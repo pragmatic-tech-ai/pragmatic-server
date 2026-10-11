@@ -16,7 +16,6 @@ export class ServerConnectionHandler
 {
     private static readonly NoActiveSolutionError = 'no active solution after open'
     private static readonly UnknownMemberError = 'unknown solution member'
-    private static readonly NoSubscription: IDisposable = { dispose() {} }
 
     private readonly connection: MessageConnection
     private readonly languageService: ILanguageService
@@ -39,19 +38,21 @@ export class ServerConnectionHandler
         this.RegisterLanguageHandlers()
         this.RegisterSolutionHandlers()
         this.RegisterModelHandlers()
-        this.graphSubscription = this.gate.CanRead()
-            ? languageService.GraphChanged.subscribe(async change =>
+        this.graphSubscription = languageService.GraphChanged.subscribe(async change =>
+        {
+            if (!this.gate.CanRead())
             {
-                try
-                {
-                    await connection.sendNotification(SolutionProtocol.GraphChanged, { memberIds: [...change.memberIds], fileIds: [...change.fileIds] })
-                }
-                catch
-                {
-                    // fail-closed: a push to a closing connection must not crash the process
-                }
-            })
-            : ServerConnectionHandler.NoSubscription
+                return
+            }
+            try
+            {
+                await connection.sendNotification(SolutionProtocol.GraphChanged, { memberIds: [...change.memberIds], fileIds: [...change.fileIds] })
+            }
+            catch
+            {
+                // fail-closed: a push to a closing connection must not crash the process
+            }
+        })
     }
 
     public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext): ServerConnectionHandler
