@@ -95,6 +95,7 @@ test('OIDC routes are 404 when the endpoint has no authenticator', async () =>
     try
     {
         assert.equal((await fetch(`${base}/auth/oidc/begin`, { redirect: 'manual' })).status, 404)
+        assert.equal((await fetch(`${base}/auth/oidc/begin`, { method: 'POST' })).status, 404)
         assert.equal((await fetch(`${base}/auth/oidc/callback?code=x&state=y`)).status, 404)
     }
     finally

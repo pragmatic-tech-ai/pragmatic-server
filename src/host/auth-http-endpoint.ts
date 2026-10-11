@@ -87,6 +87,11 @@ export class AuthHttpEndpoint
         }
         if (url.pathname === AuthHttpEndpoint.OidcBeginPath)
         {
+            if (this.oidc === undefined)
+            {
+                this.WriteJson(res, AuthHttpEndpoint.NotFoundStatus, AuthHttpEndpoint.NotFoundError)
+                return
+            }
             if (method !== AuthHttpEndpoint.GetMethod)
             {
                 this.WriteJson(res, AuthHttpEndpoint.MethodNotAllowedStatus, AuthHttpEndpoint.MethodNotAllowedError)
@@ -97,6 +102,11 @@ export class AuthHttpEndpoint
         }
         if (url.pathname === AuthHttpEndpoint.OidcCallbackPath)
         {
+            if (this.oidc === undefined)
+            {
+                this.WriteJson(res, AuthHttpEndpoint.NotFoundStatus, AuthHttpEndpoint.NotFoundError)
+                return
+            }
             if (method !== AuthHttpEndpoint.GetMethod)
             {
                 this.WriteJson(res, AuthHttpEndpoint.MethodNotAllowedStatus, AuthHttpEndpoint.MethodNotAllowedError)
@@ -198,6 +208,10 @@ export class AuthHttpEndpoint
 
     private WriteBody(res: ServerResponse, status: number, body: string): void
     {
+        if (res.writableEnded)
+        {
+            return
+        }
         res.statusCode = status
         res.setHeader(AuthHttpEndpoint.ContentTypeHeader, AuthHttpEndpoint.JsonContentType)
         res.setHeader(AuthHttpEndpoint.CacheControlHeader, AuthHttpEndpoint.NoStore)
