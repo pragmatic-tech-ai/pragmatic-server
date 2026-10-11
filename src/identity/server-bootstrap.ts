@@ -12,6 +12,11 @@ export class ServerBootstrap
         const existing = await pack.Directory.Lookup(options.adminPrincipalId, tenant)
         if (existing !== null)
         {
+            // Register and Grants.Save are not atomic: repair a missing Owner grant left by a crash between them.
+            if (options.ownerGrant)
+            {
+                await ServerBootstrap.EnsureOwnerGrantAsync(pack, tenant, options)
+            }
             return
         }
         const password = await pack.Secrets.Get(options.adminPasswordRef)
@@ -29,6 +34,16 @@ export class ServerBootstrap
             presented.Clear()
         }
         if (options.ownerGrant)
+        {
+            await ServerBootstrap.EnsureOwnerGrantAsync(pack, tenant, options)
+        }
+    }
+
+    private static async EnsureOwnerGrantAsync(pack: ServerIdentityPack, tenant: Tenant, options: BootstrapOptions): Promise<void>
+    {
+        const grants = await pack.Grants.GrantsFor(options.adminPrincipalId, tenant)
+        const hasOwner = grants.some(grant => grant.Role === Role.Owner && grant.Resource.Kind === ResourceKind.Tenant && grant.Resource.TenantId === tenant.Id)
+        if (!hasOwner)
         {
             await pack.Grants.Save(new Grant(options.adminPrincipalId, Role.Owner, new ResourceRef(ResourceKind.Tenant, tenant.Id, [])))
         }

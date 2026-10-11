@@ -39,7 +39,7 @@ class IdentityFixture
     }
 }
 
-test('Start builds the identity pack and PackFor resolves it', async () =>
+test('Start builds the identity pack and Pack resolves it', async () =>
 {
     const { identityRoot, packagesRoot, keyEnv } = IdentityFixture.Dirs()
     const server = new PragmaticServer(IdentityFixture.Options(identityRoot, packagesRoot, keyEnv))

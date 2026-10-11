@@ -53,6 +53,7 @@ export class PragmaticServer
     private static readonly ErrorSeparator = '; '
 
     private static readonly NotStartedError = 'server not started'
+    private static readonly IdentityNotConfiguredError = 'identity not configured'
 
     private readonly root: LazyCompositionRoot
     private readonly options: PragmaticServerOptions
@@ -80,14 +81,26 @@ export class PragmaticServer
         }
         if (this.identity !== undefined)
         {
-            const composed = await this.identity.ComposeAsync(this.root.Services())
-            this.pack = composed.pack
-            this.tenant = composed.tenant
+            try
+            {
+                const composed = await this.identity.ComposeAsync(this.root.Services())
+                this.pack = composed.pack
+                this.tenant = composed.tenant
+            }
+            catch (error)
+            {
+                this.root.Services().dispose()
+                throw error
+            }
         }
     }
 
     public async Pack(): Promise<ServerIdentityPack>
     {
+        if (this.identity === undefined)
+        {
+            throw new Error(PragmaticServer.IdentityNotConfiguredError)
+        }
         if (this.pack === undefined)
         {
             throw new Error(PragmaticServer.NotStartedError)
@@ -97,6 +110,10 @@ export class PragmaticServer
 
     public Tenant(): Tenant
     {
+        if (this.identity === undefined)
+        {
+            throw new Error(PragmaticServer.IdentityNotConfiguredError)
+        }
         if (this.tenant === undefined)
         {
             throw new Error(PragmaticServer.NotStartedError)
