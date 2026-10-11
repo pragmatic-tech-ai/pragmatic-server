@@ -17,6 +17,7 @@ test('LanguageServiceModule requires solution-manager and provides the language 
 {
     const m = new LanguageServiceModule().Manifest()
     assert.equal(m.Id, 'language-service')
+    assert.ok(m.Supports(HostKinds.Server))
     assert.deepEqual([...m.Requires], ['solution-manager'])
     assert.deepEqual([...m.Provides], [SolutionLanguageService.Key])
 })
