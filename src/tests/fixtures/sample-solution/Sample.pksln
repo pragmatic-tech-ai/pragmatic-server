@@ -1,0 +1,10 @@
+{
+  "kind": "todl-solution",
+  "version": 1,
+  "name": "Sample",
+  "members": [
+    { "path": "models", "type": "meta-model" }
+  ],
+  "settings": {},
+  "bags": {}
+}
