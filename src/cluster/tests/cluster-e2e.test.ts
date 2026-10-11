@@ -177,3 +177,31 @@ test('a missing tenant hint is rejected at the gateway', async () =>
         ClusterFixture.Cleanup(baseDir)
     }
 })
+
+test('a CRLF-injected tenant hint is rejected and the gateway keeps serving valid tenants', async () =>
+{
+    const { baseDir } = ClusterFixture.Start('t1')
+    const cluster = await PragmaticCluster.StartAsync(ClusterFixture.Options(baseDir, ClusterFixture.Provisioning('t1')))
+    const addr = cluster.Address()
+    try
+    {
+        const token1 = await ClusterFixture.TokenFor(cluster.WorkerForTest(), 't1')
+        await assert.rejects(() => PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?tenant=a%0d%0ab`, { bearerToken: token1 }))
+        const c1 = await PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?tenant=t1`, { bearerToken: token1 })
+        try
+        {
+            const sum = await c1.OpenSolution(join(baseDir, 't1', 'solution'))
+            assert.equal(sum.members.length, 1)
+            await ((await (await cluster.WorkerForTest().RegistryForTest().ServerFor('t1')).LanguageService()) as SolutionLanguageService).WhenIdle()
+        }
+        finally
+        {
+            await c1.DisposeAsync()
+        }
+    }
+    finally
+    {
+        await cluster.DisposeAsync()
+        ClusterFixture.Cleanup(baseDir)
+    }
+})
