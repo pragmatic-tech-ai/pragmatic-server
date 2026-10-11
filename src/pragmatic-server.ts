@@ -1,7 +1,5 @@
 import { LazyCompositionRoot, HostKinds } from '@pragmatic-tech-ai/todl-runtime'
 import type { ModuleStateProperty } from '@pragmatic-tech-ai/todl-runtime'
-import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
-import { NodeStorageProviderRegistry, HeadlessPromptService } from '@pragmatic-tech-ai/todl-platform-node'
 import { SolutionManagerService, StoragePackageSource, StoragePackageStore, PackageStoreKey } from '@pragmatic-tech-ai/todl'
 import { NodeProjectSystemComposer } from '@pragmatic-tech-ai/todl/project-system'
 import { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
@@ -13,6 +11,9 @@ import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
 import type { OidcAuthenticator } from '@pragmatic-tech-ai/todl-identity-cloud'
 import { IdentityModule } from './identity/identity-module.js'
 import { ServerBootstrap } from './identity/server-bootstrap.js'
+import { DeploymentMode } from './platform/deployment-mode.js'
+import { PlatformSelector } from './platform/platform-selector.js'
+import type { PlatformServices } from './platform/platform-services.js'
 
 export interface OidcServerOptions
 {
@@ -45,6 +46,8 @@ export interface PragmaticServerOptions
 {
     packagesRoot?: string
     identity?: PragmaticServerIdentityOptions
+    deploymentMode?: DeploymentMode
+    platform?: PlatformServices
 }
 
 /** Headless single-tenant in-process host: composes the engine over the lazy root and opens a solution. */
@@ -58,6 +61,7 @@ export class PragmaticServer
 
     private readonly root: LazyCompositionRoot
     private readonly options: PragmaticServerOptions
+    private readonly platform: PlatformServices
     private readonly identity: IdentityModule | undefined
     private pack: ServerIdentityPack | undefined
     private tenant: Tenant | undefined
@@ -66,7 +70,8 @@ export class PragmaticServer
     public constructor(options: PragmaticServerOptions)
     {
         this.options = options
-        this.identity = options.identity === undefined ? undefined : new IdentityModule(options.identity)
+        this.platform = PlatformSelector.Resolve(options.platform, options.deploymentMode ?? DeploymentMode.Local)
+        this.identity = options.identity === undefined ? undefined : new IdentityModule(options.identity, this.platform)
         const builder = LazyCompositionRoot.Builder(HostKinds.Server)
             .Module(new SolutionServicesModule())
             .Module(new LanguageServiceModule())
@@ -168,9 +173,9 @@ export class PragmaticServer
     private RegisterInfrastructure(packagesRoot: string): void
     {
         const services = this.root.Services()
-        services.registerInstance(SolutionManagerService.StorageRegistryKey, new NodeStorageProviderRegistry())
-        services.registerInstance(SolutionManagerService.PromptServiceKey, new HeadlessPromptService())
-        const packagesStorage = new NodeFsStorage(packagesRoot)
+        services.registerInstance(SolutionManagerService.StorageRegistryKey, this.platform.CreateStorageProviderRegistry())
+        services.registerInstance(SolutionManagerService.PromptServiceKey, this.platform.CreatePromptService())
+        const packagesStorage = this.platform.CreatePackagesStorage(packagesRoot)
         services.registerInstance(SolutionManagerService.PackageSourceKey, new StoragePackageSource(packagesStorage))
         services.registerInstance(PackageStoreKey, new StoragePackageStore(packagesStorage))
         NodeProjectSystemComposer.Compose(services)

@@ -1,26 +1,27 @@
 import { IdentityConfig, DelegationDepth, Tenant, TenantKind, IdentityProviderRegistryKey, SecretStoreKey, PasswordHasherKey } from '@pragmatic-tech-ai/todl-identity'
 import { Argon2PasswordHasher } from '@pragmatic-tech-ai/todl-identity-local'
 import { ConfigurableIdentityProviderRegistry } from '@pragmatic-tech-ai/todl-identity-host'
-import { ServerIdentityPack, FileEncryptedSecretStore } from '@pragmatic-tech-ai/todl-identity-node'
-import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
+import { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
 import type { ServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import type { OidcAuthenticator } from '@pragmatic-tech-ai/todl-identity-cloud'
 import { OidcAuthenticatorBuilder } from './oidc-authenticator-builder.js'
-import { MasterKeyResolver } from './master-key-resolver.js'
 import { ServerBootstrap } from './server-bootstrap.js'
 import type { PragmaticServerIdentityOptions } from '../pragmatic-server.js'
+import type { PlatformServices } from '../platform/platform-services.js'
 
-/** Builds and registers the single-tenant identity stack: file-backed ServerIdentityPack,
- *  a SingleTenant provider registry, the secret store and password hasher. */
+/** Builds and registers the single-tenant identity stack from the platform bundle: the ServerIdentityPack
+ *  (over the platform's identity stores), a SingleTenant provider registry, the secret store and password hasher. */
 export class IdentityModule
 {
     private static readonly PackId = 'server-pack'
 
     private readonly options: PragmaticServerIdentityOptions
+    private readonly platform: PlatformServices
 
-    public constructor(options: PragmaticServerIdentityOptions)
+    public constructor(options: PragmaticServerIdentityOptions, platform: PlatformServices)
     {
         this.options = options
+        this.platform = platform
     }
 
     public Tenant(): Tenant
@@ -31,13 +32,13 @@ export class IdentityModule
     public async ComposeAsync(services: ServiceProvider): Promise<{ pack: ServerIdentityPack; tenant: Tenant; oidc: OidcAuthenticator | undefined }>
     {
         const tenant = this.Tenant()
-        const storage = new NodeFsStorage(this.options.identityRoot)
-        const masterKey = MasterKeyResolver.Resolve(this.options.masterKey)
+        const masterKey = this.platform.ResolveMasterKey(this.options.masterKey)
         const hasher = new Argon2PasswordHasher()
+        const stores = await this.platform.CreateIdentityStores(this.options.identityRoot, masterKey)
         const oidc = this.options.oidc === undefined
             ? undefined
-            : OidcAuthenticatorBuilder.Build(this.options.oidc, await FileEncryptedSecretStore.Open(storage, masterKey))
-        const pack = await ServerIdentityPack.Open(storage, masterKey, oidc)
+            : OidcAuthenticatorBuilder.Build(this.options.oidc, stores.Secrets)
+        const pack = ServerIdentityPack.OpenWith(stores, oidc)
         const config = new IdentityConfig(IdentityModule.PackId, DelegationDepth.FullAuthz, new Map(), new Map(), new Map())
         const registry = await ConfigurableIdentityProviderRegistry.SingleTenant(tenant, config, pack)
         services.registerInstance(IdentityProviderRegistryKey, registry)
