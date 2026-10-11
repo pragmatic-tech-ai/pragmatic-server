@@ -49,16 +49,17 @@ test('a client presenting a valid service token opens the solution', async () =>
     const address = host.Address()
     const pack = await host.IdentityPackForTest()
     const { Token } = await pack.Tokens.Issue(host.TenantForTest(), 'svc1', [], null)
-    const client = await PragmaticClient.ConnectAsync(`ws://${address.host}:${address.port}`, { bearerToken: Token })
+    let client: PragmaticClient | undefined
     try
     {
+        client = await PragmaticClient.ConnectAsync(`ws://${address.host}:${address.port}`, { bearerToken: Token })
         const summary = await client.OpenSolution(solution)
         assert.equal(summary.members.length, 1)
         await ((await host.LanguageServiceForTest()) as SolutionLanguageService).WhenIdle()
     }
     finally
     {
-        await client.DisposeAsync()
+        await client?.DisposeAsync()
         await host.DisposeAsync()
         AuthFixture.Cleanup(identityRoot, packagesRoot, solution)
         delete process.env[keyEnv]
@@ -73,6 +74,7 @@ test('a client with no bearer is rejected at the upgrade (no connection)', async
     try
     {
         await assert.rejects(() => PragmaticClient.ConnectAsync(`ws://${address.host}:${address.port}`))
+        assert.equal(host.HandlerCountForTest(), 0)
     }
     finally
     {
@@ -90,6 +92,7 @@ test('a client with an invalid bearer is rejected at the upgrade', async () =>
     try
     {
         await assert.rejects(() => PragmaticClient.ConnectAsync(`ws://${address.host}:${address.port}`, { bearerToken: 'not-a-real-token' }))
+        assert.equal(host.HandlerCountForTest(), 0)
     }
     finally
     {

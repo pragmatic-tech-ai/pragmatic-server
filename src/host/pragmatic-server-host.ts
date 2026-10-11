@@ -37,6 +37,7 @@ export class PragmaticServerHost
     private static readonly ErrorEvent = 'error'
     private static readonly AuthorizationHeader = 'authorization'
     private static readonly BearerPrefix = 'Bearer '
+    private static readonly UpgradeRequiredStatus = 426
     private static readonly UnauthorizedResponse = 'HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'
 
     private readonly server: PragmaticServer
@@ -70,6 +71,7 @@ export class PragmaticServerHost
         this.address = address
         httpServer.on(PragmaticServerHost.UpgradeEvent, (req: IncomingMessage, socket: Socket, head: Buffer) =>
         {
+            socket.on(PragmaticServerHost.ErrorEvent, () => socket.destroy())
             void this.Upgrade(req, socket, head)
         })
     }
@@ -83,7 +85,11 @@ export class PragmaticServerHost
         const pack = await server.Pack()
         const tenant = server.Tenant()
         const host = options.host ?? PragmaticServerHost.DefaultHost
-        const httpServer = createServer()
+        const httpServer = createServer((req, res) =>
+        {
+            res.writeHead(PragmaticServerHost.UpgradeRequiredStatus)
+            res.end()
+        })
         const wss = new WebSocketServer({ noServer: true })
         try
         {
@@ -124,6 +130,12 @@ export class PragmaticServerHost
     public TenantForTest(): Tenant
     {
         return this.tenant
+    }
+
+    /** Test seam: number of live authenticated connections. */
+    public HandlerCountForTest(): number
+    {
+        return this.handlers.size
     }
 
     public async DisposeAsync(): Promise<void>
@@ -171,7 +183,10 @@ export class PragmaticServerHost
 
     private Reject(socket: Socket): void
     {
-        socket.write(PragmaticServerHost.UnauthorizedResponse)
+        if (!socket.writableEnded)
+        {
+            socket.write(PragmaticServerHost.UnauthorizedResponse)
+        }
         socket.destroy()
     }
 
@@ -183,6 +198,10 @@ export class PragmaticServerHost
             return null
         }
         const token = header.slice(PragmaticServerHost.BearerPrefix.length)
+        if (token.length === 0)
+        {
+            return null
+        }
         return this.authenticator.ResolveAsync(token, this.tenant, this.pack)
     }
 }

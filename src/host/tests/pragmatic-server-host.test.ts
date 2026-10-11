@@ -13,7 +13,7 @@ class HostFixture
 {
     private static readonly SolutionPrefix = 'ps-sol-'
     private static readonly PackagesPrefix = 'ps-pkgs-'
-    private static readonly KeyEnv = 'PS_HOST_KEY'
+    public static readonly KeyEnv = 'PS_HOST_KEY'
     private static readonly LoopbackHost = '127.0.0.1'
 
     public static readonly Host = HostFixture.LoopbackHost
@@ -75,6 +75,7 @@ test('a loopback client opens the fixture solution over a real WebSocket', async
         HostFixture.Cleanup(solution)
         HostFixture.Cleanup(packages)
         HostFixture.Cleanup(identity)
+        delete process.env[HostFixture.KeyEnv]
     }
 })
 
@@ -108,5 +109,6 @@ test('a graph change pushes to two connected clients', async () =>
         await host.DisposeAsync()
         HostFixture.Cleanup(packages)
         HostFixture.Cleanup(identity)
+        delete process.env[HostFixture.KeyEnv]
     }
 })
