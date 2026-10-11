@@ -111,3 +111,22 @@ test('malformed body is 400; unknown route is 404; wrong method is 405', async (
         delete process.env[keyEnv]
     }
 })
+
+test('oversized body is 400; body missing password is 400', async () =>
+{
+    const { identityRoot, packagesRoot, solution, keyEnv } = LoginFixture.Start()
+    const host = await PragmaticServerHost.StartAsync(LoginFixture.Options(identityRoot, packagesRoot, keyEnv))
+    const base = `http://${host.Address().host}:${host.Address().port}`
+    try
+    {
+        const oversized = JSON.stringify({ email: 'a@x.io', password: 'x'.repeat(5000) })
+        assert.equal((await fetch(`${base}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: oversized })).status, 400)
+        assert.equal((await fetch(`${base}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'a@x.io' }) })).status, 400)
+    }
+    finally
+    {
+        await host.DisposeAsync()
+        LoginFixture.Cleanup(identityRoot, packagesRoot, solution)
+        delete process.env[keyEnv]
+    }
+})

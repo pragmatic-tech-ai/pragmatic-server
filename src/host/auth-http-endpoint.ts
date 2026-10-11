@@ -25,6 +25,21 @@ export class AuthHttpEndpoint
     private static readonly BadRequestError = 'bad request'
     private static readonly NotFoundError = 'not found'
     private static readonly MethodNotAllowedError = 'method not allowed'
+    private static readonly InternalError = 'internal error'
+    private static readonly OkStatus = 200
+    private static readonly FoundStatus = 302
+    private static readonly BadRequestStatus = 400
+    private static readonly UnauthorizedStatus = 401
+    private static readonly NotFoundStatus = 404
+    private static readonly MethodNotAllowedStatus = 405
+    private static readonly InternalErrorStatus = 500
+    private static readonly EmailKey = 'email'
+    private static readonly PasswordKey = 'password'
+    private static readonly TokenKey = 'token'
+    private static readonly ExpiresAtKey = 'expiresAt'
+    private static readonly ErrorKey = 'error'
+    private static readonly CacheControlHeader = 'Cache-Control'
+    private static readonly NoStore = 'no-store'
 
     private readonly pack: ServerIdentityPack
     private readonly tenant: Tenant
@@ -39,13 +54,32 @@ export class AuthHttpEndpoint
 
     public async Handle(req: IncomingMessage, res: ServerResponse): Promise<void>
     {
+        try
+        {
+            await this.Route(req, res)
+        }
+        catch
+        {
+            if (res.headersSent)
+            {
+                res.end()
+            }
+            else
+            {
+                this.WriteJson(res, AuthHttpEndpoint.InternalErrorStatus, AuthHttpEndpoint.InternalError)
+            }
+        }
+    }
+
+    private async Route(req: IncomingMessage, res: ServerResponse): Promise<void>
+    {
         const url = new URL(req.url ?? '/', AuthHttpEndpoint.BaseUrl)
         const method = req.method ?? AuthHttpEndpoint.GetMethod
         if (url.pathname === AuthHttpEndpoint.LoginPath)
         {
             if (method !== AuthHttpEndpoint.PostMethod)
             {
-                this.WriteJson(res, 405, AuthHttpEndpoint.MethodNotAllowedError)
+                this.WriteJson(res, AuthHttpEndpoint.MethodNotAllowedStatus, AuthHttpEndpoint.MethodNotAllowedError)
                 return
             }
             await this.Login(req, res)
@@ -55,7 +89,7 @@ export class AuthHttpEndpoint
         {
             if (method !== AuthHttpEndpoint.GetMethod)
             {
-                this.WriteJson(res, 405, AuthHttpEndpoint.MethodNotAllowedError)
+                this.WriteJson(res, AuthHttpEndpoint.MethodNotAllowedStatus, AuthHttpEndpoint.MethodNotAllowedError)
                 return
             }
             await this.OidcBegin(res)
@@ -65,36 +99,38 @@ export class AuthHttpEndpoint
         {
             if (method !== AuthHttpEndpoint.GetMethod)
             {
-                this.WriteJson(res, 405, AuthHttpEndpoint.MethodNotAllowedError)
+                this.WriteJson(res, AuthHttpEndpoint.MethodNotAllowedStatus, AuthHttpEndpoint.MethodNotAllowedError)
                 return
             }
             await this.OidcCallback(url, res)
             return
         }
-        this.WriteJson(res, 404, AuthHttpEndpoint.NotFoundError)
+        this.WriteJson(res, AuthHttpEndpoint.NotFoundStatus, AuthHttpEndpoint.NotFoundError)
     }
 
     private async Login(req: IncomingMessage, res: ServerResponse): Promise<void>
     {
         const body = await RequestBody.ReadJson(req, AuthHttpEndpoint.MaxBodyBytes)
-        if (body === null || typeof body.email !== 'string' || typeof body.password !== 'string')
+        const email = body?.[AuthHttpEndpoint.EmailKey]
+        const password = body?.[AuthHttpEndpoint.PasswordKey]
+        if (typeof email !== 'string' || typeof password !== 'string')
         {
-            this.WriteJson(res, 400, AuthHttpEndpoint.BadRequestError)
+            this.WriteJson(res, AuthHttpEndpoint.BadRequestStatus, AuthHttpEndpoint.BadRequestError)
             return
         }
         const authenticator = this.pack.AuthenticatorFor(AuthMethod.Local)
         if (authenticator === undefined)
         {
-            this.WriteJson(res, 401, AuthHttpEndpoint.InvalidCredentialsError)
+            this.WriteJson(res, AuthHttpEndpoint.UnauthorizedStatus, AuthHttpEndpoint.InvalidCredentialsError)
             return
         }
-        const presented = new PresentedSecret(body.password)
+        const presented = new PresentedSecret(password)
         try
         {
-            const result = await authenticator.Authenticate(new Credential(AuthMethod.Local, body.email), presented, this.tenant)
+            const result = await authenticator.Authenticate(new Credential(AuthMethod.Local, email), presented, this.tenant)
             if (!(result instanceof AuthenticatedResult))
             {
-                this.WriteJson(res, 401, AuthHttpEndpoint.InvalidCredentialsError)
+                this.WriteJson(res, AuthHttpEndpoint.UnauthorizedStatus, AuthHttpEndpoint.InvalidCredentialsError)
                 return
             }
             await this.MintSession(res, result)
@@ -109,11 +145,11 @@ export class AuthHttpEndpoint
     {
         if (this.oidc === undefined)
         {
-            this.WriteJson(res, 404, AuthHttpEndpoint.NotFoundError)
+            this.WriteJson(res, AuthHttpEndpoint.NotFoundStatus, AuthHttpEndpoint.NotFoundError)
             return
         }
         const begun = await this.oidc.BeginAuthorization(this.tenant)
-        res.statusCode = 302
+        res.statusCode = AuthHttpEndpoint.FoundStatus
         res.setHeader(AuthHttpEndpoint.LocationHeader, begun.Url)
         res.end()
     }
@@ -122,14 +158,14 @@ export class AuthHttpEndpoint
     {
         if (this.oidc === undefined)
         {
-            this.WriteJson(res, 404, AuthHttpEndpoint.NotFoundError)
+            this.WriteJson(res, AuthHttpEndpoint.NotFoundStatus, AuthHttpEndpoint.NotFoundError)
             return
         }
         const code = url.searchParams.get(AuthHttpEndpoint.CodeParam)
         const state = url.searchParams.get(AuthHttpEndpoint.StateParam)
         if (code === null || state === null)
         {
-            this.WriteJson(res, 400, AuthHttpEndpoint.BadRequestError)
+            this.WriteJson(res, AuthHttpEndpoint.BadRequestStatus, AuthHttpEndpoint.BadRequestError)
             return
         }
         const presented = new PresentedSecret(code)
@@ -138,7 +174,7 @@ export class AuthHttpEndpoint
             const result = await this.oidc.Authenticate(new Credential(AuthMethod.Oidc, state), presented, this.tenant)
             if (!(result instanceof AuthenticatedResult))
             {
-                this.WriteJson(res, 401, AuthHttpEndpoint.InvalidCredentialsError)
+                this.WriteJson(res, AuthHttpEndpoint.UnauthorizedStatus, AuthHttpEndpoint.InvalidCredentialsError)
                 return
             }
             await this.MintSession(res, result)
@@ -152,18 +188,19 @@ export class AuthHttpEndpoint
     private async MintSession(res: ServerResponse, result: AuthenticatedResult): Promise<void>
     {
         const session = await this.pack.Sessions.Issue(result.Principal)
-        this.WriteBody(res, 200, JSON.stringify({ token: session.Id, expiresAt: session.ExpiresAt.toISOString() }))
+        this.WriteBody(res, AuthHttpEndpoint.OkStatus, JSON.stringify({ [AuthHttpEndpoint.TokenKey]: session.Id, [AuthHttpEndpoint.ExpiresAtKey]: session.ExpiresAt.toISOString() }))
     }
 
     private WriteJson(res: ServerResponse, status: number, error: string): void
     {
-        this.WriteBody(res, status, JSON.stringify({ error }))
+        this.WriteBody(res, status, JSON.stringify({ [AuthHttpEndpoint.ErrorKey]: error }))
     }
 
     private WriteBody(res: ServerResponse, status: number, body: string): void
     {
         res.statusCode = status
         res.setHeader(AuthHttpEndpoint.ContentTypeHeader, AuthHttpEndpoint.JsonContentType)
+        res.setHeader(AuthHttpEndpoint.CacheControlHeader, AuthHttpEndpoint.NoStore)
         res.end(body)
     }
 }

@@ -4,9 +4,15 @@ import type { IncomingMessage } from 'node:http'
 export class RequestBody
 {
     private static readonly Encoding = 'utf8'
+    private static readonly ContentLengthHeader = 'content-length'
 
     public static async ReadJson(req: IncomingMessage, maxBytes: number): Promise<Record<string, unknown> | null>
     {
+        const declared = Number(req.headers[RequestBody.ContentLengthHeader])
+        if (declared > maxBytes)
+        {
+            return null
+        }
         const chunks: Buffer[] = []
         let total = 0
         for await (const chunk of req)
