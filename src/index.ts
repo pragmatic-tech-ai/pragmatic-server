@@ -2,3 +2,5 @@ export { SolutionServicesModule, LanguageServiceModule } from './composition/ser
 export { PragmaticServer } from './pragmatic-server.js'
 export type { PragmaticServerOptions } from './pragmatic-server.js'
 export { ServerConnectionHandler } from './host/server-connection-handler.js'
+export { PragmaticServerHost } from './host/pragmatic-server-host.js'
+export type { PragmaticServerHostOptions, WebSocketAddress } from './host/pragmatic-server-host.js'
