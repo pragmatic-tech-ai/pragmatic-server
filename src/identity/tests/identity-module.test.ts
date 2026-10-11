@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { AuthMethod, Role, PresentedSecret, Credential, AuthenticatedResult } from '@pragmatic-tech-ai/todl-identity'
+import { AuthMethod, Role, ResourceKind, PresentedSecret, Credential, AuthenticatedResult } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../pragmatic-server.js'
 
 class IdentityFixture
@@ -78,6 +78,40 @@ test('bootstrap seeds an Owner admin when its password secret is present, and is
         assert.ok(result instanceof AuthenticatedResult)
         const grants = await pack.Grants.GrantsFor('admin', second.Tenant())
         assert.ok(grants.some(grant => grant.Role === Role.Owner))
+    }
+    finally
+    {
+        await second.Dispose()
+        IdentityFixture.Cleanup(identityRoot, packagesRoot, keyEnv)
+    }
+})
+
+test('bootstrap repairs a missing Owner grant on an existing account, idempotently', async () =>
+{
+    const { identityRoot, packagesRoot, keyEnv } = IdentityFixture.Dirs()
+    const base = IdentityFixture.Options(identityRoot, packagesRoot, keyEnv)
+    const withoutGrant = { ...base, identity: { ...base.identity, bootstrap: { ...base.identity.bootstrap, ownerGrant: false } } }
+    const withGrant = { ...base, identity: { ...base.identity, bootstrap: { ...base.identity.bootstrap, ownerGrant: true } } }
+    const first = new PragmaticServer(withoutGrant)
+    await first.Start()
+    const pack1 = await first.Pack()
+    await pack1.Secrets.Put(withoutGrant.identity.bootstrap.adminPasswordRef, 'admin-pw-12345')
+    await first.SeedBootstrapForTest()
+    assert.equal((await pack1.Grants.GrantsFor('admin', first.Tenant())).length, 0)
+    await first.Dispose()
+
+    const second = new PragmaticServer(withGrant)
+    try
+    {
+        await second.Start() // account exists, grant missing: bootstrap repairs it
+        const pack = await second.Pack()
+        const grants = await pack.Grants.GrantsFor('admin', second.Tenant())
+        assert.equal(grants.length, 1)
+        assert.equal(grants[0].Role, Role.Owner)
+        assert.equal(grants[0].Resource.Kind, ResourceKind.Tenant)
+        assert.equal(grants[0].Resource.TenantId, 't1')
+        await second.SeedBootstrapForTest()
+        assert.equal((await pack.Grants.GrantsFor('admin', second.Tenant())).length, 1)
     }
     finally
     {
