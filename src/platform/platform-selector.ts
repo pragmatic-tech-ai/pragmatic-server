@@ -3,11 +3,13 @@ import { NodePlatform } from './node-platform.js'
 import type { PlatformServices } from './platform-services.js'
 
 /** Resolves the PlatformServices bundle for a server: an explicitly-supplied bundle wins; otherwise the
- *  DeploymentMode selects one. Cloud requires an explicit bundle because pragmatic-server does not depend
- *  on the cloud platform package (fail-closed rather than silently falling back to the local set). */
+ *  DeploymentMode selects one. Only Local builds a bundle in-package (NodePlatform); every other mode —
+ *  Cloud today, and any mode added later without its own branch — requires an explicit bundle and throws
+ *  otherwise, because pragmatic-server depends on no cloud platform package (fail-closed, never a silent
+ *  fall back to the local set). */
 export class PlatformSelector
 {
-    private static readonly CloudRequiresBundle = 'DeploymentMode.Cloud requires an explicit platform bundle'
+    private static readonly RequiresBundle = ' requires an explicit platform bundle'
 
     public static Resolve(platform: PlatformServices | undefined, mode: DeploymentMode): PlatformServices
     {
@@ -15,10 +17,10 @@ export class PlatformSelector
         {
             return platform
         }
-        if (mode === DeploymentMode.Cloud)
+        if (mode === DeploymentMode.Local)
         {
-            throw new Error(PlatformSelector.CloudRequiresBundle)
+            return new NodePlatform()
         }
-        return new NodePlatform()
+        throw new Error(`${mode}${PlatformSelector.RequiresBundle}`)
     }
 }
