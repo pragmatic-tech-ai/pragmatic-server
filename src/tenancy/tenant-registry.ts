@@ -100,8 +100,9 @@ export class TenantRegistry
             this.servers.delete(tenantId)
             this.coordinator.Forget(tenantId)
             const disposal = server.Dispose()
-            this.disposing.set(tenantId, disposal.finally(() => this.disposing.delete(tenantId)))
-            await disposal
+            const tracked = disposal.catch(() => {}).finally(() => this.disposing.delete(tenantId))
+            this.disposing.set(tenantId, tracked)
+            await tracked
         }
     }
 
@@ -140,7 +141,7 @@ export class TenantRegistry
         }
         catch (error)
         {
-            await server.Dispose()
+            await server.Dispose().catch(() => {})
             throw error
         }
         return server
