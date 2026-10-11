@@ -7,6 +7,34 @@ import { NodeProjectSystemComposer } from '@pragmatic-tech-ai/todl/project-syste
 import { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { SolutionServicesModule, LanguageServiceModule } from './composition/server-modules.js'
+import type { MasterKeyRef } from './identity/master-key-resolver.js'
+
+export interface OidcServerOptions
+{
+    issuer: string
+    clientId: string
+    clientSecretRef: string
+    discoveryUrl: string
+    redirectUri: string
+    provider: string
+}
+
+export interface BootstrapOptions
+{
+    adminEmail: string
+    adminPrincipalId: string
+    adminPasswordRef: string
+    ownerGrant: boolean
+}
+
+export interface PragmaticServerIdentityOptions
+{
+    identityRoot: string
+    masterKey: MasterKeyRef
+    tenant: { id: string; displayName: string }
+    oidc?: OidcServerOptions
+    bootstrap?: BootstrapOptions
+}
 
 export interface PragmaticServerOptions
 {

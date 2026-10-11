@@ -19,6 +19,9 @@
     "@pragmatic-tech-ai/todl-runtime": "file:../todl-runtime",
     "@pragmatic-tech-ai/todl-platform-node": "file:../todl-platform-node",
     "@pragmatic-tech-ai/pragmatic-protocol": "file:../pragmatic-protocol",
+    "@pragmatic-tech-ai/todl-identity": "file:../todl-identity",
+    "@pragmatic-tech-ai/todl-identity-host": "file:../todl-identity-host",
+    "@pragmatic-tech-ai/todl-identity-node": "file:../todl-identity-node",
     "ws": "^8.18.0"
   },
   "devDependencies": {
