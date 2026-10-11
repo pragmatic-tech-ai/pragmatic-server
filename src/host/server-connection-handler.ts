@@ -25,9 +25,16 @@ export class ServerConnectionHandler
         this.manager = manager
         this.RegisterLanguageHandlers()
         this.RegisterSolutionHandlers()
-        this.graphSubscription = languageService.GraphChanged.subscribe(change =>
+        this.graphSubscription = languageService.GraphChanged.subscribe(async change =>
         {
-            void connection.sendNotification(SolutionProtocol.GraphChanged, { memberIds: [...change.memberIds], fileIds: [...change.fileIds] })
+            try
+            {
+                await connection.sendNotification(SolutionProtocol.GraphChanged, { memberIds: [...change.memberIds], fileIds: [...change.fileIds] })
+            }
+            catch
+            {
+                // fail-closed: a push to a closing connection must not crash the process
+            }
         })
     }
 
@@ -83,7 +90,7 @@ export class ServerConnectionHandler
         {
             this.languageService.DidChange(uri, text)
             const diagnostics = await this.languageService.DiagnosticsFor(uri)
-            void this.connection.sendNotification(LanguageProtocol.PublishDiagnostics, { uri, diagnostics })
+            await this.connection.sendNotification(LanguageProtocol.PublishDiagnostics, { uri, diagnostics })
         }
         catch
         {
