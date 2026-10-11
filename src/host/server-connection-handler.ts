@@ -1,9 +1,7 @@
-import { createMessageConnection, NullLogger } from 'vscode-jsonrpc'
-import type { MessageConnection } from 'vscode-jsonrpc'
 import {
-    WebSocketMessageReader, WebSocketMessageWriter, LanguageProtocol, SolutionProtocol,
+    createMessageConnection, NullLogger, WebSocketMessageReader, WebSocketMessageWriter, LanguageProtocol, SolutionProtocol,
 } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { IMessageSocket, ActiveSolutionSummary } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { MessageConnection, IMessageSocket, ActiveSolutionSummary } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'

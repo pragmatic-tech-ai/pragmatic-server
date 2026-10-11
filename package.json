@@ -19,8 +19,7 @@
     "@pragmatic-tech-ai/todl-runtime": "file:../todl-runtime",
     "@pragmatic-tech-ai/todl-platform-node": "file:../todl-platform-node",
     "@pragmatic-tech-ai/pragmatic-protocol": "file:../pragmatic-protocol",
-    "ws": "^8.18.0",
-    "vscode-jsonrpc": "^8.2.0"
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/node": "^22.20.1",
