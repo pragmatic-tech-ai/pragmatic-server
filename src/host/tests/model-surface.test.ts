@@ -128,6 +128,8 @@ test('Resources over the wire returns a JSON array for a node', async () =>
             const resources = await client.Resources(ModelFixture.WidgetId)
             assert.ok(Array.isArray(resources))
             assert.deepEqual(JSON.parse(JSON.stringify(resources)), resources)
+            const unknown = await client.Resources('no.such.node')
+            assert.deepEqual(unknown, [])
         })
     }
     finally
