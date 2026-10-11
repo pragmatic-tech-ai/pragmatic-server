@@ -46,3 +46,13 @@ test('returns null for unknown, empty and wrong-tenant tokens', async () =>
     assert.equal(await authenticator.ResolveAsync('', tenant, pack), null)
     assert.equal(await authenticator.ResolveAsync(Token, other, pack), null)
 })
+
+test('returns null for a valid session presented under the wrong tenant', async () =>
+{
+    const pack = await ServerIdentityPack.Open(new FakeStorage(), randomBytes(32))
+    const tenant = AuthenticatorFixture.Tenant1()
+    const other = new Tenant('t2', TenantKind.SelfHosted, 'Other')
+    await pack.Registrar.Register(tenant, 'a@x.io', 'p1', new PresentedSecret('pw-123456'))
+    const session = await pack.Sessions.Issue(new Principal('p1', 't1', PrincipalKind.User, new Map(), []))
+    assert.equal(await new ConnectionAuthenticator().ResolveAsync(session.Id, other, pack), null)
+})
