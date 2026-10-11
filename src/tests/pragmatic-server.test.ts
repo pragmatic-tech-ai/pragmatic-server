@@ -6,12 +6,13 @@ import { join } from 'node:path'
 import { ModuleStateKind } from '@pragmatic-tech-ai/todl-runtime'
 import { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import { PragmaticServer } from '../pragmatic-server.js'
+import { SolutionServicesModule, LanguageServiceModule } from '../composition/server-modules.js'
 
 class ServerFixture
 {
     private static readonly TempPrefix = 'ps-pkgs-'
-    public static readonly ManagerModule = 'solution-manager'
-    public static readonly LanguageModule = 'language-service'
+    public static readonly ManagerModule = SolutionServicesModule.ModuleId
+    public static readonly LanguageModule = LanguageServiceModule.ModuleId
 
     public static OverTemp(): PragmaticServer
     {
