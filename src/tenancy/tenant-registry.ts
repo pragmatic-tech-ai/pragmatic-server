@@ -27,6 +27,9 @@ export class TenantRegistry
     private static readonly PackagesDir = 'packages'
     private static readonly IdentityDir = 'identity'
     private static readonly UnprovisionedError = 'tenant is not provisioned'
+    private static readonly InvalidTenantError = 'invalid tenant id'
+    private static readonly ParentSegment = '..'
+    private static readonly SeparatorPattern = /[\\/]/
 
     private readonly baseDir: string
     private readonly masterKey: MasterKeyRef
@@ -34,6 +37,7 @@ export class TenantRegistry
     private readonly coordinator: ITenantCoordinator
     private readonly servers = new Map<string, PragmaticServer>()
     private readonly pending = new Map<string, Promise<PragmaticServer>>()
+    private readonly disposing = new Map<string, Promise<void>>()
 
     public constructor(baseDir: string, masterKey: MasterKeyRef, provisioning: ITenantProvisioning, coordinator: ITenantCoordinator)
     {
@@ -84,6 +88,10 @@ export class TenantRegistry
     {
         for (const tenantId of this.coordinator.EvictCandidates(nowMs, idleTtlMs))
         {
+            if (!this.coordinator.EvictCandidates(nowMs, idleTtlMs).includes(tenantId))
+            {
+                continue
+            }
             const server = this.servers.get(tenantId)
             if (server === undefined)
             {
@@ -91,29 +99,50 @@ export class TenantRegistry
             }
             this.servers.delete(tenantId)
             this.coordinator.Forget(tenantId)
-            await server.Dispose()
+            const disposal = server.Dispose()
+            this.disposing.set(tenantId, disposal.finally(() => this.disposing.delete(tenantId)))
+            await disposal
         }
     }
 
     public async DisposeAll(): Promise<void>
     {
+        await Promise.allSettled([...this.pending.values()])
         const servers = [...this.servers.values()]
         this.servers.clear()
         for (const server of servers)
         {
             await server.Dispose()
         }
+        await Promise.allSettled([...this.disposing.values()])
     }
 
     private async Build(tenantId: string): Promise<PragmaticServer>
     {
+        if (tenantId === '' || tenantId === '.' || tenantId === TenantRegistry.ParentSegment || TenantRegistry.SeparatorPattern.test(tenantId))
+        {
+            throw new Error(TenantRegistry.InvalidTenantError)
+        }
         const provisioning = this.provisioning.OptionsFor(tenantId)
         if (provisioning === null)
         {
             throw new Error(TenantRegistry.UnprovisionedError)
         }
+        const disposing = this.disposing.get(tenantId)
+        if (disposing !== undefined)
+        {
+            await disposing
+        }
         const server = new PragmaticServer(this.OptionsFor(tenantId, provisioning))
-        await server.Start()
+        try
+        {
+            await server.Start()
+        }
+        catch (error)
+        {
+            await server.Dispose()
+            throw error
+        }
         return server
     }
 

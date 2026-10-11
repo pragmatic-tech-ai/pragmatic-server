@@ -95,11 +95,29 @@ test('idle-evict disposes a zero-connection tenant; a connected one survives; re
     try
     {
         const first = await registry.ServerFor('t1')
-        await registry.ServerFor('t2')
+        const t2 = await registry.ServerFor('t2')
         registry.Acquire('t2') // t2 has a live connection
         await registry.EvictIdle(Number.MAX_SAFE_INTEGER, 0)
         assert.notEqual(await registry.ServerFor('t1'), first) // t1 was evicted -> cold rebuild = new instance
+        assert.equal(await registry.ServerFor('t2'), t2) // connected tenant survived
         registry.Release('t2')
+    }
+    finally
+    {
+        await registry.DisposeAll()
+        rmSync(baseDir, { recursive: true, force: true })
+        delete process.env[RegistryFixture.KeyEnv]
+    }
+})
+
+test('concurrent cold builds of the same tenant dedupe to one server', async () =>
+{
+    const { baseDir } = RegistryFixture.Dirs()
+    const registry = RegistryFixture.Registry(baseDir, RegistryFixture.Provisioning('t1'))
+    try
+    {
+        const [a, b] = await Promise.all([registry.ServerFor('t1'), registry.ServerFor('t1')])
+        assert.equal(a, b)
     }
     finally
     {
