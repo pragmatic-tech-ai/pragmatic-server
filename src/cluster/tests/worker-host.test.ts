@@ -118,9 +118,10 @@ test('a connection without a trusted client cert fails the TLS handshake', async
     const worker = await WorkerHost.StartAsync(WorkerFixture.Options(baseDir, WorkerFixture.Provisioning('t1')))
     try
     {
+        const token = await WorkerFixture.TokenFor(worker, 't1')
         await assert.rejects(() => new Promise<void>((resolve, reject) =>
         {
-            const ws = WorkerFixture.Dial(worker.Address(), 't1', 'x', false)
+            const ws = WorkerFixture.Dial(worker.Address(), 't1', token, false)
             ws.on('open', () => { ws.close(); resolve() })
             ws.on('error', reject)
         }))

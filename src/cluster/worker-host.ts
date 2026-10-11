@@ -148,6 +148,7 @@ export class WorkerHost
             return
         }
         this.registry.Acquire(tenantId)
+        // ws.handleUpgrade invokes its callback synchronously (no verifyClient configured), so `attached` is set before the finally runs — mirrors the 5A PragmaticServerHost lifecycle.
         let attached = false
         try
         {
