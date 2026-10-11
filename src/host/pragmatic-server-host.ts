@@ -34,6 +34,8 @@ export interface WebSocketAddress
     port: number
 }
 
+/** Stateless multi-tenant front door: the ?tenant hint selects a tenant's pack, the bearer authenticated against that pack binds the tenant,
+ *  each tenant is isolated in its own PragmaticServer, and idle tenants are evicted by the registry sweep. */
 export class PragmaticServerHost
 {
     private static readonly DefaultHost = '127.0.0.1'
@@ -59,6 +61,7 @@ export class PragmaticServerHost
     private readonly address: WebSocketAddress
     private readonly idleTtlMs: number
     private readonly sweep: NodeJS.Timeout
+    private disposed = false
 
     private constructor(
         httpServer: HttpServer,
@@ -136,6 +139,7 @@ export class PragmaticServerHost
 
     public async DisposeAsync(): Promise<void>
     {
+        this.disposed = true
         clearInterval(this.sweep)
         for (const handler of this.handlers)
         {
@@ -153,42 +157,11 @@ export class PragmaticServerHost
 
     private async Upgrade(req: IncomingMessage, socket: Socket, head: Buffer): Promise<void>
     {
-        try
-        {
-            const resolved = await this.Resolve(req)
-            if (resolved === null)
-            {
-                this.Reject(socket)
-                return
-            }
-            const { server, context, tenantId } = resolved
-            const languageService = await server.LanguageService()
-            const manager = await server.Manager()
-            this.registry.Acquire(tenantId)
-            this.wss.handleUpgrade(req, socket, head, (ws: WebSocket) =>
-            {
-                const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context)
-                this.handlers.add(handler)
-                ws.on(PragmaticServerHost.CloseEvent, () =>
-                {
-                    handler.Dispose()
-                    this.handlers.delete(handler)
-                    this.registry.Release(tenantId)
-                })
-            })
-        }
-        catch
-        {
-            this.Reject(socket)
-        }
-    }
-
-    private async Resolve(req: IncomingMessage): Promise<{ server: PragmaticServer; context: AccessContext; tenantId: string } | null>
-    {
         const tenantId = this.TenantHint(req)
         if (tenantId === null)
         {
-            return null
+            this.Reject(socket)
+            return
         }
         let server: PragmaticServer
         try
@@ -197,8 +170,60 @@ export class PragmaticServerHost
         }
         catch
         {
-            return null
+            this.Reject(socket)
+            return
         }
+        this.registry.Acquire(tenantId)
+        let attached = false
+        try
+        {
+            const context = await this.AuthenticateAgainst(req, server)
+            if (context === null)
+            {
+                this.Reject(socket)
+                return
+            }
+            const languageService = await server.LanguageService()
+            const manager = await server.Manager()
+            this.wss.handleUpgrade(req, socket, head, (ws: WebSocket) =>
+            {
+                try
+                {
+                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context)
+                    this.handlers.add(handler)
+                    ws.on(PragmaticServerHost.CloseEvent, () =>
+                    {
+                        if (this.disposed)
+                        {
+                            return
+                        }
+                        handler.Dispose()
+                        this.handlers.delete(handler)
+                        this.registry.Release(tenantId)
+                    })
+                    attached = true
+                }
+                catch
+                {
+                    ws.terminate()
+                }
+            })
+        }
+        catch
+        {
+            this.Reject(socket)
+        }
+        finally
+        {
+            if (!attached)
+            {
+                this.registry.Release(tenantId)
+            }
+        }
+    }
+
+    private async AuthenticateAgainst(req: IncomingMessage, server: PragmaticServer): Promise<AccessContext | null>
+    {
         const header = req.headers[PragmaticServerHost.AuthorizationHeader]
         if (typeof header !== 'string' || !header.startsWith(PragmaticServerHost.BearerPrefix))
         {
@@ -209,12 +234,7 @@ export class PragmaticServerHost
         {
             return null
         }
-        const context = await this.authenticator.ResolveAsync(token, server.Tenant(), await server.Pack())
-        if (context === null)
-        {
-            return null
-        }
-        return { server, context, tenantId }
+        return this.authenticator.ResolveAsync(token, server.Tenant(), await server.Pack())
     }
 
     private async Request(req: IncomingMessage, res: ServerResponse): Promise<void>
@@ -234,7 +254,7 @@ export class PragmaticServerHost
         }
         catch
         {
-            if (!res.writableEnded)
+            if (!res.headersSent && !res.writableEnded)
             {
                 res.writeHead(PragmaticServerHost.NotFoundStatus)
                 res.end()

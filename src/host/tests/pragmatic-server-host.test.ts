@@ -14,7 +14,7 @@ import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
 
 class HostFixture
 {
-    private static readonly PackagesPrefix = 'ps-pkgs-'
+    private static readonly BasePrefix = 'ps-base-'
     public static readonly KeyEnv = 'PS_HOST_KEY'
     private static readonly LoopbackHost = '127.0.0.1'
 
@@ -28,9 +28,9 @@ class HostFixture
         return dir
     }
 
-    public static PackagesDir(): string
+    public static BaseDir(): string
     {
-        return mkdtempSync(join(tmpdir(), HostFixture.PackagesPrefix))
+        return mkdtempSync(join(tmpdir(), HostFixture.BasePrefix))
     }
 
     public static Cleanup(dir: string): void
@@ -56,7 +56,7 @@ class HostFixture
 
 test('a loopback client opens the fixture solution over a real WebSocket', async () =>
 {
-    const baseDir = HostFixture.PackagesDir()
+    const baseDir = HostFixture.BaseDir()
     const solution = HostFixture.SolutionDir(baseDir)
     const host = await PragmaticServerHost.StartAsync(HostFixture.Options(baseDir))
     const address = host.Address()
@@ -78,7 +78,7 @@ test('a loopback client opens the fixture solution over a real WebSocket', async
 
 test('a graph change pushes to two connected clients', async () =>
 {
-    const baseDir = HostFixture.PackagesDir()
+    const baseDir = HostFixture.BaseDir()
     const host = await PragmaticServerHost.StartAsync(HostFixture.Options(baseDir))
     const address = host.Address()
     const token = await HostFixture.Token(host)
