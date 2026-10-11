@@ -34,8 +34,9 @@ export class IdentityModule
         const storage = new NodeFsStorage(this.options.identityRoot)
         const masterKey = MasterKeyResolver.Resolve(this.options.masterKey)
         const hasher = new Argon2PasswordHasher()
-        const oidcSecrets = await FileEncryptedSecretStore.Open(storage, masterKey)
-        const oidc = this.options.oidc === undefined ? undefined : OidcAuthenticatorBuilder.Build(this.options.oidc, oidcSecrets)
+        const oidc = this.options.oidc === undefined
+            ? undefined
+            : OidcAuthenticatorBuilder.Build(this.options.oidc, await FileEncryptedSecretStore.Open(storage, masterKey))
         const pack = await ServerIdentityPack.Open(storage, masterKey, oidc)
         const config = new IdentityConfig(IdentityModule.PackId, DelegationDepth.FullAuthz, new Map(), new Map(), new Map())
         const registry = await ConfigurableIdentityProviderRegistry.SingleTenant(tenant, config, pack)

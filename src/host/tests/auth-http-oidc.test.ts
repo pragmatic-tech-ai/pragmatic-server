@@ -14,7 +14,6 @@ class OidcFixture
     public static readonly ClientId = 'client-1'
     public static readonly RedirectUri = 'https://app.test/cb'
 
-    public readonly Tenant = new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
     public constructor(
         public readonly Idp: FakeOidcIdp,
         public readonly Http: FakeOidcHttpClient,
