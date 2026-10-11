@@ -1,5 +1,5 @@
 import { createServer } from 'node:http'
-import type { Server as HttpServer, IncomingMessage } from 'node:http'
+import type { Server as HttpServer, IncomingMessage, ServerResponse } from 'node:http'
 import type { Socket, AddressInfo } from 'node:net'
 import { WebSocketServer } from 'ws'
 import type { WebSocket } from 'ws'
@@ -12,6 +12,7 @@ import { PragmaticServer } from '../pragmatic-server.js'
 import type { PragmaticServerIdentityOptions } from '../pragmatic-server.js'
 import { ServerConnectionHandler } from './server-connection-handler.js'
 import { ConnectionAuthenticator } from './connection-authenticator.js'
+import { AuthHttpEndpoint } from './auth-http-endpoint.js'
 
 export interface PragmaticServerHostOptions
 {
@@ -32,12 +33,12 @@ export class PragmaticServerHost
 {
     private static readonly DefaultHost = '127.0.0.1'
     private static readonly UpgradeEvent = 'upgrade'
+    private static readonly RequestEvent = 'request'
     private static readonly CloseEvent = 'close'
     private static readonly ListeningEvent = 'listening'
     private static readonly ErrorEvent = 'error'
     private static readonly AuthorizationHeader = 'authorization'
     private static readonly BearerPrefix = 'Bearer '
-    private static readonly UpgradeRequiredStatus = 426
     private static readonly UnauthorizedResponse = 'HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'
 
     private readonly server: PragmaticServer
@@ -47,6 +48,7 @@ export class PragmaticServerHost
     private readonly manager: SolutionManagerService
     private readonly pack: ServerIdentityPack
     private readonly tenant: Tenant
+    private readonly endpoint: AuthHttpEndpoint
     private readonly authenticator = new ConnectionAuthenticator()
     private readonly handlers = new Set<ServerConnectionHandler>()
     private readonly address: WebSocketAddress
@@ -69,6 +71,11 @@ export class PragmaticServerHost
         this.pack = pack
         this.tenant = tenant
         this.address = address
+        this.endpoint = new AuthHttpEndpoint(pack, tenant)
+        httpServer.on(PragmaticServerHost.RequestEvent, (req: IncomingMessage, res: ServerResponse) =>
+        {
+            void this.endpoint.Handle(req, res)
+        })
         httpServer.on(PragmaticServerHost.UpgradeEvent, (req: IncomingMessage, socket: Socket, head: Buffer) =>
         {
             socket.on(PragmaticServerHost.ErrorEvent, () => socket.destroy())
@@ -85,11 +92,7 @@ export class PragmaticServerHost
         const pack = await server.Pack()
         const tenant = server.Tenant()
         const host = options.host ?? PragmaticServerHost.DefaultHost
-        const httpServer = createServer((req, res) =>
-        {
-            res.writeHead(PragmaticServerHost.UpgradeRequiredStatus)
-            res.end()
-        })
+        const httpServer = createServer()
         const wss = new WebSocketServer({ noServer: true })
         try
         {

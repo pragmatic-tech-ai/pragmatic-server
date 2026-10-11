@@ -23,6 +23,7 @@
     "@pragmatic-tech-ai/todl-identity-local": "file:../todl-identity-local",
     "@pragmatic-tech-ai/todl-identity-host": "file:../todl-identity-host",
     "@pragmatic-tech-ai/todl-identity-node": "file:../todl-identity-node",
+    "@pragmatic-tech-ai/todl-identity-cloud": "file:../todl-identity-cloud",
     "ws": "^8.18.0"
   },
   "devDependencies": {
