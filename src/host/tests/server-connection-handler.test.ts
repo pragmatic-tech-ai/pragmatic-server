@@ -4,6 +4,7 @@ import { mkdtempSync, cpSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { InMemoryMessageSocket, PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
 
@@ -11,7 +12,6 @@ class HandlerFixture
 {
     private static readonly SolutionPrefix = 'ps-sol-'
     private static readonly PackagesPrefix = 'ps-pkgs-'
-    private static readonly SettleMs = 300
 
     public static SolutionDir(): string
     {
@@ -23,11 +23,6 @@ class HandlerFixture
     public static PackagesDir(): string
     {
         return mkdtempSync(join(tmpdir(), HandlerFixture.PackagesPrefix))
-    }
-
-    public static Settle(): Promise<void>
-    {
-        return new Promise(resolve => setTimeout(resolve, HandlerFixture.SettleMs))
     }
 
     public static Cleanup(dir: string): void
@@ -52,13 +47,13 @@ test('a client opens a solution and reads diagnostics over the handler', async (
         const summary = await client.OpenSolution(solution)
         assert.equal(summary.members.length, 1)
         const diagnostics = await client.DiagnosticsFor(join(solution, 'models', 'model.todl'))
-        assert
+        assert.ok(Array.isArray(diagnostics))
     }
     finally
     {
         await client.DisposeAsync()
         handler.Dispose()
-        await HandlerFixture.Settle()
+        await (languageService as SolutionLanguageService).WhenIdle()
         await manager.CloseSolution()
         await server.Dispose()
         HandlerFixture.Cleanup(solution)

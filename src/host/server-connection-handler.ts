@@ -79,9 +79,16 @@ export class ServerConnectionHandler
 
     private async PublishDiagnostics(uri: string, text: string): Promise<void>
     {
-        this.languageService.DidChange(uri, text)
-        const diagnostics = await this.languageService.DiagnosticsFor(uri)
-        void this.connection.sendNotification(LanguageProtocol.PublishDiagnostics, { uri, diagnostics })
+        try
+        {
+            this.languageService.DidChange(uri, text)
+            const diagnostics = await this.languageService.DiagnosticsFor(uri)
+            void this.connection.sendNotification(LanguageProtocol.PublishDiagnostics, { uri, diagnostics })
+        }
+        catch
+        {
+            // fail closed: a failed wire op pushes nothing and never escapes as an unhandled rejection
+        }
     }
 
     private SummariseActiveSolution(): ActiveSolutionSummary
