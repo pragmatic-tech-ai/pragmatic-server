@@ -1,7 +1,7 @@
 import { Action } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import { IdentityEnforcement } from '@pragmatic-tech-ai/todl-identity-engine'
-import type { Repository, IInstanceFilter } from '@pragmatic-tech-ai/todl'
+import type { Repository, IInstanceFilter, Node } from '@pragmatic-tech-ai/todl'
 import type { ModelMemberDto, ModelProjection } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 /** Authoritative in-memory read filter over a model Repository: drops instances a policy rule hides,
@@ -51,7 +51,7 @@ export class ModelReadFilter
         return !this.keep(node)
     }
 
-    private keep(node: ReturnType<Repository['allNodes']>[number]): boolean
+    private keep(node: Node): boolean
     {
         if (node.type === null)
         {

@@ -87,3 +87,16 @@ test('a model with no policy keeps every instance', () =>
     assert.ok(ids.includes(ModelFixture.Eu))
     assert.ok(ids.includes(ModelFixture.Us))
 })
+
+test('Hidden is false for an id the model cannot resolve', () =>
+{
+    const filter = new ModelReadFilter(ModelFixture.WithPolicy(), ModelFixture.Context())
+    assert.equal(filter.Hidden('shop.Customer:does-not-exist'), false)
+})
+
+test('a structural definition node survives filtering', () =>
+{
+    const filter = new ModelReadFilter(ModelFixture.WithPolicy(), ModelFixture.Context())
+    const ids = filter.Project(new Map()).members.map(member => member.id)
+    assert.ok(ids.includes(ModelFixture.Concept))
+})
