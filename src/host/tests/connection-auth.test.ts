@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdtempSync, cpSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Grant, Role, ResourceRef, ResourceKind } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { PragmaticServerHost } from '../pragmatic-server-host.js'
@@ -48,6 +49,7 @@ test('a client presenting a valid service token opens the solution', async () =>
     const host = await PragmaticServerHost.StartAsync(AuthFixture.Options(identityRoot, packagesRoot, keyEnv))
     const address = host.Address()
     const pack = await host.IdentityPackForTest()
+    await pack.Grants.Save(new Grant('svc1', Role.Admin, new ResourceRef(ResourceKind.Tenant, 't1', [])))
     const { Token } = await pack.Tokens.Issue(host.TenantForTest(), 'svc1', [], null)
     let client: PragmaticClient | undefined
     try

@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdtempSync, cpSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Grant, Role, ResourceRef, ResourceKind } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { PragmaticServerHost } from '../pragmatic-server-host.js'
@@ -49,6 +50,7 @@ class HostFixture
     public static async Token(host: PragmaticServerHost): Promise<string>
     {
         const pack = await host.IdentityPackForTest()
+        await pack.Grants.Save(new Grant('svc1', Role.Admin, new ResourceRef(ResourceKind.Tenant, 't1', [])))
         const issued = await pack.Tokens.Issue(host.TenantForTest(), 'svc1', [], null)
         return issued.Token
     }

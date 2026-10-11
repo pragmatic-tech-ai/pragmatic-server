@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdtempSync, cpSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { PresentedSecret } from '@pragmatic-tech-ai/todl-identity'
+import { PresentedSecret, Grant, Role, ResourceRef, ResourceKind } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { PragmaticServerHost } from '../pragmatic-server-host.js'
@@ -50,6 +50,7 @@ test('login mints a session token usable as a WebSocket bearer', async () =>
     const base = `http://${host.Address().host}:${host.Address().port}`
     const pack = await host.IdentityPackForTest()
     await pack.Registrar.Register(host.TenantForTest(), 'a@x.io', 'p1', new PresentedSecret('pw-123456'))
+    await pack.Grants.Save(new Grant('p1', Role.Admin, new ResourceRef(ResourceKind.Tenant, 't1', [])))
     try
     {
         const response = await fetch(`${base}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'a@x.io', password: 'pw-123456' }) })
