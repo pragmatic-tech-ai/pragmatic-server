@@ -1,25 +1,31 @@
 import { createServer } from 'node:http'
 import type { Server as HttpServer, IncomingMessage, ServerResponse } from 'node:http'
-import type { Socket, AddressInfo } from 'node:net'
+import type { Socket } from 'node:net'
+import type { AddressInfo } from 'node:net'
 import { WebSocketServer } from 'ws'
 import type { WebSocket } from 'ws'
 import { WsMessageSocket } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import type { AccessContext, Tenant } from '@pragmatic-tech-ai/todl-identity'
 import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
-import { PragmaticServer } from '../pragmatic-server.js'
-import type { PragmaticServerIdentityOptions } from '../pragmatic-server.js'
+import type { MasterKeyRef } from '../identity/master-key-resolver.js'
+import type { PragmaticServer } from '../pragmatic-server.js'
 import { ServerConnectionHandler } from './server-connection-handler.js'
 import { ConnectionAuthenticator } from './connection-authenticator.js'
 import { AuthHttpEndpoint } from './auth-http-endpoint.js'
+import { InMemoryTenantCoordinator } from '../tenancy/tenant-coordinator.js'
+import { TenantRegistry } from '../tenancy/tenant-registry.js'
+import type { ITenantProvisioning } from '../tenancy/tenant-provisioning.js'
 
 export interface PragmaticServerHostOptions
 {
     host?: string
     port: number
-    packagesRoot?: string
-    identity: PragmaticServerIdentityOptions
+    baseDir: string
+    masterKey: MasterKeyRef
+    provisioning: ITenantProvisioning
+    idleTtlMs?: number
+    idleSweepMs?: number
 }
 
 export interface WebSocketAddress
@@ -28,7 +34,6 @@ export interface WebSocketAddress
     port: number
 }
 
-/** Serves one single-tenant PragmaticServer over http + a noServer ws WebSocketServer; every upgrade is bearer-authenticated. */
 export class PragmaticServerHost
 {
     private static readonly DefaultHost = '127.0.0.1'
@@ -39,77 +44,63 @@ export class PragmaticServerHost
     private static readonly ErrorEvent = 'error'
     private static readonly AuthorizationHeader = 'authorization'
     private static readonly BearerPrefix = 'Bearer '
+    private static readonly TenantParam = 'tenant'
+    private static readonly BaseUrl = 'http://localhost'
     private static readonly UnauthorizedResponse = 'HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'
+    private static readonly NotFoundStatus = 404
+    private static readonly DefaultIdleTtlMs = 300_000
+    private static readonly DefaultIdleSweepMs = 30_000
 
-    private readonly server: PragmaticServer
     private readonly httpServer: HttpServer
     private readonly wss: WebSocketServer
-    private readonly languageService: ILanguageService
-    private readonly manager: SolutionManagerService
-    private readonly pack: ServerIdentityPack
-    private readonly tenant: Tenant
-    private readonly endpoint: AuthHttpEndpoint
+    private readonly registry: TenantRegistry
     private readonly authenticator = new ConnectionAuthenticator()
     private readonly handlers = new Set<ServerConnectionHandler>()
     private readonly address: WebSocketAddress
+    private readonly idleTtlMs: number
+    private readonly sweep: NodeJS.Timeout
 
     private constructor(
-        server: PragmaticServer,
         httpServer: HttpServer,
         wss: WebSocketServer,
-        languageService: ILanguageService,
-        manager: SolutionManagerService,
-        pack: ServerIdentityPack,
-        tenant: Tenant,
-        address: WebSocketAddress)
+        registry: TenantRegistry,
+        address: WebSocketAddress,
+        idleTtlMs: number,
+        idleSweepMs: number)
     {
-        this.server = server
         this.httpServer = httpServer
         this.wss = wss
-        this.languageService = languageService
-        this.manager = manager
-        this.pack = pack
-        this.tenant = tenant
+        this.registry = registry
         this.address = address
-        this.endpoint = new AuthHttpEndpoint(pack, tenant, server.Oidc())
-        httpServer.on(PragmaticServerHost.RequestEvent, (req: IncomingMessage, res: ServerResponse) =>
-        {
-            void this.endpoint.Handle(req, res)
-        })
+        this.idleTtlMs = idleTtlMs
         httpServer.on(PragmaticServerHost.UpgradeEvent, (req: IncomingMessage, socket: Socket, head: Buffer) =>
         {
             socket.on(PragmaticServerHost.ErrorEvent, () => socket.destroy())
             void this.Upgrade(req, socket, head)
         })
+        httpServer.on(PragmaticServerHost.RequestEvent, (req: IncomingMessage, res: ServerResponse) =>
+        {
+            void this.Request(req, res)
+        })
+        this.sweep = setInterval(() => void this.registry.EvictIdle(Date.now(), this.idleTtlMs), idleSweepMs)
+        this.sweep.unref()
     }
 
     public static async StartAsync(options: PragmaticServerHostOptions): Promise<PragmaticServerHost>
     {
-        const server = new PragmaticServer({ packagesRoot: options.packagesRoot, identity: options.identity })
-        await server.Start()
-        const languageService = await server.LanguageService()
-        const manager = await server.Manager()
-        const pack = await server.Pack()
-        const tenant = server.Tenant()
+        const coordinator = new InMemoryTenantCoordinator()
+        const registry = new TenantRegistry(options.baseDir, options.masterKey, options.provisioning, coordinator)
         const host = options.host ?? PragmaticServerHost.DefaultHost
         const httpServer = createServer()
         const wss = new WebSocketServer({ noServer: true })
-        try
+        await new Promise<void>((resolve, reject) =>
         {
-            await new Promise<void>((resolve, reject) =>
-            {
-                httpServer.once(PragmaticServerHost.ListeningEvent, () => resolve())
-                httpServer.once(PragmaticServerHost.ErrorEvent, reject)
-                httpServer.listen(options.port, host)
-            })
-        }
-        catch (error)
-        {
-            await server.Dispose()
-            throw error
-        }
+            httpServer.once(PragmaticServerHost.ListeningEvent, () => resolve())
+            httpServer.once(PragmaticServerHost.ErrorEvent, reject)
+            httpServer.listen(options.port, host)
+        })
         const resolved = httpServer.address() as AddressInfo
-        return new PragmaticServerHost(server, httpServer, wss, languageService, manager, pack, tenant, { host, port: resolved.port })
+        return new PragmaticServerHost(httpServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? PragmaticServerHost.DefaultIdleTtlMs, options.idleSweepMs ?? PragmaticServerHost.DefaultIdleSweepMs)
     }
 
     public Address(): WebSocketAddress
@@ -117,22 +108,24 @@ export class PragmaticServerHost
         return this.address
     }
 
-    /** Test seam: the resolved language service, so tests can trigger a graph change. */
-    public async LanguageServiceForTest(): Promise<ILanguageService>
+    public RegistryForTest(): TenantRegistry
     {
-        return this.languageService
+        return this.registry
     }
 
-    /** Test seam: the identity pack, so tests can mint a token. */
-    public async IdentityPackForTest(): Promise<ServerIdentityPack>
+    public async IdentityPackForTest(tenantId: string): Promise<ServerIdentityPack>
     {
-        return this.pack
+        return (await this.registry.ServerFor(tenantId)).Pack()
     }
 
-    /** Test seam: the served tenant. */
-    public TenantForTest(): Tenant
+    public async TenantForTest(tenantId: string): Promise<Tenant>
     {
-        return this.tenant
+        return (await this.registry.ServerFor(tenantId)).Tenant()
+    }
+
+    public async LanguageServiceForTest(tenantId: string): Promise<ILanguageService>
+    {
+        return (await this.registry.ServerFor(tenantId)).LanguageService()
     }
 
     /** Test seam: number of live authenticated connections. */
@@ -143,6 +136,7 @@ export class PragmaticServerHost
 
     public async DisposeAsync(): Promise<void>
     {
+        clearInterval(this.sweep)
         for (const handler of this.handlers)
         {
             handler.Dispose()
@@ -154,27 +148,32 @@ export class PragmaticServerHost
         }
         await new Promise<void>(resolve => this.wss.close(() => resolve()))
         await new Promise<void>(resolve => this.httpServer.close(() => resolve()))
-        await this.server.Dispose()
+        await this.registry.DisposeAll()
     }
 
     private async Upgrade(req: IncomingMessage, socket: Socket, head: Buffer): Promise<void>
     {
         try
         {
-            const context = await this.Authenticate(req)
-            if (context === null)
+            const resolved = await this.Resolve(req)
+            if (resolved === null)
             {
                 this.Reject(socket)
                 return
             }
+            const { server, context, tenantId } = resolved
+            const languageService = await server.LanguageService()
+            const manager = await server.Manager()
+            this.registry.Acquire(tenantId)
             this.wss.handleUpgrade(req, socket, head, (ws: WebSocket) =>
             {
-                const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), this.languageService, this.manager, context)
+                const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context)
                 this.handlers.add(handler)
                 ws.on(PragmaticServerHost.CloseEvent, () =>
                 {
                     handler.Dispose()
                     this.handlers.delete(handler)
+                    this.registry.Release(tenantId)
                 })
             })
         }
@@ -184,17 +183,22 @@ export class PragmaticServerHost
         }
     }
 
-    private Reject(socket: Socket): void
+    private async Resolve(req: IncomingMessage): Promise<{ server: PragmaticServer; context: AccessContext; tenantId: string } | null>
     {
-        if (!socket.writableEnded && !socket.destroyed)
+        const tenantId = this.TenantHint(req)
+        if (tenantId === null)
         {
-            socket.write(PragmaticServerHost.UnauthorizedResponse)
+            return null
         }
-        socket.destroy()
-    }
-
-    private async Authenticate(req: IncomingMessage): Promise<AccessContext | null>
-    {
+        let server: PragmaticServer
+        try
+        {
+            server = await this.registry.ServerFor(tenantId)
+        }
+        catch
+        {
+            return null
+        }
         const header = req.headers[PragmaticServerHost.AuthorizationHeader]
         if (typeof header !== 'string' || !header.startsWith(PragmaticServerHost.BearerPrefix))
         {
@@ -205,6 +209,52 @@ export class PragmaticServerHost
         {
             return null
         }
-        return this.authenticator.ResolveAsync(token, this.tenant, this.pack)
+        const context = await this.authenticator.ResolveAsync(token, server.Tenant(), await server.Pack())
+        if (context === null)
+        {
+            return null
+        }
+        return { server, context, tenantId }
+    }
+
+    private async Request(req: IncomingMessage, res: ServerResponse): Promise<void>
+    {
+        try
+        {
+            const tenantId = this.TenantHint(req)
+            if (tenantId === null)
+            {
+                res.writeHead(PragmaticServerHost.NotFoundStatus)
+                res.end()
+                return
+            }
+            const server = await this.registry.ServerFor(tenantId)
+            const endpoint = new AuthHttpEndpoint(await server.Pack(), server.Tenant(), server.Oidc())
+            await endpoint.Handle(req, res)
+        }
+        catch
+        {
+            if (!res.writableEnded)
+            {
+                res.writeHead(PragmaticServerHost.NotFoundStatus)
+                res.end()
+            }
+        }
+    }
+
+    private TenantHint(req: IncomingMessage): string | null
+    {
+        const url = new URL(req.url ?? '/', PragmaticServerHost.BaseUrl)
+        const tenant = url.searchParams.get(PragmaticServerHost.TenantParam)
+        return tenant !== null && tenant.length > 0 ? tenant : null
+    }
+
+    private Reject(socket: Socket): void
+    {
+        if (!socket.writableEnded && !socket.destroyed)
+        {
+            socket.write(PragmaticServerHost.UnauthorizedResponse)
+        }
+        socket.destroy()
     }
 }

@@ -1,13 +1,15 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
-import { mkdtempSync, cpSync, rmSync } from 'node:fs'
+import { mkdtempSync, cpSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Grant, Role, ResourceRef, ResourceKind } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { PragmaticServerHost } from '../pragmatic-server-host.js'
+import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
+import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
 
 class AuthzFixture
 {
@@ -18,25 +20,21 @@ class AuthzFixture
         return new ResourceRef(ResourceKind.Tenant, 't1', [])
     }
 
-    public static Start(): { identityRoot: string; packagesRoot: string; solution: string; keyEnv: string }
+    public static Start(): { baseDir: string; solution: string; keyEnv: string }
     {
-        const identityRoot = mkdtempSync(join(tmpdir(), 'ps-id-'))
-        const packagesRoot = mkdtempSync(join(tmpdir(), 'ps-pkg-'))
-        const solution = mkdtempSync(join(tmpdir(), 'ps-sol-'))
+        const baseDir = mkdtempSync(join(tmpdir(), 'ps-base-'))
+        const solution = join(baseDir, 't1', 'solution')
+        mkdirSync(join(baseDir, 't1'), { recursive: true })
         cpSync(join(import.meta.dirname, '..', '..', 'tests', 'fixtures', 'sample-solution'), solution, { recursive: true })
         const keyEnv = 'PS_AUTHZ_KEY'
         process.env[keyEnv] = randomBytes(32).toString('base64')
-        return { identityRoot, packagesRoot, solution, keyEnv }
+        return { baseDir, solution, keyEnv }
     }
 
-    public static Options(identityRoot: string, packagesRoot: string, keyEnv: string)
+    public static Options(baseDir: string, keyEnv: string)
     {
-        return {
-            host: AuthzFixture.Host,
-            port: 0,
-            packagesRoot,
-            identity: { identityRoot, masterKey: { base64Env: keyEnv }, tenant: { id: 't1', displayName: 'Tenant One' } },
-        }
+        const entries = new Map<string, TenantProvisioning>([['t1', { displayName: 'Tenant One' }]])
+        return { host: AuthzFixture.Host, port: 0, baseDir, masterKey: { base64Env: keyEnv }, provisioning: new InMemoryTenantProvisioning(entries) }
     }
 
     public static Cleanup(...dirs: string[]): void
@@ -50,11 +48,11 @@ class AuthzFixture
 
 test('the dispatch gate enforces the role ladder for open vs read', async () =>
 {
-    const { identityRoot, packagesRoot, solution, keyEnv } = AuthzFixture.Start()
-    const host = await PragmaticServerHost.StartAsync(AuthzFixture.Options(identityRoot, packagesRoot, keyEnv))
-    const url = `ws://${host.Address().host}:${host.Address().port}`
-    const pack = await host.IdentityPackForTest()
-    const tenant = host.TenantForTest()
+    const { baseDir, solution, keyEnv } = AuthzFixture.Start()
+    const host = await PragmaticServerHost.StartAsync(AuthzFixture.Options(baseDir, keyEnv))
+    const url = `ws://${host.Address().host}:${host.Address().port}/?tenant=t1`
+    const pack = await host.IdentityPackForTest('t1')
+    const tenant = await host.TenantForTest('t1')
     await pack.Grants.Save(new Grant('admin', Role.Admin, AuthzFixture.TenantRoot()))
     await pack.Grants.Save(new Grant('viewer', Role.Viewer, AuthzFixture.TenantRoot()))
     const adminToken = (await pack.Tokens.Issue(tenant, 'admin', [], null)).Token
@@ -68,7 +66,7 @@ test('the dispatch gate enforces the role ladder for open vs read', async () =>
     {
         const summary = await admin.OpenSolution(solution)
         assert.equal(summary.members.length, 1)
-        await ((await host.LanguageServiceForTest()) as SolutionLanguageService).WhenIdle()
+        await ((await host.LanguageServiceForTest('t1')) as SolutionLanguageService).WhenIdle()
 
         assert.ok((await viewer.ActiveSolution()) !== null)
         await assert.rejects(() => viewer.OpenSolution(solution))
@@ -81,18 +79,18 @@ test('the dispatch gate enforces the role ladder for open vs read', async () =>
         await viewer.DisposeAsync()
         await nobody.DisposeAsync()
         await host.DisposeAsync()
-        AuthzFixture.Cleanup(identityRoot, packagesRoot, solution)
+        AuthzFixture.Cleanup(baseDir)
         delete process.env[keyEnv]
     }
 })
 
 test('graph-change pushes reach a readable connection but not a no-grant one', async () =>
 {
-    const { identityRoot, packagesRoot, solution, keyEnv } = AuthzFixture.Start()
-    const host = await PragmaticServerHost.StartAsync(AuthzFixture.Options(identityRoot, packagesRoot, keyEnv))
-    const url = `ws://${host.Address().host}:${host.Address().port}`
-    const pack = await host.IdentityPackForTest()
-    const tenant = host.TenantForTest()
+    const { baseDir, solution, keyEnv } = AuthzFixture.Start()
+    const host = await PragmaticServerHost.StartAsync(AuthzFixture.Options(baseDir, keyEnv))
+    const url = `ws://${host.Address().host}:${host.Address().port}/?tenant=t1`
+    const pack = await host.IdentityPackForTest('t1')
+    const tenant = await host.TenantForTest('t1')
     await pack.Grants.Save(new Grant('admin', Role.Admin, AuthzFixture.TenantRoot()))
     const adminToken = (await pack.Tokens.Issue(tenant, 'admin', [], null)).Token
     const nograntToken = (await pack.Tokens.Issue(tenant, 'nobody', [], null)).Token
@@ -105,7 +103,7 @@ test('graph-change pushes reach a readable connection but not a no-grant one', a
     nobody.OnGraphChanged(() => { nobodyPushes += 1 })
     try
     {
-        const languageService = await host.LanguageServiceForTest()
+        const languageService = await host.LanguageServiceForTest('t1')
         languageService.GraphChanged.emit({ memberIds: ['m'], fileIds: ['f'] })
         await new Promise(resolve => setTimeout(resolve, 50))
         assert.equal(adminPushes, 1)
@@ -116,7 +114,7 @@ test('graph-change pushes reach a readable connection but not a no-grant one', a
         await admin.DisposeAsync()
         await nobody.DisposeAsync()
         await host.DisposeAsync()
-        AuthzFixture.Cleanup(identityRoot, packagesRoot, solution)
+        AuthzFixture.Cleanup(baseDir)
         delete process.env[keyEnv]
     }
 })
