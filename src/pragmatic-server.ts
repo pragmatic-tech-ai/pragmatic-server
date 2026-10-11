@@ -8,6 +8,10 @@ import { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-servic
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { SolutionServicesModule, LanguageServiceModule } from './composition/server-modules.js'
 import type { MasterKeyRef } from './identity/master-key-resolver.js'
+import type { Tenant } from '@pragmatic-tech-ai/todl-identity'
+import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
+import { IdentityModule } from './identity/identity-module.js'
+import { ServerBootstrap } from './identity/server-bootstrap.js'
 
 export interface OidcServerOptions
 {
@@ -39,6 +43,7 @@ export interface PragmaticServerIdentityOptions
 export interface PragmaticServerOptions
 {
     packagesRoot?: string
+    identity?: PragmaticServerIdentityOptions
 }
 
 /** Headless single-tenant in-process host: composes the engine over the lazy root and opens a solution. */
@@ -47,10 +52,18 @@ export class PragmaticServer
     private static readonly DefaultPackagesDir = 'packages'
     private static readonly ErrorSeparator = '; '
 
+    private static readonly NotStartedError = 'server not started'
+
     private readonly root: LazyCompositionRoot
+    private readonly options: PragmaticServerOptions
+    private readonly identity: IdentityModule | undefined
+    private pack: ServerIdentityPack | undefined
+    private tenant: Tenant | undefined
 
     public constructor(options: PragmaticServerOptions)
     {
+        this.options = options
+        this.identity = options.identity === undefined ? undefined : new IdentityModule(options.identity)
         const builder = LazyCompositionRoot.Builder(HostKinds.Server)
             .Module(new SolutionServicesModule())
             .Module(new LanguageServiceModule())
@@ -64,6 +77,40 @@ export class PragmaticServer
         if (errors.length > 0)
         {
             throw new Error(errors.map(e => String(e)).join(PragmaticServer.ErrorSeparator))
+        }
+        if (this.identity !== undefined)
+        {
+            const composed = await this.identity.ComposeAsync(this.root.Services())
+            this.pack = composed.pack
+            this.tenant = composed.tenant
+        }
+    }
+
+    public async Pack(): Promise<ServerIdentityPack>
+    {
+        if (this.pack === undefined)
+        {
+            throw new Error(PragmaticServer.NotStartedError)
+        }
+        return this.pack
+    }
+
+    public Tenant(): Tenant
+    {
+        if (this.tenant === undefined)
+        {
+            throw new Error(PragmaticServer.NotStartedError)
+        }
+        return this.tenant
+    }
+
+    /** Test-only: re-runs the bootstrap seed (e.g. after pre-storing the admin password). */
+    public async SeedBootstrapForTest(): Promise<void>
+    {
+        const bootstrap = this.options.identity?.bootstrap
+        if (this.pack !== undefined && this.tenant !== undefined && bootstrap !== undefined)
+        {
+            await ServerBootstrap.SeedAsync(this.pack, this.tenant, bootstrap)
         }
     }
 
