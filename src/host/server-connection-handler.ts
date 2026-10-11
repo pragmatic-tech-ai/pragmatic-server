@@ -2,6 +2,7 @@ import {
     createMessageConnection, NullLogger, WebSocketMessageReader, WebSocketMessageWriter, LanguageProtocol, SolutionProtocol, ModelProtocol,
 } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, ModelProjection, ModelMemberDto, ResolvedResourceDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
@@ -15,10 +16,12 @@ export class ServerConnectionHandler
     private readonly connection: MessageConnection
     private readonly languageService: ILanguageService
     private readonly manager: SolutionManagerService
+    private readonly accessContext: AccessContext
     private readonly graphSubscription: IDisposable
 
-    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService)
+    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext)
     {
+        this.accessContext = accessContext
         this.connection = connection
         this.languageService = languageService
         this.manager = manager
@@ -38,10 +41,10 @@ export class ServerConnectionHandler
         })
     }
 
-    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService): ServerConnectionHandler
+    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext): ServerConnectionHandler
     {
         const connection = createMessageConnection(new WebSocketMessageReader(socket), new WebSocketMessageWriter(socket), NullLogger)
-        const handler = new ServerConnectionHandler(connection, languageService, manager)
+        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext)
         connection.listen()
         return handler
     }

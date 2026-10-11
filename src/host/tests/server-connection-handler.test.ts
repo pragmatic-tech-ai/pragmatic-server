@@ -7,6 +7,18 @@ import { InMemoryMessageSocket, PragmaticClient, WebSocketMessageReader, WebSock
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
+import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
+
+class ContextFixture
+{
+    public static Permissive(): AccessContext
+    {
+        const tenant = new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
+        const principal = new Principal('p1', 't1', PrincipalKind.User, new Map(), [])
+        const grants = [new Grant('p1', Role.Owner, new ResourceRef(ResourceKind.Tenant, 't1', []))]
+        return new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
+    }
+}
 
 class HandlerFixture
 {
@@ -40,7 +52,7 @@ test('a client opens a solution and reads diagnostics over the handler', async (
     const languageService = await server.LanguageService()
     const manager = await server.Manager()
     const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-    const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager)
+    const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, ContextFixture.Permissive())
     const client = PragmaticClient.CreateOverSocket(clientSocket)
     try
     {
@@ -69,7 +81,7 @@ test('disposing the handler stops graph-change pushes', async () =>
     const languageService = await server.LanguageService()
     const manager = await server.Manager()
     const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-    const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager)
+    const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, ContextFixture.Permissive())
     const client = PragmaticClient.CreateOverSocket(clientSocket)
     let pushes = 0
     client.OnGraphChanged(() => { pushes += 1 })
@@ -90,7 +102,7 @@ test('an unknown method rejects', async () =>
     const languageService = await server.LanguageService()
     const manager = await server.Manager()
     const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-    const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager)
+    const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, ContextFixture.Permissive())
     const connection = createMessageConnection(new WebSocketMessageReader(clientSocket), new WebSocketMessageWriter(clientSocket), NullLogger)
     connection.listen()
     try

@@ -7,6 +7,18 @@ import { InMemoryMessageSocket, PragmaticClient } from '@pragmatic-tech-ai/pragm
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
+import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
+
+class ContextFixture
+{
+    public static Permissive(): AccessContext
+    {
+        const tenant = new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
+        const principal = new Principal('p1', 't1', PrincipalKind.User, new Map(), [])
+        const grants = [new Grant('p1', Role.Owner, new ResourceRef(ResourceKind.Tenant, 't1', []))]
+        return new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
+    }
+}
 
 class ModelFixture
 {
@@ -39,7 +51,7 @@ class ModelFixture
         const languageService = await server.LanguageService()
         const manager = await server.Manager()
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager)
+        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, ContextFixture.Permissive())
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         try
         {

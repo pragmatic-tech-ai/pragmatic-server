@@ -1,17 +1,24 @@
+import { createServer } from 'node:http'
+import type { Server as HttpServer, IncomingMessage } from 'node:http'
+import type { Socket, AddressInfo } from 'node:net'
 import { WebSocketServer } from 'ws'
 import type { WebSocket } from 'ws'
-import type { AddressInfo } from 'node:net'
 import { WsMessageSocket } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
+import type { AccessContext, Tenant } from '@pragmatic-tech-ai/todl-identity'
+import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
 import { PragmaticServer } from '../pragmatic-server.js'
+import type { PragmaticServerIdentityOptions } from '../pragmatic-server.js'
 import { ServerConnectionHandler } from './server-connection-handler.js'
+import { ConnectionAuthenticator } from './connection-authenticator.js'
 
 export interface PragmaticServerHostOptions
 {
     host?: string
     port: number
     packagesRoot?: string
+    identity: PragmaticServerIdentityOptions
 }
 
 export interface WebSocketAddress
@@ -20,55 +27,71 @@ export interface WebSocketAddress
     port: number
 }
 
-/** Serves one single-tenant PragmaticServer over a ws WebSocketServer. */
+/** Serves one single-tenant PragmaticServer over http + a noServer ws WebSocketServer; every upgrade is bearer-authenticated. */
 export class PragmaticServerHost
 {
     private static readonly DefaultHost = '127.0.0.1'
-    private static readonly ConnectionEvent = 'connection'
+    private static readonly UpgradeEvent = 'upgrade'
     private static readonly CloseEvent = 'close'
     private static readonly ListeningEvent = 'listening'
     private static readonly ErrorEvent = 'error'
+    private static readonly AuthorizationHeader = 'authorization'
+    private static readonly BearerPrefix = 'Bearer '
+    private static readonly UnauthorizedResponse = 'HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'
 
     private readonly server: PragmaticServer
+    private readonly httpServer: HttpServer
     private readonly wss: WebSocketServer
     private readonly languageService: ILanguageService
     private readonly manager: SolutionManagerService
+    private readonly pack: ServerIdentityPack
+    private readonly tenant: Tenant
+    private readonly authenticator = new ConnectionAuthenticator()
     private readonly handlers = new Set<ServerConnectionHandler>()
     private readonly address: WebSocketAddress
 
-    private constructor(server: PragmaticServer, wss: WebSocketServer, languageService: ILanguageService, manager: SolutionManagerService, address: WebSocketAddress)
+    private constructor(
+        server: PragmaticServer,
+        httpServer: HttpServer,
+        wss: WebSocketServer,
+        languageService: ILanguageService,
+        manager: SolutionManagerService,
+        pack: ServerIdentityPack,
+        tenant: Tenant,
+        address: WebSocketAddress)
     {
         this.server = server
+        this.httpServer = httpServer
         this.wss = wss
         this.languageService = languageService
         this.manager = manager
+        this.pack = pack
+        this.tenant = tenant
         this.address = address
-        wss.on(PragmaticServerHost.ConnectionEvent, (socket: WebSocket) =>
+        httpServer.on(PragmaticServerHost.UpgradeEvent, (req: IncomingMessage, socket: Socket, head: Buffer) =>
         {
-            const handler = ServerConnectionHandler.Attach(new WsMessageSocket(socket), languageService, manager)
-            this.handlers.add(handler)
-            socket.on(PragmaticServerHost.CloseEvent, () =>
-            {
-                handler.Dispose()
-                this.handlers.delete(handler)
-            })
+            void this.Upgrade(req, socket, head)
         })
     }
 
     public static async StartAsync(options: PragmaticServerHostOptions): Promise<PragmaticServerHost>
     {
-        const server = new PragmaticServer({ packagesRoot: options.packagesRoot })
+        const server = new PragmaticServer({ packagesRoot: options.packagesRoot, identity: options.identity })
         await server.Start()
         const languageService = await server.LanguageService()
         const manager = await server.Manager()
+        const pack = await server.Pack()
+        const tenant = server.Tenant()
         const host = options.host ?? PragmaticServerHost.DefaultHost
-        const wss = new WebSocketServer({ host, port: options.port })
+        const httpServer = createServer()
+        const wss = new WebSocketServer({ noServer: true })
         try
         {
             await new Promise<void>((resolve, reject) =>
             {
-                wss.once(PragmaticServerHost.ListeningEvent, () => resolve())
-                wss.once(PragmaticServerHost.ErrorEvent, reject)
+                httpServer.once(PragmaticServerHost.ListeningEvent, () => resolve())
+                httpServer.once(PragmaticServerHost.ErrorEvent, reject)
+                httpServer.listen(options.port, host)
             })
         }
         catch (error)
@@ -76,9 +99,8 @@ export class PragmaticServerHost
             await server.Dispose()
             throw error
         }
-        const resolved = wss.address() as AddressInfo
-        const address = { host, port: resolved.port }
-        return new PragmaticServerHost(server, wss, languageService, manager, address)
+        const resolved = httpServer.address() as AddressInfo
+        return new PragmaticServerHost(server, httpServer, wss, languageService, manager, pack, tenant, { host, port: resolved.port })
     }
 
     public Address(): WebSocketAddress
@@ -90,6 +112,18 @@ export class PragmaticServerHost
     public async LanguageServiceForTest(): Promise<ILanguageService>
     {
         return this.languageService
+    }
+
+    /** Test seam: the identity pack, so tests can mint a token. */
+    public async IdentityPackForTest(): Promise<ServerIdentityPack>
+    {
+        return this.pack
+    }
+
+    /** Test seam: the served tenant. */
+    public TenantForTest(): Tenant
+    {
+        return this.tenant
     }
 
     public async DisposeAsync(): Promise<void>
@@ -104,6 +138,51 @@ export class PragmaticServerHost
             client.terminate()
         }
         await new Promise<void>(resolve => this.wss.close(() => resolve()))
+        await new Promise<void>(resolve => this.httpServer.close(() => resolve()))
         await this.server.Dispose()
+    }
+
+    private async Upgrade(req: IncomingMessage, socket: Socket, head: Buffer): Promise<void>
+    {
+        try
+        {
+            const context = await this.Authenticate(req)
+            if (context === null)
+            {
+                this.Reject(socket)
+                return
+            }
+            this.wss.handleUpgrade(req, socket, head, (ws: WebSocket) =>
+            {
+                const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), this.languageService, this.manager, context)
+                this.handlers.add(handler)
+                ws.on(PragmaticServerHost.CloseEvent, () =>
+                {
+                    handler.Dispose()
+                    this.handlers.delete(handler)
+                })
+            })
+        }
+        catch
+        {
+            this.Reject(socket)
+        }
+    }
+
+    private Reject(socket: Socket): void
+    {
+        socket.write(PragmaticServerHost.UnauthorizedResponse)
+        socket.destroy()
+    }
+
+    private async Authenticate(req: IncomingMessage): Promise<AccessContext | null>
+    {
+        const header = req.headers[PragmaticServerHost.AuthorizationHeader]
+        if (typeof header !== 'string' || !header.startsWith(PragmaticServerHost.BearerPrefix))
+        {
+            return null
+        }
+        const token = header.slice(PragmaticServerHost.BearerPrefix.length)
+        return this.authenticator.ResolveAsync(token, this.tenant, this.pack)
     }
 }
