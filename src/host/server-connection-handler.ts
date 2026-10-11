@@ -60,7 +60,7 @@ export class ServerConnectionHandler
         connection.onRequest(LanguageProtocol.WorkspaceSymbols, p => service.WorkspaceSymbols(p.query))
         connection.onRequest(LanguageProtocol.SemanticTokens, p => service.SemanticTokens(p.uri))
         connection.onRequest(LanguageProtocol.SignatureHelpAt, p => service.SignatureHelpAt(p.uri, p.position))
-        connection.onRequest(LanguageProtocol.CodeActions, p => service.CodeActions(p.uri, p.range, p.diagnostics))
+        connection.onRequest(LanguageProtocol.CodeActions, p => service.CodeActions(p.uri, p.range, p.diagnostics as Parameters<ILanguageService['CodeActions']>[2]))
         connection.onRequest(LanguageProtocol.FormatDocument, p => service.FormatDocument(p.uri))
         connection.onRequest(LanguageProtocol.DiagnosticsFor, p => service.DiagnosticsFor(p.uri))
         connection.onNotification(LanguageProtocol.DidChange, p => void this.PublishDiagnostics(p.uri, p.text))
