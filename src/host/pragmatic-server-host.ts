@@ -63,11 +63,19 @@ export class PragmaticServerHost
         const manager = await server.Manager()
         const host = options.host ?? PragmaticServerHost.DefaultHost
         const wss = new WebSocketServer({ host, port: options.port })
-        await new Promise<void>((resolve, reject) =>
+        try
         {
-            wss.once(PragmaticServerHost.ListeningEvent, () => resolve())
-            wss.once(PragmaticServerHost.ErrorEvent, reject)
-        })
+            await new Promise<void>((resolve, reject) =>
+            {
+                wss.once(PragmaticServerHost.ListeningEvent, () => resolve())
+                wss.once(PragmaticServerHost.ErrorEvent, reject)
+            })
+        }
+        catch (error)
+        {
+            await server.Dispose()
+            throw error
+        }
         const resolved = wss.address() as AddressInfo
         const address = { host, port: resolved.port }
         return new PragmaticServerHost(server, wss, languageService, manager, address)
@@ -91,6 +99,10 @@ export class PragmaticServerHost
             handler.Dispose()
         }
         this.handlers.clear()
+        for (const client of this.wss.clients)
+        {
+            client.terminate()
+        }
         await new Promise<void>(resolve => this.wss.close(() => resolve()))
         await this.server.Dispose()
     }
