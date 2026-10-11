@@ -71,7 +71,7 @@ export class PragmaticServerHost
         this.pack = pack
         this.tenant = tenant
         this.address = address
-        this.endpoint = new AuthHttpEndpoint(pack, tenant)
+        this.endpoint = new AuthHttpEndpoint(pack, tenant, server.Oidc())
         httpServer.on(PragmaticServerHost.RequestEvent, (req: IncomingMessage, res: ServerResponse) =>
         {
             void this.endpoint.Handle(req, res)

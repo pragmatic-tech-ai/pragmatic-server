@@ -10,6 +10,7 @@ import { SolutionServicesModule, LanguageServiceModule } from './composition/ser
 import type { MasterKeyRef } from './identity/master-key-resolver.js'
 import type { Tenant } from '@pragmatic-tech-ai/todl-identity'
 import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
+import type { OidcAuthenticator } from '@pragmatic-tech-ai/todl-identity-cloud'
 import { IdentityModule } from './identity/identity-module.js'
 import { ServerBootstrap } from './identity/server-bootstrap.js'
 
@@ -60,6 +61,7 @@ export class PragmaticServer
     private readonly identity: IdentityModule | undefined
     private pack: ServerIdentityPack | undefined
     private tenant: Tenant | undefined
+    private oidc: OidcAuthenticator | undefined
 
     public constructor(options: PragmaticServerOptions)
     {
@@ -86,6 +88,7 @@ export class PragmaticServer
                 const composed = await this.identity.ComposeAsync(this.root.Services())
                 this.pack = composed.pack
                 this.tenant = composed.tenant
+                this.oidc = composed.oidc
             }
             catch (error)
             {
@@ -119,6 +122,11 @@ export class PragmaticServer
             throw new Error(PragmaticServer.NotStartedError)
         }
         return this.tenant
+    }
+
+    public Oidc(): OidcAuthenticator | undefined
+    {
+        return this.oidc
     }
 
     /** Test-only: re-runs the bootstrap seed (e.g. after pre-storing the admin password). */
