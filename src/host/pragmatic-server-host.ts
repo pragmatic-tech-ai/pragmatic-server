@@ -183,7 +183,7 @@ export class PragmaticServerHost
 
     private Reject(socket: Socket): void
     {
-        if (!socket.writableEnded)
+        if (!socket.writableEnded && !socket.destroyed)
         {
             socket.write(PragmaticServerHost.UnauthorizedResponse)
         }
