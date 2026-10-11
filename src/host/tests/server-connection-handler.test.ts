@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, cpSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { InMemoryMessageSocket, PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { InMemoryMessageSocket, PragmaticClient, WebSocketMessageReader, WebSocketMessageWriter, createMessageConnection, NullLogger } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
@@ -80,4 +80,28 @@ test('disposing the handler stops graph-change pushes', async () =>
     await client.DisposeAsync()
     await server.Dispose()
     HandlerFixture.Cleanup(packages)
+})
+
+test('an unknown method rejects', async () =>
+{
+    const packages = HandlerFixture.PackagesDir()
+    const server = new PragmaticServer({ packagesRoot: packages })
+    await server.Start()
+    const languageService = await server.LanguageService()
+    const manager = await server.Manager()
+    const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
+    const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager)
+    const connection = createMessageConnection(new WebSocketMessageReader(clientSocket), new WebSocketMessageWriter(clientSocket), NullLogger)
+    connection.listen()
+    try
+    {
+        await assert.rejects(connection.sendRequest('does/not/exist'))
+    }
+    finally
+    {
+        connection.dispose()
+        handler.Dispose()
+        await server.Dispose()
+        HandlerFixture.Cleanup(packages)
+    }
 })
