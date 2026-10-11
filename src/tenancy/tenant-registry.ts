@@ -113,7 +113,7 @@ export class TenantRegistry
         this.servers.clear()
         for (const server of servers)
         {
-            await server.Dispose()
+            await server.Dispose().catch(() => {})
         }
         await Promise.allSettled([...this.disposing.values()])
     }
