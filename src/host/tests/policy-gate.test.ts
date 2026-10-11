@@ -18,6 +18,29 @@ class GateFixture
     {
         return new PolicyGate(GateFixture.ContextWith(role), () => [])
     }
+
+    public static ReadMethods(): readonly string[]
+    {
+        return [
+            LanguageProtocol.CompletionsAt.method,
+            LanguageProtocol.HoverAt.method,
+            LanguageProtocol.DefinitionAt.method,
+            LanguageProtocol.ReferencesAt.method,
+            LanguageProtocol.PrepareRename.method,
+            LanguageProtocol.RenameEdits.method,
+            LanguageProtocol.DocumentSymbols.method,
+            LanguageProtocol.FoldingRanges.method,
+            LanguageProtocol.WorkspaceSymbols.method,
+            LanguageProtocol.SemanticTokens.method,
+            LanguageProtocol.SignatureHelpAt.method,
+            LanguageProtocol.CodeActions.method,
+            LanguageProtocol.FormatDocument.method,
+            LanguageProtocol.DiagnosticsFor.method,
+            SolutionProtocol.ActiveSolution.method,
+            ModelProtocol.ModelView.method,
+            ModelProtocol.Resources.method,
+        ]
+    }
 }
 
 test('Viewer may read, is denied write and administer', () =>
@@ -54,4 +77,15 @@ test('a principal with no grants is denied every method', () =>
 test('an untabled method is denied', () =>
 {
     assert.equal(GateFixture.Gate(Role.Owner).Authorize('bogus/method').Allowed, false)
+})
+
+test('every tabled method is classified correctly (Viewer allows all reads, denies write and administer)', () =>
+{
+    const gate = GateFixture.Gate(Role.Viewer)
+    for (const method of GateFixture.ReadMethods())
+    {
+        assert.equal(gate.Authorize(method).Allowed, true, method)
+    }
+    assert.equal(gate.Authorize(LanguageProtocol.DidChange.method).Allowed, false)
+    assert.equal(gate.Authorize(SolutionProtocol.OpenSolution.method).Allowed, false)
 })
