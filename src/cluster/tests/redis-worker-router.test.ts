@@ -6,6 +6,7 @@ import { RedisWorkerRouter } from '../redis-worker-router.js'
 class RedisFixture
 {
     public static readonly UrlEnv = 'PRAGMATIC_TEST_REDIS_URL'
+    public static readonly Host = '127.0.0.1'
 
     public static Url(): string | undefined
     {
@@ -18,22 +19,23 @@ class RedisFixture
     }
 }
 
-test('the first router to claim a tenant owns it; a second router sees that lease and routes to it', async () =>
+test('the first router to claim a tenant owns it; a second router sees that lease and routes to it', async t =>
 {
     const url = RedisFixture.Url()
     if (url === undefined)
     {
+        t.skip('PRAGMATIC_TEST_REDIS_URL not set')
         return
     }
     const tenant = RedisFixture.Tenant()
-    const r1 = new RedisWorkerRouter(url, { host: '127.0.0.1', port: 7001 })
-    const r2 = new RedisWorkerRouter(url, { host: '127.0.0.1', port: 7002 })
+    const r1 = new RedisWorkerRouter(url, { host: RedisFixture.Host, port: 7001 })
+    const r2 = new RedisWorkerRouter(url, { host: RedisFixture.Host, port: 7002 })
     try
     {
         const a = await r1.RouteOrSpawn(tenant)
-        assert.deepEqual(a, { host: '127.0.0.1', port: 7001 })
+        assert.deepEqual(a, { host: RedisFixture.Host, port: 7001 })
         const b = await r2.RouteOrSpawn(tenant)
-        assert.deepEqual(b, { host: '127.0.0.1', port: 7001 })
+        assert.deepEqual(b, { host: RedisFixture.Host, port: 7001 })
     }
     finally
     {

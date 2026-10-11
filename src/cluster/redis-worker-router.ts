@@ -28,14 +28,18 @@ export class RedisWorkerRouter implements IWorkerRouter
     {
         const client = await this.Connected()
         const key = `${RedisWorkerRouter.KeyPrefix}${tenantId}`
+        const claimed = await client.set(key, JSON.stringify(this.self), { NX: true, PX: RedisWorkerRouter.LeaseTtlMs })
+        if (claimed !== null)
+        {
+            this.claimed.add(key)
+            return this.self
+        }
         const existing = await client.get(key)
         if (existing !== null)
         {
             await client.pExpire(key, RedisWorkerRouter.LeaseTtlMs)
             return JSON.parse(existing) as WorkerEndpoint
         }
-        await client.set(key, JSON.stringify(this.self), { PX: RedisWorkerRouter.LeaseTtlMs })
-        this.claimed.add(key)
         return this.self
     }
 
@@ -47,12 +51,23 @@ export class RedisWorkerRouter implements IWorkerRouter
         }
         const client = this.client
         this.client = null
-        for (const key of this.claimed)
+        try
         {
-            await client.del(key)
+            const mine = JSON.stringify(this.self)
+            for (const key of this.claimed)
+            {
+                const current = await client.get(key)
+                if (current === mine)
+                {
+                    await client.del(key)
+                }
+            }
+            this.claimed.clear()
         }
-        this.claimed.clear()
-        await client.quit()
+        finally
+        {
+            await client.quit()
+        }
     }
 
     private async Connected(): Promise<RedisClientType>
