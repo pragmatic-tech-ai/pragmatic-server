@@ -8,7 +8,7 @@ import type { RawData } from 'ws'
 import type { WebSocketAddress } from '../host/pragmatic-server-host.js'
 import type { IWorkerRouter, WorkerEndpoint } from './worker-router.js'
 import { MachineTls } from './machine-tls.js'
-import type { MachineTlsRef } from './machine-tls.js'
+import type { ClientTlsMaterial, MachineTlsRef } from './machine-tls.js'
 
 export interface GatewayOptions
 {
@@ -45,17 +45,17 @@ export class Gateway
     private readonly httpServer: HttpServer
     private readonly wss: WebSocketServer
     private readonly router: IWorkerRouter
-    private readonly tls: MachineTlsRef
+    private readonly clientTls: ClientTlsMaterial
     private readonly address: WebSocketAddress
     private readonly workerSockets = new Set<WebSocket>()
     private disposed = false
 
-    private constructor(httpServer: HttpServer, wss: WebSocketServer, router: IWorkerRouter, tls: MachineTlsRef, address: WebSocketAddress)
+    private constructor(httpServer: HttpServer, wss: WebSocketServer, router: IWorkerRouter, clientTls: ClientTlsMaterial, address: WebSocketAddress)
     {
         this.httpServer = httpServer
         this.wss = wss
         this.router = router
-        this.tls = tls
+        this.clientTls = clientTls
         this.address = address
         httpServer.on(Gateway.UpgradeEvent, (req: IncomingMessage, socket: Socket, head: Buffer) =>
         {
@@ -80,7 +80,8 @@ export class Gateway
             httpServer.listen(options.port, host)
         })
         const resolved = httpServer.address() as AddressInfo
-        return new Gateway(httpServer, wss, options.router, options.tls, { host, port: resolved.port })
+        const clientTls = MachineTls.Client(options.tls)
+        return new Gateway(httpServer, wss, options.router, clientTls, { host, port: resolved.port })
     }
 
     public Address(): WebSocketAddress
@@ -139,7 +140,7 @@ export class Gateway
 
     private Dial(req: IncomingMessage, socket: Socket, head: Buffer, tenantId: string, endpoint: WorkerEndpoint, authorization: string | null): void
     {
-        const client = MachineTls.Client(this.tls)
+        const client = this.clientTls
         const headers: Record<string, string> = { [Gateway.TenantHeader]: tenantId }
         if (authorization !== null)
         {
@@ -252,12 +253,24 @@ export class Gateway
                 res.end()
                 return
             }
-            const client = MachineTls.Client(this.tls)
+            const client = this.clientTls
             const headers = { ...req.headers, [Gateway.TenantHeader]: tenantId }
             const proxied = httpsRequest(
                 { host: endpoint.host, port: endpoint.port, method: req.method, path: req.url, headers, key: client.key, cert: client.cert, ca: client.ca, rejectUnauthorized: true, servername: Gateway.ServerName },
                 upstream =>
                 {
+                    upstream.on(Gateway.ErrorEvent, () =>
+                    {
+                        if (!res.headersSent && !res.writableEnded)
+                        {
+                            res.writeHead(Gateway.BadGatewayStatus)
+                            res.end()
+                        }
+                        else
+                        {
+                            res.destroy()
+                        }
+                    })
                     res.writeHead(upstream.statusCode ?? Gateway.BadGatewayStatus, upstream.headers)
                     upstream.pipe(res)
                 })
@@ -269,6 +282,8 @@ export class Gateway
                     res.end()
                 }
             })
+            req.on(Gateway.ErrorEvent, () => proxied.destroy())
+            res.on(Gateway.ErrorEvent, () => proxied.destroy())
             res.on(Gateway.CloseEvent, () => proxied.destroy())
             req.pipe(proxied)
         }

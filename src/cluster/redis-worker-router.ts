@@ -10,6 +10,7 @@ export class RedisWorkerRouter implements IWorkerRouter
     private static readonly KeyPrefix = 'pragmatic:route:'
     private static readonly LeaseTtlMs = 30_000
     private static readonly ErrorEvent = 'error'
+    private static readonly CompareDeleteScript = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
 
     private readonly url: string
     private readonly self: WorkerEndpoint
@@ -37,7 +38,6 @@ export class RedisWorkerRouter implements IWorkerRouter
         const existing = await client.get(key)
         if (existing !== null)
         {
-            await client.pExpire(key, RedisWorkerRouter.LeaseTtlMs)
             return JSON.parse(existing) as WorkerEndpoint
         }
         return this.self
@@ -56,11 +56,7 @@ export class RedisWorkerRouter implements IWorkerRouter
             const mine = JSON.stringify(this.self)
             for (const key of this.claimed)
             {
-                const current = await client.get(key)
-                if (current === mine)
-                {
-                    await client.del(key)
-                }
+                await client.eval(RedisWorkerRouter.CompareDeleteScript, { keys: [key], arguments: [mine] })
             }
             this.claimed.clear()
         }
