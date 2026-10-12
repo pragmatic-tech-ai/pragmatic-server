@@ -5,6 +5,8 @@ import type { MasterKeyRef } from '../identity/master-key-resolver.js'
 import type { PlatformServices } from '../platform/platform-services.js'
 import type { DeploymentMode } from '../platform/deployment-mode.js'
 import type { ITenantCoordinator } from './tenant-coordinator.js'
+import { InMemoryTenantOwnership, TenantOwnedElsewhereError } from './tenant-ownership.js'
+import type { ITenantOwnership } from './tenant-ownership.js'
 import type { ITenantProvisioning, TenantProvisioning } from './tenant-provisioning.js'
 
 export class InMemoryTenantProvisioning implements ITenantProvisioning
@@ -37,13 +39,14 @@ export class TenantRegistry
     private readonly masterKey: MasterKeyRef
     private readonly provisioning: ITenantProvisioning
     private readonly coordinator: ITenantCoordinator
+    private ownership: ITenantOwnership
     private readonly platform: PlatformServices | undefined
     private readonly deploymentMode: DeploymentMode | undefined
     private readonly servers = new Map<string, PragmaticServer>()
     private readonly pending = new Map<string, Promise<PragmaticServer>>()
     private readonly disposing = new Map<string, Promise<void>>()
 
-    public constructor(baseDir: string, masterKey: MasterKeyRef, provisioning: ITenantProvisioning, coordinator: ITenantCoordinator, platform?: PlatformServices, deploymentMode?: DeploymentMode)
+    public constructor(baseDir: string, masterKey: MasterKeyRef, provisioning: ITenantProvisioning, coordinator: ITenantCoordinator, platform?: PlatformServices, deploymentMode?: DeploymentMode, ownership: ITenantOwnership = new InMemoryTenantOwnership())
     {
         this.baseDir = baseDir
         this.masterKey = masterKey
@@ -51,6 +54,8 @@ export class TenantRegistry
         this.coordinator = coordinator
         this.platform = platform
         this.deploymentMode = deploymentMode
+        this.ownership = ownership
+        this.ownership.OnLost(tenantId => void this.DisposeTenant(tenantId))
     }
 
     public async ServerFor(tenantId: string): Promise<PragmaticServer>
@@ -105,6 +110,7 @@ export class TenantRegistry
             }
             this.servers.delete(tenantId)
             this.coordinator.Forget(tenantId)
+            await this.ownership.Release(tenantId).catch(() => {})
             const disposal = server.Dispose()
             const tracked = disposal.catch(() => {}).finally(() => this.disposing.delete(tenantId))
             this.disposing.set(tenantId, tracked)
@@ -121,7 +127,30 @@ export class TenantRegistry
         {
             await server.Dispose().catch(() => {})
         }
+        await this.ownership.ReleaseAll().catch(() => {})
         await Promise.allSettled([...this.disposing.values()])
+    }
+
+    public OwnershipHealthy(): boolean
+    {
+        return this.ownership.Healthy()
+    }
+
+    /** Fail-closed response to a lost lease: drop the local server so this replica stops writing the tenant.
+     *  The ownership key is already gone, so no Release is issued. */
+    public async DisposeTenant(tenantId: string): Promise<void>
+    {
+        const server = this.servers.get(tenantId)
+        if (server === undefined)
+        {
+            return
+        }
+        this.servers.delete(tenantId)
+        this.coordinator.Forget(tenantId)
+        const disposal = server.Dispose().catch(() => {})
+        const tracked = disposal.finally(() => this.disposing.delete(tenantId))
+        this.disposing.set(tenantId, tracked)
+        await tracked
     }
 
     private async Build(tenantId: string): Promise<PragmaticServer>
@@ -140,6 +169,10 @@ export class TenantRegistry
         {
             await disposing
         }
+        if (!await this.ownership.Acquire(tenantId))
+        {
+            throw new TenantOwnedElsewhereError()
+        }
         const server = new PragmaticServer(this.OptionsFor(tenantId, provisioning))
         try
         {
@@ -148,6 +181,7 @@ export class TenantRegistry
         catch (error)
         {
             await server.Dispose().catch(() => {})
+            await this.ownership.Release(tenantId).catch(() => {})
             throw error
         }
         return server
