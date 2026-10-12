@@ -14,6 +14,10 @@ import { ServerBootstrap } from './identity/server-bootstrap.js'
 import { DeploymentMode } from './platform/deployment-mode.js'
 import { PlatformSelector } from './platform/platform-selector.js'
 import type { PlatformServices } from './platform/platform-services.js'
+import { ConnectorsHost } from '@pragmatic-tech-ai/todl-connectors-host'
+import type { ConnectorsHostOptions } from '@pragmatic-tech-ai/todl-connectors-host'
+import { SolutionConnectorPlanner } from './connectors/solution-connector-planner.js'
+import { ConnectorRuntime } from './connectors/connector-runtime.js'
 
 export interface OidcServerOptions
 {
@@ -48,6 +52,7 @@ export interface PragmaticServerOptions
     identity?: PragmaticServerIdentityOptions
     deploymentMode?: DeploymentMode
     platform?: PlatformServices
+    connectors?: ConnectorsHostOptions
 }
 
 /** Headless single-tenant in-process host: composes the engine over the lazy root and opens a solution. */
@@ -58,11 +63,15 @@ export class PragmaticServer
 
     private static readonly NotStartedError = 'server not started'
     private static readonly IdentityNotConfiguredError = 'identity not configured'
+    private static readonly NoActiveSolutionForConnectors = 'No active solution: open a solution before accessing connectors'
+    private static readonly NoMemberStorageForConnectors = 'Active solution has no member storage to read a model view from'
+    private static readonly NoModelViewForConnectors = 'Active solution produced no model view'
 
     private readonly root: LazyCompositionRoot
     private readonly options: PragmaticServerOptions
     private readonly platform: PlatformServices
     private readonly identity: IdentityModule | undefined
+    private readonly connectorsHost: ConnectorsHost
     private pack: ServerIdentityPack | undefined
     private tenant: Tenant | undefined
     private oidc: OidcAuthenticator | undefined
@@ -76,6 +85,7 @@ export class PragmaticServer
             .Module(new SolutionServicesModule())
             .Module(new LanguageServiceModule())
         this.root = builder.Build()
+        this.connectorsHost = new ConnectorsHost(options.connectors)
         this.RegisterInfrastructure(options.packagesRoot ?? PragmaticServer.DefaultPackagesDir)
     }
 
@@ -160,6 +170,29 @@ export class PragmaticServer
         await manager.OpenSolution(location)
     }
 
+    public async Connectors(): Promise<ConnectorRuntime>
+    {
+        const manager = await this.Manager()
+        const solution = manager.ActiveSolution
+        if (solution === undefined)
+        {
+            throw new Error(PragmaticServer.NoActiveSolutionForConnectors)
+        }
+        const member = solution.Members.ToArray().find(m => m.Storage !== undefined)
+        if (member === undefined || member.Storage === undefined)
+        {
+            throw new Error(PragmaticServer.NoMemberStorageForConnectors)
+        }
+        const languageService = await this.LanguageService()
+        const view = await languageService.ModelView(member.Storage)
+        if (view === undefined)
+        {
+            throw new Error(PragmaticServer.NoModelViewForConnectors)
+        }
+        const models = SolutionConnectorPlanner.Plan(view.model)
+        return new ConnectorRuntime(models, this.root.Services())
+    }
+
     public StateOf(moduleId: string): ModuleStateProperty | undefined
     {
         return this.root.StateOf(moduleId)
@@ -167,6 +200,7 @@ export class PragmaticServer
 
     public async Dispose(): Promise<void>
     {
+        await this.connectorsHost.Dispose()
         this.root.Services().dispose()
     }
 
@@ -179,5 +213,6 @@ export class PragmaticServer
         services.registerInstance(SolutionManagerService.PackageSourceKey, new StoragePackageSource(packagesStorage))
         services.registerInstance(PackageStoreKey, new StoragePackageStore(packagesStorage))
         NodeProjectSystemComposer.Compose(services)
+        this.connectorsHost.Register(services)
     }
 }
