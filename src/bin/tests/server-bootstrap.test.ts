@@ -40,7 +40,7 @@ test('cloud mode without an injected platform fails closed', () =>
 
 test('the startup line never contains the master key reference target', () =>
 {
-    const line = ServerBootstrap.StartupLine(Fixture.Config(DeploymentMode.Local), 1)
+    const line = ServerBootstrap.StartupLine(Fixture.Config(DeploymentMode.Local))
     assert.ok(!line.includes('/run/secrets/key'))
     assert.ok(line.includes('8080'))
 })

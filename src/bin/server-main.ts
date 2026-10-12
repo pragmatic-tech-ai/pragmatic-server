@@ -11,6 +11,7 @@ class ServerMain
     private static readonly SigInt = 'SIGINT'
     private static readonly StartFailedPrefix = 'pragmatic-server failed to start: '
     private static readonly UnknownError = 'unknown error'
+    private static readonly ShutdownErrorPrefix = 'pragmatic-server shutdown error: '
 
     private shuttingDown = false
 
@@ -25,7 +26,7 @@ class ServerMain
         const provisioning = TenantProvisioningFactory.Build(config, read)
         const options = ServerBootstrap.ComposeOptions(config, provisioning)
         const host = await PragmaticServerHost.StartAsync(options)
-        console.log(ServerBootstrap.StartupLine(config, 0))
+        console.log(ServerBootstrap.StartupLine(config))
         const main = new ServerMain(host)
         process.on(ServerMain.SigTerm, () => void main.Shutdown())
         process.on(ServerMain.SigInt, () => void main.Shutdown())
@@ -44,7 +45,16 @@ class ServerMain
             return
         }
         this.shuttingDown = true
-        await this.host.DisposeAsync()
+        try
+        {
+            await this.host.DisposeAsync()
+        }
+        catch (error)
+        {
+            console.error(ServerMain.ShutdownErrorPrefix + (error instanceof Error ? error.message : ServerMain.UnknownError))
+            process.exit(1)
+            return
+        }
         process.exit(0)
     }
 }

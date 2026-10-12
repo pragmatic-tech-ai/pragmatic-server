@@ -27,8 +27,8 @@ export class ServerBootstrap
         }
     }
 
-    public static StartupLine(config: ServerConfig, tenantCount: number): string
+    public static StartupLine(config: ServerConfig): string
     {
-        return `pragmatic-server listening on ${config.host}:${config.port} mode=${config.deploymentMode} tenants=${tenantCount}`
+        return `pragmatic-server listening on ${config.host}:${config.port} mode=${config.deploymentMode}`
     }
 }
