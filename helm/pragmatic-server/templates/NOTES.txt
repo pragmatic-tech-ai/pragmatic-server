@@ -13,3 +13,11 @@ Then probe it:
 WARNING: secrets.masterKeyB64 was not supplied; no master-key Secret was created and the pod will fail closed.
 Install with --set secrets.masterKeyB64=<base64 key>.
 {{- end }}
+{{- if and (gt (int .Values.replicaCount) 1) (not .Values.redis.url) (not .Values.redis.existingSecret) }}
+
+WARNING: replicaCount is {{ .Values.replicaCount }} but no Redis is configured. replicaCount > 1 is only safe with
+redis.url (or redis.existingSecret) set — the tenant ownership lease stops two replicas from writing one tenant.
+Without it, several replicas can open the same tenant's storage at once. Set redis.url, or scale to replicaCount 1.
+Route tenants with session affinity (or rely on client retry) when scaling out, since a non-owner replica rejects
+with a retryable 503.
+{{- end }}

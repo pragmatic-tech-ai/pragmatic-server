@@ -51,6 +51,17 @@ spec:
                 secretKeyRef:
                   name: {{ include "pragmatic-server.fullname" . }}
                   key: PRAGMATIC_MASTER_KEY
+            {{- if or .Values.redis.url .Values.redis.existingSecret }}
+            - name: PRAGMATIC_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.redis.existingSecret | default (include "pragmatic-server.fullname" .) }}
+                  key: {{ .Values.redis.secretKey | default "redis-url" }}
+            - name: PRAGMATIC_REPLICA_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /healthz

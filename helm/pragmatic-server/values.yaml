@@ -1,4 +1,5 @@
-# replicaCount must stay 1 in local/file-backed mode; multi-replica needs cloud/shared stores (deferred).
+# replicaCount > 1 is safe ONLY with redis.url set (tenant ownership lease — one replica owns a tenant at a time).
+# Without Redis, keep this at 1: multiple replicas would open the same tenant's file-backed storage concurrently.
 replicaCount: 1
 
 nameOverride: ""
@@ -45,6 +46,14 @@ secrets:
   # them from k8s Secrets is a tracked deferred Feature.
   oidc: {}
   adminPasswords: {}
+
+# Optional Redis for safe multi-replica operation (tenant ownership lease). Leave url empty for single-replica.
+# Supply the URL via this chart's Secret (set redis.url) OR an existing Secret (redis.existingSecret + redis.secretKey).
+# The URL may carry credentials — treat it as a secret; never commit a real value.
+redis:
+  url: ""
+  existingSecret: ""
+  secretKey: redis-url
 
 ingress:
   enabled: false
