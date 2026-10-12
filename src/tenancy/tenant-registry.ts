@@ -159,6 +159,7 @@ export class TenantRegistry
             packagesRoot: join(this.baseDir, tenantId, TenantRegistry.PackagesDir),
             platform: this.platform,
             deploymentMode: this.deploymentMode,
+            connectorsPolicy: provisioning.connectorsPolicy,
             identity: {
                 identityRoot: join(this.baseDir, tenantId, TenantRegistry.IdentityDir),
                 masterKey: this.masterKey,

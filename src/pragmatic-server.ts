@@ -18,6 +18,8 @@ import { ConnectorsHost } from '@pragmatic-tech-ai/todl-connectors-host'
 import type { ConnectorsHostOptions } from '@pragmatic-tech-ai/todl-connectors-host'
 import { SolutionConnectorPlanner } from './connectors/solution-connector-planner.js'
 import { ConnectorRuntime } from './connectors/connector-runtime.js'
+import { PolicyConnectionResolver } from './host/policy-connection-resolver.js'
+import type { ConnectorsPolicy } from './host/connector-policy.js'
 
 export interface OidcServerOptions
 {
@@ -53,6 +55,7 @@ export interface PragmaticServerOptions
     deploymentMode?: DeploymentMode
     platform?: PlatformServices
     connectors?: ConnectorsHostOptions
+    connectorsPolicy?: ConnectorsPolicy
 }
 
 /** Headless single-tenant in-process host: composes the engine over the lazy root and opens a solution. */
@@ -85,8 +88,18 @@ export class PragmaticServer
             .Module(new SolutionServicesModule())
             .Module(new LanguageServiceModule())
         this.root = builder.Build()
-        this.connectorsHost = new ConnectorsHost(options.connectors)
+        this.connectorsHost = new ConnectorsHost(PragmaticServer.ConnectorsOptions(options))
         this.RegisterInfrastructure(options.packagesRoot ?? PragmaticServer.DefaultPackagesDir)
+    }
+
+    private static ConnectorsOptions(options: PragmaticServerOptions): ConnectorsHostOptions | undefined
+    {
+        if (options.connectorsPolicy === undefined)
+        {
+            return options.connectors
+        }
+        const resolver = new PolicyConnectionResolver(options.connectorsPolicy, options.connectors?.connectionResolver)
+        return { ...options.connectors, connectionResolver: resolver }
     }
 
     public async Start(): Promise<void>
