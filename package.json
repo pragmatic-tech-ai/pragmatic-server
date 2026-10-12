@@ -5,7 +5,9 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "pragmatic-serverd": "dist/bin/pragmatic-serverd.js"
+    "pragmatic-serverd": "dist/bin/pragmatic-serverd.js",
+    "pragmatic-workerd": "dist/bin/pragmatic-workerd.js",
+    "pragmatic-gatewayd": "dist/bin/pragmatic-gatewayd.js"
   },
   "exports": {
     ".": {
