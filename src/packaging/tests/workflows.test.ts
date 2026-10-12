@@ -47,3 +47,10 @@ test('image publish is gated behind an explicit enable flag (inert by default)',
     const pushStep = steps.find(step => typeof step.if === 'string' && /ENABLE_IMAGE_PUBLISH/.test(step.if))
     assert.ok(pushStep !== undefined, 'expected a push step gated on ENABLE_IMAGE_PUBLISH')
 })
+
+test('ci workflow builds TODL like every other sibling (no DOM workaround)', () =>
+{
+    const text = Workflows.Text('ci.yml')
+    assert.doesNotMatch(text, /--lib/, 'the TODL --lib workaround must be gone')
+    assert.doesNotMatch(text, /"TODL"/, 'the TODL special-case branch must be gone')
+})

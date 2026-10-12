@@ -41,3 +41,11 @@ test('Dockerfile builds the siblings in dependency order ending with pragmatic-s
         cursor = alt
     }
 })
+
+test('Dockerfile builds TODL via the common npm run build (no DOM workaround)', () =>
+{
+    const text = Dockerfile.Text()
+    assert.doesNotMatch(text, /--lib/, 'the TODL --lib workaround must be gone')
+    assert.doesNotMatch(text, /gen:prelude/, 'the inlined TODL generator mirror must be gone')
+    assert.match(text, /cd TODL && npm install --no-audit --no-fund && npm run build/)
+})

@@ -19,15 +19,7 @@ jobs:
       - name: Build siblings in dependency order
         run: |
           for pkg in todl-runtime TODL pragmatic-protocol todl-identity todl-identity-local todl-identity-host todl-identity-cloud todl-identity-engine todl-connectors-host todl-platform-node todl-platform-cloud todl-identity-node pragmatic-server; do
-            if [ "$pkg" = "TODL" ]; then
-              # Mirrors docker/Dockerfile: TODL's own `npm run build` fails in a clean env because its
-              # tsconfig lib omits DOM. Tracked deferred Feature: add DOM to TODL's lib upstream.
-              (cd "../$pkg" && npm install --no-audit --no-fund \
-                && npm run gen:prelude && npm run gen:scaffold && npm run compile:mu \
-                && npx tsc -p tsconfig.build.json --lib ES2022,DOM)
-            else
-              (cd "../$pkg" && npm install --no-audit --no-fund && npm run build)
-            fi
+            (cd "../$pkg" && npm install --no-audit --no-fund && npm run build)
           done
       - name: Test
         run: cd ../pragmatic-server && npx tsx --test "src/**/*.test.ts"

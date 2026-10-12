@@ -11,15 +11,8 @@ COPY todl-runtime/ ./todl-runtime/
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
     cd todl-runtime && npm install --no-audit --no-fund && npm run build
 COPY TODL/ ./TODL/
-# Workaround (temporary; remove once TODL's tsconfig lib includes DOM - tracked as a deferred Feature):
-# TODL declares lib ES2022 only but contains browser code; it relied on DOM types leaking from a
-# symlinked local mural. With the registry mural the hermetic build needs an explicit DOM lib.
-# This step MIRRORS TODL's own build script (gen:prelude, gen:scaffold, compile:mu) but replaces the
-# final tsc with the DOM-lib variant; keep it in sync if TODL's build script changes.
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
-    cd TODL && npm install --no-audit --no-fund \
-    && npm run gen:prelude && npm run gen:scaffold && npm run compile:mu \
-    && npx tsc -p tsconfig.build.json --lib ES2022,DOM
+    cd TODL && npm install --no-audit --no-fund && npm run build
 COPY pragmatic-protocol/ ./pragmatic-protocol/
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
     cd pragmatic-protocol && npm install --no-audit --no-fund && npm run build
