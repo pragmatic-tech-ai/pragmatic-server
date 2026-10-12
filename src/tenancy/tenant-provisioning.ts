@@ -1,5 +1,4 @@
 import type { BootstrapOptions, OidcServerOptions } from '../pragmatic-server.js'
-
 import type { ConnectorsPolicy } from '../host/connector-policy.js'
 
 export interface TenantProvisioning
