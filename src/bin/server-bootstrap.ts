@@ -7,6 +7,8 @@ import type { ServerConfig } from '../config/server-config.js'
 export class ServerBootstrap
 {
     private static readonly CloudNeedsPlatform = 'cloud deployment requires a configured platform (deferred backends)'
+    private static readonly RedisOwnership = 'redis'
+    private static readonly InMemoryOwnership = 'in-memory'
 
     public static ComposeOptions(config: ServerConfig, provisioning: ITenantProvisioning, platform?: PlatformServices): PragmaticServerHostOptions
     {
@@ -24,11 +26,14 @@ export class ServerBootstrap
             idleSweepMs: config.idleSweepMs,
             platform,
             deploymentMode: config.deploymentMode,
+            redisUrl: config.redisUrl,
+            replicaId: config.replicaId,
         }
     }
 
     public static StartupLine(config: ServerConfig, tenantCount: number): string
     {
-        return `pragmatic-server listening on ${config.host}:${config.port} mode=${config.deploymentMode} tenants=${tenantCount}`
+        const ownership = config.redisUrl !== undefined ? ServerBootstrap.RedisOwnership : ServerBootstrap.InMemoryOwnership
+        return `pragmatic-server listening on ${config.host}:${config.port} mode=${config.deploymentMode} tenants=${tenantCount} ownership=${ownership}`
     }
 }

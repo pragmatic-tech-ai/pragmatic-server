@@ -18,4 +18,6 @@ export interface ServerConfig
     singleTenant?: SingleTenantConfig
     idleTtlMs?: number
     idleSweepMs?: number
+    redisUrl?: string
+    replicaId?: string
 }

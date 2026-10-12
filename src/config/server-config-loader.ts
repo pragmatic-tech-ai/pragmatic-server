@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { MasterKeyRef } from '../identity/master-key-resolver.js'
 import { DeploymentMode } from '../platform/deployment-mode.js'
 import type { ServerConfig, SingleTenantConfig } from './server-config.js'
@@ -10,6 +11,7 @@ interface ConfigFile
     deploymentMode?: string
     idleTtlMs?: number
     idleSweepMs?: number
+    redisUrl?: string
 }
 
 export class ServerConfigLoader
@@ -36,6 +38,7 @@ export class ServerConfigLoader
         {
             throw new Error(ServerConfigLoader.MissingTenant)
         }
+        const redis = ServerConfigLoader.Redis(env, file.redisUrl)
         return {
             host: env.PRAGMATIC_HOST ?? file.host ?? ServerConfigLoader.DefaultHost,
             port: ServerConfigLoader.Int(env.PRAGMATIC_PORT) ?? file.port ?? ServerConfigLoader.DefaultPort,
@@ -46,7 +49,19 @@ export class ServerConfigLoader
             singleTenant,
             idleTtlMs: ServerConfigLoader.Int(env.PRAGMATIC_IDLE_TTL_MS) ?? file.idleTtlMs,
             idleSweepMs: ServerConfigLoader.Int(env.PRAGMATIC_IDLE_SWEEP_MS) ?? file.idleSweepMs,
+            ...redis,
         }
+    }
+
+    private static Redis(env: Record<string, string | undefined>, fileUrl: string | undefined): { redisUrl?: string; replicaId?: string }
+    {
+        const redisUrl = env.PRAGMATIC_REDIS_URL ?? fileUrl
+        if (redisUrl === undefined || redisUrl.length === 0)
+        {
+            return {}
+        }
+        const replicaId = env.PRAGMATIC_REPLICA_ID ?? env.HOSTNAME ?? randomUUID()
+        return { redisUrl, replicaId }
     }
 
     private static File(env: Record<string, string | undefined>, readTextFile: (path: string) => string): ConfigFile

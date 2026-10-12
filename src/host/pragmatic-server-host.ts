@@ -31,6 +31,8 @@ export interface PragmaticServerHostOptions
     idleSweepMs?: number
     platform?: PlatformServices
     deploymentMode?: DeploymentMode
+    redisUrl?: string
+    replicaId?: string
 }
 
 export interface WebSocketAddress
