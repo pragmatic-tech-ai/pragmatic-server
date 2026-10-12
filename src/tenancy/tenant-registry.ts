@@ -145,9 +145,9 @@ export class TenantRegistry
     }
 
     /** Test seam: replace the ownership with a deterministic in-process grant/deny, re-wiring the lost handler. */
-    public SetOwnershipForTest(granted: boolean): void
+    public SetOwnershipForTest(granted: boolean, healthy = true): void
     {
-        this.ownership = new FixedOwnership(granted)
+        this.ownership = new FixedOwnership(granted, healthy)
         this.ownership.OnLost(tenantId => void this.DisposeTenant(tenantId))
     }
 
@@ -236,10 +236,12 @@ export class TenantRegistry
 class FixedOwnership implements ITenantOwnership
 {
     private readonly granted: boolean
+    private readonly healthy: boolean
 
-    public constructor(granted: boolean)
+    public constructor(granted: boolean, healthy: boolean)
     {
         this.granted = granted
+        this.healthy = healthy
     }
 
     public async Start(): Promise<void>
@@ -261,7 +263,7 @@ class FixedOwnership implements ITenantOwnership
 
     public Healthy(): boolean
     {
-        return true
+        return this.healthy
     }
 
     public OnLost(_handler: TenantLostHandler): void
