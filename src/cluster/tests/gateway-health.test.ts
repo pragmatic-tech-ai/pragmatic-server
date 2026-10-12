@@ -17,19 +17,22 @@ class Tls
     }
 }
 
-function get(port: number, path: string): Promise<{ status: number; body: string }>
+class Http
 {
-    return new Promise((resolve, reject) =>
+    public static Get(port: number, path: string): Promise<{ status: number; body: string }>
     {
-        const req = request({ host: '127.0.0.1', port, path, method: 'GET' }, res =>
+        return new Promise((resolve, reject) =>
         {
-            let body = ''
-            res.on('data', c => { body += c })
-            res.on('end', () => resolve({ status: res.statusCode ?? 0, body }))
+            const req = request({ host: '127.0.0.1', port, path, method: 'GET' }, res =>
+            {
+                let body = ''
+                res.on('data', c => { body += c })
+                res.on('end', () => resolve({ status: res.statusCode ?? 0, body }))
+            })
+            req.on('error', reject)
+            req.end()
         })
-        req.on('error', reject)
-        req.end()
-    })
+    }
 }
 
 test('the gateway serves /healthz and /readyz on its front door', async () =>
@@ -38,10 +41,25 @@ test('the gateway serves /healthz and /readyz on its front door', async () =>
     const gateway = await Gateway.StartAsync({ port: 0, router, tls: Tls.Ref() })
     try
     {
-        const health = await get(gateway.Address().port, '/healthz')
+        const health = await Http.Get(gateway.Address().port, '/healthz')
         assert.equal(health.status, 200)
-        const ready = await get(gateway.Address().port, '/readyz')
+        const ready = await Http.Get(gateway.Address().port, '/readyz')
         assert.equal(ready.status, 200)
+    }
+    finally
+    {
+        await gateway.DisposeAsync()
+    }
+})
+
+test('a non-health request without a tenant still returns 400 (health does not shadow the proxy path)', async () =>
+{
+    const router = new InMemoryWorkerRouter({ host: '127.0.0.1', port: 1 })
+    const gateway = await Gateway.StartAsync({ port: 0, router, tls: Tls.Ref() })
+    try
+    {
+        const res = await Http.Get(gateway.Address().port, '/solution')
+        assert.equal(res.status, 400)
     }
     finally
     {
