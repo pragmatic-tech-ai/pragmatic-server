@@ -13,6 +13,7 @@ import type { PragmaticServer } from '../pragmatic-server.js'
 import { ServerConnectionHandler } from './server-connection-handler.js'
 import { ConnectionAuthenticator } from './connection-authenticator.js'
 import { AuthHttpEndpoint } from './auth-http-endpoint.js'
+import { HealthEndpoint } from './health-endpoint.js'
 import { InMemoryTenantCoordinator } from '../tenancy/tenant-coordinator.js'
 import { TenantRegistry } from '../tenancy/tenant-registry.js'
 import type { ITenantProvisioning } from '../tenancy/tenant-provisioning.js'
@@ -65,6 +66,8 @@ export class PragmaticServerHost
     private readonly address: WebSocketAddress
     private readonly idleTtlMs: number
     private readonly sweep: NodeJS.Timeout
+    private readonly health = new HealthEndpoint()
+    private ready = false
     private disposed = false
 
     private constructor(
@@ -107,7 +110,15 @@ export class PragmaticServerHost
             httpServer.listen(options.port, host)
         })
         const resolved = httpServer.address() as AddressInfo
-        return new PragmaticServerHost(httpServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? PragmaticServerHost.DefaultIdleTtlMs, options.idleSweepMs ?? PragmaticServerHost.DefaultIdleSweepMs)
+        const started = new PragmaticServerHost(httpServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? PragmaticServerHost.DefaultIdleTtlMs, options.idleSweepMs ?? PragmaticServerHost.DefaultIdleSweepMs)
+        started.MarkReady()
+        return started
+    }
+
+    /** Flips readiness on; called once StartAsync has finished so /readyz never reports a half-started host. */
+    public MarkReady(): void
+    {
+        this.ready = true
     }
 
     public Address(): WebSocketAddress
@@ -245,6 +256,14 @@ export class PragmaticServerHost
     {
         try
         {
+            const path = new URL(req.url ?? '/', PragmaticServerHost.BaseUrl).pathname
+            const health = this.health.Handle(req.method ?? '', path, this.ready)
+            if (health !== null)
+            {
+                res.writeHead(health.status)
+                res.end(health.body)
+                return
+            }
             const tenantId = this.TenantHint(req)
             if (tenantId === null)
             {
