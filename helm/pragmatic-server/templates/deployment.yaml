@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "pragmatic-server.fullname" . }}
+  labels:
+    {{- include "pragmatic-server.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  {{- if .Values.persistence.enabled }}
+  strategy:
+    type: Recreate
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "pragmatic-server.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pragmatic-server.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 1000
+      containers:
+        - name: pragmatic-server
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          env:
+            - name: PRAGMATIC_BASE_DIR
+              value: {{ .Values.baseDir | quote }}
+            - name: PRAGMATIC_PORT
+              value: {{ .Values.service.port | quote }}
+            - name: PRAGMATIC_DEPLOYMENT_MODE
+              value: {{ .Values.deploymentMode | quote }}
+            - name: PRAGMATIC_TENANTS_FILE
+              value: /cfg/tenants.json
+            - name: PRAGMATIC_MASTER_KEY_B64_ENV
+              value: PRAGMATIC_MASTER_KEY
+            - name: PRAGMATIC_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "pragmatic-server.fullname" . }}
+                  key: PRAGMATIC_MASTER_KEY
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /cfg
+              readOnly: true
+            {{- if .Values.persistence.enabled }}
+            - name: data
+              mountPath: {{ .Values.baseDir }}
+            {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "pragmatic-server.fullname" . }}
+        {{- if .Values.persistence.enabled }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "pragmatic-server.fullname" . }}
+        {{- end }}
