@@ -15,6 +15,7 @@ import { AuthHttpEndpoint } from '../host/auth-http-endpoint.js'
 import type { WebSocketAddress } from '../host/pragmatic-server-host.js'
 import { InMemoryTenantCoordinator } from '../tenancy/tenant-coordinator.js'
 import { TenantRegistry } from '../tenancy/tenant-registry.js'
+import { TenantOwnedElsewhereError } from '../tenancy/tenant-ownership.js'
 import type { ITenantProvisioning } from '../tenancy/tenant-provisioning.js'
 import { MachineTls } from './machine-tls.js'
 import type { MachineTlsRef } from './machine-tls.js'
@@ -48,6 +49,7 @@ export class WorkerHost
     private static readonly AuthorizationHeader = 'authorization'
     private static readonly TenantHeader = 'x-pragmatic-tenant'
     private static readonly BearerPrefix = 'Bearer '
+    private static readonly ServiceUnavailableResponse = 'HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nConnection: close\r\n\r\n'
     private static readonly NotFoundStatus = 404
     private static readonly DefaultIdleTtlMs = 300_000
     private static readonly DefaultIdleSweepMs = 30_000
@@ -146,8 +148,12 @@ export class WorkerHost
         {
             server = await this.registry.ServerFor(tenantId)
         }
-        catch
+        catch (error)
         {
+            if (error instanceof TenantOwnedElsewhereError && !socket.writableEnded && !socket.destroyed)
+            {
+                socket.write(WorkerHost.ServiceUnavailableResponse)
+            }
             socket.destroy()
             return
         }

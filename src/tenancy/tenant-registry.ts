@@ -6,7 +6,7 @@ import type { PlatformServices } from '../platform/platform-services.js'
 import type { DeploymentMode } from '../platform/deployment-mode.js'
 import type { ITenantCoordinator } from './tenant-coordinator.js'
 import { InMemoryTenantOwnership, TenantOwnedElsewhereError } from './tenant-ownership.js'
-import type { ITenantOwnership } from './tenant-ownership.js'
+import type { ITenantOwnership, TenantLostHandler } from './tenant-ownership.js'
 import type { ITenantProvisioning, TenantProvisioning } from './tenant-provisioning.js'
 
 export class InMemoryTenantProvisioning implements ITenantProvisioning
@@ -144,6 +144,13 @@ export class TenantRegistry
         return this.ownership.Healthy()
     }
 
+    /** Test seam: replace the ownership with a deterministic in-process grant/deny, re-wiring the lost handler. */
+    public SetOwnershipForTest(granted: boolean): void
+    {
+        this.ownership = new FixedOwnership(granted)
+        this.ownership.OnLost(tenantId => void this.DisposeTenant(tenantId))
+    }
+
     /** Fail-closed response to a lost lease: drop the local server so this replica stops writing the tenant.
      *  The ownership key is already gone, so no Release is issued. */
     public async DisposeTenant(tenantId: string): Promise<void>
@@ -222,5 +229,42 @@ export class TenantRegistry
                 oidc: provisioning.oidc,
             },
         }
+    }
+}
+
+/** Deterministic in-process ownership for tests: always grants or always denies, always healthy, never loses. */
+class FixedOwnership implements ITenantOwnership
+{
+    private readonly granted: boolean
+
+    public constructor(granted: boolean)
+    {
+        this.granted = granted
+    }
+
+    public async Start(): Promise<void>
+    {
+    }
+
+    public async Acquire(_tenantId: string): Promise<boolean>
+    {
+        return this.granted
+    }
+
+    public async Release(_tenantId: string): Promise<void>
+    {
+    }
+
+    public async ReleaseAll(): Promise<void>
+    {
+    }
+
+    public Healthy(): boolean
+    {
+        return true
+    }
+
+    public OnLost(_handler: TenantLostHandler): void
+    {
     }
 }

@@ -16,6 +16,8 @@ import { AuthHttpEndpoint } from './auth-http-endpoint.js'
 import { HealthEndpoint } from './health-endpoint.js'
 import { InMemoryTenantCoordinator } from '../tenancy/tenant-coordinator.js'
 import { TenantRegistry } from '../tenancy/tenant-registry.js'
+import { InMemoryTenantOwnership, TenantOwnedElsewhereError } from '../tenancy/tenant-ownership.js'
+import { RedisTenantOwnership } from '../tenancy/redis-tenant-ownership.js'
 import type { ITenantProvisioning } from '../tenancy/tenant-provisioning.js'
 import type { PlatformServices } from '../platform/platform-services.js'
 import type { DeploymentMode } from '../platform/deployment-mode.js'
@@ -56,6 +58,7 @@ export class PragmaticServerHost
     private static readonly TenantParam = 'tenant'
     private static readonly BaseUrl = 'http://localhost'
     private static readonly UnauthorizedResponse = 'HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'
+    private static readonly ServiceUnavailableResponse = 'HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nConnection: close\r\n\r\n'
     private static readonly NotFoundStatus = 404
     private static readonly DefaultIdleTtlMs = 300_000
     private static readonly DefaultIdleSweepMs = 30_000
@@ -101,7 +104,11 @@ export class PragmaticServerHost
     public static async StartAsync(options: PragmaticServerHostOptions): Promise<PragmaticServerHost>
     {
         const coordinator = new InMemoryTenantCoordinator()
-        const registry = new TenantRegistry(options.baseDir, options.masterKey, options.provisioning, coordinator, options.platform, options.deploymentMode)
+        const ownership = options.redisUrl !== undefined && options.redisUrl.length > 0
+            ? new RedisTenantOwnership(options.redisUrl, options.replicaId ?? options.redisUrl)
+            : new InMemoryTenantOwnership()
+        await ownership.Start().catch(() => {})
+        const registry = new TenantRegistry(options.baseDir, options.masterKey, options.provisioning, coordinator, options.platform, options.deploymentMode, ownership)
         const host = options.host ?? PragmaticServerHost.DefaultHost
         const httpServer = createServer()
         const wss = new WebSocketServer({ noServer: true })
@@ -185,9 +192,16 @@ export class PragmaticServerHost
         {
             server = await this.registry.ServerFor(tenantId)
         }
-        catch
+        catch (error)
         {
-            this.Reject(socket)
+            if (error instanceof TenantOwnedElsewhereError)
+            {
+                this.RejectRetryable(socket)
+            }
+            else
+            {
+                this.Reject(socket)
+            }
             return
         }
         this.registry.Acquire(tenantId)
@@ -259,7 +273,7 @@ export class PragmaticServerHost
         try
         {
             const path = new URL(req.url ?? '/', PragmaticServerHost.BaseUrl).pathname
-            const health = this.health.Handle(req.method ?? '', path, this.ready)
+            const health = this.health.Handle(req.method ?? '', path, this.ready && this.registry.OwnershipHealthy())
             if (health !== null)
             {
                 res.writeHead(health.status)
@@ -292,6 +306,15 @@ export class PragmaticServerHost
         const url = new URL(req.url ?? '/', PragmaticServerHost.BaseUrl)
         const tenant = url.searchParams.get(PragmaticServerHost.TenantParam)
         return tenant !== null && tenant.length > 0 ? tenant : null
+    }
+
+    private RejectRetryable(socket: Socket): void
+    {
+        if (!socket.writableEnded && !socket.destroyed)
+        {
+            socket.write(PragmaticServerHost.ServiceUnavailableResponse)
+        }
+        socket.destroy()
     }
 
     private Reject(socket: Socket): void
