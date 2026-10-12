@@ -78,7 +78,7 @@ spec:
               value: {{ .Values.cluster.tls.mountPath }}/tls.key
             - name: PRAGMATIC_TLS_CA_FILE
               value: {{ .Values.cluster.tls.mountPath }}/ca.crt
-            {{- if .Values.secrets.provisioned }}
+            {{- if or .Values.secrets.provisioned .Values.secrets.provisionedExistingSecret }}
             - name: PRAGMATIC_PROVISIONED_SECRETS_FILE
               value: /run/secrets/provisioned/secrets.json
             {{- end }}
