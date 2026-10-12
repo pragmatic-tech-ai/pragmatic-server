@@ -58,3 +58,21 @@ test('a worker serves /healthz + /readyz on its dedicated plain-HTTP health port
         delete process.env[Fixture.KeyEnv]
     }
 })
+
+test('an unreachable Redis makes /readyz 503 (ownership unhealthy) while /healthz stays 200 (Review Focus 1)', async () =>
+{
+    const baseDir = mkdtempSync(join(tmpdir(), 'ps-whh-dn-'))
+    process.env[Fixture.KeyEnv] = randomBytes(32).toString('base64')
+    const worker = await WorkerHost.StartAsync({ port: 0, baseDir, masterKey: { base64Env: Fixture.KeyEnv }, provisioning: Fixture.Provisioning(), tls: Fixture.Tls(), healthPort: 0, redisUrl: 'redis://127.0.0.1:1' })
+    try
+    {
+        assert.equal(await Fixture.Get(worker.HealthAddressForTest().port, '/healthz'), 200)
+        assert.equal(await Fixture.Get(worker.HealthAddressForTest().port, '/readyz'), 503)
+    }
+    finally
+    {
+        await worker.DisposeAsync()
+        rmSync(baseDir, { recursive: true, force: true })
+        delete process.env[Fixture.KeyEnv]
+    }
+})

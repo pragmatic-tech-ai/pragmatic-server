@@ -151,8 +151,9 @@ export class WorkerHost
     public static async StartAsync(options: WorkerHostOptions): Promise<WorkerHost>
     {
         const coordinator = new InMemoryTenantCoordinator()
-        const ownership: ITenantOwnership = options.redisUrl !== undefined && options.redisUrl.length > 0
-            ? new RedisTenantOwnership(options.redisUrl, options.replicaId ?? randomUUID())
+        const hasRedis = options.redisUrl !== undefined && options.redisUrl.length > 0
+        const ownership: ITenantOwnership = hasRedis
+            ? new RedisTenantOwnership(options.redisUrl!, options.replicaId ?? randomUUID())
             : new InMemoryTenantOwnership()
         await ownership.Start().catch(() => {})
         const registry = new TenantRegistry(options.baseDir, options.masterKey, options.provisioning, coordinator, options.platform, options.deploymentMode, ownership, options.provisionedSecrets)
@@ -168,24 +169,33 @@ export class WorkerHost
         const resolved = httpsServer.address() as AddressInfo
         let healthServer: PlainHttpServer | null = null
         let healthAddress: WebSocketAddress | null = null
-        if (options.healthPort !== undefined)
+        let registration: WorkerRegistration | null = null
+        try
         {
-            healthServer = createHttpServer()
-            await new Promise<void>((resolve, reject) =>
+            if (options.healthPort !== undefined)
             {
-                healthServer!.once(WorkerHost.ListeningEvent, () => resolve())
-                healthServer!.once(WorkerHost.ErrorEvent, reject)
-                healthServer!.listen(options.healthPort, WorkerHost.DefaultHealthHost)
-            })
-            const healthInfo = healthServer.address() as AddressInfo
-            healthAddress = { host: WorkerHost.DefaultHealthHost, port: healthInfo.port }
+                healthServer = createHttpServer()
+                await new Promise<void>((resolve, reject) =>
+                {
+                    healthServer!.once(WorkerHost.ListeningEvent, () => resolve())
+                    healthServer!.once(WorkerHost.ErrorEvent, reject)
+                    healthServer!.listen(options.healthPort, WorkerHost.DefaultHealthHost)
+                })
+                const healthInfo = healthServer.address() as AddressInfo
+                healthAddress = { host: WorkerHost.DefaultHealthHost, port: healthInfo.port }
+            }
+            registration = hasRedis && options.advertise !== undefined ? new WorkerRegistration(options.redisUrl!, options.advertise) : null
+            if (registration !== null)
+            {
+                await registration.Start().catch(() => {})
+            }
         }
-        const registration = options.redisUrl !== undefined && options.redisUrl.length > 0 && options.advertise !== undefined
-            ? new WorkerRegistration(options.redisUrl, options.advertise)
-            : null
-        if (registration !== null)
+        catch (error)
         {
-            await registration.Start().catch(() => {})
+            await new Promise<void>(resolve => wss.close(() => resolve()))
+            await new Promise<void>(resolve => httpsServer.close(() => resolve()))
+            await registry.DisposeAll().catch(() => {})
+            throw error
         }
         const started = new WorkerHost(httpsServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? WorkerHost.DefaultIdleTtlMs, options.idleSweepMs ?? WorkerHost.DefaultIdleSweepMs, healthServer, healthAddress, registration)
         started.MarkReady()
@@ -204,6 +214,7 @@ export class WorkerHost
 
     public async DisposeAsync(): Promise<void>
     {
+        this.ready = false
         this.disposed = true
         clearInterval(this.sweep)
         for (const handler of this.handlers)
