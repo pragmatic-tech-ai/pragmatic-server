@@ -144,3 +144,18 @@ test('a connection with no secret fields yields no Secret', async () =>
     assert.equal(resolved.Secret, undefined)
     assert.equal(resolved.Config.database, 'd')
 })
+
+test('an empty-string connection secretRef falls through to tokenEnvVar', async () =>
+{
+    process.env.PS_FCR_EMPTY_FALLTHROUGH = 'env-token'
+    try
+    {
+        const resolver = new FileConnectionResolver(Fixture.Map([['crm', { Settings: { database: 'd' }, SecretRef: '', TokenEnvVar: 'PS_FCR_EMPTY_FALLTHROUGH' }]]))
+        const resolved = await resolver.Resolve(Fixture.Spec({ Connection: 'crm' }), Fixture.Provider(new Map()))
+        assert.equal(resolved.Secret, 'env-token')
+    }
+    finally
+    {
+        delete process.env.PS_FCR_EMPTY_FALLTHROUGH
+    }
+})

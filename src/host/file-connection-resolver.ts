@@ -71,7 +71,7 @@ export class FileConnectionResolver implements IConnectionResolver
         {
             return (await services.get(SecretStoreKey)?.Get(spec.Secret)) ?? undefined
         }
-        if (connection.SecretRef !== undefined)
+        if (connection.SecretRef !== undefined && connection.SecretRef.length > 0)
         {
             return (await services.get(SecretStoreKey)?.Get(connection.SecretRef)) ?? undefined
         }
