@@ -31,6 +31,7 @@ export class RedisWorkerRouter implements IWorkerRouter
     private readonly now: () => number
     private readonly clientFactory: () => RedisClientType
     private client: RedisClientType | null = null
+    private connecting: Promise<RedisClientType> | null = null
 
     public constructor(url: string, now: () => number = () => Date.now(), clientFactory?: () => RedisClientType)
     {
@@ -49,6 +50,7 @@ export class RedisWorkerRouter implements IWorkerRouter
         }
         const key = RedisWorkerRouter.RoutePrefix + tenantId
         const existing = await client.get(key)
+        // The route value and live-set members are the SAME encoding (WorkerRegistration writes JSON.stringify(endpoint)), so a byte match means the claimed worker is still live.
         if (existing !== null && live.includes(existing))
         {
             await client.eval(RedisWorkerRouter.RenewScript, { keys: [key], arguments: [existing, String(RedisWorkerRouter.RouteTtlMs)] })
@@ -102,9 +104,30 @@ export class RedisWorkerRouter implements IWorkerRouter
         {
             return this.client
         }
+        this.client = null
+        if (this.connecting === null)
+        {
+            this.connecting = this.Connect().finally(() =>
+            {
+                this.connecting = null
+            })
+        }
+        return this.connecting
+    }
+
+    private async Connect(): Promise<RedisClientType>
+    {
         const client = this.clientFactory()
         client.on(RedisWorkerRouter.ErrorEvent, () => {})
-        await client.connect()
+        try
+        {
+            await client.connect()
+        }
+        catch (error)
+        {
+            await client.quit().catch(() => {})
+            throw error
+        }
         this.client = client
         return client
     }
