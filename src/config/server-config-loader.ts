@@ -39,6 +39,7 @@ export class ServerConfigLoader
             throw new Error(ServerConfigLoader.MissingTenant)
         }
         const redis = ServerConfigLoader.Redis(env, file.redisUrl)
+        const provisionedSecretsFile = env.PRAGMATIC_PROVISIONED_SECRETS_FILE
         return {
             host: env.PRAGMATIC_HOST ?? file.host ?? ServerConfigLoader.DefaultHost,
             port: ServerConfigLoader.Int(env.PRAGMATIC_PORT) ?? file.port ?? ServerConfigLoader.DefaultPort,
@@ -50,6 +51,7 @@ export class ServerConfigLoader
             idleTtlMs: ServerConfigLoader.Int(env.PRAGMATIC_IDLE_TTL_MS) ?? file.idleTtlMs,
             idleSweepMs: ServerConfigLoader.Int(env.PRAGMATIC_IDLE_SWEEP_MS) ?? file.idleSweepMs,
             ...redis,
+            provisionedSecretsFile,
         }
     }
 

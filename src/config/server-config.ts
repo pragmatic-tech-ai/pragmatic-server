@@ -20,4 +20,5 @@ export interface ServerConfig
     idleSweepMs?: number
     redisUrl?: string
     replicaId?: string
+    provisionedSecretsFile?: string
 }
