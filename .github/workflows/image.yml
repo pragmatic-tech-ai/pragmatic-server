@@ -1,0 +1,20 @@
+# OWNER is a placeholder: replace with the GitHub org/user once a remote exists.
+# The publish step is inert until repo variable ENABLE_IMAGE_PUBLISH=true and secret GHCR_TOKEN exist.
+name: image
+on:
+  workflow_dispatch:
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: |
+          printf '@pragmatic-tech-ai:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=${{ secrets.PACKAGES_TOKEN }}\n' > "$RUNNER_TEMP/npmrc"
+          DOCKER_BUILDKIT=1 docker build --secret id=npmrc,src="$RUNNER_TEMP/npmrc" -f pragmatic-server/docker/Dockerfile -t ghcr.io/OWNER/pragmatic-server:latest ..
+          rm -f "$RUNNER_TEMP/npmrc"
+      - name: Publish to GHCR (inert until enabled)
+        if: ${{ vars.ENABLE_IMAGE_PUBLISH == 'true' }}
+        run: |
+          echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker push ghcr.io/OWNER/pragmatic-server:latest

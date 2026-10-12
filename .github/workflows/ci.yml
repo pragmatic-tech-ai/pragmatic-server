@@ -1,0 +1,42 @@
+# NOTE: the sibling packages are expected to sit next to this repo in the workspace
+# (the loop's ../$pkg mirrors the local layout). Committed artifact; not executed
+# against GitHub in this phase.
+name: ci
+on:
+  push:
+  pull_request:
+jobs:
+  build-test-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Configure GitHub Packages auth
+        run: |
+          printf '@pragmatic-tech-ai:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=${{ secrets.PACKAGES_TOKEN }}\n' > ~/.npmrc
+      - name: Build siblings in dependency order
+        run: |
+          for pkg in todl-runtime TODL pragmatic-protocol todl-identity todl-identity-local todl-identity-host todl-identity-cloud todl-identity-engine todl-connectors-host todl-platform-node todl-platform-cloud todl-identity-node pragmatic-server; do
+            if [ "$pkg" = "TODL" ]; then
+              # Mirrors docker/Dockerfile: TODL's own `npm run build` fails in a clean env because its
+              # tsconfig lib omits DOM. Tracked deferred Feature: add DOM to TODL's lib upstream.
+              (cd "../$pkg" && npm install --no-audit --no-fund \
+                && npm run gen:prelude && npm run gen:scaffold && npm run compile:mu \
+                && npx tsc -p tsconfig.build.json --lib ES2022,DOM)
+            else
+              (cd "../$pkg" && npm install --no-audit --no-fund && npm run build)
+            fi
+          done
+      - name: Test
+        run: cd ../pragmatic-server && npx tsx --test "src/**/*.test.ts"
+      - name: Docker build
+        run: |
+          printf '@pragmatic-tech-ai:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=${{ secrets.PACKAGES_TOKEN }}\n' > "$RUNNER_TEMP/npmrc"
+          DOCKER_BUILDKIT=1 docker build --secret id=npmrc,src="$RUNNER_TEMP/npmrc" -f pragmatic-server/docker/Dockerfile -t pragmatic-server ..
+          rm -f "$RUNNER_TEMP/npmrc"
+      - name: Helm lint + template
+        run: |
+          helm lint pragmatic-server/helm/pragmatic-server
+          helm template pragmatic-server/helm/pragmatic-server
