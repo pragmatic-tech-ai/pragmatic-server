@@ -1,5 +1,5 @@
 {{- /* only safe in cloud/shared-store mode */}}
-{{- if .Values.autoscaling.enabled }}
+{{- if and .Values.autoscaling.enabled (not .Values.cluster.enabled) }}
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:

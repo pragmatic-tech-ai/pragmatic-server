@@ -59,3 +59,11 @@ test('the worker Service is headless (clusterIP None) for stable per-pod DNS', (
     assert.match(svc, /clusterIP: None/)
     assert.match(svc, /app\.kubernetes\.io\/component: worker/)
 })
+
+test('the standalone PVC and HPA are also confined to the non-cluster path', () =>
+{
+    const pvc = Chart.Text(join('templates', 'pvc.yaml'))
+    const hpa = Chart.Text(join('templates', 'hpa.yaml'))
+    assert.match(pvc, /not \.Values\.cluster\.enabled/)
+    assert.match(hpa, /not \.Values\.cluster\.enabled/)
+})
