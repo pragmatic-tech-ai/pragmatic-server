@@ -31,7 +31,7 @@ test('Dockerfile runs as a non-root user and defines a healthcheck + entrypoint'
 test('Dockerfile builds the siblings in dependency order ending with pragmatic-server', () =>
 {
     const text = Dockerfile.Text()
-    const order = ['todl-runtime', 'TODL', 'pragmatic-protocol', 'todl-identity', 'todl-connectors-host', 'todl-platform-cloud', 'todl-identity-node', 'pragmatic-server']
+    const order = ['todl-runtime', 'TODL', 'pragmatic-protocol', 'todl-identity', 'todl-identity-local', 'todl-identity-host', 'todl-identity-cloud', 'todl-identity-engine', 'todl-connectors-host', 'todl-platform-node', 'todl-platform-cloud', 'todl-identity-node', 'pragmatic-server']
     let cursor = -1
     for (const name of order)
     {

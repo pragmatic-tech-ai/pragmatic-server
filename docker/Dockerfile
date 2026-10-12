@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Build context MUST be the parent workspace dir (architecture-agent/).
-# Build:  DOCKER_BUILDKIT=1 docker build -f pragmatic-server/docker/Dockerfile -t pragmatic-server ..
+# Build:  DOCKER_BUILDKIT=1 docker build -f pragmatic-server/docker/Dockerfile --secret id=npmrc,src=/path/to/.npmrc -t pragmatic-server ..
 FROM node:22 AS builder
 WORKDIR /workspace
 # Native addons (argon2/bcrypt in identity) need a C toolchain.
@@ -11,8 +11,11 @@ COPY todl-runtime/ ./todl-runtime/
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
     cd todl-runtime && npm install --no-audit --no-fund && npm run build
 COPY TODL/ ./TODL/
+# Workaround (temporary; remove once TODL's tsconfig lib includes DOM - tracked as a deferred Feature):
 # TODL declares lib ES2022 only but contains browser code; it relied on DOM types leaking from a
 # symlinked local mural. With the registry mural the hermetic build needs an explicit DOM lib.
+# This step MIRRORS TODL's own build script (gen:prelude, gen:scaffold, compile:mu) but replaces the
+# final tsc with the DOM-lib variant; keep it in sync if TODL's build script changes.
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
     cd TODL && npm install --no-audit --no-fund \
     && npm run gen:prelude && npm run gen:scaffold && npm run compile:mu \
