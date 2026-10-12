@@ -62,7 +62,7 @@ test('fails closed when neither tenants file nor tenant id is given', () =>
 
 test('a thrown error never echoes a secret-looking env value', () =>
 {
-    const env = { PRAGMATIC_MASTER_KEY_B64_ENV: 'K', K: 'SUPER_SECRET_VALUE', PRAGMATIC_TENANT_ID: 't1' }
+    const env = { PRAGMATIC_BASE_DIR: '/data', PRAGMATIC_MASTER_KEY_B64_ENV: 'K', K: 'SUPER_SECRET_VALUE' }
     try
     {
         ServerConfigLoader.Load(env, Env.NoRead)
@@ -81,4 +81,10 @@ test('merges an optional JSON config file, with env overriding file', () =>
     const config = ServerConfigLoader.Load(env, read)
     assert.equal(config.port, 9000)
     assert.equal(config.idleTtlMs, 123)
+})
+
+test('fails closed on an invalid deployment mode', () =>
+{
+    const env = { ...Env.Minimal(), PRAGMATIC_DEPLOYMENT_MODE: 'staging' }
+    assert.throws(() => ServerConfigLoader.Load(env, Env.NoRead), /local or cloud/)
 })
