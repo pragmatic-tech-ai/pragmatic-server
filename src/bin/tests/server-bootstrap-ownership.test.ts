@@ -28,9 +28,9 @@ test('ComposeOptions carries redisUrl and replicaId through', () =>
 
 test('StartupLine reports ownership mode without leaking the URL', () =>
 {
-    const redis = ServerBootstrap.StartupLine(Fixtures.Config({ redisUrl: 'redis://user:secret@host:6379' }), 3)
+    const redis = ServerBootstrap.StartupLine(Fixtures.Config({ redisUrl: 'redis://user:hunter2@host:6379' }), 3)
     assert.match(redis, /ownership=redis/)
-    assert.doesNotMatch(redis, /secret/)
+    assert.doesNotMatch(redis, /hunter2/)
     assert.doesNotMatch(redis, /redis:\/\//)
     const local = ServerBootstrap.StartupLine(Fixtures.Config({}), 1)
     assert.match(local, /ownership=in-memory/)
