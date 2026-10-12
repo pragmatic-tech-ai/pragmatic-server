@@ -1,6 +1,8 @@
 import { createServer } from 'node:https'
 import type { Server as HttpsServer } from 'node:https'
-import type { IncomingMessage, ServerResponse } from 'node:http'
+import { createServer as createHttpServer } from 'node:http'
+import type { Server as PlainHttpServer, IncomingMessage, ServerResponse } from 'node:http'
+import { randomUUID } from 'node:crypto'
 import type { Socket } from 'node:net'
 import type { AddressInfo } from 'node:net'
 import { WebSocketServer } from 'ws'
@@ -15,7 +17,13 @@ import { AuthHttpEndpoint } from '../host/auth-http-endpoint.js'
 import type { WebSocketAddress } from '../host/pragmatic-server-host.js'
 import { InMemoryTenantCoordinator } from '../tenancy/tenant-coordinator.js'
 import { TenantRegistry } from '../tenancy/tenant-registry.js'
-import { TenantOwnedElsewhereError } from '../tenancy/tenant-ownership.js'
+import { TenantOwnedElsewhereError, InMemoryTenantOwnership } from '../tenancy/tenant-ownership.js'
+import type { ITenantOwnership } from '../tenancy/tenant-ownership.js'
+import { RedisTenantOwnership } from '../tenancy/redis-tenant-ownership.js'
+import { WorkerRegistration } from './worker-registration.js'
+import { HealthEndpoint } from '../host/health-endpoint.js'
+import type { IProvisionedSecretSource } from '../config/provisioned-secret-source.js'
+import type { WorkerEndpoint } from './worker-router.js'
 import type { ITenantProvisioning } from '../tenancy/tenant-provisioning.js'
 import { MachineTls } from './machine-tls.js'
 import type { MachineTlsRef } from './machine-tls.js'
@@ -34,6 +42,11 @@ export interface WorkerHostOptions
     idleSweepMs?: number
     platform?: PlatformServices
     deploymentMode?: DeploymentMode
+    redisUrl?: string
+    replicaId?: string
+    provisionedSecrets?: IProvisionedSecretSource
+    healthPort?: number
+    advertise?: WorkerEndpoint
 }
 
 /** Internal mutual-TLS wss worker: the gateway (a verified client cert) forwards x-pragmatic-tenant + authorization;
@@ -51,6 +64,10 @@ export class WorkerHost
     private static readonly BearerPrefix = 'Bearer '
     private static readonly ServiceUnavailableResponse = 'HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nConnection: close\r\n\r\n'
     private static readonly NotFoundStatus = 404
+    private static readonly DefaultHealthHost = '0.0.0.0'
+    private static readonly ContentTypeHeader = 'content-type'
+    private static readonly TextPlain = 'text/plain'
+    private static readonly NoHealthServer = 'no health server configured'
     private static readonly DefaultIdleTtlMs = 300_000
     private static readonly DefaultIdleSweepMs = 30_000
 
@@ -62,6 +79,11 @@ export class WorkerHost
     private readonly address: WebSocketAddress
     private readonly idleTtlMs: number
     private readonly sweep: NodeJS.Timeout
+    private readonly health = new HealthEndpoint()
+    private readonly healthServer: PlainHttpServer | null
+    private readonly healthAddress: WebSocketAddress | null
+    private readonly registration: WorkerRegistration | null
+    private ready = false
     private disposed = false
 
     private constructor(
@@ -70,8 +92,14 @@ export class WorkerHost
         registry: TenantRegistry,
         address: WebSocketAddress,
         idleTtlMs: number,
-        idleSweepMs: number)
+        idleSweepMs: number,
+        healthServer: PlainHttpServer | null,
+        healthAddress: WebSocketAddress | null,
+        registration: WorkerRegistration | null)
     {
+        this.healthServer = healthServer
+        this.healthAddress = healthAddress
+        this.registration = registration
         this.httpsServer = httpsServer
         this.wss = wss
         this.registry = registry
@@ -88,12 +116,46 @@ export class WorkerHost
         })
         this.sweep = setInterval(() => void this.registry.EvictIdle(Date.now(), this.idleTtlMs), idleSweepMs)
         this.sweep.unref()
+        if (healthServer !== null)
+        {
+            healthServer.on(WorkerHost.RequestEvent, (req: IncomingMessage, res: ServerResponse) =>
+            {
+                const path = (req.url ?? '/').split('?')[0]!
+                const result = this.health.Handle(req.method ?? '', path, this.ready && this.registry.OwnershipHealthy())
+                if (result === null)
+                {
+                    res.writeHead(WorkerHost.NotFoundStatus)
+                    res.end()
+                    return
+                }
+                res.writeHead(result.status, { [WorkerHost.ContentTypeHeader]: WorkerHost.TextPlain })
+                res.end(result.body)
+            })
+        }
+    }
+
+    public MarkReady(): void
+    {
+        this.ready = true
+    }
+
+    public HealthAddressForTest(): WebSocketAddress
+    {
+        if (this.healthAddress === null)
+        {
+            throw new Error(WorkerHost.NoHealthServer)
+        }
+        return this.healthAddress
     }
 
     public static async StartAsync(options: WorkerHostOptions): Promise<WorkerHost>
     {
         const coordinator = new InMemoryTenantCoordinator()
-        const registry = new TenantRegistry(options.baseDir, options.masterKey, options.provisioning, coordinator, options.platform, options.deploymentMode)
+        const ownership: ITenantOwnership = options.redisUrl !== undefined && options.redisUrl.length > 0
+            ? new RedisTenantOwnership(options.redisUrl, options.replicaId ?? randomUUID())
+            : new InMemoryTenantOwnership()
+        await ownership.Start().catch(() => {})
+        const registry = new TenantRegistry(options.baseDir, options.masterKey, options.provisioning, coordinator, options.platform, options.deploymentMode, ownership, options.provisionedSecrets)
         const host = options.host ?? WorkerHost.DefaultHost
         const httpsServer = createServer(MachineTls.Server(options.tls))
         const wss = new WebSocketServer({ noServer: true })
@@ -104,7 +166,30 @@ export class WorkerHost
             httpsServer.listen(options.port, host)
         })
         const resolved = httpsServer.address() as AddressInfo
-        return new WorkerHost(httpsServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? WorkerHost.DefaultIdleTtlMs, options.idleSweepMs ?? WorkerHost.DefaultIdleSweepMs)
+        let healthServer: PlainHttpServer | null = null
+        let healthAddress: WebSocketAddress | null = null
+        if (options.healthPort !== undefined)
+        {
+            healthServer = createHttpServer()
+            await new Promise<void>((resolve, reject) =>
+            {
+                healthServer!.once(WorkerHost.ListeningEvent, () => resolve())
+                healthServer!.once(WorkerHost.ErrorEvent, reject)
+                healthServer!.listen(options.healthPort, WorkerHost.DefaultHealthHost)
+            })
+            const healthInfo = healthServer.address() as AddressInfo
+            healthAddress = { host: WorkerHost.DefaultHealthHost, port: healthInfo.port }
+        }
+        const registration = options.redisUrl !== undefined && options.redisUrl.length > 0 && options.advertise !== undefined
+            ? new WorkerRegistration(options.redisUrl, options.advertise)
+            : null
+        if (registration !== null)
+        {
+            await registration.Start().catch(() => {})
+        }
+        const started = new WorkerHost(httpsServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? WorkerHost.DefaultIdleTtlMs, options.idleSweepMs ?? WorkerHost.DefaultIdleSweepMs, healthServer, healthAddress, registration)
+        started.MarkReady()
+        return started
     }
 
     public Address(): WebSocketAddress
@@ -132,6 +217,11 @@ export class WorkerHost
         }
         await new Promise<void>(resolve => this.wss.close(() => resolve()))
         await new Promise<void>(resolve => this.httpsServer.close(() => resolve()))
+        await this.registration?.Drain().catch(() => {})
+        if (this.healthServer !== null)
+        {
+            await new Promise<void>(resolve => this.healthServer!.close(() => resolve()))
+        }
         await this.registry.DisposeAll()
     }
 

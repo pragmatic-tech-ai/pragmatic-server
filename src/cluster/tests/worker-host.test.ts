@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { WebSocket } from 'ws'
 import { Grant, Role, ResourceRef, ResourceKind } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticClient, WsMessageSocket } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { RedisTenantOwnership } from '../../tenancy/redis-tenant-ownership.js'
 import { MachineTls } from '../machine-tls.js'
 import type { MachineTlsRef } from '../machine-tls.js'
 import { WorkerHost } from '../worker-host.js'
@@ -177,6 +178,31 @@ test('a platform passed in the options is forwarded into the per-tenant server',
     finally
     {
         await worker.DisposeAsync()
+        WorkerFixture.Cleanup(baseDir)
+    }
+})
+
+test('gated-live: a worker rejects a tenant already owned by another holder (ownership backstop, Review Focus 1)', async t =>
+{
+    const url = process.env.PRAGMATIC_TEST_REDIS_URL
+    if (url === undefined)
+    {
+        t.skip('PRAGMATIC_TEST_REDIS_URL not set')
+        return
+    }
+    const { baseDir } = WorkerFixture.Start('t1')
+    const other = new RedisTenantOwnership(url, 'other-holder')
+    await other.Start()
+    assert.equal(await other.Acquire('t1'), true)
+    const worker = await WorkerHost.StartAsync({ ...WorkerFixture.Options(baseDir, WorkerFixture.Provisioning('t1')), redisUrl: url })
+    try
+    {
+        await assert.rejects(() => worker.RegistryForTest().ServerFor('t1'), /TenantOwnedElsewhere/)
+    }
+    finally
+    {
+        await worker.DisposeAsync()
+        await other.ReleaseAll()
         WorkerFixture.Cleanup(baseDir)
     }
 })
