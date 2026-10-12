@@ -5,13 +5,14 @@ import type { IProvisionedSecretSource } from '../config/provisioned-secret-sour
 export class ProvisionedSecretMissingError extends Error
 {
     private static readonly Prefix = 'provisioned secret not available: '
+    private static readonly ErrorName = 'ProvisionedSecretMissingError'
 
     public readonly Reference: string
 
     public constructor(reference: string)
     {
         super(ProvisionedSecretMissingError.Prefix + reference)
-        this.name = 'ProvisionedSecretMissingError'
+        this.name = ProvisionedSecretMissingError.ErrorName
         this.Reference = reference
     }
 }
@@ -32,13 +33,17 @@ export class TenantSecretProvisioner
     {
         for (const reference of references)
         {
-            const value = reference.length === 0 ? null : this.source.Lookup(reference)
+            if (reference.length === 0)
+            {
+                throw new ProvisionedSecretMissingError(reference)
+            }
+            const value = this.source.Lookup(reference)
             if (value !== null)
             {
                 await secrets.Put(reference, value)
                 continue
             }
-            const existing = reference.length === 0 ? null : await secrets.Get(reference)
+            const existing = await secrets.Get(reference)
             if (existing === null)
             {
                 throw new ProvisionedSecretMissingError(reference)
