@@ -57,7 +57,9 @@ test('ComposeOptions carries the provisioned secret source onto the host options
 test('StartupLine reports secrets=file when a provisioned-secrets file is configured', () =>
 {
     const config = { ...Fixture.Config(DeploymentMode.Local), provisionedSecretsFile: '/run/secrets/provisioned/secrets.json' }
-    assert.match(ServerBootstrap.StartupLine(config, 1), / secrets=file/)
+    const line = ServerBootstrap.StartupLine(config, 1)
+    assert.match(line, / secrets=file/)
+    assert.ok(!line.includes('/run/secrets/provisioned/secrets.json'))
 })
 
 test('StartupLine reports secrets=none when no provisioned-secrets file is configured', () =>
