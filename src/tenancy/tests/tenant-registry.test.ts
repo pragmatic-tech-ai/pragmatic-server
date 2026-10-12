@@ -11,6 +11,19 @@ import type { IdentityStoreSet } from '@pragmatic-tech-ai/todl-identity'
 import { NodePlatform } from '../../platform/node-platform.js'
 import { DeploymentMode } from '../../platform/deployment-mode.js'
 
+class RecordingPlatform extends NodePlatform
+{
+    public static readonly IdentityStoresCall = 'identityStores'
+
+    public readonly calls: string[] = []
+
+    public override CreateIdentityStores(identityRoot: string, masterKey: Buffer): Promise<IdentityStoreSet>
+    {
+        this.calls.push(RecordingPlatform.IdentityStoresCall)
+        return super.CreateIdentityStores(identityRoot, masterKey)
+    }
+}
+
 class RegistryFixture
 {
     public static readonly KeyEnv = 'PS_5A_KEY'
@@ -130,19 +143,6 @@ test('concurrent cold builds of the same tenant dedupe to one server', async () 
     }
 })
 
-class RecordingPlatform extends NodePlatform
-{
-    public static readonly IdentityStoresCall = 'identityStores'
-
-    public readonly calls: string[] = []
-
-    public override CreateIdentityStores(identityRoot: string, masterKey: Buffer): Promise<IdentityStoreSet>
-    {
-        this.calls.push(RecordingPlatform.IdentityStoresCall)
-        return super.CreateIdentityStores(identityRoot, masterKey)
-    }
-}
-
 test('TenantRegistry threads the injected platform to each tenant server', async () =>
 {
     const { baseDir } = RegistryFixture.Dirs()
@@ -158,5 +158,23 @@ test('TenantRegistry threads the injected platform to each tenant server', async
     {
         await registry.DisposeAll()
         rmSync(baseDir, { recursive: true, force: true })
+        delete process.env[RegistryFixture.KeyEnv]
+    }
+})
+
+test('TenantRegistry threads deploymentMode: Cloud with no platform fails closed', async () =>
+{
+    const { baseDir } = RegistryFixture.Dirs()
+    process.env[RegistryFixture.KeyEnv] = randomBytes(32).toString('base64')
+    const registry = new TenantRegistry(baseDir, { base64Env: RegistryFixture.KeyEnv }, RegistryFixture.Provisioning('t1'), new InMemoryTenantCoordinator(), undefined, DeploymentMode.Cloud)
+    try
+    {
+        await assert.rejects(() => registry.ServerFor('t1'), /explicit platform bundle/)
+    }
+    finally
+    {
+        await registry.DisposeAll()
+        rmSync(baseDir, { recursive: true, force: true })
+        delete process.env[RegistryFixture.KeyEnv]
     }
 })
