@@ -1,0 +1,135 @@
+{{- if .Values.cluster.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "pragmatic-server.fullname" . }}-worker
+  labels:
+    {{- include "pragmatic-server.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  serviceName: {{ include "pragmatic-server.fullname" . }}-worker
+  replicas: {{ .Values.cluster.worker.replicas }}
+  selector:
+    matchLabels:
+      {{- include "pragmatic-server.componentSelectorLabels" (dict "ctx" . "component" "worker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pragmatic-server.componentSelectorLabels" (dict "ctx" . "component" "worker") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      containers:
+        - name: worker
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["node", "dist/bin/pragmatic-workerd.js"]
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+          ports:
+            - name: mtls
+              containerPort: {{ .Values.cluster.worker.port }}
+            - name: health
+              containerPort: {{ .Values.cluster.worker.healthPort }}
+          env:
+            - name: PRAGMATIC_BASE_DIR
+              value: {{ .Values.baseDir | quote }}
+            - name: PRAGMATIC_PORT
+              value: {{ .Values.cluster.worker.port | quote }}
+            - name: PRAGMATIC_HEALTH_PORT
+              value: {{ .Values.cluster.worker.healthPort | quote }}
+            - name: PRAGMATIC_DEPLOYMENT_MODE
+              value: {{ .Values.deploymentMode | quote }}
+            - name: PRAGMATIC_TENANTS_FILE
+              value: /cfg/tenants.json
+            - name: PRAGMATIC_MASTER_KEY_B64_ENV
+              value: PRAGMATIC_MASTER_KEY
+            - name: PRAGMATIC_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "pragmatic-server.fullname" . }}
+                  key: PRAGMATIC_MASTER_KEY
+            - name: PRAGMATIC_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.redis.existingSecret | default (include "pragmatic-server.fullname" .) }}
+                  key: {{ .Values.redis.secretKey | default "redis-url" }}
+            - name: PRAGMATIC_REPLICA_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: PRAGMATIC_WORKER_ADVERTISE_HOST
+              value: "$(POD_NAME).{{ include "pragmatic-server.fullname" . }}-worker"
+            - name: PRAGMATIC_WORKER_ADVERTISE_PORT
+              value: {{ .Values.cluster.worker.port | quote }}
+            - name: PRAGMATIC_TLS_CERT_FILE
+              value: {{ .Values.cluster.tls.mountPath }}/tls.crt
+            - name: PRAGMATIC_TLS_KEY_FILE
+              value: {{ .Values.cluster.tls.mountPath }}/tls.key
+            - name: PRAGMATIC_TLS_CA_FILE
+              value: {{ .Values.cluster.tls.mountPath }}/ca.crt
+            {{- if .Values.secrets.provisioned }}
+            - name: PRAGMATIC_PROVISIONED_SECRETS_FILE
+              value: /run/secrets/provisioned/secrets.json
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /cfg
+              readOnly: true
+            - name: tls
+              mountPath: {{ .Values.cluster.tls.mountPath }}
+              readOnly: true
+            {{- if or .Values.secrets.provisioned .Values.secrets.provisionedExistingSecret }}
+            - name: provisioned-secrets
+              mountPath: /run/secrets/provisioned
+              readOnly: true
+            {{- end }}
+            - name: data
+              mountPath: {{ .Values.baseDir }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "pragmatic-server.fullname" . }}
+        - name: tls
+          secret:
+            secretName: {{ required "cluster.tls.existingSecret is required when cluster.enabled" .Values.cluster.tls.existingSecret }}
+        {{- if or .Values.secrets.provisioned .Values.secrets.provisionedExistingSecret }}
+        - name: provisioned-secrets
+          secret:
+            secretName: {{ .Values.secrets.provisionedExistingSecret | default (include "pragmatic-server.fullname" .) }}
+            items:
+              - key: {{ .Values.secrets.provisionedSecretKey }}
+                path: secrets.json
+        {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}
+        {{- if .Values.persistence.storageClass }}
+        storageClassName: {{ .Values.persistence.storageClass }}
+        {{- end }}
+{{- end }}

@@ -36,3 +36,26 @@ test('the single Deployment and Service render only when cluster is disabled', (
     assert.match(deployment, /if not \.Values\.cluster\.enabled/)
     assert.match(service, /if not \.Values\.cluster\.enabled/)
 })
+
+test('the worker StatefulSet renders with component=worker, mTLS mount, advertise, health probes, and the worker daemon', () =>
+{
+    const ss = Chart.Text(join('templates', 'worker-statefulset.yaml'))
+    assert.match(ss, /kind: StatefulSet/)
+    assert.match(ss, /app\.kubernetes\.io\/component: worker/)
+    assert.match(ss, /dist\/bin\/pragmatic-workerd\.js/)
+    assert.match(ss, /PRAGMATIC_TLS_CERT_FILE/)
+    assert.match(ss, /PRAGMATIC_TLS_KEY_FILE/)
+    assert.match(ss, /PRAGMATIC_TLS_CA_FILE/)
+    assert.match(ss, /PRAGMATIC_WORKER_ADVERTISE_HOST/)
+    assert.match(ss, /PRAGMATIC_HEALTH_PORT/)
+    assert.match(ss, /path: \/readyz/)
+    assert.match(ss, /if \.Values\.cluster\.enabled/)
+    assert.doesNotMatch(ss, /tls\.key:/)
+})
+
+test('the worker Service is headless (clusterIP None) for stable per-pod DNS', () =>
+{
+    const svc = Chart.Text(join('templates', 'worker-service.yaml'))
+    assert.match(svc, /clusterIP: None/)
+    assert.match(svc, /app\.kubernetes\.io\/component: worker/)
+})
