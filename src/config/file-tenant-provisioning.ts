@@ -26,6 +26,7 @@ interface FileShape
 export class FileTenantProvisioning implements ITenantProvisioning
 {
     private static readonly BadJson = 'tenants file is not valid JSON'
+    private static readonly BadShape = 'tenants file has an invalid shape'
     private static readonly BadKind = 'unknown adapter kind in tenants file'
 
     private readonly entries: ReadonlyMap<string, TenantProvisioning>
@@ -53,14 +54,25 @@ export class FileTenantProvisioning implements ITenantProvisioning
 
     private static Parse(json: string): FileShape
     {
+        let parsed: unknown
         try
         {
-            return JSON.parse(json) as FileShape
+            parsed = JSON.parse(json)
         }
         catch
         {
             throw new Error(FileTenantProvisioning.BadJson)
         }
+        if (!FileTenantProvisioning.IsRecord(parsed) || !FileTenantProvisioning.IsRecord(parsed.tenants))
+        {
+            throw new Error(FileTenantProvisioning.BadShape)
+        }
+        return parsed as unknown as FileShape
+    }
+
+    private static IsRecord(value: unknown): value is Record<string, unknown>
+    {
+        return typeof value === 'object' && value !== null && !Array.isArray(value)
     }
 
     private static Provisioning(shape: TenantShape): TenantProvisioning
@@ -75,6 +87,10 @@ export class FileTenantProvisioning implements ITenantProvisioning
 
     private static Policy(shape: PolicyShape): ConnectorsPolicy
     {
+        if (!Array.isArray(shape.adapterAllowlist) || !Array.isArray(shape.providerAllowlist))
+        {
+            throw new Error(FileTenantProvisioning.BadShape)
+        }
         const kinds = shape.adapterAllowlist.map(name => FileTenantProvisioning.Kind(name))
         return new ConnectorsPolicy(kinds, shape.catalogOnly, shape.allowProviderOverride, shape.providerAllowlist)
     }

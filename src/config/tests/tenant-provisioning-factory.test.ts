@@ -26,7 +26,14 @@ test('builds a single-tenant provisioning from env config', () =>
 
 test('builds a file provisioning when a tenants file is configured', () =>
 {
-    const read = (path: string): string => path === '/cfg/tenants.json' ? JSON.stringify({ tenants: { acme: { displayName: 'Acme' } } }) : (() => { throw new Error('bad path') })()
+    const read = (path: string): string =>
+    {
+        if (path === '/cfg/tenants.json')
+        {
+            return JSON.stringify({ tenants: { acme: { displayName: 'Acme' } } })
+        }
+        throw new Error('unexpected read')
+    }
     const provisioning = TenantProvisioningFactory.Build(Configs.File(), read)
     assert.equal(provisioning.OptionsFor('acme')?.displayName, 'Acme')
 })

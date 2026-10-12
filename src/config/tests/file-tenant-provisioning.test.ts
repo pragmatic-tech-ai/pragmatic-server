@@ -59,3 +59,14 @@ test('a tenant without connectorsPolicy resolves with it undefined', () =>
     const options = FileTenantProvisioning.FromText(text).OptionsFor('t')
     assert.equal(options?.connectorsPolicy, undefined)
 })
+
+test('fails closed when the file has no tenants object', () =>
+{
+    assert.throws(() => FileTenantProvisioning.FromText('{}'), /invalid shape/)
+})
+
+test('fails closed when adapterAllowlist is not an array', () =>
+{
+    const text = JSON.stringify({ tenants: { t: { displayName: 't', connectorsPolicy: { adapterAllowlist: 'sql', catalogOnly: false, allowProviderOverride: false, providerAllowlist: [] } } } })
+    assert.throws(() => FileTenantProvisioning.FromText(text), /invalid shape/)
+})
