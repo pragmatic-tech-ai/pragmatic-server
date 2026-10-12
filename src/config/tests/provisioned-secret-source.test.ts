@@ -47,7 +47,7 @@ test('FromText rejects a non-string value naming neither key nor value', () =>
 
 test('FromText preserves a value with special characters (Review Focus 3)', () =>
 {
-    const value = 'a"b\\c\nd\tеé'
+    const value = 'a"b\\c\nd\t\u0435\u00e9'
     const source = ProvisionedSecretSource.FromText(JSON.stringify({ k: value }))
     assert.equal(source.Lookup('k'), value)
 })
