@@ -21,6 +21,7 @@ export class PlatformSelector
         {
             return new NodePlatform()
         }
+        // Cloud requires an injected bundle built via CloudPlatform.Create (external resources cannot be synthesized here).
         throw new Error(`${mode}${PlatformSelector.RequiresBundle}`)
     }
 }
