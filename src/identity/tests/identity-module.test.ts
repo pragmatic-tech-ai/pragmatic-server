@@ -157,3 +157,24 @@ test('an active source missing a named ref fails the tenant build closed (Review
         IdentityFixture.Cleanup(identityRoot, packagesRoot, keyEnv)
     }
 })
+
+test('additionalSecretRefs are written through from an active provisioned source', async () =>
+{
+    const { identityRoot, packagesRoot, keyEnv } = IdentityFixture.Dirs()
+    const base = IdentityFixture.Options(identityRoot, packagesRoot, keyEnv)
+    const options = { ...base, identity: { ...base.identity,
+        provisionedSecrets: ProvisionedSecretSource.FromText('{"t1/bootstrap/admin":"admin-pw-12345","t1/crm/pw":"conn-secret"}'),
+        additionalSecretRefs: ['t1/crm/pw'] } }
+    const server = new PragmaticServer(options)
+    try
+    {
+        await server.Start()
+        const pack = await server.Pack()
+        assert.equal(await pack.Secrets.Get('t1/crm/pw'), 'conn-secret')
+    }
+    finally
+    {
+        await server.Dispose()
+        IdentityFixture.Cleanup(identityRoot, packagesRoot, keyEnv)
+    }
+})

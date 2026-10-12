@@ -47,7 +47,12 @@ export class IdentityModule
             {
                 refs.push(this.options.bootstrap.adminPasswordRef)
             }
-            await new TenantSecretProvisioner(this.options.provisionedSecrets).EnsureAsync(stores.Secrets, refs)
+            if (this.options.additionalSecretRefs !== undefined)
+            {
+                refs.push(...this.options.additionalSecretRefs)
+            }
+            const unique = [...new Set(refs)]
+            await new TenantSecretProvisioner(this.options.provisionedSecrets).EnsureAsync(stores.Secrets, unique)
         }
         const oidc = this.options.oidc === undefined
             ? undefined

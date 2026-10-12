@@ -48,6 +48,7 @@ export interface PragmaticServerIdentityOptions
     oidc?: OidcServerOptions
     bootstrap?: BootstrapOptions
     provisionedSecrets?: IProvisionedSecretSource
+    additionalSecretRefs?: readonly string[]
 }
 
 export interface PragmaticServerOptions

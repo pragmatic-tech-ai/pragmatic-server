@@ -231,6 +231,7 @@ export class TenantRegistry
                 bootstrap: provisioning.bootstrap,
                 oidc: provisioning.oidc,
                 provisionedSecrets: this.provisionedSecrets,
+                additionalSecretRefs: provisioning.connectorSecretRefs,
             },
         }
     }
