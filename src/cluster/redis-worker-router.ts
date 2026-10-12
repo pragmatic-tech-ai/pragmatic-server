@@ -2,79 +2,110 @@ import { createClient } from 'redis'
 import type { RedisClientType } from 'redis'
 import type { IWorkerRouter, WorkerEndpoint } from './worker-router.js'
 
-/** Multi-worker tenant→worker routing over Redis: a worker claims a tenant under a TTL-leased key and others
- *  route to the claimant until the lease lapses. Gated-live (needs a real Redis). The connection URL may carry
- *  credentials and is never logged. */
+/** No live worker is available to serve a tenant. */
+export class NoWorkersAvailableError extends Error
+{
+    private static readonly ErrorName = 'NoWorkersAvailableError'
+    private static readonly Message = 'no live workers available'
+
+    public constructor()
+    {
+        super(NoWorkersAvailableError.Message)
+        this.name = NoWorkersAvailableError.ErrorName
+    }
+}
+
+/** Best-effort tenant->worker routing over Redis (correctness is the worker's ownership lease, not this router): reads the
+ *  live-worker set, renews an active route whose worker is still live, else deterministically picks a live worker and
+ *  claims the route under a TTL. The URL may carry credentials and is never logged. Injectable clock + clientFactory. */
 export class RedisWorkerRouter implements IWorkerRouter
 {
-    private static readonly KeyPrefix = 'pragmatic:route:'
-    private static readonly LeaseTtlMs = 30_000
+    private static readonly WorkersKey = 'pragmatic:workers'
+    private static readonly RoutePrefix = 'pragmatic:route:'
+    private static readonly RouteTtlMs = 30_000
+    private static readonly PlusInf = '+inf'
     private static readonly ErrorEvent = 'error'
-    private static readonly CompareDeleteScript = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
+    private static readonly RenewScript = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end"
 
     private readonly url: string
-    private readonly self: WorkerEndpoint
     private readonly now: () => number
-    private readonly claimed = new Set<string>()
+    private readonly clientFactory: () => RedisClientType
     private client: RedisClientType | null = null
 
-    public constructor(url: string, self: WorkerEndpoint, now: () => number = () => Date.now())
+    public constructor(url: string, now: () => number = () => Date.now(), clientFactory?: () => RedisClientType)
     {
         this.url = url
-        this.self = self
         this.now = now
+        this.clientFactory = clientFactory ?? (() => createClient({ url: this.url }) as RedisClientType)
     }
 
     public async RouteOrSpawn(tenantId: string): Promise<WorkerEndpoint>
     {
         const client = await this.Connected()
-        const key = `${RedisWorkerRouter.KeyPrefix}${tenantId}`
-        const claimed = await client.set(key, JSON.stringify(this.self), { NX: true, PX: RedisWorkerRouter.LeaseTtlMs })
-        if (claimed !== null)
+        const live = await client.zRangeByScore(RedisWorkerRouter.WorkersKey, this.now(), RedisWorkerRouter.PlusInf)
+        if (live.length === 0)
         {
-            this.claimed.add(key)
-            return this.self
+            throw new NoWorkersAvailableError()
         }
+        const key = RedisWorkerRouter.RoutePrefix + tenantId
         const existing = await client.get(key)
-        if (existing !== null)
+        if (existing !== null && live.includes(existing))
         {
+            await client.eval(RedisWorkerRouter.RenewScript, { keys: [key], arguments: [existing, String(RedisWorkerRouter.RouteTtlMs)] })
             return JSON.parse(existing) as WorkerEndpoint
         }
-        return this.self
+        const pick = RedisWorkerRouter.Pick(tenantId, live)
+        if (existing === null)
+        {
+            const claimed = await client.set(key, pick, { NX: true, PX: RedisWorkerRouter.RouteTtlMs })
+            if (claimed === null)
+            {
+                const winner = await client.get(key)
+                if (winner !== null)
+                {
+                    return JSON.parse(winner) as WorkerEndpoint
+                }
+            }
+            return JSON.parse(pick) as WorkerEndpoint
+        }
+        await client.set(key, pick, { PX: RedisWorkerRouter.RouteTtlMs })
+        return JSON.parse(pick) as WorkerEndpoint
     }
 
     public async Drain(): Promise<void>
     {
-        if (this.client === null)
-        {
-            return
-        }
         const client = this.client
         this.client = null
-        try
+        if (client !== null)
         {
-            const mine = JSON.stringify(this.self)
-            for (const key of this.claimed)
-            {
-                await client.eval(RedisWorkerRouter.CompareDeleteScript, { keys: [key], arguments: [mine] })
-            }
-            this.claimed.clear()
+            await client.quit().catch(() => {})
         }
-        finally
+    }
+
+    /** Deterministic stable pick so every gateway indexes the same sorted live list (FNV-1a over the tenant id). */
+    private static Pick(tenantId: string, live: readonly string[]): string
+    {
+        const sorted = [...live].sort()
+        let hash = 2166136261
+        for (let i = 0; i < tenantId.length; i++)
         {
-            await client.quit()
+            hash ^= tenantId.charCodeAt(i)
+            hash = Math.imul(hash, 16777619)
         }
+        const index = (hash >>> 0) % sorted.length
+        return sorted[index]!
     }
 
     private async Connected(): Promise<RedisClientType>
     {
-        if (this.client === null)
+        if (this.client !== null && this.client.isOpen)
         {
-            const client: RedisClientType = createClient({ url: this.url })
-            client.on(RedisWorkerRouter.ErrorEvent, () => {})
-            await client.connect()
-            this.client = client
+            return this.client
         }
-        return this.client
+        const client = this.clientFactory()
+        client.on(RedisWorkerRouter.ErrorEvent, () => {})
+        await client.connect()
+        this.client = client
+        return client
     }
 }
