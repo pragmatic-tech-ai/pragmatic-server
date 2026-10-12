@@ -29,13 +29,12 @@ test('Plan returns one ConnectorModel for the connector-bearing model only', () 
     assert.ok(only.Base.nodes.length > 0)
 })
 
-test('the base shard carries the model own nodes and excludes the other model instances', () =>
+test('the base shard carries the model own concept and is non-empty', () =>
 {
     const { model } = check([{ uri: 'shop.todl', text: META }])
     const planned = SolutionConnectorPlanner.Plan(model)
     const only = planned[0]!
-    // the shard must contain the Customer concept of the planned model and must NOT contain a node id
-    // that belongs to the sibling "Crm" model's own instance set (shard isolation).
+    // the shard is non-empty and contains the planned model's Customer concept.
     const ids = new Set(only.Base.nodes.map(n => n.id))
     assert.ok([...ids].some(id => id.includes('Customer')))
 })
