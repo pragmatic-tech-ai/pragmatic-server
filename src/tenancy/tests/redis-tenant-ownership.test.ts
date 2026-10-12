@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createClient } from 'redis'
+import type { RedisClientType } from 'redis'
 import { RedisTenantOwnership } from '../redis-tenant-ownership.js'
 
 const url = process.env.PRAGMATIC_TEST_REDIS_URL
@@ -76,28 +77,34 @@ test('redis ownership: a lost lease fires OnLost and drops the stale held entry'
     }
 })
 
-test('redis ownership: a key not renewable within the lease TTL is given up', { skip: url === undefined ? 'set PRAGMATIC_TEST_REDIS_URL to run' : false }, async () =>
+test('a held key not renewable within the lease TTL is given up (lapse)', async () =>
 {
-    const tenant = `t-${Date.now()}-lapse`
-    let clock = 1_000_000
-    const a = new RedisTenantOwnership(url as string, 'replica-a', () => clock)
+    let clock = 1_000
+    let evalShouldReject = false
+    const fake =
+    {
+        isOpen: true,
+        on(): void {},
+        async connect(): Promise<void> {},
+        async quit(): Promise<void> {},
+        async set(): Promise<string | null> { return 'OK' },
+        async eval(): Promise<number>
+        {
+            if (evalShouldReject)
+            {
+                throw new Error('unreachable')
+            }
+            return 1
+        },
+    }
+    const ownership = new RedisTenantOwnership('redis://unused', 'replica-a', () => clock, () => fake as unknown as RedisClientType)
     let lost = ''
-    a.OnLost(id => { lost = id })
-    await a.Start()
-    const raw = createClient({ url: url as string })
-    await raw.connect()
-    try
-    {
-        assert.equal(await a.Acquire(tenant), true)
-        await raw.del(`pragmatic:own:${tenant}`)
-        clock += 31_000
-        await a.RenewNowForTest()
-        assert.equal(lost, tenant)
-        assert.equal(await a.Acquire(tenant), true)
-    }
-    finally
-    {
-        await raw.quit()
-        await a.ReleaseAll()
-    }
+    ownership.OnLost(id => { lost = id })
+    await ownership.Start()
+    assert.equal(await ownership.Acquire('acme'), true)
+    evalShouldReject = true
+    clock += 30_000 // the lease TTL: past the drop threshold (TTL minus one renew cycle)
+    await ownership.RenewNowForTest()
+    assert.equal(lost, 'acme')
+    await ownership.ReleaseAll()
 })

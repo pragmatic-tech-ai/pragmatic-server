@@ -21,6 +21,8 @@ export class RedisTenantOwnership implements ITenantOwnership
     private readonly url: string
     private readonly self: string
     private readonly now: () => number
+    private readonly clientFactory: () => RedisClientType
+    private renewing = false
     private readonly lastRenewMs = new Map<string, number>()
     private readonly held = new Set<string>()
     private client: RedisClientType | null = null
@@ -29,11 +31,12 @@ export class RedisTenantOwnership implements ITenantOwnership
     private renew: NodeJS.Timeout | null = null
     private lost: TenantLostHandler = () => {}
 
-    public constructor(url: string, self: string, now: () => number = () => Date.now())
+    public constructor(url: string, self: string, now: () => number = () => Date.now(), clientFactory?: () => RedisClientType)
     {
         this.url = url
         this.self = self
         this.now = now
+        this.clientFactory = clientFactory ?? (() => createClient({ url: this.url, socket: { connectTimeout: RedisTenantOwnership.ConnectTimeoutMs, reconnectStrategy: retries => retries >= RedisTenantOwnership.MaxReconnectAttempts ? new Error(RedisTenantOwnership.UnavailableText) : Math.min(retries * 100, 1000) } }) as RedisClientType)
     }
 
     public OnLost(handler: TenantLostHandler): void
@@ -130,49 +133,62 @@ export class RedisTenantOwnership implements ITenantOwnership
 
     private async RenewAll(): Promise<void>
     {
-        if (this.client === null || !this.client.isOpen)
+        if (this.renewing)
         {
-            this.client = null
-            try
-            {
-                await this.Connected()
-            }
-            catch
-            {
-                this.healthy = false
-            }
+            return
         }
-        const client = this.client
-        const now = this.now()
-        for (const key of [...this.held])
+        this.renewing = true
+        try
         {
-            let renewed = false
-            if (client !== null && client.isOpen)
+            if (this.client === null || !this.client.isOpen)
             {
+                this.client = null
                 try
                 {
-                    const ok = await client.eval(RedisTenantOwnership.RenewScript, { keys: [key], arguments: [this.self, String(RedisTenantOwnership.LeaseTtlMs)] }) as number
-                    this.healthy = true
-                    if (ok === 0)
-                    {
-                        this.Drop(key)
-                        continue
-                    }
-                    renewed = true
+                    await this.Connected()
                 }
                 catch
                 {
                     this.healthy = false
                 }
             }
-            if (renewed)
+            const client = this.client
+            const now = this.now()
+            for (const key of [...this.held])
             {
-                this.lastRenewMs.set(key, now)
+                let renewed = false
+                if (client !== null && client.isOpen)
+                {
+                    try
+                    {
+                        const ok = await client.eval(RedisTenantOwnership.RenewScript, { keys: [key], arguments: [this.self, String(RedisTenantOwnership.LeaseTtlMs)] }) as number
+                        this.healthy = true
+                        if (ok === 0)
+                        {
+                            this.Drop(key)
+                            continue
+                        }
+                        renewed = true
+                    }
+                    catch
+                    {
+                        this.healthy = false
+                    }
+                }
+                if (renewed)
+                {
+                    this.lastRenewMs.set(key, now)
+                }
+                else if (now - (this.lastRenewMs.get(key) ?? now) >= RedisTenantOwnership.LeaseTtlMs - RedisTenantOwnership.RenewMs)
+                {
+                    this.Drop(key)
+                }
             }
-            else if (now - (this.lastRenewMs.get(key) ?? now) >= RedisTenantOwnership.LeaseTtlMs)
-            {
-                this.Drop(key)
-            }
+    
+        }
+        finally
+        {
+            this.renewing = false
         }
     }
 
@@ -208,7 +224,7 @@ export class RedisTenantOwnership implements ITenantOwnership
 
     private async Connect(): Promise<RedisClientType>
     {
-        const client: RedisClientType = createClient({ url: this.url, socket: { connectTimeout: RedisTenantOwnership.ConnectTimeoutMs, reconnectStrategy: retries => retries >= RedisTenantOwnership.MaxReconnectAttempts ? new Error(RedisTenantOwnership.UnavailableText) : Math.min(retries * 100, 1000) } })
+        const client: RedisClientType = this.clientFactory()
         client.on(RedisTenantOwnership.ErrorEvent, () =>
         {
             this.healthy = false
