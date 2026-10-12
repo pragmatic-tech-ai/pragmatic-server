@@ -20,54 +20,58 @@ class Fixture
     public static readonly RedisEnv = 'PRAGMATIC_TEST_REDIS_URL'
     public static readonly PortA = 17101
     public static readonly PortB = 17102
-    public static readonly Tenant = 't1'
+
+    private static Dir(): string
+    {
+        return join(import.meta.dirname, '..', '..', 'tests', 'fixtures', 'tls')
+    }
 
     public static ServerTls(): MachineTlsRef
     {
-        const dir = join(import.meta.dirname, '..', '..', 'tests', 'fixtures', 'tls')
+        const dir = Fixture.Dir()
         return { certFile: join(dir, 'server.pem'), keyFile: join(dir, 'server.key'), caFile: join(dir, 'ca.pem') }
     }
 
     public static ClientTls(): MachineTlsRef
     {
-        const dir = join(import.meta.dirname, '..', '..', 'tests', 'fixtures', 'tls')
+        const dir = Fixture.Dir()
         return { certFile: join(dir, 'client.pem'), keyFile: join(dir, 'client.key'), caFile: join(dir, 'ca.pem') }
     }
 
-    public static Seed(): string
+    public static Seed(tenant: string): string
     {
         const baseDir = mkdtempSync(join(tmpdir(), 'ps-clmi-'))
         const solution = join(import.meta.dirname, '..', '..', 'tests', 'fixtures', 'sample-solution')
-        mkdirSync(join(baseDir, Fixture.Tenant), { recursive: true })
-        cpSync(solution, join(baseDir, Fixture.Tenant, 'solution'), { recursive: true })
+        mkdirSync(join(baseDir, tenant), { recursive: true })
+        cpSync(solution, join(baseDir, tenant, 'solution'), { recursive: true })
         process.env[Fixture.KeyEnv] = randomBytes(32).toString('base64')
         return baseDir
     }
 
-    public static Provisioning(): InMemoryTenantProvisioning
+    public static Provisioning(tenant: string): InMemoryTenantProvisioning
     {
-        return new InMemoryTenantProvisioning(new Map<string, TenantProvisioning>([[Fixture.Tenant, { displayName: Fixture.Tenant }]]))
+        return new InMemoryTenantProvisioning(new Map<string, TenantProvisioning>([[tenant, { displayName: tenant }]]))
     }
 
-    public static async Worker(baseDir: string, port: number, url: string): Promise<WorkerHost>
+    public static async Worker(baseDir: string, port: number, url: string, tenant: string): Promise<WorkerHost>
     {
-        return WorkerHost.StartAsync({ host: Fixture.Host, port, baseDir, masterKey: { base64Env: Fixture.KeyEnv }, provisioning: Fixture.Provisioning(), tls: Fixture.ServerTls(), redisUrl: url, advertise: { host: Fixture.Host, port } })
+        return WorkerHost.StartAsync({ host: Fixture.Host, port, baseDir, masterKey: { base64Env: Fixture.KeyEnv }, provisioning: Fixture.Provisioning(tenant), tls: Fixture.ServerTls(), redisUrl: url, advertise: { host: Fixture.Host, port } })
     }
 
-    public static async Token(worker: WorkerHost): Promise<string>
+    public static async Token(worker: WorkerHost, tenant: string): Promise<string>
     {
-        const server = await worker.RegistryForTest().ServerFor(Fixture.Tenant)
+        const server = await worker.RegistryForTest().ServerFor(tenant)
         const pack = await server.Pack()
-        await pack.Grants.Save(new Grant(Fixture.Tenant, Role.Admin, new ResourceRef(ResourceKind.Tenant, Fixture.Tenant, [])))
-        return (await pack.Tokens.Issue(server.Tenant(), Fixture.Tenant, [], null)).Token
+        await pack.Grants.Save(new Grant(tenant, Role.Admin, new ResourceRef(ResourceKind.Tenant, tenant, [])))
+        return (await pack.Tokens.Issue(server.Tenant(), tenant, [], null)).Token
     }
 
-    public static async OpenAndCheck(addr: { host: string, port: number }, baseDir: string, token: string): Promise<void>
+    public static async OpenAndCheck(addr: { host: string, port: number }, baseDir: string, token: string, tenant: string): Promise<void>
     {
-        const client = await PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?tenant=${Fixture.Tenant}`, { bearerToken: token })
+        const client = await PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?tenant=${tenant}`, { bearerToken: token })
         try
         {
-            const sum = await client.OpenSolution(join(baseDir, Fixture.Tenant, 'solution'))
+            const sum = await client.OpenSolution(join(baseDir, tenant, 'solution'))
             assert.equal(sum.members.length, 1)
         }
         finally
@@ -85,32 +89,33 @@ test('gated-live: the gateway routes a tenant to a live worker over mTLS, and re
         t.skip('PRAGMATIC_TEST_REDIS_URL not set')
         return
     }
-    const baseDir = Fixture.Seed()
-    const router = new RedisWorkerRouter(url)
-    const workerA = await Fixture.Worker(baseDir, Fixture.PortA, url)
-    const gateway = await Gateway.StartAsync({ host: Fixture.Host, port: 0, router, tls: Fixture.ClientTls(), serverName: Fixture.Host })
-    const addr = gateway.Address()
+    const tenant = 't-' + randomBytes(6).toString('hex')
+    const baseDir = Fixture.Seed(tenant)
+    let router: RedisWorkerRouter | null = null
+    let workerA: WorkerHost | null = null
     let workerB: WorkerHost | null = null
+    let gateway: Gateway | null = null
     try
     {
-        const token = await Fixture.Token(workerA)
+        router = new RedisWorkerRouter(url)
+        workerA = await Fixture.Worker(baseDir, Fixture.PortA, url, tenant)
+        gateway = await Gateway.StartAsync({ host: Fixture.Host, port: 0, router, tls: Fixture.ClientTls(), serverName: Fixture.Host })
+        const addr = gateway.Address()
+        const token = await Fixture.Token(workerA, tenant)
         // 1) Only A is live: the client is served through the gateway + real redis router.
-        await Fixture.OpenAndCheck(addr, baseDir, token)
+        await Fixture.OpenAndCheck(addr, baseDir, token, tenant)
         // 2) Bring up B, stop A: A unregisters + releases its ownership lease.
-        workerB = await Fixture.Worker(baseDir, Fixture.PortB, url)
+        workerB = await Fixture.Worker(baseDir, Fixture.PortB, url, tenant)
         await workerA.DisposeAsync()
-        // 3) Reconnect: the router re-homes t1 to B (A no longer live), B acquires ownership and serves.
-        await Fixture.OpenAndCheck(addr, baseDir, token)
+        // 3) Reconnect: the router re-homes the tenant to B (A no longer live), B acquires ownership and serves.
+        await Fixture.OpenAndCheck(addr, baseDir, token, tenant)
     }
     finally
     {
-        await gateway.DisposeAsync()
-        await router.Drain()
-        await workerA.DisposeAsync().catch(() => {})
-        if (workerB !== null)
-        {
-            await workerB.DisposeAsync()
-        }
+        await gateway?.DisposeAsync().catch(() => {})
+        await router?.Drain().catch(() => {})
+        await workerA?.DisposeAsync().catch(() => {})
+        await workerB?.DisposeAsync().catch(() => {})
         rmSync(baseDir, { recursive: true, force: true })
         delete process.env[Fixture.KeyEnv]
     }
