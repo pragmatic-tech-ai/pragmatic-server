@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { IStorage, IPromptService } from '@pragmatic-tech-ai/todl-runtime'
 import type { IStorageProviderRegistry } from '@pragmatic-tech-ai/todl'
-import type { IdentityStoreSet } from '@pragmatic-tech-ai/todl-identity'
+import type { IdentityStoreSet, ITenantConfigStore } from '@pragmatic-tech-ai/todl-identity'
 import { NodePlatform } from '../node-platform.js'
 import type { PlatformServices } from '../platform-services.js'
 import type { MasterKeyRef } from '../../identity/master-key-resolver.js'
@@ -18,6 +18,7 @@ class RecordingPlatform implements PlatformServices
     public static readonly PromptCall = 'prompt'
     public static readonly MasterKeyCall = 'masterKey'
     public static readonly IdentityStoresCall = 'identityStores'
+    public static readonly TenantConfigCall = 'tenantConfig'
 
     private readonly inner = new NodePlatform()
     public readonly calls: string[] = []
@@ -50,6 +51,12 @@ class RecordingPlatform implements PlatformServices
     {
         this.calls.push(RecordingPlatform.IdentityStoresCall)
         return this.inner.CreateIdentityStores(identityRoot, masterKey)
+    }
+
+    public CreateTenantConfigStore(configRoot: string): Promise<ITenantConfigStore>
+    {
+        this.calls.push(RecordingPlatform.TenantConfigCall)
+        return this.inner.CreateTenantConfigStore(configRoot)
     }
 }
 

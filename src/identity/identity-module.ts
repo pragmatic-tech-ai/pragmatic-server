@@ -1,4 +1,4 @@
-import { IdentityConfig, DelegationDepth, Tenant, TenantKind, IdentityProviderRegistryKey, SecretStoreKey, PasswordHasherKey } from '@pragmatic-tech-ai/todl-identity'
+import { IdentityConfig, DelegationDepth, Tenant, TenantKind, IdentityProviderRegistryKey, SecretStoreKey, PasswordHasherKey, TenantConfigStoreKey } from '@pragmatic-tech-ai/todl-identity'
 import { Argon2PasswordHasher } from '@pragmatic-tech-ai/todl-identity-local'
 import { ConfigurableIdentityProviderRegistry } from '@pragmatic-tech-ai/todl-identity-host'
 import { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
@@ -40,6 +40,9 @@ export class IdentityModule
             : OidcAuthenticatorBuilder.Build(this.options.oidc, stores.Secrets)
         const pack = ServerIdentityPack.OpenWith(stores, oidc)
         const config = new IdentityConfig(IdentityModule.PackId, DelegationDepth.FullAuthz, new Map(), new Map(), new Map())
+        const tenantConfig = await this.platform.CreateTenantConfigStore(this.options.identityRoot)
+        await tenantConfig.Save(tenant.Id, config)
+        services.registerInstance(TenantConfigStoreKey, tenantConfig)
         const registry = await ConfigurableIdentityProviderRegistry.SingleTenant(tenant, config, pack)
         services.registerInstance(IdentityProviderRegistryKey, registry)
         services.registerInstance(SecretStoreKey, pack.Secrets)
