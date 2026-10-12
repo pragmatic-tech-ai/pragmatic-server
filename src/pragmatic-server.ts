@@ -200,8 +200,14 @@ export class PragmaticServer
 
     public async Dispose(): Promise<void>
     {
-        await this.connectorsHost.Dispose()
-        this.root.Services().dispose()
+        try
+        {
+            await this.connectorsHost.Dispose()
+        }
+        finally
+        {
+            this.root.Services().dispose()
+        }
     }
 
     private RegisterInfrastructure(packagesRoot: string): void
