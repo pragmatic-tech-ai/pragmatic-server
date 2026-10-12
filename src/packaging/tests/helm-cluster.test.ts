@@ -67,3 +67,22 @@ test('the standalone PVC and HPA are also confined to the non-cluster path', () 
     assert.match(pvc, /not \.Values\.cluster\.enabled/)
     assert.match(hpa, /not \.Values\.cluster\.enabled/)
 })
+
+test('the gateway Deployment renders with component=gateway, server name, mTLS mount, health, and the gateway daemon', () =>
+{
+    const dep = Chart.Text(join('templates', 'gateway-deployment.yaml'))
+    assert.match(dep, /kind: Deployment/)
+    assert.match(dep, /app\.kubernetes\.io\/component: gateway/)
+    assert.match(dep, /dist\/bin\/pragmatic-gatewayd\.js/)
+    assert.match(dep, /PRAGMATIC_WORKER_SERVERNAME/)
+    assert.match(dep, /PRAGMATIC_TLS_CERT_FILE/)
+    assert.match(dep, /path: \/readyz/)
+    assert.doesNotMatch(dep, /tls\.key:/)
+})
+
+test('the ingress targets the gateway service when cluster is enabled', () =>
+{
+    const ingress = Chart.Text(join('templates', 'ingress.yaml'))
+    assert.match(ingress, /cluster\.enabled/)
+    assert.match(ingress, /-gateway/)
+})

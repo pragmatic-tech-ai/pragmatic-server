@@ -1,0 +1,17 @@
+{{- if .Values.cluster.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "pragmatic-server.fullname" . }}-gateway
+  labels:
+    {{- include "pragmatic-server.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.cluster.gateway.port }}
+      targetPort: http
+  selector:
+    {{- include "pragmatic-server.componentSelectorLabels" (dict "ctx" . "component" "gateway") | nindent 4 }}
+{{- end }}

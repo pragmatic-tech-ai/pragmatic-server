@@ -10,6 +10,12 @@ metadata:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
+  {{- $svcName := include "pragmatic-server.fullname" . }}
+  {{- $svcPort := .Values.service.port }}
+  {{- if .Values.cluster.enabled }}
+  {{- $svcName = printf "%s-gateway" (include "pragmatic-server.fullname" .) }}
+  {{- $svcPort = .Values.cluster.gateway.port }}
+  {{- end }}
   {{- if .Values.ingress.className }}
   ingressClassName: {{ .Values.ingress.className }}
   {{- end }}
@@ -25,7 +31,7 @@ spec:
             pathType: {{ .Values.ingress.pathType }}
             backend:
               service:
-                name: {{ include "pragmatic-server.fullname" . }}
+                name: {{ $svcName }}
                 port:
-                  number: {{ .Values.service.port }}
+                  number: {{ $svcPort }}
 {{- end }}

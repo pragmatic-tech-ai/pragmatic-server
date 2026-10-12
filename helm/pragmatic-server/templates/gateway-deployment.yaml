@@ -1,0 +1,72 @@
+{{- if .Values.cluster.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "pragmatic-server.fullname" . }}-gateway
+  labels:
+    {{- include "pragmatic-server.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  replicas: {{ .Values.cluster.gateway.replicas }}
+  selector:
+    matchLabels:
+      {{- include "pragmatic-server.componentSelectorLabels" (dict "ctx" . "component" "gateway") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pragmatic-server.componentSelectorLabels" (dict "ctx" . "component" "gateway") | nindent 8 }}
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      containers:
+        - name: gateway
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["node", "dist/bin/pragmatic-gatewayd.js"]
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+          ports:
+            - name: http
+              containerPort: {{ .Values.cluster.gateway.port }}
+          env:
+            - name: PRAGMATIC_PORT
+              value: {{ .Values.cluster.gateway.port | quote }}
+            - name: PRAGMATIC_HEALTH_PORT
+              value: {{ .Values.cluster.gateway.healthPort | quote }}
+            - name: PRAGMATIC_WORKER_SERVERNAME
+              value: {{ .Values.cluster.workerServerName | quote }}
+            - name: PRAGMATIC_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.redis.existingSecret | default (include "pragmatic-server.fullname" .) }}
+                  key: {{ .Values.redis.secretKey | default "redis-url" }}
+            - name: PRAGMATIC_TLS_CERT_FILE
+              value: {{ .Values.cluster.tls.mountPath }}/tls.crt
+            - name: PRAGMATIC_TLS_KEY_FILE
+              value: {{ .Values.cluster.tls.mountPath }}/tls.key
+            - name: PRAGMATIC_TLS_CA_FILE
+              value: {{ .Values.cluster.tls.mountPath }}/ca.crt
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: tls
+              mountPath: {{ .Values.cluster.tls.mountPath }}
+              readOnly: true
+      volumes:
+        - name: tls
+          secret:
+            secretName: {{ required "cluster.tls.existingSecret is required when cluster.enabled" .Values.cluster.tls.existingSecret }}
+{{- end }}
