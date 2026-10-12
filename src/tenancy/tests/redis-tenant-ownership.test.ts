@@ -75,3 +75,29 @@ test('redis ownership: a lost lease fires OnLost and drops the stale held entry'
         await b.ReleaseAll()
     }
 })
+
+test('redis ownership: a key not renewable within the lease TTL is given up', { skip: url === undefined ? 'set PRAGMATIC_TEST_REDIS_URL to run' : false }, async () =>
+{
+    const tenant = `t-${Date.now()}-lapse`
+    let clock = 1_000_000
+    const a = new RedisTenantOwnership(url as string, 'replica-a', () => clock)
+    let lost = ''
+    a.OnLost(id => { lost = id })
+    await a.Start()
+    const raw = createClient({ url: url as string })
+    await raw.connect()
+    try
+    {
+        assert.equal(await a.Acquire(tenant), true)
+        await raw.del(`pragmatic:own:${tenant}`)
+        clock += 31_000
+        await a.RenewNowForTest()
+        assert.equal(lost, tenant)
+        assert.equal(await a.Acquire(tenant), true)
+    }
+    finally
+    {
+        await raw.quit()
+        await a.ReleaseAll()
+    }
+})

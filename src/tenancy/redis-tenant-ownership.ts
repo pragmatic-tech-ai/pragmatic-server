@@ -20,6 +20,8 @@ export class RedisTenantOwnership implements ITenantOwnership
 
     private readonly url: string
     private readonly self: string
+    private readonly now: () => number
+    private readonly lastRenewMs = new Map<string, number>()
     private readonly held = new Set<string>()
     private client: RedisClientType | null = null
     private connecting: Promise<RedisClientType> | null = null
@@ -27,10 +29,11 @@ export class RedisTenantOwnership implements ITenantOwnership
     private renew: NodeJS.Timeout | null = null
     private lost: TenantLostHandler = () => {}
 
-    public constructor(url: string, self: string)
+    public constructor(url: string, self: string, now: () => number = () => Date.now())
     {
         this.url = url
         this.self = self
+        this.now = now
     }
 
     public OnLost(handler: TenantLostHandler): void
@@ -57,6 +60,7 @@ export class RedisTenantOwnership implements ITenantOwnership
             return false
         }
         this.held.add(key)
+        this.lastRenewMs.set(key, this.now())
         this.EnsureRenew()
         return true
     }
@@ -69,6 +73,7 @@ export class RedisTenantOwnership implements ITenantOwnership
         {
             return
         }
+        this.lastRenewMs.delete(key)
         const client = await this.Connected()
         await client.eval(RedisTenantOwnership.ReleaseScript, { keys: [key], arguments: [this.self] })
     }
@@ -85,6 +90,7 @@ export class RedisTenantOwnership implements ITenantOwnership
         if (client === null)
         {
             this.held.clear()
+            this.lastRenewMs.clear()
             return
         }
         try
@@ -94,6 +100,7 @@ export class RedisTenantOwnership implements ITenantOwnership
                 await client.eval(RedisTenantOwnership.ReleaseScript, { keys: [key], arguments: [this.self] }).catch(() => 0)
             }
             this.held.clear()
+            this.lastRenewMs.clear()
         }
         finally
         {
@@ -123,29 +130,63 @@ export class RedisTenantOwnership implements ITenantOwnership
 
     private async RenewAll(): Promise<void>
     {
-        const client = this.client
-        if (client === null)
+        if (this.client === null || !this.client.isOpen)
         {
-            return
-        }
-        for (const key of [...this.held])
-        {
-            let ok = -1
+            this.client = null
             try
             {
-                ok = await client.eval(RedisTenantOwnership.RenewScript, { keys: [key], arguments: [this.self, String(RedisTenantOwnership.LeaseTtlMs)] }) as number
-                this.healthy = true
+                await this.Connected()
             }
             catch
             {
                 this.healthy = false
-                continue
             }
-            if (ok === 0)
+        }
+        const client = this.client
+        const now = this.now()
+        for (const key of [...this.held])
+        {
+            let renewed = false
+            if (client !== null && client.isOpen)
             {
-                this.held.delete(key)
-                this.lost(key.slice(RedisTenantOwnership.KeyPrefix.length))
+                try
+                {
+                    const ok = await client.eval(RedisTenantOwnership.RenewScript, { keys: [key], arguments: [this.self, String(RedisTenantOwnership.LeaseTtlMs)] }) as number
+                    this.healthy = true
+                    if (ok === 0)
+                    {
+                        this.Drop(key)
+                        continue
+                    }
+                    renewed = true
+                }
+                catch
+                {
+                    this.healthy = false
+                }
             }
+            if (renewed)
+            {
+                this.lastRenewMs.set(key, now)
+            }
+            else if (now - (this.lastRenewMs.get(key) ?? now) >= RedisTenantOwnership.LeaseTtlMs)
+            {
+                this.Drop(key)
+            }
+        }
+    }
+
+    /** Give up a held key: forget it locally and fire the lost handler (fail-closed). A throwing handler is isolated. */
+    private Drop(key: string): void
+    {
+        this.held.delete(key)
+        this.lastRenewMs.delete(key)
+        try
+        {
+            this.lost(key.slice(RedisTenantOwnership.KeyPrefix.length))
+        }
+        catch
+        {
         }
     }
 
