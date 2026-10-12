@@ -53,21 +53,29 @@ namespace shop {
         return dir
     }
 
+    private static Captured: Record<string, unknown> | undefined
+
     private static Provisioning(): InMemoryTenantProvisioning
     {
         const pool = Fixture.Pool()
-        const connectorsFor = (map: Array<[string, FileConnection]>) => ({ buildPool: () => pool as never, connectionResolver: new FileConnectionResolver(new Map<string, FileConnection>(map)) })
+        const capturingPool = (options: unknown) =>
+        {
+            Fixture.Captured = options as Record<string, unknown>
+            return pool as never
+        }
+        const resolverFor = (map: Array<[string, FileConnection]>) => new FileConnectionResolver(new Map<string, FileConnection>(map))
         const entries = new Map<string, TenantProvisioning>([
             ['t1', { displayName: 'Declared', connectorsPolicy: new ConnectorsPolicy([DataSourceKind.Sql], true, false, []),
-                connectors: connectorsFor([['crm', { Settings: { database: 'app' }, SecretRef: 't1/crm/pw' }]]), connectorSecretRefs: ['t1/crm/pw'] }],
+                connectors: { buildPool: capturingPool, connectionResolver: resolverFor([['crm', { Settings: { database: 'app' }, SecretRef: 't1/crm/pw' }]]) }, connectorSecretRefs: ['t1/crm/pw'] }],
             ['t2', { displayName: 'Undeclared', connectorsPolicy: new ConnectorsPolicy([DataSourceKind.Sql], true, false, []),
-                connectors: connectorsFor([]) }],
+                connectors: { buildPool: () => pool as never, connectionResolver: resolverFor([]) } }],
         ])
         return new InMemoryTenantProvisioning(entries)
     }
 
     public static async Run(): Promise<void>
     {
+        Fixture.Captured = undefined
         const baseDir = mkdtempSync(join(tmpdir(), 'ps-fconn-'))
         const dir1 = Fixture.SolutionDir(Fixture.ModelNamed)
         const dir2 = Fixture.SolutionDir(Fixture.ModelUndeclared)
@@ -84,6 +92,8 @@ namespace shop {
             const r2 = await s2.Connectors()
             const rows = await r1.ReadEntities(r1.ModelsWithConnectors()[0]!.ModelId, Fixture.ConceptId)
             assert.ok(rows.length >= 1)
+            assert.equal(Fixture.Captured?.database, 'app')
+            assert.equal(Fixture.Captured?.password, 'db-password')
             await assert.rejects(() => r2.ReadEntities(r2.ModelsWithConnectors()[0]!.ModelId, Fixture.ConceptId), /is not declared/)
         }
         finally

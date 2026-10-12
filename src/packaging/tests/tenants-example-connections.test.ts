@@ -22,6 +22,10 @@ test('the tenants example declares a connection with a secret ref, no inline pas
     assert.ok(crm !== undefined)
     assert.ok(typeof crm.secretRef === 'string' && crm.secretRef.length > 0)
     assert.equal(crm.settings.password, undefined)
+    for (const key of Object.keys(crm.settings))
+    {
+        assert.doesNotMatch(key, /pass|secret|token/i)
+    }
 })
 
 test('the chart README documents file-declared connections and their secretRef', () =>
