@@ -4,8 +4,9 @@ import type { IServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import type { ConnectorsPolicy } from './connector-policy.js'
 
 /** Enforces a tenant's ConnectorsPolicy at connection-resolve time (the seam the catalog hits on every
- *  adapter open): rejects a disallowed adapter kind, rejects an inline connection under catalog-only, and
- *  guards provider-override; otherwise delegates to the inner resolver. Registered under ConnectionResolverKey,
+ *  adapter open): rejects a disallowed adapter kind and rejects an inline connection under catalog-only;
+ *  otherwise delegates to the inner resolver. The policy's provider-override fields are carried through
+ *  unenforced. Registered under ConnectionResolverKey,
  *  which bypasses the catalog's default inline fallback. */
 export class PolicyConnectionResolver implements IConnectionResolver
 {
