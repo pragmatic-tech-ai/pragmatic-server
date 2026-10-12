@@ -12,6 +12,18 @@ import type { MachineTlsRef } from '../machine-tls.js'
 import { WorkerHost } from '../worker-host.js'
 import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
 import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
+import { NodePlatform } from '../../platform/node-platform.js'
+
+class RecordingPlatform extends NodePlatform
+{
+    public identityRoots: string[] = []
+
+    public override CreateIdentityStores(identityRoot: string, masterKey: Buffer)
+    {
+        this.identityRoots.push(identityRoot)
+        return super.CreateIdentityStores(identityRoot, masterKey)
+    }
+}
 
 class WorkerFixture
 {
@@ -142,6 +154,23 @@ test('a bad bearer is rejected by the worker (ws closes without a usable connect
         const ws = WorkerFixture.Dial(worker.Address(), 't1', 'not-a-real-token', true)
         await new Promise<void>(resolve => { ws.on('close', () => resolve()); ws.on('error', () => resolve()) })
         assert.ok(ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING)
+    }
+    finally
+    {
+        await worker.DisposeAsync()
+        WorkerFixture.Cleanup(baseDir)
+    }
+})
+
+test('a platform passed in the options is forwarded into the per-tenant server', async () =>
+{
+    const { baseDir } = WorkerFixture.Start('t1')
+    const platform = new RecordingPlatform()
+    const worker = await WorkerHost.StartAsync({ ...WorkerFixture.Options(baseDir, WorkerFixture.Provisioning('t1')), platform })
+    try
+    {
+        await WorkerFixture.TokenFor(worker, 't1')
+        assert.equal(platform.identityRoots.length, 1)
     }
     finally
     {

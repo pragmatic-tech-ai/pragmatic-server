@@ -16,6 +16,8 @@ import { AuthHttpEndpoint } from './auth-http-endpoint.js'
 import { InMemoryTenantCoordinator } from '../tenancy/tenant-coordinator.js'
 import { TenantRegistry } from '../tenancy/tenant-registry.js'
 import type { ITenantProvisioning } from '../tenancy/tenant-provisioning.js'
+import type { PlatformServices } from '../platform/platform-services.js'
+import type { DeploymentMode } from '../platform/deployment-mode.js'
 
 export interface PragmaticServerHostOptions
 {
@@ -26,6 +28,8 @@ export interface PragmaticServerHostOptions
     provisioning: ITenantProvisioning
     idleTtlMs?: number
     idleSweepMs?: number
+    platform?: PlatformServices
+    deploymentMode?: DeploymentMode
 }
 
 export interface WebSocketAddress
@@ -92,7 +96,7 @@ export class PragmaticServerHost
     public static async StartAsync(options: PragmaticServerHostOptions): Promise<PragmaticServerHost>
     {
         const coordinator = new InMemoryTenantCoordinator()
-        const registry = new TenantRegistry(options.baseDir, options.masterKey, options.provisioning, coordinator)
+        const registry = new TenantRegistry(options.baseDir, options.masterKey, options.provisioning, coordinator, options.platform, options.deploymentMode)
         const host = options.host ?? PragmaticServerHost.DefaultHost
         const httpServer = createServer()
         const wss = new WebSocketServer({ noServer: true })

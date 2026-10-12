@@ -6,6 +6,8 @@ import { Gateway } from './gateway.js'
 import { InMemoryWorkerRouter } from './worker-router.js'
 import type { IWorkerRouter } from './worker-router.js'
 import type { MachineTlsRef } from './machine-tls.js'
+import type { PlatformServices } from '../platform/platform-services.js'
+import type { DeploymentMode } from '../platform/deployment-mode.js'
 
 export interface ClusterOptions
 {
@@ -15,6 +17,8 @@ export interface ClusterOptions
     masterKey: MasterKeyRef
     provisioning: ITenantProvisioning
     tls: MachineTlsRef
+    platform?: PlatformServices
+    deploymentMode?: DeploymentMode
 }
 
 /** In-process gateway + worker composition over a real loopback mutual-TLS wss channel.
@@ -37,7 +41,7 @@ export class PragmaticCluster
     public static async StartAsync(options: ClusterOptions): Promise<PragmaticCluster>
     {
         const host = options.host ?? PragmaticCluster.DefaultHost
-        const worker = await WorkerHost.StartAsync({ host, port: 0, baseDir: options.baseDir, masterKey: options.masterKey, provisioning: options.provisioning, tls: options.tls })
+        const worker = await WorkerHost.StartAsync({ host, port: 0, baseDir: options.baseDir, masterKey: options.masterKey, provisioning: options.provisioning, tls: options.tls, platform: options.platform, deploymentMode: options.deploymentMode })
         const router = new InMemoryWorkerRouter(worker.Address())
         const gateway = await Gateway.StartAsync({ host: options.host, port: options.port, router, tls: options.tls })
         return new PragmaticCluster(gateway, worker, router)

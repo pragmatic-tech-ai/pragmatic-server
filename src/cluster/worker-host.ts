@@ -18,6 +18,8 @@ import { TenantRegistry } from '../tenancy/tenant-registry.js'
 import type { ITenantProvisioning } from '../tenancy/tenant-provisioning.js'
 import { MachineTls } from './machine-tls.js'
 import type { MachineTlsRef } from './machine-tls.js'
+import type { PlatformServices } from '../platform/platform-services.js'
+import type { DeploymentMode } from '../platform/deployment-mode.js'
 
 export interface WorkerHostOptions
 {
@@ -29,6 +31,8 @@ export interface WorkerHostOptions
     tls: MachineTlsRef
     idleTtlMs?: number
     idleSweepMs?: number
+    platform?: PlatformServices
+    deploymentMode?: DeploymentMode
 }
 
 /** Internal mutual-TLS wss worker: the gateway (a verified client cert) forwards x-pragmatic-tenant + authorization;
@@ -87,7 +91,7 @@ export class WorkerHost
     public static async StartAsync(options: WorkerHostOptions): Promise<WorkerHost>
     {
         const coordinator = new InMemoryTenantCoordinator()
-        const registry = new TenantRegistry(options.baseDir, options.masterKey, options.provisioning, coordinator)
+        const registry = new TenantRegistry(options.baseDir, options.masterKey, options.provisioning, coordinator, options.platform, options.deploymentMode)
         const host = options.host ?? WorkerHost.DefaultHost
         const httpsServer = createServer(MachineTls.Server(options.tls))
         const wss = new WebSocketServer({ noServer: true })
