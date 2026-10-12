@@ -11,6 +11,7 @@ export class WorkerRegistration
     private static readonly TtlMs = 30_000
     private static readonly RenewMs = 10_000
     private static readonly ErrorEvent = 'error'
+    private static readonly DisposedText = 'worker registration disposed'
 
     private readonly url: string
     private readonly member: string
@@ -18,6 +19,7 @@ export class WorkerRegistration
     private readonly clientFactory: () => RedisClientType
     private client: RedisClientType | null = null
     private timer: NodeJS.Timeout | null = null
+    private disposed = false
 
     public constructor(url: string, endpoint: WorkerEndpoint, now: () => number = () => Date.now(), clientFactory?: () => RedisClientType)
     {
@@ -44,6 +46,7 @@ export class WorkerRegistration
 
     public async Drain(): Promise<void>
     {
+        this.disposed = true
         if (this.timer !== null)
         {
             clearInterval(this.timer)
@@ -67,6 +70,10 @@ export class WorkerRegistration
 
     private async Heartbeat(): Promise<void>
     {
+        if (this.disposed)
+        {
+            return
+        }
         try
         {
             const client = await this.Connected()
@@ -85,7 +92,20 @@ export class WorkerRegistration
         }
         const client = this.clientFactory()
         client.on(WorkerRegistration.ErrorEvent, () => {})
-        await client.connect()
+        try
+        {
+            await client.connect()
+        }
+        catch (error)
+        {
+            await client.quit().catch(() => {})
+            throw error
+        }
+        if (this.disposed)
+        {
+            await client.quit().catch(() => {})
+            throw new Error(WorkerRegistration.DisposedText)
+        }
         this.client = client
         return client
     }
