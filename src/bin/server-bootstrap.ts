@@ -38,7 +38,7 @@ export class ServerBootstrap
     public static StartupLine(config: ServerConfig, tenantCount: number): string
     {
         const ownership = config.redisUrl !== undefined ? ServerBootstrap.RedisOwnership : ServerBootstrap.InMemoryOwnership
-        const secrets = config.provisionedSecretsFile !== undefined ? ServerBootstrap.SecretsFile : ServerBootstrap.SecretsNone
+        const secrets = config.provisionedSecretsFile !== undefined && config.provisionedSecretsFile.length > 0 ? ServerBootstrap.SecretsFile : ServerBootstrap.SecretsNone
         return `pragmatic-server listening on ${config.host}:${config.port} mode=${config.deploymentMode} tenants=${tenantCount} ownership=${ownership} secrets=${secrets}`
     }
 }

@@ -66,3 +66,9 @@ test('StartupLine reports secrets=none when no provisioned-secrets file is confi
 {
     assert.match(ServerBootstrap.StartupLine(Fixture.Config(DeploymentMode.Local), 1), / secrets=none/)
 })
+
+test('StartupLine reports secrets=none for an empty-string provisioned-secrets file path', () =>
+{
+    const config = { ...Fixture.Config(DeploymentMode.Local), provisionedSecretsFile: '' }
+    assert.match(ServerBootstrap.StartupLine(config, 1), / secrets=none/)
+})
