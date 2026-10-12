@@ -56,3 +56,10 @@ test('NOTES mention provisioned per-tenant secrets', () =>
     const notes = Chart.Text(join('templates', 'NOTES.txt'))
     assert.match(notes, /provisioned/i)
 })
+
+test('the provisioned volume/env are gated and the existingSecret overrides the chart Secret name', () =>
+{
+    const deployment = Chart.Text(join('templates', 'deployment.yaml'))
+    assert.match(deployment, /\{\{- if or \.Values\.secrets\.provisioned \.Values\.secrets\.provisionedExistingSecret \}\}/)
+    assert.match(deployment, /secretName: \{\{ \.Values\.secrets\.provisionedExistingSecret \| default/)
+})

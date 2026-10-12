@@ -42,7 +42,7 @@ tenants: {}
 secrets:
   masterKeyB64: ""
   # Per-tenant OIDC client secrets and bootstrap-admin passwords, keyed by the ref strings used in
-  # `tenants` (e.g. "acme/oidc/client-secret", "acme-admin-pw"). DEV CONVENIENCE ONLY -- never commit
+  # `tenants` (e.g. "acme-oidc-secret", "acme-admin-pw"). DEV CONVENIENCE ONLY -- never commit
   # real values here; for production supply them out-of-band via provisionedExistingSecret.
   provisioned: {}
   provisionedExistingSecret: ""
