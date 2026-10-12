@@ -7,6 +7,7 @@ import { WebSocketServer, WebSocket } from 'ws'
 import type { RawData } from 'ws'
 import type { WebSocketAddress } from '../host/pragmatic-server-host.js'
 import type { IWorkerRouter, WorkerEndpoint } from './worker-router.js'
+import { HealthEndpoint } from '../host/health-endpoint.js'
 import { MachineTls } from './machine-tls.js'
 import type { ClientTlsMaterial, MachineTlsRef } from './machine-tls.js'
 
@@ -16,6 +17,7 @@ export interface GatewayOptions
     port: number
     router: IWorkerRouter
     tls: MachineTlsRef
+    serverName?: string
 }
 
 /** Public plain-ws front door. Holds NO identity pack and never parses JSON-RPC: it reads the ?tenant hint,
@@ -35,7 +37,9 @@ export class Gateway
     private static readonly TenantHeader = 'x-pragmatic-tenant'
     private static readonly TenantParam = 'tenant'
     private static readonly BaseUrl = 'http://localhost'
-    private static readonly ServerName = '127.0.0.1'
+    private static readonly DefaultServerName = '127.0.0.1'
+    private static readonly ContentTypeHeader = 'content-type'
+    private static readonly TextPlain = 'text/plain'
     private static readonly WsScheme = 'wss://'
     private static readonly UnauthorizedResponse = 'HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'
     private static readonly BadGatewayStatus = 502
@@ -48,15 +52,19 @@ export class Gateway
     private readonly clientTls: ClientTlsMaterial
     private readonly address: WebSocketAddress
     private readonly workerSockets = new Set<WebSocket>()
+    private readonly serverName: string
+    private readonly health = new HealthEndpoint()
+    private ready = true
     private disposed = false
 
-    private constructor(httpServer: HttpServer, wss: WebSocketServer, router: IWorkerRouter, clientTls: ClientTlsMaterial, address: WebSocketAddress)
+    private constructor(httpServer: HttpServer, wss: WebSocketServer, router: IWorkerRouter, clientTls: ClientTlsMaterial, address: WebSocketAddress, serverName: string)
     {
         this.httpServer = httpServer
         this.wss = wss
         this.router = router
         this.clientTls = clientTls
         this.address = address
+        this.serverName = serverName
         httpServer.on(Gateway.UpgradeEvent, (req: IncomingMessage, socket: Socket, head: Buffer) =>
         {
             socket.on(Gateway.ErrorEvent, () => socket.destroy())
@@ -81,7 +89,7 @@ export class Gateway
         })
         const resolved = httpServer.address() as AddressInfo
         const clientTls = MachineTls.Client(options.tls)
-        return new Gateway(httpServer, wss, options.router, clientTls, { host, port: resolved.port })
+        return new Gateway(httpServer, wss, options.router, clientTls, { host, port: resolved.port }, options.serverName ?? Gateway.DefaultServerName)
     }
 
     public Address(): WebSocketAddress
@@ -146,7 +154,7 @@ export class Gateway
         {
             headers[Gateway.AuthorizationHeader] = authorization
         }
-        const wsOptions = { key: client.key, cert: client.cert, ca: client.ca, rejectUnauthorized: true, servername: Gateway.ServerName, headers }
+        const wsOptions = { key: client.key, cert: client.cert, ca: client.ca, rejectUnauthorized: true, servername: this.serverName, headers }
         const workerWs = new WebSocket(`${Gateway.WsScheme}${endpoint.host}:${endpoint.port}/`, wsOptions)
         this.workerSockets.add(workerWs)
         let opened = false
@@ -235,6 +243,14 @@ export class Gateway
     {
         try
         {
+            const healthUrl = new URL(req.url ?? '/', Gateway.BaseUrl)
+            const health = this.health.Handle(req.method ?? '', healthUrl.pathname, this.ready)
+            if (health !== null)
+            {
+                res.writeHead(health.status, { [Gateway.ContentTypeHeader]: Gateway.TextPlain })
+                res.end(health.body)
+                return
+            }
             const tenantId = this.TenantHint(req)
             if (tenantId === null)
             {
@@ -256,7 +272,7 @@ export class Gateway
             const client = this.clientTls
             const headers = { ...req.headers, [Gateway.TenantHeader]: tenantId }
             const proxied = httpsRequest(
-                { host: endpoint.host, port: endpoint.port, method: req.method, path: req.url, headers, key: client.key, cert: client.cert, ca: client.ca, rejectUnauthorized: true, servername: Gateway.ServerName },
+                { host: endpoint.host, port: endpoint.port, method: req.method, path: req.url, headers, key: client.key, cert: client.cert, ca: client.ca, rejectUnauthorized: true, servername: this.serverName },
                 upstream =>
                 {
                     upstream.on(Gateway.ErrorEvent, () =>
