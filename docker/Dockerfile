@@ -8,31 +8,48 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 make g+
 
 # Copy each package, then install+build in dependency order.
 COPY todl-runtime/ ./todl-runtime/
-RUN cd todl-runtime && npm install --no-audit --no-fund && npm run build
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+    cd todl-runtime && npm install --no-audit --no-fund && npm run build
 COPY TODL/ ./TODL/
-RUN cd TODL && npm install --no-audit --no-fund && npm run build
+# TODL declares lib ES2022 only but contains browser code; it relied on DOM types leaking from a
+# symlinked local mural. With the registry mural the hermetic build needs an explicit DOM lib.
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+    cd TODL && npm install --no-audit --no-fund \
+    && npm run gen:prelude && npm run gen:scaffold && npm run compile:mu \
+    && npx tsc -p tsconfig.build.json --lib ES2022,DOM
 COPY pragmatic-protocol/ ./pragmatic-protocol/
-RUN cd pragmatic-protocol && npm install --no-audit --no-fund && npm run build
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+    cd pragmatic-protocol && npm install --no-audit --no-fund && npm run build
 COPY todl-identity/ ./todl-identity/
-RUN cd todl-identity && npm install --no-audit --no-fund && npm run build
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+    cd todl-identity && npm install --no-audit --no-fund && npm run build
 COPY todl-identity-local/ ./todl-identity-local/
-RUN cd todl-identity-local && npm install --no-audit --no-fund && npm run build
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+    cd todl-identity-local && npm install --no-audit --no-fund && npm run build
 COPY todl-identity-host/ ./todl-identity-host/
-RUN cd todl-identity-host && npm install --no-audit --no-fund && npm run build
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+    cd todl-identity-host && npm install --no-audit --no-fund && npm run build
 COPY todl-identity-cloud/ ./todl-identity-cloud/
-RUN cd todl-identity-cloud && npm install --no-audit --no-fund && npm run build
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+    cd todl-identity-cloud && npm install --no-audit --no-fund && npm run build
 COPY todl-identity-engine/ ./todl-identity-engine/
-RUN cd todl-identity-engine && npm install --no-audit --no-fund && npm run build
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+    cd todl-identity-engine && npm install --no-audit --no-fund && npm run build
 COPY todl-connectors-host/ ./todl-connectors-host/
-RUN cd todl-connectors-host && npm install --no-audit --no-fund && npm run build
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+    cd todl-connectors-host && npm install --no-audit --no-fund && npm run build
 COPY todl-platform-node/ ./todl-platform-node/
-RUN cd todl-platform-node && npm install --no-audit --no-fund && npm run build
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+    cd todl-platform-node && npm install --no-audit --no-fund && npm run build
 COPY todl-platform-cloud/ ./todl-platform-cloud/
-RUN cd todl-platform-cloud && npm install --no-audit --no-fund && npm run build
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+    cd todl-platform-cloud && npm install --no-audit --no-fund && npm run build
 COPY todl-identity-node/ ./todl-identity-node/
-RUN cd todl-identity-node && npm install --no-audit --no-fund && npm run build
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+    cd todl-identity-node && npm install --no-audit --no-fund && npm run build
 COPY pragmatic-server/ ./pragmatic-server/
-RUN cd pragmatic-server && npm install --no-audit --no-fund && npm run build
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+    cd pragmatic-server && npm install --no-audit --no-fund && npm run build
 
 FROM node:22-slim AS runtime
 ENV NODE_ENV=production

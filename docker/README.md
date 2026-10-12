@@ -6,7 +6,16 @@ The image builds the whole sibling workspace from source (hermetic, multi-stage)
 
 From the parent workspace directory:
 
-    DOCKER_BUILDKIT=1 docker build -f pragmatic-server/docker/Dockerfile -t pragmatic-server .
+    DOCKER_BUILDKIT=1 docker build -f pragmatic-server/docker/Dockerfile --secret id=npmrc,src=/path/to/.npmrc -t pragmatic-server .
+
+### Private registry
+
+Several `@pragmatic-tech-ai/*` dependencies (for example mural) are hosted on GitHub Packages (npm.pkg.github.com) and need a token with `read:packages`. Create a scoped `.npmrc` OUTSIDE the repo and never commit it:
+
+    @pragmatic-tech-ai:registry=https://npm.pkg.github.com
+    //npm.pkg.github.com/:_authToken=<your PACKAGES_TOKEN>
+
+The token is supplied by reference at build time as a BuildKit secret (`--secret id=npmrc,...`), mounted only during each `npm install` step. It is never baked into an image layer, and `**/.npmrc` is excluded from the build context. CI passes the token from the `PACKAGES_TOKEN` secret (wired in the CI task). Without the secret the build still starts but fails at the first package that needs a private dependency.
 
 BuildKit reads `pragmatic-server/docker/Dockerfile.dockerignore`, which excludes `node_modules`, `dist`, VCS metadata and logs so the context is source plus manifests.
 
