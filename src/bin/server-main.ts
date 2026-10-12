@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { ServerConfigLoader } from '../config/server-config-loader.js'
 import { TenantProvisioningFactory } from '../config/tenant-provisioning-factory.js'
+import { ProvisionedSecretsFactory } from '../config/provisioned-secrets-factory.js'
 import { PragmaticServerHost } from '../host/pragmatic-server-host.js'
 import { ServerBootstrap } from './server-bootstrap.js'
 
@@ -25,7 +26,8 @@ class ServerMain
         const read = (path: string): string => readFileSync(path, ServerMain.Utf8)
         const config = ServerConfigLoader.Load(process.env, read)
         const { provisioning, tenantCount } = TenantProvisioningFactory.Build(config, read)
-        const options = ServerBootstrap.ComposeOptions(config, provisioning)
+        const provisionedSecrets = ProvisionedSecretsFactory.Build(config, read)
+        const options = ServerBootstrap.ComposeOptions(config, provisioning, undefined, provisionedSecrets)
         const host = await PragmaticServerHost.StartAsync(options)
         console.log(ServerBootstrap.StartupLine(config, tenantCount))
         const main = new ServerMain(host)

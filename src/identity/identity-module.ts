@@ -6,6 +6,7 @@ import type { ServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import type { OidcAuthenticator } from '@pragmatic-tech-ai/todl-identity-cloud'
 import { OidcAuthenticatorBuilder } from './oidc-authenticator-builder.js'
 import { ServerBootstrap } from './server-bootstrap.js'
+import { TenantSecretProvisioner } from './tenant-secret-provisioner.js'
 import type { PragmaticServerIdentityOptions } from '../pragmatic-server.js'
 import type { PlatformServices } from '../platform/platform-services.js'
 
@@ -35,6 +36,19 @@ export class IdentityModule
         const masterKey = this.platform.ResolveMasterKey(this.options.masterKey)
         const hasher = new Argon2PasswordHasher()
         const stores = await this.platform.CreateIdentityStores(this.options.identityRoot, masterKey)
+        if (this.options.provisionedSecrets !== undefined)
+        {
+            const refs: string[] = []
+            if (this.options.oidc !== undefined)
+            {
+                refs.push(this.options.oidc.clientSecretRef)
+            }
+            if (this.options.bootstrap !== undefined)
+            {
+                refs.push(this.options.bootstrap.adminPasswordRef)
+            }
+            await new TenantSecretProvisioner(this.options.provisionedSecrets).EnsureAsync(stores.Secrets, refs)
+        }
         const oidc = this.options.oidc === undefined
             ? undefined
             : OidcAuthenticatorBuilder.Build(this.options.oidc, stores.Secrets)

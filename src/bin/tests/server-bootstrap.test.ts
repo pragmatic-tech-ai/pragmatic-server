@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DeploymentMode } from '../../platform/deployment-mode.js'
 import { ServerBootstrap } from '../server-bootstrap.js'
+import { ProvisionedSecretSource } from '../../config/provisioned-secret-source.js'
 import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
 import type { ServerConfig } from '../../config/server-config.js'
 import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
@@ -44,4 +45,22 @@ test('the startup line never contains the master key reference target', () =>
     assert.ok(!line.includes('/run/secrets/key'))
     assert.ok(line.includes('8080'))
     assert.ok(line.includes('tenants=1'))
+})
+
+test('ComposeOptions carries the provisioned secret source onto the host options', () =>
+{
+    const source = ProvisionedSecretSource.FromText('{}')
+    const options = ServerBootstrap.ComposeOptions(Fixture.Config(DeploymentMode.Local), Fixture.Provisioning(), undefined, source)
+    assert.equal(options.provisionedSecrets, source)
+})
+
+test('StartupLine reports secrets=file when a provisioned-secrets file is configured', () =>
+{
+    const config = { ...Fixture.Config(DeploymentMode.Local), provisionedSecretsFile: '/run/secrets/provisioned/secrets.json' }
+    assert.match(ServerBootstrap.StartupLine(config, 1), / secrets=file/)
+})
+
+test('StartupLine reports secrets=none when no provisioned-secrets file is configured', () =>
+{
+    assert.match(ServerBootstrap.StartupLine(Fixture.Config(DeploymentMode.Local), 1), / secrets=none/)
 })

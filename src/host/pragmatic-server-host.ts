@@ -10,6 +10,7 @@ import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services
 import type { AccessContext, Tenant } from '@pragmatic-tech-ai/todl-identity'
 import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
 import type { MasterKeyRef } from '../identity/master-key-resolver.js'
+import type { IProvisionedSecretSource } from '../config/provisioned-secret-source.js'
 import type { PragmaticServer } from '../pragmatic-server.js'
 import { ServerConnectionHandler } from './server-connection-handler.js'
 import { ConnectionAuthenticator } from './connection-authenticator.js'
@@ -36,6 +37,7 @@ export interface PragmaticServerHostOptions
     deploymentMode?: DeploymentMode
     redisUrl?: string
     replicaId?: string
+    provisionedSecrets?: IProvisionedSecretSource
 }
 
 export interface WebSocketAddress
@@ -112,7 +114,7 @@ export class PragmaticServerHost
             ? new RedisTenantOwnership(options.redisUrl, options.replicaId ?? randomUUID())
             : new InMemoryTenantOwnership()
         await ownership.Start().catch(() => {})
-        const registry = new TenantRegistry(options.baseDir, options.masterKey, options.provisioning, coordinator, options.platform, options.deploymentMode, ownership)
+        const registry = new TenantRegistry(options.baseDir, options.masterKey, options.provisioning, coordinator, options.platform, options.deploymentMode, ownership, options.provisionedSecrets)
         const host = options.host ?? PragmaticServerHost.DefaultHost
         const httpServer = createServer()
         const wss = new WebSocketServer({ noServer: true })

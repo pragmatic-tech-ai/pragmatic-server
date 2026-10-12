@@ -2,6 +2,7 @@ import { join } from 'node:path'
 import { PragmaticServer } from '../pragmatic-server.js'
 import type { PragmaticServerOptions } from '../pragmatic-server.js'
 import type { MasterKeyRef } from '../identity/master-key-resolver.js'
+import type { IProvisionedSecretSource } from '../config/provisioned-secret-source.js'
 import type { PlatformServices } from '../platform/platform-services.js'
 import type { DeploymentMode } from '../platform/deployment-mode.js'
 import type { ITenantCoordinator } from './tenant-coordinator.js'
@@ -40,6 +41,7 @@ export class TenantRegistry
     private readonly provisioning: ITenantProvisioning
     private readonly coordinator: ITenantCoordinator
     private ownership: ITenantOwnership
+    private readonly provisionedSecrets: IProvisionedSecretSource | undefined
     private readonly lostDuringBuild = new Set<string>()
     private readonly platform: PlatformServices | undefined
     private readonly deploymentMode: DeploymentMode | undefined
@@ -47,7 +49,7 @@ export class TenantRegistry
     private readonly pending = new Map<string, Promise<PragmaticServer>>()
     private readonly disposing = new Map<string, Promise<void>>()
 
-    public constructor(baseDir: string, masterKey: MasterKeyRef, provisioning: ITenantProvisioning, coordinator: ITenantCoordinator, platform?: PlatformServices, deploymentMode?: DeploymentMode, ownership: ITenantOwnership = new InMemoryTenantOwnership())
+    public constructor(baseDir: string, masterKey: MasterKeyRef, provisioning: ITenantProvisioning, coordinator: ITenantCoordinator, platform?: PlatformServices, deploymentMode?: DeploymentMode, ownership: ITenantOwnership = new InMemoryTenantOwnership(), provisionedSecrets?: IProvisionedSecretSource)
     {
         this.baseDir = baseDir
         this.masterKey = masterKey
@@ -56,6 +58,7 @@ export class TenantRegistry
         this.platform = platform
         this.deploymentMode = deploymentMode
         this.ownership = ownership
+        this.provisionedSecrets = provisionedSecrets
         this.ownership.OnLost(tenantId => void this.DisposeTenant(tenantId))
     }
 
@@ -227,6 +230,7 @@ export class TenantRegistry
                 tenant: { id: tenantId, displayName: provisioning.displayName },
                 bootstrap: provisioning.bootstrap,
                 oidc: provisioning.oidc,
+                provisionedSecrets: this.provisionedSecrets,
             },
         }
     }

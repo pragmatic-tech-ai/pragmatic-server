@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AuthMethod, Role, ResourceKind, PresentedSecret, Credential, AuthenticatedResult } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../pragmatic-server.js'
+import { ProvisionedSecretSource } from '../../config/provisioned-secret-source.js'
 
 class IdentityFixture
 {
@@ -116,6 +117,43 @@ test('bootstrap repairs a missing Owner grant on an existing account, idempotent
     finally
     {
         await second.Dispose()
+        IdentityFixture.Cleanup(identityRoot, packagesRoot, keyEnv)
+    }
+})
+
+test('an active provisioned source seeds the admin with no manual Put', async () =>
+{
+    const { identityRoot, packagesRoot, keyEnv } = IdentityFixture.Dirs()
+    const base = IdentityFixture.Options(identityRoot, packagesRoot, keyEnv)
+    const options = { ...base, identity: { ...base.identity, provisionedSecrets: ProvisionedSecretSource.FromText('{"t1/bootstrap/admin":"admin-pw-12345"}') } }
+    const server = new PragmaticServer(options)
+    try
+    {
+        await server.Start()
+        const pack = await server.Pack()
+        const result = await pack.AuthenticatorFor(AuthMethod.Local)!.Authenticate(new Credential(AuthMethod.Local, 'admin@x.io'), new PresentedSecret('admin-pw-12345'), server.Tenant())
+        assert.ok(result instanceof AuthenticatedResult)
+    }
+    finally
+    {
+        await server.Dispose()
+        IdentityFixture.Cleanup(identityRoot, packagesRoot, keyEnv)
+    }
+})
+
+test('an active source missing a named ref fails the tenant build closed (Review Focus 1, 5)', async () =>
+{
+    const { identityRoot, packagesRoot, keyEnv } = IdentityFixture.Dirs()
+    const base = IdentityFixture.Options(identityRoot, packagesRoot, keyEnv)
+    const options = { ...base, identity: { ...base.identity, provisionedSecrets: ProvisionedSecretSource.FromText('{}') } }
+    const server = new PragmaticServer(options)
+    try
+    {
+        await assert.rejects(() => server.Start(), /provisioned secret not available: t1\/bootstrap\/admin/)
+    }
+    finally
+    {
+        await server.Dispose()
         IdentityFixture.Cleanup(identityRoot, packagesRoot, keyEnv)
     }
 })
