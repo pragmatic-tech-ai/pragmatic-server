@@ -35,6 +35,8 @@ persistence:
 # {"tenants": {...}} into the ConfigMap's tenants.json (mounted at /cfg/tenants.json).
 # e.g. tenants: { acme: { displayName: Acme } }
 # Holds secret REFERENCES only, never secret values.
+# A tenant entry may also carry a `connections` map (id -> { settings, secretRef }); each
+# secretRef resolves from `secrets.provisioned` (or provisionedExistingSecret).
 tenants: {}
 
 # Secret placeholders: EMPTY here, supplied at install time (e.g. --set secrets.masterKeyB64=...).
