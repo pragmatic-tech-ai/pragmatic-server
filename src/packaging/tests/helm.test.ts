@@ -30,6 +30,18 @@ test('values default replicaCount is 1 (single-replica-safe for local mode)', ()
     assert.match(text, /replicaCount:\s*1/)
 })
 
+test('configmap wraps tenants under the tenants key', () =>
+{
+    const text = readFileSync(join(Chart.Dir(), 'templates', 'configmap.yaml'), 'utf8')
+    assert.ok(text.includes('dict "tenants"'))
+})
+
+test('deployment pins a numeric runAsUser', () =>
+{
+    const text = readFileSync(join(Chart.Dir(), 'templates', 'deployment.yaml'), 'utf8')
+    assert.ok(text.includes('runAsUser: 10001'))
+})
+
 test('helm template renders without error when helm is available', { skip: Chart.HelmOnPath() ? false : 'helm not on PATH' }, () =>
 {
     const result = spawnSync('helm', ['template', Chart.Dir()], { shell: true, encoding: 'utf8' })

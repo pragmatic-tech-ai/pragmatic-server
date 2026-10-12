@@ -5,4 +5,4 @@ metadata:
   labels:
     {{- include "pragmatic-server.labels" . | nindent 4 }}
 data:
-  tenants.json: {{ .Values.tenants | toJson | quote }}
+  tenants.json: {{ dict "tenants" .Values.tenants | toJson | quote }}

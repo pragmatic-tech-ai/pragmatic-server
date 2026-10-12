@@ -1,6 +1,9 @@
 # replicaCount must stay 1 in local/file-backed mode; multi-replica needs cloud/shared stores (deferred).
 replicaCount: 1
 
+nameOverride: ""
+fullnameOverride: ""
+
 image:
   repository: pragmatic-server
   tag: "0.1.0"
@@ -27,7 +30,9 @@ persistence:
   size: 1Gi
   # storageClass: ""
 
-# Rendered into the ConfigMap as tenants.json (mounted at /cfg/tenants.json).
+# The tenant MAP (the body under the top-level "tenants" key). The chart wraps it as
+# {"tenants": {...}} into the ConfigMap's tenants.json (mounted at /cfg/tenants.json).
+# e.g. tenants: { acme: { displayName: Acme } }
 # Holds secret REFERENCES only, never secret values.
 tenants: {}
 
@@ -35,6 +40,9 @@ tenants: {}
 # Never commit a real value.
 secrets:
   masterKeyB64: ""
+  # RESERVED / not yet wired: oidc and adminPasswords inject nothing today. Per-tenant OIDC
+  # client secrets and admin passwords are resolved by the server's own secret store; wiring
+  # them from k8s Secrets is a tracked deferred Feature.
   oidc: {}
   adminPasswords: {}
 

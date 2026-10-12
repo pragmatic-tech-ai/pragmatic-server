@@ -14,7 +14,9 @@ The master key is required and is supplied at install time. It is never committe
 
     helm upgrade pragmatic ./helm/pragmatic-server --reuse-values
 
-Tenants are configured through the `tenants` value (rendered to `tenants.json` in a ConfigMap). Put secret references there, never secret values.
+Tenants are configured through the `tenants` value (rendered to `tenants.json` in a ConfigMap). `tenants` is the tenant map (the body under the `tenants` key; the chart wraps it), e.g. `tenants: { acme: { displayName: Acme } }`. Put secret references there, never secret values.
+
+`secrets.oidc` and `secrets.adminPasswords` are reserved and not yet wired; the server resolves those from its own secret store (wiring from k8s Secrets is a tracked deferred Feature).
 
 ## Single replica
 

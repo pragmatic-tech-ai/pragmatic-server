@@ -60,7 +60,7 @@ RUN useradd --system --create-home --uid 10001 pragmatic
 WORKDIR /app
 COPY --from=builder --chown=pragmatic:pragmatic /workspace /workspace
 WORKDIR /workspace/pragmatic-server
-USER pragmatic
+USER 10001
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
   CMD node -e "const http=require('node:http');const r=http.request({host:'127.0.0.1',port:process.env.PRAGMATIC_PORT||8080,path:'/healthz'},x=>process.exit(x.statusCode===200?0:1));r.on('error',()=>process.exit(1));r.end()"
