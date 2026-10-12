@@ -148,7 +148,7 @@ export class FileTenantProvisioning implements ITenantProvisioning
             throw new Error(FileTenantProvisioning.BadShape)
         }
         return {
-            Settings: entry.settings,
+            Settings: { ...entry.settings },
             SecretRef: entry.secretRef,
             TokenEnvVar: entry.tokenEnvVar,
         }

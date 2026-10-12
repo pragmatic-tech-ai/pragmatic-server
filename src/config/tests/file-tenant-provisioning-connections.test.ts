@@ -48,3 +48,26 @@ test('connections with a non-string secretRef fail closed', () =>
     const json = JSON.stringify({ tenants: { acme: { displayName: 'Acme', connections: { crm: { settings: { database: 'd' }, secretRef: 5 } } } } })
     assert.throws(() => FileTenantProvisioning.FromText(json), /tenants file has an invalid shape/)
 })
+
+test('connections with a non-string tokenEnvVar fail closed', () =>
+{
+    const json = JSON.stringify({ tenants: { acme: { displayName: 'Acme', connections: { crm: { settings: { database: 'd' }, tokenEnvVar: 7 } } } } })
+    assert.throws(() => FileTenantProvisioning.FromText(json), /tenants file has an invalid shape/)
+})
+
+test('an empty-string secretRef is not collected', () =>
+{
+    const json = JSON.stringify({ tenants: { acme: { displayName: 'Acme', connections: { crm: { settings: { database: 'd' }, secretRef: '' } } } } })
+    const tenant = FileTenantProvisioning.FromText(json).OptionsFor('acme')
+    assert.deepEqual([...tenant?.connectorSecretRefs ?? []], [])
+})
+
+test('distinct secret refs across connections are all collected in order', () =>
+{
+    const json = JSON.stringify({ tenants: { acme: { displayName: 'Acme', connections: {
+        crm: { settings: { database: 'c' }, secretRef: 'acme/crm/pw' },
+        billing: { settings: { database: 'b' }, secretRef: 'acme/billing/pw' },
+    } } } })
+    const tenant = FileTenantProvisioning.FromText(json).OptionsFor('acme')
+    assert.deepEqual([...tenant?.connectorSecretRefs ?? []], ['acme/crm/pw', 'acme/billing/pw'])
+})
