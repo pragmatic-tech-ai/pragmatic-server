@@ -2,6 +2,8 @@ import { join } from 'node:path'
 import { PragmaticServer } from '../pragmatic-server.js'
 import type { PragmaticServerOptions } from '../pragmatic-server.js'
 import type { MasterKeyRef } from '../identity/master-key-resolver.js'
+import type { PlatformServices } from '../platform/platform-services.js'
+import type { DeploymentMode } from '../platform/deployment-mode.js'
 import type { ITenantCoordinator } from './tenant-coordinator.js'
 import type { ITenantProvisioning, TenantProvisioning } from './tenant-provisioning.js'
 
@@ -35,16 +37,20 @@ export class TenantRegistry
     private readonly masterKey: MasterKeyRef
     private readonly provisioning: ITenantProvisioning
     private readonly coordinator: ITenantCoordinator
+    private readonly platform: PlatformServices | undefined
+    private readonly deploymentMode: DeploymentMode | undefined
     private readonly servers = new Map<string, PragmaticServer>()
     private readonly pending = new Map<string, Promise<PragmaticServer>>()
     private readonly disposing = new Map<string, Promise<void>>()
 
-    public constructor(baseDir: string, masterKey: MasterKeyRef, provisioning: ITenantProvisioning, coordinator: ITenantCoordinator)
+    public constructor(baseDir: string, masterKey: MasterKeyRef, provisioning: ITenantProvisioning, coordinator: ITenantCoordinator, platform?: PlatformServices, deploymentMode?: DeploymentMode)
     {
         this.baseDir = baseDir
         this.masterKey = masterKey
         this.provisioning = provisioning
         this.coordinator = coordinator
+        this.platform = platform
+        this.deploymentMode = deploymentMode
     }
 
     public async ServerFor(tenantId: string): Promise<PragmaticServer>
@@ -151,6 +157,8 @@ export class TenantRegistry
     {
         return {
             packagesRoot: join(this.baseDir, tenantId, TenantRegistry.PackagesDir),
+            platform: this.platform,
+            deploymentMode: this.deploymentMode,
             identity: {
                 identityRoot: join(this.baseDir, tenantId, TenantRegistry.IdentityDir),
                 masterKey: this.masterKey,

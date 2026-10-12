@@ -7,6 +7,9 @@ import { join } from 'node:path'
 import { InMemoryTenantCoordinator } from '../tenant-coordinator.js'
 import { InMemoryTenantProvisioning, TenantRegistry } from '../tenant-registry.js'
 import type { TenantProvisioning } from '../tenant-provisioning.js'
+import type { IdentityStoreSet } from '@pragmatic-tech-ai/todl-identity'
+import { NodePlatform } from '../../platform/node-platform.js'
+import { DeploymentMode } from '../../platform/deployment-mode.js'
 
 class RegistryFixture
 {
@@ -124,5 +127,36 @@ test('concurrent cold builds of the same tenant dedupe to one server', async () 
         await registry.DisposeAll()
         rmSync(baseDir, { recursive: true, force: true })
         delete process.env[RegistryFixture.KeyEnv]
+    }
+})
+
+class RecordingPlatform extends NodePlatform
+{
+    public static readonly IdentityStoresCall = 'identityStores'
+
+    public readonly calls: string[] = []
+
+    public override CreateIdentityStores(identityRoot: string, masterKey: Buffer): Promise<IdentityStoreSet>
+    {
+        this.calls.push(RecordingPlatform.IdentityStoresCall)
+        return super.CreateIdentityStores(identityRoot, masterKey)
+    }
+}
+
+test('TenantRegistry threads the injected platform to each tenant server', async () =>
+{
+    const { baseDir } = RegistryFixture.Dirs()
+    process.env[RegistryFixture.KeyEnv] = randomBytes(32).toString('base64')
+    const recording = new RecordingPlatform()
+    const registry = new TenantRegistry(baseDir, { base64Env: RegistryFixture.KeyEnv }, RegistryFixture.Provisioning('t1'), new InMemoryTenantCoordinator(), recording, DeploymentMode.Cloud)
+    try
+    {
+        await registry.ServerFor('t1')
+        assert.ok(recording.calls.includes(RecordingPlatform.IdentityStoresCall))
+    }
+    finally
+    {
+        await registry.DisposeAll()
+        rmSync(baseDir, { recursive: true, force: true })
     }
 })
