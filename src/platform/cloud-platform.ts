@@ -29,13 +29,14 @@ export interface CloudPlatformOptions
 /** Cloud PlatformServices bundle. Composes the object-store registry + the DB-backed identity stores
  *  (over ONE shared ISqlSession) + FileEncryptedSecretStore-over-object-storage for per-tenant pack secrets.
  *  The SQL stores are multi-tenant by data (every row/method carries the tenant), so they are opened ONCE and
- *  shared across tenants — which also avoids re-running CREATE TABLE on one db (pg-mem rejects a repeated
+ *  shared across tenants - which also avoids re-running CREATE TABLE on one db (pg-mem rejects a repeated
  *  constrained CREATE TABLE). Per CreateIdentityStores call, a fresh per-tenant Secrets store is composed over
  *  a per-tenant object-store namespace, isolating secrets by location. The master key is resolved ONCE from the
  *  secret manager by reference at Create and held; ResolveMasterKey hands out a defensive copy. */
 export class CloudPlatform implements PlatformServices
 {
     private static readonly KeyByteLength = 32
+    private static readonly MissingKeyMessage = 'cloud master key reference not found'
     private static readonly InvalidKeyMessage = 'cloud master key must be exactly 32 bytes'
 
     private readonly session: ISqlSession
@@ -58,7 +59,7 @@ export class CloudPlatform implements PlatformServices
         const encoded = await options.secretManager.Get(options.masterKeyRef)
         if (encoded === null)
         {
-            throw new Error(CloudPlatform.InvalidKeyMessage)
+            throw new Error(CloudPlatform.MissingKeyMessage)
         }
         const key = Buffer.from(encoded, 'base64')
         if (key.length !== CloudPlatform.KeyByteLength)
@@ -104,7 +105,7 @@ export class CloudPlatform implements PlatformServices
     {
         if (this.sqlStoresPromise === undefined)
         {
-            this.sqlStoresPromise = this.OpenSqlStores()
+            this.sqlStoresPromise = this.OpenSqlStores().catch(e => { this.sqlStoresPromise = undefined; throw e })
         }
         return this.sqlStoresPromise
     }
@@ -124,7 +125,7 @@ export class CloudPlatform implements PlatformServices
     {
         if (this.tenantConfigPromise === undefined)
         {
-            this.tenantConfigPromise = SqlTenantConfigStore.Open(this.session)
+            this.tenantConfigPromise = SqlTenantConfigStore.Open(this.session).catch(e => { this.tenantConfigPromise = undefined; throw e })
         }
         return this.tenantConfigPromise
     }
