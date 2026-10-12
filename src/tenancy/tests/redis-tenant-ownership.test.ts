@@ -126,3 +126,24 @@ test('Acquire fails closed (returns false) when the Redis command errors', async
     assert.equal(ownership.Healthy(), false)
     await ownership.ReleaseAll()
 })
+
+test('health recovers via the heartbeat after Redis comes back, with no held keys', async () =>
+{
+    let up = false
+    const fake =
+    {
+        get isOpen() { return up },
+        on(): void {},
+        async connect(): Promise<void> { if (!up) { throw new Error('down') } },
+        async quit(): Promise<void> {},
+        async set(): Promise<string | null> { return 'OK' },
+        async eval(): Promise<number> { return 1 },
+    }
+    const ownership = new RedisTenantOwnership('redis://unused', 'replica-a', () => 1000, () => fake as unknown as RedisClientType)
+    await ownership.Start().catch(() => {})
+    assert.equal(ownership.Healthy(), false)
+    up = true
+    await ownership.RenewNowForTest()
+    assert.equal(ownership.Healthy(), true)
+    await ownership.ReleaseAll()
+})

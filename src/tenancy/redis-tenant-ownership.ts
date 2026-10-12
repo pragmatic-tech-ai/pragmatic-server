@@ -48,6 +48,7 @@ export class RedisTenantOwnership implements ITenantOwnership
 
     public async Start(): Promise<void>
     {
+        this.EnsureRenew()
         await this.Connected()
     }
 
