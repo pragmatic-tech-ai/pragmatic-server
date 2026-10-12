@@ -1,3 +1,4 @@
+import type { MachineTlsRef } from '../cluster/machine-tls.js'
 import type { MasterKeyRef } from '../identity/master-key-resolver.js'
 import type { DeploymentMode } from '../platform/deployment-mode.js'
 
@@ -21,4 +22,19 @@ export interface ServerConfig
     redisUrl?: string
     replicaId?: string
     provisionedSecretsFile?: string
+    tls?: MachineTlsRef
+    workerAdvertiseHost?: string
+    workerAdvertisePort?: number
+    workerServerName?: string
+    healthPort?: number
+}
+
+export interface GatewayConfig
+{
+    host: string
+    port: number
+    tls: MachineTlsRef
+    redisUrl: string
+    workerServerName?: string
+    healthPort?: number
 }

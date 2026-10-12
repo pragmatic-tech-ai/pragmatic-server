@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import type { MasterKeyRef } from '../identity/master-key-resolver.js'
 import { DeploymentMode } from '../platform/deployment-mode.js'
-import type { ServerConfig, SingleTenantConfig } from './server-config.js'
+import type { MachineTlsRef } from '../cluster/machine-tls.js'
+import type { GatewayConfig, ServerConfig, SingleTenantConfig } from './server-config.js'
 
 interface ConfigFile
 {
@@ -23,6 +24,58 @@ export class ServerConfigLoader
     private static readonly MissingTenant = 'a tenant source is required: set PRAGMATIC_TENANTS_FILE or PRAGMATIC_TENANT_ID'
     private static readonly BadMode = 'PRAGMATIC_DEPLOYMENT_MODE must be local or cloud'
 
+    private static readonly TlsCertMissing = 'PRAGMATIC_TLS_CERT_FILE is required when TLS is configured'
+    private static readonly TlsKeyMissing = 'PRAGMATIC_TLS_KEY_FILE is required when TLS is configured'
+    private static readonly TlsCaMissing = 'PRAGMATIC_TLS_CA_FILE is required when TLS is configured'
+    private static readonly GatewayNeedsTls = 'PRAGMATIC_TLS_CERT_FILE/KEY_FILE/CA_FILE are required for the gateway'
+    private static readonly GatewayNeedsRedis = 'PRAGMATIC_REDIS_URL is required for the gateway'
+
+    public static LoadGateway(env: Record<string, string | undefined>): GatewayConfig
+    {
+        const tls = ServerConfigLoader.Tls(env)
+        if (tls === undefined)
+        {
+            throw new Error(ServerConfigLoader.GatewayNeedsTls)
+        }
+        const redisUrl = env.PRAGMATIC_REDIS_URL
+        if (redisUrl === undefined || redisUrl.length === 0)
+        {
+            throw new Error(ServerConfigLoader.GatewayNeedsRedis)
+        }
+        return {
+            host: env.PRAGMATIC_HOST ?? ServerConfigLoader.DefaultHost,
+            port: ServerConfigLoader.Int(env.PRAGMATIC_PORT) ?? ServerConfigLoader.DefaultPort,
+            tls,
+            redisUrl,
+            workerServerName: env.PRAGMATIC_WORKER_SERVERNAME,
+            healthPort: ServerConfigLoader.Int(env.PRAGMATIC_HEALTH_PORT),
+        }
+    }
+
+    private static Tls(env: Record<string, string | undefined>): MachineTlsRef | undefined
+    {
+        const certFile = env.PRAGMATIC_TLS_CERT_FILE
+        const keyFile = env.PRAGMATIC_TLS_KEY_FILE
+        const caFile = env.PRAGMATIC_TLS_CA_FILE
+        if (certFile === undefined && keyFile === undefined && caFile === undefined)
+        {
+            return undefined
+        }
+        if (certFile === undefined)
+        {
+            throw new Error(ServerConfigLoader.TlsCertMissing)
+        }
+        if (keyFile === undefined)
+        {
+            throw new Error(ServerConfigLoader.TlsKeyMissing)
+        }
+        if (caFile === undefined)
+        {
+            throw new Error(ServerConfigLoader.TlsCaMissing)
+        }
+        return { certFile, keyFile, caFile }
+    }
+
     public static Load(env: Record<string, string | undefined>, readTextFile: (path: string) => string): ServerConfig
     {
         const file = ServerConfigLoader.File(env, readTextFile)
@@ -40,6 +93,7 @@ export class ServerConfigLoader
         }
         const redis = ServerConfigLoader.Redis(env, file.redisUrl)
         const provisionedSecretsFile = env.PRAGMATIC_PROVISIONED_SECRETS_FILE
+        const tls = ServerConfigLoader.Tls(env)
         return {
             host: env.PRAGMATIC_HOST ?? file.host ?? ServerConfigLoader.DefaultHost,
             port: ServerConfigLoader.Int(env.PRAGMATIC_PORT) ?? file.port ?? ServerConfigLoader.DefaultPort,
@@ -52,6 +106,11 @@ export class ServerConfigLoader
             idleSweepMs: ServerConfigLoader.Int(env.PRAGMATIC_IDLE_SWEEP_MS) ?? file.idleSweepMs,
             ...redis,
             provisionedSecretsFile,
+            tls,
+            workerAdvertiseHost: env.PRAGMATIC_WORKER_ADVERTISE_HOST,
+            workerAdvertisePort: ServerConfigLoader.Int(env.PRAGMATIC_WORKER_ADVERTISE_PORT),
+            workerServerName: env.PRAGMATIC_WORKER_SERVERNAME,
+            healthPort: ServerConfigLoader.Int(env.PRAGMATIC_HEALTH_PORT),
         }
     }
 
