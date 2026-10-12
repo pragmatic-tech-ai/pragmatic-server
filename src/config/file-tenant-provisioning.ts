@@ -1,5 +1,7 @@
 import { DataSourceKind } from '@pragmatic-tech-ai/todl'
 import { ConnectorsPolicy } from '../host/connector-policy.js'
+import { FileConnectionResolver } from '../host/file-connection-resolver.js'
+import type { FileConnection } from '../host/file-connection-resolver.js'
 import type { ITenantProvisioning, TenantProvisioning } from '../tenancy/tenant-provisioning.js'
 
 interface PolicyShape
@@ -10,12 +12,20 @@ interface PolicyShape
     providerAllowlist: readonly string[]
 }
 
+interface ConnectionShape
+{
+    settings: Record<string, string>
+    secretRef?: string
+    tokenEnvVar?: string
+}
+
 interface TenantShape
 {
     displayName: string
     bootstrap?: TenantProvisioning['bootstrap']
     oidc?: TenantProvisioning['oidc']
     connectorsPolicy?: PolicyShape
+    connections?: Record<string, ConnectionShape>
 }
 
 interface FileShape
@@ -82,11 +92,65 @@ export class FileTenantProvisioning implements ITenantProvisioning
 
     private static Provisioning(shape: TenantShape): TenantProvisioning
     {
+        const connections = FileTenantProvisioning.Connections(shape)
         return {
             displayName: shape.displayName,
             bootstrap: shape.bootstrap,
             oidc: shape.oidc,
             connectorsPolicy: shape.connectorsPolicy === undefined ? undefined : FileTenantProvisioning.Policy(shape.connectorsPolicy),
+            connectors: connections === undefined ? undefined : { connectionResolver: connections.Resolver },
+            connectorSecretRefs: connections === undefined ? undefined : connections.Refs,
+        }
+    }
+
+    private static Connections(shape: TenantShape): { Resolver: FileConnectionResolver; Refs: readonly string[] } | undefined
+    {
+        if (shape.connections === undefined)
+        {
+            return undefined
+        }
+        if (!FileTenantProvisioning.IsRecord(shape.connections))
+        {
+            throw new Error(FileTenantProvisioning.BadShape)
+        }
+        const map = new Map<string, FileConnection>()
+        const refs: string[] = []
+        for (const [id, entry] of Object.entries(shape.connections))
+        {
+            map.set(id, FileTenantProvisioning.Connection(entry))
+            if (entry.secretRef !== undefined && entry.secretRef.length > 0 && !refs.includes(entry.secretRef))
+            {
+                refs.push(entry.secretRef)
+            }
+        }
+        return { Resolver: new FileConnectionResolver(map), Refs: refs }
+    }
+
+    private static Connection(entry: ConnectionShape): FileConnection
+    {
+        if (!FileTenantProvisioning.IsRecord(entry) || !FileTenantProvisioning.IsRecord(entry.settings))
+        {
+            throw new Error(FileTenantProvisioning.BadShape)
+        }
+        for (const value of Object.values(entry.settings))
+        {
+            if (typeof value !== 'string')
+            {
+                throw new Error(FileTenantProvisioning.BadShape)
+            }
+        }
+        if (entry.secretRef !== undefined && typeof entry.secretRef !== 'string')
+        {
+            throw new Error(FileTenantProvisioning.BadShape)
+        }
+        if (entry.tokenEnvVar !== undefined && typeof entry.tokenEnvVar !== 'string')
+        {
+            throw new Error(FileTenantProvisioning.BadShape)
+        }
+        return {
+            Settings: entry.settings,
+            SecretRef: entry.secretRef,
+            TokenEnvVar: entry.tokenEnvVar,
         }
     }
 

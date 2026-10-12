@@ -8,6 +8,7 @@ export interface TenantProvisioning
     oidc?: OidcServerOptions
     connectorsPolicy?: ConnectorsPolicy
     connectors?: PragmaticServerOptions['connectors']
+    connectorSecretRefs?: readonly string[]
 }
 
 /** Source of per-tenant provisioning (display name + optional bootstrap/OIDC). 5B/5C back this with a
