@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
-import { LanguageProtocol, SolutionProtocol, ModelProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { PolicyGate } from '../policy-gate.js'
 
 class GateFixture
@@ -88,4 +88,26 @@ test('every tabled method is classified correctly (Viewer allows all reads, deni
     }
     assert.equal(gate.Authorize(LanguageProtocol.DidChange.method).Allowed, false)
     assert.equal(gate.Authorize(SolutionProtocol.OpenSolution.method).Allowed, false)
+})
+
+test('Owner may list/read/write/test/prepare/refresh connectors', () =>
+{
+    const gate = GateFixture.Gate(Role.Owner)
+    assert.equal(gate.Authorize(ConnectorProtocol.List.method).Allowed, true)
+    assert.equal(gate.Authorize(ConnectorProtocol.Read.method).Allowed, true)
+    assert.equal(gate.Authorize(ConnectorProtocol.WriteBack.method).Allowed, true)
+    assert.equal(gate.Authorize(ConnectorProtocol.Test.method).Allowed, true)
+    assert.equal(gate.Authorize(ConnectorProtocol.Prepare.method).Allowed, true)
+    assert.equal(gate.Authorize(ConnectorProtocol.Refresh.method).Allowed, true)
+})
+
+test('Viewer may list/read connectors but not write/test/prepare/refresh', () =>
+{
+    const gate = GateFixture.Gate(Role.Viewer)
+    assert.equal(gate.Authorize(ConnectorProtocol.List.method).Allowed, true)
+    assert.equal(gate.Authorize(ConnectorProtocol.Read.method).Allowed, true)
+    assert.equal(gate.Authorize(ConnectorProtocol.WriteBack.method).Allowed, false)
+    assert.equal(gate.Authorize(ConnectorProtocol.Test.method).Allowed, false)
+    assert.equal(gate.Authorize(ConnectorProtocol.Prepare.method).Allowed, false)
+    assert.equal(gate.Authorize(ConnectorProtocol.Refresh.method).Allowed, false)
 })

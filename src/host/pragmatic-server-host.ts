@@ -193,7 +193,7 @@ export class PragmaticServerHost
             {
                 try
                 {
-                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context)
+                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors())
                     this.handlers.add(handler)
                     ws.on(PragmaticServerHost.CloseEvent, () =>
                     {

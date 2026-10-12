@@ -1,5 +1,5 @@
 import {
-    createMessageConnection, NullLogger, WebSocketMessageReader, WebSocketMessageWriter, LanguageProtocol, SolutionProtocol, ModelProtocol,
+    createMessageConnection, NullLogger, WebSocketMessageReader, WebSocketMessageWriter, LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol,
 } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, ModelProjection, ResolvedResourceDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ResponseError, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -9,6 +9,8 @@ import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { PolicyGate } from './policy-gate.js'
+import { ConnectorService } from './connector-service.js'
+import type { ConnectorRuntime } from '../connectors/connector-runtime.js'
 import { ModelReadFilter } from './model-read-filter.js'
 
 /** One client connection: wires every JSON-RPC handler 1:1 to the engine services and pushes notifications. */
@@ -22,10 +24,12 @@ export class ServerConnectionHandler
     private readonly manager: SolutionManagerService
     private readonly accessContext: AccessContext
     private readonly gate: PolicyGate
+    private readonly connectorService: ConnectorService
     private readonly graphSubscription: IDisposable
 
-    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext)
+    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>)
     {
+        this.connectorService = new ConnectorService(connectorsFactory)
         this.accessContext = accessContext
         this.connection = connection
         this.languageService = languageService
@@ -38,6 +42,7 @@ export class ServerConnectionHandler
         this.RegisterLanguageHandlers()
         this.RegisterSolutionHandlers()
         this.RegisterModelHandlers()
+        this.RegisterConnectorHandlers()
         this.graphSubscription = languageService.GraphChanged.subscribe(async change =>
         {
             if (!this.gate.CanRead())
@@ -55,10 +60,10 @@ export class ServerConnectionHandler
         })
     }
 
-    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext): ServerConnectionHandler
+    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>): ServerConnectionHandler
     {
         const connection = createMessageConnection(new WebSocketMessageReader(socket), new WebSocketMessageWriter(socket), NullLogger)
-        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext)
+        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectorsFactory)
         connection.listen()
         return handler
     }
@@ -142,6 +147,24 @@ export class ServerConnectionHandler
         })
     }
 
+    private RegisterConnectorHandlers(): void
+    {
+        this.connection.onRequest(ConnectorProtocol.List, () =>
+        {
+            this.authorize(ConnectorProtocol.List.method)
+            return this.connectorService.List()
+        })
+        this.connection.onRequest(ConnectorProtocol.Refresh, () =>
+        {
+            this.authorize(ConnectorProtocol.Refresh.method)
+            this.connectorService.Invalidate()
+        })
+        this.guarded(ConnectorProtocol.Prepare, p => this.connectorService.Prepare(p.modelId))
+        this.guarded(ConnectorProtocol.Read, p => this.connectorService.Read(p.modelId, p.concept))
+        this.guarded(ConnectorProtocol.WriteBack, p => this.connectorService.WriteBack(p))
+        this.guarded(ConnectorProtocol.Test, p => this.connectorService.Test(p.modelId, p.connectorName))
+    }
+
     private async ResourceHidden(nodeId: string): Promise<boolean>
     {
         const solution = this.manager.ActiveSolution
@@ -190,6 +213,7 @@ export class ServerConnectionHandler
         this.guarded(SolutionProtocol.OpenSolution, async p =>
         {
             await this.manager.OpenSolution(p.location)
+            this.connectorService.Invalidate()
             return this.SummariseActiveSolution()
         })
         this.guardedNoParams(SolutionProtocol.ActiveSolution, () => this.ActiveSolutionOrNull())

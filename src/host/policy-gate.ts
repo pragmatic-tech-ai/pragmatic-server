@@ -1,6 +1,6 @@
 import { Action, ResourceKind, ResourceRef, AccessDecision } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
-import { LanguageProtocol, SolutionProtocol, ModelProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 interface MethodPolicy
 {
@@ -48,6 +48,9 @@ export class PolicyGate
         const write: MethodPolicy = { action: Action.Write, resourceKind: ResourceKind.Model }
         const administer: MethodPolicy = { action: Action.Administer, resourceKind: ResourceKind.Tenant }
         const readTenant: MethodPolicy = { action: Action.Read, resourceKind: ResourceKind.Tenant }
+        const connect: MethodPolicy = { action: Action.Connect, resourceKind: ResourceKind.Connector }
+        const readConnector: MethodPolicy = { action: Action.Read, resourceKind: ResourceKind.Connector }
+        const writeConnector: MethodPolicy = { action: Action.Write, resourceKind: ResourceKind.Connector }
         return new Map<string, MethodPolicy>([
             [LanguageProtocol.CompletionsAt.method, read],
             [LanguageProtocol.HoverAt.method, read],
@@ -68,6 +71,12 @@ export class PolicyGate
             [SolutionProtocol.ActiveSolution.method, readTenant],
             [ModelProtocol.ModelView.method, read],
             [ModelProtocol.Resources.method, read],
+            [ConnectorProtocol.List.method, readConnector],
+            [ConnectorProtocol.Read.method, readConnector],
+            [ConnectorProtocol.WriteBack.method, writeConnector],
+            [ConnectorProtocol.Test.method, connect],
+            [ConnectorProtocol.Prepare.method, connect],
+            [ConnectorProtocol.Refresh.method, connect],
         ])
     }
 }
