@@ -21,3 +21,10 @@ Without it, several replicas can open the same tenant's storage at once. Set red
 Route tenants with session affinity (or rely on client retry) when scaling out, since a non-owner replica rejects
 with a retryable 503.
 {{- end }}
+{{- if or .Values.secrets.provisioned .Values.secrets.provisionedExistingSecret }}
+
+Per-tenant provisioned secrets are wired: every oidc.clientSecretRef and bootstrap.adminPasswordRef
+named in tenants.json must have a matching key in the provisioned Secret (chart-managed
+secrets.provisioned, or secrets.provisionedExistingSecret). A tenant naming a ref with no matching
+value fails that tenant closed.
+{{- end }}

@@ -41,11 +41,12 @@ tenants: {}
 # Never commit a real value.
 secrets:
   masterKeyB64: ""
-  # RESERVED / not yet wired: oidc and adminPasswords inject nothing today. Per-tenant OIDC
-  # client secrets and admin passwords are resolved by the server's own secret store; wiring
-  # them from k8s Secrets is a tracked deferred Feature.
-  oidc: {}
-  adminPasswords: {}
+  # Per-tenant OIDC client secrets and bootstrap-admin passwords, keyed by the ref strings used in
+  # `tenants` (e.g. "acme/oidc/client-secret", "acme-admin-pw"). DEV CONVENIENCE ONLY -- never commit
+  # real values here; for production supply them out-of-band via provisionedExistingSecret.
+  provisioned: {}
+  provisionedExistingSecret: ""
+  provisionedSecretKey: provisioned-secrets.json
 
 # Optional Redis for safe multi-replica operation (tenant ownership lease). Leave url empty for single-replica.
 # Supply the URL via this chart's Secret (set redis.url) OR an existing Secret (redis.existingSecret + redis.secretKey).

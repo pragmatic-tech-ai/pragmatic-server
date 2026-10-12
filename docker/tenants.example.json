@@ -3,6 +3,7 @@
     "acme": {
       "displayName": "Acme Corp",
       "bootstrap": { "adminEmail": "admin@acme.test", "adminPrincipalId": "admin", "adminPasswordRef": "acme-admin-pw", "ownerGrant": true },
+      "oidc": { "issuer": "https://issuer.acme.test", "clientId": "pragmatic", "clientSecretRef": "acme-oidc-secret", "discoveryUrl": "https://issuer.acme.test/.well-known/openid-configuration", "redirectUri": "https://acme.test/callback", "provider": "generic" },
       "connectorsPolicy": { "adapterAllowlist": ["sql"], "catalogOnly": false, "allowProviderOverride": false, "providerAllowlist": [] }
     }
   }

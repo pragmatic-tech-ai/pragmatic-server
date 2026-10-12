@@ -19,6 +19,7 @@ spec:
         {{- include "pragmatic-server.selectorLabels" . | nindent 8 }}
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
     spec:
       securityContext:
         runAsNonRoot: true
@@ -51,6 +52,10 @@ spec:
                 secretKeyRef:
                   name: {{ include "pragmatic-server.fullname" . }}
                   key: PRAGMATIC_MASTER_KEY
+            {{- if or .Values.secrets.provisioned .Values.secrets.provisionedExistingSecret }}
+            - name: PRAGMATIC_PROVISIONED_SECRETS_FILE
+              value: /run/secrets/provisioned/secrets.json
+            {{- end }}
             {{- if or .Values.redis.url .Values.redis.existingSecret }}
             - name: PRAGMATIC_REDIS_URL
               valueFrom:
@@ -76,12 +81,25 @@ spec:
             - name: config
               mountPath: /cfg
               readOnly: true
+            {{- if or .Values.secrets.provisioned .Values.secrets.provisionedExistingSecret }}
+            - name: provisioned-secrets
+              mountPath: /run/secrets/provisioned
+              readOnly: true
+            {{- end }}
             - name: data
               mountPath: {{ .Values.baseDir }}
       volumes:
         - name: config
           configMap:
             name: {{ include "pragmatic-server.fullname" . }}
+        {{- if or .Values.secrets.provisioned .Values.secrets.provisionedExistingSecret }}
+        - name: provisioned-secrets
+          secret:
+            secretName: {{ .Values.secrets.provisionedExistingSecret | default (include "pragmatic-server.fullname" .) }}
+            items:
+              - key: {{ .Values.secrets.provisionedSecretKey }}
+                path: secrets.json
+        {{- end }}
         - name: data
           {{- if .Values.persistence.enabled }}
           persistentVolumeClaim:
