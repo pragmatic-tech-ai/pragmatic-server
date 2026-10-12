@@ -28,3 +28,15 @@ named in tenants.json must have a matching key in the provisioned Secret (chart-
 secrets.provisioned, or secrets.provisionedExistingSecret). A tenant naming a ref with no matching
 value fails that tenant closed.
 {{- end }}
+{{- if .Values.cluster.enabled }}
+
+Cluster mode is enabled: a worker StatefulSet ({{ .Values.cluster.worker.replicas }}) behind a gateway
+Deployment ({{ .Values.cluster.gateway.replicas }}). The worker tier REQUIRES Redis -- the ownership lease
+keeps one worker per tenant. Set redis.url (or redis.existingSecret); without it two workers could open one
+tenant's storage. mTLS material must be supplied via cluster.tls.existingSecret (tls.crt, tls.key, ca.crt);
+all workers share one server cert whose SAN equals cluster.workerServerName.
+{{- if and (not .Values.redis.url) (not .Values.redis.existingSecret) }}
+
+WARNING: cluster.enabled is set but no Redis is configured. Set redis.url or redis.existingSecret.
+{{- end }}
+{{- end }}

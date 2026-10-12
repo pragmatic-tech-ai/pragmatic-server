@@ -86,3 +86,24 @@ test('the ingress targets the gateway service when cluster is enabled', () =>
     assert.match(ingress, /cluster\.enabled/)
     assert.match(ingress, /-gateway/)
 })
+
+test('the ConfigMap never carries an mTLS value', () =>
+{
+    const configmap = Chart.Text(join('templates', 'configmap.yaml'))
+    assert.doesNotMatch(configmap, /tls\.key/)
+    assert.doesNotMatch(configmap, /BEGIN .*PRIVATE KEY/)
+})
+
+test('values never inline mTLS material (only an existingSecret ref)', () =>
+{
+    const values = Chart.Text('values.yaml')
+    assert.doesNotMatch(values, /BEGIN .*PRIVATE KEY/)
+    assert.doesNotMatch(values, /tls\.key:\s*\S/)
+})
+
+test('NOTES warn that cluster mode requires Redis (Review Focus 4)', () =>
+{
+    const notes = Chart.Text(join('templates', 'NOTES.txt'))
+    assert.match(notes, /cluster/i)
+    assert.match(notes, /redis/i)
+})

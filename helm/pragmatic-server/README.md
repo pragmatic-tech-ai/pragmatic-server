@@ -38,3 +38,7 @@ Enable autoscaling only in cloud/shared-store mode.
 ## Probes
 
 Liveness uses `/healthz`; readiness uses `/readyz`, which stays false until startup completes.
+
+## Cluster mode (gateway + worker split)
+
+Set `cluster.enabled=true` to run a worker StatefulSet behind a gateway Deployment. The worker tier REQUIRES Redis (`redis.url` or `redis.existingSecret`) -- the ownership lease keeps one worker per tenant. Supply mTLS material through `cluster.tls.existingSecret` (the operator or cert-manager provides `tls.crt`, `tls.key`, `ca.crt`); nothing is inlined in values or the ConfigMap. `cluster.workerServerName` is the SAN every worker presents, and the gateway validates the worker certificate against it.

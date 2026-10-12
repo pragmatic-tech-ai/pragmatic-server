@@ -1,0 +1,71 @@
+# Illustrative gateway + worker split for local testing. Supply mTLS PEM files (./tls) and a master key
+# (./master.key) out of band -- never commit them. Run: docker compose -f docker-compose.cluster.yml up --build
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+  worker1:
+    build:
+      context: ..
+      dockerfile: pragmatic-server/docker/Dockerfile
+    command: ["node", "dist/bin/pragmatic-workerd.js"]
+    environment:
+      PRAGMATIC_BASE_DIR: /data
+      PRAGMATIC_PORT: "8443"
+      PRAGMATIC_HEALTH_PORT: "8081"
+      PRAGMATIC_TENANTS_FILE: /cfg/tenants.json
+      PRAGMATIC_MASTER_KEY_FILE: /run/secrets/master_key
+      PRAGMATIC_REDIS_URL: redis://redis:6379
+      PRAGMATIC_WORKER_ADVERTISE_HOST: worker1
+      PRAGMATIC_WORKER_ADVERTISE_PORT: "8443"
+      PRAGMATIC_TLS_CERT_FILE: /run/secrets/tls/server.pem
+      PRAGMATIC_TLS_KEY_FILE: /run/secrets/tls/server.key
+      PRAGMATIC_TLS_CA_FILE: /run/secrets/tls/ca.pem
+    volumes:
+      - ./tenants.example.json:/cfg/tenants.json:ro
+      - ./master.key:/run/secrets/master_key:ro
+      - ./tls:/run/secrets/tls:ro
+    depends_on:
+      - redis
+  worker2:
+    build:
+      context: ..
+      dockerfile: pragmatic-server/docker/Dockerfile
+    command: ["node", "dist/bin/pragmatic-workerd.js"]
+    environment:
+      PRAGMATIC_BASE_DIR: /data
+      PRAGMATIC_PORT: "8443"
+      PRAGMATIC_HEALTH_PORT: "8081"
+      PRAGMATIC_TENANTS_FILE: /cfg/tenants.json
+      PRAGMATIC_MASTER_KEY_FILE: /run/secrets/master_key
+      PRAGMATIC_REDIS_URL: redis://redis:6379
+      PRAGMATIC_WORKER_ADVERTISE_HOST: worker2
+      PRAGMATIC_WORKER_ADVERTISE_PORT: "8443"
+      PRAGMATIC_TLS_CERT_FILE: /run/secrets/tls/server.pem
+      PRAGMATIC_TLS_KEY_FILE: /run/secrets/tls/server.key
+      PRAGMATIC_TLS_CA_FILE: /run/secrets/tls/ca.pem
+    volumes:
+      - ./tenants.example.json:/cfg/tenants.json:ro
+      - ./master.key:/run/secrets/master_key:ro
+      - ./tls:/run/secrets/tls:ro
+    depends_on:
+      - redis
+  gateway:
+    build:
+      context: ..
+      dockerfile: pragmatic-server/docker/Dockerfile
+    command: ["node", "dist/bin/pragmatic-gatewayd.js"]
+    ports:
+      - "8080:8080"
+    environment:
+      PRAGMATIC_PORT: "8080"
+      PRAGMATIC_REDIS_URL: redis://redis:6379
+      PRAGMATIC_WORKER_SERVERNAME: 127.0.0.1
+      PRAGMATIC_TLS_CERT_FILE: /run/secrets/tls/client.pem
+      PRAGMATIC_TLS_KEY_FILE: /run/secrets/tls/client.key
+      PRAGMATIC_TLS_CA_FILE: /run/secrets/tls/ca.pem
+    volumes:
+      - ./tls:/run/secrets/tls:ro
+    depends_on:
+      - redis

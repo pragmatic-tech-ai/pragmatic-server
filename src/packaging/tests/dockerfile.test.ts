@@ -49,3 +49,21 @@ test('Dockerfile builds TODL via the common npm run build (no DOM workaround)', 
     assert.doesNotMatch(text, /gen:prelude/, 'the inlined TODL generator mirror must be gone')
     assert.match(text, /cd TODL && npm install --no-audit --no-fund && npm run build/)
 })
+
+class Compose
+{
+    public static Text(): string
+    {
+        const here = dirname(fileURLToPath(import.meta.url))
+        return readFileSync(join(here, '..', '..', '..', 'docker', 'docker-compose.cluster.yml'), 'utf8')
+    }
+}
+
+test('the cluster compose file runs a gateway + two workers + redis with cert mounts', () =>
+{
+    const text = Compose.Text()
+    assert.match(text, /pragmatic-gatewayd\.js/)
+    assert.match(text, /pragmatic-workerd\.js/)
+    assert.match(text, /redis/)
+    assert.match(text, /\/run\/secrets\/tls/)
+})
