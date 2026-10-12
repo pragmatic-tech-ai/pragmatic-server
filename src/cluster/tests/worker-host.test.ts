@@ -13,12 +13,13 @@ import { WorkerHost } from '../worker-host.js'
 import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
 import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
 import { NodePlatform } from '../../platform/node-platform.js'
+import type { IdentityStoreSet } from '@pragmatic-tech-ai/todl-identity'
 
 class RecordingPlatform extends NodePlatform
 {
     public identityRoots: string[] = []
 
-    public override CreateIdentityStores(identityRoot: string, masterKey: Buffer)
+    public override CreateIdentityStores(identityRoot: string, masterKey: Buffer): Promise<IdentityStoreSet>
     {
         this.identityRoots.push(identityRoot)
         return super.CreateIdentityStores(identityRoot, masterKey)
@@ -171,6 +172,7 @@ test('a platform passed in the options is forwarded into the per-tenant server',
     {
         await WorkerFixture.TokenFor(worker, 't1')
         assert.equal(platform.identityRoots.length, 1)
+        assert.ok(platform.identityRoots[0].includes('t1'))
     }
     finally
     {

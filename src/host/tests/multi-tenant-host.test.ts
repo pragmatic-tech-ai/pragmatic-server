@@ -10,6 +10,20 @@ import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-s
 import { PragmaticServerHost } from '../pragmatic-server-host.js'
 import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
 import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
+import type { IdentityStoreSet } from '@pragmatic-tech-ai/todl-identity'
+import { NodePlatform } from '../../platform/node-platform.js'
+import { DeploymentMode } from '../../platform/deployment-mode.js'
+
+class RecordingPlatform extends NodePlatform
+{
+    public identityRoots: string[] = []
+
+    public override CreateIdentityStores(identityRoot: string, masterKey: Buffer): Promise<IdentityStoreSet>
+    {
+        this.identityRoots.push(identityRoot)
+        return super.CreateIdentityStores(identityRoot, masterKey)
+    }
+}
 
 class MtFixture
 {
@@ -146,6 +160,39 @@ test('closing the only connection releases the tenant so an idle sweep evicts it
         await host.RegistryForTest().EvictIdle(Date.now(), 0)
         const after = await host.RegistryForTest().ServerFor('t1')
         assert.notStrictEqual(after, before)
+    }
+    finally
+    {
+        await host.DisposeAsync()
+        MtFixture.Cleanup(baseDir)
+    }
+})
+
+test('a platform passed in the host options is forwarded into the per-tenant server', async () =>
+{
+    const { baseDir } = MtFixture.Start('t1')
+    const platform = new RecordingPlatform()
+    const host = await PragmaticServerHost.StartAsync({ ...MtFixture.Options(baseDir, MtFixture.Provisioning('t1')), platform })
+    try
+    {
+        await host.IdentityPackForTest('t1')
+        assert.equal(platform.identityRoots.length, 1)
+        assert.ok(platform.identityRoots[0].includes('t1'))
+    }
+    finally
+    {
+        await host.DisposeAsync()
+        MtFixture.Cleanup(baseDir)
+    }
+})
+
+test('deploymentMode threads through the host: Cloud without a platform bundle fails closed', async () =>
+{
+    const { baseDir } = MtFixture.Start('t1')
+    const host = await PragmaticServerHost.StartAsync({ ...MtFixture.Options(baseDir, MtFixture.Provisioning('t1')), deploymentMode: DeploymentMode.Cloud })
+    try
+    {
+        await assert.rejects(() => host.IdentityPackForTest('t1'), /explicit platform bundle/)
     }
     finally
     {
