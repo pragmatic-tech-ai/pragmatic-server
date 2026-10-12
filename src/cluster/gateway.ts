@@ -99,6 +99,7 @@ export class Gateway
 
     public async DisposeAsync(): Promise<void>
     {
+        this.ready = false
         this.disposed = true
         for (const workerWs of this.workerSockets)
         {
