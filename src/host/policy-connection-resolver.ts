@@ -4,10 +4,12 @@ import type { IServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import type { ConnectorsPolicy } from './connector-policy.js'
 
 /** Enforces a tenant's ConnectorsPolicy at connection-resolve time (the seam the catalog hits on every
- *  adapter open): rejects a disallowed adapter kind and rejects an inline connection under catalog-only;
- *  otherwise delegates to the inner resolver. The policy's provider-override fields are carried through
- *  unenforced. Registered under ConnectionResolverKey,
- *  which bypasses the catalog's default inline fallback. */
+ *  adapter open): rejects a disallowed adapter kind; under catalog-only, inline resolution is never used —
+ *  an unnamed spec is rejected, and a named spec resolves only when a catalog resolver is injected (the
+ *  deferred named-connection catalog). With no such resolver a catalog-only tenant can open no connector
+ *  (fail-closed). Otherwise delegates to the inner resolver. The policy's provider-override fields are
+ *  carried through unenforced. Registered under ConnectionResolverKey, which bypasses the catalog's
+ *  default inline fallback. */
 export class PolicyConnectionResolver implements IConnectionResolver
 {
     private static readonly AdapterNotAllowed = 'connector.policy.adapter-not-allowed'
@@ -15,11 +17,13 @@ export class PolicyConnectionResolver implements IConnectionResolver
 
     private readonly policy: ConnectorsPolicy
     private readonly inner: IConnectionResolver
+    private readonly hasCatalogResolver: boolean
 
-    public constructor(policy: ConnectorsPolicy, inner: IConnectionResolver = new InlineConnectionResolver())
+    public constructor(policy: ConnectorsPolicy, inner?: IConnectionResolver)
     {
         this.policy = policy
-        this.inner = inner
+        this.inner = inner ?? new InlineConnectionResolver()
+        this.hasCatalogResolver = inner !== undefined
     }
 
     public Resolve(spec: ConnectorSpec, services: IServiceProvider): Promise<ResolvedConnection>
@@ -28,7 +32,7 @@ export class PolicyConnectionResolver implements IConnectionResolver
         {
             return Promise.reject(new Error(`${PolicyConnectionResolver.AdapterNotAllowed}: ${spec.Kind}`))
         }
-        if (this.policy.CatalogOnly && spec.Connection === undefined)
+        if (this.policy.CatalogOnly && (spec.Connection === undefined || !this.hasCatalogResolver))
         {
             return Promise.reject(new Error(`${PolicyConnectionResolver.CatalogOnlyViolation}: ${spec.Name}`))
         }

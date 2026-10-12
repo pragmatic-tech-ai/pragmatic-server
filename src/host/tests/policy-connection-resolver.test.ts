@@ -65,6 +65,13 @@ test('catalog-only allows a named-Connection spec (delegates to inner)', async (
     assert.equal(resolved.Config.ok, 'yes')
 })
 
+test('catalog-only rejects a named spec when no catalog resolver is injected (no inline fallthrough)', async () =>
+{
+    const policy = new ConnectorsPolicy([DataSourceKind.Sql], true, false, [])
+    const resolver = new PolicyConnectionResolver(policy)
+    await assert.rejects(() => resolver.Resolve(Specs.Named(), Specs.Services), /catalog-only/)
+})
+
 test('provider gate is inert for a normal spec (no provider field) — resolves fine', async () =>
 {
     const policy = new ConnectorsPolicy([DataSourceKind.Sql], false, false, [])
