@@ -19,9 +19,10 @@ class Configs
 
 test('builds a single-tenant provisioning from env config', () =>
 {
-    const provisioning = TenantProvisioningFactory.Build(Configs.Single(), () => { throw new Error('no read') })
-    assert.equal(provisioning.OptionsFor('t1')?.displayName, 'Tenant One')
-    assert.equal(provisioning.OptionsFor('other'), null)
+    const result = TenantProvisioningFactory.Build(Configs.Single(), () => { throw new Error('no read') })
+    assert.equal(result.provisioning.OptionsFor('t1')?.displayName, 'Tenant One')
+    assert.equal(result.provisioning.OptionsFor('other'), null)
+    assert.equal(result.tenantCount, 1)
 })
 
 test('builds a file provisioning when a tenants file is configured', () =>
@@ -34,6 +35,7 @@ test('builds a file provisioning when a tenants file is configured', () =>
         }
         throw new Error('unexpected read')
     }
-    const provisioning = TenantProvisioningFactory.Build(Configs.File(), read)
-    assert.equal(provisioning.OptionsFor('acme')?.displayName, 'Acme')
+    const result = TenantProvisioningFactory.Build(Configs.File(), read)
+    assert.equal(result.provisioning.OptionsFor('acme')?.displayName, 'Acme')
+    assert.equal(result.tenantCount, 1)
 })

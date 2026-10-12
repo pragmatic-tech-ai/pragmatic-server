@@ -52,6 +52,11 @@ export class FileTenantProvisioning implements ITenantProvisioning
         return this.entries.get(tenantId) ?? null
     }
 
+    public Count(): number
+    {
+        return this.entries.size
+    }
+
     private static Parse(json: string): FileShape
     {
         let parsed: unknown
