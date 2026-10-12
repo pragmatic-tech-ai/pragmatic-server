@@ -7,7 +7,7 @@ import type { ConnectorModelDto, ConnectorWriteBackParams, EntityDto, FlushOutco
 export class ConnectorService
 {
     private readonly runtimeFactory: () => Promise<ConnectorRuntime>
-    private runtime: ConnectorRuntime | undefined
+    private runtimePromise: Promise<ConnectorRuntime> | undefined
 
     public constructor(runtimeFactory: () => Promise<ConnectorRuntime>)
     {
@@ -16,16 +16,24 @@ export class ConnectorService
 
     public Invalidate(): void
     {
-        this.runtime = undefined
+        this.runtimePromise = undefined
     }
 
-    private async Runtime(): Promise<ConnectorRuntime>
+    private Runtime(): Promise<ConnectorRuntime>
     {
-        if (this.runtime === undefined)
+        if (this.runtimePromise === undefined)
         {
-            this.runtime = await this.runtimeFactory()
+            const pending = this.runtimeFactory()
+            this.runtimePromise = pending
+            pending.catch(() =>
+            {
+                if (this.runtimePromise === pending)
+                {
+                    this.runtimePromise = undefined
+                }
+            })
         }
-        return this.runtime
+        return this.runtimePromise
     }
 
     public async List(): Promise<ConnectorModelDto[]>
