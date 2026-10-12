@@ -67,9 +67,20 @@ test('an empty ref never calls the store', async () =>
 {
     class ThrowingStore implements ISecretStore
     {
-        public async Get(): Promise<string | null> { throw new Error('Get must not be called') }
-        public async Put(): Promise<void> { throw new Error('Put must not be called') }
-        public async Delete(): Promise<void> { throw new Error('Delete must not be called') }
+        public async Get(): Promise<string | null>
+        {
+            throw new Error('Get must not be called')
+        }
+
+        public async Put(): Promise<void>
+        {
+            throw new Error('Put must not be called')
+        }
+
+        public async Delete(): Promise<void>
+        {
+            throw new Error('Delete must not be called')
+        }
     }
     const source = ProvisionedSecretSource.FromText('{}')
     await assert.rejects(() => new TenantSecretProvisioner(source).EnsureAsync(new ThrowingStore(), ['']), ProvisionedSecretMissingError)
