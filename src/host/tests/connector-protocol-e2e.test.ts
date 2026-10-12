@@ -91,9 +91,9 @@ namespace shop {
         }
         finally
         {
-            await client?.DisposeAsync()
-            handler?.Dispose()
-            await server.Dispose()
+            try { await client?.DisposeAsync() } catch { /* keep cleaning up */ }
+            try { handler?.Dispose() } catch { /* keep cleaning up */ }
+            try { await server.Dispose() } catch { /* keep cleaning up */ }
             rmSync(dir, { recursive: true, force: true })
         }
     }
