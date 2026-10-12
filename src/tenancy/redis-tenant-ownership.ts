@@ -11,6 +11,8 @@ export class RedisTenantOwnership implements ITenantOwnership
     private static readonly LeaseTtlMs = 30_000
     private static readonly RenewMs = 10_000
     private static readonly ConnectTimeoutMs = 3_000
+    private static readonly MaxReconnectAttempts = 10
+    private static readonly UnavailableText = 'redis unavailable'
     private static readonly ErrorEvent = 'error'
     private static readonly ReadyEvent = 'ready'
     private static readonly RenewScript = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end"
@@ -20,6 +22,7 @@ export class RedisTenantOwnership implements ITenantOwnership
     private readonly self: string
     private readonly held = new Set<string>()
     private client: RedisClientType | null = null
+    private connecting: Promise<RedisClientType> | null = null
     private healthy = false
     private renew: NodeJS.Timeout | null = null
     private lost: TenantLostHandler = () => {}
@@ -58,6 +61,7 @@ export class RedisTenantOwnership implements ITenantOwnership
         return true
     }
 
+    /** If Redis is unreachable the eval throws and the key lingers until its TTL (another replica can reclaim after at most one TTL). */
     public async Release(tenantId: string): Promise<void>
     {
         const key = RedisTenantOwnership.KeyPrefix + tenantId
@@ -126,39 +130,55 @@ export class RedisTenantOwnership implements ITenantOwnership
         }
         for (const key of [...this.held])
         {
+            let ok = -1
             try
             {
-                const ok = await client.eval(RedisTenantOwnership.RenewScript, { keys: [key], arguments: [this.self, String(RedisTenantOwnership.LeaseTtlMs)] }) as number
-                if (ok === 0)
-                {
-                    this.held.delete(key)
-                    this.lost(key.slice(RedisTenantOwnership.KeyPrefix.length))
-                }
+                ok = await client.eval(RedisTenantOwnership.RenewScript, { keys: [key], arguments: [this.self, String(RedisTenantOwnership.LeaseTtlMs)] }) as number
+                this.healthy = true
             }
             catch
             {
                 this.healthy = false
+                continue
+            }
+            if (ok === 0)
+            {
+                this.held.delete(key)
+                this.lost(key.slice(RedisTenantOwnership.KeyPrefix.length))
             }
         }
     }
 
     private async Connected(): Promise<RedisClientType>
     {
-        if (this.client === null)
+        if (this.client !== null)
         {
-            const client: RedisClientType = createClient({ url: this.url, socket: { connectTimeout: RedisTenantOwnership.ConnectTimeoutMs } })
-            client.on(RedisTenantOwnership.ErrorEvent, () =>
-            {
-                this.healthy = false
-            })
-            client.on(RedisTenantOwnership.ReadyEvent, () =>
-            {
-                this.healthy = true
-            })
-            await client.connect()
-            this.client = client
-            this.healthy = true
+            return this.client
         }
-        return this.client
+        if (this.connecting === null)
+        {
+            this.connecting = this.Connect().finally(() =>
+            {
+                this.connecting = null
+            })
+        }
+        return this.connecting
+    }
+
+    private async Connect(): Promise<RedisClientType>
+    {
+        const client: RedisClientType = createClient({ url: this.url, socket: { connectTimeout: RedisTenantOwnership.ConnectTimeoutMs, reconnectStrategy: retries => retries >= RedisTenantOwnership.MaxReconnectAttempts ? new Error(RedisTenantOwnership.UnavailableText) : Math.min(retries * 100, 1000) } })
+        client.on(RedisTenantOwnership.ErrorEvent, () =>
+        {
+            this.healthy = false
+        })
+        client.on(RedisTenantOwnership.ReadyEvent, () =>
+        {
+            this.healthy = true
+        })
+        await client.connect()
+        this.client = client
+        this.healthy = true
+        return client
     }
 }

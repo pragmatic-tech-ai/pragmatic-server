@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { createClient } from 'redis'
 import { RedisTenantOwnership } from '../redis-tenant-ownership.js'
 
 const url = process.env.PRAGMATIC_TEST_REDIS_URL
@@ -44,5 +45,33 @@ test('redis ownership: renew keeps ownership and the lost handler does not fire 
     finally
     {
         await a.ReleaseAll()
+    }
+})
+
+test('redis ownership: a lost lease fires OnLost and drops the stale held entry', { skip: url === undefined ? 'set PRAGMATIC_TEST_REDIS_URL to run' : false }, async () =>
+{
+    const tenant = `t-${Date.now()}-lost`
+    const a = new RedisTenantOwnership(url as string, 'replica-a')
+    const b = new RedisTenantOwnership(url as string, 'replica-b')
+    let lost = ''
+    a.OnLost(id => { lost = id })
+    await a.Start()
+    await b.Start()
+    const raw = createClient({ url: url as string })
+    await raw.connect()
+    try
+    {
+        assert.equal(await a.Acquire(tenant), true)
+        await raw.del(`pragmatic:own:${tenant}`)
+        assert.equal(await b.Acquire(tenant), true)
+        await a.RenewNowForTest()
+        assert.equal(lost, tenant)
+        assert.equal(await a.Acquire(tenant), false)
+    }
+    finally
+    {
+        await raw.quit()
+        await a.ReleaseAll()
+        await b.ReleaseAll()
     }
 })
