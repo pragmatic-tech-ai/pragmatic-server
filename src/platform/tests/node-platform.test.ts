@@ -63,6 +63,8 @@ test('NodePlatform CreateTenantConfigStore round-trips a tenant config', async (
         await store.Save('t1', new IdentityConfig('pack-1', DelegationDepth.FullAuthz, new Map([['s', 'v']]), new Map([['g', Role.Editor]]), new Map()))
         const got = (await store.Get('t1'))!
         assert.equal(got.PackId, 'pack-1')
+        assert.equal(got.ProviderSettings.get('s'), 'v')
+        assert.equal(got.DelegationDepth, DelegationDepth.FullAuthz)
         assert.equal(got.GroupRoleMap.get('g'), Role.Editor)
         assert.deepEqual([...(await store.List())], ['t1'])
     }

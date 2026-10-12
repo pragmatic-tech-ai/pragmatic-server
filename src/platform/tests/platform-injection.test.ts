@@ -96,6 +96,7 @@ test('a server built with an injected platform routes all infra + identity throu
         assert.ok(platform.calls.includes(RecordingPlatform.PromptCall))
         assert.ok(platform.calls.includes(RecordingPlatform.MasterKeyCall))
         assert.ok(platform.calls.includes(RecordingPlatform.IdentityStoresCall))
+        assert.ok(platform.calls.includes(RecordingPlatform.TenantConfigCall))
         assert.notEqual(await server.Pack(), undefined)
     }
     finally
