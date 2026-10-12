@@ -52,6 +52,6 @@ test('ci workflow builds TODL like every other sibling (no DOM workaround)', () 
 {
     const text = Workflows.Text('ci.yml')
     assert.doesNotMatch(text, /--lib/, 'the TODL --lib workaround must be gone')
-    assert.doesNotMatch(text, /"TODL"/, 'the TODL special-case branch must be gone')
+    assert.doesNotMatch(text, /if /, 'no shell conditional - TODL builds like every other sibling')
     assert.doesNotMatch(text, /gen:prelude/, 'the inlined TODL generator mirror must be gone')
 })
