@@ -160,6 +160,7 @@ export class TenantRegistry
             platform: this.platform,
             deploymentMode: this.deploymentMode,
             connectorsPolicy: provisioning.connectorsPolicy,
+            connectors: provisioning.connectors,
             identity: {
                 identityRoot: join(this.baseDir, tenantId, TenantRegistry.IdentityDir),
                 masterKey: this.masterKey,

@@ -1,4 +1,4 @@
-import type { BootstrapOptions, OidcServerOptions } from '../pragmatic-server.js'
+import type { BootstrapOptions, OidcServerOptions, PragmaticServerOptions } from '../pragmatic-server.js'
 import type { ConnectorsPolicy } from '../host/connector-policy.js'
 
 export interface TenantProvisioning
@@ -7,6 +7,7 @@ export interface TenantProvisioning
     bootstrap?: BootstrapOptions
     oidc?: OidcServerOptions
     connectorsPolicy?: ConnectorsPolicy
+    connectors?: PragmaticServerOptions['connectors']
 }
 
 /** Source of per-tenant provisioning (display name + optional bootstrap/OIDC). 5B/5C back this with a
