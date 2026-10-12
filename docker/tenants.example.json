@@ -1,0 +1,9 @@
+{
+  "tenants": {
+    "acme": {
+      "displayName": "Acme Corp",
+      "bootstrap": { "adminEmail": "admin@acme.test", "adminPrincipalId": "admin", "adminPasswordRef": "acme-admin-pw", "ownerGrant": true },
+      "connectorsPolicy": { "adapterAllowlist": ["sql"], "catalogOnly": false, "allowProviderOverride": false, "providerAllowlist": [] }
+    }
+  }
+}

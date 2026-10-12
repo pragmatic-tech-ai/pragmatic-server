@@ -1,0 +1,21 @@
+services:
+  pragmatic-server:
+    build:
+      context: ..
+      dockerfile: pragmatic-server/docker/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      PRAGMATIC_BASE_DIR: /data
+      PRAGMATIC_PORT: "8080"
+      PRAGMATIC_TENANTS_FILE: /cfg/tenants.json
+      PRAGMATIC_MASTER_KEY_FILE: /run/secrets/master_key
+    volumes:
+      - pragmatic-data:/data
+      - ./docker/tenants.example.json:/cfg/tenants.json:ro
+      - ./docker/master.key:/run/secrets/master_key:ro
+# A Redis coordinator would attach here for the deferred multi-replica story:
+#  redis:
+#    image: redis:7
+volumes:
+  pragmatic-data:

@@ -1,2 +1,4 @@
 node_modules
 dist
+docker/master.key
+docker/*.key
