@@ -232,7 +232,7 @@ export class TenantRegistry
     }
 }
 
-/** Deterministic in-process ownership for tests: always grants or always denies, always healthy, never loses. */
+/** Deterministic in-process ownership for tests: grants or denies per flags, never loses. */
 class FixedOwnership implements ITenantOwnership
 {
     private readonly granted: boolean

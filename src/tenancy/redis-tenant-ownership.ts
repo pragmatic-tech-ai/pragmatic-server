@@ -12,6 +12,8 @@ export class RedisTenantOwnership implements ITenantOwnership
     private static readonly RenewMs = 10_000
     private static readonly ConnectTimeoutMs = 3_000
     private static readonly MaxReconnectAttempts = 10
+    private static readonly CommandTimeoutMs = 3_000
+    private static readonly CommandTimedOutText = 'redis command timed out'
     private static readonly UnavailableText = 'redis unavailable'
     private static readonly ErrorEvent = 'error'
     private static readonly ReadyEvent = 'ready'
@@ -56,16 +58,24 @@ export class RedisTenantOwnership implements ITenantOwnership
         {
             return true
         }
-        const client = await this.Connected()
-        const claimed = await client.set(key, this.self, { NX: true, PX: RedisTenantOwnership.LeaseTtlMs })
-        if (claimed === null)
+        try
         {
+            const client = await this.Connected()
+            const claimed = await this.WithTimeout(client.set(key, this.self, { NX: true, PX: RedisTenantOwnership.LeaseTtlMs }))
+            if (claimed === null)
+            {
+                return false
+            }
+            this.held.add(key)
+            this.lastRenewMs.set(key, this.now())
+            this.EnsureRenew()
+            return true
+        }
+        catch
+        {
+            this.healthy = false
             return false
         }
-        this.held.add(key)
-        this.lastRenewMs.set(key, this.now())
-        this.EnsureRenew()
-        return true
     }
 
     /** If Redis is unreachable the eval throws and the key lingers until its TTL (another replica can reclaim after at most one TTL). */
@@ -78,7 +88,7 @@ export class RedisTenantOwnership implements ITenantOwnership
         }
         this.lastRenewMs.delete(key)
         const client = await this.Connected()
-        await client.eval(RedisTenantOwnership.ReleaseScript, { keys: [key], arguments: [this.self] })
+        await this.WithTimeout(client.eval(RedisTenantOwnership.ReleaseScript, { keys: [key], arguments: [this.self] }))
     }
 
     public async ReleaseAll(): Promise<void>
@@ -100,7 +110,7 @@ export class RedisTenantOwnership implements ITenantOwnership
         {
             for (const key of this.held)
             {
-                await client.eval(RedisTenantOwnership.ReleaseScript, { keys: [key], arguments: [this.self] }).catch(() => 0)
+                await this.WithTimeout(client.eval(RedisTenantOwnership.ReleaseScript, { keys: [key], arguments: [this.self] })).catch(() => 0)
             }
             this.held.clear()
             this.lastRenewMs.clear()
@@ -161,7 +171,7 @@ export class RedisTenantOwnership implements ITenantOwnership
                 {
                     try
                     {
-                        const ok = await client.eval(RedisTenantOwnership.RenewScript, { keys: [key], arguments: [this.self, String(RedisTenantOwnership.LeaseTtlMs)] }) as number
+                        const ok = await this.WithTimeout(client.eval(RedisTenantOwnership.RenewScript, { keys: [key], arguments: [this.self, String(RedisTenantOwnership.LeaseTtlMs)] })) as number
                         this.healthy = true
                         if (ok === 0)
                         {
@@ -206,12 +216,34 @@ export class RedisTenantOwnership implements ITenantOwnership
         }
     }
 
+    private async WithTimeout<T>(op: Promise<T>): Promise<T>
+    {
+        let timer: NodeJS.Timeout | undefined
+        const timeout = new Promise<never>((_resolve, reject) =>
+        {
+            timer = setTimeout(() => reject(new Error(RedisTenantOwnership.CommandTimedOutText)), RedisTenantOwnership.CommandTimeoutMs)
+            timer.unref()
+        })
+        try
+        {
+            return await Promise.race([op, timeout])
+        }
+        finally
+        {
+            if (timer !== undefined)
+            {
+                clearTimeout(timer)
+            }
+        }
+    }
+
     private async Connected(): Promise<RedisClientType>
     {
-        if (this.client !== null)
+        if (this.client !== null && this.client.isOpen)
         {
             return this.client
         }
+        this.client = null
         if (this.connecting === null)
         {
             this.connecting = this.Connect().finally(() =>

@@ -108,3 +108,21 @@ test('a held key not renewable within the lease TTL is given up (lapse)', async 
     assert.equal(lost, 'acme')
     await ownership.ReleaseAll()
 })
+
+test('Acquire fails closed (returns false) when the Redis command errors', async () =>
+{
+    const fake =
+    {
+        isOpen: true,
+        on(): void {},
+        async connect(): Promise<void> {},
+        async quit(): Promise<void> {},
+        async set(): Promise<string | null> { throw new Error('unreachable') },
+        async eval(): Promise<number> { return 1 },
+    }
+    const ownership = new RedisTenantOwnership('redis://unused', 'replica-a', () => 1000, () => fake as unknown as RedisClientType)
+    await ownership.Start()
+    assert.equal(await ownership.Acquire('acme'), false)
+    assert.equal(ownership.Healthy(), false)
+    await ownership.ReleaseAll()
+})

@@ -87,3 +87,18 @@ test('readyz is 503 when ownership is unhealthy (Redis-down fail-closed)', async
         await host.DisposeAsync()
     }
 })
+
+test('an HTTP request for an owned-elsewhere tenant returns a retryable 503', async () =>
+{
+    const provisioning = new InMemoryTenantProvisioning(new Map<string, TenantProvisioning>([['acme', { displayName: 'Acme' }]]))
+    const host = await PragmaticServerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir: 'C:/tmp/ro-test', masterKey: { base64Env: 'PRAGMATIC_MASTER_KEY' }, provisioning })
+    try
+    {
+        host.RegistryForTest().SetOwnershipForTest(false)
+        assert.equal(await Probe.Get(host.Address().port, '/auth?tenant=acme'), 503)
+    }
+    finally
+    {
+        await host.DisposeAsync()
+    }
+})

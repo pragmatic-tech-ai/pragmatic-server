@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import type { Server as HttpServer, IncomingMessage, ServerResponse } from 'node:http'
 import type { Socket } from 'node:net'
@@ -60,6 +61,9 @@ export class PragmaticServerHost
     private static readonly UnauthorizedResponse = 'HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'
     private static readonly ServiceUnavailableResponse = 'HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nConnection: close\r\n\r\n'
     private static readonly NotFoundStatus = 404
+    private static readonly ServiceUnavailableStatus = 503
+    private static readonly RetryAfterHeader = 'Retry-After'
+    private static readonly RetryAfterSeconds = '1'
     private static readonly DefaultIdleTtlMs = 300_000
     private static readonly DefaultIdleSweepMs = 30_000
 
@@ -105,7 +109,7 @@ export class PragmaticServerHost
     {
         const coordinator = new InMemoryTenantCoordinator()
         const ownership = options.redisUrl !== undefined && options.redisUrl.length > 0
-            ? new RedisTenantOwnership(options.redisUrl, options.replicaId ?? options.redisUrl)
+            ? new RedisTenantOwnership(options.redisUrl, options.replicaId ?? randomUUID())
             : new InMemoryTenantOwnership()
         await ownership.Start().catch(() => {})
         const registry = new TenantRegistry(options.baseDir, options.masterKey, options.provisioning, coordinator, options.platform, options.deploymentMode, ownership)
@@ -291,12 +295,20 @@ export class PragmaticServerHost
             const endpoint = new AuthHttpEndpoint(await server.Pack(), server.Tenant(), server.Oidc())
             await endpoint.Handle(req, res)
         }
-        catch
+        catch (error)
         {
             if (!res.headersSent && !res.writableEnded)
             {
-                res.writeHead(PragmaticServerHost.NotFoundStatus)
-                res.end()
+                if (error instanceof TenantOwnedElsewhereError)
+                {
+                    res.writeHead(PragmaticServerHost.ServiceUnavailableStatus, { [PragmaticServerHost.RetryAfterHeader]: PragmaticServerHost.RetryAfterSeconds })
+                    res.end()
+                }
+                else
+                {
+                    res.writeHead(PragmaticServerHost.NotFoundStatus)
+                    res.end()
+                }
             }
         }
     }
