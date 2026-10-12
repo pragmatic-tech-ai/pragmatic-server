@@ -88,6 +88,7 @@ export class TenantRegistry
         finally
         {
             this.pending.delete(tenantId)
+            this.lostDuringBuild.delete(tenantId)
         }
     }
 
@@ -116,11 +117,12 @@ export class TenantRegistry
             }
             this.servers.delete(tenantId)
             this.coordinator.Forget(tenantId)
-            const disposal = server.Dispose()
-            const tracked = disposal.catch(() => {}).finally(() => this.disposing.delete(tenantId))
+            const tracked = server.Dispose()
+                .catch(() => {})
+                .then(() => this.ownership.Release(tenantId).catch(() => {}))
+                .finally(() => this.disposing.delete(tenantId))
             this.disposing.set(tenantId, tracked)
             await tracked
-            await this.ownership.Release(tenantId).catch(() => {})
         }
     }
 
