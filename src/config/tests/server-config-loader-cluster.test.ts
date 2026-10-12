@@ -67,3 +67,21 @@ test('LoadGateway fails closed without redis', () =>
 {
     assert.throws(() => ServerConfigLoader.LoadGateway({ ...Env.Tls() }), /PRAGMATIC_REDIS_URL/)
 })
+
+test('a missing cert (key+ca present) fails closed naming the cert var', () =>
+{
+    const env = { ...Env.Base(), PRAGMATIC_TLS_KEY_FILE: '/k.pem', PRAGMATIC_TLS_CA_FILE: '/ca.pem' }
+    assert.throws(() => ServerConfigLoader.Load(env, Env.NoFile), /PRAGMATIC_TLS_CERT_FILE/)
+})
+
+test('a missing key (cert+ca present) fails closed naming the key var', () =>
+{
+    const env = { ...Env.Base(), PRAGMATIC_TLS_CERT_FILE: '/c.pem', PRAGMATIC_TLS_CA_FILE: '/ca.pem' }
+    assert.throws(() => ServerConfigLoader.Load(env, Env.NoFile), /PRAGMATIC_TLS_KEY_FILE/)
+})
+
+test('an empty-string TLS var is treated as absent (fails closed)', () =>
+{
+    const env = { ...Env.Base(), PRAGMATIC_TLS_CERT_FILE: '', PRAGMATIC_TLS_KEY_FILE: '/k.pem', PRAGMATIC_TLS_CA_FILE: '/ca.pem' }
+    assert.throws(() => ServerConfigLoader.Load(env, Env.NoFile), /PRAGMATIC_TLS_CERT_FILE/)
+})

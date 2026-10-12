@@ -52,11 +52,16 @@ export class ServerConfigLoader
         }
     }
 
+    private static NonEmpty(value: string | undefined): string | undefined
+    {
+        return value !== undefined && value.length > 0 ? value : undefined
+    }
+
     private static Tls(env: Record<string, string | undefined>): MachineTlsRef | undefined
     {
-        const certFile = env.PRAGMATIC_TLS_CERT_FILE
-        const keyFile = env.PRAGMATIC_TLS_KEY_FILE
-        const caFile = env.PRAGMATIC_TLS_CA_FILE
+        const certFile = ServerConfigLoader.NonEmpty(env.PRAGMATIC_TLS_CERT_FILE)
+        const keyFile = ServerConfigLoader.NonEmpty(env.PRAGMATIC_TLS_KEY_FILE)
+        const caFile = ServerConfigLoader.NonEmpty(env.PRAGMATIC_TLS_CA_FILE)
         if (certFile === undefined && keyFile === undefined && caFile === undefined)
         {
             return undefined
