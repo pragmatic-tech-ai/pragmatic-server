@@ -114,3 +114,33 @@ test('a connection with a tokenEnvVar reads the secret from the environment', as
         delete process.env.PS_FCR_TEST_TOKEN
     }
 })
+
+test('a model-level spec.Secret that is unresolved yields no Secret (no fallthrough to SecretRef)', async () =>
+{
+    const resolver = new FileConnectionResolver(Fixture.Map([['crm', { Settings: { database: 'd' }, SecretRef: 't1/crm/pw' }]]))
+    const resolved = await resolver.Resolve(Fixture.Spec({ Connection: 'crm', Secret: 'model-ref' }), Fixture.Provider(new Map([['t1/crm/pw', 'conn-value']])))
+    assert.equal(resolved.Secret, undefined)
+})
+
+test('connection SecretRef takes precedence over tokenEnvVar', async () =>
+{
+    process.env.PS_FCR_TEST_TOKEN2 = 'env-value'
+    try
+    {
+        const resolver = new FileConnectionResolver(Fixture.Map([['crm', { Settings: { database: 'd' }, SecretRef: 't1/crm/pw', TokenEnvVar: 'PS_FCR_TEST_TOKEN2' }]]))
+        const resolved = await resolver.Resolve(Fixture.Spec({ Connection: 'crm' }), Fixture.Provider(new Map([['t1/crm/pw', 'ref-value']])))
+        assert.equal(resolved.Secret, 'ref-value')
+    }
+    finally
+    {
+        delete process.env.PS_FCR_TEST_TOKEN2
+    }
+})
+
+test('a connection with no secret fields yields no Secret', async () =>
+{
+    const resolver = new FileConnectionResolver(Fixture.Map([['crm', { Settings: { database: 'd' } }]]))
+    const resolved = await resolver.Resolve(Fixture.Spec({ Connection: 'crm' }), Fixture.Provider(new Map()))
+    assert.equal(resolved.Secret, undefined)
+    assert.equal(resolved.Config.database, 'd')
+})
