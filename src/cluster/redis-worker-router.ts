@@ -1,5 +1,6 @@
 import { createClient } from 'redis'
 import type { RedisClientType } from 'redis'
+import { ClusterKeys } from './cluster-keys.js'
 import type { IWorkerRouter, WorkerEndpoint } from './worker-router.js'
 
 /** No live worker is available to serve a tenant. */
@@ -20,8 +21,6 @@ export class NoWorkersAvailableError extends Error
  *  claims the route under a TTL. The URL may carry credentials and is never logged. Injectable clock + clientFactory. */
 export class RedisWorkerRouter implements IWorkerRouter
 {
-    private static readonly WorkersKey = 'pragmatic:workers'
-    private static readonly RoutePrefix = 'pragmatic:route:'
     private static readonly RouteTtlMs = 30_000
     private static readonly PlusInf = '+inf'
     private static readonly ErrorEvent = 'error'
@@ -43,12 +42,12 @@ export class RedisWorkerRouter implements IWorkerRouter
     public async RouteOrSpawn(tenantId: string): Promise<WorkerEndpoint>
     {
         const client = await this.Connected()
-        const live = await client.zRangeByScore(RedisWorkerRouter.WorkersKey, this.now(), RedisWorkerRouter.PlusInf)
+        const live = await client.zRangeByScore(ClusterKeys.Workers, this.now(), RedisWorkerRouter.PlusInf)
         if (live.length === 0)
         {
             throw new NoWorkersAvailableError()
         }
-        const key = RedisWorkerRouter.RoutePrefix + tenantId
+        const key = ClusterKeys.RoutePrefix + tenantId
         const existing = await client.get(key)
         // The route value and live-set members are the SAME encoding (WorkerRegistration writes JSON.stringify(endpoint)), so a byte match means the claimed worker is still live.
         if (existing !== null && live.includes(existing))

@@ -1,5 +1,6 @@
 import { createClient } from 'redis'
 import type { RedisClientType } from 'redis'
+import { ClusterKeys } from './cluster-keys.js'
 import type { WorkerEndpoint } from './worker-router.js'
 
 /** Heartbeats this worker's endpoint into a Redis sorted set (scored by an expiry timestamp) so the gateway's router
@@ -7,7 +8,6 @@ import type { WorkerEndpoint } from './worker-router.js'
  *  carry credentials and is never logged. Injectable clock + clientFactory for deterministic non-gated tests. */
 export class WorkerRegistration
 {
-    private static readonly WorkersKey = 'pragmatic:workers'
     private static readonly TtlMs = 30_000
     private static readonly RenewMs = 10_000
     private static readonly ErrorEvent = 'error'
@@ -18,6 +18,7 @@ export class WorkerRegistration
     private readonly now: () => number
     private readonly clientFactory: () => RedisClientType
     private client: RedisClientType | null = null
+    private connecting: Promise<RedisClientType> | null = null
     private timer: NodeJS.Timeout | null = null
     private disposed = false
 
@@ -60,7 +61,7 @@ export class WorkerRegistration
         }
         try
         {
-            await client.zRem(WorkerRegistration.WorkersKey, this.member).catch(() => 0)
+            await client.zRem(ClusterKeys.Workers, this.member).catch(() => 0)
         }
         finally
         {
@@ -77,7 +78,7 @@ export class WorkerRegistration
         try
         {
             const client = await this.Connected()
-            await client.zAdd(WorkerRegistration.WorkersKey, { score: this.now() + WorkerRegistration.TtlMs, value: this.member })
+            await client.zAdd(ClusterKeys.Workers, { score: this.now() + WorkerRegistration.TtlMs, value: this.member })
         }
         catch
         {
@@ -90,6 +91,19 @@ export class WorkerRegistration
         {
             return this.client
         }
+        this.client = null
+        if (this.connecting === null)
+        {
+            this.connecting = this.Connect().finally(() =>
+            {
+                this.connecting = null
+            })
+        }
+        return this.connecting
+    }
+
+    private async Connect(): Promise<RedisClientType>
+    {
         const client = this.clientFactory()
         client.on(WorkerRegistration.ErrorEvent, () => {})
         try
