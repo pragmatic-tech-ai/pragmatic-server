@@ -11,6 +11,7 @@ class FakeOwnership implements ITenantOwnership
 {
     public granted = true
     public healthy = true
+    public acquired: string[] = []
     public released: string[] = []
     public lost: TenantLostHandler = () => {}
 
@@ -18,8 +19,9 @@ class FakeOwnership implements ITenantOwnership
     {
     }
 
-    public async Acquire(_tenantId: string): Promise<boolean>
+    public async Acquire(tenantId: string): Promise<boolean>
     {
+        this.acquired.push(tenantId)
         return this.granted
     }
 
@@ -43,33 +45,37 @@ class FakeOwnership implements ITenantOwnership
     }
 }
 
-function registryWith(ownership: ITenantOwnership): TenantRegistry
+class Fixtures
 {
-    const entries = new Map<string, TenantProvisioning>([['acme', { displayName: 'Acme' }]])
-    const provisioning = new InMemoryTenantProvisioning(entries)
-    return new TenantRegistry('C:/tmp/does-not-matter', { base64Env: 'PRAGMATIC_MASTER_KEY' }, provisioning, new InMemoryTenantCoordinator(), undefined, DeploymentMode.Local, ownership)
+    public static RegistryWith(ownership: ITenantOwnership): TenantRegistry
+    {
+        const entries = new Map<string, TenantProvisioning>([['acme', { displayName: 'Acme' }]])
+        const provisioning = new InMemoryTenantProvisioning(entries)
+        return new TenantRegistry('C:/tmp/does-not-matter', { base64Env: 'PRAGMATIC_MASTER_KEY' }, provisioning, new InMemoryTenantCoordinator(), undefined, DeploymentMode.Local, ownership)
+    }
 }
 
 test('ServerFor throws TenantOwnedElsewhereError when ownership denies', async () =>
 {
     const ownership = new FakeOwnership()
     ownership.granted = false
-    const registry = registryWith(ownership)
+    const registry = Fixtures.RegistryWith(ownership)
     await assert.rejects(() => registry.ServerFor('acme'), TenantOwnedElsewhereError)
 })
 
 test('ServerFor rejects an unprovisioned tenant before acquiring ownership', async () =>
 {
     const ownership = new FakeOwnership()
-    const registry = registryWith(ownership)
+    const registry = Fixtures.RegistryWith(ownership)
     await assert.rejects(() => registry.ServerFor('ghost'))
     assert.deepEqual(ownership.released, [])
+    assert.deepEqual(ownership.acquired, [])
 })
 
 test('OwnershipHealthy delegates to the ownership', () =>
 {
     const ownership = new FakeOwnership()
     ownership.healthy = false
-    const registry = registryWith(ownership)
+    const registry = Fixtures.RegistryWith(ownership)
     assert.equal(registry.OwnershipHealthy(), false)
 })

@@ -40,6 +40,7 @@ export class TenantRegistry
     private readonly provisioning: ITenantProvisioning
     private readonly coordinator: ITenantCoordinator
     private ownership: ITenantOwnership
+    private readonly lostDuringBuild = new Set<string>()
     private readonly platform: PlatformServices | undefined
     private readonly deploymentMode: DeploymentMode | undefined
     private readonly servers = new Map<string, PragmaticServer>()
@@ -75,6 +76,11 @@ export class TenantRegistry
         try
         {
             const server = await build
+            if (this.lostDuringBuild.delete(tenantId))
+            {
+                await server.Dispose().catch(() => {})
+                throw new TenantOwnedElsewhereError()
+            }
             this.servers.set(tenantId, server)
             this.coordinator.Note(tenantId)
             return server
@@ -110,11 +116,11 @@ export class TenantRegistry
             }
             this.servers.delete(tenantId)
             this.coordinator.Forget(tenantId)
-            await this.ownership.Release(tenantId).catch(() => {})
             const disposal = server.Dispose()
             const tracked = disposal.catch(() => {}).finally(() => this.disposing.delete(tenantId))
             this.disposing.set(tenantId, tracked)
             await tracked
+            await this.ownership.Release(tenantId).catch(() => {})
         }
     }
 
@@ -143,6 +149,10 @@ export class TenantRegistry
         const server = this.servers.get(tenantId)
         if (server === undefined)
         {
+            if (this.pending.has(tenantId))
+            {
+                this.lostDuringBuild.add(tenantId)
+            }
             return
         }
         this.servers.delete(tenantId)
@@ -173,18 +183,25 @@ export class TenantRegistry
         {
             throw new TenantOwnedElsewhereError()
         }
-        const server = new PragmaticServer(this.OptionsFor(tenantId, provisioning))
         try
         {
-            await server.Start()
+            const server = new PragmaticServer(this.OptionsFor(tenantId, provisioning))
+            try
+            {
+                await server.Start()
+            }
+            catch (error)
+            {
+                await server.Dispose().catch(() => {})
+                throw error
+            }
+            return server
         }
         catch (error)
         {
-            await server.Dispose().catch(() => {})
             await this.ownership.Release(tenantId).catch(() => {})
             throw error
         }
-        return server
     }
 
     private OptionsFor(tenantId: string, provisioning: TenantProvisioning): PragmaticServerOptions
