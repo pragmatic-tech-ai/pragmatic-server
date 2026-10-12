@@ -23,6 +23,13 @@ app.kubernetes.io/name: {{ include "pragmatic-server.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
+{{/* Selector labels for a cluster component (worker|gateway). Pass a dict: (dict "ctx" . "component" "worker"). */}}
+{{- define "pragmatic-server.componentSelectorLabels" -}}
+app.kubernetes.io/name: {{ include "pragmatic-server.name" .ctx }}
+app.kubernetes.io/instance: {{ .ctx.Release.Name }}
+app.kubernetes.io/component: {{ .component }}
+{{- end -}}
+
 {{/* Common labels. */}}
 {{- define "pragmatic-server.labels" -}}
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}

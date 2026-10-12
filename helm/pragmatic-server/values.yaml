@@ -73,3 +73,25 @@ autoscaling:
   minReplicas: 2
   maxReplicas: 5
   targetCPUUtilizationPercentage: 70
+
+# Gateway + worker split (horizontal scale). When enabled the chart deploys a worker StatefulSet
+# (file-backed, mutual-TLS, one tenant-owner at a time via the Redis lease) behind a stateless
+# gateway Deployment, instead of the single Deployment above. REQUIRES redis.* (the worker
+# ownership lease is the single-writer backstop). mTLS material comes from an existing Secret
+# (cert-manager or operator supplied: tls.crt, tls.key, ca.crt) -- never inline here.
+cluster:
+  enabled: false
+  tls:
+    existingSecret: ""
+    mountPath: /run/secrets/tls
+  # All workers present one server cert whose SAN is this name; the gateway validates every worker
+  # connection against it (connecting to the per-pod DNS address independently).
+  workerServerName: pragmatic-worker
+  worker:
+    replicas: 2
+    port: 8443
+    healthPort: 8081
+  gateway:
+    replicas: 2
+    port: 8080
+    healthPort: 8080
