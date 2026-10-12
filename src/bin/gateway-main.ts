@@ -47,14 +47,15 @@ class GatewayMain
         try
         {
             await this.gateway.DisposeAsync()
-            await this.router.Drain()
         }
         catch (error)
         {
             console.error(GatewayMain.ShutdownErrorPrefix + (error instanceof Error ? error.message : GatewayMain.UnknownError))
+            await this.router.Drain().catch(() => {})
             process.exit(1)
             return
         }
+        await this.router.Drain().catch(() => {})
         process.exit(0)
     }
 }

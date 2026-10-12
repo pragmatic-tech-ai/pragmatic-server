@@ -15,6 +15,8 @@ export class ServerBootstrap
     private static readonly InMemoryOwnership = 'in-memory'
     private static readonly SecretsFile = 'file'
     private static readonly SecretsNone = 'none'
+    private static readonly HealthOff = 'off'
+    private static readonly ServerNameDefault = 'default'
     private static readonly WorkerNeedsTls = 'worker requires TLS (set PRAGMATIC_TLS_CERT_FILE/KEY_FILE/CA_FILE)'
 
     public static ComposeOptions(config: ServerConfig, provisioning: ITenantProvisioning, platform?: PlatformServices, provisionedSecrets?: IProvisionedSecretSource): PragmaticServerHostOptions
@@ -88,11 +90,11 @@ export class ServerBootstrap
     public static WorkerStartupLine(config: ServerConfig): string
     {
         const ownership = config.redisUrl !== undefined ? ServerBootstrap.RedisOwnership : ServerBootstrap.InMemoryOwnership
-        return `pragmatic-worker listening on ${config.host}:${config.port} mode=${config.deploymentMode} ownership=${ownership} health=${config.healthPort ?? 'off'}`
+        return `pragmatic-worker listening on ${config.host}:${config.port} mode=${config.deploymentMode} ownership=${ownership} health=${config.healthPort ?? ServerBootstrap.HealthOff}`
     }
 
     public static GatewayStartupLine(gw: GatewayConfig): string
     {
-        return `pragmatic-gateway listening on ${gw.host}:${gw.port} servername=${gw.workerServerName ?? 'default'}`
+        return `pragmatic-gateway listening on ${gw.host}:${gw.port} servername=${gw.workerServerName ?? ServerBootstrap.ServerNameDefault}`
     }
 }

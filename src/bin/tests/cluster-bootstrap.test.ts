@@ -61,5 +61,7 @@ test('the worker and gateway startup lines never leak the redis URL or TLS key p
     assert.ok(w.includes('8443'))
     const g = ServerBootstrap.GatewayStartupLine(Fixture.Gateway())
     assert.ok(!g.includes('secret'))
+    assert.ok(!g.includes('/k.pem'))
+    assert.ok(!g.includes('redis://'))
     assert.ok(g.includes('8080'))
 })
