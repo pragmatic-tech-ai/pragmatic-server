@@ -36,8 +36,6 @@ spec:
           env:
             - name: PRAGMATIC_PORT
               value: {{ .Values.cluster.gateway.port | quote }}
-            - name: PRAGMATIC_HEALTH_PORT
-              value: {{ .Values.cluster.gateway.healthPort | quote }}
             - name: PRAGMATIC_WORKER_SERVERNAME
               value: {{ .Values.cluster.workerServerName | quote }}
             - name: PRAGMATIC_REDIS_URL

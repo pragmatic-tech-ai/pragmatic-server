@@ -94,4 +94,3 @@ cluster:
   gateway:
     replicas: 2
     port: 8080
-    healthPort: 8080
