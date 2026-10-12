@@ -178,3 +178,43 @@ test('additionalSecretRefs are written through from an active provisioned source
         IdentityFixture.Cleanup(identityRoot, packagesRoot, keyEnv)
     }
 })
+
+test('an additionalSecretRef duplicating the bootstrap ref is written once (dedupe)', async () =>
+{
+    const { identityRoot, packagesRoot, keyEnv } = IdentityFixture.Dirs()
+    const base = IdentityFixture.Options(identityRoot, packagesRoot, keyEnv)
+    const options = { ...base, identity: { ...base.identity,
+        provisionedSecrets: ProvisionedSecretSource.FromText('{"t1/bootstrap/admin":"admin-pw-12345"}'),
+        additionalSecretRefs: ['t1/bootstrap/admin'] } }
+    const server = new PragmaticServer(options)
+    try
+    {
+        await server.Start() // dedupe must not cause a double-provision failure
+        const pack = await server.Pack()
+        assert.equal(await pack.Secrets.Get('t1/bootstrap/admin'), 'admin-pw-12345')
+    }
+    finally
+    {
+        await server.Dispose()
+        IdentityFixture.Cleanup(identityRoot, packagesRoot, keyEnv)
+    }
+})
+
+test('additionalSecretRefs are ignored when no provisioned source is configured (R1)', async () =>
+{
+    const { identityRoot, packagesRoot, keyEnv } = IdentityFixture.Dirs()
+    const base = IdentityFixture.Options(identityRoot, packagesRoot, keyEnv)
+    const options = { ...base, identity: { ...base.identity, additionalSecretRefs: ['t1/crm/pw'] } }
+    const server = new PragmaticServer(options)
+    try
+    {
+        await server.Start() // no source → write-through skipped, no throw
+        const pack = await server.Pack()
+        assert.equal(await pack.Secrets.Get('t1/crm/pw'), null)
+    }
+    finally
+    {
+        await server.Dispose()
+        IdentityFixture.Cleanup(identityRoot, packagesRoot, keyEnv)
+    }
+})
