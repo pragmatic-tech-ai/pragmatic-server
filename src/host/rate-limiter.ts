@@ -86,53 +86,119 @@ class TokenBucket
         this.last = now
     }
 
+    /** True when idle for at least the full-refill horizon (Burst / Rps): equivalent to a fresh full bucket. */
+    public IsIdle(now: number, settings: RateLimitSettings): boolean
+    {
+        return now - this.last >= (settings.Burst / settings.Rps) * TokenBucket.MsPerSecond
+    }
+
     public TryConsume(now: number, settings: RateLimitSettings): RateLimitDecision
     {
         const elapsedSeconds = Math.max(0, now - this.last) / TokenBucket.MsPerSecond
         this.tokens = Math.min(settings.Burst, this.tokens + elapsedSeconds * settings.Rps)
-        this.last = now
+        this.last = Math.max(this.last, now)
         if (this.tokens >= 1)
         {
             this.tokens -= 1
             return RateLimitDecision.Allow()
         }
         const deficit = 1 - this.tokens
-        const retryMs = settings.Rps > 0 ? Math.ceil((deficit / settings.Rps) * TokenBucket.MsPerSecond) : TokenBucket.MinRetryMs
+        const retryMs = Math.ceil((deficit / settings.Rps) * TokenBucket.MsPerSecond)
         return RateLimitDecision.Reject(Math.max(TokenBucket.MinRetryMs, retryMs))
     }
 }
 
-/** Per-replica in-memory token buckets, keyed independently per tenant and per principal. */
+/** Per-replica in-memory token buckets, keyed independently per tenant and per principal. Tenant buckets are keyed by
+ *  tenant id; principal buckets by a length-prefixed (tenant, principal) composite so the same principal id in two
+ *  tenants never shares a bucket and no (tenant, key) pair can collide with another. Idle buckets are swept once a
+ *  scope's map exceeds MaxBuckets, bounding memory against attacker-supplied ids. */
 export class TokenBucketRateLimiter implements IRateLimiter
 {
+    public static readonly DefaultMaxBuckets = 10000
+    private static readonly KeySeparator = ':'
+    private static readonly InvalidRpsMessage = 'Invalid rate-limit config: Rps must be a finite number greater than 0'
+    private static readonly InvalidBurstMessage = 'Invalid rate-limit config: Burst must be a finite number of at least 1'
+
     private readonly perTenant: RateLimitSettings | undefined
     private readonly perPrincipal: RateLimitSettings | undefined
     private readonly clock: MonotonicClock
+    private readonly maxBuckets: number
     private readonly tenantBuckets = new Map<string, TokenBucket>()
     private readonly principalBuckets = new Map<string, TokenBucket>()
+    private checksSinceSweep = 0
 
-    public constructor(config: RateLimitConfig, clock: MonotonicClock = () => performance.now())
+    public constructor(config: RateLimitConfig, clock: MonotonicClock = () => performance.now(), maxBuckets: number = TokenBucketRateLimiter.DefaultMaxBuckets)
     {
+        TokenBucketRateLimiter.Validate(config.perTenant)
+        TokenBucketRateLimiter.Validate(config.perPrincipal)
         this.perTenant = config.perTenant
         this.perPrincipal = config.perPrincipal
         this.clock = clock
+        this.maxBuckets = maxBuckets
     }
 
     public Check(request: RateLimitRequest): RateLimitDecision
     {
-        const settings = request.scope === RateLimitScope.Tenant ? this.perTenant : this.perPrincipal
+        const isTenant = request.scope === RateLimitScope.Tenant
+        const settings = isTenant ? this.perTenant : this.perPrincipal
         if (settings === undefined)
         {
             return RateLimitDecision.Allow()
         }
-        const buckets = request.scope === RateLimitScope.Tenant ? this.tenantBuckets : this.principalBuckets
+        const buckets = isTenant ? this.tenantBuckets : this.principalBuckets
+        const mapKey = isTenant ? request.key : TokenBucketRateLimiter.PrincipalKey(request.tenant, request.key)
         const now = this.clock()
-        let bucket = buckets.get(request.key)
+        this.MaybeSweep(buckets, settings, now)
+        let bucket = buckets.get(mapKey)
         if (bucket === undefined)
         {
             bucket = new TokenBucket(now, settings.Burst)
-            buckets.set(request.key, bucket)
+            buckets.set(mapKey, bucket)
         }
         return bucket.TryConsume(now, settings)
+    }
+
+    /** Diagnostic: current bucket count for a scope. */
+    public BucketCount(scope: RateLimitScope): number
+    {
+        return (scope === RateLimitScope.Tenant ? this.tenantBuckets : this.principalBuckets).size
+    }
+
+    private MaybeSweep(buckets: Map<string, TokenBucket>, settings: RateLimitSettings, now: number): void
+    {
+        this.checksSinceSweep++
+        if (buckets.size <= this.maxBuckets || this.checksSinceSweep < this.maxBuckets)
+        {
+            return
+        }
+        this.checksSinceSweep = 0
+        for (const [key, bucket] of buckets)
+        {
+            if (bucket.IsIdle(now, settings))
+            {
+                buckets.delete(key)
+            }
+        }
+    }
+
+    private static PrincipalKey(tenant: string, key: string): string
+    {
+        return `${tenant.length}${TokenBucketRateLimiter.KeySeparator}${tenant}${key}`
+    }
+
+    private static Validate(settings: RateLimitSettings | undefined): void
+    {
+        if (settings === undefined)
+        {
+            return
+        }
+        if (!Number.isFinite(settings.Rps) || settings.Rps <= 0)
+        {
+            throw new Error(TokenBucketRateLimiter.InvalidRpsMessage)
+        }
+        if (!Number.isFinite(settings.Burst) || settings.Burst < 1)
+        {
+            throw new Error(TokenBucketRateLimiter.InvalidBurstMessage)
+        }
     }
 }
