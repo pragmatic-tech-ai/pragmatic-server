@@ -68,6 +68,14 @@ spec:
                 fieldRef:
                   fieldPath: metadata.name
             {{- end }}
+            {{- if .Values.clientTls.existingSecret }}
+            - name: PRAGMATIC_CLIENT_TLS_CERT_FILE
+              value: {{ .Values.clientTls.mountPath }}/tls.crt
+            - name: PRAGMATIC_CLIENT_TLS_KEY_FILE
+              value: {{ .Values.clientTls.mountPath }}/tls.key
+            - name: PRAGMATIC_CLIENT_TLS_CA_FILE
+              value: {{ .Values.clientTls.mountPath }}/ca.crt
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /healthz
@@ -87,6 +95,11 @@ spec:
               mountPath: /run/secrets/provisioned
               readOnly: true
             {{- end }}
+            {{- if .Values.clientTls.existingSecret }}
+            - name: client-tls
+              mountPath: {{ .Values.clientTls.mountPath }}
+              readOnly: true
+            {{- end }}
             - name: data
               mountPath: {{ .Values.baseDir }}
       volumes:
@@ -100,6 +113,11 @@ spec:
             items:
               - key: {{ .Values.secrets.provisionedSecretKey }}
                 path: secrets.json
+        {{- end }}
+        {{- if .Values.clientTls.existingSecret }}
+        - name: client-tls
+          secret:
+            secretName: {{ .Values.clientTls.existingSecret }}
         {{- end }}
         - name: data
           {{- if .Values.persistence.enabled }}

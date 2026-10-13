@@ -58,6 +58,13 @@ redis:
   existingSecret: ""
   secretKey: redis-url
 
+# Client-facing TLS (machine-cert mTLS) for the standalone server. Empty existingSecret = OFF.
+# The Secret is operator/cert-manager supplied and must carry tls.crt, tls.key, ca.crt -- never inline here.
+# This client CA MUST be distinct from the worker mTLS CA (cluster.tls).
+clientTls:
+  existingSecret: ""
+  mountPath: /run/secrets/client-tls
+
 ingress:
   enabled: false
   className: ""
