@@ -1,5 +1,6 @@
 import type { MachineTlsRef } from '../cluster/machine-tls.js'
 import type { MasterKeyRef } from '../identity/master-key-resolver.js'
+import type { OtlpProtocol } from '../observability/otlp-protocol.js'
 import type { DeploymentMode } from '../platform/deployment-mode.js'
 
 export interface SingleTenantConfig
@@ -28,6 +29,12 @@ export interface ServerConfig
     workerAdvertisePort?: number
     workerServerName?: string
     healthPort?: number
+    serviceName?: string
+    metricsPort?: number
+    otlpEndpoint?: string
+    otlpProtocol?: OtlpProtocol
+    otlpMetrics?: boolean
+    traceSampling?: number
 }
 
 export interface GatewayConfig
@@ -39,4 +46,10 @@ export interface GatewayConfig
     redisUrl: string
     workerServerName?: string
     healthPort?: number
+    serviceName?: string
+    metricsPort?: number
+    otlpEndpoint?: string
+    otlpProtocol?: OtlpProtocol
+    otlpMetrics?: boolean
+    traceSampling?: number
 }

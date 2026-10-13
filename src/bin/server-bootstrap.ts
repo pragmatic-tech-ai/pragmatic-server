@@ -23,6 +23,9 @@ export class ServerBootstrap
     private static readonly ClientMtlsOn = 'on'
     private static readonly ClientMtlsOff = 'off'
     private static readonly ClientMtlsLabel = ' client-mtls='
+    private static readonly OtelOn = 'on'
+    private static readonly OtelOff = 'off'
+    private static readonly OtelLabel = ' otel='
     private static readonly WorkerNeedsTls = 'worker requires TLS (set PRAGMATIC_TLS_CERT_FILE/KEY_FILE/CA_FILE)'
 
     public static ComposeOptions(config: ServerConfig, provisioning: ITenantProvisioning, platform?: PlatformServices, provisionedSecrets?: IProvisionedSecretSource, logger?: ILogger): PragmaticServerHostOptions
@@ -53,7 +56,7 @@ export class ServerBootstrap
     {
         const ownership = ServerBootstrap.HasRedis(config) ? ServerBootstrap.RedisOwnership : ServerBootstrap.InMemoryOwnership
         const secrets = config.provisionedSecretsFile !== undefined && config.provisionedSecretsFile.length > 0 ? ServerBootstrap.SecretsFile : ServerBootstrap.SecretsNone
-        return `pragmatic-server listening on ${config.host}:${config.port} mode=${config.deploymentMode} tenants=${tenantCount} ownership=${ownership} secrets=${secrets}${ServerBootstrap.ClientMtls(config.clientTls)}${ServerBootstrap.OidcFlowToken}${ownership}`
+        return `pragmatic-server listening on ${config.host}:${config.port} mode=${config.deploymentMode} tenants=${tenantCount} ownership=${ownership} secrets=${secrets}${ServerBootstrap.ClientMtls(config.clientTls)}${ServerBootstrap.OidcFlowToken}${ownership}${ServerBootstrap.Otel(config)}`
     }
 
     public static ComposeWorkerOptions(config: ServerConfig, provisioning: ITenantProvisioning, provisionedSecrets?: IProvisionedSecretSource, logger?: ILogger): WorkerHostOptions
@@ -101,12 +104,24 @@ export class ServerBootstrap
     public static WorkerStartupLine(config: ServerConfig): string
     {
         const ownership = ServerBootstrap.HasRedis(config) ? ServerBootstrap.RedisOwnership : ServerBootstrap.InMemoryOwnership
-        return `pragmatic-worker listening on ${config.host}:${config.port} mode=${config.deploymentMode} ownership=${ownership} health=${config.healthPort ?? ServerBootstrap.HealthOff}`
+        return `pragmatic-worker listening on ${config.host}:${config.port} mode=${config.deploymentMode} ownership=${ownership} health=${config.healthPort ?? ServerBootstrap.HealthOff}${ServerBootstrap.Otel(config)}`
     }
 
     public static GatewayStartupLine(gw: GatewayConfig): string
     {
-        return `pragmatic-gateway listening on ${gw.host}:${gw.port} servername=${gw.workerServerName ?? ServerBootstrap.ServerNameDefault}${ServerBootstrap.ClientMtls(gw.clientTls)}`
+        return `pragmatic-gateway listening on ${gw.host}:${gw.port} servername=${gw.workerServerName ?? ServerBootstrap.ServerNameDefault}${ServerBootstrap.ClientMtls(gw.clientTls)}${ServerBootstrap.Otel(gw)}`
+    }
+
+    public static OtelEnabled(config: { metricsPort?: number; otlpEndpoint?: string; otlpMetrics?: boolean }): boolean
+    {
+        const tracing = config.otlpEndpoint !== undefined && config.otlpEndpoint.length > 0
+        const metrics = config.metricsPort !== undefined || config.otlpMetrics === true
+        return tracing || metrics
+    }
+
+    private static Otel(config: { metricsPort?: number; otlpEndpoint?: string; otlpMetrics?: boolean }): string
+    {
+        return ServerBootstrap.OtelLabel + (ServerBootstrap.OtelEnabled(config) ? ServerBootstrap.OtelOn : ServerBootstrap.OtelOff)
     }
 
     private static HasRedis(config: ServerConfig): boolean

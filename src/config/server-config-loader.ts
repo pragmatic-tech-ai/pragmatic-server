@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { MasterKeyRef } from '../identity/master-key-resolver.js'
 import { DeploymentMode } from '../platform/deployment-mode.js'
 import type { MachineTlsRef } from '../cluster/machine-tls.js'
+import { OtlpProtocol } from '../observability/otlp-protocol.js'
 import type { GatewayConfig, ServerConfig, SingleTenantConfig } from './server-config.js'
 
 interface ConfigFile
@@ -33,6 +34,17 @@ export class ServerConfigLoader
     private static readonly GatewayNeedsTls = 'PRAGMATIC_TLS_CERT_FILE/KEY_FILE/CA_FILE are required for the gateway'
     private static readonly GatewayNeedsRedis = 'PRAGMATIC_REDIS_URL is required for the gateway'
 
+    private static readonly BadMetricsPort = 'PRAGMATIC_METRICS_PORT must be an integer port between 1 and 65535'
+    private static readonly BadSampling = 'PRAGMATIC_TRACE_SAMPLING must be a ratio between 0 and 1'
+    private static readonly BadOtlpProtocol = 'PRAGMATIC_OTLP_PROTOCOL must be http-protobuf or grpc'
+    private static readonly TrueValue = 'true'
+    private static readonly EnvServiceName = 'PRAGMATIC_SERVICE_NAME'
+    private static readonly EnvMetricsPort = 'PRAGMATIC_METRICS_PORT'
+    private static readonly EnvOtlpEndpoint = 'PRAGMATIC_OTLP_ENDPOINT'
+    private static readonly EnvOtlpProtocol = 'PRAGMATIC_OTLP_PROTOCOL'
+    private static readonly EnvOtlpMetrics = 'PRAGMATIC_OTLP_METRICS'
+    private static readonly EnvTraceSampling = 'PRAGMATIC_TRACE_SAMPLING'
+
     public static LoadGateway(env: Record<string, string | undefined>): GatewayConfig
     {
         const tls = ServerConfigLoader.Tls(env)
@@ -53,6 +65,73 @@ export class ServerConfigLoader
             redisUrl,
             workerServerName: env.PRAGMATIC_WORKER_SERVERNAME,
             healthPort: ServerConfigLoader.Int(env.PRAGMATIC_HEALTH_PORT),
+            ...ServerConfigLoader.Observability(env),
+        }
+    }
+
+    private static MetricsPort(value: string | undefined): number | undefined
+    {
+        if (value === undefined || value.length === 0)
+        {
+            return undefined
+        }
+        const parsed = Number(value)
+        if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535)
+        {
+            throw new Error(ServerConfigLoader.BadMetricsPort)
+        }
+        return parsed
+    }
+
+    private static Sampling(value: string | undefined): number | undefined
+    {
+        if (value === undefined || value.length === 0)
+        {
+            return undefined
+        }
+        const parsed = Number(value)
+        if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1)
+        {
+            throw new Error(ServerConfigLoader.BadSampling)
+        }
+        return parsed
+    }
+
+    private static Bool(value: string | undefined): boolean | undefined
+    {
+        if (value === undefined || value.length === 0)
+        {
+            return undefined
+        }
+        return value === ServerConfigLoader.TrueValue
+    }
+
+    private static OtlpProtocolOf(value: string | undefined): OtlpProtocol | undefined
+    {
+        if (value === undefined || value.length === 0)
+        {
+            return undefined
+        }
+        if (value === OtlpProtocol.HttpProtobuf)
+        {
+            return OtlpProtocol.HttpProtobuf
+        }
+        if (value === OtlpProtocol.Grpc)
+        {
+            return OtlpProtocol.Grpc
+        }
+        throw new Error(ServerConfigLoader.BadOtlpProtocol)
+    }
+
+    private static Observability(env: Record<string, string | undefined>): { serviceName?: string; metricsPort?: number; otlpEndpoint?: string; otlpProtocol?: OtlpProtocol; otlpMetrics?: boolean; traceSampling?: number }
+    {
+        return {
+            serviceName: ServerConfigLoader.NonEmpty(env[ServerConfigLoader.EnvServiceName]),
+            metricsPort: ServerConfigLoader.MetricsPort(env[ServerConfigLoader.EnvMetricsPort]),
+            otlpEndpoint: ServerConfigLoader.NonEmpty(env[ServerConfigLoader.EnvOtlpEndpoint]),
+            otlpProtocol: ServerConfigLoader.OtlpProtocolOf(env[ServerConfigLoader.EnvOtlpProtocol]),
+            otlpMetrics: ServerConfigLoader.Bool(env[ServerConfigLoader.EnvOtlpMetrics]),
+            traceSampling: ServerConfigLoader.Sampling(env[ServerConfigLoader.EnvTraceSampling]),
         }
     }
 
@@ -146,6 +225,7 @@ export class ServerConfigLoader
             workerAdvertisePort: ServerConfigLoader.Int(env.PRAGMATIC_WORKER_ADVERTISE_PORT),
             workerServerName: env.PRAGMATIC_WORKER_SERVERNAME,
             healthPort: ServerConfigLoader.Int(env.PRAGMATIC_HEALTH_PORT),
+            ...ServerConfigLoader.Observability(env),
         }
     }
 
