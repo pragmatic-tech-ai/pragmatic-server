@@ -160,6 +160,8 @@ test('a throwing operation increments request_errors_total, marks the span error
     assert.equal(spans.length, 1)
     assert.equal(spans[0]!.attributes.outcome, 'error')
     assert.equal(spans[0]!.attributes.error, 'TypeError')
+    assert.equal(spans[0]!.status.code, 2)
+    assert.equal(spans[0]!.events.length, 0)
     const errors = await fixture.Points('request_errors_total')
     assert.equal(errors.length, 1)
     assert.equal(errors[0]!.value, 1)

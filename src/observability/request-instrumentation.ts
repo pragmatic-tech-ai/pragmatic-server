@@ -120,7 +120,6 @@ export class RequestInstrumentation
         const className = error instanceof Error ? error.constructor.name : RequestInstrumentation.UnknownClass
         span.setAttribute(RequestInstrumentation.OutcomeKey, RequestOutcome.Error)
         span.setAttribute(RequestInstrumentation.ErrorAttribute, className)
-        span.recordException(error instanceof Error ? error : new Error(RequestInstrumentation.UnknownClass))
         span.setStatus({ code: SpanStatusCode.ERROR })
         this.requestsTotal.add(1, { ...labels, [RequestInstrumentation.OutcomeKey]: RequestOutcome.Error })
         this.errorsTotal.add(1, { ...labels, [RequestInstrumentation.ClassKey]: className })

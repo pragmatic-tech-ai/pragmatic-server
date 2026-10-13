@@ -12,6 +12,17 @@ import type { ILogger } from '../observability/logger.js'
 import type { Observability, IObservabilityOptions, ObservabilityRole } from '../observability/observability.js'
 import type { OtlpProtocol } from '../observability/otlp-protocol.js'
 
+interface IObservabilityConfigView
+{
+    serviceName?: string
+    replicaId?: string
+    metricsPort?: number
+    otlpEndpoint?: string
+    otlpProtocol?: OtlpProtocol
+    otlpMetrics?: boolean
+    traceSampling?: number
+}
+
 export class ServerBootstrap
 {
     private static readonly CloudNeedsPlatform = 'cloud deployment requires a configured platform (deferred backends)'
@@ -116,14 +127,14 @@ export class ServerBootstrap
         return `pragmatic-gateway listening on ${gw.host}:${gw.port} servername=${gw.workerServerName ?? ServerBootstrap.ServerNameDefault}${ServerBootstrap.ClientMtls(gw.clientTls)}${ServerBootstrap.Otel(gw)}`
     }
 
-    public static OtelEnabled(config: { metricsPort?: number; otlpEndpoint?: string; otlpMetrics?: boolean }): boolean
+    public static OtelEnabled(config: IObservabilityConfigView): boolean
     {
         const tracing = config.otlpEndpoint !== undefined && config.otlpEndpoint.length > 0
         const metrics = config.metricsPort !== undefined || config.otlpMetrics === true
         return tracing || metrics
     }
 
-    public static ObservabilityOptions(config: { serviceName?: string; replicaId?: string; metricsPort?: number; otlpEndpoint?: string; otlpProtocol?: OtlpProtocol; otlpMetrics?: boolean; traceSampling?: number }, role: ObservabilityRole, replicaId?: string): IObservabilityOptions | undefined
+    public static ObservabilityOptions(config: IObservabilityConfigView, role: ObservabilityRole, replicaId?: string): IObservabilityOptions | undefined
     {
         if (!ServerBootstrap.OtelEnabled(config))
         {
@@ -141,7 +152,7 @@ export class ServerBootstrap
         }
     }
 
-    private static Otel(config: { metricsPort?: number; otlpEndpoint?: string; otlpMetrics?: boolean }): string
+    private static Otel(config: IObservabilityConfigView): string
     {
         return ServerBootstrap.OtelLabel + (ServerBootstrap.OtelEnabled(config) ? ServerBootstrap.OtelOn : ServerBootstrap.OtelOff)
     }
