@@ -21,10 +21,12 @@ Without it, several replicas can open the same tenant's storage at once. Set red
 Route tenants with session affinity (or rely on client retry) when scaling out, since a non-owner replica rejects
 with a retryable 503.
 {{- end }}
+{{- if .Values.clientTls.existingSecret }}
 
 SECURITY: the client-facing CA (clientTls / PRAGMATIC_CLIENT_TLS_CA_FILE) and the worker mTLS CA
 (cluster.tls / PRAGMATIC_TLS_CA_FILE) MUST be distinct. If they share a CA, a client that reaches a
 worker directly could present a cert that spoofs a machine fingerprint.
+{{- end }}
 
 NOTE: multi-replica OIDC login requires redis.url -- the OIDC flow-state store is in-memory and
 per-replica otherwise, so a login callback landing on a different replica fails.

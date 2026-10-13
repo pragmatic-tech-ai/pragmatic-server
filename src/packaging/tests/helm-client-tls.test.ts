@@ -47,7 +47,7 @@ class Chart
 test('values default clientTls to off with a mountPath', () =>
 {
     const values = Chart.Text('values.yaml')
-    assert.match(values, /^clientTls:\s*\n\s+existingSecret: ""\s*\n\s+mountPath: \/run\/secrets\/client-tls/m)
+    assert.match(values, /^clientTls:\s*\n\s+existingSecret: (''|"")\s*\n\s+mountPath: \/run\/secrets\/client-tls/m)
 })
 
 test('the standalone Deployment sets the three client TLS env vars, gated on clientTls.existingSecret', () =>

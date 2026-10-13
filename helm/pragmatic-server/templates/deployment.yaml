@@ -118,6 +118,7 @@ spec:
         - name: client-tls
           secret:
             secretName: {{ .Values.clientTls.existingSecret }}
+            defaultMode: 0440
         {{- end }}
         - name: data
           {{- if .Values.persistence.enabled }}
