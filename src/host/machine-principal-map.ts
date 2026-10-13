@@ -63,7 +63,8 @@ export class MachinePrincipalMap
 
     public constructor(entries: ReadonlyMap<string, MachinePrincipalEntry>)
     {
-        this.entries = entries
+        // Normalize keys here so storage and Lookup share one canonical form.
+        this.entries = new Map([...entries].map(([key, value]) => [MachineCertIdentity.Normalize(key), value] as const))
     }
 
     public get IsEmpty(): boolean

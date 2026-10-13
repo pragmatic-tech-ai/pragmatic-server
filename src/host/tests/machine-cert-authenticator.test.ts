@@ -67,3 +67,13 @@ test('Lookup matches an uppercase colon-formatted reference', () =>
     const map = new MachinePrincipalMap(new Map([['abcd', { PrincipalId: 'x', Groups: [] }]]))
     assert.equal(map.Lookup('AB:CD')?.PrincipalId, 'x')
 })
+
+test('a map built with a non-canonical key is reachable by canonical and original forms', () =>
+{
+    const entry = { PrincipalId: 'svc-9', Groups: [] }
+    const map = new MachinePrincipalMap(new Map([['AA:BB:CC', entry]]))
+    assert.equal(map.Lookup('aabbcc'), entry)
+    assert.equal(map.Lookup('AA:BB:CC'), entry)
+    assert.equal(map.IsEmpty, false)
+    assert.equal(MachinePrincipalMap.Empty.IsEmpty, true)
+})
