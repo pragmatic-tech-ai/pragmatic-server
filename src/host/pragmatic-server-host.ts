@@ -1,5 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
+import { createServer as httpsCreateServer } from 'node:https'
+import type { Server as HttpsServer } from 'node:https'
+import type { TLSSocket } from 'node:tls'
 import type { Server as HttpServer, IncomingMessage, ServerResponse } from 'node:http'
 import type { Socket } from 'node:net'
 import type { AddressInfo } from 'node:net'
@@ -7,9 +10,13 @@ import { WebSocketServer } from 'ws'
 import type { WebSocket } from 'ws'
 import { WsMessageSocket } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
+import { AuthMethod } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext, Tenant } from '@pragmatic-tech-ai/todl-identity'
 import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
+import { MachineTls } from '../cluster/machine-tls.js'
 import type { MachineTlsRef } from '../cluster/machine-tls.js'
+import { MachineCertIdentity } from './machine-principal-map.js'
+import type { MachineAuthContext } from './auth-http-endpoint.js'
 import type { MasterKeyRef } from '../identity/master-key-resolver.js'
 import type { IProvisionedSecretSource } from '../config/provisioned-secret-source.js'
 import type { PragmaticServer } from '../pragmatic-server.js'
@@ -71,25 +78,27 @@ export class PragmaticServerHost
     private static readonly DefaultIdleTtlMs = 300_000
     private static readonly DefaultIdleSweepMs = 30_000
 
-    private readonly httpServer: HttpServer
+    private readonly httpServer: HttpServer | HttpsServer
     private readonly wss: WebSocketServer
     private readonly registry: TenantRegistry
     private readonly authenticator = new ConnectionAuthenticator()
     private readonly handlers = new Set<ServerConnectionHandler>()
     private readonly address: WebSocketAddress
     private readonly idleTtlMs: number
+    private readonly clientTls: boolean
     private readonly sweep: NodeJS.Timeout
     private readonly health = new HealthEndpoint()
     private ready = false
     private disposed = false
 
     private constructor(
-        httpServer: HttpServer,
+        httpServer: HttpServer | HttpsServer,
         wss: WebSocketServer,
         registry: TenantRegistry,
         address: WebSocketAddress,
         idleTtlMs: number,
-        idleSweepMs: number)
+        idleSweepMs: number,
+        clientTls: boolean)
     {
         this.httpServer = httpServer
         this.wss = wss
@@ -105,6 +114,7 @@ export class PragmaticServerHost
         {
             void this.Request(req, res)
         })
+        this.clientTls = clientTls
         this.sweep = setInterval(() => void this.registry.EvictIdle(Date.now(), this.idleTtlMs), idleSweepMs)
         this.sweep.unref()
     }
@@ -118,7 +128,7 @@ export class PragmaticServerHost
         await ownership.Start().catch(() => {})
         const registry = new TenantRegistry(options.baseDir, options.masterKey, options.provisioning, coordinator, options.platform, options.deploymentMode, ownership, options.provisionedSecrets)
         const host = options.host ?? PragmaticServerHost.DefaultHost
-        const httpServer = createServer()
+        const httpServer = options.clientTls === undefined ? createServer() : httpsCreateServer(MachineTls.OptionalServer(options.clientTls))
         const wss = new WebSocketServer({ noServer: true })
         await new Promise<void>((resolve, reject) =>
         {
@@ -127,7 +137,7 @@ export class PragmaticServerHost
             httpServer.listen(options.port, host)
         })
         const resolved = httpServer.address() as AddressInfo
-        const started = new PragmaticServerHost(httpServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? PragmaticServerHost.DefaultIdleTtlMs, options.idleSweepMs ?? PragmaticServerHost.DefaultIdleSweepMs)
+        const started = new PragmaticServerHost(httpServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? PragmaticServerHost.DefaultIdleTtlMs, options.idleSweepMs ?? PragmaticServerHost.DefaultIdleSweepMs, options.clientTls !== undefined)
         started.MarkReady()
         return started
     }
@@ -296,7 +306,8 @@ export class PragmaticServerHost
                 return
             }
             const server = await this.registry.ServerFor(tenantId)
-            const endpoint = new AuthHttpEndpoint(await server.Pack(), server.Tenant(), server.Oidc())
+            const pack = await server.Pack()
+            const endpoint = new AuthHttpEndpoint(pack, server.Tenant(), server.Oidc(), this.MachineContext(req, pack))
             await endpoint.Handle(req, res)
         }
         catch (error)
@@ -315,6 +326,21 @@ export class PragmaticServerHost
                 }
             }
         }
+    }
+
+    private MachineContext(req: IncomingMessage, pack: ServerIdentityPack): MachineAuthContext | undefined
+    {
+        if (!this.clientTls)
+        {
+            return undefined
+        }
+        const authenticator = pack.AuthenticatorFor(AuthMethod.Machine)
+        if (authenticator === undefined)
+        {
+            return undefined
+        }
+        const socket = req.socket as TLSSocket
+        return { authenticator, identity: MachineCertIdentity.FromPeerCertificate(socket.authorized === true, socket.getPeerCertificate()) }
     }
 
     private TenantHint(req: IncomingMessage): string | null

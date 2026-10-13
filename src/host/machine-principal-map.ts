@@ -7,6 +7,7 @@ export class MachineCertIdentity
     private static readonly HashAlgorithm = 'sha256'
     private static readonly HexEncoding = 'hex'
     private static readonly EmptyText = ''
+    private static readonly CommaSeparator = ','
 
     public readonly Authorized: boolean
     public readonly Fingerprint: string
@@ -19,10 +20,11 @@ export class MachineCertIdentity
         this.Subject = subject
     }
 
-    public static FromPeerCertificate(authorized: boolean, cert: { raw?: Buffer; fingerprint256?: string; subject?: { CN?: string } }): MachineCertIdentity
+    public static FromPeerCertificate(authorized: boolean, cert: { raw?: Buffer; fingerprint256?: string; subject?: { CN?: string | string[] } }): MachineCertIdentity
     {
         const fingerprint = MachineCertIdentity.ComputeFingerprint(cert)
-        const subject = cert.subject?.CN ?? MachineCertIdentity.EmptyText
+        const cn = cert.subject?.CN
+        const subject = Array.isArray(cn) ? cn.join(MachineCertIdentity.CommaSeparator) : cn ?? MachineCertIdentity.EmptyText
         return new MachineCertIdentity(authorized && fingerprint.length > 0, fingerprint, subject)
     }
 
