@@ -1,10 +1,17 @@
 import { AuthMethod, Credential, PresentedSecret, AuthenticatedResult } from '@pragmatic-tech-ai/todl-identity'
 import type { IAuthenticator, Tenant } from '@pragmatic-tech-ai/todl-identity'
-import type { OidcAuthenticator } from '@pragmatic-tech-ai/todl-identity-cloud'
 import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { RequestBody } from './request-body.js'
 import type { MachineCertIdentity } from './machine-principal-map.js'
+
+/** The OIDC surface the auth endpoint needs: begin an authorization and look up the OIDC authenticator.
+ *  Satisfied structurally by the cloud OIDC identity-provider packs. */
+export interface OidcFrontDoor
+{
+    BeginAuthorization(tenant: Tenant): Promise<{ Url: string; State: string }>
+    AuthenticatorFor(method: AuthMethod): IAuthenticator | undefined
+}
 
 /** A verified TLS peer identity plus the tenant's Machine authenticator; absent when client TLS is not configured. */
 export interface MachineAuthContext
@@ -53,10 +60,10 @@ export class AuthHttpEndpoint
 
     private readonly pack: ServerIdentityPack
     private readonly tenant: Tenant
-    private readonly oidc: OidcAuthenticator | undefined
+    private readonly oidc: OidcFrontDoor | undefined
     private readonly machine: MachineAuthContext | undefined
 
-    public constructor(pack: ServerIdentityPack, tenant: Tenant, oidc?: OidcAuthenticator, machine?: MachineAuthContext)
+    public constructor(pack: ServerIdentityPack, tenant: Tenant, oidc?: OidcFrontDoor, machine?: MachineAuthContext)
     {
         this.machine = machine
         this.pack = pack
@@ -209,7 +216,8 @@ export class AuthHttpEndpoint
 
     private async OidcCallback(url: URL, res: ServerResponse): Promise<void>
     {
-        if (this.oidc === undefined)
+        const authenticator = this.oidc?.AuthenticatorFor(AuthMethod.Oidc)
+        if (authenticator === undefined)
         {
             this.WriteJson(res, AuthHttpEndpoint.NotFoundStatus, AuthHttpEndpoint.NotFoundError)
             return
@@ -224,7 +232,7 @@ export class AuthHttpEndpoint
         const presented = new PresentedSecret(code)
         try
         {
-            const result = await this.oidc.Authenticate(new Credential(AuthMethod.Oidc, state), presented, this.tenant)
+            const result = await authenticator.Authenticate(new Credential(AuthMethod.Oidc, state), presented, this.tenant)
             if (!(result instanceof AuthenticatedResult))
             {
                 this.WriteJson(res, AuthHttpEndpoint.UnauthorizedStatus, AuthHttpEndpoint.InvalidCredentialsError)

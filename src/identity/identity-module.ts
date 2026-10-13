@@ -3,8 +3,9 @@ import { Argon2PasswordHasher } from '@pragmatic-tech-ai/todl-identity-local'
 import { ConfigurableIdentityProviderRegistry } from '@pragmatic-tech-ai/todl-identity-host'
 import { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
 import type { ServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
-import type { OidcAuthenticator } from '@pragmatic-tech-ai/todl-identity-cloud'
-import { OidcAuthenticatorBuilder } from './oidc-authenticator-builder.js'
+import { FetchHttpClient, InMemoryOidcFlowStateStore, OidcSettingKeys } from '@pragmatic-tech-ai/todl-identity-cloud'
+import type { OidcIdentityProviderPackBase } from '@pragmatic-tech-ai/todl-identity-cloud'
+import { IdentityPackResolver } from './identity-pack-resolver.js'
 import { ServerBootstrap } from './server-bootstrap.js'
 import { TenantSecretProvisioner } from './tenant-secret-provisioner.js'
 import type { PragmaticServerIdentityOptions } from '../pragmatic-server.js'
@@ -14,7 +15,7 @@ import type { PlatformServices } from '../platform/platform-services.js'
  *  (over the platform's identity stores), a SingleTenant provider registry, the secret store and password hasher. */
 export class IdentityModule
 {
-    private static readonly PackId = 'server-pack'
+    private static readonly LocalPackId = 'local'
 
     private readonly options: PragmaticServerIdentityOptions
     private readonly platform: PlatformServices
@@ -30,15 +31,22 @@ export class IdentityModule
         return new Tenant(this.options.tenant.id, TenantKind.SelfHosted, this.options.tenant.displayName)
     }
 
-    public async ComposeAsync(services: ServiceProvider): Promise<{ pack: ServerIdentityPack; tenant: Tenant; oidc: OidcAuthenticator | undefined }>
+    public async ComposeAsync(services: ServiceProvider): Promise<{ pack: ServerIdentityPack; tenant: Tenant; oidc: OidcIdentityProviderPackBase | undefined }>
     {
         const tenant = this.Tenant()
         const masterKey = this.platform.ResolveMasterKey(this.options.masterKey)
         const hasher = new Argon2PasswordHasher()
         const stores = await this.platform.CreateIdentityStores(this.options.identityRoot, masterKey)
+        const config = this.options.identityConfig
+            ?? new IdentityConfig(IdentityModule.LocalPackId, DelegationDepth.FullAuthz, new Map(), new Map(), new Map())
         if (this.options.provisionedSecrets !== undefined)
         {
             const refs: string[] = []
+            const oidcSecretRef = config.ProviderSettings.get(OidcSettingKeys.SecretRef)
+            if (oidcSecretRef !== undefined && oidcSecretRef !== '')
+            {
+                refs.push(oidcSecretRef)
+            }
             if (this.options.oidc !== undefined)
             {
                 refs.push(this.options.oidc.clientSecretRef)
@@ -54,11 +62,9 @@ export class IdentityModule
             const unique = [...new Set(refs)]
             await new TenantSecretProvisioner(this.options.provisionedSecrets).EnsureAsync(stores.Secrets, unique)
         }
-        const oidc = this.options.oidc === undefined
-            ? undefined
-            : OidcAuthenticatorBuilder.Build(this.options.oidc, stores.Secrets)
-        const pack = ServerIdentityPack.OpenWith(stores, oidc)
-        const config = new IdentityConfig(IdentityModule.PackId, DelegationDepth.FullAuthz, new Map(), new Map(), new Map())
+        const resolver = new IdentityPackResolver(this.options.httpClient ?? new FetchHttpClient(), this.options.flowStateStore ?? new InMemoryOidcFlowStateStore())
+        const resolved = resolver.Resolve(tenant, config, stores, this.options.machine)
+        const pack = resolved.Pack
         const tenantConfig = await this.platform.CreateTenantConfigStore(this.options.identityRoot)
         await tenantConfig.Save(tenant.Id, config)
         services.registerInstance(TenantConfigStoreKey, tenantConfig)
@@ -70,6 +76,6 @@ export class IdentityModule
         {
             await ServerBootstrap.SeedAsync(pack, tenant, this.options.bootstrap)
         }
-        return { pack, tenant, oidc }
+        return { pack, tenant, oidc: resolved.Oidc }
     }
 }

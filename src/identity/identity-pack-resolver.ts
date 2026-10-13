@@ -1,5 +1,5 @@
 import { AuthMethod, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
-import type { IAccessPolicy, IAuthenticator, IIdentityProviderPack, IdentityConfig, IdentityStoreSet, Tenant } from '@pragmatic-tech-ai/todl-identity'
+import type { IAccessPolicy, IAuthenticator, IdentityConfig, IdentityStoreSet, Tenant } from '@pragmatic-tech-ai/todl-identity'
 import { ClaimArrayGroupStrategy, FetchHttpClient, GenericOidcPack, GenericOidcProfile, GoogleIdentityPack, InMemoryOidcFlowStateStore, MicrosoftEntraPack, OidcSettingKeys } from '@pragmatic-tech-ai/todl-identity-cloud'
 import type { IHttpClient, IOidcFlowStateStore, OidcIdentityProviderPackBase, OidcPackOptions } from '@pragmatic-tech-ai/todl-identity-cloud'
 import { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
@@ -9,7 +9,7 @@ import { IdentityPackKind, IdentityPackKinds } from './identity-pack-kind.js'
 
 export interface ResolvedPack
 {
-    Pack: IIdentityProviderPack
+    Pack: ServerIdentityPack
     Oidc: OidcIdentityProviderPackBase | undefined
 }
 

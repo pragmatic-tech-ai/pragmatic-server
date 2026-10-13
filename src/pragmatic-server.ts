@@ -9,7 +9,8 @@ import type { MasterKeyRef } from './identity/master-key-resolver.js'
 import type { IProvisionedSecretSource } from './config/provisioned-secret-source.js'
 import type { Tenant, IdentityConfig } from '@pragmatic-tech-ai/todl-identity'
 import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
-import type { OidcAuthenticator, IHttpClient, IOidcFlowStateStore } from '@pragmatic-tech-ai/todl-identity-cloud'
+import type { IHttpClient, IOidcFlowStateStore } from '@pragmatic-tech-ai/todl-identity-cloud'
+import type { OidcFrontDoor } from './host/auth-http-endpoint.js'
 import type { MachinePrincipalMap } from './host/machine-principal-map.js'
 import { IdentityModule } from './identity/identity-module.js'
 import { ServerBootstrap } from './identity/server-bootstrap.js'
@@ -85,7 +86,7 @@ export class PragmaticServer
     private readonly connectorsHost: ConnectorsHost
     private pack: ServerIdentityPack | undefined
     private tenant: Tenant | undefined
-    private oidc: OidcAuthenticator | undefined
+    private oidc: OidcFrontDoor | undefined
 
     public constructor(options: PragmaticServerOptions)
     {
@@ -160,7 +161,7 @@ export class PragmaticServer
         return this.tenant
     }
 
-    public Oidc(): OidcAuthenticator | undefined
+    public Oidc(): OidcFrontDoor | undefined
     {
         return this.oidc
     }

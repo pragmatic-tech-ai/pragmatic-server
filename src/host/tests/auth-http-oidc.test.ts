@@ -7,7 +7,31 @@ import { Tenant, TenantKind, IdentityConfig, DelegationDepth } from '@pragmatic-
 import { FakeStorage } from '@pragmatic-tech-ai/todl-runtime'
 import { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
 import { OidcAuthenticator, OidcResolvedConfig, OidcDiscovery, JwksCache, ClaimsMapper, ClaimArrayGroupStrategy, InMemoryOidcFlowStateStore, FakeOidcIdp, FakeOidcHttpClient } from '@pragmatic-tech-ai/todl-identity-cloud'
+import { AuthMethod } from '@pragmatic-tech-ai/todl-identity'
+import type { IAuthenticator } from '@pragmatic-tech-ai/todl-identity'
 import { AuthHttpEndpoint } from '../auth-http-endpoint.js'
+import type { OidcFrontDoor } from '../auth-http-endpoint.js'
+
+/** Adapts a bare OidcAuthenticator to the endpoint's OidcFrontDoor surface. */
+class AuthenticatorFrontDoor implements OidcFrontDoor
+{
+    private readonly authenticator: OidcAuthenticator
+
+    public constructor(authenticator: OidcAuthenticator)
+    {
+        this.authenticator = authenticator
+    }
+
+    public BeginAuthorization(tenant: Tenant): Promise<{ Url: string; State: string }>
+    {
+        return this.authenticator.BeginAuthorization(tenant)
+    }
+
+    public AuthenticatorFor(method: AuthMethod): IAuthenticator | undefined
+    {
+        return method === AuthMethod.Oidc ? this.authenticator : undefined
+    }
+}
 
 class OidcFixture
 {
@@ -40,7 +64,7 @@ class OidcFixture
             Resolved: resolved,
         })
         const tenant = new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
-        return new OidcFixture(idp, http, store, new AuthHttpEndpoint(pack, tenant, authenticator))
+        return new OidcFixture(idp, http, store, new AuthHttpEndpoint(pack, tenant, new AuthenticatorFrontDoor(authenticator)))
     }
 
     public Serve(): Promise<{ base: string; close: () => Promise<void> }>
