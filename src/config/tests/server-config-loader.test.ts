@@ -263,13 +263,39 @@ test('aws rejects an unknown rds auth mode', () =>
 
 test('aws rds port must be a positive integer', () =>
 {
-    assert.throws(() => ServerConfigLoader.Load(AwsCloudEnv.Cloud({ PRAGMATIC_RDS_PORT: 'abc' }), Env.NoRead), /positive integer/)
+    for (const bad of ['abc', '0', '-1', '1.5', '5432abc', ' 5432', '65536', '99999', '1234567890123456789012345'])
+    {
+        assert.throws(() => ServerConfigLoader.Load(AwsCloudEnv.Cloud({ PRAGMATIC_RDS_PORT: bad }), Env.NoRead), /between 1 and 65535/)
+    }
     assert.equal(ServerConfigLoader.Load(AwsCloudEnv.Cloud({ PRAGMATIC_RDS_PORT: '5432' }), Env.NoRead).rdsPort, 5432)
+    assert.equal(ServerConfigLoader.Load(AwsCloudEnv.Cloud({ PRAGMATIC_RDS_PORT: '65535' }), Env.NoRead).rdsPort, 65535)
 })
 
 test('provider value is case-insensitive', () =>
 {
-    assert.equal(ServerConfigLoader.Load(AwsCloudEnv.Cloud({ PRAGMATIC_CLOUD_PROVIDER: 'AWS' }), Env.NoRead).cloudProvider, DeploymentProvider.Aws)
+    for (const value of ['AWS', 'Aws'])
+    {
+        assert.equal(ServerConfigLoader.Load(AwsCloudEnv.Cloud({ PRAGMATIC_CLOUD_PROVIDER: value }), Env.NoRead).cloudProvider, DeploymentProvider.Aws)
+    }
+    assert.equal(ServerConfigLoader.Load(CloudEnv.Cloud({ PRAGMATIC_CLOUD_PROVIDER: 'GCP' }), Env.NoRead).cloudProvider, DeploymentProvider.Gcp)
+})
+
+test('rds auth is case-insensitive', () =>
+{
+    assert.equal(ServerConfigLoader.Load(AwsCloudEnv.Cloud({ PRAGMATIC_RDS_AUTH: 'IAM' }), Env.NoRead).rdsAuth, 'IAM')
+    const config = ServerConfigLoader.Load(AwsCloudEnv.Cloud({ PRAGMATIC_RDS_AUTH: 'Password', PRAGMATIC_RDS_PASSWORD_REF: 'db/pw' }), Env.NoRead)
+    assert.equal(config.rdsAuth, 'Password')
+    assert.equal(config.rdsPasswordRef, 'db/pw')
+})
+
+test('the aws provider does not require the gcp vars', () =>
+{
+    const env = AwsCloudEnv.Cloud()
+    assert.equal(env.PRAGMATIC_GCS_BUCKET, undefined)
+    assert.equal(env.PRAGMATIC_CLOUDSQL_INSTANCE, undefined)
+    const config = ServerConfigLoader.Load(env, Env.NoRead)
+    assert.equal(config.gcsBucket, undefined)
+    assert.equal(config.cloudSqlInstance, undefined)
 })
 
 test('local mode ignores gcp vars', () =>

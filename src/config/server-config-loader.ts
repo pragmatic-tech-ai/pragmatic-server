@@ -94,7 +94,8 @@ export class ServerConfigLoader
     private static readonly MissingRdsDb = 'PRAGMATIC_RDS_DB is required for cloud deployment'
     private static readonly MissingRdsPasswordRef = 'PRAGMATIC_RDS_PASSWORD_REF is required when PRAGMATIC_RDS_AUTH=password'
     private static readonly BadRdsAuth = 'PRAGMATIC_RDS_AUTH must be iam or password'
-    private static readonly BadRdsPort = 'PRAGMATIC_RDS_PORT must be a positive integer'
+    private static readonly BadRdsPort = 'PRAGMATIC_RDS_PORT must be a port between 1 and 65535'
+    private static readonly MaxPort = 65535
     private static readonly RdsAuthPassword = 'password'
     private static readonly RdsAuthIam = 'iam'
     private static readonly PositiveIntPattern = /^[1-9][0-9]*$/
@@ -479,7 +480,12 @@ export class ServerConfigLoader
         {
             throw new Error(badMessage)
         }
-        return Number(value)
+        const parsed = Number(value)
+        if (!Number.isSafeInteger(parsed) || parsed > ServerConfigLoader.MaxPort)
+        {
+            throw new Error(badMessage)
+        }
+        return parsed
     }
 
     private static RequiredCloud(value: string | undefined, missingMessage: string): string
