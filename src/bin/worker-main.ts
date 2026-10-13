@@ -42,7 +42,7 @@ class WorkerMain
         const observabilityOptions = ServerBootstrap.ObservabilityOptions(config, ObservabilityRole.Worker)
         const observability = observabilityOptions !== undefined ? Observability.Start(observabilityOptions) : undefined
         const audit = ServerBootstrap.AuditSink(config, logger, observability)
-        const rateLimit = ServerBootstrap.RateLimit(config, audit, observability)
+        const rateLimit = ServerBootstrap.RateLimit(config, audit, observability, logger)
         const host = await WorkerHost.StartAsync(ServerBootstrap.ComposeWorkerOptions(config, provisioning, provisionedSecrets, logger, observability, audit, rateLimit))
         logger.Info(ServerBootstrap.WorkerStartupLine(config), { [WorkerMain.EventKey]: WorkerMain.StartupEvent })
         const main = new WorkerMain(host, logger, observability)

@@ -15,7 +15,7 @@ export class FileAccessAuditSink implements IAccessAuditSink
     private static readonly WriteFailed = 'access audit write failed'
     private static readonly SurfaceField = 'surface'
     private static readonly OutcomeField = 'outcome'
-    private static readonly ScopeLabel = 'surface'
+    private static readonly SurfaceLabel = 'surface'
     private static readonly Newline = '\n'
 
     private readonly path: string
@@ -56,7 +56,7 @@ export class FileAccessAuditSink implements IAccessAuditSink
     {
         try
         {
-            failures?.add(1, { [FileAccessAuditSink.ScopeLabel]: event.Surface })
+            failures?.add(1, { [FileAccessAuditSink.SurfaceLabel]: event.Surface })
         }
         catch
         {

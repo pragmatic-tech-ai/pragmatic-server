@@ -194,13 +194,14 @@ export class ServerBootstrap
         return new NullAccessAuditSink()
     }
 
-    public static RateLimit(config: { rateLimit?: RateLimitConfig }, audit: IAccessAuditSink, observability?: Observability): RateLimitGuard
+    public static RateLimit(config: { rateLimit?: RateLimitConfig }, audit: IAccessAuditSink, observability?: Observability, logger?: ILogger): RateLimitGuard
     {
         if (config.rateLimit === undefined)
         {
             return new RateLimitGuard()
         }
-        return new RateLimitGuard(new TokenBucketRateLimiter(config.rateLimit), audit, observability?.Meter().createCounter(RateLimitGuard.MetricName()))
+        const meter = observability?.Meter()
+        return new RateLimitGuard(new TokenBucketRateLimiter(config.rateLimit), audit, meter?.createCounter(RateLimitGuard.MetricName()), logger, meter?.createCounter(RateLimitGuard.ErrorMetricName()))
     }
 
     private static Security(config: { auditSink?: AuditSinkKind; rateLimit?: RateLimitConfig }): string

@@ -1,4 +1,5 @@
 import type { Counter } from '@opentelemetry/api'
+import type { ILogger } from '../observability/logger.js'
 import { NullRateLimiter } from './rate-limiter.js'
 import { RateLimitDecision } from './rate-limiter.js'
 import type { IRateLimiter, RateLimitRequest } from './rate-limiter.js'
@@ -24,6 +25,11 @@ export class RateLimitGuard
     private static readonly Metric = 'rate_limited_total'
     private static readonly ScopeLabel = 'scope'
     private static readonly TenantLabel = 'tenant'
+    private static readonly ErrorMetric = 'rate_limit_errors_total'
+    private static readonly LimiterErrorMessage = 'rate limiter failed; request allowed (fail-open)'
+    private static readonly SurfaceField = 'surface'
+    private static readonly MethodField = 'methodOrPath'
+    private static readonly ErrorField = 'error'
     public static readonly RejectedReason = 'rate limit exceeded'
     private static readonly StatusLine = 'HTTP/1.1 429 Too Many Requests'
     private static readonly RetryAfterHeader = 'Retry-After'
@@ -34,17 +40,26 @@ export class RateLimitGuard
     private readonly limiter: IRateLimiter
     private readonly audit: IAccessAuditSink
     private readonly rejected: Counter | undefined
+    private readonly logger: ILogger | undefined
+    private readonly errors: Counter | undefined
 
-    public constructor(limiter: IRateLimiter = new NullRateLimiter(), audit: IAccessAuditSink = new NullAccessAuditSink(), rejected?: Counter)
+    public constructor(limiter: IRateLimiter = new NullRateLimiter(), audit: IAccessAuditSink = new NullAccessAuditSink(), rejected?: Counter, logger?: ILogger, errors?: Counter)
     {
         this.limiter = limiter
         this.audit = audit
         this.rejected = rejected
+        this.logger = logger
+        this.errors = errors
     }
 
     public static MetricName(): string
     {
         return RateLimitGuard.Metric
+    }
+
+    public static ErrorMetricName(): string
+    {
+        return RateLimitGuard.ErrorMetric
     }
 
     /** The audit method/path recorded for a front-door Upgrade rejection. */
@@ -73,10 +88,30 @@ export class RateLimitGuard
             }
             return decision
         }
+        catch (error)
+        {
+            // rate-limiting is an availability control, not an access gate: an unexpected internal error allows the request (observably)
+            this.ReportLimiterError(request, context, error)
+            return RateLimitDecision.Allow()
+        }
+    }
+
+    private ReportLimiterError(request: RateLimitRequest, context: RateLimitContext, error: unknown): void
+    {
+        try
+        {
+            this.logger?.Error(RateLimitGuard.LimiterErrorMessage, {
+                [RateLimitGuard.ScopeLabel]: request.scope,
+                [RateLimitGuard.TenantLabel]: context.tenant,
+                [RateLimitGuard.SurfaceField]: context.surface,
+                [RateLimitGuard.MethodField]: context.methodOrPath,
+                [RateLimitGuard.ErrorField]: error instanceof Error ? error.message : String(error),
+            })
+            this.errors?.add(1, { [RateLimitGuard.ScopeLabel]: request.scope, [RateLimitGuard.TenantLabel]: context.tenant })
+        }
         catch
         {
-            // rate-limiting is an availability control, not an access gate: an unexpected internal error allows the request
-            return RateLimitDecision.Allow()
+            // a broken logger or meter must never turn a fail-open allow into a crash
         }
     }
 

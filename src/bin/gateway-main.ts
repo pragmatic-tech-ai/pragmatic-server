@@ -38,7 +38,7 @@ class GatewayMain
         const observability = observabilityOptions !== undefined ? Observability.Start(observabilityOptions) : undefined
         const router = new RedisWorkerRouter(gw.redisUrl)
         const audit = ServerBootstrap.AuditSink(gw, logger, observability)
-        const rateLimit = ServerBootstrap.RateLimit(gw, audit, observability)
+        const rateLimit = ServerBootstrap.RateLimit(gw, audit, observability, logger)
         const gateway = await Gateway.StartAsync(ServerBootstrap.ComposeGatewayOptions(gw, router, logger, rateLimit))
         logger.Info(ServerBootstrap.GatewayStartupLine(gw), { [GatewayMain.EventKey]: GatewayMain.StartupEvent })
         const main = new GatewayMain(gateway, router, logger, observability)

@@ -9,6 +9,7 @@ import type { IRateLimiter, RateLimitDecision } from '../rate-limiter.js'
 import { RateLimitGuard } from '../rate-limit-guard.js'
 import { AuditSurface, AuditOutcome } from '../access-audit.js'
 import type { IAccessAuditSink, AccessAuditEvent } from '../access-audit.js'
+import type { ILogger, LogFields } from '../../observability/logger.js'
 
 class CapturingSink implements IAccessAuditSink
 {
@@ -148,6 +149,45 @@ test('Check is total: an unexpected limiter error allows the request instead of 
 {
     const guard = new RateLimitGuard(new ThrowingLimiter())
     assert.equal(guard.Check({ scope: RateLimitScope.Tenant, tenant: 't1', key: 't1' }, { surface: AuditSurface.Upgrade, tenant: 't1', methodOrPath: 'ws' }).Allowed, true)
+})
+
+class CapturingLogger implements ILogger
+{
+    public readonly Errors: Array<{ message: string; fields?: LogFields }> = []
+
+    public Info(): void
+    {
+    }
+
+    public Warn(): void
+    {
+    }
+
+    public Error(message: string, fields?: LogFields): void
+    {
+        this.Errors.push({ message, fields })
+    }
+
+    public Child(): ILogger
+    {
+        return this
+    }
+}
+
+test('a limiter error fails open observably: allowed, one logged error, rate_limit_errors_total incremented', async () =>
+{
+    const reader = new PeriodicExportingMetricReader({ exporter: new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE), exportIntervalMillis: 2_147_483_647 })
+    const observability = Observability.ForTest({ role: ObservabilityRole.Host, serviceName: 'svc' }, new InMemorySpanExporter(), reader)
+    const logger = new CapturingLogger()
+    const guard = new RateLimitGuard(new ThrowingLimiter(), undefined, undefined, logger, observability.Meter().createCounter(RateLimitGuard.ErrorMetricName()))
+    const decision = guard.Check({ scope: RateLimitScope.Tenant, tenant: 't1', key: 't1' }, { surface: AuditSurface.Upgrade, tenant: 't1', methodOrPath: 'ws' })
+    assert.equal(decision.Allowed, true)
+    assert.equal(logger.Errors.length, 1)
+    assert.equal(logger.Errors[0]!.fields?.tenant, 't1')
+    const pts = await Points.Of(reader, 'rate_limit_errors_total')
+    assert.equal(pts.length, 1)
+    assert.equal(pts[0]!.value, 1)
+    await observability.Shutdown()
 })
 
 test('TooManyRequestsResponse emits whole-second Retry-After, defaulting to 1 for 0 and NaN', () =>
