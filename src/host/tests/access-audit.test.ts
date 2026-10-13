@@ -4,9 +4,23 @@ import { Action, ResourceKind } from '@pragmatic-tech-ai/todl-identity'
 import { AuditSurface, AuditOutcome, NullAccessAuditSink } from '../access-audit.js'
 import type { AccessAuditEvent } from '../access-audit.js'
 
-const KnownToken = 'sk-super-secret-bearer-0123456789'
+const SecretKeyShape = /token|secret|password|credential|fingerprint|verifier|session/i
 
-test('a serialized event carries no secret substring and no secret-shaped key', () =>
+const ExpectedFieldNames: readonly string[] = [
+    'Timestamp',
+    'TenantId',
+    'PrincipalId',
+    'Surface',
+    'MethodOrPath',
+    'Action',
+    'ResourceKind',
+    'ResourcePath',
+    'Outcome',
+    'Reason',
+    'CorrelationId',
+]
+
+test('a fully-populated event has exactly the expected field set, none secret-shaped', () =>
 {
     const event: AccessAuditEvent = {
         Timestamp: new Date('2026-01-01T00:00:00.000Z'),
@@ -18,14 +32,14 @@ test('a serialized event carries no secret substring and no secret-shaped key', 
         ResourceKind: ResourceKind.Tenant,
         ResourcePath: 'my-solution',
         Outcome: AuditOutcome.Deny,
-        Reason: 'insufficient role',
+        Reason: 'insufficient-role',
         CorrelationId: 'abc123',
     }
-    const serialized = JSON.stringify(event)
-    assert.equal(serialized.includes(KnownToken), false)
-    for (const key of Object.keys(event))
+    const keys = Object.keys(event)
+    assert.deepEqual([...keys].sort(), [...ExpectedFieldNames].sort())
+    for (const key of keys)
     {
-        assert.equal(/token|secret|password|credential|fingerprint|verifier|session/i.test(key), false, key)
+        assert.equal(SecretKeyShape.test(key), false, key)
     }
 })
 
@@ -42,14 +56,15 @@ test('an auth-failure event is valid without Action or ResourceKind', () =>
     assert.equal(event.ResourceKind, undefined)
 })
 
-test('NullAccessAuditSink.Record resolves and records nothing observable', async () =>
+test('NullAccessAuditSink.Record resolves to undefined', async () =>
 {
-    await new NullAccessAuditSink().Record({
+    const sink = new NullAccessAuditSink()
+    const event: AccessAuditEvent = {
         Timestamp: new Date(),
         TenantId: 't1',
         Surface: AuditSurface.Upgrade,
         MethodOrPath: 'ws',
         Outcome: AuditOutcome.Allow,
-    })
-    assert.ok(true)
+    }
+    assert.equal(await sink.Record(event), undefined)
 })

@@ -30,6 +30,8 @@ export interface AccessAuditEvent
     ResourceKind?: ResourceKind
     ResourcePath?: string
     Outcome: AuditOutcome
+    /** A short classification / reason code (e.g. 'insufficient-role'). NEVER an error message, stack trace,
+     *  or raw input: emitters must not funnel free text or secrets through this field. */
     Reason?: string
     CorrelationId?: string
 }
