@@ -22,7 +22,6 @@ const soak = process.env.PRAGMATIC_SOAK
 class Soak
 {
     public static readonly Tenant = 't1'
-    public static readonly KeyEnv = 'PS_SOAK_KEY'
     public static readonly Concurrency = 8
     public static readonly RequestsPerClient = 40
     public static readonly P95CeilingMs = 10000
@@ -35,20 +34,57 @@ class Soak
     public static readonly UnavailablePolls = 80
     public static readonly UnavailablePollMs = 25
     public static readonly ExitGraceMs = 15000
-    public static readonly SettleMs = 100
+    public static readonly HandlerSettleDeadlineMs = 5000
+    public static readonly HandlerSettlePollMs = 25
     public static readonly HttpTimeoutMs = 5000
+    public static readonly LoadTestTimeoutMs = 120000
+    public static readonly SigtermTestTimeoutMs = 60000
+
+    /** Sentinel statuses returned by Readyz when no HTTP status was observed. */
+    public static readonly ReadyRefused = -1
+    public static readonly ReadyError = 0
 
     public static readonly OptInSkip = 'set PRAGMATIC_SOAK=1 to run'
     public static readonly WindowsSkip = 'POSIX-only: Windows process.kill cannot deliver a catchable SIGTERM for graceful drain'
 
+    private static readonly KeyEnv = 'PS_SOAK_KEY'
+    private static readonly LocalHost = '127.0.0.1'
+    private static readonly DisplayName = 'T1'
+    private static readonly ServiceName = 'pragmatic-server'
+    public static readonly LoadDirPrefix = 'ps-soak-'
+    public static readonly SigDirPrefix = 'ps-soak-sig-'
+    private static readonly AuditFileName = 'audit.log'
+    private static readonly TenantsFileName = 'tenants.json'
+    private static readonly KeyFileName = 'key'
+    private static readonly SolutionDir = 'solution'
     private static readonly ReadyzPath = '/readyz'
     private static readonly MetricsPath = '/metrics'
-    private static readonly LocalHost = '127.0.0.1'
     private static readonly SigTerm = 'SIGTERM'
     private static readonly SigKill = 'SIGKILL'
     private static readonly TsxImport = 'tsx'
     private static readonly ImportFlag = '--import'
     private static readonly HttpTimeoutMessage = 'http timeout'
+    private static readonly ConnectionRefused = 'ECONNREFUSED'
+    private static readonly Base64 = 'base64'
+    private static readonly Utf8 = 'utf8'
+    private static readonly DrainTimeoutValue = '3000'
+    private static readonly HostDrainTimeoutMs = 25000
+    private static readonly EnvHost = 'PRAGMATIC_HOST'
+    private static readonly EnvPort = 'PRAGMATIC_PORT'
+    private static readonly EnvBaseDir = 'PRAGMATIC_BASE_DIR'
+    private static readonly EnvTenantsFile = 'PRAGMATIC_TENANTS_FILE'
+    private static readonly EnvMasterKeyEnv = 'PRAGMATIC_MASTER_KEY_B64_ENV'
+    private static readonly EnvMetricsPort = 'PRAGMATIC_METRICS_PORT'
+    private static readonly EnvDrainTimeout = 'PRAGMATIC_DRAIN_TIMEOUT_MS'
+
+    public static readonly MsgNoLeak = 'no connection leak'
+    public static readonly MsgHeap = 'heap growth bounded'
+    public static readonly MsgAudit = 'audit fired under load: first non-empty line is JSON'
+    public static readonly MsgAuditEmpty = 'audit file has at least one line'
+    public static readonly MsgReady = 'child became ready'
+    public static readonly MsgSpawn = 'child spawned without error'
+    public static readonly MsgUnavailable = '/readyz returned a real 503 (or the server had already closed) after SIGTERM'
+    public static readonly MsgExit = 'child exited 0 within the grace period'
 
     public static OptIn(): string | false
     {
@@ -66,7 +102,7 @@ class Soak
 
     public static Provisioning(): InMemoryTenantProvisioning
     {
-        return new InMemoryTenantProvisioning(new Map<string, TenantProvisioning>([[Soak.Tenant, { displayName: 'T1' }]]))
+        return new InMemoryTenantProvisioning(new Map<string, TenantProvisioning>([[Soak.Tenant, { displayName: Soak.DisplayName }]]))
     }
 
     public static Fixture(): string
@@ -88,6 +124,67 @@ class Soak
         return sorted[Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))] ?? 0
     }
 
+    public static WsUrl(host: string, port: number): string
+    {
+        return `ws://${host}:${port}/?tenant=${Soak.Tenant}`
+    }
+
+    public static MakeBaseDir(prefix: string): string
+    {
+        return mkdtempSync(join(tmpdir(), prefix))
+    }
+
+    public static SolutionPath(baseDir: string): string
+    {
+        return join(baseDir, Soak.Tenant, Soak.SolutionDir)
+    }
+
+    public static SeedLoadDir(baseDir: string): { keyPath: string, auditFile: string }
+    {
+        mkdirSync(join(baseDir, Soak.Tenant), { recursive: true })
+        cpSync(Soak.Fixture(), Soak.SolutionPath(baseDir), { recursive: true })
+        const keyPath = join(baseDir, Soak.KeyFileName)
+        writeFileSync(keyPath, randomBytes(32))
+        return { keyPath, auditFile: join(baseDir, Soak.AuditFileName) }
+    }
+
+    public static StartObservability(): Observability
+    {
+        return Observability.Start({ role: ObservabilityRole.Host, serviceName: Soak.ServiceName, metricsPort: Soak.MetricsPort })
+    }
+
+    public static NewAudit(auditFile: string): FileAccessAuditSink
+    {
+        return new FileAccessAuditSink(auditFile, undefined, StructuredLogger.ToSink(() => {}))
+    }
+
+    public static StartHost(baseDir: string, keyPath: string, observability: Observability, audit: FileAccessAuditSink): Promise<PragmaticServerHost>
+    {
+        return PragmaticServerHost.StartAsync({ host: Soak.LocalHost, port: 0, baseDir, masterKey: { keyFilePath: keyPath }, provisioning: Soak.Provisioning(), observability, audit, drainTimeoutMs: Soak.HostDrainTimeoutMs })
+    }
+
+    /** Bounded poll: waits for the live-handler count to reach zero, returning the last observed count. */
+    public static async SettledHandlerCount(host: PragmaticServerHost): Promise<number>
+    {
+        const deadline = Date.now() + Soak.HandlerSettleDeadlineMs
+        let count = host.HandlerCountForTest()
+        while (count !== 0 && Date.now() < deadline)
+        {
+            await Soak.Sleep(Soak.HandlerSettlePollMs)
+            count = host.HandlerCountForTest()
+        }
+        return count
+    }
+
+    /** Asserts the audit file has at least one non-empty line and that it parses as JSON (contents are never inspected). */
+    public static AssertAuditLineIsJson(auditFile: string): void
+    {
+        assert.ok(existsSync(auditFile), Soak.MsgAuditEmpty)
+        const line = readFileSync(auditFile, Soak.Utf8).split('\n').find(l => l.trim().length > 0)
+        assert.ok(line !== undefined, Soak.MsgAuditEmpty)
+        assert.doesNotThrow(() => JSON.parse(line), Soak.MsgAudit)
+    }
+
     public static Scrape(port: number): Promise<string>
     {
         return new Promise<string>((resolve, reject) =>
@@ -104,17 +201,18 @@ class Soak
         })
     }
 
+    /** Resolves the real HTTP status, ReadyRefused on ECONNREFUSED, or ReadyError on any other failure (e.g. timeout). */
     public static Readyz(port: number): Promise<number>
     {
-        return new Promise<number>((resolve, reject) =>
+        return new Promise<number>(resolve =>
         {
             const req = request({ host: Soak.LocalHost, port, path: Soak.ReadyzPath, method: 'GET' }, res =>
             {
                 res.resume()
-                resolve(res.statusCode ?? 0)
+                resolve(res.statusCode ?? Soak.ReadyError)
             })
             req.setTimeout(Soak.HttpTimeoutMs, () => req.destroy(new Error(Soak.HttpTimeoutMessage)))
-            req.on('error', reject)
+            req.on('error', (error: NodeJS.ErrnoException) => resolve(error.code === Soak.ConnectionRefused ? Soak.ReadyRefused : Soak.ReadyError))
             req.end()
         })
     }
@@ -124,9 +222,49 @@ class Soak
         return new Promise<void>(resolve => setTimeout(resolve, ms))
     }
 
+    /** Races the child's exit against a grace timer that is always cancelled, so no timer outlives the test. */
+    public static async RaceExit(exited: Promise<number>, graceMs: number): Promise<number>
+    {
+        let timer: NodeJS.Timeout | undefined
+        const timeout = new Promise<number>(resolve =>
+        {
+            timer = setTimeout(() => resolve(-2), graceMs)
+        })
+        try
+        {
+            return await Promise.race([exited, timeout])
+        }
+        finally
+        {
+            clearTimeout(timer)
+        }
+    }
+
     public static Bin(): string
     {
         return join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'bin', 'server-main.ts')
+    }
+
+    public static ChildEnv(baseDir: string, tenantsFile: string): NodeJS.ProcessEnv
+    {
+        return {
+            ...process.env,
+            [Soak.EnvHost]: Soak.LocalHost,
+            [Soak.EnvPort]: String(Soak.ChildPort),
+            [Soak.EnvBaseDir]: baseDir,
+            [Soak.EnvTenantsFile]: tenantsFile,
+            [Soak.EnvMasterKeyEnv]: Soak.KeyEnv,
+            [Soak.KeyEnv]: randomBytes(32).toString(Soak.Base64),
+            [Soak.EnvMetricsPort]: String(Soak.ChildMetricsPort),
+            [Soak.EnvDrainTimeout]: Soak.DrainTimeoutValue,
+        }
+    }
+
+    public static WriteTenantsFile(baseDir: string): string
+    {
+        const tenantsFile = join(baseDir, Soak.TenantsFileName)
+        writeFileSync(tenantsFile, JSON.stringify({ tenants: { [Soak.Tenant]: { displayName: Soak.DisplayName } } }))
+        return tenantsFile
     }
 
     /** Spawns the Node process directly (no shell wrapper) so SIGTERM reaches the process that installed the handler. */
@@ -146,30 +284,26 @@ class Soak
     }
 }
 
-test('soak: concurrent WS+HTTP load stays within thresholds, leaks no connections, and metrics+audit fire (Review Focus 5)', { skip: Soak.OptIn() }, async () =>
+test('soak: concurrent WS+HTTP load stays within thresholds, leaks no connections, and metrics+audit fire (Review Focus 5)', { skip: Soak.OptIn(), timeout: Soak.LoadTestTimeoutMs }, async () =>
 {
-    const baseDir = mkdtempSync(join(tmpdir(), 'ps-soak-'))
-    mkdirSync(join(baseDir, Soak.Tenant), { recursive: true })
-    cpSync(Soak.Fixture(), join(baseDir, Soak.Tenant, 'solution'), { recursive: true })
-    const keyPath = join(baseDir, 'key')
-    writeFileSync(keyPath, randomBytes(32))
-    const auditFile = join(baseDir, 'audit.log')
-    const observability = Observability.Start({ role: ObservabilityRole.Host, serviceName: 'pragmatic-server', metricsPort: Soak.MetricsPort })
+    const baseDir = Soak.MakeBaseDir(Soak.LoadDirPrefix)
+    const { keyPath, auditFile } = Soak.SeedLoadDir(baseDir)
+    const observability = Soak.StartObservability()
     let host: PragmaticServerHost | undefined
     try
     {
-        const audit = new FileAccessAuditSink(auditFile, undefined, StructuredLogger.ToSink(() => {}))
-        host = await PragmaticServerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir, masterKey: { keyFilePath: keyPath }, provisioning: Soak.Provisioning(), observability, audit, drainTimeoutMs: 25000 })
+        host = await Soak.StartHost(baseDir, keyPath, observability, Soak.NewAudit(auditFile))
         const addr = host.Address()
+        const url = Soak.WsUrl(addr.host, addr.port)
         const token = await Soak.TokenFor(host)
         const heapBefore = process.memoryUsage().heapUsed
         const latencies: number[] = []
         // One serial open up front: concurrent same-tenant OpenSolution calls leave an engine content watcher armed
         // after teardown (upstream todl race), which would keep the test process alive. The load itself stays concurrent.
-        const primer = await PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?tenant=${Soak.Tenant}`, { bearerToken: token })
+        const primer = await PragmaticClient.ConnectAsync(url, { bearerToken: token })
         try
         {
-            await primer.OpenSolution(join(baseDir, Soak.Tenant, 'solution'))
+            await primer.OpenSolution(Soak.SolutionPath(baseDir))
         }
         finally
         {
@@ -177,7 +311,7 @@ test('soak: concurrent WS+HTTP load stays within thresholds, leaks no connection
         }
         const workers = Array.from({ length: Soak.Concurrency }, async () =>
         {
-            const client = await PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?tenant=${Soak.Tenant}`, { bearerToken: token })
+            const client = await PragmaticClient.ConnectAsync(url, { bearerToken: token })
             try
             {
                 for (let i = 0; i < Soak.RequestsPerClient; i += 1)
@@ -193,16 +327,15 @@ test('soak: concurrent WS+HTTP load stays within thresholds, leaks no connection
             }
         })
         await Promise.all(workers)
-        await Soak.Sleep(Soak.SettleMs)
 
         assert.equal(latencies.length, Soak.Concurrency * Soak.RequestsPerClient)
         assert.ok(Soak.Percentile(latencies, 95) < Soak.P95CeilingMs, `p95 ${Soak.Percentile(latencies, 95)}ms`)
-        assert.equal(host.HandlerCountForTest(), 0, 'no connection leak')
-        assert.ok(process.memoryUsage().heapUsed - heapBefore < Soak.HeapGrowthCeilingBytes, 'heap growth bounded')
+        assert.equal(await Soak.SettledHandlerCount(host), 0, Soak.MsgNoLeak)
+        assert.ok(process.memoryUsage().heapUsed - heapBefore < Soak.HeapGrowthCeilingBytes, Soak.MsgHeap)
 
         const scrape = await Soak.Scrape(Soak.MetricsPort)
         assert.match(scrape, /requests_total/)
-        assert.ok(existsSync(auditFile) && readFileSync(auditFile, 'utf8').trim().length > 0, 'audit fired under load')
+        Soak.AssertAuditLineIsJson(auditFile)
     }
     finally
     {
@@ -218,57 +351,55 @@ test('soak: concurrent WS+HTTP load stays within thresholds, leaks no connection
     }
 })
 
-test('mid-load SIGTERM drains cleanly and the child process exits 0 within the grace period (Review Focus 1, 5)', { skip: Soak.PosixOnly() }, async () =>
+test('mid-load SIGTERM drains cleanly and the child process exits 0 within the grace period (Review Focus 1, 5)', { skip: Soak.PosixOnly(), timeout: Soak.SigtermTestTimeoutMs }, async () =>
 {
-    const baseDir = mkdtempSync(join(tmpdir(), 'ps-soak-sig-'))
-    const tenantsFile = join(baseDir, 'tenants.json')
-    writeFileSync(tenantsFile, JSON.stringify({ tenants: { [Soak.Tenant]: { displayName: 'T1' } } }))
-    const env = {
-        ...process.env,
-        PRAGMATIC_HOST: '127.0.0.1',
-        PRAGMATIC_PORT: String(Soak.ChildPort),
-        PRAGMATIC_BASE_DIR: baseDir,
-        PRAGMATIC_TENANTS_FILE: tenantsFile,
-        PRAGMATIC_MASTER_KEY_B64_ENV: Soak.KeyEnv,
-        [Soak.KeyEnv]: randomBytes(32).toString('base64'),
-        PRAGMATIC_METRICS_PORT: String(Soak.ChildMetricsPort),
-        PRAGMATIC_DRAIN_TIMEOUT_MS: '3000',
-    }
-    const child = Soak.SpawnServer(env)
-    const exited = new Promise<number>(resolve => child.on('exit', code => resolve(code ?? -1)))
+    const baseDir = Soak.MakeBaseDir(Soak.SigDirPrefix)
+    const child = Soak.SpawnServer(Soak.ChildEnv(baseDir, Soak.WriteTenantsFile(baseDir)))
+    let spawnError: Error | undefined
+    const exited = new Promise<number>(resolve =>
+    {
+        child.on('error', error =>
+        {
+            spawnError = error
+            resolve(-1)
+        })
+        child.on('exit', code => resolve(code ?? -1))
+    })
     try
     {
         let ready = false
-        for (let i = 0; i < Soak.ReadyPolls; i += 1)
+        for (let i = 0; i < Soak.ReadyPolls && spawnError === undefined; i += 1)
         {
             await Soak.Sleep(Soak.ReadyPollMs)
-            const status = await Soak.Readyz(Soak.ChildPort).catch(() => 0)
-            if (status === 200)
+            if (await Soak.Readyz(Soak.ChildPort) === 200)
             {
                 ready = true
                 break
             }
         }
-        assert.ok(ready, 'child became ready')
+        assert.equal(spawnError, undefined, Soak.MsgSpawn)
+        assert.ok(ready, Soak.MsgReady)
         Soak.Term(child)
+        // Success is an actual 503, or a refused connection (the server already finished closing).
+        // A timeout or any other error is neither and keeps polling until the bounded deadline.
         let sawUnavailable = false
         for (let i = 0; i < Soak.UnavailablePolls; i += 1)
         {
-            const status = await Soak.Readyz(Soak.ChildPort).catch(() => 503)
-            if (status === 503)
+            const status = await Soak.Readyz(Soak.ChildPort)
+            if (status === 503 || status === Soak.ReadyRefused)
             {
                 sawUnavailable = true
                 break
             }
             await Soak.Sleep(Soak.UnavailablePollMs)
         }
-        assert.ok(sawUnavailable, '/readyz flipped to 503 on SIGTERM')
-        const code = await Promise.race([exited, Soak.Sleep(Soak.ExitGraceMs).then(() => -2)])
-        assert.equal(code, 0, 'child exited 0 within the grace period')
+        assert.ok(sawUnavailable, Soak.MsgUnavailable)
+        const code = await Soak.RaceExit(exited, Soak.ExitGraceMs)
+        assert.equal(code, 0, Soak.MsgExit)
     }
     finally
     {
-        if (child.exitCode === null)
+        if (child.exitCode === null && child.signalCode === null)
         {
             Soak.Kill(child)
         }
