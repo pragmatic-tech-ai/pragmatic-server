@@ -121,3 +121,13 @@ test('the gateway loader also defaults drainTimeoutMs to 25000', () =>
     }
     assert.equal(ServerConfigLoader.LoadGateway(env).drainTimeoutMs, 25000)
 })
+
+test('the gateway loader fails closed on a non-integer drainTimeoutMs', () =>
+{
+    const env = {
+        PRAGMATIC_TLS_CERT_FILE: '/c', PRAGMATIC_TLS_KEY_FILE: '/k', PRAGMATIC_TLS_CA_FILE: '/a',
+        PRAGMATIC_REDIS_URL: 'redis://127.0.0.1:6379',
+        PRAGMATIC_DRAIN_TIMEOUT_MS: 'soon',
+    }
+    assert.throws(() => ServerConfigLoader.LoadGateway(env), /PRAGMATIC_DRAIN_TIMEOUT_MS/)
+})

@@ -4,7 +4,8 @@ import { DeploymentMode } from '../../platform/deployment-mode.js'
 import { ServerBootstrap } from '../server-bootstrap.js'
 import { ProvisionedSecretSource } from '../../config/provisioned-secret-source.js'
 import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
-import type { ServerConfig } from '../../config/server-config.js'
+import type { ServerConfig, GatewayConfig } from '../../config/server-config.js'
+import type { IWorkerRouter } from '../../cluster/worker-router.js'
 import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
 
 class Fixture
@@ -84,4 +85,39 @@ test('StartupLine reports the drain window', () =>
 {
     const config = { ...Fixture.Config(DeploymentMode.Local), drainTimeoutMs: 25000 }
     assert.match(ServerBootstrap.StartupLine(config, 1), / drain=25000/)
+})
+
+class DrainFixture
+{
+    public static Worker(): ServerConfig
+    {
+        return { ...Fixture.Config(DeploymentMode.Local), tls: { certFile: '/c', keyFile: '/k', caFile: '/a' }, drainTimeoutMs: 31000 } as unknown as ServerConfig
+    }
+
+    public static Gateway(): GatewayConfig
+    {
+        return { host: '0.0.0.0', port: 8080, tls: { certFile: '/c', keyFile: '/k', caFile: '/a' }, redisUrl: 'redis://x', drainTimeoutMs: 32000 }
+    }
+}
+
+test('ComposeWorkerOptions threads drainTimeoutMs', () =>
+{
+    const options = ServerBootstrap.ComposeWorkerOptions(DrainFixture.Worker(), Fixture.Provisioning())
+    assert.equal(options.drainTimeoutMs, 31000)
+})
+
+test('ComposeGatewayOptions threads drainTimeoutMs', () =>
+{
+    const options = ServerBootstrap.ComposeGatewayOptions(DrainFixture.Gateway(), {} as unknown as IWorkerRouter)
+    assert.equal(options.drainTimeoutMs, 32000)
+})
+
+test('WorkerStartupLine reports the drain window', () =>
+{
+    assert.match(ServerBootstrap.WorkerStartupLine(DrainFixture.Worker()), / drain=31000/)
+})
+
+test('GatewayStartupLine reports the drain window', () =>
+{
+    assert.match(ServerBootstrap.GatewayStartupLine(DrainFixture.Gateway()), / drain=32000/)
 })
