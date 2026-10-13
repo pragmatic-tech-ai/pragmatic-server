@@ -43,6 +43,8 @@ import { NullLogger } from '../observability/logger.js'
 import type { ILogger } from '../observability/logger.js'
 import { RequestInstrumentation } from '../observability/request-instrumentation.js'
 import type { Observability } from '../observability/observability.js'
+import { DrainController } from '../observability/drain-controller.js'
+import type { IInFlightSource } from '../observability/drain-controller.js'
 import { RequestCorrelation } from '../observability/request-correlation.js'
 
 export interface PragmaticServerHostOptions
@@ -96,6 +98,18 @@ export class PragmaticServerHost
     private static readonly RetryAfterSeconds = '1'
     private static readonly DefaultIdleTtlMs = 300_000
     private static readonly DefaultIdleSweepMs = 30_000
+    private static readonly DrainBeginEvent = 'drain-begin'
+    private static readonly DrainCompleteEvent = 'drain-complete'
+    private static readonly EventKey = 'event'
+    private static readonly InFlightField = 'inFlight'
+    private static readonly RemainingField = 'remaining'
+    private static readonly ElapsedField = 'elapsedMs'
+    private static readonly DrainedField = 'drained'
+    private static readonly DrainBeginLine = 'drain begin'
+    private static readonly DrainCompleteLine = 'drain complete'
+    private static readonly DrainFailedLine = 'drain step failed'
+    private static readonly DefaultDrainTimeoutMs = 0
+    private static readonly ZeroInFlight: IInFlightSource = { InFlight: () => 0 }
 
     private readonly httpServer: HttpServer | HttpsServer
     private readonly wss: WebSocketServer
@@ -113,6 +127,10 @@ export class PragmaticServerHost
     private readonly health = new HealthEndpoint()
     private ready = false
     private disposed = false
+    private readonly observability: Observability | undefined
+    private readonly drainTimeoutMs: number
+    private drainSource: IInFlightSource | undefined
+    private drained = false
 
     private constructor(
         httpServer: HttpServer | HttpsServer,
@@ -125,8 +143,12 @@ export class PragmaticServerHost
         logger: ILogger,
         instrumentation?: RequestInstrumentation,
         rateLimit: RateLimitGuard = new RateLimitGuard(),
-        audit: IAccessAuditSink = new NullAccessAuditSink())
+        audit: IAccessAuditSink = new NullAccessAuditSink(),
+        observability?: Observability,
+        drainTimeoutMs: number = PragmaticServerHost.DefaultDrainTimeoutMs)
     {
+        this.observability = observability
+        this.drainTimeoutMs = drainTimeoutMs
         this.audit = audit
         this.authenticator = new ConnectionAuthenticator(undefined, audit)
         this.rateLimit = rateLimit
@@ -180,7 +202,7 @@ export class PragmaticServerHost
             httpServer.listen(options.port, host)
         })
         const resolved = httpServer.address() as AddressInfo
-        const started = new PragmaticServerHost(httpServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? PragmaticServerHost.DefaultIdleTtlMs, options.idleSweepMs ?? PragmaticServerHost.DefaultIdleSweepMs, options.clientTls !== undefined, options.logger ?? new NullLogger(), options.observability !== undefined ? RequestInstrumentation.FromObservability(options.observability, options.logger ?? new NullLogger()) : undefined, options.rateLimit, options.audit)
+        const started = new PragmaticServerHost(httpServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? PragmaticServerHost.DefaultIdleTtlMs, options.idleSweepMs ?? PragmaticServerHost.DefaultIdleSweepMs, options.clientTls !== undefined, options.logger ?? new NullLogger(), options.observability !== undefined ? RequestInstrumentation.FromObservability(options.observability, options.logger ?? new NullLogger()) : undefined, options.rateLimit, options.audit, options.observability, options.drainTimeoutMs ?? PragmaticServerHost.DefaultDrainTimeoutMs)
         started.MarkReady()
         return started
     }
@@ -189,6 +211,12 @@ export class PragmaticServerHost
     public MarkReady(): void
     {
         this.ready = true
+    }
+
+    /** Test seam: override the in-flight source the drain waits on (default: the request instrumentation). */
+    public SetDrainSourceForTest(source: IInFlightSource): void
+    {
+        this.drainSource = source
     }
 
     public Address(): WebSocketAddress
@@ -224,24 +252,59 @@ export class PragmaticServerHost
 
     public async DisposeAsync(): Promise<void>
     {
+        if (this.drained)
+        {
+            return
+        }
+        this.drained = true
+        this.ready = false
         this.disposed = true
         clearInterval(this.sweep)
-        for (const handler of this.handlers)
+        try
         {
-            handler.Dispose()
+            await this.Drain()
+            for (const handler of this.handlers)
+            {
+                handler.Dispose()
+            }
+            this.handlers.clear()
+            for (const client of this.wss.clients)
+            {
+                client.terminate()
+            }
+            await new Promise<void>(resolve => this.wss.close(() => resolve()))
+            await new Promise<void>(resolve => this.httpServer.close(() => resolve()))
+            await this.observability?.Shutdown()
         }
-        this.handlers.clear()
-        for (const client of this.wss.clients)
+        finally
         {
-            client.terminate()
+            await this.registry.DisposeAll()
         }
-        await new Promise<void>(resolve => this.wss.close(() => resolve()))
-        await new Promise<void>(resolve => this.httpServer.close(() => resolve()))
-        await this.registry.DisposeAll()
+    }
+
+    /** Bounded wait for in-flight work; a failure here is logged (counts only) and never blocks teardown. */
+    private async Drain(): Promise<void>
+    {
+        try
+        {
+            const source = this.drainSource ?? this.instrumentation ?? PragmaticServerHost.ZeroInFlight
+            this.logger.Info(PragmaticServerHost.DrainBeginLine, { [PragmaticServerHost.EventKey]: PragmaticServerHost.DrainBeginEvent, [PragmaticServerHost.InFlightField]: source.InFlight() })
+            const outcome = await new DrainController(this.drainTimeoutMs).WaitForDrain(source)
+            this.logger.Info(PragmaticServerHost.DrainCompleteLine, { [PragmaticServerHost.EventKey]: PragmaticServerHost.DrainCompleteEvent, [PragmaticServerHost.DrainedField]: outcome.Drained, [PragmaticServerHost.RemainingField]: outcome.Remaining, [PragmaticServerHost.ElapsedField]: outcome.ElapsedMs })
+        }
+        catch
+        {
+            this.logger.Info(PragmaticServerHost.DrainFailedLine, { [PragmaticServerHost.EventKey]: PragmaticServerHost.DrainCompleteEvent })
+        }
     }
 
     private async Upgrade(req: IncomingMessage, socket: Socket, head: Buffer): Promise<void>
     {
+        if (this.disposed)
+        {
+            this.Reject(socket)
+            return
+        }
         const tenantId = this.TenantHint(req)
         if (tenantId === null)
         {
@@ -348,6 +411,12 @@ export class PragmaticServerHost
             {
                 res.writeHead(health.status)
                 res.end(health.body)
+                return
+            }
+            if (this.disposed)
+            {
+                res.writeHead(PragmaticServerHost.ServiceUnavailableStatus, { [PragmaticServerHost.RetryAfterHeader]: PragmaticServerHost.RetryAfterSeconds })
+                res.end()
                 return
             }
             const tenantId = this.TenantHint(req)
