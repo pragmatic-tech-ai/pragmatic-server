@@ -9,6 +9,7 @@ import { WsMessageSocket } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import type { AccessContext, Tenant } from '@pragmatic-tech-ai/todl-identity'
 import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
+import type { MachineTlsRef } from '../cluster/machine-tls.js'
 import type { MasterKeyRef } from '../identity/master-key-resolver.js'
 import type { IProvisionedSecretSource } from '../config/provisioned-secret-source.js'
 import type { PragmaticServer } from '../pragmatic-server.js'
@@ -38,6 +39,7 @@ export interface PragmaticServerHostOptions
     redisUrl?: string
     replicaId?: string
     provisionedSecrets?: IProvisionedSecretSource
+    clientTls?: MachineTlsRef
 }
 
 export interface WebSocketAddress

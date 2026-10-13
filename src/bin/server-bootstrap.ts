@@ -5,6 +5,7 @@ import type { PragmaticServerHostOptions } from '../host/pragmatic-server-host.j
 import type { ServerConfig, GatewayConfig } from '../config/server-config.js'
 import type { WorkerHostOptions } from '../cluster/worker-host.js'
 import type { GatewayOptions } from '../cluster/gateway.js'
+import type { MachineTlsRef } from '../cluster/machine-tls.js'
 import type { IWorkerRouter } from '../cluster/worker-router.js'
 import type { IProvisionedSecretSource } from '../config/provisioned-secret-source.js'
 
@@ -17,6 +18,9 @@ export class ServerBootstrap
     private static readonly SecretsNone = 'none'
     private static readonly HealthOff = 'off'
     private static readonly ServerNameDefault = 'default'
+    private static readonly ClientMtlsOn = 'on'
+    private static readonly ClientMtlsOff = 'off'
+    private static readonly ClientMtlsLabel = ' client-mtls='
     private static readonly WorkerNeedsTls = 'worker requires TLS (set PRAGMATIC_TLS_CERT_FILE/KEY_FILE/CA_FILE)'
 
     public static ComposeOptions(config: ServerConfig, provisioning: ITenantProvisioning, platform?: PlatformServices, provisionedSecrets?: IProvisionedSecretSource): PragmaticServerHostOptions
@@ -38,6 +42,7 @@ export class ServerBootstrap
             redisUrl: config.redisUrl,
             replicaId: config.replicaId,
             provisionedSecrets,
+            clientTls: config.clientTls,
         }
     }
 
@@ -45,7 +50,7 @@ export class ServerBootstrap
     {
         const ownership = config.redisUrl !== undefined ? ServerBootstrap.RedisOwnership : ServerBootstrap.InMemoryOwnership
         const secrets = config.provisionedSecretsFile !== undefined && config.provisionedSecretsFile.length > 0 ? ServerBootstrap.SecretsFile : ServerBootstrap.SecretsNone
-        return `pragmatic-server listening on ${config.host}:${config.port} mode=${config.deploymentMode} tenants=${tenantCount} ownership=${ownership} secrets=${secrets}`
+        return `pragmatic-server listening on ${config.host}:${config.port} mode=${config.deploymentMode} tenants=${tenantCount} ownership=${ownership} secrets=${secrets}${ServerBootstrap.ClientMtls(config.clientTls)}`
     }
 
     public static ComposeWorkerOptions(config: ServerConfig, provisioning: ITenantProvisioning, provisionedSecrets?: IProvisionedSecretSource): WorkerHostOptions
@@ -84,6 +89,7 @@ export class ServerBootstrap
             router,
             tls: gw.tls,
             serverName: gw.workerServerName,
+            clientTls: gw.clientTls,
         }
     }
 
@@ -95,6 +101,11 @@ export class ServerBootstrap
 
     public static GatewayStartupLine(gw: GatewayConfig): string
     {
-        return `pragmatic-gateway listening on ${gw.host}:${gw.port} servername=${gw.workerServerName ?? ServerBootstrap.ServerNameDefault}`
+        return `pragmatic-gateway listening on ${gw.host}:${gw.port} servername=${gw.workerServerName ?? ServerBootstrap.ServerNameDefault}${ServerBootstrap.ClientMtls(gw.clientTls)}`
+    }
+
+    private static ClientMtls(clientTls: MachineTlsRef | undefined): string
+    {
+        return ServerBootstrap.ClientMtlsLabel + (clientTls !== undefined ? ServerBootstrap.ClientMtlsOn : ServerBootstrap.ClientMtlsOff)
     }
 }

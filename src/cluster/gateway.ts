@@ -17,6 +17,7 @@ export interface GatewayOptions
     port: number
     router: IWorkerRouter
     tls: MachineTlsRef
+    clientTls?: MachineTlsRef
     serverName?: string
 }
 

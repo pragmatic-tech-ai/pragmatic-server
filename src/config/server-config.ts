@@ -23,6 +23,7 @@ export interface ServerConfig
     replicaId?: string
     provisionedSecretsFile?: string
     tls?: MachineTlsRef
+    clientTls?: MachineTlsRef
     workerAdvertiseHost?: string
     workerAdvertisePort?: number
     workerServerName?: string
@@ -34,6 +35,7 @@ export interface GatewayConfig
     host: string
     port: number
     tls: MachineTlsRef
+    clientTls?: MachineTlsRef
     redisUrl: string
     workerServerName?: string
     healthPort?: number

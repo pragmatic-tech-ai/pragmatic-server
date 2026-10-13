@@ -27,6 +27,9 @@ export class ServerConfigLoader
     private static readonly TlsCertMissing = 'PRAGMATIC_TLS_CERT_FILE is required when TLS is configured'
     private static readonly TlsKeyMissing = 'PRAGMATIC_TLS_KEY_FILE is required when TLS is configured'
     private static readonly TlsCaMissing = 'PRAGMATIC_TLS_CA_FILE is required when TLS is configured'
+    private static readonly ClientTlsCertMissing = 'PRAGMATIC_CLIENT_TLS_CERT_FILE (client TLS cert) is required when client TLS is configured'
+    private static readonly ClientTlsKeyMissing = 'PRAGMATIC_CLIENT_TLS_KEY_FILE (client TLS key) is required when client TLS is configured'
+    private static readonly ClientTlsCaMissing = 'PRAGMATIC_CLIENT_TLS_CA_FILE (client TLS CA) is required when client TLS is configured'
     private static readonly GatewayNeedsTls = 'PRAGMATIC_TLS_CERT_FILE/KEY_FILE/CA_FILE are required for the gateway'
     private static readonly GatewayNeedsRedis = 'PRAGMATIC_REDIS_URL is required for the gateway'
 
@@ -46,6 +49,7 @@ export class ServerConfigLoader
             host: env.PRAGMATIC_HOST ?? ServerConfigLoader.DefaultHost,
             port: ServerConfigLoader.Int(env.PRAGMATIC_PORT) ?? ServerConfigLoader.DefaultPort,
             tls,
+            clientTls: ServerConfigLoader.ClientTls(env),
             redisUrl,
             workerServerName: env.PRAGMATIC_WORKER_SERVERNAME,
             healthPort: ServerConfigLoader.Int(env.PRAGMATIC_HEALTH_PORT),
@@ -81,6 +85,30 @@ export class ServerConfigLoader
         return { certFile, keyFile, caFile }
     }
 
+    private static ClientTls(env: Record<string, string | undefined>): MachineTlsRef | undefined
+    {
+        const certFile = ServerConfigLoader.NonEmpty(env.PRAGMATIC_CLIENT_TLS_CERT_FILE)
+        const keyFile = ServerConfigLoader.NonEmpty(env.PRAGMATIC_CLIENT_TLS_KEY_FILE)
+        const caFile = ServerConfigLoader.NonEmpty(env.PRAGMATIC_CLIENT_TLS_CA_FILE)
+        if (certFile === undefined && keyFile === undefined && caFile === undefined)
+        {
+            return undefined
+        }
+        if (certFile === undefined)
+        {
+            throw new Error(ServerConfigLoader.ClientTlsCertMissing)
+        }
+        if (keyFile === undefined)
+        {
+            throw new Error(ServerConfigLoader.ClientTlsKeyMissing)
+        }
+        if (caFile === undefined)
+        {
+            throw new Error(ServerConfigLoader.ClientTlsCaMissing)
+        }
+        return { certFile, keyFile, caFile }
+    }
+
     public static Load(env: Record<string, string | undefined>, readTextFile: (path: string) => string): ServerConfig
     {
         const file = ServerConfigLoader.File(env, readTextFile)
@@ -99,6 +127,7 @@ export class ServerConfigLoader
         const redis = ServerConfigLoader.Redis(env, file.redisUrl)
         const provisionedSecretsFile = env.PRAGMATIC_PROVISIONED_SECRETS_FILE
         const tls = ServerConfigLoader.Tls(env)
+        const clientTls = ServerConfigLoader.ClientTls(env)
         return {
             host: env.PRAGMATIC_HOST ?? file.host ?? ServerConfigLoader.DefaultHost,
             port: ServerConfigLoader.Int(env.PRAGMATIC_PORT) ?? file.port ?? ServerConfigLoader.DefaultPort,
@@ -112,6 +141,7 @@ export class ServerConfigLoader
             ...redis,
             provisionedSecretsFile,
             tls,
+            clientTls,
             workerAdvertiseHost: env.PRAGMATIC_WORKER_ADVERTISE_HOST,
             workerAdvertisePort: ServerConfigLoader.Int(env.PRAGMATIC_WORKER_ADVERTISE_PORT),
             workerServerName: env.PRAGMATIC_WORKER_SERVERNAME,
