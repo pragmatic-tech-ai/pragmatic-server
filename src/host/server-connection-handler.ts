@@ -12,6 +12,8 @@ import { PolicyGate } from './policy-gate.js'
 import { ConnectorService } from './connector-service.js'
 import type { ConnectorRuntime } from '../connectors/connector-runtime.js'
 import { ModelReadFilter } from './model-read-filter.js'
+import type { Context } from '@opentelemetry/api'
+import type { RequestInstrumentation } from '../observability/request-instrumentation.js'
 
 /** One client connection: wires every JSON-RPC handler 1:1 to the engine services and pushes notifications. */
 export class ServerConnectionHandler
@@ -26,9 +28,13 @@ export class ServerConnectionHandler
     private readonly gate: PolicyGate
     private readonly connectorService: ConnectorService
     private readonly graphSubscription: IDisposable
+    private readonly instrumentation: RequestInstrumentation | undefined
+    private readonly parent: Context | undefined
 
-    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>)
+    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, instrumentation?: RequestInstrumentation, parent?: Context)
     {
+        this.instrumentation = instrumentation
+        this.parent = parent
         this.connectorService = new ConnectorService(connectorsFactory)
         this.accessContext = accessContext
         this.connection = connection
@@ -60,10 +66,10 @@ export class ServerConnectionHandler
         })
     }
 
-    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>): ServerConnectionHandler
+    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, instrumentation?: RequestInstrumentation, parent?: Context): ServerConnectionHandler
     {
         const connection = createMessageConnection(new WebSocketMessageReader(socket), new WebSocketMessageWriter(socket), NullLogger)
-        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectorsFactory)
+        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectorsFactory, instrumentation, parent)
         connection.listen()
         return handler
     }
@@ -83,22 +89,31 @@ export class ServerConnectionHandler
         }
     }
 
+    private Dispatch<R>(method: string, operation: () => R | Promise<R>): R | Promise<R>
+    {
+        if (this.instrumentation === undefined)
+        {
+            return operation()
+        }
+        return this.instrumentation.Run({ method, tenant: this.accessContext.Tenant.Id, principal: this.accessContext.Principal.Id }, operation, this.parent)
+    }
+
     private guarded<P, R, E>(type: RequestType<P, R, E>, handler: (params: P) => R | Promise<R>): void
     {
-        this.connection.onRequest(type, (params: P) =>
+        this.connection.onRequest(type, (params: P) => this.Dispatch(type.method, () =>
         {
             this.authorize(type.method)
             return handler(params)
-        })
+        }))
     }
 
     private guardedNoParams(type: typeof SolutionProtocol.ActiveSolution, handler: () => ActiveSolutionSummary | null): void
     {
-        this.connection.onRequest(type, () =>
+        this.connection.onRequest(type, () => this.Dispatch(type.method, () =>
         {
             this.authorize(type.method)
             return handler()
-        })
+        }))
     }
 
     private guardedNotification<P>(type: NotificationType<P>, handler: (params: P) => void): void
@@ -149,16 +164,16 @@ export class ServerConnectionHandler
 
     private RegisterConnectorHandlers(): void
     {
-        this.connection.onRequest(ConnectorProtocol.List, () =>
+        this.connection.onRequest(ConnectorProtocol.List, () => this.Dispatch(ConnectorProtocol.List.method, () =>
         {
             this.authorize(ConnectorProtocol.List.method)
             return this.connectorService.List()
-        })
-        this.connection.onRequest(ConnectorProtocol.Refresh, () =>
+        }))
+        this.connection.onRequest(ConnectorProtocol.Refresh, () => this.Dispatch(ConnectorProtocol.Refresh.method, () =>
         {
             this.authorize(ConnectorProtocol.Refresh.method)
             this.connectorService.Invalidate()
-        })
+        }))
         this.guarded(ConnectorProtocol.Prepare, p => this.connectorService.Prepare(p.modelId))
         this.guarded(ConnectorProtocol.Read, p => this.connectorService.Read(p.modelId, p.concept))
         this.guarded(ConnectorProtocol.WriteBack, p => this.connectorService.WriteBack(p))

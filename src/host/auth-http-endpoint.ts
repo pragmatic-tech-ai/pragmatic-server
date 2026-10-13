@@ -4,6 +4,7 @@ import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { RequestBody } from './request-body.js'
 import type { MachineCertIdentity } from './machine-principal-map.js'
+import type { RequestInstrumentation } from '../observability/request-instrumentation.js'
 
 /** The OIDC surface the auth endpoint needs: begin an authorization and look up the OIDC authenticator.
  *  Satisfied structurally by the cloud OIDC identity-provider packs. */
@@ -32,6 +33,7 @@ export class AuthHttpEndpoint
     private static readonly MachineUnauthorizedError = 'machine authentication failed'
     private static readonly PostMethod = 'POST'
     private static readonly GetMethod = 'GET'
+    private static readonly HttpSurface = 'http'
     private static readonly ContentTypeHeader = 'Content-Type'
     private static readonly LocationHeader = 'Location'
     private static readonly JsonContentType = 'application/json'
@@ -62,9 +64,11 @@ export class AuthHttpEndpoint
     private readonly tenant: Tenant
     private readonly oidc: OidcFrontDoor | undefined
     private readonly machine: MachineAuthContext | undefined
+    private readonly instrumentation: RequestInstrumentation | undefined
 
-    public constructor(pack: ServerIdentityPack, tenant: Tenant, oidc?: OidcFrontDoor, machine?: MachineAuthContext)
+    public constructor(pack: ServerIdentityPack, tenant: Tenant, oidc?: OidcFrontDoor, machine?: MachineAuthContext, instrumentation?: RequestInstrumentation)
     {
+        this.instrumentation = instrumentation
         this.machine = machine
         this.pack = pack
         this.tenant = tenant
@@ -75,7 +79,15 @@ export class AuthHttpEndpoint
     {
         try
         {
-            await this.Route(req, res)
+            if (this.instrumentation === undefined)
+            {
+                await this.Route(req, res)
+            }
+            else
+            {
+                const method = `${req.method ?? AuthHttpEndpoint.GetMethod} ${AuthHttpEndpoint.HttpSurface}`
+                await this.instrumentation.Run({ method, tenant: this.tenant.Id, principal: '' }, () => this.Route(req, res))
+            }
         }
         catch
         {

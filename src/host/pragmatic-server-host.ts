@@ -37,6 +37,8 @@ import type { PlatformServices } from '../platform/platform-services.js'
 import type { DeploymentMode } from '../platform/deployment-mode.js'
 import { NullLogger } from '../observability/logger.js'
 import type { ILogger } from '../observability/logger.js'
+import { RequestInstrumentation } from '../observability/request-instrumentation.js'
+import type { Observability } from '../observability/observability.js'
 
 export interface PragmaticServerHostOptions
 {
@@ -54,6 +56,7 @@ export interface PragmaticServerHostOptions
     provisionedSecrets?: IProvisionedSecretSource
     clientTls?: MachineTlsRef
     logger?: ILogger
+    observability?: Observability
 }
 
 export interface WebSocketAddress
@@ -95,6 +98,7 @@ export class PragmaticServerHost
     private readonly idleTtlMs: number
     private readonly clientTls: boolean
     private readonly logger: ILogger
+    private readonly instrumentation: RequestInstrumentation | undefined
     private readonly sweep: NodeJS.Timeout
     private readonly health = new HealthEndpoint()
     private ready = false
@@ -108,9 +112,11 @@ export class PragmaticServerHost
         idleTtlMs: number,
         idleSweepMs: number,
         clientTls: boolean,
-        logger: ILogger)
+        logger: ILogger,
+        instrumentation?: RequestInstrumentation)
     {
         this.logger = logger
+        this.instrumentation = instrumentation
         this.httpServer = httpServer
         this.wss = wss
         this.registry = registry
@@ -159,7 +165,7 @@ export class PragmaticServerHost
             httpServer.listen(options.port, host)
         })
         const resolved = httpServer.address() as AddressInfo
-        const started = new PragmaticServerHost(httpServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? PragmaticServerHost.DefaultIdleTtlMs, options.idleSweepMs ?? PragmaticServerHost.DefaultIdleSweepMs, options.clientTls !== undefined, options.logger ?? new NullLogger())
+        const started = new PragmaticServerHost(httpServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? PragmaticServerHost.DefaultIdleTtlMs, options.idleSweepMs ?? PragmaticServerHost.DefaultIdleSweepMs, options.clientTls !== undefined, options.logger ?? new NullLogger(), options.observability !== undefined ? RequestInstrumentation.FromObservability(options.observability, options.logger ?? new NullLogger()) : undefined)
         started.MarkReady()
         return started
     }
@@ -260,7 +266,7 @@ export class PragmaticServerHost
             {
                 try
                 {
-                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors())
+                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors(), this.instrumentation)
                     this.handlers.add(handler)
                     ws.on(PragmaticServerHost.CloseEvent, () =>
                     {
@@ -329,7 +335,7 @@ export class PragmaticServerHost
             }
             const server = await this.registry.ServerFor(tenantId)
             const pack = await server.Pack()
-            const endpoint = new AuthHttpEndpoint(pack, server.Tenant(), server.Oidc(), this.MachineContext(req, pack))
+            const endpoint = new AuthHttpEndpoint(pack, server.Tenant(), server.Oidc(), this.MachineContext(req, pack), this.instrumentation)
             await endpoint.Handle(req, res)
         }
         catch (error)

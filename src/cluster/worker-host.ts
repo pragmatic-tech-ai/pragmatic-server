@@ -37,6 +37,8 @@ import type { PlatformServices } from '../platform/platform-services.js'
 import type { DeploymentMode } from '../platform/deployment-mode.js'
 import { NullLogger } from '../observability/logger.js'
 import type { ILogger } from '../observability/logger.js'
+import { RequestInstrumentation } from '../observability/request-instrumentation.js'
+import type { Observability } from '../observability/observability.js'
 
 export interface WorkerHostOptions
 {
@@ -56,6 +58,7 @@ export interface WorkerHostOptions
     healthPort?: number
     advertise?: WorkerEndpoint
     logger?: ILogger
+    observability?: Observability
 }
 
 /** Internal mutual-TLS wss worker: the gateway (a verified client cert) forwards x-pragmatic-tenant + authorization;
@@ -93,6 +96,7 @@ export class WorkerHost
     private readonly healthAddress: WebSocketAddress | null
     private readonly registration: WorkerRegistration | null
     private readonly logger: ILogger
+    private readonly instrumentation: RequestInstrumentation | undefined
     private ready = false
     private disposed = false
 
@@ -106,9 +110,11 @@ export class WorkerHost
         healthServer: PlainHttpServer | null,
         healthAddress: WebSocketAddress | null,
         registration: WorkerRegistration | null,
-        logger: ILogger)
+        logger: ILogger,
+        instrumentation?: RequestInstrumentation)
     {
         this.logger = logger
+        this.instrumentation = instrumentation
         this.healthServer = healthServer
         this.healthAddress = healthAddress
         this.registration = registration
@@ -209,7 +215,7 @@ export class WorkerHost
             await registry.DisposeAll().catch(() => {})
             throw error
         }
-        const started = new WorkerHost(httpsServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? WorkerHost.DefaultIdleTtlMs, options.idleSweepMs ?? WorkerHost.DefaultIdleSweepMs, healthServer, healthAddress, registration, options.logger ?? new NullLogger())
+        const started = new WorkerHost(httpsServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? WorkerHost.DefaultIdleTtlMs, options.idleSweepMs ?? WorkerHost.DefaultIdleSweepMs, healthServer, healthAddress, registration, options.logger ?? new NullLogger(), options.observability !== undefined ? RequestInstrumentation.FromObservability(options.observability, options.logger ?? new NullLogger()) : undefined)
         started.MarkReady()
         return started
     }
@@ -287,7 +293,7 @@ export class WorkerHost
             {
                 try
                 {
-                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors())
+                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors(), this.instrumentation)
                     this.handlers.add(handler)
                     ws.on(WorkerHost.CloseEvent, () =>
                     {
@@ -348,7 +354,7 @@ export class WorkerHost
             }
             const server = await this.registry.ServerFor(tenantId)
             const pack = await server.Pack()
-            const endpoint = new AuthHttpEndpoint(pack, server.Tenant(), server.Oidc(), this.MachineContext(req, pack))
+            const endpoint = new AuthHttpEndpoint(pack, server.Tenant(), server.Oidc(), this.MachineContext(req, pack), this.instrumentation)
             await endpoint.Handle(req, res)
         }
         catch
