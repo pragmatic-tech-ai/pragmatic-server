@@ -105,5 +105,5 @@ test('NOTES warn that cluster mode requires Redis (Review Focus 4)', () =>
 {
     const notes = Chart.Text(join('templates', 'NOTES.txt'))
     assert.match(notes, /cluster/i)
-    assert.match(notes, /redis/i)
+    assert.match(notes, /REQUIRES Redis/)
 })

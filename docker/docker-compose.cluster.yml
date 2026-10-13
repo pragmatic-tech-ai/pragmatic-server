@@ -61,6 +61,8 @@ services:
     environment:
       PRAGMATIC_PORT: "8080"
       PRAGMATIC_REDIS_URL: redis://redis:6379
+      # The gateway validates every worker's TLS cert against this name (not the connect host), so the
+      # worker server cert's SAN must equal it. The fixtures' server.pem has an IP SAN of 127.0.0.1.
       PRAGMATIC_WORKER_SERVERNAME: 127.0.0.1
       PRAGMATIC_TLS_CERT_FILE: /run/secrets/tls/client.pem
       PRAGMATIC_TLS_KEY_FILE: /run/secrets/tls/client.key
