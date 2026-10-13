@@ -16,6 +16,15 @@ export interface ServerTlsMaterial
     rejectUnauthorized: true
 }
 
+export interface OptionalServerTlsMaterial
+{
+    key: Buffer
+    cert: Buffer
+    ca: Buffer
+    requestCert: true
+    rejectUnauthorized: false
+}
+
 export interface ClientTlsMaterial
 {
     key: Buffer
@@ -35,6 +44,17 @@ export class MachineTls
             ca: readFileSync(ref.caFile),
             requestCert: true,
             rejectUnauthorized: true,
+        }
+    }
+
+    public static OptionalServer(ref: MachineTlsRef): OptionalServerTlsMaterial
+    {
+        return {
+            key: readFileSync(ref.keyFile),
+            cert: readFileSync(ref.certFile),
+            ca: readFileSync(ref.caFile),
+            requestCert: true,
+            rejectUnauthorized: false,
         }
     }
 

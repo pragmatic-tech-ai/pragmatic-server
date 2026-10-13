@@ -25,6 +25,14 @@ test('Server material loads the PEM files and sets requestCert + rejectUnauthori
     assert.deepEqual(material.cert, readFileSync(TlsFixture.Ref().certFile))
 })
 
+test('OptionalServer loads material requesting but not requiring a client cert', () =>
+{
+    const material = MachineTls.OptionalServer(TlsFixture.Ref())
+    assert.equal(material.requestCert, true)
+    assert.equal(material.rejectUnauthorized, false)
+    assert.ok(material.key.length > 0 && material.cert.length > 0 && material.ca.length > 0)
+})
+
 test('Client material loads cert/key/ca', () =>
 {
     const material = MachineTls.Client(TlsFixture.Ref())
