@@ -4,11 +4,26 @@ import { AuditEvent, AuditEventKind, Action, ResourceKind } from '@pragmatic-tec
 import type { IAuditSink } from '@pragmatic-tech-ai/todl-identity'
 import { AuditSurface, AuditOutcome } from '../access-audit.js'
 import { SqlAuditAccessSink } from '../sql-access-audit-sink.js'
+import type { ILogger, LogFields } from '../../observability/logger.js'
 
 class CapturingStore implements IAuditSink
 {
     public readonly Events: AuditEvent[] = []
     public Record(event: AuditEvent): Promise<void> { this.Events.push(event); return Promise.resolve() }
+}
+
+class CapturingLogger implements ILogger
+{
+    public readonly Errors: Array<{ message: string; fields?: LogFields }> = []
+    public Info(): void {}
+    public Warn(): void {}
+    public Error(message: string, fields?: LogFields): void { this.Errors.push({ message, fields }) }
+    public Child(): ILogger { return this }
+}
+
+class RejectingStore implements IAuditSink
+{
+    public Record(): Promise<void> { return Promise.reject(new Error('db rejected')) }
 }
 
 class ThrowingStore implements IAuditSink
@@ -60,14 +75,55 @@ test('maps an http auth event to an Authentication AuditEvent with a null princi
     assert.equal(store.Events[0]!.PrincipalId, null)
 })
 
-test('a throwing store is swallowed and never escapes', async () =>
+test('maps optional fields into Detail when present and omits them when absent', async () =>
 {
-    await new SqlAuditAccessSink(new ThrowingStore()).Record({
+    const store = new CapturingStore()
+    const sink = new SqlAuditAccessSink(store)
+    await sink.Record({
+        Timestamp: new Date(),
+        TenantId: 't1',
+        Surface: AuditSurface.Rpc,
+        MethodOrPath: 'x',
+        ResourcePath: 'my-solution',
+        Outcome: AuditOutcome.Deny,
+        Reason: 'insufficient-role',
+        CorrelationId: 'trace-abc',
+    })
+    await sink.Record({ Timestamp: new Date(), TenantId: 't1', Surface: AuditSurface.Rpc, MethodOrPath: 'x', Outcome: AuditOutcome.Allow })
+    const present = store.Events[0]!.Detail
+    assert.equal(present.get('resourcePath'), 'my-solution')
+    assert.equal(present.get('reason'), 'insufficient-role')
+    assert.equal(present.get('correlationId'), 'trace-abc')
+    const absent = store.Events[1]!.Detail
+    for (const key of ['resourcePath', 'reason', 'correlationId', 'action', 'resourceKind'])
+    {
+        assert.equal(absent.has(key), false, key)
+    }
+})
+
+test('a synchronously throwing store is swallowed and logged', async () =>
+{
+    const logger = new CapturingLogger()
+    await new SqlAuditAccessSink(new ThrowingStore(), logger).Record({
         Timestamp: new Date(),
         TenantId: 't1',
         Surface: AuditSurface.Rpc,
         MethodOrPath: 'x',
         Outcome: AuditOutcome.Allow,
     })
-    assert.ok(true)
+    assert.equal(logger.Errors.length, 1)
+    assert.equal(logger.Errors[0]!.fields?.surface, 'rpc')
+})
+
+test('a rejecting store is swallowed and logged', async () =>
+{
+    const logger = new CapturingLogger()
+    await new SqlAuditAccessSink(new RejectingStore(), logger).Record({
+        Timestamp: new Date(),
+        TenantId: 't1',
+        Surface: AuditSurface.Rpc,
+        MethodOrPath: 'x',
+        Outcome: AuditOutcome.Allow,
+    })
+    assert.equal(logger.Errors.length, 1)
 })
