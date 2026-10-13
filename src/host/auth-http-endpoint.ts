@@ -244,6 +244,7 @@ export class AuthHttpEndpoint
         const authenticator = this.oidc?.AuthenticatorFor(AuthMethod.Oidc)
         if (authenticator === undefined)
         {
+            this.Emit(AuthHttpEndpoint.OidcCallbackPath, AuditOutcome.AuthFailure)
             this.WriteJson(res, AuthHttpEndpoint.NotFoundStatus, AuthHttpEndpoint.NotFoundError)
             return
         }

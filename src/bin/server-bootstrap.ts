@@ -49,6 +49,7 @@ export class ServerBootstrap
     private static readonly OtelOff = 'off'
     private static readonly OtelLabel = ' otel='
     private static readonly AuditFailuresMetric = 'audit_write_failures_total'
+    private static readonly AuditFileRequired = 'audit file path required when audit sink is file'
     private static readonly SqlNeedsStore = 'audit sink sql requires a cloud audit store'
     private static readonly AuditLabel = ' audit='
     private static readonly RateLimitLabel = ' ratelimit='
@@ -174,8 +175,12 @@ export class ServerBootstrap
 
     public static AuditSink(config: { auditSink?: AuditSinkKind; auditFile?: string }, logger: ILogger, observability?: Observability, cloudAudit?: IAuditSink): IAccessAuditSink
     {
-        if (config.auditSink === AuditSinkKind.File && config.auditFile !== undefined)
+        if (config.auditSink === AuditSinkKind.File)
         {
+            if (config.auditFile === undefined || config.auditFile.length === 0)
+            {
+                throw new Error(ServerBootstrap.AuditFileRequired)
+            }
             return new FileAccessAuditSink(config.auditFile, undefined, logger, observability?.Meter().createCounter(ServerBootstrap.AuditFailuresMetric))
         }
         if (config.auditSink === AuditSinkKind.Sql)

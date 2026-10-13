@@ -34,6 +34,7 @@ export class ServerConfigLoader
     private static readonly ClientTlsKeyMissing = 'PRAGMATIC_CLIENT_TLS_KEY_FILE (client TLS key) is required when client TLS is configured'
     private static readonly ClientTlsCaMissing = 'PRAGMATIC_CLIENT_TLS_CA_FILE (client TLS CA) is required when client TLS is configured'
     private static readonly GatewayNeedsTls = 'PRAGMATIC_TLS_CERT_FILE/KEY_FILE/CA_FILE are required for the gateway'
+    private static readonly GatewayNoSqlAudit = 'PRAGMATIC_AUDIT_SINK=sql is not supported on the gateway (it is a router with no SQL audit store); use file or none'
     private static readonly GatewayNeedsRedis = 'PRAGMATIC_REDIS_URL is required for the gateway'
 
     private static readonly BadMetricsPort = 'PRAGMATIC_METRICS_PORT must be an integer port between 1 and 65535'
@@ -59,6 +60,16 @@ export class ServerConfigLoader
     private static readonly EnvTenantBurst = 'PRAGMATIC_RATELIMIT_TENANT_BURST'
     private static readonly EnvPrincipalRps = 'PRAGMATIC_RATELIMIT_PRINCIPAL_RPS'
     private static readonly EnvPrincipalBurst = 'PRAGMATIC_RATELIMIT_PRINCIPAL_BURST'
+
+    private static GatewaySecurity(env: Record<string, string | undefined>): { auditSink?: AuditSinkKind; auditFile?: string; rateLimit?: RateLimitConfig }
+    {
+        const security = ServerConfigLoader.Security(env)
+        if (security.auditSink === AuditSinkKind.Sql)
+        {
+            throw new Error(ServerConfigLoader.GatewayNoSqlAudit)
+        }
+        return security
+    }
 
     private static Security(env: Record<string, string | undefined>, deploymentMode?: DeploymentMode): { auditSink?: AuditSinkKind; auditFile?: string; rateLimit?: RateLimitConfig }
     {
@@ -141,7 +152,7 @@ export class ServerConfigLoader
             workerServerName: env.PRAGMATIC_WORKER_SERVERNAME,
             healthPort: ServerConfigLoader.Int(env.PRAGMATIC_HEALTH_PORT),
             ...ServerConfigLoader.Observability(env),
-            ...ServerConfigLoader.Security(env),
+            ...ServerConfigLoader.GatewaySecurity(env),
         }
     }
 

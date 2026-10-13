@@ -107,3 +107,9 @@ test('ComposeOptions threads the sink and guard through', () =>
     assert.equal(options.audit, audit)
     assert.equal(options.rateLimit, guard)
 })
+
+test('AuditSink=file without a path fails closed instead of returning a null sink', () =>
+{
+    assert.throws(() => ServerBootstrap.AuditSink({ ...SecurityFixture.BaseConfig(), auditSink: AuditSinkKind.File }, new NullLogger()), /audit file path required/)
+    assert.throws(() => ServerBootstrap.AuditSink({ ...SecurityFixture.BaseConfig(), auditSink: AuditSinkKind.File, auditFile: '' }, new NullLogger()), /audit file path required/)
+})

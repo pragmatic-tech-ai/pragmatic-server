@@ -5,6 +5,11 @@ import { mkdtempSync, cpSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PresentedSecret, Grant, Role, ResourceRef, ResourceKind } from '@pragmatic-tech-ai/todl-identity'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
+import type { Tenant } from '@pragmatic-tech-ai/todl-identity'
+import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
+import { AuthHttpEndpoint } from '../auth-http-endpoint.js'
 import { PragmaticServerHost } from '../pragmatic-server-host.js'
 import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
 import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
@@ -32,7 +37,7 @@ class ThrowingSink implements IAccessAuditSink
 
 class AuthAuditFixture
 {
-    public static async Run(audit: IAccessAuditSink, body: (base: string) => Promise<void>): Promise<void>
+    public static async Run(audit: IAccessAuditSink, body: (base: string) => Promise<void>, direct?: (pack: ServerIdentityPack, tenant: Tenant) => Promise<void>): Promise<void>
     {
         const baseDir = mkdtempSync(join(tmpdir(), 'ps-base-'))
         mkdirSync(join(baseDir, 't1'), { recursive: true })
@@ -46,6 +51,7 @@ class AuthAuditFixture
         await pack.Grants.Save(new Grant('p1', Role.Admin, new ResourceRef(ResourceKind.Tenant, 't1', [])))
         try
         {
+            await direct?.(pack, await host.TenantForTest('t1'))
             await body(`http://${host.Address().host}:${host.Address().port}`)
         }
         finally
@@ -87,5 +93,29 @@ test('a throwing audit sink never changes the auth response', async () =>
     {
         assert.equal((await AuthAuditFixture.Login(base, 'pw-123456')).status, 200)
         assert.equal((await AuthAuditFixture.Login(base, 'wrong')).status, 401)
+    })
+})
+
+test('an OIDC callback with no OIDC authenticator configured audits an AuthFailure', async () =>
+{
+    const sink = new CapturingSink()
+    await AuthAuditFixture.Run(sink, async () => undefined, async (pack, tenant) =>
+    {
+        const oidc = { BeginAuthorization: () => Promise.reject(new Error('unused')), AuthenticatorFor: () => undefined }
+        const endpoint = new AuthHttpEndpoint(pack, tenant, oidc, undefined, undefined, sink)
+        const server = createServer((req, res) => void endpoint.Handle(req, res))
+        await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+        try
+        {
+            const port = (server.address() as AddressInfo).port
+            const res = await fetch(`http://127.0.0.1:${port}/auth/oidc/callback?code=c&state=s`)
+            assert.equal(res.status, 404)
+            await new Promise(resolve => setImmediate(resolve))
+            assert.ok(sink.Events.some(e => e.Surface === AuditSurface.Http && e.MethodOrPath === '/auth/oidc/callback' && e.Outcome === AuditOutcome.AuthFailure))
+        }
+        finally
+        {
+            await new Promise(resolve => server.close(resolve))
+        }
     })
 })
