@@ -21,9 +21,16 @@ class Fixtures
     public static readonly ShutdownErrorEvent = 'shutdown-error'
     public static readonly ShutdownErrorMessage = 'pragmatic-server shutdown error: boom'
 
+    private static readonly KeyPath = '/run/secrets/key'
+
+    public static LeaksKeyPath(text: string): boolean
+    {
+        return text.includes(Fixtures.KeyPath)
+    }
+
     public static Config(): ServerConfig
     {
-        return { host: '0.0.0.0', port: 8080, baseDir: '/data', masterKey: { keyFilePath: '/run/secrets/key' }, deploymentMode: DeploymentMode.Local, singleTenant: { id: 't1', displayName: 'Tenant One' } }
+        return { host: '0.0.0.0', port: 8080, baseDir: '/data', masterKey: { keyFilePath: Fixtures.KeyPath }, deploymentMode: DeploymentMode.Local, singleTenant: { id: 't1', displayName: 'Tenant One' } }
     }
 }
 
@@ -45,5 +52,5 @@ test('a shutdown-error line is logged at error level and never leaks the master 
     const logger = capture.Logger()
     logger.Error(Fixtures.ShutdownErrorMessage, { event: Fixtures.ShutdownErrorEvent })
     assert.equal(capture.Records[0]!.level, LogLevel.Error)
-    assert.ok(!JSON.stringify(capture.Records[0]).includes('/run/secrets/key'))
+    assert.ok(!Fixtures.LeaksKeyPath(JSON.stringify(capture.Records[0])))
 })
