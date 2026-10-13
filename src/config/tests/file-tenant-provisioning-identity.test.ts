@@ -80,3 +80,32 @@ for (const [name, identity, field] of Malformed)
             error.message.includes(field) && !error.message.includes(Secret))
     })
 }
+
+const MoreMalformed: [string, Record<string, unknown>, string][] = [
+    ['null identity', { identity: null }, 'pack'],
+    ['string identity', { identity: Secret }, 'pack'],
+    ['non-string delegationDepth', { identity: { pack: 'p', delegationDepth: 7, providerSettings: { a: Secret } } }, 'delegationDepth'],
+    ['non-string claimsMapping value', { identity: { pack: 'p', claimsMapping: { g: 5, s: Secret } } }, 'claimsMapping'],
+    ['machine groups not strings', { identity: { pack: 'p', machine: { aa: { principalId: 'x', groups: [Secret, 5] } } } }, 'machine.groups'],
+    ['machine groups not an array', { identity: { pack: 'p', machine: { aa: { principalId: 'x', groups: Secret } } } }, 'machine.groups'],
+    ['non-record machine', { identity: { pack: 'p', machine: Secret } }, 'machine'],
+    ['legacy oidc missing discoveryUrl', { oidc: { issuer: 'i', clientId: 'c', clientSecretRef: Secret, redirectUri: 'r', provider: 'generic' } }, 'oidc.discoveryUrl'],
+    ['legacy oidc non-string clientId', { oidc: { issuer: 'i', clientId: 5, clientSecretRef: Secret, discoveryUrl: 'd', redirectUri: 'r', provider: 'generic' } }, 'oidc.clientId'],
+]
+
+for (const [name, extra, field] of MoreMalformed)
+{
+    test(`malformed tenant (${name}) fails closed naming the field without leaking values`, () =>
+    {
+        assert.throws(() => FileTenantProvisioning.FromText(Fixture.Tenant(extra)), (error: Error) =>
+            error.message.includes(field) && !error.message.includes('Secret') && !error.message.includes(Secret))
+    })
+}
+
+test('a legacy-only tenant has the generic-oidc identity and no machine map', () =>
+{
+    const oidc = { issuer: 'i', clientId: 'c', clientSecretRef: 's', discoveryUrl: 'd', redirectUri: 'r', provider: 'generic' }
+    const tenant = FileTenantProvisioning.FromText(Fixture.Tenant({ oidc })).OptionsFor('acme')
+    assert.equal(tenant?.machine, undefined)
+    assert.equal(tenant?.identity?.PackId, 'generic-oidc')
+})

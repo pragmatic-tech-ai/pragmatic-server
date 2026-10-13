@@ -70,6 +70,12 @@ export class FileTenantProvisioning implements ITenantProvisioning
     private static readonly FieldMachine = 'machine'
     private static readonly FieldPrincipalId = 'machine.principalId'
     private static readonly FieldMachineGroups = 'machine.groups'
+    private static readonly OidcFieldPrefix = 'oidc.'
+    private static readonly OidcIssuer = 'issuer'
+    private static readonly OidcDiscoveryUrl = 'discoveryUrl'
+    private static readonly OidcClientId = 'clientId'
+    private static readonly OidcRedirectUri = 'redirectUri'
+    private static readonly OidcClientSecretRef = 'clientSecretRef'
     private static readonly LegacyPackId = 'generic-oidc'
     private static readonly DepthAuthnDirectory = 'authn-directory'
     private static readonly DepthExternalGrants = 'external-grants'
@@ -153,13 +159,23 @@ export class FileTenantProvisioning implements ITenantProvisioning
             return undefined
         }
         const settings = new Map<string, string>([
-            [OidcSettingKeys.Issuer, oidc.issuer],
-            [OidcSettingKeys.DiscoveryUrl, oidc.discoveryUrl],
-            [OidcSettingKeys.ClientId, oidc.clientId],
-            [OidcSettingKeys.RedirectUri, oidc.redirectUri],
-            [OidcSettingKeys.SecretRef, oidc.clientSecretRef],
+            [OidcSettingKeys.Issuer, FileTenantProvisioning.OidcField(oidc, FileTenantProvisioning.OidcIssuer)],
+            [OidcSettingKeys.DiscoveryUrl, FileTenantProvisioning.OidcField(oidc, FileTenantProvisioning.OidcDiscoveryUrl)],
+            [OidcSettingKeys.ClientId, FileTenantProvisioning.OidcField(oidc, FileTenantProvisioning.OidcClientId)],
+            [OidcSettingKeys.RedirectUri, FileTenantProvisioning.OidcField(oidc, FileTenantProvisioning.OidcRedirectUri)],
+            [OidcSettingKeys.SecretRef, FileTenantProvisioning.OidcField(oidc, FileTenantProvisioning.OidcClientSecretRef)],
         ])
         return new IdentityConfig(FileTenantProvisioning.LegacyPackId, DelegationDepth.AuthnDirectory, settings, new Map(), new Map())
+    }
+
+    private static OidcField(oidc: unknown, key: 'issuer' | 'discoveryUrl' | 'clientId' | 'redirectUri' | 'clientSecretRef'): string
+    {
+        const value = FileTenantProvisioning.IsRecord(oidc) ? oidc[key] : undefined
+        if (typeof value !== 'string' || value.length === 0)
+        {
+            throw FileTenantProvisioning.BadField(FileTenantProvisioning.OidcFieldPrefix + key)
+        }
+        return value
     }
 
     private static Identity(shape: IdentityShape): IdentityConfig
