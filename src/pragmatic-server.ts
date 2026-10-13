@@ -84,6 +84,7 @@ export class PragmaticServer
     private readonly platform: PlatformServices
     private readonly identity: IdentityModule | undefined
     private readonly connectorsHost: ConnectorsHost
+    private disposing: Promise<void> | undefined
     private pack: ServerIdentityPack | undefined
     private tenant: Tenant | undefined
     private oidc: OidcFrontDoor | undefined
@@ -220,7 +221,14 @@ export class PragmaticServer
         return this.root.StateOf(moduleId)
     }
 
-    public async Dispose(): Promise<void>
+    /** Idempotent: every call (concurrent or later) shares the one teardown. */
+    public Dispose(): Promise<void>
+    {
+        this.disposing ??= this.DoDispose()
+        return this.disposing
+    }
+
+    private async DoDispose(): Promise<void>
     {
         try
         {

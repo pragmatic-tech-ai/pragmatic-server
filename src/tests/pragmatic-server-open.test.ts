@@ -16,7 +16,7 @@ class OpenGolden
     private static readonly MissingDir = 'does-not-exist-xyz'
     public static readonly LanguageModule = 'language-service'
     public static readonly ConcurrentMessage = 'both concurrent opens leave a solution active'
-    public static readonly DrainMessage = 'dispose drains the maintenance tail and resolves'
+    public static readonly DrainMessage = 'repeated and concurrent Dispose calls share one teardown'
     public static readonly LazyMessage = 'dispose never constructs a language service that was not built'
     public static readonly WidgetId = 'acme.Widget'
     /** The engine's real error for a folder holding no .pksln manifest. */
@@ -125,9 +125,11 @@ test('concurrent opens of the same solution then Dispose drains and tears down c
         await Promise.all([server.OpenSolution(solution), server.OpenSolution(solution)])
         const manager = await server.Manager()
         assert.ok(manager.ActiveSolution, OpenGolden.ConcurrentMessage)
-        await server.Dispose()
-        await server.Dispose()
-        assert.ok(true, OpenGolden.DrainMessage)
+        const first = server.Dispose()
+        const second = server.Dispose()
+        assert.strictEqual(first, second, OpenGolden.DrainMessage)
+        await first
+        assert.strictEqual(server.Dispose(), first, OpenGolden.DrainMessage)
     }
     finally
     {
