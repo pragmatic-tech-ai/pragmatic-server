@@ -110,6 +110,7 @@ export class PragmaticServerHost
     private static readonly DrainFailedLine = 'drain step failed'
     private static readonly DrainFailedEvent = 'drain-failed'
     private static readonly StepField = 'step'
+    private static readonly StepReadiness = 'readiness-close'
     private static readonly StepHandlers = 'dispose-handlers'
     private static readonly StepTerminate = 'terminate-clients'
     private static readonly StepWss = 'close-wss'
@@ -277,8 +278,11 @@ export class PragmaticServerHost
     {
         this.ready = false
         this.disposed = true
-        clearInterval(this.sweep)
-        this.httpServer.closeIdleConnections()
+        await this.Step(PragmaticServerHost.StepReadiness, () =>
+        {
+            clearInterval(this.sweep)
+            this.httpServer.closeIdleConnections()
+        })
         const drained = await this.Drain()
         await this.Step(PragmaticServerHost.StepHandlers, () =>
         {

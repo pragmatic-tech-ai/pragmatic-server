@@ -304,3 +304,35 @@ test('a draining host answers new requests with 503', async () =>
         rmSync(baseDir, { recursive: true, force: true })
     }
 })
+
+test('a throw in the readiness-close step does not prevent drain and the remaining teardown', async () =>
+{
+    const baseDir = mkdtempSync(join(tmpdir(), 'ps-drain-'))
+    const events: string[] = []
+    const lines: string[] = []
+    const host = await DrainFixture.Start(baseDir, 100, lines, new FakeObservability(events).AsObservability())
+    host.SetDrainControllerForTest(new FakeClock().Controller(100))
+    const internals = host as unknown as { httpServer: { closeIdleConnections: () => void } }
+    const original = internals.httpServer.closeIdleConnections.bind(internals.httpServer)
+    let calls = 0
+    internals.httpServer.closeIdleConnections = () =>
+    {
+        calls += 1
+        if (calls === 1)
+        {
+            throw new Error('boom')
+        }
+        original()
+    }
+    try
+    {
+        await host.DisposeAsync()
+        assert.deepEqual(events, ['shutdown'])
+        assert.ok(lines.some(line => line.includes('drain-failed') && line.includes('readiness-close')))
+        assert.ok(lines.some(line => line.includes('drain-complete')))
+    }
+    finally
+    {
+        rmSync(baseDir, { recursive: true, force: true })
+    }
+})
