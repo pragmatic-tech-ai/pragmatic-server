@@ -108,6 +108,15 @@ export class PragmaticServerHost
     private static readonly DrainBeginLine = 'drain begin'
     private static readonly DrainCompleteLine = 'drain complete'
     private static readonly DrainFailedLine = 'drain step failed'
+    private static readonly DrainFailedEvent = 'drain-failed'
+    private static readonly StepField = 'step'
+    private static readonly StepHandlers = 'dispose-handlers'
+    private static readonly StepTerminate = 'terminate-clients'
+    private static readonly StepWss = 'close-wss'
+    private static readonly StepHttp = 'close-http'
+    private static readonly StepObservability = 'observability-shutdown'
+    private static readonly StepRegistry = 'registry-dispose'
+    private static readonly StepWait = 'in-flight-wait'
     private static readonly DefaultDrainTimeoutMs = 0
     private static readonly ZeroInFlight: IInFlightSource = { InFlight: () => 0 }
 
@@ -130,7 +139,8 @@ export class PragmaticServerHost
     private readonly observability: Observability | undefined
     private readonly drainTimeoutMs: number
     private drainSource: IInFlightSource | undefined
-    private drained = false
+    private disposing: Promise<void> | undefined
+    private drainController: DrainController | undefined
 
     private constructor(
         httpServer: HttpServer | HttpsServer,
@@ -219,6 +229,12 @@ export class PragmaticServerHost
         this.drainSource = source
     }
 
+    /** Test seam: inject the drain controller (clock/sleep) so the bounded wait is deterministic. */
+    public SetDrainControllerForTest(controller: DrainController): void
+    {
+        this.drainController = controller
+    }
+
     public Address(): WebSocketAddress
     {
         return this.address
@@ -250,51 +266,82 @@ export class PragmaticServerHost
         return this.handlers.size
     }
 
-    public async DisposeAsync(): Promise<void>
+    /** Idempotent and safe to await concurrently: every caller awaits the same shared completion. */
+    public DisposeAsync(): Promise<void>
     {
-        if (this.drained)
-        {
-            return
-        }
-        this.drained = true
+        this.disposing ??= this.DoDispose()
+        return this.disposing
+    }
+
+    private async DoDispose(): Promise<void>
+    {
         this.ready = false
         this.disposed = true
         clearInterval(this.sweep)
-        try
+        this.httpServer.closeIdleConnections()
+        const drained = await this.Drain()
+        await this.Step(PragmaticServerHost.StepHandlers, () =>
         {
-            await this.Drain()
             for (const handler of this.handlers)
             {
                 handler.Dispose()
             }
             this.handlers.clear()
+        })
+        await this.Step(PragmaticServerHost.StepTerminate, () =>
+        {
             for (const client of this.wss.clients)
             {
                 client.terminate()
             }
-            await new Promise<void>(resolve => this.wss.close(() => resolve()))
-            await new Promise<void>(resolve => this.httpServer.close(() => resolve()))
-            await this.observability?.Shutdown()
-        }
-        finally
+        })
+        await this.Step(PragmaticServerHost.StepWss, () => new Promise<void>(resolve => this.wss.close(() => resolve())))
+        await this.Step(PragmaticServerHost.StepHttp, () =>
         {
-            await this.registry.DisposeAll()
-        }
+            const closed = new Promise<void>(resolve => this.httpServer.close(() => resolve()))
+            if (!drained)
+            {
+                this.httpServer.closeAllConnections()
+            }
+            return closed
+        })
+        await this.Step(PragmaticServerHost.StepObservability, async () =>
+        {
+            await this.observability?.Shutdown()
+        })
+        await this.Step(PragmaticServerHost.StepRegistry, () => this.registry.DisposeAll())
     }
 
-    /** Bounded wait for in-flight work; a failure here is logged (counts only) and never blocks teardown. */
-    private async Drain(): Promise<void>
+    /** Runs one teardown step; a throw is logged (step name only, no secrets) and never skips the remaining steps. */
+    private async Step(name: string, action: () => void | Promise<void>): Promise<void>
     {
         try
         {
-            const source = this.drainSource ?? this.instrumentation ?? PragmaticServerHost.ZeroInFlight
-            this.logger.Info(PragmaticServerHost.DrainBeginLine, { [PragmaticServerHost.EventKey]: PragmaticServerHost.DrainBeginEvent, [PragmaticServerHost.InFlightField]: source.InFlight() })
-            const outcome = await new DrainController(this.drainTimeoutMs).WaitForDrain(source)
-            this.logger.Info(PragmaticServerHost.DrainCompleteLine, { [PragmaticServerHost.EventKey]: PragmaticServerHost.DrainCompleteEvent, [PragmaticServerHost.DrainedField]: outcome.Drained, [PragmaticServerHost.RemainingField]: outcome.Remaining, [PragmaticServerHost.ElapsedField]: outcome.ElapsedMs })
+            await action()
         }
         catch
         {
-            this.logger.Info(PragmaticServerHost.DrainFailedLine, { [PragmaticServerHost.EventKey]: PragmaticServerHost.DrainCompleteEvent })
+            this.logger.Warn(PragmaticServerHost.DrainFailedLine, { [PragmaticServerHost.EventKey]: PragmaticServerHost.DrainFailedEvent, [PragmaticServerHost.StepField]: name })
+        }
+    }
+
+    /** Bounded wait for in-flight work; returns whether it fully drained. A failure is logged and never blocks teardown. */
+    private async Drain(): Promise<boolean>
+    {
+        try
+        {
+            // InFlight() counts HTTP requests; live ws sessions are terminated after the wait by design.
+            const source = this.drainSource ?? this.instrumentation ?? PragmaticServerHost.ZeroInFlight
+            this.logger.Info(PragmaticServerHost.DrainBeginLine, { [PragmaticServerHost.EventKey]: PragmaticServerHost.DrainBeginEvent, [PragmaticServerHost.InFlightField]: source.InFlight() })
+            const controller = this.drainController ?? new DrainController(this.drainTimeoutMs)
+            const outcome = await controller.WaitForDrain(source)
+            this.logger.Info(PragmaticServerHost.DrainCompleteLine, { [PragmaticServerHost.EventKey]: PragmaticServerHost.DrainCompleteEvent, [PragmaticServerHost.DrainedField]: outcome.Drained, [PragmaticServerHost.RemainingField]: outcome.Remaining, [PragmaticServerHost.ElapsedField]: outcome.ElapsedMs })
+            return outcome.Drained
+        }
+        catch
+        {
+            this.logger.Warn(PragmaticServerHost.DrainFailedLine, { [PragmaticServerHost.EventKey]: PragmaticServerHost.DrainFailedEvent, [PragmaticServerHost.StepField]: PragmaticServerHost.StepWait })
+            return false
         }
     }
 
@@ -302,7 +349,7 @@ export class PragmaticServerHost
     {
         if (this.disposed)
         {
-            this.Reject(socket)
+            this.RejectRetryable(socket)
             return
         }
         const tenantId = this.TenantHint(req)
@@ -349,6 +396,11 @@ export class PragmaticServerHost
             const parent = this.instrumentation !== undefined ? RequestCorrelation.Extract(req.headers) : undefined
             const languageService = await server.LanguageService()
             const manager = await server.Manager()
+            if (this.disposed)
+            {
+                this.RejectRetryable(socket)
+                return
+            }
             this.wss.handleUpgrade(req, socket, head, (ws: WebSocket) =>
             {
                 try

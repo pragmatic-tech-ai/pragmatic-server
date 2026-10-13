@@ -1,14 +1,19 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { request } from 'node:http'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, cpSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
+import { trace, metrics } from '@opentelemetry/api'
+import { WebSocket } from 'ws'
+import { Grant, Role, ResourceRef, ResourceKind } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServerHost } from '../pragmatic-server-host.js'
 import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
 import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
 import { StructuredLogger } from '../../observability/logger.js'
+import { DrainController } from '../../observability/drain-controller.js'
+import type { Observability } from '../../observability/observability.js'
 import type { IInFlightSource } from '../../observability/drain-controller.js'
 
 class DrainFixture
@@ -18,12 +23,12 @@ class DrainFixture
         return new InMemoryTenantProvisioning(new Map<string, TenantProvisioning>([['t1', { displayName: 'Tenant One' }]]))
     }
 
-    public static async Start(baseDir: string, drainTimeoutMs: number, lines?: string[]): Promise<PragmaticServerHost>
+    public static async Start(baseDir: string, drainTimeoutMs: number, lines?: string[], observability?: Observability): Promise<PragmaticServerHost>
     {
         const keyPath = join(baseDir, 'key')
         writeFileSync(keyPath, randomBytes(32))
         const logger = lines === undefined ? undefined : StructuredLogger.ToSink(line => lines.push(line))
-        return PragmaticServerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir, masterKey: { keyFilePath: keyPath }, provisioning: DrainFixture.Provisioning(), drainTimeoutMs, logger })
+        return PragmaticServerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir, masterKey: { keyFilePath: keyPath }, provisioning: DrainFixture.Provisioning(), drainTimeoutMs, logger, observability })
     }
 
     public static Get(port: number, path: string): Promise<number>
@@ -38,6 +43,66 @@ class DrainFixture
             req.on('error', reject)
             req.end()
         })
+    }
+}
+
+class FakeObservability
+{
+    public readonly Events: string[]
+
+    public constructor(events: string[])
+    {
+        this.Events = events
+    }
+
+    public Tracer()
+    {
+        return trace.getTracer('drain-test')
+    }
+
+    public Meter()
+    {
+        return metrics.getMeter('drain-test')
+    }
+
+    public Shutdown(): Promise<void>
+    {
+        this.Events.push('shutdown')
+        return Promise.resolve()
+    }
+
+    public AsObservability(): Observability
+    {
+        return this as unknown as Observability
+    }
+}
+
+class FakeClock
+{
+    private current = 0
+
+    public Controller(timeoutMs: number): DrainController
+    {
+        return new DrainController(timeoutMs, () => this.current, ms => { this.current += ms; return Promise.resolve() }, 25)
+    }
+}
+
+class WsFixture
+{
+    public static async Connect(host: PragmaticServerHost, tenantId: string): Promise<WebSocket>
+    {
+        const pack = await host.IdentityPackForTest(tenantId)
+        await pack.Grants.Save(new Grant(tenantId, Role.Admin, new ResourceRef(ResourceKind.Tenant, tenantId, [])))
+        const tenant = await host.TenantForTest(tenantId)
+        const token = (await pack.Tokens.Issue(tenant, tenantId, [], null)).Token
+        const address = host.Address()
+        const ws = new WebSocket(`ws://${address.host}:${address.port}/?tenant=${tenantId}`, { headers: { authorization: `Bearer ${token}` } })
+        await new Promise<void>((resolve, reject) =>
+        {
+            ws.once('open', () => resolve())
+            ws.once('error', reject)
+        })
+        return ws
     }
 }
 
@@ -112,11 +177,12 @@ test('a connection still in-flight past the window is terminated, not awaited fo
     const baseDir = mkdtempSync(join(tmpdir(), 'ps-drain-'))
     const host = await DrainFixture.Start(baseDir, 60)
     host.SetDrainSourceForTest({ InFlight: () => 1 })
+    host.SetDrainControllerForTest(new FakeClock().Controller(60))
     try
     {
         const started = Date.now()
         await host.DisposeAsync()
-        assert.ok(Date.now() - started < 3000)
+        assert.ok(Date.now() - started < 1000)
     }
     finally
     {
@@ -133,6 +199,105 @@ test('DisposeAsync is idempotent under a double call and still tears down (Revie
         await host.DisposeAsync()
         await host.DisposeAsync()
         assert.equal(host.HandlerCountForTest(), 0)
+    }
+    finally
+    {
+        rmSync(baseDir, { recursive: true, force: true })
+    }
+})
+
+test('happy path: observability is flushed, and only AFTER the in-flight request completes', async () =>
+{
+    const baseDir = mkdtempSync(join(tmpdir(), 'ps-drain-'))
+    const events: string[] = []
+    const fake = new FakeObservability(events)
+    const host = await DrainFixture.Start(baseDir, 3000, undefined, fake.AsObservability())
+    const held = new HeldSource(1)
+    host.SetDrainSourceForTest(held)
+    try
+    {
+        const disposing = host.DisposeAsync()
+        await new Promise<void>(resolve => setTimeout(resolve, 80))
+        assert.deepEqual(events, [])
+        events.push('release')
+        held.Release()
+        await disposing
+        assert.deepEqual(events, ['release', 'shutdown'])
+    }
+    finally
+    {
+        rmSync(baseDir, { recursive: true, force: true })
+    }
+})
+
+test('concurrent DisposeAsync calls both resolve only after full teardown', async () =>
+{
+    const baseDir = mkdtempSync(join(tmpdir(), 'ps-drain-'))
+    const events: string[] = []
+    const host = await DrainFixture.Start(baseDir, 3000, undefined, new FakeObservability(events).AsObservability())
+    const held = new HeldSource(1)
+    host.SetDrainSourceForTest(held)
+    try
+    {
+        const first = host.DisposeAsync().then(() => events.push('first'))
+        const second = host.DisposeAsync().then(() => events.push('second'))
+        await new Promise<void>(resolve => setTimeout(resolve, 60))
+        assert.deepEqual(events, [])
+        held.Release()
+        await Promise.all([first, second])
+        assert.equal(events[0], 'shutdown')
+        assert.deepEqual(events.slice(1).sort(), ['first', 'second'])
+    }
+    finally
+    {
+        rmSync(baseDir, { recursive: true, force: true })
+    }
+})
+
+test('on timeout a live ws client is terminated and the log shows drained=false with positive remaining', async () =>
+{
+    const baseDir = mkdtempSync(join(tmpdir(), 'ps-drain-'))
+    mkdirSync(join(baseDir, 't1'), { recursive: true })
+    cpSync(join(import.meta.dirname, '..', '..', 'tests', 'fixtures', 'sample-solution'), join(baseDir, 't1', 'solution'), { recursive: true })
+    const lines: string[] = []
+    const keyEnv = 'PS_DRAIN_KEY'
+    process.env[keyEnv] = randomBytes(32).toString('base64')
+    const logger = StructuredLogger.ToSink(line => lines.push(line))
+    const host = await PragmaticServerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir, masterKey: { base64Env: keyEnv }, provisioning: DrainFixture.Provisioning(), drainTimeoutMs: 100, logger })
+    host.SetDrainSourceForTest({ InFlight: () => 1 })
+    host.SetDrainControllerForTest(new FakeClock().Controller(100))
+    try
+    {
+        const ws = await WsFixture.Connect(host, 't1')
+        const closed = new Promise<void>(resolve => ws.once('close', () => resolve()))
+        await host.DisposeAsync()
+        await closed
+        const complete = lines.map(line => JSON.parse(line) as Record<string, unknown>).find(entry => entry['event'] === 'drain-complete')
+        assert.ok(complete !== undefined)
+        assert.equal(complete['drained'], false)
+        assert.ok(Number(complete['remaining']) > 0)
+    }
+    finally
+    {
+        rmSync(baseDir, { recursive: true, force: true })
+        delete process.env[keyEnv]
+    }
+})
+
+test('a draining host answers new requests with 503', async () =>
+{
+    const baseDir = mkdtempSync(join(tmpdir(), 'ps-drain-'))
+    const host = await DrainFixture.Start(baseDir, 3000)
+    const held = new HeldSource(1)
+    host.SetDrainSourceForTest(held)
+    const port = host.Address().port
+    try
+    {
+        const disposing = host.DisposeAsync()
+        await new Promise<void>(resolve => setTimeout(resolve, 50))
+        assert.equal(await DrainFixture.Get(port, '/?tenant=t1'), 503)
+        held.Release()
+        await disposing
     }
     finally
     {
