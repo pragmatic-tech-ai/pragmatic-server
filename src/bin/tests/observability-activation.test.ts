@@ -63,7 +63,7 @@ test('ComposeOptions and ComposeWorkerOptions thread observability through', asy
     try
     {
         assert.equal(ServerBootstrap.ComposeOptions(Fixtures.Config(), Fixtures.Provisioning(), undefined, undefined, undefined, obs).observability, obs)
-        assert.equal(ServerBootstrap.ComposeWorkerOptions(Fixtures.Config(), Fixtures.Provisioning(), undefined, undefined, obs).observability, obs)
+        assert.equal(ServerBootstrap.ComposeWorkerOptions(Fixtures.Config(), Fixtures.Provisioning(), undefined, undefined, undefined, obs).observability, obs)
     }
     finally
     {

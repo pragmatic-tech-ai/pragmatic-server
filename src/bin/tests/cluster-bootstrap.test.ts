@@ -6,6 +6,7 @@ import { InMemoryWorkerRouter } from '../../cluster/worker-router.js'
 import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
 import type { ServerConfig, GatewayConfig } from '../../config/server-config.js'
 import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
+import type { PlatformServices } from '../../platform/platform-services.js'
 
 class Fixture
 {
@@ -64,4 +65,12 @@ test('the worker and gateway startup lines never leak the redis URL or TLS key p
     assert.ok(!g.includes('/k.pem'))
     assert.ok(!g.includes('redis://'))
     assert.ok(g.includes('8080'))
+})
+
+test('ComposeWorkerOptions fails closed in cloud mode without a platform, and threads one through when given', () =>
+{
+    const config: ServerConfig = { ...Fixture.Config(), deploymentMode: DeploymentMode.Cloud }
+    assert.throws(() => ServerBootstrap.ComposeWorkerOptions(config, Fixture.Provisioning()), /cloud/i)
+    const platform = {} as PlatformServices
+    assert.equal(ServerBootstrap.ComposeWorkerOptions(config, Fixture.Provisioning(), platform).platform, platform)
 })

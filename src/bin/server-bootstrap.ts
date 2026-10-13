@@ -93,11 +93,15 @@ export class ServerBootstrap
         return `pragmatic-server listening on ${config.host}:${config.port} mode=${config.deploymentMode} tenants=${tenantCount} ownership=${ownership} secrets=${secrets}${ServerBootstrap.ClientMtls(config.clientTls)}${ServerBootstrap.OidcFlowToken}${ownership}${ServerBootstrap.Otel(config)}${ServerBootstrap.Security(config)}${ServerBootstrap.Drain(config)}`
     }
 
-    public static ComposeWorkerOptions(config: ServerConfig, provisioning: ITenantProvisioning, provisionedSecrets?: IProvisionedSecretSource, logger?: ILogger, observability?: Observability, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard): WorkerHostOptions
+    public static ComposeWorkerOptions(config: ServerConfig, provisioning: ITenantProvisioning, platform?: PlatformServices, provisionedSecrets?: IProvisionedSecretSource, logger?: ILogger, observability?: Observability, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard): WorkerHostOptions
     {
         if (config.tls === undefined)
         {
             throw new Error(ServerBootstrap.WorkerNeedsTls)
+        }
+        if (config.deploymentMode === DeploymentMode.Cloud && platform === undefined)
+        {
+            throw new Error(ServerBootstrap.CloudNeedsPlatform)
         }
         const advertise = config.workerAdvertiseHost !== undefined && config.workerAdvertisePort !== undefined
             ? { host: config.workerAdvertiseHost, port: config.workerAdvertisePort }
@@ -111,7 +115,7 @@ export class ServerBootstrap
             tls: config.tls,
             idleTtlMs: config.idleTtlMs,
             idleSweepMs: config.idleSweepMs,
-            platform: undefined,
+            platform,
             deploymentMode: config.deploymentMode,
             redisUrl: config.redisUrl,
             replicaId: config.replicaId,

@@ -6,6 +6,9 @@ import { PragmaticServerHost } from '../host/pragmatic-server-host.js'
 import { ServerBootstrap } from './server-bootstrap.js'
 import { StructuredLogger } from '../observability/logger.js'
 import type { ILogger } from '../observability/logger.js'
+import { DeploymentMode } from '../platform/deployment-mode.js'
+import { GcpPlatformFactory } from '../platform/gcp-platform-factory.js'
+import type { ICloudBundle } from '../platform/gcp-platform-factory.js'
 import { Observability, ObservabilityRole } from '../observability/observability.js'
 
 class ServerMain
@@ -26,7 +29,7 @@ class ServerMain
 
     private shuttingDown = false
 
-    private constructor(private readonly host: PragmaticServerHost, private readonly logger: ILogger)
+    private constructor(private readonly host: PragmaticServerHost, private readonly logger: ILogger, private readonly bundle?: ICloudBundle)
     {
     }
 
@@ -39,12 +42,13 @@ class ServerMain
         const provisionedSecrets = ProvisionedSecretsFactory.Build(config, read)
         const observabilityOptions = ServerBootstrap.ObservabilityOptions(config, ObservabilityRole.Host)
         const observability = observabilityOptions !== undefined ? Observability.Start(observabilityOptions) : undefined
-        const audit = ServerBootstrap.AuditSink(config, logger, observability)
+        const bundle = config.deploymentMode === DeploymentMode.Cloud ? await GcpPlatformFactory.Create(config) : undefined
+        const audit = ServerBootstrap.AuditSink(config, logger, observability, bundle !== undefined ? await bundle.Platform.AuditSink() : undefined)
         const rateLimit = ServerBootstrap.RateLimit(config, audit, observability, logger)
-        const options = ServerBootstrap.ComposeOptions(config, provisioning, undefined, provisionedSecrets, logger, observability, audit, rateLimit)
+        const options = ServerBootstrap.ComposeOptions(config, provisioning, bundle?.Platform, provisionedSecrets, logger, observability, audit, rateLimit)
         const host = await PragmaticServerHost.StartAsync(options)
         logger.Info(ServerBootstrap.StartupLine(config, tenantCount), { [ServerMain.EventKey]: ServerMain.StartupEvent })
-        const main = new ServerMain(host, logger)
+        const main = new ServerMain(host, logger, bundle)
         process.on(ServerMain.SigTerm, () => void main.Shutdown())
         process.on(ServerMain.SigInt, () => void main.Shutdown())
     }
@@ -53,6 +57,22 @@ class ServerMain
     {
         StructuredLogger.ToStdout().Error(ServerMain.StartFailedPrefix + (error instanceof Error ? error.message : ServerMain.UnknownError), { [ServerMain.EventKey]: ServerMain.StartFailedEvent })
         process.exit(1)
+    }
+
+    private async DisposeBundle(): Promise<void>
+    {
+        if (this.bundle === undefined)
+        {
+            return
+        }
+        try
+        {
+            await this.bundle.Dispose()
+        }
+        catch
+        {
+            // best-effort: a bundle teardown failure must not block exit
+        }
     }
 
     private async Shutdown(): Promise<void>
@@ -70,9 +90,11 @@ class ServerMain
         catch (error)
         {
             this.logger.Error(ServerMain.ShutdownErrorPrefix + (error instanceof Error ? error.message : ServerMain.UnknownError), { [ServerMain.EventKey]: ServerMain.ShutdownErrorEvent })
+            await this.DisposeBundle()
             process.exit(1)
             return
         }
+        await this.DisposeBundle()
         process.exit(0)
     }
 }
