@@ -9,7 +9,7 @@ import type { ITenantCoordinator } from './tenant-coordinator.js'
 import { InMemoryTenantOwnership, TenantOwnedElsewhereError } from './tenant-ownership.js'
 import type { ITenantOwnership, TenantLostHandler } from './tenant-ownership.js'
 import type { IdentityRuntime } from '../identity/identity-runtime.js'
-import type { ITenantProvisioning,TenantProvisioning } from './tenant-provisioning.js'
+import type { ITenantProvisioning, TenantProvisioning } from './tenant-provisioning.js'
 
 export class InMemoryTenantProvisioning implements ITenantProvisioning
 {
@@ -35,7 +35,7 @@ export class TenantRegistry
     private static readonly UnprovisionedError = 'tenant is not provisioned'
     private static readonly InvalidTenantError = 'invalid tenant id'
     private static readonly ParentSegment = '..'
-    private static readonly SeparatorPattern = /[\\/]/
+    private static readonly SeparatorPattern = /[\\/:]/
 
     private readonly baseDir: string
     private readonly masterKey: MasterKeyRef

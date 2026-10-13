@@ -49,7 +49,7 @@ export class ServerBootstrap
 
     public static StartupLine(config: ServerConfig, tenantCount: number): string
     {
-        const ownership = config.redisUrl !== undefined ? ServerBootstrap.RedisOwnership : ServerBootstrap.InMemoryOwnership
+        const ownership = ServerBootstrap.HasRedis(config) ? ServerBootstrap.RedisOwnership : ServerBootstrap.InMemoryOwnership
         const secrets = config.provisionedSecretsFile !== undefined && config.provisionedSecretsFile.length > 0 ? ServerBootstrap.SecretsFile : ServerBootstrap.SecretsNone
         return `pragmatic-server listening on ${config.host}:${config.port} mode=${config.deploymentMode} tenants=${tenantCount} ownership=${ownership} secrets=${secrets}${ServerBootstrap.ClientMtls(config.clientTls)}${ServerBootstrap.OidcFlowToken}${ownership}`
     }
@@ -96,13 +96,18 @@ export class ServerBootstrap
 
     public static WorkerStartupLine(config: ServerConfig): string
     {
-        const ownership = config.redisUrl !== undefined ? ServerBootstrap.RedisOwnership : ServerBootstrap.InMemoryOwnership
+        const ownership = ServerBootstrap.HasRedis(config) ? ServerBootstrap.RedisOwnership : ServerBootstrap.InMemoryOwnership
         return `pragmatic-worker listening on ${config.host}:${config.port} mode=${config.deploymentMode} ownership=${ownership} health=${config.healthPort ?? ServerBootstrap.HealthOff}`
     }
 
     public static GatewayStartupLine(gw: GatewayConfig): string
     {
         return `pragmatic-gateway listening on ${gw.host}:${gw.port} servername=${gw.workerServerName ?? ServerBootstrap.ServerNameDefault}${ServerBootstrap.ClientMtls(gw.clientTls)}`
+    }
+
+    private static HasRedis(config: ServerConfig): boolean
+    {
+        return config.redisUrl !== undefined && config.redisUrl.length > 0
     }
 
     private static ClientMtls(clientTls: MachineTlsRef | undefined): string
