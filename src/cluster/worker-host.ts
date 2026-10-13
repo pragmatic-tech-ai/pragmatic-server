@@ -14,7 +14,8 @@ import type { PragmaticServer } from '../pragmatic-server.js'
 import { ServerConnectionHandler } from '../host/server-connection-handler.js'
 import { RateLimitGuard } from '../host/rate-limit-guard.js'
 import { RateLimitScope } from '../host/rate-limiter.js'
-import { AuditSurface } from '../host/access-audit.js'
+import { AuditSurface, NullAccessAuditSink } from '../host/access-audit.js'
+import type { IAccessAuditSink } from '../host/access-audit.js'
 import { ConnectionAuthenticator } from '../host/connection-authenticator.js'
 import { AuthHttpEndpoint } from '../host/auth-http-endpoint.js'
 import type { WebSocketAddress } from '../host/pragmatic-server-host.js'
@@ -64,6 +65,7 @@ export interface WorkerHostOptions
     logger?: ILogger
     observability?: Observability
     rateLimit?: RateLimitGuard
+    audit?: IAccessAuditSink
 }
 
 /** Internal mutual-TLS wss worker: the gateway (a verified client cert) forwards x-pragmatic-tenant + authorization;
@@ -91,7 +93,8 @@ export class WorkerHost
     private readonly httpsServer: HttpsServer
     private readonly wss: WebSocketServer
     private readonly registry: TenantRegistry
-    private readonly authenticator = new ConnectionAuthenticator()
+    private readonly authenticator: ConnectionAuthenticator
+    private readonly audit: IAccessAuditSink
     private readonly handlers = new Set<ServerConnectionHandler>()
     private readonly address: WebSocketAddress
     private readonly idleTtlMs: number
@@ -118,8 +121,11 @@ export class WorkerHost
         registration: WorkerRegistration | null,
         logger: ILogger,
         instrumentation?: RequestInstrumentation,
-        rateLimit: RateLimitGuard = new RateLimitGuard())
+        rateLimit: RateLimitGuard = new RateLimitGuard(),
+        audit: IAccessAuditSink = new NullAccessAuditSink())
     {
+        this.audit = audit
+        this.authenticator = new ConnectionAuthenticator(undefined, audit)
         this.rateLimit = rateLimit
         this.logger = logger
         this.instrumentation = instrumentation
@@ -223,7 +229,7 @@ export class WorkerHost
             await registry.DisposeAll().catch(() => {})
             throw error
         }
-        const started = new WorkerHost(httpsServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? WorkerHost.DefaultIdleTtlMs, options.idleSweepMs ?? WorkerHost.DefaultIdleSweepMs, healthServer, healthAddress, registration, options.logger ?? new NullLogger(), options.observability !== undefined ? RequestInstrumentation.FromObservability(options.observability, options.logger ?? new NullLogger()) : undefined, options.rateLimit)
+        const started = new WorkerHost(httpsServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? WorkerHost.DefaultIdleTtlMs, options.idleSweepMs ?? WorkerHost.DefaultIdleSweepMs, healthServer, healthAddress, registration, options.logger ?? new NullLogger(), options.observability !== undefined ? RequestInstrumentation.FromObservability(options.observability, options.logger ?? new NullLogger()) : undefined, options.rateLimit, options.audit)
         started.MarkReady()
         return started
     }
@@ -319,7 +325,7 @@ export class WorkerHost
             {
                 try
                 {
-                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors(), this.instrumentation, parent, undefined, this.rateLimit)
+                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors(), this.instrumentation, parent, this.audit, this.rateLimit)
                     this.handlers.add(handler)
                     ws.on(WorkerHost.CloseEvent, () =>
                     {
@@ -380,7 +386,7 @@ export class WorkerHost
             }
             const server = await this.registry.ServerFor(tenantId)
             const pack = await server.Pack()
-            const endpoint = new AuthHttpEndpoint(pack, server.Tenant(), server.Oidc(), this.MachineContext(req, pack), this.instrumentation)
+            const endpoint = new AuthHttpEndpoint(pack, server.Tenant(), server.Oidc(), this.MachineContext(req, pack), this.instrumentation, this.audit)
             await endpoint.Handle(req, res)
         }
         catch

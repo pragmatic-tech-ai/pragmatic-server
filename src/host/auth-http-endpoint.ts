@@ -4,6 +4,9 @@ import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { RequestBody } from './request-body.js'
 import type { MachineCertIdentity } from './machine-principal-map.js'
+import { trace } from '@opentelemetry/api'
+import { NullAccessAuditSink, AuditSurface, AuditOutcome } from './access-audit.js'
+import type { IAccessAuditSink, AccessAuditEvent } from './access-audit.js'
 import type { RequestInstrumentation } from '../observability/request-instrumentation.js'
 
 /** The OIDC surface the auth endpoint needs: begin an authorization and look up the OIDC authenticator.
@@ -30,6 +33,8 @@ export class AuthHttpEndpoint
     private static readonly OidcBeginPath = '/auth/oidc/begin'
     private static readonly OidcCallbackPath = '/auth/oidc/callback'
     private static readonly MachinePath = '/auth/machine'
+    private static readonly AuthOk = 'authenticated'
+    private static readonly AuthRejected = 'authentication rejected'
     private static readonly MachineUnauthorizedError = 'machine authentication failed'
     private static readonly PostMethod = 'POST'
     private static readonly GetMethod = 'GET'
@@ -64,11 +69,13 @@ export class AuthHttpEndpoint
     private readonly tenant: Tenant
     private readonly oidc: OidcFrontDoor | undefined
     private readonly machine: MachineAuthContext | undefined
+    private readonly audit: IAccessAuditSink
     private readonly instrumentation: RequestInstrumentation | undefined
 
-    public constructor(pack: ServerIdentityPack, tenant: Tenant, oidc?: OidcFrontDoor, machine?: MachineAuthContext, instrumentation?: RequestInstrumentation)
+    public constructor(pack: ServerIdentityPack, tenant: Tenant, oidc?: OidcFrontDoor, machine?: MachineAuthContext, instrumentation?: RequestInstrumentation, audit: IAccessAuditSink = new NullAccessAuditSink())
     {
         this.instrumentation = instrumentation
+        this.audit = audit
         this.machine = machine
         this.pack = pack
         this.tenant = tenant
@@ -168,16 +175,19 @@ export class AuthHttpEndpoint
     {
         if (machine.identity.Authorized !== true || machine.identity.Fingerprint.length === 0)
         {
+            this.Emit(AuthHttpEndpoint.MachinePath, AuditOutcome.AuthFailure)
             this.WriteJson(res, AuthHttpEndpoint.UnauthorizedStatus, AuthHttpEndpoint.MachineUnauthorizedError)
             return
         }
         const result = await machine.authenticator.Authenticate(new Credential(AuthMethod.Machine, machine.identity.Fingerprint), new PresentedSecret(''), this.tenant)
         if (!(result instanceof AuthenticatedResult))
         {
+            this.Emit(AuthHttpEndpoint.MachinePath, AuditOutcome.AuthFailure)
             this.WriteJson(res, AuthHttpEndpoint.UnauthorizedStatus, AuthHttpEndpoint.MachineUnauthorizedError)
             return
         }
         await this.MintSession(res, result)
+        this.Emit(AuthHttpEndpoint.MachinePath, AuditOutcome.Allow, result.Principal.Id)
     }
 
     private async Login(req: IncomingMessage, res: ServerResponse): Promise<void>
@@ -193,6 +203,7 @@ export class AuthHttpEndpoint
         const authenticator = this.pack.AuthenticatorFor(AuthMethod.Local)
         if (authenticator === undefined)
         {
+            this.Emit(AuthHttpEndpoint.LoginPath, AuditOutcome.AuthFailure)
             this.WriteJson(res, AuthHttpEndpoint.UnauthorizedStatus, AuthHttpEndpoint.InvalidCredentialsError)
             return
         }
@@ -202,10 +213,12 @@ export class AuthHttpEndpoint
             const result = await authenticator.Authenticate(new Credential(AuthMethod.Local, email), presented, this.tenant)
             if (!(result instanceof AuthenticatedResult))
             {
+                this.Emit(AuthHttpEndpoint.LoginPath, AuditOutcome.AuthFailure)
                 this.WriteJson(res, AuthHttpEndpoint.UnauthorizedStatus, AuthHttpEndpoint.InvalidCredentialsError)
                 return
             }
             await this.MintSession(res, result)
+            this.Emit(AuthHttpEndpoint.LoginPath, AuditOutcome.Allow, result.Principal.Id)
         }
         finally
         {
@@ -247,14 +260,38 @@ export class AuthHttpEndpoint
             const result = await authenticator.Authenticate(new Credential(AuthMethod.Oidc, state), presented, this.tenant)
             if (!(result instanceof AuthenticatedResult))
             {
+                this.Emit(AuthHttpEndpoint.OidcCallbackPath, AuditOutcome.AuthFailure)
                 this.WriteJson(res, AuthHttpEndpoint.UnauthorizedStatus, AuthHttpEndpoint.InvalidCredentialsError)
                 return
             }
             await this.MintSession(res, result)
+            this.Emit(AuthHttpEndpoint.OidcCallbackPath, AuditOutcome.Allow, result.Principal.Id)
         }
         finally
         {
             presented.Clear()
+        }
+    }
+
+    private Emit(path: string, outcome: AuditOutcome, principalId?: string): void
+    {
+        const event: AccessAuditEvent = {
+            Timestamp: new Date(),
+            TenantId: this.tenant.Id,
+            PrincipalId: principalId,
+            Surface: AuditSurface.Http,
+            MethodOrPath: path,
+            Outcome: outcome,
+            Reason: outcome === AuditOutcome.Allow ? AuthHttpEndpoint.AuthOk : AuthHttpEndpoint.AuthRejected,
+            CorrelationId: trace.getActiveSpan()?.spanContext().traceId,
+        }
+        try
+        {
+            void this.audit.Record(event).catch(() => {})
+        }
+        catch
+        {
+            // audit is fire-and-forget: it must never change the 200/401 the auth route returns
         }
     }
 

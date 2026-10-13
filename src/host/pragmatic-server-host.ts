@@ -23,7 +23,8 @@ import type { PragmaticServer } from '../pragmatic-server.js'
 import { ServerConnectionHandler } from './server-connection-handler.js'
 import { RateLimitGuard } from './rate-limit-guard.js'
 import { RateLimitScope } from './rate-limiter.js'
-import { AuditSurface } from './access-audit.js'
+import { AuditSurface, NullAccessAuditSink } from './access-audit.js'
+import type { IAccessAuditSink } from './access-audit.js'
 import { ConnectionAuthenticator } from './connection-authenticator.js'
 import { AuthHttpEndpoint } from './auth-http-endpoint.js'
 import { HealthEndpoint } from './health-endpoint.js'
@@ -62,6 +63,7 @@ export interface PragmaticServerHostOptions
     logger?: ILogger
     observability?: Observability
     rateLimit?: RateLimitGuard
+    audit?: IAccessAuditSink
 }
 
 export interface WebSocketAddress
@@ -97,7 +99,8 @@ export class PragmaticServerHost
     private readonly httpServer: HttpServer | HttpsServer
     private readonly wss: WebSocketServer
     private readonly registry: TenantRegistry
-    private readonly authenticator = new ConnectionAuthenticator()
+    private readonly authenticator: ConnectionAuthenticator
+    private readonly audit: IAccessAuditSink
     private readonly handlers = new Set<ServerConnectionHandler>()
     private readonly address: WebSocketAddress
     private readonly idleTtlMs: number
@@ -120,8 +123,11 @@ export class PragmaticServerHost
         clientTls: boolean,
         logger: ILogger,
         instrumentation?: RequestInstrumentation,
-        rateLimit: RateLimitGuard = new RateLimitGuard())
+        rateLimit: RateLimitGuard = new RateLimitGuard(),
+        audit: IAccessAuditSink = new NullAccessAuditSink())
     {
+        this.audit = audit
+        this.authenticator = new ConnectionAuthenticator(undefined, audit)
         this.rateLimit = rateLimit
         this.logger = logger
         this.instrumentation = instrumentation
@@ -173,7 +179,7 @@ export class PragmaticServerHost
             httpServer.listen(options.port, host)
         })
         const resolved = httpServer.address() as AddressInfo
-        const started = new PragmaticServerHost(httpServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? PragmaticServerHost.DefaultIdleTtlMs, options.idleSweepMs ?? PragmaticServerHost.DefaultIdleSweepMs, options.clientTls !== undefined, options.logger ?? new NullLogger(), options.observability !== undefined ? RequestInstrumentation.FromObservability(options.observability, options.logger ?? new NullLogger()) : undefined, options.rateLimit)
+        const started = new PragmaticServerHost(httpServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? PragmaticServerHost.DefaultIdleTtlMs, options.idleSweepMs ?? PragmaticServerHost.DefaultIdleSweepMs, options.clientTls !== undefined, options.logger ?? new NullLogger(), options.observability !== undefined ? RequestInstrumentation.FromObservability(options.observability, options.logger ?? new NullLogger()) : undefined, options.rateLimit, options.audit)
         started.MarkReady()
         return started
     }
@@ -283,7 +289,7 @@ export class PragmaticServerHost
             {
                 try
                 {
-                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors(), this.instrumentation, parent, undefined, this.rateLimit)
+                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors(), this.instrumentation, parent, this.audit, this.rateLimit)
                     this.handlers.add(handler)
                     ws.on(PragmaticServerHost.CloseEvent, () =>
                     {
@@ -352,7 +358,7 @@ export class PragmaticServerHost
             }
             const server = await this.registry.ServerFor(tenantId)
             const pack = await server.Pack()
-            const endpoint = new AuthHttpEndpoint(pack, server.Tenant(), server.Oidc(), this.MachineContext(req, pack), this.instrumentation)
+            const endpoint = new AuthHttpEndpoint(pack, server.Tenant(), server.Oidc(), this.MachineContext(req, pack), this.instrumentation, this.audit)
             await endpoint.Handle(req, res)
         }
         catch (error)

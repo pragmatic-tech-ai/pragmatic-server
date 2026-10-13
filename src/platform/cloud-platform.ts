@@ -1,6 +1,6 @@
 import type { IStorage, IPromptService } from '@pragmatic-tech-ai/todl-runtime'
 import type { ISqlSession, IStorageProviderRegistry } from '@pragmatic-tech-ai/todl'
-import type { IdentityStoreSet, ISecretStore, ITenantConfigStore } from '@pragmatic-tech-ai/todl-identity'
+import type { IdentityStoreSet, ISecretStore, ITenantConfigStore, IAuditSink } from '@pragmatic-tech-ai/todl-identity'
 import { SqlLocalAccountStore, SqlServiceTokenStore, SqlSessionStore, SqlRoleGrantStore, SqlAuditStore, SqlTenantConfigStore } from '@pragmatic-tech-ai/todl-platform-cloud'
 import { FileEncryptedSecretStore } from '@pragmatic-tech-ai/todl-identity-node'
 import { HeadlessPromptService } from '@pragmatic-tech-ai/todl-platform-node'
@@ -82,6 +82,12 @@ export class CloudPlatform implements PlatformServices
     public CreatePromptService(): IPromptService
     {
         return this.prompt
+    }
+
+    /** The shared multi-tenant SQL audit store, for the access-audit bridge in cloud composition. */
+    public async AuditSink(): Promise<IAuditSink>
+    {
+        return (await this.sqlStores()).Audit
     }
 
     public ResolveMasterKey(_ref: MasterKeyRef): Buffer

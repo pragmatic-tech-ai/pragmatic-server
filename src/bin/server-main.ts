@@ -41,7 +41,9 @@ class ServerMain
         const provisionedSecrets = ProvisionedSecretsFactory.Build(config, read)
         const observabilityOptions = ServerBootstrap.ObservabilityOptions(config, ObservabilityRole.Host)
         const observability = observabilityOptions !== undefined ? Observability.Start(observabilityOptions) : undefined
-        const options = ServerBootstrap.ComposeOptions(config, provisioning, undefined, provisionedSecrets, logger, observability)
+        const audit = ServerBootstrap.AuditSink(config, logger, observability)
+        const rateLimit = ServerBootstrap.RateLimit(config, audit, observability)
+        const options = ServerBootstrap.ComposeOptions(config, provisioning, undefined, provisionedSecrets, logger, observability, audit, rateLimit)
         const host = await PragmaticServerHost.StartAsync(options)
         logger.Info(ServerBootstrap.StartupLine(config, tenantCount), { [ServerMain.EventKey]: ServerMain.StartupEvent })
         const main = new ServerMain(host, logger, observability)

@@ -1,5 +1,7 @@
 import type { MachineTlsRef } from '../cluster/machine-tls.js'
 import type { MasterKeyRef } from '../identity/master-key-resolver.js'
+import type { AuditSinkKind } from './audit-sink-kind.js'
+import type { RateLimitConfig } from '../host/rate-limiter.js'
 import type { OtlpProtocol } from '../observability/otlp-protocol.js'
 import type { DeploymentMode } from '../platform/deployment-mode.js'
 
@@ -35,6 +37,9 @@ export interface ServerConfig
     otlpProtocol?: OtlpProtocol
     otlpMetrics?: boolean
     traceSampling?: number
+    auditSink?: AuditSinkKind
+    auditFile?: string
+    rateLimit?: RateLimitConfig
 }
 
 export interface GatewayConfig
@@ -52,4 +57,7 @@ export interface GatewayConfig
     otlpProtocol?: OtlpProtocol
     otlpMetrics?: boolean
     traceSampling?: number
+    auditSink?: AuditSinkKind
+    auditFile?: string
+    rateLimit?: RateLimitConfig
 }

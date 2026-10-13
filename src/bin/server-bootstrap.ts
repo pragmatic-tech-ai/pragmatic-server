@@ -11,6 +11,15 @@ import type { IProvisionedSecretSource } from '../config/provisioned-secret-sour
 import type { ILogger } from '../observability/logger.js'
 import type { Observability, IObservabilityOptions, ObservabilityRole } from '../observability/observability.js'
 import type { OtlpProtocol } from '../observability/otlp-protocol.js'
+import { AuditSinkKind } from '../config/audit-sink-kind.js'
+import { NullAccessAuditSink } from '../host/access-audit.js'
+import type { IAccessAuditSink } from '../host/access-audit.js'
+import { FileAccessAuditSink } from '../host/file-access-audit-sink.js'
+import { SqlAuditAccessSink } from '../host/sql-access-audit-sink.js'
+import { TokenBucketRateLimiter } from '../host/rate-limiter.js'
+import type { RateLimitConfig } from '../host/rate-limiter.js'
+import { RateLimitGuard } from '../host/rate-limit-guard.js'
+import type { IAuditSink } from '@pragmatic-tech-ai/todl-identity'
 
 interface IObservabilityConfigView
 {
@@ -39,9 +48,15 @@ export class ServerBootstrap
     private static readonly OtelOn = 'on'
     private static readonly OtelOff = 'off'
     private static readonly OtelLabel = ' otel='
+    private static readonly AuditFailuresMetric = 'audit_write_failures_total'
+    private static readonly SqlNeedsStore = 'audit sink sql requires a cloud audit store'
+    private static readonly AuditLabel = ' audit='
+    private static readonly RateLimitLabel = ' ratelimit='
+    private static readonly RateLimitOn = 'on'
+    private static readonly RateLimitOff = 'off'
     private static readonly WorkerNeedsTls = 'worker requires TLS (set PRAGMATIC_TLS_CERT_FILE/KEY_FILE/CA_FILE)'
 
-    public static ComposeOptions(config: ServerConfig, provisioning: ITenantProvisioning, platform?: PlatformServices, provisionedSecrets?: IProvisionedSecretSource, logger?: ILogger, observability?: Observability): PragmaticServerHostOptions
+    public static ComposeOptions(config: ServerConfig, provisioning: ITenantProvisioning, platform?: PlatformServices, provisionedSecrets?: IProvisionedSecretSource, logger?: ILogger, observability?: Observability, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard): PragmaticServerHostOptions
     {
         if (config.deploymentMode === DeploymentMode.Cloud && platform === undefined)
         {
@@ -63,6 +78,8 @@ export class ServerBootstrap
             clientTls: config.clientTls,
             logger,
             observability,
+            audit,
+            rateLimit,
         }
     }
 
@@ -70,10 +87,10 @@ export class ServerBootstrap
     {
         const ownership = ServerBootstrap.HasRedis(config) ? ServerBootstrap.RedisOwnership : ServerBootstrap.InMemoryOwnership
         const secrets = config.provisionedSecretsFile !== undefined && config.provisionedSecretsFile.length > 0 ? ServerBootstrap.SecretsFile : ServerBootstrap.SecretsNone
-        return `pragmatic-server listening on ${config.host}:${config.port} mode=${config.deploymentMode} tenants=${tenantCount} ownership=${ownership} secrets=${secrets}${ServerBootstrap.ClientMtls(config.clientTls)}${ServerBootstrap.OidcFlowToken}${ownership}${ServerBootstrap.Otel(config)}`
+        return `pragmatic-server listening on ${config.host}:${config.port} mode=${config.deploymentMode} tenants=${tenantCount} ownership=${ownership} secrets=${secrets}${ServerBootstrap.ClientMtls(config.clientTls)}${ServerBootstrap.OidcFlowToken}${ownership}${ServerBootstrap.Otel(config)}${ServerBootstrap.Security(config)}`
     }
 
-    public static ComposeWorkerOptions(config: ServerConfig, provisioning: ITenantProvisioning, provisionedSecrets?: IProvisionedSecretSource, logger?: ILogger, observability?: Observability): WorkerHostOptions
+    public static ComposeWorkerOptions(config: ServerConfig, provisioning: ITenantProvisioning, provisionedSecrets?: IProvisionedSecretSource, logger?: ILogger, observability?: Observability, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard): WorkerHostOptions
     {
         if (config.tls === undefined)
         {
@@ -100,10 +117,12 @@ export class ServerBootstrap
             advertise,
             logger,
             observability,
+            audit,
+            rateLimit,
         }
     }
 
-    public static ComposeGatewayOptions(gw: GatewayConfig, router: IWorkerRouter, logger?: ILogger): GatewayOptions
+    public static ComposeGatewayOptions(gw: GatewayConfig, router: IWorkerRouter, logger?: ILogger, rateLimit?: RateLimitGuard): GatewayOptions
     {
         return {
             host: gw.host,
@@ -113,18 +132,19 @@ export class ServerBootstrap
             serverName: gw.workerServerName,
             clientTls: gw.clientTls,
             logger,
+            rateLimit,
         }
     }
 
     public static WorkerStartupLine(config: ServerConfig): string
     {
         const ownership = ServerBootstrap.HasRedis(config) ? ServerBootstrap.RedisOwnership : ServerBootstrap.InMemoryOwnership
-        return `pragmatic-worker listening on ${config.host}:${config.port} mode=${config.deploymentMode} ownership=${ownership} health=${config.healthPort ?? ServerBootstrap.HealthOff}${ServerBootstrap.Otel(config)}`
+        return `pragmatic-worker listening on ${config.host}:${config.port} mode=${config.deploymentMode} ownership=${ownership} health=${config.healthPort ?? ServerBootstrap.HealthOff}${ServerBootstrap.Otel(config)}${ServerBootstrap.Security(config)}`
     }
 
     public static GatewayStartupLine(gw: GatewayConfig): string
     {
-        return `pragmatic-gateway listening on ${gw.host}:${gw.port} servername=${gw.workerServerName ?? ServerBootstrap.ServerNameDefault}${ServerBootstrap.ClientMtls(gw.clientTls)}${ServerBootstrap.Otel(gw)}`
+        return `pragmatic-gateway listening on ${gw.host}:${gw.port} servername=${gw.workerServerName ?? ServerBootstrap.ServerNameDefault}${ServerBootstrap.ClientMtls(gw.clientTls)}${ServerBootstrap.Otel(gw)}${ServerBootstrap.Security(gw)}`
     }
 
     public static OtelEnabled(config: IObservabilityConfigView): boolean
@@ -150,6 +170,39 @@ export class ServerBootstrap
             otlpMetrics: config.otlpMetrics,
             traceSampling: config.traceSampling,
         }
+    }
+
+    public static AuditSink(config: { auditSink?: AuditSinkKind; auditFile?: string }, logger: ILogger, observability?: Observability, cloudAudit?: IAuditSink): IAccessAuditSink
+    {
+        if (config.auditSink === AuditSinkKind.File && config.auditFile !== undefined)
+        {
+            return new FileAccessAuditSink(config.auditFile, undefined, logger, observability?.Meter().createCounter(ServerBootstrap.AuditFailuresMetric))
+        }
+        if (config.auditSink === AuditSinkKind.Sql)
+        {
+            if (cloudAudit === undefined)
+            {
+                throw new Error(ServerBootstrap.SqlNeedsStore)
+            }
+            return new SqlAuditAccessSink(cloudAudit, logger)
+        }
+        return new NullAccessAuditSink()
+    }
+
+    public static RateLimit(config: { rateLimit?: RateLimitConfig }, audit: IAccessAuditSink, observability?: Observability): RateLimitGuard
+    {
+        if (config.rateLimit === undefined)
+        {
+            return new RateLimitGuard()
+        }
+        return new RateLimitGuard(new TokenBucketRateLimiter(config.rateLimit), audit, observability?.Meter().createCounter(RateLimitGuard.MetricName()))
+    }
+
+    private static Security(config: { auditSink?: AuditSinkKind; rateLimit?: RateLimitConfig }): string
+    {
+        const audit = config.auditSink ?? AuditSinkKind.None
+        const rateLimit = config.rateLimit !== undefined ? ServerBootstrap.RateLimitOn : ServerBootstrap.RateLimitOff
+        return ServerBootstrap.AuditLabel + audit + ServerBootstrap.RateLimitLabel + rateLimit
     }
 
     private static Otel(config: IObservabilityConfigView): string

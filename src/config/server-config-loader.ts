@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto'
 import type { MasterKeyRef } from '../identity/master-key-resolver.js'
 import { DeploymentMode } from '../platform/deployment-mode.js'
 import type { MachineTlsRef } from '../cluster/machine-tls.js'
+import { AuditSinkKind } from './audit-sink-kind.js'
+import type { RateLimitConfig, RateLimitSettings } from '../host/rate-limiter.js'
 import { OtlpProtocol } from '../observability/otlp-protocol.js'
 import type { GatewayConfig, ServerConfig, SingleTenantConfig } from './server-config.js'
 
@@ -47,6 +49,77 @@ export class ServerConfigLoader
     private static readonly EnvOtlpMetrics = 'PRAGMATIC_OTLP_METRICS'
     private static readonly EnvTraceSampling = 'PRAGMATIC_TRACE_SAMPLING'
 
+    private static readonly BadAuditSink = 'PRAGMATIC_AUDIT_SINK must be none, file or sql'
+    private static readonly AuditFileRequired = 'PRAGMATIC_AUDIT_FILE is required when PRAGMATIC_AUDIT_SINK=file'
+    private static readonly AuditSqlNeedsCloud = 'PRAGMATIC_AUDIT_SINK=sql requires PRAGMATIC_DEPLOYMENT_MODE=cloud'
+    private static readonly BadRateLimit = 'PRAGMATIC_RATELIMIT_* values must be set in Rps+Burst pairs, with Rps a number greater than 0 and Burst an integer of at least 1'
+    private static readonly EnvAuditSink = 'PRAGMATIC_AUDIT_SINK'
+    private static readonly EnvAuditFile = 'PRAGMATIC_AUDIT_FILE'
+    private static readonly EnvTenantRps = 'PRAGMATIC_RATELIMIT_TENANT_RPS'
+    private static readonly EnvTenantBurst = 'PRAGMATIC_RATELIMIT_TENANT_BURST'
+    private static readonly EnvPrincipalRps = 'PRAGMATIC_RATELIMIT_PRINCIPAL_RPS'
+    private static readonly EnvPrincipalBurst = 'PRAGMATIC_RATELIMIT_PRINCIPAL_BURST'
+
+    private static Security(env: Record<string, string | undefined>, deploymentMode?: DeploymentMode): { auditSink?: AuditSinkKind; auditFile?: string; rateLimit?: RateLimitConfig }
+    {
+        const auditSink = ServerConfigLoader.AuditSinkOf(env[ServerConfigLoader.EnvAuditSink])
+        const auditFile = ServerConfigLoader.NonEmpty(env[ServerConfigLoader.EnvAuditFile])
+        if (auditSink === AuditSinkKind.File && auditFile === undefined)
+        {
+            throw new Error(ServerConfigLoader.AuditFileRequired)
+        }
+        if (auditSink === AuditSinkKind.Sql && deploymentMode !== undefined && deploymentMode !== DeploymentMode.Cloud)
+        {
+            throw new Error(ServerConfigLoader.AuditSqlNeedsCloud)
+        }
+        return { auditSink, auditFile, rateLimit: ServerConfigLoader.RateLimitOf(env) }
+    }
+
+    private static AuditSinkOf(value: string | undefined): AuditSinkKind | undefined
+    {
+        if (value === undefined || value.length === 0)
+        {
+            return undefined
+        }
+        if (value === AuditSinkKind.None || value === AuditSinkKind.File || value === AuditSinkKind.Sql)
+        {
+            return value
+        }
+        throw new Error(ServerConfigLoader.BadAuditSink)
+    }
+
+    private static RateLimitOf(env: Record<string, string | undefined>): RateLimitConfig | undefined
+    {
+        const perTenant = ServerConfigLoader.SettingsOf(env[ServerConfigLoader.EnvTenantRps], env[ServerConfigLoader.EnvTenantBurst])
+        const perPrincipal = ServerConfigLoader.SettingsOf(env[ServerConfigLoader.EnvPrincipalRps], env[ServerConfigLoader.EnvPrincipalBurst])
+        if (perTenant === undefined && perPrincipal === undefined)
+        {
+            return undefined
+        }
+        return { perTenant, perPrincipal }
+    }
+
+    private static SettingsOf(rps: string | undefined, burst: string | undefined): RateLimitSettings | undefined
+    {
+        const hasRps = rps !== undefined && rps.length > 0
+        const hasBurst = burst !== undefined && burst.length > 0
+        if (!hasRps && !hasBurst)
+        {
+            return undefined
+        }
+        if (!hasRps || !hasBurst)
+        {
+            throw new Error(ServerConfigLoader.BadRateLimit)
+        }
+        const parsedRps = Number(rps)
+        const parsedBurst = Number(burst)
+        if (!Number.isFinite(parsedRps) || parsedRps <= 0 || !Number.isInteger(parsedBurst) || parsedBurst < 1)
+        {
+            throw new Error(ServerConfigLoader.BadRateLimit)
+        }
+        return { Rps: parsedRps, Burst: parsedBurst }
+    }
+
     public static LoadGateway(env: Record<string, string | undefined>): GatewayConfig
     {
         const tls = ServerConfigLoader.Tls(env)
@@ -68,6 +141,7 @@ export class ServerConfigLoader
             workerServerName: env.PRAGMATIC_WORKER_SERVERNAME,
             healthPort: ServerConfigLoader.Int(env.PRAGMATIC_HEALTH_PORT),
             ...ServerConfigLoader.Observability(env),
+            ...ServerConfigLoader.Security(env),
         }
     }
 
@@ -218,12 +292,13 @@ export class ServerConfigLoader
         const provisionedSecretsFile = env.PRAGMATIC_PROVISIONED_SECRETS_FILE
         const tls = ServerConfigLoader.Tls(env)
         const clientTls = ServerConfigLoader.ClientTls(env)
+        const deploymentMode = ServerConfigLoader.Mode(env.PRAGMATIC_DEPLOYMENT_MODE ?? file.deploymentMode)
         return {
             host: env.PRAGMATIC_HOST ?? file.host ?? ServerConfigLoader.DefaultHost,
             port: ServerConfigLoader.Int(env.PRAGMATIC_PORT) ?? file.port ?? ServerConfigLoader.DefaultPort,
             baseDir,
             masterKey,
-            deploymentMode: ServerConfigLoader.Mode(env.PRAGMATIC_DEPLOYMENT_MODE ?? file.deploymentMode),
+            deploymentMode,
             tenantsFile,
             singleTenant,
             idleTtlMs: ServerConfigLoader.Int(env.PRAGMATIC_IDLE_TTL_MS) ?? file.idleTtlMs,
@@ -237,6 +312,7 @@ export class ServerConfigLoader
             workerServerName: env.PRAGMATIC_WORKER_SERVERNAME,
             healthPort: ServerConfigLoader.Int(env.PRAGMATIC_HEALTH_PORT),
             ...ServerConfigLoader.Observability(env),
+            ...ServerConfigLoader.Security(env, deploymentMode),
         }
     }
 
