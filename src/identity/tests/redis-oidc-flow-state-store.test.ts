@@ -25,6 +25,7 @@ class FakeRedis
     public getDelResult: string | null = null
     public getDelThrows = false
     public setThrows = false
+    public getDelKeys: string[] = []
 
     public on(): this
     {
@@ -46,8 +47,14 @@ class FakeRedis
         return 'OK'
     }
 
-    public async getDel(_key: string): Promise<string | null>
+    public async quit(): Promise<void>
     {
+        this.isOpen = false
+    }
+
+    public async getDel(key: string): Promise<string | null>
+    {
+        this.getDelKeys.push(key)
         if (this.getDelThrows)
         {
             throw new Error('boom redis://secret')
@@ -87,6 +94,7 @@ test('redis oidc flow store: Take returns the stored state, null when absent', a
     await store.Put(Fixture.State('s1'))
     fake.getDelResult = fake.setCalls[0].value
     const got = await store.Take('s1')
+    assert.deepEqual(fake.getDelKeys, [Fixture.Prefix + 's1'])
     assert.ok(got !== null)
     assert.equal(got.State, 's1')
     assert.equal(got.Nonce, 'nonce-1')
@@ -121,7 +129,45 @@ test('redis oidc flow store: fail-closed, Put rethrows a sanitized error', async
     const fake = new FakeRedis()
     fake.setThrows = true
     const store = new RedisOidcFlowStateStore(Fixture.Url, Fixture.Prefix, () => Fixture.Now, () => fake.AsClient())
-    await assert.rejects(() => store.Put(Fixture.State('s1')), (e: Error) => !e.message.includes('secret'))
+    await assert.rejects(() => store.Put(Fixture.State('s1')), (e: Error) => e.message === RedisOidcFlowStateStore.PutFailedText && !e.message.includes(Fixture.Url) && !e.message.includes('nonce-1'))
+})
+
+test('redis oidc flow store: Put of an already-expired state uses the default TTL', async () =>
+{
+    const fake = new FakeRedis()
+    const store = new RedisOidcFlowStateStore(Fixture.Url, Fixture.Prefix, () => new Date(Fixture.Now.getTime() + 120_000), () => fake.AsClient())
+    await store.Put(Fixture.State('s1'))
+    assert.equal(fake.setCalls[0].options.PX, RedisOidcFlowStateStore.DefaultTtlMs)
+})
+
+test('redis oidc flow store: a second Put of the same key is still issued with NX', async () =>
+{
+    const fake = new FakeRedis()
+    const store = new RedisOidcFlowStateStore(Fixture.Url, Fixture.Prefix, () => Fixture.Now, () => fake.AsClient())
+    await store.Put(Fixture.State('s1'))
+    await store.Put(Fixture.State('s1'))
+    assert.equal(fake.setCalls.length, 2)
+    assert.equal(fake.setCalls[1].options.NX, true)
+})
+
+test('redis oidc flow store: Take rejects an entry whose State does not match the key', async () =>
+{
+    const fake = new FakeRedis()
+    const store = new RedisOidcFlowStateStore(Fixture.Url, Fixture.Prefix, () => Fixture.Now, () => fake.AsClient())
+    await store.Put(Fixture.State('other'))
+    fake.getDelResult = fake.setCalls[0].value
+    assert.equal(await store.Take('s1'), null)
+})
+
+test('redis oidc flow store: Dispose quits an opened client and is a no-op when never connected', async () =>
+{
+    const fake = new FakeRedis()
+    const store = new RedisOidcFlowStateStore(Fixture.Url, Fixture.Prefix, () => Fixture.Now, () => fake.AsClient())
+    await store.Dispose()
+    await store.Put(Fixture.State('s1'))
+    assert.equal(fake.isOpen, true)
+    await store.Dispose()
+    assert.equal(fake.isOpen, false)
 })
 
 const url = process.env.PRAGMATIC_TEST_REDIS_URL

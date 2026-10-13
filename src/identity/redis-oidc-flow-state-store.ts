@@ -8,13 +8,13 @@ import type { IOidcFlowStateStore } from '@pragmatic-tech-ai/todl-identity-cloud
  *  The URL may carry credentials, and the payload holds the nonce and PKCE verifier; none of it is ever logged. */
 export class RedisOidcFlowStateStore implements IOidcFlowStateStore
 {
-    private static readonly DefaultTtlMs = 600_000
+    public static readonly DefaultTtlMs = 600_000
     private static readonly ConnectTimeoutMs = 3_000
     private static readonly MaxReconnectAttempts = 10
     private static readonly CommandTimeoutMs = 3_000
     private static readonly CommandTimedOutText = 'redis command timed out'
     private static readonly UnavailableText = 'redis unavailable'
-    private static readonly PutFailedText = 'oidc flow state store unavailable'
+    public static readonly PutFailedText = 'oidc flow state store unavailable'
     private static readonly ErrorEvent = 'error'
 
     private readonly url: string
@@ -59,6 +59,10 @@ export class RedisOidcFlowStateStore implements IOidcFlowStateStore
                 return null
             }
             const p = JSON.parse(raw) as { State: string, Nonce: string, CodeVerifier: string, RedirectUri: string, ExpiresAt: string }
+            if (p.State !== state)
+            {
+                return null
+            }
             const expiresAt = new Date(p.ExpiresAt)
             if (expiresAt.getTime() <= this.now().getTime())
             {
@@ -75,9 +79,13 @@ export class RedisOidcFlowStateStore implements IOidcFlowStateStore
     /** Quits the underlying client if one was opened; a no-op otherwise. Errors are swallowed. */
     public async Dispose(): Promise<void>
     {
+        if (this.connecting !== null)
+        {
+            await this.connecting.catch(() => null)
+        }
         const client = this.client
         this.client = null
-        if (client === null || !client.isOpen || typeof client.quit !== 'function')
+        if (client === null || !client.isOpen)
         {
             return
         }
