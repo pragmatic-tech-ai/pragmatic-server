@@ -9,10 +9,14 @@ import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { PolicyGate } from './policy-gate.js'
+import { AuditSurface } from './access-audit.js'
 import type { IAccessAuditSink } from './access-audit.js'
+import { RateLimitGuard } from './rate-limit-guard.js'
+import { RateLimitScope } from './rate-limiter.js'
 import { ConnectorService } from './connector-service.js'
 import type { ConnectorRuntime } from '../connectors/connector-runtime.js'
 import { ModelReadFilter } from './model-read-filter.js'
+import { trace } from '@opentelemetry/api'
 import type { Context } from '@opentelemetry/api'
 import type { RequestInstrumentation } from '../observability/request-instrumentation.js'
 
@@ -21,6 +25,8 @@ export class ServerConnectionHandler
 {
     private static readonly NoActiveSolutionError = 'no active solution after open'
     private static readonly UnknownMemberError = 'unknown solution member'
+    private static readonly RateLimitedCode = -32029
+    private static readonly RateLimitedMessage = 'rate limit exceeded'
 
     private readonly connection: MessageConnection
     private readonly languageService: ILanguageService
@@ -31,9 +37,11 @@ export class ServerConnectionHandler
     private readonly graphSubscription: IDisposable
     private readonly instrumentation: RequestInstrumentation | undefined
     private readonly parent: Context | undefined
+    private readonly rateLimit: RateLimitGuard
 
-    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink)
+    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit: RateLimitGuard = new RateLimitGuard())
     {
+        this.rateLimit = rateLimit
         this.instrumentation = instrumentation
         this.parent = parent
         this.connectorService = new ConnectorService(connectorsFactory)
@@ -67,10 +75,10 @@ export class ServerConnectionHandler
         })
     }
 
-    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink): ServerConnectionHandler
+    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard): ServerConnectionHandler
     {
         const connection = createMessageConnection(new WebSocketMessageReader(socket), new WebSocketMessageWriter(socket), NullLogger)
-        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectorsFactory, instrumentation, parent, audit)
+        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectorsFactory, instrumentation, parent, audit, rateLimit)
         connection.listen()
         return handler
     }
@@ -79,6 +87,17 @@ export class ServerConnectionHandler
     {
         this.graphSubscription.dispose()
         this.connection.dispose()
+    }
+
+    private EnforceRate(method: string): void
+    {
+        const decision = this.rateLimit.Check(
+            { scope: RateLimitScope.Principal, tenant: this.accessContext.Tenant.Id, key: this.accessContext.Principal.Id },
+            { surface: AuditSurface.Rpc, tenant: this.accessContext.Tenant.Id, principal: this.accessContext.Principal.Id, methodOrPath: method, correlationId: trace.getActiveSpan()?.spanContext().traceId })
+        if (!decision.Allowed)
+        {
+            throw new ResponseError(ServerConnectionHandler.RateLimitedCode, ServerConnectionHandler.RateLimitedMessage, { retryAfterMs: decision.RetryAfterMs })
+        }
     }
 
     private authorize(method: string): void
@@ -103,6 +122,7 @@ export class ServerConnectionHandler
     {
         this.connection.onRequest(type, (params: P) => this.Dispatch(type.method, () =>
         {
+            this.EnforceRate(type.method)
             this.authorize(type.method)
             return handler(params)
         }))
@@ -112,6 +132,7 @@ export class ServerConnectionHandler
     {
         this.connection.onRequest(type, () => this.Dispatch(type.method, () =>
         {
+            this.EnforceRate(type.method)
             this.authorize(type.method)
             return handler()
         }))
@@ -167,11 +188,13 @@ export class ServerConnectionHandler
     {
         this.connection.onRequest(ConnectorProtocol.List, () => this.Dispatch(ConnectorProtocol.List.method, () =>
         {
+            this.EnforceRate(ConnectorProtocol.List.method)
             this.authorize(ConnectorProtocol.List.method)
             return this.connectorService.List()
         }))
         this.connection.onRequest(ConnectorProtocol.Refresh, () => this.Dispatch(ConnectorProtocol.Refresh.method, () =>
         {
+            this.EnforceRate(ConnectorProtocol.Refresh.method)
             this.authorize(ConnectorProtocol.Refresh.method)
             this.connectorService.Invalidate()
         }))

@@ -21,6 +21,9 @@ import type { MasterKeyRef } from '../identity/master-key-resolver.js'
 import type { IProvisionedSecretSource } from '../config/provisioned-secret-source.js'
 import type { PragmaticServer } from '../pragmatic-server.js'
 import { ServerConnectionHandler } from './server-connection-handler.js'
+import { RateLimitGuard } from './rate-limit-guard.js'
+import { RateLimitScope } from './rate-limiter.js'
+import { AuditSurface } from './access-audit.js'
 import { ConnectionAuthenticator } from './connection-authenticator.js'
 import { AuthHttpEndpoint } from './auth-http-endpoint.js'
 import { HealthEndpoint } from './health-endpoint.js'
@@ -58,6 +61,7 @@ export interface PragmaticServerHostOptions
     clientTls?: MachineTlsRef
     logger?: ILogger
     observability?: Observability
+    rateLimit?: RateLimitGuard
 }
 
 export interface WebSocketAddress
@@ -100,6 +104,7 @@ export class PragmaticServerHost
     private readonly clientTls: boolean
     private readonly logger: ILogger
     private readonly instrumentation: RequestInstrumentation | undefined
+    private readonly rateLimit: RateLimitGuard
     private readonly sweep: NodeJS.Timeout
     private readonly health = new HealthEndpoint()
     private ready = false
@@ -114,8 +119,10 @@ export class PragmaticServerHost
         idleSweepMs: number,
         clientTls: boolean,
         logger: ILogger,
-        instrumentation?: RequestInstrumentation)
+        instrumentation?: RequestInstrumentation,
+        rateLimit: RateLimitGuard = new RateLimitGuard())
     {
+        this.rateLimit = rateLimit
         this.logger = logger
         this.instrumentation = instrumentation
         this.httpServer = httpServer
@@ -166,7 +173,7 @@ export class PragmaticServerHost
             httpServer.listen(options.port, host)
         })
         const resolved = httpServer.address() as AddressInfo
-        const started = new PragmaticServerHost(httpServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? PragmaticServerHost.DefaultIdleTtlMs, options.idleSweepMs ?? PragmaticServerHost.DefaultIdleSweepMs, options.clientTls !== undefined, options.logger ?? new NullLogger(), options.observability !== undefined ? RequestInstrumentation.FromObservability(options.observability, options.logger ?? new NullLogger()) : undefined)
+        const started = new PragmaticServerHost(httpServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? PragmaticServerHost.DefaultIdleTtlMs, options.idleSweepMs ?? PragmaticServerHost.DefaultIdleSweepMs, options.clientTls !== undefined, options.logger ?? new NullLogger(), options.observability !== undefined ? RequestInstrumentation.FromObservability(options.observability, options.logger ?? new NullLogger()) : undefined, options.rateLimit)
         started.MarkReady()
         return started
     }
@@ -234,6 +241,14 @@ export class PragmaticServerHost
             this.Reject(socket)
             return
         }
+        const limit = this.rateLimit.Check(
+            { scope: RateLimitScope.Tenant, tenant: tenantId, key: tenantId },
+            { surface: AuditSurface.Upgrade, tenant: tenantId, methodOrPath: RateLimitGuard.UpgradeMethodName() })
+        if (!limit.Allowed)
+        {
+            this.RejectRateLimited(socket, limit.RetryAfterMs)
+            return
+        }
         let server: PragmaticServer
         try
         {
@@ -268,7 +283,7 @@ export class PragmaticServerHost
             {
                 try
                 {
-                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors(), this.instrumentation, parent)
+                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors(), this.instrumentation, parent, undefined, this.rateLimit)
                     this.handlers.add(handler)
                     ws.on(PragmaticServerHost.CloseEvent, () =>
                     {
@@ -385,6 +400,15 @@ export class PragmaticServerHost
         if (!socket.writableEnded && !socket.destroyed)
         {
             socket.write(PragmaticServerHost.ServiceUnavailableResponse)
+        }
+        socket.destroy()
+    }
+
+    private RejectRateLimited(socket: Socket, retryAfterMs: number): void
+    {
+        if (!socket.writableEnded && !socket.destroyed)
+        {
+            socket.write(RateLimitGuard.TooManyRequestsResponse(retryAfterMs))
         }
         socket.destroy()
     }

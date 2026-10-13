@@ -14,6 +14,9 @@ import type { ClientTlsMaterial, MachineTlsRef } from './machine-tls.js'
 import { MachineCertIdentity } from '../host/machine-principal-map.js'
 import { MachineFingerprintHeader } from './machine-headers.js'
 import { NullLogger } from '../observability/logger.js'
+import { RateLimitGuard } from '../host/rate-limit-guard.js'
+import { RateLimitScope } from '../host/rate-limiter.js'
+import { AuditSurface } from '../host/access-audit.js'
 import type { ILogger } from '../observability/logger.js'
 import { RequestCorrelation } from '../observability/request-correlation.js'
 
@@ -26,6 +29,7 @@ export interface GatewayOptions
     clientTls?: MachineTlsRef
     serverName?: string
     logger?: ILogger
+    rateLimit?: RateLimitGuard
 }
 
 /** Public plain-ws front door. Holds NO identity pack and never parses JSON-RPC: it reads the ?tenant hint,
@@ -63,12 +67,14 @@ export class Gateway
     private readonly workerSockets = new Set<WebSocket>()
     private readonly serverName: string
     private readonly logger: ILogger
+    private readonly rateLimit: RateLimitGuard
     private readonly health = new HealthEndpoint()
     private ready = true
     private disposed = false
 
-    private constructor(httpServer: HttpServer, wss: WebSocketServer, router: IWorkerRouter, clientTls: ClientTlsMaterial, address: WebSocketAddress, serverName: string, machineTlsConfigured: boolean, logger: ILogger)
+    private constructor(httpServer: HttpServer, wss: WebSocketServer, router: IWorkerRouter, clientTls: ClientTlsMaterial, address: WebSocketAddress, serverName: string, machineTlsConfigured: boolean, logger: ILogger, rateLimit: RateLimitGuard = new RateLimitGuard())
     {
+        this.rateLimit = rateLimit
         this.logger = logger
         this.machineTlsConfigured = machineTlsConfigured
         this.httpServer = httpServer
@@ -101,7 +107,7 @@ export class Gateway
         })
         const resolved = httpServer.address() as AddressInfo
         const clientTls = MachineTls.Client(options.tls)
-        return new Gateway(httpServer, wss, options.router, clientTls, { host, port: resolved.port }, options.serverName ?? Gateway.DefaultServerName, options.clientTls !== undefined, options.logger ?? new NullLogger())
+        return new Gateway(httpServer, wss, options.router, clientTls, { host, port: resolved.port }, options.serverName ?? Gateway.DefaultServerName, options.clientTls !== undefined, options.logger ?? new NullLogger(), options.rateLimit)
     }
 
     /** Anti-spoof: ALWAYS strips any inbound fingerprint header, then stamps the verified peer-cert fingerprint only when client TLS is configured and the peer was authorized. */
@@ -157,6 +163,14 @@ export class Gateway
             if (tenantId === null)
             {
                 this.Reject(socket)
+                return
+            }
+            const limit = this.rateLimit.Check(
+                { scope: RateLimitScope.Tenant, tenant: tenantId, key: tenantId },
+                { surface: AuditSurface.Upgrade, tenant: tenantId, methodOrPath: RateLimitGuard.UpgradeMethodName() })
+            if (!limit.Allowed)
+            {
+                this.RejectRateLimited(socket, limit.RetryAfterMs)
                 return
             }
             let endpoint: WorkerEndpoint
@@ -369,6 +383,15 @@ export class Gateway
             return null
         }
         return tenant
+    }
+
+    private RejectRateLimited(socket: Socket, retryAfterMs: number): void
+    {
+        if (!socket.writableEnded && !socket.destroyed)
+        {
+            socket.write(RateLimitGuard.TooManyRequestsResponse(retryAfterMs))
+        }
+        socket.destroy()
     }
 
     private Reject(socket: Socket): void

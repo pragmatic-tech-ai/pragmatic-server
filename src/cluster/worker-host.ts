@@ -12,6 +12,9 @@ import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import type { MasterKeyRef } from '../identity/master-key-resolver.js'
 import type { PragmaticServer } from '../pragmatic-server.js'
 import { ServerConnectionHandler } from '../host/server-connection-handler.js'
+import { RateLimitGuard } from '../host/rate-limit-guard.js'
+import { RateLimitScope } from '../host/rate-limiter.js'
+import { AuditSurface } from '../host/access-audit.js'
 import { ConnectionAuthenticator } from '../host/connection-authenticator.js'
 import { AuthHttpEndpoint } from '../host/auth-http-endpoint.js'
 import type { WebSocketAddress } from '../host/pragmatic-server-host.js'
@@ -60,6 +63,7 @@ export interface WorkerHostOptions
     advertise?: WorkerEndpoint
     logger?: ILogger
     observability?: Observability
+    rateLimit?: RateLimitGuard
 }
 
 /** Internal mutual-TLS wss worker: the gateway (a verified client cert) forwards x-pragmatic-tenant + authorization;
@@ -98,6 +102,7 @@ export class WorkerHost
     private readonly registration: WorkerRegistration | null
     private readonly logger: ILogger
     private readonly instrumentation: RequestInstrumentation | undefined
+    private readonly rateLimit: RateLimitGuard
     private ready = false
     private disposed = false
 
@@ -112,8 +117,10 @@ export class WorkerHost
         healthAddress: WebSocketAddress | null,
         registration: WorkerRegistration | null,
         logger: ILogger,
-        instrumentation?: RequestInstrumentation)
+        instrumentation?: RequestInstrumentation,
+        rateLimit: RateLimitGuard = new RateLimitGuard())
     {
+        this.rateLimit = rateLimit
         this.logger = logger
         this.instrumentation = instrumentation
         this.healthServer = healthServer
@@ -216,7 +223,7 @@ export class WorkerHost
             await registry.DisposeAll().catch(() => {})
             throw error
         }
-        const started = new WorkerHost(httpsServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? WorkerHost.DefaultIdleTtlMs, options.idleSweepMs ?? WorkerHost.DefaultIdleSweepMs, healthServer, healthAddress, registration, options.logger ?? new NullLogger(), options.observability !== undefined ? RequestInstrumentation.FromObservability(options.observability, options.logger ?? new NullLogger()) : undefined)
+        const started = new WorkerHost(httpsServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? WorkerHost.DefaultIdleTtlMs, options.idleSweepMs ?? WorkerHost.DefaultIdleSweepMs, healthServer, healthAddress, registration, options.logger ?? new NullLogger(), options.observability !== undefined ? RequestInstrumentation.FromObservability(options.observability, options.logger ?? new NullLogger()) : undefined, options.rateLimit)
         started.MarkReady()
         return started
     }
@@ -255,12 +262,29 @@ export class WorkerHost
         await this.registry.DisposeAll()
     }
 
+    private RejectRateLimited(socket: Socket, retryAfterMs: number): void
+    {
+        if (!socket.writableEnded && !socket.destroyed)
+        {
+            socket.write(RateLimitGuard.TooManyRequestsResponse(retryAfterMs))
+        }
+        socket.destroy()
+    }
+
     private async Upgrade(req: IncomingMessage, socket: Socket, head: Buffer): Promise<void>
     {
         const tenantId = this.TenantHint(req)
         if (tenantId === null)
         {
             socket.destroy()
+            return
+        }
+        const limit = this.rateLimit.Check(
+            { scope: RateLimitScope.Tenant, tenant: tenantId, key: tenantId },
+            { surface: AuditSurface.Upgrade, tenant: tenantId, methodOrPath: RateLimitGuard.UpgradeMethodName() })
+        if (!limit.Allowed)
+        {
+            this.RejectRateLimited(socket, limit.RetryAfterMs)
             return
         }
         let server: PragmaticServer
@@ -295,7 +319,7 @@ export class WorkerHost
             {
                 try
                 {
-                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors(), this.instrumentation, parent)
+                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors(), this.instrumentation, parent, undefined, this.rateLimit)
                     this.handlers.add(handler)
                     ws.on(WorkerHost.CloseEvent, () =>
                     {
