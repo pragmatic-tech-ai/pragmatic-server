@@ -37,7 +37,9 @@ export class ServerConfigLoader
     private static readonly BadMetricsPort = 'PRAGMATIC_METRICS_PORT must be an integer port between 1 and 65535'
     private static readonly BadSampling = 'PRAGMATIC_TRACE_SAMPLING must be a ratio between 0 and 1'
     private static readonly BadOtlpProtocol = 'PRAGMATIC_OTLP_PROTOCOL must be http-protobuf or grpc'
+    private static readonly BadOtlpMetrics = 'PRAGMATIC_OTLP_METRICS must be true or false'
     private static readonly TrueValue = 'true'
+    private static readonly FalseValue = 'false'
     private static readonly EnvServiceName = 'PRAGMATIC_SERVICE_NAME'
     private static readonly EnvMetricsPort = 'PRAGMATIC_METRICS_PORT'
     private static readonly EnvOtlpEndpoint = 'PRAGMATIC_OTLP_ENDPOINT'
@@ -103,7 +105,16 @@ export class ServerConfigLoader
         {
             return undefined
         }
-        return value === ServerConfigLoader.TrueValue
+        const lowered = value.toLowerCase()
+        if (lowered === ServerConfigLoader.TrueValue)
+        {
+            return true
+        }
+        if (lowered === ServerConfigLoader.FalseValue)
+        {
+            return false
+        }
+        throw new Error(ServerConfigLoader.BadOtlpMetrics)
     }
 
     private static OtlpProtocolOf(value: string | undefined): OtlpProtocol | undefined

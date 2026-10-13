@@ -54,6 +54,15 @@ test('fails closed on an unknown otlp protocol', () =>
     assert.throws(() => ServerConfigLoader.Load({ ...Fixtures.Minimal(), PRAGMATIC_OTLP_PROTOCOL: 'thrift' }, Fixtures.NoRead), /PRAGMATIC_OTLP_PROTOCOL/)
 })
 
+test('otlp metrics flag parses true/false case-insensitively and fails closed otherwise', () =>
+{
+    assert.equal(ServerConfigLoader.Load({ ...Fixtures.Minimal(), PRAGMATIC_OTLP_METRICS: 'TRUE' }, Fixtures.NoRead).otlpMetrics, true)
+    assert.equal(ServerConfigLoader.Load({ ...Fixtures.Minimal(), PRAGMATIC_OTLP_METRICS: 'false' }, Fixtures.NoRead).otlpMetrics, false)
+    assert.equal(ServerConfigLoader.Load({ ...Fixtures.Minimal(), PRAGMATIC_OTLP_METRICS: '' }, Fixtures.NoRead).otlpMetrics, undefined)
+    assert.throws(() => ServerConfigLoader.Load({ ...Fixtures.Minimal(), PRAGMATIC_OTLP_METRICS: '1' }, Fixtures.NoRead), /PRAGMATIC_OTLP_METRICS must be true or false/)
+    assert.throws(() => ServerConfigLoader.Load({ ...Fixtures.Minimal(), PRAGMATIC_OTLP_METRICS: 'ture' }, Fixtures.NoRead), /PRAGMATIC_OTLP_METRICS/)
+})
+
 test('the gateway loader parses observability fields too', () =>
 {
     const env = { PRAGMATIC_TLS_CERT_FILE: '/c', PRAGMATIC_TLS_KEY_FILE: '/k', PRAGMATIC_TLS_CA_FILE: '/a', PRAGMATIC_REDIS_URL: 'redis://localhost:6379', PRAGMATIC_METRICS_PORT: '9464', PRAGMATIC_OTLP_ENDPOINT: 'https://collector:4317' }

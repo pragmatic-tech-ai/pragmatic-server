@@ -38,3 +38,10 @@ test('worker and gateway startup lines carry the otel token without the endpoint
     const gw = ServerBootstrap.GatewayStartupLine({ host: '0.0.0.0', port: 8080, tls: { certFile: '/c', keyFile: '/k', caFile: '/a' }, redisUrl: 'redis://x' })
     assert.match(gw, / otel=off/)
 })
+
+test('gateway startup line is otel=on without echoing the endpoint', () =>
+{
+    const gw = ServerBootstrap.GatewayStartupLine({ host: '0.0.0.0', port: 8080, tls: { certFile: '/c', keyFile: '/k', caFile: '/a' }, redisUrl: 'redis://x', metricsPort: 9464, otlpEndpoint: 'https://collector:4317' })
+    assert.match(gw, / otel=on/)
+    assert.ok(!gw.includes('https://collector:4317'))
+})
