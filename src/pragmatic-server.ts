@@ -228,7 +228,18 @@ export class PragmaticServer
         }
         finally
         {
-            this.root.Services().dispose()
+            try
+            {
+                const disposable = this.options.identity?.flowStateStore as { Dispose?: () => Promise<void> } | undefined
+                if (disposable?.Dispose !== undefined)
+                {
+                    await disposable.Dispose()
+                }
+            }
+            finally
+            {
+                this.root.Services().dispose()
+            }
         }
     }
 

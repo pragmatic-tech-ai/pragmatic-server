@@ -11,6 +11,7 @@ import type { PragmaticServerIdentityOptions } from '../../pragmatic-server.js'
 import { MachinePrincipalMap } from '../../host/machine-principal-map.js'
 import { ProvisionedSecretSource } from '../../config/provisioned-secret-source.js'
 import { OidcSettingKeys } from '@pragmatic-tech-ai/todl-identity-cloud'
+import type { IOidcFlowStateStore } from '@pragmatic-tech-ai/todl-identity-cloud'
 import { ResolverFixture } from './resolver-fixture.js'
 
 class ModuleFixture
@@ -182,6 +183,41 @@ test('the OIDC secret ref in ProviderSettings is written through from the provis
     {
         await server.Dispose()
         resolverFixture.Dispose()
+        fixture.Dispose()
+    }
+})
+
+class DisposableFlowStateStore implements IOidcFlowStateStore
+{
+    public DisposeCount = 0
+
+    public async Put(): Promise<void>
+    {
+    }
+
+    public async Take(): Promise<null>
+    {
+        return null
+    }
+
+    public async Dispose(): Promise<void>
+    {
+        this.DisposeCount++
+    }
+}
+
+test('server Dispose disposes a flow-state store that exposes Dispose', async () =>
+{
+    const fixture = new ModuleFixture()
+    const store = new DisposableFlowStateStore()
+    const server = fixture.Server(fixture.Identity({ flowStateStore: store }))
+    try
+    {
+        await server.Dispose()
+        assert.equal(store.DisposeCount, 1)
+    }
+    finally
+    {
         fixture.Dispose()
     }
 })

@@ -6,8 +6,8 @@ import { RedisOidcFlowStateStore } from '../redis-oidc-flow-state-store.js'
 
 class Fixture
 {
-    public static readonly Prefix = 'pragmatic:oidc:t1:'
-    public static readonly OtherPrefix = 'pragmatic:oidc:t2:'
+    public static readonly Prefix = 'pragmatic:oidc:flow:t1:'
+    public static readonly OtherPrefix = 'pragmatic:oidc:flow:t2:'
     public static readonly Url = 'redis://unused'
     public static readonly LiveSkip = 'set PRAGMATIC_TEST_REDIS_URL to run'
     public static readonly Now = new Date('2026-01-01T00:00:00.000Z')

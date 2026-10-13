@@ -4,5 +4,5 @@ export class ClusterKeys
 {
     public static readonly Workers = 'pragmatic:workers'
     public static readonly RoutePrefix = 'pragmatic:route:'
-    public static readonly OidcFlowPrefix = 'pragmatic:oidc:'
+    public static readonly OidcFlowPrefix = 'pragmatic:oidc:flow:'
 }
