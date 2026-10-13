@@ -13,6 +13,7 @@ export class IdentityPackKinds
     private static readonly GoogleId = 'google'
     private static readonly LocalId = 'local'
     private static readonly GenericOidcId = 'generic-oidc'
+    private static readonly ServerPackId = 'server-pack'
     private static readonly UnknownPackError = 'unknown identity pack: '
 
     private static readonly ById: ReadonlyMap<string, IdentityPackKind> = new Map<string, IdentityPackKind>([
@@ -20,6 +21,7 @@ export class IdentityPackKinds
         [IdentityPackKinds.GoogleId, IdentityPackKind.Google],
         [IdentityPackKinds.LocalId, IdentityPackKind.Local],
         [IdentityPackKinds.GenericOidcId, IdentityPackKind.GenericOidc],
+        [IdentityPackKinds.ServerPackId, IdentityPackKind.Local],
     ])
 
     public static FromPackId(packId: string): IdentityPackKind

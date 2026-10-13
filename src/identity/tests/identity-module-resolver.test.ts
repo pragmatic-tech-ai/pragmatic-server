@@ -9,6 +9,8 @@ import { FakeOidcHttpClient, FakeOidcIdp, InMemoryOidcFlowStateStore } from '@pr
 import { PragmaticServer } from '../../pragmatic-server.js'
 import type { PragmaticServerIdentityOptions } from '../../pragmatic-server.js'
 import { MachinePrincipalMap } from '../../host/machine-principal-map.js'
+import { ProvisionedSecretSource } from '../../config/provisioned-secret-source.js'
+import { OidcSettingKeys } from '@pragmatic-tech-ai/todl-identity-cloud'
 import { ResolverFixture } from './resolver-fixture.js'
 
 class ModuleFixture
@@ -119,6 +121,67 @@ test('a tenant with no identityConfig and no oidc falls back to a local-only pac
     finally
     {
         await server.Dispose()
+        fixture.Dispose()
+    }
+})
+
+test('legacy flat oidc options without an identityConfig still yield a working OIDC front door', async () =>
+{
+    const fixture = new ModuleFixture()
+    const idp = await FakeOidcIdp.Create(ModuleFixture.Issuer)
+    const http = new FakeOidcHttpClient(idp)
+    const flowStates = new InMemoryOidcFlowStateStore()
+    const oidc = {
+        issuer: ModuleFixture.Issuer,
+        clientId: ResolverFixture.ClientId,
+        clientSecretRef: 't1/oidc/client-secret',
+        discoveryUrl: ModuleFixture.Issuer + '/.well-known/openid-configuration',
+        redirectUri: ResolverFixture.RedirectUri,
+        provider: 'generic',
+    }
+    const server = fixture.Server(fixture.Identity({ oidc, httpClient: http, flowStateStore: flowStates }))
+    try
+    {
+        await server.Start()
+        const front = server.Oidc()
+        assert.ok(front !== undefined)
+        const begun = await front.BeginAuthorization(server.Tenant())
+        const nonce = flowStates.Peek(begun.State)!.Nonce
+        http.NextTokenResponse = {
+            id_token: await idp.MintIdToken({ sub: ResolverFixture.Subject, aud: ResolverFixture.ClientId, nonce, email: ResolverFixture.Email, groups: [] }),
+            token_type: ResolverFixture.BearerType,
+        }
+        const result = await front.AuthenticatorFor(AuthMethod.Oidc)!.Authenticate(new Credential(AuthMethod.Oidc, begun.State), new PresentedSecret(ResolverFixture.AuthCode), server.Tenant())
+        assert.ok(result instanceof AuthenticatedResult)
+        assert.equal(result.Principal.Id, ResolverFixture.Subject)
+    }
+    finally
+    {
+        await server.Dispose()
+        fixture.Dispose()
+    }
+})
+
+test('the OIDC secret ref in ProviderSettings is written through from the provisioned source', async () =>
+{
+    const fixture = new ModuleFixture()
+    const resolverFixture = new ResolverFixture()
+    const secretRef = 't1/oidc/client-secret'
+    const settings = resolverFixture.GenericSettings(ModuleFixture.Issuer)
+    settings.set(OidcSettingKeys.SecretRef, secretRef)
+    const config = new IdentityConfig(ModuleFixture.GenericPackId, DelegationDepth.AuthnDirectory, settings, new Map(), new Map())
+    const provisionedSecrets = ProvisionedSecretSource.FromText(JSON.stringify({ [secretRef]: 'oidc-secret-xyz' }))
+    const server = fixture.Server(fixture.Identity({ identityConfig: config, provisionedSecrets }))
+    try
+    {
+        await server.Start()
+        const pack = await server.Pack()
+        assert.equal(await pack.Secrets.Get(secretRef), 'oidc-secret-xyz')
+    }
+    finally
+    {
+        await server.Dispose()
+        resolverFixture.Dispose()
         fixture.Dispose()
     }
 })
