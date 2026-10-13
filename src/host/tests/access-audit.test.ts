@@ -2,7 +2,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Action, ResourceKind } from '@pragmatic-tech-ai/todl-identity'
 import { AuditSurface, AuditOutcome, NullAccessAuditSink } from '../access-audit.js'
-import type { AccessAuditEvent } from '../access-audit.js'
+import type { AccessAuditEvent, IAccessAuditSink } from '../access-audit.js'
+
+type FullAccessAuditEvent = Required<AccessAuditEvent>
 
 const SecretKeyShape = /token|secret|password|credential|fingerprint|verifier|session/i
 
@@ -22,7 +24,7 @@ const ExpectedFieldNames: readonly string[] = [
 
 test('a fully-populated event has exactly the expected field set, none secret-shaped', () =>
 {
-    const event: AccessAuditEvent = {
+    const event: FullAccessAuditEvent = {
         Timestamp: new Date('2026-01-01T00:00:00.000Z'),
         TenantId: 't1',
         PrincipalId: 'p1',
@@ -58,7 +60,7 @@ test('an auth-failure event is valid without Action or ResourceKind', () =>
 
 test('NullAccessAuditSink.Record resolves to undefined', async () =>
 {
-    const sink = new NullAccessAuditSink()
+    const sink: IAccessAuditSink = new NullAccessAuditSink()
     const event: AccessAuditEvent = {
         Timestamp: new Date(),
         TenantId: 't1',
