@@ -3,6 +3,8 @@ import { Gateway } from '../cluster/gateway.js'
 import { RedisWorkerRouter } from '../cluster/redis-worker-router.js'
 import type { IWorkerRouter } from '../cluster/worker-router.js'
 import { ServerBootstrap } from './server-bootstrap.js'
+import { StructuredLogger } from '../observability/logger.js'
+import type { ILogger } from '../observability/logger.js'
 
 class GatewayMain
 {
@@ -13,26 +15,33 @@ class GatewayMain
     private static readonly ShutdownLine = 'pragmatic-gateway shutting down'
     private static readonly ShutdownErrorPrefix = 'pragmatic-gateway shutdown error: '
 
+    private static readonly StartupEvent = 'startup'
+    private static readonly ShutdownEvent = 'shutdown'
+    private static readonly StartFailedEvent = 'start-failed'
+    private static readonly ShutdownErrorEvent = 'shutdown-error'
+    private static readonly EventKey = 'event'
+
     private shuttingDown = false
 
-    private constructor(private readonly gateway: Gateway, private readonly router: IWorkerRouter)
+    private constructor(private readonly gateway: Gateway, private readonly router: IWorkerRouter, private readonly logger: ILogger)
     {
     }
 
     public static async Run(): Promise<void>
     {
+        const logger = StructuredLogger.ToStdout()
         const gw = ServerConfigLoader.LoadGateway(process.env)
         const router = new RedisWorkerRouter(gw.redisUrl)
-        const gateway = await Gateway.StartAsync(ServerBootstrap.ComposeGatewayOptions(gw, router))
-        console.log(ServerBootstrap.GatewayStartupLine(gw))
-        const main = new GatewayMain(gateway, router)
+        const gateway = await Gateway.StartAsync(ServerBootstrap.ComposeGatewayOptions(gw, router, logger))
+        logger.Info(ServerBootstrap.GatewayStartupLine(gw), { [GatewayMain.EventKey]: GatewayMain.StartupEvent })
+        const main = new GatewayMain(gateway, router, logger)
         process.on(GatewayMain.SigTerm, () => void main.Shutdown())
         process.on(GatewayMain.SigInt, () => void main.Shutdown())
     }
 
     public static Fail(error: unknown): void
     {
-        console.error(GatewayMain.StartFailedPrefix + (error instanceof Error ? error.message : GatewayMain.UnknownError))
+        StructuredLogger.ToStdout().Error(GatewayMain.StartFailedPrefix + (error instanceof Error ? error.message : GatewayMain.UnknownError), { [GatewayMain.EventKey]: GatewayMain.StartFailedEvent })
         process.exit(1)
     }
 
@@ -43,14 +52,14 @@ class GatewayMain
             return
         }
         this.shuttingDown = true
-        console.log(GatewayMain.ShutdownLine)
+        this.logger.Info(GatewayMain.ShutdownLine, { [GatewayMain.EventKey]: GatewayMain.ShutdownEvent })
         try
         {
             await this.gateway.DisposeAsync()
         }
         catch (error)
         {
-            console.error(GatewayMain.ShutdownErrorPrefix + (error instanceof Error ? error.message : GatewayMain.UnknownError))
+            this.logger.Error(GatewayMain.ShutdownErrorPrefix + (error instanceof Error ? error.message : GatewayMain.UnknownError), { [GatewayMain.EventKey]: GatewayMain.ShutdownErrorEvent })
             await this.router.Drain().catch(() => {})
             process.exit(1)
             return

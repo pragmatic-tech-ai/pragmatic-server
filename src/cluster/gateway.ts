@@ -1,3 +1,5 @@
+import { NullLogger } from '../observability/logger.js'
+import type { ILogger } from '../observability/logger.js'
 import { createServer } from 'node:http'
 import type { Server as HttpServer, IncomingMessage, ServerResponse } from 'node:http'
 import { request as httpsRequest, createServer as httpsCreateServer } from 'node:https'
@@ -22,6 +24,7 @@ export interface GatewayOptions
     tls: MachineTlsRef
     clientTls?: MachineTlsRef
     serverName?: string
+    logger?: ILogger
 }
 
 /** Public plain-ws front door. Holds NO identity pack and never parses JSON-RPC: it reads the ?tenant hint,
@@ -58,12 +61,14 @@ export class Gateway
     private readonly machineTlsConfigured: boolean
     private readonly workerSockets = new Set<WebSocket>()
     private readonly serverName: string
+    private readonly logger: ILogger
     private readonly health = new HealthEndpoint()
     private ready = true
     private disposed = false
 
-    private constructor(httpServer: HttpServer, wss: WebSocketServer, router: IWorkerRouter, clientTls: ClientTlsMaterial, address: WebSocketAddress, serverName: string, machineTlsConfigured: boolean)
+    private constructor(httpServer: HttpServer, wss: WebSocketServer, router: IWorkerRouter, clientTls: ClientTlsMaterial, address: WebSocketAddress, serverName: string, machineTlsConfigured: boolean, logger: ILogger)
     {
+        this.logger = logger
         this.machineTlsConfigured = machineTlsConfigured
         this.httpServer = httpServer
         this.wss = wss
@@ -95,7 +100,7 @@ export class Gateway
         })
         const resolved = httpServer.address() as AddressInfo
         const clientTls = MachineTls.Client(options.tls)
-        return new Gateway(httpServer, wss, options.router, clientTls, { host, port: resolved.port }, options.serverName ?? Gateway.DefaultServerName, options.clientTls !== undefined)
+        return new Gateway(httpServer, wss, options.router, clientTls, { host, port: resolved.port }, options.serverName ?? Gateway.DefaultServerName, options.clientTls !== undefined, options.logger ?? new NullLogger())
     }
 
     /** Anti-spoof: ALWAYS strips any inbound fingerprint header, then stamps the verified peer-cert fingerprint only when client TLS is configured and the peer was authorized. */

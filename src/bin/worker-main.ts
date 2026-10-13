@@ -4,6 +4,8 @@ import { TenantProvisioningFactory } from '../config/tenant-provisioning-factory
 import { ProvisionedSecretsFactory } from '../config/provisioned-secrets-factory.js'
 import { WorkerHost } from '../cluster/worker-host.js'
 import { ServerBootstrap } from './server-bootstrap.js'
+import { StructuredLogger } from '../observability/logger.js'
+import type { ILogger } from '../observability/logger.js'
 
 class WorkerMain
 {
@@ -15,28 +17,35 @@ class WorkerMain
     private static readonly ShutdownLine = 'pragmatic-worker shutting down'
     private static readonly ShutdownErrorPrefix = 'pragmatic-worker shutdown error: '
 
+    private static readonly StartupEvent = 'startup'
+    private static readonly ShutdownEvent = 'shutdown'
+    private static readonly StartFailedEvent = 'start-failed'
+    private static readonly ShutdownErrorEvent = 'shutdown-error'
+    private static readonly EventKey = 'event'
+
     private shuttingDown = false
 
-    private constructor(private readonly host: WorkerHost)
+    private constructor(private readonly host: WorkerHost, private readonly logger: ILogger)
     {
     }
 
     public static async Run(): Promise<void>
     {
+        const logger = StructuredLogger.ToStdout()
         const read = (path: string): string => readFileSync(path, WorkerMain.Utf8)
         const config = ServerConfigLoader.Load(process.env, read)
         const { provisioning } = TenantProvisioningFactory.Build(config, read)
         const provisionedSecrets = ProvisionedSecretsFactory.Build(config, read)
-        const host = await WorkerHost.StartAsync(ServerBootstrap.ComposeWorkerOptions(config, provisioning, provisionedSecrets))
-        console.log(ServerBootstrap.WorkerStartupLine(config))
-        const main = new WorkerMain(host)
+        const host = await WorkerHost.StartAsync(ServerBootstrap.ComposeWorkerOptions(config, provisioning, provisionedSecrets, logger))
+        logger.Info(ServerBootstrap.WorkerStartupLine(config), { [WorkerMain.EventKey]: WorkerMain.StartupEvent })
+        const main = new WorkerMain(host, logger)
         process.on(WorkerMain.SigTerm, () => void main.Shutdown())
         process.on(WorkerMain.SigInt, () => void main.Shutdown())
     }
 
     public static Fail(error: unknown): void
     {
-        console.error(WorkerMain.StartFailedPrefix + (error instanceof Error ? error.message : WorkerMain.UnknownError))
+        StructuredLogger.ToStdout().Error(WorkerMain.StartFailedPrefix + (error instanceof Error ? error.message : WorkerMain.UnknownError), { [WorkerMain.EventKey]: WorkerMain.StartFailedEvent })
         process.exit(1)
     }
 
@@ -47,14 +56,14 @@ class WorkerMain
             return
         }
         this.shuttingDown = true
-        console.log(WorkerMain.ShutdownLine)
+        this.logger.Info(WorkerMain.ShutdownLine, { [WorkerMain.EventKey]: WorkerMain.ShutdownEvent })
         try
         {
             await this.host.DisposeAsync()
         }
         catch (error)
         {
-            console.error(WorkerMain.ShutdownErrorPrefix + (error instanceof Error ? error.message : WorkerMain.UnknownError))
+            this.logger.Error(WorkerMain.ShutdownErrorPrefix + (error instanceof Error ? error.message : WorkerMain.UnknownError), { [WorkerMain.EventKey]: WorkerMain.ShutdownErrorEvent })
             process.exit(1)
             return
         }

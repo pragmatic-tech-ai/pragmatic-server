@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { NullLogger } from '../observability/logger.js'
+import type { ILogger } from '../observability/logger.js'
 import { createServer } from 'node:http'
 import { createServer as httpsCreateServer } from 'node:https'
 import type { Server as HttpsServer } from 'node:https'
@@ -51,6 +53,7 @@ export interface PragmaticServerHostOptions
     replicaId?: string
     provisionedSecrets?: IProvisionedSecretSource
     clientTls?: MachineTlsRef
+    logger?: ILogger
 }
 
 export interface WebSocketAddress
@@ -91,6 +94,7 @@ export class PragmaticServerHost
     private readonly address: WebSocketAddress
     private readonly idleTtlMs: number
     private readonly clientTls: boolean
+    private readonly logger: ILogger
     private readonly sweep: NodeJS.Timeout
     private readonly health = new HealthEndpoint()
     private ready = false
@@ -103,8 +107,10 @@ export class PragmaticServerHost
         address: WebSocketAddress,
         idleTtlMs: number,
         idleSweepMs: number,
-        clientTls: boolean)
+        clientTls: boolean,
+        logger: ILogger)
     {
+        this.logger = logger
         this.httpServer = httpServer
         this.wss = wss
         this.registry = registry
@@ -153,7 +159,7 @@ export class PragmaticServerHost
             httpServer.listen(options.port, host)
         })
         const resolved = httpServer.address() as AddressInfo
-        const started = new PragmaticServerHost(httpServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? PragmaticServerHost.DefaultIdleTtlMs, options.idleSweepMs ?? PragmaticServerHost.DefaultIdleSweepMs, options.clientTls !== undefined)
+        const started = new PragmaticServerHost(httpServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? PragmaticServerHost.DefaultIdleTtlMs, options.idleSweepMs ?? PragmaticServerHost.DefaultIdleSweepMs, options.clientTls !== undefined, options.logger ?? new NullLogger())
         started.MarkReady()
         return started
     }

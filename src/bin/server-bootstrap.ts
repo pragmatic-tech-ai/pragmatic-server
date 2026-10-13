@@ -8,6 +8,7 @@ import type { GatewayOptions } from '../cluster/gateway.js'
 import type { MachineTlsRef } from '../cluster/machine-tls.js'
 import type { IWorkerRouter } from '../cluster/worker-router.js'
 import type { IProvisionedSecretSource } from '../config/provisioned-secret-source.js'
+import type { ILogger } from '../observability/logger.js'
 
 export class ServerBootstrap
 {
@@ -24,7 +25,7 @@ export class ServerBootstrap
     private static readonly ClientMtlsLabel = ' client-mtls='
     private static readonly WorkerNeedsTls = 'worker requires TLS (set PRAGMATIC_TLS_CERT_FILE/KEY_FILE/CA_FILE)'
 
-    public static ComposeOptions(config: ServerConfig, provisioning: ITenantProvisioning, platform?: PlatformServices, provisionedSecrets?: IProvisionedSecretSource): PragmaticServerHostOptions
+    public static ComposeOptions(config: ServerConfig, provisioning: ITenantProvisioning, platform?: PlatformServices, provisionedSecrets?: IProvisionedSecretSource, logger?: ILogger): PragmaticServerHostOptions
     {
         if (config.deploymentMode === DeploymentMode.Cloud && platform === undefined)
         {
@@ -44,6 +45,7 @@ export class ServerBootstrap
             replicaId: config.replicaId,
             provisionedSecrets,
             clientTls: config.clientTls,
+            logger,
         }
     }
 
@@ -54,7 +56,7 @@ export class ServerBootstrap
         return `pragmatic-server listening on ${config.host}:${config.port} mode=${config.deploymentMode} tenants=${tenantCount} ownership=${ownership} secrets=${secrets}${ServerBootstrap.ClientMtls(config.clientTls)}${ServerBootstrap.OidcFlowToken}${ownership}`
     }
 
-    public static ComposeWorkerOptions(config: ServerConfig, provisioning: ITenantProvisioning, provisionedSecrets?: IProvisionedSecretSource): WorkerHostOptions
+    public static ComposeWorkerOptions(config: ServerConfig, provisioning: ITenantProvisioning, provisionedSecrets?: IProvisionedSecretSource, logger?: ILogger): WorkerHostOptions
     {
         if (config.tls === undefined)
         {
@@ -79,10 +81,11 @@ export class ServerBootstrap
             provisionedSecrets,
             healthPort: config.healthPort,
             advertise,
+            logger,
         }
     }
 
-    public static ComposeGatewayOptions(gw: GatewayConfig, router: IWorkerRouter): GatewayOptions
+    public static ComposeGatewayOptions(gw: GatewayConfig, router: IWorkerRouter, logger?: ILogger): GatewayOptions
     {
         return {
             host: gw.host,
@@ -91,6 +94,7 @@ export class ServerBootstrap
             tls: gw.tls,
             serverName: gw.workerServerName,
             clientTls: gw.clientTls,
+            logger,
         }
     }
 

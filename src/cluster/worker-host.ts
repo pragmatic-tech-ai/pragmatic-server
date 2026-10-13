@@ -1,3 +1,5 @@
+import { NullLogger } from '../observability/logger.js'
+import type { ILogger } from '../observability/logger.js'
 import { createServer } from 'node:https'
 import type { Server as HttpsServer } from 'node:https'
 import { createServer as createHttpServer } from 'node:http'
@@ -53,6 +55,7 @@ export interface WorkerHostOptions
     provisionedSecrets?: IProvisionedSecretSource
     healthPort?: number
     advertise?: WorkerEndpoint
+    logger?: ILogger
 }
 
 /** Internal mutual-TLS wss worker: the gateway (a verified client cert) forwards x-pragmatic-tenant + authorization;
@@ -89,6 +92,7 @@ export class WorkerHost
     private readonly healthServer: PlainHttpServer | null
     private readonly healthAddress: WebSocketAddress | null
     private readonly registration: WorkerRegistration | null
+    private readonly logger: ILogger
     private ready = false
     private disposed = false
 
@@ -101,8 +105,10 @@ export class WorkerHost
         idleSweepMs: number,
         healthServer: PlainHttpServer | null,
         healthAddress: WebSocketAddress | null,
-        registration: WorkerRegistration | null)
+        registration: WorkerRegistration | null,
+        logger: ILogger)
     {
+        this.logger = logger
         this.healthServer = healthServer
         this.healthAddress = healthAddress
         this.registration = registration
@@ -203,7 +209,7 @@ export class WorkerHost
             await registry.DisposeAll().catch(() => {})
             throw error
         }
-        const started = new WorkerHost(httpsServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? WorkerHost.DefaultIdleTtlMs, options.idleSweepMs ?? WorkerHost.DefaultIdleSweepMs, healthServer, healthAddress, registration)
+        const started = new WorkerHost(httpsServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? WorkerHost.DefaultIdleTtlMs, options.idleSweepMs ?? WorkerHost.DefaultIdleSweepMs, healthServer, healthAddress, registration, options.logger ?? new NullLogger())
         started.MarkReady()
         return started
     }

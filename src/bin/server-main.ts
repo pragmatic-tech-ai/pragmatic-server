@@ -4,6 +4,8 @@ import { TenantProvisioningFactory } from '../config/tenant-provisioning-factory
 import { ProvisionedSecretsFactory } from '../config/provisioned-secrets-factory.js'
 import { PragmaticServerHost } from '../host/pragmatic-server-host.js'
 import { ServerBootstrap } from './server-bootstrap.js'
+import { StructuredLogger } from '../observability/logger.js'
+import type { ILogger } from '../observability/logger.js'
 
 class ServerMain
 {
@@ -15,29 +17,36 @@ class ServerMain
     private static readonly ShutdownLine = 'pragmatic-server shutting down'
     private static readonly ShutdownErrorPrefix = 'pragmatic-server shutdown error: '
 
+    private static readonly StartupEvent = 'startup'
+    private static readonly ShutdownEvent = 'shutdown'
+    private static readonly StartFailedEvent = 'start-failed'
+    private static readonly ShutdownErrorEvent = 'shutdown-error'
+    private static readonly EventKey = 'event'
+
     private shuttingDown = false
 
-    private constructor(private readonly host: PragmaticServerHost)
+    private constructor(private readonly host: PragmaticServerHost, private readonly logger: ILogger)
     {
     }
 
     public static async Run(): Promise<void>
     {
+        const logger = StructuredLogger.ToStdout()
         const read = (path: string): string => readFileSync(path, ServerMain.Utf8)
         const config = ServerConfigLoader.Load(process.env, read)
         const { provisioning, tenantCount } = TenantProvisioningFactory.Build(config, read)
         const provisionedSecrets = ProvisionedSecretsFactory.Build(config, read)
-        const options = ServerBootstrap.ComposeOptions(config, provisioning, undefined, provisionedSecrets)
+        const options = ServerBootstrap.ComposeOptions(config, provisioning, undefined, provisionedSecrets, logger)
         const host = await PragmaticServerHost.StartAsync(options)
-        console.log(ServerBootstrap.StartupLine(config, tenantCount))
-        const main = new ServerMain(host)
+        logger.Info(ServerBootstrap.StartupLine(config, tenantCount), { [ServerMain.EventKey]: ServerMain.StartupEvent })
+        const main = new ServerMain(host, logger)
         process.on(ServerMain.SigTerm, () => void main.Shutdown())
         process.on(ServerMain.SigInt, () => void main.Shutdown())
     }
 
     public static Fail(error: unknown): void
     {
-        console.error(ServerMain.StartFailedPrefix + (error instanceof Error ? error.message : ServerMain.UnknownError))
+        StructuredLogger.ToStdout().Error(ServerMain.StartFailedPrefix + (error instanceof Error ? error.message : ServerMain.UnknownError), { [ServerMain.EventKey]: ServerMain.StartFailedEvent })
         process.exit(1)
     }
 
@@ -48,14 +57,14 @@ class ServerMain
             return
         }
         this.shuttingDown = true
-        console.log(ServerMain.ShutdownLine)
+        this.logger.Info(ServerMain.ShutdownLine, { [ServerMain.EventKey]: ServerMain.ShutdownEvent })
         try
         {
             await this.host.DisposeAsync()
         }
         catch (error)
         {
-            console.error(ServerMain.ShutdownErrorPrefix + (error instanceof Error ? error.message : ServerMain.UnknownError))
+            this.logger.Error(ServerMain.ShutdownErrorPrefix + (error instanceof Error ? error.message : ServerMain.UnknownError), { [ServerMain.EventKey]: ServerMain.ShutdownErrorEvent })
             process.exit(1)
             return
         }
