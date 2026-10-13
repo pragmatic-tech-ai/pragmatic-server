@@ -1,5 +1,3 @@
-import { NullLogger } from '../observability/logger.js'
-import type { ILogger } from '../observability/logger.js'
 import { createServer } from 'node:http'
 import type { Server as HttpServer, IncomingMessage, ServerResponse } from 'node:http'
 import { request as httpsRequest, createServer as httpsCreateServer } from 'node:https'
@@ -15,6 +13,8 @@ import { MachineTls } from './machine-tls.js'
 import type { ClientTlsMaterial, MachineTlsRef } from './machine-tls.js'
 import { MachineCertIdentity } from '../host/machine-principal-map.js'
 import { MachineFingerprintHeader } from './machine-headers.js'
+import { NullLogger } from '../observability/logger.js'
+import type { ILogger } from '../observability/logger.js'
 
 export interface GatewayOptions
 {

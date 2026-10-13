@@ -1,5 +1,3 @@
-import { NullLogger } from '../observability/logger.js'
-import type { ILogger } from '../observability/logger.js'
 import { createServer } from 'node:https'
 import type { Server as HttpsServer } from 'node:https'
 import { createServer as createHttpServer } from 'node:http'
@@ -37,6 +35,8 @@ import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
 import { AuthMethod } from '@pragmatic-tech-ai/todl-identity'
 import type { PlatformServices } from '../platform/platform-services.js'
 import type { DeploymentMode } from '../platform/deployment-mode.js'
+import { NullLogger } from '../observability/logger.js'
+import type { ILogger } from '../observability/logger.js'
 
 export interface WorkerHostOptions
 {

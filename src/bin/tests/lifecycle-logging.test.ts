@@ -15,28 +15,35 @@ class Capture
     }
 }
 
-function config(): ServerConfig
+class Fixtures
 {
-    return { host: '0.0.0.0', port: 8080, baseDir: '/data', masterKey: { keyFilePath: '/run/secrets/key' }, deploymentMode: DeploymentMode.Local, singleTenant: { id: 't1', displayName: 'Tenant One' } }
+    public static readonly StartupEvent = 'startup'
+    public static readonly ShutdownErrorEvent = 'shutdown-error'
+    public static readonly ShutdownErrorMessage = 'pragmatic-server shutdown error: boom'
+
+    public static Config(): ServerConfig
+    {
+        return { host: '0.0.0.0', port: 8080, baseDir: '/data', masterKey: { keyFilePath: '/run/secrets/key' }, deploymentMode: DeploymentMode.Local, singleTenant: { id: 't1', displayName: 'Tenant One' } }
+    }
 }
 
 test('the startup line is logged verbatim as the message through the logger', () =>
 {
     const capture = new Capture()
     const logger = capture.Logger()
-    const line = ServerBootstrap.StartupLine(config(), 1)
-    logger.Info(line, { event: 'startup' })
+    const line = ServerBootstrap.StartupLine(Fixtures.Config(), 1)
+    logger.Info(line, { event: Fixtures.StartupEvent })
     assert.equal(capture.Records.length, 1)
     assert.equal(capture.Records[0]!.message, line)
     assert.equal(capture.Records[0]!.level, LogLevel.Info)
-    assert.equal(capture.Records[0]!.event, 'startup')
+    assert.equal(capture.Records[0]!.event, Fixtures.StartupEvent)
 })
 
 test('a shutdown-error line is logged at error level and never leaks the master key target', () =>
 {
     const capture = new Capture()
     const logger = capture.Logger()
-    logger.Error('pragmatic-server shutdown error: boom', { event: 'shutdown-error' })
+    logger.Error(Fixtures.ShutdownErrorMessage, { event: Fixtures.ShutdownErrorEvent })
     assert.equal(capture.Records[0]!.level, LogLevel.Error)
     assert.ok(!JSON.stringify(capture.Records[0]).includes('/run/secrets/key'))
 })
