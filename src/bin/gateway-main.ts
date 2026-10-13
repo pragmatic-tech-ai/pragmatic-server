@@ -5,6 +5,7 @@ import type { IWorkerRouter } from '../cluster/worker-router.js'
 import { ServerBootstrap } from './server-bootstrap.js'
 import { StructuredLogger } from '../observability/logger.js'
 import type { ILogger } from '../observability/logger.js'
+import { Observability, ObservabilityRole } from '../observability/observability.js'
 
 class GatewayMain
 {
@@ -23,7 +24,7 @@ class GatewayMain
 
     private shuttingDown = false
 
-    private constructor(private readonly gateway: Gateway, private readonly router: IWorkerRouter, private readonly logger: ILogger)
+    private constructor(private readonly gateway: Gateway, private readonly router: IWorkerRouter, private readonly logger: ILogger, private readonly observability?: Observability)
     {
     }
 
@@ -31,10 +32,12 @@ class GatewayMain
     {
         const logger = StructuredLogger.ToStdout()
         const gw = ServerConfigLoader.LoadGateway(process.env)
+        const observabilityOptions = ServerBootstrap.ObservabilityOptions(gw, ObservabilityRole.Gateway)
+        const observability = observabilityOptions !== undefined ? Observability.Start(observabilityOptions) : undefined
         const router = new RedisWorkerRouter(gw.redisUrl)
         const gateway = await Gateway.StartAsync(ServerBootstrap.ComposeGatewayOptions(gw, router, logger))
         logger.Info(ServerBootstrap.GatewayStartupLine(gw), { [GatewayMain.EventKey]: GatewayMain.StartupEvent })
-        const main = new GatewayMain(gateway, router, logger)
+        const main = new GatewayMain(gateway, router, logger, observability)
         process.on(GatewayMain.SigTerm, () => void main.Shutdown())
         process.on(GatewayMain.SigInt, () => void main.Shutdown())
     }
@@ -55,7 +58,14 @@ class GatewayMain
         this.logger.Info(GatewayMain.ShutdownLine, { [GatewayMain.EventKey]: GatewayMain.ShutdownEvent })
         try
         {
-            await this.gateway.DisposeAsync()
+            try
+            {
+                await this.gateway.DisposeAsync()
+            }
+            finally
+            {
+                await this.observability?.Shutdown()
+            }
         }
         catch (error)
         {

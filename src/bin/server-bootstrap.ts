@@ -9,6 +9,8 @@ import type { MachineTlsRef } from '../cluster/machine-tls.js'
 import type { IWorkerRouter } from '../cluster/worker-router.js'
 import type { IProvisionedSecretSource } from '../config/provisioned-secret-source.js'
 import type { ILogger } from '../observability/logger.js'
+import type { Observability, IObservabilityOptions, ObservabilityRole } from '../observability/observability.js'
+import type { OtlpProtocol } from '../observability/otlp-protocol.js'
 
 export class ServerBootstrap
 {
@@ -28,7 +30,7 @@ export class ServerBootstrap
     private static readonly OtelLabel = ' otel='
     private static readonly WorkerNeedsTls = 'worker requires TLS (set PRAGMATIC_TLS_CERT_FILE/KEY_FILE/CA_FILE)'
 
-    public static ComposeOptions(config: ServerConfig, provisioning: ITenantProvisioning, platform?: PlatformServices, provisionedSecrets?: IProvisionedSecretSource, logger?: ILogger): PragmaticServerHostOptions
+    public static ComposeOptions(config: ServerConfig, provisioning: ITenantProvisioning, platform?: PlatformServices, provisionedSecrets?: IProvisionedSecretSource, logger?: ILogger, observability?: Observability): PragmaticServerHostOptions
     {
         if (config.deploymentMode === DeploymentMode.Cloud && platform === undefined)
         {
@@ -49,6 +51,7 @@ export class ServerBootstrap
             provisionedSecrets,
             clientTls: config.clientTls,
             logger,
+            observability,
         }
     }
 
@@ -59,7 +62,7 @@ export class ServerBootstrap
         return `pragmatic-server listening on ${config.host}:${config.port} mode=${config.deploymentMode} tenants=${tenantCount} ownership=${ownership} secrets=${secrets}${ServerBootstrap.ClientMtls(config.clientTls)}${ServerBootstrap.OidcFlowToken}${ownership}${ServerBootstrap.Otel(config)}`
     }
 
-    public static ComposeWorkerOptions(config: ServerConfig, provisioning: ITenantProvisioning, provisionedSecrets?: IProvisionedSecretSource, logger?: ILogger): WorkerHostOptions
+    public static ComposeWorkerOptions(config: ServerConfig, provisioning: ITenantProvisioning, provisionedSecrets?: IProvisionedSecretSource, logger?: ILogger, observability?: Observability): WorkerHostOptions
     {
         if (config.tls === undefined)
         {
@@ -85,6 +88,7 @@ export class ServerBootstrap
             healthPort: config.healthPort,
             advertise,
             logger,
+            observability,
         }
     }
 
@@ -117,6 +121,24 @@ export class ServerBootstrap
         const tracing = config.otlpEndpoint !== undefined && config.otlpEndpoint.length > 0
         const metrics = config.metricsPort !== undefined || config.otlpMetrics === true
         return tracing || metrics
+    }
+
+    public static ObservabilityOptions(config: { serviceName?: string; replicaId?: string; metricsPort?: number; otlpEndpoint?: string; otlpProtocol?: OtlpProtocol; otlpMetrics?: boolean; traceSampling?: number }, role: ObservabilityRole, replicaId?: string): IObservabilityOptions | undefined
+    {
+        if (!ServerBootstrap.OtelEnabled(config))
+        {
+            return undefined
+        }
+        return {
+            role,
+            serviceName: config.serviceName,
+            replicaId: replicaId ?? config.replicaId,
+            metricsPort: config.metricsPort,
+            otlpEndpoint: config.otlpEndpoint,
+            otlpProtocol: config.otlpProtocol,
+            otlpMetrics: config.otlpMetrics,
+            traceSampling: config.traceSampling,
+        }
     }
 
     private static Otel(config: { metricsPort?: number; otlpEndpoint?: string; otlpMetrics?: boolean }): string

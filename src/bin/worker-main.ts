@@ -6,6 +6,7 @@ import { WorkerHost } from '../cluster/worker-host.js'
 import { ServerBootstrap } from './server-bootstrap.js'
 import { StructuredLogger } from '../observability/logger.js'
 import type { ILogger } from '../observability/logger.js'
+import { Observability, ObservabilityRole } from '../observability/observability.js'
 
 class WorkerMain
 {
@@ -25,7 +26,7 @@ class WorkerMain
 
     private shuttingDown = false
 
-    private constructor(private readonly host: WorkerHost, private readonly logger: ILogger)
+    private constructor(private readonly host: WorkerHost, private readonly logger: ILogger, private readonly observability?: Observability)
     {
     }
 
@@ -36,9 +37,11 @@ class WorkerMain
         const config = ServerConfigLoader.Load(process.env, read)
         const { provisioning } = TenantProvisioningFactory.Build(config, read)
         const provisionedSecrets = ProvisionedSecretsFactory.Build(config, read)
-        const host = await WorkerHost.StartAsync(ServerBootstrap.ComposeWorkerOptions(config, provisioning, provisionedSecrets, logger))
+        const observabilityOptions = ServerBootstrap.ObservabilityOptions(config, ObservabilityRole.Worker)
+        const observability = observabilityOptions !== undefined ? Observability.Start(observabilityOptions) : undefined
+        const host = await WorkerHost.StartAsync(ServerBootstrap.ComposeWorkerOptions(config, provisioning, provisionedSecrets, logger, observability))
         logger.Info(ServerBootstrap.WorkerStartupLine(config), { [WorkerMain.EventKey]: WorkerMain.StartupEvent })
-        const main = new WorkerMain(host, logger)
+        const main = new WorkerMain(host, logger, observability)
         process.on(WorkerMain.SigTerm, () => void main.Shutdown())
         process.on(WorkerMain.SigInt, () => void main.Shutdown())
     }
@@ -59,7 +62,14 @@ class WorkerMain
         this.logger.Info(WorkerMain.ShutdownLine, { [WorkerMain.EventKey]: WorkerMain.ShutdownEvent })
         try
         {
-            await this.host.DisposeAsync()
+            try
+            {
+                await this.host.DisposeAsync()
+            }
+            finally
+            {
+                await this.observability?.Shutdown()
+            }
         }
         catch (error)
         {

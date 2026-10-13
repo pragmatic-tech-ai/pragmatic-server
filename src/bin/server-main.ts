@@ -6,6 +6,7 @@ import { PragmaticServerHost } from '../host/pragmatic-server-host.js'
 import { ServerBootstrap } from './server-bootstrap.js'
 import { StructuredLogger } from '../observability/logger.js'
 import type { ILogger } from '../observability/logger.js'
+import { Observability, ObservabilityRole } from '../observability/observability.js'
 
 class ServerMain
 {
@@ -25,7 +26,7 @@ class ServerMain
 
     private shuttingDown = false
 
-    private constructor(private readonly host: PragmaticServerHost, private readonly logger: ILogger)
+    private constructor(private readonly host: PragmaticServerHost, private readonly logger: ILogger, private readonly observability?: Observability)
     {
     }
 
@@ -36,10 +37,12 @@ class ServerMain
         const config = ServerConfigLoader.Load(process.env, read)
         const { provisioning, tenantCount } = TenantProvisioningFactory.Build(config, read)
         const provisionedSecrets = ProvisionedSecretsFactory.Build(config, read)
-        const options = ServerBootstrap.ComposeOptions(config, provisioning, undefined, provisionedSecrets, logger)
+        const observabilityOptions = ServerBootstrap.ObservabilityOptions(config, ObservabilityRole.Host)
+        const observability = observabilityOptions !== undefined ? Observability.Start(observabilityOptions) : undefined
+        const options = ServerBootstrap.ComposeOptions(config, provisioning, undefined, provisionedSecrets, logger, observability)
         const host = await PragmaticServerHost.StartAsync(options)
         logger.Info(ServerBootstrap.StartupLine(config, tenantCount), { [ServerMain.EventKey]: ServerMain.StartupEvent })
-        const main = new ServerMain(host, logger)
+        const main = new ServerMain(host, logger, observability)
         process.on(ServerMain.SigTerm, () => void main.Shutdown())
         process.on(ServerMain.SigInt, () => void main.Shutdown())
     }
@@ -60,7 +63,14 @@ class ServerMain
         this.logger.Info(ServerMain.ShutdownLine, { [ServerMain.EventKey]: ServerMain.ShutdownEvent })
         try
         {
-            await this.host.DisposeAsync()
+            try
+            {
+                await this.host.DisposeAsync()
+            }
+            finally
+            {
+                await this.observability?.Shutdown()
+            }
         }
         catch (error)
         {
