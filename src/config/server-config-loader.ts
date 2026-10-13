@@ -77,7 +77,28 @@ export class ServerConfigLoader
     private static readonly CloudSqlAuthIam = 'iam'
     private static readonly EnvCloudProvider = 'PRAGMATIC_CLOUD_PROVIDER'
     private static readonly MissingCloudProvider = 'PRAGMATIC_CLOUD_PROVIDER is required for cloud deployment'
-    private static readonly BadCloudProvider = 'PRAGMATIC_CLOUD_PROVIDER must be gcp or aws'
+    private static readonly BadCloudProvider = 'PRAGMATIC_CLOUD_PROVIDER must be gcp, aws or azure'
+    private static readonly EnvBlobAccount = 'PRAGMATIC_AZURE_STORAGE_ACCOUNT'
+    private static readonly EnvBlobContainer = 'PRAGMATIC_BLOB_CONTAINER'
+    private static readonly EnvBlobPrefix = 'PRAGMATIC_BLOB_PREFIX'
+    private static readonly EnvKeyVaultUrl = 'PRAGMATIC_AZURE_KEYVAULT_URL'
+    private static readonly EnvAzpgHost = 'PRAGMATIC_AZPG_HOST'
+    private static readonly EnvAzpgPort = 'PRAGMATIC_AZPG_PORT'
+    private static readonly EnvAzpgUser = 'PRAGMATIC_AZPG_USER'
+    private static readonly EnvAzpgDb = 'PRAGMATIC_AZPG_DB'
+    private static readonly EnvAzpgAuth = 'PRAGMATIC_AZPG_AUTH'
+    private static readonly EnvAzpgPasswordRef = 'PRAGMATIC_AZPG_PASSWORD_REF'
+    private static readonly MissingBlobAccount = 'PRAGMATIC_AZURE_STORAGE_ACCOUNT is required for cloud deployment'
+    private static readonly MissingBlobContainer = 'PRAGMATIC_BLOB_CONTAINER is required for cloud deployment'
+    private static readonly MissingKeyVaultUrl = 'PRAGMATIC_AZURE_KEYVAULT_URL is required for cloud deployment'
+    private static readonly MissingAzpgHost = 'PRAGMATIC_AZPG_HOST is required for cloud deployment'
+    private static readonly MissingAzpgUser = 'PRAGMATIC_AZPG_USER is required for cloud deployment'
+    private static readonly MissingAzpgDb = 'PRAGMATIC_AZPG_DB is required for cloud deployment'
+    private static readonly MissingAzpgPasswordRef = 'PRAGMATIC_AZPG_PASSWORD_REF is required when PRAGMATIC_AZPG_AUTH=password'
+    private static readonly BadAzpgAuth = 'PRAGMATIC_AZPG_AUTH must be entra or password'
+    private static readonly BadAzpgPort = 'PRAGMATIC_AZPG_PORT must be a port between 1 and 65535'
+    private static readonly AzpgAuthPassword = 'password'
+    private static readonly AzpgAuthEntra = 'entra'
     private static readonly EnvAwsRegion = 'PRAGMATIC_AWS_REGION'
     private static readonly EnvS3Bucket = 'PRAGMATIC_S3_BUCKET'
     private static readonly EnvS3Prefix = 'PRAGMATIC_S3_PREFIX'
@@ -401,6 +422,10 @@ export class ServerConfigLoader
         {
             return ServerConfigLoader.CloudAws(env, cloudProvider, cloudMasterKeyRef)
         }
+        if (cloudProvider === DeploymentProvider.Azure)
+        {
+            return ServerConfigLoader.CloudAzure(env, cloudProvider, cloudMasterKeyRef)
+        }
         const gcsBucket = ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvGcsBucket], ServerConfigLoader.MissingGcsBucket)
         const gcpProject = ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvGcpProject], ServerConfigLoader.MissingGcpProject)
         const cloudSqlInstance = ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvCloudSqlInstance], ServerConfigLoader.MissingCloudSqlInstance)
@@ -460,9 +485,50 @@ export class ServerConfigLoader
         }
     }
 
+    private static CloudAzure(env: Record<string, string | undefined>, cloudProvider: DeploymentProvider, cloudMasterKeyRef: string): Partial<ServerConfig>
+    {
+        const blobAccount = ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvBlobAccount], ServerConfigLoader.MissingBlobAccount)
+        const blobContainer = ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvBlobContainer], ServerConfigLoader.MissingBlobContainer)
+        const keyVaultUrl = ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvKeyVaultUrl], ServerConfigLoader.MissingKeyVaultUrl)
+        const azpgHost = ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvAzpgHost], ServerConfigLoader.MissingAzpgHost)
+        const azpgUser = ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvAzpgUser], ServerConfigLoader.MissingAzpgUser)
+        const azpgDatabase = ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvAzpgDb], ServerConfigLoader.MissingAzpgDb)
+        const rawPort = ServerConfigLoader.NonEmpty(env[ServerConfigLoader.EnvAzpgPort])
+        const azpgPort = rawPort === undefined ? undefined : ServerConfigLoader.PositiveIntOr(rawPort, ServerConfigLoader.BadAzpgPort)
+        const azpgAuth = ServerConfigLoader.NonEmpty(env[ServerConfigLoader.EnvAzpgAuth])
+        const authLower = azpgAuth?.toLowerCase()
+        if (authLower !== undefined && authLower !== ServerConfigLoader.AzpgAuthEntra && authLower !== ServerConfigLoader.AzpgAuthPassword)
+        {
+            throw new Error(ServerConfigLoader.BadAzpgAuth)
+        }
+        const azpgPasswordRef = ServerConfigLoader.NonEmpty(env[ServerConfigLoader.EnvAzpgPasswordRef])
+        if (authLower === ServerConfigLoader.AzpgAuthPassword && azpgPasswordRef === undefined)
+        {
+            throw new Error(ServerConfigLoader.MissingAzpgPasswordRef)
+        }
+        return {
+            cloudProvider,
+            blobAccount,
+            blobContainer,
+            blobPrefix: ServerConfigLoader.NonEmpty(env[ServerConfigLoader.EnvBlobPrefix]),
+            keyVaultUrl,
+            azpgHost,
+            azpgPort,
+            azpgUser,
+            azpgDatabase,
+            azpgAuth,
+            azpgPasswordRef,
+            cloudMasterKeyRef,
+        }
+    }
+
     private static ProviderOf(value: string): DeploymentProvider
     {
         const lower = value.toLowerCase()
+        if (lower === DeploymentProvider.Azure)
+        {
+            return DeploymentProvider.Azure
+        }
         if (lower === DeploymentProvider.Gcp)
         {
             return DeploymentProvider.Gcp

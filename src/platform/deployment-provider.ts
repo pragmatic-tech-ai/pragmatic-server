@@ -3,4 +3,5 @@ export enum DeploymentProvider
 {
     Gcp = 'gcp',
     Aws = 'aws',
+    Azure = 'azure',
 }

@@ -52,6 +52,16 @@ export interface ServerConfig
     rdsDatabase?: string
     rdsAuth?: string
     rdsPasswordRef?: string
+    blobAccount?: string
+    blobContainer?: string
+    blobPrefix?: string
+    keyVaultUrl?: string
+    azpgHost?: string
+    azpgPort?: number
+    azpgUser?: string
+    azpgDatabase?: string
+    azpgAuth?: string
+    azpgPasswordRef?: string
     gcsBucket?: string
     gcsPrefix?: string
     gcpProject?: string

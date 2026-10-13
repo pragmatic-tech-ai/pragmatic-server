@@ -239,7 +239,7 @@ test('cloud mode with gcp provider resolves DeploymentProvider.Gcp', () =>
 
 test('cloud mode rejects an unknown provider', () =>
 {
-    assert.throws(() => ServerConfigLoader.Load(AwsCloudEnv.Cloud({ PRAGMATIC_CLOUD_PROVIDER: 'azure' }), Env.NoRead), /must be gcp or aws/)
+    assert.throws(() => ServerConfigLoader.Load(AwsCloudEnv.Cloud({ PRAGMATIC_CLOUD_PROVIDER: 'oracle' }), Env.NoRead), /must be gcp, aws or azure/)
 })
 
 test('cloud mode requires PRAGMATIC_CLOUD_PROVIDER', () =>
@@ -304,4 +304,85 @@ test('local mode ignores gcp vars', () =>
     assert.equal(config.gcsBucket, undefined)
     assert.equal(config.cloudMasterKeyRef, undefined)
     assert.equal('cloudSqlAuth' in config, false)
+})
+
+class AzureCloudEnv
+{
+    public static readonly Required: Record<string, string> = {
+        PRAGMATIC_CLOUD_PROVIDER: 'azure',
+        PRAGMATIC_AZURE_STORAGE_ACCOUNT: 'acct',
+        PRAGMATIC_BLOB_CONTAINER: 'cont',
+        PRAGMATIC_AZURE_KEYVAULT_URL: 'https://v.vault.azure.net',
+        PRAGMATIC_AZPG_HOST: 'db.postgres.database.azure.com',
+        PRAGMATIC_AZPG_USER: 'svc',
+        PRAGMATIC_AZPG_DB: 'db1',
+        PRAGMATIC_CLOUD_MASTER_KEY_REF: 'cluster/master-key',
+    }
+
+    public static Cloud(extra: Record<string, string> = {}): Record<string, string | undefined>
+    {
+        return { ...Env.Minimal(), PRAGMATIC_DEPLOYMENT_MODE: 'cloud', ...AzureCloudEnv.Required, ...extra }
+    }
+}
+
+test('cloud mode with provider azure and all azure vars populates the azure fields', () =>
+{
+    const config = ServerConfigLoader.Load(AzureCloudEnv.Cloud({ PRAGMATIC_BLOB_PREFIX: 'p/' }), Env.NoRead)
+    assert.equal(config.cloudProvider, DeploymentProvider.Azure)
+    assert.equal(config.blobAccount, 'acct')
+    assert.equal(config.blobContainer, 'cont')
+    assert.equal(config.blobPrefix, 'p/')
+    assert.equal(config.keyVaultUrl, 'https://v.vault.azure.net')
+    assert.equal(config.azpgHost, 'db.postgres.database.azure.com')
+    assert.equal(config.azpgUser, 'svc')
+    assert.equal(config.azpgDatabase, 'db1')
+    assert.equal(config.cloudMasterKeyRef, 'cluster/master-key')
+})
+
+for (const name of Object.keys(AzureCloudEnv.Required))
+{
+    test(`azure cloud mode missing ${name} throws naming only that var`, () =>
+    {
+        for (const blank of [undefined, ''])
+        {
+            const env = AzureCloudEnv.Cloud()
+            env[name] = blank
+            assert.throws(() => ServerConfigLoader.Load(env, Env.NoRead), (error: Error) =>
+                error.message.startsWith(`${name} is required`) && !error.message.includes(AzureCloudEnv.Required[name]))
+        }
+    })
+}
+
+test('azure password auth requires a password ref', () =>
+{
+    assert.throws(() => ServerConfigLoader.Load(AzureCloudEnv.Cloud({ PRAGMATIC_AZPG_AUTH: 'password' }), Env.NoRead), /required when PRAGMATIC_AZPG_AUTH=password/)
+    const config = ServerConfigLoader.Load(AzureCloudEnv.Cloud({ PRAGMATIC_AZPG_AUTH: 'password', PRAGMATIC_AZPG_PASSWORD_REF: 'db/pw' }), Env.NoRead)
+    assert.equal(config.azpgPasswordRef, 'db/pw')
+})
+
+test('azure rejects an unknown azpg auth mode', () =>
+{
+    assert.throws(() => ServerConfigLoader.Load(AzureCloudEnv.Cloud({ PRAGMATIC_AZPG_AUTH: 'bogus' }), Env.NoRead), /must be entra or password/)
+    assert.equal(ServerConfigLoader.Load(AzureCloudEnv.Cloud({ PRAGMATIC_AZPG_AUTH: 'Entra' }), Env.NoRead).azpgAuth, 'Entra')
+})
+
+test('azure azpg port must be a bounded positive integer', () =>
+{
+    for (const bad of ['abc', '0', '70000'])
+    {
+        assert.throws(() => ServerConfigLoader.Load(AzureCloudEnv.Cloud({ PRAGMATIC_AZPG_PORT: bad }), Env.NoRead), /between 1 and 65535/)
+    }
+    assert.equal(ServerConfigLoader.Load(AzureCloudEnv.Cloud({ PRAGMATIC_AZPG_PORT: '5432' }), Env.NoRead).azpgPort, 5432)
+})
+
+test('azure provider value is case-insensitive', () =>
+{
+    assert.equal(ServerConfigLoader.Load(AzureCloudEnv.Cloud({ PRAGMATIC_CLOUD_PROVIDER: 'AZURE' }), Env.NoRead).cloudProvider, DeploymentProvider.Azure)
+})
+
+test('the azure provider does not require the gcp or aws vars', () =>
+{
+    const config = ServerConfigLoader.Load(AzureCloudEnv.Cloud(), Env.NoRead)
+    assert.equal(config.gcsBucket, undefined)
+    assert.equal(config.s3Bucket, undefined)
 })
