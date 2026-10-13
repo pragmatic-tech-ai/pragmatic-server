@@ -133,12 +133,21 @@ test('redis oidc flow store (live): cross-instance, single-use, namespace-isolat
     const b = new RedisOidcFlowStateStore(url as string, Fixture.Prefix)
     const other = new RedisOidcFlowStateStore(url as string, Fixture.OtherPrefix)
     const state = new OidcFlowState(raw, 'n', 'v', 'https://app/cb', new Date(Date.now() + 60_000))
-    await a.Put(state)
-    assert.equal(await other.Take(raw), null)
-    const got = await b.Take(raw)
-    assert.ok(got !== null)
-    assert.equal(got.Nonce, 'n')
-    assert.equal(got.CodeVerifier, 'v')
-    assert.equal(await b.Take(raw), null)
-    assert.equal(await a.Take(raw), null)
+    try
+    {
+        await a.Put(state)
+        assert.equal(await other.Take(raw), null)
+        const got = await b.Take(raw)
+        assert.ok(got !== null)
+        assert.equal(got.Nonce, 'n')
+        assert.equal(got.CodeVerifier, 'v')
+        assert.equal(await b.Take(raw), null)
+        assert.equal(await a.Take(raw), null)
+    }
+    finally
+    {
+        await a.Dispose()
+        await b.Dispose()
+        await other.Dispose()
+    }
 })

@@ -72,6 +72,24 @@ export class RedisOidcFlowStateStore implements IOidcFlowStateStore
         }
     }
 
+    /** Quits the underlying client if one was opened; a no-op otherwise. Errors are swallowed. */
+    public async Dispose(): Promise<void>
+    {
+        const client = this.client
+        this.client = null
+        if (client === null || !client.isOpen || typeof client.quit !== 'function')
+        {
+            return
+        }
+        try
+        {
+            await client.quit()
+        }
+        catch
+        {
+        }
+    }
+
     private async WithTimeout<T>(op: Promise<T>): Promise<T>
     {
         let timer: NodeJS.Timeout | undefined
