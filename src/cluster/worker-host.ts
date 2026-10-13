@@ -39,6 +39,7 @@ import { NullLogger } from '../observability/logger.js'
 import type { ILogger } from '../observability/logger.js'
 import { RequestInstrumentation } from '../observability/request-instrumentation.js'
 import type { Observability } from '../observability/observability.js'
+import { RequestCorrelation } from '../observability/request-correlation.js'
 
 export interface WorkerHostOptions
 {
@@ -287,13 +288,14 @@ export class WorkerHost
                 socket.destroy()
                 return
             }
+            const parent = this.instrumentation !== undefined ? RequestCorrelation.Extract(req.headers) : undefined
             const languageService = await server.LanguageService()
             const manager = await server.Manager()
             this.wss.handleUpgrade(req, socket, head, (ws: WebSocket) =>
             {
                 try
                 {
-                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors(), this.instrumentation)
+                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors(), this.instrumentation, parent)
                     this.handlers.add(handler)
                     ws.on(WorkerHost.CloseEvent, () =>
                     {

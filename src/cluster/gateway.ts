@@ -15,6 +15,7 @@ import { MachineCertIdentity } from '../host/machine-principal-map.js'
 import { MachineFingerprintHeader } from './machine-headers.js'
 import { NullLogger } from '../observability/logger.js'
 import type { ILogger } from '../observability/logger.js'
+import { RequestCorrelation } from '../observability/request-correlation.js'
 
 export interface GatewayOptions
 {
@@ -177,6 +178,7 @@ export class Gateway
             headers[Gateway.AuthorizationHeader] = authorization
         }
         Gateway.StampMachineFingerprint(headers, req.socket as TLSSocket, this.machineTlsConfigured)
+        RequestCorrelation.Inject(RequestCorrelation.Extract(req.headers), headers)
         const wsOptions = { key: client.key, cert: client.cert, ca: client.ca, rejectUnauthorized: true, servername: this.serverName, headers }
         const workerWs = new WebSocket(`${Gateway.WsScheme}${endpoint.host}:${endpoint.port}/`, wsOptions)
         this.workerSockets.add(workerWs)
