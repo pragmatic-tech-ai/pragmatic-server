@@ -1,5 +1,7 @@
 import type { BootstrapOptions, OidcServerOptions, PragmaticServerOptions } from '../pragmatic-server.js'
 import type { ConnectorsPolicy } from '../host/connector-policy.js'
+import type { MachinePrincipalMap } from '../host/machine-principal-map.js'
+import type { IdentityConfig } from '@pragmatic-tech-ai/todl-identity'
 
 export interface TenantProvisioning
 {
@@ -9,6 +11,8 @@ export interface TenantProvisioning
     connectorsPolicy?: ConnectorsPolicy
     connectors?: PragmaticServerOptions['connectors']
     connectorSecretRefs?: readonly string[]
+    identity?: IdentityConfig
+    machine?: MachinePrincipalMap
 }
 
 /** Source of per-tenant provisioning (display name + optional bootstrap/OIDC). 5B/5C back this with a
