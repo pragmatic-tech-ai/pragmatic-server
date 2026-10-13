@@ -7,8 +7,8 @@ import { IdentityPackKind, IdentityPackKinds } from './identity-pack-kind.js'
 
 export interface ResolvedPack
 {
-    pack: IIdentityProviderPack
-    oidc: OidcIdentityProviderPackBase | undefined
+    Pack: IIdentityProviderPack
+    Oidc: OidcIdentityProviderPackBase | undefined
 }
 
 /** Resolves a tenant's composite identity pack from its stored IdentityConfig: the base ServerIdentityPack
@@ -33,7 +33,7 @@ export class IdentityPackResolver
         const kind = IdentityPackKinds.FromPackId(config.PackId)
         if (kind === IdentityPackKind.Local)
         {
-            return { pack: ServerIdentityPack.OpenWith(stores, { DelegationDepth: config.DelegationDepth }), oidc: undefined }
+            return { Pack: ServerIdentityPack.OpenWith(stores, { DelegationDepth: config.DelegationDepth }), Oidc: undefined }
         }
         const oidcPack = this.BuildOidcPack(kind, config, stores)
         const oidcAuthenticator = oidcPack.AuthenticatorFor(AuthMethod.Oidc)
@@ -43,7 +43,7 @@ export class IdentityPackResolver
             DelegationDepth: config.DelegationDepth,
             Policy: policy,
         })
-        return { pack, oidc: oidcPack }
+        return { Pack: pack, Oidc: oidcPack }
     }
 
     private BuildOidcPack(kind: IdentityPackKind, config: IdentityConfig, stores: IdentityStoreSet): OidcIdentityProviderPackBase

@@ -71,7 +71,7 @@ export class ResolverFixture
         const tenant = new Tenant(ResolverFixture.TenantIdPrefix + packId, TenantKind.Saas, packId)
         const resolver = new IdentityPackResolver(http, flowStates)
         const resolved = resolver.Resolve(tenant, config, stores)
-        const begun = await resolved.oidc!.BeginAuthorization(tenant)
+        const begun = await resolved.Oidc!.BeginAuthorization(tenant)
         const nonce = flowStates.Peek(begun.State)!.Nonce
         const idToken = await idp.MintIdToken({
             sub: ResolverFixture.Subject,
