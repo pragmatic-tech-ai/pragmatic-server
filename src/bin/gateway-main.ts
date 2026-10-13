@@ -21,6 +21,8 @@ class GatewayMain
     private static readonly StartFailedEvent = 'start-failed'
     private static readonly ShutdownErrorEvent = 'shutdown-error'
     private static readonly EventKey = 'event'
+    private static readonly ObservabilityShutdownFailed = 'observability shutdown failed: '
+    private static readonly ObservabilityShutdownEvent = 'observability-shutdown-error'
 
     private shuttingDown = false
 
@@ -64,7 +66,7 @@ class GatewayMain
             }
             finally
             {
-                await this.observability?.Shutdown()
+                await this.ShutdownObservability()
             }
         }
         catch (error)
@@ -76,6 +78,18 @@ class GatewayMain
         }
         await this.router.Drain().catch(() => {})
         process.exit(0)
+    }
+
+    private async ShutdownObservability(): Promise<void>
+    {
+        try
+        {
+            await this.observability?.Shutdown()
+        }
+        catch (error)
+        {
+            this.logger.Error(GatewayMain.ObservabilityShutdownFailed + (error instanceof Error ? error.message : GatewayMain.UnknownError), { [GatewayMain.EventKey]: GatewayMain.ObservabilityShutdownEvent })
+        }
     }
 }
 

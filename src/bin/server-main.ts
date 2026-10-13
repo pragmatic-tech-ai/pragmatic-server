@@ -23,6 +23,8 @@ class ServerMain
     private static readonly StartFailedEvent = 'start-failed'
     private static readonly ShutdownErrorEvent = 'shutdown-error'
     private static readonly EventKey = 'event'
+    private static readonly ObservabilityShutdownFailed = 'observability shutdown failed: '
+    private static readonly ObservabilityShutdownEvent = 'observability-shutdown-error'
 
     private shuttingDown = false
 
@@ -69,7 +71,7 @@ class ServerMain
             }
             finally
             {
-                await this.observability?.Shutdown()
+                await this.ShutdownObservability()
             }
         }
         catch (error)
@@ -79,6 +81,18 @@ class ServerMain
             return
         }
         process.exit(0)
+    }
+
+    private async ShutdownObservability(): Promise<void>
+    {
+        try
+        {
+            await this.observability?.Shutdown()
+        }
+        catch (error)
+        {
+            this.logger.Error(ServerMain.ObservabilityShutdownFailed + (error instanceof Error ? error.message : ServerMain.UnknownError), { [ServerMain.EventKey]: ServerMain.ObservabilityShutdownEvent })
+        }
     }
 }
 
