@@ -28,6 +28,10 @@ import { InMemoryTenantCoordinator } from '../tenancy/tenant-coordinator.js'
 import { TenantRegistry } from '../tenancy/tenant-registry.js'
 import { InMemoryTenantOwnership, TenantOwnedElsewhereError } from '../tenancy/tenant-ownership.js'
 import { RedisTenantOwnership } from '../tenancy/redis-tenant-ownership.js'
+import { FetchHttpClient, InMemoryOidcFlowStateStore } from '@pragmatic-tech-ai/todl-identity-cloud'
+import { RedisOidcFlowStateStore } from '../identity/redis-oidc-flow-state-store.js'
+import { ClusterKeys } from '../cluster/cluster-keys.js'
+import type { IdentityRuntime } from '../identity/identity-runtime.js'
 import type { ITenantProvisioning } from '../tenancy/tenant-provisioning.js'
 import type { PlatformServices } from '../platform/platform-services.js'
 import type { DeploymentMode } from '../platform/deployment-mode.js'
@@ -60,6 +64,7 @@ export interface WebSocketAddress
 export class PragmaticServerHost
 {
     private static readonly DefaultHost = '127.0.0.1'
+    private static readonly FlowKeySeparator = ':'
     private static readonly UpgradeEvent = 'upgrade'
     private static readonly RequestEvent = 'request'
     private static readonly CloseEvent = 'close'
@@ -119,6 +124,17 @@ export class PragmaticServerHost
         this.sweep.unref()
     }
 
+    private static BuildIdentityRuntime(redisUrl: string | undefined): IdentityRuntime
+    {
+        const url = redisUrl !== undefined && redisUrl.length > 0 ? redisUrl : undefined
+        return {
+            HttpClient: new FetchHttpClient(),
+            FlowStateFor: tenantId => url === undefined
+                ? new InMemoryOidcFlowStateStore()
+                : new RedisOidcFlowStateStore(url, ClusterKeys.OidcFlowPrefix + tenantId + PragmaticServerHost.FlowKeySeparator),
+        }
+    }
+
     public static async StartAsync(options: PragmaticServerHostOptions): Promise<PragmaticServerHost>
     {
         const coordinator = new InMemoryTenantCoordinator()
@@ -126,7 +142,7 @@ export class PragmaticServerHost
             ? new RedisTenantOwnership(options.redisUrl, options.replicaId ?? randomUUID())
             : new InMemoryTenantOwnership()
         await ownership.Start().catch(() => {})
-        const registry = new TenantRegistry(options.baseDir, options.masterKey, options.provisioning, coordinator, options.platform, options.deploymentMode, ownership, options.provisionedSecrets)
+        const registry = new TenantRegistry(options.baseDir, options.masterKey, options.provisioning, coordinator, options.platform, options.deploymentMode, ownership, options.provisionedSecrets, PragmaticServerHost.BuildIdentityRuntime(options.redisUrl))
         const host = options.host ?? PragmaticServerHost.DefaultHost
         const httpServer = options.clientTls === undefined ? createServer() : httpsCreateServer(MachineTls.OptionalServer(options.clientTls))
         const wss = new WebSocketServer({ noServer: true })

@@ -8,7 +8,8 @@ import type { DeploymentMode } from '../platform/deployment-mode.js'
 import type { ITenantCoordinator } from './tenant-coordinator.js'
 import { InMemoryTenantOwnership, TenantOwnedElsewhereError } from './tenant-ownership.js'
 import type { ITenantOwnership, TenantLostHandler } from './tenant-ownership.js'
-import type { ITenantProvisioning, TenantProvisioning } from './tenant-provisioning.js'
+import type { IdentityRuntime } from '../identity/identity-runtime.js'
+import type { ITenantProvisioning,TenantProvisioning } from './tenant-provisioning.js'
 
 export class InMemoryTenantProvisioning implements ITenantProvisioning
 {
@@ -43,13 +44,14 @@ export class TenantRegistry
     private ownership: ITenantOwnership
     private readonly provisionedSecrets: IProvisionedSecretSource | undefined
     private readonly lostDuringBuild = new Set<string>()
+    private readonly identityRuntime: IdentityRuntime | undefined
     private readonly platform: PlatformServices | undefined
     private readonly deploymentMode: DeploymentMode | undefined
     private readonly servers = new Map<string, PragmaticServer>()
     private readonly pending = new Map<string, Promise<PragmaticServer>>()
     private readonly disposing = new Map<string, Promise<void>>()
 
-    public constructor(baseDir: string, masterKey: MasterKeyRef, provisioning: ITenantProvisioning, coordinator: ITenantCoordinator, platform?: PlatformServices, deploymentMode?: DeploymentMode, ownership: ITenantOwnership = new InMemoryTenantOwnership(), provisionedSecrets?: IProvisionedSecretSource)
+    public constructor(baseDir: string, masterKey: MasterKeyRef, provisioning: ITenantProvisioning, coordinator: ITenantCoordinator, platform?: PlatformServices, deploymentMode?: DeploymentMode, ownership: ITenantOwnership = new InMemoryTenantOwnership(), provisionedSecrets?: IProvisionedSecretSource, identityRuntime?: IdentityRuntime)
     {
         this.baseDir = baseDir
         this.masterKey = masterKey
@@ -59,6 +61,7 @@ export class TenantRegistry
         this.deploymentMode = deploymentMode
         this.ownership = ownership
         this.provisionedSecrets = provisionedSecrets
+        this.identityRuntime = identityRuntime
         this.ownership.OnLost(tenantId => void this.DisposeTenant(tenantId))
     }
 
@@ -216,7 +219,8 @@ export class TenantRegistry
         }
     }
 
-    private OptionsFor(tenantId: string, provisioning: TenantProvisioning): PragmaticServerOptions
+    /** Package-visible for tests; Build validates the tenant id before calling (it is used verbatim in flow-state key prefixes). */
+    public OptionsFor(tenantId: string, provisioning: TenantProvisioning): PragmaticServerOptions
     {
         return {
             packagesRoot: join(this.baseDir, tenantId, TenantRegistry.PackagesDir),
@@ -232,6 +236,10 @@ export class TenantRegistry
                 oidc: provisioning.oidc,
                 provisionedSecrets: this.provisionedSecrets,
                 additionalSecretRefs: provisioning.connectorSecretRefs,
+                identityConfig: provisioning.identity,
+                machine: provisioning.machine,
+                httpClient: this.identityRuntime?.HttpClient,
+                flowStateStore: this.identityRuntime?.FlowStateFor(tenantId),
             },
         }
     }

@@ -7,9 +7,10 @@ import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services
 import { SolutionServicesModule, LanguageServiceModule } from './composition/server-modules.js'
 import type { MasterKeyRef } from './identity/master-key-resolver.js'
 import type { IProvisionedSecretSource } from './config/provisioned-secret-source.js'
-import type { Tenant } from '@pragmatic-tech-ai/todl-identity'
+import type { Tenant, IdentityConfig } from '@pragmatic-tech-ai/todl-identity'
 import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
-import type { OidcAuthenticator } from '@pragmatic-tech-ai/todl-identity-cloud'
+import type { OidcAuthenticator, IHttpClient, IOidcFlowStateStore } from '@pragmatic-tech-ai/todl-identity-cloud'
+import type { MachinePrincipalMap } from './host/machine-principal-map.js'
 import { IdentityModule } from './identity/identity-module.js'
 import { ServerBootstrap } from './identity/server-bootstrap.js'
 import { DeploymentMode } from './platform/deployment-mode.js'
@@ -49,6 +50,10 @@ export interface PragmaticServerIdentityOptions
     bootstrap?: BootstrapOptions
     provisionedSecrets?: IProvisionedSecretSource
     additionalSecretRefs?: readonly string[]
+    identityConfig?: IdentityConfig
+    machine?: MachinePrincipalMap
+    httpClient?: IHttpClient
+    flowStateStore?: IOidcFlowStateStore
 }
 
 export interface PragmaticServerOptions

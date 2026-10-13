@@ -14,6 +14,7 @@ export class ServerBootstrap
     private static readonly CloudNeedsPlatform = 'cloud deployment requires a configured platform (deferred backends)'
     private static readonly RedisOwnership = 'redis'
     private static readonly InMemoryOwnership = 'in-memory'
+    private static readonly OidcFlowToken = ' oidc-flow='
     private static readonly SecretsFile = 'file'
     private static readonly SecretsNone = 'none'
     private static readonly HealthOff = 'off'
@@ -50,7 +51,7 @@ export class ServerBootstrap
     {
         const ownership = config.redisUrl !== undefined ? ServerBootstrap.RedisOwnership : ServerBootstrap.InMemoryOwnership
         const secrets = config.provisionedSecretsFile !== undefined && config.provisionedSecretsFile.length > 0 ? ServerBootstrap.SecretsFile : ServerBootstrap.SecretsNone
-        return `pragmatic-server listening on ${config.host}:${config.port} mode=${config.deploymentMode} tenants=${tenantCount} ownership=${ownership} secrets=${secrets}${ServerBootstrap.ClientMtls(config.clientTls)}`
+        return `pragmatic-server listening on ${config.host}:${config.port} mode=${config.deploymentMode} tenants=${tenantCount} ownership=${ownership} secrets=${secrets}${ServerBootstrap.ClientMtls(config.clientTls)}${ServerBootstrap.OidcFlowToken}${ownership}`
     }
 
     public static ComposeWorkerOptions(config: ServerConfig, provisioning: ITenantProvisioning, provisionedSecrets?: IProvisionedSecretSource): WorkerHostOptions
