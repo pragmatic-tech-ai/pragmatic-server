@@ -20,6 +20,8 @@ import { AuditSurface } from '../host/access-audit.js'
 import type { ILogger } from '../observability/logger.js'
 import type { Observability } from '../observability/observability.js'
 import { RequestCorrelation } from '../observability/request-correlation.js'
+import { DrainController } from '../observability/drain-controller.js'
+import type { IInFlightSource } from '../observability/drain-controller.js'
 
 export interface GatewayOptions
 {
@@ -60,6 +62,27 @@ export class Gateway
     private static readonly BadGatewayStatus = 502
     private static readonly BadRequestStatus = 400
     private static readonly TenantPattern = /^[A-Za-z0-9._-]+$/
+    private static readonly ServiceUnavailableResponse = 'HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nConnection: close\r\n\r\n'
+    private static readonly DrainBeginEvent = 'drain-begin'
+    private static readonly DrainCompleteEvent = 'drain-complete'
+    private static readonly DrainFailedEvent = 'drain-failed'
+    private static readonly EventKey = 'event'
+    private static readonly InFlightField = 'inFlight'
+    private static readonly RemainingField = 'remaining'
+    private static readonly ElapsedField = 'elapsedMs'
+    private static readonly DrainedField = 'drained'
+    private static readonly StepField = 'step'
+    private static readonly DrainBeginLine = 'drain begin'
+    private static readonly DrainCompleteLine = 'drain complete'
+    private static readonly DrainFailedLine = 'drain step failed'
+    private static readonly StepReadiness = 'readiness-close'
+    private static readonly StepWait = 'in-flight-wait'
+    private static readonly StepWorkerSockets = 'terminate-worker-sockets'
+    private static readonly StepTerminate = 'terminate-clients'
+    private static readonly StepWss = 'close-wss'
+    private static readonly StepHttp = 'close-http'
+    private static readonly StepObservability = 'observability-shutdown'
+    private static readonly DefaultDrainTimeoutMs = 0
 
     private readonly httpServer: HttpServer
     private readonly wss: WebSocketServer
@@ -72,11 +95,18 @@ export class Gateway
     private readonly logger: ILogger
     private readonly rateLimit: RateLimitGuard
     private readonly health = new HealthEndpoint()
+    private readonly observability: Observability | undefined
+    private readonly drainTimeoutMs: number
+    private drainSource: IInFlightSource | undefined
+    private drainController: DrainController | undefined
+    private disposing: Promise<void> | undefined
     private ready = true
     private disposed = false
 
-    private constructor(httpServer: HttpServer, wss: WebSocketServer, router: IWorkerRouter, clientTls: ClientTlsMaterial, address: WebSocketAddress, serverName: string, machineTlsConfigured: boolean, logger: ILogger, rateLimit: RateLimitGuard = new RateLimitGuard())
+    private constructor(httpServer: HttpServer, wss: WebSocketServer, router: IWorkerRouter, clientTls: ClientTlsMaterial, address: WebSocketAddress, serverName: string, machineTlsConfigured: boolean, logger: ILogger, rateLimit: RateLimitGuard = new RateLimitGuard(), observability?: Observability, drainTimeoutMs: number = Gateway.DefaultDrainTimeoutMs)
     {
+        this.observability = observability
+        this.drainTimeoutMs = drainTimeoutMs
         this.rateLimit = rateLimit
         this.logger = logger
         this.machineTlsConfigured = machineTlsConfigured
@@ -110,7 +140,7 @@ export class Gateway
         })
         const resolved = httpServer.address() as AddressInfo
         const clientTls = MachineTls.Client(options.tls)
-        return new Gateway(httpServer, wss, options.router, clientTls, { host, port: resolved.port }, options.serverName ?? Gateway.DefaultServerName, options.clientTls !== undefined, options.logger ?? new NullLogger(), options.rateLimit)
+        return new Gateway(httpServer, wss, options.router, clientTls, { host, port: resolved.port }, options.serverName ?? Gateway.DefaultServerName, options.clientTls !== undefined, options.logger ?? new NullLogger(), options.rateLimit, options.observability, options.drainTimeoutMs ?? Gateway.DefaultDrainTimeoutMs)
     }
 
     /** Anti-spoof: ALWAYS strips any inbound fingerprint header, then stamps the verified peer-cert fingerprint only when client TLS is configured and the peer was authorized. */
@@ -141,25 +171,109 @@ export class Gateway
         return this.address
     }
 
-    public async DisposeAsync(): Promise<void>
+    /** Test seam: override the in-flight source the drain waits on (default: the live client-connection count). */
+    public SetDrainSourceForTest(source: IInFlightSource): void
+    {
+        this.drainSource = source
+    }
+
+    /** Test seam: inject the drain controller (clock/sleep) so the bounded wait is deterministic. */
+    public SetDrainControllerForTest(controller: DrainController): void
+    {
+        this.drainController = controller
+    }
+
+    public DisposeAsync(): Promise<void>
+    {
+        this.disposing ??= this.DoDispose()
+        return this.disposing
+    }
+
+    private async DoDispose(): Promise<void>
     {
         this.ready = false
         this.disposed = true
-        for (const workerWs of this.workerSockets)
+        await this.Step(Gateway.StepReadiness, () => this.httpServer.closeIdleConnections())
+        const drained = await this.Drain()
+        await this.Step(Gateway.StepWorkerSockets, () =>
         {
-            workerWs.terminate()
-        }
-        this.workerSockets.clear()
-        for (const client of this.wss.clients)
+            for (const workerWs of this.workerSockets)
+            {
+                workerWs.terminate()
+            }
+            this.workerSockets.clear()
+        })
+        await this.Step(Gateway.StepTerminate, () =>
         {
-            client.terminate()
+            for (const client of this.wss.clients)
+            {
+                client.terminate()
+            }
+        })
+        await this.Step(Gateway.StepWss, () => new Promise<void>(resolve => this.wss.close(() => resolve())))
+        await this.Step(Gateway.StepHttp, () =>
+        {
+            const closed = new Promise<void>(resolve => this.httpServer.close(() => resolve()))
+            if (!drained)
+            {
+                this.httpServer.closeAllConnections()
+            }
+            return closed
+        })
+        await this.Step(Gateway.StepObservability, async () =>
+        {
+            await this.observability?.Shutdown()
+        })
+    }
+
+    /** Runs one teardown step; a throw is logged (step name only, no secrets) and never skips the remaining steps. */
+    private async Step(name: string, action: () => void | Promise<void>): Promise<void>
+    {
+        try
+        {
+            await action()
         }
-        await new Promise<void>(resolve => this.wss.close(() => resolve()))
-        await new Promise<void>(resolve => this.httpServer.close(() => resolve()))
+        catch
+        {
+            this.logger.Warn(Gateway.DrainFailedLine, { [Gateway.EventKey]: Gateway.DrainFailedEvent, [Gateway.StepField]: name })
+        }
+    }
+
+    /** Bounded wait for bridged sessions; the gateway has no request instrumentation, so in-flight is the live client-socket count. */
+    private async Drain(): Promise<boolean>
+    {
+        try
+        {
+            const source = this.drainSource ?? { InFlight: () => this.wss.clients.size }
+            this.logger.Info(Gateway.DrainBeginLine, { [Gateway.EventKey]: Gateway.DrainBeginEvent, [Gateway.InFlightField]: source.InFlight() })
+            const controller = this.drainController ?? new DrainController(this.drainTimeoutMs)
+            const outcome = await controller.WaitForDrain(source)
+            this.logger.Info(Gateway.DrainCompleteLine, { [Gateway.EventKey]: Gateway.DrainCompleteEvent, [Gateway.DrainedField]: outcome.Drained, [Gateway.RemainingField]: outcome.Remaining, [Gateway.ElapsedField]: outcome.ElapsedMs })
+            return outcome.Drained
+        }
+        catch
+        {
+            this.logger.Warn(Gateway.DrainFailedLine, { [Gateway.EventKey]: Gateway.DrainFailedEvent, [Gateway.StepField]: Gateway.StepWait })
+            return false
+        }
+    }
+
+    private RejectRetryable(socket: Socket): void
+    {
+        if (!socket.writableEnded && !socket.destroyed)
+        {
+            socket.write(Gateway.ServiceUnavailableResponse)
+        }
+        socket.destroy()
     }
 
     private async Upgrade(req: IncomingMessage, socket: Socket, head: Buffer): Promise<void>
     {
+        if (this.disposed)
+        {
+            this.RejectRetryable(socket)
+            return
+        }
         try
         {
             const tenantId = this.TenantHint(req)
@@ -188,7 +302,7 @@ export class Gateway
             }
             if (this.disposed)
             {
-                this.Reject(socket)
+                this.RejectRetryable(socket)
                 return
             }
             this.Dial(req, socket, head, tenantId, endpoint, this.AuthorizationOf(req))
@@ -214,7 +328,7 @@ export class Gateway
             if (this.disposed)
             {
                 workerWs.terminate()
-                this.Reject(socket)
+                this.RejectRetryable(socket)
                 return
             }
             this.wss.handleUpgrade(req, socket, head, (clientWs: WebSocket) =>

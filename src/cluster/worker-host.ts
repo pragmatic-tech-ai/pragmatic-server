@@ -44,6 +44,8 @@ import type { ILogger } from '../observability/logger.js'
 import { RequestInstrumentation } from '../observability/request-instrumentation.js'
 import type { Observability } from '../observability/observability.js'
 import { RequestCorrelation } from '../observability/request-correlation.js'
+import { DrainController } from '../observability/drain-controller.js'
+import type { IInFlightSource } from '../observability/drain-controller.js'
 
 export interface WorkerHostOptions
 {
@@ -90,6 +92,30 @@ export class WorkerHost
     private static readonly NoHealthServer = 'no health server configured'
     private static readonly DefaultIdleTtlMs = 300_000
     private static readonly DefaultIdleSweepMs = 30_000
+    private static readonly DrainBeginEvent = 'drain-begin'
+    private static readonly DrainCompleteEvent = 'drain-complete'
+    private static readonly DrainFailedEvent = 'drain-failed'
+    private static readonly EventKey = 'event'
+    private static readonly InFlightField = 'inFlight'
+    private static readonly RemainingField = 'remaining'
+    private static readonly ElapsedField = 'elapsedMs'
+    private static readonly DrainedField = 'drained'
+    private static readonly StepField = 'step'
+    private static readonly DrainBeginLine = 'drain begin'
+    private static readonly DrainCompleteLine = 'drain complete'
+    private static readonly DrainFailedLine = 'drain step failed'
+    private static readonly StepReadiness = 'readiness-close'
+    private static readonly StepWait = 'in-flight-wait'
+    private static readonly StepHandlers = 'dispose-handlers'
+    private static readonly StepTerminate = 'terminate-clients'
+    private static readonly StepWss = 'close-wss'
+    private static readonly StepHttps = 'close-https'
+    private static readonly StepRegistration = 'registration-drain'
+    private static readonly StepHealth = 'close-health'
+    private static readonly StepObservability = 'observability-shutdown'
+    private static readonly StepRegistry = 'registry-dispose'
+    private static readonly DefaultDrainTimeoutMs = 0
+    private static readonly ZeroInFlight: IInFlightSource = { InFlight: () => 0 }
 
     private readonly httpsServer: HttpsServer
     private readonly wss: WebSocketServer
@@ -107,6 +133,11 @@ export class WorkerHost
     private readonly logger: ILogger
     private readonly instrumentation: RequestInstrumentation | undefined
     private readonly rateLimit: RateLimitGuard
+    private readonly observability: Observability | undefined
+    private readonly drainTimeoutMs: number
+    private drainSource: IInFlightSource | undefined
+    private drainController: DrainController | undefined
+    private disposing: Promise<void> | undefined
     private ready = false
     private disposed = false
 
@@ -123,8 +154,12 @@ export class WorkerHost
         logger: ILogger,
         instrumentation?: RequestInstrumentation,
         rateLimit: RateLimitGuard = new RateLimitGuard(),
-        audit: IAccessAuditSink = new NullAccessAuditSink())
+        audit: IAccessAuditSink = new NullAccessAuditSink(),
+        observability?: Observability,
+        drainTimeoutMs: number = WorkerHost.DefaultDrainTimeoutMs)
     {
+        this.observability = observability
+        this.drainTimeoutMs = drainTimeoutMs
         this.audit = audit
         this.authenticator = new ConnectionAuthenticator(undefined, audit)
         this.rateLimit = rateLimit
@@ -170,6 +205,18 @@ export class WorkerHost
     public MarkReady(): void
     {
         this.ready = true
+    }
+
+    /** Test seam: override the in-flight source the drain waits on (default: the request instrumentation). */
+    public SetDrainSourceForTest(source: IInFlightSource): void
+    {
+        this.drainSource = source
+    }
+
+    /** Test seam: inject the drain controller (clock/sleep) so the bounded wait is deterministic. */
+    public SetDrainControllerForTest(controller: DrainController): void
+    {
+        this.drainController = controller
     }
 
     public HealthAddressForTest(): WebSocketAddress
@@ -230,7 +277,7 @@ export class WorkerHost
             await registry.DisposeAll().catch(() => {})
             throw error
         }
-        const started = new WorkerHost(httpsServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? WorkerHost.DefaultIdleTtlMs, options.idleSweepMs ?? WorkerHost.DefaultIdleSweepMs, healthServer, healthAddress, registration, options.logger ?? new NullLogger(), options.observability !== undefined ? RequestInstrumentation.FromObservability(options.observability, options.logger ?? new NullLogger()) : undefined, options.rateLimit, options.audit)
+        const started = new WorkerHost(httpsServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? WorkerHost.DefaultIdleTtlMs, options.idleSweepMs ?? WorkerHost.DefaultIdleSweepMs, healthServer, healthAddress, registration, options.logger ?? new NullLogger(), options.observability !== undefined ? RequestInstrumentation.FromObservability(options.observability, options.logger ?? new NullLogger()) : undefined, options.rateLimit, options.audit, options.observability, options.drainTimeoutMs ?? WorkerHost.DefaultDrainTimeoutMs)
         started.MarkReady()
         return started
     }
@@ -245,28 +292,106 @@ export class WorkerHost
         return this.registry
     }
 
-    public async DisposeAsync(): Promise<void>
+    public DisposeAsync(): Promise<void>
+    {
+        this.disposing ??= this.DoDispose()
+        return this.disposing
+    }
+
+    private async DoDispose(): Promise<void>
     {
         this.ready = false
         this.disposed = true
-        clearInterval(this.sweep)
-        for (const handler of this.handlers)
+        await this.Step(WorkerHost.StepReadiness, () =>
         {
-            handler.Dispose()
-        }
-        this.handlers.clear()
-        for (const client of this.wss.clients)
+            clearInterval(this.sweep)
+            this.httpsServer.closeIdleConnections()
+        })
+        const drained = await this.Drain()
+        await this.Step(WorkerHost.StepHandlers, () =>
         {
-            client.terminate()
-        }
-        await new Promise<void>(resolve => this.wss.close(() => resolve()))
-        await new Promise<void>(resolve => this.httpsServer.close(() => resolve()))
-        await this.registration?.Drain().catch(() => {})
-        if (this.healthServer !== null)
+            for (const handler of this.handlers)
+            {
+                handler.Dispose()
+            }
+            this.handlers.clear()
+        })
+        await this.Step(WorkerHost.StepTerminate, () =>
         {
-            await new Promise<void>(resolve => this.healthServer!.close(() => resolve()))
+            for (const client of this.wss.clients)
+            {
+                client.terminate()
+            }
+        })
+        await this.Step(WorkerHost.StepWss, () => new Promise<void>(resolve => this.wss.close(() => resolve())))
+        await this.Step(WorkerHost.StepHttps, () =>
+        {
+            const closed = new Promise<void>(resolve => this.httpsServer.close(() => resolve()))
+            if (!drained)
+            {
+                this.httpsServer.closeAllConnections()
+            }
+            return closed
+        })
+        await this.Step(WorkerHost.StepRegistration, async () =>
+        {
+            await this.registration?.Drain()
+        })
+        await this.Step(WorkerHost.StepHealth, () =>
+        {
+            const health = this.healthServer
+            if (health === null)
+            {
+                return
+            }
+            return new Promise<void>(resolve => health.close(() => resolve()))
+        })
+        await this.Step(WorkerHost.StepObservability, async () =>
+        {
+            await this.observability?.Shutdown()
+        })
+        await this.Step(WorkerHost.StepRegistry, () => this.registry.DisposeAll())
+    }
+
+    /** Runs one teardown step; a throw is logged (step name only, no secrets) and never skips the remaining steps. */
+    private async Step(name: string, action: () => void | Promise<void>): Promise<void>
+    {
+        try
+        {
+            await action()
         }
-        await this.registry.DisposeAll()
+        catch
+        {
+            this.logger.Warn(WorkerHost.DrainFailedLine, { [WorkerHost.EventKey]: WorkerHost.DrainFailedEvent, [WorkerHost.StepField]: name })
+        }
+    }
+
+    /** Bounded wait for in-flight work; returns whether it fully drained. A failure is logged and never blocks teardown. */
+    private async Drain(): Promise<boolean>
+    {
+        try
+        {
+            const source = this.drainSource ?? this.instrumentation ?? WorkerHost.ZeroInFlight
+            this.logger.Info(WorkerHost.DrainBeginLine, { [WorkerHost.EventKey]: WorkerHost.DrainBeginEvent, [WorkerHost.InFlightField]: source.InFlight() })
+            const controller = this.drainController ?? new DrainController(this.drainTimeoutMs)
+            const outcome = await controller.WaitForDrain(source)
+            this.logger.Info(WorkerHost.DrainCompleteLine, { [WorkerHost.EventKey]: WorkerHost.DrainCompleteEvent, [WorkerHost.DrainedField]: outcome.Drained, [WorkerHost.RemainingField]: outcome.Remaining, [WorkerHost.ElapsedField]: outcome.ElapsedMs })
+            return outcome.Drained
+        }
+        catch
+        {
+            this.logger.Warn(WorkerHost.DrainFailedLine, { [WorkerHost.EventKey]: WorkerHost.DrainFailedEvent, [WorkerHost.StepField]: WorkerHost.StepWait })
+            return false
+        }
+    }
+
+    private RejectRetryable(socket: Socket): void
+    {
+        if (!socket.writableEnded && !socket.destroyed)
+        {
+            socket.write(WorkerHost.ServiceUnavailableResponse)
+        }
+        socket.destroy()
     }
 
     private RejectRateLimited(socket: Socket, retryAfterMs: number): void
@@ -280,6 +405,11 @@ export class WorkerHost
 
     private async Upgrade(req: IncomingMessage, socket: Socket, head: Buffer): Promise<void>
     {
+        if (this.disposed)
+        {
+            this.RejectRetryable(socket)
+            return
+        }
         const tenantId = this.TenantHint(req)
         if (tenantId === null)
         {
@@ -301,11 +431,14 @@ export class WorkerHost
         }
         catch (error)
         {
-            if (error instanceof TenantOwnedElsewhereError && !socket.writableEnded && !socket.destroyed)
+            if (error instanceof TenantOwnedElsewhereError)
             {
-                socket.write(WorkerHost.ServiceUnavailableResponse)
+                this.RejectRetryable(socket)
             }
-            socket.destroy()
+            else
+            {
+                socket.destroy()
+            }
             return
         }
         this.registry.Acquire(tenantId)
@@ -322,6 +455,11 @@ export class WorkerHost
             const parent = this.instrumentation !== undefined ? RequestCorrelation.Extract(req.headers) : undefined
             const languageService = await server.LanguageService()
             const manager = await server.Manager()
+            if (this.disposed)
+            {
+                this.RejectRetryable(socket)
+                return
+            }
             this.wss.handleUpgrade(req, socket, head, (ws: WebSocket) =>
             {
                 try
