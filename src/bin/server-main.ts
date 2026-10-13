@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import type { ServerConfig } from '../config/server-config.js'
 import { ServerConfigLoader } from '../config/server-config-loader.js'
 import { TenantProvisioningFactory } from '../config/tenant-provisioning-factory.js'
 import { ProvisionedSecretsFactory } from '../config/provisioned-secrets-factory.js'
@@ -7,7 +8,6 @@ import { ServerBootstrap } from './server-bootstrap.js'
 import { StructuredLogger } from '../observability/logger.js'
 import type { ILogger } from '../observability/logger.js'
 import { DeploymentMode } from '../platform/deployment-mode.js'
-import { GcpPlatformFactory } from '../platform/gcp-platform-factory.js'
 import type { ICloudBundle } from '../platform/gcp-platform-factory.js'
 import { Observability, ObservabilityRole } from '../observability/observability.js'
 
@@ -42,13 +42,22 @@ class ServerMain
         const provisionedSecrets = ProvisionedSecretsFactory.Build(config, read)
         const observabilityOptions = ServerBootstrap.ObservabilityOptions(config, ObservabilityRole.Host)
         const observability = observabilityOptions !== undefined ? Observability.Start(observabilityOptions) : undefined
-        const bundle = config.deploymentMode === DeploymentMode.Cloud ? await GcpPlatformFactory.Create(config) : undefined
-        const audit = ServerBootstrap.AuditSink(config, logger, observability, bundle !== undefined ? await bundle.Platform.AuditSink() : undefined)
-        const rateLimit = ServerBootstrap.RateLimit(config, audit, observability, logger)
-        const options = ServerBootstrap.ComposeOptions(config, provisioning, bundle?.Platform, provisionedSecrets, logger, observability, audit, rateLimit)
-        const host = await PragmaticServerHost.StartAsync(options)
-        logger.Info(ServerBootstrap.StartupLine(config, tenantCount), { [ServerMain.EventKey]: ServerMain.StartupEvent })
-        const main = new ServerMain(host, logger, bundle)
+        const bundle = config.deploymentMode === DeploymentMode.Cloud ? await ServerMain.BuildBundle(config) : undefined
+        let main: ServerMain
+        try
+        {
+            const audit = ServerBootstrap.AuditSink(config, logger, observability, bundle !== undefined ? await bundle.Platform.AuditSink() : undefined)
+            const rateLimit = ServerBootstrap.RateLimit(config, audit, observability, logger)
+            const options = ServerBootstrap.ComposeOptions(config, provisioning, bundle?.Platform, provisionedSecrets, logger, observability, audit, rateLimit)
+            const host = await PragmaticServerHost.StartAsync(options)
+            logger.Info(ServerBootstrap.StartupLine(config, tenantCount), { [ServerMain.EventKey]: ServerMain.StartupEvent })
+            main = new ServerMain(host, logger, bundle)
+        }
+        catch (error)
+        {
+            await ServerMain.DisposeQuietly(bundle)
+            throw error
+        }
         process.on(ServerMain.SigTerm, () => void main.Shutdown())
         process.on(ServerMain.SigInt, () => void main.Shutdown())
     }
@@ -61,13 +70,24 @@ class ServerMain
 
     private async DisposeBundle(): Promise<void>
     {
-        if (this.bundle === undefined)
+        await ServerMain.DisposeQuietly(this.bundle)
+    }
+
+    private static async BuildBundle(config: ServerConfig): Promise<ICloudBundle>
+    {
+        const { GcpPlatformFactory } = await import('../platform/gcp-platform-factory.js')
+        return await GcpPlatformFactory.Create(config)
+    }
+
+    private static async DisposeQuietly(bundle: ICloudBundle | undefined): Promise<void>
+    {
+        if (bundle === undefined)
         {
             return
         }
         try
         {
-            await this.bundle.Dispose()
+            await bundle.Dispose()
         }
         catch
         {

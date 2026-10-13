@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import type { ServerConfig } from '../config/server-config.js'
 import { ServerConfigLoader } from '../config/server-config-loader.js'
 import { TenantProvisioningFactory } from '../config/tenant-provisioning-factory.js'
 import { ProvisionedSecretsFactory } from '../config/provisioned-secrets-factory.js'
@@ -7,7 +8,6 @@ import { ServerBootstrap } from './server-bootstrap.js'
 import { StructuredLogger } from '../observability/logger.js'
 import type { ILogger } from '../observability/logger.js'
 import { DeploymentMode } from '../platform/deployment-mode.js'
-import { GcpPlatformFactory } from '../platform/gcp-platform-factory.js'
 import type { ICloudBundle } from '../platform/gcp-platform-factory.js'
 import { Observability, ObservabilityRole } from '../observability/observability.js'
 
@@ -42,12 +42,21 @@ class WorkerMain
         const provisionedSecrets = ProvisionedSecretsFactory.Build(config, read)
         const observabilityOptions = ServerBootstrap.ObservabilityOptions(config, ObservabilityRole.Worker)
         const observability = observabilityOptions !== undefined ? Observability.Start(observabilityOptions) : undefined
-        const bundle = config.deploymentMode === DeploymentMode.Cloud ? await GcpPlatformFactory.Create(config) : undefined
-        const audit = ServerBootstrap.AuditSink(config, logger, observability, bundle !== undefined ? await bundle.Platform.AuditSink() : undefined)
-        const rateLimit = ServerBootstrap.RateLimit(config, audit, observability, logger)
-        const host = await WorkerHost.StartAsync(ServerBootstrap.ComposeWorkerOptions(config, provisioning, bundle?.Platform, provisionedSecrets, logger, observability, audit, rateLimit))
-        logger.Info(ServerBootstrap.WorkerStartupLine(config), { [WorkerMain.EventKey]: WorkerMain.StartupEvent })
-        const main = new WorkerMain(host, logger, bundle)
+        const bundle = config.deploymentMode === DeploymentMode.Cloud ? await WorkerMain.BuildBundle(config) : undefined
+        let main: WorkerMain
+        try
+        {
+            const audit = ServerBootstrap.AuditSink(config, logger, observability, bundle !== undefined ? await bundle.Platform.AuditSink() : undefined)
+            const rateLimit = ServerBootstrap.RateLimit(config, audit, observability, logger)
+            const host = await WorkerHost.StartAsync(ServerBootstrap.ComposeWorkerOptions(config, provisioning, bundle?.Platform, provisionedSecrets, logger, observability, audit, rateLimit))
+            logger.Info(ServerBootstrap.WorkerStartupLine(config), { [WorkerMain.EventKey]: WorkerMain.StartupEvent })
+            main = new WorkerMain(host, logger, bundle)
+        }
+        catch (error)
+        {
+            await WorkerMain.DisposeQuietly(bundle)
+            throw error
+        }
         process.on(WorkerMain.SigTerm, () => void main.Shutdown())
         process.on(WorkerMain.SigInt, () => void main.Shutdown())
     }
@@ -60,13 +69,24 @@ class WorkerMain
 
     private async DisposeBundle(): Promise<void>
     {
-        if (this.bundle === undefined)
+        await WorkerMain.DisposeQuietly(this.bundle)
+    }
+
+    private static async BuildBundle(config: ServerConfig): Promise<ICloudBundle>
+    {
+        const { GcpPlatformFactory } = await import('../platform/gcp-platform-factory.js')
+        return await GcpPlatformFactory.Create(config)
+    }
+
+    private static async DisposeQuietly(bundle: ICloudBundle | undefined): Promise<void>
+    {
+        if (bundle === undefined)
         {
             return
         }
         try
         {
-            await this.bundle.Dispose()
+            await bundle.Dispose()
         }
         catch
         {
