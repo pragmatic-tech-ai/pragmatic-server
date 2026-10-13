@@ -58,7 +58,13 @@ test('a per-principal breach rejects the RPC and audits a RateLimited Rpc event'
     try
     {
         await client.OpenSolution(solution)
-        await assert.rejects(() => client.ActiveSolution())
+        await assert.rejects(() => client.ActiveSolution(), (error: unknown) =>
+        {
+            const failure = error as { code?: number, data?: { retryAfterMs?: number } }
+            assert.equal(failure.code, ServerConnectionHandler.RateLimitedCode)
+            assert.ok(typeof failure.data?.retryAfterMs === 'number')
+            return true
+        })
         await new Promise(resolve => setImmediate(resolve))
         const limited = sink.Events.filter(e => e.Outcome === AuditOutcome.RateLimited)
         assert.equal(limited.length, 1)

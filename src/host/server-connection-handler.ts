@@ -25,8 +25,7 @@ export class ServerConnectionHandler
 {
     private static readonly NoActiveSolutionError = 'no active solution after open'
     private static readonly UnknownMemberError = 'unknown solution member'
-    private static readonly RateLimitedCode = -32029
-    private static readonly RateLimitedMessage = 'rate limit exceeded'
+    public static readonly RateLimitedCode = -32029
 
     private readonly connection: MessageConnection
     private readonly languageService: ILanguageService
@@ -37,9 +36,9 @@ export class ServerConnectionHandler
     private readonly graphSubscription: IDisposable
     private readonly instrumentation: RequestInstrumentation | undefined
     private readonly parent: Context | undefined
-    private readonly rateLimit: RateLimitGuard
+    private readonly rateLimit: RateLimitGuard | undefined
 
-    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit: RateLimitGuard = new RateLimitGuard())
+    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard)
     {
         this.rateLimit = rateLimit
         this.instrumentation = instrumentation
@@ -91,12 +90,16 @@ export class ServerConnectionHandler
 
     private EnforceRate(method: string): void
     {
+        if (this.rateLimit === undefined)
+        {
+            return
+        }
         const decision = this.rateLimit.Check(
             { scope: RateLimitScope.Principal, tenant: this.accessContext.Tenant.Id, key: this.accessContext.Principal.Id },
             { surface: AuditSurface.Rpc, tenant: this.accessContext.Tenant.Id, principal: this.accessContext.Principal.Id, methodOrPath: method, correlationId: trace.getActiveSpan()?.spanContext().traceId })
         if (!decision.Allowed)
         {
-            throw new ResponseError(ServerConnectionHandler.RateLimitedCode, ServerConnectionHandler.RateLimitedMessage, { retryAfterMs: decision.RetryAfterMs })
+            throw new ResponseError(ServerConnectionHandler.RateLimitedCode, RateLimitGuard.RejectedReason, { retryAfterMs: decision.RetryAfterMs })
         }
     }
 

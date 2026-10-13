@@ -1,6 +1,7 @@
 import type { Counter } from '@opentelemetry/api'
 import { NullRateLimiter } from './rate-limiter.js'
-import type { IRateLimiter, RateLimitRequest, RateLimitDecision } from './rate-limiter.js'
+import { RateLimitDecision } from './rate-limiter.js'
+import type { IRateLimiter, RateLimitRequest } from './rate-limiter.js'
 import { NullAccessAuditSink, AuditOutcome } from './access-audit.js'
 import type { IAccessAuditSink, AccessAuditEvent, AuditSurface } from './access-audit.js'
 
@@ -23,7 +24,7 @@ export class RateLimitGuard
     private static readonly Metric = 'rate_limited_total'
     private static readonly ScopeLabel = 'scope'
     private static readonly TenantLabel = 'tenant'
-    private static readonly RejectedReason = 'rate limit exceeded'
+    public static readonly RejectedReason = 'rate limit exceeded'
     private static readonly StatusLine = 'HTTP/1.1 429 Too Many Requests'
     private static readonly RetryAfterHeader = 'Retry-After'
     private static readonly Crlf = '\r\n'
@@ -55,20 +56,28 @@ export class RateLimitGuard
     /** The raw HTTP 429 written to an upgrade socket, with Retry-After in whole seconds (rounded up, at least 1). */
     public static TooManyRequestsResponse(retryAfterMs: number): string
     {
-        const seconds = Math.max(1, Math.ceil(retryAfterMs / 1000))
+        const seconds = Number.isFinite(retryAfterMs) ? Math.max(1, Math.ceil(retryAfterMs / 1000)) : 1
         const crlf = RateLimitGuard.Crlf
         return `${RateLimitGuard.StatusLine}${crlf}${RateLimitGuard.RetryAfterHeader}: ${seconds}${crlf}${RateLimitGuard.CloseHeader}${crlf}${crlf}`
     }
 
     public Check(request: RateLimitRequest, context: RateLimitContext): RateLimitDecision
     {
-        const decision = this.limiter.Check(request)
-        if (!decision.Allowed)
+        try
         {
-            this.Meter(request.scope, context.tenant)
-            this.Emit(context)
+            const decision = this.limiter.Check(request)
+            if (!decision.Allowed)
+            {
+                this.Meter(request.scope, context.tenant)
+                this.Emit(context)
+            }
+            return decision
         }
-        return decision
+        catch
+        {
+            // rate-limiting is an availability control, not an access gate: an unexpected internal error allows the request
+            return RateLimitDecision.Allow()
+        }
     }
 
     private Meter(scope: string, tenant: string): void
@@ -97,7 +106,7 @@ export class RateLimitGuard
         }
         try
         {
-            void this.audit.Record(event).catch(() => {})
+            void Promise.resolve(this.audit.Record(event)).catch(() => {})
         }
         catch
         {

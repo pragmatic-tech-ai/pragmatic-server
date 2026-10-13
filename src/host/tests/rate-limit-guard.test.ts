@@ -5,6 +5,7 @@ import type { DataPoint } from '@opentelemetry/sdk-metrics'
 import { InMemorySpanExporter } from '@opentelemetry/sdk-trace-base'
 import { Observability, ObservabilityRole } from '../../observability/observability.js'
 import { RateLimitScope, TokenBucketRateLimiter, NullRateLimiter } from '../rate-limiter.js'
+import type { IRateLimiter, RateLimitDecision } from '../rate-limiter.js'
 import { RateLimitGuard } from '../rate-limit-guard.js'
 import { AuditSurface, AuditOutcome } from '../access-audit.js'
 import type { IAccessAuditSink, AccessAuditEvent } from '../access-audit.js'
@@ -101,4 +102,60 @@ test('a bare guard (no args) allows everything and never touches audit or metric
 {
     const guard = new RateLimitGuard()
     assert.equal(guard.Check({ scope: RateLimitScope.Tenant, tenant: 't1', key: 't1' }, { surface: AuditSurface.Upgrade, tenant: 't1', methodOrPath: 'ws' }).Allowed, true)
+})
+
+class RejectingSink implements IAccessAuditSink
+{
+    public Record(): Promise<void>
+    {
+        return Promise.reject(new Error('sink rejected'))
+    }
+}
+
+class ThrowingLimiter implements IRateLimiter
+{
+    public Check(): RateLimitDecision
+    {
+        throw new Error('limiter broke')
+    }
+}
+
+test('a rejecting audit sink leaves Check rejecting with a retry hint and raises no unhandledRejection', async () =>
+{
+    const unhandled: unknown[] = []
+    const listener = (reason: unknown): void => { unhandled.push(reason) }
+    process.on('unhandledRejection', listener)
+    try
+    {
+        const guard = new RateLimitGuard(new TokenBucketRateLimiter({ perTenant: { Rps: 0.001, Burst: 1 } }), new RejectingSink())
+        const request = { scope: RateLimitScope.Tenant, tenant: 't1', key: 't1' }
+        const context = { surface: AuditSurface.Upgrade, tenant: 't1', methodOrPath: 'ws' }
+        guard.Check(request, context)
+        const decision = guard.Check(request, context)
+        assert.equal(decision.Allowed, false)
+        assert.ok(decision.RetryAfterMs > 0)
+        await new Promise(resolve => setImmediate(resolve))
+        await new Promise(resolve => setImmediate(resolve))
+        assert.equal(unhandled.length, 0)
+    }
+    finally
+    {
+        process.off('unhandledRejection', listener)
+    }
+})
+
+test('Check is total: an unexpected limiter error allows the request instead of throwing', () =>
+{
+    const guard = new RateLimitGuard(new ThrowingLimiter())
+    assert.equal(guard.Check({ scope: RateLimitScope.Tenant, tenant: 't1', key: 't1' }, { surface: AuditSurface.Upgrade, tenant: 't1', methodOrPath: 'ws' }).Allowed, true)
+})
+
+test('TooManyRequestsResponse emits whole-second Retry-After, defaulting to 1 for 0 and NaN', () =>
+{
+    const header = (ms: number): string => /Retry-After: (\S+)\r\n/.exec(RateLimitGuard.TooManyRequestsResponse(ms))![1]!
+    assert.equal(header(0), '1')
+    assert.equal(header(1), '1')
+    assert.equal(header(1500), '2')
+    assert.equal(header(Number.NaN), '1')
+    assert.ok(RateLimitGuard.TooManyRequestsResponse(1).startsWith('HTTP/1.1 429 Too Many Requests\r\n'))
 })
