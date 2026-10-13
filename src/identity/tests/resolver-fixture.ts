@@ -19,12 +19,15 @@ export class ResolverFixture
     public static readonly Group = 'group-ed'
     public static readonly AuthCode = 'auth-code'
     public static readonly BearerType = 'Bearer'
+    private static readonly TempPrefix = 'ps7-'
+    private static readonly TenantIdPrefix = 't-'
+    private static readonly DiscoveryPath = '/.well-known/openid-configuration'
 
     private roots: string[] = []
 
     public async Stores(): Promise<IdentityStoreSet>
     {
-        const root = mkdtempSync(join(tmpdir(), 'ps7-'))
+        const root = mkdtempSync(join(tmpdir(), ResolverFixture.TempPrefix))
         this.roots.push(root)
         return new NodePlatform().CreateIdentityStores(root, randomBytes(32))
     }
@@ -51,7 +54,7 @@ export class ResolverFixture
     {
         return new Map([
             [OidcSettingKeys.Issuer, ResolverFixture.GoogleIssuer],
-            [OidcSettingKeys.DiscoveryUrl, ResolverFixture.GoogleIssuer + '/.well-known/openid-configuration'],
+            [OidcSettingKeys.DiscoveryUrl, ResolverFixture.GoogleIssuer + ResolverFixture.DiscoveryPath],
             [OidcSettingKeys.ClientId, ResolverFixture.ClientId],
             [OidcSettingKeys.RedirectUri, ResolverFixture.RedirectUri],
         ])
@@ -65,7 +68,7 @@ export class ResolverFixture
         const flowStates = new InMemoryOidcFlowStateStore()
         const stores = await this.Stores()
         const config = new IdentityConfig(packId, depth, settings, groupRoleMap, new Map())
-        const tenant = new Tenant('t-' + packId, TenantKind.Saas, packId)
+        const tenant = new Tenant(ResolverFixture.TenantIdPrefix + packId, TenantKind.Saas, packId)
         const resolver = new IdentityPackResolver(http, flowStates)
         const resolved = resolver.Resolve(tenant, config, stores)
         const begun = await resolved.oidc!.BeginAuthorization(tenant)

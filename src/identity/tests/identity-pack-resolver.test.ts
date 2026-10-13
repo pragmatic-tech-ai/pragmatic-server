@@ -3,12 +3,15 @@ import assert from 'node:assert/strict'
 import { AuthMethod, AuthenticatedResult, Credential, DelegationDepth, PresentedSecret, Role } from '@pragmatic-tech-ai/todl-identity'
 import { ResolverFixture } from './resolver-fixture.js'
 
+const EntraIssuer = 'https://login.microsoftonline.com/test-tid/v2.0'
+const GroupsClaim = 'groups'
+
 test('Entra config resolves a composite pack that authenticates end to end (ExternalGrants)', async () =>
 {
     const fixture = new ResolverFixture()
     try
     {
-        const { resolved, tenant, State } = await fixture.Flow('entra', 'https://login.microsoftonline.com/test-tid/v2.0', fixture.EntraSettings(), DelegationDepth.ExternalGrants, new Map([[ResolverFixture.Group, Role.Editor]]), 'groups')
+        const { resolved, tenant, State } = await fixture.Flow('entra', EntraIssuer, fixture.EntraSettings(), DelegationDepth.ExternalGrants, new Map([[ResolverFixture.Group, Role.Editor]]), GroupsClaim)
         assert.ok(resolved.pack.AuthenticatorFor(AuthMethod.Local), 'composite pack keeps local password auth')
         assert.ok(resolved.pack.AuthenticatorFor(AuthMethod.ServiceToken))
         const oidc = resolved.pack.AuthenticatorFor(AuthMethod.Oidc)!
