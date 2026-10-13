@@ -28,15 +28,21 @@ export class MachineCertIdentity
 
     private static ComputeFingerprint(cert: { raw?: Buffer; fingerprint256?: string }): string
     {
-        if (cert.fingerprint256 !== undefined && cert.fingerprint256.length > 0)
-        {
-            return cert.fingerprint256.split(MachineCertIdentity.ColonSeparator).join(MachineCertIdentity.EmptyText).toLowerCase()
-        }
         if (cert.raw !== undefined && cert.raw.length > 0)
         {
             return createHash(MachineCertIdentity.HashAlgorithm).update(cert.raw).digest(MachineCertIdentity.HexEncoding)
         }
+        if (cert.fingerprint256 !== undefined && cert.fingerprint256.length > 0)
+        {
+            return MachineCertIdentity.Normalize(cert.fingerprint256)
+        }
         return MachineCertIdentity.EmptyText
+    }
+
+    /** Canonical form: lowercase hex, no colons. */
+    public static Normalize(fingerprint: string): string
+    {
+        return fingerprint.split(MachineCertIdentity.ColonSeparator).join(MachineCertIdentity.EmptyText).toLowerCase()
     }
 }
 
@@ -58,8 +64,9 @@ export class MachinePrincipalMap
         this.entries = entries
     }
 
+    /** The canonical key is lowercase-hex-no-colons; the lookup key is normalized to that form. */
     public Lookup(fingerprint: string): MachinePrincipalEntry | undefined
     {
-        return this.entries.get(fingerprint)
+        return this.entries.get(MachineCertIdentity.Normalize(fingerprint))
     }
 }

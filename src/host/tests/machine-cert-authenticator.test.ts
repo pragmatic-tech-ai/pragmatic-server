@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { X509Certificate, createHash } from 'node:crypto'
 import { AuthMethod, AuthenticatedResult, Credential, PresentedSecret, PrincipalKind, RejectedResult, Tenant, TenantKind } from '@pragmatic-tech-ai/todl-identity'
-import { MachinePrincipalMap } from '../machine-principal-map.js'
+import { MachineCertIdentity, MachinePrincipalMap } from '../machine-principal-map.js'
 import { MachineCertAuthenticator } from '../machine-cert-authenticator.js'
 
 class Fixture
@@ -42,4 +42,28 @@ test('an empty fingerprint is rejected', async () =>
     const map = new MachinePrincipalMap(new Map([['abc', { PrincipalId: 'x', Groups: [] }]]))
     const result = await new MachineCertAuthenticator(map).Authenticate(new Credential(AuthMethod.Machine, ''), new PresentedSecret(''), Fixture.Tenant())
     assert.ok(result instanceof RejectedResult)
+})
+
+test('FromPeerCertificate converges raw DER and colon-separated uppercase fingerprint256', () =>
+{
+    const raw = new X509Certificate(readFileSync('src/tests/fixtures/tls/machine-client.pem')).raw
+    const hex = createHash('sha256').update(raw).digest('hex')
+    const colon = hex.toUpperCase().match(/../g)!.join(':')
+    const both = MachineCertIdentity.FromPeerCertificate(true, { fingerprint256: colon, raw })
+    assert.equal(both.Fingerprint, hex)
+    assert.equal(both.Authorized, true)
+    assert.equal(MachineCertIdentity.FromPeerCertificate(true, { fingerprint256: colon }).Fingerprint, hex)
+})
+
+test('FromPeerCertificate on an empty cert is unauthorized with an empty fingerprint', () =>
+{
+    const id = MachineCertIdentity.FromPeerCertificate(false, {})
+    assert.equal(id.Authorized, false)
+    assert.equal(id.Fingerprint, '')
+})
+
+test('Lookup matches an uppercase colon-formatted reference', () =>
+{
+    const map = new MachinePrincipalMap(new Map([['abcd', { PrincipalId: 'x', Groups: [] }]]))
+    assert.equal(map.Lookup('AB:CD')?.PrincipalId, 'x')
 })
