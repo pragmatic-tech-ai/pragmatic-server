@@ -27,6 +27,11 @@ import type { WorkerEndpoint } from './worker-router.js'
 import type { ITenantProvisioning } from '../tenancy/tenant-provisioning.js'
 import { MachineTls } from './machine-tls.js'
 import type { MachineTlsRef } from './machine-tls.js'
+import { MachineFingerprintHeader } from './gateway.js'
+import { MachineCertIdentity } from '../host/machine-principal-map.js'
+import type { MachineAuthContext } from '../host/auth-http-endpoint.js'
+import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
+import { AuthMethod } from '@pragmatic-tech-ai/todl-identity'
 import type { PlatformServices } from '../platform/platform-services.js'
 import type { DeploymentMode } from '../platform/deployment-mode.js'
 
@@ -335,7 +340,8 @@ export class WorkerHost
                 return
             }
             const server = await this.registry.ServerFor(tenantId)
-            const endpoint = new AuthHttpEndpoint(await server.Pack(), server.Tenant(), server.Oidc())
+            const pack = await server.Pack()
+            const endpoint = new AuthHttpEndpoint(pack, server.Tenant(), server.Oidc(), this.MachineContext(req, pack))
             await endpoint.Handle(req, res)
         }
         catch
@@ -346,6 +352,22 @@ export class WorkerHost
                 res.end()
             }
         }
+    }
+
+    /** Trusts the gateway-forwarded fingerprint (the gateway strips client-supplied values; this listener only accepts mTLS peers). */
+    private MachineContext(req: IncomingMessage, pack: ServerIdentityPack): MachineAuthContext | undefined
+    {
+        const header = req.headers[MachineFingerprintHeader]
+        if (typeof header !== 'string' || header.length === 0)
+        {
+            return undefined
+        }
+        const authenticator = pack.AuthenticatorFor(AuthMethod.Machine)
+        if (authenticator === undefined)
+        {
+            return undefined
+        }
+        return { authenticator, identity: MachineCertIdentity.FromPeerCertificate(true, { fingerprint256: header }) }
     }
 
     private TenantHint(req: IncomingMessage): string | null

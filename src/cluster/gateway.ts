@@ -1,6 +1,7 @@
 import { createServer } from 'node:http'
 import type { Server as HttpServer, IncomingMessage, ServerResponse } from 'node:http'
-import { request as httpsRequest } from 'node:https'
+import { request as httpsRequest, createServer as httpsCreateServer } from 'node:https'
+import type { TLSSocket } from 'node:tls'
 import type { Socket } from 'node:net'
 import type { AddressInfo } from 'node:net'
 import { WebSocketServer, WebSocket } from 'ws'
@@ -10,6 +11,10 @@ import type { IWorkerRouter, WorkerEndpoint } from './worker-router.js'
 import { HealthEndpoint } from '../host/health-endpoint.js'
 import { MachineTls } from './machine-tls.js'
 import type { ClientTlsMaterial, MachineTlsRef } from './machine-tls.js'
+import { MachineCertIdentity } from '../host/machine-principal-map.js'
+
+/** Header carrying the gateway-verified client-cert fingerprint to the worker; stripped from every inbound request so a client can never set it. */
+export const MachineFingerprintHeader = 'x-pragmatic-machine-fingerprint'
 
 export interface GatewayOptions
 {
@@ -52,14 +57,16 @@ export class Gateway
     private readonly router: IWorkerRouter
     private readonly clientTls: ClientTlsMaterial
     private readonly address: WebSocketAddress
+    private readonly machineTlsConfigured: boolean
     private readonly workerSockets = new Set<WebSocket>()
     private readonly serverName: string
     private readonly health = new HealthEndpoint()
     private ready = true
     private disposed = false
 
-    private constructor(httpServer: HttpServer, wss: WebSocketServer, router: IWorkerRouter, clientTls: ClientTlsMaterial, address: WebSocketAddress, serverName: string)
+    private constructor(httpServer: HttpServer, wss: WebSocketServer, router: IWorkerRouter, clientTls: ClientTlsMaterial, address: WebSocketAddress, serverName: string, machineTlsConfigured: boolean)
     {
+        this.machineTlsConfigured = machineTlsConfigured
         this.httpServer = httpServer
         this.wss = wss
         this.router = router
@@ -80,7 +87,7 @@ export class Gateway
     public static async StartAsync(options: GatewayOptions): Promise<Gateway>
     {
         const host = options.host ?? Gateway.DefaultHost
-        const httpServer = createServer()
+        const httpServer: HttpServer = options.clientTls ? httpsCreateServer(MachineTls.OptionalServer(options.clientTls)) : createServer()
         const wss = new WebSocketServer({ noServer: true })
         await new Promise<void>((resolve, reject) =>
         {
@@ -90,7 +97,17 @@ export class Gateway
         })
         const resolved = httpServer.address() as AddressInfo
         const clientTls = MachineTls.Client(options.tls)
-        return new Gateway(httpServer, wss, options.router, clientTls, { host, port: resolved.port }, options.serverName ?? Gateway.DefaultServerName)
+        return new Gateway(httpServer, wss, options.router, clientTls, { host, port: resolved.port }, options.serverName ?? Gateway.DefaultServerName, options.clientTls !== undefined)
+    }
+
+    /** Anti-spoof: ALWAYS strips any inbound fingerprint header, then stamps the verified peer-cert fingerprint only when client TLS is configured and the peer was authorized. */
+    public static StampMachineFingerprint(headers: Record<string, string | string[] | undefined>, socket: TLSSocket, clientTlsConfigured: boolean): void
+    {
+        delete headers[MachineFingerprintHeader]
+        if (clientTlsConfigured && socket.authorized === true)
+        {
+            headers[MachineFingerprintHeader] = MachineCertIdentity.FromPeerCertificate(true, socket.getPeerCertificate()).Fingerprint
+        }
     }
 
     public Address(): WebSocketAddress
@@ -156,6 +173,7 @@ export class Gateway
         {
             headers[Gateway.AuthorizationHeader] = authorization
         }
+        Gateway.StampMachineFingerprint(headers, req.socket as TLSSocket, this.machineTlsConfigured)
         const wsOptions = { key: client.key, cert: client.cert, ca: client.ca, rejectUnauthorized: true, servername: this.serverName, headers }
         const workerWs = new WebSocket(`${Gateway.WsScheme}${endpoint.host}:${endpoint.port}/`, wsOptions)
         this.workerSockets.add(workerWs)
@@ -272,7 +290,8 @@ export class Gateway
                 return
             }
             const client = this.clientTls
-            const headers = { ...req.headers, [Gateway.TenantHeader]: tenantId }
+            const headers: Record<string, string | string[] | undefined> = { ...req.headers, [Gateway.TenantHeader]: tenantId }
+            Gateway.StampMachineFingerprint(headers, req.socket as TLSSocket, this.machineTlsConfigured)
             const proxied = httpsRequest(
                 { host: endpoint.host, port: endpoint.port, method: req.method, path: req.url, headers, key: client.key, cert: client.cert, ca: client.ca, rejectUnauthorized: true, servername: this.serverName },
                 upstream =>
