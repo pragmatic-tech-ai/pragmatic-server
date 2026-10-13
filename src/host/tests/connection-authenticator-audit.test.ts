@@ -19,6 +19,14 @@ class CapturingSink implements IAccessAuditSink
     }
 }
 
+class RejectingSink implements IAccessAuditSink
+{
+    public Record(): Promise<void>
+    {
+        return Promise.reject(new Error('sink rejected'))
+    }
+}
+
 class ThrowingSink implements IAccessAuditSink
 {
     public Record(): Promise<void>
@@ -58,4 +66,36 @@ test('a throwing sink does not change the auth result', async () =>
     const pack = await ServerIdentityPack.Open(new FakeStorage(), randomBytes(32))
     const tenant = new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
     assert.equal(await new ConnectionAuthenticator(undefined, new ThrowingSink()).ResolveAsync('garbage', tenant, pack), null)
+})
+
+test('a rejecting sink does not change the auth result and raises no unhandled rejection', async () =>
+{
+    const unhandled: unknown[] = []
+    const listener = (reason: unknown): void => { unhandled.push(reason) }
+    process.on('unhandledRejection', listener)
+    try
+    {
+        const pack = await ServerIdentityPack.Open(new FakeStorage(), randomBytes(32))
+        const tenant = new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
+        const { Token } = await pack.Tokens.Issue(tenant, 'svc1', [], null)
+        const authenticator = new ConnectionAuthenticator(undefined, new RejectingSink())
+        assert.equal((await authenticator.ResolveAsync(Token, tenant, pack))?.Principal.Id, 'svc1')
+        assert.equal(await authenticator.ResolveAsync('garbage', tenant, pack), null)
+        await new Promise(resolve => setImmediate(resolve))
+        await new Promise(resolve => setImmediate(resolve))
+        assert.equal(unhandled.length, 0)
+    }
+    finally
+    {
+        process.off('unhandledRejection', listener)
+    }
+})
+
+test('a throwing sink on the success path leaves the returned context unchanged', async () =>
+{
+    const pack = await ServerIdentityPack.Open(new FakeStorage(), randomBytes(32))
+    const tenant = new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
+    const { Token } = await pack.Tokens.Issue(tenant, 'svc1', [], null)
+    const context = await new ConnectionAuthenticator(undefined, new ThrowingSink()).ResolveAsync(Token, tenant, pack)
+    assert.equal(context?.Principal.Id, 'svc1')
 })

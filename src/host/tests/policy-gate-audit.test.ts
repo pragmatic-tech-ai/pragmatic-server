@@ -2,6 +2,10 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, Action, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { LanguageProtocol, SolutionProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { trace } from '@opentelemetry/api'
+import { InMemorySpanExporter } from '@opentelemetry/sdk-trace-base'
+import { PeriodicExportingMetricReader, InMemoryMetricExporter, AggregationTemporality } from '@opentelemetry/sdk-metrics'
+import { Observability, ObservabilityRole } from '../../observability/observability.js'
 import { PolicyGate } from '../policy-gate.js'
 import { AuditSurface, AuditOutcome } from '../access-audit.js'
 import type { IAccessAuditSink, AccessAuditEvent } from '../access-audit.js'
@@ -114,4 +118,31 @@ test('CanRead does not emit', () =>
     const gate = new PolicyGate(Fixtures.Context(Role.Viewer), () => [], sink)
     gate.CanRead()
     assert.equal(sink.Events.length, 0)
+})
+
+test('with an active valid span the event carries its trace id; with none it is undefined', async () =>
+{
+    const sink = new CapturingSink()
+    const gate = new PolicyGate(Fixtures.Context(Role.Viewer), () => [], sink)
+    gate.Authorize(LanguageProtocol.CompletionsAt.method)
+    assert.equal(sink.Events[0]!.CorrelationId, undefined)
+
+    const metricReader = new PeriodicExportingMetricReader({ exporter: new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE), exportIntervalMillis: 2_147_483_647 })
+    const observability = Observability.ForTest({ role: ObservabilityRole.Host, serviceName: 'svc' }, new InMemorySpanExporter(), metricReader)
+    try
+    {
+        let traceId: string | undefined
+        observability.Tracer().startActiveSpan('t', span =>
+        {
+            traceId = trace.getActiveSpan()?.spanContext().traceId
+            gate.Authorize(LanguageProtocol.CompletionsAt.method)
+            span.end()
+        })
+        assert.notEqual(traceId, undefined)
+        assert.equal(sink.Events[1]!.CorrelationId, traceId)
+    }
+    finally
+    {
+        await observability.Shutdown()
+    }
 })

@@ -1,6 +1,6 @@
 import { Action, ResourceKind, ResourceRef, AccessDecision } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
-import { trace } from '@opentelemetry/api'
+import { trace, isSpanContextValid } from '@opentelemetry/api'
 import { NullAccessAuditSink, AuditSurface, AuditOutcome } from './access-audit.js'
 import type { IAccessAuditSink, AccessAuditEvent } from './access-audit.js'
 import { LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -36,12 +36,13 @@ export class PolicyGate
         if (policy === undefined)
         {
             const denied = AccessDecision.Deny(PolicyGate.UntabledReason)
-            this.Emit(method, undefined, undefined, denied)
+            this.Emit(method, undefined, undefined, denied, [])
             return denied
         }
-        const resource = new ResourceRef(policy.resourceKind, this.context.Tenant.Id, this.path())
+        const path = this.path()
+        const resource = new ResourceRef(policy.resourceKind, this.context.Tenant.Id, path)
         const decision = this.context.Policy.Decide(this.context, policy.action, resource)
-        this.Emit(method, policy.action, policy.resourceKind, decision)
+        this.Emit(method, policy.action, policy.resourceKind, decision, path)
         return decision
     }
 
@@ -51,10 +52,11 @@ export class PolicyGate
         return this.context.Policy.Decide(this.context, Action.Read, resource).Allowed
     }
 
-    private Emit(method: string, action: Action | undefined, resourceKind: ResourceKind | undefined, decision: AccessDecision): void
+    private Emit(method: string, action: Action | undefined, resourceKind: ResourceKind | undefined, decision: AccessDecision, path: readonly string[]): void
     {
         try
         {
+            const spanContext = trace.getActiveSpan()?.spanContext()
             const event: AccessAuditEvent = {
                 Timestamp: new Date(),
                 TenantId: this.context.Tenant.Id,
@@ -63,10 +65,10 @@ export class PolicyGate
                 MethodOrPath: method,
                 Action: action,
                 ResourceKind: resourceKind,
-                ResourcePath: this.ResourcePath(),
+                ResourcePath: path.length > 0 ? path.join('/') : undefined,
                 Outcome: decision.Allowed ? AuditOutcome.Allow : AuditOutcome.Deny,
                 Reason: decision.Reason,
-                CorrelationId: trace.getActiveSpan()?.spanContext().traceId,
+                CorrelationId: spanContext !== undefined && isSpanContextValid(spanContext) ? spanContext.traceId : undefined,
             }
             void this.audit.Record(event).catch(() => {})
         }
@@ -74,12 +76,6 @@ export class PolicyGate
         {
             // audit is fire-and-forget: a sink that throws must never alter the decision this method returns
         }
-    }
-
-    private ResourcePath(): string | undefined
-    {
-        const segments = this.path()
-        return segments.length > 0 ? segments.join('/') : undefined
     }
 
     private static BuildTable(): ReadonlyMap<string, MethodPolicy>

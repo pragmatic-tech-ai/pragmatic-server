@@ -2,6 +2,7 @@ import { AuthMethod, Credential, PresentedSecret, AuthenticatedResult } from '@p
 import type { AccessContext, Tenant } from '@pragmatic-tech-ai/todl-identity'
 import { AccessContextAssembler } from '@pragmatic-tech-ai/todl-identity-node'
 import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
+import { trace, isSpanContextValid } from '@opentelemetry/api'
 import { NullAccessAuditSink, AuditSurface, AuditOutcome } from './access-audit.js'
 import type { IAccessAuditSink, AccessAuditEvent } from './access-audit.js'
 
@@ -33,6 +34,7 @@ export class ConnectionAuthenticator
     {
         try
         {
+            const spanContext = trace.getActiveSpan()?.spanContext()
             const event: AccessAuditEvent = {
                 Timestamp: new Date(),
                 TenantId: tenant.Id,
@@ -40,6 +42,7 @@ export class ConnectionAuthenticator
                 Surface: AuditSurface.Upgrade,
                 MethodOrPath: ConnectionAuthenticator.UpgradeMethod,
                 Outcome: context === null ? AuditOutcome.AuthFailure : AuditOutcome.Allow,
+                CorrelationId: spanContext !== undefined && isSpanContextValid(spanContext) ? spanContext.traceId : undefined,
             }
             void this.audit.Record(event).catch(() => {})
         }
