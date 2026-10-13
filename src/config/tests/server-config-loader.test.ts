@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DeploymentMode } from '../../platform/deployment-mode.js'
+import { DeploymentProvider } from '../../platform/deployment-provider.js'
 import { ServerConfigLoader } from '../server-config-loader.js'
 
 class Env
@@ -135,6 +136,7 @@ test('the gateway loader fails closed on a non-integer drainTimeoutMs', () =>
 class CloudEnv
 {
     public static readonly Required: Record<string, string> = {
+        PRAGMATIC_CLOUD_PROVIDER: 'gcp',
         PRAGMATIC_GCS_BUCKET: 'bkt',
         PRAGMATIC_GCP_PROJECT: 'proj',
         PRAGMATIC_CLOUDSQL_INSTANCE: 'proj:region:inst',
@@ -183,6 +185,91 @@ test('cloud mode rejects password auth and accepts iam in any case', () =>
     {
         assert.equal(ServerConfigLoader.Load(CloudEnv.Cloud({ PRAGMATIC_CLOUDSQL_AUTH: auth }), Env.NoRead).cloudSqlAuth, auth)
     }
+})
+
+class AwsCloudEnv
+{
+    public static readonly Required: Record<string, string> = {
+        PRAGMATIC_CLOUD_PROVIDER: 'aws',
+        PRAGMATIC_AWS_REGION: 'us-east-1',
+        PRAGMATIC_S3_BUCKET: 'bkt',
+        PRAGMATIC_RDS_HOST: 'db.example',
+        PRAGMATIC_RDS_USER: 'svc',
+        PRAGMATIC_RDS_DB: 'db1',
+        PRAGMATIC_CLOUD_MASTER_KEY_REF: 'cluster/master-key',
+    }
+
+    public static Cloud(extra: Record<string, string> = {}): Record<string, string | undefined>
+    {
+        return { ...Env.Minimal(), PRAGMATIC_DEPLOYMENT_MODE: 'cloud', ...AwsCloudEnv.Required, ...extra }
+    }
+}
+
+test('cloud mode with provider aws and all aws vars populates the aws fields', () =>
+{
+    const config = ServerConfigLoader.Load(AwsCloudEnv.Cloud(), Env.NoRead)
+    assert.equal(config.cloudProvider, DeploymentProvider.Aws)
+    assert.equal(config.awsRegion, 'us-east-1')
+    assert.equal(config.s3Bucket, 'bkt')
+    assert.equal(config.rdsHost, 'db.example')
+    assert.equal(config.rdsUser, 'svc')
+    assert.equal(config.rdsDatabase, 'db1')
+    assert.equal(config.cloudMasterKeyRef, 'cluster/master-key')
+    assert.equal(config.gcsBucket, undefined)
+})
+
+for (const name of Object.keys(AwsCloudEnv.Required))
+{
+    test(`aws cloud mode missing ${name} throws naming only that var`, () =>
+    {
+        for (const blank of [undefined, ''])
+        {
+            const env = AwsCloudEnv.Cloud()
+            env[name] = blank
+            assert.throws(() => ServerConfigLoader.Load(env, Env.NoRead), (error: Error) =>
+                error.message.startsWith(`${name} is required`) && !error.message.includes(AwsCloudEnv.Required[name]))
+        }
+    })
+}
+
+test('cloud mode with gcp provider resolves DeploymentProvider.Gcp', () =>
+{
+    assert.equal(ServerConfigLoader.Load(CloudEnv.Cloud(), Env.NoRead).cloudProvider, DeploymentProvider.Gcp)
+})
+
+test('cloud mode rejects an unknown provider', () =>
+{
+    assert.throws(() => ServerConfigLoader.Load(AwsCloudEnv.Cloud({ PRAGMATIC_CLOUD_PROVIDER: 'azure' }), Env.NoRead), /must be gcp or aws/)
+})
+
+test('cloud mode requires PRAGMATIC_CLOUD_PROVIDER', () =>
+{
+    const env = AwsCloudEnv.Cloud()
+    delete env.PRAGMATIC_CLOUD_PROVIDER
+    assert.throws(() => ServerConfigLoader.Load(env, Env.NoRead), /PRAGMATIC_CLOUD_PROVIDER is required/)
+})
+
+test('aws password auth requires a password ref', () =>
+{
+    assert.throws(() => ServerConfigLoader.Load(AwsCloudEnv.Cloud({ PRAGMATIC_RDS_AUTH: 'password' }), Env.NoRead), /required when PRAGMATIC_RDS_AUTH=password/)
+    const config = ServerConfigLoader.Load(AwsCloudEnv.Cloud({ PRAGMATIC_RDS_AUTH: 'password', PRAGMATIC_RDS_PASSWORD_REF: 'db/pw' }), Env.NoRead)
+    assert.equal(config.rdsPasswordRef, 'db/pw')
+})
+
+test('aws rejects an unknown rds auth mode', () =>
+{
+    assert.throws(() => ServerConfigLoader.Load(AwsCloudEnv.Cloud({ PRAGMATIC_RDS_AUTH: 'bogus' }), Env.NoRead), /must be iam or password/)
+})
+
+test('aws rds port must be a positive integer', () =>
+{
+    assert.throws(() => ServerConfigLoader.Load(AwsCloudEnv.Cloud({ PRAGMATIC_RDS_PORT: 'abc' }), Env.NoRead), /positive integer/)
+    assert.equal(ServerConfigLoader.Load(AwsCloudEnv.Cloud({ PRAGMATIC_RDS_PORT: '5432' }), Env.NoRead).rdsPort, 5432)
+})
+
+test('provider value is case-insensitive', () =>
+{
+    assert.equal(ServerConfigLoader.Load(AwsCloudEnv.Cloud({ PRAGMATIC_CLOUD_PROVIDER: 'AWS' }), Env.NoRead).cloudProvider, DeploymentProvider.Aws)
 })
 
 test('local mode ignores gcp vars', () =>

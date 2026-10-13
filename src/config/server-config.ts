@@ -4,6 +4,7 @@ import type { AuditSinkKind } from './audit-sink-kind.js'
 import type { RateLimitConfig } from '../host/rate-limiter.js'
 import type { OtlpProtocol } from '../observability/otlp-protocol.js'
 import type { DeploymentMode } from '../platform/deployment-mode.js'
+import type { DeploymentProvider } from '../platform/deployment-provider.js'
 
 export interface SingleTenantConfig
 {
@@ -41,6 +42,16 @@ export interface ServerConfig
     auditFile?: string
     rateLimit?: RateLimitConfig
     drainTimeoutMs?: number
+    cloudProvider?: DeploymentProvider
+    awsRegion?: string
+    s3Bucket?: string
+    s3Prefix?: string
+    rdsHost?: string
+    rdsPort?: number
+    rdsUser?: string
+    rdsDatabase?: string
+    rdsAuth?: string
+    rdsPasswordRef?: string
     gcsBucket?: string
     gcsPrefix?: string
     gcpProject?: string

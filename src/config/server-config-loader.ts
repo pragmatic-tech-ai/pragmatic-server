@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { MasterKeyRef } from '../identity/master-key-resolver.js'
 import { DeploymentMode } from '../platform/deployment-mode.js'
+import { DeploymentProvider } from '../platform/deployment-provider.js'
 import type { MachineTlsRef } from '../cluster/machine-tls.js'
 import { AuditSinkKind } from './audit-sink-kind.js'
 import type { RateLimitConfig, RateLimitSettings } from '../host/rate-limiter.js'
@@ -74,6 +75,29 @@ export class ServerConfigLoader
     private static readonly MissingCloudMasterKeyRef = 'PRAGMATIC_CLOUD_MASTER_KEY_REF is required for cloud deployment'
     private static readonly UnsupportedCloudSqlAuth = 'PRAGMATIC_CLOUDSQL_AUTH=password is not supported yet; use iam'
     private static readonly CloudSqlAuthIam = 'iam'
+    private static readonly EnvCloudProvider = 'PRAGMATIC_CLOUD_PROVIDER'
+    private static readonly MissingCloudProvider = 'PRAGMATIC_CLOUD_PROVIDER is required for cloud deployment'
+    private static readonly BadCloudProvider = 'PRAGMATIC_CLOUD_PROVIDER must be gcp or aws'
+    private static readonly EnvAwsRegion = 'PRAGMATIC_AWS_REGION'
+    private static readonly EnvS3Bucket = 'PRAGMATIC_S3_BUCKET'
+    private static readonly EnvS3Prefix = 'PRAGMATIC_S3_PREFIX'
+    private static readonly EnvRdsHost = 'PRAGMATIC_RDS_HOST'
+    private static readonly EnvRdsPort = 'PRAGMATIC_RDS_PORT'
+    private static readonly EnvRdsUser = 'PRAGMATIC_RDS_USER'
+    private static readonly EnvRdsDb = 'PRAGMATIC_RDS_DB'
+    private static readonly EnvRdsAuth = 'PRAGMATIC_RDS_AUTH'
+    private static readonly EnvRdsPasswordRef = 'PRAGMATIC_RDS_PASSWORD_REF'
+    private static readonly MissingAwsRegion = 'PRAGMATIC_AWS_REGION is required for cloud deployment'
+    private static readonly MissingS3Bucket = 'PRAGMATIC_S3_BUCKET is required for cloud deployment'
+    private static readonly MissingRdsHost = 'PRAGMATIC_RDS_HOST is required for cloud deployment'
+    private static readonly MissingRdsUser = 'PRAGMATIC_RDS_USER is required for cloud deployment'
+    private static readonly MissingRdsDb = 'PRAGMATIC_RDS_DB is required for cloud deployment'
+    private static readonly MissingRdsPasswordRef = 'PRAGMATIC_RDS_PASSWORD_REF is required when PRAGMATIC_RDS_AUTH=password'
+    private static readonly BadRdsAuth = 'PRAGMATIC_RDS_AUTH must be iam or password'
+    private static readonly BadRdsPort = 'PRAGMATIC_RDS_PORT must be a positive integer'
+    private static readonly RdsAuthPassword = 'password'
+    private static readonly RdsAuthIam = 'iam'
+    private static readonly PositiveIntPattern = /^[1-9][0-9]*$/
     private static readonly EnvAuditSink = 'PRAGMATIC_AUDIT_SINK'
     private static readonly EnvAuditFile = 'PRAGMATIC_AUDIT_FILE'
     private static readonly EnvTenantRps = 'PRAGMATIC_RATELIMIT_TENANT_RPS'
@@ -370,18 +394,24 @@ export class ServerConfigLoader
         {
             return {}
         }
+        const cloudProvider = ServerConfigLoader.ProviderOf(ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvCloudProvider], ServerConfigLoader.MissingCloudProvider))
+        const cloudMasterKeyRef = ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvCloudMasterKeyRef], ServerConfigLoader.MissingCloudMasterKeyRef)
+        if (cloudProvider === DeploymentProvider.Aws)
+        {
+            return ServerConfigLoader.CloudAws(env, cloudProvider, cloudMasterKeyRef)
+        }
         const gcsBucket = ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvGcsBucket], ServerConfigLoader.MissingGcsBucket)
         const gcpProject = ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvGcpProject], ServerConfigLoader.MissingGcpProject)
         const cloudSqlInstance = ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvCloudSqlInstance], ServerConfigLoader.MissingCloudSqlInstance)
         const cloudSqlUser = ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvCloudSqlUser], ServerConfigLoader.MissingCloudSqlUser)
         const cloudSqlDatabase = ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvCloudSqlDb], ServerConfigLoader.MissingCloudSqlDb)
-        const cloudMasterKeyRef = ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvCloudMasterKeyRef], ServerConfigLoader.MissingCloudMasterKeyRef)
         const cloudSqlAuth = ServerConfigLoader.NonEmpty(env[ServerConfigLoader.EnvCloudSqlAuth])
         if (cloudSqlAuth !== undefined && cloudSqlAuth.toLowerCase() !== ServerConfigLoader.CloudSqlAuthIam)
         {
             throw new Error(ServerConfigLoader.UnsupportedCloudSqlAuth)
         }
         return {
+            cloudProvider,
             gcsBucket,
             gcsPrefix: ServerConfigLoader.NonEmpty(env[ServerConfigLoader.EnvGcsPrefix]),
             gcpProject,
@@ -392,6 +422,64 @@ export class ServerConfigLoader
             cloudSqlAuth,
             cloudMasterKeyRef,
         }
+    }
+
+    private static CloudAws(env: Record<string, string | undefined>, cloudProvider: DeploymentProvider, cloudMasterKeyRef: string): Partial<ServerConfig>
+    {
+        const awsRegion = ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvAwsRegion], ServerConfigLoader.MissingAwsRegion)
+        const s3Bucket = ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvS3Bucket], ServerConfigLoader.MissingS3Bucket)
+        const rdsHost = ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvRdsHost], ServerConfigLoader.MissingRdsHost)
+        const rdsUser = ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvRdsUser], ServerConfigLoader.MissingRdsUser)
+        const rdsDatabase = ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvRdsDb], ServerConfigLoader.MissingRdsDb)
+        const rawPort = ServerConfigLoader.NonEmpty(env[ServerConfigLoader.EnvRdsPort])
+        const rdsPort = rawPort === undefined ? undefined : ServerConfigLoader.PositiveIntOr(rawPort, ServerConfigLoader.BadRdsPort)
+        const rdsAuth = ServerConfigLoader.NonEmpty(env[ServerConfigLoader.EnvRdsAuth])
+        const authLower = rdsAuth?.toLowerCase()
+        if (authLower !== undefined && authLower !== ServerConfigLoader.RdsAuthIam && authLower !== ServerConfigLoader.RdsAuthPassword)
+        {
+            throw new Error(ServerConfigLoader.BadRdsAuth)
+        }
+        const rdsPasswordRef = ServerConfigLoader.NonEmpty(env[ServerConfigLoader.EnvRdsPasswordRef])
+        if (authLower === ServerConfigLoader.RdsAuthPassword && rdsPasswordRef === undefined)
+        {
+            throw new Error(ServerConfigLoader.MissingRdsPasswordRef)
+        }
+        return {
+            cloudProvider,
+            awsRegion,
+            s3Bucket,
+            s3Prefix: ServerConfigLoader.NonEmpty(env[ServerConfigLoader.EnvS3Prefix]),
+            rdsHost,
+            rdsPort,
+            rdsUser,
+            rdsDatabase,
+            rdsAuth,
+            rdsPasswordRef,
+            cloudMasterKeyRef,
+        }
+    }
+
+    private static ProviderOf(value: string): DeploymentProvider
+    {
+        const lower = value.toLowerCase()
+        if (lower === DeploymentProvider.Gcp)
+        {
+            return DeploymentProvider.Gcp
+        }
+        if (lower === DeploymentProvider.Aws)
+        {
+            return DeploymentProvider.Aws
+        }
+        throw new Error(ServerConfigLoader.BadCloudProvider)
+    }
+
+    private static PositiveIntOr(value: string, badMessage: string): number
+    {
+        if (!ServerConfigLoader.PositiveIntPattern.test(value))
+        {
+            throw new Error(badMessage)
+        }
+        return Number(value)
     }
 
     private static RequiredCloud(value: string | undefined, missingMessage: string): string
