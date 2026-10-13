@@ -43,6 +43,9 @@ export class Observability
     private static readonly MetricsEndpoint = '/metrics'
     private static readonly MetricsHost = '0.0.0.0'
     private static readonly FullSampling = 1
+    private static readonly TracesPath = '/v1/traces'
+    private static readonly MetricsPath = '/v1/metrics'
+    private static readonly PathSeparator = '/'
 
     private readonly tracerProvider: NodeTracerProvider
     private readonly meterProvider: MeterProvider
@@ -56,6 +59,27 @@ export class Observability
     public static Start(options: IObservabilityOptions): Observability
     {
         return Observability.Build(options, Observability.ProductionSpanProcessors(options), Observability.ProductionMetricReaders(options))
+    }
+
+    /** Derives the per-signal OTLP-HTTP URL from a base collector endpoint; a URL already ending in the signal path is kept as-is. */
+    public static SignalUrl(endpoint: string, signalPath: string): string
+    {
+        let base = endpoint
+        while (base.endsWith(Observability.PathSeparator))
+        {
+            base = base.slice(0, -1)
+        }
+        return base.endsWith(signalPath) ? base : base + signalPath
+    }
+
+    public static TracesUrl(endpoint: string): string
+    {
+        return Observability.SignalUrl(endpoint, Observability.TracesPath)
+    }
+
+    public static MetricsUrl(endpoint: string): string
+    {
+        return Observability.SignalUrl(endpoint, Observability.MetricsPath)
     }
 
     public static ForTest(options: IObservabilityOptions, spanExporter: SpanExporter, metricReader: MetricReader): Observability
@@ -88,13 +112,17 @@ export class Observability
         return new Observability(tracerProvider, meterProvider)
     }
 
-    private static ResourceOf(options: IObservabilityOptions): Resource
+    public static ResourceOf(options: IObservabilityOptions): Resource
     {
-        return defaultResource().merge(resourceFromAttributes({
+        const attributes: Record<string, string> = {
             [ATTR_SERVICE_NAME]: options.serviceName ?? Observability.DefaultServiceName,
-            [Observability.InstanceAttribute]: options.replicaId ?? '',
             [Observability.RoleAttribute]: options.role,
-        }))
+        }
+        if (options.replicaId !== undefined)
+        {
+            attributes[Observability.InstanceAttribute] = options.replicaId
+        }
+        return defaultResource().merge(resourceFromAttributes(attributes))
     }
 
     private static SamplerOf(options: IObservabilityOptions, spanProcessors: SpanProcessor[]): Sampler
@@ -119,11 +147,11 @@ export class Observability
         }
         const exporter: SpanExporter = options.otlpProtocol === OtlpProtocol.Grpc
             ? new OTLPTraceExporterGrpc({ url: options.otlpEndpoint })
-            : new OTLPTraceExporter({ url: options.otlpEndpoint })
+            : new OTLPTraceExporter({ url: Observability.TracesUrl(options.otlpEndpoint!) })
         return [new BatchSpanProcessor(exporter)]
     }
 
-    private static ProductionMetricReaders(options: IObservabilityOptions): MetricReader[]
+    public static ProductionMetricReaders(options: IObservabilityOptions): MetricReader[]
     {
         const readers: MetricReader[] = []
         if (options.metricsPort !== undefined)
@@ -132,7 +160,7 @@ export class Observability
         }
         if (options.otlpMetrics === true && Observability.HasEndpoint(options))
         {
-            readers.push(new PeriodicExportingMetricReader({ exporter: new OTLPMetricExporter({ url: options.otlpEndpoint }) }))
+            readers.push(new PeriodicExportingMetricReader({ exporter: new OTLPMetricExporter({ url: Observability.MetricsUrl(options.otlpEndpoint!) }) }))
         }
         return readers
     }

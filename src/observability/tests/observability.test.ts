@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { InMemorySpanExporter } from '@opentelemetry/sdk-trace-base'
+import { PrometheusExporter } from '@opentelemetry/exporter-prometheus'
 import { PeriodicExportingMetricReader, InMemoryMetricExporter, AggregationTemporality } from '@opentelemetry/sdk-metrics'
 import { Observability, ObservabilityRole } from '../observability.js'
 
@@ -39,8 +40,8 @@ test('a disabled config still builds a degrade-safe no-op and Shutdown resolves'
     const span = obs.Tracer().startSpan('x')
     assert.equal(span.spanContext().traceId.length, 32)
     span.end()
-    await obs.Shutdown()
-    assert.ok(true)
+    await assert.doesNotReject(obs.Shutdown())
+    assert.equal(span.spanContext().traceId.length, 32)
 })
 
 test('a registered counter is collectable through an in-memory metric reader', async () =>
@@ -73,4 +74,43 @@ test('a Prometheus reader serves the registered instruments on the configured po
     assert.equal(response.status, 200)
     assert.ok(body.includes('scrape_probe_total'))
     await obs.Shutdown()
+})
+
+test('a base OTLP endpoint is expanded to per-signal URLs and an already-suffixed URL is not doubled', () =>
+{
+    assert.equal(Observability.TracesUrl('http://collector:4318'), 'http://collector:4318/v1/traces')
+    assert.equal(Observability.TracesUrl('http://collector:4318/'), 'http://collector:4318/v1/traces')
+    assert.equal(Observability.MetricsUrl('http://collector:4318'), 'http://collector:4318/v1/metrics')
+    assert.equal(Observability.TracesUrl('http://collector:4318/v1/traces'), 'http://collector:4318/v1/traces')
+    assert.equal(Observability.MetricsUrl('http://collector:4318/v1/metrics/'), 'http://collector:4318/v1/metrics')
+})
+
+test('the resource carries service name and role, and instance id only when a replica id is set', () =>
+{
+    const withReplica = Observability.ResourceOf({ role: ObservabilityRole.Gateway, serviceName: 'svc', replicaId: 'r9' }).attributes
+    assert.equal(withReplica['service.name'], 'svc')
+    assert.equal(withReplica['service.role'], 'gateway')
+    assert.equal(withReplica['service.instance.id'], 'r9')
+    const without = Observability.ResourceOf({ role: ObservabilityRole.Host }).attributes
+    assert.equal(without['service.role'], 'host')
+    assert.equal('service.instance.id' in without, false)
+})
+
+test('reader gating: no Prometheus reader without a port, no OTLP metric reader unless enabled with an endpoint', async () =>
+{
+    assert.equal(Observability.ProductionMetricReaders({ role: ObservabilityRole.Host }).length, 0)
+    assert.equal(Observability.ProductionMetricReaders({ role: ObservabilityRole.Host, otlpEndpoint: 'http://collector:4318' }).length, 0)
+    assert.equal(Observability.ProductionMetricReaders({ role: ObservabilityRole.Host, otlpEndpoint: 'http://collector:4318', otlpMetrics: false }).length, 0)
+    assert.equal(Observability.ProductionMetricReaders({ role: ObservabilityRole.Host, otlpMetrics: true }).length, 0)
+    const otlpOnly = Observability.ProductionMetricReaders({ role: ObservabilityRole.Host, otlpEndpoint: 'http://collector:4318', otlpMetrics: true })
+    assert.equal(otlpOnly.length, 1)
+    assert.ok(otlpOnly[0] instanceof PeriodicExportingMetricReader)
+    const port = await Fixtures.GrabPort()
+    const promOnly = Observability.ProductionMetricReaders({ role: ObservabilityRole.Host, metricsPort: port })
+    assert.equal(promOnly.length, 1)
+    assert.ok(promOnly[0] instanceof PrometheusExporter)
+    for (const r of [...otlpOnly, ...promOnly])
+    {
+        await r.shutdown().catch(() => {})
+    }
 })
