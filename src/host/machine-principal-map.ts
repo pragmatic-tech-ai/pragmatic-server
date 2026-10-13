@@ -66,6 +66,11 @@ export class MachinePrincipalMap
         this.entries = entries
     }
 
+    public get IsEmpty(): boolean
+    {
+        return this.entries.size === 0
+    }
+
     /** The canonical key is lowercase-hex-no-colons; the lookup key is normalized to that form. */
     public Lookup(fingerprint: string): MachinePrincipalEntry | undefined
     {

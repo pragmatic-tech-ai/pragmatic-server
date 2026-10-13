@@ -1,8 +1,10 @@
 import { AuthMethod, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
-import type { IAccessPolicy, IIdentityProviderPack, IdentityConfig, IdentityStoreSet, Tenant } from '@pragmatic-tech-ai/todl-identity'
+import type { IAccessPolicy, IAuthenticator, IIdentityProviderPack, IdentityConfig, IdentityStoreSet, Tenant } from '@pragmatic-tech-ai/todl-identity'
 import { FetchHttpClient, GoogleIdentityPack, InMemoryOidcFlowStateStore, MicrosoftEntraPack } from '@pragmatic-tech-ai/todl-identity-cloud'
 import type { IHttpClient, IOidcFlowStateStore, OidcIdentityProviderPackBase, OidcPackOptions } from '@pragmatic-tech-ai/todl-identity-cloud'
 import { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
+import { MachineCertAuthenticator } from '../host/machine-cert-authenticator.js'
+import type { MachinePrincipalMap } from '../host/machine-principal-map.js'
 import { IdentityPackKind, IdentityPackKinds } from './identity-pack-kind.js'
 
 export interface ResolvedPack
@@ -28,18 +30,19 @@ export class IdentityPackResolver
         this.now = now
     }
 
-    public Resolve(tenant: Tenant, config: IdentityConfig, stores: IdentityStoreSet): ResolvedPack
+    public Resolve(tenant: Tenant, config: IdentityConfig, stores: IdentityStoreSet, machineMap?: MachinePrincipalMap): ResolvedPack
     {
         const kind = IdentityPackKinds.FromPackId(config.PackId)
+        const machineAuthenticators: IAuthenticator[] = machineMap !== undefined && !machineMap.IsEmpty ? [new MachineCertAuthenticator(machineMap)] : []
         if (kind === IdentityPackKind.Local)
         {
-            return { Pack: ServerIdentityPack.OpenWith(stores, { DelegationDepth: config.DelegationDepth }), Oidc: undefined }
+            return { Pack: ServerIdentityPack.OpenWith(stores, { ExtraAuthenticators: machineAuthenticators, DelegationDepth: config.DelegationDepth }), Oidc: undefined }
         }
         const oidcPack = this.BuildOidcPack(kind, config, stores)
         const oidcAuthenticator = oidcPack.AuthenticatorFor(AuthMethod.Oidc)
         const policy: IAccessPolicy = oidcPack.Policy ?? new ResourceAuthorizationPolicy()
         const pack = ServerIdentityPack.OpenWith(stores, {
-            ExtraAuthenticators: oidcAuthenticator === undefined ? [] : [oidcAuthenticator],
+            ExtraAuthenticators: oidcAuthenticator === undefined ? machineAuthenticators : [oidcAuthenticator, ...machineAuthenticators],
             DelegationDepth: config.DelegationDepth,
             Policy: policy,
         })
