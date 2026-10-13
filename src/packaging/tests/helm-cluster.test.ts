@@ -107,3 +107,10 @@ test('NOTES warn that cluster mode requires Redis (Review Focus 4)', () =>
     assert.match(notes, /cluster/i)
     assert.match(notes, /REQUIRES Redis/)
 })
+
+test('the gateway can use a distinct client cert secret, defaulting to the shared one', () =>
+{
+    const dep = Chart.Text(join('templates', 'gateway-deployment.yaml'))
+    assert.match(dep, /cluster\.gateway\.tls\.existingSecret/)
+    assert.match(dep, /default \(required/)
+})

@@ -42,3 +42,5 @@ Liveness uses `/healthz`; readiness uses `/readyz`, which stays false until star
 ## Cluster mode (gateway + worker split)
 
 Set `cluster.enabled=true` to run a worker StatefulSet behind a gateway Deployment. The worker tier REQUIRES Redis (`redis.url` or `redis.existingSecret`) -- the ownership lease keeps one worker per tenant. Supply mTLS material through `cluster.tls.existingSecret` (the operator or cert-manager provides `tls.crt`, `tls.key`, `ca.crt`); nothing is inlined in values or the ConfigMap. `cluster.workerServerName` is the SAN every worker presents, and the gateway validates the worker certificate against it.
+
+Worker storage is ALWAYS persistent -- the StatefulSet uses volumeClaimTemplates -- regardless of the top-level `persistence.enabled`, which only governs the single-Deployment path. To give the gateway its own client certificate, set `cluster.gateway.tls.existingSecret`; it defaults to the shared `cluster.tls.existingSecret`.

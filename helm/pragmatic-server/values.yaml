@@ -88,9 +88,13 @@ cluster:
   # connection against it (connecting to the per-pod DNS address independently).
   workerServerName: pragmatic-worker
   worker:
+    # Worker storage is ALWAYS persistent (volumeClaimTemplates), regardless of persistence.enabled.
     replicas: 2
     port: 8443
     healthPort: 8081
   gateway:
     replicas: 2
     port: 8080
+    # Optional distinct gateway client cert; defaults to cluster.tls.existingSecret (one shared machine cert).
+    tls:
+      existingSecret: ""

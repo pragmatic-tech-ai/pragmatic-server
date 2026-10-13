@@ -66,5 +66,5 @@ spec:
       volumes:
         - name: tls
           secret:
-            secretName: {{ required "cluster.tls.existingSecret is required when cluster.enabled" .Values.cluster.tls.existingSecret }}
+            secretName: {{ .Values.cluster.gateway.tls.existingSecret | default (required "cluster.tls.existingSecret is required when cluster.enabled" .Values.cluster.tls.existingSecret) }}
 {{- end }}
