@@ -12,8 +12,8 @@ class MachineHarness
 {
     public static readonly CertPath = 'src/tests/fixtures/tls/machine-client.pem'
     public static readonly PrincipalId = 'svc-1'
-    private static readonly LocalPackId = 'local'
-    private static readonly EntraPackId = 'entra'
+    public static readonly LocalPackId = 'local'
+    public static readonly EntraPackId = 'entra'
     private static readonly EntraIssuer = 'https://login.microsoftonline.com/test-tid/v2.0'
     private static readonly TenantId = 't-machine'
     private static readonly HashAlgorithm = 'sha256'
@@ -59,7 +59,7 @@ test('a Local tenant with a machine map authenticates a mapped fingerprint as a 
     try
     {
         const stores = await fixture.Stores()
-        const tenant = MachineHarness.Tenant('local')
+        const tenant = MachineHarness.Tenant(MachineHarness.LocalPackId)
         const resolved = new IdentityPackResolver().Resolve(tenant, MachineHarness.LocalConfig(), stores, MachineHarness.Map())
         const auth = resolved.Pack.AuthenticatorFor(AuthMethod.Machine)
         assert.ok(auth !== undefined)
@@ -80,7 +80,7 @@ test('resolving without a machine map leaves no Machine authenticator', async ()
     try
     {
         const stores = await fixture.Stores()
-        const resolved = new IdentityPackResolver().Resolve(MachineHarness.Tenant('local'), MachineHarness.LocalConfig(), stores)
+        const resolved = new IdentityPackResolver().Resolve(MachineHarness.Tenant(MachineHarness.LocalPackId), MachineHarness.LocalConfig(), stores)
         assert.equal(resolved.Pack.AuthenticatorFor(AuthMethod.Machine), undefined)
     }
     finally
@@ -95,7 +95,7 @@ test('an empty machine map adds no Machine authenticator', async () =>
     try
     {
         const stores = await fixture.Stores()
-        const resolved = new IdentityPackResolver().Resolve(MachineHarness.Tenant('local'), MachineHarness.LocalConfig(), stores, MachinePrincipalMap.Empty)
+        const resolved = new IdentityPackResolver().Resolve(MachineHarness.Tenant(MachineHarness.LocalPackId), MachineHarness.LocalConfig(), stores, MachinePrincipalMap.Empty)
         assert.equal(resolved.Pack.AuthenticatorFor(AuthMethod.Machine), undefined)
     }
     finally
@@ -111,7 +111,7 @@ test('an Entra tenant keeps the OIDC authenticator alongside the Machine one', a
     {
         const stores = await fixture.Stores()
         const resolver = await MachineHarness.EntraResolver()
-        const resolved = resolver.Resolve(MachineHarness.Tenant('entra'), MachineHarness.EntraConfig(fixture), stores, MachineHarness.Map())
+        const resolved = resolver.Resolve(MachineHarness.Tenant(MachineHarness.EntraPackId), MachineHarness.EntraConfig(fixture), stores, MachineHarness.Map())
         assert.ok(resolved.Pack.AuthenticatorFor(AuthMethod.Oidc) !== undefined)
         assert.ok(resolved.Pack.AuthenticatorFor(AuthMethod.Machine) !== undefined)
         assert.ok(resolved.Oidc !== undefined)
