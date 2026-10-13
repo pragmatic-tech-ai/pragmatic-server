@@ -7,7 +7,7 @@ export enum LogLevel
 
 export type LogFields = Record<string, unknown>
 
-/** Structured application logger: JSON-line records with a central field-name deny-list. */
+/** Structured application logger: JSON-line records with a central, recursive field-name deny-list. */
 export interface ILogger
 {
     Info(message: string, fields?: LogFields): void
@@ -16,17 +16,35 @@ export interface ILogger
     Child(fields: LogFields): ILogger
 }
 
-/** JSON-line logger to an injectable sink. A hoisted deny-list of field names is dropped before serialization so secret-bearing values never reach output. */
+/**
+ * JSON-line logger to an injectable sink. Field names are normalized (lowercased, `_` and `-` removed) and
+ * checked against a deny-list at every depth of plain objects, arrays and Error props, so secret-bearing
+ * values never reach output. Reserved record keys cannot be spoofed by caller fields.
+ */
 export class StructuredLogger implements ILogger
 {
     private static readonly LevelKey = 'level'
     private static readonly TimestampKey = 'timestamp'
     private static readonly MessageKey = 'message'
+    private static readonly LogErrorKey = 'logError'
+    private static readonly FallbackReason = 'unserializable fields'
+    private static readonly CircularMarker = '[Circular]'
+    private static readonly ToJsonKey = 'toJSON'
+    private static readonly ErrorNameKey = 'name'
+    private static readonly ErrorMessageKey = 'message'
+    private static readonly ErrorStackKey = 'stack'
     private static readonly Newline = '\n'
+    private static readonly ReservedKeys: ReadonlySet<string> = new Set<string>([
+        StructuredLogger.LevelKey,
+        StructuredLogger.TimestampKey,
+        StructuredLogger.MessageKey,
+    ])
+    private static readonly SecretFragments: readonly string[] = ['password', 'secret', 'token']
     private static readonly Denied: ReadonlySet<string> = new Set<string>([
         'redisurl',
         'otlpendpoint',
         'authorization',
+        'xauthorization',
         'password',
         'token',
         'code',
@@ -80,29 +98,112 @@ export class StructuredLogger implements ILogger
 
     private Emit(level: LogLevel, message: string, fields?: LogFields): void
     {
-        const record: Record<string, unknown> = {
-            [StructuredLogger.LevelKey]: level,
-            [StructuredLogger.TimestampKey]: new Date().toISOString(),
-            [StructuredLogger.MessageKey]: message,
-        }
-        StructuredLogger.Merge(record, this.bound)
-        if (fields !== undefined)
+        const timestamp = new Date().toISOString()
+        let line: string
+        try
         {
-            StructuredLogger.Merge(record, fields)
+            const record: Record<string, unknown> = {
+                [StructuredLogger.LevelKey]: level,
+                [StructuredLogger.TimestampKey]: timestamp,
+                [StructuredLogger.MessageKey]: message,
+            }
+            const ancestors = new WeakSet<object>()
+            StructuredLogger.MergeInto(record, this.bound, ancestors)
+            if (fields !== undefined)
+            {
+                StructuredLogger.MergeInto(record, fields, ancestors)
+            }
+            line = JSON.stringify(record)
         }
-        this.sink(JSON.stringify(record) + StructuredLogger.Newline)
+        catch
+        {
+            line = JSON.stringify({
+                [StructuredLogger.LevelKey]: level,
+                [StructuredLogger.TimestampKey]: timestamp,
+                [StructuredLogger.MessageKey]: message,
+                [StructuredLogger.LogErrorKey]: StructuredLogger.FallbackReason,
+            })
+        }
+        this.sink(line + StructuredLogger.Newline)
     }
 
-    private static Merge(target: Record<string, unknown>, source: LogFields): void
+    private static MergeInto(target: Record<string, unknown>, source: LogFields, ancestors: WeakSet<object>): void
     {
         for (const key of Object.keys(source))
         {
-            if (StructuredLogger.Denied.has(key.toLowerCase()))
+            if (StructuredLogger.IsDenied(key) || StructuredLogger.IsReserved(key))
             {
                 continue
             }
-            target[key] = source[key]
+            target[key] = StructuredLogger.Sanitize(source[key], ancestors)
         }
+    }
+
+    private static IsDenied(key: string): boolean
+    {
+        const normalized = key.toLowerCase().replace(/[_-]/g, '')
+        if (StructuredLogger.Denied.has(normalized))
+        {
+            return true
+        }
+        return StructuredLogger.SecretFragments.some(fragment => normalized.includes(fragment))
+    }
+
+    private static IsReserved(key: string): boolean
+    {
+        return StructuredLogger.ReservedKeys.has(key.toLowerCase())
+    }
+
+    private static Sanitize(value: unknown, ancestors: WeakSet<object>): unknown
+    {
+        if (value === null || typeof value !== 'object')
+        {
+            return value
+        }
+        if (ancestors.has(value))
+        {
+            return StructuredLogger.CircularMarker
+        }
+        ancestors.add(value)
+        try
+        {
+            return StructuredLogger.SanitizeObject(value, ancestors)
+        }
+        finally
+        {
+            ancestors.delete(value)
+        }
+    }
+
+    private static SanitizeObject(value: object, ancestors: WeakSet<object>): unknown
+    {
+        if (Array.isArray(value))
+        {
+            return value.map(item => StructuredLogger.Sanitize(item, ancestors))
+        }
+        const toJson: unknown = Reflect.get(value, StructuredLogger.ToJsonKey)
+        if (typeof toJson === 'function')
+        {
+            return StructuredLogger.Sanitize(Reflect.apply(toJson, value, []), ancestors)
+        }
+        const source: LogFields = value instanceof Error
+            ? {
+                ...value,
+                [StructuredLogger.ErrorNameKey]: value.name,
+                [StructuredLogger.ErrorMessageKey]: value.message,
+                [StructuredLogger.ErrorStackKey]: value.stack,
+            }
+            : value as LogFields
+        const result: Record<string, unknown> = {}
+        for (const key of Object.keys(source))
+        {
+            if (StructuredLogger.IsDenied(key))
+            {
+                continue
+            }
+            result[key] = StructuredLogger.Sanitize(source[key], ancestors)
+        }
+        return result
     }
 }
 
