@@ -40,6 +40,7 @@ export interface ServerConfig
     auditSink?: AuditSinkKind
     auditFile?: string
     rateLimit?: RateLimitConfig
+    drainTimeoutMs?: number
 }
 
 export interface GatewayConfig
@@ -60,4 +61,5 @@ export interface GatewayConfig
     auditSink?: AuditSinkKind
     auditFile?: string
     rateLimit?: RateLimitConfig
+    drainTimeoutMs?: number
 }

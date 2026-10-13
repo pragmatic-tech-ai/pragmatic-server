@@ -66,6 +66,7 @@ export interface WorkerHostOptions
     observability?: Observability
     rateLimit?: RateLimitGuard
     audit?: IAccessAuditSink
+    drainTimeoutMs?: number
 }
 
 /** Internal mutual-TLS wss worker: the gateway (a verified client cert) forwards x-pragmatic-tenant + authorization;

@@ -38,6 +38,9 @@ export class ServerConfigLoader
     private static readonly GatewayNeedsRedis = 'PRAGMATIC_REDIS_URL is required for the gateway'
 
     private static readonly BadMetricsPort = 'PRAGMATIC_METRICS_PORT must be an integer port between 1 and 65535'
+    private static readonly BadDrainTimeout = 'PRAGMATIC_DRAIN_TIMEOUT_MS must be a positive integer (milliseconds)'
+    private static readonly EnvDrainTimeout = 'PRAGMATIC_DRAIN_TIMEOUT_MS'
+    private static readonly DefaultDrainTimeoutMs = 25000
     private static readonly BadSampling = 'PRAGMATIC_TRACE_SAMPLING must be a ratio between 0 and 1'
     private static readonly BadOtlpProtocol = 'PRAGMATIC_OTLP_PROTOCOL must be http-protobuf or grpc'
     private static readonly BadOtlpMetrics = 'PRAGMATIC_OTLP_METRICS must be true or false'
@@ -153,6 +156,7 @@ export class ServerConfigLoader
             healthPort: ServerConfigLoader.Int(env.PRAGMATIC_HEALTH_PORT),
             ...ServerConfigLoader.Observability(env),
             ...ServerConfigLoader.GatewaySecurity(env),
+            drainTimeoutMs: ServerConfigLoader.DrainTimeout(env[ServerConfigLoader.EnvDrainTimeout]),
         }
     }
 
@@ -166,6 +170,20 @@ export class ServerConfigLoader
         if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535)
         {
             throw new Error(ServerConfigLoader.BadMetricsPort)
+        }
+        return parsed
+    }
+
+    private static DrainTimeout(value: string | undefined): number
+    {
+        if (value === undefined || value.length === 0)
+        {
+            return ServerConfigLoader.DefaultDrainTimeoutMs
+        }
+        const parsed = Number(value)
+        if (!Number.isInteger(parsed) || parsed < 1)
+        {
+            throw new Error(ServerConfigLoader.BadDrainTimeout)
         }
         return parsed
     }
@@ -324,6 +342,7 @@ export class ServerConfigLoader
             healthPort: ServerConfigLoader.Int(env.PRAGMATIC_HEALTH_PORT),
             ...ServerConfigLoader.Observability(env),
             ...ServerConfigLoader.Security(env, deploymentMode),
+            drainTimeoutMs: ServerConfigLoader.DrainTimeout(env[ServerConfigLoader.EnvDrainTimeout]),
         }
     }
 

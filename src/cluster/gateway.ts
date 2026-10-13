@@ -18,6 +18,7 @@ import { RateLimitGuard } from '../host/rate-limit-guard.js'
 import { RateLimitScope } from '../host/rate-limiter.js'
 import { AuditSurface } from '../host/access-audit.js'
 import type { ILogger } from '../observability/logger.js'
+import type { Observability } from '../observability/observability.js'
 import { RequestCorrelation } from '../observability/request-correlation.js'
 
 export interface GatewayOptions
@@ -30,6 +31,8 @@ export interface GatewayOptions
     serverName?: string
     logger?: ILogger
     rateLimit?: RateLimitGuard
+    observability?: Observability
+    drainTimeoutMs?: number
 }
 
 /** Public plain-ws front door. Holds NO identity pack and never parses JSON-RPC: it reads the ?tenant hint,

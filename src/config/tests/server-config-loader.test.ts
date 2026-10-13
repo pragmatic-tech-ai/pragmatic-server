@@ -88,3 +88,36 @@ test('fails closed on an invalid deployment mode', () =>
     const env = { ...Env.Minimal(), PRAGMATIC_DEPLOYMENT_MODE: 'staging' }
     assert.throws(() => ServerConfigLoader.Load(env, Env.NoRead), /local or cloud/)
 })
+
+test('drainTimeoutMs defaults to 25000 when unset', () =>
+{
+    const config = ServerConfigLoader.Load(Env.Minimal(), Env.NoRead)
+    assert.equal(config.drainTimeoutMs, 25000)
+})
+
+test('drainTimeoutMs parses a positive integer from PRAGMATIC_DRAIN_TIMEOUT_MS', () =>
+{
+    const env = { ...Env.Minimal(), PRAGMATIC_DRAIN_TIMEOUT_MS: '40000' }
+    assert.equal(ServerConfigLoader.Load(env, Env.NoRead).drainTimeoutMs, 40000)
+})
+
+test('drainTimeoutMs fails closed on a non-integer value', () =>
+{
+    const env = { ...Env.Minimal(), PRAGMATIC_DRAIN_TIMEOUT_MS: 'soon' }
+    assert.throws(() => ServerConfigLoader.Load(env, Env.NoRead), /PRAGMATIC_DRAIN_TIMEOUT_MS/)
+})
+
+test('drainTimeoutMs fails closed on a non-positive value', () =>
+{
+    const env = { ...Env.Minimal(), PRAGMATIC_DRAIN_TIMEOUT_MS: '0' }
+    assert.throws(() => ServerConfigLoader.Load(env, Env.NoRead), /PRAGMATIC_DRAIN_TIMEOUT_MS/)
+})
+
+test('the gateway loader also defaults drainTimeoutMs to 25000', () =>
+{
+    const env = {
+        PRAGMATIC_TLS_CERT_FILE: '/c', PRAGMATIC_TLS_KEY_FILE: '/k', PRAGMATIC_TLS_CA_FILE: '/a',
+        PRAGMATIC_REDIS_URL: 'redis://127.0.0.1:6379',
+    }
+    assert.equal(ServerConfigLoader.LoadGateway(env).drainTimeoutMs, 25000)
+})

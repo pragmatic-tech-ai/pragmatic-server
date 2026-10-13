@@ -53,6 +53,7 @@ export class ServerBootstrap
     private static readonly SqlNeedsStore = 'audit sink sql requires a cloud audit store'
     private static readonly AuditLabel = ' audit='
     private static readonly RateLimitLabel = ' ratelimit='
+    private static readonly DrainLabel = ' drain='
     private static readonly RateLimitOn = 'on'
     private static readonly RateLimitOff = 'off'
     private static readonly WorkerNeedsTls = 'worker requires TLS (set PRAGMATIC_TLS_CERT_FILE/KEY_FILE/CA_FILE)'
@@ -81,6 +82,7 @@ export class ServerBootstrap
             observability,
             audit,
             rateLimit,
+            drainTimeoutMs: config.drainTimeoutMs,
         }
     }
 
@@ -88,7 +90,7 @@ export class ServerBootstrap
     {
         const ownership = ServerBootstrap.HasRedis(config) ? ServerBootstrap.RedisOwnership : ServerBootstrap.InMemoryOwnership
         const secrets = config.provisionedSecretsFile !== undefined && config.provisionedSecretsFile.length > 0 ? ServerBootstrap.SecretsFile : ServerBootstrap.SecretsNone
-        return `pragmatic-server listening on ${config.host}:${config.port} mode=${config.deploymentMode} tenants=${tenantCount} ownership=${ownership} secrets=${secrets}${ServerBootstrap.ClientMtls(config.clientTls)}${ServerBootstrap.OidcFlowToken}${ownership}${ServerBootstrap.Otel(config)}${ServerBootstrap.Security(config)}`
+        return `pragmatic-server listening on ${config.host}:${config.port} mode=${config.deploymentMode} tenants=${tenantCount} ownership=${ownership} secrets=${secrets}${ServerBootstrap.ClientMtls(config.clientTls)}${ServerBootstrap.OidcFlowToken}${ownership}${ServerBootstrap.Otel(config)}${ServerBootstrap.Security(config)}${ServerBootstrap.Drain(config)}`
     }
 
     public static ComposeWorkerOptions(config: ServerConfig, provisioning: ITenantProvisioning, provisionedSecrets?: IProvisionedSecretSource, logger?: ILogger, observability?: Observability, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard): WorkerHostOptions
@@ -120,10 +122,11 @@ export class ServerBootstrap
             observability,
             audit,
             rateLimit,
+            drainTimeoutMs: config.drainTimeoutMs,
         }
     }
 
-    public static ComposeGatewayOptions(gw: GatewayConfig, router: IWorkerRouter, logger?: ILogger, rateLimit?: RateLimitGuard): GatewayOptions
+    public static ComposeGatewayOptions(gw: GatewayConfig, router: IWorkerRouter, logger?: ILogger, rateLimit?: RateLimitGuard, observability?: Observability): GatewayOptions
     {
         return {
             host: gw.host,
@@ -134,18 +137,20 @@ export class ServerBootstrap
             clientTls: gw.clientTls,
             logger,
             rateLimit,
+            observability,
+            drainTimeoutMs: gw.drainTimeoutMs,
         }
     }
 
     public static WorkerStartupLine(config: ServerConfig): string
     {
         const ownership = ServerBootstrap.HasRedis(config) ? ServerBootstrap.RedisOwnership : ServerBootstrap.InMemoryOwnership
-        return `pragmatic-worker listening on ${config.host}:${config.port} mode=${config.deploymentMode} ownership=${ownership} health=${config.healthPort ?? ServerBootstrap.HealthOff}${ServerBootstrap.Otel(config)}${ServerBootstrap.Security(config)}`
+        return `pragmatic-worker listening on ${config.host}:${config.port} mode=${config.deploymentMode} ownership=${ownership} health=${config.healthPort ?? ServerBootstrap.HealthOff}${ServerBootstrap.Otel(config)}${ServerBootstrap.Security(config)}${ServerBootstrap.Drain(config)}`
     }
 
     public static GatewayStartupLine(gw: GatewayConfig): string
     {
-        return `pragmatic-gateway listening on ${gw.host}:${gw.port} servername=${gw.workerServerName ?? ServerBootstrap.ServerNameDefault}${ServerBootstrap.ClientMtls(gw.clientTls)}${ServerBootstrap.Otel(gw)}${ServerBootstrap.Security(gw)}`
+        return `pragmatic-gateway listening on ${gw.host}:${gw.port} servername=${gw.workerServerName ?? ServerBootstrap.ServerNameDefault}${ServerBootstrap.ClientMtls(gw.clientTls)}${ServerBootstrap.Otel(gw)}${ServerBootstrap.Security(gw)}${ServerBootstrap.Drain(gw)}`
     }
 
     public static OtelEnabled(config: IObservabilityConfigView): boolean
@@ -202,6 +207,11 @@ export class ServerBootstrap
         }
         const meter = observability?.Meter()
         return new RateLimitGuard(new TokenBucketRateLimiter(config.rateLimit), audit, meter?.createCounter(RateLimitGuard.MetricName()), logger, meter?.createCounter(RateLimitGuard.ErrorMetricName()))
+    }
+
+    private static Drain(config: { drainTimeoutMs?: number }): string
+    {
+        return config.drainTimeoutMs === undefined ? '' : ServerBootstrap.DrainLabel + config.drainTimeoutMs
     }
 
     private static Security(config: { auditSink?: AuditSinkKind; rateLimit?: RateLimitConfig }): string

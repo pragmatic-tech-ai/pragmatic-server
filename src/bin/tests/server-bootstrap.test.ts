@@ -72,3 +72,16 @@ test('StartupLine reports secrets=none for an empty-string provisioned-secrets f
     const config = { ...Fixture.Config(DeploymentMode.Local), provisionedSecretsFile: '' }
     assert.match(ServerBootstrap.StartupLine(config, 1), / secrets=none/)
 })
+
+test('ComposeOptions threads drainTimeoutMs through to the host options', () =>
+{
+    const config = { ...Fixture.Config(DeploymentMode.Local), drainTimeoutMs: 30000 }
+    const options = ServerBootstrap.ComposeOptions(config, Fixture.Provisioning())
+    assert.equal(options.drainTimeoutMs, 30000)
+})
+
+test('StartupLine reports the drain window', () =>
+{
+    const config = { ...Fixture.Config(DeploymentMode.Local), drainTimeoutMs: 25000 }
+    assert.match(ServerBootstrap.StartupLine(config, 1), / drain=25000/)
+})

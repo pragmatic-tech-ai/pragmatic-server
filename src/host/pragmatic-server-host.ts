@@ -64,6 +64,7 @@ export interface PragmaticServerHostOptions
     observability?: Observability
     rateLimit?: RateLimitGuard
     audit?: IAccessAuditSink
+    drainTimeoutMs?: number
 }
 
 export interface WebSocketAddress
