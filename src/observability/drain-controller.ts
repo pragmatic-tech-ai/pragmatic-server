@@ -32,7 +32,7 @@ export class DrainController
         this.timeoutMs = timeoutMs
         this.now = now
         this.sleep = sleep
-        this.pollMs = pollMs
+        this.pollMs = Math.max(1, pollMs)
     }
 
     public async WaitForDrain(source: IInFlightSource): Promise<IDrainOutcome>
@@ -45,9 +45,10 @@ export class DrainController
             {
                 return { Drained: true, Remaining: 0, ElapsedMs: this.now() - start }
             }
-            if (this.now() - start >= this.timeoutMs)
+            const elapsed = this.now() - start
+            if (elapsed >= this.timeoutMs)
             {
-                return { Drained: false, Remaining: remaining, ElapsedMs: this.now() - start }
+                return { Drained: false, Remaining: remaining, ElapsedMs: elapsed }
             }
             await this.sleep(this.pollMs)
         }

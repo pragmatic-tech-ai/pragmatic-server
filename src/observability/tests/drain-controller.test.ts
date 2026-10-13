@@ -75,6 +75,22 @@ test('a throwing in-flight source is treated as drained and never hangs (Review 
     assert.equal(outcome.Remaining, 0)
 })
 
+test('a non-positive pollMs is clamped to 1 so the wait never spins on zero-delay sleeps', async () =>
+{
+    const clock = new FakeClock()
+    const sleeps: number[] = []
+    const controller = new DrainController(1000, () => clock.Now(), ms =>
+    {
+        sleeps.push(ms)
+        return clock.Sleep(ms)
+    }, 0)
+    const outcome = await controller.WaitForDrain(new Countdown([2, 0]))
+    assert.equal(outcome.Drained, true)
+    assert.equal(outcome.Remaining, 0)
+    assert.ok(outcome.ElapsedMs >= 1)
+    assert.deepEqual(sleeps, [1])
+})
+
 test('a zero timeout with a non-zero count returns immediately (preserves pre-Stage-C teardown)', async () =>
 {
     const clock = new FakeClock()
