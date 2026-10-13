@@ -41,6 +41,7 @@
     "@pragmatic-tech-ai/todl-identity-local": "file:../todl-identity-local",
     "@pragmatic-tech-ai/todl-identity-node": "file:../todl-identity-node",
     "@pragmatic-tech-ai/todl-platform-aws": "file:../todl-platform-aws",
+    "@pragmatic-tech-ai/todl-platform-azure": "file:../todl-platform-azure",
     "@pragmatic-tech-ai/todl-platform-cloud": "file:../todl-platform-cloud",
     "@pragmatic-tech-ai/todl-platform-gcp": "file:../todl-platform-gcp",
     "@pragmatic-tech-ai/todl-platform-node": "file:../todl-platform-node",

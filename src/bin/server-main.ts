@@ -76,6 +76,11 @@ class ServerMain
 
     private static async BuildBundle(config: ServerConfig): Promise<ICloudBundle>
     {
+        if (config.cloudProvider === DeploymentProvider.Azure)
+        {
+            const { AzurePlatformFactory } = await import('../platform/azure-platform-factory.js')
+            return await AzurePlatformFactory.Create(config)
+        }
         if (config.cloudProvider === DeploymentProvider.Aws)
         {
             const { AwsPlatformFactory } = await import('../platform/aws-platform-factory.js')
