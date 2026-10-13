@@ -57,6 +57,23 @@ export class ServerConfigLoader
     private static readonly AuditFileRequired = 'PRAGMATIC_AUDIT_FILE is required when PRAGMATIC_AUDIT_SINK=file'
     private static readonly AuditSqlNeedsCloud = 'PRAGMATIC_AUDIT_SINK=sql requires PRAGMATIC_DEPLOYMENT_MODE=cloud'
     private static readonly BadRateLimit = 'PRAGMATIC_RATELIMIT_* values must be set in Rps+Burst pairs, with Rps a number greater than 0 and Burst an integer of at least 1'
+    private static readonly EnvGcsBucket = 'PRAGMATIC_GCS_BUCKET'
+    private static readonly EnvGcsPrefix = 'PRAGMATIC_GCS_PREFIX'
+    private static readonly EnvGcpProject = 'PRAGMATIC_GCP_PROJECT'
+    private static readonly EnvCloudSqlInstance = 'PRAGMATIC_CLOUDSQL_INSTANCE'
+    private static readonly EnvCloudSqlUser = 'PRAGMATIC_CLOUDSQL_USER'
+    private static readonly EnvCloudSqlDb = 'PRAGMATIC_CLOUDSQL_DB'
+    private static readonly EnvCloudSqlIpType = 'PRAGMATIC_CLOUDSQL_IPTYPE'
+    private static readonly EnvCloudSqlAuth = 'PRAGMATIC_CLOUDSQL_AUTH'
+    private static readonly EnvCloudMasterKeyRef = 'PRAGMATIC_CLOUD_MASTER_KEY_REF'
+    private static readonly MissingGcsBucket = 'PRAGMATIC_GCS_BUCKET is required for cloud deployment'
+    private static readonly MissingGcpProject = 'PRAGMATIC_GCP_PROJECT is required for cloud deployment'
+    private static readonly MissingCloudSqlInstance = 'PRAGMATIC_CLOUDSQL_INSTANCE is required for cloud deployment'
+    private static readonly MissingCloudSqlUser = 'PRAGMATIC_CLOUDSQL_USER is required for cloud deployment'
+    private static readonly MissingCloudSqlDb = 'PRAGMATIC_CLOUDSQL_DB is required for cloud deployment'
+    private static readonly MissingCloudMasterKeyRef = 'PRAGMATIC_CLOUD_MASTER_KEY_REF is required for cloud deployment'
+    private static readonly UnsupportedCloudSqlAuth = 'PRAGMATIC_CLOUDSQL_AUTH=password is not supported yet; use iam'
+    private static readonly CloudSqlAuthIam = 'iam'
     private static readonly EnvAuditSink = 'PRAGMATIC_AUDIT_SINK'
     private static readonly EnvAuditFile = 'PRAGMATIC_AUDIT_FILE'
     private static readonly EnvTenantRps = 'PRAGMATIC_RATELIMIT_TENANT_RPS'
@@ -342,8 +359,49 @@ export class ServerConfigLoader
             healthPort: ServerConfigLoader.Int(env.PRAGMATIC_HEALTH_PORT),
             ...ServerConfigLoader.Observability(env),
             ...ServerConfigLoader.Security(env, deploymentMode),
+            ...ServerConfigLoader.Cloud(env, deploymentMode),
             drainTimeoutMs: ServerConfigLoader.DrainTimeout(env[ServerConfigLoader.EnvDrainTimeout]),
         }
+    }
+
+    private static Cloud(env: Record<string, string | undefined>, deploymentMode: DeploymentMode): Partial<ServerConfig>
+    {
+        if (deploymentMode !== DeploymentMode.Cloud)
+        {
+            return {}
+        }
+        const gcsBucket = ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvGcsBucket], ServerConfigLoader.MissingGcsBucket)
+        const gcpProject = ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvGcpProject], ServerConfigLoader.MissingGcpProject)
+        const cloudSqlInstance = ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvCloudSqlInstance], ServerConfigLoader.MissingCloudSqlInstance)
+        const cloudSqlUser = ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvCloudSqlUser], ServerConfigLoader.MissingCloudSqlUser)
+        const cloudSqlDatabase = ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvCloudSqlDb], ServerConfigLoader.MissingCloudSqlDb)
+        const cloudMasterKeyRef = ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvCloudMasterKeyRef], ServerConfigLoader.MissingCloudMasterKeyRef)
+        const cloudSqlAuth = ServerConfigLoader.NonEmpty(env[ServerConfigLoader.EnvCloudSqlAuth])
+        if (cloudSqlAuth !== undefined && cloudSqlAuth.toLowerCase() !== ServerConfigLoader.CloudSqlAuthIam)
+        {
+            throw new Error(ServerConfigLoader.UnsupportedCloudSqlAuth)
+        }
+        return {
+            gcsBucket,
+            gcsPrefix: ServerConfigLoader.NonEmpty(env[ServerConfigLoader.EnvGcsPrefix]),
+            gcpProject,
+            cloudSqlInstance,
+            cloudSqlUser,
+            cloudSqlDatabase,
+            cloudSqlIpType: ServerConfigLoader.NonEmpty(env[ServerConfigLoader.EnvCloudSqlIpType]),
+            cloudSqlAuth,
+            cloudMasterKeyRef,
+        }
+    }
+
+    private static RequiredCloud(value: string | undefined, missingMessage: string): string
+    {
+        const present = ServerConfigLoader.NonEmpty(value)
+        if (present === undefined)
+        {
+            throw new Error(missingMessage)
+        }
+        return present
     }
 
     private static Redis(env: Record<string, string | undefined>, fileUrl: string | undefined): { redisUrl?: string; replicaId?: string }

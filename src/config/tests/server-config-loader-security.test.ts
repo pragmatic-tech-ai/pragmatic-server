@@ -42,7 +42,15 @@ test('auditSink=sql is only valid in cloud mode', () =>
 {
     const env = { ...LoaderFixture.Minimal(), PRAGMATIC_AUDIT_SINK: 'sql' }
     assert.throws(() => ServerConfigLoader.Load(env, LoaderFixture.NoRead), /cloud/)
-    const ok = ServerConfigLoader.Load({ ...env, PRAGMATIC_DEPLOYMENT_MODE: 'cloud' }, LoaderFixture.NoRead)
+    const gcp = {
+        PRAGMATIC_GCS_BUCKET: 'bkt',
+        PRAGMATIC_GCP_PROJECT: 'proj',
+        PRAGMATIC_CLOUDSQL_INSTANCE: 'proj:region:inst',
+        PRAGMATIC_CLOUDSQL_USER: 'svc',
+        PRAGMATIC_CLOUDSQL_DB: 'db1',
+        PRAGMATIC_CLOUD_MASTER_KEY_REF: 'cluster/master-key',
+    }
+    const ok = ServerConfigLoader.Load({ ...env, ...gcp, PRAGMATIC_DEPLOYMENT_MODE: 'cloud' }, LoaderFixture.NoRead)
     assert.equal(ok.auditSink, AuditSinkKind.Sql)
 })
 

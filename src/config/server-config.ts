@@ -41,6 +41,15 @@ export interface ServerConfig
     auditFile?: string
     rateLimit?: RateLimitConfig
     drainTimeoutMs?: number
+    gcsBucket?: string
+    gcsPrefix?: string
+    gcpProject?: string
+    cloudSqlInstance?: string
+    cloudSqlUser?: string
+    cloudSqlDatabase?: string
+    cloudSqlIpType?: string
+    cloudSqlAuth?: string
+    cloudMasterKeyRef?: string
 }
 
 export interface GatewayConfig
