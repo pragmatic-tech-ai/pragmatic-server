@@ -21,12 +21,10 @@ class GatewayMain
     private static readonly StartFailedEvent = 'start-failed'
     private static readonly ShutdownErrorEvent = 'shutdown-error'
     private static readonly EventKey = 'event'
-    private static readonly ObservabilityShutdownFailed = 'observability shutdown failed: '
-    private static readonly ObservabilityShutdownEvent = 'observability-shutdown-error'
 
     private shuttingDown = false
 
-    private constructor(private readonly gateway: Gateway, private readonly router: IWorkerRouter, private readonly logger: ILogger, private readonly observability?: Observability)
+    private constructor(private readonly gateway: Gateway, private readonly router: IWorkerRouter, private readonly logger: ILogger)
     {
     }
 
@@ -41,7 +39,7 @@ class GatewayMain
         const rateLimit = ServerBootstrap.RateLimit(gw, audit, observability, logger)
         const gateway = await Gateway.StartAsync(ServerBootstrap.ComposeGatewayOptions(gw, router, logger, rateLimit, observability))
         logger.Info(ServerBootstrap.GatewayStartupLine(gw), { [GatewayMain.EventKey]: GatewayMain.StartupEvent })
-        const main = new GatewayMain(gateway, router, logger, observability)
+        const main = new GatewayMain(gateway, router, logger)
         process.on(GatewayMain.SigTerm, () => void main.Shutdown())
         process.on(GatewayMain.SigInt, () => void main.Shutdown())
     }
@@ -62,14 +60,7 @@ class GatewayMain
         this.logger.Info(GatewayMain.ShutdownLine, { [GatewayMain.EventKey]: GatewayMain.ShutdownEvent })
         try
         {
-            try
-            {
-                await this.gateway.DisposeAsync()
-            }
-            finally
-            {
-                await this.ShutdownObservability()
-            }
+            await this.gateway.DisposeAsync()
         }
         catch (error)
         {
@@ -80,18 +71,6 @@ class GatewayMain
         }
         await this.router.Drain().catch(() => {})
         process.exit(0)
-    }
-
-    private async ShutdownObservability(): Promise<void>
-    {
-        try
-        {
-            await this.observability?.Shutdown()
-        }
-        catch (error)
-        {
-            this.logger.Error(GatewayMain.ObservabilityShutdownFailed + (error instanceof Error ? error.message : GatewayMain.UnknownError), { [GatewayMain.EventKey]: GatewayMain.ObservabilityShutdownEvent })
-        }
     }
 }
 

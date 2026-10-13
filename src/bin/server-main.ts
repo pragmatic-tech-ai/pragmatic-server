@@ -23,12 +23,10 @@ class ServerMain
     private static readonly StartFailedEvent = 'start-failed'
     private static readonly ShutdownErrorEvent = 'shutdown-error'
     private static readonly EventKey = 'event'
-    private static readonly ObservabilityShutdownFailed = 'observability shutdown failed: '
-    private static readonly ObservabilityShutdownEvent = 'observability-shutdown-error'
 
     private shuttingDown = false
 
-    private constructor(private readonly host: PragmaticServerHost, private readonly logger: ILogger, private readonly observability?: Observability)
+    private constructor(private readonly host: PragmaticServerHost, private readonly logger: ILogger)
     {
     }
 
@@ -46,7 +44,7 @@ class ServerMain
         const options = ServerBootstrap.ComposeOptions(config, provisioning, undefined, provisionedSecrets, logger, observability, audit, rateLimit)
         const host = await PragmaticServerHost.StartAsync(options)
         logger.Info(ServerBootstrap.StartupLine(config, tenantCount), { [ServerMain.EventKey]: ServerMain.StartupEvent })
-        const main = new ServerMain(host, logger, observability)
+        const main = new ServerMain(host, logger)
         process.on(ServerMain.SigTerm, () => void main.Shutdown())
         process.on(ServerMain.SigInt, () => void main.Shutdown())
     }
@@ -67,14 +65,7 @@ class ServerMain
         this.logger.Info(ServerMain.ShutdownLine, { [ServerMain.EventKey]: ServerMain.ShutdownEvent })
         try
         {
-            try
-            {
-                await this.host.DisposeAsync()
-            }
-            finally
-            {
-                await this.ShutdownObservability()
-            }
+            await this.host.DisposeAsync()
         }
         catch (error)
         {
@@ -83,18 +74,6 @@ class ServerMain
             return
         }
         process.exit(0)
-    }
-
-    private async ShutdownObservability(): Promise<void>
-    {
-        try
-        {
-            await this.observability?.Shutdown()
-        }
-        catch (error)
-        {
-            this.logger.Error(ServerMain.ObservabilityShutdownFailed + (error instanceof Error ? error.message : ServerMain.UnknownError), { [ServerMain.EventKey]: ServerMain.ObservabilityShutdownEvent })
-        }
     }
 }
 

@@ -23,12 +23,10 @@ class WorkerMain
     private static readonly StartFailedEvent = 'start-failed'
     private static readonly ShutdownErrorEvent = 'shutdown-error'
     private static readonly EventKey = 'event'
-    private static readonly ObservabilityShutdownFailed = 'observability shutdown failed: '
-    private static readonly ObservabilityShutdownEvent = 'observability-shutdown-error'
 
     private shuttingDown = false
 
-    private constructor(private readonly host: WorkerHost, private readonly logger: ILogger, private readonly observability?: Observability)
+    private constructor(private readonly host: WorkerHost, private readonly logger: ILogger)
     {
     }
 
@@ -45,7 +43,7 @@ class WorkerMain
         const rateLimit = ServerBootstrap.RateLimit(config, audit, observability, logger)
         const host = await WorkerHost.StartAsync(ServerBootstrap.ComposeWorkerOptions(config, provisioning, provisionedSecrets, logger, observability, audit, rateLimit))
         logger.Info(ServerBootstrap.WorkerStartupLine(config), { [WorkerMain.EventKey]: WorkerMain.StartupEvent })
-        const main = new WorkerMain(host, logger, observability)
+        const main = new WorkerMain(host, logger)
         process.on(WorkerMain.SigTerm, () => void main.Shutdown())
         process.on(WorkerMain.SigInt, () => void main.Shutdown())
     }
@@ -66,14 +64,7 @@ class WorkerMain
         this.logger.Info(WorkerMain.ShutdownLine, { [WorkerMain.EventKey]: WorkerMain.ShutdownEvent })
         try
         {
-            try
-            {
-                await this.host.DisposeAsync()
-            }
-            finally
-            {
-                await this.ShutdownObservability()
-            }
+            await this.host.DisposeAsync()
         }
         catch (error)
         {
@@ -82,18 +73,6 @@ class WorkerMain
             return
         }
         process.exit(0)
-    }
-
-    private async ShutdownObservability(): Promise<void>
-    {
-        try
-        {
-            await this.observability?.Shutdown()
-        }
-        catch (error)
-        {
-            this.logger.Error(WorkerMain.ObservabilityShutdownFailed + (error instanceof Error ? error.message : WorkerMain.UnknownError), { [WorkerMain.EventKey]: WorkerMain.ObservabilityShutdownEvent })
-        }
     }
 }
 

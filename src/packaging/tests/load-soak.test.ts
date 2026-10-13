@@ -17,10 +17,9 @@ import { Observability, ObservabilityRole } from '../../observability/observabil
 import { FileAccessAuditSink } from '../../host/file-access-audit-sink.js'
 import { StructuredLogger } from '../../observability/logger.js'
 
-const soak = process.env.PRAGMATIC_SOAK
-
 class Soak
 {
+    private static readonly SoakFlag = process.env.PRAGMATIC_SOAK
     public static readonly Tenant = 't1'
     public static readonly Concurrency = 8
     public static readonly RequestsPerClient = 40
@@ -88,12 +87,12 @@ class Soak
 
     public static OptIn(): string | false
     {
-        return soak === undefined ? Soak.OptInSkip : false
+        return Soak.SoakFlag === undefined ? Soak.OptInSkip : false
     }
 
     public static PosixOnly(): string | false
     {
-        if (soak === undefined)
+        if (Soak.SoakFlag === undefined)
         {
             return Soak.OptInSkip
         }

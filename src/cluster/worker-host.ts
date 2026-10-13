@@ -332,6 +332,7 @@ export class WorkerHost
         await this.Step(WorkerHost.StepHttps, () =>
         {
             const closed = new Promise<void>(resolve => this.httpsServer.close(() => resolve()))
+            this.httpsServer.closeIdleConnections()
             if (!drained)
             {
                 this.httpsServer.closeAllConnections()
@@ -349,6 +350,7 @@ export class WorkerHost
             {
                 return
             }
+            health.closeIdleConnections()
             return new Promise<void>(resolve => health.close(() => resolve()))
         })
         await this.Step(WorkerHost.StepObservability, async () =>

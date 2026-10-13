@@ -219,6 +219,7 @@ export class Gateway
         await this.Step(Gateway.StepHttp, () =>
         {
             const closed = new Promise<void>(resolve => this.httpServer.close(() => resolve()))
+            this.httpServer.closeIdleConnections()
             if (!drained)
             {
                 this.httpServer.closeAllConnections()
