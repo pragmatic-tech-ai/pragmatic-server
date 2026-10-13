@@ -105,6 +105,7 @@ export class PragmaticServerHost
         this.registry = registry
         this.address = address
         this.idleTtlMs = idleTtlMs
+        this.clientTls = clientTls
         httpServer.on(PragmaticServerHost.UpgradeEvent, (req: IncomingMessage, socket: Socket, head: Buffer) =>
         {
             socket.on(PragmaticServerHost.ErrorEvent, () => socket.destroy())
@@ -114,7 +115,6 @@ export class PragmaticServerHost
         {
             void this.Request(req, res)
         })
-        this.clientTls = clientTls
         this.sweep = setInterval(() => void this.registry.EvictIdle(Date.now(), this.idleTtlMs), idleSweepMs)
         this.sweep.unref()
     }

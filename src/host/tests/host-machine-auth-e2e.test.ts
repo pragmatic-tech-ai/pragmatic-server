@@ -1,7 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { request } from 'node:https'
-import { createServer as httpsCreateServer } from 'node:https'
+import { request, createServer as httpsCreateServer } from 'node:https'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import type { TLSSocket } from 'node:tls'
@@ -34,6 +33,11 @@ class MachineFixture
         return createHash('sha256').update(new X509Certificate(readFileSync(MachineFixture.ClientCert)).raw).digest('hex')
     }
 
+    public static ClientDer(): Buffer
+    {
+        return new X509Certificate(readFileSync(MachineFixture.ClientCert)).raw
+    }
+
     public static ClientWithCert(): object
     {
         return { key: readFileSync(MachineFixture.ClientKey), cert: readFileSync(MachineFixture.ClientCert), ca: readFileSync(MachineFixture.CaFile) }
@@ -41,7 +45,7 @@ class MachineFixture
 
     public static ClientWithoutCert(): object
     {
-        return { ca: readFileSync(MachineFixture.CaFile), rejectUnauthorized: false }
+        return { rejectUnauthorized: false }
     }
 
     public static Post(port: number, path: string, tls: object): Promise<{ status: number; body: string }>
@@ -136,6 +140,29 @@ test('/auth/machine is 404 when no machine context is supplied', async () =>
     }
 })
 
+test('/auth/machine rejects an untrusted (unauthorized) cert even when its fingerprint is mapped', async () =>
+{
+    const identity = MachineCertIdentity.FromPeerCertificate(false, { raw: MachineFixture.ClientDer() })
+    assert.equal(identity.Authorized, false)
+    assert.ok(identity.Fingerprint.length > 0)
+    const map = new MachinePrincipalMap(new Map([[identity.Fingerprint, { PrincipalId: 'svc-1', Groups: [] }]]))
+    const pack = await ServerIdentityPack.Open(new FakeStorage(), randomBytes(32))
+    const endpoint = new AuthHttpEndpoint(pack, new Tenant('t1', TenantKind.SelfHosted, 'Tenant One'), undefined, { authenticator: new MachineCertAuthenticator(map), identity })
+    const server = httpsCreateServer(MachineTls.OptionalServer(MachineFixture.ServerRef), (req, res) => void endpoint.Handle(req, res))
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', () => resolve()))
+    try
+    {
+        const res = await MachineFixture.Post((server.address() as AddressInfo).port, '/auth/machine', MachineFixture.ClientWithoutCert())
+        assert.equal(res.status, 401)
+        assert.equal((JSON.parse(res.body) as { token?: string }).token, undefined)
+    }
+    finally
+    {
+        await new Promise<void>(resolve => server.close(() => resolve()))
+    }
+})
+
+// The host's cert-PRESENT /auth/machine path is fully exercised once Task 6 wires the Machine authenticator into the tenant pack.
 test('a host with clientTls listens over TLS and serves a no-cert client', async () =>
 {
     const dir = mkdtempSync(join(tmpdir(), 'ph7b-tls-'))
