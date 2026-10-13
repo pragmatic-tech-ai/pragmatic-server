@@ -21,6 +21,7 @@ export class IdentityPackResolver
 {
     private static readonly GenericScopes: readonly string[] = ['openid', 'email', 'profile']
     private static readonly GenericGroupsClaim = 'groups'
+    private static readonly UnexpectedKindError = 'unexpected identity pack kind: '
     private static readonly MissingSettingError = 'OIDC provider setting is required: '
 
     private readonly http: IHttpClient
@@ -70,7 +71,11 @@ export class IdentityPackResolver
                 new ClaimArrayGroupStrategy(IdentityPackResolver.GenericGroupsClaim))
             return GenericOidcPack.Create({ Profile: profile, ...this.OidcOptions(config, stores) })
         }
-        return GoogleIdentityPack.Create(this.OidcOptions(config, stores))
+        if (kind === IdentityPackKind.Google)
+        {
+            return GoogleIdentityPack.Create(this.OidcOptions(config, stores))
+        }
+        throw new Error(IdentityPackResolver.UnexpectedKindError + IdentityPackKind[kind])
     }
 
     private OidcOptions(config: IdentityConfig, stores: IdentityStoreSet): Omit<OidcPackOptions, 'Profile'>

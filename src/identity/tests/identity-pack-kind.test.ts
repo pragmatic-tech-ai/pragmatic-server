@@ -7,6 +7,7 @@ test('known pack ids map to kinds', () =>
     assert.equal(IdentityPackKinds.FromPackId('entra'), IdentityPackKind.Entra)
     assert.equal(IdentityPackKinds.FromPackId('google'), IdentityPackKind.Google)
     assert.equal(IdentityPackKinds.FromPackId('local'), IdentityPackKind.Local)
+    assert.equal(IdentityPackKinds.FromPackId('generic-oidc'), IdentityPackKind.GenericOidc)
 })
 
 test('an unknown pack id fails closed naming the id', () =>
