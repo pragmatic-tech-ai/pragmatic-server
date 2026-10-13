@@ -244,7 +244,6 @@ export class Gateway
         }
     }
 
-    /** Bounded wait for bridged sessions; the gateway has no request instrumentation, so in-flight is the live client-socket count. */
     /** Degrade-safe in-flight read for the begin log: a throwing source counts as zero, matching DrainController. */
     private CountOf(source: IInFlightSource): number
     {
@@ -258,6 +257,7 @@ export class Gateway
         }
     }
 
+    /** Bounded wait for bridged sessions; the gateway has no request instrumentation, so in-flight is the live client-socket count. */
     private async Drain(): Promise<boolean>
     {
         try

@@ -329,7 +329,6 @@ export class PragmaticServerHost
         }
     }
 
-    /** Bounded wait for in-flight work; returns whether it fully drained. A failure is logged and never blocks teardown. */
     /** Degrade-safe in-flight read for the begin log: a throwing source counts as zero, matching DrainController. */
     private CountOf(source: IInFlightSource): number
     {
@@ -343,6 +342,7 @@ export class PragmaticServerHost
         }
     }
 
+    /** Bounded wait for in-flight work; returns whether it fully drained. A failure is logged and never blocks teardown. */
     private async Drain(): Promise<boolean>
     {
         try
