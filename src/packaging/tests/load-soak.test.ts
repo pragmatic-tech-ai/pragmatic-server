@@ -297,22 +297,12 @@ test('soak: concurrent WS+HTTP load stays within thresholds, leaks no connection
         const token = await Soak.TokenFor(host)
         const heapBefore = process.memoryUsage().heapUsed
         const latencies: number[] = []
-        // One serial open up front: concurrent same-tenant OpenSolution calls leave an engine content watcher armed
-        // after teardown (upstream todl race), which would keep the test process alive. The load itself stays concurrent.
-        const primer = await PragmaticClient.ConnectAsync(url, { bearerToken: token })
-        try
-        {
-            await primer.OpenSolution(Soak.SolutionPath(baseDir))
-        }
-        finally
-        {
-            await primer.DisposeAsync()
-        }
         const workers = Array.from({ length: Soak.Concurrency }, async () =>
         {
             const client = await PragmaticClient.ConnectAsync(url, { bearerToken: token })
             try
             {
+                await client.OpenSolution(Soak.SolutionPath(baseDir))
                 for (let i = 0; i < Soak.RequestsPerClient; i += 1)
                 {
                     const start = Date.now()
