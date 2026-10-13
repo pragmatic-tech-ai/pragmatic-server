@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, cpSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { ModuleStateKind } from '@pragmatic-tech-ai/todl-runtime'
 import { PragmaticServer } from '../pragmatic-server.js'
 
 /** Test helpers for the offline acceptance golden: temp dirs and a private copy of the read-only fixture. */
@@ -13,6 +14,10 @@ class OpenGolden
     private static readonly FixturesDir = 'fixtures'
     private static readonly SampleSolutionDir = 'sample-solution'
     private static readonly MissingDir = 'does-not-exist-xyz'
+    public static readonly LanguageModule = 'language-service'
+    public static readonly ConcurrentMessage = 'both concurrent opens leave a solution active'
+    public static readonly DrainMessage = 'dispose drains the maintenance tail and resolves'
+    public static readonly LazyMessage = 'dispose never constructs a language service that was not built'
     public static readonly WidgetId = 'acme.Widget'
     /** The engine's real error for a folder holding no .pksln manifest. */
     public static readonly MissingManifestError = /No \.pksln solution manifest in /
@@ -104,6 +109,46 @@ test('OpenSolution on a non-existent location rejects with a clear error', async
     finally
     {
         await server.Dispose()
+        OpenGolden.Cleanup(packages)
+    }
+})
+
+test('concurrent opens of the same solution then Dispose drains and tears down cleanly', async () =>
+{
+    const packages = OpenGolden.PackagesDir()
+    const solution = OpenGolden.OpenableSolutionDir()
+    const server = new PragmaticServer({ packagesRoot: packages })
+    await server.Start()
+    try
+    {
+        await server.LanguageService()
+        await Promise.all([server.OpenSolution(solution), server.OpenSolution(solution)])
+        const manager = await server.Manager()
+        assert.ok(manager.ActiveSolution, OpenGolden.ConcurrentMessage)
+        await server.Dispose()
+        await server.Dispose()
+        assert.ok(true, OpenGolden.DrainMessage)
+    }
+    finally
+    {
+        await server.Dispose()
+        OpenGolden.Cleanup(solution)
+        OpenGolden.Cleanup(packages)
+    }
+})
+
+test('Dispose does not construct the language service when it was never built', async () =>
+{
+    const packages = OpenGolden.PackagesDir()
+    const server = new PragmaticServer({ packagesRoot: packages })
+    await server.Start()
+    try
+    {
+        await server.Dispose()
+        assert.equal(server.StateOf(OpenGolden.LanguageModule)?.Get().Kind, ModuleStateKind.Dormant, OpenGolden.LazyMessage)
+    }
+    finally
+    {
         OpenGolden.Cleanup(packages)
     }
 })

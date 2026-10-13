@@ -1,4 +1,4 @@
-import { LazyCompositionRoot, HostKinds } from '@pragmatic-tech-ai/todl-runtime'
+import { LazyCompositionRoot, HostKinds, ModuleStateKind } from '@pragmatic-tech-ai/todl-runtime'
 import type { ModuleStateProperty } from '@pragmatic-tech-ai/todl-runtime'
 import { SolutionManagerService, StoragePackageSource, StoragePackageStore, PackageStoreKey } from '@pragmatic-tech-ai/todl'
 import { NodeProjectSystemComposer } from '@pragmatic-tech-ai/todl/project-system'
@@ -238,8 +238,27 @@ export class PragmaticServer
             }
             finally
             {
+                await this.DrainLanguageService()
                 this.root.Services().dispose()
             }
+        }
+    }
+
+    /** Awaits the language service's queued maintenance tail, only if it was already built; best-effort. */
+    private async DrainLanguageService(): Promise<void>
+    {
+        if (this.root.StateOf(LanguageServiceModule.ModuleId)?.Get().Kind !== ModuleStateKind.Active)
+        {
+            return
+        }
+        try
+        {
+            const languageService = await this.LanguageService() as SolutionLanguageService
+            await languageService.WhenIdle()
+        }
+        catch
+        {
+            // draining is best-effort; never block teardown on it
         }
     }
 
