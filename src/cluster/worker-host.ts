@@ -27,7 +27,8 @@ import type { WorkerEndpoint } from './worker-router.js'
 import type { ITenantProvisioning } from '../tenancy/tenant-provisioning.js'
 import { MachineTls } from './machine-tls.js'
 import type { MachineTlsRef } from './machine-tls.js'
-import { MachineFingerprintHeader } from './gateway.js'
+import { MachineFingerprintHeader } from './machine-headers.js'
+import { TLSSocket } from 'node:tls'
 import { MachineCertIdentity } from '../host/machine-principal-map.js'
 import type { MachineAuthContext } from '../host/auth-http-endpoint.js'
 import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
@@ -357,6 +358,11 @@ export class WorkerHost
     /** Trusts the gateway-forwarded fingerprint (the gateway strips client-supplied values; this listener only accepts mTLS peers). */
     private MachineContext(req: IncomingMessage, pack: ServerIdentityPack): MachineAuthContext | undefined
     {
+        const socket = req.socket
+        if (!(socket instanceof TLSSocket) || socket.authorized !== true)
+        {
+            return undefined
+        }
         const header = req.headers[MachineFingerprintHeader]
         if (typeof header !== 'string' || header.length === 0)
         {

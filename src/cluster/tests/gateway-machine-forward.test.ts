@@ -2,6 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import type { TLSSocket } from 'node:tls'
 import { Gateway } from '../gateway.js'
+import { MachineFingerprintHeader } from '../machine-headers.js'
 
 class FakeSocket
 {
@@ -27,7 +28,7 @@ class FakeSocket
 
 describe('Gateway.StampMachineFingerprint', () =>
 {
-    const Header = 'x-pragmatic-machine-fingerprint'
+    const Header = MachineFingerprintHeader
     const Spoofed = 'spoofed'
     const RawFingerprint = 'AA:BB:CC:DD'
     const CanonicalFingerprint = 'aabbccdd'

@@ -12,9 +12,7 @@ import { HealthEndpoint } from '../host/health-endpoint.js'
 import { MachineTls } from './machine-tls.js'
 import type { ClientTlsMaterial, MachineTlsRef } from './machine-tls.js'
 import { MachineCertIdentity } from '../host/machine-principal-map.js'
-
-/** Header carrying the gateway-verified client-cert fingerprint to the worker; stripped from every inbound request so a client can never set it. */
-export const MachineFingerprintHeader = 'x-pragmatic-machine-fingerprint'
+import { MachineFingerprintHeader } from './machine-headers.js'
 
 export interface GatewayOptions
 {
