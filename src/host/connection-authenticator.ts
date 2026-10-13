@@ -2,6 +2,8 @@ import { AuthMethod, Credential, PresentedSecret, AuthenticatedResult } from '@p
 import type { AccessContext, Tenant } from '@pragmatic-tech-ai/todl-identity'
 import { AccessContextAssembler } from '@pragmatic-tech-ai/todl-identity-node'
 import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
+import { NullAccessAuditSink, AuditSurface, AuditOutcome } from './access-audit.js'
+import type { IAccessAuditSink, AccessAuditEvent } from './access-audit.js'
 
 /** Resolves a bearer token to an AccessContext: session first, then service token. Fail-closed:
  *  an unresolved token returns null and no context is built. */
@@ -9,14 +11,45 @@ export class ConnectionAuthenticator
 {
     private static readonly EmptyReference = ''
 
-    private readonly assembler: AccessContextAssembler
+    private static readonly UpgradeMethod = 'ws'
 
-    public constructor(assembler: AccessContextAssembler = new AccessContextAssembler())
+    private readonly assembler: AccessContextAssembler
+    private readonly audit: IAccessAuditSink
+
+    public constructor(assembler: AccessContextAssembler = new AccessContextAssembler(), audit: IAccessAuditSink = new NullAccessAuditSink())
     {
         this.assembler = assembler
+        this.audit = audit
     }
 
     public async ResolveAsync(token: string, tenant: Tenant, pack: ServerIdentityPack): Promise<AccessContext | null>
+    {
+        const context = await this.Resolve(token, tenant, pack)
+        this.Emit(tenant, context)
+        return context
+    }
+
+    private Emit(tenant: Tenant, context: AccessContext | null): void
+    {
+        try
+        {
+            const event: AccessAuditEvent = {
+                Timestamp: new Date(),
+                TenantId: tenant.Id,
+                PrincipalId: context?.Principal.Id,
+                Surface: AuditSurface.Upgrade,
+                MethodOrPath: ConnectionAuthenticator.UpgradeMethod,
+                Outcome: context === null ? AuditOutcome.AuthFailure : AuditOutcome.Allow,
+            }
+            void this.audit.Record(event).catch(() => {})
+        }
+        catch
+        {
+            // audit is fire-and-forget: a throwing sink must never change the auth result
+        }
+    }
+
+    private async Resolve(token: string, tenant: Tenant, pack: ServerIdentityPack): Promise<AccessContext | null>
     {
         if (token.length === 0)
         {

@@ -1,5 +1,8 @@
 import { Action, ResourceKind, ResourceRef, AccessDecision } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
+import { trace } from '@opentelemetry/api'
+import { NullAccessAuditSink, AuditSurface, AuditOutcome } from './access-audit.js'
+import type { IAccessAuditSink, AccessAuditEvent } from './access-audit.js'
 import { LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 interface MethodPolicy
@@ -18,11 +21,13 @@ export class PolicyGate
 
     private readonly context: AccessContext
     private readonly path: () => readonly string[]
+    private readonly audit: IAccessAuditSink
 
-    public constructor(context: AccessContext, path: () => readonly string[])
+    public constructor(context: AccessContext, path: () => readonly string[], audit: IAccessAuditSink = new NullAccessAuditSink())
     {
         this.context = context
         this.path = path
+        this.audit = audit
     }
 
     public Authorize(method: string): AccessDecision
@@ -30,16 +35,51 @@ export class PolicyGate
         const policy = PolicyGate.Table.get(method)
         if (policy === undefined)
         {
-            return AccessDecision.Deny(PolicyGate.UntabledReason)
+            const denied = AccessDecision.Deny(PolicyGate.UntabledReason)
+            this.Emit(method, undefined, undefined, denied)
+            return denied
         }
         const resource = new ResourceRef(policy.resourceKind, this.context.Tenant.Id, this.path())
-        return this.context.Policy.Decide(this.context, policy.action, resource)
+        const decision = this.context.Policy.Decide(this.context, policy.action, resource)
+        this.Emit(method, policy.action, policy.resourceKind, decision)
+        return decision
     }
 
     public CanRead(): boolean
     {
         const resource = new ResourceRef(ResourceKind.Model, this.context.Tenant.Id, this.path())
         return this.context.Policy.Decide(this.context, Action.Read, resource).Allowed
+    }
+
+    private Emit(method: string, action: Action | undefined, resourceKind: ResourceKind | undefined, decision: AccessDecision): void
+    {
+        try
+        {
+            const event: AccessAuditEvent = {
+                Timestamp: new Date(),
+                TenantId: this.context.Tenant.Id,
+                PrincipalId: this.context.Principal.Id,
+                Surface: AuditSurface.Rpc,
+                MethodOrPath: method,
+                Action: action,
+                ResourceKind: resourceKind,
+                ResourcePath: this.ResourcePath(),
+                Outcome: decision.Allowed ? AuditOutcome.Allow : AuditOutcome.Deny,
+                Reason: decision.Reason,
+                CorrelationId: trace.getActiveSpan()?.spanContext().traceId,
+            }
+            void this.audit.Record(event).catch(() => {})
+        }
+        catch
+        {
+            // audit is fire-and-forget: a sink that throws must never alter the decision this method returns
+        }
+    }
+
+    private ResourcePath(): string | undefined
+    {
+        const segments = this.path()
+        return segments.length > 0 ? segments.join('/') : undefined
     }
 
     private static BuildTable(): ReadonlyMap<string, MethodPolicy>
