@@ -8,7 +8,8 @@ import { ServerBootstrap } from './server-bootstrap.js'
 import { StructuredLogger } from '../observability/logger.js'
 import type { ILogger } from '../observability/logger.js'
 import { DeploymentMode } from '../platform/deployment-mode.js'
-import type { ICloudBundle } from '../platform/gcp-platform-factory.js'
+import { DeploymentProvider } from '../platform/deployment-provider.js'
+import type { ICloudBundle } from '../platform/cloud-bundle.js'
 import { Observability, ObservabilityRole } from '../observability/observability.js'
 
 class WorkerMain
@@ -74,6 +75,11 @@ class WorkerMain
 
     private static async BuildBundle(config: ServerConfig): Promise<ICloudBundle>
     {
+        if (config.cloudProvider === DeploymentProvider.Aws)
+        {
+            const { AwsPlatformFactory } = await import('../platform/aws-platform-factory.js')
+            return await AwsPlatformFactory.Create(config)
+        }
         const { GcpPlatformFactory } = await import('../platform/gcp-platform-factory.js')
         return await GcpPlatformFactory.Create(config)
     }

@@ -1,24 +1,9 @@
 import { GcpCloudBackends } from '@pragmatic-tech-ai/todl-platform-gcp'
-import type { IStorageProviderRegistry, ISqlSession } from '@pragmatic-tech-ai/todl'
-import type { ISecretStore } from '@pragmatic-tech-ai/todl-identity'
 import type { ServerConfig } from '../config/server-config.js'
+import type { ICloudBundle, ICloudBackends } from './cloud-bundle.js'
 import { CloudPlatform } from './cloud-platform.js'
 
-/** The backend handles + lifecycle the factory needs (structurally satisfied by GcpCloudBackends). */
-export interface ICloudBackends
-{
-    readonly Storage: IStorageProviderRegistry
-    readonly SecretManager: ISecretStore
-    readonly Session: ISqlSession
-    Dispose(): Promise<void>
-}
-
-/** A built CloudPlatform plus the teardown for the backends it runs on (CloudPlatform has none). */
-export interface ICloudBundle
-{
-    readonly Platform: CloudPlatform
-    Dispose(): Promise<void>
-}
+export type { ICloudBundle, ICloudBackends } from './cloud-bundle.js'
 
 export class GcpPlatformFactory
 {
