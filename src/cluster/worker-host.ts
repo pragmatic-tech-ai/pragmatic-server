@@ -219,6 +219,11 @@ export class WorkerHost
         this.drainController = controller
     }
 
+    public HandlerCountForTest(): number
+    {
+        return this.handlers.size
+    }
+
     public HealthAddressForTest(): WebSocketAddress
     {
         if (this.healthAddress === null)
@@ -367,12 +372,25 @@ export class WorkerHost
     }
 
     /** Bounded wait for in-flight work; returns whether it fully drained. A failure is logged and never blocks teardown. */
+    /** Degrade-safe in-flight read for the begin log: a throwing source counts as zero, matching DrainController. */
+    private CountOf(source: IInFlightSource): number
+    {
+        try
+        {
+            return source.InFlight()
+        }
+        catch
+        {
+            return 0
+        }
+    }
+
     private async Drain(): Promise<boolean>
     {
         try
         {
             const source = this.drainSource ?? this.instrumentation ?? WorkerHost.ZeroInFlight
-            this.logger.Info(WorkerHost.DrainBeginLine, { [WorkerHost.EventKey]: WorkerHost.DrainBeginEvent, [WorkerHost.InFlightField]: source.InFlight() })
+            this.logger.Info(WorkerHost.DrainBeginLine, { [WorkerHost.EventKey]: WorkerHost.DrainBeginEvent, [WorkerHost.InFlightField]: this.CountOf(source) })
             const controller = this.drainController ?? new DrainController(this.drainTimeoutMs)
             const outcome = await controller.WaitForDrain(source)
             this.logger.Info(WorkerHost.DrainCompleteLine, { [WorkerHost.EventKey]: WorkerHost.DrainCompleteEvent, [WorkerHost.DrainedField]: outcome.Drained, [WorkerHost.RemainingField]: outcome.Remaining, [WorkerHost.ElapsedField]: outcome.ElapsedMs })

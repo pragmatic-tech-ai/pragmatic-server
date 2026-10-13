@@ -166,6 +166,11 @@ export class Gateway
         return headers
     }
 
+    public ClientCountForTest(): number
+    {
+        return this.wss.clients.size
+    }
+
     public Address(): WebSocketAddress
     {
         return this.address
@@ -240,12 +245,25 @@ export class Gateway
     }
 
     /** Bounded wait for bridged sessions; the gateway has no request instrumentation, so in-flight is the live client-socket count. */
+    /** Degrade-safe in-flight read for the begin log: a throwing source counts as zero, matching DrainController. */
+    private CountOf(source: IInFlightSource): number
+    {
+        try
+        {
+            return source.InFlight()
+        }
+        catch
+        {
+            return 0
+        }
+    }
+
     private async Drain(): Promise<boolean>
     {
         try
         {
             const source = this.drainSource ?? { InFlight: () => this.wss.clients.size }
-            this.logger.Info(Gateway.DrainBeginLine, { [Gateway.EventKey]: Gateway.DrainBeginEvent, [Gateway.InFlightField]: source.InFlight() })
+            this.logger.Info(Gateway.DrainBeginLine, { [Gateway.EventKey]: Gateway.DrainBeginEvent, [Gateway.InFlightField]: this.CountOf(source) })
             const controller = this.drainController ?? new DrainController(this.drainTimeoutMs)
             const outcome = await controller.WaitForDrain(source)
             this.logger.Info(Gateway.DrainCompleteLine, { [Gateway.EventKey]: Gateway.DrainCompleteEvent, [Gateway.DrainedField]: outcome.Drained, [Gateway.RemainingField]: outcome.Remaining, [Gateway.ElapsedField]: outcome.ElapsedMs })
@@ -255,6 +273,19 @@ export class Gateway
         {
             this.logger.Warn(Gateway.DrainFailedLine, { [Gateway.EventKey]: Gateway.DrainFailedEvent, [Gateway.StepField]: Gateway.StepWait })
             return false
+        }
+    }
+
+    /** A worker dial that never opened: 503 retryable during drain (our own teardown), else the normal 401. */
+    private RejectUnopened(socket: Socket): void
+    {
+        if (this.disposed)
+        {
+            this.RejectRetryable(socket)
+        }
+        else
+        {
+            this.Reject(socket)
         }
     }
 
@@ -342,7 +373,7 @@ export class Gateway
             this.workerSockets.delete(workerWs)
             if (!opened)
             {
-                this.Reject(socket)
+                this.RejectUnopened(socket)
             }
         })
         workerWs.once(Gateway.CloseEvent, () =>
@@ -350,7 +381,7 @@ export class Gateway
             this.workerSockets.delete(workerWs)
             if (!opened)
             {
-                this.Reject(socket)
+                this.RejectUnopened(socket)
             }
         })
         socket.on(Gateway.ErrorEvent, () => workerWs.terminate())

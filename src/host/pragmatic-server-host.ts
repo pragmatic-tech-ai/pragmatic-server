@@ -330,13 +330,26 @@ export class PragmaticServerHost
     }
 
     /** Bounded wait for in-flight work; returns whether it fully drained. A failure is logged and never blocks teardown. */
+    /** Degrade-safe in-flight read for the begin log: a throwing source counts as zero, matching DrainController. */
+    private CountOf(source: IInFlightSource): number
+    {
+        try
+        {
+            return source.InFlight()
+        }
+        catch
+        {
+            return 0
+        }
+    }
+
     private async Drain(): Promise<boolean>
     {
         try
         {
             // InFlight() counts HTTP requests; live ws sessions are terminated after the wait by design.
             const source = this.drainSource ?? this.instrumentation ?? PragmaticServerHost.ZeroInFlight
-            this.logger.Info(PragmaticServerHost.DrainBeginLine, { [PragmaticServerHost.EventKey]: PragmaticServerHost.DrainBeginEvent, [PragmaticServerHost.InFlightField]: source.InFlight() })
+            this.logger.Info(PragmaticServerHost.DrainBeginLine, { [PragmaticServerHost.EventKey]: PragmaticServerHost.DrainBeginEvent, [PragmaticServerHost.InFlightField]: this.CountOf(source) })
             const controller = this.drainController ?? new DrainController(this.drainTimeoutMs)
             const outcome = await controller.WaitForDrain(source)
             this.logger.Info(PragmaticServerHost.DrainCompleteLine, { [PragmaticServerHost.EventKey]: PragmaticServerHost.DrainCompleteEvent, [PragmaticServerHost.DrainedField]: outcome.Drained, [PragmaticServerHost.RemainingField]: outcome.Remaining, [PragmaticServerHost.ElapsedField]: outcome.ElapsedMs })
