@@ -1,11 +1,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { newDb } from 'pg-mem'
+import pg from 'pg'
 import type { Pool } from 'pg'
-import { GcpCloudBackends } from '@pragmatic-tech-ai/todl-platform-gcp'
+import { GcpCloudBackends, GcpEmulatorFactories } from '@pragmatic-tech-ai/todl-platform-gcp'
 import { AuthMethod, Credential, PresentedSecret, AuthenticatedResult } from '@pragmatic-tech-ai/todl-identity'
 import { PgSession, ObjectStoreProviderRegistry, CloudSecretManagerSecretStore } from '@pragmatic-tech-ai/todl-platform-cloud'
 import { GcpPlatformFactory } from '../../platform/gcp-platform-factory.js'
@@ -35,11 +37,15 @@ class CountingBackends implements ICloudBackends
     }
 }
 
+/** One cloud-boot scenario. `ns` namespaces tenant ids, secret refs and the master-key ref so runs sharing an emulator do not collide. */
 class CloudBootFixture
 {
-    public static readonly MasterKeyRef = 'cluster/master-key'
-    private static readonly TenantOneId = 't1'
-    private static readonly TenantTwoId = 't2'
+    private static readonly Separator = '-'
+    private static readonly TenantOneBase = 't1'
+    private static readonly TenantTwoBase = 't2'
+    private static readonly MasterKeyBase = 'cluster/master-key'
+    private static readonly Admin1RefBase = 'bootstrap/admin1'
+    private static readonly Admin2RefBase = 'bootstrap/admin2'
     private static readonly Admin1Id = 'admin1'
     private static readonly Admin2Id = 'admin2'
     private static readonly UnusedEnv = 'PS_CLOUD_UNUSED'
@@ -47,8 +53,6 @@ class CloudBootFixture
     private static readonly Loopback = '127.0.0.1'
     private static readonly Admin1Email = 'admin1@x.io'
     private static readonly Admin2Email = 'admin2@x.io'
-    private static readonly Admin1Ref = 't1/bootstrap/admin'
-    private static readonly Admin2Ref = 't2/bootstrap/admin'
     private static readonly Admin1Pw = 'pw-t1-123456'
     private static readonly Admin2Pw = 'pw-t2-123456'
     private static readonly TestBucket = 'test-bucket'
@@ -57,7 +61,36 @@ class CloudBootFixture
     private static readonly TestSqlUser = 'test-user'
     private static readonly TestSqlDatabase = 'test-db'
 
-    public static CloudConfig(baseDir: string, overrides: Partial<ServerConfig> = {}): ServerConfig
+    public constructor(private readonly ns: string = '')
+    {
+    }
+
+    public get MasterKeyRef(): string
+    {
+        return this.ns + CloudBootFixture.MasterKeyBase
+    }
+
+    private get TenantOneId(): string
+    {
+        return this.ns + CloudBootFixture.TenantOneBase
+    }
+
+    private get TenantTwoId(): string
+    {
+        return this.ns + CloudBootFixture.TenantTwoBase
+    }
+
+    private get Admin1Ref(): string
+    {
+        return this.ns + CloudBootFixture.Admin1RefBase
+    }
+
+    private get Admin2Ref(): string
+    {
+        return this.ns + CloudBootFixture.Admin2RefBase
+    }
+
+    public CloudConfig(baseDir: string, overrides: Partial<ServerConfig> = {}): ServerConfig
     {
         return {
             host: CloudBootFixture.Loopback,
@@ -70,43 +103,53 @@ class CloudBootFixture
             cloudSqlInstance: CloudBootFixture.TestInstance,
             cloudSqlUser: CloudBootFixture.TestSqlUser,
             cloudSqlDatabase: CloudBootFixture.TestSqlDatabase,
-            cloudMasterKeyRef: CloudBootFixture.MasterKeyRef,
+            cloudMasterKeyRef: this.MasterKeyRef,
             ...overrides,
         }
     }
 
-    public static Provisioning(): InMemoryTenantProvisioning
+    public Provisioning(): InMemoryTenantProvisioning
     {
         const entries = new Map<string, TenantProvisioning>([
-            [CloudBootFixture.TenantOneId, { displayName: 'Tenant One', bootstrap: { adminEmail: CloudBootFixture.Admin1Email, adminPrincipalId: CloudBootFixture.Admin1Id, adminPasswordRef: CloudBootFixture.Admin1Ref, ownerGrant: true } }],
-            [CloudBootFixture.TenantTwoId, { displayName: 'Tenant Two', bootstrap: { adminEmail: CloudBootFixture.Admin2Email, adminPrincipalId: CloudBootFixture.Admin2Id, adminPasswordRef: CloudBootFixture.Admin2Ref, ownerGrant: true } }],
+            [this.TenantOneId, { displayName: 'Tenant One', bootstrap: { adminEmail: CloudBootFixture.Admin1Email, adminPrincipalId: CloudBootFixture.Admin1Id, adminPasswordRef: this.Admin1Ref, ownerGrant: true } }],
+            [this.TenantTwoId, { displayName: 'Tenant Two', bootstrap: { adminEmail: CloudBootFixture.Admin2Email, adminPrincipalId: CloudBootFixture.Admin2Id, adminPasswordRef: this.Admin2Ref, ownerGrant: true } }],
         ])
         return new InMemoryTenantProvisioning(entries)
     }
 
-    public static async DoubleBackends(): Promise<CountingBackends>
+    public async DoubleBackends(): Promise<CountingBackends>
     {
-        const pg = newDb().adapters.createPg()
+        const db = newDb().adapters.createPg()
         const secretManager = new CloudSecretManagerSecretStore()
-        await secretManager.Put(CloudBootFixture.MasterKeyRef, Buffer.alloc(32, 3).toString('base64'))
-        return new CountingBackends(new ObjectStoreProviderRegistry(), secretManager, new PgSession(new pg.Pool() as unknown as Pool))
+        await this.PutMasterKey(secretManager)
+        return new CountingBackends(new ObjectStoreProviderRegistry(), secretManager, new PgSession(new db.Pool() as unknown as Pool))
+    }
+
+    public async PutMasterKey(secrets: ICloudBackends['SecretManager']): Promise<void>
+    {
+        await secrets.Put(this.MasterKeyRef, Buffer.alloc(32, 3).toString('base64'))
     }
 
     /** Boots a cloud-mode host over the bundle built from `backends`, runs the two-tenant isolation assertions,
      *  then disposes host and bundle. Cleanup is isolated so a cleanup throw never masks an assertion failure. */
-    public static async BootAndAssert(backends: ICloudBackends, config: ServerConfig): Promise<void>
+    public async BootAndAssert(backends: ICloudBackends, config: ServerConfig): Promise<void>
     {
-        const bundle = await GcpPlatformFactory.CreateWith(backends, CloudBootFixture.MasterKeyRef)
+        const bundle = await GcpPlatformFactory.CreateWith(backends, this.MasterKeyRef)
         let host: PragmaticServerHost | undefined
         try
         {
-            host = await PragmaticServerHost.StartAsync(ServerBootstrap.ComposeOptions(config, CloudBootFixture.Provisioning(), bundle.Platform))
-            await CloudBootFixture.AssertIsolation(host)
+            host = await PragmaticServerHost.StartAsync(ServerBootstrap.ComposeOptions(config, this.Provisioning(), bundle.Platform))
+            await this.AssertIsolation(host)
         }
         finally
         {
             await CloudBootFixture.IsolatedCleanup(host, bundle)
         }
+    }
+
+    public static Namespace(prefix: string): string
+    {
+        return prefix + CloudBootFixture.Separator
     }
 
     public static MakeBaseDir(): string
@@ -147,13 +190,13 @@ class CloudBootFixture
         return pack.AuthenticatorFor(AuthMethod.Local)!.Authenticate(new Credential(AuthMethod.Local, email), new PresentedSecret(pw), server.Tenant())
     }
 
-    private static async AssertIsolation(host: PragmaticServerHost): Promise<void>
+    private async AssertIsolation(host: PragmaticServerHost): Promise<void>
     {
         const registry = host.RegistryForTest()
-        const s1 = await registry.ServerFor(CloudBootFixture.TenantOneId)
-        const s2 = await registry.ServerFor(CloudBootFixture.TenantTwoId)
-        assert.ok((await CloudBootFixture.SeedAndAuth(s1, CloudBootFixture.Admin1Email, CloudBootFixture.Admin1Ref, CloudBootFixture.Admin1Pw)) instanceof AuthenticatedResult)
-        assert.ok((await CloudBootFixture.SeedAndAuth(s2, CloudBootFixture.Admin2Email, CloudBootFixture.Admin2Ref, CloudBootFixture.Admin2Pw)) instanceof AuthenticatedResult)
+        const s1 = await registry.ServerFor(this.TenantOneId)
+        const s2 = await registry.ServerFor(this.TenantTwoId)
+        assert.ok((await CloudBootFixture.SeedAndAuth(s1, CloudBootFixture.Admin1Email, this.Admin1Ref, CloudBootFixture.Admin1Pw)) instanceof AuthenticatedResult)
+        assert.ok((await CloudBootFixture.SeedAndAuth(s2, CloudBootFixture.Admin2Email, this.Admin2Ref, CloudBootFixture.Admin2Pw)) instanceof AuthenticatedResult)
         const pack1 = await s1.Pack()
         const cross = await pack1.AuthenticatorFor(AuthMethod.Local)!.Authenticate(new Credential(AuthMethod.Local, CloudBootFixture.Admin2Email), new PresentedSecret(CloudBootFixture.Admin2Pw), s1.Tenant())
         assert.ok(!(cross instanceof AuthenticatedResult))
@@ -162,49 +205,89 @@ class CloudBootFixture
         assert.notEqual(await pack2.Directory.Lookup(CloudBootFixture.Admin2Id, s2.Tenant()), null)
         assert.equal(await pack2.Directory.Lookup(CloudBootFixture.Admin1Id, s2.Tenant()), null)
         assert.notEqual(await pack1.Directory.Lookup(CloudBootFixture.Admin1Id, s1.Tenant()), null)
-        assert.equal(await pack1.Secrets.Get(CloudBootFixture.Admin2Ref), null)
-        assert.equal(await pack1.Secrets.Get(CloudBootFixture.Admin1Ref), CloudBootFixture.Admin1Pw)
-        assert.equal(await pack2.Secrets.Get(CloudBootFixture.Admin1Ref), null)
+        assert.equal(await pack1.Secrets.Get(this.Admin2Ref), null)
+        assert.equal(await pack1.Secrets.Get(this.Admin1Ref), CloudBootFixture.Admin1Pw)
+        assert.equal(await pack2.Secrets.Get(this.Admin1Ref), null)
     }
 }
 
-class RealGcpGate
+/** Gated emulator variant: real GcpCloudBackends wiring with the SDK clients pointed at local emulators
+ *  (fake-gcs-server + a plaintext-gRPC Secret Manager emulator) and a plain pg pool on local Postgres
+ *  (there is no Cloud SQL emulator, so the connector is bypassed). */
+class EmulatorGcpGate
 {
     private static readonly OptInVar = 'PRAGMATIC_TEST_GCP_CLOUD'
     private static readonly GcsEndpointVar = 'PRAGMATIC_TEST_GCS_ENDPOINT'
     private static readonly SecretEndpointVar = 'PRAGMATIC_TEST_GCP_SECRET_ENDPOINT'
     private static readonly PgUrlVar = 'PRAGMATIC_TEST_PG_URL'
-    private static readonly ProjectVar = 'PRAGMATIC_TEST_GCP_PROJECT'
     private static readonly BucketVar = 'PRAGMATIC_TEST_GCS_BUCKET'
-    private static readonly InstanceVar = 'PRAGMATIC_TEST_CLOUDSQL_INSTANCE'
-    private static readonly UserVar = 'PRAGMATIC_TEST_CLOUDSQL_USER'
-    private static readonly DatabaseVar = 'PRAGMATIC_TEST_CLOUDSQL_DATABASE'
-    private static readonly SkipReason = 'set PRAGMATIC_TEST_GCP_CLOUD=1 plus the GCS/secret endpoints, PRAGMATIC_TEST_PG_URL and project/bucket/Cloud SQL vars to run'
+    private static readonly ProjectVar = 'PRAGMATIC_TEST_GCP_PROJECT'
+    private static readonly DefaultBucket = 'pragmatic-test'
+    private static readonly DefaultProject = 'test-project'
+    private static readonly RunPrefix = 'run-'
+    private static readonly SkipReason = 'set PRAGMATIC_TEST_GCP_CLOUD=1 plus PRAGMATIC_TEST_GCS_ENDPOINT, PRAGMATIC_TEST_GCP_SECRET_ENDPOINT and PRAGMATIC_TEST_PG_URL to run'
 
     public static get Skip(): string | false
     {
-        const required = [RealGcpGate.OptInVar, RealGcpGate.GcsEndpointVar, RealGcpGate.SecretEndpointVar, RealGcpGate.PgUrlVar, RealGcpGate.ProjectVar, RealGcpGate.BucketVar, RealGcpGate.InstanceVar, RealGcpGate.UserVar, RealGcpGate.DatabaseVar]
-        return required.every(name => (process.env[name] ?? '').length > 0) ? false : RealGcpGate.SkipReason
+        const required = [EmulatorGcpGate.OptInVar, EmulatorGcpGate.GcsEndpointVar, EmulatorGcpGate.SecretEndpointVar, EmulatorGcpGate.PgUrlVar]
+        return required.every(name => (process.env[name] ?? '').length > 0) ? false : EmulatorGcpGate.SkipReason
     }
 
-    public static Config(baseDir: string): ServerConfig
+    public static async Run(): Promise<void>
     {
-        return CloudBootFixture.CloudConfig(baseDir, {
-            gcpProject: process.env[RealGcpGate.ProjectVar],
-            gcsBucket: process.env[RealGcpGate.BucketVar],
-            cloudSqlInstance: process.env[RealGcpGate.InstanceVar],
-            cloudSqlUser: process.env[RealGcpGate.UserVar],
-            cloudSqlDatabase: process.env[RealGcpGate.DatabaseVar],
-        })
+        const runId = EmulatorGcpGate.RunPrefix + randomBytes(8).toString('hex')
+        const fixture = new CloudBootFixture(CloudBootFixture.Namespace(runId))
+        const baseDir = CloudBootFixture.MakeBaseDir()
+        try
+        {
+            const project = process.env[EmulatorGcpGate.ProjectVar] ?? EmulatorGcpGate.DefaultProject
+            const config = fixture.CloudConfig(baseDir, {
+                gcpProject: project,
+                gcsBucket: process.env[EmulatorGcpGate.BucketVar] ?? EmulatorGcpGate.DefaultBucket,
+                gcsPrefix: runId,
+            })
+            const factories = GcpEmulatorFactories.ForTest({
+                gcsEndpoint: process.env[EmulatorGcpGate.GcsEndpointVar]!,
+                secretEndpoint: process.env[EmulatorGcpGate.SecretEndpointVar]!,
+                CreatePool: async () =>
+                {
+                    const pool = new pg.Pool({ connectionString: process.env[EmulatorGcpGate.PgUrlVar] })
+                    return { Pool: pool, Dispose: async () => { await pool.end() } }
+                },
+            })
+            const backends = await GcpCloudBackends.Create({
+                gcsBucket: config.gcsBucket!,
+                gcsPrefix: config.gcsPrefix,
+                gcpProject: project,
+                cloudSqlInstance: config.cloudSqlInstance!,
+                cloudSqlUser: config.cloudSqlUser!,
+                cloudSqlDatabase: config.cloudSqlDatabase!,
+            }, factories)
+            try
+            {
+                await fixture.PutMasterKey(backends.SecretManager)
+            }
+            catch (error)
+            {
+                await backends.Dispose().catch(() => undefined)
+                throw error
+            }
+            await fixture.BootAndAssert(backends, config)
+        }
+        finally
+        {
+            CloudBootFixture.RemoveBaseDir(baseDir)
+        }
     }
 }
 
 test('cloud mode without a platform bundle still fails closed (the gap this stage closes)', () =>
 {
+    const fixture = new CloudBootFixture()
     const baseDir = CloudBootFixture.MakeBaseDir()
     try
     {
-        assert.throws(() => ServerBootstrap.ComposeOptions(CloudBootFixture.CloudConfig(baseDir), CloudBootFixture.Provisioning(), undefined), /requires a configured platform/)
+        assert.throws(() => ServerBootstrap.ComposeOptions(fixture.CloudConfig(baseDir), fixture.Provisioning(), undefined), /requires a configured platform/)
     }
     finally
     {
@@ -214,11 +297,12 @@ test('cloud mode without a platform bundle still fails closed (the gap this stag
 
 test('cloud mode boots end-to-end over an injected bundle and serves two isolated tenants', async () =>
 {
+    const fixture = new CloudBootFixture()
     const baseDir = CloudBootFixture.MakeBaseDir()
     try
     {
-        const backends = await CloudBootFixture.DoubleBackends()
-        await CloudBootFixture.BootAndAssert(backends, CloudBootFixture.CloudConfig(baseDir))
+        const backends = await fixture.DoubleBackends()
+        await fixture.BootAndAssert(backends, fixture.CloudConfig(baseDir))
         assert.equal(backends.disposeCalls, 1)
     }
     finally
@@ -227,24 +311,7 @@ test('cloud mode boots end-to-end over an injected bundle and serves two isolate
     }
 })
 
-test('cloud mode boots over real GcpCloudBackends and keeps two tenants isolated', { skip: RealGcpGate.Skip }, async () =>
+test('cloud mode boots over real GcpCloudBackends wiring against local emulators and keeps two tenants isolated', { skip: EmulatorGcpGate.Skip }, async () =>
 {
-    const baseDir = CloudBootFixture.MakeBaseDir()
-    try
-    {
-        const config = RealGcpGate.Config(baseDir)
-        const real = await GcpCloudBackends.Create({
-            gcsBucket: config.gcsBucket!,
-            gcpProject: config.gcpProject!,
-            cloudSqlInstance: config.cloudSqlInstance!,
-            cloudSqlUser: config.cloudSqlUser!,
-            cloudSqlDatabase: config.cloudSqlDatabase!,
-        })
-        await real.SecretManager.Put(CloudBootFixture.MasterKeyRef, Buffer.alloc(32, 3).toString('base64'))
-        await CloudBootFixture.BootAndAssert(real, config)
-    }
-    finally
-    {
-        CloudBootFixture.RemoveBaseDir(baseDir)
-    }
+    await EmulatorGcpGate.Run()
 })
