@@ -1,6 +1,6 @@
 import { AuthMethod, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import type { IAccessPolicy, IAuthenticator, IIdentityProviderPack, IdentityConfig, IdentityStoreSet, Tenant } from '@pragmatic-tech-ai/todl-identity'
-import { FetchHttpClient, GoogleIdentityPack, InMemoryOidcFlowStateStore, MicrosoftEntraPack } from '@pragmatic-tech-ai/todl-identity-cloud'
+import { ClaimArrayGroupStrategy, FetchHttpClient, GenericOidcPack, GenericOidcProfile, GoogleIdentityPack, InMemoryOidcFlowStateStore, MicrosoftEntraPack, OidcSettingKeys } from '@pragmatic-tech-ai/todl-identity-cloud'
 import type { IHttpClient, IOidcFlowStateStore, OidcIdentityProviderPackBase, OidcPackOptions } from '@pragmatic-tech-ai/todl-identity-cloud'
 import { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
 import { MachineCertAuthenticator } from '../host/machine-cert-authenticator.js'
@@ -19,6 +19,10 @@ export interface ResolvedPack
  *  tenant store-set so group->grant writes are read back by the resource policy. */
 export class IdentityPackResolver
 {
+    private static readonly GenericScopes: readonly string[] = ['openid', 'email', 'profile']
+    private static readonly GenericGroupsClaim = 'groups'
+    private static readonly MissingSettingError = 'OIDC provider setting is required: '
+
     private readonly http: IHttpClient
     private readonly flowStates: IOidcFlowStateStore
     private readonly now: () => Date
@@ -51,7 +55,27 @@ export class IdentityPackResolver
 
     private BuildOidcPack(kind: IdentityPackKind, config: IdentityConfig, stores: IdentityStoreSet): OidcIdentityProviderPackBase
     {
-        const opts: Omit<OidcPackOptions, 'Profile'> = {
+        if (kind === IdentityPackKind.Entra)
+        {
+            return MicrosoftEntraPack.Create(this.OidcOptions(config, stores))
+        }
+        if (kind === IdentityPackKind.GenericOidc)
+        {
+            const settings = config.ProviderSettings
+            const profile = new GenericOidcProfile(
+                IdentityPackResolver.RequireSetting(settings, OidcSettingKeys.Issuer),
+                IdentityPackResolver.RequireSetting(settings, OidcSettingKeys.DiscoveryUrl),
+                [...IdentityPackResolver.GenericScopes],
+                config.ClaimsMapping,
+                new ClaimArrayGroupStrategy(IdentityPackResolver.GenericGroupsClaim))
+            return GenericOidcPack.Create({ Profile: profile, ...this.OidcOptions(config, stores) })
+        }
+        return GoogleIdentityPack.Create(this.OidcOptions(config, stores))
+    }
+
+    private OidcOptions(config: IdentityConfig, stores: IdentityStoreSet): Omit<OidcPackOptions, 'Profile'>
+    {
+        return {
             Config: config,
             Http: this.http,
             FlowStates: this.flowStates,
@@ -61,10 +85,15 @@ export class IdentityPackResolver
             Audit: stores.Audit,
             now: this.now,
         }
-        if (kind === IdentityPackKind.Entra)
+    }
+
+    private static RequireSetting(settings: ReadonlyMap<string, string>, key: string): string
+    {
+        const value = settings.get(key)
+        if (value === undefined || value === '')
         {
-            return MicrosoftEntraPack.Create(opts)
+            throw new Error(IdentityPackResolver.MissingSettingError + key)
         }
-        return GoogleIdentityPack.Create(opts)
+        return value
     }
 }

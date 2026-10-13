@@ -60,6 +60,16 @@ export class ResolverFixture
         ])
     }
 
+    public GenericSettings(issuer: string): Map<string, string>
+    {
+        return new Map([
+            [OidcSettingKeys.Issuer, issuer],
+            [OidcSettingKeys.DiscoveryUrl, issuer + ResolverFixture.DiscoveryPath],
+            [OidcSettingKeys.ClientId, ResolverFixture.ClientId],
+            [OidcSettingKeys.RedirectUri, ResolverFixture.RedirectUri],
+        ])
+    }
+
     /** Resolve a pack for one tenant, run begin, mint a matching id_token, and arm the token endpoint. */
     public async Flow(packId: string, issuer: string, settings: Map<string, string>, depth: DelegationDepth, groupRoleMap: ReadonlyMap<string, Role>, groupsClaim: string)
     {
