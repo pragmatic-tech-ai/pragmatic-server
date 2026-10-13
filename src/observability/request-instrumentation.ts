@@ -27,13 +27,11 @@ export class RequestInstrumentation
     private static readonly RequestErrorsTotal = 'request_errors_total'
     private static readonly MethodLabel = 'method'
     private static readonly TenantLabel = 'tenant'
-    private static readonly OutcomeLabel = 'outcome'
-    private static readonly ClassLabel = 'class'
+    private static readonly OutcomeKey = 'outcome'
+    private static readonly ClassKey = 'class'
     private static readonly PrincipalAttribute = 'principal'
     private static readonly ErrorAttribute = 'error'
     private static readonly CorrelationIdField = 'correlationId'
-    private static readonly OutcomeField = 'outcome'
-    private static readonly ClassField = 'class'
     private static readonly RequestCompleted = 'request completed'
     private static readonly RequestFailed = 'request failed'
     private static readonly UnknownClass = 'Error'
@@ -71,46 +69,74 @@ export class RequestInstrumentation
         const active = parent ?? context.active()
         return context.with(active, () => this.tracer.startActiveSpan(request.method, span => this.Observe(span, request, operation)))
     }
+
     private async Observe<T>(span: Span, request: IRequestObservation, operation: () => T | Promise<T>): Promise<T>
     {
         const labels = { [RequestInstrumentation.MethodLabel]: request.method, [RequestInstrumentation.TenantLabel]: request.tenant }
-        const log = this.logger.Child({ [RequestInstrumentation.CorrelationIdField]: span.spanContext().traceId, [RequestInstrumentation.MethodLabel]: request.method, [RequestInstrumentation.TenantLabel]: request.tenant })
-        span.setAttribute(RequestInstrumentation.MethodLabel, request.method)
-        span.setAttribute(RequestInstrumentation.TenantLabel, request.tenant)
-        if (request.principal.length > 0)
-        {
-            span.setAttribute(RequestInstrumentation.PrincipalAttribute, request.principal)
-        }
-        this.inFlight += 1
-        this.inFlightCounter.add(1, { [RequestInstrumentation.TenantLabel]: request.tenant })
+        let log: ILogger = this.logger
         const start = performance.now()
         try
         {
+            this.Safely(() =>
+            {
+                log = this.logger.Child({ [RequestInstrumentation.CorrelationIdField]: span.spanContext().traceId, [RequestInstrumentation.MethodLabel]: request.method, [RequestInstrumentation.TenantLabel]: request.tenant })
+                span.setAttribute(RequestInstrumentation.MethodLabel, request.method)
+                span.setAttribute(RequestInstrumentation.TenantLabel, request.tenant)
+                if (request.principal.length > 0)
+                {
+                    span.setAttribute(RequestInstrumentation.PrincipalAttribute, request.principal)
+                }
+            })
+            this.inFlight += 1
+            this.Safely(() => this.inFlightCounter.add(1, { [RequestInstrumentation.TenantLabel]: request.tenant }))
             const result = await operation()
-            span.setAttribute(RequestInstrumentation.OutcomeLabel, RequestOutcome.Ok)
-            span.setStatus({ code: SpanStatusCode.OK })
-            this.requestsTotal.add(1, { ...labels, [RequestInstrumentation.OutcomeLabel]: RequestOutcome.Ok })
-            log.Info(RequestInstrumentation.RequestCompleted, { [RequestInstrumentation.OutcomeField]: RequestOutcome.Ok })
+            this.Safely(() => this.RecordSuccess(span, labels, log))
             return result
         }
         catch (error)
         {
-            const className = error instanceof Error ? error.constructor.name : RequestInstrumentation.UnknownClass
-            span.setAttribute(RequestInstrumentation.OutcomeLabel, RequestOutcome.Error)
-            span.setAttribute(RequestInstrumentation.ErrorAttribute, className)
-            span.recordException(error instanceof Error ? error : new Error(RequestInstrumentation.UnknownClass))
-            span.setStatus({ code: SpanStatusCode.ERROR })
-            this.requestsTotal.add(1, { ...labels, [RequestInstrumentation.OutcomeLabel]: RequestOutcome.Error })
-            this.errorsTotal.add(1, { ...labels, [RequestInstrumentation.ClassLabel]: className })
-            log.Error(RequestInstrumentation.RequestFailed, { [RequestInstrumentation.ClassField]: className })
+            this.Safely(() => this.RecordFailure(span, labels, log, error))
             throw error
         }
         finally
         {
             this.inFlight -= 1
-            this.inFlightCounter.add(-1, { [RequestInstrumentation.TenantLabel]: request.tenant })
-            this.durationMs.record(performance.now() - start, labels)
-            span.end()
+            this.Safely(() => this.inFlightCounter.add(-1, { [RequestInstrumentation.TenantLabel]: request.tenant }))
+            this.Safely(() => this.durationMs.record(performance.now() - start, labels))
+            this.Safely(() => span.end())
+        }
+    }
+
+    private RecordSuccess(span: Span, labels: Record<string, string>, log: ILogger): void
+    {
+        span.setAttribute(RequestInstrumentation.OutcomeKey, RequestOutcome.Ok)
+        span.setStatus({ code: SpanStatusCode.OK })
+        this.requestsTotal.add(1, { ...labels, [RequestInstrumentation.OutcomeKey]: RequestOutcome.Ok })
+        log.Info(RequestInstrumentation.RequestCompleted, { [RequestInstrumentation.OutcomeKey]: RequestOutcome.Ok })
+    }
+
+    private RecordFailure(span: Span, labels: Record<string, string>, log: ILogger, error: unknown): void
+    {
+        const className = error instanceof Error ? error.constructor.name : RequestInstrumentation.UnknownClass
+        span.setAttribute(RequestInstrumentation.OutcomeKey, RequestOutcome.Error)
+        span.setAttribute(RequestInstrumentation.ErrorAttribute, className)
+        span.recordException(error instanceof Error ? error : new Error(RequestInstrumentation.UnknownClass))
+        span.setStatus({ code: SpanStatusCode.ERROR })
+        this.requestsTotal.add(1, { ...labels, [RequestInstrumentation.OutcomeKey]: RequestOutcome.Error })
+        this.errorsTotal.add(1, { ...labels, [RequestInstrumentation.ClassKey]: className })
+        log.Error(RequestInstrumentation.RequestFailed, { [RequestInstrumentation.ClassKey]: className })
+    }
+
+    /** Observability must never alter a request's outcome: a throwing sink is swallowed. */
+    private Safely(action: () => void): void
+    {
+        try
+        {
+            action()
+        }
+        catch
+        {
+            // degrade-safe: telemetry failure is not a request failure
         }
     }
 }
