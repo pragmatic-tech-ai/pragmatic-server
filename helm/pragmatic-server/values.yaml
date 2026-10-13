@@ -105,3 +105,27 @@ cluster:
     # Optional distinct gateway client cert; defaults to cluster.tls.existingSecret (one shared machine cert).
     tls:
       existingSecret: ""
+
+# Stage-C observability wiring. All OFF by default so the chart renders byte-unchanged when unset.
+observability:
+  # Prometheus scrape exporter (PRAGMATIC_METRICS_PORT). enabled:false => no metrics port, no scrape annotations.
+  metrics:
+    enabled: false
+    port: 9464
+    path: /metrics
+  # OTLP export (PRAGMATIC_OTLP_ENDPOINT). The endpoint may carry an auth token -- supply BY REFERENCE:
+  # a literal endpoint (observability.otlp.endpoint) OR an existing Secret (otlp.existingSecret + otlp.secretKey).
+  # Never commit a real endpoint with embedded credentials.
+  otlp:
+    endpoint: ""
+    existingSecret: ""
+    secretKey: otlp-endpoint
+    protocol: ""   # http-protobuf | grpc | "" (default)
+    metrics: false
+
+# Stage-C graceful drain. All EMPTY by default so the chart renders byte-unchanged when unset.
+# When you opt in, set terminationGracePeriodSeconds >= ceil(timeoutMs/1000) + preStopSeconds.
+drain:
+  timeoutMs: ""                      # e.g. 25000  -> PRAGMATIC_DRAIN_TIMEOUT_MS
+  preStopSeconds: ""                 # e.g. 5      -> lifecycle.preStop sleep (let the LB observe the /readyz flip)
+  terminationGracePeriodSeconds: ""  # e.g. 35

@@ -19,7 +19,15 @@ spec:
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- if .Values.observability.metrics.enabled }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ .Values.observability.metrics.port | quote }}
+        prometheus.io/path: {{ .Values.observability.metrics.path | quote }}
+        {{- end }}
     spec:
+      {{- if .Values.drain.terminationGracePeriodSeconds }}
+      terminationGracePeriodSeconds: {{ .Values.drain.terminationGracePeriodSeconds }}
+      {{- end }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -37,6 +45,10 @@ spec:
               containerPort: {{ .Values.cluster.worker.port }}
             - name: health
               containerPort: {{ .Values.cluster.worker.healthPort }}
+            {{- if .Values.observability.metrics.enabled }}
+            - name: metrics
+              containerPort: {{ .Values.observability.metrics.port }}
+            {{- end }}
           env:
             - name: PRAGMATIC_BASE_DIR
               value: {{ .Values.baseDir | quote }}
@@ -82,6 +94,32 @@ spec:
             - name: PRAGMATIC_PROVISIONED_SECRETS_FILE
               value: /run/secrets/provisioned/secrets.json
             {{- end }}
+            {{- if .Values.observability.metrics.enabled }}
+            - name: PRAGMATIC_METRICS_PORT
+              value: {{ .Values.observability.metrics.port | quote }}
+            {{- end }}
+            {{- if .Values.observability.otlp.existingSecret }}
+            - name: PRAGMATIC_OTLP_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.observability.otlp.existingSecret }}
+                  key: {{ .Values.observability.otlp.secretKey }}
+            {{- else if .Values.observability.otlp.endpoint }}
+            - name: PRAGMATIC_OTLP_ENDPOINT
+              value: {{ .Values.observability.otlp.endpoint | quote }}
+            {{- end }}
+            {{- if .Values.observability.otlp.protocol }}
+            - name: PRAGMATIC_OTLP_PROTOCOL
+              value: {{ .Values.observability.otlp.protocol | quote }}
+            {{- end }}
+            {{- if .Values.observability.otlp.metrics }}
+            - name: PRAGMATIC_OTLP_METRICS
+              value: "true"
+            {{- end }}
+            {{- if .Values.drain.timeoutMs }}
+            - name: PRAGMATIC_DRAIN_TIMEOUT_MS
+              value: {{ .Values.drain.timeoutMs | quote }}
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /healthz
@@ -90,6 +128,12 @@ spec:
             httpGet:
               path: /readyz
               port: health
+          {{- if .Values.drain.preStopSeconds }}
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "{{ .Values.drain.preStopSeconds }}"]
+          {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:

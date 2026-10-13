@@ -49,3 +49,15 @@ all workers share one server cert whose SAN equals cluster.workerServerName.
 WARNING: cluster.enabled is set but no Redis is configured. Set redis.url or redis.existingSecret.
 {{- end }}
 {{- end }}
+{{- if .Values.observability.metrics.enabled }}
+
+Observability: Prometheus scrape is exposed on container port {{ .Values.observability.metrics.port }} (path
+{{ .Values.observability.metrics.path }}) with prometheus.io/scrape pod annotations. The OTLP endpoint and the
+audit-file path are supplied BY REFERENCE and are never logged.
+{{- end }}
+{{- if .Values.drain.terminationGracePeriodSeconds }}
+
+Graceful drain: terminationGracePeriodSeconds={{ .Values.drain.terminationGracePeriodSeconds }} with a
+preStop sleep of {{ .Values.drain.preStopSeconds }}s. Keep terminationGracePeriodSeconds >=
+ceil(drain.timeoutMs/1000) + drain.preStopSeconds so the pod finishes in-flight requests before SIGKILL.
+{{- end }}
