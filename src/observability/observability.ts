@@ -11,6 +11,7 @@ import { OTLPTraceExporter as OTLPTraceExporterGrpc } from '@opentelemetry/expor
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http'
 import { PrometheusExporter } from '@opentelemetry/exporter-prometheus'
 import type { Tracer, Meter } from '@opentelemetry/api'
+import { W3CTraceContextPropagator } from '@opentelemetry/core'
 import { OtlpProtocol } from './otlp-protocol.js'
 
 export enum ObservabilityRole
@@ -107,7 +108,7 @@ export class Observability
     {
         const resource = Observability.ResourceOf(options)
         const tracerProvider = new NodeTracerProvider({ resource, sampler: Observability.SamplerOf(options, spanProcessors), spanProcessors })
-        tracerProvider.register()
+        tracerProvider.register({ propagator: new W3CTraceContextPropagator() })
         const meterProvider = new MeterProvider({ resource, readers })
         return new Observability(tracerProvider, meterProvider)
     }

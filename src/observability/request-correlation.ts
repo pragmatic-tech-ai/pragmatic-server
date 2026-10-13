@@ -37,8 +37,7 @@ export class RequestCorrelation
 
     public static TraceIdOf(ctx: Context): string | undefined
     {
-        const span = trace.getSpan(ctx)
-        const traceId = span?.spanContext().traceId
-        return traceId !== undefined && traceId.length > 0 ? traceId : undefined
+        const spanContext = trace.getSpan(ctx)?.spanContext()
+        return spanContext !== undefined && trace.isSpanContextValid(spanContext) ? spanContext.traceId : undefined
     }
 }

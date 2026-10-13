@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { IncomingHttpHeaders } from 'node:http'
+import { ROOT_CONTEXT, trace } from '@opentelemetry/api'
 import { InMemorySpanExporter } from '@opentelemetry/sdk-trace-base'
 import { PeriodicExportingMetricReader, InMemoryMetricExporter, AggregationTemporality } from '@opentelemetry/sdk-metrics'
 import { Observability, ObservabilityRole } from '../observability.js'
@@ -82,4 +83,22 @@ test('every log line within a request carries the correlation id equal to the sp
     assert.ok(lines.length >= 1)
     assert.equal(lines[lines.length - 1]!.correlationId, KNOWN_TRACE_ID)
     await obs.Shutdown()
+})
+
+test('baggage is not propagated: an inbound baggage header never reaches the outbound carrier', () =>
+{
+    Observability.ForTest({ role: ObservabilityRole.Host }, new InMemorySpanExporter(), CorrelationFixture.Reader())
+    const ctx = RequestCorrelation.Extract({ traceparent: TRACEPARENT, baggage: 'user=attacker' })
+    const carrier: Record<string, string> = {}
+    RequestCorrelation.Inject(ctx, carrier)
+    assert.ok(typeof carrier.traceparent === 'string')
+    assert.equal(carrier.baggage, undefined)
+})
+
+test('TraceIdOf returns undefined for an absent or invalid (zero) span context', () =>
+{
+    Observability.ForTest({ role: ObservabilityRole.Host }, new InMemorySpanExporter(), CorrelationFixture.Reader())
+    assert.equal(RequestCorrelation.TraceIdOf(RequestCorrelation.Extract({})), undefined)
+    const zero = trace.setSpanContext(ROOT_CONTEXT, { traceId: '0'.repeat(32), spanId: '0'.repeat(16), traceFlags: 0 })
+    assert.equal(RequestCorrelation.TraceIdOf(zero), undefined)
 })

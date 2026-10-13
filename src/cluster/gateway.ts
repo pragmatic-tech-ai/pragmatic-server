@@ -114,6 +114,19 @@ export class Gateway
         }
     }
 
+    /** Builds the outbound worker-upgrade carrier: tenant, authorization, anti-spoof fingerprint stamp, and the inbound W3C trace context. */
+    public static OutboundHeaders(req: IncomingMessage, tenantId: string, authorization: string | null, clientTlsConfigured: boolean): Record<string, string>
+    {
+        const headers: Record<string, string> = { [Gateway.TenantHeader]: tenantId }
+        if (authorization !== null)
+        {
+            headers[Gateway.AuthorizationHeader] = authorization
+        }
+        Gateway.StampMachineFingerprint(headers, req.socket as TLSSocket, clientTlsConfigured)
+        RequestCorrelation.Inject(RequestCorrelation.Extract(req.headers), headers)
+        return headers
+    }
+
     public Address(): WebSocketAddress
     {
         return this.address
@@ -172,13 +185,7 @@ export class Gateway
     private Dial(req: IncomingMessage, socket: Socket, head: Buffer, tenantId: string, endpoint: WorkerEndpoint, authorization: string | null): void
     {
         const client = this.clientTls
-        const headers: Record<string, string> = { [Gateway.TenantHeader]: tenantId }
-        if (authorization !== null)
-        {
-            headers[Gateway.AuthorizationHeader] = authorization
-        }
-        Gateway.StampMachineFingerprint(headers, req.socket as TLSSocket, this.machineTlsConfigured)
-        RequestCorrelation.Inject(RequestCorrelation.Extract(req.headers), headers)
+        const headers = Gateway.OutboundHeaders(req, tenantId, authorization, this.machineTlsConfigured)
         const wsOptions = { key: client.key, cert: client.cert, ca: client.ca, rejectUnauthorized: true, servername: this.serverName, headers }
         const workerWs = new WebSocket(`${Gateway.WsScheme}${endpoint.host}:${endpoint.port}/`, wsOptions)
         this.workerSockets.add(workerWs)
