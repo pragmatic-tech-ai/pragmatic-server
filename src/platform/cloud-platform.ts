@@ -79,7 +79,7 @@ export class CloudPlatform implements PlatformServices
         if (options.auditAnchorKeyRef !== undefined && options.auditAnchorKeyRef.length > 0)
         {
             const resolved = await options.secretManager.Get(options.auditAnchorKeyRef)
-            if (resolved === null)
+            if (resolved === null || resolved.length === 0)
             {
                 throw new Error(CloudPlatform.MissingAnchorKeyMessage)
             }

@@ -74,7 +74,7 @@ test('anchoring on: audit records are checkpointed into identity_audit_anchor', 
     await audit.Record(AnchoringFixture.Event('t1', 'a'))
     await audit.Record(AnchoringFixture.Event('t2', 'x'))
     const rows = await session.Query('SELECT tenant_id, seq FROM identity_audit_anchor ORDER BY tenant_id, seq', [])
-    assert.ok(rows.length >= 2)
+    assert.equal(rows.length, 2)
 })
 
 test('anchoring on: a tail DELETE is detected fail-closed when a fresh platform reopens the store', async () =>
@@ -95,6 +95,7 @@ test('anchor key ref set but secret absent: Create rejects without leaking', asy
 {
     const session = AnchoringFixture.Session()
     const secretManager = await AnchoringFixture.SecretManager(false)
+    await secretManager.Put('cluster/unrelated', 'anchor-secret-key-material')
     await assert.rejects(() => CloudPlatform.Create({ session, storage: new ObjectStoreProviderRegistry(), secretManager, masterKeyRef: AnchoringFixture.MasterRef, auditAnchorKeyRef: AnchoringFixture.AnchorRef }), (e) =>
     {
         assert.ok(e instanceof Error)
@@ -110,5 +111,13 @@ test('anchoring off: no identity_audit_anchor table is created', async () =>
     const platform = await CloudPlatform.Create({ session, storage: new ObjectStoreProviderRegistry(), secretManager, masterKeyRef: AnchoringFixture.MasterRef })
     const audit = await platform.AuditSink()
     await audit.Record(AnchoringFixture.Event('t1', 'a'))
-    await assert.rejects(() => session.Query('SELECT * FROM identity_audit_anchor', []))
+    await assert.rejects(() => session.Query('SELECT * FROM identity_audit_anchor', []), /does not exist/)
+})
+
+test('anchor key ref set but secret is empty: Create rejects', async () =>
+{
+    const session = AnchoringFixture.Session()
+    const secretManager = await AnchoringFixture.SecretManager(false)
+    await secretManager.Put(AnchoringFixture.AnchorRef, '')
+    await assert.rejects(() => CloudPlatform.Create({ session, storage: new ObjectStoreProviderRegistry(), secretManager, masterKeyRef: AnchoringFixture.MasterRef, auditAnchorKeyRef: AnchoringFixture.AnchorRef }), /anchor/i)
 })
