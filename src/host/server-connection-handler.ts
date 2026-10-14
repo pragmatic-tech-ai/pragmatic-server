@@ -1,12 +1,13 @@
 import {
-    createMessageConnection, NullLogger, WebSocketMessageReader, WebSocketMessageWriter, LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol, AdminProtocol,
+    createMessageConnection, NullLogger, WebSocketMessageReader, WebSocketMessageWriter, LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol, AdminProtocol, CypherProtocol,
 } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, ModelProjection, ResolvedResourceDto, GrantDto, GrantMutationDto, IdentityConfigDto, AccountDto, CreateAccountParams, ServiceTokenSummaryDto, IssueTokenParams, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, ModelProjection, ResolvedResourceDto, GrantDto, GrantMutationDto, IdentityConfigDto, AccountDto, CreateAccountParams, ServiceTokenSummaryDto, IssueTokenParams, TokenIssuedDto, CypherQueryParams, CypherQueryResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ResponseError, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { RequestType, NotificationType } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ResourceRef, IdentityConfig, PresentedSecret, LocalAccountNotFoundError } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext, Grant, Role, LocalAccount, ServiceTokenSummary, ServiceTokenGrant } from '@pragmatic-tech-ai/todl-identity'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
+import { Cypher } from '@pragmatic-tech-ai/todl'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
@@ -20,6 +21,9 @@ import type { ConnectorRuntime } from '../connectors/connector-runtime.js'
 import { ModelReadFilter } from './model-read-filter.js'
 import { AdminService, AdminSelfLockoutError, AdminConfigMissingError, AdminTokenNotFoundError } from './admin-service.js'
 import { AdminEnums, AdminEnumError } from './admin-enums.js'
+import { CypherLimits } from '../config/cypher-limits.js'
+import { CypherParamConverter, CypherParamError } from './cypher/cypher-param-converter.js'
+import { CypherResultMapper } from './cypher/cypher-result-mapper.js'
 import { trace } from '@opentelemetry/api'
 import type { Context } from '@opentelemetry/api'
 import type { RequestInstrumentation } from '../observability/request-instrumentation.js'
@@ -47,7 +51,10 @@ export class ServerConnectionHandler
     private static readonly PrincipalTakenMessage = 'principal already registered'
     private static readonly AccountExistsMessage = 'account already exists'
     private static readonly InvalidParamsPrefix = 'invalid params: '
+    private static readonly CypherField = 'cypher'
+    private static readonly CypherTimeoutMessage = 'cypher query timed out'
     public static readonly RateLimitedCode = -32029
+    public static readonly CypherTimeoutCode = -32030
 
     private readonly connection: MessageConnection
     private readonly languageService: ILanguageService
@@ -60,10 +67,12 @@ export class ServerConnectionHandler
     private readonly parent: Context | undefined
     private readonly rateLimit: RateLimitGuard | undefined
     private readonly admin: AdminService | undefined
-    protected readonly graphProvider: (context: AccessContext) => Promise<IGraphQuery>
+    private readonly graphProvider: (context: AccessContext) => Promise<IGraphQuery>
+    private readonly cypherLimits: CypherLimits
 
-    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, graphProvider: (context: AccessContext) => Promise<IGraphQuery>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService)
+    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, graphProvider: (context: AccessContext) => Promise<IGraphQuery>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits)
     {
+        this.cypherLimits = cypherLimits ?? new CypherLimits()
         this.rateLimit = rateLimit
         this.admin = admin
         this.graphProvider = graphProvider
@@ -83,6 +92,7 @@ export class ServerConnectionHandler
         this.RegisterSolutionHandlers()
         this.RegisterModelHandlers()
         this.RegisterConnectorHandlers()
+        this.RegisterCypherHandlers()
         if (this.admin !== undefined)
         {
             this.RegisterAdminHandlers()
@@ -104,10 +114,10 @@ export class ServerConnectionHandler
         })
     }
 
-    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, graphProvider: (context: AccessContext) => Promise<IGraphQuery>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService): ServerConnectionHandler
+    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, graphProvider: (context: AccessContext) => Promise<IGraphQuery>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits): ServerConnectionHandler
     {
         const connection = createMessageConnection(new WebSocketMessageReader(socket), new WebSocketMessageWriter(socket), NullLogger)
-        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectorsFactory, graphProvider, instrumentation, parent, audit, rateLimit, admin)
+        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectorsFactory, graphProvider, instrumentation, parent, audit, rateLimit, admin, cypherLimits)
         connection.listen()
         return handler
     }
@@ -235,6 +245,48 @@ export class ServerConnectionHandler
         this.guarded(ConnectorProtocol.Read, p => this.connectorService.Read(p.modelId, p.concept))
         this.guarded(ConnectorProtocol.WriteBack, p => this.connectorService.WriteBack(p))
         this.guarded(ConnectorProtocol.Test, p => this.connectorService.Test(p.modelId, p.connectorName))
+    }
+
+    private RegisterCypherHandlers(): void
+    {
+        this.guarded(CypherProtocol.Query, p => this.RunCypherQuery(p))
+    }
+
+    public async RunCypherQuery(params: CypherQueryParams): Promise<CypherQueryResultDto>
+    {
+        const source = this.RequireNonEmptyString(params?.cypher, ServerConnectionHandler.CypherField)
+        let parameters: ReadonlyMap<string, Cypher.ParameterValue>
+        try
+        {
+            parameters = CypherParamConverter.ToMap(params.parameters)
+        }
+        catch (error)
+        {
+            if (error instanceof CypherParamError)
+            {
+                throw new ResponseError(ErrorCodes.InvalidParams, `${ServerConnectionHandler.InvalidParamsPrefix}${error.message}`)
+            }
+            throw error
+        }
+        const graph = await this.graphProvider(this.accessContext)
+        try
+        {
+            const engine = Cypher.CypherEngine.OverQuery(graph, { MaxVarLength: this.cypherLimits.MaxVarLength })
+            const result = engine.Execute(source, parameters, { RowCap: this.cypherLimits.RowCap, Cancel: Cypher.Deadline.After(this.cypherLimits.TimeoutMs) })
+            return CypherResultMapper.ToWire(Cypher.CypherEngine.ToDto(result))
+        }
+        catch (error)
+        {
+            if (error instanceof Cypher.CypherSyntaxError || error instanceof Cypher.CypherSemanticError)
+            {
+                throw new ResponseError(ErrorCodes.InvalidParams, `${ServerConnectionHandler.InvalidParamsPrefix}${error.message}`)
+            }
+            if (error instanceof Cypher.CypherTimeout)
+            {
+                throw new ResponseError(ServerConnectionHandler.CypherTimeoutCode, ServerConnectionHandler.CypherTimeoutMessage)
+            }
+            throw error
+        }
     }
 
     private RegisterAdminHandlers(): void

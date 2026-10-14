@@ -42,6 +42,9 @@ export interface ServerConfig
     auditFile?: string
     rateLimit?: RateLimitConfig
     drainTimeoutMs?: number
+    cypherRowCap?: number
+    cypherTimeoutMs?: number
+    cypherMaxVarLength?: number
     cloudProvider?: DeploymentProvider
     awsRegion?: string
     s3Bucket?: string
