@@ -17,6 +17,10 @@ export class ServerBootstrap
             {
                 await ServerBootstrap.EnsureOwnerGrantAsync(pack, tenant, options)
             }
+            if (options.allowAdminPasswordRotation === true)
+            {
+                await ServerBootstrap.RotateAdminPasswordAsync(pack, tenant, options)
+            }
             return
         }
         const password = await pack.Secrets.Get(options.adminPasswordRef)
@@ -46,6 +50,26 @@ export class ServerBootstrap
         if (!hasOwner)
         {
             await pack.Grants.Save(new Grant(options.adminPrincipalId, Role.Owner, new ResourceRef(ResourceKind.Tenant, tenant.Id, [])))
+        }
+    }
+
+    /** Opt-in: re-hash the admin credential when the provisioned password no longer matches the stored
+     *  hash. Fail-closed: a null provisioned plaintext is a no-op (never wipes the live credential). */
+    private static async RotateAdminPasswordAsync(pack: ServerIdentityPack, tenant: Tenant, options: BootstrapOptions): Promise<void>
+    {
+        const password = await pack.Secrets.Get(options.adminPasswordRef)
+        if (password === null)
+        {
+            return
+        }
+        const presented = new PresentedSecret(password)
+        try
+        {
+            await pack.Registrar.RotatePasswordIfChanged(tenant, options.adminPrincipalId, presented)
+        }
+        finally
+        {
+            presented.Clear()
         }
     }
 }

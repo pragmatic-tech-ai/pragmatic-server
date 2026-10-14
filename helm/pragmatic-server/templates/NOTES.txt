@@ -36,6 +36,8 @@ Per-tenant provisioned secrets are wired: every oidc.clientSecretRef and bootstr
 named in tenants.json must have a matching key in the provisioned Secret (chart-managed
 secrets.provisioned, or secrets.provisionedExistingSecret). A tenant naming a ref with no matching
 value fails that tenant closed.
+A tenant may set bootstrap.allowAdminPasswordRotation: true in tenants.json to re-hash the bootstrap admin
+credential when the value behind its adminPasswordRef changes (default: no rotation).
 {{- end }}
 {{- if .Values.cluster.enabled }}
 

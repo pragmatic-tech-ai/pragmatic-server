@@ -40,6 +40,7 @@ export interface BootstrapOptions
     adminPrincipalId: string
     adminPasswordRef: string
     ownerGrant: boolean
+    allowAdminPasswordRotation?: boolean
 }
 
 export interface PragmaticServerIdentityOptions
