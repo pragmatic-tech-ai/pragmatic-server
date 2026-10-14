@@ -14,6 +14,9 @@ export class PragmaticAppsRegistry
     private static readonly ManifestFile = 'application.json'
     private static readonly RootPath = '.'
     private static readonly Separator = '/'
+    private static readonly ParentSegment = '..'
+    private static readonly SeparatorPattern = /[\\/:]/
+    private static readonly InvalidNameError = 'invalid application name: '
     private static readonly NotFoundError = 'application not found: '
 
     private readonly storage: IStorage
@@ -41,6 +44,10 @@ export class PragmaticAppsRegistry
 
     public async ApplicationFor(name: string): Promise<PragmaticApplication>
     {
+        if (name === '' || name === '.' || name === PragmaticAppsRegistry.ParentSegment || PragmaticAppsRegistry.SeparatorPattern.test(name))
+        {
+            throw new Error(PragmaticAppsRegistry.InvalidNameError + name)
+        }
         const path = PragmaticAppsRegistry.ManifestPath(name)
         if (!await this.storage.Exists(path))
         {

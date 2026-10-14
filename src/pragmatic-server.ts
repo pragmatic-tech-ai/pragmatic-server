@@ -82,8 +82,7 @@ export interface PragmaticServerOptions
 export class PragmaticServer
 {
     private static readonly DefaultPackagesDir = 'packages'
-    /** Default applications directory (relative to the process cwd) when `applicationsRoot` is not configured. */
-    private static readonly DefaultApplicationsDir = 'applications'
+    private static readonly ApplicationsRootRequiredError = 'applicationsRoot is required for a runtime tenant'
     private static readonly ErrorSeparator = '; '
 
     private static readonly NotStartedError = 'server not started'
@@ -188,7 +187,14 @@ export class PragmaticServer
 
     public AppsStorage(): IStorage
     {
-        this.appsStorage ??= this.platform.CreateStorage(this.options.applicationsRoot ?? PragmaticServer.DefaultApplicationsDir)
+        if (this.appsStorage === undefined)
+        {
+            if (this.options.applicationsRoot === undefined)
+            {
+                throw new Error(PragmaticServer.ApplicationsRootRequiredError)
+            }
+            this.appsStorage = this.platform.CreateStorage(this.options.applicationsRoot)
+        }
         return this.appsStorage
     }
 

@@ -77,3 +77,40 @@ test('malformed manifest fails closed', async () =>
     }
     finally { f.Dispose() }
 })
+
+test('ApplicationFor rejects traversal names before touching storage', async () =>
+{
+    const f = new AppsFixture()
+    try
+    {
+        f.AddApp('demo')
+        await assert.rejects(f.Registry().ApplicationFor('../identity'), /invalid application name/)
+        await assert.rejects(f.Registry().ApplicationFor('..\\identity'), /invalid application name/)
+        await assert.rejects(f.Registry().ApplicationFor('..'), /invalid application name/)
+    }
+    finally { f.Dispose() }
+})
+
+test('List skips a subdirectory without application.json', async () =>
+{
+    const f = new AppsFixture()
+    try
+    {
+        f.AddApp('demo')
+        mkdirSync(join(f.Dir, 'empty'))
+        assert.deepEqual(await f.Registry().List(), [{ name: 'demo', version: '1.0.0' }])
+    }
+    finally { f.Dispose() }
+})
+
+test('List fails closed when one manifest is malformed', async () =>
+{
+    const f = new AppsFixture()
+    try
+    {
+        f.AddApp('demo')
+        f.AddApp('bad', '{"name":"bad"}')
+        await assert.rejects(f.Registry().List())
+    }
+    finally { f.Dispose() }
+})
