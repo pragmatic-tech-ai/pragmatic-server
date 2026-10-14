@@ -38,7 +38,14 @@ export class IdentityModule
         const masterKey = this.platform.ResolveMasterKey(this.options.masterKey)
         const hasher = new Argon2PasswordHasher()
         const stores = await this.platform.CreateIdentityStores(this.options.identityRoot, masterKey)
-        const config = this.options.identityConfig ?? IdentityModule.LegacyOrLocal(this.options.oidc)
+        const tenantConfig = await this.platform.CreateTenantConfigStore(this.options.identityRoot)
+        const seed = this.options.identityConfig ?? IdentityModule.LegacyOrLocal(this.options.oidc)
+        const stored = await tenantConfig.Get(tenant.Id)
+        const config = stored ?? seed
+        if (stored === null)
+        {
+            await tenantConfig.Save(tenant.Id, seed)
+        }
         if (this.options.provisionedSecrets !== undefined)
         {
             const refs: string[] = []
@@ -61,8 +68,6 @@ export class IdentityModule
         const resolver = new IdentityPackResolver(this.options.httpClient ?? new FetchHttpClient(), this.options.flowStateStore ?? new InMemoryOidcFlowStateStore())
         const resolved = resolver.Resolve(tenant, config, stores, this.options.machine)
         const pack = resolved.Pack
-        const tenantConfig = await this.platform.CreateTenantConfigStore(this.options.identityRoot)
-        await tenantConfig.Save(tenant.Id, config)
         services.registerInstance(TenantConfigStoreKey, tenantConfig)
         const registry = await ConfigurableIdentityProviderRegistry.SingleTenant(tenant, config, pack)
         services.registerInstance(IdentityProviderRegistryKey, registry)

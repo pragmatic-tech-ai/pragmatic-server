@@ -7,7 +7,8 @@ import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services
 import { SolutionServicesModule, LanguageServiceModule } from './composition/server-modules.js'
 import type { MasterKeyRef } from './identity/master-key-resolver.js'
 import type { IProvisionedSecretSource } from './config/provisioned-secret-source.js'
-import type { Tenant, IdentityConfig } from '@pragmatic-tech-ai/todl-identity'
+import { TenantConfigStoreKey } from '@pragmatic-tech-ai/todl-identity'
+import type { Tenant, IdentityConfig, ITenantConfigStore } from '@pragmatic-tech-ai/todl-identity'
 import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
 import type { IHttpClient, IOidcFlowStateStore } from '@pragmatic-tech-ai/todl-identity-cloud'
 import type { OidcFrontDoor } from './host/auth-http-endpoint.js'
@@ -148,6 +149,19 @@ export class PragmaticServer
             throw new Error(PragmaticServer.NotStartedError)
         }
         return this.pack
+    }
+
+    public async TenantConfigStore(): Promise<ITenantConfigStore>
+    {
+        if (this.identity === undefined)
+        {
+            throw new Error(PragmaticServer.IdentityNotConfiguredError)
+        }
+        if (this.pack === undefined)
+        {
+            throw new Error(PragmaticServer.NotStartedError)
+        }
+        return this.root.Resolve(TenantConfigStoreKey)
     }
 
     public Tenant(): Tenant
