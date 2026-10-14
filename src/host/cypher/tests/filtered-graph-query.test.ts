@@ -32,6 +32,8 @@ class Fixture
     public static readonly SecretOpen = 'acme.s2'
     public static readonly DocA = 'acme.d1'
     public static readonly DocB = 'acme.d2'
+    public static readonly Points = 'points'
+    public static readonly PointedBy = 'pointedBy'
     public static readonly EffectDeny = 'deny'
     public static readonly ActionRead = 'read'
     public static readonly TenantId = 't1'
@@ -95,6 +97,8 @@ class Fixture
             .assertInstance('acme.Doc', Fixture.DocB)
             .addRelationship(Fixture.DocA, Fixture.Link, Fixture.SecretHidden)
             .addRelationship(Fixture.DocB, Fixture.Link, Fixture.SecretOpen)
+            .addConceptRelationship('acme.Secret', Fixture.Points, ['acme.Doc'], Cardinality.Optional, Fixture.PointedBy)
+            .addRelationship(Fixture.SecretHidden, Fixture.Points, Fixture.DocB)
             .commit()
         return repo
     }
@@ -121,6 +125,9 @@ test('denied instances are hidden from listing, reflection and edges', async () 
         assert.deepEqual(Fixture.Ids(q.Refs(Fixture.DocB, Fixture.Link)), [Fixture.SecretOpen])
         assert.ok(Fixture.Ids(q.Referrers(Fixture.SecretOpen)).includes(Fixture.DocB))
         assert.deepEqual(Fixture.Ids(q.Referrers(Fixture.SecretHidden)), [])
+        // a DENIED node that refs an ALLOWED target is not reported as that target's referrer
+        assert.ok(Fixture.Ids(inner.Referrers(Fixture.DocB)).includes(Fixture.SecretHidden), 'precondition: denied referrer exists')
+        assert.ok(!Fixture.Ids(q.Referrers(Fixture.DocB)).includes(Fixture.SecretHidden))
         assert.deepEqual(Fixture.Ids(q.Search(Fixture.Hidden)), [])
         assert.equal(q.Concepts().length, inner.Concepts().length)
         assert.deepEqual(Fixture.Ids(q.InstancesOf(Fixture.Doc)), [Fixture.DocA, Fixture.DocB])

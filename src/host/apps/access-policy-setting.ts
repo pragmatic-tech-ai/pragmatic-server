@@ -3,12 +3,10 @@ import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 /** Thrown when an application's access-policy setting is unreadable or structurally invalid (fail-closed). */
 export class MalformedPolicyError extends Error
 {
-    private static readonly ErrorName = 'MalformedPolicyError'
-
     constructor(message: string)
     {
         super(message)
-        this.name = MalformedPolicyError.ErrorName
+        this.name = new.target.name
     }
 }
 
@@ -35,7 +33,7 @@ export class AccessPolicySetting
         {
             parsed = JSON.parse(text)
         }
-        catch (e)
+        catch
         {
             throw new MalformedPolicyError(AccessPolicySetting.NotJson + path)
         }
