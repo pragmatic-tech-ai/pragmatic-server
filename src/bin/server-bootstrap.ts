@@ -54,6 +54,9 @@ export class ServerBootstrap
     private static readonly AuditLabel = ' audit='
     private static readonly RateLimitLabel = ' ratelimit='
     private static readonly DrainLabel = ' drain='
+    private static readonly AuditAnchorLabel = ' audit-anchor='
+    private static readonly AuditAnchorOn = 'on'
+    private static readonly AuditAnchorOff = 'off'
     private static readonly RateLimitOn = 'on'
     private static readonly RateLimitOff = 'off'
     private static readonly WorkerNeedsTls = 'worker requires TLS (set PRAGMATIC_TLS_CERT_FILE/KEY_FILE/CA_FILE)'
@@ -90,7 +93,7 @@ export class ServerBootstrap
     {
         const ownership = ServerBootstrap.HasRedis(config) ? ServerBootstrap.RedisOwnership : ServerBootstrap.InMemoryOwnership
         const secrets = config.provisionedSecretsFile !== undefined && config.provisionedSecretsFile.length > 0 ? ServerBootstrap.SecretsFile : ServerBootstrap.SecretsNone
-        return `pragmatic-server listening on ${config.host}:${config.port} mode=${config.deploymentMode} tenants=${tenantCount} ownership=${ownership} secrets=${secrets}${ServerBootstrap.ClientMtls(config.clientTls)}${ServerBootstrap.OidcFlowToken}${ownership}${ServerBootstrap.Otel(config)}${ServerBootstrap.Security(config)}${ServerBootstrap.Drain(config)}`
+        return `pragmatic-server listening on ${config.host}:${config.port} mode=${config.deploymentMode} tenants=${tenantCount} ownership=${ownership} secrets=${secrets}${ServerBootstrap.ClientMtls(config.clientTls)}${ServerBootstrap.OidcFlowToken}${ownership}${ServerBootstrap.Otel(config)}${ServerBootstrap.Security(config)}${ServerBootstrap.Drain(config)}${ServerBootstrap.AuditAnchor(config)}`
     }
 
     public static ComposeWorkerOptions(config: ServerConfig, provisioning: ITenantProvisioning, platform?: PlatformServices, provisionedSecrets?: IProvisionedSecretSource, logger?: ILogger, observability?: Observability, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard): WorkerHostOptions
@@ -216,6 +219,12 @@ export class ServerBootstrap
     private static Drain(config: { drainTimeoutMs?: number }): string
     {
         return config.drainTimeoutMs === undefined ? '' : ServerBootstrap.DrainLabel + config.drainTimeoutMs
+    }
+
+    private static AuditAnchor(config: { cloudAuditAnchorKeyRef?: string }): string
+    {
+        const on = config.cloudAuditAnchorKeyRef !== undefined && config.cloudAuditAnchorKeyRef.length > 0
+        return ServerBootstrap.AuditAnchorLabel + (on ? ServerBootstrap.AuditAnchorOn : ServerBootstrap.AuditAnchorOff)
     }
 
     private static Security(config: { auditSink?: AuditSinkKind; rateLimit?: RateLimitConfig }): string
