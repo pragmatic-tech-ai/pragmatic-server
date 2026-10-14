@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { InMemoryMessageSocket, PragmaticClient, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
+import { CypherLimits } from '../../config/cypher-limits.js'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
 import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
@@ -29,7 +30,7 @@ class CypherSurfaceFixture
         return new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
     }
 
-    public static async With(body: (client: PragmaticClient) => Promise<void>): Promise<void>
+    public static async With(body: (client: PragmaticClient) => Promise<void>, limits?: CypherLimits): Promise<void>
     {
         const solution = mkdtempSync(join(tmpdir(), CypherSurfaceFixture.SolutionPrefix))
         const packages = mkdtempSync(join(tmpdir(), CypherSurfaceFixture.PackagesPrefix))
@@ -41,7 +42,7 @@ class CypherSurfaceFixture
         const languageService = await server.LanguageService()
         const manager = await server.Manager()
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, CypherSurfaceFixture.Permissive(), () => Promise.reject(new Error(CypherSurfaceFixture.NoConnectors)), ctx => server.Graph(ctx))
+        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, CypherSurfaceFixture.Permissive(), () => Promise.reject(new Error(CypherSurfaceFixture.NoConnectors)), ctx => server.Graph(ctx), undefined, undefined, undefined, undefined, undefined, limits)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         try
         {
@@ -106,4 +107,14 @@ test('cypher/query rejects an empty query with InvalidParams', async () =>
     {
         await assert.rejects(() => client.CypherQuery(''), (error: { code?: number }) => error.code === ErrorCodes.InvalidParams)
     })
+})
+
+test('cypher/query honours an overridden low row cap with truncated true', async () =>
+{
+    await CypherSurfaceFixture.With(async client =>
+    {
+        const result = await client.CypherQuery(CypherSurfaceFixture.NameQuery)
+        assert.equal(result.rows.length, 1)
+        assert.equal(result.truncated, true)
+    }, new CypherLimits(1))
 })

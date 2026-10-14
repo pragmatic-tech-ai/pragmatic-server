@@ -11,6 +11,7 @@ import type { IProvisionedSecretSource } from '../config/provisioned-secret-sour
 import type { ILogger } from '../observability/logger.js'
 import type { Observability, IObservabilityOptions, ObservabilityRole } from '../observability/observability.js'
 import type { OtlpProtocol } from '../observability/otlp-protocol.js'
+import { CypherLimits } from '../config/cypher-limits.js'
 import { AuditSinkKind } from '../config/audit-sink-kind.js'
 import { NullAccessAuditSink } from '../host/access-audit.js'
 import type { IAccessAuditSink } from '../host/access-audit.js'
@@ -86,7 +87,13 @@ export class ServerBootstrap
             audit,
             rateLimit,
             drainTimeoutMs: config.drainTimeoutMs,
+            cypherLimits: ServerBootstrap.CypherLimitsOf(config),
         }
+    }
+
+    private static CypherLimitsOf(config: ServerConfig): CypherLimits
+    {
+        return new CypherLimits(config.cypherRowCap, config.cypherTimeoutMs, config.cypherMaxVarLength)
     }
 
     public static StartupLine(config: ServerConfig, tenantCount: number): string
@@ -130,6 +137,7 @@ export class ServerBootstrap
             audit,
             rateLimit,
             drainTimeoutMs: config.drainTimeoutMs,
+            cypherLimits: ServerBootstrap.CypherLimitsOf(config),
         }
     }
 

@@ -27,6 +27,7 @@ import type { ITenantOwnership } from '../tenancy/tenant-ownership.js'
 import { RedisTenantOwnership } from '../tenancy/redis-tenant-ownership.js'
 import { WorkerRegistration } from './worker-registration.js'
 import { HealthEndpoint } from '../host/health-endpoint.js'
+import type { CypherLimits } from '../config/cypher-limits.js'
 import type { IProvisionedSecretSource } from '../config/provisioned-secret-source.js'
 import type { WorkerEndpoint } from './worker-router.js'
 import type { ITenantProvisioning } from '../tenancy/tenant-provisioning.js'
@@ -70,6 +71,7 @@ export interface WorkerHostOptions
     rateLimit?: RateLimitGuard
     audit?: IAccessAuditSink
     drainTimeoutMs?: number
+    cypherLimits?: CypherLimits
 }
 
 /** Internal mutual-TLS wss worker: the gateway (a verified client cert) forwards x-pragmatic-tenant + authorization;
@@ -136,6 +138,7 @@ export class WorkerHost
     private readonly rateLimit: RateLimitGuard
     private readonly observability: Observability | undefined
     private readonly drainTimeoutMs: number
+    private readonly cypherLimits: CypherLimits | undefined
     private drainSource: IInFlightSource | undefined
     private drainController: DrainController | undefined
     private disposing: Promise<void> | undefined
@@ -157,8 +160,10 @@ export class WorkerHost
         rateLimit: RateLimitGuard = new RateLimitGuard(),
         audit: IAccessAuditSink = new NullAccessAuditSink(),
         observability?: Observability,
-        drainTimeoutMs: number = WorkerHost.DefaultDrainTimeoutMs)
+        drainTimeoutMs: number = WorkerHost.DefaultDrainTimeoutMs,
+        cypherLimits?: CypherLimits)
     {
+        this.cypherLimits = cypherLimits
         this.observability = observability
         this.drainTimeoutMs = drainTimeoutMs
         this.audit = audit
@@ -283,7 +288,7 @@ export class WorkerHost
             await registry.DisposeAll().catch(() => {})
             throw error
         }
-        const started = new WorkerHost(httpsServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? WorkerHost.DefaultIdleTtlMs, options.idleSweepMs ?? WorkerHost.DefaultIdleSweepMs, healthServer, healthAddress, registration, options.logger ?? new NullLogger(), options.observability !== undefined ? RequestInstrumentation.FromObservability(options.observability, options.logger ?? new NullLogger()) : undefined, options.rateLimit, options.audit, options.observability, options.drainTimeoutMs ?? WorkerHost.DefaultDrainTimeoutMs)
+        const started = new WorkerHost(httpsServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? WorkerHost.DefaultIdleTtlMs, options.idleSweepMs ?? WorkerHost.DefaultIdleSweepMs, healthServer, healthAddress, registration, options.logger ?? new NullLogger(), options.observability !== undefined ? RequestInstrumentation.FromObservability(options.observability, options.logger ?? new NullLogger()) : undefined, options.rateLimit, options.audit, options.observability, options.drainTimeoutMs ?? WorkerHost.DefaultDrainTimeoutMs, options.cypherLimits)
         started.MarkReady()
         return started
     }
@@ -487,7 +492,7 @@ export class WorkerHost
             {
                 try
                 {
-                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors(), ctx => server.Graph(ctx), this.instrumentation, parent, this.audit, this.rateLimit, admin)
+                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors(), ctx => server.Graph(ctx), this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits)
                     this.handlers.add(handler)
                     ws.on(WorkerHost.CloseEvent, () =>
                     {

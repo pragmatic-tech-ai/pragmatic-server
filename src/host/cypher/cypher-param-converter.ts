@@ -55,7 +55,8 @@ export class CypherParamConverter
         }
         if (typeof value === 'object')
         {
-            const record: { [key: string]: ParameterValue } = {}
+            // null prototype: a wire key such as __proto__ becomes an ordinary own property
+            const record: { [key: string]: ParameterValue } = Object.create(null)
             for (const [key, entry] of Object.entries(value))
             {
                 record[key] = CypherParamConverter.ToValue(entry)

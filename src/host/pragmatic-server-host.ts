@@ -18,6 +18,7 @@ import type { MachineTlsRef } from '../cluster/machine-tls.js'
 import { MachineCertIdentity } from './machine-principal-map.js'
 import type { MachineAuthContext } from './auth-http-endpoint.js'
 import type { MasterKeyRef } from '../identity/master-key-resolver.js'
+import type { CypherLimits } from '../config/cypher-limits.js'
 import type { IProvisionedSecretSource } from '../config/provisioned-secret-source.js'
 import type { PragmaticServer } from '../pragmatic-server.js'
 import { ServerConnectionHandler } from './server-connection-handler.js'
@@ -68,6 +69,7 @@ export interface PragmaticServerHostOptions
     rateLimit?: RateLimitGuard
     audit?: IAccessAuditSink
     drainTimeoutMs?: number
+    cypherLimits?: CypherLimits
 }
 
 export interface WebSocketAddress
@@ -140,6 +142,7 @@ export class PragmaticServerHost
     private disposed = false
     private readonly observability: Observability | undefined
     private readonly drainTimeoutMs: number
+    private readonly cypherLimits: CypherLimits | undefined
     private drainSource: IInFlightSource | undefined
     private disposing: Promise<void> | undefined
     private drainController: DrainController | undefined
@@ -157,8 +160,10 @@ export class PragmaticServerHost
         rateLimit: RateLimitGuard = new RateLimitGuard(),
         audit: IAccessAuditSink = new NullAccessAuditSink(),
         observability?: Observability,
-        drainTimeoutMs: number = PragmaticServerHost.DefaultDrainTimeoutMs)
+        drainTimeoutMs: number = PragmaticServerHost.DefaultDrainTimeoutMs,
+        cypherLimits?: CypherLimits)
     {
+        this.cypherLimits = cypherLimits
         this.observability = observability
         this.drainTimeoutMs = drainTimeoutMs
         this.audit = audit
@@ -214,7 +219,7 @@ export class PragmaticServerHost
             httpServer.listen(options.port, host)
         })
         const resolved = httpServer.address() as AddressInfo
-        const started = new PragmaticServerHost(httpServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? PragmaticServerHost.DefaultIdleTtlMs, options.idleSweepMs ?? PragmaticServerHost.DefaultIdleSweepMs, options.clientTls !== undefined, options.logger ?? new NullLogger(), options.observability !== undefined ? RequestInstrumentation.FromObservability(options.observability, options.logger ?? new NullLogger()) : undefined, options.rateLimit, options.audit, options.observability, options.drainTimeoutMs ?? PragmaticServerHost.DefaultDrainTimeoutMs)
+        const started = new PragmaticServerHost(httpServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? PragmaticServerHost.DefaultIdleTtlMs, options.idleSweepMs ?? PragmaticServerHost.DefaultIdleSweepMs, options.clientTls !== undefined, options.logger ?? new NullLogger(), options.observability !== undefined ? RequestInstrumentation.FromObservability(options.observability, options.logger ?? new NullLogger()) : undefined, options.rateLimit, options.audit, options.observability, options.drainTimeoutMs ?? PragmaticServerHost.DefaultDrainTimeoutMs, options.cypherLimits)
         started.MarkReady()
         return started
     }
@@ -426,7 +431,7 @@ export class PragmaticServerHost
             {
                 try
                 {
-                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors(), ctx => server.Graph(ctx), this.instrumentation, parent, this.audit, this.rateLimit, admin)
+                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors(), ctx => server.Graph(ctx), this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits)
                     this.handlers.add(handler)
                     ws.on(PragmaticServerHost.CloseEvent, () =>
                     {

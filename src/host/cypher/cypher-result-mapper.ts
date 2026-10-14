@@ -4,6 +4,8 @@ import type { Cypher } from '@pragmatic-tech-ai/todl'
 /** Maps the engine's PascalCase result DTO to the camelCase plain-JSON wire DTO. */
 export class CypherResultMapper
 {
+    private static readonly NoOrigin = ''
+
     public static ToWire(dto: Cypher.CypherResultDto): CypherQueryResultDto
     {
         return {
@@ -37,7 +39,7 @@ export class CypherResultMapper
             {
                 return CypherResultMapper.Node(cell)
             }
-            const record: { [k: string]: CypherCellDto } = {}
+            const record: { [k: string]: CypherCellDto } = Object.create(null)
             for (const [key, value] of Object.entries(cell))
             {
                 record[key] = CypherResultMapper.Cell(value)
@@ -56,17 +58,17 @@ export class CypherResultMapper
 
     private static Node(node: Record<string, unknown>): CypherNodeCellDto
     {
-        const fields: { [name: string]: CypherFieldSnapshotDto } = {}
-        for (const [name, raw] of Object.entries(node.fields as Record<string, { value?: unknown, definitionOrigin: string, valueOrigin: string }>))
+        const fields: { [name: string]: CypherFieldSnapshotDto } = Object.create(null)
+        for (const [name, raw] of Object.entries(node.fields as Record<string, { value?: unknown, definitionOrigin?: string | null, valueOrigin?: string | null }>))
         {
             const value = raw.value
             fields[name] = {
                 value: value === undefined || value === null ? null : value as string | number | boolean,
-                definitionOrigin: raw.definitionOrigin,
-                valueOrigin: raw.valueOrigin,
+                definitionOrigin: raw.definitionOrigin ?? CypherResultMapper.NoOrigin,
+                valueOrigin: raw.valueOrigin ?? CypherResultMapper.NoOrigin,
             }
         }
-        const refs: { [name: string]: string[] } = {}
+        const refs: { [name: string]: string[] } = Object.create(null)
         for (const [name, targets] of Object.entries(node.refs as Record<string, string[]>))
         {
             refs[name] = [...targets]
