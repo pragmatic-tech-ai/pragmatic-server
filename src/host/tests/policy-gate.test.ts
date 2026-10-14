@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
-import { LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol, CypherProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { PolicyGate } from '../policy-gate.js'
 
 class GateFixture
@@ -39,6 +39,7 @@ class GateFixture
             SolutionProtocol.ActiveSolution.method,
             ModelProtocol.ModelView.method,
             ModelProtocol.Resources.method,
+            CypherProtocol.Query.method,
         ]
     }
 }
@@ -88,6 +89,12 @@ test('every tabled method is classified correctly (Viewer allows all reads, deni
     }
     assert.equal(gate.Authorize(LanguageProtocol.DidChange.method).Allowed, false)
     assert.equal(gate.Authorize(SolutionProtocol.OpenSolution.method).Allowed, false)
+})
+
+test('cypher/query is allowed for a reader and denied with no role', () =>
+{
+    assert.equal(GateFixture.Gate(Role.Viewer).Authorize(CypherProtocol.Query.method).Allowed, true)
+    assert.equal(GateFixture.Gate(null).Authorize(CypherProtocol.Query.method).Allowed, false)
 })
 
 test('Owner may list/read/write/test/prepare/refresh connectors', () =>
