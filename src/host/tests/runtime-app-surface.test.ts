@@ -51,11 +51,13 @@ class RuntimeSurfaceFixture
     public static readonly Hi = 'Hi'
     public static readonly Bye = 'Bye'
     public static readonly Cog = 'Cog'
+    public static readonly Nut = 'Nut'
+    public static readonly Bolt = 'Bolt'
     public static readonly Alpha = 'alpha'
     public static readonly NoAppSelected = /no application selected/i
     public static readonly NotRuntime = /runtime/i
     public static readonly NotDevelopment = /development/i
-    public static readonly Failed = /.+/
+    public static readonly MalformedPolicyMessage = /Access policy is not valid JSON/
     public static readonly UnknownLabel = /unknown label/i
 
     public readonly Packages = mkdtempSync(join(tmpdir(), RuntimeSurfaceFixture.PkgPrefix))
@@ -267,9 +269,11 @@ test('runtime e2e: access policy hides instances and edges, is live, and fails c
         fx.WritePolicy(RuntimeSurfaceFixture.AppA, RuntimeSurfaceFixture.OpenPolicy)
         const open = await client.CypherQuery(RuntimeSurfaceFixture.WidgetLabels)
         assert.deepEqual(RuntimeSurfaceFixture.Column(open), [RuntimeSurfaceFixture.Bye, RuntimeSurfaceFixture.Hi])
+        const reopenedEdges = await client.CypherQuery(RuntimeSurfaceFixture.EdgeQuery)
+        assert.equal(reopenedEdges.rows.length, 1)
 
         fx.WritePolicy(RuntimeSurfaceFixture.AppA, RuntimeSurfaceFixture.MalformedPolicy)
-        await assert.rejects(() => client.CypherQuery(RuntimeSurfaceFixture.WidgetLabels), RuntimeSurfaceFixture.Failed)
+        await assert.rejects(() => client.CypherQuery(RuntimeSurfaceFixture.WidgetLabels), RuntimeSurfaceFixture.MalformedPolicyMessage)
     })
 })
 
@@ -288,5 +292,21 @@ test('runtime e2e: each connection sees only its own bound application', async (
         await assert.rejects(() => one.CypherQuery(RuntimeSurfaceFixture.GadgetLabels), RuntimeSurfaceFixture.UnknownLabel)
         assert.deepEqual(RuntimeSurfaceFixture.Column(await two.CypherQuery(RuntimeSurfaceFixture.GadgetLabels)), [RuntimeSurfaceFixture.Cog])
         await assert.rejects(() => two.CypherQuery(RuntimeSurfaceFixture.WidgetLabels), RuntimeSurfaceFixture.UnknownLabel)
+    })
+})
+
+test('runtime e2e: same-named concepts in two applications do not leak instances across connections', async () =>
+{
+    await RuntimeSurfaceFixture.Run(async fx =>
+    {
+        await fx.Seed(RuntimeSurfaceFixture.AppA, RuntimeSurfaceFixture.PkgA, RuntimeSurfaceFixture.Widget, [RuntimeSurfaceFixture.Hi, RuntimeSurfaceFixture.Bye], false)
+        await fx.Seed(RuntimeSurfaceFixture.AppB, RuntimeSurfaceFixture.PkgB, RuntimeSurfaceFixture.Widget, [RuntimeSurfaceFixture.Nut, RuntimeSurfaceFixture.Bolt], false)
+        const connect = await fx.Runtime()
+        const one = connect()
+        const two = connect()
+        await one.OpenApplication(RuntimeSurfaceFixture.AppA)
+        await two.OpenApplication(RuntimeSurfaceFixture.AppB)
+        assert.deepEqual(RuntimeSurfaceFixture.Column(await one.CypherQuery(RuntimeSurfaceFixture.WidgetLabels)), [RuntimeSurfaceFixture.Bye, RuntimeSurfaceFixture.Hi])
+        assert.deepEqual(RuntimeSurfaceFixture.Column(await two.CypherQuery(RuntimeSurfaceFixture.WidgetLabels)), [RuntimeSurfaceFixture.Bolt, RuntimeSurfaceFixture.Nut])
     })
 })
