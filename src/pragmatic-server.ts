@@ -29,6 +29,7 @@ import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import { PragmaticAppsRegistry } from './host/apps/pragmatic-apps-registry.js'
+import { RuntimeAppGraph } from './host/cypher/runtime-app-graph.js'
 import { TenantGraphCache } from './host/cypher/tenant-graph-cache.js'
 import type { TenantRepository } from './host/cypher/tenant-graph-source.js'
 
@@ -82,6 +83,7 @@ export interface PragmaticServerOptions
 export class PragmaticServer
 {
     private static readonly DefaultPackagesDir = 'packages'
+    private static readonly AppGraphKeySeparator = '@'
     private static readonly ApplicationsRootRequiredError = 'applicationsRoot is required for a runtime tenant'
     private static readonly ErrorSeparator = '; '
 
@@ -106,6 +108,7 @@ export class PragmaticServer
     private graphCache: TenantGraphCache | undefined
     private appsStorage: IStorage | undefined
     private appsRegistry: PragmaticAppsRegistry | undefined
+    private readonly appGraphs = new Map<string, Promise<IGraphQuery>>()
 
     public constructor(options: PragmaticServerOptions)
     {
@@ -206,6 +209,20 @@ export class PragmaticServer
         }
         this.appsRegistry ??= new PragmaticAppsRegistry(this.AppsStorage())
         return this.appsRegistry
+    }
+
+    private async BaseGraphFor(name: string): Promise<IGraphQuery>
+    {
+        const app = await this.Applications().ApplicationFor(name)
+        const key = `${app.Manifest.name}${PragmaticServer.AppGraphKeySeparator}${app.Manifest.version}`
+        let graph = this.appGraphs.get(key)
+        if (graph === undefined)
+        {
+            const source = new StoragePackageSource(this.platform.CreateStorage(this.options.packagesRoot ?? PragmaticServer.DefaultPackagesDir))
+            graph = RuntimeAppGraph.BuildQuery(source, app.Manifest)
+            this.appGraphs.set(key, graph)
+        }
+        return graph
     }
 
     public Tenant(): Tenant
@@ -333,6 +350,7 @@ export class PragmaticServer
         finally
         {
             this.graphCache?.Dispose()
+            this.appGraphs.clear()
             try
             {
                 const disposable = this.options.identity?.flowStateStore as { Dispose?: () => Promise<void> } | undefined
