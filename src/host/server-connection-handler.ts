@@ -30,6 +30,12 @@ export class ServerConnectionHandler
     private static readonly UnknownMemberError = 'unknown solution member'
     private static readonly DefaultResourceKind = 'Tenant'
     private static readonly InvalidConfigField = 'config'
+    private static readonly SubjectField = 'subject'
+    private static readonly ResourcePathField = 'resourcePath'
+    private static readonly PackIdField = 'packId'
+    private static readonly ProviderSettingsField = 'providerSettings'
+    private static readonly GroupRoleMapField = 'groupRoleMap'
+    private static readonly ClaimsMappingField = 'claimsMapping'
     private static readonly InvalidParamsPrefix = 'invalid params: '
     public static readonly RateLimitedCode = -32029
 
@@ -222,17 +228,17 @@ export class ServerConnectionHandler
     private RegisterAdminHandlers(): void
     {
         const admin = this.admin as AdminService
-        this.guarded(AdminProtocol.ListGrants, async p => (await this.AdminCall(() => admin.ListGrants(p.subject))).map(g => this.ToGrantDto(g)))
+        this.guarded(AdminProtocol.ListGrants, async p => (await this.AdminCall(() => admin.ListGrants(this.RequireSubject(p.subject)))).map(g => this.ToGrantDto(g)))
         this.guarded(AdminProtocol.GrantRole, async p =>
         {
-            const { role, resource } = this.ParseMutation(p)
-            await this.AdminCall(() => admin.GrantRole(this.actor(), p.subject, role, resource))
+            const { subject, role, resource } = this.ParseMutation(p)
+            await this.AdminCall(() => admin.GrantRole(this.actor(), subject, role, resource))
             return { ok: true as const }
         })
         this.guarded(AdminProtocol.RevokeRole, async p =>
         {
-            const { role, resource } = this.ParseMutation(p)
-            await this.AdminCall(() => admin.RevokeRole(this.actor(), p.subject, role, resource))
+            const { subject, role, resource } = this.ParseMutation(p)
+            await this.AdminCall(() => admin.RevokeRole(this.actor(), subject, role, resource))
             return { ok: true as const }
         })
         this.connection.onRequest(AdminProtocol.GetConfig, () => this.Dispatch(AdminProtocol.GetConfig.method, async () =>
@@ -272,23 +278,70 @@ export class ServerConnectionHandler
 
     private InvalidParams(error: unknown): ResponseError<void>
     {
+        if (error instanceof ResponseError)
+        {
+            return error
+        }
         const field = error instanceof AdminEnumError ? error.Field : ServerConnectionHandler.InvalidConfigField
         return new ResponseError(ErrorCodes.InvalidParams, `${ServerConnectionHandler.InvalidParamsPrefix}${field}`)
     }
 
-    private ParseMutation(dto: GrantMutationDto): { role: Role, resource: ResourceRef }
+    private ParseMutation(dto: GrantMutationDto): { subject: string, role: Role, resource: ResourceRef }
     {
         try
         {
+            const subject = this.RequireSubject(dto.subject)
             const role = AdminEnums.RoleFromName(dto.role)
             const kind = AdminEnums.ResourceKindFromName(dto.resourceKind ?? ServerConnectionHandler.DefaultResourceKind)
-            const path = Array.isArray(dto.resourcePath) ? dto.resourcePath : []
-            return { role, resource: new ResourceRef(kind, this.accessContext.Tenant.Id, path) }
+            const path = dto.resourcePath === undefined ? [] : this.RequireStringArray(dto.resourcePath, ServerConnectionHandler.ResourcePathField)
+            return { subject, role, resource: new ResourceRef(kind, this.accessContext.Tenant.Id, path) }
         }
         catch (error)
         {
             throw this.InvalidParams(error)
         }
+    }
+
+    private RequireSubject(value: unknown): string
+    {
+        return this.RequireNonEmptyString(value, ServerConnectionHandler.SubjectField)
+    }
+
+    private RequireNonEmptyString(value: unknown, field: string): string
+    {
+        if (typeof value !== 'string' || value.length === 0)
+        {
+            throw this.InvalidParams(new AdminEnumError(field))
+        }
+        return value
+    }
+
+    private RequireStringArray(value: unknown, field: string): string[]
+    {
+        if (!Array.isArray(value) || value.some(v => typeof v !== 'string'))
+        {
+            throw this.InvalidParams(new AdminEnumError(field))
+        }
+        return [...value]
+    }
+
+    private RequireStringRecord(value: unknown, field: string): Map<string, string>
+    {
+        const proto = typeof value === 'object' && value !== null ? Object.getPrototypeOf(value) : undefined
+        if (typeof value !== 'object' || value === null || Array.isArray(value) || (proto !== Object.prototype && proto !== null))
+        {
+            throw this.InvalidParams(new AdminEnumError(field))
+        }
+        const result = new Map<string, string>()
+        for (const [key, entry] of Object.entries(value))
+        {
+            if (typeof entry !== 'string')
+            {
+                throw this.InvalidParams(new AdminEnumError(field))
+            }
+            result.set(key, entry)
+        }
+        return result
     }
 
     private ToGrantDto(grant: Grant): GrantDto
@@ -321,17 +374,24 @@ export class ServerConnectionHandler
     {
         try
         {
-            if (typeof dto.packId !== 'string' || dto.packId.length === 0)
-            {
-                throw new AdminEnumError('packId')
-            }
+            const packId = this.RequireNonEmptyString(dto.packId, ServerConnectionHandler.PackIdField)
             const depth = AdminEnums.DepthFromName(dto.delegationDepth)
+            const providerSettings = this.RequireStringRecord(dto.providerSettings, ServerConnectionHandler.ProviderSettingsField)
+            const groupNames = this.RequireStringRecord(dto.groupRoleMap, ServerConnectionHandler.GroupRoleMapField)
+            const claimsMapping = this.RequireStringRecord(dto.claimsMapping, ServerConnectionHandler.ClaimsMappingField)
             const groupRoles = new Map<string, Role>()
-            for (const [group, name] of Object.entries(dto.groupRoleMap ?? {}))
+            for (const [group, name] of groupNames)
             {
-                groupRoles.set(group, AdminEnums.RoleFromName(name))
+                try
+                {
+                    groupRoles.set(group, AdminEnums.RoleFromName(name))
+                }
+                catch
+                {
+                    throw this.InvalidParams(new AdminEnumError(ServerConnectionHandler.GroupRoleMapField))
+                }
             }
-            return new IdentityConfig(dto.packId, depth, new Map(Object.entries(dto.providerSettings ?? {})), groupRoles, new Map(Object.entries(dto.claimsMapping ?? {})))
+            return new IdentityConfig(packId, depth, providerSettings, groupRoles, claimsMapping)
         }
         catch (error)
         {
