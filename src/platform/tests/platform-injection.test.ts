@@ -29,6 +29,11 @@ class RecordingPlatform implements PlatformServices
         return this.inner.CreateStorageProviderRegistry()
     }
 
+    public CreateStorage(root: string): IStorage
+    {
+        return this.inner.CreateStorage(root)
+    }
+
     public CreatePackagesStorage(packagesRoot: string): IStorage
     {
         this.calls.push(RecordingPlatform.PackagesCall)

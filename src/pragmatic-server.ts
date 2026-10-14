@@ -1,4 +1,5 @@
 import { LazyCompositionRoot, HostKinds, ModuleStateKind } from '@pragmatic-tech-ai/todl-runtime'
+import { TenantPurpose } from './tenancy/tenant-purpose.js'
 import type { ModuleStateProperty } from '@pragmatic-tech-ai/todl-runtime'
 import { SolutionManagerService, StoragePackageSource, StoragePackageStore, PackageStoreKey } from '@pragmatic-tech-ai/todl'
 import { NodeProjectSystemComposer } from '@pragmatic-tech-ai/todl/project-system'
@@ -65,6 +66,8 @@ export interface PragmaticServerIdentityOptions
 
 export interface PragmaticServerOptions
 {
+    purpose?: TenantPurpose
+    applicationsRoot?: string
     packagesRoot?: string
     identity?: PragmaticServerIdentityOptions
     deploymentMode?: DeploymentMode
@@ -169,6 +172,11 @@ export class PragmaticServer
             throw new Error(PragmaticServer.NotStartedError)
         }
         return this.root.Resolve(TenantConfigStoreKey)
+    }
+
+    public Purpose(): TenantPurpose
+    {
+        return this.options.purpose ?? TenantPurpose.Development
     }
 
     public Tenant(): Tenant

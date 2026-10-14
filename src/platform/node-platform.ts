@@ -17,9 +17,14 @@ export class NodePlatform implements PlatformServices
         return new NodeStorageProviderRegistry()
     }
 
+    public CreateStorage(root: string): IStorage
+    {
+        return new NodeFsStorage(root)
+    }
+
     public CreatePackagesStorage(packagesRoot: string): IStorage
     {
-        return new NodeFsStorage(packagesRoot)
+        return this.CreateStorage(packagesRoot)
     }
 
     public CreatePromptService(): IPromptService

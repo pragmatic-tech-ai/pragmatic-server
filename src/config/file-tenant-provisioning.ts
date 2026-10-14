@@ -6,6 +6,7 @@ import type { MachinePrincipalEntry } from '../host/machine-principal-map.js'
 import { ConnectorsPolicy } from '../host/connector-policy.js'
 import { FileConnectionResolver } from '../host/file-connection-resolver.js'
 import type { FileConnection } from '../host/file-connection-resolver.js'
+import type { TenantPurpose } from '../tenancy/tenant-purpose.js'
 import type { ITenantProvisioning, TenantProvisioning } from '../tenancy/tenant-provisioning.js'
 
 interface PolicyShape
@@ -43,6 +44,7 @@ interface TenantShape
 {
     identity?: IdentityShape
     displayName: string
+    purpose?: TenantPurpose
     bootstrap?: TenantProvisioning['bootstrap']
     oidc?: TenantProvisioning['oidc']
     connectorsPolicy?: PolicyShape
@@ -142,6 +144,7 @@ export class FileTenantProvisioning implements ITenantProvisioning
         const identity = shape.identity === undefined ? FileTenantProvisioning.LegacyIdentity(shape.oidc) : FileTenantProvisioning.Identity(shape.identity)
         return {
             displayName: shape.displayName,
+            purpose: shape.purpose,
             bootstrap: shape.bootstrap,
             oidc: shape.oidc,
             connectorsPolicy: shape.connectorsPolicy === undefined ? undefined : FileTenantProvisioning.Policy(shape.connectorsPolicy),

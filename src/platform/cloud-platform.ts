@@ -93,9 +93,14 @@ export class CloudPlatform implements PlatformServices
         return this.storage
     }
 
+    public CreateStorage(root: string): IStorage
+    {
+        return this.storage.CreateStorage(root)
+    }
+
     public CreatePackagesStorage(packagesRoot: string): IStorage
     {
-        return this.storage.CreateStorage(packagesRoot)
+        return this.CreateStorage(packagesRoot)
     }
 
     public CreatePromptService(): IPromptService

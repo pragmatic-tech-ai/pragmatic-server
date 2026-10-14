@@ -31,6 +31,7 @@ export class InMemoryTenantProvisioning implements ITenantProvisioning
 export class TenantRegistry
 {
     private static readonly PackagesDir = 'packages'
+    private static readonly ApplicationsDir = 'applications'
     private static readonly IdentityDir = 'identity'
     private static readonly UnprovisionedError = 'tenant is not provisioned'
     private static readonly InvalidTenantError = 'invalid tenant id'
@@ -224,6 +225,8 @@ export class TenantRegistry
     {
         return {
             packagesRoot: join(this.baseDir, tenantId, TenantRegistry.PackagesDir),
+            purpose: provisioning.purpose,
+            applicationsRoot: join(this.baseDir, tenantId, TenantRegistry.ApplicationsDir),
             platform: this.platform,
             deploymentMode: this.deploymentMode,
             connectorsPolicy: provisioning.connectorsPolicy,

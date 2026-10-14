@@ -1,11 +1,13 @@
 import type { BootstrapOptions, OidcServerOptions, PragmaticServerOptions } from '../pragmatic-server.js'
 import type { ConnectorsPolicy } from '../host/connector-policy.js'
 import type { MachinePrincipalMap } from '../host/machine-principal-map.js'
+import type { TenantPurpose } from './tenant-purpose.js'
 import type { IdentityConfig } from '@pragmatic-tech-ai/todl-identity'
 
 export interface TenantProvisioning
 {
     displayName: string
+    purpose?: TenantPurpose
     bootstrap?: BootstrapOptions
     oidc?: OidcServerOptions
     connectorsPolicy?: ConnectorsPolicy

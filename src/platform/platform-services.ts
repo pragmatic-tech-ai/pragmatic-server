@@ -9,6 +9,7 @@ import type { MasterKeyRef } from '../identity/master-key-resolver.js'
 export interface PlatformServices
 {
     CreateStorageProviderRegistry(): IStorageProviderRegistry
+    CreateStorage(root: string): IStorage
     CreatePackagesStorage(packagesRoot: string): IStorage
     CreatePromptService(): IPromptService
     ResolveMasterKey(ref: MasterKeyRef): Buffer
