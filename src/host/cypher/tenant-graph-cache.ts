@@ -78,18 +78,24 @@ export class TenantGraphCache
         this.subscribed = []
     }
 
-    /** Ids of the instance nodes the principal may read, across every repository (mirrors ModelReadFilter.keep). */
+    /**
+     * Ids the principal may read, DENY-WINS across repositories: an id is kept when some repository
+     * allows it and NO repository that contains it denies it (mirrors ModelReadFilter.keep per repo).
+     */
     private static AllowedIds(entries: readonly TenantRepository[], context: AccessContext): Set<string>
     {
         const allowed = new Set<string>()
+        const denied = new Set<string>()
         for (const entry of entries)
         {
             const filter = IdentityEnforcement.ForRepository(entry.repo, context, Action.Read).InstanceFilter()
             for (const node of entry.repo.allNodes())
             {
                 if (TenantGraphCache.Keep(node, filter)) allowed.add(node.id)
+                else denied.add(node.id)
             }
         }
+        for (const id of denied) allowed.delete(id)
         return allowed
     }
 
