@@ -221,8 +221,12 @@ export class ServerBootstrap
         return config.drainTimeoutMs === undefined ? '' : ServerBootstrap.DrainLabel + config.drainTimeoutMs
     }
 
-    private static AuditAnchor(config: { cloudAuditAnchorKeyRef?: string }): string
+    private static AuditAnchor(config: { deploymentMode?: DeploymentMode; cloudAuditAnchorKeyRef?: string }): string
     {
+        if (config.deploymentMode !== DeploymentMode.Cloud)
+        {
+            return ''
+        }
         const on = config.cloudAuditAnchorKeyRef !== undefined && config.cloudAuditAnchorKeyRef.length > 0
         return ServerBootstrap.AuditAnchorLabel + (on ? ServerBootstrap.AuditAnchorOn : ServerBootstrap.AuditAnchorOff)
     }

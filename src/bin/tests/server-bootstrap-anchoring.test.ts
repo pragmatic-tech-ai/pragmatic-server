@@ -24,3 +24,9 @@ test('startup line shows audit-anchor=off when no ref is set', () =>
     const line = ServerBootstrap.StartupLine(AnchorStartupFixture.CloudConfig({}), 0)
     assert.match(line, /audit-anchor=off/)
 })
+
+test('non-cloud startup line omits the audit-anchor token', () =>
+{
+    const line = ServerBootstrap.StartupLine(AnchorStartupFixture.CloudConfig({ deploymentMode: DeploymentMode.Local }), 0)
+    assert.ok(!line.includes('audit-anchor'))
+})
