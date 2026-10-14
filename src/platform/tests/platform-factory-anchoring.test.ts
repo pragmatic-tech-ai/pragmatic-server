@@ -6,9 +6,17 @@ import { AuditEvent, AuditEventKind } from '@pragmatic-tech-ai/todl-identity'
 import { PgSession, ObjectStoreProviderRegistry, CloudSecretManagerSecretStore } from '@pragmatic-tech-ai/todl-platform-cloud'
 import type { ICloudBackends } from '../cloud-bundle.js'
 import { GcpPlatformFactory } from '../gcp-platform-factory.js'
+import { AwsPlatformFactory } from '../aws-platform-factory.js'
+import { AzurePlatformFactory } from '../azure-platform-factory.js'
 
 class FactoryFixture
 {
+    public static readonly Factories = [
+        ['gcp', GcpPlatformFactory],
+        ['aws', AwsPlatformFactory],
+        ['azure', AzurePlatformFactory],
+    ] as const
+
     public static async Backends(): Promise<ICloudBackends>
     {
         const db = newDb()
@@ -21,22 +29,24 @@ class FactoryFixture
     }
 }
 
-test('CreateWith forwards the anchor key ref so the audit store is anchored', async () =>
+for (const [name, factory] of FactoryFixture.Factories)
 {
-    const backends = await FactoryFixture.Backends()
-    const bundle = await GcpPlatformFactory.CreateWith(backends, 'm', 'a', 1)
-    const audit = await bundle.Platform.AuditSink()
-    await audit.Record(new AuditEvent(AuditEventKind.AdminAction, 't1', 'p1', new Date('2026-01-01T00:00:00Z'), new Map([['action', 'a']])))
-    const session = backends.Session
-    const rows = await session.Query('SELECT seq FROM identity_audit_anchor WHERE tenant_id = $1', ['t1'])
-    assert.ok(rows.length >= 1)
-})
+    test(`${name}: CreateWith forwards the anchor key ref so the audit store is anchored`, async () =>
+    {
+        const backends = await FactoryFixture.Backends()
+        const bundle = await factory.CreateWith(backends, 'm', 'a', 1)
+        const audit = await bundle.Platform.AuditSink()
+        await audit.Record(new AuditEvent(AuditEventKind.AdminAction, 't1', 'p1', new Date('2026-01-01T00:00:00Z'), new Map([['action', 'a']])))
+        const rows = await backends.Session.Query('SELECT seq FROM identity_audit_anchor WHERE tenant_id = $1', ['t1'])
+        assert.ok(rows.length >= 1)
+    })
 
-test('CreateWith without an anchor ref leaves the store unanchored (no table)', async () =>
-{
-    const backends = await FactoryFixture.Backends()
-    const bundle = await GcpPlatformFactory.CreateWith(backends, 'm')
-    const audit = await bundle.Platform.AuditSink()
-    await audit.Record(new AuditEvent(AuditEventKind.AdminAction, 't1', 'p1', new Date('2026-01-01T00:00:00Z'), new Map([['action', 'a']])))
-    await assert.rejects(() => backends.Session.Query('SELECT * FROM identity_audit_anchor', []))
-})
+    test(`${name}: CreateWith without an anchor ref leaves the store unanchored (no table)`, async () =>
+    {
+        const backends = await FactoryFixture.Backends()
+        const bundle = await factory.CreateWith(backends, 'm')
+        const audit = await bundle.Platform.AuditSink()
+        await audit.Record(new AuditEvent(AuditEventKind.AdminAction, 't1', 'p1', new Date('2026-01-01T00:00:00Z'), new Map([['action', 'a']])))
+        await assert.rejects(() => backends.Session.Query('SELECT * FROM identity_audit_anchor', []), /does not exist/)
+    })
+}
