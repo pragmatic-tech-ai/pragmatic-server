@@ -5,7 +5,7 @@ import { Tenant, TenantKind, Role, ResourceKind, ResourceRef, IdentityConfig, De
 import { Grant } from '@pragmatic-tech-ai/todl-identity'
 import type { IAuditSink, AuditEvent, ITenantConfigStore, IRoleGrantStore } from '@pragmatic-tech-ai/todl-identity'
 import { InMemoryRoleGrantStore, LocalAccountStore, ServiceTokenStore, LocalAccountRegistrar, EncryptedSecretStore, Argon2PasswordHasher } from '@pragmatic-tech-ai/todl-identity-local'
-import { AdminService, AdminSelfLockoutError, AdminConfigMissingError } from '../admin-service.js'
+import { AdminService, AdminTokenNotFoundError, AdminSelfLockoutError, AdminConfigMissingError } from '../admin-service.js'
 import { AdminEnums, AdminEnumError } from '../admin-enums.js'
 
 class RecordingAuditSink implements IAuditSink
@@ -319,13 +319,28 @@ test('ListTokens surfaces the issued token then revoked=true after RevokeToken',
     assert.equal(event.Detail.get('tokenRef'), issued.Grant.TokenRef)
 })
 
-test('RevokeToken on an unknown or other-tenant tokenRef has no effect on other tenants', async () =>
+test('RevokeToken on an unknown tokenRef rejects and records no audit event', async () =>
+{
+    const f = new AdminFixture()
+    await assert.rejects(f.Service.RevokeToken('u1', 'missing'), AdminTokenNotFoundError)
+    assert.equal(f.Audit.Events.length, 0)
+})
+
+test('RevokeToken on another tenant tokenRef rejects and leaves that token unrevoked', async () =>
 {
     const f = new AdminFixture()
     const other = f.ServiceFor(new Tenant('t2', TenantKind.SelfHosted, 'T2'), f.Audit, async () => {})
     const issued = await other.IssueToken('u1', 'p1', ['read'], null)
-    // The store treats an unknown / foreign ref as an idempotent no-op (does not throw).
-    await f.Service.RevokeToken('u1', 'missing')
-    await f.Service.RevokeToken('u1', issued.Grant.TokenRef)
+    const before = f.Audit.Events.length
+    await assert.rejects(f.Service.RevokeToken('u1', issued.Grant.TokenRef), AdminTokenNotFoundError)
+    assert.equal(f.Audit.Events.length, before)
     assert.equal((await other.ListTokens())[0].Revoked, false)
+})
+
+test('a failing audit fails DisableAccount closed', async () =>
+{
+    const f = new AdminFixture()
+    await f.Service.CreateAccount('u1', 'a@x.io', 'p9', new PresentedSecret('pw'))
+    const failing = f.ServiceFor(f.Tenant, new FailingAuditSink(), async () => {})
+    await assert.rejects(failing.DisableAccount('u1', 'p9'), /audit down/)
 })

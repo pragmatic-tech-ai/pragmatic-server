@@ -13,6 +13,16 @@ export class AdminSelfLockoutError extends Error
     }
 }
 
+/** Raised when a service token reference is unknown to this tenant. */
+export class AdminTokenNotFoundError extends Error
+{
+    public constructor(public readonly TokenRef: string)
+    {
+        super('service token not found')
+        this.name = 'AdminTokenNotFoundError'
+    }
+}
+
 /** Raised when the tenant has no stored identity config. */
 export class AdminConfigMissingError extends Error
 {
@@ -164,6 +174,11 @@ export class AdminService
 
     public async RevokeToken(actor: string, tokenRef: string): Promise<void>
     {
+        const existing = await this.tokens.List(this.tenant)
+        if (!existing.some(summary => summary.TokenRef === tokenRef))
+        {
+            throw new AdminTokenNotFoundError(tokenRef)
+        }
         await this.tokens.Revoke(this.tenant, tokenRef)
         const detail = new Map<string, string>([
             [AdminService.ActorKey, actor],
