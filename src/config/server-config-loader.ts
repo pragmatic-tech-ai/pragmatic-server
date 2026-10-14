@@ -67,6 +67,9 @@ export class ServerConfigLoader
     private static readonly EnvCloudSqlIpType = 'PRAGMATIC_CLOUDSQL_IPTYPE'
     private static readonly EnvCloudSqlAuth = 'PRAGMATIC_CLOUDSQL_AUTH'
     private static readonly EnvCloudMasterKeyRef = 'PRAGMATIC_CLOUD_MASTER_KEY_REF'
+    private static readonly EnvAuditAnchorKeyRef = 'PRAGMATIC_CLOUD_AUDIT_ANCHOR_KEY_REF'
+    private static readonly EnvAuditAnchorInterval = 'PRAGMATIC_CLOUD_AUDIT_ANCHOR_INTERVAL'
+    private static readonly BadAuditAnchorInterval = 'PRAGMATIC_CLOUD_AUDIT_ANCHOR_INTERVAL must be an integer >= 1'
     private static readonly MissingGcsBucket = 'PRAGMATIC_GCS_BUCKET is required for cloud deployment'
     private static readonly MissingGcpProject = 'PRAGMATIC_GCP_PROJECT is required for cloud deployment'
     private static readonly MissingCloudSqlInstance = 'PRAGMATIC_CLOUDSQL_INSTANCE is required for cloud deployment'
@@ -418,13 +421,14 @@ export class ServerConfigLoader
         }
         const cloudProvider = ServerConfigLoader.ProviderOf(ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvCloudProvider], ServerConfigLoader.MissingCloudProvider))
         const cloudMasterKeyRef = ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvCloudMasterKeyRef], ServerConfigLoader.MissingCloudMasterKeyRef)
+        const anchor = ServerConfigLoader.AuditAnchor(env)
         if (cloudProvider === DeploymentProvider.Aws)
         {
-            return ServerConfigLoader.CloudAws(env, cloudProvider, cloudMasterKeyRef)
+            return { ...ServerConfigLoader.CloudAws(env, cloudProvider, cloudMasterKeyRef), ...anchor }
         }
         if (cloudProvider === DeploymentProvider.Azure)
         {
-            return ServerConfigLoader.CloudAzure(env, cloudProvider, cloudMasterKeyRef)
+            return { ...ServerConfigLoader.CloudAzure(env, cloudProvider, cloudMasterKeyRef), ...anchor }
         }
         const gcsBucket = ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvGcsBucket], ServerConfigLoader.MissingGcsBucket)
         const gcpProject = ServerConfigLoader.RequiredCloud(env[ServerConfigLoader.EnvGcpProject], ServerConfigLoader.MissingGcpProject)
@@ -447,7 +451,30 @@ export class ServerConfigLoader
             cloudSqlIpType: ServerConfigLoader.NonEmpty(env[ServerConfigLoader.EnvCloudSqlIpType]),
             cloudSqlAuth,
             cloudMasterKeyRef,
+            ...anchor,
         }
+    }
+
+    private static AuditAnchor(env: Record<string, string | undefined>): Partial<ServerConfig>
+    {
+        return {
+            cloudAuditAnchorKeyRef: ServerConfigLoader.NonEmpty(env[ServerConfigLoader.EnvAuditAnchorKeyRef]),
+            cloudAuditAnchorInterval: ServerConfigLoader.AuditAnchorInterval(env[ServerConfigLoader.EnvAuditAnchorInterval]),
+        }
+    }
+
+    private static AuditAnchorInterval(value: string | undefined): number | undefined
+    {
+        if (value === undefined || value.length === 0)
+        {
+            return undefined
+        }
+        const parsed = Number(value)
+        if (!Number.isInteger(parsed) || parsed < 1)
+        {
+            throw new Error(ServerConfigLoader.BadAuditAnchorInterval)
+        }
+        return parsed
     }
 
     private static CloudAws(env: Record<string, string | undefined>, cloudProvider: DeploymentProvider, cloudMasterKeyRef: string): Partial<ServerConfig>

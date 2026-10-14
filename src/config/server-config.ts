@@ -71,6 +71,8 @@ export interface ServerConfig
     cloudSqlIpType?: string
     cloudSqlAuth?: string
     cloudMasterKeyRef?: string
+    cloudAuditAnchorKeyRef?: string
+    cloudAuditAnchorInterval?: number
 }
 
 export interface GatewayConfig
