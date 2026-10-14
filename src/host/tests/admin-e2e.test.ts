@@ -83,7 +83,7 @@ test('an Owner over a live host connection grants a role that persists to the pa
         assert.deepEqual(ack, { ok: true })
         const stored = await fx.BobGrants()
         assert.equal(stored.length, 1)
-        assert.equal(stored[0].Role, Role.Editor)
+        assert.equal(stored[0]!.Role, Role.Editor)
     }
     finally
     {

@@ -1,7 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Tenant, TenantKind, Role, ResourceKind, ResourceRef, IdentityConfig, DelegationDepth, AuditEventKind } from '@pragmatic-tech-ai/todl-identity'
-import type { IAuditSink, AuditEvent, ITenantConfigStore, IRoleGrantStore, Grant } from '@pragmatic-tech-ai/todl-identity'
+import { Grant } from '@pragmatic-tech-ai/todl-identity'
+import type { IAuditSink, AuditEvent, ITenantConfigStore, IRoleGrantStore } from '@pragmatic-tech-ai/todl-identity'
 import { InMemoryRoleGrantStore } from '@pragmatic-tech-ai/todl-identity-local'
 import { AdminService, AdminSelfLockoutError, AdminConfigMissingError } from '../admin-service.js'
 import { AdminEnums, AdminEnumError } from '../admin-enums.js'
@@ -137,6 +138,35 @@ test('ListGrants returns only the subject grants', async () =>
     const grants = await f.Service.ListGrants('u2')
     assert.equal(grants.length, 1)
     assert.equal(grants[0].Role, Role.Viewer)
+})
+
+test('ListGrants never returns the same subject grants from another tenant', async () =>
+{
+    const f = new AdminFixture()
+    await f.Grants.Save(new Grant('u2', Role.Viewer, f.TenantRoot()))
+    await f.Grants.Save(new Grant('u2', Role.Owner, new ResourceRef(ResourceKind.Tenant, 'other-tenant', [])))
+    const grants = await f.Service.ListGrants('u2')
+    assert.equal(grants.length, 1)
+    assert.equal(grants[0]!.Resource.TenantId, 't1')
+    assert.equal(grants[0]!.Role, Role.Viewer)
+})
+
+test('SetConfig then GetConfig round-trips and evicts', async () =>
+{
+    const f = new AdminFixture()
+    const config = new IdentityConfig('local', DelegationDepth.FullAuthz, new Map([['k', 'v']]), new Map(), new Map())
+    await f.Service.SetConfig('u1', config)
+    assert.deepEqual(await f.Service.GetConfig(), config)
+    assert.ok(f.Config.Calls.includes('evict'))
+})
+
+test('SetConfig audit failure throws before the tenant is evicted', async () =>
+{
+    const f = new AdminFixture()
+    const failing = new AdminService(f.Grants, new FailingAuditSink(), f.Config, f.Tenant, async () => { f.Config.Calls.push('evict') })
+    const config = new IdentityConfig('local', DelegationDepth.AuthnDirectory, new Map(), new Map(), new Map())
+    await assert.rejects(failing.SetConfig('u1', config), /audit down/)
+    assert.deepEqual(f.Config.Calls, ['save'])
 })
 
 test('SetConfig saves then evicts and audits identifiers only', async () =>

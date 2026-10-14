@@ -55,7 +55,8 @@ export class AdminService
 
     public async ListGrants(subject: string): Promise<readonly Grant[]>
     {
-        return this.grants.GrantsFor(subject, this.tenant)
+        const grants = await this.grants.GrantsFor(subject, this.tenant)
+        return grants.filter(grant => grant.Resource.TenantId === this.tenant.Id)
     }
 
     public async GrantRole(actor: string, subject: string, role: Role, resource: ResourceRef): Promise<void>
@@ -87,7 +88,6 @@ export class AdminService
     public async SetConfig(actor: string, config: IdentityConfig): Promise<void>
     {
         await this.configStore.Save(this.tenant.Id, config)
-        await this.evict()
         const detail = new Map<string, string>([
             [AdminService.ActorKey, actor],
             [AdminService.ActionKey, AdminService.SetConfigAction],
@@ -95,6 +95,7 @@ export class AdminService
             [AdminService.DelegationDepthKey, AdminEnums.NameOfDepth(config.DelegationDepth)],
         ])
         await this.Audit(null, detail)
+        await this.evict()
     }
 
     private async Audit(subject: string | null, detail: ReadonlyMap<string, string>): Promise<void>
