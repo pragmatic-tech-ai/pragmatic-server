@@ -29,8 +29,8 @@ class GraphForAppFixture
     private static readonly LabelsQuery = 'MATCH (w:Widget) RETURN w.label AS label'
     private static readonly Concept = 'Widget'
     private static readonly Label = 'label'
-    private static readonly Hidden = 'Bye'
-    private static readonly Visible = 'Hi'
+    public static readonly Hidden = 'Bye'
+    public static readonly Visible = 'Hi'
     private static readonly Deny = 'deny'
     private static readonly Read = 'read'
     private static readonly OpenPolicy = '{}'
@@ -135,11 +135,11 @@ test('GraphForPragmaticApp applies the live access-policy setting over a cached 
         const ctx = GraphForAppFixture.Permissive()
         fx.DenyHidden()
         const denied = await server.GraphForPragmaticApp(ctx, GraphForAppFixture.Name)
-        assert.deepEqual(GraphForAppFixture.Labels(denied), ['Hi'])
+        assert.deepEqual(GraphForAppFixture.Labels(denied), [GraphForAppFixture.Visible])
 
         fx.OpenPolicy()
         const open = await server.GraphForPragmaticApp(ctx, GraphForAppFixture.Name)
-        assert.deepEqual(GraphForAppFixture.Labels(open), ['Bye', 'Hi'])
+        assert.deepEqual(GraphForAppFixture.Labels(open), [GraphForAppFixture.Hidden, GraphForAppFixture.Visible])
 
         const first = await GraphForAppFixture.BaseOf(server)
         const second = await GraphForAppFixture.BaseOf(server)

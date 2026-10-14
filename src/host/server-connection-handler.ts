@@ -57,6 +57,7 @@ export class ServerConnectionHandler
     private static readonly CypherTimeoutMessage = 'cypher query timed out'
     private static readonly NotRuntimeMessage = 'operation requires a runtime tenant'
     private static readonly NotDevelopmentMessage = 'operation requires a development tenant'
+    private static readonly NameMismatchMessage = 'application manifest name does not match requested name: '
     private static readonly NoApplicationSelectedMessage = 'no application selected: call application/open first'
     private static readonly ApplicationsUnavailableMessage = 'pragmatic applications are not available on this connection'
     public static readonly RateLimitedCode = -32029
@@ -126,6 +127,16 @@ export class ServerConnectionHandler
                 // fail-closed: a push to a closing connection must not crash the process
             }
         })
+    }
+
+    /** The runtime-only Attach arguments (application registry + per-app graph provider); both undefined unless the server is a Runtime tenant. */
+    public static RuntimeAttachArgs(server: { Purpose(): TenantPurpose; Applications(): PragmaticAppsRegistry; GraphForPragmaticApp(context: AccessContext, name: string): Promise<IGraphQuery> }): { applications: PragmaticAppsRegistry | undefined; appGraphProvider: ((context: AccessContext, name: string) => Promise<IGraphQuery>) | undefined }
+    {
+        if (server.Purpose() !== TenantPurpose.Runtime)
+        {
+            return { applications: undefined, appGraphProvider: undefined }
+        }
+        return { applications: server.Applications(), appGraphProvider: (context, name) => server.GraphForPragmaticApp(context, name) }
     }
 
     public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, graphProvider: (context: AccessContext) => Promise<IGraphQuery>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: TenantPurpose = TenantPurpose.Development, applications?: PragmaticAppsRegistry, appGraphProvider?: (context: AccessContext, name: string) => Promise<IGraphQuery>): ServerConnectionHandler
@@ -319,6 +330,10 @@ export class ServerConnectionHandler
         {
             this.EnsureRuntime()
             const app = await this.RequireApplications().ApplicationFor(p.name)
+            if (app.Manifest.name !== p.name)
+            {
+                throw new ResponseError(ErrorCodes.InvalidParams, ServerConnectionHandler.NameMismatchMessage + p.name)
+            }
             this.boundApp = { name: app.Manifest.name, version: app.Manifest.version }
             return this.boundApp
         })

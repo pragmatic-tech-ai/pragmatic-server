@@ -6,7 +6,7 @@ import type { MachinePrincipalEntry } from '../host/machine-principal-map.js'
 import { ConnectorsPolicy } from '../host/connector-policy.js'
 import { FileConnectionResolver } from '../host/file-connection-resolver.js'
 import type { FileConnection } from '../host/file-connection-resolver.js'
-import type { TenantPurpose } from '../tenancy/tenant-purpose.js'
+import { TenantPurpose } from '../tenancy/tenant-purpose.js'
 import type { ITenantProvisioning, TenantProvisioning } from '../tenancy/tenant-provisioning.js'
 
 interface PolicyShape
@@ -58,6 +58,7 @@ interface FileShape
 
 export class FileTenantProvisioning implements ITenantProvisioning
 {
+    private static readonly BadPurpose = 'tenants file has an invalid purpose (expected a TenantPurpose value)'
     private static readonly BadJson = 'tenants file is not valid JSON'
     private static readonly BadShape = 'tenants file has an invalid shape'
     private static readonly BadKind = 'unknown adapter kind in tenants file'
@@ -144,7 +145,7 @@ export class FileTenantProvisioning implements ITenantProvisioning
         const identity = shape.identity === undefined ? FileTenantProvisioning.LegacyIdentity(shape.oidc) : FileTenantProvisioning.Identity(shape.identity)
         return {
             displayName: shape.displayName,
-            purpose: shape.purpose,
+            purpose: FileTenantProvisioning.Purpose(shape.purpose),
             bootstrap: shape.bootstrap,
             oidc: shape.oidc,
             connectorsPolicy: shape.connectorsPolicy === undefined ? undefined : FileTenantProvisioning.Policy(shape.connectorsPolicy),
@@ -153,6 +154,16 @@ export class FileTenantProvisioning implements ITenantProvisioning
             identity,
             machine: shape.identity === undefined ? undefined : FileTenantProvisioning.Machine(shape.identity.machine),
         }
+    }
+
+    private static Purpose(value: unknown): TenantPurpose | undefined
+    {
+        if (value === undefined) return undefined
+        if (typeof value !== 'number' || TenantPurpose[value] === undefined)
+        {
+            throw new Error(FileTenantProvisioning.BadPurpose)
+        }
+        return value as TenantPurpose
     }
 
     private static LegacyIdentity(oidc: TenantShape['oidc']): IdentityConfig | undefined

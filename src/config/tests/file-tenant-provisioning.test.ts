@@ -70,3 +70,17 @@ test('fails closed when adapterAllowlist is not an array', () =>
     const text = JSON.stringify({ tenants: { t: { displayName: 't', connectorsPolicy: { adapterAllowlist: 'sql', catalogOnly: false, allowProviderOverride: false, providerAllowlist: [] } } } })
     assert.throws(() => FileTenantProvisioning.FromText(text), /invalid shape/)
 })
+
+test('fails closed on an invalid tenant purpose', () =>
+{
+    const bad = JSON.stringify({ tenants: { acme: { displayName: 'Acme', purpose: 'nonsense' } } })
+    assert.throws(() => FileTenantProvisioning.FromText(bad).OptionsFor('acme'), /invalid purpose/)
+})
+
+test('accepts a valid purpose and an absent purpose', () =>
+{
+    const ok = JSON.stringify({ tenants: { acme: { displayName: 'Acme', purpose: 1 }, beta: { displayName: 'Beta' } } })
+    const provisioning = FileTenantProvisioning.FromText(ok)
+    assert.equal(provisioning.OptionsFor('acme')?.purpose, 1)
+    assert.equal(provisioning.OptionsFor('beta')?.purpose, undefined)
+})

@@ -9,6 +9,7 @@ import { AccessPolicySetting, MalformedPolicyError } from '../access-policy-sett
 class Fixture
 {
     public static readonly App = 'demo'
+    public static readonly Traversal = '../x'
     public static readonly Prefix = 'policy-'
     public static readonly Concept = 'acme.Secret'
     public static readonly Rules = [{ effect: 'deny', action: 'read' }]
@@ -65,4 +66,17 @@ test('malformed policy files fail closed', async () =>
         }
     }
     finally { fx.Dispose() }
+})
+
+test('Load rejects a traversal app name before touching storage', async () =>
+{
+    const fx = new Fixture()
+    try
+    {
+        await assert.rejects(() => AccessPolicySetting.Load(new NodeFsStorage(fx.Dir), Fixture.Traversal), /invalid application name/)
+    }
+    finally
+    {
+        fx.Dispose()
+    }
 })

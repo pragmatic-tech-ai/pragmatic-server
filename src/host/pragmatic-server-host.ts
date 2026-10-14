@@ -1,4 +1,3 @@
-import { TenantPurpose } from '../tenancy/tenant-purpose.js'
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { createServer as httpsCreateServer } from 'node:https'
@@ -432,8 +431,8 @@ export class PragmaticServerHost
             {
                 try
                 {
-                    const runtime = server.Purpose() === TenantPurpose.Runtime
-                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors(), ctx => server.Graph(ctx), this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, server.Purpose(), runtime ? server.Applications() : undefined, runtime ? ((ctx, name) => server.GraphForPragmaticApp(ctx, name)) : undefined)
+                    const runtime = ServerConnectionHandler.RuntimeAttachArgs(server)
+                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors(), ctx => server.Graph(ctx), this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, server.Purpose(), runtime.applications, runtime.appGraphProvider)
                     this.handlers.add(handler)
                     ws.on(PragmaticServerHost.CloseEvent, () =>
                     {

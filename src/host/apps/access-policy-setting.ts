@@ -1,4 +1,5 @@
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
+import { PragmaticAppsRegistry } from './pragmatic-apps-registry.js'
 
 /** Thrown when an application's access-policy setting is unreadable or structurally invalid (fail-closed). */
 export class MalformedPolicyError extends Error
@@ -25,6 +26,7 @@ export class AccessPolicySetting
 
     public static async Load(storage: IStorage, appName: string): Promise<readonly { concept: string; rulesJson: string }[]>
     {
+        PragmaticAppsRegistry.AssertValidName(appName)
         const path = appName + AccessPolicySetting.Separator + AccessPolicySetting.PolicyFile
         if (!(await storage.Exists(path))) return []
         const text = await storage.ReadText(path)

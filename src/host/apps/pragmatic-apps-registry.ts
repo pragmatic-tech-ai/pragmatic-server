@@ -44,16 +44,22 @@ export class PragmaticAppsRegistry
 
     public async ApplicationFor(name: string): Promise<PragmaticApplication>
     {
-        if (name === '' || name === '.' || name === PragmaticAppsRegistry.ParentSegment || PragmaticAppsRegistry.SeparatorPattern.test(name))
-        {
-            throw new Error(PragmaticAppsRegistry.InvalidNameError + name)
-        }
+        PragmaticAppsRegistry.AssertValidName(name)
         const path = PragmaticAppsRegistry.ManifestPath(name)
         if (!await this.storage.Exists(path))
         {
             throw new Error(PragmaticAppsRegistry.NotFoundError + name)
         }
         return new PragmaticApplication(PragmaticAppManifestParser.Parse(await this.storage.ReadText(path)))
+    }
+
+    /** Rejects names that are empty, `.`, `..`, or contain a path separator; shared with the access-policy loader. */
+    public static AssertValidName(name: string): void
+    {
+        if (name === '' || name === PragmaticAppsRegistry.RootPath || name === PragmaticAppsRegistry.ParentSegment || PragmaticAppsRegistry.SeparatorPattern.test(name))
+        {
+            throw new Error(PragmaticAppsRegistry.InvalidNameError + name)
+        }
     }
 
     private static ManifestPath(name: string): string

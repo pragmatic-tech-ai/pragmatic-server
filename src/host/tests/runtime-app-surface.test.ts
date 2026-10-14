@@ -55,8 +55,13 @@ class RuntimeSurfaceFixture
     public static readonly Bolt = 'Bolt'
     public static readonly Alpha = 'alpha'
     public static readonly NoAppSelected = /no application selected/i
-    public static readonly NotRuntime = /runtime/i
-    public static readonly NotDevelopment = /development/i
+    public static readonly NotRuntime = /operation requires a runtime tenant/
+    public static readonly NameMismatch = /does not match requested name/
+    public static readonly TenantId = 't1'
+    public static readonly PrincipalId = 'p1'
+    public static readonly TenantName = 'Tenant One'
+    public static readonly Renamed = 'other-name'
+    public static readonly NotDevelopment = /operation requires a development tenant/
     public static readonly MalformedPolicyMessage = /Access policy is not valid JSON/
     public static readonly UnknownLabel = /unknown label/i
 
@@ -66,9 +71,9 @@ class RuntimeSurfaceFixture
 
     public static Permissive(): AccessContext
     {
-        const tenant = new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
-        const principal = new Principal('p1', 't1', PrincipalKind.User, new Map(), [])
-        const grants = [new Grant('p1', Role.Owner, new ResourceRef(ResourceKind.Tenant, 't1', []))]
+        const tenant = new Tenant(RuntimeSurfaceFixture.TenantId, TenantKind.SelfHosted, RuntimeSurfaceFixture.TenantName)
+        const principal = new Principal(RuntimeSurfaceFixture.PrincipalId, RuntimeSurfaceFixture.TenantId, PrincipalKind.User, new Map(), [])
+        const grants = [new Grant(RuntimeSurfaceFixture.PrincipalId, Role.Owner, new ResourceRef(ResourceKind.Tenant, RuntimeSurfaceFixture.TenantId, []))]
         return new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
     }
 
@@ -112,6 +117,11 @@ class RuntimeSurfaceFixture
         writeFileSync(join(this.Apps, app, RuntimeSurfaceFixture.ManifestFile), JSON.stringify({
             name: app, version: RuntimeSurfaceFixture.Version, packages: [{ id: pkgId, version: RuntimeSurfaceFixture.Version }],
         }))
+    }
+
+    public RenameManifest(app: string, name: string): void
+    {
+        writeFileSync(join(this.Apps, app, RuntimeSurfaceFixture.ManifestFile), JSON.stringify({ name, version: RuntimeSurfaceFixture.Version, packages: [] }))
     }
 
     public WritePolicy(app: string, text: string): void
@@ -308,5 +318,16 @@ test('runtime e2e: same-named concepts in two applications do not leak instances
         await two.OpenApplication(RuntimeSurfaceFixture.AppB)
         assert.deepEqual(RuntimeSurfaceFixture.Column(await one.CypherQuery(RuntimeSurfaceFixture.WidgetLabels)), [RuntimeSurfaceFixture.Bye, RuntimeSurfaceFixture.Hi])
         assert.deepEqual(RuntimeSurfaceFixture.Column(await two.CypherQuery(RuntimeSurfaceFixture.WidgetLabels)), [RuntimeSurfaceFixture.Bolt, RuntimeSurfaceFixture.Nut])
+    })
+})
+
+test('runtime e2e: open rejects a manifest whose name differs from its directory', async () =>
+{
+    await RuntimeSurfaceFixture.Run(async fx =>
+    {
+        await fx.Seed(RuntimeSurfaceFixture.AppA, RuntimeSurfaceFixture.PkgA, RuntimeSurfaceFixture.Widget, [RuntimeSurfaceFixture.Hi], false)
+        fx.RenameManifest(RuntimeSurfaceFixture.AppA, RuntimeSurfaceFixture.Renamed)
+        const client = (await fx.Runtime())()
+        await assert.rejects(() => client.OpenApplication(RuntimeSurfaceFixture.AppA), RuntimeSurfaceFixture.NameMismatch)
     })
 })
