@@ -456,3 +456,18 @@ test('a valid expiresInSeconds is honored as roughly now plus N', async () =>
         fx.Dispose()
     }
 })
+
+test('entirely missing params on create and issue are InvalidParams naming a specific field', async () =>
+{
+    const fx = new AdminFixture(Role.Owner)
+    try
+    {
+        await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.CreateAccount, undefined as never), 'email')
+        await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.IssueToken, undefined as never), 'principalId')
+        assert.equal(await AccountTokenCases.AccountCount(fx), 0)
+    }
+    finally
+    {
+        fx.Dispose()
+    }
+})

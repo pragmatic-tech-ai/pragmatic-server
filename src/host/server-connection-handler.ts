@@ -271,7 +271,7 @@ export class ServerConnectionHandler
         this.guarded(AdminProtocol.CreateAccount, async p =>
         {
             const { email, principalId } = this.ParseCreateAccount(p)
-            const presented = new PresentedSecret(this.RequireNonEmptyString(p.password, ServerConnectionHandler.PasswordField))
+            const presented = new PresentedSecret(this.RequireNonEmptyString(p?.password, ServerConnectionHandler.PasswordField))
             try
             {
                 await this.AdminCall(() => admin.CreateAccount(this.actor(), email, principalId, presented))
@@ -415,8 +415,8 @@ export class ServerConnectionHandler
     {
         try
         {
-            const email = this.RequireNonEmptyString(dto.email, ServerConnectionHandler.EmailField)
-            const principalId = this.RequireNonEmptyString(dto.principalId, ServerConnectionHandler.PrincipalIdField)
+            const email = this.RequireNonEmptyString(dto?.email, ServerConnectionHandler.EmailField)
+            const principalId = this.RequireNonEmptyString(dto?.principalId, ServerConnectionHandler.PrincipalIdField)
             // password is validated at the call site (it must be wrapped and cleared there).
             return { email, principalId }
         }
@@ -430,9 +430,9 @@ export class ServerConnectionHandler
     {
         try
         {
-            const principalId = this.RequireNonEmptyString(dto.principalId, ServerConnectionHandler.PrincipalIdField)
-            const scopes = this.RequireStringArray(dto.scopes, ServerConnectionHandler.ScopesField)
-            const expiresAt = this.ParseExpiry(dto.expiresInSeconds)
+            const principalId = this.RequireNonEmptyString(dto?.principalId, ServerConnectionHandler.PrincipalIdField)
+            const scopes = this.RequireStringArray(dto?.scopes, ServerConnectionHandler.ScopesField)
+            const expiresAt = this.ParseExpiry(dto?.expiresInSeconds)
             return { principalId, scopes, expiresAt }
         }
         catch (error)
