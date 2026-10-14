@@ -100,7 +100,8 @@ test('GrantRole saves and audits actor+action with no secret', async () =>
     assert.equal(event.PrincipalId, 'u2')
     assert.equal(event.Detail.get('actor'), 'u1')
     assert.equal(event.Detail.get('action'), 'grant-role')
-    assert.deepEqual([...event.Detail.keys()].sort(), ['action', 'actor', 'resourceKind', 'role'])
+    assert.equal(event.Detail.get('resourcePath'), '')
+    assert.deepEqual([...event.Detail.keys()].sort(), ['action', 'actor', 'resourceKind', 'resourcePath', 'role'])
     assert.ok(![...event.Detail.values()].some(v => v.includes(AdminFixture.Secret)))
 })
 
@@ -176,4 +177,38 @@ test('AdminEnums round-trips names and fails closed naming the field only', () =
     assert.throws(() => AdminEnums.RoleFromName('Root'), (e: unknown) => e instanceof AdminEnumError && e.message.includes('role') && !e.message.includes('Root'))
     assert.throws(() => AdminEnums.ResourceKindFromName('x'), (e: unknown) => e instanceof AdminEnumError && e.Field === 'resourceKind')
     assert.throws(() => AdminEnums.DepthFromName('x'), (e: unknown) => e instanceof AdminEnumError && e.Field === 'delegationDepth')
+})
+
+test('self-lockout guard is narrow: other combinations proceed', async () =>
+{
+    const f = new AdminFixture()
+    const tenantRoot = f.TenantRoot()
+    const cases: ReadonlyArray<readonly [string, Role, ResourceRef]> = [
+        ['u1', Role.Admin, tenantRoot],
+        ['u1', Role.Owner, new ResourceRef(ResourceKind.Project, 't1', [])],
+        ['u1', Role.Owner, new ResourceRef(ResourceKind.Tenant, 't1', ['p'])],
+        ['u2', Role.Owner, tenantRoot],
+    ]
+    for (const [subject, role, resource] of cases)
+    {
+        const before = f.Grants.Touched
+        await f.Service.RevokeRole('u1', subject, role, resource)
+        assert.equal(f.Grants.Touched, before + 1)
+    }
+})
+
+test('grant audit detail carries the joined resource path', async () =>
+{
+    const f = new AdminFixture()
+    await f.Service.GrantRole('u1', 'u2', Role.Viewer, new ResourceRef(ResourceKind.Project, 't1', ['a', 'b']))
+    assert.equal(f.Audit.Events[0].Detail.get('resourcePath'), 'a/b')
+})
+
+test('failing audit fails RevokeRole and SetConfig closed', async () =>
+{
+    const f = new AdminFixture()
+    const failing = new AdminService(f.Grants, new FailingAuditSink(), f.Config, f.Tenant, async () => {})
+    await assert.rejects(failing.RevokeRole('u1', 'u2', Role.Viewer, f.TenantRoot()), /audit down/)
+    const config = new IdentityConfig('local', DelegationDepth.AuthnDirectory, new Map(), new Map(), new Map())
+    await assert.rejects(failing.SetConfig('u1', config), /audit down/)
 })

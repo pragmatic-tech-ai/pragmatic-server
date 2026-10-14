@@ -30,6 +30,8 @@ export class AdminService
     private static readonly ActionKey = 'action'
     private static readonly RoleKey = 'role'
     private static readonly ResourceKindKey = 'resourceKind'
+    private static readonly ResourcePathKey = 'resourcePath'
+    private static readonly PathSeparator = '/'
     private static readonly PackIdKey = 'packId'
     private static readonly DelegationDepthKey = 'delegationDepth'
     private static readonly GrantRoleAction = 'grant-role'
@@ -107,6 +109,7 @@ export class AdminService
             [AdminService.ActionKey, action],
             [AdminService.RoleKey, AdminEnums.NameOfRole(role)],
             [AdminService.ResourceKindKey, AdminEnums.NameOfResourceKind(resource.Kind)],
+            [AdminService.ResourcePathKey, resource.Path.join(AdminService.PathSeparator)],
         ])
     }
 }
