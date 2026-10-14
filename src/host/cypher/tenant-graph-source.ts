@@ -54,8 +54,8 @@ export class TenantGraphComposition
             identities.add(identity)
             const resolved = PackageManifestBridge.toResolvedJsonDocument(toJSON(entry.repo), entry.model, entry.version, [])
             this.MergeSeed(resolved.seed, nodes, edges)
-            const { seed: _seed, ...schemaOnly } = resolved
-            packages.push(schemaOnly)
+            delete resolved.seed
+            packages.push(resolved)
         }
         return { packages, seedNodes: [...nodes.values()], seedEdges: [...edges.values()] }
     }
@@ -75,13 +75,25 @@ export class TenantGraphComposition
         return new GraphQuery(domain.graph)
     }
 
+    /** Key-order-independent serialization used to compare node data. */
+    private static Canonical(value: unknown): string
+    {
+        return JSON.stringify(value, (_key, v) =>
+        {
+            if (v === null || typeof v !== 'object' || Array.isArray(v)) return v
+            const sorted: Record<string, unknown> = {}
+            for (const k of Object.keys(v as object).sort()) sorted[k] = (v as Record<string, unknown>)[k]
+            return sorted
+        })
+    }
+
     private MergeSeed(seed: SeedGraph | undefined, nodes: Map<string, SeedNode>, edges: Map<string, DomainEdge>): void
     {
         for (const node of seed?.nodes ?? [])
         {
             const existing = nodes.get(node.id)
             if (existing === undefined) nodes.set(node.id, node)
-            else if (JSON.stringify(existing) !== JSON.stringify(node)) throw new Error(TenantGraphComposition.NodeConflictMessage + node.id)
+            else if (TenantGraphComposition.Canonical(existing) !== TenantGraphComposition.Canonical(node)) throw new Error(TenantGraphComposition.NodeConflictMessage + node.id)
         }
         for (const edge of seed?.edges ?? [])
         {

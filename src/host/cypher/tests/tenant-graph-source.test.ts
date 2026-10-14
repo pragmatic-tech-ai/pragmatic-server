@@ -75,3 +75,34 @@ test('an empty tenant composes to an empty graph and counts zero', async () =>
     assert.equal(composition.Compose().seedNodes.length, 0)
     assert.equal(await GraphFixture.Count(composition), 0)
 })
+
+test('seed node ids and edge endpoints equal the Repository instance ids exactly', () =>
+{
+    const repo = new Repository()
+    const b = repo.builder()
+    b.definePrimitive('string')
+    b.defineConcept('shop.Order')
+    b.defineConcept(GraphFixture.Concept)
+    b.addField(GraphFixture.Concept, GraphFixture.Region, 'string')
+    b.addConceptRelationship('shop.Order', 'buyer', [GraphFixture.Concept])
+    b.assertInstance(GraphFixture.Concept, 'shop.Customer:c1')
+    b.setField('shop.Customer:c1', GraphFixture.Region, 'eu')
+    b.assertInstance('shop.Order', 'shop.Order:o1')
+    b.addRelationship('shop.Order:o1', 'buyer', 'shop.Customer:c1')
+    b.commit()
+    // Same enumeration accessor ModelReadFilter uses: repo.allNodes(), node.id.
+    const instanceIds = new Set<string>()
+    for (const node of repo.allNodes())
+    {
+        if (node.type === GraphFixture.Concept || node.type === 'shop.Order') instanceIds.add(node.id)
+    }
+    assert.equal(instanceIds.size, 2)
+    const artifact = new TenantGraphComposition([{ repo, model: 'alpha', version: '1.0.0' }]).Compose()
+    assert.deepEqual(new Set(artifact.seedNodes.map(n => n.id)), instanceIds)
+    assert.ok(artifact.seedEdges.length >= 1)
+    for (const edge of artifact.seedEdges)
+    {
+        assert.ok(instanceIds.has(edge.from), `edge.from ${edge.from}`)
+        assert.ok(instanceIds.has(edge.to), `edge.to ${edge.to}`)
+    }
+})
