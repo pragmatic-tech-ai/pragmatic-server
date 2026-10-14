@@ -32,10 +32,10 @@ export class GcpPlatformFactory
             cloudSqlIpType: config.cloudSqlIpType,
             cloudSqlAuth: config.cloudSqlAuth,
         })
-        return GcpPlatformFactory.CreateWith(backends, masterKeyRef)
+        return GcpPlatformFactory.CreateWith(backends, masterKeyRef, config.cloudAuditAnchorKeyRef, config.cloudAuditAnchorInterval)
     }
 
-    public static async CreateWith(backends: ICloudBackends, masterKeyRef: string): Promise<ICloudBundle>
+    public static async CreateWith(backends: ICloudBackends, masterKeyRef: string, auditAnchorKeyRef?: string, auditAnchorInterval?: number): Promise<ICloudBundle>
     {
         let platform: CloudPlatform
         try
@@ -45,6 +45,8 @@ export class GcpPlatformFactory
                 storage: backends.Storage,
                 secretManager: backends.SecretManager,
                 masterKeyRef,
+                auditAnchorKeyRef,
+                auditAnchorInterval,
             })
         }
         catch (error)

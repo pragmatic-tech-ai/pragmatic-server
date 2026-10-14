@@ -31,10 +31,10 @@ export class AwsPlatformFactory
             rdsAuth: config.rdsAuth,
             rdsPasswordRef: config.rdsPasswordRef,
         })
-        return AwsPlatformFactory.CreateWith(backends, masterKeyRef)
+        return AwsPlatformFactory.CreateWith(backends, masterKeyRef, config.cloudAuditAnchorKeyRef, config.cloudAuditAnchorInterval)
     }
 
-    public static async CreateWith(backends: ICloudBackends, masterKeyRef: string): Promise<ICloudBundle>
+    public static async CreateWith(backends: ICloudBackends, masterKeyRef: string, auditAnchorKeyRef?: string, auditAnchorInterval?: number): Promise<ICloudBundle>
     {
         let platform: CloudPlatform
         try
@@ -44,6 +44,8 @@ export class AwsPlatformFactory
                 storage: backends.Storage,
                 secretManager: backends.SecretManager,
                 masterKeyRef,
+                auditAnchorKeyRef,
+                auditAnchorInterval,
             })
         }
         catch (error)
