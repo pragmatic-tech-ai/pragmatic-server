@@ -27,6 +27,8 @@ import { PolicyConnectionResolver } from './host/policy-connection-resolver.js'
 import type { ConnectorsPolicy } from './host/connector-policy.js'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
+import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
+import { PragmaticAppsRegistry } from './host/apps/pragmatic-apps-registry.js'
 import { TenantGraphCache } from './host/cypher/tenant-graph-cache.js'
 import type { TenantRepository } from './host/cypher/tenant-graph-source.js'
 
@@ -80,9 +82,12 @@ export interface PragmaticServerOptions
 export class PragmaticServer
 {
     private static readonly DefaultPackagesDir = 'packages'
+    /** Default applications directory (relative to the process cwd) when `applicationsRoot` is not configured. */
+    private static readonly DefaultApplicationsDir = 'applications'
     private static readonly ErrorSeparator = '; '
 
     private static readonly NotStartedError = 'server not started'
+    private static readonly ApplicationsRuntimeOnlyError = 'applications are a runtime-tenant feature'
     private static readonly IdentityNotConfiguredError = 'identity not configured'
     private static readonly NoActiveSolutionForConnectors = 'No active solution: open a solution before accessing connectors'
     private static readonly NoMemberStorageForConnectors = 'Active solution has no member storage to read a model view from'
@@ -100,6 +105,8 @@ export class PragmaticServer
     private tenant: Tenant | undefined
     private oidc: OidcFrontDoor | undefined
     private graphCache: TenantGraphCache | undefined
+    private appsStorage: IStorage | undefined
+    private appsRegistry: PragmaticAppsRegistry | undefined
 
     public constructor(options: PragmaticServerOptions)
     {
@@ -177,6 +184,22 @@ export class PragmaticServer
     public Purpose(): TenantPurpose
     {
         return this.options.purpose ?? TenantPurpose.Development
+    }
+
+    public AppsStorage(): IStorage
+    {
+        this.appsStorage ??= this.platform.CreateStorage(this.options.applicationsRoot ?? PragmaticServer.DefaultApplicationsDir)
+        return this.appsStorage
+    }
+
+    public Applications(): PragmaticAppsRegistry
+    {
+        if (this.Purpose() !== TenantPurpose.Runtime)
+        {
+            throw new Error(PragmaticServer.ApplicationsRuntimeOnlyError)
+        }
+        this.appsRegistry ??= new PragmaticAppsRegistry(this.AppsStorage())
+        return this.appsRegistry
     }
 
     public Tenant(): Tenant
