@@ -1,5 +1,5 @@
-import { AuditEvent, AuditEventKind, Grant, Role, ResourceKind } from '@pragmatic-tech-ai/todl-identity'
-import type { LocalAccount, ServiceTokenSummary, PresentedSecret, IRoleGrantStore, IAuditSink, ITenantConfigStore, ILocalAccountStore, IServiceTokenStore, ServiceTokenGrant, Tenant, ResourceRef, IdentityConfig } from '@pragmatic-tech-ai/todl-identity'
+import { Action, AuditEvent, AuditEventKind, Grant, ResourceRef, Role, RoleCapabilities, ResourceKind } from '@pragmatic-tech-ai/todl-identity'
+import type { LocalAccount, ServiceTokenSummary, PresentedSecret, IRoleGrantStore, IAuditSink, ITenantConfigStore, ILocalAccountStore, IServiceTokenStore, ServiceTokenGrant, Tenant, IdentityConfig } from '@pragmatic-tech-ai/todl-identity'
 import type { LocalAccountRegistrar } from '@pragmatic-tech-ai/todl-identity-local'
 import { AdminEnums } from './admin-enums.js'
 
@@ -10,6 +10,16 @@ export class AdminSelfLockoutError extends Error
     {
         super('cannot revoke your own tenant-Owner grant')
         this.name = 'AdminSelfLockoutError'
+    }
+}
+
+/** Raised when revoking a grant would leave the tenant with no administrator. */
+export class LastAdministratorError extends Error
+{
+    public constructor()
+    {
+        super('cannot revoke the tenant\'s last administrator')
+        this.name = 'LastAdministratorError'
     }
 }
 
@@ -96,6 +106,15 @@ export class AdminService
         if (subject === actor && role === Role.Owner && resource.Kind === ResourceKind.Tenant && resource.Path.length === 0)
         {
             throw new AdminSelfLockoutError()
+        }
+        if (resource.Kind === ResourceKind.Tenant && resource.Path.length === 0 && RoleCapabilities.Covers(role, Action.Administer))
+        {
+            const onRoot = await this.grants.GrantsOn(new ResourceRef(ResourceKind.Tenant, this.tenant.Id, []))
+            const remaining = onRoot.filter(grant => RoleCapabilities.Covers(grant.Role, Action.Administer) && !(grant.Subject === subject && grant.Role === role))
+            if (remaining.length === 0)
+            {
+                throw new LastAdministratorError()
+            }
         }
         await this.grants.Revoke(new Grant(subject, role, resource))
         await this.Audit(subject, AdminService.GrantDetail(actor, AdminService.RevokeRoleAction, role, resource))

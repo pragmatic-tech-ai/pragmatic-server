@@ -5,7 +5,7 @@ import { Tenant, TenantKind, Role, ResourceKind, ResourceRef, IdentityConfig, De
 import { Grant } from '@pragmatic-tech-ai/todl-identity'
 import type { IAuditSink, AuditEvent, ITenantConfigStore, IRoleGrantStore } from '@pragmatic-tech-ai/todl-identity'
 import { InMemoryRoleGrantStore, LocalAccountStore, ServiceTokenStore, LocalAccountRegistrar, EncryptedSecretStore, Argon2PasswordHasher } from '@pragmatic-tech-ai/todl-identity-local'
-import { AdminService, AdminTokenNotFoundError, AdminSelfLockoutError, AdminConfigMissingError } from '../admin-service.js'
+import { AdminService, AdminTokenNotFoundError, AdminSelfLockoutError, LastAdministratorError, AdminConfigMissingError } from '../admin-service.js'
 import { AdminEnums, AdminEnumError } from '../admin-enums.js'
 
 class RecordingAuditSink implements IAuditSink
@@ -58,6 +58,11 @@ class SpyGrantStore implements IRoleGrantStore
         return this.Inner.GrantsFor(subject, tenant)
     }
 
+    public GrantsOn(resource: ResourceRef): Promise<readonly Grant[]>
+    {
+        return this.Inner.GrantsOn(resource)
+    }
+
     public Save(grant: Grant): Promise<void>
     {
         this.Touched++
@@ -97,6 +102,16 @@ class AdminFixture
     {
         return new ResourceRef(ResourceKind.Tenant, this.Tenant.Id, [])
     }
+
+    public async Seed(subject: string, role: Role, resource: ResourceRef = this.TenantRoot()): Promise<void>
+    {
+        await this.Grants.Inner.Save(new Grant(subject, role, resource))
+    }
+
+    public async RootGrantCount(): Promise<number>
+    {
+        return (await this.Grants.GrantsOn(this.TenantRoot())).length
+    }
 }
 
 test('GrantRole saves and audits actor+action with no secret', async () =>
@@ -135,8 +150,87 @@ test('self-lockout rejects before touching the store', async () =>
 test('revoking another subject Owner is allowed', async () =>
 {
     const f = new AdminFixture()
+    await f.Seed('u2', Role.Owner)
+    await f.Seed('u3', Role.Owner)
     await f.Service.RevokeRole('u1', 'u2', Role.Owner, f.TenantRoot())
     assert.equal(f.Grants.Touched, 1)
+})
+
+test('revoking the sole tenant-root Owner is rejected, grant kept, no audit', async () =>
+{
+    const f = new AdminFixture()
+    await f.Seed('u2', Role.Owner)
+    await assert.rejects(f.Service.RevokeRole('u1', 'u2', Role.Owner, f.TenantRoot()), LastAdministratorError)
+    assert.equal(await f.RootGrantCount(), 1)
+    assert.equal(f.Grants.Touched, 0)
+    assert.equal(f.Audit.Events.length, 0)
+})
+
+test('revoking the sole tenant-root Admin is rejected', async () =>
+{
+    const f = new AdminFixture()
+    await f.Seed('u2', Role.Admin)
+    await assert.rejects(f.Service.RevokeRole('u1', 'u2', Role.Admin, f.TenantRoot()), LastAdministratorError)
+    assert.equal(await f.RootGrantCount(), 1)
+    assert.equal(f.Audit.Events.length, 0)
+})
+
+test('two Owners: first revoke succeeds and audits, second is rejected', async () =>
+{
+    const f = new AdminFixture()
+    await f.Seed('u2', Role.Owner)
+    await f.Seed('u3', Role.Owner)
+    await f.Service.RevokeRole('u1', 'u2', Role.Owner, f.TenantRoot())
+    assert.equal(f.Audit.Events.length, 1)
+    await assert.rejects(f.Service.RevokeRole('u1', 'u3', Role.Owner, f.TenantRoot()), LastAdministratorError)
+    assert.equal(await f.RootGrantCount(), 1)
+    assert.equal(f.Audit.Events.length, 1)
+})
+
+test('Owner plus Admin: Owner revoke allowed, then Admin revoke rejected', async () =>
+{
+    const f = new AdminFixture()
+    await f.Seed('u2', Role.Owner)
+    await f.Seed('u3', Role.Admin)
+    await f.Service.RevokeRole('u1', 'u2', Role.Owner, f.TenantRoot())
+    await assert.rejects(f.Service.RevokeRole('u1', 'u3', Role.Admin, f.TenantRoot()), LastAdministratorError)
+    assert.equal(await f.RootGrantCount(), 1)
+})
+
+test('tenant-root Viewer revoke is allowed (guard skipped) when an Owner exists', async () =>
+{
+    const f = new AdminFixture()
+    await f.Seed('u2', Role.Owner)
+    await f.Seed('u3', Role.Viewer)
+    await f.Service.RevokeRole('u1', 'u3', Role.Viewer, f.TenantRoot())
+    assert.equal(await f.RootGrantCount(), 1)
+})
+
+test('Project-scoped Owner revoke is allowed as the only such grant (guard skipped)', async () =>
+{
+    const f = new AdminFixture()
+    const project = new ResourceRef(ResourceKind.Project, f.Tenant.Id, ['p1'])
+    await f.Seed('u2', Role.Owner)
+    await f.Seed('u3', Role.Owner, project)
+    await f.Service.RevokeRole('u1', 'u3', Role.Owner, project)
+    assert.equal((await f.Grants.GrantsOn(project)).length, 0)
+    assert.equal(await f.RootGrantCount(), 1)
+})
+
+test('two tenants each with one Owner: revoking A sole Owner is rejected regardless of B', async () =>
+{
+    const f = new AdminFixture()
+    await f.Seed('u2', Role.Owner)
+    await f.Seed('ub', Role.Owner, new ResourceRef(ResourceKind.Tenant, 't2', []))
+    await assert.rejects(f.Service.RevokeRole('u1', 'u2', Role.Owner, f.TenantRoot()), LastAdministratorError)
+    assert.equal(await f.RootGrantCount(), 1)
+})
+
+test('self-lockout takes precedence over last-administrator', async () =>
+{
+    const f = new AdminFixture()
+    await f.Seed('u1', Role.Owner)
+    await assert.rejects(f.Service.RevokeRole('u1', 'u1', Role.Owner, f.TenantRoot()), AdminSelfLockoutError)
 })
 
 test('ListGrants returns only the subject grants', async () =>
@@ -222,6 +316,7 @@ test('self-lockout guard is narrow: other combinations proceed', async () =>
 {
     const f = new AdminFixture()
     const tenantRoot = f.TenantRoot()
+    await f.Seed('keeper', Role.Owner)
     const cases: ReadonlyArray<readonly [string, Role, ResourceRef]> = [
         ['u1', Role.Admin, tenantRoot],
         ['u1', Role.Owner, new ResourceRef(ResourceKind.Project, 't1', [])],

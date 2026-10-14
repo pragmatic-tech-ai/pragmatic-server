@@ -19,7 +19,7 @@ import { RateLimitScope } from './rate-limiter.js'
 import { ConnectorService } from './connector-service.js'
 import type { ConnectorRuntime } from '../connectors/connector-runtime.js'
 import { ModelReadFilter } from './model-read-filter.js'
-import { AdminService, AdminSelfLockoutError, AdminConfigMissingError, AdminTokenNotFoundError } from './admin-service.js'
+import { AdminService, AdminSelfLockoutError, LastAdministratorError, AdminConfigMissingError, AdminTokenNotFoundError } from './admin-service.js'
 import { AdminEnums, AdminEnumError } from './admin-enums.js'
 import { CypherLimits } from '../config/cypher-limits.js'
 import { CypherParamConverter, CypherParamError } from './cypher/cypher-param-converter.js'
@@ -380,7 +380,7 @@ export class ServerConnectionHandler
         }
         catch (error)
         {
-            if (error instanceof AdminSelfLockoutError || error instanceof AdminConfigMissingError || error instanceof LocalAccountNotFoundError || error instanceof AdminTokenNotFoundError)
+            if (error instanceof AdminSelfLockoutError || error instanceof LastAdministratorError || error instanceof AdminConfigMissingError || error instanceof LocalAccountNotFoundError || error instanceof AdminTokenNotFoundError)
             {
                 throw new ResponseError(ErrorCodes.InvalidRequest, error.message)
             }
