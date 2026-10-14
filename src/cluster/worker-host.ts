@@ -12,6 +12,7 @@ import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import type { MasterKeyRef } from '../identity/master-key-resolver.js'
 import type { PragmaticServer } from '../pragmatic-server.js'
 import { ServerConnectionHandler } from '../host/server-connection-handler.js'
+import { AdminService } from '../host/admin-service.js'
 import { RateLimitGuard } from '../host/rate-limit-guard.js'
 import { RateLimitScope } from '../host/rate-limiter.js'
 import { AuditSurface, NullAccessAuditSink } from '../host/access-audit.js'
@@ -475,6 +476,8 @@ export class WorkerHost
             const parent = this.instrumentation !== undefined ? RequestCorrelation.Extract(req.headers) : undefined
             const languageService = await server.LanguageService()
             const manager = await server.Manager()
+            const pack = await server.Pack()
+            const admin = new AdminService(pack.Grants, pack.Audit, await server.TenantConfigStore(), server.Tenant(), () => this.registry.DisposeTenant(tenantId))
             if (this.disposed)
             {
                 this.RejectRetryable(socket)
@@ -484,7 +487,7 @@ export class WorkerHost
             {
                 try
                 {
-                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors(), this.instrumentation, parent, this.audit, this.rateLimit)
+                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors(), this.instrumentation, parent, this.audit, this.rateLimit, admin)
                     this.handlers.add(handler)
                     ws.on(WorkerHost.CloseEvent, () =>
                     {

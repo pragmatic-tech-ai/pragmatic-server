@@ -21,6 +21,7 @@ import type { MasterKeyRef } from '../identity/master-key-resolver.js'
 import type { IProvisionedSecretSource } from '../config/provisioned-secret-source.js'
 import type { PragmaticServer } from '../pragmatic-server.js'
 import { ServerConnectionHandler } from './server-connection-handler.js'
+import { AdminService } from './admin-service.js'
 import { RateLimitGuard } from './rate-limit-guard.js'
 import { RateLimitScope } from './rate-limiter.js'
 import { AuditSurface, NullAccessAuditSink } from './access-audit.js'
@@ -414,6 +415,8 @@ export class PragmaticServerHost
             const parent = this.instrumentation !== undefined ? RequestCorrelation.Extract(req.headers) : undefined
             const languageService = await server.LanguageService()
             const manager = await server.Manager()
+            const pack = await server.Pack()
+            const admin = new AdminService(pack.Grants, pack.Audit, await server.TenantConfigStore(), server.Tenant(), () => this.registry.DisposeTenant(tenantId))
             if (this.disposed)
             {
                 this.RejectRetryable(socket)
@@ -423,7 +426,7 @@ export class PragmaticServerHost
             {
                 try
                 {
-                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors(), this.instrumentation, parent, this.audit, this.rateLimit)
+                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors(), this.instrumentation, parent, this.audit, this.rateLimit, admin)
                     this.handlers.add(handler)
                     ws.on(PragmaticServerHost.CloseEvent, () =>
                     {
