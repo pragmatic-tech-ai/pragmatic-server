@@ -1,9 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { Tenant, TenantKind, Role, ResourceKind, ResourceRef, IdentityConfig, DelegationDepth, AuditEventKind } from '@pragmatic-tech-ai/todl-identity'
+import { randomBytes } from 'node:crypto'
+import { Tenant, TenantKind, Role, ResourceKind, ResourceRef, IdentityConfig, DelegationDepth, AuditEventKind, PresentedSecret, LocalAccountNotFoundError } from '@pragmatic-tech-ai/todl-identity'
 import { Grant } from '@pragmatic-tech-ai/todl-identity'
 import type { IAuditSink, AuditEvent, ITenantConfigStore, IRoleGrantStore } from '@pragmatic-tech-ai/todl-identity'
-import { InMemoryRoleGrantStore } from '@pragmatic-tech-ai/todl-identity-local'
+import { InMemoryRoleGrantStore, LocalAccountStore, ServiceTokenStore, LocalAccountRegistrar, EncryptedSecretStore, Argon2PasswordHasher } from '@pragmatic-tech-ai/todl-identity-local'
 import { AdminService, AdminSelfLockoutError, AdminConfigMissingError } from '../admin-service.js'
 import { AdminEnums, AdminEnumError } from '../admin-enums.js'
 
@@ -77,11 +78,19 @@ class AdminFixture
     public readonly Grants = new SpyGrantStore()
     public readonly Audit = new RecordingAuditSink()
     public readonly Config = new FakeConfigStore()
+    public readonly Accounts = new LocalAccountStore()
+    public readonly Tokens = new ServiceTokenStore()
+    public readonly Registrar = new LocalAccountRegistrar(this.Accounts, new EncryptedSecretStore(randomBytes(32)), new Argon2PasswordHasher(), new RecordingAuditSink())
     public readonly Service: AdminService
 
     public constructor()
     {
-        this.Service = new AdminService(this.Grants, this.Audit, this.Config, this.Tenant, async () => { this.Config.Calls.push('evict') })
+        this.Service = this.ServiceFor(this.Tenant, this.Audit, async () => { this.Config.Calls.push('evict') })
+    }
+
+    public ServiceFor(tenant: Tenant, audit: IAuditSink, evict: () => Promise<void>): AdminService
+    {
+        return new AdminService(this.Grants, audit, this.Config, tenant, evict, this.Accounts, this.Registrar, this.Tokens)
     }
 
     public TenantRoot(): ResourceRef
@@ -163,7 +172,7 @@ test('SetConfig then GetConfig round-trips and evicts', async () =>
 test('SetConfig audit failure throws before the tenant is evicted', async () =>
 {
     const f = new AdminFixture()
-    const failing = new AdminService(f.Grants, new FailingAuditSink(), f.Config, f.Tenant, async () => { f.Config.Calls.push('evict') })
+    const failing = f.ServiceFor(f.Tenant, new FailingAuditSink(), async () => { f.Config.Calls.push('evict') })
     const config = new IdentityConfig('local', DelegationDepth.AuthnDirectory, new Map(), new Map(), new Map())
     await assert.rejects(failing.SetConfig('u1', config), /audit down/)
     assert.deepEqual(f.Config.Calls, ['save'])
@@ -194,7 +203,7 @@ test('GetConfig throws when the store returns null, returns config otherwise', a
 test('a failing audit fails the mutation closed', async () =>
 {
     const f = new AdminFixture()
-    const failing = new AdminService(f.Grants, new FailingAuditSink(), f.Config, f.Tenant, async () => {})
+    const failing = f.ServiceFor(f.Tenant, new FailingAuditSink(), async () => {})
     await assert.rejects(failing.GrantRole('u1', 'u2', Role.Viewer, f.TenantRoot()), /audit down/)
 })
 
@@ -237,8 +246,86 @@ test('grant audit detail carries the joined resource path', async () =>
 test('failing audit fails RevokeRole and SetConfig closed', async () =>
 {
     const f = new AdminFixture()
-    const failing = new AdminService(f.Grants, new FailingAuditSink(), f.Config, f.Tenant, async () => {})
+    const failing = f.ServiceFor(f.Tenant, new FailingAuditSink(), async () => {})
     await assert.rejects(failing.RevokeRole('u1', 'u2', Role.Viewer, f.TenantRoot()), /audit down/)
     const config = new IdentityConfig('local', DelegationDepth.AuthnDirectory, new Map(), new Map(), new Map())
     await assert.rejects(failing.SetConfig('u1', config), /audit down/)
+})
+
+test('CreateAccount registers the account and audits actor+principalId+email, never the password', async () =>
+{
+    const f = new AdminFixture()
+    const password = 'pw-plaintext-123'
+    const account = await f.Service.CreateAccount('u1', 'a@x.io', 'p9', new PresentedSecret(password))
+    assert.equal(account.PrincipalId, 'p9')
+    assert.equal((await f.Service.ListAccounts()).length, 1)
+    const event = f.Audit.Events[0]
+    assert.equal(event.PrincipalId, 'p9')
+    assert.equal(event.Detail.get('action'), 'create-account')
+    assert.equal(event.Detail.get('actor'), 'u1')
+    assert.equal(event.Detail.get('principalId'), 'p9')
+    assert.equal(event.Detail.get('email'), 'a@x.io')
+    assert.ok(![...event.Detail.values()].some(v => v.includes(password)))
+})
+
+test('DisableAccount disables and audits; unknown principal throws LocalAccountNotFoundError', async () =>
+{
+    const f = new AdminFixture()
+    await f.Service.CreateAccount('u1', 'a@x.io', 'p9', new PresentedSecret('pw'))
+    await f.Service.DisableAccount('u1', 'p9')
+    assert.equal((await f.Service.ListAccounts())[0].Disabled, true)
+    assert.equal(f.Audit.Events[1].Detail.get('action'), 'disable-account')
+    assert.equal(f.Audit.Events[1].Detail.get('principalId'), 'p9')
+    const before = f.Audit.Events.length
+    await assert.rejects(f.Service.DisableAccount('u1', 'nobody'), LocalAccountNotFoundError)
+    assert.equal(f.Audit.Events.length, before)
+})
+
+test('ListAccounts returns only this tenant accounts', async () =>
+{
+    const f = new AdminFixture()
+    const other = new Tenant('t2', TenantKind.SelfHosted, 'T2')
+    const otherService = f.ServiceFor(other, f.Audit, async () => {})
+    await f.Service.CreateAccount('u1', 'a@x.io', 'p1', new PresentedSecret('pw'))
+    await otherService.CreateAccount('u1', 'b@x.io', 'p2', new PresentedSecret('pw'))
+    assert.deepEqual((await f.Service.ListAccounts()).map(a => a.PrincipalId), ['p1'])
+    assert.deepEqual((await otherService.ListAccounts()).map(a => a.PrincipalId), ['p2'])
+})
+
+test('IssueToken returns the token once and audits tokenRef not the token value', async () =>
+{
+    const f = new AdminFixture()
+    const issued = await f.Service.IssueToken('u1', 'p1', ['read', 'write'], null)
+    assert.ok(issued.Token.length > 0)
+    const event = f.Audit.Events[0]
+    assert.equal(event.Detail.get('action'), 'issue-token')
+    assert.equal(event.Detail.get('tokenRef'), issued.Grant.TokenRef)
+    assert.equal(event.Detail.get('scopes'), 'read write')
+    assert.ok(![...event.Detail.values()].some(v => v.includes(issued.Token)))
+})
+
+test('ListTokens surfaces the issued token then revoked=true after RevokeToken', async () =>
+{
+    const f = new AdminFixture()
+    const issued = await f.Service.IssueToken('u1', 'p1', ['read'], null)
+    const listed = await f.Service.ListTokens()
+    assert.equal(listed.length, 1)
+    assert.equal(listed[0].TokenRef, issued.Grant.TokenRef)
+    assert.equal(listed[0].Revoked, false)
+    await f.Service.RevokeToken('u1', issued.Grant.TokenRef)
+    assert.equal((await f.Service.ListTokens())[0].Revoked, true)
+    const event = f.Audit.Events[1]
+    assert.equal(event.Detail.get('action'), 'revoke-token')
+    assert.equal(event.Detail.get('tokenRef'), issued.Grant.TokenRef)
+})
+
+test('RevokeToken on an unknown or other-tenant tokenRef has no effect on other tenants', async () =>
+{
+    const f = new AdminFixture()
+    const other = f.ServiceFor(new Tenant('t2', TenantKind.SelfHosted, 'T2'), f.Audit, async () => {})
+    const issued = await other.IssueToken('u1', 'p1', ['read'], null)
+    // The store treats an unknown / foreign ref as an idempotent no-op (does not throw).
+    await f.Service.RevokeToken('u1', 'missing')
+    await f.Service.RevokeToken('u1', issued.Grant.TokenRef)
+    assert.equal((await other.ListTokens())[0].Revoked, false)
 })

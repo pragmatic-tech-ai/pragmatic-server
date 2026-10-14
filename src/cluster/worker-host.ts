@@ -477,7 +477,7 @@ export class WorkerHost
             const languageService = await server.LanguageService()
             const manager = await server.Manager()
             const pack = await server.Pack()
-            const admin = new AdminService(pack.Grants, pack.Audit, await server.TenantConfigStore(), server.Tenant(), () => this.registry.DisposeTenant(tenantId))
+            const admin = new AdminService(pack.Grants, pack.Audit, await server.TenantConfigStore(), server.Tenant(), () => this.registry.DisposeTenant(tenantId), pack.Accounts, pack.Registrar, pack.Tokens)
             if (this.disposed)
             {
                 this.RejectRetryable(socket)

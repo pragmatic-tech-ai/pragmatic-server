@@ -1,12 +1,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { randomBytes } from 'node:crypto'
 import { InMemoryMessageSocket, WebSocketMessageReader, WebSocketMessageWriter, createMessageConnection, NullLogger, AdminProtocol, ResponseError, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { MessageConnection } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import type { IAuditSink, AuditEvent } from '@pragmatic-tech-ai/todl-identity'
-import { InMemoryRoleGrantStore } from '@pragmatic-tech-ai/todl-identity-local'
+import { InMemoryRoleGrantStore, LocalAccountStore, ServiceTokenStore, LocalAccountRegistrar, EncryptedSecretStore, Argon2PasswordHasher } from '@pragmatic-tech-ai/todl-identity-local'
 import { InMemoryTenantConfigStore } from '@pragmatic-tech-ai/todl-identity-host'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
 import { AdminService } from '../admin-service.js'
@@ -31,7 +32,9 @@ class AdminFixture
         const tenant = new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
         const principal = new Principal('p1', 't1', PrincipalKind.User, new Map(), [])
         const context = new AccessContext(principal, tenant, [new Grant('p1', role, new ResourceRef(ResourceKind.Tenant, 't1', []))], new ResourceAuthorizationPolicy())
-        const admin = new AdminService(this.Grants, new NullAuditSink(), this.Configs, tenant, async () => undefined)
+        const accounts = new LocalAccountStore()
+        const registrar = new LocalAccountRegistrar(accounts, new EncryptedSecretStore(randomBytes(32)), new Argon2PasswordHasher(), new NullAuditSink())
+        const admin = new AdminService(this.Grants, new NullAuditSink(), this.Configs, tenant, async () => undefined, accounts, registrar, new ServiceTokenStore())
         const languageService = { GraphChanged: { subscribe: () => ({ dispose: () => undefined }) } } as unknown as ILanguageService
         const manager = {} as unknown as SolutionManagerService
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()

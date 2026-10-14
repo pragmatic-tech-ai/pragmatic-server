@@ -1,5 +1,6 @@
 import { AuditEvent, AuditEventKind, Grant, Role, ResourceKind } from '@pragmatic-tech-ai/todl-identity'
-import type { IRoleGrantStore, IAuditSink, ITenantConfigStore, Tenant, ResourceRef, IdentityConfig } from '@pragmatic-tech-ai/todl-identity'
+import type { LocalAccount, ServiceTokenSummary, PresentedSecret, IRoleGrantStore, IAuditSink, ITenantConfigStore, ILocalAccountStore, IServiceTokenStore, ServiceTokenGrant, Tenant, ResourceRef, IdentityConfig } from '@pragmatic-tech-ai/todl-identity'
+import type { LocalAccountRegistrar } from '@pragmatic-tech-ai/todl-identity-local'
 import { AdminEnums } from './admin-enums.js'
 
 /** Raised when a caller tries to revoke their own tenant-Owner grant. */
@@ -37,20 +38,35 @@ export class AdminService
     private static readonly GrantRoleAction = 'grant-role'
     private static readonly RevokeRoleAction = 'revoke-role'
     private static readonly SetConfigAction = 'set-config'
+    private static readonly CreateAccountAction = 'create-account'
+    private static readonly DisableAccountAction = 'disable-account'
+    private static readonly IssueTokenAction = 'issue-token'
+    private static readonly RevokeTokenAction = 'revoke-token'
+    private static readonly PrincipalIdKey = 'principalId'
+    private static readonly EmailKey = 'email'
+    private static readonly TokenRefKey = 'tokenRef'
+    private static readonly ScopesKey = 'scopes'
+    private static readonly ScopeSeparator = ' '
 
     private readonly grants: IRoleGrantStore
     private readonly audit: IAuditSink
     private readonly configStore: ITenantConfigStore
     private readonly tenant: Tenant
     private readonly evict: () => Promise<void>
+    private readonly accounts: ILocalAccountStore
+    private readonly registrar: LocalAccountRegistrar
+    private readonly tokens: IServiceTokenStore
 
-    public constructor(grants: IRoleGrantStore, audit: IAuditSink, configStore: ITenantConfigStore, tenant: Tenant, evict: () => Promise<void>)
+    public constructor(grants: IRoleGrantStore, audit: IAuditSink, configStore: ITenantConfigStore, tenant: Tenant, evict: () => Promise<void>, accounts: ILocalAccountStore, registrar: LocalAccountRegistrar, tokens: IServiceTokenStore)
     {
         this.grants = grants
         this.audit = audit
         this.configStore = configStore
         this.tenant = tenant
         this.evict = evict
+        this.accounts = accounts
+        this.registrar = registrar
+        this.tokens = tokens
     }
 
     public async ListGrants(subject: string): Promise<readonly Grant[]>
@@ -96,6 +112,65 @@ export class AdminService
         ])
         await this.Audit(null, detail)
         await this.evict()
+    }
+
+    public async ListAccounts(): Promise<readonly LocalAccount[]>
+    {
+        return this.accounts.ListAccounts(this.tenant)
+    }
+
+    public async CreateAccount(actor: string, email: string, principalId: string, password: PresentedSecret): Promise<LocalAccount>
+    {
+        const account = await this.registrar.Register(this.tenant, email, principalId, password)
+        const detail = new Map<string, string>([
+            [AdminService.ActorKey, actor],
+            [AdminService.ActionKey, AdminService.CreateAccountAction],
+            [AdminService.PrincipalIdKey, principalId],
+            [AdminService.EmailKey, email],
+        ])
+        await this.Audit(principalId, detail)
+        return account
+    }
+
+    public async DisableAccount(actor: string, principalId: string): Promise<void>
+    {
+        await this.accounts.Disable(this.tenant, principalId)
+        const detail = new Map<string, string>([
+            [AdminService.ActorKey, actor],
+            [AdminService.ActionKey, AdminService.DisableAccountAction],
+            [AdminService.PrincipalIdKey, principalId],
+        ])
+        await this.Audit(principalId, detail)
+    }
+
+    public async ListTokens(): Promise<readonly ServiceTokenSummary[]>
+    {
+        return this.tokens.List(this.tenant)
+    }
+
+    public async IssueToken(actor: string, principalId: string, scopes: readonly string[], expiresAt: Date | null): Promise<{ Grant: ServiceTokenGrant, Token: string }>
+    {
+        const issued = await this.tokens.Issue(this.tenant, principalId, scopes, expiresAt)
+        const detail = new Map<string, string>([
+            [AdminService.ActorKey, actor],
+            [AdminService.ActionKey, AdminService.IssueTokenAction],
+            [AdminService.PrincipalIdKey, principalId],
+            [AdminService.TokenRefKey, issued.Grant.TokenRef],
+            [AdminService.ScopesKey, scopes.join(AdminService.ScopeSeparator)],
+        ])
+        await this.Audit(principalId, detail)
+        return issued
+    }
+
+    public async RevokeToken(actor: string, tokenRef: string): Promise<void>
+    {
+        await this.tokens.Revoke(this.tenant, tokenRef)
+        const detail = new Map<string, string>([
+            [AdminService.ActorKey, actor],
+            [AdminService.ActionKey, AdminService.RevokeTokenAction],
+            [AdminService.TokenRefKey, tokenRef],
+        ])
+        await this.Audit(null, detail)
     }
 
     private async Audit(subject: string | null, detail: ReadonlyMap<string, string>): Promise<void>
