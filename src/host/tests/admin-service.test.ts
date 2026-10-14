@@ -187,6 +187,21 @@ test('two Owners: first revoke succeeds and audits, second is rejected', async (
     assert.equal(f.Audit.Events.length, 1)
 })
 
+test('duplicate sole-Owner grants: revoke is still rejected (exclusion drops every copy, matching Revoke)', async () =>
+{
+    const f = new AdminFixture()
+    // append-no-dedup: the same (subject, role, resource) seeded twice produces two copies.
+    await f.Seed('u2', Role.Owner)
+    await f.Seed('u2', Role.Owner)
+    assert.equal(await f.RootGrantCount(), 2)
+    // Revoke deletes BOTH copies, so u2 would be left with no admin grant; the guard must reject,
+    // not be fooled into counting the second copy as a surviving administrator.
+    await assert.rejects(f.Service.RevokeRole('u1', 'u2', Role.Owner, f.TenantRoot()), LastAdministratorError)
+    assert.equal(await f.RootGrantCount(), 2)
+    assert.equal(f.Grants.Touched, 0)
+    assert.equal(f.Audit.Events.length, 0)
+})
+
 test('Owner plus Admin: Owner revoke allowed, then Admin revoke rejected', async () =>
 {
     const f = new AdminFixture()

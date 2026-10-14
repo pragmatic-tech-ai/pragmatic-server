@@ -109,7 +109,7 @@ export class AdminService
         }
         if (resource.Kind === ResourceKind.Tenant && resource.Path.length === 0 && RoleCapabilities.Covers(role, Action.Administer))
         {
-            const onRoot = await this.grants.GrantsOn(new ResourceRef(ResourceKind.Tenant, this.tenant.Id, []))
+            const onRoot = await this.grants.GrantsOn(new ResourceRef(ResourceKind.Tenant, resource.TenantId, []))
             const remaining = onRoot.filter(grant => RoleCapabilities.Covers(grant.Role, Action.Administer) && !(grant.Subject === subject && grant.Role === role))
             if (remaining.length === 0)
             {
