@@ -1,10 +1,11 @@
 import {
-    createMessageConnection, NullLogger, WebSocketMessageReader, WebSocketMessageWriter, LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol,
+    createMessageConnection, NullLogger, WebSocketMessageReader, WebSocketMessageWriter, LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol, AdminProtocol,
 } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, ModelProjection, ResolvedResourceDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, ModelProjection, ResolvedResourceDto, GrantDto, GrantMutationDto, IdentityConfigDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ResponseError, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { RequestType, NotificationType } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
+import { ResourceRef, IdentityConfig } from '@pragmatic-tech-ai/todl-identity'
+import type { AccessContext, Grant, Role } from '@pragmatic-tech-ai/todl-identity'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
@@ -16,6 +17,8 @@ import { RateLimitScope } from './rate-limiter.js'
 import { ConnectorService } from './connector-service.js'
 import type { ConnectorRuntime } from '../connectors/connector-runtime.js'
 import { ModelReadFilter } from './model-read-filter.js'
+import { AdminService, AdminSelfLockoutError, AdminConfigMissingError } from './admin-service.js'
+import { AdminEnums, AdminEnumError } from './admin-enums.js'
 import { trace } from '@opentelemetry/api'
 import type { Context } from '@opentelemetry/api'
 import type { RequestInstrumentation } from '../observability/request-instrumentation.js'
@@ -25,6 +28,9 @@ export class ServerConnectionHandler
 {
     private static readonly NoActiveSolutionError = 'no active solution after open'
     private static readonly UnknownMemberError = 'unknown solution member'
+    private static readonly DefaultResourceKind = 'Tenant'
+    private static readonly InvalidConfigField = 'config'
+    private static readonly InvalidParamsPrefix = 'invalid params: '
     public static readonly RateLimitedCode = -32029
 
     private readonly connection: MessageConnection
@@ -37,10 +43,12 @@ export class ServerConnectionHandler
     private readonly instrumentation: RequestInstrumentation | undefined
     private readonly parent: Context | undefined
     private readonly rateLimit: RateLimitGuard | undefined
+    private readonly admin: AdminService | undefined
 
-    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard)
+    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService)
     {
         this.rateLimit = rateLimit
+        this.admin = admin
         this.instrumentation = instrumentation
         this.parent = parent
         this.connectorService = new ConnectorService(connectorsFactory)
@@ -57,6 +65,10 @@ export class ServerConnectionHandler
         this.RegisterSolutionHandlers()
         this.RegisterModelHandlers()
         this.RegisterConnectorHandlers()
+        if (this.admin !== undefined)
+        {
+            this.RegisterAdminHandlers()
+        }
         this.graphSubscription = languageService.GraphChanged.subscribe(async change =>
         {
             if (!this.gate.CanRead())
@@ -74,10 +86,10 @@ export class ServerConnectionHandler
         })
     }
 
-    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard): ServerConnectionHandler
+    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService): ServerConnectionHandler
     {
         const connection = createMessageConnection(new WebSocketMessageReader(socket), new WebSocketMessageWriter(socket), NullLogger)
-        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectorsFactory, instrumentation, parent, audit, rateLimit)
+        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectorsFactory, instrumentation, parent, audit, rateLimit, admin)
         connection.listen()
         return handler
     }
@@ -205,6 +217,126 @@ export class ServerConnectionHandler
         this.guarded(ConnectorProtocol.Read, p => this.connectorService.Read(p.modelId, p.concept))
         this.guarded(ConnectorProtocol.WriteBack, p => this.connectorService.WriteBack(p))
         this.guarded(ConnectorProtocol.Test, p => this.connectorService.Test(p.modelId, p.connectorName))
+    }
+
+    private RegisterAdminHandlers(): void
+    {
+        const admin = this.admin as AdminService
+        this.guarded(AdminProtocol.ListGrants, async p => (await this.AdminCall(() => admin.ListGrants(p.subject))).map(g => this.ToGrantDto(g)))
+        this.guarded(AdminProtocol.GrantRole, async p =>
+        {
+            const { role, resource } = this.ParseMutation(p)
+            await this.AdminCall(() => admin.GrantRole(this.actor(), p.subject, role, resource))
+            return { ok: true as const }
+        })
+        this.guarded(AdminProtocol.RevokeRole, async p =>
+        {
+            const { role, resource } = this.ParseMutation(p)
+            await this.AdminCall(() => admin.RevokeRole(this.actor(), p.subject, role, resource))
+            return { ok: true as const }
+        })
+        this.connection.onRequest(AdminProtocol.GetConfig, () => this.Dispatch(AdminProtocol.GetConfig.method, async () =>
+        {
+            this.EnforceRate(AdminProtocol.GetConfig.method)
+            this.authorize(AdminProtocol.GetConfig.method)
+            return this.ToConfigDto(await this.AdminCall(() => admin.GetConfig()))
+        }))
+        this.guarded(AdminProtocol.SetConfig, async p =>
+        {
+            const config = this.ParseConfigDto(p)
+            await this.AdminCall(() => admin.SetConfig(this.actor(), config))
+            return { ok: true as const }
+        })
+    }
+
+    private actor(): string
+    {
+        return this.accessContext.Principal.Id
+    }
+
+    private async AdminCall<T>(operation: () => Promise<T>): Promise<T>
+    {
+        try
+        {
+            return await operation()
+        }
+        catch (error)
+        {
+            if (error instanceof AdminSelfLockoutError || error instanceof AdminConfigMissingError)
+            {
+                throw new ResponseError(ErrorCodes.InvalidRequest, error.message)
+            }
+            throw error
+        }
+    }
+
+    private InvalidParams(error: unknown): ResponseError<void>
+    {
+        const field = error instanceof AdminEnumError ? error.Field : ServerConnectionHandler.InvalidConfigField
+        return new ResponseError(ErrorCodes.InvalidParams, `${ServerConnectionHandler.InvalidParamsPrefix}${field}`)
+    }
+
+    private ParseMutation(dto: GrantMutationDto): { role: Role, resource: ResourceRef }
+    {
+        try
+        {
+            const role = AdminEnums.RoleFromName(dto.role)
+            const kind = AdminEnums.ResourceKindFromName(dto.resourceKind ?? ServerConnectionHandler.DefaultResourceKind)
+            const path = Array.isArray(dto.resourcePath) ? dto.resourcePath : []
+            return { role, resource: new ResourceRef(kind, this.accessContext.Tenant.Id, path) }
+        }
+        catch (error)
+        {
+            throw this.InvalidParams(error)
+        }
+    }
+
+    private ToGrantDto(grant: Grant): GrantDto
+    {
+        return {
+            subject: grant.Subject,
+            role: AdminEnums.NameOfRole(grant.Role),
+            resourceKind: AdminEnums.NameOfResourceKind(grant.Resource.Kind),
+            resourcePath: [...grant.Resource.Path],
+        }
+    }
+
+    private ToConfigDto(config: IdentityConfig): IdentityConfigDto
+    {
+        const groupRoleMap: Record<string, string> = {}
+        for (const [group, role] of config.GroupRoleMap)
+        {
+            groupRoleMap[group] = AdminEnums.NameOfRole(role)
+        }
+        return {
+            packId: config.PackId,
+            delegationDepth: AdminEnums.NameOfDepth(config.DelegationDepth),
+            providerSettings: Object.fromEntries(config.ProviderSettings),
+            groupRoleMap,
+            claimsMapping: Object.fromEntries(config.ClaimsMapping),
+        }
+    }
+
+    private ParseConfigDto(dto: IdentityConfigDto): IdentityConfig
+    {
+        try
+        {
+            if (typeof dto.packId !== 'string' || dto.packId.length === 0)
+            {
+                throw new AdminEnumError('packId')
+            }
+            const depth = AdminEnums.DepthFromName(dto.delegationDepth)
+            const groupRoles = new Map<string, Role>()
+            for (const [group, name] of Object.entries(dto.groupRoleMap ?? {}))
+            {
+                groupRoles.set(group, AdminEnums.RoleFromName(name))
+            }
+            return new IdentityConfig(dto.packId, depth, new Map(Object.entries(dto.providerSettings ?? {})), groupRoles, new Map(Object.entries(dto.claimsMapping ?? {})))
+        }
+        catch (error)
+        {
+            throw this.InvalidParams(error)
+        }
     }
 
     private async ResourceHidden(nodeId: string): Promise<boolean>
