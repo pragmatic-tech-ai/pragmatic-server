@@ -1,11 +1,11 @@
 import {
     createMessageConnection, NullLogger, WebSocketMessageReader, WebSocketMessageWriter, LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol, AdminProtocol,
 } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, ModelProjection, ResolvedResourceDto, GrantDto, GrantMutationDto, IdentityConfigDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, ModelProjection, ResolvedResourceDto, GrantDto, GrantMutationDto, IdentityConfigDto, AccountDto, CreateAccountParams, ServiceTokenSummaryDto, IssueTokenParams, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ResponseError, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { RequestType, NotificationType } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { ResourceRef, IdentityConfig } from '@pragmatic-tech-ai/todl-identity'
-import type { AccessContext, Grant, Role } from '@pragmatic-tech-ai/todl-identity'
+import { ResourceRef, IdentityConfig, PresentedSecret, LocalAccountNotFoundError } from '@pragmatic-tech-ai/todl-identity'
+import type { AccessContext, Grant, Role, LocalAccount, ServiceTokenSummary, ServiceTokenGrant } from '@pragmatic-tech-ai/todl-identity'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
@@ -17,7 +17,7 @@ import { RateLimitScope } from './rate-limiter.js'
 import { ConnectorService } from './connector-service.js'
 import type { ConnectorRuntime } from '../connectors/connector-runtime.js'
 import { ModelReadFilter } from './model-read-filter.js'
-import { AdminService, AdminSelfLockoutError, AdminConfigMissingError } from './admin-service.js'
+import { AdminService, AdminSelfLockoutError, AdminConfigMissingError, AdminTokenNotFoundError } from './admin-service.js'
 import { AdminEnums, AdminEnumError } from './admin-enums.js'
 import { trace } from '@opentelemetry/api'
 import type { Context } from '@opentelemetry/api'
@@ -36,6 +36,12 @@ export class ServerConnectionHandler
     private static readonly ProviderSettingsField = 'providerSettings'
     private static readonly GroupRoleMapField = 'groupRoleMap'
     private static readonly ClaimsMappingField = 'claimsMapping'
+    private static readonly PrincipalIdField = 'principalId'
+    private static readonly EmailField = 'email'
+    private static readonly PasswordField = 'password'
+    private static readonly TokenRefField = 'tokenRef'
+    private static readonly ScopesField = 'scopes'
+    private static readonly ExpiresInField = 'expiresInSeconds'
     private static readonly InvalidParamsPrefix = 'invalid params: '
     public static readonly RateLimitedCode = -32029
 
@@ -253,6 +259,54 @@ export class ServerConnectionHandler
             await this.AdminCall(() => admin.SetConfig(this.actor(), config))
             return { ok: true as const }
         })
+        this.connection.onRequest(AdminProtocol.ListAccounts, () => this.Dispatch(AdminProtocol.ListAccounts.method, async () =>
+        {
+            this.EnforceRate(AdminProtocol.ListAccounts.method)
+            this.authorize(AdminProtocol.ListAccounts.method)
+            return (await this.AdminCall(() => admin.ListAccounts())).map(a => this.ToAccountDto(a))
+        }))
+        this.guarded(AdminProtocol.CreateAccount, async p =>
+        {
+            const { email, principalId } = this.ParseCreateAccount(p)
+            const presented = new PresentedSecret(this.RequireNonEmptyString(p.password, ServerConnectionHandler.PasswordField))
+            try
+            {
+                await this.AdminCall(() => admin.CreateAccount(this.actor(), email, principalId, presented))
+            }
+            catch (error)
+            {
+                throw this.MapCreateError(error)
+            }
+            finally
+            {
+                presented.Clear()
+            }
+            return { ok: true as const }
+        })
+        this.guarded(AdminProtocol.DisableAccount, async p =>
+        {
+            const principalId = this.RequirePrincipalId(p.principalId)
+            await this.AdminCall(() => admin.DisableAccount(this.actor(), principalId))
+            return { ok: true as const }
+        })
+        this.connection.onRequest(AdminProtocol.ListTokens, () => this.Dispatch(AdminProtocol.ListTokens.method, async () =>
+        {
+            this.EnforceRate(AdminProtocol.ListTokens.method)
+            this.authorize(AdminProtocol.ListTokens.method)
+            return (await this.AdminCall(() => admin.ListTokens())).map(t => this.ToServiceTokenSummaryDto(t))
+        }))
+        this.guarded(AdminProtocol.IssueToken, async p =>
+        {
+            const { principalId, scopes, expiresAt } = this.ParseIssueToken(p)
+            const issued = await this.AdminCall(() => admin.IssueToken(this.actor(), principalId, scopes, expiresAt))
+            return this.ToTokenIssuedDto(issued)
+        })
+        this.guarded(AdminProtocol.RevokeToken, async p =>
+        {
+            const tokenRef = this.RequireTokenRef(p.tokenRef)
+            await this.AdminCall(() => admin.RevokeToken(this.actor(), tokenRef))
+            return { ok: true as const }
+        })
     }
 
     private actor(): string
@@ -268,7 +322,7 @@ export class ServerConnectionHandler
         }
         catch (error)
         {
-            if (error instanceof AdminSelfLockoutError || error instanceof AdminConfigMissingError)
+            if (error instanceof AdminSelfLockoutError || error instanceof AdminConfigMissingError || error instanceof LocalAccountNotFoundError || error instanceof AdminTokenNotFoundError)
             {
                 throw new ResponseError(ErrorCodes.InvalidRequest, error.message)
             }
@@ -342,6 +396,100 @@ export class ServerConnectionHandler
             result.set(key, entry)
         }
         return result
+    }
+
+    private RequirePrincipalId(value: unknown): string
+    {
+        return this.RequireNonEmptyString(value, ServerConnectionHandler.PrincipalIdField)
+    }
+
+    private RequireTokenRef(value: unknown): string
+    {
+        return this.RequireNonEmptyString(value, ServerConnectionHandler.TokenRefField)
+    }
+
+    private ParseCreateAccount(dto: CreateAccountParams): { email: string, principalId: string }
+    {
+        try
+        {
+            const email = this.RequireNonEmptyString(dto.email, ServerConnectionHandler.EmailField)
+            const principalId = this.RequireNonEmptyString(dto.principalId, ServerConnectionHandler.PrincipalIdField)
+            // password is validated at the call site (it must be wrapped and cleared there).
+            return { email, principalId }
+        }
+        catch (error)
+        {
+            throw this.InvalidParams(error)
+        }
+    }
+
+    private ParseIssueToken(dto: IssueTokenParams): { principalId: string, scopes: string[], expiresAt: Date | null }
+    {
+        try
+        {
+            const principalId = this.RequireNonEmptyString(dto.principalId, ServerConnectionHandler.PrincipalIdField)
+            const scopes = this.RequireStringArray(dto.scopes, ServerConnectionHandler.ScopesField)
+            const expiresAt = this.ParseExpiry(dto.expiresInSeconds)
+            return { principalId, scopes, expiresAt }
+        }
+        catch (error)
+        {
+            throw this.InvalidParams(error)
+        }
+    }
+
+    private ParseExpiry(value: unknown): Date | null
+    {
+        if (value === null || value === undefined)
+        {
+            return null
+        }
+        if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0)
+        {
+            throw this.InvalidParams(new AdminEnumError(ServerConnectionHandler.ExpiresInField))
+        }
+        return new Date(Date.now() + value * 1000)
+    }
+
+    private MapCreateError(error: unknown): unknown
+    {
+        if (error instanceof ResponseError)
+        {
+            return error
+        }
+        if (error instanceof Error)
+        {
+            // duplicate email/principal from the registrar: a bad request.
+            return new ResponseError(ErrorCodes.InvalidRequest, error.message)
+        }
+        return error
+    }
+
+    private ToAccountDto(account: LocalAccount): AccountDto
+    {
+        return { principalId: account.PrincipalId, email: account.Email, disabled: account.Disabled }
+    }
+
+    private ToServiceTokenSummaryDto(summary: ServiceTokenSummary): ServiceTokenSummaryDto
+    {
+        return {
+            tokenRef: summary.TokenRef,
+            principalId: summary.PrincipalId,
+            scopes: [...summary.Scopes],
+            expiresAt: summary.ExpiresAt === null ? null : summary.ExpiresAt.toISOString(),
+            revoked: summary.Revoked,
+        }
+    }
+
+    private ToTokenIssuedDto(issued: { Grant: ServiceTokenGrant, Token: string }): TokenIssuedDto
+    {
+        return {
+            tokenRef: issued.Grant.TokenRef,
+            token: issued.Token,
+            principalId: issued.Grant.PrincipalId,
+            scopes: [...issued.Grant.Scopes],
+            expiresAt: issued.Grant.ExpiresAt === null ? null : issued.Grant.ExpiresAt.toISOString(),
+        }
     }
 
     private ToGrantDto(grant: Grant): GrantDto

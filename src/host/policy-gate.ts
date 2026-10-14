@@ -118,6 +118,12 @@ export class PolicyGate
             [AdminProtocol.RevokeRole.method, administer],
             [AdminProtocol.GetConfig.method, administer],
             [AdminProtocol.SetConfig.method, administer],
+            [AdminProtocol.ListAccounts.method, administer],
+            [AdminProtocol.CreateAccount.method, administer],
+            [AdminProtocol.DisableAccount.method, administer],
+            [AdminProtocol.ListTokens.method, administer],
+            [AdminProtocol.IssueToken.method, administer],
+            [AdminProtocol.RevokeToken.method, administer],
         ])
     }
 }

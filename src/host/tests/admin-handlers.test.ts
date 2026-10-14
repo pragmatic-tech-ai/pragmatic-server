@@ -12,10 +12,18 @@ import { InMemoryTenantConfigStore } from '@pragmatic-tech-ai/todl-identity-host
 import { ServerConnectionHandler } from '../server-connection-handler.js'
 import { AdminService } from '../admin-service.js'
 
-class NullAuditSink implements IAuditSink
+class CapturingAuditSink implements IAuditSink
 {
-    public async Record(_event: AuditEvent): Promise<void>
+    public readonly Events: AuditEvent[] = []
+
+    public async Record(event: AuditEvent): Promise<void>
     {
+        this.Events.push(event)
+    }
+
+    public Serialized(): string
+    {
+        return JSON.stringify(this.Events)
     }
 }
 
@@ -24,6 +32,8 @@ class AdminFixture
     public readonly Grants = new InMemoryRoleGrantStore()
     public readonly Tenant = new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
     public readonly Configs = new InMemoryTenantConfigStore()
+    public readonly Audit = new CapturingAuditSink()
+    public readonly Accounts = new LocalAccountStore()
     public readonly Handler: ServerConnectionHandler
     public readonly Client: MessageConnection
 
@@ -32,9 +42,9 @@ class AdminFixture
         const tenant = new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
         const principal = new Principal('p1', 't1', PrincipalKind.User, new Map(), [])
         const context = new AccessContext(principal, tenant, [new Grant('p1', role, new ResourceRef(ResourceKind.Tenant, 't1', []))], new ResourceAuthorizationPolicy())
-        const accounts = new LocalAccountStore()
-        const registrar = new LocalAccountRegistrar(accounts, new EncryptedSecretStore(randomBytes(32)), new Argon2PasswordHasher(), new NullAuditSink())
-        const admin = new AdminService(this.Grants, new NullAuditSink(), this.Configs, tenant, async () => undefined, accounts, registrar, new ServiceTokenStore())
+        const accounts = this.Accounts
+        const registrar = new LocalAccountRegistrar(accounts, new EncryptedSecretStore(randomBytes(32)), new Argon2PasswordHasher(), this.Audit)
+        const admin = new AdminService(this.Grants, this.Audit, this.Configs, tenant, async () => undefined, accounts, registrar, new ServiceTokenStore())
         const languageService = { GraphChanged: { subscribe: () => ({ dispose: () => undefined }) } } as unknown as ILanguageService
         const manager = {} as unknown as SolutionManagerService
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
@@ -210,6 +220,155 @@ test('a tenant or tenantId field in the DTO is ignored: the connection tenant is
         const stored = await fx.Grants.GrantsFor('bob', fx.Tenant)
         assert.equal(stored.length, 1)
         assert.equal(stored[0].Resource.TenantId, 't1')
+    }
+    finally
+    {
+        fx.Dispose()
+    }
+})
+
+class AccountTokenCases
+{
+    public static readonly Password = 'S3cret-pass-phrase-xyz'
+    public static readonly Email = 'carol@example.com'
+    public static readonly Principal = 'carol'
+
+    public static async Create(fx: AdminFixture): Promise<void>
+    {
+        await fx.Client.sendRequest(AdminProtocol.CreateAccount, { email: AccountTokenCases.Email, principalId: AccountTokenCases.Principal, password: AccountTokenCases.Password })
+    }
+
+    public static async AccountCount(fx: AdminFixture): Promise<number>
+    {
+        return (await fx.Accounts.ListAccounts(fx.Tenant)).length
+    }
+
+    public static async Invalid(request: Promise<unknown>, field: string): Promise<void>
+    {
+        await assert.rejects(request, (e: unknown) =>
+            e instanceof ResponseError && e.code === ErrorCodes.InvalidParams && e.message.includes(field))
+    }
+}
+
+test('a Viewer is rejected on every account and token method', async () =>
+{
+    const fx = new AdminFixture(Role.Viewer)
+    try
+    {
+        const calls: Promise<unknown>[] = [
+            fx.Client.sendRequest(AdminProtocol.ListAccounts),
+            fx.Client.sendRequest(AdminProtocol.CreateAccount, { email: AccountTokenCases.Email, principalId: AccountTokenCases.Principal, password: AccountTokenCases.Password }),
+            fx.Client.sendRequest(AdminProtocol.DisableAccount, { principalId: AccountTokenCases.Principal }),
+            fx.Client.sendRequest(AdminProtocol.ListTokens),
+            fx.Client.sendRequest(AdminProtocol.IssueToken, { principalId: AccountTokenCases.Principal, scopes: [], expiresInSeconds: null }),
+            fx.Client.sendRequest(AdminProtocol.RevokeToken, { tokenRef: 'x' }),
+        ]
+        for (const call of calls)
+        {
+            await assert.rejects(call, (e: unknown) => e instanceof ResponseError && e.code === ErrorCodes.InvalidRequest)
+        }
+        assert.equal(await AccountTokenCases.AccountCount(fx), 0)
+    }
+    finally
+    {
+        fx.Dispose()
+    }
+})
+
+test('create then list shows the account; the password never reaches audit or the list', async () =>
+{
+    const fx = new AdminFixture(Role.Owner)
+    try
+    {
+        await AccountTokenCases.Create(fx)
+        const list = await fx.Client.sendRequest(AdminProtocol.ListAccounts)
+        assert.deepEqual(list, [{ principalId: AccountTokenCases.Principal, email: AccountTokenCases.Email, disabled: false }])
+        assert.equal(fx.Audit.Serialized().includes(AccountTokenCases.Password), false)
+        assert.equal(JSON.stringify(list).includes(AccountTokenCases.Password), false)
+        await fx.Client.sendRequest(AdminProtocol.DisableAccount, { principalId: AccountTokenCases.Principal })
+        assert.equal((await fx.Client.sendRequest(AdminProtocol.ListAccounts))[0]!.disabled, true)
+    }
+    finally
+    {
+        fx.Dispose()
+    }
+})
+
+test('a duplicate account create is InvalidRequest and disabling an unknown principal is InvalidRequest', async () =>
+{
+    const fx = new AdminFixture(Role.Owner)
+    try
+    {
+        await AccountTokenCases.Create(fx)
+        await assert.rejects(AccountTokenCases.Create(fx), (e: unknown) => e instanceof ResponseError && e.code === ErrorCodes.InvalidRequest)
+        await assert.rejects(fx.Client.sendRequest(AdminProtocol.DisableAccount, { principalId: 'nobody' }), (e: unknown) =>
+            e instanceof ResponseError && e.code === ErrorCodes.InvalidRequest)
+        assert.equal(await AccountTokenCases.AccountCount(fx), 1)
+    }
+    finally
+    {
+        fx.Dispose()
+    }
+})
+
+test('empty or missing account and token fields are InvalidParams naming the field', async () =>
+{
+    const fx = new AdminFixture(Role.Owner)
+    try
+    {
+        const ok = { email: AccountTokenCases.Email, principalId: AccountTokenCases.Principal, password: AccountTokenCases.Password }
+        await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.CreateAccount, { ...ok, email: '' }), 'email')
+        await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.CreateAccount, { ...ok, principalId: '' }), 'principalId')
+        await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.CreateAccount, { ...ok, password: '' }), 'password')
+        await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.DisableAccount, { principalId: '' }), 'principalId')
+        await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.IssueToken, { principalId: '', scopes: [], expiresInSeconds: null }), 'principalId')
+        await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.IssueToken, { principalId: 'a', scopes: 'x' } as never), 'scopes')
+        await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.RevokeToken, { tokenRef: '' }), 'tokenRef')
+        assert.equal(await AccountTokenCases.AccountCount(fx), 0)
+    }
+    finally
+    {
+        fx.Dispose()
+    }
+})
+
+test('a bad expiresInSeconds is InvalidParams naming the field and issues no token', async () =>
+{
+    const fx = new AdminFixture(Role.Owner)
+    try
+    {
+        for (const bad of [0, -1, 1.5, 'x'])
+        {
+            await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.IssueToken, { principalId: 'carol', scopes: [], expiresInSeconds: bad } as never), 'expiresInSeconds')
+        }
+        assert.deepEqual(await fx.Client.sendRequest(AdminProtocol.ListTokens), [])
+    }
+    finally
+    {
+        fx.Dispose()
+    }
+})
+
+test('issue returns the one-time token; list and audit never carry it; revoke flips revoked; unknown revoke is InvalidRequest', async () =>
+{
+    const fx = new AdminFixture(Role.Owner)
+    try
+    {
+        const issued = await fx.Client.sendRequest(AdminProtocol.IssueToken, { principalId: 'carol', scopes: ['read'], expiresInSeconds: 60 })
+        assert.ok(issued.token.length > 0)
+        assert.equal(issued.principalId, 'carol')
+        assert.deepEqual(issued.scopes, ['read'])
+        assert.notEqual(issued.expiresAt, null)
+        const list = await fx.Client.sendRequest(AdminProtocol.ListTokens)
+        assert.equal(list.length, 1)
+        assert.equal(list[0]!.tokenRef, issued.tokenRef)
+        assert.equal(list[0]!.revoked, false)
+        assert.equal(JSON.stringify(list).includes(issued.token), false)
+        assert.equal(fx.Audit.Serialized().includes(issued.token), false)
+        await fx.Client.sendRequest(AdminProtocol.RevokeToken, { tokenRef: issued.tokenRef })
+        assert.equal((await fx.Client.sendRequest(AdminProtocol.ListTokens))[0]!.revoked, true)
+        await assert.rejects(fx.Client.sendRequest(AdminProtocol.RevokeToken, { tokenRef: 'unknown-ref' }), (e: unknown) =>
+            e instanceof ResponseError && e.code === ErrorCodes.InvalidRequest)
     }
     finally
     {

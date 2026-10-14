@@ -20,7 +20,10 @@ class AdminHostFixture
     private static readonly ViewerSubject = 'viewer1'
     private static readonly NewSubject = 'bob'
     private static readonly TenantDisplayName = 'Tenant One'
-    private static readonly RoleEditorName = 'Editor'
+    public static readonly RoleEditorName = 'Editor'
+    public static readonly AccountEmail = 'dave@example.com'
+    public static readonly AccountPrincipal = 'dave'
+    public static readonly AccountPassword = 'e2e-pass-phrase-123'
     private static readonly WsOpenEvent = 'open'
     private static readonly WsErrorEvent = 'error'
 
@@ -102,6 +105,69 @@ test('a Viewer over a live host connection is denied admin/* and nothing persist
         await assert.rejects(client.sendRequest(AdminProtocol.GrantRole, { subject: AdminHostFixture.Bob, role: AdminHostFixture.RoleEditorName }), (e: unknown) =>
             e instanceof ResponseError && e.code === ErrorCodes.InvalidRequest)
         assert.equal((await fx.BobGrants()).length, 0)
+    }
+    finally
+    {
+        client.dispose()
+        await fx.DisposeAsync()
+    }
+})
+
+test('an Owner creates, lists and disables a local account over a live connection', async () =>
+{
+    const fx = new AdminHostFixture()
+    await fx.StartAsync()
+    const client = await fx.ConnectAs(Role.Owner)
+    try
+    {
+        await client.sendRequest(AdminProtocol.CreateAccount, { email: AdminHostFixture.AccountEmail, principalId: AdminHostFixture.AccountPrincipal, password: AdminHostFixture.AccountPassword })
+        const created = (await client.sendRequest(AdminProtocol.ListAccounts)).find(a => a.principalId === AdminHostFixture.AccountPrincipal)
+        assert.deepEqual(created, { principalId: AdminHostFixture.AccountPrincipal, email: AdminHostFixture.AccountEmail, disabled: false })
+        await client.sendRequest(AdminProtocol.DisableAccount, { principalId: AdminHostFixture.AccountPrincipal })
+        const disabled = (await client.sendRequest(AdminProtocol.ListAccounts)).find(a => a.principalId === AdminHostFixture.AccountPrincipal)
+        assert.equal(disabled?.disabled, true)
+    }
+    finally
+    {
+        client.dispose()
+        await fx.DisposeAsync()
+    }
+})
+
+test('an Owner issues, lists and revokes a service token over a live connection', async () =>
+{
+    const fx = new AdminHostFixture()
+    await fx.StartAsync()
+    const client = await fx.ConnectAs(Role.Owner)
+    try
+    {
+        const issued = await client.sendRequest(AdminProtocol.IssueToken, { principalId: AdminHostFixture.AccountPrincipal, scopes: [], expiresInSeconds: null })
+        assert.ok(issued.token.length > 0)
+        const listed = (await client.sendRequest(AdminProtocol.ListTokens)).find(t => t.tokenRef === issued.tokenRef)
+        assert.equal(listed?.revoked, false)
+        assert.equal(JSON.stringify(listed).includes(issued.token), false)
+        await client.sendRequest(AdminProtocol.RevokeToken, { tokenRef: issued.tokenRef })
+        const revoked = (await client.sendRequest(AdminProtocol.ListTokens)).find(t => t.tokenRef === issued.tokenRef)
+        assert.equal(revoked?.revoked, true)
+    }
+    finally
+    {
+        client.dispose()
+        await fx.DisposeAsync()
+    }
+})
+
+test('a Viewer over a live host connection is denied the account and token methods', async () =>
+{
+    const fx = new AdminHostFixture()
+    await fx.StartAsync()
+    const client = await fx.ConnectAs(Role.Viewer)
+    try
+    {
+        await assert.rejects(client.sendRequest(AdminProtocol.ListAccounts), (e: unknown) =>
+            e instanceof ResponseError && e.code === ErrorCodes.InvalidRequest)
+        await assert.rejects(client.sendRequest(AdminProtocol.IssueToken, { principalId: AdminHostFixture.AccountPrincipal, scopes: [], expiresInSeconds: null }), (e: unknown) =>
+            e instanceof ResponseError && e.code === ErrorCodes.InvalidRequest)
     }
     finally
     {

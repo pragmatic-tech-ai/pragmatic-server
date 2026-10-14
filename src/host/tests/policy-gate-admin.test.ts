@@ -12,7 +12,15 @@ class AdminGateFixture
         AdminProtocol.RevokeRole.method,
         AdminProtocol.GetConfig.method,
         AdminProtocol.SetConfig.method,
+        AdminProtocol.ListAccounts.method,
+        AdminProtocol.CreateAccount.method,
+        AdminProtocol.DisableAccount.method,
+        AdminProtocol.ListTokens.method,
+        AdminProtocol.IssueToken.method,
+        AdminProtocol.RevokeToken.method,
     ]
+
+    public static readonly Untabled = 'admin/accounts/bogus'
 
     public static Gate(role: Role | null): PolicyGate
     {
@@ -45,4 +53,9 @@ test('Viewer, Editor and ungranted callers are denied every admin method', () =>
             assert.equal(gate.Authorize(method).Allowed, false, `${role === null ? 'none' : Role[role]} ${method}`)
         }
     }
+})
+
+test('an untabled admin method is denied even for Owner', () =>
+{
+    assert.equal(AdminGateFixture.Gate(Role.Owner).Authorize(AdminGateFixture.Untabled).Allowed, false)
 })
