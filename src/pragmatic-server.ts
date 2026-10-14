@@ -214,13 +214,23 @@ export class PragmaticServer
     private async BaseGraphFor(name: string): Promise<IGraphQuery>
     {
         const app = await this.Applications().ApplicationFor(name)
+        // Key is name@version: packages are version-pinned, so republishing under the same app version is intentionally not re-read.
         const key = `${app.Manifest.name}${PragmaticServer.AppGraphKeySeparator}${app.Manifest.version}`
         let graph = this.appGraphs.get(key)
         if (graph === undefined)
         {
             const source = new StoragePackageSource(this.platform.CreateStorage(this.options.packagesRoot ?? PragmaticServer.DefaultPackagesDir))
-            graph = RuntimeAppGraph.BuildQuery(source, app.Manifest)
-            this.appGraphs.set(key, graph)
+            const built = RuntimeAppGraph.BuildQuery(source, app.Manifest)
+            graph = built
+            this.appGraphs.set(key, built)
+            // Evict a failed build so a later call retries (concurrent callers still share the in-flight promise).
+            built.catch(() =>
+            {
+                if (this.appGraphs.get(key) === built)
+                {
+                    this.appGraphs.delete(key)
+                }
+            })
         }
         return graph
     }

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
@@ -8,6 +8,8 @@ import {
     Repository, Cardinality, toJSON, BlobPackageStore, StoragePackageSink, StoragePackageSource, Cypher,
     type PackageDocument, type CompiledPackage,
 } from '@pragmatic-tech-ai/todl'
+import { PragmaticServer } from '../../../pragmatic-server.js'
+import { TenantPurpose } from '../../../tenancy/tenant-purpose.js'
 import { RuntimeAppGraph } from '../runtime-app-graph.js'
 import type { PragmaticAppManifest } from '../../apps/pragmatic-app-manifest.js'
 
@@ -16,6 +18,11 @@ class PublishedFixture
     public static readonly Id = 'shop'
     public static readonly Version = '1.0.0'
     public static readonly Prefix = 'pkgs-'
+    public static readonly AppName = 'demo'
+    public static readonly AppVersion = '1.0.0'
+    public static readonly AppsPrefix = 'apps-'
+    public static readonly ManifestFile = 'application.json'
+    public static readonly BaseGraphFor = 'BaseGraphFor'
     public static readonly SourceSuffix = '.todl'
     public static readonly Count = 'MATCH (w:Widget) RETURN count(w) AS n'
     public static readonly Labels = 'MATCH (w:Widget) RETURN w.label AS label'
@@ -38,12 +45,21 @@ class PublishedFixture
 
     public Manifest(): PragmaticAppManifest
     {
-        return { name: 'demo', version: '1.0.0', packages: [{ id: PublishedFixture.Id, version: PublishedFixture.Version }] }
+        return { name: PublishedFixture.AppName, version: PublishedFixture.AppVersion, packages: [{ id: PublishedFixture.Id, version: PublishedFixture.Version }] }
+    }
+
+    public readonly AppsDir = mkdtempSync(join(tmpdir(), PublishedFixture.AppsPrefix))
+
+    public WriteApp(): void
+    {
+        mkdirSync(join(this.AppsDir, PublishedFixture.AppName))
+        writeFileSync(join(this.AppsDir, PublishedFixture.AppName, PublishedFixture.ManifestFile), JSON.stringify(this.Manifest()))
     }
 
     public Dispose(): void
     {
         rmSync(this.Dir, { recursive: true, force: true })
+        rmSync(this.AppsDir, { recursive: true, force: true })
     }
 
     private static Repo(): Repository
@@ -82,6 +98,26 @@ test('published package instances are queryable via Cypher over the composed gra
     }
     finally
     {
+        fx.Dispose()
+    }
+})
+
+test('a failed app graph build is evicted so a later call retries', async () =>
+{
+    const fx = new PublishedFixture()
+    const server = new PragmaticServer({ purpose: TenantPurpose.Runtime, applicationsRoot: fx.AppsDir, packagesRoot: fx.Dir })
+    try
+    {
+        fx.WriteApp()
+        const baseGraphFor = (name: string): Promise<unknown> => (server as any)[PublishedFixture.BaseGraphFor](name)
+        await assert.rejects(baseGraphFor(PublishedFixture.AppName))
+        await fx.Publish()
+        const query = await baseGraphFor(PublishedFixture.AppName)
+        assert.ok(query)
+    }
+    finally
+    {
+        await server.Dispose()
         fx.Dispose()
     }
 })
