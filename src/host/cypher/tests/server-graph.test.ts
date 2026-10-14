@@ -24,6 +24,24 @@ class ServerGraphFixture
         return new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
     }
 
+    public static async RunEmpty(): Promise<void>
+    {
+        const packages = mkdtempSync(join(tmpdir(), ServerGraphFixture.PackagesPrefix))
+        const server = new PragmaticServer({ packagesRoot: packages })
+        try
+        {
+            await server.Start()
+            const graph = await server.Graph(ServerGraphFixture.Permissive())
+            const result = Cypher.CypherEngine.OverQuery(graph).Execute(ServerGraphFixture.CountQuery)
+            assert.equal((result.Rows[0]![0] as { Value: number }).Value, 0)
+        }
+        finally
+        {
+            await server.Dispose()
+            rmSync(packages, { recursive: true, force: true })
+        }
+    }
+
     public static async Run(): Promise<void>
     {
         const solution = mkdtempSync(join(tmpdir(), ServerGraphFixture.SolutionPrefix))
@@ -48,6 +66,11 @@ class ServerGraphFixture
         }
     }
 }
+
+test('server.Graph with no solution open is an empty graph, not an error', async () =>
+{
+    await ServerGraphFixture.RunEmpty()
+})
 
 test('server.Graph composes the open solution into a queryable graph', async () =>
 {

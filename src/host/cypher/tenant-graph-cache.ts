@@ -18,12 +18,12 @@ export class TenantGraphCache
     private subscriptions: IDisposable[] = []
     private subscribed: readonly TenantRepository[] = []
 
-    constructor(private readonly sources: () => readonly TenantRepository[]) {}
+    constructor(private readonly sources: () => readonly TenantRepository[] | Promise<readonly TenantRepository[]>) {}
 
     /** The queryable graph for `context`: the cached artifact with policy-hidden instances removed. */
     public async GraphFor(context: AccessContext): Promise<IGraphQuery>
     {
-        const entries = this.sources()
+        const entries = await this.sources()
         const artifact = this.Artifact(entries)
         const allowed = TenantGraphCache.AllowedIds(entries, context)
         const filtered: TenantGraphArtifact = {

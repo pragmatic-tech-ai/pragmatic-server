@@ -97,7 +97,6 @@ export class PragmaticServer
     private tenant: Tenant | undefined
     private oidc: OidcFrontDoor | undefined
     private graphCache: TenantGraphCache | undefined
-    private graphSources: readonly TenantRepository[] = []
 
     public constructor(options: PragmaticServerOptions)
     {
@@ -240,14 +239,15 @@ export class PragmaticServer
     }
 
     /**
-     * The tenant's queryable graph for `context`: the active solution's model, RBAC-filtered per request.
+     * The queryable graph for `context` over the tenant's ACTIVE solution (its member projects),
+     * RBAC-filtered per request. With no solution open the graph is empty. Session-scoped
+     * multi-solution querying is deferred (future SSM program).
      * The solution view is ONE Repository shared by every member, so the sources are the distinct
      * repositories reachable from members with Storage (identity-deduped), pinned to the solution name.
      */
     public async Graph(context: AccessContext): Promise<IGraphQuery>
     {
-        this.graphSources = await this.CollectGraphSources()
-        this.graphCache ??= new TenantGraphCache(() => this.graphSources)
+        this.graphCache ??= new TenantGraphCache(() => this.CollectGraphSources())
         return await this.graphCache.GraphFor(context)
     }
 
@@ -256,7 +256,7 @@ export class PragmaticServer
         const solution = (await this.Manager()).ActiveSolution
         if (solution === undefined)
         {
-            throw new Error(PragmaticServer.NoActiveSolutionForConnectors)
+            return []
         }
         const languageService = await this.LanguageService()
         const sources: TenantRepository[] = []
