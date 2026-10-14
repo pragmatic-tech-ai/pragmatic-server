@@ -5,6 +5,7 @@ import { InMemoryMessageSocket, WebSocketMessageReader, WebSocketMessageWriter, 
 import type { MessageConnection } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
+import type { LocalAccount } from '@pragmatic-tech-ai/todl-identity'
 import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import type { IAuditSink, AuditEvent } from '@pragmatic-tech-ai/todl-identity'
 import { InMemoryRoleGrantStore, LocalAccountStore, ServiceTokenStore, LocalAccountRegistrar, EncryptedSecretStore, Argon2PasswordHasher } from '@pragmatic-tech-ai/todl-identity-local'
@@ -27,13 +28,28 @@ class CapturingAuditSink implements IAuditSink
     }
 }
 
+class FaultingAccountStore extends LocalAccountStore
+{
+    public static readonly FaultEmail = 'fault@example.com'
+    public static readonly FaultMessage = 'disk exploded at /var/secret/path'
+
+    public override async CreateAccount(tenant: Tenant, email: string, principalId: string, secretRef: string): Promise<LocalAccount>
+    {
+        if (email === FaultingAccountStore.FaultEmail)
+        {
+            throw new Error(FaultingAccountStore.FaultMessage)
+        }
+        return super.CreateAccount(tenant, email, principalId, secretRef)
+    }
+}
+
 class AdminFixture
 {
     public readonly Grants = new InMemoryRoleGrantStore()
     public readonly Tenant = new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
     public readonly Configs = new InMemoryTenantConfigStore()
     public readonly Audit = new CapturingAuditSink()
-    public readonly Accounts = new LocalAccountStore()
+    public readonly Accounts = new FaultingAccountStore()
     public readonly Handler: ServerConnectionHandler
     public readonly Client: MessageConnection
 
@@ -369,6 +385,71 @@ test('issue returns the one-time token; list and audit never carry it; revoke fl
         assert.equal((await fx.Client.sendRequest(AdminProtocol.ListTokens))[0]!.revoked, true)
         await assert.rejects(fx.Client.sendRequest(AdminProtocol.RevokeToken, { tokenRef: 'unknown-ref' }), (e: unknown) =>
             e instanceof ResponseError && e.code === ErrorCodes.InvalidRequest)
+    }
+    finally
+    {
+        fx.Dispose()
+    }
+})
+
+test('a huge expiresInSeconds is InvalidParams and issues no token', async () =>
+{
+    const fx = new AdminFixture(Role.Owner)
+    try
+    {
+        await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.IssueToken, { principalId: 'carol', scopes: [], expiresInSeconds: Number.MAX_SAFE_INTEGER }), 'expiresInSeconds')
+        assert.deepEqual(await fx.Client.sendRequest(AdminProtocol.ListTokens), [])
+    }
+    finally
+    {
+        fx.Dispose()
+    }
+})
+
+test('a non-duplicate store fault on create is not InvalidRequest and is not mapped to a client error', async () =>
+{
+    const fx = new AdminFixture(Role.Owner)
+    try
+    {
+        await assert.rejects(fx.Client.sendRequest(AdminProtocol.CreateAccount, { email: FaultingAccountStore.FaultEmail, principalId: 'fault', password: AccountTokenCases.Password }), (e: unknown) =>
+            e instanceof ResponseError && e.code !== ErrorCodes.InvalidRequest)
+        await AccountTokenCases.Create(fx)
+        await assert.rejects(AccountTokenCases.Create(fx), (e: unknown) =>
+            e instanceof ResponseError && e.code === ErrorCodes.InvalidRequest && e.message === 'account already exists')
+    }
+    finally
+    {
+        fx.Dispose()
+    }
+})
+
+test('missing params and non-string fields are InvalidParams naming the field', async () =>
+{
+    const fx = new AdminFixture(Role.Owner)
+    try
+    {
+        await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.DisableAccount, undefined as never), 'principalId')
+        await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.DisableAccount, {} as never), 'principalId')
+        await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.RevokeToken, undefined as never), 'tokenRef')
+        await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.RevokeToken, {} as never), 'tokenRef')
+        await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.RevokeToken, { tokenRef: 7 } as never), 'tokenRef')
+        await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.CreateAccount, { email: 5, principalId: 'a', password: AccountTokenCases.Password } as never), 'email')
+    }
+    finally
+    {
+        fx.Dispose()
+    }
+})
+
+test('a valid expiresInSeconds is honored as roughly now plus N', async () =>
+{
+    const fx = new AdminFixture(Role.Owner)
+    try
+    {
+        const before = Date.now()
+        const issued = await fx.Client.sendRequest(AdminProtocol.IssueToken, { principalId: 'carol', scopes: [], expiresInSeconds: 3600 })
+        const expiry = new Date(issued.expiresAt as string).getTime()
+        assert.ok(Math.abs(expiry - (before + 3600 * 1000)) < 10000)
     }
     finally
     {

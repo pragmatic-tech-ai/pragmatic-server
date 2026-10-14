@@ -42,6 +42,9 @@ export class ServerConnectionHandler
     private static readonly TokenRefField = 'tokenRef'
     private static readonly ScopesField = 'scopes'
     private static readonly ExpiresInField = 'expiresInSeconds'
+    private static readonly EmailTakenMessage = 'email already registered'
+    private static readonly PrincipalTakenMessage = 'principal already registered'
+    private static readonly AccountExistsMessage = 'account already exists'
     private static readonly InvalidParamsPrefix = 'invalid params: '
     public static readonly RateLimitedCode = -32029
 
@@ -285,7 +288,7 @@ export class ServerConnectionHandler
         })
         this.guarded(AdminProtocol.DisableAccount, async p =>
         {
-            const principalId = this.RequirePrincipalId(p.principalId)
+            const principalId = this.RequirePrincipalId(p?.principalId)
             await this.AdminCall(() => admin.DisableAccount(this.actor(), principalId))
             return { ok: true as const }
         })
@@ -303,7 +306,7 @@ export class ServerConnectionHandler
         })
         this.guarded(AdminProtocol.RevokeToken, async p =>
         {
-            const tokenRef = this.RequireTokenRef(p.tokenRef)
+            const tokenRef = this.RequireTokenRef(p?.tokenRef)
             await this.AdminCall(() => admin.RevokeToken(this.actor(), tokenRef))
             return { ok: true as const }
         })
@@ -448,7 +451,12 @@ export class ServerConnectionHandler
         {
             throw this.InvalidParams(new AdminEnumError(ServerConnectionHandler.ExpiresInField))
         }
-        return new Date(Date.now() + value * 1000)
+        const expiresAt = new Date(Date.now() + value * 1000)
+        if (Number.isNaN(expiresAt.getTime()))
+        {
+            throw this.InvalidParams(new AdminEnumError(ServerConnectionHandler.ExpiresInField))
+        }
+        return expiresAt
     }
 
     private MapCreateError(error: unknown): unknown
@@ -457,10 +465,10 @@ export class ServerConnectionHandler
         {
             return error
         }
-        if (error instanceof Error)
+        if (error instanceof Error && (error.message === ServerConnectionHandler.EmailTakenMessage || error.message === ServerConnectionHandler.PrincipalTakenMessage))
         {
-            // duplicate email/principal from the registrar: a bad request.
-            return new ResponseError(ErrorCodes.InvalidRequest, error.message)
+            // duplicate email/principal from the registrar: a bad request; the raw message is not echoed.
+            return new ResponseError(ErrorCodes.InvalidRequest, ServerConnectionHandler.AccountExistsMessage)
         }
         return error
     }

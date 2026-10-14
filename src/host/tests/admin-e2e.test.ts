@@ -141,6 +141,7 @@ test('an Owner issues, lists and revokes a service token over a live connection'
     const client = await fx.ConnectAs(Role.Owner)
     try
     {
+        // service tokens are account-independent: no local account is needed for this principal.
         const issued = await client.sendRequest(AdminProtocol.IssueToken, { principalId: AdminHostFixture.AccountPrincipal, scopes: [], expiresInSeconds: null })
         assert.ok(issued.token.length > 0)
         const listed = (await client.sendRequest(AdminProtocol.ListTokens)).find(t => t.tokenRef === issued.tokenRef)
