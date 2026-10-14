@@ -1,3 +1,4 @@
+import { TenantPurpose } from '../tenancy/tenant-purpose.js'
 import { createServer } from 'node:https'
 import type { Server as HttpsServer } from 'node:https'
 import { createServer as createHttpServer } from 'node:http'
@@ -492,7 +493,8 @@ export class WorkerHost
             {
                 try
                 {
-                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors(), ctx => server.Graph(ctx), this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits)
+                    const runtime = server.Purpose() === TenantPurpose.Runtime
+                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors(), ctx => server.Graph(ctx), this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, server.Purpose(), runtime ? server.Applications() : undefined, runtime ? ((ctx, name) => server.GraphForPragmaticApp(ctx, name)) : undefined)
                     this.handlers.add(handler)
                     ws.on(WorkerHost.CloseEvent, () =>
                     {

@@ -1,7 +1,7 @@
 import {
-    createMessageConnection, NullLogger, WebSocketMessageReader, WebSocketMessageWriter, LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol, AdminProtocol, CypherProtocol,
+    createMessageConnection, NullLogger, WebSocketMessageReader, WebSocketMessageWriter, LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol, AdminProtocol, CypherProtocol, PragmaticAppProtocol,
 } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, ModelProjection, ResolvedResourceDto, GrantDto, GrantMutationDto, IdentityConfigDto, AccountDto, CreateAccountParams, ServiceTokenSummaryDto, IssueTokenParams, TokenIssuedDto, CypherQueryParams, CypherQueryResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, ModelProjection, ResolvedResourceDto, GrantDto, GrantMutationDto, IdentityConfigDto, AccountDto, CreateAccountParams, ServiceTokenSummaryDto, IssueTokenParams, TokenIssuedDto, CypherQueryParams, CypherQueryResultDto, PragmaticAppSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ResponseError, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { RequestType, NotificationType } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ResourceRef, IdentityConfig, PresentedSecret, LocalAccountNotFoundError } from '@pragmatic-tech-ai/todl-identity'
@@ -21,6 +21,8 @@ import type { ConnectorRuntime } from '../connectors/connector-runtime.js'
 import { ModelReadFilter } from './model-read-filter.js'
 import { AdminService, AdminSelfLockoutError, LastAdministratorError, AdminConfigMissingError, AdminTokenNotFoundError } from './admin-service.js'
 import { AdminEnums, AdminEnumError } from './admin-enums.js'
+import { TenantPurpose } from '../tenancy/tenant-purpose.js'
+import type { PragmaticAppsRegistry } from './apps/pragmatic-apps-registry.js'
 import { CypherLimits } from '../config/cypher-limits.js'
 import { CypherParamConverter, CypherParamError } from './cypher/cypher-param-converter.js'
 import { CypherResultMapper } from './cypher/cypher-result-mapper.js'
@@ -53,6 +55,10 @@ export class ServerConnectionHandler
     private static readonly InvalidParamsPrefix = 'invalid params: '
     private static readonly CypherField = 'cypher'
     private static readonly CypherTimeoutMessage = 'cypher query timed out'
+    private static readonly NotRuntimeMessage = 'operation requires a runtime tenant'
+    private static readonly NotDevelopmentMessage = 'operation requires a development tenant'
+    private static readonly NoApplicationSelectedMessage = 'no application selected: call application/open first'
+    private static readonly ApplicationsUnavailableMessage = 'pragmatic applications are not available on this connection'
     public static readonly RateLimitedCode = -32029
     public static readonly CypherTimeoutCode = -32030
 
@@ -69,10 +75,17 @@ export class ServerConnectionHandler
     private readonly admin: AdminService | undefined
     private readonly graphProvider: (context: AccessContext) => Promise<IGraphQuery>
     private readonly cypherLimits: CypherLimits
+    private readonly purpose: TenantPurpose
+    private readonly applications: PragmaticAppsRegistry | undefined
+    private readonly appGraphProvider: ((context: AccessContext, name: string) => Promise<IGraphQuery>) | undefined
+    private boundApp: PragmaticAppSummaryDto | undefined
 
-    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, graphProvider: (context: AccessContext) => Promise<IGraphQuery>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits)
+    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, graphProvider: (context: AccessContext) => Promise<IGraphQuery>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: TenantPurpose = TenantPurpose.Development, applications?: PragmaticAppsRegistry, appGraphProvider?: (context: AccessContext, name: string) => Promise<IGraphQuery>)
     {
         this.cypherLimits = cypherLimits ?? new CypherLimits()
+        this.purpose = purpose
+        this.applications = applications
+        this.appGraphProvider = appGraphProvider
         this.rateLimit = rateLimit
         this.admin = admin
         this.graphProvider = graphProvider
@@ -93,6 +106,7 @@ export class ServerConnectionHandler
         this.RegisterModelHandlers()
         this.RegisterConnectorHandlers()
         this.RegisterCypherHandlers()
+        this.RegisterApplicationHandlers()
         if (this.admin !== undefined)
         {
             this.RegisterAdminHandlers()
@@ -114,10 +128,10 @@ export class ServerConnectionHandler
         })
     }
 
-    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, graphProvider: (context: AccessContext) => Promise<IGraphQuery>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits): ServerConnectionHandler
+    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, graphProvider: (context: AccessContext) => Promise<IGraphQuery>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: TenantPurpose = TenantPurpose.Development, applications?: PragmaticAppsRegistry, appGraphProvider?: (context: AccessContext, name: string) => Promise<IGraphQuery>): ServerConnectionHandler
     {
         const connection = createMessageConnection(new WebSocketMessageReader(socket), new WebSocketMessageWriter(socket), NullLogger)
-        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectorsFactory, graphProvider, instrumentation, parent, audit, rateLimit, admin, cypherLimits)
+        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectorsFactory, graphProvider, instrumentation, parent, audit, rateLimit, admin, cypherLimits, purpose, applications, appGraphProvider)
         connection.listen()
         return handler
     }
@@ -172,12 +186,14 @@ export class ServerConnectionHandler
     }
 
     private guardedNoParams(type: typeof SolutionProtocol.ActiveSolution, handler: () => ActiveSolutionSummary | null): void
+    private guardedNoParams(type: typeof PragmaticAppProtocol.List, handler: () => PragmaticAppSummaryDto[] | Promise<PragmaticAppSummaryDto[]>): void
+    private guardedNoParams(type: typeof SolutionProtocol.ActiveSolution | typeof PragmaticAppProtocol.List, handler: () => unknown): void
     {
-        this.connection.onRequest(type, () => this.Dispatch(type.method, () =>
+        this.connection.onRequest(type as typeof SolutionProtocol.ActiveSolution, () => this.Dispatch(type.method, () =>
         {
             this.EnforceRate(type.method)
             this.authorize(type.method)
-            return handler()
+            return handler() as ActiveSolutionSummary | null
         }))
     }
 
@@ -268,7 +284,9 @@ export class ServerConnectionHandler
             }
             throw error
         }
-        const graph = await this.graphProvider(this.accessContext)
+        const graph = this.purpose === TenantPurpose.Runtime
+            ? await this.RequireBoundAppGraph()
+            : await this.graphProvider(this.accessContext)
         try
         {
             const engine = Cypher.CypherEngine.OverQuery(graph, { MaxVarLength: this.cypherLimits.MaxVarLength })
@@ -287,6 +305,57 @@ export class ServerConnectionHandler
             }
             throw error
         }
+    }
+
+    private RegisterApplicationHandlers(): void
+    {
+        this.guardedNoParams(PragmaticAppProtocol.List, async () =>
+        {
+            this.EnsureRuntime()
+            const summaries = await this.RequireApplications().List()
+            return summaries.map(a => ({ name: a.name, version: a.version }))
+        })
+        this.guarded(PragmaticAppProtocol.Open, async p =>
+        {
+            this.EnsureRuntime()
+            const app = await this.RequireApplications().ApplicationFor(p.name)
+            this.boundApp = { name: app.Manifest.name, version: app.Manifest.version }
+            return this.boundApp
+        })
+    }
+
+    private EnsureRuntime(): void
+    {
+        if (this.purpose !== TenantPurpose.Runtime)
+        {
+            throw new ResponseError(ErrorCodes.InvalidRequest, ServerConnectionHandler.NotRuntimeMessage)
+        }
+    }
+
+    private EnsureDevelopment(): void
+    {
+        if (this.purpose !== TenantPurpose.Development)
+        {
+            throw new ResponseError(ErrorCodes.InvalidRequest, ServerConnectionHandler.NotDevelopmentMessage)
+        }
+    }
+
+    private RequireApplications(): PragmaticAppsRegistry
+    {
+        if (this.applications === undefined)
+        {
+            throw new ResponseError(ErrorCodes.InvalidRequest, ServerConnectionHandler.ApplicationsUnavailableMessage)
+        }
+        return this.applications
+    }
+
+    private async RequireBoundAppGraph(): Promise<IGraphQuery>
+    {
+        if (this.boundApp === undefined || this.appGraphProvider === undefined)
+        {
+            throw new ResponseError(ErrorCodes.InvalidRequest, ServerConnectionHandler.NoApplicationSelectedMessage)
+        }
+        return this.appGraphProvider(this.accessContext, this.boundApp.name)
     }
 
     private RegisterAdminHandlers(): void
@@ -657,6 +726,7 @@ export class ServerConnectionHandler
     {
         this.guarded(SolutionProtocol.OpenSolution, async p =>
         {
+            this.EnsureDevelopment()
             await this.manager.OpenSolution(p.location)
             this.connectorService.Invalidate()
             return this.SummariseActiveSolution()
