@@ -1,7 +1,8 @@
 import type { IStorage, IPromptService } from '@pragmatic-tech-ai/todl-runtime'
 import type { ISqlSession, IStorageProviderRegistry } from '@pragmatic-tech-ai/todl'
 import type { IdentityStoreSet, ISecretStore, ITenantConfigStore, IAuditSink } from '@pragmatic-tech-ai/todl-identity'
-import { SqlLocalAccountStore, SqlServiceTokenStore, SqlSessionStore, SqlRoleGrantStore, SqlAuditStore, SqlTenantConfigStore } from '@pragmatic-tech-ai/todl-platform-cloud'
+import { SqlLocalAccountStore, SqlServiceTokenStore, SqlSessionStore, SqlRoleGrantStore, SqlAuditStore, SqlAuditCheckpointStore, SqlTenantConfigStore } from '@pragmatic-tech-ai/todl-platform-cloud'
+import { AuditAnchor, AuditAnchoring, HmacAuditCheckpointSigner } from '@pragmatic-tech-ai/todl-identity-host'
 import { FileEncryptedSecretStore } from '@pragmatic-tech-ai/todl-identity-node'
 import { HeadlessPromptService } from '@pragmatic-tech-ai/todl-platform-node'
 import type { PlatformServices } from './platform-services.js'
@@ -24,6 +25,8 @@ export interface CloudPlatformOptions
     readonly storage: IStorageProviderRegistry
     readonly secretManager: ISecretStore
     readonly masterKeyRef: string
+    readonly auditAnchorKeyRef?: string
+    readonly auditAnchorInterval?: number
 }
 
 /** Cloud PlatformServices bundle. Composes the object-store registry + the DB-backed identity stores
@@ -38,20 +41,26 @@ export class CloudPlatform implements PlatformServices
     private static readonly KeyByteLength = 32
     private static readonly MissingKeyMessage = 'cloud master key reference not found'
     private static readonly InvalidKeyMessage = 'cloud master key must be exactly 32 bytes'
+    private static readonly MissingAnchorKeyMessage = 'cloud audit anchor key reference not found'
+    private static readonly DefaultAnchorInterval = 1
 
     private readonly session: ISqlSession
     private readonly storage: IStorageProviderRegistry
     private readonly prompt: IPromptService
     private readonly masterKey: Buffer
+    private readonly anchorKey: string | undefined
+    private readonly anchorInterval: number
     private sqlStoresPromise: Promise<SqlIdentityStores> | undefined
     private tenantConfigPromise: Promise<ITenantConfigStore> | undefined
 
-    private constructor(session: ISqlSession, storage: IStorageProviderRegistry, masterKey: Buffer)
+    private constructor(session: ISqlSession, storage: IStorageProviderRegistry, masterKey: Buffer, anchorKey: string | undefined, anchorInterval: number)
     {
         this.session = session
         this.storage = storage
         this.prompt = new HeadlessPromptService()
         this.masterKey = masterKey
+        this.anchorKey = anchorKey
+        this.anchorInterval = anchorInterval
     }
 
     public static async Create(options: CloudPlatformOptions): Promise<CloudPlatform>
@@ -66,7 +75,17 @@ export class CloudPlatform implements PlatformServices
         {
             throw new Error(CloudPlatform.InvalidKeyMessage)
         }
-        return new CloudPlatform(options.session, options.storage, key)
+        let anchorKey: string | undefined
+        if (options.auditAnchorKeyRef !== undefined && options.auditAnchorKeyRef.length > 0)
+        {
+            const resolved = await options.secretManager.Get(options.auditAnchorKeyRef)
+            if (resolved === null)
+            {
+                throw new Error(CloudPlatform.MissingAnchorKeyMessage)
+            }
+            anchorKey = resolved
+        }
+        return new CloudPlatform(options.session, options.storage, key, anchorKey, options.auditAnchorInterval ?? CloudPlatform.DefaultAnchorInterval)
     }
 
     public CreateStorageProviderRegistry(): IStorageProviderRegistry
@@ -123,8 +142,18 @@ export class CloudPlatform implements PlatformServices
             Tokens: await SqlServiceTokenStore.Open(this.session),
             Sessions: await SqlSessionStore.Open(this.session),
             Grants: await SqlRoleGrantStore.Open(this.session),
-            Audit: await SqlAuditStore.Open(this.session),
+            Audit: await this.OpenAudit(),
         }
+    }
+
+    private async OpenAudit(): Promise<SqlAuditStore>
+    {
+        if (this.anchorKey === undefined)
+        {
+            return SqlAuditStore.Open(this.session)
+        }
+        const anchoring = new AuditAnchoring(new AuditAnchor(new HmacAuditCheckpointSigner(this.anchorKey), this.anchorInterval), await SqlAuditCheckpointStore.Open(this.session))
+        return SqlAuditStore.Open(this.session, anchoring)
     }
 
     private tenantConfigStore(): Promise<ITenantConfigStore>
