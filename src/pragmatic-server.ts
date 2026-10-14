@@ -25,7 +25,11 @@ import { SolutionConnectorPlanner } from './connectors/solution-connector-planne
 import { ConnectorRuntime } from './connectors/connector-runtime.js'
 import { PolicyConnectionResolver } from './host/policy-connection-resolver.js'
 import type { ConnectorsPolicy } from './host/connector-policy.js'
+import { Action } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
+import { IdentityEnforcement, PolicyCatalog } from '@pragmatic-tech-ai/todl-identity-engine'
+import { AccessPolicySetting } from './host/apps/access-policy-setting.js'
+import { FilteredGraphQuery } from './host/cypher/filtered-graph-query.js'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import { PragmaticAppsRegistry } from './host/apps/pragmatic-apps-registry.js'
@@ -209,6 +213,15 @@ export class PragmaticServer
         }
         this.appsRegistry ??= new PragmaticAppsRegistry(this.AppsStorage())
         return this.appsRegistry
+    }
+
+    /** The policy-filtered graph for a bound application: cached base graph, policy setting and filter rebuilt per request. */
+    public async GraphForPragmaticApp(context: AccessContext, name: string): Promise<IGraphQuery>
+    {
+        const base = await this.BaseGraphFor(name)
+        const rules = await AccessPolicySetting.Load(this.AppsStorage(), name)
+        const filter = IdentityEnforcement.Over(PolicyCatalog.FromPolicies(rules), context, Action.Read).InstanceFilter()
+        return new FilteredGraphQuery(base, filter)
     }
 
     private async BaseGraphFor(name: string): Promise<IGraphQuery>
