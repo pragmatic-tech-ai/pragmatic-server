@@ -19,6 +19,10 @@ class AdminHostFixture
     private static readonly OwnerSubject = 'owner1'
     private static readonly ViewerSubject = 'viewer1'
     private static readonly NewSubject = 'bob'
+    private static readonly TenantDisplayName = 'Tenant One'
+    private static readonly RoleEditorName = 'Editor'
+    private static readonly WsOpenEvent = 'open'
+    private static readonly WsErrorEvent = 'error'
 
     public readonly Dir = mkdtempSync(join(tmpdir(), 'ps-admin-e2e-'))
     public Host!: PragmaticServerHost
@@ -31,7 +35,7 @@ class AdminHostFixture
     public async StartAsync(): Promise<void>
     {
         process.env[AdminHostFixture.KeyEnv] = randomBytes(32).toString('base64')
-        const entries = new Map<string, TenantProvisioning>([[AdminHostFixture.TenantId, { displayName: 'Tenant One' }]])
+        const entries = new Map<string, TenantProvisioning>([[AdminHostFixture.TenantId, { displayName: AdminHostFixture.TenantDisplayName }]])
         this.Host = await PragmaticServerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir: this.Dir, masterKey: { base64Env: AdminHostFixture.KeyEnv }, provisioning: new InMemoryTenantProvisioning(entries) })
     }
 
@@ -45,8 +49,8 @@ class AdminHostFixture
         const ws = new WebSocket(`ws://${address.host}:${address.port}/?tenant=${AdminHostFixture.TenantId}`, { headers: { authorization: `Bearer ${issued.Token}` } })
         await new Promise<void>((resolve, reject) =>
         {
-            ws.once('open', () => resolve())
-            ws.once('error', reject)
+            ws.once(AdminHostFixture.WsOpenEvent, () => resolve())
+            ws.once(AdminHostFixture.WsErrorEvent, reject)
         })
         const socket = new WsMessageSocket(ws)
         const connection = createMessageConnection(new WebSocketMessageReader(socket), new WebSocketMessageWriter(socket), NullLogger)
@@ -75,7 +79,7 @@ test('an Owner over a live host connection grants a role that persists to the pa
     const client = await fx.ConnectAs(Role.Owner)
     try
     {
-        const ack = await client.sendRequest(AdminProtocol.GrantRole, { subject: AdminHostFixture.Bob, role: 'Editor' })
+        const ack = await client.sendRequest(AdminProtocol.GrantRole, { subject: AdminHostFixture.Bob, role: AdminHostFixture.RoleEditorName })
         assert.deepEqual(ack, { ok: true })
         const stored = await fx.BobGrants()
         assert.equal(stored.length, 1)
@@ -95,7 +99,7 @@ test('a Viewer over a live host connection is denied admin/* and nothing persist
     const client = await fx.ConnectAs(Role.Viewer)
     try
     {
-        await assert.rejects(client.sendRequest(AdminProtocol.GrantRole, { subject: AdminHostFixture.Bob, role: 'Editor' }), (e: unknown) =>
+        await assert.rejects(client.sendRequest(AdminProtocol.GrantRole, { subject: AdminHostFixture.Bob, role: AdminHostFixture.RoleEditorName }), (e: unknown) =>
             e instanceof ResponseError && e.code === ErrorCodes.InvalidRequest)
         assert.equal((await fx.BobGrants()).length, 0)
     }
