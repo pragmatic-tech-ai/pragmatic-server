@@ -64,7 +64,7 @@ class AdminFixture
         const languageService = { GraphChanged: { subscribe: () => ({ dispose: () => undefined }) } } as unknown as ILanguageService
         const manager = {} as unknown as SolutionManagerService
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        this.Handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, context, () => Promise.reject(new Error('none')), undefined, undefined, undefined, undefined, admin)
+        this.Handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, context, () => Promise.reject(new Error('none')), () => Promise.reject(new Error('no graph')), undefined, undefined, undefined, undefined, admin)
         this.Client = createMessageConnection(new WebSocketMessageReader(clientSocket), new WebSocketMessageWriter(clientSocket), NullLogger)
         this.Client.listen()
     }

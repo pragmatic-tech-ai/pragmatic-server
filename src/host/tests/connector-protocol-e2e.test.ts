@@ -75,7 +75,7 @@ namespace shop {
             await server.OpenSolution(dir)
             const languageService = await server.LanguageService()
             const manager = await server.Manager()
-            handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, E2e.OwnerContext(), () => server.Connectors())
+            handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, E2e.OwnerContext(), () => server.Connectors(), ctx => server.Graph(ctx))
             client = PragmaticClient.CreateOverSocket(clientSocket)
             const models = await client.Connectors()
             assert.equal(models.length, 1)

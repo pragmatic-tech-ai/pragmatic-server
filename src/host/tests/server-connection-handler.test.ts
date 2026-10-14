@@ -52,7 +52,7 @@ test('a client opens a solution and reads diagnostics over the handler', async (
     const languageService = await server.LanguageService()
     const manager = await server.Manager()
     const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-    const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, ContextFixture.Permissive(), () => Promise.reject(new Error('no connectors in this test')))
+    const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, ContextFixture.Permissive(), () => Promise.reject(new Error('no connectors in this test')), () => Promise.reject(new Error('no graph')))
     const client = PragmaticClient.CreateOverSocket(clientSocket)
     try
     {
@@ -81,7 +81,7 @@ test('disposing the handler stops graph-change pushes', async () =>
     const languageService = await server.LanguageService()
     const manager = await server.Manager()
     const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-    const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, ContextFixture.Permissive(), () => Promise.reject(new Error('no connectors in this test')))
+    const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, ContextFixture.Permissive(), () => Promise.reject(new Error('no connectors in this test')), () => Promise.reject(new Error('no graph')))
     const client = PragmaticClient.CreateOverSocket(clientSocket)
     let pushes = 0
     client.OnGraphChanged(() => { pushes += 1 })
@@ -102,7 +102,7 @@ test('an unknown method rejects', async () =>
     const languageService = await server.LanguageService()
     const manager = await server.Manager()
     const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-    const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, ContextFixture.Permissive(), () => Promise.reject(new Error('no connectors in this test')))
+    const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, ContextFixture.Permissive(), () => Promise.reject(new Error('no connectors in this test')), () => Promise.reject(new Error('no graph')))
     const connection = createMessageConnection(new WebSocketMessageReader(clientSocket), new WebSocketMessageWriter(clientSocket), NullLogger)
     connection.listen()
     try

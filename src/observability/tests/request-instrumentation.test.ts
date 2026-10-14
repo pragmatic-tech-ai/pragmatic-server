@@ -111,7 +111,7 @@ test('one successful request emits exactly one span and the success metrics with
     const languageService = await server.LanguageService()
     const manager = await server.Manager()
     const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-    const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, Fixture.Context(), () => Promise.reject(new Error('no connectors')), fixture.Instrumentation())
+    const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, Fixture.Context(), () => Promise.reject(new Error('no connectors')), () => Promise.reject(new Error('no graph')), fixture.Instrumentation())
     const client = PragmaticClient.CreateOverSocket(clientSocket)
     try
     {
@@ -208,7 +208,7 @@ test('a denied request through the real handler rejects and records one error sp
     const languageService = await server.LanguageService()
     const manager = await server.Manager()
     const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-    const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, Fixture.ViewerContext(), () => Promise.reject(new Error('no connectors')), fixture.Instrumentation())
+    const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, Fixture.ViewerContext(), () => Promise.reject(new Error('no connectors')), () => Promise.reject(new Error('no graph')), fixture.Instrumentation())
     const client = PragmaticClient.CreateOverSocket(clientSocket)
     try
     {
@@ -248,7 +248,7 @@ test('with no instrumentation attached a request still succeeds and nothing is r
     const languageService = await server.LanguageService()
     const manager = await server.Manager()
     const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-    const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, Fixture.Context(), () => Promise.reject(new Error('no connectors')))
+    const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, Fixture.Context(), () => Promise.reject(new Error('no connectors')), () => Promise.reject(new Error('no graph')))
     const client = PragmaticClient.CreateOverSocket(clientSocket)
     try
     {

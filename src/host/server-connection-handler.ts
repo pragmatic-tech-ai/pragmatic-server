@@ -8,6 +8,7 @@ import { ResourceRef, IdentityConfig, PresentedSecret, LocalAccountNotFoundError
 import type { AccessContext, Grant, Role, LocalAccount, ServiceTokenSummary, ServiceTokenGrant } from '@pragmatic-tech-ai/todl-identity'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
+import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { PolicyGate } from './policy-gate.js'
 import { AuditSurface } from './access-audit.js'
@@ -59,11 +60,13 @@ export class ServerConnectionHandler
     private readonly parent: Context | undefined
     private readonly rateLimit: RateLimitGuard | undefined
     private readonly admin: AdminService | undefined
+    protected readonly graphProvider: (context: AccessContext) => Promise<IGraphQuery>
 
-    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService)
+    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, graphProvider: (context: AccessContext) => Promise<IGraphQuery>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService)
     {
         this.rateLimit = rateLimit
         this.admin = admin
+        this.graphProvider = graphProvider
         this.instrumentation = instrumentation
         this.parent = parent
         this.connectorService = new ConnectorService(connectorsFactory)
@@ -101,10 +104,10 @@ export class ServerConnectionHandler
         })
     }
 
-    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService): ServerConnectionHandler
+    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, graphProvider: (context: AccessContext) => Promise<IGraphQuery>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService): ServerConnectionHandler
     {
         const connection = createMessageConnection(new WebSocketMessageReader(socket), new WebSocketMessageWriter(socket), NullLogger)
-        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectorsFactory, instrumentation, parent, audit, rateLimit, admin)
+        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectorsFactory, graphProvider, instrumentation, parent, audit, rateLimit, admin)
         connection.listen()
         return handler
     }

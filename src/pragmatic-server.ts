@@ -24,6 +24,10 @@ import { SolutionConnectorPlanner } from './connectors/solution-connector-planne
 import { ConnectorRuntime } from './connectors/connector-runtime.js'
 import { PolicyConnectionResolver } from './host/policy-connection-resolver.js'
 import type { ConnectorsPolicy } from './host/connector-policy.js'
+import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
+import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
+import { TenantGraphCache } from './host/cypher/tenant-graph-cache.js'
+import type { TenantRepository } from './host/cypher/tenant-graph-source.js'
 
 export interface OidcServerOptions
 {
@@ -81,6 +85,8 @@ export class PragmaticServer
     private static readonly NoMemberStorageForConnectors = 'Active solution has no member storage to read a model view from'
     private static readonly NoModelViewForConnectors = 'Active solution produced no model view'
 
+    private static readonly GraphModelVersion = '0.0.0'
+
     private readonly root: LazyCompositionRoot
     private readonly options: PragmaticServerOptions
     private readonly platform: PlatformServices
@@ -90,6 +96,8 @@ export class PragmaticServer
     private pack: ServerIdentityPack | undefined
     private tenant: Tenant | undefined
     private oidc: OidcFrontDoor | undefined
+    private graphCache: TenantGraphCache | undefined
+    private graphSources: readonly TenantRepository[] = []
 
     public constructor(options: PragmaticServerOptions)
     {
@@ -231,6 +239,42 @@ export class PragmaticServer
         return new ConnectorRuntime(models, this.root.Services())
     }
 
+    /**
+     * The tenant's queryable graph for `context`: the active solution's model, RBAC-filtered per request.
+     * The solution view is ONE Repository shared by every member, so the sources are the distinct
+     * repositories reachable from members with Storage (identity-deduped), pinned to the solution name.
+     */
+    public async Graph(context: AccessContext): Promise<IGraphQuery>
+    {
+        this.graphSources = await this.CollectGraphSources()
+        this.graphCache ??= new TenantGraphCache(() => this.graphSources)
+        return await this.graphCache.GraphFor(context)
+    }
+
+    private async CollectGraphSources(): Promise<readonly TenantRepository[]>
+    {
+        const solution = (await this.Manager()).ActiveSolution
+        if (solution === undefined)
+        {
+            throw new Error(PragmaticServer.NoActiveSolutionForConnectors)
+        }
+        const languageService = await this.LanguageService()
+        const sources: TenantRepository[] = []
+        for (const member of solution.Members.ToArray())
+        {
+            if (member.Storage === undefined)
+            {
+                continue
+            }
+            const view = await languageService.ModelView(member.Storage)
+            if (view !== undefined && !sources.some(s => s.repo === view.model))
+            {
+                sources.push({ repo: view.model, model: solution.Name, version: PragmaticServer.GraphModelVersion })
+            }
+        }
+        return sources
+    }
+
     public StateOf(moduleId: string): ModuleStateProperty | undefined
     {
         return this.root.StateOf(moduleId)
@@ -251,6 +295,7 @@ export class PragmaticServer
         }
         finally
         {
+            this.graphCache?.Dispose()
             try
             {
                 const disposable = this.options.identity?.flowStateStore as { Dispose?: () => Promise<void> } | undefined

@@ -51,7 +51,7 @@ class ModelFixture
         const languageService = await server.LanguageService()
         const manager = await server.Manager()
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, ContextFixture.Permissive(), () => Promise.reject(new Error('no connectors in this test')))
+        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, ContextFixture.Permissive(), () => Promise.reject(new Error('no connectors in this test')), () => Promise.reject(new Error('no graph')))
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         try
         {
