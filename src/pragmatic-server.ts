@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import { LazyCompositionRoot, HostKinds, ModuleStateKind } from '@pragmatic-tech-ai/todl-runtime'
 import { TenantPurpose } from './tenancy/tenant-purpose.js'
 import type { ModuleStateProperty } from '@pragmatic-tech-ai/todl-runtime'
@@ -24,6 +25,7 @@ import type { PlatformServices } from './platform/platform-services.js'
 import { ConnectorsHost } from '@pragmatic-tech-ai/todl-connectors-host'
 import type { ConnectorsHostOptions } from '@pragmatic-tech-ai/todl-connectors-host'
 import { BuiltinAdapterFactory } from './host/connectors/builtin-adapter-factory.js'
+import { BuiltinBindings } from './host/connectors/builtin-bindings.js'
 import { BuiltinStoreEngine } from './host/connectors/builtin-store-engine.js'
 import { SolutionConnectorPlanner } from './connectors/solution-connector-planner.js'
 import { ConnectorRuntime } from './connectors/connector-runtime.js'
@@ -96,13 +98,15 @@ export interface PragmaticServerOptions
 /** The node labels a Cypher query references; wildcard when any node pattern is unlabeled; parseFailed when the text is not valid Cypher (nothing is prefetched). */
 export type ReferencedLabelSet = { labels: readonly string[]; wildcard: boolean; parseFailed: boolean }
 
-type AppBase = { domain: Domain; plan: ModelConnectorPlan; nativeBase: IGraphQuery }
+type AppBase = { domain: Domain; plan: ModelConnectorPlan; nativeBase: IGraphQuery; defaultConcepts: ReadonlySet<string> }
 
 /** Headless single-tenant in-process host: composes the engine over the lazy root and opens a solution. */
 export class PragmaticServer
 {
     private static readonly DefaultPackagesDir = 'packages'
     private static readonly AppGraphKeySeparator = '@'
+    private static readonly BuiltinConnectorPrefix = '__builtin__@'
+    private static readonly AppDataDir = 'data'
     private static readonly ApplicationsRootRequiredError = 'applicationsRoot is required for a runtime tenant'
     private static readonly ErrorSeparator = '; '
     private static readonly NamespaceSeparator = '.'
@@ -280,7 +284,7 @@ export class PragmaticServer
         const snapshot = concepts.length === 0
             ? new Map()
             : await ConnectorPrefetch.ForConcepts(concepts, built.plan, services.getRequired(DataSourceAdapterCatalog.ServiceKey), services, built.domain)
-        const base = new ConnectorRuntimeGraphQuery(nativeBase, snapshot)
+        const base = new ConnectorRuntimeGraphQuery(nativeBase, snapshot, built.defaultConcepts)
         const rules = await AccessPolicySetting.Load(this.AppsStorage(), name)
         const predicate = IdentityEnforcement.Over(PolicyCatalog.FromPolicies(rules), context, Action.Read).InstanceFilter()
         const depth = await (await this.DepthFilterSource()).ReadFilterFor(context)
@@ -354,7 +358,20 @@ export class PragmaticServer
         const packagesStorage = this.platform.CreateStorage(this.options.packagesRoot ?? PragmaticServer.DefaultPackagesDir)
         const domain = await RuntimeAppGraph.BuildDomain(new StoragePackageSource(packagesStorage), manifest)
         const plan = await AppConnectorPlan.For(packagesStorage, manifest)
-        return { domain, plan, nativeBase: new GraphQuery(domain.graph) }
+        const nativeBase = new GraphQuery(domain.graph)
+        const connectorName = `${PragmaticServer.BuiltinConnectorPrefix}${manifest.name}${PragmaticServer.AppGraphKeySeparator}${manifest.version}`
+        const augmented = BuiltinBindings.Augment(plan, nativeBase, connectorName, this.DataRootFor(manifest.name), this.BuiltinEngine())
+        return { domain, plan: augmented.plan, nativeBase, defaultConcepts: augmented.defaultConcepts }
+    }
+
+    /** The per-app built-in store directory: `<applicationsRoot>/<app>/data`, the path the platform's CreateAppDataStore consumes. */
+    private DataRootFor(name: string): string
+    {
+        if (this.options.applicationsRoot === undefined)
+        {
+            throw new Error(PragmaticServer.ApplicationsRootRequiredError)
+        }
+        return join(this.options.applicationsRoot, name, PragmaticServer.AppDataDir)
     }
 
     public Tenant(): Tenant
