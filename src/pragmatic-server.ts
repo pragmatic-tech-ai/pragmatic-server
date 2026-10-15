@@ -196,7 +196,19 @@ export class PragmaticServer
         {
             return AllowAllReadFilterSource.Instance
         }
-        this.readAuth ??= this.BuildReadAuth()
+        if (this.readAuth === undefined)
+        {
+            const built = this.BuildReadAuth()
+            this.readAuth = built
+            // Evict a failed build so a later call retries (concurrent callers still share the in-flight promise).
+            built.catch(() =>
+            {
+                if (this.readAuth === built)
+                {
+                    this.readAuth = undefined
+                }
+            })
+        }
         return this.readAuth
     }
 
