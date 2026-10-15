@@ -21,7 +21,7 @@ export class FilteredReadWriteTargetSource implements IWriteTargetSource
     public async Fetch(concept: string, id: string): Promise<IInstanceView | undefined>
     {
         const graph = await this.GraphFor(concept)
-        const mirror = graph.Reflect(id) ?? this.FindBySuffix(graph, concept, id)
+        const mirror = graph.Reflect(id) ?? this.FindByKey(graph, concept, id)
         if (mirror === undefined)
         {
             return undefined
@@ -29,10 +29,26 @@ export class FilteredReadWriteTargetSource implements IWriteTargetSource
         return { Concept: mirror.type?.fullName ?? concept, Field: name => mirror.field(name)?.value }
     }
 
-    /** Graph node ids are qualified (`ns.name`, or `concept#binding#key` for connector-minted rows); a client writes the bare key. */
-    private FindBySuffix(graph: IGraphQuery, concept: string, id: string): ReturnType<IGraphQuery['Reflect']>
+    /** Graph node ids are qualified (`ns.name`, or `concept#binding#key` for connector-minted rows); a client writes the bare key. Ambiguous or absent => undefined (fail closed). */
+    private FindByKey(graph: IGraphQuery, concept: string, id: string): ReturnType<IGraphQuery['Reflect']>
     {
-        return graph.InstancesOf(concept).find(m => m.node.id.endsWith(FilteredReadWriteTargetSource.HashSep + id) || m.node.id.endsWith(FilteredReadWriteTargetSource.DotSep + id))
+        if (id === '')
+        {
+            return undefined
+        }
+        const hits = graph.InstancesOf(concept).filter(m => this.KeyMatches(m.node.id, id))
+        return hits.length === 1 ? hits[0] : undefined
+    }
+
+    private KeyMatches(nodeId: string, id: string): boolean
+    {
+        const hash = nodeId.lastIndexOf(FilteredReadWriteTargetSource.HashSep)
+        if (hash >= 0)
+        {
+            return nodeId.substring(hash + 1) === id
+        }
+        const local = nodeId.substring(nodeId.lastIndexOf(FilteredReadWriteTargetSource.DotSep) + 1)
+        return local === id || nodeId === id
     }
 
     private GraphFor(concept: string): Promise<IGraphQuery>
