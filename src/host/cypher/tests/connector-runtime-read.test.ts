@@ -270,6 +270,24 @@ test('wildcard: an unlabeled node pattern prefetches every connector concept', a
     })
 })
 
+test('wildcard + SecurityModel: the depth filter hides a connector-backed instance on the AllInstances path', async () =>
+{
+    await Case.Run(ConnectorReadFixture.Bu(), async (_fx, server) =>
+    {
+        const labels = await Case.Read(server, ConnectorReadFixture.Wildcard)
+        assert.ok(labels.includes('S1') && labels.includes('S2'), `visible widgets present in ${labels.join(',')}`)
+        assert.ok(!labels.includes('R1'), 'the root-owned connector row is hidden under the wildcard path')
+    })
+})
+
+test('an unparseable query prefetches nothing and surfaces the engine syntax error', async () =>
+{
+    await Case.Run(undefined, async (_fx, server) =>
+    {
+        await assert.rejects(Case.Read(server, 'MATCH (w:Widget RETURN'))
+    })
+})
+
 test('native concepts read unchanged and without a connector prefetch', async () =>
 {
     await Case.Run(undefined, async (_fx, server) =>

@@ -90,10 +90,10 @@ export interface PragmaticServerOptions
     connectorsPolicy?: ConnectorsPolicy
 }
 
-/** The node labels a Cypher query references; wildcard when any node pattern is unlabeled (or the text did not parse). */
-export type ReferencedLabelSet = { labels: readonly string[]; wildcard: boolean }
+/** The node labels a Cypher query references; wildcard when any node pattern is unlabeled . */
+export type ReferencedLabelSet = { labels: readonly string[]; wildcard: boolean; parseFailed: boolean }
 
-type AppBase = { domain: Domain; plan: ModelConnectorPlan }
+type AppBase = { domain: Domain; plan: ModelConnectorPlan; nativeBase: IGraphQuery }
 
 /** Headless single-tenant in-process host: composes the engine over the lazy root and opens a solution. */
 export class PragmaticServer
@@ -103,7 +103,7 @@ export class PragmaticServer
     private static readonly ApplicationsRootRequiredError = 'applicationsRoot is required for a runtime tenant'
     private static readonly ErrorSeparator = '; '
     private static readonly NamespaceSeparator = '.'
-    private static readonly NoLabels: ReferencedLabelSet = { labels: [], wildcard: false }
+    private static readonly NoLabels: ReferencedLabelSet = { labels: [], wildcard: false, parseFailed: false }
 
     private static readonly NotStartedError = 'server not started'
     private static readonly ApplicationsRuntimeOnlyError = 'applications are a runtime-tenant feature'
@@ -265,7 +265,7 @@ export class PragmaticServer
     public async GraphForPragmaticApp(context: AccessContext, name: string, labels: ReferencedLabelSet = PragmaticServer.NoLabels): Promise<IGraphQuery>
     {
         const built = await this.BaseGraphFor(name)
-        const nativeBase = new GraphQuery(built.domain.graph)
+        const nativeBase = built.nativeBase
         const concepts = PragmaticServer.ConnectorConcepts(labels, built.plan, nativeBase)
         const services = this.root.Services()
         const snapshot = concepts.length === 0
@@ -281,7 +281,7 @@ export class PragmaticServer
     /** Resolves the query's labels to the connector-backed concept ids to prefetch; a wildcard selects every connector concept. */
     private static ConnectorConcepts(labels: ReferencedLabelSet, plan: ModelConnectorPlan, base: IGraphQuery): string[]
     {
-        if (plan.Bindings.length === 0)
+        if (labels.parseFailed || plan.Bindings.length === 0)
         {
             return []
         }
@@ -345,7 +345,7 @@ export class PragmaticServer
         const packagesStorage = this.platform.CreateStorage(this.options.packagesRoot ?? PragmaticServer.DefaultPackagesDir)
         const domain = await RuntimeAppGraph.BuildDomain(new StoragePackageSource(packagesStorage), manifest)
         const plan = await AppConnectorPlan.For(packagesStorage, manifest)
-        return { domain, plan }
+        return { domain, plan, nativeBase: new GraphQuery(domain.graph) }
     }
 
     public Tenant(): Tenant
