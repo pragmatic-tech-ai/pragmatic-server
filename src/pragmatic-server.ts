@@ -27,7 +27,9 @@ import { PolicyConnectionResolver } from './host/policy-connection-resolver.js'
 import type { ConnectorsPolicy } from './host/connector-policy.js'
 import { Action } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
-import { IdentityEnforcement, PolicyCatalog } from '@pragmatic-tech-ai/todl-identity-engine'
+import { IdentityEnforcement, PolicyCatalog, CompositeInstanceFilter } from '@pragmatic-tech-ai/todl-identity-engine'
+import { TenantReadAuthorization, AllowAllReadFilterSource } from './host/cypher/read-filter-source.js'
+import type { IReadFilterSource } from './host/cypher/read-filter-source.js'
 import { AccessPolicySetting } from './host/apps/access-policy-setting.js'
 import { FilteredGraphQuery } from './host/cypher/filtered-graph-query.js'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
@@ -113,6 +115,7 @@ export class PragmaticServer
     private appsStorage: IStorage | undefined
     private appsRegistry: PragmaticAppsRegistry | undefined
     private readonly appGraphs = new Map<string, Promise<IGraphQuery>>()
+    private readAuth: TenantReadAuthorization | undefined
 
     public constructor(options: PragmaticServerOptions)
     {
@@ -187,6 +190,16 @@ export class PragmaticServer
         return this.root.Resolve(TenantConfigStoreKey)
     }
 
+    private async DepthFilterSource(): Promise<IReadFilterSource>
+    {
+        if (this.identity === undefined)
+        {
+            return AllowAllReadFilterSource.Instance
+        }
+        this.readAuth ??= new TenantReadAuthorization(await this.TenantConfigStore())
+        return this.readAuth
+    }
+
     public Purpose(): TenantPurpose
     {
         return this.options.purpose ?? TenantPurpose.Development
@@ -220,8 +233,9 @@ export class PragmaticServer
     {
         const base = await this.BaseGraphFor(name)
         const rules = await AccessPolicySetting.Load(this.AppsStorage(), name)
-        const filter = IdentityEnforcement.Over(PolicyCatalog.FromPolicies(rules), context, Action.Read).InstanceFilter()
-        return new FilteredGraphQuery(base, filter)
+        const predicate = IdentityEnforcement.Over(PolicyCatalog.FromPolicies(rules), context, Action.Read).InstanceFilter()
+        const depth = await (await this.DepthFilterSource()).ReadFilterFor(context)
+        return new FilteredGraphQuery(base, new CompositeInstanceFilter([predicate, depth]))
     }
 
     private async BaseGraphFor(name: string): Promise<IGraphQuery>
