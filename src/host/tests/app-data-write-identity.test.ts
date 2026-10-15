@@ -154,3 +154,18 @@ test('update of an out-of-BU row is denied though it is readable', async () =>
         assert.equal(out.results[0].reason, 'not authorized for this record')
     })
 })
+
+test('a create targeting an existing out-of-scope row id cannot overwrite it', async () =>
+{
+    await Case.Run(async fx =>
+    {
+        // Seed row w0 is owned by "root" (out of u1's write reach). A create with the same id and an in-scope owningBu must not overwrite it.
+        const out = await fx.Write([{ op: AppWriteOpKind.Create, concept: IdFixture.Widget, id: 'w0', fields: { label: 'hijacked', owningBu: 'sales' } }])
+        assert.equal(out.results[0].status, AppWriteStatus.Denied)
+        assert.equal(out.results[0].reason, 'not authorized for this record')
+        // w0 is untouched: still owned by root, never flipped to sales.
+        const bus = await fx.Bus()
+        assert.ok(bus.includes('root'))
+        assert.ok(!bus.includes('sales'))
+    })
+})

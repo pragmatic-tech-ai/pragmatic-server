@@ -147,10 +147,24 @@ export class RuntimeAppWriter
             results[index] = { status: AppWriteStatus.Invalid, reason: missing }
             return undefined
         }
-        const authorized = op.op === AppWriteOpKind.Create
-            ? this.gate.Authorize(PrivilegeAction.Create, this.PayloadView(op))
-            : await this.gate.AuthorizeById(PrivilegeAction.Update, op.concept, id)
-        if (!authorized)
+        if (op.op === AppWriteOpKind.Create)
+        {
+            if (op.id !== undefined && op.id.length > 0)
+            {
+                const existing = await this.gate.Resolve(op.concept, id)
+                if (existing !== undefined && !this.gate.Authorize(PrivilegeAction.Update, existing))
+                {
+                    results[index] = { status: AppWriteStatus.Denied, reason: RuntimeAppWriter.NotAuthorizedRecord }
+                    return undefined
+                }
+            }
+            if (!this.gate.Authorize(PrivilegeAction.Create, this.PayloadView(op)))
+            {
+                results[index] = { status: AppWriteStatus.Denied, reason: RuntimeAppWriter.NotAuthorizedRecord }
+                return undefined
+            }
+        }
+        else if (!(await this.gate.AuthorizeById(PrivilegeAction.Update, op.concept, id)))
         {
             results[index] = { status: AppWriteStatus.Denied, reason: RuntimeAppWriter.NotAuthorizedRecord }
             return undefined

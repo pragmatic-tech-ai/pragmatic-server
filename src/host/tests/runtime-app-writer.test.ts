@@ -314,10 +314,12 @@ class FakeGate implements IWriteInstanceGate
     constructor(
         private readonly defaults: readonly { field: string; value: string }[] = [],
         private readonly byId: (id: string) => boolean = () => true,
-        private readonly byView: (view: IInstanceView) => boolean = () => true) {}
+        private readonly byView: (action: PrivilegeAction, view: IInstanceView) => boolean = () => true,
+        private readonly existing: IInstanceView | undefined = undefined) {}
     public CreateDefaults(): readonly { field: string; value: string }[] { return this.defaults }
-    public Authorize(_action: PrivilegeAction, view: IInstanceView): boolean { this.authorizeCalls++; return this.byView(view) }
+    public Authorize(action: PrivilegeAction, view: IInstanceView): boolean { this.authorizeCalls++; return this.byView(action, view) }
     public async AuthorizeById(_action: PrivilegeAction, _concept: string, id: string): Promise<boolean> { this.authorizeByIdCalls++; return this.byId(id) }
+    public async Resolve(): Promise<IInstanceView | undefined> { return this.existing }
 }
 
 class GateFx
@@ -365,7 +367,7 @@ test('per-instance gate denies a delete of a non-fetchable row', async () =>
 test('create stamps omitted owner/BU defaults into the persisted fields', async () =>
 {
     const adapter = new FakeAdapter()
-    const gate = new FakeGate([{ field: 'owner', value: 'u1' }, { field: 'owningBu', value: 'sales' }], () => true, v => v.Field('owningBu') === 'sales')
+    const gate = new FakeGate([{ field: 'owner', value: 'u1' }, { field: 'owningBu', value: 'sales' }], () => true, (_action, v) => v.Field('owningBu') === 'sales')
     const w = GateFx.Writer(adapter, gate)
     const out = await w.Apply([{ op: AppWriteOpKind.Create, concept: 'shop.Order', fields: { title: 'x' } }])
     assert.equal(out.results[0].status, AppWriteStatus.Applied)
@@ -376,11 +378,35 @@ test('create stamps omitted owner/BU defaults into the persisted fields', async 
 test('create with an explicit out-of-scope owner is denied and does not overwrite it', async () =>
 {
     const adapter = new FakeAdapter()
-    const gate = new FakeGate([{ field: 'owningBu', value: 'sales' }], () => true, v => v.Field('owningBu') === 'sales')
+    const gate = new FakeGate([{ field: 'owningBu', value: 'sales' }], () => true, (_action, v) => v.Field('owningBu') === 'sales')
     const w = GateFx.Writer(adapter, gate)
-    const out = await w.Apply([{ op: AppWriteOpKind.Create, concept: 'shop.Order', fields: { title: 'x', owningBu: 'root' } }])
+    const op: AppWriteOpDto = { op: AppWriteOpKind.Create, concept: 'shop.Order', fields: { title: 'x', owningBu: 'root' } }
+    const out = await w.Apply([op])
     assert.equal(out.results[0].status, AppWriteStatus.Denied)
     assert.equal(adapter.batches.length, 0)
+    assert.equal((op.fields as Record<string, unknown>).owningBu, 'root')
+})
+
+test('create with a client id whose existing row is not writable is denied without touching the adapter', async () =>
+{
+    const adapter = new FakeAdapter()
+    const existing: IInstanceView = { Concept: 'shop.Order', Field: () => 'root' }
+    const gate = new FakeGate([], () => true, (action, _v) => action === PrivilegeAction.Create, existing)
+    const w = GateFx.Writer(adapter, gate)
+    const out = await w.Apply([{ op: AppWriteOpKind.Create, concept: 'shop.Order', id: 'w0', fields: { title: 'x', owningBu: 'sales' } }])
+    assert.equal(out.results[0].status, AppWriteStatus.Denied)
+    assert.equal(out.results[0].reason, 'not authorized for this record')
+    assert.equal(adapter.batches.length, 0)
+})
+
+test('create with a client id whose row does not exist is a genuine create', async () =>
+{
+    const adapter = new FakeAdapter()
+    const gate = new FakeGate([], () => true, () => true, undefined)
+    const w = GateFx.Writer(adapter, gate)
+    const out = await w.Apply([{ op: AppWriteOpKind.Create, concept: 'shop.Order', id: 'new1', fields: { title: 'x' } }])
+    assert.equal(out.results[0].status, AppWriteStatus.Applied)
+    assert.equal(adapter.batches[0].Operations[0].Key, 'new1')
 })
 
 test('coarse per-concept deny short-circuits before the per-instance gate', async () =>
@@ -407,7 +433,7 @@ test('update without id is Invalid before any gate fetch', async () =>
 test('create on a concept with no ownership rule stamps nothing and is authorized on the raw payload', async () =>
 {
     const adapter = new FakeAdapter()
-    const gate = new FakeGate([], () => true, v => v.Field('owningBu') === undefined)
+    const gate = new FakeGate([], () => true, (_action, v) => v.Field('owningBu') === undefined)
     const w = GateFx.Writer(adapter, gate)
     const out = await w.Apply([{ op: AppWriteOpKind.Create, concept: 'shop.Order', fields: { title: 'x' } }])
     assert.equal(out.results[0].status, AppWriteStatus.Applied)

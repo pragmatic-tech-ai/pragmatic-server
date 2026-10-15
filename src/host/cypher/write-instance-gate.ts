@@ -9,6 +9,7 @@ export interface IWriteInstanceGate
     CreateDefaults(concept: string): readonly { field: string; value: string }[]
     Authorize(action: PrivilegeAction, view: IInstanceView): boolean
     AuthorizeById(action: PrivilegeAction, concept: string, id: string): Promise<boolean>
+    Resolve(concept: string, id: string): Promise<IInstanceView | undefined>
 }
 
 /** Identity-configured gate: depth via the tenant evaluator, predicate via the request's Action.Write filter. */
@@ -37,6 +38,11 @@ export class AccessDepthWriteInstanceGate implements IWriteInstanceGate
         const view = await this.target.Fetch(concept, id)
         return view !== undefined && this.Authorize(action, view)
     }
+
+    public Resolve(concept: string, id: string): Promise<IInstanceView | undefined>
+    {
+        return this.target.Fetch(concept, id)
+    }
 }
 
 /** No identity subsystem: every record passes, no stamping, no fetch. Preserves SP-3c(3). */
@@ -57,5 +63,10 @@ export class AllowAllWriteInstanceGate implements IWriteInstanceGate
     public async AuthorizeById(): Promise<boolean>
     {
         return true
+    }
+
+    public async Resolve(): Promise<IInstanceView | undefined>
+    {
+        return undefined
     }
 }

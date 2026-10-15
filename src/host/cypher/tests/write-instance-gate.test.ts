@@ -5,6 +5,7 @@ import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import type { IInstanceView, IInstanceFilter } from '@pragmatic-tech-ai/todl'
 import { AccessDepthEvaluator } from '@pragmatic-tech-ai/todl-identity-engine'
 import { AccessDepthWriteInstanceGate, AllowAllWriteInstanceGate } from '../write-instance-gate.js'
+import type { IWriteInstanceGate } from '../write-instance-gate.js'
 import type { IWriteTargetSource } from '../../write-target-source.js'
 
 const Widget = 'shop.Widget'
@@ -84,8 +85,9 @@ test('CreateDefaults forwards the evaluator stamp', () =>
 
 test('AllowAll gate allows everything with no stamping', async () =>
 {
-    const gate = AllowAllWriteInstanceGate.Instance
-    assert.deepEqual(gate.CreateDefaults(), [])
-    assert.equal(gate.Authorize(), true)
-    assert.equal(await gate.AuthorizeById(), true)
+    const gate: IWriteInstanceGate = AllowAllWriteInstanceGate.Instance
+    assert.deepEqual(gate.CreateDefaults(Widget), [])
+    assert.equal(gate.Authorize(PrivilegeAction.Update, Fx.View('sales')), true)
+    assert.equal(await gate.AuthorizeById(PrivilegeAction.Update, Widget, 'anything'), true)
+    assert.equal(await gate.Resolve('x', 'y'), undefined)
 })
