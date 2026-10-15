@@ -49,8 +49,12 @@ export class TenantReadAuthorization implements IReadFilterSource
     private async Build(tenantId: string): Promise<AccessDepthEvaluator>
     {
         const config = await this.store.Get(tenantId)
-        const model: ISecurityModelConfig | undefined = config?.SecurityModel
-        return model === undefined ? AccessDepthEvaluator.DenyAll() : AccessDepthEvaluator.FromConfig(model)
+        const model: ISecurityModelConfig | null | undefined = config?.SecurityModel
+        if (model === undefined || model === null)
+        {
+            return AccessDepthEvaluator.DenyAll()
+        }
+        return AccessDepthEvaluator.FromConfig(model)
     }
 }
 

@@ -6,11 +6,17 @@ import { TenantReadAuthorization, AllowAllReadFilterSource } from '../read-filte
 
 class FakeStore implements ITenantConfigStore
 {
+    private static readonly FailureMessage = 'store unavailable'
+
     public gets = 0
-    constructor(private readonly model: ISecurityModelConfig | undefined, private readonly returnNull = false) {}
+    constructor(private readonly model: ISecurityModelConfig | undefined, private readonly returnNull = false, private readonly failFirst = false) {}
     public async Get(): Promise<IdentityConfig | null>
     {
         this.gets++
+        if (this.failFirst && this.gets === 1)
+        {
+            throw new Error(FakeStore.FailureMessage)
+        }
         if (this.returnNull) return null
         return new IdentityConfig('local', DelegationDepth.FullAuthz, new Map(), new Map(), new Map(), this.model)
     }
@@ -21,23 +27,26 @@ class FakeStore implements ITenantConfigStore
 class ReadFilterFixture
 {
     public static readonly Concept = 'Widget'
+    public static readonly PrincipalId = 'p1'
+    public static readonly TenantId = 't1'
+    public static readonly RootBusinessUnit = 'root'
     public static readonly Widget = { Concept: ReadFilterFixture.Concept, Field: () => undefined }
 
-    public static Context(principalId: string): AccessContext
+    public static Context(principalId: string, tenantId: string = ReadFilterFixture.TenantId): AccessContext
     {
-        const tenant = new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
-        const principal = new Principal(principalId, 't1', PrincipalKind.User, new Map(), [])
-        const grants = [new Grant(principalId, Role.Owner, new ResourceRef(ResourceKind.Tenant, 't1', []))]
+        const tenant = new Tenant(tenantId, TenantKind.SelfHosted, 'Tenant One')
+        const principal = new Principal(principalId, tenantId, PrincipalKind.User, new Map(), [])
+        const grants = [new Grant(principalId, Role.Owner, new ResourceRef(ResourceKind.Tenant, tenantId, []))]
         return new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
     }
 
     public static OrgModel(principalId: string): ISecurityModelConfig
     {
         return {
-            businessUnits: [{ id: 'root', name: 'Root' }],
+            businessUnits: [{ id: ReadFilterFixture.RootBusinessUnit, name: 'Root' }],
             teams: [],
-            membership: { claimsMapping: [], overrides: [{ principalId, homeBusinessUnit: 'root', teams: [] }] },
-            ownershipRules: [{ concept: ReadFilterFixture.Concept, owningBusinessUnit: { kind: OwnershipSourceKind.Fixed, value: 'root' } }],
+            membership: { claimsMapping: [], overrides: [{ principalId, homeBusinessUnit: ReadFilterFixture.RootBusinessUnit, teams: [] }] },
+            ownershipRules: [{ concept: ReadFilterFixture.Concept, owningBusinessUnit: { kind: OwnershipSourceKind.Fixed, value: ReadFilterFixture.RootBusinessUnit } }],
             roles: [{ id: 'reader', name: 'Reader', privileges: [{ action: PrivilegeAction.Read, concept: ReadFilterFixture.Concept, level: AccessLevel.Organization }] }],
             roleAssignment: { claimsMapping: [], overrides: [{ principalId, roles: ['reader'] }], teamRoles: [] },
         }
@@ -46,36 +55,62 @@ class ReadFilterFixture
 
 test('TenantReadAuthorization allows under a granting SecurityModel', async () =>
 {
-    const auth = new TenantReadAuthorization(new FakeStore(ReadFilterFixture.OrgModel('p1')))
-    const filter = await auth.ReadFilterFor(ReadFilterFixture.Context('p1'))
+    const auth = new TenantReadAuthorization(new FakeStore(ReadFilterFixture.OrgModel(ReadFilterFixture.PrincipalId)))
+    const filter = await auth.ReadFilterFor(ReadFilterFixture.Context(ReadFilterFixture.PrincipalId))
     assert.equal(filter.Keep(ReadFilterFixture.Widget), true)
 })
 
 test('TenantReadAuthorization denies all when SecurityModel is absent', async () =>
 {
     const auth = new TenantReadAuthorization(new FakeStore(undefined))
-    const filter = await auth.ReadFilterFor(ReadFilterFixture.Context('p1'))
+    const filter = await auth.ReadFilterFor(ReadFilterFixture.Context(ReadFilterFixture.PrincipalId))
     assert.equal(filter.Keep(ReadFilterFixture.Widget), false)
 })
 
 test('TenantReadAuthorization denies all when Get returns null', async () =>
 {
     const auth = new TenantReadAuthorization(new FakeStore(undefined, true))
-    const filter = await auth.ReadFilterFor(ReadFilterFixture.Context('p1'))
+    const filter = await auth.ReadFilterFor(ReadFilterFixture.Context(ReadFilterFixture.PrincipalId))
     assert.equal(filter.Keep(ReadFilterFixture.Widget), false)
 })
 
 test('TenantReadAuthorization builds the evaluator once per tenant', async () =>
 {
-    const store = new FakeStore(ReadFilterFixture.OrgModel('p1'))
+    const store = new FakeStore(ReadFilterFixture.OrgModel(ReadFilterFixture.PrincipalId))
     const auth = new TenantReadAuthorization(store)
-    await auth.ReadFilterFor(ReadFilterFixture.Context('p1'))
-    await auth.ReadFilterFor(ReadFilterFixture.Context('p1'))
+    await auth.ReadFilterFor(ReadFilterFixture.Context(ReadFilterFixture.PrincipalId))
+    await auth.ReadFilterFor(ReadFilterFixture.Context(ReadFilterFixture.PrincipalId))
     assert.equal(store.gets, 1)
+})
+
+test('TenantReadAuthorization builds a separate evaluator per tenant', async () =>
+{
+    const store = new FakeStore(ReadFilterFixture.OrgModel(ReadFilterFixture.PrincipalId))
+    const auth = new TenantReadAuthorization(store)
+    await auth.ReadFilterFor(ReadFilterFixture.Context(ReadFilterFixture.PrincipalId))
+    await auth.ReadFilterFor(ReadFilterFixture.Context(ReadFilterFixture.PrincipalId))
+    await auth.ReadFilterFor(ReadFilterFixture.Context(ReadFilterFixture.PrincipalId, 't2'))
+    assert.equal(store.gets, 2)
+})
+
+test('TenantReadAuthorization retries after a failed build', async () =>
+{
+    const store = new FakeStore(ReadFilterFixture.OrgModel(ReadFilterFixture.PrincipalId), false, true)
+    const auth = new TenantReadAuthorization(store)
+    await assert.rejects(auth.ReadFilterFor(ReadFilterFixture.Context(ReadFilterFixture.PrincipalId)))
+    const filter = await auth.ReadFilterFor(ReadFilterFixture.Context(ReadFilterFixture.PrincipalId))
+    assert.equal(filter.Keep(ReadFilterFixture.Widget), true)
+})
+
+test('TenantReadAuthorization denies a principal with no role assignment', async () =>
+{
+    const auth = new TenantReadAuthorization(new FakeStore(ReadFilterFixture.OrgModel(ReadFilterFixture.PrincipalId)))
+    const filter = await auth.ReadFilterFor(ReadFilterFixture.Context('p2'))
+    assert.equal(filter.Keep(ReadFilterFixture.Widget), false)
 })
 
 test('AllowAllReadFilterSource keeps everything', async () =>
 {
-    const filter = await AllowAllReadFilterSource.Instance.ReadFilterFor(ReadFilterFixture.Context('p1'))
+    const filter = await AllowAllReadFilterSource.Instance.ReadFilterFor(ReadFilterFixture.Context(ReadFilterFixture.PrincipalId))
     assert.equal(filter.Keep(ReadFilterFixture.Widget), true)
 })
