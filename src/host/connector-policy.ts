@@ -18,6 +18,6 @@ export class ConnectorsPolicy
      *  Absence of an explicit policy behaves exactly as pre-6C. */
     public static Default(): ConnectorsPolicy
     {
-        return new ConnectorsPolicy([DataSourceKind.Sql, DataSourceKind.Rest, DataSourceKind.Cypher, DataSourceKind.Document, DataSourceKind.Builtin], false, false, [])
+        return new ConnectorsPolicy([DataSourceKind.Sql, DataSourceKind.Rest, DataSourceKind.Cypher, DataSourceKind.Document], false, false, [])
     }
 }

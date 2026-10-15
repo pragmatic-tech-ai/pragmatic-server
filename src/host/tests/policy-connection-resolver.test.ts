@@ -40,6 +40,17 @@ test('an adapter kind outside the allowlist is rejected', async () =>
     await assert.rejects(() => resolver.Resolve(Specs.Inline(DataSourceKind.Sql), Specs.Services), /adapter-not-allowed/)
 })
 
+test('the built-in kind is exempt from a restrictive policy but external kinds are still gated', async () =>
+{
+    const policy = new ConnectorsPolicy([DataSourceKind.Rest], true, false, [])
+    const resolver = new PolicyConnectionResolver(policy)
+    const builtin: ConnectorSpec = { Name: 'default', Kind: DataSourceKind.Builtin, Config: { dataRoot: 'x' }, Connection: undefined }
+    const resolved = await resolver.Resolve(builtin, Specs.Services)
+    assert.equal(resolved.Kind, DataSourceKind.Builtin)
+    assert.equal(resolved.Config.dataRoot, 'x')
+    await assert.rejects(() => resolver.Resolve(Specs.Inline(DataSourceKind.Sql), Specs.Services), /adapter-not-allowed/)
+})
+
 test('an allowed adapter kind passes the allowlist', async () =>
 {
     const policy = new ConnectorsPolicy([DataSourceKind.Sql], false, false, [])

@@ -19,6 +19,9 @@ class BuiltinFixture
 {
     private static readonly Prefix = 'builtin-factory-'
     private static readonly Source = 'Customer'
+    private static readonly RowKey = 'c1'
+    private static readonly NameField = 'name'
+    private static readonly NameValue = 'Ada'
     private static readonly IdKey = 'id'
     private static readonly MasterRef = 'cluster/master-key'
     private static readonly CloudMessage = /built-in store is not available on the cloud platform/
@@ -35,13 +38,13 @@ class BuiltinFixture
             const result = await adapter.Apply({
                 Source: BuiltinFixture.Source,
                 IdKey: BuiltinFixture.IdKey,
-                Operations: [{ Kind: WriteOperationKind.Upsert, Key: 'c1', Fields: { name: 'Ada' } }]
+                Operations: [{ Kind: WriteOperationKind.Upsert, Key: BuiltinFixture.RowKey, Fields: { [BuiltinFixture.NameField]: BuiltinFixture.NameValue } }]
             })
             assert.equal(result.Applied, 1)
-            const rows = await adapter.Query({ Source: BuiltinFixture.Source, Fields: [BuiltinFixture.IdKey, 'name'] })
+            const rows = await adapter.Query({ Source: BuiltinFixture.Source, Fields: [BuiltinFixture.IdKey, BuiltinFixture.NameField] })
             assert.equal(rows.length, 1)
-            assert.equal(rows[0]['name'], 'Ada')
-            assert.equal(rows[0][BuiltinFixture.IdKey], 'c1')
+            assert.equal(rows[0][BuiltinFixture.NameField], BuiltinFixture.NameValue)
+            assert.equal(rows[0][BuiltinFixture.IdKey], BuiltinFixture.RowKey)
             await adapter.Dispose()
         }
         finally

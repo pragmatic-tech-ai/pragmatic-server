@@ -1,4 +1,4 @@
-import { InlineConnectionResolver } from '@pragmatic-tech-ai/todl'
+import { InlineConnectionResolver, DataSourceKind } from '@pragmatic-tech-ai/todl'
 import type { IConnectionResolver, ConnectorSpec, ResolvedConnection } from '@pragmatic-tech-ai/todl'
 import type { IServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import type { ConnectorsPolicy } from './connector-policy.js'
@@ -28,6 +28,12 @@ export class PolicyConnectionResolver implements IConnectionResolver
 
     public Resolve(spec: ConnectorSpec, services: IServiceProvider): Promise<ResolvedConnection>
     {
+        // The built-in default store is server-internal (a local file/SQLite under the tenant's own data root:
+        // no external reach, no credential), so it is exempt from the external-adapter policy.
+        if (spec.Kind === DataSourceKind.Builtin)
+        {
+            return this.inner.Resolve(spec, services)
+        }
         if (!this.policy.AdapterAllowlist.includes(spec.Kind))
         {
             return Promise.reject(new Error(`${PolicyConnectionResolver.AdapterNotAllowed}: ${spec.Kind}`))
