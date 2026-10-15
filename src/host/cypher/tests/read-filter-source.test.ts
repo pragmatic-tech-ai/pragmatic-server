@@ -30,6 +30,7 @@ class ReadFilterFixture
     public static readonly PrincipalId = 'p1'
     public static readonly TenantId = 't1'
     public static readonly RootBusinessUnit = 'root'
+    public static readonly ReaderRoleId = 'reader'
     public static readonly Widget = { Concept: ReadFilterFixture.Concept, Field: () => undefined }
 
     public static Context(principalId: string, tenantId: string = ReadFilterFixture.TenantId): AccessContext
@@ -47,8 +48,8 @@ class ReadFilterFixture
             teams: [],
             membership: { claimsMapping: [], overrides: [{ principalId, homeBusinessUnit: ReadFilterFixture.RootBusinessUnit, teams: [] }] },
             ownershipRules: [{ concept: ReadFilterFixture.Concept, owningBusinessUnit: { kind: OwnershipSourceKind.Fixed, value: ReadFilterFixture.RootBusinessUnit } }],
-            roles: [{ id: 'reader', name: 'Reader', privileges: [{ action: PrivilegeAction.Read, concept: ReadFilterFixture.Concept, level: AccessLevel.Organization }] }],
-            roleAssignment: { claimsMapping: [], overrides: [{ principalId, roles: ['reader'] }], teamRoles: [] },
+            roles: [{ id: ReadFilterFixture.ReaderRoleId, name: 'Reader', privileges: [{ action: PrivilegeAction.Read, concept: ReadFilterFixture.Concept, level: AccessLevel.Organization }] }],
+            roleAssignment: { claimsMapping: [], overrides: [{ principalId, roles: [ReadFilterFixture.ReaderRoleId] }], teamRoles: [] },
         }
     }
 }
