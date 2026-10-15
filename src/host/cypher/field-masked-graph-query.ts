@@ -18,7 +18,13 @@ export class AllowAllFieldReadMask implements IFieldReadMask
     }
 }
 
-/** Wraps a mirror so denied scalar fields read as absent (field()/fields() and the raw node.attrs). */
+/**
+ * Wraps a mirror so denied fields read as absent (field()/fields() and the raw node attrs/refs).
+ * Divergence from FilteredGraphQuery: the filter fails open because an untyped node is not a restricted instance, but this mask
+ * fails CLOSED: an indeterminate concept means field authorization cannot be verified, so nothing is exposed.
+ * Boundaries: class/TermInfo fixed values are schema-level and outside the field mask; Search matches the UNMASKED inner graph,
+ * so it is not a safe egress for secured data (the runtime read egress is Cypher via field()/fields()/node only).
+ */
 export class MaskedMirror implements IInstanceMirror
 {
     constructor(private readonly inner: IInstanceMirror, private readonly mask: IFieldReadMask) {}
@@ -39,7 +45,7 @@ export class MaskedMirror implements IInstanceMirror
         const source = this.inner.node
         if (concept === undefined)
         {
-            return source
+            return source.refs === undefined ? { ...source, attrs: {} } : { ...source, attrs: {}, refs: {} }
         }
         const attrs: Record<string, Scalar> = {}
         for (const key of Object.keys(source.attrs))
@@ -49,13 +55,25 @@ export class MaskedMirror implements IInstanceMirror
                 attrs[key] = source.attrs[key]
             }
         }
-        return { ...source, attrs }
+        if (source.refs === undefined)
+        {
+            return { ...source, attrs }
+        }
+        const refs: Record<string, string[]> = {}
+        for (const member of Object.keys(source.refs))
+        {
+            if (this.mask.CanRead(concept, member))
+            {
+                refs[member] = source.refs[member]
+            }
+        }
+        return { ...source, attrs, refs }
     }
 
     public field(name: string): FieldView | undefined
     {
         const concept = this.inner.type?.fullName
-        if (concept !== undefined && !this.mask.CanRead(concept, name))
+        if (concept === undefined || !this.mask.CanRead(concept, name))
         {
             return undefined
         }
@@ -67,13 +85,16 @@ export class MaskedMirror implements IInstanceMirror
         const concept = this.inner.type?.fullName
         if (concept === undefined)
         {
-            return this.inner.fields()
+            return []
         }
         return this.inner.fields().filter(fv => this.mask.CanRead(concept, fv.field.name))
     }
 }
 
-/** Outermost read decorator: masks every mirror the inner graph returns. Schema queries pass through. */
+/**
+ * Outermost read decorator: masks every mirror the inner graph returns. Schema queries pass through. Scalar and whole-node reads
+ * are masked; relationship traversal (Refs/Referrers) returns targets ungoverned by field security (a separate concern).
+ */
 export class FieldMaskedGraphQuery implements IGraphQuery
 {
     constructor(private readonly inner: IGraphQuery, private readonly mask: IFieldReadMask) {}

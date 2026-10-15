@@ -63,3 +63,36 @@ test('allow-all mask returns every field unchanged', () =>
     const masked = new MaskedMirror(inner, AllowAllFieldReadMask.Instance)
     assert.equal((masked.field('cost') as { value: string }).value, '99')
 })
+
+class UntypedMirror
+{
+    public get type(): undefined { return undefined }
+    public get class(): undefined { return undefined }
+    public get node(): unknown { return { id: 'u1', type: 'x', attrs: { cost: '99' }, refs: { link: ['a'] } } }
+    public field(): unknown { return { field: { name: 'cost' }, value: '99' } }
+    public fields(): unknown[] { return [{ field: { name: 'cost' }, value: '99' }] }
+}
+
+test('an indeterminate concept fails closed on field(), fields() and node', () =>
+{
+    const masked = new MaskedMirror(new UntypedMirror() as never, AllowAllFieldReadMask.Instance)
+    assert.equal(masked.field('cost'), undefined)
+    assert.deepEqual(masked.fields(), [])
+    assert.deepEqual(masked.node.attrs, {})
+    assert.deepEqual(masked.node.refs, {})
+})
+
+class LinkHidden implements IFieldReadMask
+{
+    public CanRead(_concept: string, field: string): boolean { return field !== 'link' }
+}
+
+test('whole-node refs honor the mask', () =>
+{
+    class Typed extends FakeMirror
+    {
+        public override get node(): unknown { return { id: 'w1', type: 'shop.Widget', attrs: {}, refs: { link: ['a'], other: ['b'] } } }
+    }
+    const masked = new MaskedMirror(new Typed('shop.Widget', {}) as never, new LinkHidden())
+    assert.deepEqual(masked.node.refs, { other: ['b'] })
+})

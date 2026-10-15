@@ -24,6 +24,9 @@ class FieldSecurityFixture
     private static readonly AppName = 'demo'
     private static readonly ManifestFile = 'application.json'
     private static readonly SourceSuffix = '.todl'
+    private static readonly Namespace = 'shop'
+    private static readonly Qualified = 'shop.Widget'
+    private static readonly OrderQuery = 'MATCH (w:Widget) RETURN w.label AS label, w.secret AS secret ORDER BY w.secret'
     private static readonly Label = 'label'
     private static readonly Secret = 'secret'
     private static readonly SecretValue = 'hush'
@@ -49,7 +52,7 @@ class FieldSecurityFixture
         return FieldSecurityFixture.SecretValue
     }
 
-    public async Setup(): Promise<PragmaticServer>
+    public async Setup(identityOn = true): Promise<PragmaticServer>
     {
         PpSecurityHarness.SetKey()
         const doc = toJSON(FieldSecurityFixture.Repo()) as PackageDocument
@@ -65,10 +68,13 @@ class FieldSecurityFixture
         }))
         this.server = new PragmaticServer({
             packagesRoot: this.packages, applicationsRoot: this.apps, purpose: TenantPurpose.Runtime,
-            identity: PpSecurityHarness.Identity(this.identityRoot),
+            identity: identityOn ? PpSecurityHarness.Identity(this.identityRoot) : undefined,
         })
         await this.server.Start()
-        await PpSecurityHarness.Seed(this.server, FieldSecurityFixture.Model())
+        if (identityOn)
+        {
+            await PpSecurityHarness.Seed(this.server, FieldSecurityFixture.Model())
+        }
         return this.server
     }
 
@@ -84,6 +90,12 @@ class FieldSecurityFixture
     public static Rows(graph: IGraphQuery): Array<[string, string | null]>
     {
         return Cypher.CypherEngine.OverQuery(graph).Execute(FieldSecurityFixture.ReturnQuery).Rows
+            .map(r => [FieldSecurityFixture.Text(r[0]), r[1] instanceof Cypher.ScalarValue && r[1].Value !== null ? String(r[1].Value) : null] as [string, string | null])
+    }
+
+    public static Ordered(graph: IGraphQuery): Array<[string, string | null]>
+    {
+        return Cypher.CypherEngine.OverQuery(graph).Execute(FieldSecurityFixture.OrderQuery).Rows
             .map(r => [FieldSecurityFixture.Text(r[0]), r[1] instanceof Cypher.ScalarValue && r[1].Value !== null ? String(r[1].Value) : null] as [string, string | null])
     }
 
@@ -105,6 +117,8 @@ class FieldSecurityFixture
         const reader = base.roles[0].id
         return {
             ...base,
+            ownershipRules: base.ownershipRules.map(r => ({ ...r, concept: FieldSecurityFixture.Qualified })),
+            roles: base.roles.map(r => ({ ...r, privileges: r.privileges.map(p => ({ ...p, concept: FieldSecurityFixture.Qualified })) })),
             membership: { claimsMapping: [], overrides: [
                 { principalId: FieldSecurityFixture.Plain, homeBusinessUnit: PpSecurityHarness.SalesBu, teams: [] },
                 { principalId: FieldSecurityFixture.Granted, homeBusinessUnit: PpSecurityHarness.SalesBu, teams: [] },
@@ -114,8 +128,8 @@ class FieldSecurityFixture
                 { principalId: FieldSecurityFixture.Granted, roles: [reader] },
             ] },
             fieldSecurity: {
-                securedFields: [{ concept: PpSecurityHarness.Concept, field: FieldSecurityFixture.Secret }],
-                profiles: [{ id: FieldSecurityFixture.Profile, name: FieldSecurityFixture.ProfileName, grants: [{ concept: PpSecurityHarness.Concept, field: FieldSecurityFixture.Secret, read: true }] }],
+                securedFields: [{ concept: FieldSecurityFixture.Qualified, field: FieldSecurityFixture.Secret }],
+                profiles: [{ id: FieldSecurityFixture.Profile, name: FieldSecurityFixture.ProfileName, grants: [{ concept: FieldSecurityFixture.Qualified, field: FieldSecurityFixture.Secret, read: true }] }],
                 profileAssignment: { claimsMapping: [], teamProfiles: [], overrides: [{ principalId: FieldSecurityFixture.Granted, profiles: [FieldSecurityFixture.Profile] }] },
             },
         }
@@ -125,12 +139,12 @@ class FieldSecurityFixture
     {
         const repo = new Repository()
         repo.builder()
-            .defineConcept(PpSecurityHarness.Concept)
-            .addField(PpSecurityHarness.Concept, PpSecurityHarness.OwningBuField, 'string', Cardinality.Optional)
-            .addField(PpSecurityHarness.Concept, FieldSecurityFixture.Label, 'string', Cardinality.Optional)
-            .addField(PpSecurityHarness.Concept, FieldSecurityFixture.Secret, 'string', Cardinality.Optional)
-            .setNamespace('shop')
-            .assertInstance(PpSecurityHarness.Concept, 'shop.w1')
+            .setNamespace(FieldSecurityFixture.Namespace)
+            .defineConcept(FieldSecurityFixture.Qualified)
+            .addField(FieldSecurityFixture.Qualified, PpSecurityHarness.OwningBuField, 'string', Cardinality.Optional)
+            .addField(FieldSecurityFixture.Qualified, FieldSecurityFixture.Label, 'string', Cardinality.Optional)
+            .addField(FieldSecurityFixture.Qualified, FieldSecurityFixture.Secret, 'string', Cardinality.Optional)
+            .assertInstance(FieldSecurityFixture.Qualified, 'shop.w1')
             .setField('shop.w1', PpSecurityHarness.OwningBuField, PpSecurityHarness.SalesBu)
             .setField('shop.w1', FieldSecurityFixture.Label, 'W1')
             .setField('shop.w1', FieldSecurityFixture.Secret, FieldSecurityFixture.SecretValue)
@@ -148,6 +162,7 @@ test('a principal without a granting profile sees the secured field as null and 
         const graph = await server.GraphForPragmaticApp(PpSecurityHarness.Context(FieldSecurityFixture.Plain), FieldSecurityFixture.Name)
         assert.deepEqual(FieldSecurityFixture.Rows(graph), [['W1', null]])
         assert.deepEqual(FieldSecurityFixture.Matches(graph), [])
+        assert.deepEqual(FieldSecurityFixture.Ordered(graph), [['W1', null]])
     }
     finally
     {
@@ -178,6 +193,21 @@ test('the unmasked internal fetch still sees the secured field (write-gate path)
     {
         const server = await fx.Setup()
         const graph = await server.GraphForPragmaticApp(PpSecurityHarness.Context(FieldSecurityFixture.Plain), FieldSecurityFixture.Name, undefined, false)
+        assert.deepEqual(FieldSecurityFixture.Rows(graph), [['W1', FieldSecurityFixture.Hidden]])
+    }
+    finally
+    {
+        await fx.Dispose()
+    }
+})
+
+test('identity off: no mask wrapper, the secured field reads unmasked', async () =>
+{
+    const fx = new FieldSecurityFixture()
+    try
+    {
+        const server = await fx.Setup(false)
+        const graph = await server.GraphForPragmaticApp(PpSecurityHarness.Context(FieldSecurityFixture.Plain), FieldSecurityFixture.Name)
         assert.deepEqual(FieldSecurityFixture.Rows(graph), [['W1', FieldSecurityFixture.Hidden]])
     }
     finally
