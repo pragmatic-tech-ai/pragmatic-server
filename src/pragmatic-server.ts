@@ -37,6 +37,9 @@ import { IdentityEnforcement, PolicyCatalog, CompositeInstanceFilter } from '@pr
 import { TenantReadAuthorization, AllowAllReadFilterSource } from './host/cypher/read-filter-source.js'
 import { AllowAllWriteAuthorizerSource } from './host/cypher/read-filter-source.js'
 import type { IReadFilterSource, IWriteAuthorizerSource } from './host/cypher/read-filter-source.js'
+import { AllowAllWriteInstanceGate } from './host/cypher/write-instance-gate.js'
+import type { IWriteInstanceGate } from './host/cypher/write-instance-gate.js'
+import { FilteredReadWriteTargetSource } from './host/filtered-read-write-target-source.js'
 import { RuntimeAppWriter } from './host/runtime-app-writer.js'
 import { RuntimeWritePayloadValidator } from './host/runtime-write-payload-validator.js'
 import type { AppWriteOpDto, AppWriteResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -237,6 +240,19 @@ export class PragmaticServer
         return this.ReadAuthorization()
     }
 
+    private async WriteInstanceGate(context: AccessContext, name: string): Promise<IWriteInstanceGate>
+    {
+        if (this.identity === undefined)
+        {
+            return AllowAllWriteInstanceGate.Instance
+        }
+        const rules = await AccessPolicySetting.Load(this.AppsStorage(), name)
+        const predicate = IdentityEnforcement.Over(PolicyCatalog.FromPolicies(rules), context, Action.Write).InstanceFilter()
+        const target = new FilteredReadWriteTargetSource(this, context, name)
+        const auth = await this.ReadAuthorization()
+        return auth.WriteInstanceGateFor(context, predicate, target)
+    }
+
     private ReadAuthorization(): Promise<TenantReadAuthorization>
     {
         if (this.readAuth === undefined)
@@ -315,7 +331,8 @@ export class PragmaticServer
         const services = this.root.Services()
         const catalog = services.getRequired(DataSourceAdapterCatalog.ServiceKey)
         const authorizer = await (await this.WriteAuthorizerSource()).WriteAuthorizerFor(context)
-        const writer = new RuntimeAppWriter(built.plan, built.nativeBase, catalog, services, authorizer, new RuntimeWritePayloadValidator())
+        const gate = await this.WriteInstanceGate(context, name)
+        const writer = new RuntimeAppWriter(built.plan, built.nativeBase, catalog, services, authorizer, new RuntimeWritePayloadValidator(), gate)
         return writer.Apply(operations)
     }
 

@@ -7,6 +7,8 @@ import type { IWriteTargetSource } from './write-target-source.js'
 /** Reflects an Update/Delete subject through the policy-filtered read graph, one graph built per concept per request. */
 export class FilteredReadWriteTargetSource implements IWriteTargetSource
 {
+    private static readonly HashSep = '#'
+    private static readonly DotSep = '.'
     private readonly graphs = new Map<string, Promise<IGraphQuery>>()
 
     constructor(
@@ -19,12 +21,18 @@ export class FilteredReadWriteTargetSource implements IWriteTargetSource
     public async Fetch(concept: string, id: string): Promise<IInstanceView | undefined>
     {
         const graph = await this.GraphFor(concept)
-        const mirror = graph.Reflect(id)
+        const mirror = graph.Reflect(id) ?? this.FindBySuffix(graph, concept, id)
         if (mirror === undefined)
         {
             return undefined
         }
         return { Concept: mirror.type?.fullName ?? concept, Field: name => mirror.field(name)?.value }
+    }
+
+    /** Graph node ids are qualified (`ns.name`, or `concept#binding#key` for connector-minted rows); a client writes the bare key. */
+    private FindBySuffix(graph: IGraphQuery, concept: string, id: string): ReturnType<IGraphQuery['Reflect']>
+    {
+        return graph.InstancesOf(concept).find(m => m.node.id.endsWith(FilteredReadWriteTargetSource.HashSep + id) || m.node.id.endsWith(FilteredReadWriteTargetSource.DotSep + id))
     }
 
     private GraphFor(concept: string): Promise<IGraphQuery>
