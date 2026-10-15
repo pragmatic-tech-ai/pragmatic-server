@@ -49,7 +49,18 @@ export class SqliteDocumentSession implements IDocumentSession
 
     private Db(): Promise<DatabaseSync>
     {
-        this.dbOpen ??= this.Open()
+        if (this.dbOpen === undefined)
+        {
+            const opening = this.Open()
+            this.dbOpen = opening
+            opening.catch(() =>
+            {
+                if (this.dbOpen === opening)
+                {
+                    this.dbOpen = undefined
+                }
+            })
+        }
         return this.dbOpen
     }
 

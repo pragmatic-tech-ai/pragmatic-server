@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
@@ -96,6 +96,26 @@ class DocumentSessionConformance
         }
     }
 
+    public static async FailedOpenRetry(): Promise<void>
+    {
+        const dir = mkdtempSync(join(tmpdir(), DocumentSessionConformance.Prefix))
+        try
+        {
+            const c = DocumentSessionConformance.Collection
+            const missing = join(dir, 'missing')
+            const session = new SqliteDocumentSession(join(missing, DocumentSessionConformance.DbFile))
+            await assert.rejects(session.Find(c, DocumentSessionConformance.Empty))
+            await assert.rejects(session.Find(c, DocumentSessionConformance.Empty))
+            mkdirSync(missing)
+            assert.deepEqual(await session.Find(c, DocumentSessionConformance.Empty), [])
+            await session.Dispose?.()
+        }
+        finally
+        {
+            rmSync(dir, { recursive: true, force: true })
+        }
+    }
+
     private static async PathSafety(s: IDocumentSession): Promise<void>
     {
         const f = DocumentSessionConformance.IdField
@@ -181,4 +201,9 @@ test('SqliteDocumentSession durability across dispose and reopen', async () =>
 test('SqliteDocumentSession concurrent first calls open once', async () =>
 {
     await DocumentSessionConformance.OpenRace()
+})
+
+test('SqliteDocumentSession failed open is retryable', async () =>
+{
+    await DocumentSessionConformance.FailedOpenRetry()
 })
