@@ -4,6 +4,7 @@ import { Repository, Cypher } from '@pragmatic-tech-ai/todl'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { TenantGraphCache } from '../tenant-graph-cache.js'
+import { AllowAllReadFilterSource } from '../read-filter-source.js'
 import type { TenantGraphArtifact, TenantRepository } from '../tenant-graph-source.js'
 
 class CacheFixture
@@ -99,7 +100,7 @@ class CountingCache extends TenantGraphCache
 
 test('a policy-hidden instance is absent from count, direct return and traversal', async () =>
 {
-    const cache = new TenantGraphCache(() => [{ repo: CacheFixture.Repo(), model: 'shop', version: '1.0.0' }])
+    const cache = new TenantGraphCache(() => [{ repo: CacheFixture.Repo(), model: 'shop', version: '1.0.0' }], AllowAllReadFilterSource.Instance)
     const query = await cache.GraphFor(CacheFixture.Context('eu'))
     assert.deepEqual(CacheFixture.Rows(query, CacheFixture.CountQuery), [1])
     assert.deepEqual(CacheFixture.Rows(query, CacheFixture.NamesQuery), ['Eve'])
@@ -113,7 +114,7 @@ test('a policy-hidden instance is absent from count, direct return and traversal
 test('two principals see different instance sets from the same cached artifact', async () =>
 {
     const repo = CacheFixture.Repo()
-    const cache = new CountingCache(() => [{ repo, model: 'shop', version: '1.0.0' }])
+    const cache = new CountingCache(() => [{ repo, model: 'shop', version: '1.0.0' }], AllowAllReadFilterSource.Instance)
     const eu = await cache.GraphFor(CacheFixture.Context('eu'))
     const us = await cache.GraphFor(CacheFixture.Context('us'))
     assert.deepEqual(CacheFixture.Rows(eu, CacheFixture.NamesQuery), ['Eve'])
@@ -125,7 +126,7 @@ test('two principals see different instance sets from the same cached artifact',
 test('a repository change invalidates the cache and the next call recomposes', async () =>
 {
     const repo = CacheFixture.Repo()
-    const cache = new CountingCache(() => [{ repo, model: 'shop', version: '1.0.0' }])
+    const cache = new CountingCache(() => [{ repo, model: 'shop', version: '1.0.0' }], AllowAllReadFilterSource.Instance)
     await cache.GraphFor(CacheFixture.Context('eu'))
     await cache.GraphFor(CacheFixture.Context('eu'))
     assert.equal(cache.ComposeCalls, 1)
@@ -145,7 +146,7 @@ test('an id denied by ANY repository containing it is dropped everywhere (deny-w
     const cache = new TenantGraphCache(() => [
         { repo: guarded, model: 'guarded', version: '1.0.0' },
         { repo: open, model: 'open', version: '1.0.0' },
-    ])
+    ], AllowAllReadFilterSource.Instance)
     const eu = await cache.GraphFor(CacheFixture.Context('eu'))
     assert.deepEqual(CacheFixture.Rows(eu, CacheFixture.NamesQuery), [])
     assert.deepEqual(CacheFixture.Rows(eu, CacheFixture.CountQuery), [0])

@@ -355,7 +355,10 @@ export class PragmaticServer
      */
     public async Graph(context: AccessContext): Promise<IGraphQuery>
     {
-        this.graphCache ??= new TenantGraphCache(() => this.CollectGraphSources())
+        if (this.graphCache === undefined)
+        {
+            this.graphCache = new TenantGraphCache(() => this.CollectGraphSources(), await this.DepthFilterSource())
+        }
         return await this.graphCache.GraphFor(context)
     }
 

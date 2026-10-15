@@ -1,9 +1,10 @@
 import { Action } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
-import { IdentityEnforcement } from '@pragmatic-tech-ai/todl-identity-engine'
+import { IdentityEnforcement, CompositeInstanceFilter } from '@pragmatic-tech-ai/todl-identity-engine'
 import type { Node, IInstanceFilter } from '@pragmatic-tech-ai/todl'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
+import type { IReadFilterSource } from './read-filter-source.js'
 import { TenantGraphComposition, type TenantGraphArtifact, type TenantRepository } from './tenant-graph-source.js'
 
 /**
@@ -18,14 +19,17 @@ export class TenantGraphCache
     private subscriptions: IDisposable[] = []
     private subscribed: readonly TenantRepository[] = []
 
-    constructor(private readonly sources: () => readonly TenantRepository[] | Promise<readonly TenantRepository[]>) {}
+    constructor(
+        private readonly sources: () => readonly TenantRepository[] | Promise<readonly TenantRepository[]>,
+        private readonly depthSource: IReadFilterSource) {}
 
     /** The queryable graph for `context`: the cached artifact with policy-hidden instances removed. */
     public async GraphFor(context: AccessContext): Promise<IGraphQuery>
     {
         const entries = await this.sources()
         const artifact = this.Artifact(entries)
-        const allowed = TenantGraphCache.AllowedIds(entries, context)
+        const depth = await this.depthSource.ReadFilterFor(context)
+        const allowed = TenantGraphCache.AllowedIds(entries, context, depth)
         const filtered: TenantGraphArtifact = {
             packages: artifact.packages,
             seedNodes: artifact.seedNodes.filter(n => allowed.has(n.id)),
@@ -82,13 +86,14 @@ export class TenantGraphCache
      * Ids the principal may read, DENY-WINS across repositories: an id is kept when some repository
      * allows it and NO repository that contains it denies it (mirrors ModelReadFilter.keep per repo).
      */
-    private static AllowedIds(entries: readonly TenantRepository[], context: AccessContext): Set<string>
+    private static AllowedIds(entries: readonly TenantRepository[], context: AccessContext, depth: IInstanceFilter): Set<string>
     {
         const allowed = new Set<string>()
         const denied = new Set<string>()
         for (const entry of entries)
         {
-            const filter = IdentityEnforcement.ForRepository(entry.repo, context, Action.Read).InstanceFilter()
+            const predicate = IdentityEnforcement.ForRepository(entry.repo, context, Action.Read).InstanceFilter()
+            const filter = new CompositeInstanceFilter([predicate, depth])
             for (const node of entry.repo.allNodes())
             {
                 if (TenantGraphCache.Keep(node, filter)) allowed.add(node.id)
