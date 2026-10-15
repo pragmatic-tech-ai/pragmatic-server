@@ -75,6 +75,7 @@ export class AllowAllWriteInstanceGate implements IWriteInstanceGate
     {
         return undefined
     }
+
     public CanWriteField(): boolean
     {
         return true

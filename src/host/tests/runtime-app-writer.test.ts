@@ -484,3 +484,14 @@ test('create explicitly setting a secured field without field-create is Denied',
     assert.equal(out.results[0].reason, 'not authorized for a field')
     assert.equal(adapter.batches.length, 0)
 })
+
+test('update never skips a field: a payload field sharing a stamped owner name is still checked', async () =>
+{
+    const adapter = new FakeAdapter()
+    const gate = new FakeGate([{ field: 'owningBu', value: 'sales' }], () => true, () => true, undefined, (_c, field) => field !== 'owningBu')
+    const w = GateFx.Writer(adapter, gate)
+    const out = await w.Apply([{ op: AppWriteOpKind.Update, concept: 'shop.Order', id: 'o1', fields: { owningBu: 'root' } }])
+    assert.equal(out.results[0].status, AppWriteStatus.Denied)
+    assert.equal(out.results[0].reason, 'not authorized for a field')
+    assert.equal(adapter.batches.length, 0)
+})
