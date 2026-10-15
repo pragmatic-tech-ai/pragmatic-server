@@ -44,3 +44,25 @@ test('a mix of valid and invalid rights keeps only the valid ones', async () =>
     assert.deepEqual(all[0].rights, ['read', 'share'])
     assert.equal(all[0].subject.kind, ShareSubjectKind.Team)
 })
+
+test('malformed rows are all dropped (fail-closed)', async () =>
+{
+    const session = new FakeSession()
+    const store = new ShareStore(session as never)
+    session.rows.set('k1', { grantKey: 'k1', concept: 'shop.Order', recordId: 'o1', subject: { kind: 'robot', id: 'x' }, rights: ['read'] })
+    session.rows.set('k2', { grantKey: 'k2', concept: 'shop.Order', recordId: 'o1', subject: { kind: 'principal', id: '' }, rights: ['read'] })
+    session.rows.set('k3', { grantKey: 'k3', concept: 'shop.Order', recordId: 'o1', subject: { kind: 'principal', id: 'u2' }, rights: 'read' })
+    session.rows.set('k4', { grantKey: 'k4', concept: 'shop.Order', recordId: 'o1', subject: { kind: 'principal', id: 'u2' }, rights: 42 })
+    session.rows.set('k5', { grantKey: 'k5', concept: 'shop.Order', subject: { kind: 'principal', id: 'u2' }, rights: ['read'] })
+    assert.equal((await store.LoadAll()).length, 0)
+})
+
+test('duplicate rights collapse preserving order', async () =>
+{
+    const session = new FakeSession()
+    const store = new ShareStore(session as never)
+    session.rows.set('k1', { grantKey: 'k1', concept: 'shop.Order', recordId: 'o1', subject: { kind: 'principal', id: 'u2' }, rights: ['read', 'read', 'update'] })
+    const all = await store.LoadAll()
+    assert.equal(all.length, 1)
+    assert.deepEqual(all[0].rights, ['read', 'update'])
+})
