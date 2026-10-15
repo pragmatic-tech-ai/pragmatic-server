@@ -46,6 +46,8 @@ class DenyDelete implements IWriteAuthorizer
 
 class Fx
 {
+    public static readonly WriteFailed = 'write failed'
+
     public static Type(fields: { name: string; type: string; card: Cardinality }[]): unknown
     {
         const prim = (n: string) => ({ name: n, baseType: undefined, getField: () => undefined, getFields: () => [], getRelationships: () => [] })
@@ -220,6 +222,9 @@ test('adapter throw in one binding leaves the other group applied', async () =>
         { op: AppWriteOpKind.Update, concept: 'shop.Gadget', id: 'g2', fields: { title: 'c' } },
     ])
     assert.deepEqual(out.results.map(r => r.status), [AppWriteStatus.Conflict, AppWriteStatus.Applied, AppWriteStatus.Conflict])
+    assert.equal(out.results[0].reason, Fx.WriteFailed)
+    assert.equal(out.results[2].reason, Fx.WriteFailed)
+    assert.equal(out.results[1].reason, undefined)
 })
 
 test('same key twice in one group makes the duplicate Invalid', async () =>
@@ -261,7 +266,7 @@ test('authorizer throw is contained to its op', async () =>
         { op: AppWriteOpKind.Update, concept: 'shop.Order', id: 'o2', fields: { title: 'a' } },
     ])
     assert.equal(out.results[0].status, AppWriteStatus.Invalid)
-    assert.equal(out.results[0].reason, 'policy boom')
+    assert.equal(out.results[0].reason, Fx.WriteFailed)
     assert.equal(out.results[1].status, AppWriteStatus.Applied)
 })
 

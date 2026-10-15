@@ -22,6 +22,7 @@ interface WriteGroup
     binding: ConnectorBinding
     spec: ConnectorSpec
     items: PlannedWrite[]
+    keys: Set<string>
 }
 
 /** Applies a batch of runtime writes: per-op gate + validate + id + build, grouped by binding, routed to adapters. */
@@ -35,6 +36,8 @@ export class RuntimeAppWriter
     private static readonly MissingConnector = 'connector not found for binding'
     private static readonly DefaultConflict = 'write was refused'
     private static readonly DuplicateKey = 'duplicate key in batch'
+    private static readonly WriteFailed = 'write failed'
+    private static readonly NotProcessed = 'operation was not processed'
     private static readonly UnknownOperation = 'unknown operation kind'
     private static readonly GroupKeySeparator = '\u0000'
 
@@ -59,9 +62,9 @@ export class RuntimeAppWriter
             {
                 planned = this.Plan(operations[index], index, results)
             }
-            catch (error)
+            catch
             {
-                results[index] = { status: AppWriteStatus.Invalid, reason: error instanceof Error ? error.message : RuntimeAppWriter.DefaultConflict }
+                results[index] = { status: AppWriteStatus.Invalid, reason: RuntimeAppWriter.WriteFailed }
                 continue
             }
             if (planned === undefined)
@@ -70,18 +73,19 @@ export class RuntimeAppWriter
             }
             const group = this.GroupFor(groups, planned.binding, planned.spec)
             const keyText = String(planned.write.key)
-            if (group.items.some(i => String(i.key) === keyText))
+            if (group.keys.has(keyText))
             {
                 results[index] = { status: AppWriteStatus.Invalid, reason: RuntimeAppWriter.DuplicateKey }
                 continue
             }
+            group.keys.add(keyText)
             group.items.push(planned.write)
         }
         for (const group of groups.values())
         {
             await this.ApplyGroup(group, results)
         }
-        return { results: results.map(r => r ?? { status: AppWriteStatus.Invalid, reason: RuntimeAppWriter.UnknownConcept }) }
+        return { results: results.map(r => r ?? { status: AppWriteStatus.Invalid, reason: RuntimeAppWriter.NotProcessed }) }
     }
 
     private Plan(op: AppWriteOpDto, index: number, results: (AppWriteOpResultDto | undefined)[]): { binding: ConnectorBinding; spec: ConnectorSpec; write: PlannedWrite } | undefined
@@ -199,7 +203,7 @@ export class RuntimeAppWriter
         let group = groups.get(key)
         if (group === undefined)
         {
-            group = { binding, spec, items: [] }
+            group = { binding, spec, items: [], keys: new Set<string>() }
             groups.set(key, group)
         }
         return group
@@ -214,9 +218,9 @@ export class RuntimeAppWriter
             const adapter = await this.catalog.Open(group.spec, this.services)
             result = await adapter.Apply(batch)
         }
-        catch (error)
+        catch
         {
-            const reason = error instanceof Error ? error.message : RuntimeAppWriter.DefaultConflict
+            const reason = RuntimeAppWriter.WriteFailed
             for (const item of group.items)
             {
                 results[item.index] = { status: AppWriteStatus.Conflict, id: String(item.key), reason }

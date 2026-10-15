@@ -26,6 +26,12 @@ class FakeType implements IConceptType
 class Schema
 {
     public static readonly Validator = new RuntimeWritePayloadValidator()
+    public static readonly UnknownConcept = 'unknown concept'
+    public static readonly UnknownFieldPrefix = 'unknown field: '
+    public static readonly ReferenceMemberPrefix = 'reference member is not writable: '
+    public static readonly MissingRequiredPrefix = 'missing required field: '
+    public static readonly NotScalarPrefix = 'field value must be a scalar: '
+    public static readonly TypeMismatchPrefix = 'field has the wrong type: '
 
     public static Primitive(name: string): IConceptType
     {
@@ -43,19 +49,26 @@ class Schema
 test('unknown field is rejected', () =>
 {
     const type = new FakeType([Schema.Field('title', 'string', Cardinality.One)])
-    assert.ok(Schema.Validator.Validate(type, true, { bogus: 'x' }))
+    assert.equal(Schema.Validator.Validate(type, true, { bogus: 'x' }), Schema.UnknownFieldPrefix + 'bogus')
 })
 
-test('reference member is rejected as out-of-scope', () =>
+test('reference member is rejected as out-of-scope, distinct from unknown field', () =>
 {
-    const type = new FakeType([], ['customer'])
-    assert.ok(Schema.Validator.Validate(type, true, { customer: 'c1' }))
+    const type = new FakeType([Schema.Field('title', 'string', Cardinality.Optional)], ['customer'])
+    assert.equal(Schema.Validator.Validate(type, true, { customer: 'c1' }), Schema.ReferenceMemberPrefix + 'customer')
+    assert.equal(Schema.Validator.Validate(type, true, { bogus: 'c1' }), Schema.UnknownFieldPrefix + 'bogus')
 })
 
 test('missing required field on create is rejected', () =>
 {
     const type = new FakeType([Schema.Field('title', 'string', Cardinality.One)])
-    assert.ok(Schema.Validator.Validate(type, true, {}))
+    assert.equal(Schema.Validator.Validate(type, true, {}), Schema.MissingRequiredPrefix + 'title')
+})
+
+test('missing OneOrMore field on create is rejected', () =>
+{
+    const type = new FakeType([Schema.Field('tag', 'string', Cardinality.OneOrMore)])
+    assert.equal(Schema.Validator.Validate(type, true, {}), Schema.MissingRequiredPrefix + 'tag')
 })
 
 test('missing required field on update is allowed (partial validated)', () =>
@@ -67,13 +80,26 @@ test('missing required field on update is allowed (partial validated)', () =>
 test('scalar type mismatch is rejected', () =>
 {
     const type = new FakeType([Schema.Field('count', 'number', Cardinality.One)])
-    assert.ok(Schema.Validator.Validate(type, true, { count: 'not-a-number' }))
+    assert.equal(Schema.Validator.Validate(type, true, { count: 'not-a-number' }), Schema.TypeMismatchPrefix + 'count')
+})
+
+test('boolean field given a non-boolean scalar is rejected', () =>
+{
+    const type = new FakeType([Schema.Field('active', 'boolean', Cardinality.One)])
+    assert.equal(Schema.Validator.Validate(type, true, { active: 'yes' }), Schema.TypeMismatchPrefix + 'active')
+    assert.equal(Schema.Validator.Validate(type, true, { active: true }), undefined)
 })
 
 test('valid create passes', () =>
 {
     const type = new FakeType([Schema.Field('title', 'string', Cardinality.One), Schema.Field('count', 'number', Cardinality.Optional)])
     assert.equal(Schema.Validator.Validate(type, true, { title: 'Widget', count: 3 }), undefined)
+})
+
+test('null value on a required and an optional field is allowed', () =>
+{
+    const type = new FakeType([Schema.Field('title', 'string', Cardinality.One), Schema.Field('note', 'string', Cardinality.Optional)])
+    assert.equal(Schema.Validator.Validate(type, true, { title: null, note: null }), undefined)
 })
 
 test('user-primitive (base string) accepts a string', () =>
@@ -85,13 +111,26 @@ test('user-primitive (base string) accepts a string', () =>
     assert.equal(Schema.Validator.Validate(type, true, { key: 'abc' }), undefined)
 })
 
-test('undefined concept type is rejected', () =>
+test('unknown base primitive is leniently accepted', () =>
 {
-    assert.ok(Schema.Validator.Validate(undefined, true, { title: 'x' }))
+    const type = new FakeType([Schema.Field('when', 'date', Cardinality.One)])
+    assert.equal(Schema.Validator.Validate(type, true, { when: 'anything' }), undefined)
+    assert.equal(Schema.Validator.Validate(type, true, { when: 5 }), undefined)
 })
 
-test('non-scalar value is rejected', () =>
+test('undefined concept type is rejected', () =>
+{
+    assert.equal(Schema.Validator.Validate(undefined, true, { title: 'x' }), Schema.UnknownConcept)
+})
+
+test('non-scalar object value is rejected as not-scalar only', () =>
 {
     const type = new FakeType([Schema.Field('title', 'string', Cardinality.One)])
-    assert.ok(Schema.Validator.Validate(type, true, { title: { nested: 1 } as unknown as string }))
+    assert.equal(Schema.Validator.Validate(type, true, { title: { nested: 1 } as unknown as string }), Schema.NotScalarPrefix + 'title')
+})
+
+test('array value is rejected as not-scalar', () =>
+{
+    const type = new FakeType([Schema.Field('title', 'string', Cardinality.One)])
+    assert.equal(Schema.Validator.Validate(type, true, { title: ['a'] as unknown as string }), Schema.NotScalarPrefix + 'title')
 })
