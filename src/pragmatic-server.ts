@@ -35,7 +35,11 @@ import { Action } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import { IdentityEnforcement, PolicyCatalog, CompositeInstanceFilter } from '@pragmatic-tech-ai/todl-identity-engine'
 import { TenantReadAuthorization, AllowAllReadFilterSource } from './host/cypher/read-filter-source.js'
-import type { IReadFilterSource } from './host/cypher/read-filter-source.js'
+import { AllowAllWriteAuthorizerSource } from './host/cypher/read-filter-source.js'
+import type { IReadFilterSource, IWriteAuthorizerSource } from './host/cypher/read-filter-source.js'
+import { RuntimeAppWriter } from './host/runtime-app-writer.js'
+import { RuntimeWritePayloadValidator } from './host/runtime-write-payload-validator.js'
+import type { AppWriteOpDto, AppWriteResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { AccessPolicySetting } from './host/apps/access-policy-setting.js'
 import { FilteredGraphQuery } from './host/cypher/filtered-graph-query.js'
 import { GraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
@@ -221,6 +225,20 @@ export class PragmaticServer
         {
             return AllowAllReadFilterSource.Instance
         }
+        return this.ReadAuthorization()
+    }
+
+    private async WriteAuthorizerSource(): Promise<IWriteAuthorizerSource>
+    {
+        if (this.identity === undefined)
+        {
+            return AllowAllWriteAuthorizerSource.Instance
+        }
+        return this.ReadAuthorization()
+    }
+
+    private ReadAuthorization(): Promise<TenantReadAuthorization>
+    {
         if (this.readAuth === undefined)
         {
             const built = this.BuildReadAuth()
@@ -289,6 +307,16 @@ export class PragmaticServer
         const predicate = IdentityEnforcement.Over(PolicyCatalog.FromPolicies(rules), context, Action.Read).InstanceFilter()
         const depth = await (await this.DepthFilterSource()).ReadFilterFor(context)
         return new FilteredGraphQuery(base, new CompositeInstanceFilter([predicate, depth]))
+    }
+
+    public async WriteForPragmaticApp(context: AccessContext, name: string, operations: readonly AppWriteOpDto[]): Promise<AppWriteResultDto>
+    {
+        const built = await this.BaseGraphFor(name)
+        const services = this.root.Services()
+        const catalog = services.getRequired(DataSourceAdapterCatalog.ServiceKey)
+        const authorizer = await (await this.WriteAuthorizerSource()).WriteAuthorizerFor(context)
+        const writer = new RuntimeAppWriter(built.plan, built.nativeBase, catalog, services, authorizer, new RuntimeWritePayloadValidator())
+        return writer.Apply(operations)
     }
 
     /** Resolves the query's labels to the connector-backed concept ids to prefetch; a wildcard selects every connector concept. */
