@@ -16,6 +16,9 @@ import { BuiltinStoreEngine } from '../connectors/builtin-store-engine.js'
 class WriteFixture
 {
     private static readonly Id = 'shop'
+    private static readonly PackagesPrefix = 'adw2-pkgs-'
+    private static readonly AppsPrefix = 'adw2-apps-'
+    private static readonly ManifestFile = 'application.json'
     private static readonly Version = '1.0.0'
     public static readonly AppName = 'demo'
     private static readonly SourceUri = 'shop.todl'
@@ -36,8 +39,8 @@ namespace shop {
   }
 }
 `
-    private readonly packages = mkdtempSync(join(tmpdir(), 'adw2-pkgs-'))
-    private readonly apps = mkdtempSync(join(tmpdir(), 'adw2-apps-'))
+    private readonly packages = mkdtempSync(join(tmpdir(), WriteFixture.PackagesPrefix))
+    private readonly apps = mkdtempSync(join(tmpdir(), WriteFixture.AppsPrefix))
     private readonly db = newDb()
     private server: PragmaticServer | undefined
 
@@ -48,7 +51,7 @@ namespace shop {
         assert.ok(outcome.ok, JSON.stringify(outcome.errors))
         await new BlobPackageStore(new StoragePackageSink(new NodeFsStorage(this.packages))).persist(outcome.package!)
         mkdirSync(join(this.apps, WriteFixture.AppName))
-        writeFileSync(join(this.apps, WriteFixture.AppName, 'application.json'), JSON.stringify({ name: WriteFixture.AppName, version: WriteFixture.Version, packages: [{ id: WriteFixture.Id, version: WriteFixture.Version }] }))
+        writeFileSync(join(this.apps, WriteFixture.AppName, WriteFixture.ManifestFile), JSON.stringify({ name: WriteFixture.AppName, version: WriteFixture.Version, packages: [{ id: WriteFixture.Id, version: WriteFixture.Version }] }))
         this.server = new PragmaticServer({
             packagesRoot: this.packages, applicationsRoot: this.apps, purpose: TenantPurpose.Runtime,
             builtinStoreEngine: BuiltinStoreEngine.Document,
@@ -144,7 +147,7 @@ test('a write to a read-only external (populate) binding is denied', async () =>
     })
 })
 
-test('a batch of two creates both apply in input order', async () =>
+test('a batch of two creates both apply with distinct ids', async () =>
 {
     await Case.Run(async fx =>
     {
@@ -152,8 +155,11 @@ test('a batch of two creates both apply in input order', async () =>
             { op: AppWriteOpKind.Create, concept: WriteFixture.Widget, fields: { label: 'a' } },
             { op: AppWriteOpKind.Create, concept: WriteFixture.Widget, fields: { label: 'b' } },
         ])
+        assert.equal(out.results.length, 2)
         assert.equal(out.results[0].status, AppWriteStatus.Applied)
         assert.equal(out.results[1].status, AppWriteStatus.Applied)
+        assert.ok(out.results[0].id && out.results[1].id)
+        assert.notEqual(out.results[0].id, out.results[1].id)
         assert.deepEqual(await fx.Labels(), ['a', 'b', 'seed-W'])
     })
 })

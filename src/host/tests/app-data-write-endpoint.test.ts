@@ -18,6 +18,12 @@ class EndpointFixture
     private static readonly PackagesPrefix = 'adw-pkgs-'
     private static readonly NoConnectors = 'no connectors'
     public static readonly AppName = 'x'
+    private static readonly WidgetConcept = 'shop.Widget'
+    private static readonly WidgetLabel = 'w'
+    public static readonly ServerId = 'srv-1'
+    public static readonly SampleOps: AppWriteOpDto[] = [{ op: AppWriteOpKind.Create, concept: EndpointFixture.WidgetConcept, fields: { label: EndpointFixture.WidgetLabel } }]
+    public static ReceivedName: string | undefined
+    public static ReceivedOps: readonly AppWriteOpDto[] | undefined
 
     public static Owner(): AccessContext
     {
@@ -36,7 +42,12 @@ class EndpointFixture
 
     public static Applied(): (name: string, ops: readonly AppWriteOpDto[]) => Promise<AppWriteResultDto>
     {
-        return async (_name, ops) => ({ results: ops.map(() => ({ status: AppWriteStatus.Applied, id: 'srv-1' })) })
+        return async (name, ops) =>
+        {
+            EndpointFixture.ReceivedName = name
+            EndpointFixture.ReceivedOps = ops
+            return { results: ops.map(() => ({ status: AppWriteStatus.Applied, id: EndpointFixture.ServerId })) }
+        }
     }
 
     public static async With(purpose: TenantPurpose, context: AccessContext, write: (name: string, ops: readonly AppWriteOpDto[]) => Promise<AppWriteResultDto>, body: (client: PragmaticClient) => Promise<void>): Promise<void>
@@ -68,13 +79,11 @@ class EndpointFixture
     }
 }
 
-const SampleOps: AppWriteOpDto[] = [{ op: AppWriteOpKind.Create, concept: 'shop.Widget', fields: { label: 'w' } }]
-
 test('data/write on a development tenant is rejected', async () =>
 {
     await EndpointFixture.With(TenantPurpose.Development, EndpointFixture.Owner(), EndpointFixture.Applied(), async client =>
     {
-        await assert.rejects(() => client.WriteAppData({ operations: SampleOps }), /runtime/i)
+        await assert.rejects(() => client.WriteAppData({ operations: EndpointFixture.SampleOps }), /runtime/i)
     })
 })
 
@@ -82,15 +91,17 @@ test('data/write before application/open is rejected', async () =>
 {
     await EndpointFixture.With(TenantPurpose.Runtime, EndpointFixture.Owner(), EndpointFixture.Applied(), async client =>
     {
-        await assert.rejects(() => client.WriteAppData({ operations: SampleOps }), /no application selected/i)
+        await assert.rejects(() => client.WriteAppData({ operations: EndpointFixture.SampleOps }), /no application selected/i)
     })
 })
 
 test('a principal without Write is rejected by the policy gate', async () =>
 {
+    EndpointFixture.ReceivedOps = undefined
     await EndpointFixture.With(TenantPurpose.Runtime, EndpointFixture.NoGrants(), EndpointFixture.Applied(), async client =>
     {
-        await assert.rejects(() => client.WriteAppData({ operations: SampleOps }))
+        await assert.rejects(() => client.WriteAppData({ operations: EndpointFixture.SampleOps }), (e: unknown) => !/no application selected/i.test(String((e as { message?: string }).message ?? e)))
+        assert.equal(EndpointFixture.ReceivedOps, undefined)
     })
 })
 
@@ -99,8 +110,11 @@ test('runtime tenant routes an opened app write to the provider', async () =>
     await EndpointFixture.With(TenantPurpose.Runtime, EndpointFixture.Owner(), EndpointFixture.Applied(), async client =>
     {
         await client.OpenApplication(EndpointFixture.AppName)
-        const out = await client.WriteAppData({ operations: SampleOps })
+        const out = await client.WriteAppData({ operations: EndpointFixture.SampleOps })
         assert.equal(out.results[0].status, AppWriteStatus.Applied)
-        assert.equal(out.results[0].id, 'srv-1')
+        assert.equal(out.results[0].id, EndpointFixture.ServerId)
+        assert.equal(EndpointFixture.ReceivedName, EndpointFixture.AppName)
+        assert.equal(EndpointFixture.ReceivedOps?.length, 1)
+        assert.equal(EndpointFixture.ReceivedOps?.[0].concept, EndpointFixture.SampleOps[0].concept)
     })
 })
