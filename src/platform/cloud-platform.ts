@@ -5,6 +5,8 @@ import { SqlLocalAccountStore, SqlServiceTokenStore, SqlSessionStore, SqlRoleGra
 import { AuditAnchor, AuditAnchoring, HmacAuditCheckpointSigner } from '@pragmatic-tech-ai/todl-identity-host'
 import { FileEncryptedSecretStore } from '@pragmatic-tech-ai/todl-identity-node'
 import { HeadlessPromptService } from '@pragmatic-tech-ai/todl-platform-node'
+import type { IDocumentSession } from '@pragmatic-tech-ai/todl-connectors-host'
+import type { BuiltinStoreEngine } from '../host/connectors/builtin-store-engine.js'
 import type { PlatformServices } from './platform-services.js'
 import type { MasterKeyRef } from '../identity/master-key-resolver.js'
 
@@ -43,6 +45,7 @@ export class CloudPlatform implements PlatformServices
     private static readonly InvalidKeyMessage = 'cloud master key must be exactly 32 bytes'
     private static readonly MissingAnchorKeyMessage = 'cloud audit anchor key reference not found'
     private static readonly DefaultAnchorInterval = 1
+    private static readonly BuiltinStoreUnavailableMessage = 'built-in store is not available on the cloud platform'
 
     private readonly session: ISqlSession
     private readonly storage: IStorageProviderRegistry
@@ -129,6 +132,11 @@ export class CloudPlatform implements PlatformServices
     public CreateTenantConfigStore(_configRoot: string): Promise<ITenantConfigStore>
     {
         return this.tenantConfigStore()
+    }
+
+    public CreateAppDataStore(_dataRoot: string, _engine: BuiltinStoreEngine): IDocumentSession
+    {
+        throw new Error(CloudPlatform.BuiltinStoreUnavailableMessage)
     }
 
     private sqlStores(): Promise<SqlIdentityStores>

@@ -23,6 +23,8 @@ import { PlatformSelector } from './platform/platform-selector.js'
 import type { PlatformServices } from './platform/platform-services.js'
 import { ConnectorsHost } from '@pragmatic-tech-ai/todl-connectors-host'
 import type { ConnectorsHostOptions } from '@pragmatic-tech-ai/todl-connectors-host'
+import { BuiltinAdapterFactory } from './host/connectors/builtin-adapter-factory.js'
+import { BuiltinStoreEngine } from './host/connectors/builtin-store-engine.js'
 import { SolutionConnectorPlanner } from './connectors/solution-connector-planner.js'
 import { ConnectorRuntime } from './connectors/connector-runtime.js'
 import { PolicyConnectionResolver } from './host/policy-connection-resolver.js'
@@ -85,6 +87,7 @@ export interface PragmaticServerOptions
     packagesRoot?: string
     identity?: PragmaticServerIdentityOptions
     deploymentMode?: DeploymentMode
+    builtinStoreEngine?: BuiltinStoreEngine
     platform?: PlatformServices
     connectors?: ConnectorsHostOptions
     connectorsPolicy?: ConnectorsPolicy
@@ -139,7 +142,13 @@ export class PragmaticServer
             .Module(new LanguageServiceModule())
         this.root = builder.Build()
         this.connectorsHost = new ConnectorsHost(PragmaticServer.ConnectorsOptions(options))
+        this.connectorsHost.Catalog.Register(new BuiltinAdapterFactory((dataRoot, engine) => this.platform.CreateAppDataStore(dataRoot, engine)))
         this.RegisterInfrastructure(options.packagesRoot ?? PragmaticServer.DefaultPackagesDir)
+    }
+
+    private BuiltinEngine(): BuiltinStoreEngine
+    {
+        return this.options.builtinStoreEngine ?? (this.options.deploymentMode === DeploymentMode.Cloud ? BuiltinStoreEngine.Sqlite : BuiltinStoreEngine.Document)
     }
 
     private static ConnectorsOptions(options: PragmaticServerOptions): ConnectorsHostOptions | undefined
