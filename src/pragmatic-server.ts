@@ -90,7 +90,7 @@ export interface PragmaticServerOptions
     connectorsPolicy?: ConnectorsPolicy
 }
 
-/** The node labels a Cypher query references; wildcard when any node pattern is unlabeled . */
+/** The node labels a Cypher query references; wildcard when any node pattern is unlabeled; parseFailed when the text is not valid Cypher (nothing is prefetched). */
 export type ReferencedLabelSet = { labels: readonly string[]; wildcard: boolean; parseFailed: boolean }
 
 type AppBase = { domain: Domain; plan: ModelConnectorPlan; nativeBase: IGraphQuery }
