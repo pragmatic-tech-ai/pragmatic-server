@@ -5,6 +5,11 @@ import { FilteredReadWriteTargetSource } from '../filtered-read-write-target-sou
 class FakeGraph
 {
     constructor(private readonly rows: Record<string, Record<string, string>>) {}
+    public InstancesOf(_concept: string): unknown[]
+    {
+        return []
+    }
+
     public Reflect(id: string): unknown
     {
         const row = this.rows[id]
