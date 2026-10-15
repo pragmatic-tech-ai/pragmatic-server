@@ -4,9 +4,11 @@ import { mkdtempSync, cpSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Cypher } from '@pragmatic-tech-ai/todl'
-import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
+import type { AccessContext, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../../pragmatic-server.js'
 import { PpSecurityHarness } from './pp-security-harness.js'
+
+type GraphParam = Parameters<typeof Cypher.CypherEngine.OverQuery>[0]
 
 class ServerGraphDepthFixture
 {
@@ -33,13 +35,13 @@ class ServerGraphDepthFixture
         return `namespace ${ServerGraphDepthFixture.Namespace} { concept ${concept} { ${field} : string?; label : string?; } ${policy}model Shop : ${ServerGraphDepthFixture.Namespace} { ${instances} } }`
     }
 
-    public static Labels(graph: Parameters<typeof Cypher.CypherEngine.OverQuery>[0]): string[]
+    public static Labels(graph: GraphParam): string[]
     {
         const result = Cypher.CypherEngine.OverQuery(graph).Execute(ServerGraphDepthFixture.LabelQuery)
         return result.Rows.map(r => String((r[0] as unknown as { Value: string }).Value)).sort()
     }
 
-    public static Count(graph: Parameters<typeof Cypher.CypherEngine.OverQuery>[0]): number
+    public static Count(graph: GraphParam): number
     {
         const result = Cypher.CypherEngine.OverQuery(graph).Execute(ServerGraphDepthFixture.CountAllQuery)
         return (result.Rows[0]![0] as unknown as { Value: number }).Value
@@ -77,7 +79,7 @@ class ServerGraphDepthFixture
         }
     }
 
-    public static Context()
+    public static Context(): AccessContext
     {
         return PpSecurityHarness.Context(ServerGraphDepthFixture.PrincipalId)
     }
@@ -133,18 +135,12 @@ test('state 1: BusinessUnit depth keeps only sales-owned widgets on the dev grap
     })
 })
 
-test('depth never drops untyped nodes: the node count with depth equals the typed survivors plus all untyped', async () =>
+test('depth leaves no extra nodes: the all-node count equals the surviving widgets (structural nodes are not graph-visible)', async () =>
 {
-    let untyped = 0
-    await ServerGraphDepthFixture.With(ServerGraphDepthFixture.Model(false), undefined, async server =>
-    {
-        const graph = await server.Graph(ServerGraphDepthFixture.Context())
-        untyped = ServerGraphDepthFixture.Count(graph) - ServerGraphDepthFixture.All.length
-    })
     await ServerGraphDepthFixture.With(ServerGraphDepthFixture.Model(false), ServerGraphDepthFixture.Bu(), async server =>
     {
         const graph = await server.Graph(ServerGraphDepthFixture.Context())
-        assert.equal(ServerGraphDepthFixture.Count(graph), ServerGraphDepthFixture.SalesOnly.length + untyped)
+        assert.equal(ServerGraphDepthFixture.Count(graph), ServerGraphDepthFixture.SalesOnly.length)
     })
 })
 
