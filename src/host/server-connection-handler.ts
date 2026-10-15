@@ -11,6 +11,7 @@ import { Cypher } from '@pragmatic-tech-ai/todl'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
+import type { ReferencedLabelSet } from '../pragmatic-server.js'
 import { PolicyGate } from './policy-gate.js'
 import { AuditSurface } from './access-audit.js'
 import type { IAccessAuditSink } from './access-audit.js'
@@ -78,10 +79,10 @@ export class ServerConnectionHandler
     private readonly cypherLimits: CypherLimits
     private readonly purpose: TenantPurpose
     private readonly applications: PragmaticAppsRegistry | undefined
-    private readonly appGraphProvider: ((context: AccessContext, name: string) => Promise<IGraphQuery>) | undefined
+    private readonly appGraphProvider: ((context: AccessContext, name: string, labels: ReferencedLabelSet) => Promise<IGraphQuery>) | undefined
     private boundApp: PragmaticAppSummaryDto | undefined
 
-    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, graphProvider: (context: AccessContext) => Promise<IGraphQuery>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: TenantPurpose = TenantPurpose.Development, applications?: PragmaticAppsRegistry, appGraphProvider?: (context: AccessContext, name: string) => Promise<IGraphQuery>)
+    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, graphProvider: (context: AccessContext) => Promise<IGraphQuery>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: TenantPurpose = TenantPurpose.Development, applications?: PragmaticAppsRegistry, appGraphProvider?: (context: AccessContext, name: string, labels: ReferencedLabelSet) => Promise<IGraphQuery>)
     {
         this.cypherLimits = cypherLimits ?? new CypherLimits()
         this.purpose = purpose
@@ -130,16 +131,16 @@ export class ServerConnectionHandler
     }
 
     /** The runtime-only Attach arguments (application registry + per-app graph provider); both undefined unless the server is a Runtime tenant. */
-    public static RuntimeAttachArgs(server: { Purpose(): TenantPurpose; Applications(): PragmaticAppsRegistry; GraphForPragmaticApp(context: AccessContext, name: string): Promise<IGraphQuery> }): { applications: PragmaticAppsRegistry | undefined; appGraphProvider: ((context: AccessContext, name: string) => Promise<IGraphQuery>) | undefined }
+    public static RuntimeAttachArgs(server: { Purpose(): TenantPurpose; Applications(): PragmaticAppsRegistry; GraphForPragmaticApp(context: AccessContext, name: string, labels: ReferencedLabelSet): Promise<IGraphQuery> }): { applications: PragmaticAppsRegistry | undefined; appGraphProvider: ((context: AccessContext, name: string, labels: ReferencedLabelSet) => Promise<IGraphQuery>) | undefined }
     {
         if (server.Purpose() !== TenantPurpose.Runtime)
         {
             return { applications: undefined, appGraphProvider: undefined }
         }
-        return { applications: server.Applications(), appGraphProvider: (context, name) => server.GraphForPragmaticApp(context, name) }
+        return { applications: server.Applications(), appGraphProvider: (context, name, labels) => server.GraphForPragmaticApp(context, name, labels) }
     }
 
-    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, graphProvider: (context: AccessContext) => Promise<IGraphQuery>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: TenantPurpose = TenantPurpose.Development, applications?: PragmaticAppsRegistry, appGraphProvider?: (context: AccessContext, name: string) => Promise<IGraphQuery>): ServerConnectionHandler
+    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, graphProvider: (context: AccessContext) => Promise<IGraphQuery>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: TenantPurpose = TenantPurpose.Development, applications?: PragmaticAppsRegistry, appGraphProvider?: (context: AccessContext, name: string, labels: ReferencedLabelSet) => Promise<IGraphQuery>): ServerConnectionHandler
     {
         const connection = createMessageConnection(new WebSocketMessageReader(socket), new WebSocketMessageWriter(socket), NullLogger)
         const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectorsFactory, graphProvider, instrumentation, parent, audit, rateLimit, admin, cypherLimits, purpose, applications, appGraphProvider)
@@ -296,7 +297,7 @@ export class ServerConnectionHandler
             throw error
         }
         const graph = this.purpose === TenantPurpose.Runtime
-            ? await this.RequireBoundAppGraph()
+            ? await this.RequireBoundAppGraph(Cypher.ReferencedLabels.Of(source))
             : await this.graphProvider(this.accessContext)
         try
         {
@@ -364,13 +365,13 @@ export class ServerConnectionHandler
         return this.applications
     }
 
-    private async RequireBoundAppGraph(): Promise<IGraphQuery>
+    private async RequireBoundAppGraph(labels: ReferencedLabelSet): Promise<IGraphQuery>
     {
         if (this.boundApp === undefined || this.appGraphProvider === undefined)
         {
             throw new ResponseError(ErrorCodes.InvalidRequest, ServerConnectionHandler.NoApplicationSelectedMessage)
         }
-        return this.appGraphProvider(this.accessContext, this.boundApp.name)
+        return this.appGraphProvider(this.accessContext, this.boundApp.name, labels)
     }
 
     private RegisterAdminHandlers(): void

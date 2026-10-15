@@ -1,7 +1,9 @@
 import { LazyCompositionRoot, HostKinds, ModuleStateKind } from '@pragmatic-tech-ai/todl-runtime'
 import { TenantPurpose } from './tenancy/tenant-purpose.js'
 import type { ModuleStateProperty } from '@pragmatic-tech-ai/todl-runtime'
-import { SolutionManagerService, StoragePackageSource, StoragePackageStore, PackageStoreKey } from '@pragmatic-tech-ai/todl'
+import { SolutionManagerService, StoragePackageSource, StoragePackageStore, PackageStoreKey, ConnectorPrefetch, ConnectorRuntimeGraphQuery, DataSourceAdapterCatalog } from '@pragmatic-tech-ai/todl'
+import type { ModelConnectorPlan } from '@pragmatic-tech-ai/todl'
+import type { Domain } from '@pragmatic-tech-ai/todl/domain'
 import { NodeProjectSystemComposer } from '@pragmatic-tech-ai/todl/project-system'
 import { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
@@ -32,10 +34,13 @@ import { TenantReadAuthorization, AllowAllReadFilterSource } from './host/cypher
 import type { IReadFilterSource } from './host/cypher/read-filter-source.js'
 import { AccessPolicySetting } from './host/apps/access-policy-setting.js'
 import { FilteredGraphQuery } from './host/cypher/filtered-graph-query.js'
+import { GraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import { PragmaticAppsRegistry } from './host/apps/pragmatic-apps-registry.js'
 import { RuntimeAppGraph } from './host/cypher/runtime-app-graph.js'
+import { AppConnectorPlan } from './host/cypher/app-connector-plan.js'
+import type { PragmaticAppManifest } from './host/apps/pragmatic-app-manifest.js'
 import { TenantGraphCache } from './host/cypher/tenant-graph-cache.js'
 import type { TenantRepository } from './host/cypher/tenant-graph-source.js'
 
@@ -85,6 +90,11 @@ export interface PragmaticServerOptions
     connectorsPolicy?: ConnectorsPolicy
 }
 
+/** The node labels a Cypher query references; wildcard when any node pattern is unlabeled (or the text did not parse). */
+export type ReferencedLabelSet = { labels: readonly string[]; wildcard: boolean }
+
+type AppBase = { domain: Domain; plan: ModelConnectorPlan }
+
 /** Headless single-tenant in-process host: composes the engine over the lazy root and opens a solution. */
 export class PragmaticServer
 {
@@ -92,6 +102,8 @@ export class PragmaticServer
     private static readonly AppGraphKeySeparator = '@'
     private static readonly ApplicationsRootRequiredError = 'applicationsRoot is required for a runtime tenant'
     private static readonly ErrorSeparator = '; '
+    private static readonly NamespaceSeparator = '.'
+    private static readonly NoLabels: ReferencedLabelSet = { labels: [], wildcard: false }
 
     private static readonly NotStartedError = 'server not started'
     private static readonly ApplicationsRuntimeOnlyError = 'applications are a runtime-tenant feature'
@@ -114,7 +126,7 @@ export class PragmaticServer
     private graphCache: TenantGraphCache | undefined
     private appsStorage: IStorage | undefined
     private appsRegistry: PragmaticAppsRegistry | undefined
-    private readonly appGraphs = new Map<string, Promise<IGraphQuery>>()
+    private readonly appGraphs = new Map<string, Promise<AppBase>>()
     private readAuth: Promise<TenantReadAuthorization> | undefined
 
     public constructor(options: PragmaticServerOptions)
@@ -245,27 +257,76 @@ export class PragmaticServer
         return this.appsRegistry
     }
 
-    /** The policy-filtered graph for a bound application: cached base graph, policy setting and filter rebuilt per request. */
-    public async GraphForPragmaticApp(context: AccessContext, name: string): Promise<IGraphQuery>
+    /**
+     * The policy-filtered graph for a bound application: cached base graph, connector-backed concepts the query references
+     * prefetched fresh per query, then the SP-3b depth+predicate filter over the result. The connector layer sits INSIDE the filter,
+     * so a connector-minted instance is filtered exactly like a native one.
+     */
+    public async GraphForPragmaticApp(context: AccessContext, name: string, labels: ReferencedLabelSet = PragmaticServer.NoLabels): Promise<IGraphQuery>
     {
-        const base = await this.BaseGraphFor(name)
+        const built = await this.BaseGraphFor(name)
+        const nativeBase = new GraphQuery(built.domain.graph)
+        const concepts = PragmaticServer.ConnectorConcepts(labels, built.plan, nativeBase)
+        const services = this.root.Services()
+        const snapshot = concepts.length === 0
+            ? new Map()
+            : await ConnectorPrefetch.ForConcepts(concepts, built.plan, services.getRequired(DataSourceAdapterCatalog.ServiceKey), services, built.domain)
+        const base = new ConnectorRuntimeGraphQuery(nativeBase, snapshot)
         const rules = await AccessPolicySetting.Load(this.AppsStorage(), name)
         const predicate = IdentityEnforcement.Over(PolicyCatalog.FromPolicies(rules), context, Action.Read).InstanceFilter()
         const depth = await (await this.DepthFilterSource()).ReadFilterFor(context)
         return new FilteredGraphQuery(base, new CompositeInstanceFilter([predicate, depth]))
     }
 
-    private async BaseGraphFor(name: string): Promise<IGraphQuery>
+    /** Resolves the query's labels to the connector-backed concept ids to prefetch; a wildcard selects every connector concept. */
+    private static ConnectorConcepts(labels: ReferencedLabelSet, plan: ModelConnectorPlan, base: IGraphQuery): string[]
+    {
+        if (plan.Bindings.length === 0)
+        {
+            return []
+        }
+        if (labels.wildcard)
+        {
+            return [...new Set(plan.Bindings.map(b => b.Concept))]
+        }
+        const connectorConcepts = new Set(plan.Bindings.map(b => b.Concept))
+        const result: string[] = []
+        for (const label of labels.labels)
+        {
+            for (const full of PragmaticServer.ConceptIdsFor(label, base))
+            {
+                if (connectorConcepts.has(full) && !result.includes(full))
+                {
+                    result.push(full)
+                }
+            }
+        }
+        return result
+    }
+
+    /** Mirrors the Cypher engine's label resolution: an exact concept id, else every concept whose short name matches (ambiguity prefetches all candidates). */
+    private static ConceptIdsFor(label: string, base: IGraphQuery): string[]
+    {
+        const exact = base.Type(label)
+        if (exact !== undefined)
+        {
+            return [exact.fullName]
+        }
+        return base.Concepts()
+            .map(c => c.fullName)
+            .filter(full => full.substring(full.lastIndexOf(PragmaticServer.NamespaceSeparator) + 1) === label)
+    }
+
+    private async BaseGraphFor(name: string): Promise<AppBase>
     {
         const app = await this.Applications().ApplicationFor(name)
         // Key is name@version: packages are version-pinned, so republishing under the same app version is intentionally not re-read.
         const key = `${app.Manifest.name}${PragmaticServer.AppGraphKeySeparator}${app.Manifest.version}`
-        let graph = this.appGraphs.get(key)
-        if (graph === undefined)
+        let base = this.appGraphs.get(key)
+        if (base === undefined)
         {
-            const source = new StoragePackageSource(this.platform.CreateStorage(this.options.packagesRoot ?? PragmaticServer.DefaultPackagesDir))
-            const built = RuntimeAppGraph.BuildQuery(source, app.Manifest)
-            graph = built
+            const built = this.BuildBaseFor(app.Manifest)
+            base = built
             this.appGraphs.set(key, built)
             // Evict a failed build so a later call retries (concurrent callers still share the in-flight promise).
             built.catch(() =>
@@ -276,7 +337,15 @@ export class PragmaticServer
                 }
             })
         }
-        return graph
+        return base
+    }
+
+    private async BuildBaseFor(manifest: PragmaticAppManifest): Promise<AppBase>
+    {
+        const packagesStorage = this.platform.CreateStorage(this.options.packagesRoot ?? PragmaticServer.DefaultPackagesDir)
+        const domain = await RuntimeAppGraph.BuildDomain(new StoragePackageSource(packagesStorage), manifest)
+        const plan = await AppConnectorPlan.For(packagesStorage, manifest)
+        return { domain, plan }
     }
 
     public Tenant(): Tenant

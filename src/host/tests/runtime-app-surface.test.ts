@@ -202,7 +202,7 @@ class RuntimeSurfaceFixture
             () => Promise.reject(new Error(RuntimeSurfaceFixture.NoConnectors)), ctx => server.Graph(ctx),
             undefined, undefined, undefined, undefined, undefined, undefined, purpose,
             runtime ? server.Applications() : undefined,
-            runtime ? (ctx, name) => server.GraphForPragmaticApp(ctx, name) : undefined)
+            runtime ? (ctx, name, labels) => server.GraphForPragmaticApp(ctx, name, labels) : undefined)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         this.disposables.push(async () =>
         {
