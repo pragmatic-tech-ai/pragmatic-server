@@ -55,6 +55,7 @@ import { AppConnectorPlan } from './host/cypher/app-connector-plan.js'
 import type { PragmaticAppManifest } from './host/apps/pragmatic-app-manifest.js'
 import { TenantGraphCache } from './host/cypher/tenant-graph-cache.js'
 import type { TenantRepository } from './host/cypher/tenant-graph-source.js'
+import { ShareStore } from './host/sharing/share-store.js'
 
 export interface OidcServerOptions
 {
@@ -142,6 +143,7 @@ export class PragmaticServer
     private appsStorage: IStorage | undefined
     private appsRegistry: PragmaticAppsRegistry | undefined
     private readonly appGraphs = new Map<string, Promise<AppBase>>()
+    private readonly shareStores = new Map<string, ShareStore>()
     private readAuth: Promise<TenantReadAuthorization> | undefined
 
     public constructor(options: PragmaticServerOptions)
@@ -418,6 +420,18 @@ export class PragmaticServer
         const connectorName = `${PragmaticServer.BuiltinConnectorPrefix}${manifest.name}${PragmaticServer.AppGraphKeySeparator}${manifest.version}`
         const augmented = BuiltinBindings.Augment(plan, nativeBase, connectorName, this.DataRootFor(manifest.name), this.BuiltinEngine())
         return { domain, plan: augmented.plan, nativeBase, defaultConcepts: augmented.defaultConcepts }
+    }
+
+    /** The per-app record-share store (memoized), over the app's built-in document store. */
+    public AppShareStore(name: string): ShareStore
+    {
+        let store = this.shareStores.get(name)
+        if (store === undefined)
+        {
+            store = new ShareStore(this.platform.CreateAppDataStore(this.DataRootFor(name), this.BuiltinEngine()))
+            this.shareStores.set(name, store)
+        }
+        return store
     }
 
     /** The per-app built-in store directory: `<applicationsRoot>/<app>/data`, the path the platform's CreateAppDataStore consumes. */
