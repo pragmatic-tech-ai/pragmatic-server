@@ -115,7 +115,7 @@ export class PragmaticServer
     private appsStorage: IStorage | undefined
     private appsRegistry: PragmaticAppsRegistry | undefined
     private readonly appGraphs = new Map<string, Promise<IGraphQuery>>()
-    private readAuth: TenantReadAuthorization | undefined
+    private readAuth: Promise<TenantReadAuthorization> | undefined
 
     public constructor(options: PragmaticServerOptions)
     {
@@ -196,8 +196,13 @@ export class PragmaticServer
         {
             return AllowAllReadFilterSource.Instance
         }
-        this.readAuth ??= new TenantReadAuthorization(await this.TenantConfigStore())
+        this.readAuth ??= this.BuildReadAuth()
         return this.readAuth
+    }
+
+    private async BuildReadAuth(): Promise<TenantReadAuthorization>
+    {
+        return new TenantReadAuthorization(await this.TenantConfigStore())
     }
 
     public Purpose(): TenantPurpose
