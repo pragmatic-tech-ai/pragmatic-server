@@ -11,6 +11,9 @@ export class SqliteDocumentSession implements IDocumentSession
         'INSERT INTO instances (source, id, data) VALUES (?, ?, ?) ON CONFLICT (source, id) DO UPDATE SET data = excluded.data'
     private static readonly DeleteRow = 'DELETE FROM instances WHERE source = ? AND id = ?'
 
+    private static readonly SqliteUnavailable =
+        'the built-in SQLite store requires Node >= 22.5 with node:sqlite available (on 22.5-23.x enable --experimental-sqlite, or upgrade to Node 24+)'
+
     private dbOpen: Promise<DatabaseSync> | undefined
 
     public constructor(private readonly dbFilePath: string)
@@ -66,7 +69,15 @@ export class SqliteDocumentSession implements IDocumentSession
 
     private async Open(): Promise<DatabaseSync>
     {
-        const sqlite = await import('node:sqlite')
+        let sqlite: typeof import('node:sqlite')
+        try
+        {
+            sqlite = await import('node:sqlite')
+        }
+        catch (cause)
+        {
+            throw new Error(SqliteDocumentSession.SqliteUnavailable, { cause })
+        }
         const db = new sqlite.DatabaseSync(this.dbFilePath)
         db.exec(SqliteDocumentSession.CreateTable)
         return db

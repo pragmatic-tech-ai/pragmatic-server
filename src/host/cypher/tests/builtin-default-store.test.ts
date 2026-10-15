@@ -32,7 +32,7 @@ class BuiltinFixture
     private static readonly Principal = 'p1'
     private static readonly Deny = 'deny'
     private static readonly Read = 'read'
-    private static readonly LabelField = 'label'
+    public static readonly LabelField = 'label'
     private static readonly OwningBuField = 'owningBu'
     private static readonly IdKey = 'id'
     private static readonly CreateGadget = 'CREATE TABLE "Gadget" (gadget_id text PRIMARY KEY, label text, description text)'
@@ -238,7 +238,7 @@ test('external still shadows: an explicit populate concept returns adapter rows 
 {
     await Case.Run(BuiltinFixture.WithConnector, undefined, async (fx, server) =>
     {
-        await fx.Put(BuiltinFixture.GadgetConcept, 'x1', { label: 'store-G' })
+        await fx.Put(BuiltinFixture.GadgetConcept, 'x1', { [BuiltinFixture.LabelField]: 'store-G' })
         assert.deepEqual(await BuiltinFixture.Labels(server, BuiltinFixture.GadgetLabels), ['ext-G1'])
     })
 })
