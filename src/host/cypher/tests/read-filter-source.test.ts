@@ -112,6 +112,6 @@ test('TenantReadAuthorization denies a principal with no role assignment', async
 
 test('AllowAllReadFilterSource keeps everything', async () =>
 {
-    const filter = await AllowAllReadFilterSource.Instance.ReadFilterFor(ReadFilterFixture.Context(ReadFilterFixture.PrincipalId))
+    const filter = await AllowAllReadFilterSource.Instance.ReadFilterFor()
     assert.equal(filter.Keep(ReadFilterFixture.Widget), true)
 })

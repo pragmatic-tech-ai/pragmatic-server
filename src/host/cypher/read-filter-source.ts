@@ -63,7 +63,7 @@ export class AllowAllReadFilterSource implements IReadFilterSource
 {
     public static readonly Instance = new AllowAllReadFilterSource()
 
-    public async ReadFilterFor(context: AccessContext): Promise<IInstanceFilter>
+    public async ReadFilterFor(): Promise<IInstanceFilter>
     {
         return new AllowAllInstanceFilter()
     }
