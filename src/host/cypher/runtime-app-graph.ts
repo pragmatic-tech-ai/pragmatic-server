@@ -6,13 +6,19 @@ import type { PragmaticAppManifest } from '../apps/pragmatic-app-manifest.js'
 /** Composes an application's published packages into one queryable graph via the Domain resolver. */
 export class RuntimeAppGraph
 {
-    public static async BuildQuery(source: StoragePackageSource, manifest: PragmaticAppManifest): Promise<IGraphQuery>
+    /** Loads every manifest package into a fresh Domain. */
+    public static async BuildDomain(source: StoragePackageSource, manifest: PragmaticAppManifest): Promise<Domain>
     {
         const domain = new Domain(source)
         for (const pkg of manifest.packages)
         {
             await domain.load({ model: pkg.id, version: pkg.version })
         }
-        return new GraphQuery(domain.graph)
+        return domain
+    }
+
+    public static async BuildQuery(source: StoragePackageSource, manifest: PragmaticAppManifest): Promise<IGraphQuery>
+    {
+        return new GraphQuery((await RuntimeAppGraph.BuildDomain(source, manifest)).graph)
     }
 }
