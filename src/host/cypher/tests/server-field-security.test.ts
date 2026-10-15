@@ -32,6 +32,7 @@ class FieldSecurityFixture
     private static readonly SecretValue = 'hush'
     private static readonly ReturnQuery = 'MATCH (w:Widget) RETURN w.label AS label, w.secret AS secret'
     private static readonly WhereQuery = "MATCH (w:Widget) WHERE w.secret = 'hush' RETURN w.label AS label"
+    private static readonly NodeQuery = 'MATCH (w:Widget) RETURN w'
     private static readonly Profile = 'cost-readers'
     private static readonly ProfileName = 'Cost readers'
     public static readonly Plain = 'p1'
@@ -97,6 +98,12 @@ class FieldSecurityFixture
     {
         return Cypher.CypherEngine.OverQuery(graph).Execute(FieldSecurityFixture.OrderQuery).Rows
             .map(r => [FieldSecurityFixture.Text(r[0]), r[1] instanceof Cypher.ScalarValue && r[1].Value !== null ? String(r[1].Value) : null] as [string, string | null])
+    }
+
+    public static NodeSnapshot(graph: IGraphQuery): string
+    {
+        const value = Cypher.CypherEngine.OverQuery(graph).Execute(FieldSecurityFixture.NodeQuery).Rows[0][0]
+        return value instanceof Cypher.NodeValue ? JSON.stringify(value.ToDto()) : ''
     }
 
     public static Matches(graph: IGraphQuery): string[]
@@ -209,6 +216,28 @@ test('identity off: no mask wrapper, the secured field reads unmasked', async ()
         const server = await fx.Setup(false)
         const graph = await server.GraphForPragmaticApp(PpSecurityHarness.Context(FieldSecurityFixture.Plain), FieldSecurityFixture.Name)
         assert.deepEqual(FieldSecurityFixture.Rows(graph), [['W1', FieldSecurityFixture.Hidden]])
+    }
+    finally
+    {
+        await fx.Dispose()
+    }
+})
+
+test('a whole-node RETURN omits the secured field without the profile and includes it with the profile', async () =>
+{
+    const fx = new FieldSecurityFixture()
+    try
+    {
+        const server = await fx.Setup()
+        const plain = await server.GraphForPragmaticApp(PpSecurityHarness.Context(FieldSecurityFixture.Plain), FieldSecurityFixture.Name)
+        const plainNode = FieldSecurityFixture.NodeSnapshot(plain)
+        assert.ok(plainNode.includes('W1'))
+        assert.ok(!plainNode.includes('secret'))
+        assert.ok(!plainNode.includes(FieldSecurityFixture.Hidden))
+        const granted = await server.GraphForPragmaticApp(PpSecurityHarness.Context(FieldSecurityFixture.Granted), FieldSecurityFixture.Name)
+        const grantedNode = FieldSecurityFixture.NodeSnapshot(granted)
+        assert.ok(grantedNode.includes('secret'))
+        assert.ok(grantedNode.includes(FieldSecurityFixture.Hidden))
     }
     finally
     {

@@ -39,9 +39,21 @@ export class MaskedMirror implements IInstanceMirror
         return this.inner.class
     }
 
+    private Concept(): string | undefined
+    {
+        try
+        {
+            return this.inner.type?.fullName
+        }
+        catch
+        {
+            return undefined
+        }
+    }
+
     public get node(): ReflectedNode
     {
-        const concept = this.inner.type?.fullName
+        const concept = this.Concept()
         const source = this.inner.node
         if (concept === undefined)
         {
@@ -72,7 +84,7 @@ export class MaskedMirror implements IInstanceMirror
 
     public field(name: string): FieldView | undefined
     {
-        const concept = this.inner.type?.fullName
+        const concept = this.Concept()
         if (concept === undefined || !this.mask.CanRead(concept, name))
         {
             return undefined
@@ -82,7 +94,7 @@ export class MaskedMirror implements IInstanceMirror
 
     public fields(): FieldView[]
     {
-        const concept = this.inner.type?.fullName
+        const concept = this.Concept()
         if (concept === undefined)
         {
             return []

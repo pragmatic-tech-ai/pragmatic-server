@@ -96,3 +96,16 @@ test('whole-node refs honor the mask', () =>
     const masked = new MaskedMirror(new Typed('shop.Widget', {}) as never, new LinkHidden())
     assert.deepEqual(masked.node.refs, { other: ['b'] })
 })
+
+test('a mirror whose type getter throws fails closed instead of throwing', () =>
+{
+    class Throwing extends FakeMirror
+    {
+        public override get type(): unknown { throw new Error('indeterminate type') }
+    }
+    const masked = new MaskedMirror(new Throwing('shop.Widget', { label: 'W' }) as never, new AllowAllFieldReadMask())
+    assert.equal(masked.field('x'), undefined)
+    assert.deepEqual(masked.fields(), [])
+    assert.deepEqual(masked.node.attrs, {})
+    assert.equal(masked.node.id, 'w1')
+})

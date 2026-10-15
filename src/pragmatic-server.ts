@@ -35,7 +35,7 @@ import { Action } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import { IdentityEnforcement, PolicyCatalog, CompositeInstanceFilter } from '@pragmatic-tech-ai/todl-identity-engine'
 import { TenantReadAuthorization, AllowAllReadFilterSource } from './host/cypher/read-filter-source.js'
-import { FieldMaskedGraphQuery } from './host/cypher/field-masked-graph-query.js'
+import { FieldMaskedGraphQuery, AllowAllFieldReadMask } from './host/cypher/field-masked-graph-query.js'
 import { AllowAllWriteAuthorizerSource } from './host/cypher/read-filter-source.js'
 import type { IReadFilterSource, IWriteAuthorizerSource } from './host/cypher/read-filter-source.js'
 import { AllowAllWriteInstanceGate } from './host/cypher/write-instance-gate.js'
@@ -329,6 +329,10 @@ export class PragmaticServer
             return filtered
         }
         const mask = await (await this.ReadAuthorization()).FieldReadMaskFor(context)
+        if (mask === AllowAllFieldReadMask.Instance)
+        {
+            return filtered
+        }
         return new FieldMaskedGraphQuery(filtered, mask)
     }
 

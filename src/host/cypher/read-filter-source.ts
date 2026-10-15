@@ -3,6 +3,7 @@ import { PrivilegeAction, AccessLevel } from '@pragmatic-tech-ai/todl-identity'
 import type { IInstanceFilter } from '@pragmatic-tech-ai/todl'
 import { AccessDepthEvaluator, AccessDepthInstanceFilter, AllowAllInstanceFilter } from '@pragmatic-tech-ai/todl-identity-engine'
 import type { FieldSecurityEvaluator } from '@pragmatic-tech-ai/todl-identity-engine'
+import { AllowAllFieldReadMask } from './field-masked-graph-query.js'
 import type { IFieldReadMask } from './field-masked-graph-query.js'
 import { AccessDepthWriteInstanceGate } from './write-instance-gate.js'
 import type { IWriteInstanceGate } from './write-instance-gate.js'
@@ -100,7 +101,12 @@ export class TenantReadAuthorization implements IReadFilterSource, IWriteAuthori
     public async FieldReadMaskFor(context: AccessContext): Promise<IFieldReadMask>
     {
         const evaluator = await this.EvaluatorFor(context.Tenant.Id)
-        return new AccessFieldReadMask(evaluator.FieldSecurity(), context.Principal)
+        const fs = evaluator.FieldSecurity()
+        if (!fs.HasSecuredFields())
+        {
+            return AllowAllFieldReadMask.Instance
+        }
+        return new AccessFieldReadMask(fs, context.Principal)
     }
 
     private EvaluatorFor(tenantId: string): Promise<AccessDepthEvaluator>
