@@ -34,6 +34,8 @@ export class RuntimeAppWriter
     private static readonly IdRequiredExternal = 'id is required for an external concept'
     private static readonly MissingConnector = 'connector not found for binding'
     private static readonly DefaultConflict = 'write was refused'
+    private static readonly DuplicateKey = 'duplicate key in batch'
+    private static readonly UnknownOperation = 'unknown operation kind'
     private static readonly GroupKeySeparator = '\u0000'
 
     constructor(
@@ -52,12 +54,27 @@ export class RuntimeAppWriter
         const groups = new Map<string, WriteGroup>()
         for (let index = 0; index < operations.length; index++)
         {
-            const planned = this.Plan(operations[index], index, results)
+            let planned: { binding: ConnectorBinding; spec: ConnectorSpec; write: PlannedWrite } | undefined
+            try
+            {
+                planned = this.Plan(operations[index], index, results)
+            }
+            catch (error)
+            {
+                results[index] = { status: AppWriteStatus.Invalid, reason: error instanceof Error ? error.message : RuntimeAppWriter.DefaultConflict }
+                continue
+            }
             if (planned === undefined)
             {
                 continue
             }
             const group = this.GroupFor(groups, planned.binding, planned.spec)
+            const keyText = String(planned.write.key)
+            if (group.items.some(i => String(i.key) === keyText))
+            {
+                results[index] = { status: AppWriteStatus.Invalid, reason: RuntimeAppWriter.DuplicateKey }
+                continue
+            }
             group.items.push(planned.write)
         }
         for (const group of groups.values())
@@ -73,6 +90,11 @@ export class RuntimeAppWriter
         if (binding === undefined)
         {
             results[index] = { status: AppWriteStatus.Invalid, reason: RuntimeAppWriter.UnknownConcept }
+            return undefined
+        }
+        if (op.op !== AppWriteOpKind.Create && op.op !== AppWriteOpKind.Update && op.op !== AppWriteOpKind.Delete)
+        {
+            results[index] = { status: AppWriteStatus.Invalid, reason: RuntimeAppWriter.UnknownOperation }
             return undefined
         }
         const action = this.ActionFor(op.op)
@@ -110,7 +132,8 @@ export class RuntimeAppWriter
         const id = this.ResolveUpsertId(op, spec)
         if (id === undefined)
         {
-            results[index] = { status: AppWriteStatus.Invalid, reason: RuntimeAppWriter.IdRequiredExternal }
+            const missing = op.op === AppWriteOpKind.Create ? RuntimeAppWriter.IdRequiredExternal : RuntimeAppWriter.IdRequired
+            results[index] = { status: AppWriteStatus.Invalid, reason: missing }
             return undefined
         }
         const operation: WriteOperation = { Kind: WriteOperationKind.Upsert, Key: id, Fields: this.MapFields(binding, op.fields) }
@@ -137,10 +160,6 @@ export class RuntimeAppWriter
         if (op.op === AppWriteOpKind.Create && spec.Kind === DataSourceKind.Builtin)
         {
             return randomUUID()
-        }
-        if (op.op === AppWriteOpKind.Update)
-        {
-            return undefined
         }
         return undefined
     }
@@ -176,7 +195,7 @@ export class RuntimeAppWriter
 
     private GroupFor(groups: Map<string, WriteGroup>, binding: ConnectorBinding, spec: ConnectorSpec): WriteGroup
     {
-        const key = `${binding.Connector}${RuntimeAppWriter.GroupKeySeparator}${binding.Source}`
+        const key = [binding.Connector, binding.Source, binding.IdKey, binding.VersionField ?? ''].join(RuntimeAppWriter.GroupKeySeparator)
         let group = groups.get(key)
         if (group === undefined)
         {

@@ -13,11 +13,11 @@ import type { IWriteAuthorizer } from '../cypher/read-filter-source.js'
 class FakeAdapter
 {
     public batches: WriteBatch[] = []
-    constructor(private readonly conflictKeys: Set<string> = new Set(), private readonly throwOnApply = false) {}
+    constructor(private readonly conflictKeys: Set<string> = new Set(), private readonly throwOnApply = false, private readonly throwOnSource = '') {}
     public async Query(): Promise<readonly never[]> { return [] }
     public async Apply(batch: WriteBatch): Promise<WriteResult>
     {
-        if (this.throwOnApply)
+        if (this.throwOnApply || batch.Source === this.throwOnSource)
         {
             throw new Error('adapter exploded')
         }
@@ -55,7 +55,37 @@ class Fx
 
     public static Graph(t: unknown): unknown
     {
-        return { Type: () => t }
+        return { Type: (name: string) => (name === 'shop.Order' || name === 'shop.Gadget' ? t : undefined) }
+    }
+
+    public static TwoPlan(): ModelConnectorPlan
+    {
+        return {
+            Model: 'shop', Version: '1',
+            Connectors: [{ Name: 'c', Kind: DataSourceKind.Builtin, Config: {} }],
+            Bindings: [
+                { Concept: 'shop.Order', Connector: 'c', Source: 'orders', IdKey: 'id', FieldMap: {}, Writable: true },
+                { Concept: 'shop.Gadget', Connector: 'c', Source: 'gadgets', IdKey: 'id', FieldMap: {}, Writable: true },
+            ],
+        } as ModelConnectorPlan
+    }
+
+    public static MappedPlan(): ModelConnectorPlan
+    {
+        return {
+            Model: 'shop', Version: '1',
+            Connectors: [{ Name: 'c', Kind: DataSourceKind.Builtin, Config: {} }],
+            Bindings: [{ Concept: 'shop.Order', Connector: 'c', Source: 'orders', IdKey: 'oid', FieldMap: { label: 'lbl', ident: 'oid' }, Writable: true }],
+        } as ModelConnectorPlan
+    }
+
+    public static MappedWriter(adapter: FakeAdapter): RuntimeAppWriter
+    {
+        const t = Fx.Type([
+            { name: 'label', type: 'string', card: Cardinality.Optional },
+            { name: 'ident', type: 'string', card: Cardinality.Optional },
+        ])
+        return new RuntimeAppWriter(Fx.MappedPlan(), Fx.Graph(t) as never, new FakeCatalog(adapter) as never, {} as never, new AllowAll(), new RuntimeWritePayloadValidator())
     }
 
     public static Plan(writable: boolean, kind: DataSourceKind): ModelConnectorPlan
@@ -74,7 +104,7 @@ class Fx
     }
 }
 
-// ---- tests ---- (call sites below use Fx.Plan / Fx.Writer; `plan(` → `Fx.Plan(`, `writer(` → `Fx.Writer(`)
+// ---- tests ----
 test('create on built-in mints a server id and applies', async () =>
 {
     const adapter = new FakeAdapter()
@@ -153,4 +183,119 @@ test('adapter exception maps the group to Conflict and still returns', async () 
     const out = await w.Apply([{ op: AppWriteOpKind.Update, concept: 'shop.Order', id: 'o1', fields: { title: 'a' } }])
     assert.equal(out.results[0].status, AppWriteStatus.Conflict)
     assert.ok(out.results[0].reason)
+})
+
+test('interleaved ops across two bindings land in input order', async () =>
+{
+    const adapter = new FakeAdapter()
+    const w = Fx.Writer(Fx.TwoPlan(), adapter, new AllowAll())
+    const out = await w.Apply([
+        { op: AppWriteOpKind.Update, concept: 'shop.Order', id: 'o1', fields: { title: 'a' } },
+        { op: AppWriteOpKind.Update, concept: 'shop.Gadget', id: 'g1', fields: { title: 'b' } },
+        { op: AppWriteOpKind.Update, concept: 'shop.Order', id: 'o2', fields: { title: 'c' } },
+    ])
+    assert.deepEqual(out.results.map(r => r.status), [AppWriteStatus.Applied, AppWriteStatus.Applied, AppWriteStatus.Applied])
+    assert.deepEqual(out.results.map(r => r.id), ['o1', 'g1', 'o2'])
+})
+
+test('invalid op between valid ops keeps order', async () =>
+{
+    const adapter = new FakeAdapter()
+    const w = Fx.Writer(Fx.TwoPlan(), adapter, new AllowAll())
+    const out = await w.Apply([
+        { op: AppWriteOpKind.Update, concept: 'shop.Order', id: 'o1', fields: { title: 'a' } },
+        { op: AppWriteOpKind.Update, concept: 'shop.Ghost', id: 'x', fields: {} },
+        { op: AppWriteOpKind.Update, concept: 'shop.Gadget', id: 'g1', fields: { title: 'b' } },
+    ])
+    assert.deepEqual(out.results.map(r => r.status), [AppWriteStatus.Applied, AppWriteStatus.Invalid, AppWriteStatus.Applied])
+})
+
+test('adapter throw in one binding leaves the other group applied', async () =>
+{
+    const adapter = new FakeAdapter(new Set(), false, 'gadgets')
+    const w = Fx.Writer(Fx.TwoPlan(), adapter, new AllowAll())
+    const out = await w.Apply([
+        { op: AppWriteOpKind.Update, concept: 'shop.Gadget', id: 'g1', fields: { title: 'b' } },
+        { op: AppWriteOpKind.Update, concept: 'shop.Order', id: 'o1', fields: { title: 'a' } },
+        { op: AppWriteOpKind.Update, concept: 'shop.Gadget', id: 'g2', fields: { title: 'c' } },
+    ])
+    assert.deepEqual(out.results.map(r => r.status), [AppWriteStatus.Conflict, AppWriteStatus.Applied, AppWriteStatus.Conflict])
+})
+
+test('same key twice in one group makes the duplicate Invalid', async () =>
+{
+    const adapter = new FakeAdapter()
+    const w = Fx.Writer(Fx.Plan(true, DataSourceKind.Builtin), adapter, new AllowAll())
+    const out = await w.Apply([
+        { op: AppWriteOpKind.Update, concept: 'shop.Order', id: 'o1', fields: { title: 'a' } },
+        { op: AppWriteOpKind.Update, concept: 'shop.Order', id: 'o1', fields: { title: 'b' } },
+    ])
+    assert.equal(out.results[0].status, AppWriteStatus.Applied)
+    assert.equal(out.results[1].status, AppWriteStatus.Invalid)
+    assert.equal(adapter.batches[0].Operations.length, 1)
+})
+
+class ThrowOnDelete implements IWriteAuthorizer
+{
+    public Allows(_concept: string, action: PrivilegeAction): boolean
+    {
+        if (action === PrivilegeAction.Delete)
+        {
+            throw new Error('policy boom')
+        }
+        return true
+    }
+}
+
+class DenyAll implements IWriteAuthorizer
+{
+    public Allows(): boolean { return false }
+}
+
+test('authorizer throw is contained to its op', async () =>
+{
+    const adapter = new FakeAdapter()
+    const w = Fx.Writer(Fx.Plan(true, DataSourceKind.Builtin), adapter, new ThrowOnDelete())
+    const out = await w.Apply([
+        { op: AppWriteOpKind.Delete, concept: 'shop.Order', id: 'o1' },
+        { op: AppWriteOpKind.Update, concept: 'shop.Order', id: 'o2', fields: { title: 'a' } },
+    ])
+    assert.equal(out.results[0].status, AppWriteStatus.Invalid)
+    assert.equal(out.results[0].reason, 'policy boom')
+    assert.equal(out.results[1].status, AppWriteStatus.Applied)
+})
+
+test('update without id and unknown op kind are Invalid with distinct reasons', async () =>
+{
+    const adapter = new FakeAdapter()
+    const w = Fx.Writer(Fx.Plan(true, DataSourceKind.Builtin), adapter, new AllowAll())
+    const out = await w.Apply([
+        { op: AppWriteOpKind.Update, concept: 'shop.Order', fields: { title: 'a' } },
+        { op: 'bogus' as AppWriteOpKind, concept: 'shop.Order', id: 'o1' },
+    ])
+    assert.equal(out.results[0].status, AppWriteStatus.Invalid)
+    assert.equal(out.results[1].status, AppWriteStatus.Invalid)
+    assert.notEqual(out.results[0].reason, out.results[1].reason)
+    assert.equal(adapter.batches.length, 0)
+})
+
+test('fully rejected batch never reaches the adapter', async () =>
+{
+    const adapter = new FakeAdapter()
+    const w = Fx.Writer(Fx.Plan(true, DataSourceKind.Builtin), adapter, new DenyAll())
+    const out = await w.Apply([
+        { op: AppWriteOpKind.Create, concept: 'shop.Order', fields: { title: 'x' } },
+        { op: AppWriteOpKind.Delete, concept: 'shop.Order', id: 'o1' },
+    ])
+    assert.deepEqual(out.results.map(r => r.status), [AppWriteStatus.Denied, AppWriteStatus.Denied])
+    assert.equal(adapter.batches.length, 0)
+})
+
+test('create maps member names to external names and drops the id field', async () =>
+{
+    const adapter = new FakeAdapter()
+    const w = Fx.MappedWriter(adapter)
+    const out = await w.Apply([{ op: AppWriteOpKind.Create, concept: 'shop.Order', fields: { label: 'L', ident: 'zzz' } }])
+    assert.equal(out.results[0].status, AppWriteStatus.Applied)
+    assert.deepEqual(adapter.batches[0].Operations[0].Fields, { lbl: 'L' })
 })
