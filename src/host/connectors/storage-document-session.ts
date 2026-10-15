@@ -6,6 +6,8 @@ export class StorageDocumentSession implements IDocumentSession
 {
     private static readonly Extension = '.json'
     private static readonly Separator = '/'
+    private static readonly Utf8 = 'utf8'
+    private static readonly Hex = 'hex'
 
     public constructor(private readonly storage: IStorage)
     {
@@ -13,7 +15,7 @@ export class StorageDocumentSession implements IDocumentSession
 
     public async Find(collection: string, _filter: Record<string, unknown>): Promise<readonly Record<string, unknown>[]>
     {
-        const dir = encodeURIComponent(collection)
+        const dir = StorageDocumentSession.Encode(collection)
         if (!(await this.storage.Exists(dir)))
         {
             return []
@@ -34,7 +36,7 @@ export class StorageDocumentSession implements IDocumentSession
 
     public async Upsert(collection: string, idField: string, key: unknown, doc: Record<string, unknown>): Promise<void>
     {
-        await this.storage.CreateDirectory(encodeURIComponent(collection))
+        await this.storage.CreateDirectory(StorageDocumentSession.Encode(collection))
         await this.storage.WriteText(this.PathFor(collection, key), JSON.stringify({ ...doc, [idField]: key }))
     }
 
@@ -51,6 +53,12 @@ export class StorageDocumentSession implements IDocumentSession
 
     private PathFor(collection: string, key: unknown): string
     {
-        return `${encodeURIComponent(collection)}${StorageDocumentSession.Separator}${encodeURIComponent(String(key))}${StorageDocumentSession.Extension}`
+        return `${StorageDocumentSession.Encode(collection)}${StorageDocumentSession.Separator}${StorageDocumentSession.Encode(String(key))}${StorageDocumentSession.Extension}`
+    }
+
+    /** One-way lowercase hex of the UTF-8 bytes: filesystem-safe, case-stable, injective. */
+    private static Encode(segment: string): string
+    {
+        return Buffer.from(segment, StorageDocumentSession.Utf8).toString(StorageDocumentSession.Hex)
     }
 }

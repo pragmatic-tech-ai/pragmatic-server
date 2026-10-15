@@ -11,7 +11,7 @@ export class SqliteDocumentSession implements IDocumentSession
         'INSERT INTO instances (source, id, data) VALUES (?, ?, ?) ON CONFLICT (source, id) DO UPDATE SET data = excluded.data'
     private static readonly DeleteRow = 'DELETE FROM instances WHERE source = ? AND id = ?'
 
-    private db: DatabaseSync | undefined
+    private dbOpen: Promise<DatabaseSync> | undefined
 
     public constructor(private readonly dbFilePath: string)
     {
@@ -39,18 +39,25 @@ export class SqliteDocumentSession implements IDocumentSession
 
     public async Dispose(): Promise<void>
     {
-        this.db?.close()
-        this.db = undefined
+        const open = this.dbOpen
+        this.dbOpen = undefined
+        if (open !== undefined)
+        {
+            (await open).close()
+        }
     }
 
-    private async Db(): Promise<DatabaseSync>
+    private Db(): Promise<DatabaseSync>
     {
-        if (this.db === undefined)
-        {
-            const sqlite = await import('node:sqlite')
-            this.db = new sqlite.DatabaseSync(this.dbFilePath)
-            this.db.exec(SqliteDocumentSession.CreateTable)
-        }
-        return this.db
+        this.dbOpen ??= this.Open()
+        return this.dbOpen
+    }
+
+    private async Open(): Promise<DatabaseSync>
+    {
+        const sqlite = await import('node:sqlite')
+        const db = new sqlite.DatabaseSync(this.dbFilePath)
+        db.exec(SqliteDocumentSession.CreateTable)
+        return db
     }
 }

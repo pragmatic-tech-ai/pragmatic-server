@@ -23,7 +23,8 @@ class DocumentSessionConformance
             DocumentSessionConformance.UpdateNotDuplicate,
             DocumentSessionConformance.DeleteMissing,
             DocumentSessionConformance.EmptyCollection,
-            DocumentSessionConformance.TypeRoundTrip
+            DocumentSessionConformance.TypeRoundTrip,
+            DocumentSessionConformance.PathSafety
         ]
         for (const run of cases)
         {
@@ -68,6 +69,53 @@ class DocumentSessionConformance
         {
             rmSync(dir, { recursive: true, force: true })
         }
+    }
+
+    public static async OpenRace(): Promise<void>
+    {
+        const dir = mkdtempSync(join(tmpdir(), DocumentSessionConformance.Prefix))
+        try
+        {
+            const c = DocumentSessionConformance.Collection
+            const f = DocumentSessionConformance.IdField
+            const session = DocumentSessionConformance.MakeSqlite(dir)
+            const [found] = await Promise.all([
+                session.Find(c, DocumentSessionConformance.Empty),
+                session.Upsert(c, f, 'k', { name: 'K' })
+            ])
+            assert.ok(found.length <= 1)
+            assert.deepEqual(await session.Find(c, DocumentSessionConformance.Empty), [{ name: 'K', id: 'k' }])
+            await session.Dispose?.()
+            const again = DocumentSessionConformance.MakeSqlite(dir)
+            assert.deepEqual(await again.Find(c, DocumentSessionConformance.Empty), [{ name: 'K', id: 'k' }])
+            await again.Dispose?.()
+        }
+        finally
+        {
+            rmSync(dir, { recursive: true, force: true })
+        }
+    }
+
+    private static async PathSafety(s: IDocumentSession): Promise<void>
+    {
+        const f = DocumentSessionConformance.IdField
+        const cols = ['..', 'a.b.C']
+        const keys = ['a*b', 'A', 'a']
+        for (const c of cols)
+        {
+            for (const k of keys)
+            {
+                await s.Upsert(c, f, k, { v: `${c}|${k}` })
+            }
+        }
+        for (const c of cols)
+        {
+            const docs = [...(await s.Find(c, DocumentSessionConformance.Empty))].map(d => String(d.v)).sort()
+            assert.deepEqual(docs, keys.map(k => `${c}|${k}`).sort())
+        }
+        assert.equal(await s.Delete('..', f, 'A'), true)
+        assert.equal((await s.Find('..', DocumentSessionConformance.Empty)).length, 2)
+        assert.equal((await s.Find('a.b.C', DocumentSessionConformance.Empty)).length, 3)
     }
 
     private static async Crud(s: IDocumentSession): Promise<void>
@@ -128,4 +176,9 @@ test('SqliteDocumentSession conformance', async () =>
 test('SqliteDocumentSession durability across dispose and reopen', async () =>
 {
     await DocumentSessionConformance.Durability()
+})
+
+test('SqliteDocumentSession concurrent first calls open once', async () =>
+{
+    await DocumentSessionConformance.OpenRace()
 })
