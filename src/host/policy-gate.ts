@@ -3,7 +3,7 @@ import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import { trace, isSpanContextValid } from '@opentelemetry/api'
 import { NullAccessAuditSink, AuditSurface, AuditOutcome } from './access-audit.js'
 import type { IAccessAuditSink, AccessAuditEvent } from './access-audit.js'
-import { LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol, AdminProtocol, CypherProtocol, PragmaticAppProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol, AdminProtocol, CypherProtocol, PragmaticAppProtocol, AppDataProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 interface MethodPolicy
 {
@@ -84,6 +84,7 @@ export class PolicyGate
         const write: MethodPolicy = { action: Action.Write, resourceKind: ResourceKind.Model }
         const administer: MethodPolicy = { action: Action.Administer, resourceKind: ResourceKind.Tenant }
         const readTenant: MethodPolicy = { action: Action.Read, resourceKind: ResourceKind.Tenant }
+        const writeTenant: MethodPolicy = { action: Action.Write, resourceKind: ResourceKind.Tenant }
         const connect: MethodPolicy = { action: Action.Connect, resourceKind: ResourceKind.Connector }
         const readConnector: MethodPolicy = { action: Action.Read, resourceKind: ResourceKind.Connector }
         const writeConnector: MethodPolicy = { action: Action.Write, resourceKind: ResourceKind.Connector }
@@ -114,6 +115,7 @@ export class PolicyGate
             [ConnectorProtocol.Prepare.method, connect],
             [ConnectorProtocol.Refresh.method, connect],
             [CypherProtocol.Query.method, readTenant],
+            [AppDataProtocol.Write.method, writeTenant],
             [PragmaticAppProtocol.List.method, readTenant],
             [PragmaticAppProtocol.Open.method, readTenant],
             [AdminProtocol.ListGrants.method, administer],
