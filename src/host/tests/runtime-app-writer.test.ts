@@ -1,13 +1,15 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Cardinality, WriteOperationKind, DataSourceKind } from '@pragmatic-tech-ai/todl'
-import type { ModelConnectorPlan, WriteBatch, WriteResult } from '@pragmatic-tech-ai/todl'
+import type { ModelConnectorPlan, WriteBatch, WriteResult, IInstanceView } from '@pragmatic-tech-ai/todl'
 import { PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
 import { AppWriteOpKind, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AppWriteOpDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { RuntimeAppWriter } from '../runtime-app-writer.js'
 import { RuntimeWritePayloadValidator } from '../runtime-write-payload-validator.js'
 import type { IWriteAuthorizer } from '../cypher/read-filter-source.js'
+import { AllowAllWriteInstanceGate } from '../cypher/write-instance-gate.js'
+import type { IWriteInstanceGate } from '../cypher/write-instance-gate.js'
 
 // ---- fakes ----
 class FakeAdapter
@@ -87,7 +89,7 @@ class Fx
             { name: 'label', type: 'string', card: Cardinality.Optional },
             { name: 'ident', type: 'string', card: Cardinality.Optional },
         ])
-        return new RuntimeAppWriter(Fx.MappedPlan(), Fx.Graph(t) as never, new FakeCatalog(adapter) as never, {} as never, new AllowAll(), new RuntimeWritePayloadValidator())
+        return new RuntimeAppWriter(Fx.MappedPlan(), Fx.Graph(t) as never, new FakeCatalog(adapter) as never, {} as never, new AllowAll(), new RuntimeWritePayloadValidator(), AllowAllWriteInstanceGate.Instance)
     }
 
     public static Plan(writable: boolean, kind: DataSourceKind): ModelConnectorPlan
@@ -102,7 +104,7 @@ class Fx
     public static Writer(p: ModelConnectorPlan, adapter: FakeAdapter, auth: IWriteAuthorizer): RuntimeAppWriter
     {
         const t = Fx.Type([{ name: 'title', type: 'string', card: Cardinality.One }])
-        return new RuntimeAppWriter(p, Fx.Graph(t) as never, new FakeCatalog(adapter) as never, {} as never, auth, new RuntimeWritePayloadValidator())
+        return new RuntimeAppWriter(p, Fx.Graph(t) as never, new FakeCatalog(adapter) as never, {} as never, auth, new RuntimeWritePayloadValidator(), AllowAllWriteInstanceGate.Instance)
     }
 }
 
@@ -159,7 +161,7 @@ test('unknown concept is Invalid', async () =>
 {
     const adapter = new FakeAdapter()
     const p = Fx.Plan(true, DataSourceKind.Builtin)
-    const w = new RuntimeAppWriter(p, { Type: () => undefined } as never, new FakeCatalog(adapter) as never, {} as never, new AllowAll(), new RuntimeWritePayloadValidator())
+    const w = new RuntimeAppWriter(p, { Type: () => undefined } as never, new FakeCatalog(adapter) as never, {} as never, new AllowAll(), new RuntimeWritePayloadValidator(), AllowAllWriteInstanceGate.Instance)
     const out = await w.Apply([{ op: AppWriteOpKind.Create, concept: 'shop.Ghost', id: 'g1', fields: {} }])
     assert.equal(out.results[0].status, AppWriteStatus.Invalid)
 })
@@ -303,4 +305,111 @@ test('create maps member names to external names and drops the id field', async 
     const out = await w.Apply([{ op: AppWriteOpKind.Create, concept: 'shop.Order', fields: { label: 'L', ident: 'zzz' } }])
     assert.equal(out.results[0].status, AppWriteStatus.Applied)
     assert.deepEqual(adapter.batches[0].Operations[0].Fields, { lbl: 'L' })
+})
+
+class FakeGate implements IWriteInstanceGate
+{
+    public authorizeByIdCalls = 0
+    public authorizeCalls = 0
+    constructor(
+        private readonly defaults: readonly { field: string; value: string }[] = [],
+        private readonly byId: (id: string) => boolean = () => true,
+        private readonly byView: (view: IInstanceView) => boolean = () => true) {}
+    public CreateDefaults(): readonly { field: string; value: string }[] { return this.defaults }
+    public Authorize(_action: PrivilegeAction, view: IInstanceView): boolean { this.authorizeCalls++; return this.byView(view) }
+    public async AuthorizeById(_action: PrivilegeAction, _concept: string, id: string): Promise<boolean> { this.authorizeByIdCalls++; return this.byId(id) }
+}
+
+class GateFx
+{
+    public static OwnedType(): unknown
+    {
+        return Fx.Type([
+            { name: 'title', type: 'string', card: Cardinality.One },
+            { name: 'owner', type: 'string', card: Cardinality.Optional },
+            { name: 'owningBu', type: 'string', card: Cardinality.Optional },
+        ])
+    }
+
+    public static Writer(adapter: FakeAdapter, gate: IWriteInstanceGate): RuntimeAppWriter
+    {
+        return new RuntimeAppWriter(Fx.Plan(true, DataSourceKind.Builtin), Fx.Graph(GateFx.OwnedType()) as never, new FakeCatalog(adapter) as never, {} as never, new AllowAll(), new RuntimeWritePayloadValidator(), gate)
+    }
+}
+
+test('per-instance gate denies an out-of-scope update (write depth narrower than read)', async () =>
+{
+    const adapter = new FakeAdapter()
+    const gate = new FakeGate([], id => id === 'o1')
+    const w = GateFx.Writer(adapter, gate)
+    const out = await w.Apply([
+        { op: AppWriteOpKind.Update, concept: 'shop.Order', id: 'o1', fields: { title: 'a' } },
+        { op: AppWriteOpKind.Update, concept: 'shop.Order', id: 'o2', fields: { title: 'b' } },
+    ])
+    assert.equal(out.results[0].status, AppWriteStatus.Applied)
+    assert.equal(out.results[1].status, AppWriteStatus.Denied)
+    assert.equal(out.results[1].reason, 'not authorized for this record')
+    assert.equal(adapter.batches[0].Operations.length, 1)
+})
+
+test('per-instance gate denies a delete of a non-fetchable row', async () =>
+{
+    const adapter = new FakeAdapter()
+    const w = GateFx.Writer(adapter, new FakeGate([], () => false))
+    const out = await w.Apply([{ op: AppWriteOpKind.Delete, concept: 'shop.Order', id: 'gone' }])
+    assert.equal(out.results[0].status, AppWriteStatus.Denied)
+    assert.equal(out.results[0].reason, 'not authorized for this record')
+    assert.equal(adapter.batches.length, 0)
+})
+
+test('create stamps omitted owner/BU defaults into the persisted fields', async () =>
+{
+    const adapter = new FakeAdapter()
+    const gate = new FakeGate([{ field: 'owner', value: 'u1' }, { field: 'owningBu', value: 'sales' }], () => true, v => v.Field('owningBu') === 'sales')
+    const w = GateFx.Writer(adapter, gate)
+    const out = await w.Apply([{ op: AppWriteOpKind.Create, concept: 'shop.Order', fields: { title: 'x' } }])
+    assert.equal(out.results[0].status, AppWriteStatus.Applied)
+    assert.equal(adapter.batches[0].Operations[0].Fields.owner, 'u1')
+    assert.equal(adapter.batches[0].Operations[0].Fields.owningBu, 'sales')
+})
+
+test('create with an explicit out-of-scope owner is denied and does not overwrite it', async () =>
+{
+    const adapter = new FakeAdapter()
+    const gate = new FakeGate([{ field: 'owningBu', value: 'sales' }], () => true, v => v.Field('owningBu') === 'sales')
+    const w = GateFx.Writer(adapter, gate)
+    const out = await w.Apply([{ op: AppWriteOpKind.Create, concept: 'shop.Order', fields: { title: 'x', owningBu: 'root' } }])
+    assert.equal(out.results[0].status, AppWriteStatus.Denied)
+    assert.equal(adapter.batches.length, 0)
+})
+
+test('coarse per-concept deny short-circuits before the per-instance gate', async () =>
+{
+    const adapter = new FakeAdapter()
+    const gate = new FakeGate()
+    const w = new RuntimeAppWriter(Fx.Plan(true, DataSourceKind.Builtin), Fx.Graph(GateFx.OwnedType()) as never, new FakeCatalog(adapter) as never, {} as never, new DenyAll(), new RuntimeWritePayloadValidator(), gate)
+    const out = await w.Apply([{ op: AppWriteOpKind.Update, concept: 'shop.Order', id: 'o1', fields: { title: 'a' } }])
+    assert.equal(out.results[0].status, AppWriteStatus.Denied)
+    assert.equal(gate.authorizeByIdCalls, 0)
+    assert.equal(gate.authorizeCalls, 0)
+})
+
+test('update without id is Invalid before any gate fetch', async () =>
+{
+    const adapter = new FakeAdapter()
+    const gate = new FakeGate()
+    const w = GateFx.Writer(adapter, gate)
+    const out = await w.Apply([{ op: AppWriteOpKind.Update, concept: 'shop.Order', fields: { title: 'a' } }])
+    assert.equal(out.results[0].status, AppWriteStatus.Invalid)
+    assert.equal(gate.authorizeByIdCalls, 0)
+})
+
+test('create on a concept with no ownership rule stamps nothing and is authorized on the raw payload', async () =>
+{
+    const adapter = new FakeAdapter()
+    const gate = new FakeGate([], () => true, v => v.Field('owningBu') === undefined)
+    const w = GateFx.Writer(adapter, gate)
+    const out = await w.Apply([{ op: AppWriteOpKind.Create, concept: 'shop.Order', fields: { title: 'x' } }])
+    assert.equal(out.results[0].status, AppWriteStatus.Applied)
+    assert.equal(adapter.batches[0].Operations[0].Fields.owningBu, undefined)
 })

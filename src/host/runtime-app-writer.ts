@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { WriteOperationKind, DataSourceKind } from '@pragmatic-tech-ai/todl'
-import type { ModelConnectorPlan, ConnectorBinding, ConnectorSpec, WriteBatch, WriteOperation, WriteResult, ExternalFieldValue, DataSourceAdapterCatalog } from '@pragmatic-tech-ai/todl'
+import type { ModelConnectorPlan, ConnectorBinding, ConnectorSpec, WriteBatch, WriteOperation, WriteResult, ExternalFieldValue, DataSourceAdapterCatalog, IInstanceView, Scalar } from '@pragmatic-tech-ai/todl'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import { PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
@@ -9,6 +9,7 @@ import type { AppWriteOpDto, AppWriteOpResultDto, AppWriteResultDto } from '@pra
 import type { IConceptType } from './runtime-write-payload-validator.js'
 import { RuntimeWritePayloadValidator } from './runtime-write-payload-validator.js'
 import type { IWriteAuthorizer } from './cypher/read-filter-source.js'
+import type { IWriteInstanceGate } from './cypher/write-instance-gate.js'
 
 interface PlannedWrite
 {
@@ -39,6 +40,7 @@ export class RuntimeAppWriter
     private static readonly WriteFailed = 'write failed'
     private static readonly NotProcessed = 'operation was not processed'
     private static readonly UnknownOperation = 'unknown operation kind'
+    private static readonly NotAuthorizedRecord = 'not authorized for this record'
     private static readonly GroupKeySeparator = '\u0000'
 
     constructor(
@@ -47,7 +49,8 @@ export class RuntimeAppWriter
         private readonly catalog: DataSourceAdapterCatalog,
         private readonly services: IServiceProvider,
         private readonly authorizer: IWriteAuthorizer,
-        private readonly validator: RuntimeWritePayloadValidator)
+        private readonly validator: RuntimeWritePayloadValidator,
+        private readonly gate: IWriteInstanceGate)
     {
     }
 
@@ -60,7 +63,7 @@ export class RuntimeAppWriter
             let planned: { binding: ConnectorBinding; spec: ConnectorSpec; write: PlannedWrite } | undefined
             try
             {
-                planned = this.Plan(operations[index], index, results)
+                planned = await this.Plan(operations[index], index, results)
             }
             catch
             {
@@ -88,7 +91,7 @@ export class RuntimeAppWriter
         return { results: results.map(r => r ?? { status: AppWriteStatus.Invalid, reason: RuntimeAppWriter.NotProcessed }) }
     }
 
-    private Plan(op: AppWriteOpDto, index: number, results: (AppWriteOpResultDto | undefined)[]): { binding: ConnectorBinding; spec: ConnectorSpec; write: PlannedWrite } | undefined
+    private async Plan(op: AppWriteOpDto, index: number, results: (AppWriteOpResultDto | undefined)[]): Promise<{ binding: ConnectorBinding; spec: ConnectorSpec; write: PlannedWrite } | undefined>
     {
         const binding = this.plan.Bindings.find(b => b.Concept === op.concept)
         if (binding === undefined)
@@ -125,8 +128,12 @@ export class RuntimeAppWriter
         return this.PlanUpsert(op, index, binding, spec, results)
     }
 
-    private PlanUpsert(op: AppWriteOpDto, index: number, binding: ConnectorBinding, spec: ConnectorSpec, results: (AppWriteOpResultDto | undefined)[]): { binding: ConnectorBinding; spec: ConnectorSpec; write: PlannedWrite } | undefined
+    private async PlanUpsert(op: AppWriteOpDto, index: number, binding: ConnectorBinding, spec: ConnectorSpec, results: (AppWriteOpResultDto | undefined)[]): Promise<{ binding: ConnectorBinding; spec: ConnectorSpec; write: PlannedWrite } | undefined>
     {
+        if (op.op === AppWriteOpKind.Create)
+        {
+            this.StampCreateDefaults(op)
+        }
         const reason = this.validator.Validate(this.graph.Type(op.concept) as IConceptType | undefined, op.op === AppWriteOpKind.Create, op.fields)
         if (reason !== undefined)
         {
@@ -140,15 +147,28 @@ export class RuntimeAppWriter
             results[index] = { status: AppWriteStatus.Invalid, reason: missing }
             return undefined
         }
+        const authorized = op.op === AppWriteOpKind.Create
+            ? this.gate.Authorize(PrivilegeAction.Create, this.PayloadView(op))
+            : await this.gate.AuthorizeById(PrivilegeAction.Update, op.concept, id)
+        if (!authorized)
+        {
+            results[index] = { status: AppWriteStatus.Denied, reason: RuntimeAppWriter.NotAuthorizedRecord }
+            return undefined
+        }
         const operation: WriteOperation = { Kind: WriteOperationKind.Upsert, Key: id, Fields: this.MapFields(binding, op.fields) }
         return { binding, spec, write: { index, key: id, operation } }
     }
 
-    private PlanDelete(op: AppWriteOpDto, index: number, binding: ConnectorBinding, spec: ConnectorSpec, results: (AppWriteOpResultDto | undefined)[]): { binding: ConnectorBinding; spec: ConnectorSpec; write: PlannedWrite } | undefined
+    private async PlanDelete(op: AppWriteOpDto, index: number, binding: ConnectorBinding, spec: ConnectorSpec, results: (AppWriteOpResultDto | undefined)[]): Promise<{ binding: ConnectorBinding; spec: ConnectorSpec; write: PlannedWrite } | undefined>
     {
         if (op.id === undefined || op.id.length === 0)
         {
             results[index] = { status: AppWriteStatus.Invalid, reason: RuntimeAppWriter.IdRequired }
+            return undefined
+        }
+        if (!(await this.gate.AuthorizeById(PrivilegeAction.Delete, op.concept, op.id)))
+        {
+            results[index] = { status: AppWriteStatus.Denied, reason: RuntimeAppWriter.NotAuthorizedRecord }
             return undefined
         }
         const operation: WriteOperation = { Kind: WriteOperationKind.Delete, Key: op.id, Fields: {} }
@@ -182,6 +202,30 @@ export class RuntimeAppWriter
             out[external] = payload[member] as ExternalFieldValue
         }
         return out
+    }
+
+    private StampCreateDefaults(op: AppWriteOpDto): void
+    {
+        const defaults = this.gate.CreateDefaults(op.concept)
+        if (defaults.length === 0)
+        {
+            return
+        }
+        const fields: Record<string, unknown> = { ...(op.fields ?? {}) }
+        for (const stamp of defaults)
+        {
+            const current = fields[stamp.field]
+            if (current === undefined || current === null || current === '')
+            {
+                fields[stamp.field] = stamp.value
+            }
+        }
+        op.fields = fields
+    }
+
+    private PayloadView(op: AppWriteOpDto): IInstanceView
+    {
+        return { Concept: op.concept, Field: name => op.fields?.[name] as Scalar | undefined }
     }
 
     private ActionFor(kind: AppWriteOpKind): PrivilegeAction
