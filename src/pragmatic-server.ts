@@ -35,6 +35,7 @@ import { Action } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import { IdentityEnforcement, PolicyCatalog, CompositeInstanceFilter } from '@pragmatic-tech-ai/todl-identity-engine'
 import { TenantReadAuthorization, AllowAllReadFilterSource } from './host/cypher/read-filter-source.js'
+import { FieldMaskedGraphQuery } from './host/cypher/field-masked-graph-query.js'
 import { AllowAllWriteAuthorizerSource } from './host/cypher/read-filter-source.js'
 import type { IReadFilterSource, IWriteAuthorizerSource } from './host/cypher/read-filter-source.js'
 import { AllowAllWriteInstanceGate } from './host/cypher/write-instance-gate.js'
@@ -309,7 +310,7 @@ export class PragmaticServer
      * prefetched fresh per query, then the SP-3b depth+predicate filter over the result. The connector layer sits INSIDE the filter,
      * so a connector-minted instance is filtered exactly like a native one.
      */
-    public async GraphForPragmaticApp(context: AccessContext, name: string, labels: ReferencedLabelSet = PragmaticServer.NoLabels): Promise<IGraphQuery>
+    public async GraphForPragmaticApp(context: AccessContext, name: string, labels: ReferencedLabelSet = PragmaticServer.NoLabels, maskFields = true): Promise<IGraphQuery>
     {
         const built = await this.BaseGraphFor(name)
         const nativeBase = built.nativeBase
@@ -322,7 +323,13 @@ export class PragmaticServer
         const rules = await AccessPolicySetting.Load(this.AppsStorage(), name)
         const predicate = IdentityEnforcement.Over(PolicyCatalog.FromPolicies(rules), context, Action.Read).InstanceFilter()
         const depth = await (await this.DepthFilterSource()).ReadFilterFor(context)
-        return new FilteredGraphQuery(base, new CompositeInstanceFilter([predicate, depth]))
+        const filtered = new FilteredGraphQuery(base, new CompositeInstanceFilter([predicate, depth]))
+        if (!maskFields || this.identity === undefined)
+        {
+            return filtered
+        }
+        const mask = await (await this.ReadAuthorization()).FieldReadMaskFor(context)
+        return new FieldMaskedGraphQuery(filtered, mask)
     }
 
     public async WriteForPragmaticApp(context: AccessContext, name: string, operations: readonly AppWriteOpDto[]): Promise<AppWriteResultDto>

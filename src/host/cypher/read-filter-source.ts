@@ -2,6 +2,8 @@ import type { AccessContext, ITenantConfigStore, ISecurityModelConfig, Principal
 import { PrivilegeAction, AccessLevel } from '@pragmatic-tech-ai/todl-identity'
 import type { IInstanceFilter } from '@pragmatic-tech-ai/todl'
 import { AccessDepthEvaluator, AccessDepthInstanceFilter, AllowAllInstanceFilter } from '@pragmatic-tech-ai/todl-identity-engine'
+import type { FieldSecurityEvaluator } from '@pragmatic-tech-ai/todl-identity-engine'
+import type { IFieldReadMask } from './field-masked-graph-query.js'
 import { AccessDepthWriteInstanceGate } from './write-instance-gate.js'
 import type { IWriteInstanceGate } from './write-instance-gate.js'
 import type { IWriteTargetSource } from '../write-target-source.js'
@@ -31,6 +33,16 @@ class AccessDepthWriteAuthorizer implements IWriteAuthorizer
     public Allows(concept: string, action: PrivilegeAction): boolean
     {
         return this.evaluator.EffectiveLevel(this.principal, action, concept) !== AccessLevel.None
+    }
+}
+
+class AccessFieldReadMask implements IFieldReadMask
+{
+    constructor(private readonly evaluator: FieldSecurityEvaluator, private readonly principal: Principal) {}
+
+    public CanRead(concept: string, field: string): boolean
+    {
+        return this.evaluator.CanReadField(this.principal, concept, field)
     }
 }
 
@@ -83,6 +95,12 @@ export class TenantReadAuthorization implements IReadFilterSource, IWriteAuthori
     {
         const evaluator = await this.EvaluatorFor(context.Tenant.Id)
         return new AccessDepthWriteInstanceGate(evaluator, context.Principal, predicate, target)
+    }
+
+    public async FieldReadMaskFor(context: AccessContext): Promise<IFieldReadMask>
+    {
+        const evaluator = await this.EvaluatorFor(context.Tenant.Id)
+        return new AccessFieldReadMask(evaluator.FieldSecurity(), context.Principal)
     }
 
     private EvaluatorFor(tenantId: string): Promise<AccessDepthEvaluator>
