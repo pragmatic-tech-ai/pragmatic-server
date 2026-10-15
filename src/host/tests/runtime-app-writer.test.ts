@@ -315,7 +315,9 @@ class FakeGate implements IWriteInstanceGate
         private readonly defaults: readonly { field: string; value: string }[] = [],
         private readonly byId: (id: string) => boolean = () => true,
         private readonly byView: (action: PrivilegeAction, view: IInstanceView) => boolean = () => true,
-        private readonly existing: IInstanceView | undefined = undefined) {}
+        private readonly existing: IInstanceView | undefined = undefined,
+        private readonly fieldOk: (concept: string, field: string, action: PrivilegeAction) => boolean = () => true) {}
+    public CanWriteField(concept: string, field: string, action: PrivilegeAction): boolean { return this.fieldOk(concept, field, action) }
     public CreateDefaults(): readonly { field: string; value: string }[] { return this.defaults }
     public Authorize(action: PrivilegeAction, view: IInstanceView): boolean { this.authorizeCalls++; return this.byView(action, view) }
     public async AuthorizeById(_action: PrivilegeAction, _concept: string, id: string): Promise<boolean> { this.authorizeByIdCalls++; return this.byId(id) }
@@ -330,6 +332,7 @@ class GateFx
             { name: 'title', type: 'string', card: Cardinality.One },
             { name: 'owner', type: 'string', card: Cardinality.Optional },
             { name: 'owningBu', type: 'string', card: Cardinality.Optional },
+            { name: 'cost', type: 'string', card: Cardinality.Optional },
         ])
     }
 
@@ -438,4 +441,46 @@ test('create on a concept with no ownership rule stamps nothing and is authorize
     const out = await w.Apply([{ op: AppWriteOpKind.Create, concept: 'shop.Order', fields: { title: 'x' } }])
     assert.equal(out.results[0].status, AppWriteStatus.Applied)
     assert.equal(adapter.batches[0].Operations[0].Fields.owningBu, undefined)
+})
+
+test('update setting a secured field the principal cannot write is Denied', async () =>
+{
+    const adapter = new FakeAdapter()
+    const gate = new FakeGate([], () => true, () => true, undefined, (_c, field) => field !== 'cost')
+    const w = GateFx.Writer(adapter, gate)
+    const out = await w.Apply([{ op: AppWriteOpKind.Update, concept: 'shop.Order', id: 'o1', fields: { title: 'a', cost: '5' } }])
+    assert.equal(out.results[0].status, AppWriteStatus.Denied)
+    assert.equal(out.results[0].reason, 'not authorized for a field')
+    assert.equal(adapter.batches.length, 0)
+})
+
+test('update of only open fields on a concept with a secured field succeeds', async () =>
+{
+    const adapter = new FakeAdapter()
+    const gate = new FakeGate([], () => true, () => true, undefined, (_c, field) => field !== 'cost')
+    const w = GateFx.Writer(adapter, gate)
+    const out = await w.Apply([{ op: AppWriteOpKind.Update, concept: 'shop.Order', id: 'o1', fields: { title: 'a' } }])
+    assert.equal(out.results[0].status, AppWriteStatus.Applied)
+})
+
+test('create stamped owner/BU on a secured field bypasses the per-field write check', async () =>
+{
+    const adapter = new FakeAdapter()
+    // owningBu is secured for writes (fieldOk denies it), but it is server-stamped (not user-supplied) so it is not checked.
+    const gate = new FakeGate([{ field: 'owningBu', value: 'sales' }], () => true, () => true, undefined, (_c, field) => field !== 'owningBu')
+    const w = GateFx.Writer(adapter, gate)
+    const out = await w.Apply([{ op: AppWriteOpKind.Create, concept: 'shop.Order', fields: { title: 'x' } }])
+    assert.equal(out.results[0].status, AppWriteStatus.Applied)
+    assert.equal(adapter.batches[0].Operations[0].Fields.owningBu, 'sales')
+})
+
+test('create explicitly setting a secured field without field-create is Denied', async () =>
+{
+    const adapter = new FakeAdapter()
+    const gate = new FakeGate([], () => true, () => true, undefined, (_c, field) => field !== 'cost')
+    const w = GateFx.Writer(adapter, gate)
+    const out = await w.Apply([{ op: AppWriteOpKind.Create, concept: 'shop.Order', fields: { title: 'x', cost: '5' } }])
+    assert.equal(out.results[0].status, AppWriteStatus.Denied)
+    assert.equal(out.results[0].reason, 'not authorized for a field')
+    assert.equal(adapter.batches.length, 0)
 })

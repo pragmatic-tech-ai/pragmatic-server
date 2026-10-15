@@ -41,6 +41,7 @@ export class RuntimeAppWriter
     private static readonly NotProcessed = 'operation was not processed'
     private static readonly UnknownOperation = 'unknown operation kind'
     private static readonly NotAuthorizedRecord = 'not authorized for this record'
+    private static readonly NotAuthorizedField = 'not authorized for a field'
     private static readonly GroupKeySeparator = '\u0000'
 
     constructor(
@@ -130,6 +131,7 @@ export class RuntimeAppWriter
 
     private async PlanUpsert(op: AppWriteOpDto, index: number, binding: ConnectorBinding, spec: ConnectorSpec, results: (AppWriteOpResultDto | undefined)[]): Promise<{ binding: ConnectorBinding; spec: ConnectorSpec; write: PlannedWrite } | undefined>
     {
+        const userFields = op.op === AppWriteOpKind.Create ? new Set(Object.keys(op.fields ?? {})) : undefined
         if (op.op === AppWriteOpKind.Create)
         {
             this.StampCreateDefaults(op)
@@ -168,6 +170,19 @@ export class RuntimeAppWriter
         {
             results[index] = { status: AppWriteStatus.Denied, reason: RuntimeAppWriter.NotAuthorizedRecord }
             return undefined
+        }
+        const fieldAction = op.op === AppWriteOpKind.Create ? PrivilegeAction.Create : PrivilegeAction.Update
+        for (const field of Object.keys(op.fields ?? {}))
+        {
+            if (userFields !== undefined && !userFields.has(field))
+            {
+                continue
+            }
+            if (!this.gate.CanWriteField(op.concept, field, fieldAction))
+            {
+                results[index] = { status: AppWriteStatus.Denied, reason: RuntimeAppWriter.NotAuthorizedField }
+                return undefined
+            }
         }
         const operation: WriteOperation = { Kind: WriteOperationKind.Upsert, Key: id, Fields: this.MapFields(binding, op.fields) }
         return { binding, spec, write: { index, key: id, operation } }
