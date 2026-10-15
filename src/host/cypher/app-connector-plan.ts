@@ -8,7 +8,6 @@ export class AppConnectorPlan
 {
     private static readonly ModelFile = 'model.json'
     private static readonly PathSeparator = '/'
-    private static readonly PlanVersion = '0.0.0'
 
     public static async For(storage: IStorage, manifest: PragmaticAppManifest): Promise<ModelConnectorPlan>
     {
@@ -42,6 +41,6 @@ export class AppConnectorPlan
                 bindings.push(...plan.Bindings)
             }
         }
-        return { Model: manifest.name, Version: AppConnectorPlan.PlanVersion, Connectors: connectors, Bindings: bindings }
+        return { Model: manifest.name, Version: manifest.version, Connectors: connectors, Bindings: bindings }
     }
 }
