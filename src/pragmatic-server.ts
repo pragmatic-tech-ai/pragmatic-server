@@ -56,6 +56,7 @@ import type { PragmaticAppManifest } from './host/apps/pragmatic-app-manifest.js
 import { TenantGraphCache } from './host/cypher/tenant-graph-cache.js'
 import type { TenantRepository } from './host/cypher/tenant-graph-source.js'
 import { ShareStore } from './host/sharing/share-store.js'
+import { ShareGrantIndex } from './host/sharing/share-grant-index.js'
 
 export interface OidcServerOptions
 {
@@ -432,6 +433,25 @@ export class PragmaticServer
             this.shareStores.set(name, store)
         }
         return store
+    }
+
+    public async ShareIndexFor(context: AccessContext, name: string): Promise<ShareGrantIndex>
+    {
+        if (this.identity === undefined)
+        {
+            return ShareGrantIndex.Empty()
+        }
+        let store
+        try
+        {
+            store = this.AppShareStore(name)
+        }
+        catch
+        {
+            return ShareGrantIndex.Empty()
+        }
+        const membership = await (await this.ReadAuthorization()).MembershipFor(context)
+        return ShareGrantIndex.For(store, context.Principal, membership)
     }
 
     /** The per-app built-in store directory: `<applicationsRoot>/<app>/data`, the path the platform's CreateAppDataStore consumes. */
