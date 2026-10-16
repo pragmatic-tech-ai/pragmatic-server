@@ -1,0 +1,197 @@
+import { execFile } from 'node:child_process'
+import { get } from 'node:http'
+import type { EnvDefinition } from './bundle.js'
+
+export { EnvKind, TenantPurposeName } from './bundle.js'
+export type { EnvDefinition } from './bundle.js'
+
+/**
+ * Docker container lifecycle for a local environment, via the `docker` CLI only.
+ * Docker-touching methods are exercised by the integration smoke run, not unit tests.
+ */
+export class DockerEnv
+{
+    public static readonly ImageName = 'pragmatic-server:dev'
+
+    private static readonly Docker = 'docker'
+    private static readonly NamePrefix = 'pragmatic-env-'
+    private static readonly VolumeSuffix = '-data'
+    private static readonly InternalPort = '8080'
+    private static readonly DataMount = '/data'
+    private static readonly DataSeedMount = '/data-seed'
+    private static readonly SeedMount = '/seed'
+    private static readonly HealthPath = '/healthz'
+    private static readonly LocalHost = '127.0.0.1'
+    private static readonly HealthTimeoutMs = 60000
+    private static readonly HealthIntervalMs = 1000
+    private static readonly HealthRequestTimeoutMs = 2000
+    private static readonly MaxBuffer = 16 * 1024 * 1024
+
+    private static readonly Run = 'run'
+    private static readonly Detach = '-d'
+    private static readonly Rm = '--rm'
+    private static readonly NameFlag = '--name'
+    private static readonly PortFlag = '-p'
+    private static readonly VolumeFlag = '-v'
+    private static readonly EnvFlag = '-e'
+    private static readonly EntrypointFlag = '--entrypoint'
+    private static readonly Sh = 'sh'
+    private static readonly ShCommandFlag = '-c'
+
+    private static readonly TenantsMount = '/cfg/tenants.json'
+    private static readonly SecretsMount = '/cfg/provisioned-secrets.json'
+    private static readonly MasterKeyMount = '/run/secrets/master_key'
+    private static readonly TenantsFile = 'tenants.json'
+    private static readonly SecretsFile = 'provisioned-secrets.json'
+    private static readonly MasterKeyFile = 'master.key'
+    private static readonly DataSubdir = 'data'
+    private static readonly ReadOnly = ':ro'
+
+    private static readonly EnvBaseDir = 'PRAGMATIC_BASE_DIR'
+    private static readonly EnvTenantsFile = 'PRAGMATIC_TENANTS_FILE'
+    private static readonly EnvMasterKeyFile = 'PRAGMATIC_MASTER_KEY_FILE'
+    private static readonly EnvSecretsFile = 'PRAGMATIC_PROVISIONED_SECRETS_FILE'
+    private static readonly EnvPort = 'PRAGMATIC_PORT'
+    private static readonly EnvDeploymentMode = 'PRAGMATIC_DEPLOYMENT_MODE'
+    private static readonly DeploymentModeLocal = 'local'
+
+    private static readonly SeedScript = 'test -f /data/.env-seeded || { cp -a /seed/. /data/ && chmod -R a+rwX /data && touch /data/.env-seeded; }'
+
+    private static readonly ImageInspect = ['image', 'inspect']
+    private static readonly PsArgs = ['ps', '-a', '--filter', 'name=pragmatic-env-', '--format', 'table {{.Names}}\t{{.Status}}\t{{.Ports}}']
+    private static readonly LogsCommand = 'logs'
+    private static readonly RmForce = ['rm', '-f']
+    private static readonly BuildHint = 'Image pragmatic-server:dev not found. Build it once with BuildKit (the build needs the GitHub Packages token secret):\n  DOCKER_BUILDKIT=1 docker build --secret id=npmrc,src=<path-to-.npmrc> -t pragmatic-server:dev .'
+    private static readonly HealthTimeoutMessage = 'Server did not become healthy in time on port '
+
+    public static ContainerName(def: EnvDefinition): string
+    {
+        return `${DockerEnv.NamePrefix}${def.name}`
+    }
+
+    public static VolumeName(def: EnvDefinition): string
+    {
+        return `${DockerEnv.NamePrefix}${def.name}${DockerEnv.VolumeSuffix}`
+    }
+
+    public static RunArgs(def: EnvDefinition, bundleDir: string): string[]
+    {
+        return [
+            DockerEnv.Run, DockerEnv.Detach, DockerEnv.NameFlag, DockerEnv.ContainerName(def),
+            DockerEnv.PortFlag, `${def.hostPort}:${DockerEnv.InternalPort}`,
+            DockerEnv.VolumeFlag, `${DockerEnv.VolumeName(def)}:${DockerEnv.DataMount}`,
+            DockerEnv.VolumeFlag, `${bundleDir}/${DockerEnv.TenantsFile}:${DockerEnv.TenantsMount}${DockerEnv.ReadOnly}`,
+            DockerEnv.VolumeFlag, `${bundleDir}/${DockerEnv.SecretsFile}:${DockerEnv.SecretsMount}${DockerEnv.ReadOnly}`,
+            DockerEnv.VolumeFlag, `${bundleDir}/${DockerEnv.MasterKeyFile}:${DockerEnv.MasterKeyMount}${DockerEnv.ReadOnly}`,
+            DockerEnv.VolumeFlag, `${bundleDir}/${DockerEnv.DataSubdir}:${DockerEnv.DataSeedMount}${DockerEnv.ReadOnly}`,
+            DockerEnv.EnvFlag, `${DockerEnv.EnvBaseDir}=${DockerEnv.DataMount}`,
+            DockerEnv.EnvFlag, `${DockerEnv.EnvTenantsFile}=${DockerEnv.TenantsMount}`,
+            DockerEnv.EnvFlag, `${DockerEnv.EnvMasterKeyFile}=${DockerEnv.MasterKeyMount}`,
+            DockerEnv.EnvFlag, `${DockerEnv.EnvSecretsFile}=${DockerEnv.SecretsMount}`,
+            DockerEnv.EnvFlag, `${DockerEnv.EnvPort}=${DockerEnv.InternalPort}`,
+            DockerEnv.EnvFlag, `${DockerEnv.EnvDeploymentMode}=${DockerEnv.DeploymentModeLocal}`,
+            DockerEnv.ImageName
+        ]
+    }
+
+    /** Checks the image exists; if not, prints the one-time BuildKit command (never builds: the build needs a secret). */
+    public async EnsureImage(): Promise<boolean>
+    {
+        try
+        {
+            await this.Exec([...DockerEnv.ImageInspect, DockerEnv.ImageName])
+            return true
+        }
+        catch
+        {
+            console.log(DockerEnv.BuildHint)
+            return false
+        }
+    }
+
+    /** Seeds the data volume (idempotent) then starts the server container detached. */
+    public async Up(def: EnvDefinition, bundleDir: string): Promise<void>
+    {
+        await this.SeedVolume(def, bundleDir)
+        await this.Exec(DockerEnv.RunArgs(def, bundleDir))
+    }
+
+    public async Down(def: EnvDefinition): Promise<void>
+    {
+        await this.Exec([...DockerEnv.RmForce, DockerEnv.ContainerName(def)])
+    }
+
+    public async Status(): Promise<string>
+    {
+        return this.Exec(DockerEnv.PsArgs)
+    }
+
+    public async Logs(def: EnvDefinition): Promise<string>
+    {
+        return this.Exec([DockerEnv.LogsCommand, DockerEnv.ContainerName(def)])
+    }
+
+    /** Polls the unauthenticated liveness endpoint until HTTP 200 or the timeout elapses. */
+    public async WaitHealthy(port: number): Promise<void>
+    {
+        const deadline = Date.now() + DockerEnv.HealthTimeoutMs
+        while (Date.now() < deadline)
+        {
+            if (await this.Probe(port))
+            {
+                return
+            }
+            await new Promise<void>(resolve => setTimeout(resolve, DockerEnv.HealthIntervalMs))
+        }
+        throw new Error(`${DockerEnv.HealthTimeoutMessage}${port}`)
+    }
+
+    /**
+     * Mechanism: throwaway-container copy. TenantRegistry.OptionsFor reads
+     * <PRAGMATIC_BASE_DIR>/<tenant>/{packages,applications,identity} (join(baseDir, tenantId, ...)),
+     * so the pre-seeded tree must live inside the named volume mounted at /data; the read-only
+     * /data-seed mount is not the server's base dir. A one-shot container copies the bundle data/
+     * into the volume, guarded by a marker file so repeated Up calls never overwrite live state.
+     */
+    public async SeedVolume(def: EnvDefinition, bundleDir: string): Promise<void>
+    {
+        await this.Exec([
+            DockerEnv.Run, DockerEnv.Rm,
+            DockerEnv.VolumeFlag, `${DockerEnv.VolumeName(def)}:${DockerEnv.DataMount}`,
+            DockerEnv.VolumeFlag, `${bundleDir}/${DockerEnv.DataSubdir}:${DockerEnv.SeedMount}${DockerEnv.ReadOnly}`,
+            DockerEnv.EntrypointFlag, DockerEnv.Sh,
+            DockerEnv.ImageName,
+            DockerEnv.ShCommandFlag, DockerEnv.SeedScript
+        ])
+    }
+
+    private Probe(port: number): Promise<boolean>
+    {
+        return new Promise<boolean>(resolve =>
+        {
+            const req = get({ host: DockerEnv.LocalHost, port, path: DockerEnv.HealthPath, timeout: DockerEnv.HealthRequestTimeoutMs }, res =>
+            {
+                res.resume()
+                resolve(res.statusCode === 200)
+            })
+            req.on('timeout', () => req.destroy())
+            req.on('error', () => resolve(false))
+        })
+    }
+
+    private Exec(args: string[]): Promise<string>
+    {
+        return new Promise<string>((resolve, reject) =>
+        {
+            execFile(DockerEnv.Docker, args, { maxBuffer: DockerEnv.MaxBuffer }, (err, stdout, stderr) =>
+            {
+                if (err)
+                {
+                    reject(new Error(`${err.message}\n${stderr}`))
+                    return
+                }
+                resolve(stdout)
+            })
+        })
+    }
+}
