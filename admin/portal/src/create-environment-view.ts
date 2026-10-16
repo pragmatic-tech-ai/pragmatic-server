@@ -1,0 +1,104 @@
+import { StackPanel, TextBlock, TextBox } from '@pragmatic-tech-ai/mural/basic'
+import { Button, ComboBox } from '@pragmatic-tech-ai/mural/framework'
+import type { ControlPlaneClient } from './api-client.js'
+import type { IPortalNavigator, IPortalView, TemplateDto } from './portal-types.js'
+
+// Create form: name, template dropdown (from ListTemplates), optional host port.
+export class CreateEnvironmentView extends StackPanel implements IPortalView
+{
+    public static readonly CreateLabel = 'Create'
+    public static readonly BackLabel = 'Back'
+    public static readonly NamePlaceholder = 'Environment name'
+    public static readonly PortPlaceholder = 'Host port (optional)'
+    public static readonly TemplatePlaceholder = 'Template'
+    private static readonly HeadingText = 'New environment'
+    private static readonly TitlePath = 'title'
+    private static readonly ErrorPrefix = 'error: '
+    private static readonly PortInvalid = 'Port must be a whole number'
+    private static readonly NoTemplate = 'Choose a template'
+
+    private readonly nameBox = new TextBox()
+    private readonly portBox = new TextBox()
+    private readonly templateBox = new ComboBox()
+    private readonly message = new TextBlock()
+
+    public constructor(private readonly client: ControlPlaneClient, private readonly nav: IPortalNavigator)
+    {
+        super()
+        const heading = new TextBlock()
+        heading.Text = CreateEnvironmentView.HeadingText
+        this.AddChild(heading)
+
+        this.nameBox.Placeholder = CreateEnvironmentView.NamePlaceholder
+        this.AddChild(this.nameBox)
+
+        this.templateBox.Placeholder = CreateEnvironmentView.TemplatePlaceholder
+        this.templateBox.DisplayMemberPath = CreateEnvironmentView.TitlePath
+        this.AddChild(this.templateBox)
+
+        this.portBox.Placeholder = CreateEnvironmentView.PortPlaceholder
+        this.AddChild(this.portBox)
+
+        this.AddChild(this.MakeButton(CreateEnvironmentView.CreateLabel, () => { void this.Submit() }))
+        this.AddChild(this.MakeButton(CreateEnvironmentView.BackLabel, () => { this.nav.ShowList() }))
+        this.AddChild(this.message)
+    }
+
+    public async Refresh(): Promise<void>
+    {
+        try
+        {
+            const templates = await this.client.ListTemplates()
+            this.templateBox.ItemsSource = templates
+            if (templates.length > 0 && this.templateBox.SelectedItem === undefined)
+            {
+                this.templateBox.SelectedIndex = 0
+            }
+        }
+        catch (e)
+        {
+            this.message.Text = CreateEnvironmentView.ErrorPrefix + (e as Error).message
+        }
+    }
+
+    private async Submit(): Promise<void>
+    {
+        const selected = this.templateBox.SelectedItem as TemplateDto | undefined
+        if (selected === undefined)
+        {
+            this.message.Text = CreateEnvironmentView.ErrorPrefix + CreateEnvironmentView.NoTemplate
+            return
+        }
+        let port: number | undefined
+        const portText = this.portBox.Text.trim()
+        if (portText.length > 0)
+        {
+            port = Number(portText)
+            if (!Number.isInteger(port))
+            {
+                this.message.Text = CreateEnvironmentView.ErrorPrefix + CreateEnvironmentView.PortInvalid
+                return
+            }
+        }
+        try
+        {
+            await this.client.CreateEnvironment(this.nameBox.Text.trim(), selected.id, port)
+        }
+        catch (e)
+        {
+            this.message.Text = CreateEnvironmentView.ErrorPrefix + (e as Error).message
+            return
+        }
+        this.nav.ShowList()
+    }
+
+    private MakeButton(label: string, onClick: () => void): Button
+    {
+        const text = new TextBlock()
+        text.Text = label
+        const button = new Button()
+        button.Content = text
+        button.AddClickHandler(onClick)
+        return button
+    }
+}
