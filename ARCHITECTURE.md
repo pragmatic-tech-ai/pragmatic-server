@@ -4,7 +4,7 @@
 
 **Package:** `@pragmatic-tech-ai/pragmatic-server` — Layer **L4** headless server. Exposes the TODL engine (+ connectors + identity) to remote clients over `pragmatic-protocol` (JSON-RPC 2.0 over WebSocket). Consumes TODL + todl-runtime + pragmatic-protocol + todl-identity + todl-platform-node as built `dist` via `file:` sibling deps.
 
-**Vision context (read these memories):** the server is two **tenant types** — a *development* center (collaborative edit of ONE active solution; the surface SP3/Cypher shipped against) and a *runtime* graph provider (compiled application = package set + connectors). See memory `project_server_dual_purpose` and `project_server_architecture`. The dev-vs-runtime tenant **type** does NOT exist in code yet — it's the target of the current reshape.
+**Vision context (read these memories):** the server is two **tenant types** — a *development* center (collaborative edit of ONE active solution; the surface SP3/Cypher shipped against) and a *runtime* graph provider (compiled application = package set + connectors). See memory `project_server_dual_purpose` and `project_server_architecture`. The dev-vs-runtime tenant **type** now exists in code as `TenantPurpose` (`src/tenancy/tenant-purpose.ts`: `Development` / `Runtime`; `PragmaticServer.Purpose()`); the runtime data-op surface is described under "Runtime data ops" below.
 
 ---
 
@@ -46,6 +46,14 @@
 - **`TenantGraphComposition`** (`tenant-graph-source.ts:44`) — `Compose()` emits each member `Repository` via `PackageManifestBridge.toResolvedJsonDocument`, merges seeds (assert-no-conflict dedup); `BuildQuery(artifact)` (:64) loads into `Domain(new MemoryPackageSource(...))` + `FrozenGraph` wrapped as `GraphQuery`. `TenantRepository` type at :7.
 - **`TenantGraphCache`** (`tenant-graph-cache.ts:15`) — caches one UNFILTERED artifact, invalidated on `repo.changed`; per request `AllowedIds(entries, context)` strips RBAC-hidden instances, **deny-wins across repos** (:85), keeps seedNodes in allowed + seedEdges both-endpoints allowed; then binds graph.
 - **Handler:** `ServerConnectionHandler` registers `CypherProtocol.Query` under `guarded` (rate-limit→authorize→handler); `cypher-param-converter.ts` (wire params→engine, `Object.create(null)` anti-`__proto__`), `cypher-result-mapper.ts` (engine PascalCase→wire camelCase). Error map: syntax/semantic→InvalidParams, `CypherTimeout`→ -32030. Limits from `CypherLimits` config.
+
+## Runtime data ops (`TenantPurpose.Runtime`; `src/host/sharing/`, `src/host/apps/`)
+
+- **Applications:** `PragmaticAppsRegistry` (`src/host/apps/`) lists/opens an application (manifest = package set); a connection binds one app (`boundApp`) via `application/open`. Data ops require a bound app, else "no application selected".
+- **Per-app `PragmaticServer` methods** (Runtime only): `GraphForPragmaticApp`, `WriteForPragmaticApp` (`data/write`), `ShareForPragmaticApp` / `UnshareForPragmaticApp` / `ListSharesForPragmaticApp` (`data/share`, `data/unshare`, `data/shares/list`; SP-5 record sharing), `AssignForPragmaticApp` (`data/assign`; SP-5b record assign). `AppShareStore(name)` is the per-app share persistence.
+- **Services** (`src/host/sharing/`): `ShareService` (grant/revoke/list), `ShareStore` + `ShareGrantIndex` (per-principal grants keyed by concept/record; `AllowsRecord`), `AssignService` (changes owner / owning-BU columns under the **Assign** right via role OR record share, bypassing the Update gate; maps `AssignOutcome` from the identity engine to `AssignStatus`; empty mapped fields -> `Invalid`, adapter fault -> `Denied` "write failed", key conflict -> `Denied` "write conflict"), plus `ShareWidening*` filters/authorizers that widen read/write for shared records.
+- **Provider threading:** `ServerConnectionHandler.RuntimeAttachArgs(server)` returns `{ applications, appGraphProvider, appWriteProvider, shareProvider, unshareProvider, listSharesProvider, assignProvider }` (all `undefined` for a Development server); both Attach sites (`PragmaticServerHost` and `WorkerHost`) spread it into `ServerConnectionHandler.Attach`, which stores each provider and forwards the call with the bound app name.
+- **Policy:** `PolicyGate` maps `data/write`, `data/share`, `data/unshare`, `data/assign` to `writeTenant` (Write/Tenant); the finer Assign/Share rights are enforced inside the services, not the gate.
 
 ## Connectors (`src/host/` + phase-6 wiring)
 
