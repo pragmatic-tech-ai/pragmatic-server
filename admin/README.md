@@ -26,6 +26,28 @@ npx tsx admin/control-plane/server.ts
 
 The port comes from PRAGMATIC_ADMIN_PORT (default 7000). The server binds 127.0.0.1 only. Open the portal at http://localhost:7000/ (or your chosen admin port).
 
+## Operator authentication
+
+The control plane requires operator login and binds 127.0.0.1 only. Configuration is by environment variable:
+
+PRAGMATIC_ADMIN_OPERATOR_EMAIL is the operator login email (default admin@control-plane.test).
+
+PRAGMATIC_ADMIN_OPERATOR_PASSWORD seeds the operator on the first run only. It is ignored afterwards: seeding is idempotent and never resets an existing password.
+
+PRAGMATIC_ADMIN_MASTER_KEY_FILE is the master key path (default <data>/master.key, generated automatically if absent).
+
+PRAGMATIC_ADMIN_SECURE_COOKIE marks the session cookie Secure (default false; set true for a future TLS deployment).
+
+First run: set the password variable once, start the server, then log in at http://localhost:7000/ (or your chosen admin port) with the operator email and that password. Later runs do not need the password variable.
+
+```
+PRAGMATIC_ADMIN_OPERATOR_PASSWORD=choose-a-password npx tsx admin/control-plane/server.ts
+```
+
+The operator account and master key persist in the gitignored admin/control-plane/data/identity/ directory plus master.key. If you lose the data directory or the master key you must re-bootstrap: set the password variable again on the next start.
+
+The gated smoke below logs in automatically with a built-in test operator composed over its temporary data directory.
+
 ## Create environments
 
 From the portal, create either a dev-blank environment (the name must be a lowercase slug, characters a-z, 0-9 and hyphen) or a demo-contoso environment (seeds the Contoso security model and four demo users). Each is a pragmatic-server:dev container on an allocated host port. Connect over HTTP at http://localhost:PORT and over WebSocket at ws://localhost:PORT/?tenant=TENANT.

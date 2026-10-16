@@ -24,9 +24,10 @@ import { BundleBuilderAdapter, DockerEnvAdapter, UserSeederAdapter } from './doc
 import { EnvStatus, Template } from './environment-record.js'
 import { EnvironmentRegistry } from './environment-registry.js'
 import { EnvironmentService } from './environment-service.js'
+import { OperatorIdentity } from './operator-identity.js'
 import { NetPortProbe, PortAllocator } from './port-allocator.js'
 
-type HttpResult = { status: number; json: unknown }
+type HttpResult = { status: number; json: unknown; setCookie: string[] }
 
 export class ControlPlaneSmoke
 {
@@ -55,7 +56,17 @@ export class ControlPlaneSmoke
     private static readonly AdminEmail = 'admin@contoso.test'
     private static readonly AdminPwKey = 'contoso-admin-pw'
     private static readonly DemoPrincipals: readonly string[] = ['rep-boston', 'rep-atlanta', 'manager-north', 'finance']
+    private static readonly OperatorEmail = 'smoke-operator@control-plane.test'
+    private static readonly OperatorPassword = 'smoke-operator-test-password'
+    private static readonly IdentityDir = 'identity'
+    private static readonly MasterKeyFile = 'master.key'
+    private static readonly LoginPath = '/api/login'
+    private static readonly SessionCookieName = 'cp_session'
+    private static readonly CookieHeader = 'Cookie'
+    private static readonly SetCookieHeader = 'set-cookie'
+    private static readonly CookieAttrSep = ';'
     private static readonly StatusOk = 200
+    private static readonly StatusUnauthorized = 401
     private static readonly StatusCreated = 201
     private static readonly PollTimeoutMs = 90000
     private static readonly PollIntervalMs = 1000
@@ -74,6 +85,8 @@ export class ControlPlaneSmoke
     private static readonly EndEvent = 'end'
     private static readonly ErrorEvent = 'error'
     private static readonly Labels = {
+        Gate401: 'control plane: unauthenticated request returns 401',
+        Login: 'control plane: operator login returns 200 and a session cookie',
         CreateDev: 'dev-blank: create returns 201',
         RunningDev: 'dev-blank: reaches running',
         HealthDev: 'dev-blank: /healthz returns 200',
@@ -93,6 +106,7 @@ export class ControlPlaneSmoke
 
     private failed = false
     private controlPort = 0
+    private sessionCookie = ''
 
     public static async Main(): Promise<void>
     {
@@ -113,13 +127,22 @@ export class ControlPlaneSmoke
         await registry.Reconcile()
         const allocator = new PortAllocator(ControlPlaneSmoke.EnvPortFloor, new NetPortProbe())
         const service = new EnvironmentService(registry, allocator, docker, new BundleBuilderAdapter(), new UserSeederAdapter(new UserSeeder()), dataRoot)
-        const host = new ControlPlaneHost(service, staticRoot)
+        const operator = await OperatorIdentity.Compose({
+            identityRoot: join(dataRoot, ControlPlaneSmoke.IdentityDir),
+            masterKeyFile: join(dataRoot, ControlPlaneSmoke.MasterKeyFile),
+            operatorEmail: ControlPlaneSmoke.OperatorEmail,
+            initialPassword: ControlPlaneSmoke.OperatorPassword
+        })
+        const host = new ControlPlaneHost(service, staticRoot, operator, false)
         try
         {
             await host.Listen(0, ControlPlaneSmoke.LoopbackHost)
             this.controlPort = host.Address().port
-            await this.DevLifecycle()
-            await this.DemoSeeded(dataRoot)
+            if (await this.Authenticate())
+            {
+                await this.DevLifecycle()
+                await this.DemoSeeded(dataRoot)
+            }
         }
         catch (err)
         {
@@ -133,6 +156,23 @@ export class ControlPlaneSmoke
             rmSync(dataRoot, { recursive: true, force: true })
         }
         return !this.failed
+    }
+
+    /** Asserts the auth gate is live, then logs in and stores the session cookie; false when no session. */
+    private async Authenticate(): Promise<boolean>
+    {
+        const gated = await this.Api(ControlPlaneSmoke.MethodGet, ControlPlaneSmoke.EnvironmentsPath)
+        this.Expect(ControlPlaneSmoke.Labels.Gate401, gated.status === ControlPlaneSmoke.StatusUnauthorized, ControlPlaneSmoke.StatusWord + String(gated.status))
+        const login = await this.Api(ControlPlaneSmoke.MethodPost, ControlPlaneSmoke.LoginPath, { email: ControlPlaneSmoke.OperatorEmail, password: ControlPlaneSmoke.OperatorPassword })
+        const prefix = ControlPlaneSmoke.SessionCookieName + '='
+        const pair = login.setCookie.map(c => c.split(ControlPlaneSmoke.CookieAttrSep)[0]).find(c => c.startsWith(prefix))
+        this.Expect(ControlPlaneSmoke.Labels.Login, login.status === ControlPlaneSmoke.StatusOk && pair !== undefined, ControlPlaneSmoke.StatusWord + String(login.status))
+        if (pair === undefined)
+        {
+            return false
+        }
+        this.sessionCookie = pair
+        return true
     }
 
     /** Best-effort removal of both smoke environments so a rerun starts clean. */
@@ -258,15 +298,20 @@ export class ControlPlaneSmoke
 
     private Api(method: string, path: string, body?: unknown): Promise<HttpResult>
     {
-        return this.Http(method, this.controlPort, path, body)
+        const extra: Record<string, string> = {}
+        if (this.sessionCookie !== '')
+        {
+            extra[ControlPlaneSmoke.CookieHeader] = this.sessionCookie
+        }
+        return this.Http(method, this.controlPort, path, body, extra)
     }
 
-    private Http(method: string, port: number, path: string, body?: unknown): Promise<HttpResult>
+    private Http(method: string, port: number, path: string, body?: unknown, extraHeaders: Record<string, string> = {}): Promise<HttpResult>
     {
         return new Promise<HttpResult>((resolve, reject) =>
         {
             const payload = body === undefined ? undefined : JSON.stringify(body)
-            const headers: Record<string, string> = {}
+            const headers: Record<string, string> = { ...extraHeaders }
             if (payload !== undefined)
             {
                 headers[ControlPlaneSmoke.ContentTypeHeader] = ControlPlaneSmoke.JsonContentType
@@ -287,7 +332,7 @@ export class ControlPlaneSmoke
                     {
                         json = text
                     }
-                    resolve({ status: res.statusCode ?? 0, json })
+                    resolve({ status: res.statusCode ?? 0, json, setCookie: res.headers[ControlPlaneSmoke.SetCookieHeader] ?? [] })
                 })
             })
             req.on(ControlPlaneSmoke.ErrorEvent, reject)
