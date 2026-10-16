@@ -55,14 +55,33 @@ export class DockerEnv
     private static readonly EnvDeploymentMode = 'PRAGMATIC_DEPLOYMENT_MODE'
     private static readonly DeploymentModeLocal = 'local'
 
-    private static readonly SeedScript = 'test -f /data/.env-seeded || { cp -a /seed/. /data/ && chmod -R a+rwX /data && touch /data/.env-seeded; }'
-
-    private static readonly ImageInspect = ['image', 'inspect']
-    private static readonly PsArgs = ['ps', '-a', '--filter', 'name=pragmatic-env-', '--format', 'table {{.Names}}\t{{.Status}}\t{{.Ports}}']
+    private static readonly SeedMarkerName = '.env-seeded'
+    private static readonly ImageCmd = 'image'
+    private static readonly InspectCmd = 'inspect'
+    private static readonly PsCmd = 'ps'
+    private static readonly RmCmd = 'rm'
+    private static readonly ForceFlag = '-f'
+    private static readonly AllFlag = '-a'
+    private static readonly FilterFlag = '--filter'
+    private static readonly FormatFlag = '--format'
+    private static readonly UserFlag = '--user'
+    private static readonly RootUser = '0'
+    private static readonly NameFilter = 'name='
+    private static readonly PsFormat = 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+    private static readonly RunningFormat = '{{.State.Running}}'
+    private static readonly RunningTrue = 'true'
     private static readonly LogsCommand = 'logs'
-    private static readonly RmForce = ['rm', '-f']
-    private static readonly BuildHint = 'Image pragmatic-server:dev not found. Build it once with BuildKit (the build needs the GitHub Packages token secret):\n  DOCKER_BUILDKIT=1 docker build --secret id=npmrc,src=<path-to-.npmrc> -t pragmatic-server:dev .'
     private static readonly HealthTimeoutMessage = 'Server did not become healthy in time on port '
+    private static readonly ContainerExitedMessage = 'Container exited before becoming healthy: '
+
+    private static readonly BuildHintPrefix = 'Image not found. Build it once with BuildKit from the workspace parent dir (one level above pragmatic-server):\n  DOCKER_BUILDKIT=1 docker build -f pragmatic-server/docker/Dockerfile --secret id=npmrc,src=<path-to>/.npmrc -t '
+    private static readonly BuildHintSuffix = ' ..'
+
+    private static SeedScript(): string
+    {
+        const marker = `${DockerEnv.DataMount}/${DockerEnv.SeedMarkerName}`
+        return `test -f ${marker} || { cp -a ${DockerEnv.SeedMount}/. ${DockerEnv.DataMount}/ && chmod -R a+rwX ${DockerEnv.DataMount} && touch ${marker}; }`
+    }
 
     public static ContainerName(def: EnvDefinition): string
     {
@@ -99,12 +118,12 @@ export class DockerEnv
     {
         try
         {
-            await this.Exec([...DockerEnv.ImageInspect, DockerEnv.ImageName])
+            await this.Exec([DockerEnv.ImageCmd, DockerEnv.InspectCmd, DockerEnv.ImageName])
             return true
         }
         catch
         {
-            console.log(DockerEnv.BuildHint)
+            console.log(`${DockerEnv.BuildHintPrefix}${DockerEnv.ImageName}${DockerEnv.BuildHintSuffix}`)
             return false
         }
     }
@@ -113,17 +132,29 @@ export class DockerEnv
     public async Up(def: EnvDefinition, bundleDir: string): Promise<void>
     {
         await this.SeedVolume(def, bundleDir)
+        await this.Down(def)
         await this.Exec(DockerEnv.RunArgs(def, bundleDir))
     }
 
     public async Down(def: EnvDefinition): Promise<void>
     {
-        await this.Exec([...DockerEnv.RmForce, DockerEnv.ContainerName(def)])
+        try
+        {
+            await this.Exec([DockerEnv.RmCmd, DockerEnv.ForceFlag, DockerEnv.ContainerName(def)])
+        }
+        catch
+        {
+            // rm -f on a missing container errors; absence is the desired end state
+        }
     }
 
     public async Status(): Promise<string>
     {
-        return this.Exec(DockerEnv.PsArgs)
+        return this.Exec([
+            DockerEnv.PsCmd, DockerEnv.AllFlag,
+            DockerEnv.FilterFlag, `${DockerEnv.NameFilter}${DockerEnv.NamePrefix}`,
+            DockerEnv.FormatFlag, DockerEnv.PsFormat
+        ])
     }
 
     public async Logs(def: EnvDefinition): Promise<string>
@@ -132,7 +163,7 @@ export class DockerEnv
     }
 
     /** Polls the unauthenticated liveness endpoint until HTTP 200 or the timeout elapses. */
-    public async WaitHealthy(port: number): Promise<void>
+    public async WaitHealthy(port: number, def?: EnvDefinition): Promise<void>
     {
         const deadline = Date.now() + DockerEnv.HealthTimeoutMs
         while (Date.now() < deadline)
@@ -140,6 +171,10 @@ export class DockerEnv
             if (await this.Probe(port))
             {
                 return
+            }
+            if (def && !(await this.IsRunning(def)))
+            {
+                throw new Error(`${DockerEnv.ContainerExitedMessage}${DockerEnv.ContainerName(def)}`)
             }
             await new Promise<void>(resolve => setTimeout(resolve, DockerEnv.HealthIntervalMs))
         }
@@ -156,13 +191,26 @@ export class DockerEnv
     public async SeedVolume(def: EnvDefinition, bundleDir: string): Promise<void>
     {
         await this.Exec([
-            DockerEnv.Run, DockerEnv.Rm,
+            DockerEnv.Run, DockerEnv.Rm, DockerEnv.UserFlag, DockerEnv.RootUser,
             DockerEnv.VolumeFlag, `${DockerEnv.VolumeName(def)}:${DockerEnv.DataMount}`,
             DockerEnv.VolumeFlag, `${bundleDir}/${DockerEnv.DataSubdir}:${DockerEnv.SeedMount}${DockerEnv.ReadOnly}`,
             DockerEnv.EntrypointFlag, DockerEnv.Sh,
             DockerEnv.ImageName,
-            DockerEnv.ShCommandFlag, DockerEnv.SeedScript
+            DockerEnv.ShCommandFlag, DockerEnv.SeedScript()
         ])
+    }
+
+    private async IsRunning(def: EnvDefinition): Promise<boolean>
+    {
+        try
+        {
+            const out = await this.Exec([DockerEnv.InspectCmd, DockerEnv.FormatFlag, DockerEnv.RunningFormat, DockerEnv.ContainerName(def)])
+            return out.trim() === DockerEnv.RunningTrue
+        }
+        catch
+        {
+            return false
+        }
     }
 
     private Probe(port: number): Promise<boolean>
