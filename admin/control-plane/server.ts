@@ -14,6 +14,8 @@ export class ControlPlaneServer
     private static readonly PortEnvVar = 'PRAGMATIC_ADMIN_PORT'
     private static readonly DefaultPort = 7000
     private static readonly EnvPortFloor = 8100
+    private static readonly MaxPort = 65535
+    private static readonly BadPortPrefix = 'Invalid PRAGMATIC_ADMIN_PORT: '
     private static readonly BindHost = '127.0.0.1'
     private static readonly DataDir = 'data'
     private static readonly RegistryFile = 'registry.json'
@@ -38,9 +40,23 @@ export class ControlPlaneServer
         const service = new EnvironmentService(registry, allocator, docker, bundle, seeder, dataRoot)
         const staticRoot = join(here, ControlPlaneServer.ParentSegment, ControlPlaneServer.PortalSegment, ControlPlaneServer.DistSegment)
         const host = new ControlPlaneHost(service, staticRoot)
-        const port = Number(process.env[ControlPlaneServer.PortEnvVar] ?? ControlPlaneServer.DefaultPort)
+        const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
         await host.Listen(port, ControlPlaneServer.BindHost)
         console.log(ControlPlaneServer.ListeningPrefix + String(port) + ControlPlaneServer.ListeningSuffix)
+    }
+
+    private static ResolvePort(raw: string | undefined): number
+    {
+        if (raw === undefined || raw === '')
+        {
+            return ControlPlaneServer.DefaultPort
+        }
+        const port = Number(raw)
+        if (!Number.isInteger(port) || port < 1 || port > ControlPlaneServer.MaxPort)
+        {
+            throw new Error(ControlPlaneServer.BadPortPrefix + raw)
+        }
+        return port
     }
 
     /** True when this module is the process entry point (not when imported by tests). */

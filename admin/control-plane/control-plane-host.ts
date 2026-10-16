@@ -48,19 +48,40 @@ class BodyTooLargeError extends Error
 
 export class ControlPlaneHost
 {
-    private static readonly BaseUrl = 'http://localhost'
-    private static readonly HttpScheme = 'http://localhost:'
-    private static readonly WsScheme = 'ws://localhost:'
+    private static readonly LocalName = 'localhost'
+    private static readonly HttpScheme = 'http://'
+    private static readonly WsScheme = 'ws://'
+    private static readonly BaseUrl = ControlPlaneHost.HttpScheme + ControlPlaneHost.LocalName
+    private static readonly PortSeparator = ':'
+    private static readonly AllowedHosts: ReadonlySet<string> = new Set([ControlPlaneHost.LocalName, '127.0.0.1', '[::1]'])
+    private static readonly HostHeaderPattern = /^(\[[^\]]+\]|[^:]+)(?::\d+)?$/
+    private static readonly HostHeader = 'host'
+    private static readonly ContentTypeHeader = 'content-type'
+    private static readonly JsonMediaType = 'application/json'
+    private static readonly ContentLengthHeader = 'content-length'
+    private static readonly TransferEncodingHeader = 'transfer-encoding'
+    private static readonly StatusForbidden = 403
+    private static readonly StatusUnsupported = 415
+    private static readonly ForbiddenHostMessage = 'Host not allowed'
+    private static readonly UnsupportedMediaMessage = 'Content-Type must be application/json'
+    private static readonly BadNameMessage = 'Invalid environment name in path'
+    private static readonly NotListeningMessage = 'ControlPlaneHost is not listening'
+    private static readonly OperationFailedMessage = 'Environment operation failed'
+    private static readonly ErrorEvent = 'error'
+    private static readonly CloseEvent = 'close'
+    private static readonly LogPrefix = '[control-plane] request failed:'
     private static readonly TenantQuery = '/?tenant='
     private static readonly ApiPrefix = '/api/'
     private static readonly PingPath = '/api/ping'
     private static readonly TemplatesPath = '/api/templates'
     private static readonly EnvironmentsPath = '/api/environments'
     private static readonly EventsPath = '/api/events'
-    private static readonly EnvPathPattern = /^\/api\/environments\/([^/]+)(?:\/(start|stop|logs))?$/
     private static readonly StartAction = 'start'
     private static readonly StopAction = 'stop'
     private static readonly LogsAction = 'logs'
+    private static readonly EnvPathPattern = new RegExp(
+        '^' + ControlPlaneHost.EnvironmentsPath + '/([^/]+)(?:/(' +
+        [ControlPlaneHost.StartAction, ControlPlaneHost.StopAction, ControlPlaneHost.LogsAction].join('|') + '))?$')
     private static readonly MethodGet = 'GET'
     private static readonly MethodPost = 'POST'
     private static readonly MethodDelete = 'DELETE'
@@ -130,7 +151,7 @@ export class ControlPlaneHost
         server.on('upgrade', (req, socket, head) =>
         {
             const path = new URL(req.url ?? ControlPlaneHost.RootPath, ControlPlaneHost.BaseUrl).pathname
-            if (path !== ControlPlaneHost.EventsPath)
+            if (path !== ControlPlaneHost.EventsPath || !ControlPlaneHost.HostAllowed(req))
             {
                 socket.destroy()
                 return
@@ -138,7 +159,8 @@ export class ControlPlaneHost
             wss.handleUpgrade(req, socket, head, ws =>
             {
                 this.clients.add(ws)
-                ws.on('close', () => this.clients.delete(ws))
+                ws.on(ControlPlaneHost.CloseEvent, () => this.clients.delete(ws))
+                ws.on(ControlPlaneHost.ErrorEvent, () => this.clients.delete(ws))
             })
         })
         this.httpServer = server
@@ -181,7 +203,7 @@ export class ControlPlaneHost
         const a = this.httpServer?.address() as AddressInfo | null | undefined
         if (a === null || a === undefined)
         {
-            throw new Error('ControlPlaneHost is not listening')
+            throw new Error(ControlPlaneHost.NotListeningMessage)
         }
         return { address: a.address, port: a.port }
     }
@@ -190,6 +212,17 @@ export class ControlPlaneHost
     {
         try
         {
+            if (!ControlPlaneHost.HostAllowed(req))
+            {
+                this.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.ForbiddenHostMessage })
+                return
+            }
+            if (ControlPlaneHost.HasBody(req) && !ControlPlaneHost.IsJson(req))
+            {
+                req.resume()
+                this.WriteJson(res, ControlPlaneHost.StatusUnsupported, { error: ControlPlaneHost.UnsupportedMediaMessage })
+                return
+            }
             const path = new URL(req.url ?? ControlPlaneHost.RootPath, ControlPlaneHost.BaseUrl).pathname
             const handled = await this.RouteApi(req, res, path)
             if (!handled)
@@ -236,7 +269,16 @@ export class ControlPlaneHost
         {
             return false
         }
-        const name = decodeURIComponent(m[1] as string)
+        let name: string
+        try
+        {
+            name = decodeURIComponent(m[1] as string)
+        }
+        catch
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+            return true
+        }
         const action = m[2]
         if (action === ControlPlaneHost.StartAction && method === ControlPlaneHost.MethodPost)
         {
@@ -395,19 +437,15 @@ export class ControlPlaneHost
             return
         }
         const status = this.StatusFor(err)
-        if (status === undefined)
+        if (status === undefined || status >= ControlPlaneHost.StatusInternal && status !== ControlPlaneHost.StatusUnavailable)
         {
-            this.WriteJson(res, ControlPlaneHost.StatusInternal, { error: ControlPlaneHost.GenericError })
+            console.error(ControlPlaneHost.LogPrefix, err)
+            this.WriteJson(res, ControlPlaneHost.StatusInternal, { error: ControlPlaneHost.OperationFailedMessage })
             return
         }
         if (err instanceof ImageMissingError)
         {
             this.WriteJson(res, status, { error: err.message, buildCommand: err.buildCommand })
-            return
-        }
-        if (err instanceof CreateFailedError)
-        {
-            this.WriteJson(res, status, { error: err.message })
             return
         }
         this.WriteJson(res, status, { error: (err as Error).message })
@@ -440,6 +478,29 @@ export class ControlPlaneHost
         }
     }
 
+    private static HostAllowed(req: IncomingMessage): boolean
+    {
+        const header = req.headers[ControlPlaneHost.HostHeader]
+        const m = header === undefined ? null : ControlPlaneHost.HostHeaderPattern.exec(header)
+        return m !== null && ControlPlaneHost.AllowedHosts.has((m[1] as string).toLowerCase())
+    }
+
+    private static HasBody(req: IncomingMessage): boolean
+    {
+        if (req.method !== ControlPlaneHost.MethodPost)
+        {
+            return false
+        }
+        const len = req.headers[ControlPlaneHost.ContentLengthHeader]
+        return (len !== undefined && len !== '0') || req.headers[ControlPlaneHost.TransferEncodingHeader] !== undefined
+    }
+
+    private static IsJson(req: IncomingMessage): boolean
+    {
+        const type = req.headers[ControlPlaneHost.ContentTypeHeader] ?? ''
+        return type.split(';')[0]!.trim().toLowerCase() === ControlPlaneHost.JsonMediaType
+    }
+
     private static Changed(): ChangedEvent
     {
         return { type: ControlPlaneHost.ChangedType }
@@ -454,8 +515,8 @@ export class ControlPlaneHost
             hostPort: r.hostPort,
             status: r.status,
             createdAt: r.createdAt,
-            httpUrl: ControlPlaneHost.HttpScheme + String(r.hostPort),
-            wsUrl: ControlPlaneHost.WsScheme + String(r.hostPort) + ControlPlaneHost.TenantQuery + r.tenantId
+            httpUrl: ControlPlaneHost.HttpScheme + ControlPlaneHost.LocalName + ControlPlaneHost.PortSeparator + String(r.hostPort),
+            wsUrl: ControlPlaneHost.WsScheme + ControlPlaneHost.LocalName + ControlPlaneHost.PortSeparator + String(r.hostPort) + ControlPlaneHost.TenantQuery + r.tenantId
         }
     }
 }

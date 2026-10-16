@@ -5,7 +5,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import { ControlPlaneHost, type IEnvironmentService } from '../control-plane-host.js'
-import { CreateFailedError, DockerUnavailableError, EnvironmentNotFoundError, ImageMissingError } from '../environment-service.js'
+import { CreateFailedError, DockerUnavailableError, EnvironmentExistsError, EnvironmentNotFoundError, ImageMissingError } from '../environment-service.js'
+import { PortUnavailableError } from '../port-allocator.js'
+import { InvalidEnvironmentNameError } from '../template-catalog.js'
+import { WebSocket } from 'ws'
 import { EnvStatus, Template, type EnvironmentRecord } from '../environment-record.js'
 import { TemplateCatalog } from '../template-catalog.js'
 
@@ -79,12 +82,12 @@ class Harness
     public static readonly DtoKeys = ['createdAt', 'hostPort', 'httpUrl', 'name', 'status', 'template', 'tenantId', 'wsUrl']
     public static readonly Forbidden = ['bundleDir', 'containerName', 'volumeName', 'master', 'secret', 'password', 'ctr-secret-name', 'vol-secret-name', '/secret/bundle']
 
-    public static Send(host: ControlPlaneHost, method: string, path: string, body?: string): Promise<Reply>
+    public static Send(host: ControlPlaneHost, method: string, path: string, body?: string, headers: Record<string, string> = { 'content-type': 'application/json' }): Promise<Reply>
     {
         const addr = host.Address()
         return new Promise((resolve, reject) =>
         {
-            const req = request({ host: addr.address, port: addr.port, method, path, headers: { 'content-type': 'application/json' } }, res =>
+            const req = request({ host: addr.address, port: addr.port, method, path, headers }, res =>
             {
                 const chunks: Buffer[] = []
                 res.on('data', c => chunks.push(c as Buffer))
@@ -101,10 +104,14 @@ describe('ControlPlaneHost', () =>
     let fake: FakeService
     let host: ControlPlaneHost
     let root: string
+    let parent: string
 
     beforeEach(async () =>
     {
-        root = mkdtempSync(join(tmpdir(), 'cp-static-'))
+        parent = mkdtempSync(join(tmpdir(), 'cp-parent-'))
+        writeFileSync(join(parent, 'sentinel.txt'), 'SENTINEL')
+        root = join(parent, 'static')
+        mkdirSync(root)
         writeFileSync(join(root, 'index.html'), '<h1>portal</h1>')
         mkdirSync(join(root, 'assets'))
         writeFileSync(join(root, 'assets', 'app.js'), 'var a=1')
@@ -116,7 +123,7 @@ describe('ControlPlaneHost', () =>
     afterEach(async () =>
     {
         await host.Close()
-        rmSync(root, { recursive: true, force: true })
+        rmSync(parent, { recursive: true, force: true })
     })
 
     it('lists environments as the connect-info DTO', async () =>
@@ -209,12 +216,75 @@ describe('ControlPlaneHost', () =>
         assert.equal(js.status, 200)
         assert.equal(js.body, 'var a=1')
         assert.equal((await Harness.Send(host, 'GET', '/nope.txt')).status, 404)
-        assert.equal((await Harness.Send(host, 'GET', '/..%2f..%2fpackage.json')).status, 404)
-        assert.equal((await Harness.Send(host, 'GET', '/%2e%2e/%2e%2e/package.json')).status, 404)
+        const t1 = await Harness.Send(host, 'GET', '/..%2fsentinel.txt')
+        assert.equal(t1.status, 404)
+        assert.ok(!t1.body.includes('SENTINEL'))
+        const t2 = await Harness.Send(host, 'GET', '/%2e%2e/sentinel.txt')
+        assert.equal(t2.status, 404)
+        assert.ok(!t2.body.includes('SENTINEL'))
     })
 
     it('binds 127.0.0.1 only', () =>
     {
         assert.equal(host.Address().address, '127.0.0.1')
+    })
+
+    it('maps remaining client errors', async () =>
+    {
+        fake.Throw = new PortUnavailableError('8100 busy')
+        assert.equal((await Harness.Send(host, 'POST', '/api/environments/x/start')).status, 409)
+        fake.Throw = new EnvironmentExistsError('x')
+        assert.equal((await Harness.Send(host, 'POST', '/api/environments/x/start')).status, 409)
+        fake.Throw = new InvalidEnvironmentNameError('X!', '^a$')
+        assert.equal((await Harness.Send(host, 'POST', '/api/environments/x/start')).status, 400)
+    })
+
+    it('hides internal detail on 500-class errors', async () =>
+    {
+        const orig = console.error
+        console.error = () => undefined
+        try
+        {
+            fake.Throw = new CreateFailedError('docker stderr C:\secret\path')
+            const a = await Harness.Send(host, 'POST', '/api/environments/x/start')
+            assert.equal(a.status, 500)
+            assert.ok(!a.body.includes('secret'))
+            fake.Throw = new Error('fs /etc/leak')
+            const b = await Harness.Send(host, 'POST', '/api/environments/x/start')
+            assert.equal(b.status, 500)
+            assert.ok(!b.body.includes('leak'))
+        }
+        finally
+        {
+            console.error = orig
+        }
+    })
+
+    it('rejects foreign Host headers and non-JSON bodies', async () =>
+    {
+        const addr = host.Address()
+        const evil = await Harness.Send(host, 'GET', '/api/environments', undefined, { host: 'evil.example.com' })
+        assert.equal(evil.status, 403)
+        const ok = await Harness.Send(host, 'GET', '/api/environments', undefined, { host: `localhost:${addr.port}` })
+        assert.equal(ok.status, 200)
+        const text = await Harness.Send(host, 'POST', '/api/environments', JSON.stringify({ name: 'e', template: 'dev-blank' }), { 'content-type': 'text/plain' })
+        assert.equal(text.status, 415)
+        assert.equal(fake.Calls.length, 0)
+    })
+
+    it('returns 400 for a malformed percent-encoded name', async () =>
+    {
+        assert.equal((await Harness.Send(host, 'POST', '/api/environments/%zz/start')).status, 400)
+    })
+
+    it('broadcasts environments-changed to ws clients', async () =>
+    {
+        const addr = host.Address()
+        const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/api/events`)
+        await new Promise<void>((res, rej) => { ws.once('open', () => res()); ws.once('error', rej) })
+        const msg = new Promise<string>(res => ws.once('message', d => res(d.toString())))
+        await Harness.Send(host, 'POST', '/api/environments', JSON.stringify({ name: 'e1', template: 'dev-blank' }))
+        assert.deepEqual(JSON.parse(await msg), { type: 'environments-changed' })
+        ws.close()
     })
 })
