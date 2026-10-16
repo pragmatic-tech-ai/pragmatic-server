@@ -1,4 +1,4 @@
-import type { EnvironmentDto, TemplateDto } from './portal-types.js'
+import type { EnvironmentDto, OperatorDto, TemplateDto } from './portal-types.js'
 
 // Thrown for non-2xx control-plane responses; Message carries the server's error text.
 export class ApiError extends Error
@@ -17,6 +17,11 @@ export class ControlPlaneClient
 {
     private static readonly EnvironmentsRoute = '/api/environments'
     private static readonly TemplatesRoute = '/api/templates'
+    private static readonly LoginRoute = '/api/login'
+    private static readonly LogoutRoute = '/api/logout'
+    private static readonly SessionRoute = '/api/session'
+    private static readonly CredentialsMode = 'same-origin'
+    private static readonly UnauthorizedStatus = 401
     private static readonly EventsRoute = '/api/events'
     private static readonly PathSeparator = '/'
     private static readonly StartAction = 'start'
@@ -43,6 +48,33 @@ export class ControlPlaneClient
     public async ListEnvironments(): Promise<EnvironmentDto[]>
     {
         return await this.Send<EnvironmentDto[]>(ControlPlaneClient.EnvironmentsRoute, undefined)
+    }
+
+    public async Login(email: string, password: string): Promise<void>
+    {
+        await this.Send<unknown>(ControlPlaneClient.LoginRoute, { method: ControlPlaneClient.MethodPost, body: JSON.stringify({ email, password }) })
+    }
+
+    public async Logout(): Promise<void>
+    {
+        await this.Send<unknown>(ControlPlaneClient.LogoutRoute, { method: ControlPlaneClient.MethodPost, body: ControlPlaneClient.EmptyBody })
+    }
+
+    // The signed-in operator, or null when there is no valid session (401).
+    public async Session(): Promise<OperatorDto | null>
+    {
+        try
+        {
+            return await this.Send<OperatorDto>(ControlPlaneClient.SessionRoute, undefined)
+        }
+        catch (e)
+        {
+            if (e instanceof ApiError && e.Status === ControlPlaneClient.UnauthorizedStatus)
+            {
+                return null
+            }
+            throw e
+        }
     }
 
     public async ListTemplates(): Promise<TemplateDto[]>
@@ -158,8 +190,8 @@ export class ControlPlaneClient
 
     private async Send<T>(route: string, init: { method: string; body?: string } | undefined): Promise<T>
     {
-        const response = await fetch(route, init === undefined ? undefined :
-            { method: init.method, body: init.body, headers: { [ControlPlaneClient.ContentTypeHeader]: ControlPlaneClient.JsonType } })
+        const response = await fetch(route, init === undefined ? { credentials: ControlPlaneClient.CredentialsMode } :
+            { method: init.method, body: init.body, credentials: ControlPlaneClient.CredentialsMode, headers: { [ControlPlaneClient.ContentTypeHeader]: ControlPlaneClient.JsonType } })
         let payload: unknown
         try
         {

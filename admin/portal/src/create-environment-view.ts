@@ -64,7 +64,7 @@ export class CreateEnvironmentView extends PortalViewBase
         }
         catch (e)
         {
-            this.message.Text = PortalViewBase.ErrorPrefix + (e as Error).message
+            this.ShowError(e)
         }
     }
 
@@ -93,7 +93,7 @@ export class CreateEnvironmentView extends PortalViewBase
         }
         catch (e)
         {
-            this.message.Text = PortalViewBase.ErrorPrefix + (e as Error).message
+            this.ShowError(e)
             return
         }
         this.nav.ShowList()

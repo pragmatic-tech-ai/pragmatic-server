@@ -1,6 +1,7 @@
 import { StackPanel, TextBlock } from '@pragmatic-tech-ai/mural/basic'
 import { Button } from '@pragmatic-tech-ai/mural/framework'
-import type { IPortalView } from './portal-types.js'
+import { ApiError } from './api-client.js'
+import type { IPortalNavigator, IPortalView } from './portal-types.js'
 
 // Shared base for portal screens: common button labels, a button factory,
 // an error/status message line, and a run-then-refresh helper.
@@ -14,8 +15,10 @@ export abstract class PortalViewBase extends StackPanel implements IPortalView
     public static readonly BackLabel = 'Back'
     protected static readonly ErrorPrefix = 'error: '
     protected static readonly NoMessage = ''
+    private static readonly UnauthorizedStatus = 401
 
     protected readonly message = new TextBlock()
+    private sessionNav: IPortalNavigator | undefined
 
     public abstract Refresh(): Promise<void>
 
@@ -29,7 +32,24 @@ export abstract class PortalViewBase extends StackPanel implements IPortalView
         return button
     }
 
+    // The shell attaches itself so a 401 from any action can drop to the login view.
+    public AttachNavigator(nav: IPortalNavigator): void
+    {
+        this.sessionNav = nav
+    }
+
     protected ShowError(e: unknown): void
+    {
+        if (e instanceof ApiError && e.Status === PortalViewBase.UnauthorizedStatus && this.sessionNav !== undefined)
+        {
+            this.sessionNav.ShowLogin()
+            return
+        }
+        this.ShowMessage(e)
+    }
+
+    // Always shows the error inline (used by the login view, where 401 means bad credentials).
+    protected ShowMessage(e: unknown): void
     {
         this.message.Text = PortalViewBase.ErrorPrefix + (e as Error).message
     }

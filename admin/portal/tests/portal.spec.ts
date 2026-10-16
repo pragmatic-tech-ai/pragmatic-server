@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test'
 import { App } from '../src/app.js'
 import { CreateEnvironmentView } from '../src/create-environment-view.js'
+import { LoginView } from '../src/login-view.js'
 import { EnvironmentListView } from '../src/environment-list-view.js'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { readFile } from 'node:fs/promises'
@@ -27,6 +28,13 @@ class FakeControlPlane
     public static readonly DeletePath = '/api/environments/alpha'
     public static readonly MethodPost = 'POST'
     public static readonly MethodDelete = 'DELETE'
+    public static readonly LoginPath = '/api/login'
+    public static readonly LogoutPath = '/api/logout'
+    public static readonly SessionPath = '/api/session'
+    public static readonly OperatorEmail = 'op@example.com'
+    public static readonly OperatorPassword = 'correct-horse'
+    private static readonly SetCookieHeader = 'set-cookie'
+    private static readonly SessionCookie = 'sid=test; Path=/; HttpOnly'
     private static readonly TenantId = 't-1'
     private static readonly HttpUrl = 'http://localhost:4101'
     private static readonly WsUrl = 'ws://localhost:4101/?tenant=t-1'
@@ -51,6 +59,7 @@ class FakeControlPlane
 
     public readonly Calls: Call[] = []
     public TemplatesRequests = 0
+    public Authenticated = true
     private readonly root = fileURLToPath(new URL('../dist/', import.meta.url))
     private server: Server | undefined
 
@@ -107,6 +116,35 @@ class FakeControlPlane
     {
         const method = req.method ?? FakeControlPlane.MethodGet
         const path = (req.url ?? FakeControlPlane.RootPath).split('?')[0]!
+        if (path === FakeControlPlane.SessionPath)
+        {
+            if (this.Authenticated)
+            {
+                FakeControlPlane.Json(res, 200, { email: FakeControlPlane.OperatorEmail })
+            }
+            else
+            {
+                FakeControlPlane.Json(res, 401, { error: 'unauthenticated' })
+            }
+            return
+        }
+        if (path === FakeControlPlane.LoginPath)
+        {
+            const raw = await FakeControlPlane.ReadBody(req)
+            this.Calls.push({ method, path, body: JSON.parse(raw) })
+            this.Authenticated = true
+            res.writeHead(200, { 'content-type': FakeControlPlane.JsonType, [FakeControlPlane.SetCookieHeader]: FakeControlPlane.SessionCookie })
+            res.end(JSON.stringify({ email: FakeControlPlane.OperatorEmail }))
+            return
+        }
+        if (path === FakeControlPlane.LogoutPath)
+        {
+            await FakeControlPlane.ReadBody(req)
+            this.Calls.push({ method, path })
+            this.Authenticated = false
+            FakeControlPlane.Json(res, 200, {})
+            return
+        }
         if (path === FakeControlPlane.TemplatesPath)
         {
             this.TemplatesRequests++
@@ -167,6 +205,19 @@ class PortalSteps
 {
     private static readonly InputSelector = 'input'
 
+    // Types into the nth text field (input mode) or, failing that, the field showing the placeholder.
+    public static async TypeInto(page: Page, index: number, placeholder: string, text: string): Promise<void>
+    {
+        const inputs = page.locator(PortalSteps.InputSelector)
+        if (await inputs.count() > index)
+        {
+            await inputs.nth(index).fill(text)
+            return
+        }
+        await page.getByText(placeholder, { exact: true }).click()
+        await page.keyboard.type(text)
+    }
+
     public static async TypeName(page: Page, text: string): Promise<void>
     {
         const input = page.locator(PortalSteps.InputSelector).first()
@@ -187,6 +238,7 @@ test.describe('admin portal', () =>
 
     test.beforeAll(async () => { base = await fake.Start() })
     test.afterAll(async () => { await fake.Stop() })
+    test.beforeEach(() => { fake.Authenticated = true })
 
     test('lists the environment with its status', async ({ page }) =>
     {
@@ -225,5 +277,39 @@ test.describe('admin portal', () =>
         await page.getByText(EnvironmentListView.DeleteLabel, { exact: true }).click()
         await page.getByText(EnvironmentListView.ConfirmDeleteLabel, { exact: true }).click()
         await expect.poll(() => fake.Find(FakeControlPlane.MethodDelete, FakeControlPlane.DeletePath)).toBeDefined()
+    })
+
+    test('unauthenticated load shows the login view, not the list', async ({ page }) =>
+    {
+        fake.Authenticated = false
+        await page.goto(base)
+        await expect(page.getByText(LoginView.LoginLabel, { exact: true })).toBeVisible()
+        await expect(page.getByText(LoginView.EmailPlaceholder, { exact: true })).toBeVisible()
+        await expect(page.getByText(EnvironmentListView.NewLabel, { exact: true })).toHaveCount(0)
+    })
+
+    test('logging in posts the email and then shows the environment list', async ({ page }) =>
+    {
+        fake.Authenticated = false
+        await page.goto(base)
+        await expect(page.getByText(LoginView.LoginLabel, { exact: true })).toBeVisible()
+        await PortalSteps.TypeInto(page, 0, LoginView.EmailPlaceholder, FakeControlPlane.OperatorEmail)
+        await PortalSteps.TypeInto(page, 1, LoginView.PasswordPlaceholder, FakeControlPlane.OperatorPassword)
+        await page.getByText(LoginView.LoginLabel, { exact: true }).click()
+        await expect.poll(() => fake.Find(FakeControlPlane.MethodPost, FakeControlPlane.LoginPath)).toBeDefined()
+        expect(fake.Find(FakeControlPlane.MethodPost, FakeControlPlane.LoginPath)!.body).toEqual({
+            email: FakeControlPlane.OperatorEmail,
+            password: FakeControlPlane.OperatorPassword,
+        })
+        await expect(page.getByText(EnvironmentListView.NewLabel, { exact: true })).toBeVisible()
+    })
+
+    test('Logout posts to the server and returns to the login view', async ({ page }) =>
+    {
+        await page.goto(base)
+        await expect(page.getByText(EnvironmentListView.NewLabel, { exact: true })).toBeVisible()
+        await page.getByText(App.LogoutLabel, { exact: true }).click()
+        await expect.poll(() => fake.Find(FakeControlPlane.MethodPost, FakeControlPlane.LogoutPath)).toBeDefined()
+        await expect(page.getByText(LoginView.LoginLabel, { exact: true })).toBeVisible()
     })
 })
