@@ -441,11 +441,12 @@ export class PragmaticServer
         {
             return ShareGrantIndex.Empty()
         }
-        let store
+        let store: ShareStore
         try
         {
             store = this.AppShareStore(name)
         }
+        // Fail-closed: a store that can't be opened (e.g. Cloud, where CreateAppDataStore is unsupported) leaves sharing inactive rather than breaking reads/writes.
         catch
         {
             return ShareGrantIndex.Empty()
