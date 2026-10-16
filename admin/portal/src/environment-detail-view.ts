@@ -11,6 +11,7 @@ export class EnvironmentDetailView extends PortalViewBase
     private static readonly HttpPrefix = 'HTTP: '
     private static readonly WsPrefix = 'WebSocket: '
     private static readonly StatusPrefix = 'Status: '
+    private static readonly NoLogsMessage = 'No logs available (environment not running).'
 
     private readonly title = new TextBlock()
     private readonly status = new TextBlock()
@@ -52,12 +53,24 @@ export class EnvironmentDetailView extends PortalViewBase
                 return
             }
             this.ShowEnvironment(env)
-            this.logs.Text = await this.client.Logs(this.name)
+            this.logs.Text = await this.FetchLogs()
             this.message.Text = PortalViewBase.NoMessage
         }
         catch (e)
         {
             this.ShowError(e)
+        }
+    }
+
+    private async FetchLogs(): Promise<string>
+    {
+        try
+        {
+            return await this.client.Logs(this.name)
+        }
+        catch
+        {
+            return EnvironmentDetailView.NoLogsMessage
         }
     }
 

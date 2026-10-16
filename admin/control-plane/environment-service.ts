@@ -1,6 +1,7 @@
+import { rmSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { EnvKind, type EnvDefinition } from '../../environments/seed/bundle.js'
+import { BundleBuilder, EnvKind, type EnvDefinition } from '../../environments/seed/bundle.js'
 import { DockerEnv } from '../../environments/seed/docker.js'
 import type { UserSeed } from '../../environments/seed/users.js'
 import { EnvStatus, type Template, type EnvironmentRecord } from './environment-record.js'
@@ -74,9 +75,6 @@ export class EnvironmentService
 {
     private static readonly HttpPrefix = 'http://localhost:'
     private static readonly WsPrefix = 'ws://localhost:'
-    private static readonly AdminEmailPrefix = 'admin@'
-    private static readonly EmailSuffix = '.test'
-    private static readonly AdminPwSuffix = '-admin-pw'
     private static readonly SecretsFile = 'provisioned-secrets.json'
     private static readonly UsersFile = 'users.json'
     private static readonly Utf8 = 'utf8'
@@ -121,10 +119,12 @@ export class EnvironmentService
         }
         catch
         {
+            EnvironmentService.RemoveBundleDir(bundleDir)
             throw new DockerUnavailableError()
         }
         if (!imageOk)
         {
+            EnvironmentService.RemoveBundleDir(bundleDir)
             throw new ImageMissingError(this.docker.BuildCommand())
         }
 
@@ -157,6 +157,14 @@ export class EnvironmentService
             catch
             {
                 // teardown is best-effort; the Failed record and CreateFailedError must still happen
+            }
+            try
+            {
+                await this.docker.RemoveVolume(def)
+            }
+            catch
+            {
+                // volume removal is best-effort too
             }
             await this.registry.Put({ ...record, status: EnvStatus.Failed })
             throw new CreateFailedError(err instanceof Error ? err.message : String(err))
@@ -193,6 +201,24 @@ export class EnvironmentService
     public List(): readonly EnvironmentRecord[]
     {
         return this.registry.List()
+    }
+
+    public async ListReconciled(): Promise<readonly EnvironmentRecord[]>
+    {
+        await this.registry.Reconcile()
+        return this.registry.List()
+    }
+
+    private static RemoveBundleDir(bundleDir: string): void
+    {
+        try
+        {
+            rmSync(bundleDir, { recursive: true, force: true })
+        }
+        catch
+        {
+            // best-effort cleanup of the orphaned bundle
+        }
     }
 
     public async Logs(name: string): Promise<string>
@@ -232,8 +258,8 @@ export class EnvironmentService
         {
             user.password = EnvironmentService.Secret(secrets, user.passwordRef)
         }
-        const adminEmail = EnvironmentService.AdminEmailPrefix + def.tenantId + EnvironmentService.EmailSuffix
-        const adminPw = EnvironmentService.Secret(secrets, def.tenantId + EnvironmentService.AdminPwSuffix)
+        const adminEmail = BundleBuilder.AdminEmailPrefix + def.tenantId + BundleBuilder.AdminEmailSuffix
+        const adminPw = EnvironmentService.Secret(secrets, def.tenantId + BundleBuilder.AdminSecretSuffix)
         const token = await this.seeder.Login(EnvironmentService.HttpPrefix + port, def.tenantId, adminEmail, adminPw)
         const conn = await this.seeder.Connect(EnvironmentService.WsPrefix + port, def.tenantId, token)
         try

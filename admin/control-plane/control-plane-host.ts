@@ -22,6 +22,7 @@ export interface IEnvironmentService
     Stop(name: string): Promise<EnvironmentRecord>
     Delete(name: string): Promise<void>
     List(): readonly EnvironmentRecord[]
+    ListReconciled(): Promise<readonly EnvironmentRecord[]>
     Logs(name: string): Promise<string>
 }
 
@@ -254,7 +255,7 @@ export class ControlPlaneHost
         {
             if (method === ControlPlaneHost.MethodGet)
             {
-                this.WriteJson(res, ControlPlaneHost.StatusOk, this.service.List().map(r => ControlPlaneHost.ToDto(r)))
+                this.WriteJson(res, ControlPlaneHost.StatusOk, (await this.service.ListReconciled()).map(r => ControlPlaneHost.ToDto(r)))
                 return true
             }
             if (method === ControlPlaneHost.MethodPost)

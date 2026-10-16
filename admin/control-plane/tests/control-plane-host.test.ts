@@ -62,6 +62,11 @@ class FakeService implements IEnvironmentService
         return [this.Record]
     }
 
+    public async ListReconciled(): Promise<readonly EnvironmentRecord[]>
+    {
+        return this.List()
+    }
+
     public async Logs(name: string): Promise<string>
     {
         this.Calls.push(`logs:${name}`)
