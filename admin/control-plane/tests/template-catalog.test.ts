@@ -9,11 +9,12 @@ import { EnvKind, TenantPurposeName } from '../../../environments/seed/bundle.js
 class CatalogFixture
 {
     public static readonly SecurityModel = 'security-model.json'
+    public static readonly Backslash = String.fromCharCode(92)
     public static readonly DemoSuffix = 'environments/demo/seed'
 
     public static Norm(p: string): string
     {
-        return p.replace(/\/g, '/')
+        return p.split(CatalogFixture.Backslash).join('/')
     }
 }
 
