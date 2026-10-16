@@ -7,6 +7,7 @@ import { ControlPlaneHost } from './control-plane-host.js'
 import { BundleBuilderAdapter, DockerEnvAdapter, UserSeederAdapter } from './docker-env-port.js'
 import { EnvironmentRegistry } from './environment-registry.js'
 import { EnvironmentService } from './environment-service.js'
+import { OperatorIdentity, type OperatorComposeOptions } from './operator-identity.js'
 import { NetPortProbe, PortAllocator } from './port-allocator.js'
 
 export class ControlPlaneServer
@@ -24,12 +25,23 @@ export class ControlPlaneServer
     private static readonly DistSegment = 'dist'
     private static readonly ListeningPrefix = 'Control plane listening on http://localhost:'
     private static readonly ListeningSuffix = '/'
+    private static readonly MasterKeyEnvVar = 'PRAGMATIC_ADMIN_MASTER_KEY_FILE'
+    private static readonly OperatorEmailEnvVar = 'PRAGMATIC_ADMIN_OPERATOR_EMAIL'
+    private static readonly OperatorPasswordEnvVar = 'PRAGMATIC_ADMIN_OPERATOR_PASSWORD'
+    private static readonly SecureCookieEnvVar = 'PRAGMATIC_ADMIN_SECURE_COOKIE'
+    private static readonly DefaultOperatorEmail = 'admin@control-plane.test'
+    private static readonly MasterKeyFileName = 'master.key'
+    private static readonly IdentitySegment = 'identity'
+    private static readonly TrueToken = 'true'
+    private static readonly OneToken = '1'
 
     public static async Main(): Promise<void>
     {
         const here = dirname(fileURLToPath(import.meta.url))
         const dataRoot = join(here, ControlPlaneServer.DataDir)
         mkdirSync(dataRoot, { recursive: true })
+        const opts = ControlPlaneServer.ReadOperatorOptions(process.env, dataRoot)
+        const operator = await OperatorIdentity.Compose(opts)
         const docker = new DockerEnvAdapter(new DockerEnv())
         const registry = new EnvironmentRegistry(join(dataRoot, ControlPlaneServer.RegistryFile), docker)
         await registry.Load()
@@ -39,10 +51,24 @@ export class ControlPlaneServer
         const seeder = new UserSeederAdapter(new UserSeeder())
         const service = new EnvironmentService(registry, allocator, docker, bundle, seeder, dataRoot)
         const staticRoot = join(here, ControlPlaneServer.ParentSegment, ControlPlaneServer.PortalSegment, ControlPlaneServer.DistSegment)
-        const host = new ControlPlaneHost(service, staticRoot)
+        const host = new ControlPlaneHost(service, staticRoot, operator, opts.secureCookie)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
         await host.Listen(port, ControlPlaneServer.BindHost)
         console.log(ControlPlaneServer.ListeningPrefix + String(port) + ControlPlaneServer.ListeningSuffix)
+    }
+
+    /** Pure: derives operator-identity compose options and cookie policy from the environment. */
+    public static ReadOperatorOptions(env: NodeJS.ProcessEnv, dataRoot: string): OperatorComposeOptions & { secureCookie: boolean }
+    {
+        const password = env[ControlPlaneServer.OperatorPasswordEnvVar]
+        const secure = env[ControlPlaneServer.SecureCookieEnvVar]
+        return {
+            masterKeyFile: env[ControlPlaneServer.MasterKeyEnvVar] ?? join(dataRoot, ControlPlaneServer.MasterKeyFileName),
+            identityRoot: join(dataRoot, ControlPlaneServer.IdentitySegment),
+            operatorEmail: env[ControlPlaneServer.OperatorEmailEnvVar] ?? ControlPlaneServer.DefaultOperatorEmail,
+            initialPassword: password === undefined || password === '' ? undefined : password,
+            secureCookie: secure === ControlPlaneServer.TrueToken || secure === ControlPlaneServer.OneToken,
+        }
     }
 
     private static ResolvePort(raw: string | undefined): number
