@@ -12,12 +12,12 @@ describe('SessionCookie', () =>
         assert.ok(c.includes('SameSite=Strict'))
         assert.ok(c.includes('Path=/'))
         assert.match(c, /Max-Age=\d+/)
-        assert.ok(!c.includes('Secure'))
+        assert.ok(!c.includes('; Secure'))
     })
 
     it('adds Secure when requested', () =>
     {
-        assert.ok(SessionCookie.Build('t', new Date(Date.now() + 1000), true).includes('Secure'))
+        assert.ok(SessionCookie.Build('t', new Date(Date.now() + 1000), true).includes('; Secure'))
     })
 
     it('builds a clearing cookie', () =>
@@ -32,6 +32,16 @@ describe('SessionCookie', () =>
         assert.equal(SessionCookie.Read('a=1; cp_session=abc; b=2'), 'abc')
         assert.equal(SessionCookie.Read('x=1'), undefined)
         assert.equal(SessionCookie.Read(undefined), undefined)
+    })
+
+    it('ignores a lookalike cookie name', () =>
+    {
+        assert.equal(SessionCookie.Read('xcp_session=bad; cp_session=good'), 'good')
+    })
+
+    it('clamps a past expiry to zero', () =>
+    {
+        assert.ok(SessionCookie.Build('t', new Date(Date.now() - 10000), false).includes('Max-Age=0'))
     })
 
     it('reads a single pair', () =>
