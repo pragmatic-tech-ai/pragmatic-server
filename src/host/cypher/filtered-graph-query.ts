@@ -59,6 +59,7 @@ export class FilteredGraphQuery implements IGraphQuery
     {
         const concept = mirror.type?.fullName
         if (concept === undefined) return true
+        // RecordKey (derived from the node id) lets the SP-5 share filter key per-record grants; other filters ignore it.
         const view: IRecordKeyedView = { Concept: concept, Field: name => mirror.field(name)?.value, RecordKey: RecordKey.FromNodeId(mirror.node.id) }
         return this.filter.Keep(view)
     }

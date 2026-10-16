@@ -16,23 +16,31 @@ class FakeSession
 }
 
 const Order = 'shop.Order'
-const denyAll = { Keep(): boolean { return false } }
-const idFields = ConceptIdFields.From({ Model: 'm', Version: '1', Connectors: [], Bindings: [{ Concept: Order, Connector: 'c', Source: 's', IdKey: 'id', FieldMap: {}, Writable: true }] } as never)
-const view = (id: string) => ({ Concept: Order, Field: (n: string) => (n === 'id' ? id : undefined) })
+
+class WideningFixture
+{
+    public static readonly DenyAll = { Keep(): boolean { return false } }
+    public static readonly KeepAll = { Keep(): boolean { return true } }
+    public static readonly IdFields = ConceptIdFields.From({ Model: 'm', Version: '1', Connectors: [], Bindings: [{ Concept: Order, Connector: 'c', Source: 's', IdKey: 'id', FieldMap: {}, Writable: true }] } as never)
+
+    public static View(id: string)
+    {
+        return { Concept: Order, Field: (n: string) => (n === 'id' ? id : undefined) }
+    }
+}
 
 test('a Read share makes an otherwise-denied record visible; the wrong record stays denied', async () =>
 {
     const store = new ShareStore(new FakeSession() as never)
     await store.Grant({ concept: Order, recordId: 'o1', subject: { kind: ShareSubjectKind.Principal, id: 'u2' }, rights: [PrivilegeAction.Read] })
     const index = await ShareGrantIndex.For(store, new Principal('u2', 't1', PrincipalKind.User, new Map(), []), { homeBusinessUnit: 'root', teams: [] })
-    const filter = new ShareWideningInstanceFilter(denyAll, index, idFields)
-    assert.equal(filter.Keep(view('o1') as never), true)
-    assert.equal(filter.Keep(view('o2') as never), false)
+    const filter = new ShareWideningInstanceFilter(WideningFixture.DenyAll, index, WideningFixture.IdFields)
+    assert.equal(filter.Keep(WideningFixture.View('o1') as never), true)
+    assert.equal(filter.Keep(WideningFixture.View('o2') as never), false)
 })
 
 test('when the inner filter keeps the view, the share is not consulted (never narrows)', () =>
 {
-    const keepAll = { Keep(): boolean { return true } }
-    const filter = new ShareWideningInstanceFilter(keepAll, ShareGrantIndex.Empty(), idFields)
-    assert.equal(filter.Keep(view('anything') as never), true)
+    const filter = new ShareWideningInstanceFilter(WideningFixture.KeepAll, ShareGrantIndex.Empty(), WideningFixture.IdFields)
+    assert.equal(filter.Keep(WideningFixture.View('anything') as never), true)
 })

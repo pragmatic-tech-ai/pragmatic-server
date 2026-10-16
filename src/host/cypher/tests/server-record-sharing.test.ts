@@ -46,7 +46,6 @@ class RecordSharingFixture
     private static readonly Profile = 'secret-readers'
     private static readonly ProfileName = 'Secret readers'
     public static readonly Query = 'MATCH (w:Widget) RETURN w.label AS label, w.secret AS secret'
-    private static readonly RowsQuery = 'MATCH (w:Widget) RETURN w.label AS label, w.secret AS secret'
     public static readonly Principal = 'p1'
     public static readonly Other = 'p2'
     /** Sales-owned: visible by depth + predicate. */
@@ -153,7 +152,7 @@ class RecordSharingFixture
     /** label -> secret (null when masked), sorted by label. */
     public static Rows(graph: IGraphQuery): Array<[string, string | null]>
     {
-        return Cypher.CypherEngine.OverQuery(graph).Execute(RecordSharingFixture.RowsQuery).Rows
+        return Cypher.CypherEngine.OverQuery(graph).Execute(RecordSharingFixture.Query).Rows
             .map(r => [
                 r[0] instanceof Cypher.ScalarValue ? String(r[0].Value) : '',
                 r[1] instanceof Cypher.ScalarValue && r[1].Value !== null ? String(r[1].Value) : null,
