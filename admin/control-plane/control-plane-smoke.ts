@@ -69,6 +69,20 @@ export class ControlPlaneSmoke
     private static readonly StatusOk = 200
     private static readonly StatusUnauthorized = 401
     private static readonly StatusCreated = 201
+    private static readonly StatusConflict = 409
+    private static readonly MethodPut = 'PUT'
+    private static readonly AdminSegment = '/admin/'
+    private static readonly SnapshotLeaf = 'snapshot'
+    private static readonly AccountsLeaf = 'accounts'
+    private static readonly GrantsLeaf = 'grants'
+    private static readonly ConfigLeaf = 'config'
+    private static readonly ManagedPrincipal = 'smoke-managed'
+    private static readonly ManagedEmail = 'smoke-managed@contoso.test'
+    private static readonly ManagedPassword = 'smoke-managed-test-password'
+    private static readonly ViewerRole = 'Viewer'
+    private static readonly OwnerRole = 'Owner'
+    private static readonly TenantKind = 'Tenant'
+    private static readonly OwnerSubject = 'admin'
     private static readonly PollTimeoutMs = 90000
     private static readonly PollIntervalMs = 1000
     private static readonly PassTag = 'PASS '
@@ -102,7 +116,15 @@ export class ControlPlaneSmoke
         HealthDemo: 'demo-contoso: /healthz returns 200',
         SeededDemo: 'demo-contoso: four demo principals plus admin seeded',
         DeleteDemo: 'demo-contoso: delete returns 200',
-        GoneDemo: 'demo-contoso: no longer listed'
+        GoneDemo: 'demo-contoso: no longer listed',
+        ManageSnapshot: 'manage: snapshot returns 200 with admin, demo principals and config',
+        ManageCreate: 'manage: create account returns 201',
+        ManageListed: 'manage: new account appears in snapshot',
+        ManageGrant: 'manage: grant Viewer returns 200',
+        ManageRevoke: 'manage: revoke Viewer returns 200',
+        ManageGetConfig: 'manage: get config returns 200',
+        ManagePutConfig: 'manage: put unchanged config returns 200',
+        ManageLockout: 'manage: revoking own Owner grant is refused with 409'
     }
 
     private failed = false
@@ -230,7 +252,8 @@ export class ControlPlaneSmoke
         }
         await this.CheckHealth(L.HealthDemo, running.hostPort)
         await this.CheckSeeded(dataRoot, running.hostPort)
-        const del = await this.Api(ControlPlaneSmoke.MethodDelete, this.EnvPath(name))
+        await this.ManageRoundTrip(name)
+        const del =await this.Api(ControlPlaneSmoke.MethodDelete, this.EnvPath(name))
         this.Expect(L.DeleteDemo, del.status === ControlPlaneSmoke.StatusOk, ControlPlaneSmoke.StatusWord + String(del.status))
         this.Expect(L.GoneDemo, (await this.Find(name)) === undefined)
     }
@@ -261,6 +284,43 @@ export class ControlPlaneSmoke
         {
             conn.dispose()
         }
+    }
+
+    /** Drives the admin Manage routes against the running demo environment through the control plane. */
+    private async ManageRoundTrip(name: string): Promise<void>
+    {
+        const S = ControlPlaneSmoke
+        const L = S.Labels
+        const base = this.EnvPath(name) + S.AdminSegment
+        const snapshot = await this.Api(S.MethodGet, base + S.SnapshotLeaf)
+        const snap = snapshot.json as { accounts?: { principalId: string; email: string }[]; config?: unknown } | undefined
+        const accounts = snap?.accounts ?? []
+        const ids = new Set(accounts.map(a => a.principalId))
+        const missing = S.DemoPrincipals.filter(p => !ids.has(p))
+        const hasAdmin = accounts.some(a => a.email === S.AdminEmail)
+        const snapshotOk = snapshot.status === S.StatusOk && missing.length === 0 && hasAdmin && snap?.config !== undefined
+        this.Expect(L.ManageSnapshot, snapshotOk, S.StatusWord + String(snapshot.status) + S.MissingOpen + missing.join(S.Comma) + S.MissingClose + String(hasAdmin))
+
+        const create = await this.Api(S.MethodPost, base + S.AccountsLeaf, { principalId: S.ManagedPrincipal, email: S.ManagedEmail, password: S.ManagedPassword })
+        this.Expect(L.ManageCreate, create.status === S.StatusCreated, S.StatusWord + String(create.status))
+        const after = await this.Api(S.MethodGet, base + S.SnapshotLeaf)
+        const listed = ((after.json as { accounts?: { principalId: string }[] } | undefined)?.accounts ?? []).some(a => a.principalId === S.ManagedPrincipal)
+        this.Expect(L.ManageListed, after.status === S.StatusOk && listed, S.StatusWord + String(after.status))
+
+        const viewer = { subject: S.ManagedPrincipal, role: S.ViewerRole, resourceKind: S.TenantKind, resourcePath: [] }
+        const grant = await this.Api(S.MethodPost, base + S.GrantsLeaf, viewer)
+        this.Expect(L.ManageGrant, grant.status === S.StatusOk, S.StatusWord + String(grant.status))
+        const revoke = await this.Api(S.MethodDelete, base + S.GrantsLeaf, viewer)
+        this.Expect(L.ManageRevoke, revoke.status === S.StatusOk, S.StatusWord + String(revoke.status))
+
+        const config = await this.Api(S.MethodGet, base + S.ConfigLeaf)
+        this.Expect(L.ManageGetConfig, config.status === S.StatusOk && config.json !== undefined, S.StatusWord + String(config.status))
+        const put = await this.Api(S.MethodPut, base + S.ConfigLeaf, config.json)
+        this.Expect(L.ManagePutConfig, put.status === S.StatusOk, S.StatusWord + String(put.status))
+
+        const owner = { subject: S.OwnerSubject, role: S.OwnerRole, resourceKind: S.TenantKind, resourcePath: [] }
+        const lockout = await this.Api(S.MethodDelete, base + S.GrantsLeaf, owner)
+        this.Expect(L.ManageLockout, lockout.status === S.StatusConflict, S.StatusWord + String(lockout.status))
     }
 
     private async CheckHealth(label: string, hostPort: number): Promise<void>
