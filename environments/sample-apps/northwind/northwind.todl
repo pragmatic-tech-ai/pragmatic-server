@@ -1,0 +1,35 @@
+namespace northwind
+{
+  concept Category { name : string; }
+  concept Product { name : string; unitPrice : number; category : Category?; }
+  concept Customer { company : string; contact : string; region : string; creditLimit : number; }
+  concept Employee { name : string; title : string; }
+  concept Order { orderNo : string; owner : string; owningBu : string; customer : Customer?; freight : number; status : string; }
+
+  model Northwind : northwind
+  {
+    annotate entrypoint { }
+
+    Category beverages { name = "Beverages"; }
+    Category produce { name = "Produce"; }
+
+    Product chai { name = "Chai"; unitPrice = 18; category = beverages; }
+    Product tofu { name = "Tofu"; unitPrice = 23; category = produce; }
+
+    Customer alfki { company = "Alfreds Futterkiste"; contact = "Maria Anders"; region = "north"; creditLimit = 5000; }
+    Customer ernsh { company = "Ernst Handel"; contact = "Roland Mendel"; region = "south"; creditLimit = 25000; }
+    Customer bonap { company = "Bon App"; contact = "Laurence Lebihan"; region = "south"; creditLimit = 12000; }
+
+    Employee nancy { name = "Nancy Davolio"; title = "Sales Rep"; }
+    Employee andrew { name = "Andrew Fuller"; title = "Sales Manager"; }
+
+    Order o1  { orderNo = "10248"; owner = "rep-boston";  owningBu = "boston";  customer = alfki; freight = 32;  status = "open"; }
+    Order o2  { orderNo = "10249"; owner = "rep-boston";  owningBu = "boston";  customer = alfki; freight = 11;  status = "shipped"; }
+    Order o3  { orderNo = "10250"; owner = "rep-boston";  owningBu = "newyork"; customer = alfki; freight = 65;  status = "open"; }
+    Order o4  { orderNo = "10251"; owner = "rep-atlanta"; owningBu = "atlanta"; customer = ernsh; freight = 41;  status = "open"; }
+    Order o5  { orderNo = "10252"; owner = "rep-atlanta"; owningBu = "atlanta"; customer = ernsh; freight = 51;  status = "shipped"; }
+    Order o6  { orderNo = "10253"; owner = "rep-atlanta"; owningBu = "atlanta"; customer = bonap; freight = 58;  status = "open"; }
+    Order o7  { orderNo = "10254"; owner = "manager-north"; owningBu = "north"; customer = alfki; freight = 22;  status = "open"; }
+    Order o8  { orderNo = "10255"; owner = "manager-north"; owningBu = "boston"; customer = alfki; freight = 148; status = "open"; }
+  }
+}
