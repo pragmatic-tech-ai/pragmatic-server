@@ -2,8 +2,8 @@ import {
     createMessageConnection, NullLogger, WebSocketMessageReader, WebSocketMessageWriter, LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol, AdminProtocol, CypherProtocol, PragmaticAppProtocol,
 } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, ModelProjection, ResolvedResourceDto, GrantDto, GrantMutationDto, IdentityConfigDto, AccountDto, CreateAccountParams, ServiceTokenSummaryDto, IssueTokenParams, TokenIssuedDto, CypherQueryParams, CypherQueryResultDto, PragmaticAppSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { ResponseError, ErrorCodes, AppDataProtocol, DataSharingProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { AppWriteParams, AppWriteResultDto, AppWriteOpDto, ShareParams, ShareResultDto, UnshareParams, UnshareResultDto, ListSharesParams, ListSharesResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { ResponseError, ErrorCodes, AppDataProtocol, DataSharingProtocol, DataAssignmentProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { AppWriteParams, AppWriteResultDto, AppWriteOpDto, ShareParams, ShareResultDto, UnshareParams, UnshareResultDto, ListSharesParams, ListSharesResultDto, AssignParams, AssignResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { RequestType, NotificationType } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ResourceRef, IdentityConfig, PresentedSecret, LocalAccountNotFoundError } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext, Grant, Role, LocalAccount, ServiceTokenSummary, ServiceTokenGrant } from '@pragmatic-tech-ai/todl-identity'
@@ -85,9 +85,10 @@ export class ServerConnectionHandler
     private readonly shareProvider: ((context: AccessContext, name: string, params: ShareParams) => Promise<ShareResultDto>) | undefined
     private readonly unshareProvider: ((context: AccessContext, name: string, params: UnshareParams) => Promise<UnshareResultDto>) | undefined
     private readonly listSharesProvider: ((context: AccessContext, name: string, params: ListSharesParams) => Promise<ListSharesResultDto>) | undefined
+    private readonly assignProvider: ((context: AccessContext, name: string, params: AssignParams) => Promise<AssignResultDto>) | undefined
     private boundApp: PragmaticAppSummaryDto | undefined
 
-    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, graphProvider: (context: AccessContext) => Promise<IGraphQuery>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: TenantPurpose = TenantPurpose.Development, applications?: PragmaticAppsRegistry, appGraphProvider?: (context: AccessContext, name: string, labels: ReferencedLabelSet) => Promise<IGraphQuery>, appWriteProvider?: (context: AccessContext, name: string, operations: readonly AppWriteOpDto[]) => Promise<AppWriteResultDto>, shareProvider?: (context: AccessContext, name: string, params: ShareParams) => Promise<ShareResultDto>, unshareProvider?: (context: AccessContext, name: string, params: UnshareParams) => Promise<UnshareResultDto>, listSharesProvider?: (context: AccessContext, name: string, params: ListSharesParams) => Promise<ListSharesResultDto>)
+    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, graphProvider: (context: AccessContext) => Promise<IGraphQuery>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: TenantPurpose = TenantPurpose.Development, applications?: PragmaticAppsRegistry, appGraphProvider?: (context: AccessContext, name: string, labels: ReferencedLabelSet) => Promise<IGraphQuery>, appWriteProvider?: (context: AccessContext, name: string, operations: readonly AppWriteOpDto[]) => Promise<AppWriteResultDto>, shareProvider?: (context: AccessContext, name: string, params: ShareParams) => Promise<ShareResultDto>, unshareProvider?: (context: AccessContext, name: string, params: UnshareParams) => Promise<UnshareResultDto>, listSharesProvider?: (context: AccessContext, name: string, params: ListSharesParams) => Promise<ListSharesResultDto>, assignProvider?: (context: AccessContext, name: string, params: AssignParams) => Promise<AssignResultDto>)
     {
         this.cypherLimits = cypherLimits ?? new CypherLimits()
         this.purpose = purpose
@@ -97,6 +98,7 @@ export class ServerConnectionHandler
         this.shareProvider = shareProvider
         this.unshareProvider = unshareProvider
         this.listSharesProvider = listSharesProvider
+        this.assignProvider = assignProvider
         this.rateLimit = rateLimit
         this.admin = admin
         this.graphProvider = graphProvider
@@ -120,6 +122,7 @@ export class ServerConnectionHandler
         this.RegisterApplicationHandlers()
         this.RegisterAppDataHandlers()
         this.RegisterDataSharingHandlers()
+        this.RegisterDataAssignmentHandlers()
         if (this.admin !== undefined)
         {
             this.RegisterAdminHandlers()
@@ -142,19 +145,19 @@ export class ServerConnectionHandler
     }
 
     /** The runtime-only Attach arguments (application registry + per-app graph provider); both undefined unless the server is a Runtime tenant. */
-    public static RuntimeAttachArgs(server: { Purpose(): TenantPurpose; Applications(): PragmaticAppsRegistry; GraphForPragmaticApp(context: AccessContext, name: string, labels: ReferencedLabelSet): Promise<IGraphQuery>; WriteForPragmaticApp(context: AccessContext, name: string, operations: readonly AppWriteOpDto[]): Promise<AppWriteResultDto>; ShareForPragmaticApp(context: AccessContext, name: string, params: ShareParams): Promise<ShareResultDto>; UnshareForPragmaticApp(context: AccessContext, name: string, params: UnshareParams): Promise<UnshareResultDto>; ListSharesForPragmaticApp(context: AccessContext, name: string, params: ListSharesParams): Promise<ListSharesResultDto> }): { applications: PragmaticAppsRegistry | undefined; appGraphProvider: ((context: AccessContext, name: string, labels: ReferencedLabelSet) => Promise<IGraphQuery>) | undefined; appWriteProvider: ((context: AccessContext, name: string, operations: readonly AppWriteOpDto[]) => Promise<AppWriteResultDto>) | undefined; shareProvider: ((context: AccessContext, name: string, params: ShareParams) => Promise<ShareResultDto>) | undefined; unshareProvider: ((context: AccessContext, name: string, params: UnshareParams) => Promise<UnshareResultDto>) | undefined; listSharesProvider: ((context: AccessContext, name: string, params: ListSharesParams) => Promise<ListSharesResultDto>) | undefined }
+    public static RuntimeAttachArgs(server: { Purpose(): TenantPurpose; Applications(): PragmaticAppsRegistry; GraphForPragmaticApp(context: AccessContext, name: string, labels: ReferencedLabelSet): Promise<IGraphQuery>; WriteForPragmaticApp(context: AccessContext, name: string, operations: readonly AppWriteOpDto[]): Promise<AppWriteResultDto>; ShareForPragmaticApp(context: AccessContext, name: string, params: ShareParams): Promise<ShareResultDto>; UnshareForPragmaticApp(context: AccessContext, name: string, params: UnshareParams): Promise<UnshareResultDto>; ListSharesForPragmaticApp(context: AccessContext, name: string, params: ListSharesParams): Promise<ListSharesResultDto>; AssignForPragmaticApp(context: AccessContext, name: string, params: AssignParams): Promise<AssignResultDto> }): { applications: PragmaticAppsRegistry | undefined; appGraphProvider: ((context: AccessContext, name: string, labels: ReferencedLabelSet) => Promise<IGraphQuery>) | undefined; appWriteProvider: ((context: AccessContext, name: string, operations: readonly AppWriteOpDto[]) => Promise<AppWriteResultDto>) | undefined; shareProvider: ((context: AccessContext, name: string, params: ShareParams) => Promise<ShareResultDto>) | undefined; unshareProvider: ((context: AccessContext, name: string, params: UnshareParams) => Promise<UnshareResultDto>) | undefined; listSharesProvider: ((context: AccessContext, name: string, params: ListSharesParams) => Promise<ListSharesResultDto>) | undefined; assignProvider: ((context: AccessContext, name: string, params: AssignParams) => Promise<AssignResultDto>) | undefined }
     {
         if (server.Purpose() !== TenantPurpose.Runtime)
         {
-            return { applications: undefined, appGraphProvider: undefined, appWriteProvider: undefined, shareProvider: undefined, unshareProvider: undefined, listSharesProvider: undefined }
+            return { applications: undefined, appGraphProvider: undefined, appWriteProvider: undefined, shareProvider: undefined, unshareProvider: undefined, listSharesProvider: undefined, assignProvider: undefined }
         }
-        return { applications: server.Applications(), appGraphProvider: (context, name, labels) => server.GraphForPragmaticApp(context, name, labels), appWriteProvider: (context, name, operations) => server.WriteForPragmaticApp(context, name, operations), shareProvider: (context, name, params) => server.ShareForPragmaticApp(context, name, params), unshareProvider: (context, name, params) => server.UnshareForPragmaticApp(context, name, params), listSharesProvider: (context, name, params) => server.ListSharesForPragmaticApp(context, name, params) }
+        return { applications: server.Applications(), appGraphProvider: (context, name, labels) => server.GraphForPragmaticApp(context, name, labels), appWriteProvider: (context, name, operations) => server.WriteForPragmaticApp(context, name, operations), shareProvider: (context, name, params) => server.ShareForPragmaticApp(context, name, params), unshareProvider: (context, name, params) => server.UnshareForPragmaticApp(context, name, params), listSharesProvider: (context, name, params) => server.ListSharesForPragmaticApp(context, name, params), assignProvider: (context, name, params) => server.AssignForPragmaticApp(context, name, params) }
     }
 
-    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, graphProvider: (context: AccessContext) => Promise<IGraphQuery>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: TenantPurpose = TenantPurpose.Development, applications?: PragmaticAppsRegistry, appGraphProvider?: (context: AccessContext, name: string, labels: ReferencedLabelSet) => Promise<IGraphQuery>, appWriteProvider?: (context: AccessContext, name: string, operations: readonly AppWriteOpDto[]) => Promise<AppWriteResultDto>, shareProvider?: (context: AccessContext, name: string, params: ShareParams) => Promise<ShareResultDto>, unshareProvider?: (context: AccessContext, name: string, params: UnshareParams) => Promise<UnshareResultDto>, listSharesProvider?: (context: AccessContext, name: string, params: ListSharesParams) => Promise<ListSharesResultDto>): ServerConnectionHandler
+    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, graphProvider: (context: AccessContext) => Promise<IGraphQuery>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: TenantPurpose = TenantPurpose.Development, applications?: PragmaticAppsRegistry, appGraphProvider?: (context: AccessContext, name: string, labels: ReferencedLabelSet) => Promise<IGraphQuery>, appWriteProvider?: (context: AccessContext, name: string, operations: readonly AppWriteOpDto[]) => Promise<AppWriteResultDto>, shareProvider?: (context: AccessContext, name: string, params: ShareParams) => Promise<ShareResultDto>, unshareProvider?: (context: AccessContext, name: string, params: UnshareParams) => Promise<UnshareResultDto>, listSharesProvider?: (context: AccessContext, name: string, params: ListSharesParams) => Promise<ListSharesResultDto>, assignProvider?: (context: AccessContext, name: string, params: AssignParams) => Promise<AssignResultDto>): ServerConnectionHandler
     {
         const connection = createMessageConnection(new WebSocketMessageReader(socket), new WebSocketMessageWriter(socket), NullLogger)
-        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectorsFactory, graphProvider, instrumentation, parent, audit, rateLimit, admin, cypherLimits, purpose, applications, appGraphProvider, appWriteProvider, shareProvider, unshareProvider, listSharesProvider)
+        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectorsFactory, graphProvider, instrumentation, parent, audit, rateLimit, admin, cypherLimits, purpose, applications, appGraphProvider, appWriteProvider, shareProvider, unshareProvider, listSharesProvider, assignProvider)
         connection.listen()
         return handler
     }
@@ -331,6 +334,21 @@ export class ServerConnectionHandler
             throw new ResponseError(ErrorCodes.InvalidRequest, ServerConnectionHandler.NoApplicationSelectedMessage)
         }
         return this.listSharesProvider(this.accessContext, this.boundApp.name, params)
+    }
+
+    private RegisterDataAssignmentHandlers(): void
+    {
+        this.guarded(DataAssignmentProtocol.Assign, p => this.RunAssign(p))
+    }
+
+    public async RunAssign(params: AssignParams): Promise<AssignResultDto>
+    {
+        this.EnsureRuntime()
+        if (this.boundApp === undefined || this.assignProvider === undefined)
+        {
+            throw new ResponseError(ErrorCodes.InvalidRequest, ServerConnectionHandler.NoApplicationSelectedMessage)
+        }
+        return this.assignProvider(this.accessContext, this.boundApp.name, params)
     }
 
     public async RunAppDataWrite(params: AppWriteParams): Promise<AppWriteResultDto>
