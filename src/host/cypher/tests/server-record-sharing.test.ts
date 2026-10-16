@@ -277,3 +277,35 @@ test('share ops: a Read-only actor is Denied sharing a visible record; List sees
         await fx.Dispose()
     }
 })
+
+test('share ops round-trip via the cascade: a Share grant lets the actor share to p2 (visible at read time), list reflects it, unshare removes it', async () =>
+{
+    const fx = new RecordSharingFixture()
+    try
+    {
+        const server = await fx.Setup()
+        await server.AppShareStore(RecordSharingFixture.Name).Grant({
+            concept: 'shop.Widget', recordId: RecordSharingFixture.SharedRecordId,
+            subject: { kind: ShareSubjectKind.Principal, id: RecordSharingFixture.Principal }, rights: [PrivilegeAction.Read, PrivilegeAction.Share],
+        })
+        const actor = PpSecurityHarness.Context(RecordSharingFixture.Principal)
+        const p2 = PpSecurityHarness.Context(RecordSharingFixture.Other)
+        const params = { concept: 'shop.Widget', id: RecordSharingFixture.SharedRecordId }
+        const subject = { kind: ShareSubjectKind.Principal, id: RecordSharingFixture.Other }
+        const labels = Cypher.ReferencedLabels.Of(RecordSharingFixture.Query)
+        const rowsFor = async () => RecordSharingFixture.Rows(await server.GraphForPragmaticApp(p2, RecordSharingFixture.Name, labels))
+        assert.deepEqual(await rowsFor(), [[RecordSharingFixture.VisibleLabel, null]])
+        const shared = await server.ShareForPragmaticApp(actor, RecordSharingFixture.Name, { ...params, subject, rights: [PrivilegeAction.Read] })
+        assert.equal(shared.status, ShareStatus.Applied)
+        assert.deepEqual(await rowsFor(), [[RecordSharingFixture.VisibleLabel, null], [RecordSharingFixture.SharedLabel, null]])
+        const listed = await server.ListSharesForPragmaticApp(actor, RecordSharingFixture.Name, params)
+        assert.ok(listed.grants.some(g => g.subject.id === RecordSharingFixture.Other))
+        const removed = await server.UnshareForPragmaticApp(actor, RecordSharingFixture.Name, { ...params, subject })
+        assert.equal(removed.status, ShareStatus.Applied)
+        assert.deepEqual(await rowsFor(), [[RecordSharingFixture.VisibleLabel, null]])
+    }
+    finally
+    {
+        await fx.Dispose()
+    }
+})

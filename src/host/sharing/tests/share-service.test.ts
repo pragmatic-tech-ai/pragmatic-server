@@ -34,16 +34,19 @@ class FakeEvaluator
     public IsKnownTeam(id: string): boolean { return this.teams.has(id) }
 }
 
-function service(opts: { shareOk: boolean; known?: string[]; teams?: string[] }): { svc: ShareService; store: ShareStore }
+class ServiceFactory
 {
-    const store = new ShareStore(new FakeSession() as never)
-    const svc = new ShareService(store, ShareGrantIndex.Empty(), new FakeEvaluator(opts.shareOk, new Set(opts.teams ?? [])) as never, new Principal('u1', 't1', PrincipalKind.User, new Map(), []), new FakeTarget(new Set(opts.known ?? ['o1'])) as never, idFields)
-    return { svc, store }
+    public static Build(opts: { shareOk: boolean; known?: string[]; teams?: string[] }): { svc: ShareService; store: ShareStore }
+    {
+        const store = new ShareStore(new FakeSession() as never)
+        const svc = new ShareService(store, ShareGrantIndex.Empty(), new FakeEvaluator(opts.shareOk, new Set(opts.teams ?? [])) as never, new Principal('u1', 't1', PrincipalKind.User, new Map(), []), new FakeTarget(new Set(opts.known ?? ['o1'])) as never, idFields)
+        return { svc, store }
+    }
 }
 
 test('an actor with Share right shares a visible record', async () =>
 {
-    const { svc, store } = service({ shareOk: true })
+    const { svc, store } = ServiceFactory.Build({ shareOk: true })
     const out = await svc.Share({ concept: Order, id: 'o1', subject: { kind: ShareSubjectKind.Principal, id: 'u2' }, rights: [PrivilegeAction.Read] })
     assert.equal(out.status, ShareStatus.Applied)
     assert.equal((await store.ListForRecord(Order, 'o1')).length, 1)
@@ -51,21 +54,21 @@ test('an actor with Share right shares a visible record', async () =>
 
 test('sharing a record the actor cannot Share is Denied', async () =>
 {
-    const { svc } = service({ shareOk: false })
+    const { svc } = ServiceFactory.Build({ shareOk: false })
     const out = await svc.Share({ concept: Order, id: 'o1', subject: { kind: ShareSubjectKind.Principal, id: 'u2' }, rights: [PrivilegeAction.Read] })
     assert.equal(out.status, ShareStatus.Denied)
 })
 
 test('sharing a non-visible record is NotFound', async () =>
 {
-    const { svc } = service({ shareOk: true, known: [] })
+    const { svc } = ServiceFactory.Build({ shareOk: true, known: [] })
     const out = await svc.Share({ concept: Order, id: 'ghost', subject: { kind: ShareSubjectKind.Principal, id: 'u2' }, rights: [PrivilegeAction.Read] })
     assert.equal(out.status, ShareStatus.NotFound)
 })
 
 test('an empty/invalid rights list is Invalid; an unknown team is Invalid', async () =>
 {
-    const { svc } = service({ shareOk: true, teams: ['sales'] })
+    const { svc } = ServiceFactory.Build({ shareOk: true, teams: ['sales'] })
     assert.equal((await svc.Share({ concept: Order, id: 'o1', subject: { kind: ShareSubjectKind.Principal, id: 'u2' }, rights: ['bogus'] })).status, ShareStatus.Invalid)
     assert.equal((await svc.Share({ concept: Order, id: 'o1', subject: { kind: ShareSubjectKind.Team, id: 'ghost' }, rights: [PrivilegeAction.Read] })).status, ShareStatus.Invalid)
     assert.equal((await svc.Share({ concept: Order, id: 'o1', subject: { kind: ShareSubjectKind.Team, id: 'sales' }, rights: [PrivilegeAction.Read] })).status, ShareStatus.Applied)
@@ -73,7 +76,7 @@ test('an empty/invalid rights list is Invalid; an unknown team is Invalid', asyn
 
 test('unshare removes the grant; unshare of a missing grant is NotFound', async () =>
 {
-    const { svc } = service({ shareOk: true })
+    const { svc } = ServiceFactory.Build({ shareOk: true })
     await svc.Share({ concept: Order, id: 'o1', subject: { kind: ShareSubjectKind.Principal, id: 'u2' }, rights: [PrivilegeAction.Read] })
     assert.equal((await svc.Unshare({ concept: Order, id: 'o1', subject: { kind: ShareSubjectKind.Principal, id: 'u2' } })).status, ShareStatus.Applied)
     assert.equal((await svc.Unshare({ concept: Order, id: 'o1', subject: { kind: ShareSubjectKind.Principal, id: 'u2' } })).status, ShareStatus.NotFound)

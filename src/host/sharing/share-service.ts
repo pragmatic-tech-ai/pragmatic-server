@@ -36,7 +36,7 @@ export class ShareService
         {
             return { status: ShareStatus.NotFound, reason: ShareService.RecordNotFound }
         }
-        if (!this.CanShare(params.concept, view, params.id))
+        if (!this.CanShare(view.Concept, view, params.id))
         {
             return { status: ShareStatus.Denied, reason: ShareService.NotAuthorized }
         }
@@ -49,8 +49,8 @@ export class ShareService
         {
             return { status: ShareStatus.Invalid, reason: ShareService.UnknownTeam }
         }
-        const recordId = this.RecordId(params.concept, view) ?? params.id
-        await this.store.Grant({ concept: params.concept, recordId, subject: params.subject, rights })
+        const recordId = this.RecordId(view.Concept, view) ?? params.id
+        await this.store.Grant({ concept: view.Concept, recordId, subject: params.subject, rights })
         return { status: ShareStatus.Applied }
     }
 
@@ -61,12 +61,12 @@ export class ShareService
         {
             return { status: ShareStatus.NotFound, reason: ShareService.RecordNotFound }
         }
-        if (!this.CanShare(params.concept, view, params.id))
+        if (!this.CanShare(view.Concept, view, params.id))
         {
             return { status: ShareStatus.Denied, reason: ShareService.NotAuthorized }
         }
-        const recordId = this.RecordId(params.concept, view) ?? params.id
-        const removed = await this.store.Revoke(params.concept, recordId, params.subject.kind, params.subject.id)
+        const recordId = this.RecordId(view.Concept, view) ?? params.id
+        const removed = await this.store.Revoke(view.Concept, recordId, params.subject.kind, params.subject.id)
         return removed ? { status: ShareStatus.Applied } : { status: ShareStatus.NotFound }
     }
 
@@ -77,8 +77,8 @@ export class ShareService
         {
             return { grants: [] }
         }
-        const recordId = this.RecordId(params.concept, view) ?? params.id
-        const grants = await this.store.ListForRecord(params.concept, recordId)
+        const recordId = this.RecordId(view.Concept, view) ?? params.id
+        const grants = await this.store.ListForRecord(view.Concept, recordId)
         return { grants: [...grants] as ShareGrantDto[] }
     }
 
