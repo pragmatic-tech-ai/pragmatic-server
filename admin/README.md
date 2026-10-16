@@ -1,0 +1,47 @@
+# Admin control plane runbook
+
+The control plane is a local web portal plus HTTP API that creates, starts, stops and deletes pragmatic-server environments as Docker containers.
+
+## One-time image build
+
+Needs Docker with BuildKit, and an .npmrc containing the scoped registry token. Run from the workspace parent directory (one level above pragmatic-server):
+
+```
+DOCKER_BUILDKIT=1 docker build -f pragmatic-server/docker/Dockerfile --secret id=npmrc,src=<path-to>/.npmrc -t pragmatic-server:dev ..
+```
+
+## Build the portal
+
+Before the first start. This emits admin/portal/dist/, which the control plane serves. The portal depends on the sibling Mural and todl-runtime builds via file: paths, so those siblings must already be built.
+
+```
+npm --prefix admin/portal install && npm --prefix admin/portal run build
+```
+
+## Start the control plane
+
+```
+npx tsx admin/control-plane/server.ts
+```
+
+The port comes from PRAGMATIC_ADMIN_PORT (default 7000). The server binds 127.0.0.1 only. Open the portal at http://localhost:7000/ (or your chosen admin port).
+
+## Create environments
+
+From the portal, create either a dev-blank environment (the name must be a lowercase slug, characters a-z, 0-9 and hyphen) or a demo-contoso environment (seeds the Contoso security model and four demo users). Each is a pragmatic-server:dev container on an allocated host port. Connect over HTTP at http://localhost:PORT and over WebSocket at ws://localhost:PORT/?tenant=TENANT.
+
+## Gated integration smoke
+
+Requires Docker and the built image. It creates, starts, stops and deletes a dev and a demo environment end to end, and checks the seeded users. It is not part of the normal test run.
+
+```
+npx tsx admin/control-plane/control-plane-smoke.ts
+```
+
+## Generated data and portal tests
+
+admin/control-plane/data/ holds generated bundles, registry.json, provisioned secrets and master keys. It is generated and gitignored; never commit it. The Playwright portal spec is gated on a one-time browser install:
+
+```
+npx playwright install chromium
+```
