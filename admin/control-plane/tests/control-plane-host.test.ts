@@ -516,8 +516,11 @@ describe('ControlPlaneHost', () =>
 
     it('maps AdminProxyError kinds and unknown environments to statuses', async () =>
     {
-        fake.Throw = new AdminProxyError(AdminProxyErrorKind.Connect)
-        assert.equal((await Harness.Send(host, 'GET', '/api/environments/x/admin/snapshot')).status, 503)
+        fake.Throw = new AdminProxyError(AdminProxyErrorKind.Connect, 'ECONNREFUSED 10.0.0.5:8101 login failed')
+        const conn = await Harness.Send(host, 'GET', '/api/environments/x/admin/snapshot')
+        assert.equal(conn.status, 503)
+        assert.equal(JSON.parse(conn.body).error, 'Environment is not reachable')
+        assert.ok(!conn.body.includes('ECONNREFUSED'))
         fake.Throw = new AdminProxyError(AdminProxyErrorKind.Rbac, 'last admin cannot be removed')
         const rbac = await Harness.Send(host, 'DELETE', '/api/environments/x/admin/grants', JSON.stringify({ subject: 's', role: 'r' }))
         assert.equal(rbac.status, 409)

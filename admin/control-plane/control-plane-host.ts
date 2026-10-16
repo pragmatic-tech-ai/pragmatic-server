@@ -119,6 +119,7 @@ export class ControlPlaneHost
     private static readonly GrantFieldsMessage = 'subject and role (strings) are required'
     private static readonly ConfigFieldsMessage = 'packId and delegationDepth (strings) are required'
     private static readonly BodyObjectMessage = 'Request body must be a JSON object'
+    private static readonly ConnectUnavailableMessage = 'Environment is not reachable'
     private static readonly MethodGet = 'GET'
     private static readonly MethodPost = 'POST'
     private static readonly MethodDelete = 'DELETE'
@@ -692,6 +693,12 @@ export class ControlPlaneHost
         {
             console.error(ControlPlaneHost.LogPrefix, err)
             this.WriteJson(res, ControlPlaneHost.StatusInternal, { error: ControlPlaneHost.OperationFailedMessage })
+            return
+        }
+        if (err instanceof AdminProxyError && err.Kind === AdminProxyErrorKind.Connect)
+        {
+            console.error(ControlPlaneHost.LogPrefix, err)
+            this.WriteJson(res, status, { error: ControlPlaneHost.ConnectUnavailableMessage })
             return
         }
         if (err instanceof ImageMissingError)
