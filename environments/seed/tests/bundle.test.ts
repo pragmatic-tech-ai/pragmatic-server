@@ -49,7 +49,11 @@ test('omitted seedDir keeps the name-derived seed path', async () =>
     const config = JSON.parse(readFileSync(join(dir, 'data', 'contoso', 'identity', 'tenant-config.json'), 'utf8'))
     assert.ok(config.configs.contoso.securityModel.businessUnits.length > 0)
     const secrets = JSON.parse(readFileSync(join(dir, 'provisioned-secrets.json'), 'utf8'))
-    assert.ok('rep-boston-pw' in secrets || Object.keys(secrets).length > 1)
+    assert.ok('contoso-admin-pw' in secrets)
+    for (const ref of ['rep-boston-pw', 'rep-atlanta-pw', 'manager-north-pw', 'finance-pw'])
+    {
+        assert.ok(ref in secrets)
+    }
 })
 
 test('generate is idempotent: a second run keeps the same master key', async () =>
