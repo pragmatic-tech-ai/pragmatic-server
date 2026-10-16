@@ -56,6 +56,18 @@ COPY pragmatic-server/ ./pragmatic-server/
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
     cd pragmatic-server && npm install --no-audit --no-fund && npm run build
 
+# Slim the tree that gets baked into the runtime image: the entrypoint runs the
+# compiled dist with plain `node`, so dev dependencies (TypeScript, tsx, test tooling)
+# are not needed at runtime. Prune them workspace-wide; prod deps (incl. native argon2)
+# and the file: sibling links are kept.
+RUN set -e; for d in todl-runtime TODL pragmatic-protocol todl-identity todl-identity-local \
+      todl-identity-host todl-identity-cloud todl-identity-engine todl-connectors-host \
+      todl-platform-node todl-platform-cloud todl-platform-aws todl-platform-azure \
+      todl-platform-gcp todl-identity-node pragmatic-server; do \
+      (cd "/workspace/$d" && npm prune --omit=dev --no-audit --no-fund); \
+    done; \
+    find /workspace -type f \( -name '*.map' -o -name '*.tsbuildinfo' \) -delete 2>/dev/null || true
+
 FROM node:22-slim AS runtime
 ENV NODE_ENV=production
 RUN useradd --system --create-home --uid 10001 pragmatic
