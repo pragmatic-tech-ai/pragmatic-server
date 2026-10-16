@@ -50,10 +50,10 @@ export class BundleBuilder
     private static readonly Indent = 2
     private static readonly SeedRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 
-    public static async Generate(def: EnvDefinition, bundleDir: string): Promise<void>
+    public static async Generate(def: EnvDefinition, bundleDir: string, explicitSeedDir?: string): Promise<void>
     {
         mkdirSync(bundleDir, { recursive: true })
-        const seedDir = join(BundleBuilder.SeedRoot, def.name, BundleBuilder.SeedDir)
+        const seedDir = explicitSeedDir ?? join(BundleBuilder.SeedRoot, def.name, BundleBuilder.SeedDir)
         BundleBuilder.WriteMasterKey(bundleDir)
         BundleBuilder.WriteSecrets(def, bundleDir, seedDir)
         BundleBuilder.WriteTenants(def, bundleDir)
