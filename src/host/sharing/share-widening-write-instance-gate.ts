@@ -32,8 +32,11 @@ export class ShareWideningWriteInstanceGate implements IWriteInstanceGate
 
     public async AuthorizeById(action: PrivilegeAction, concept: string, id: string): Promise<boolean>
     {
-        const view = await this.inner.Resolve(concept, id)
-        return view !== undefined && this.Authorize(action, view)
+        if (this.index.AllowsRecord(concept, id, action))
+        {
+            return true
+        }
+        return this.inner.AuthorizeById(action, concept, id)
     }
 
     public Resolve(concept: string, id: string): Promise<IInstanceView | undefined>

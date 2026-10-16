@@ -128,6 +128,7 @@ export class PragmaticServer
     private static readonly NoLabels: ReferencedLabelSet = { labels: [], wildcard: false, parseFailed: false }
 
     private static readonly SharingRequiresIdentityError = 'record sharing requires an identity subsystem'
+    private static readonly SharingRequiresStoreError = 'record sharing requires the built-in store'
     private static readonly NotStartedError = 'server not started'
     private static readonly ApplicationsRuntimeOnlyError = 'applications are a runtime-tenant feature'
     private static readonly IdentityNotConfiguredError = 'identity not configured'
@@ -362,7 +363,15 @@ export class PragmaticServer
         {
             throw new Error(PragmaticServer.SharingRequiresIdentityError)
         }
-        const store = this.AppShareStore(name)
+        let store: ShareStore
+        try
+        {
+            store = this.AppShareStore(name)
+        }
+        catch
+        {
+            throw new Error(PragmaticServer.SharingRequiresStoreError)
+        }
         const index = await this.ShareIndexFor(context, name)
         const evaluator = await (await this.ReadAuthorization()).EvaluatorForContext(context)
         const target = new FilteredReadWriteTargetSource(this, context, name)

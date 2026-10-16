@@ -12,7 +12,7 @@ import {
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
-import { ShareSubjectKind, ShareStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { ShareSubjectKind, ShareStatus, AppWriteOpKind, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { IDataSourceAdapter, ExternalFieldValue } from '@pragmatic-tech-ai/todl'
 import { DataSourceKind, WriteOperationKind } from '@pragmatic-tech-ai/todl'
 import { PragmaticServer } from '../../../pragmatic-server.js'
@@ -99,6 +99,7 @@ class RecordSharingFixture
         await this.Put('rec-visible', PpSecurityHarness.SalesBu, RecordSharingFixture.VisibleLabel)
         await this.Put(RecordSharingFixture.SharedRecordId, PpSecurityHarness.RootBu, RecordSharingFixture.SharedLabel)
         await this.Put('rec-hidden', PpSecurityHarness.RootBu, RecordSharingFixture.HiddenLabel)
+        await this.Put('rec-del', PpSecurityHarness.RootBu, 'D1')
         return this.server
     }
 
@@ -303,6 +304,32 @@ test('share ops round-trip via the cascade: a Share grant lets the actor share t
         const removed = await server.UnshareForPragmaticApp(actor, RecordSharingFixture.Name, { ...params, subject })
         assert.equal(removed.status, ShareStatus.Applied)
         assert.deepEqual(await rowsFor(), [[RecordSharingFixture.VisibleLabel, null]])
+    }
+    finally
+    {
+        await fx.Dispose()
+    }
+})
+
+test('write shares authorize by id though the record is unreadable: Update/Delete shares apply, an unshared record is Denied', async () =>
+{
+    const fx = new RecordSharingFixture()
+    try
+    {
+        const server = await fx.Setup()
+        const concept = 'shop.Widget'
+        const store = server.AppShareStore(RecordSharingFixture.Name)
+        const subject = { kind: ShareSubjectKind.Principal, id: RecordSharingFixture.Principal }
+        await store.Grant({ concept, recordId: 'rec-hidden', subject, rights: [PrivilegeAction.Update] })
+        await store.Grant({ concept, recordId: 'rec-del', subject, rights: [PrivilegeAction.Delete] })
+        const actor = PpSecurityHarness.Context(RecordSharingFixture.Principal)
+        const labels = Cypher.ReferencedLabels.Of(RecordSharingFixture.Query)
+        assert.deepEqual(RecordSharingFixture.Rows(await server.GraphForPragmaticApp(actor, RecordSharingFixture.Name, labels)), [[RecordSharingFixture.VisibleLabel, null]])
+        const status = async (op: AppWriteOpKind, id: string) =>
+            (await server.WriteForPragmaticApp(actor, RecordSharingFixture.Name, [{ op, concept, id, fields: op === AppWriteOpKind.Delete ? undefined : { label: 'changed' } }])).results[0].status
+        assert.equal(await status(AppWriteOpKind.Update, 'rec-hidden'), AppWriteStatus.Applied)
+        assert.equal(await status(AppWriteOpKind.Update, RecordSharingFixture.SharedRecordId), AppWriteStatus.Denied)
+        assert.equal(await status(AppWriteOpKind.Delete, 'rec-del'), AppWriteStatus.Applied)
     }
     finally
     {

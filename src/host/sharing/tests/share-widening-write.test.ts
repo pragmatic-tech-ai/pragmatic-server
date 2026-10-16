@@ -37,11 +37,11 @@ class Fixture
 
 class DenyGate
 {
-    public constructor(private readonly canWriteField: boolean = true) {}
+    public constructor(private readonly canWriteField: boolean = true, private readonly innerById: boolean = false) {}
     public CreateDefaults(): readonly { field: string; value: string }[] { return [] }
     public Authorize(): boolean { return false }
-    public async AuthorizeById(): Promise<boolean> { return false }
-    public async Resolve(_c: string, id: string): Promise<unknown> { return Fixture.View(id) }
+    public async AuthorizeById(): Promise<boolean> { return this.innerById }
+    public async Resolve(): Promise<unknown> { return undefined }
     public CanWriteField(): boolean { return this.canWriteField }
 }
 
@@ -52,6 +52,16 @@ test('an Update share lets the holder update that one record though the inner ga
     assert.equal(gate.Authorize(PrivilegeAction.Update, Fixture.View('o2') as never), false)
     assert.equal(await gate.AuthorizeById(PrivilegeAction.Update, Order, 'o1'), true)
     assert.equal(await gate.AuthorizeById(PrivilegeAction.Delete, Order, 'o1'), false)
+})
+
+test('AuthorizeById falls back to the inner gate when there is no grant, and needs no read-resolution when there is', async () =>
+{
+    const index = await Fixture.IndexWith(PrivilegeAction.Update)
+    const allowingInner = new ShareWideningWriteInstanceGate(new DenyGate(true, true) as never, index, Fixture.IdFields)
+    assert.equal(await allowingInner.AuthorizeById(PrivilegeAction.Delete, Order, 'o1'), true)
+    assert.equal(await allowingInner.AuthorizeById(PrivilegeAction.Update, Order, 'o2'), true)
+    const denyingInner = new ShareWideningWriteInstanceGate(new DenyGate(true, false) as never, index, Fixture.IdFields)
+    assert.equal(await denyingInner.AuthorizeById(PrivilegeAction.Update, Order, 'o2'), false)
 })
 
 test('a view without RecordKey falls back to the id field', async () =>
