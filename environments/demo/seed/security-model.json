@@ -1,0 +1,71 @@
+{
+  "businessUnits": [
+    { "id": "contoso", "name": "Contoso Ltd." },
+    { "id": "north", "name": "North Region", "parent": "contoso" },
+    { "id": "south", "name": "South Region", "parent": "contoso" },
+    { "id": "boston", "name": "Boston", "parent": "north" },
+    { "id": "newyork", "name": "New York", "parent": "north" },
+    { "id": "atlanta", "name": "Atlanta", "parent": "south" }
+  ],
+  "teams": [
+    { "id": "sales-north", "name": "Sales North", "owningBusinessUnit": "north" },
+    { "id": "sales-south", "name": "Sales South", "owningBusinessUnit": "south" }
+  ],
+  "membership": {
+    "claimsMapping": [],
+    "overrides": [
+      { "principalId": "rep-boston", "homeBusinessUnit": "boston", "teams": ["sales-north"] },
+      { "principalId": "rep-atlanta", "homeBusinessUnit": "atlanta", "teams": ["sales-south"] },
+      { "principalId": "manager-north", "homeBusinessUnit": "north", "teams": ["sales-north"] },
+      { "principalId": "finance", "homeBusinessUnit": "contoso", "teams": [] }
+    ]
+  },
+  "ownershipRules": [
+    { "concept": "northwind.Order", "owningBusinessUnit": { "kind": "fromField", "value": "owningBu" }, "owner": { "kind": "fromField", "value": "owner" } },
+    { "concept": "northwind.Customer", "owningBusinessUnit": { "kind": "fixed", "value": "contoso" } }
+  ],
+  "roles": [
+    { "id": "salesRep", "name": "Sales Rep", "privileges": [
+      { "action": "read", "concept": "northwind.Order", "level": "businessUnit" },
+      { "action": "update", "concept": "northwind.Order", "level": "businessUnit" },
+      { "action": "share", "concept": "northwind.Order", "level": "businessUnit" },
+      { "action": "assign", "concept": "northwind.Order", "level": "businessUnit" },
+      { "action": "read", "concept": "northwind.Customer", "level": "organization" },
+      { "action": "read", "concept": "northwind.Product", "level": "organization" },
+      { "action": "read", "concept": "northwind.Category", "level": "organization" }
+    ] },
+    { "id": "salesManager", "name": "Sales Manager", "privileges": [
+      { "action": "read", "concept": "northwind.Order", "level": "businessUnitAndChildren" },
+      { "action": "update", "concept": "northwind.Order", "level": "businessUnitAndChildren" },
+      { "action": "share", "concept": "northwind.Order", "level": "businessUnitAndChildren" },
+      { "action": "assign", "concept": "northwind.Order", "level": "businessUnitAndChildren" },
+      { "action": "read", "concept": "northwind.Customer", "level": "organization" }
+    ] },
+    { "id": "reader", "name": "Reader", "privileges": [
+      { "action": "read", "concept": "northwind.Order", "level": "organization" },
+      { "action": "read", "concept": "northwind.Customer", "level": "organization" }
+    ] }
+  ],
+  "roleAssignment": {
+    "claimsMapping": [],
+    "teamRoles": [],
+    "overrides": [
+      { "principalId": "rep-boston", "roles": ["salesRep"] },
+      { "principalId": "rep-atlanta", "roles": ["salesRep"] },
+      { "principalId": "manager-north", "roles": ["salesManager"] },
+      { "principalId": "finance", "roles": ["reader"] }
+    ]
+  },
+  "fieldSecurity": {
+    "securedFields": [ { "concept": "northwind.Customer", "field": "creditLimit" } ],
+    "profiles": [ { "id": "credit-readers", "name": "Credit Readers", "grants": [ { "concept": "northwind.Customer", "field": "creditLimit", "read": true } ] } ],
+    "profileAssignment": {
+      "claimsMapping": [],
+      "teamProfiles": [],
+      "overrides": [
+        { "principalId": "manager-north", "profiles": ["credit-readers"] },
+        { "principalId": "finance", "profiles": ["credit-readers"] }
+      ]
+    }
+  }
+}
