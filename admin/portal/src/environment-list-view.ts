@@ -1,28 +1,20 @@
 import { StackPanel, TextBlock, Orientation } from '@pragmatic-tech-ai/mural/basic'
-import { Button } from '@pragmatic-tech-ai/mural/framework'
 import type { ControlPlaneClient } from './api-client.js'
-import type { EnvironmentDto, IPortalNavigator, IPortalView } from './portal-types.js'
+import type { EnvironmentDto, IPortalNavigator } from './portal-types.js'
+import { PortalViewBase } from './portal-view-base.js'
 
 // Lists environments with per-row Start / Stop / Open / Delete (inline confirm).
-export class EnvironmentListView extends StackPanel implements IPortalView
+export class EnvironmentListView extends PortalViewBase
 {
     public static readonly NewLabel = 'New environment'
-    public static readonly StartLabel = 'Start'
-    public static readonly StopLabel = 'Stop'
     public static readonly OpenLabel = 'Open'
-    public static readonly DeleteLabel = 'Delete'
-    public static readonly ConfirmDeleteLabel = 'Confirm delete'
-    public static readonly CancelLabel = 'Cancel'
     private static readonly HeadingText = 'Environments'
     private static readonly EmptyText = 'No environments yet'
     private static readonly RunningStatus = 'running'
     private static readonly FieldSeparator = '  |  '
     private static readonly PortPrefix = 'port '
-    private static readonly ErrorPrefix = 'error: '
-    private static readonly NoMessage = ''
 
     private readonly rows: StackPanel
-    private readonly message: TextBlock
     private pendingDelete: string | undefined
     private environments: EnvironmentDto[] = []
 
@@ -33,7 +25,6 @@ export class EnvironmentListView extends StackPanel implements IPortalView
         heading.Text = EnvironmentListView.HeadingText
         this.AddChild(heading)
         this.AddChild(this.MakeButton(EnvironmentListView.NewLabel, () => { this.nav.ShowCreate() }))
-        this.message = new TextBlock()
         this.AddChild(this.message)
         this.rows = new StackPanel()
         this.AddChild(this.rows)
@@ -44,11 +35,11 @@ export class EnvironmentListView extends StackPanel implements IPortalView
         try
         {
             this.environments = await this.client.ListEnvironments()
-            this.message.Text = EnvironmentListView.NoMessage
+            this.message.Text = PortalViewBase.NoMessage
         }
         catch (e)
         {
-            this.message.Text = EnvironmentListView.ErrorPrefix + (e as Error).message
+            this.ShowError(e)
         }
         this.RenderRows()
     }
@@ -81,17 +72,17 @@ export class EnvironmentListView extends StackPanel implements IPortalView
         row.AddChild(info)
         const running = env.status === EnvironmentListView.RunningStatus
         row.AddChild(running
-            ? this.MakeButton(EnvironmentListView.StopLabel, () => { void this.Run(() => this.client.StopEnvironment(env.name)) })
-            : this.MakeButton(EnvironmentListView.StartLabel, () => { void this.Run(() => this.client.StartEnvironment(env.name)) }))
+            ? this.MakeButton(PortalViewBase.StopLabel, () => { void this.Run(() => this.client.StopEnvironment(env.name)) })
+            : this.MakeButton(PortalViewBase.StartLabel, () => { void this.Run(() => this.client.StartEnvironment(env.name)) }))
         row.AddChild(this.MakeButton(EnvironmentListView.OpenLabel, () => { this.nav.ShowDetail(env.name) }))
         if (this.pendingDelete === env.name)
         {
-            row.AddChild(this.MakeButton(EnvironmentListView.ConfirmDeleteLabel, () =>
+            row.AddChild(this.MakeButton(PortalViewBase.ConfirmDeleteLabel, () =>
             {
                 this.pendingDelete = undefined
                 void this.Run(() => this.client.DeleteEnvironment(env.name))
             }))
-            row.AddChild(this.MakeButton(EnvironmentListView.CancelLabel, () =>
+            row.AddChild(this.MakeButton(PortalViewBase.CancelLabel, () =>
             {
                 this.pendingDelete = undefined
                 this.RenderRows()
@@ -99,36 +90,12 @@ export class EnvironmentListView extends StackPanel implements IPortalView
         }
         else
         {
-            row.AddChild(this.MakeButton(EnvironmentListView.DeleteLabel, () =>
+            row.AddChild(this.MakeButton(PortalViewBase.DeleteLabel, () =>
             {
                 this.pendingDelete = env.name
                 this.RenderRows()
             }))
         }
         return row
-    }
-
-    private async Run(action: () => Promise<unknown>): Promise<void>
-    {
-        try
-        {
-            await action()
-        }
-        catch (e)
-        {
-            this.message.Text = EnvironmentListView.ErrorPrefix + (e as Error).message
-            return
-        }
-        await this.Refresh()
-    }
-
-    private MakeButton(label: string, onClick: () => void): Button
-    {
-        const text = new TextBlock()
-        text.Text = label
-        const button = new Button()
-        button.Content = text
-        button.AddClickHandler(onClick)
-        return button
     }
 }

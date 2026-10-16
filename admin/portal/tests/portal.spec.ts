@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 import { App } from '../src/app.js'
 import { CreateEnvironmentView } from '../src/create-environment-view.js'
 import { EnvironmentListView } from '../src/environment-list-view.js'
@@ -23,19 +23,30 @@ class FakeControlPlane
     public static readonly TemplateTwoTitle = 'Contoso demo'
     public static readonly NewName = 'beta'
     public static readonly EnvironmentsPath = '/api/environments'
+    public static readonly StopPath = '/api/environments/alpha/stop'
+    public static readonly DeletePath = '/api/environments/alpha'
+    public static readonly MethodPost = 'POST'
+    public static readonly MethodDelete = 'DELETE'
+    private static readonly TenantId = 't-1'
+    private static readonly HttpUrl = 'http://localhost:4101'
+    private static readonly WsUrl = 'ws://localhost:4101/?tenant=t-1'
+    private static readonly HtmlExt = '.html'
+    private static readonly JsExt = '.js'
+    private static readonly CssExt = '.css'
+    private static readonly RootPath = '/'
     private static readonly IndexFile = 'index.html'
     private static readonly ParentSegment = '..'
     private static readonly TemplatesPath = '/api/templates'
     private static readonly EnvPrefix = '/api/environments/'
     private static readonly MethodGet = 'GET'
-    private static readonly MethodPost = 'POST'
+    private static readonly HostLocal = '127.0.0.1'
     private static readonly JsonType = 'application/json'
     private static readonly DefaultType = 'application/octet-stream'
     private static readonly Types: Record<string, string> =
     {
-        '.html': 'text/html',
-        '.js': 'text/javascript',
-        '.css': 'text/css',
+        [FakeControlPlane.HtmlExt]: 'text/html',
+        [FakeControlPlane.JsExt]: 'text/javascript',
+        [FakeControlPlane.CssExt]: 'text/css',
     }
 
     public readonly Calls: Call[] = []
@@ -45,10 +56,10 @@ class FakeControlPlane
     public async Start(): Promise<string>
     {
         this.server = createServer((req, res) => { void this.Handle(req, res) })
-        await new Promise<void>(resolve => this.server!.listen(0, '127.0.0.1', resolve))
+        await new Promise<void>(resolve => this.server!.listen(0, FakeControlPlane.HostLocal, resolve))
         const addr = this.server.address()
         const port = typeof addr === 'object' && addr !== null ? addr.port : 0
-        return `http://127.0.0.1:${port}`
+        return `http://${FakeControlPlane.HostLocal}:${port}`
     }
 
     public async Stop(): Promise<void>
@@ -66,12 +77,12 @@ class FakeControlPlane
         return {
             name: FakeControlPlane.EnvName,
             template: FakeControlPlane.TemplateOneId,
-            tenantId: 't-1',
+            tenantId: FakeControlPlane.TenantId,
             hostPort: 4101,
             status: FakeControlPlane.EnvStatus,
             createdAt: '2026-01-01T00:00:00.000Z',
-            httpUrl: 'http://localhost:4101',
-            wsUrl: 'ws://localhost:4101/?tenant=t-1',
+            httpUrl: FakeControlPlane.HttpUrl,
+            wsUrl: FakeControlPlane.WsUrl,
         }
     }
 
@@ -94,7 +105,7 @@ class FakeControlPlane
     private async Handle(req: IncomingMessage, res: ServerResponse): Promise<void>
     {
         const method = req.method ?? FakeControlPlane.MethodGet
-        const path = (req.url ?? '/').split('?')[0]!
+        const path = (req.url ?? FakeControlPlane.RootPath).split('?')[0]!
         if (path === FakeControlPlane.TemplatesPath)
         {
             FakeControlPlane.Json(res, 200, [
@@ -126,7 +137,7 @@ class FakeControlPlane
 
     private async Serve(path: string, res: ServerResponse): Promise<void>
     {
-        const rel = path === '/' ? FakeControlPlane.IndexFile : normalize(path).slice(1)
+        const rel = path === FakeControlPlane.RootPath ? FakeControlPlane.IndexFile : normalize(path).slice(1)
         if (rel.startsWith(FakeControlPlane.ParentSegment))
         {
             res.writeHead(404)
@@ -144,6 +155,26 @@ class FakeControlPlane
             res.writeHead(404)
             res.end()
         }
+    }
+}
+
+// Interaction helpers. ASSUMPTION (adjust empirically): Mural may render
+// TextBox either as a real <input> or as a canvas/SVG surface with a hidden
+// key sink; handle both, preferring a real input when one exists.
+class PortalSteps
+{
+    private static readonly InputSelector = 'input'
+
+    public static async TypeName(page: Page, text: string): Promise<void>
+    {
+        const input = page.locator(PortalSteps.InputSelector).first()
+        if (await input.count() > 0)
+        {
+            await input.fill(text)
+            return
+        }
+        await page.getByText(CreateEnvironmentView.NamePlaceholder, { exact: true }).click()
+        await page.keyboard.type(text)
     }
 }
 
@@ -168,17 +199,17 @@ test.describe('admin portal', () =>
         await page.goto(base)
         await page.getByText(EnvironmentListView.NewLabel, { exact: true }).click()
 
-        await page.getByText(CreateEnvironmentView.NamePlaceholder, { exact: true }).click()
-        await page.keyboard.type(FakeControlPlane.NewName)
+        await PortalSteps.TypeName(page, FakeControlPlane.NewName)
 
+        // ASSUMPTION: clicking the preselected title opens the popup; adjust if Mural's ComboBox needs a different target.
         // Open the dropdown: the first template is preselected, both titles must be offered.
         await page.getByText(FakeControlPlane.TemplateOneTitle, { exact: true }).click()
         await expect(page.getByText(FakeControlPlane.TemplateTwoTitle, { exact: true })).toBeVisible()
         await page.getByText(FakeControlPlane.TemplateTwoTitle, { exact: true }).click()
 
         await page.getByText(CreateEnvironmentView.CreateLabel, { exact: true }).click()
-        await expect.poll(() => fake.Find('POST', FakeControlPlane.EnvironmentsPath)).toBeDefined()
-        expect(fake.Find('POST', FakeControlPlane.EnvironmentsPath)!.body).toEqual({
+        await expect.poll(() => fake.Find(FakeControlPlane.MethodPost, FakeControlPlane.EnvironmentsPath)).toBeDefined()
+        expect(fake.Find(FakeControlPlane.MethodPost, FakeControlPlane.EnvironmentsPath)!.body).toEqual({
             name: FakeControlPlane.NewName,
             template: FakeControlPlane.TemplateTwoId,
         })
@@ -188,10 +219,10 @@ test.describe('admin portal', () =>
     {
         await page.goto(base)
         await page.getByText(EnvironmentListView.StopLabel, { exact: true }).click()
-        await expect.poll(() => fake.Find('POST', `/api/environments/${FakeControlPlane.EnvName}/stop`)).toBeDefined()
+        await expect.poll(() => fake.Find(FakeControlPlane.MethodPost, FakeControlPlane.StopPath)).toBeDefined()
 
         await page.getByText(EnvironmentListView.DeleteLabel, { exact: true }).click()
         await page.getByText(EnvironmentListView.ConfirmDeleteLabel, { exact: true }).click()
-        await expect.poll(() => fake.Find('DELETE', `/api/environments/${FakeControlPlane.EnvName}`)).toBeDefined()
+        await expect.poll(() => fake.Find(FakeControlPlane.MethodDelete, FakeControlPlane.DeletePath)).toBeDefined()
     })
 })

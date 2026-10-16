@@ -8,13 +8,14 @@ import { App } from './app.js'
 export class PortalMain
 {
     private static readonly RootId = 'app'
+    private static readonly MissingRootMessage = 'PortalMain: root element missing'
 
     public static Run(): void
     {
         const root = document.getElementById(PortalMain.RootId)
         if (root === null)
         {
-            throw new Error('PortalMain: root element missing')
+            throw new Error(PortalMain.MissingRootMessage)
         }
         const app = new Application()
         Application.current = app

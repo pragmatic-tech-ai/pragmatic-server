@@ -1,26 +1,24 @@
-import { StackPanel, TextBlock, TextBox } from '@pragmatic-tech-ai/mural/basic'
-import { Button, ComboBox } from '@pragmatic-tech-ai/mural/framework'
+import { TextBlock, TextBox } from '@pragmatic-tech-ai/mural/basic'
+import { ComboBox } from '@pragmatic-tech-ai/mural/framework'
 import type { ControlPlaneClient } from './api-client.js'
-import type { IPortalNavigator, IPortalView, TemplateDto } from './portal-types.js'
+import type { IPortalNavigator, TemplateDto } from './portal-types.js'
+import { PortalViewBase } from './portal-view-base.js'
 
 // Create form: name, template dropdown (from ListTemplates), optional host port.
-export class CreateEnvironmentView extends StackPanel implements IPortalView
+export class CreateEnvironmentView extends PortalViewBase
 {
     public static readonly CreateLabel = 'Create'
-    public static readonly BackLabel = 'Back'
     public static readonly NamePlaceholder = 'Environment name'
     public static readonly PortPlaceholder = 'Host port (optional)'
     public static readonly TemplatePlaceholder = 'Template'
     private static readonly HeadingText = 'New environment'
     private static readonly TitlePath = 'title'
-    private static readonly ErrorPrefix = 'error: '
     private static readonly PortInvalid = 'Port must be a whole number'
     private static readonly NoTemplate = 'Choose a template'
 
     private readonly nameBox = new TextBox()
     private readonly portBox = new TextBox()
     private readonly templateBox = new ComboBox()
-    private readonly message = new TextBlock()
 
     public constructor(private readonly client: ControlPlaneClient, private readonly nav: IPortalNavigator)
     {
@@ -40,7 +38,7 @@ export class CreateEnvironmentView extends StackPanel implements IPortalView
         this.AddChild(this.portBox)
 
         this.AddChild(this.MakeButton(CreateEnvironmentView.CreateLabel, () => { void this.Submit() }))
-        this.AddChild(this.MakeButton(CreateEnvironmentView.BackLabel, () => { this.nav.ShowList() }))
+        this.AddChild(this.MakeButton(PortalViewBase.BackLabel, () => { this.nav.ShowList() }))
         this.AddChild(this.message)
     }
 
@@ -57,7 +55,7 @@ export class CreateEnvironmentView extends StackPanel implements IPortalView
         }
         catch (e)
         {
-            this.message.Text = CreateEnvironmentView.ErrorPrefix + (e as Error).message
+            this.message.Text = PortalViewBase.ErrorPrefix + (e as Error).message
         }
     }
 
@@ -66,7 +64,7 @@ export class CreateEnvironmentView extends StackPanel implements IPortalView
         const selected = this.templateBox.SelectedItem as TemplateDto | undefined
         if (selected === undefined)
         {
-            this.message.Text = CreateEnvironmentView.ErrorPrefix + CreateEnvironmentView.NoTemplate
+            this.message.Text = PortalViewBase.ErrorPrefix + CreateEnvironmentView.NoTemplate
             return
         }
         let port: number | undefined
@@ -76,7 +74,7 @@ export class CreateEnvironmentView extends StackPanel implements IPortalView
             port = Number(portText)
             if (!Number.isInteger(port))
             {
-                this.message.Text = CreateEnvironmentView.ErrorPrefix + CreateEnvironmentView.PortInvalid
+                this.message.Text = PortalViewBase.ErrorPrefix + CreateEnvironmentView.PortInvalid
                 return
             }
         }
@@ -86,19 +84,9 @@ export class CreateEnvironmentView extends StackPanel implements IPortalView
         }
         catch (e)
         {
-            this.message.Text = CreateEnvironmentView.ErrorPrefix + (e as Error).message
+            this.message.Text = PortalViewBase.ErrorPrefix + (e as Error).message
             return
         }
         this.nav.ShowList()
-    }
-
-    private MakeButton(label: string, onClick: () => void): Button
-    {
-        const text = new TextBlock()
-        text.Text = label
-        const button = new Button()
-        button.Content = text
-        button.AddClickHandler(onClick)
-        return button
     }
 }

@@ -33,6 +33,8 @@ export class ControlPlaneClient
     private static readonly HttpsScheme = 'https:'
     private static readonly SchemeSuffix = '//'
     private static readonly MessageEvent = 'message'
+    private static readonly CloseEvent = 'close'
+    private static readonly ReconnectDelayMs = 2000
     private static readonly RequestFailed = 'Request failed: '
 
     private readonly handlers: Array<() => void> = []
@@ -87,10 +89,33 @@ export class ControlPlaneClient
         {
             return
         }
+        this.Connect()
+    }
+
+    private Connect(): void
+    {
         const scheme = location.protocol === ControlPlaneClient.HttpsScheme ? ControlPlaneClient.WssScheme : ControlPlaneClient.WsScheme
         const socket = new WebSocket(scheme + ControlPlaneClient.SchemeSuffix + location.host + ControlPlaneClient.EventsRoute)
         socket.addEventListener(ControlPlaneClient.MessageEvent, (ev: MessageEvent) => { this.OnMessage(String(ev.data)) })
+        socket.addEventListener(ControlPlaneClient.CloseEvent, () => { this.OnClosed(socket) })
         this.socket = socket
+    }
+
+    // Reopens the socket after a delay; skipped if Dispose() ran or the socket was already replaced.
+    private OnClosed(closed: WebSocket): void
+    {
+        if (this.socket !== closed)
+        {
+            return
+        }
+        this.socket = undefined
+        setTimeout(() =>
+        {
+            if (this.socket === undefined && this.handlers.length > 0)
+            {
+                this.Connect()
+            }
+        }, ControlPlaneClient.ReconnectDelayMs)
     }
 
     public Dispose(): void

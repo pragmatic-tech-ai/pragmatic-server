@@ -1,29 +1,22 @@
 import { StackPanel, TextBlock, Orientation } from '@pragmatic-tech-ai/mural/basic'
-import { Button } from '@pragmatic-tech-ai/mural/framework'
+import { ScrollViewer } from '@pragmatic-tech-ai/mural/framework'
 import type { ControlPlaneClient } from './api-client.js'
-import type { EnvironmentDto, IPortalNavigator, IPortalView } from './portal-types.js'
+import type { EnvironmentDto, IPortalNavigator } from './portal-types.js'
+import { PortalViewBase } from './portal-view-base.js'
 
-// One environment: connect info, logs pane, Start / Stop / Delete.
-export class EnvironmentDetailView extends StackPanel implements IPortalView
+// One environment: connect info, scrollable logs pane, Start / Stop / Delete.
+export class EnvironmentDetailView extends PortalViewBase
 {
-    public static readonly StartLabel = 'Start'
-    public static readonly StopLabel = 'Stop'
-    public static readonly DeleteLabel = 'Delete'
-    public static readonly ConfirmDeleteLabel = 'Confirm delete'
-    public static readonly BackLabel = 'Back'
     private static readonly LogsHeading = 'Logs'
     private static readonly HttpPrefix = 'HTTP: '
     private static readonly WsPrefix = 'WebSocket: '
     private static readonly StatusPrefix = 'Status: '
-    private static readonly ErrorPrefix = 'error: '
-    private static readonly NoMessage = ''
 
     private readonly title = new TextBlock()
     private readonly status = new TextBlock()
     private readonly http = new TextBlock()
     private readonly ws = new TextBlock()
     private readonly logs = new TextBlock()
-    private readonly message = new TextBlock()
     private readonly actions = new StackPanel()
     private confirming = false
 
@@ -41,7 +34,9 @@ export class EnvironmentDetailView extends StackPanel implements IPortalView
         const logsHeading = new TextBlock()
         logsHeading.Text = EnvironmentDetailView.LogsHeading
         this.AddChild(logsHeading)
-        this.AddChild(this.logs)
+        const scroller = new ScrollViewer()
+        scroller.Content = this.logs
+        this.AddChild(scroller)
         this.RenderActions()
     }
 
@@ -58,11 +53,11 @@ export class EnvironmentDetailView extends StackPanel implements IPortalView
             }
             this.ShowEnvironment(env)
             this.logs.Text = await this.client.Logs(this.name)
-            this.message.Text = EnvironmentDetailView.NoMessage
+            this.message.Text = PortalViewBase.NoMessage
         }
         catch (e)
         {
-            this.message.Text = EnvironmentDetailView.ErrorPrefix + (e as Error).message
+            this.ShowError(e)
         }
     }
 
@@ -79,21 +74,24 @@ export class EnvironmentDetailView extends StackPanel implements IPortalView
         {
             this.actions.RemoveChild(child)
         }
-        this.actions.AddChild(this.MakeButton(EnvironmentDetailView.StartLabel, () => { void this.Run(() => this.client.StartEnvironment(this.name)) }))
-        this.actions.AddChild(this.MakeButton(EnvironmentDetailView.StopLabel, () => { void this.Run(() => this.client.StopEnvironment(this.name)) }))
+        this.actions.AddChild(this.MakeButton(PortalViewBase.StartLabel, () => { void this.Run(() => this.client.StartEnvironment(this.name)) }))
+        this.actions.AddChild(this.MakeButton(PortalViewBase.StopLabel, () => { void this.Run(() => this.client.StopEnvironment(this.name)) }))
         if (this.confirming)
         {
-            this.actions.AddChild(this.MakeButton(EnvironmentDetailView.ConfirmDeleteLabel, () => { void this.ConfirmDelete() }))
+            this.actions.AddChild(this.MakeButton(PortalViewBase.ConfirmDeleteLabel, () => { void this.ConfirmDelete() }))
+            this.actions.AddChild(this.MakeButton(PortalViewBase.CancelLabel, () => { this.SetConfirming(false) }))
         }
         else
         {
-            this.actions.AddChild(this.MakeButton(EnvironmentDetailView.DeleteLabel, () =>
-            {
-                this.confirming = true
-                this.RenderActions()
-            }))
+            this.actions.AddChild(this.MakeButton(PortalViewBase.DeleteLabel, () => { this.SetConfirming(true) }))
         }
-        this.actions.AddChild(this.MakeButton(EnvironmentDetailView.BackLabel, () => { this.nav.ShowList() }))
+        this.actions.AddChild(this.MakeButton(PortalViewBase.BackLabel, () => { this.nav.ShowList() }))
+    }
+
+    private SetConfirming(value: boolean): void
+    {
+        this.confirming = value
+        this.RenderActions()
     }
 
     private async ConfirmDelete(): Promise<void>
@@ -104,33 +102,11 @@ export class EnvironmentDetailView extends StackPanel implements IPortalView
         }
         catch (e)
         {
-            this.message.Text = EnvironmentDetailView.ErrorPrefix + (e as Error).message
+            this.ShowError(e)
+            this.SetConfirming(false)
             return
         }
+        this.SetConfirming(false)
         this.nav.ShowList()
-    }
-
-    private async Run(action: () => Promise<unknown>): Promise<void>
-    {
-        try
-        {
-            await action()
-        }
-        catch (e)
-        {
-            this.message.Text = EnvironmentDetailView.ErrorPrefix + (e as Error).message
-            return
-        }
-        await this.Refresh()
-    }
-
-    private MakeButton(label: string, onClick: () => void): Button
-    {
-        const text = new TextBlock()
-        text.Text = label
-        const button = new Button()
-        button.Content = text
-        button.AddClickHandler(onClick)
-        return button
     }
 }
