@@ -70,6 +70,9 @@ export class ControlPlaneSmoke
     private static readonly MissingOpen = ' missing=['
     private static readonly MissingClose = '] admin='
     private static readonly Comma = ','
+    private static readonly DataEvent = 'data'
+    private static readonly EndEvent = 'end'
+    private static readonly ErrorEvent = 'error'
     private static readonly Labels = {
         CreateDev: 'dev-blank: create returns 201',
         RunningDev: 'dev-blank: reaches running',
@@ -125,10 +128,27 @@ export class ControlPlaneSmoke
         }
         finally
         {
+            await this.Cleanup()
             await host.Close()
             rmSync(dataRoot, { recursive: true, force: true })
         }
         return !this.failed
+    }
+
+    /** Best-effort removal of both smoke environments so a rerun starts clean. */
+    private async Cleanup(): Promise<void>
+    {
+        for (const name of [ControlPlaneSmoke.DevName, ControlPlaneSmoke.DemoName])
+        {
+            try
+            {
+                await this.Api(ControlPlaneSmoke.MethodDelete, this.EnvPath(name))
+            }
+            catch
+            {
+                // already gone or unreachable: ignore
+            }
+        }
     }
 
     private async DevLifecycle(): Promise<void>
@@ -254,8 +274,8 @@ export class ControlPlaneSmoke
             const req = request({ host: ControlPlaneSmoke.LoopbackHost, port, path, method, headers }, res =>
             {
                 const chunks: Buffer[] = []
-                res.on('data', (c: Buffer) => chunks.push(c))
-                res.on('end', () =>
+                res.on(ControlPlaneSmoke.DataEvent, (c: Buffer) => chunks.push(c))
+                res.on(ControlPlaneSmoke.EndEvent, () =>
                 {
                     const text = Buffer.concat(chunks).toString(ControlPlaneSmoke.Utf8)
                     let json: unknown = undefined
@@ -270,7 +290,7 @@ export class ControlPlaneSmoke
                     resolve({ status: res.statusCode ?? 0, json })
                 })
             })
-            req.on('error', reject)
+            req.on(ControlPlaneSmoke.ErrorEvent, reject)
             if (payload !== undefined)
             {
                 req.write(payload)
