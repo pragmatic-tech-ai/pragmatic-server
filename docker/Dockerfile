@@ -40,6 +40,15 @@ RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
 COPY todl-platform-cloud/ ./todl-platform-cloud/
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
     cd todl-platform-cloud && npm install --no-audit --no-fund && npm run build
+COPY todl-platform-aws/ ./todl-platform-aws/
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+    cd todl-platform-aws && npm install --no-audit --no-fund && npm run build
+COPY todl-platform-azure/ ./todl-platform-azure/
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+    cd todl-platform-azure && npm install --no-audit --no-fund && npm run build
+COPY todl-platform-gcp/ ./todl-platform-gcp/
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+    cd todl-platform-gcp && npm install --no-audit --no-fund && npm run build
 COPY todl-identity-node/ ./todl-identity-node/
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
     cd todl-identity-node && npm install --no-audit --no-fund && npm run build
