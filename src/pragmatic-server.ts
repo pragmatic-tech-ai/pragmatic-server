@@ -57,6 +57,8 @@ import { TenantGraphCache } from './host/cypher/tenant-graph-cache.js'
 import type { TenantRepository } from './host/cypher/tenant-graph-source.js'
 import { ShareStore } from './host/sharing/share-store.js'
 import { ShareGrantIndex } from './host/sharing/share-grant-index.js'
+import { ShareWideningInstanceFilter } from './host/sharing/share-widening-instance-filter.js'
+import { ConceptIdFields } from './host/sharing/concept-id-fields.js'
 
 export interface OidcServerOptions
 {
@@ -326,7 +328,12 @@ export class PragmaticServer
         const rules = await AccessPolicySetting.Load(this.AppsStorage(), name)
         const predicate = IdentityEnforcement.Over(PolicyCatalog.FromPolicies(rules), context, Action.Read).InstanceFilter()
         const depth = await (await this.DepthFilterSource()).ReadFilterFor(context)
-        const filtered = new FilteredGraphQuery(base, new CompositeInstanceFilter([predicate, depth]))
+        const composite = new CompositeInstanceFilter([predicate, depth])
+        const shareIndex = await this.ShareIndexFor(context, name)
+        const instanceFilter = shareIndex.IsEmpty()
+            ? composite
+            : new ShareWideningInstanceFilter(composite, shareIndex, ConceptIdFields.From(built.plan))
+        const filtered = new FilteredGraphQuery(base, instanceFilter)
         if (!maskFields || this.identity === undefined)
         {
             return filtered

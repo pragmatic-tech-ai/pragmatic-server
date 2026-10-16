@@ -1,5 +1,7 @@
 import type { IInstanceFilter } from '@pragmatic-tech-ai/todl'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
+import { RecordKey } from '../sharing/record-keyed-view.js'
+import type { IRecordKeyedView } from '../sharing/record-keyed-view.js'
 
 type Mirror = ReturnType<IGraphQuery['AllInstances']>[number]
 
@@ -57,6 +59,7 @@ export class FilteredGraphQuery implements IGraphQuery
     {
         const concept = mirror.type?.fullName
         if (concept === undefined) return true
-        return this.filter.Keep({ Concept: concept, Field: name => mirror.field(name)?.value })
+        const view: IRecordKeyedView = { Concept: concept, Field: name => mirror.field(name)?.value, RecordKey: RecordKey.FromNodeId(mirror.node.id) }
+        return this.filter.Keep(view)
     }
 }
