@@ -27,17 +27,20 @@ export class NetPortProbe implements IPortProbe
 export class PortUnavailableError extends Error
 {
     private static readonly MessagePrefix = 'Port unavailable: '
+    private static readonly ErrorName = 'PortUnavailableError'
 
-    public constructor(port: number)
+    public constructor(detail: string)
     {
-        super(PortUnavailableError.MessagePrefix + port)
-        this.name = 'PortUnavailableError'
+        super(PortUnavailableError.MessagePrefix + detail)
+        this.name = PortUnavailableError.ErrorName
     }
 }
 
 export class PortAllocator
 {
     private static readonly ScanSpan = 4000
+    private static readonly RangeExhausted = 'no free port in range '
+    private static readonly RangeSeparator = '-'
 
     public constructor(private readonly floor: number, private readonly probe: IPortProbe)
     {
@@ -53,14 +56,15 @@ export class PortAllocator
                 return port
             }
         }
-        throw new PortUnavailableError(this.floor)
+        throw new PortUnavailableError(
+            PortAllocator.RangeExhausted + this.floor + PortAllocator.RangeSeparator + (limit - 1))
     }
 
     public async Check(port: number, taken: readonly number[]): Promise<void>
     {
         if (taken.includes(port) || !(await this.probe.Free(port)))
         {
-            throw new PortUnavailableError(port)
+            throw new PortUnavailableError(String(port))
         }
     }
 }

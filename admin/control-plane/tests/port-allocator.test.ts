@@ -34,7 +34,7 @@ describe('PortAllocator', () =>
     it('throws when every port is busy', async () =>
     {
         const allocator = new PortAllocator(floor, new FakeProbe(new Set(), true))
-        await assert.rejects(allocator.Allocate([]), PortUnavailableError)
+        await assert.rejects(allocator.Allocate([]), (e: Error) => e instanceof PortUnavailableError && e.message.includes('5000-8999'))
     })
 
     it('Check rejects taken ports', async () =>
