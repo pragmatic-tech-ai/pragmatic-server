@@ -6,6 +6,7 @@ import type { IServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import { PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
 import { AppWriteOpKind, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AppWriteOpDto, AppWriteOpResultDto, AppWriteResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { ConnectorWrites } from './connector-writes.js'
 import type { IConceptType } from './runtime-write-payload-validator.js'
 import { RuntimeWritePayloadValidator } from './runtime-write-payload-validator.js'
 import type { IWriteAuthorizer } from './cypher/read-filter-source.js'
@@ -219,18 +220,7 @@ export class RuntimeAppWriter
 
     private MapFields(binding: ConnectorBinding, fields: Record<string, unknown> | undefined): Record<string, ExternalFieldValue>
     {
-        const out: Record<string, ExternalFieldValue> = {}
-        const payload = fields ?? {}
-        for (const member of Object.keys(payload))
-        {
-            const external = binding.FieldMap[member] ?? member
-            if (external === binding.IdKey)
-            {
-                continue
-            }
-            out[external] = payload[member] as ExternalFieldValue
-        }
-        return out
+        return ConnectorWrites.ToExternalFields(binding, fields)
     }
 
     private StampCreateDefaults(op: AppWriteOpDto): void

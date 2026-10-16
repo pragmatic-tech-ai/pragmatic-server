@@ -43,8 +43,9 @@ import type { IWriteInstanceGate } from './host/cypher/write-instance-gate.js'
 import { FilteredReadWriteTargetSource } from './host/filtered-read-write-target-source.js'
 import { RuntimeAppWriter } from './host/runtime-app-writer.js'
 import { RuntimeWritePayloadValidator } from './host/runtime-write-payload-validator.js'
-import type { AppWriteOpDto, AppWriteResultDto, ShareParams, ShareResultDto, UnshareParams, UnshareResultDto, ListSharesParams, ListSharesResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { AppWriteOpDto, AppWriteResultDto, ShareParams, ShareResultDto, UnshareParams, UnshareResultDto, ListSharesParams, ListSharesResultDto, AssignParams, AssignResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ShareService } from './host/sharing/share-service.js'
+import { AssignService } from './host/sharing/assign-service.js'
 import { AccessPolicySetting } from './host/apps/access-policy-setting.js'
 import { FilteredGraphQuery } from './host/cypher/filtered-graph-query.js'
 import { GraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
@@ -128,6 +129,7 @@ export class PragmaticServer
     private static readonly NoLabels: ReferencedLabelSet = { labels: [], wildcard: false, parseFailed: false }
 
     private static readonly SharingRequiresIdentityError = 'record sharing requires an identity subsystem'
+    private static readonly AssignRequiresIdentityError = 'record assignment requires an identity subsystem'
     private static readonly SharingRequiresStoreError = 'record sharing requires the built-in store'
     private static readonly NotStartedError = 'server not started'
     private static readonly ApplicationsRuntimeOnlyError = 'applications are a runtime-tenant feature'
@@ -392,6 +394,27 @@ export class PragmaticServer
     public async ListSharesForPragmaticApp(context: AccessContext, name: string, params: ListSharesParams): Promise<ListSharesResultDto>
     {
         return (await this.ShareServiceFor(context, name)).List(params)
+    }
+
+    private async AssignServiceFor(context: AccessContext, name: string): Promise<AssignService>
+    {
+        if (this.identity === undefined)
+        {
+            throw new Error(PragmaticServer.AssignRequiresIdentityError)
+        }
+        const built = await this.BaseGraphFor(name)
+        const services = this.root.Services()
+        const catalog = services.getRequired(DataSourceAdapterCatalog.ServiceKey)
+        const index = await this.ShareIndexFor(context, name)
+        const evaluator = await (await this.ReadAuthorization()).EvaluatorForContext(context)
+        const target = new FilteredReadWriteTargetSource(this, context, name)
+        const idFields = ConceptIdFields.From(built.plan)
+        return new AssignService(evaluator, index, context.Principal, target, idFields, built.plan, catalog, services)
+    }
+
+    public async AssignForPragmaticApp(context: AccessContext, name: string, params: AssignParams): Promise<AssignResultDto>
+    {
+        return (await this.AssignServiceFor(context, name)).Assign(params)
     }
 
     public async WriteForPragmaticApp(context: AccessContext, name: string, operations: readonly AppWriteOpDto[]): Promise<AppWriteResultDto>
