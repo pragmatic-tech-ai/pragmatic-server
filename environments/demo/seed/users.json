@@ -1,0 +1,6 @@
+[
+  { "principalId": "rep-boston",    "email": "rep-boston@contoso.test",    "passwordRef": "rep-boston-pw",    "coarseRole": "Editor" },
+  { "principalId": "rep-atlanta",   "email": "rep-atlanta@contoso.test",   "passwordRef": "rep-atlanta-pw",   "coarseRole": "Editor" },
+  { "principalId": "manager-north", "email": "manager-north@contoso.test", "passwordRef": "manager-north-pw", "coarseRole": "Editor" },
+  { "principalId": "finance",       "email": "finance@contoso.test",       "passwordRef": "finance-pw",       "coarseRole": "Viewer" }
+]
