@@ -1,12 +1,13 @@
 import {
     createMessageConnection, NullLogger, WebSocketMessageReader, WebSocketMessageWriter, LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol, AdminProtocol, CypherProtocol, PragmaticAppProtocol,
 } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, ModelProjection, ResolvedResourceDto, GrantDto, GrantMutationDto, IdentityConfigDto, AccountDto, CreateAccountParams, ServiceTokenSummaryDto, IssueTokenParams, TokenIssuedDto, CypherQueryParams, CypherQueryResultDto, PragmaticAppSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, ModelProjection, ResolvedResourceDto, GrantDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, AccountDto, CreateAccountParams, ServiceTokenSummaryDto, IssueTokenParams, TokenIssuedDto, CypherQueryParams, CypherQueryResultDto, PragmaticAppSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ResponseError, ErrorCodes, AppDataProtocol, DataSharingProtocol, DataAssignmentProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AppWriteParams, AppWriteResultDto, AppWriteOpDto, ShareParams, ShareResultDto, UnshareParams, UnshareResultDto, ListSharesParams, ListSharesResultDto, AssignParams, AssignResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { RequestType, NotificationType } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ResourceRef, IdentityConfig, PresentedSecret, LocalAccountNotFoundError } from '@pragmatic-tech-ai/todl-identity'
-import type { AccessContext, Grant, Role, LocalAccount, ServiceTokenSummary, ServiceTokenGrant } from '@pragmatic-tech-ai/todl-identity'
+import { AccessDepthEvaluator } from '@pragmatic-tech-ai/todl-identity-engine'
+import type { AccessContext, ISecurityModelConfig, Grant, Role, LocalAccount, ServiceTokenSummary, ServiceTokenGrant } from '@pragmatic-tech-ai/todl-identity'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { Cypher } from '@pragmatic-tech-ai/todl'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
@@ -45,6 +46,7 @@ export class ServerConnectionHandler
     private static readonly ProviderSettingsField = 'providerSettings'
     private static readonly GroupRoleMapField = 'groupRoleMap'
     private static readonly ClaimsMappingField = 'claimsMapping'
+    private static readonly SecurityModelField = 'securityModel'
     private static readonly PrincipalIdField = 'principalId'
     private static readonly EmailField = 'email'
     private static readonly PasswordField = 'password'
@@ -745,6 +747,8 @@ export class ServerConnectionHandler
             providerSettings: Object.fromEntries(config.ProviderSettings),
             groupRoleMap,
             claimsMapping: Object.fromEntries(config.ClaimsMapping),
+            // ISecurityModelConfig and SecurityModelDto are field-identical, JSON-safe shapes.
+            securityModel: config.SecurityModel as SecurityModelDto | undefined,
         }
     }
 
@@ -769,7 +773,21 @@ export class ServerConnectionHandler
                     throw this.InvalidParams(new AdminEnumError(ServerConnectionHandler.GroupRoleMapField))
                 }
             }
-            return new IdentityConfig(packId, depth, providerSettings, groupRoles, claimsMapping)
+            let securityModel: ISecurityModelConfig | undefined
+            if (dto.securityModel !== undefined)
+            {
+                const candidate = dto.securityModel as unknown as ISecurityModelConfig
+                try
+                {
+                    AccessDepthEvaluator.FromConfig(candidate)
+                }
+                catch
+                {
+                    throw this.InvalidParams(new AdminEnumError(ServerConnectionHandler.SecurityModelField))
+                }
+                securityModel = candidate
+            }
+            return new IdentityConfig(packId, depth, providerSettings, groupRoles, claimsMapping, securityModel)
         }
         catch (error)
         {
