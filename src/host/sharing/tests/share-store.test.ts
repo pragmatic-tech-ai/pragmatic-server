@@ -66,3 +66,14 @@ test('duplicate rights collapse preserving order', async () =>
     assert.equal(all.length, 1)
     assert.deepEqual(all[0].rights, ['read', 'update'])
 })
+
+test('Create is not a share right: dropped from a mix, and a Create-only row is dropped entirely', async () =>
+{
+    const session = new FakeSession()
+    const store = new ShareStore(session as never)
+    session.rows.set('k1', { grantKey: 'k1', concept: 'shop.Order', recordId: 'o1', subject: { kind: 'principal', id: 'u2' }, rights: ['create', 'read'] })
+    session.rows.set('k2', { grantKey: 'k2', concept: 'shop.Order', recordId: 'o2', subject: { kind: 'principal', id: 'u2' }, rights: ['create'] })
+    const all = await store.LoadAll()
+    assert.equal(all.length, 1)
+    assert.deepEqual(all[0].rights, ['read'])
+})

@@ -6,6 +6,7 @@ import type { ShareGrantDto, ShareSubjectDto } from '@pragmatic-tech-ai/pragmati
 /** Per-app persistence of record-share grants in a reserved document-store collection. One document per grant. */
 export class ShareStore
 {
+    private static readonly ValidShareRights: readonly PrivilegeAction[] = [PrivilegeAction.Read, PrivilegeAction.Update, PrivilegeAction.Delete, PrivilegeAction.Assign, PrivilegeAction.Share]
     private static readonly Collection = '__shares'
     private static readonly IdField = 'grantKey'
     private static readonly KeySeparator = '\u0000'
@@ -115,7 +116,7 @@ export class ShareStore
         {
             return []
         }
-        const known = new Set<string>(Object.values(PrivilegeAction))
+        const known = new Set<string>(ShareStore.ValidShareRights)
         const out: string[] = []
         for (const right of value)
         {
