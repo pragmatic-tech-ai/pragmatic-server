@@ -24,7 +24,7 @@ import { PpSecurityHarness } from './pp-security-harness.js'
 class RecordAssignFixture
 {
     private static readonly Id = 'shop'
-    private static readonly Version = '1.0.0'
+    public static readonly Version = '1.0.0'
     private static readonly PkgPrefix = 'ras-pkgs-'
     private static readonly AppsPrefix = 'ras-apps-'
     private static readonly IdPrefix = 'ras-id-'
@@ -187,12 +187,36 @@ class RecordAssignFixture
     }
 }
 
+class AssignRecorder
+{
+    public received: { name: string; params: AssignParams } | undefined
+
+    public async Provide(_c: AccessContext, name: string, params: AssignParams): Promise<AssignResultDto>
+    {
+        this.received = { name, params }
+        return { status: AssignStatus.Applied }
+    }
+}
+
+class DevelopmentServerStub
+{
+    constructor(public readonly server: PragmaticServer, private readonly root: string)
+    {
+    }
+
+    public async Dispose(): Promise<void>
+    {
+        await this.server.Dispose()
+        rmSync(this.root, { recursive: true, force: true })
+    }
+}
+
 class HandlerFixture
 {
     private static readonly PackagesPrefix = 'ras-hnd-'
     private static readonly DevPrefix = 'ras-dev-'
     private static readonly SampleId = 'r1'
-    public static Received: { name: string; params: AssignParams } | undefined
+    public static readonly UnboundError = /no application selected/i
 
     public static get RecordId(): string
     {
@@ -207,7 +231,7 @@ class HandlerFixture
         const languageService = await server.LanguageService()
         const manager = await server.Manager()
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const applications = { List: async () => [], ApplicationFor: async (name: string) => ({ Manifest: { name, version: '1.0.0' } }) } as unknown as PragmaticAppsRegistry
+        const applications = { List: async () => [], ApplicationFor: async (name: string) => ({ Manifest: { name, version: RecordAssignFixture.Version } }) } as unknown as PragmaticAppsRegistry
         const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, PpSecurityHarness.Context(RecordAssignFixture.Principal), () => Promise.reject(new Error(RecordAssignFixture.NoConnectorsMessage)), ctx => server.Graph(ctx), undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Runtime, applications, undefined, undefined, undefined, undefined, undefined, provider)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         try
@@ -224,11 +248,10 @@ class HandlerFixture
         }
     }
 
-    public static async DevelopmentServer(): Promise<{ server: PragmaticServer; dispose: () => Promise<void> }>
+    public static DevelopmentServer(): DevelopmentServerStub
     {
         const root = mkdtempSync(join(tmpdir(), HandlerFixture.DevPrefix))
-        const server = new PragmaticServer({ packagesRoot: root })
-        return { server, dispose: async () => { await server.Dispose(); rmSync(root, { recursive: true, force: true }) } }
+        return new DevelopmentServerStub(new PragmaticServer({ packagesRoot: root }), root)
     }
 }
 
@@ -285,7 +308,7 @@ test('assign requires an identity subsystem', async () =>
 test('RuntimeAttachArgs returns a defined assignProvider only for a Runtime server', async () =>
 {
     const fx = new RecordAssignFixture()
-    const dev = await HandlerFixture.DevelopmentServer()
+    const dev = HandlerFixture.DevelopmentServer()
     try
     {
         const runtime = await fx.Setup()
@@ -294,26 +317,22 @@ test('RuntimeAttachArgs returns a defined assignProvider only for a Runtime serv
     }
     finally
     {
-        await dev.dispose()
+        await dev.Dispose()
         await fx.Dispose()
     }
 })
 
 test('RunAssign forwards the bound app and params to the provider; unbound is rejected', async () =>
 {
-    HandlerFixture.Received = undefined
-    const provider = async (_c: AccessContext, name: string, params: AssignParams): Promise<AssignResultDto> =>
-    {
-        HandlerFixture.Received = { name, params }
-        return { status: AssignStatus.Applied }
-    }
+    const recorder = new AssignRecorder()
+    const provider = (c: AccessContext, name: string, params: AssignParams): Promise<AssignResultDto> => recorder.Provide(c, name, params)
     await HandlerFixture.With(provider, async client =>
     {
-        await assert.rejects(() => client.AssignRecord(RecordAssignFixture.Params(HandlerFixture.RecordId)), /no application selected/i)
+        await assert.rejects(() => client.AssignRecord(RecordAssignFixture.Params(HandlerFixture.RecordId)), HandlerFixture.UnboundError)
         await client.OpenApplication(RecordAssignFixture.Name)
         const out = await client.AssignRecord(RecordAssignFixture.Params(HandlerFixture.RecordId))
         assert.equal(out.status, AssignStatus.Applied)
-        assert.equal(HandlerFixture.Received?.name, RecordAssignFixture.Name)
-        assert.equal(HandlerFixture.Received?.params.id, HandlerFixture.RecordId)
+        assert.equal(recorder.received?.name, RecordAssignFixture.Name)
+        assert.equal(recorder.received?.params.id, HandlerFixture.RecordId)
     })
 })

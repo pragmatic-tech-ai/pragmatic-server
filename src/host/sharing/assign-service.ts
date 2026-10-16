@@ -24,6 +24,8 @@ export class AssignService
     private static readonly UnknownTeam = 'unknown team owner'
     private static readonly NotWritable = 'concept is not bound to a writable source'
     private static readonly WriteConflictReason = 'write conflict'
+    private static readonly WriteFailedReason = 'write failed'
+    private static readonly NoOwnershipColumns = 'no ownership columns to write'
 
     constructor(
         private readonly evaluator: AccessDepthEvaluator,
@@ -111,7 +113,12 @@ export class AssignService
         {
             fields[write.field] = write.value
         }
-        const operation: WriteOperation = { Kind: WriteOperationKind.Upsert, Key: recordId, Fields: ConnectorWrites.ToExternalFields(binding, fields) }
+        const mapped = ConnectorWrites.ToExternalFields(binding, fields)
+        if (Object.keys(mapped).length === 0)
+        {
+            return { status: AssignStatus.Invalid, reason: AssignService.NoOwnershipColumns }
+        }
+        const operation: WriteOperation = { Kind: WriteOperationKind.Upsert, Key: recordId, Fields: mapped }
         const batch: WriteBatch = { Source: binding.Source, IdKey: binding.IdKey, Operations: [operation], VersionField: binding.VersionField }
         let result: WriteResult
         try
@@ -121,7 +128,7 @@ export class AssignService
         }
         catch
         {
-            return { status: AssignStatus.Denied, reason: AssignService.WriteConflictReason }
+            return { status: AssignStatus.Denied, reason: AssignService.WriteFailedReason }
         }
         const conflicted = result.Conflicts.some(c => String(c.Key) === String(recordId))
         return conflicted
