@@ -45,6 +45,7 @@ export class SeedCli
     private static readonly BuildCommandSuffix = ' ..'
     private static readonly BuildNote = 'Run from the workspace parent dir (one level above pragmatic-server):\n  '
     private static readonly SeedingUsersMessage = 'Seeding demo users...'
+    private static readonly NoUserSeedingMessage = 'User seeding applies to the demo environment only; skipping for '
     private static readonly SeededMessage = 'Demo users seeded.'
     private static readonly EnvRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -166,14 +167,16 @@ export class SeedCli
         await docker.SeedVolume(def, bundleDir)
         await docker.Up(def, bundleDir)
         await docker.WaitHealthy(def.hostPort, def)
-        if (def.kind === EnvKind.Demo)
-        {
-            await SeedCli.SeedDemoUsers(def)
-        }
+        await SeedCli.SeedDemoUsers(def)
     }
 
     private static async SeedDemoUsers(def: EnvDefinition): Promise<void>
     {
+        if (def.kind !== EnvKind.Demo)
+        {
+            console.log(SeedCli.NoUserSeedingMessage + def.name)
+            return
+        }
         console.log(SeedCli.SeedingUsersMessage)
         const secrets = SeedCli.LoadSecrets(def.name)
         const users = JSON.parse(readFileSync(join(SeedCli.EnvDir(def.name), SeedCli.SeedDir, SeedCli.UsersFile), SeedCli.Utf8)) as UserSeed[]
