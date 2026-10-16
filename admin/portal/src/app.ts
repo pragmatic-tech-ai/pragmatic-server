@@ -6,6 +6,7 @@ import { CreateEnvironmentView } from './create-environment-view.js'
 import { EnvironmentDetailView } from './environment-detail-view.js'
 import { EnvironmentListView } from './environment-list-view.js'
 import { LoginView } from './login-view.js'
+import { ManageView } from './manage-view.js'
 import type { IPortalNavigator, IPortalView } from './portal-types.js'
 
 // Root shell: owns the API client, switches list / create / detail, and
@@ -117,6 +118,12 @@ export class App extends StackPanel implements IPortalNavigator
     {
         this.SetLogoutVisible(true)
         this.Show(new EnvironmentDetailView(this.client, this, name))
+    }
+
+    public ShowManage(name: string): void
+    {
+        this.SetLogoutVisible(true)
+        this.Show(new ManageView(this.client, this, name))
     }
 
     private Show(view: Visual & IPortalView): void

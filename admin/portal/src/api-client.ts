@@ -1,4 +1,4 @@
-import type { EnvironmentDto, OperatorDto, TemplateDto } from './portal-types.js'
+import type { AdminSnapshotDto, EnvironmentDto, GrantMutationDto, IdentityConfigDto, OperatorDto, TemplateDto } from './portal-types.js'
 
 // Thrown for non-2xx control-plane responses; Message carries the server's error text.
 export class ApiError extends Error
@@ -30,6 +30,12 @@ export class ControlPlaneClient
     private static readonly LogsAction = 'logs'
     private static readonly MethodPost = 'POST'
     private static readonly MethodDelete = 'DELETE'
+    private static readonly MethodPut = 'PUT'
+    private static readonly AdminSegment = '/admin/'
+    private static readonly SnapshotLeaf = 'snapshot'
+    private static readonly AccountsLeaf = 'accounts'
+    private static readonly GrantsLeaf = 'grants'
+    private static readonly ConfigLeaf = 'config'
     private static readonly ContentTypeHeader = 'content-type'
     private static readonly JsonType = 'application/json'
     private static readonly EmptyBody = '{}'
@@ -114,6 +120,43 @@ export class ControlPlaneClient
         return result.logs
     }
 
+    public async Snapshot(name: string): Promise<AdminSnapshotDto>
+    {
+        return await this.Send<AdminSnapshotDto>(this.AdminRoute(name, ControlPlaneClient.SnapshotLeaf), undefined)
+    }
+
+    public async CreateAccount(name: string, email: string, principalId: string, password: string): Promise<void>
+    {
+        await this.Send<unknown>(this.AdminRoute(name, ControlPlaneClient.AccountsLeaf),
+            { method: ControlPlaneClient.MethodPost, body: JSON.stringify({ email, principalId, password }) })
+    }
+
+    public async DisableAccount(name: string, principalId: string): Promise<void>
+    {
+        await this.Send<unknown>(this.AdminRoute(name, ControlPlaneClient.AccountsLeaf) + ControlPlaneClient.PathSeparator + encodeURIComponent(principalId),
+            { method: ControlPlaneClient.MethodDelete })
+    }
+
+    public async GrantRole(name: string, mutation: GrantMutationDto): Promise<void>
+    {
+        await this.Send<unknown>(this.AdminRoute(name, ControlPlaneClient.GrantsLeaf), { method: ControlPlaneClient.MethodPost, body: JSON.stringify(mutation) })
+    }
+
+    public async RevokeRole(name: string, mutation: GrantMutationDto): Promise<void>
+    {
+        await this.Send<unknown>(this.AdminRoute(name, ControlPlaneClient.GrantsLeaf), { method: ControlPlaneClient.MethodDelete, body: JSON.stringify(mutation) })
+    }
+
+    public async GetConfig(name: string): Promise<IdentityConfigDto>
+    {
+        return await this.Send<IdentityConfigDto>(this.AdminRoute(name, ControlPlaneClient.ConfigLeaf), undefined)
+    }
+
+    public async SetConfig(name: string, config: IdentityConfigDto): Promise<void>
+    {
+        await this.Send<unknown>(this.AdminRoute(name, ControlPlaneClient.ConfigLeaf), { method: ControlPlaneClient.MethodPut, body: JSON.stringify(config) })
+    }
+
     // Registers a handler; the single /api/events socket is opened on first use.
     public OnChanged(handler: () => void): void
     {
@@ -181,6 +224,11 @@ export class ControlPlaneClient
     private EnvRoute(name: string): string
     {
         return ControlPlaneClient.EnvironmentsRoute + ControlPlaneClient.PathSeparator + encodeURIComponent(name)
+    }
+
+    private AdminRoute(name: string, leaf: string): string
+    {
+        return this.EnvRoute(name) + ControlPlaneClient.AdminSegment + leaf
     }
 
     private async Action(name: string, action: string): Promise<EnvironmentDto>

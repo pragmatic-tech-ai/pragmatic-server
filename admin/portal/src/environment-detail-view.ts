@@ -7,6 +7,7 @@ import { PortalViewBase } from './portal-view-base.js'
 // One environment: connect info, scrollable logs pane, Start / Stop / Delete.
 export class EnvironmentDetailView extends PortalViewBase
 {
+    private static readonly ManageLabel = 'Manage'
     private static readonly LogsHeading = 'Logs'
     private static readonly HttpPrefix = 'HTTP: '
     private static readonly WsPrefix = 'WebSocket: '
@@ -98,6 +99,7 @@ export class EnvironmentDetailView extends PortalViewBase
         {
             this.actions.AddChild(this.MakeButton(PortalViewBase.DeleteLabel, () => { this.SetConfirming(true) }))
         }
+        this.actions.AddChild(this.MakeButton(EnvironmentDetailView.ManageLabel, () => { this.nav.ShowManage(this.name) }))
         this.actions.AddChild(this.MakeButton(PortalViewBase.BackLabel, () => { this.nav.ShowList() }))
     }
 
