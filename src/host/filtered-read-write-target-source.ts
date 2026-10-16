@@ -3,6 +3,8 @@ import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import type { PragmaticServer } from '../pragmatic-server.js'
 import type { IWriteTargetSource } from './write-target-source.js'
+import { RecordKey } from './sharing/record-keyed-view.js'
+import type { IRecordKeyedView } from './sharing/record-keyed-view.js'
 
 /** Reflects an Update/Delete subject through the policy-filtered read graph, one graph built per concept per request. */
 export class FilteredReadWriteTargetSource implements IWriteTargetSource
@@ -26,7 +28,8 @@ export class FilteredReadWriteTargetSource implements IWriteTargetSource
         {
             return undefined
         }
-        return { Concept: mirror.type?.fullName ?? concept, Field: name => mirror.field(name)?.value }
+        const keyed: IRecordKeyedView = { Concept: mirror.type?.fullName ?? concept, RecordKey: RecordKey.FromNodeId(mirror.node.id), Field: name => mirror.field(name)?.value }
+        return keyed
     }
 
     /** Graph node ids are qualified (`ns.name`, or `concept#binding#key` for connector-minted rows); a client writes the bare key. Ambiguous or absent => undefined (fail closed). */

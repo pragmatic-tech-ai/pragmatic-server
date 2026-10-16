@@ -59,6 +59,8 @@ import { ShareStore } from './host/sharing/share-store.js'
 import { ShareGrantIndex } from './host/sharing/share-grant-index.js'
 import { ShareWideningInstanceFilter } from './host/sharing/share-widening-instance-filter.js'
 import { ConceptIdFields } from './host/sharing/concept-id-fields.js'
+import { ShareWideningWriteInstanceGate } from './host/sharing/share-widening-write-instance-gate.js'
+import { ShareWideningWriteAuthorizer } from './host/sharing/share-widening-write-authorizer.js'
 
 export interface OidcServerOptions
 {
@@ -256,7 +258,13 @@ export class PragmaticServer
         const predicate = IdentityEnforcement.Over(PolicyCatalog.FromPolicies(rules), context, Action.Write).InstanceFilter()
         const target = new FilteredReadWriteTargetSource(this, context, name)
         const auth = await this.ReadAuthorization()
-        return auth.WriteInstanceGateFor(context, predicate, target)
+        const gate = await auth.WriteInstanceGateFor(context, predicate, target)
+        const shareIndex = await this.ShareIndexFor(context, name)
+        if (shareIndex.IsEmpty())
+        {
+            return gate
+        }
+        return new ShareWideningWriteInstanceGate(gate, shareIndex, ConceptIdFields.From((await this.BaseGraphFor(name)).plan))
     }
 
     private ReadAuthorization(): Promise<TenantReadAuthorization>
@@ -351,7 +359,9 @@ export class PragmaticServer
         const built = await this.BaseGraphFor(name)
         const services = this.root.Services()
         const catalog = services.getRequired(DataSourceAdapterCatalog.ServiceKey)
-        const authorizer = await (await this.WriteAuthorizerSource()).WriteAuthorizerFor(context)
+        const baseAuthorizer = await (await this.WriteAuthorizerSource()).WriteAuthorizerFor(context)
+        const shareIndex = await this.ShareIndexFor(context, name)
+        const authorizer = shareIndex.IsEmpty() ? baseAuthorizer : new ShareWideningWriteAuthorizer(baseAuthorizer, shareIndex)
         const gate = await this.WriteInstanceGate(context, name)
         const writer = new RuntimeAppWriter(built.plan, built.nativeBase, catalog, services, authorizer, new RuntimeWritePayloadValidator(), gate)
         return writer.Apply(operations)
