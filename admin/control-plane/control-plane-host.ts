@@ -14,6 +14,8 @@ import {
 import { EnvStatus, Template, type EnvironmentRecord } from './environment-record.js'
 import { PortUnavailableError } from './port-allocator.js'
 import { InvalidEnvironmentNameError, TemplateCatalog } from './template-catalog.js'
+import type { IOperatorIdentity } from './operator-identity.js'
+import { SessionCookie } from './session-cookie.js'
 
 export interface IEnvironmentService
 {
@@ -42,6 +44,7 @@ export type ChangedEvent = { type: string }
 
 type ErrorCtor = abstract new (...args: never[]) => Error
 type CreateBody = { name?: unknown; template?: unknown; hostPort?: unknown }
+type LoginBody = { email?: unknown; password?: unknown }
 
 class BodyTooLargeError extends Error
 {
@@ -77,6 +80,16 @@ export class ControlPlaneHost
     private static readonly TemplatesPath = '/api/templates'
     private static readonly EnvironmentsPath = '/api/environments'
     private static readonly EventsPath = '/api/events'
+    private static readonly LoginPath = '/api/login'
+    private static readonly SessionPath = '/api/session'
+    private static readonly LogoutPath = '/api/logout'
+    private static readonly SetCookieHeader = 'set-cookie'
+    private static readonly OriginHeader = 'origin'
+    private static readonly StatusUnauthorized = 401
+    private static readonly InvalidCredentialsMessage = 'Invalid email or password'
+    private static readonly UnauthenticatedMessage = 'Authentication required'
+    private static readonly BadOriginMessage = 'Origin not allowed'
+    private static readonly CredentialsRequiredMessage = 'email and password (strings) are required'
     private static readonly StartAction = 'start'
     private static readonly StopAction = 'stop'
     private static readonly LogsAction = 'logs'
@@ -137,7 +150,11 @@ export class ControlPlaneHost
     private readonly clients = new Set<WebSocket>()
     private readonly staticRootAbs: string
 
-    public constructor(private readonly service: IEnvironmentService, staticRoot: string)
+    public constructor(
+        private readonly service: IEnvironmentService,
+        staticRoot: string,
+        private readonly operator: IOperatorIdentity,
+        private readonly secureCookie: boolean)
     {
         this.staticRootAbs = resolve(staticRoot)
     }
@@ -157,12 +174,20 @@ export class ControlPlaneHost
                 socket.destroy()
                 return
             }
-            wss.handleUpgrade(req, socket, head, ws =>
+            void this.Authenticated(req).then(ok =>
             {
-                this.clients.add(ws)
-                ws.on(ControlPlaneHost.CloseEvent, () => this.clients.delete(ws))
-                ws.on(ControlPlaneHost.ErrorEvent, () => this.clients.delete(ws))
-            })
+                if (!ok)
+                {
+                    socket.destroy()
+                    return
+                }
+                wss.handleUpgrade(req, socket, head, ws =>
+                {
+                    this.clients.add(ws)
+                    ws.on(ControlPlaneHost.CloseEvent, () => this.clients.delete(ws))
+                    ws.on(ControlPlaneHost.ErrorEvent, () => this.clients.delete(ws))
+                })
+            }, () => socket.destroy())
         })
         this.httpServer = server
         this.wsServer = wss
@@ -225,6 +250,20 @@ export class ControlPlaneHost
                 return
             }
             const path = new URL(req.url ?? ControlPlaneHost.RootPath, ControlPlaneHost.BaseUrl).pathname
+            if (path.startsWith(ControlPlaneHost.ApiPrefix))
+            {
+                if (ControlPlaneHost.IsMutating(req) && !ControlPlaneHost.OriginAllowed(req))
+                {
+                    this.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.BadOriginMessage })
+                    return
+                }
+                if (!ControlPlaneHost.IsPublicApi(path) && !(await this.Authenticated(req)))
+                {
+                    req.resume()
+                    this.WriteJson(res, ControlPlaneHost.StatusUnauthorized, { error: ControlPlaneHost.UnauthenticatedMessage })
+                    return
+                }
+            }
             const handled = await this.RouteApi(req, res, path)
             if (!handled)
             {
@@ -243,6 +282,35 @@ export class ControlPlaneHost
         const method = req.method ?? ControlPlaneHost.MethodGet
         if (path === ControlPlaneHost.PingPath && method === ControlPlaneHost.MethodGet)
         {
+            this.WriteJson(res, ControlPlaneHost.StatusOk, { ok: true })
+            return true
+        }
+        if (path === ControlPlaneHost.LoginPath && method === ControlPlaneHost.MethodPost)
+        {
+            await this.HandleLogin(req, res)
+            return true
+        }
+        if (path === ControlPlaneHost.SessionPath && method === ControlPlaneHost.MethodGet)
+        {
+            const who = await this.Principal(req)
+            if (who === null)
+            {
+                this.WriteJson(res, ControlPlaneHost.StatusUnauthorized, { error: ControlPlaneHost.UnauthenticatedMessage })
+            }
+            else
+            {
+                this.WriteJson(res, ControlPlaneHost.StatusOk, { email: who.email })
+            }
+            return true
+        }
+        if (path === ControlPlaneHost.LogoutPath && method === ControlPlaneHost.MethodPost)
+        {
+            const token = SessionCookie.Read(req.headers.cookie)
+            if (token !== undefined)
+            {
+                await this.operator.Revoke(token)
+            }
+            res.setHeader(ControlPlaneHost.SetCookieHeader, SessionCookie.BuildClearing(this.secureCookie))
             this.WriteJson(res, ControlPlaneHost.StatusOk, { ok: true })
             return true
         }
@@ -309,6 +377,45 @@ export class ControlPlaneHost
             return true
         }
         return false
+    }
+
+    private async HandleLogin(req: IncomingMessage, res: ServerResponse): Promise<void>
+    {
+        const raw = await this.ReadBody(req)
+        let body: LoginBody
+        try
+        {
+            body = JSON.parse(raw) as LoginBody
+        }
+        catch
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadJsonMessage })
+            return
+        }
+        if (body === null || typeof body !== 'object' || typeof body.email !== 'string' || typeof body.password !== 'string')
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.CredentialsRequiredMessage })
+            return
+        }
+        const session = await this.operator.Authenticate(body.email, body.password)
+        if (session === null)
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusUnauthorized, { error: ControlPlaneHost.InvalidCredentialsMessage })
+            return
+        }
+        res.setHeader(ControlPlaneHost.SetCookieHeader, SessionCookie.Build(session.token, session.expiresAt, this.secureCookie))
+        this.WriteJson(res, ControlPlaneHost.StatusOk, { email: body.email })
+    }
+
+    private async Principal(req: IncomingMessage): Promise<{ email: string } | null>
+    {
+        const token = SessionCookie.Read(req.headers.cookie)
+        return token === undefined || token.length === 0 ? null : await this.operator.ValidateToken(token)
+    }
+
+    private async Authenticated(req: IncomingMessage): Promise<boolean>
+    {
+        return (await this.Principal(req)) !== null
     }
 
     private async HandleCreate(req: IncomingMessage, res: ServerResponse): Promise<void>
@@ -484,6 +591,23 @@ export class ControlPlaneHost
         const header = req.headers[ControlPlaneHost.HostHeader]
         const m = header === undefined ? null : ControlPlaneHost.HostHeaderPattern.exec(header)
         return m !== null && ControlPlaneHost.AllowedHosts.has((m[1] as string).toLowerCase())
+    }
+
+    private static IsPublicApi(path: string): boolean
+    {
+        return path === ControlPlaneHost.PingPath || path === ControlPlaneHost.LoginPath || path === ControlPlaneHost.SessionPath
+    }
+
+    private static IsMutating(req: IncomingMessage): boolean
+    {
+        return req.method === ControlPlaneHost.MethodPost || req.method === ControlPlaneHost.MethodDelete
+    }
+
+    /** Absent Origin is allowed (non-browser / same-origin navigation); a present one must equal our own origin. */
+    private static OriginAllowed(req: IncomingMessage): boolean
+    {
+        const origin = req.headers[ControlPlaneHost.OriginHeader]
+        return origin === undefined || origin === ControlPlaneHost.HttpScheme + req.headers[ControlPlaneHost.HostHeader]
     }
 
     private static HasBody(req: IncomingMessage): boolean

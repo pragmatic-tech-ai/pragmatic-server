@@ -12,7 +12,36 @@ import { WebSocket } from 'ws'
 import { EnvStatus, Template, type EnvironmentRecord } from '../environment-record.js'
 import { TemplateCatalog } from '../template-catalog.js'
 
-type Reply = { status: number; body: string }
+import type { IOperatorIdentity, OperatorPrincipal, OperatorSession } from '../operator-identity.js'
+
+type Reply = { status: number; body: string; setCookie?: string[] | undefined }
+
+class FakeOperator implements IOperatorIdentity
+{
+    public static readonly Email = 'op@example.com'
+    public static readonly Password = 'correct-horse'
+    public static readonly Token = 'valid-token'
+    public Revoked: string[] = []
+
+    public async Authenticate(email: string, password: string): Promise<OperatorSession | null>
+    {
+        if (email === FakeOperator.Email && password === FakeOperator.Password)
+        {
+            return { token: FakeOperator.Token, expiresAt: new Date(Date.now() + 3600000) }
+        }
+        return null
+    }
+
+    public async ValidateToken(token: string): Promise<OperatorPrincipal | null>
+    {
+        return token === FakeOperator.Token ? { email: FakeOperator.Email, principalId: 'p1' } : null
+    }
+
+    public async Revoke(token: string): Promise<void>
+    {
+        this.Revoked.push(token)
+    }
+}
 
 class FakeService implements IEnvironmentService
 {
@@ -87,7 +116,19 @@ class Harness
     public static readonly DtoKeys = ['createdAt', 'hostPort', 'httpUrl', 'name', 'status', 'template', 'tenantId', 'wsUrl']
     public static readonly Forbidden = ['bundleDir', 'containerName', 'volumeName', 'master', 'secret', 'password', 'ctr-secret-name', 'vol-secret-name', '/secret/bundle']
 
-    public static Send(host: ControlPlaneHost, method: string, path: string, body?: string, headers: Record<string, string> = { 'content-type': 'application/json' }): Promise<Reply>
+    public static readonly AuthCookie = 'cp_session=valid-token'
+
+    public static Send(host: ControlPlaneHost, method: string, path: string, body?: string, headers: Record<string, string> = {}): Promise<Reply>
+    {
+        return Harness.Raw(host, method, path, body, { 'content-type': 'application/json', cookie: Harness.AuthCookie, ...headers })
+    }
+
+    public static Anon(host: ControlPlaneHost, method: string, path: string, body?: string, headers: Record<string, string> = {}): Promise<Reply>
+    {
+        return Harness.Raw(host, method, path, body, { 'content-type': 'application/json', ...headers })
+    }
+
+    public static Raw(host: ControlPlaneHost, method: string, path: string, body: string | undefined, headers: Record<string, string>): Promise<Reply>
     {
         const addr = host.Address()
         return new Promise((resolve, reject) =>
@@ -96,7 +137,7 @@ class Harness
             {
                 const chunks: Buffer[] = []
                 res.on('data', c => chunks.push(c as Buffer))
-                res.on('end', () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf8') }))
+                res.on('end', () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf8'), setCookie: res.headers['set-cookie'] }))
             })
             req.on('error', reject)
             req.end(body)
@@ -107,6 +148,7 @@ class Harness
 describe('ControlPlaneHost', () =>
 {
     let fake: FakeService
+    let operator: FakeOperator
     let host: ControlPlaneHost
     let root: string
     let parent: string
@@ -121,7 +163,8 @@ describe('ControlPlaneHost', () =>
         mkdirSync(join(root, 'assets'))
         writeFileSync(join(root, 'assets', 'app.js'), 'var a=1')
         fake = new FakeService()
-        host = new ControlPlaneHost(fake, root)
+        operator = new FakeOperator()
+        host = new ControlPlaneHost(fake, root, operator, false)
         await host.Listen(0, '127.0.0.1')
     })
 
@@ -285,11 +328,92 @@ describe('ControlPlaneHost', () =>
     it('broadcasts environments-changed to ws clients', async () =>
     {
         const addr = host.Address()
-        const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/api/events`)
+        const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/api/events`, { headers: { Cookie: Harness.AuthCookie } })
         await new Promise<void>((res, rej) => { ws.once('open', () => res()); ws.once('error', rej) })
         const msg = new Promise<string>(res => ws.once('message', d => res(d.toString())))
         await Harness.Send(host, 'POST', '/api/environments', JSON.stringify({ name: 'e1', template: 'dev-blank' }))
         assert.deepEqual(JSON.parse(await msg), { type: 'environments-changed' })
         ws.close()
+    })
+
+    it('gates API routes behind the operator session', async () =>
+    {
+        assert.equal((await Harness.Anon(host, 'GET', '/api/environments')).status, 401)
+        assert.equal((await Harness.Anon(host, 'GET', '/api/templates')).status, 401)
+        assert.equal((await Harness.Anon(host, 'POST', '/api/environments/x/start')).status, 401)
+        assert.equal((await Harness.Anon(host, 'GET', '/api/environments', undefined, { cookie: 'cp_session=bogus' })).status, 401)
+        assert.equal((await Harness.Anon(host, 'GET', '/api/environments', undefined, { cookie: Harness.AuthCookie })).status, 200)
+        assert.equal(fake.Calls.length, 0)
+    })
+
+    it('serves ping and static shell without a cookie', async () =>
+    {
+        assert.equal((await Harness.Anon(host, 'GET', '/api/ping')).status, 200)
+        assert.equal((await Harness.Anon(host, 'GET', '/')).status, 200)
+    })
+
+    it('logs in with good credentials and sets a hardened cookie', async () =>
+    {
+        const r = await Harness.Anon(host, 'POST', '/api/login', JSON.stringify({ email: FakeOperator.Email, password: FakeOperator.Password }))
+        assert.equal(r.status, 200)
+        assert.deepEqual(JSON.parse(r.body), { email: FakeOperator.Email })
+        const cookie = (r.setCookie ?? []).join('|')
+        assert.ok(cookie.includes('cp_session='))
+        assert.ok(cookie.includes('HttpOnly'))
+        assert.ok(cookie.includes('SameSite=Strict'))
+    })
+
+    it('rejects bad credentials generically with no cookie', async () =>
+    {
+        const r = await Harness.Anon(host, 'POST', '/api/login', JSON.stringify({ email: 'nobody@example.com', password: 'nope' }))
+        assert.equal(r.status, 401)
+        assert.equal(r.setCookie, undefined)
+        assert.ok(!r.body.includes('nobody@example.com'))
+        assert.ok(!/exist|found/i.test(r.body))
+        const bad = await Harness.Anon(host, 'POST', '/api/login', JSON.stringify({ email: 1 }))
+        assert.equal(bad.status, 400)
+    })
+
+    it('reports the session', async () =>
+    {
+        const ok = await Harness.Anon(host, 'GET', '/api/session', undefined, { cookie: Harness.AuthCookie })
+        assert.equal(ok.status, 200)
+        assert.deepEqual(JSON.parse(ok.body), { email: FakeOperator.Email })
+        assert.equal((await Harness.Anon(host, 'GET', '/api/session')).status, 401)
+    })
+
+    it('logs out: revokes and clears the cookie', async () =>
+    {
+        const r = await Harness.Send(host, 'POST', '/api/logout')
+        assert.equal(r.status, 200)
+        assert.deepEqual(operator.Revoked, ['valid-token'])
+        assert.ok((r.setCookie ?? []).join('|').includes('Max-Age=0'))
+    })
+
+    it('enforces same-origin on mutating API requests', async () =>
+    {
+        const body = JSON.stringify({ name: 'e1', template: 'dev-blank' })
+        const evil = await Harness.Send(host, 'POST', '/api/environments', body, { origin: 'http://evil.example' })
+        assert.equal(evil.status, 403)
+        assert.equal(fake.Calls.length, 0)
+        const none = await Harness.Send(host, 'POST', '/api/environments', body)
+        assert.equal(none.status, 201)
+        const addr = host.Address()
+        const same = await Harness.Send(host, 'POST', '/api/environments', body, { host: `localhost:${addr.port}`, origin: `http://localhost:${addr.port}` })
+        assert.equal(same.status, 201)
+        const evilLogin = await Harness.Anon(host, 'POST', '/api/login', JSON.stringify({ email: FakeOperator.Email, password: FakeOperator.Password }), { origin: 'http://evil.example' })
+        assert.equal(evilLogin.status, 403)
+    })
+
+    it('rejects ws upgrades without a valid session cookie', async () =>
+    {
+        const addr = host.Address()
+        for (const headers of [{}, { Cookie: 'cp_session=bogus' }])
+        {
+            const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/api/events`, { headers })
+            const opened = await new Promise<boolean>(res => { ws.once('open', () => res(true)); ws.once('error', () => res(false)); ws.once('close', () => res(false)) })
+            assert.equal(opened, false)
+            ws.terminate()
+        }
     })
 })
