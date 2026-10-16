@@ -1,17 +1,19 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { OperatorIdentity, OperatorBootstrapError } from '../operator-identity.js'
+import { OperatorIdentity, OperatorBootstrapError, MasterKeyError } from '../operator-identity.js'
 
 class OperatorIdentityFixture
 {
     public static readonly Email = 'op@control-plane.test'
     public static readonly Password = 'pw-correct-horse'
+    public static readonly OtherPassword = 'pw-DIFFERENT'
+    public static readonly BadKeyBytes = 16
     private static readonly TempPrefix = 'op-'
     private static readonly IdentityDir = 'identity'
-    private static readonly KeyFile = 'master.key'
+    public static readonly KeyFile = 'master.key'
 
     public static Compose(root: string, initialPassword: string | undefined): Promise<OperatorIdentity>
     {
@@ -59,9 +61,9 @@ describe('OperatorIdentity', () =>
         await OperatorIdentityFixture.WithRoot(async root =>
         {
             await OperatorIdentityFixture.Compose(root, OperatorIdentityFixture.Password)
-            const again = await OperatorIdentityFixture.Compose(root, undefined)
-            const session = await again.Authenticate(OperatorIdentityFixture.Email, OperatorIdentityFixture.Password)
-            assert.notEqual(session, null)
+            const again = await OperatorIdentityFixture.Compose(root, OperatorIdentityFixture.OtherPassword)
+            assert.notEqual(await again.Authenticate(OperatorIdentityFixture.Email, OperatorIdentityFixture.Password), null)
+            assert.equal(await again.Authenticate(OperatorIdentityFixture.Email, OperatorIdentityFixture.OtherPassword), null)
         })
     })
 
@@ -79,6 +81,26 @@ describe('OperatorIdentity', () =>
         {
             const identity = await OperatorIdentityFixture.Compose(root, OperatorIdentityFixture.Password)
             assert.equal(await identity.ValidateToken('not-a-real-token'), null)
+        })
+    })
+
+    it('rejects a wrong-sized master key', async () =>
+    {
+        await OperatorIdentityFixture.WithRoot(async root =>
+        {
+            writeFileSync(join(root, OperatorIdentityFixture.KeyFile), Buffer.alloc(OperatorIdentityFixture.BadKeyBytes))
+            await assert.rejects(() => OperatorIdentityFixture.Compose(root, OperatorIdentityFixture.Password), MasterKeyError)
+        })
+    })
+
+    it('reuses the persisted master key', async () =>
+    {
+        await OperatorIdentityFixture.WithRoot(async root =>
+        {
+            await OperatorIdentityFixture.Compose(root, OperatorIdentityFixture.Password)
+            const first = readFileSync(join(root, OperatorIdentityFixture.KeyFile))
+            await OperatorIdentityFixture.Compose(root, OperatorIdentityFixture.Password)
+            assert.ok(first.equals(readFileSync(join(root, OperatorIdentityFixture.KeyFile))))
         })
     })
 })

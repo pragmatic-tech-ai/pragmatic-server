@@ -73,13 +73,14 @@ export class OperatorIdentity implements IOperatorIdentity
                 throw new OperatorBootstrapError()
             }
             await pack.Secrets.Put(OperatorIdentity.AdminPasswordRef, options.initialPassword)
-            await ServerBootstrap.SeedAsync(pack, tenant, {
-                adminEmail: options.operatorEmail,
-                adminPrincipalId: OperatorIdentity.AdminPrincipalId,
-                adminPasswordRef: OperatorIdentity.AdminPasswordRef,
-                ownerGrant: true
-            })
         }
+        // Idempotent: for an existing account this only re-ensures the Owner grant (no password change).
+        await ServerBootstrap.SeedAsync(pack, tenant, {
+            adminEmail: options.operatorEmail,
+            adminPrincipalId: OperatorIdentity.AdminPrincipalId,
+            adminPasswordRef: OperatorIdentity.AdminPasswordRef,
+            ownerGrant: true
+        })
         return new OperatorIdentity(pack, tenant, options.operatorEmail)
     }
 
