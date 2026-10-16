@@ -76,6 +76,9 @@ export class DockerEnv
 
     private static readonly BuildHintPrefix = 'Image not found. Build it once with BuildKit from the workspace parent dir (one level above pragmatic-server):\n  DOCKER_BUILDKIT=1 docker build -f pragmatic-server/docker/Dockerfile --secret id=npmrc,src=<path-to>/.npmrc -t '
     private static readonly BuildHintSuffix = ' ..'
+    private static readonly VolumeCmd = 'volume'
+    private static readonly VersionCmd = 'version'
+    private static readonly DaemonUnreachableMessage = 'Docker daemon is unreachable. Start Docker and try again.'
 
     private static SeedScript(): string
     {
@@ -113,6 +116,52 @@ export class DockerEnv
         ]
     }
 
+    /** The full one-time build command (the same text EnsureImage prints). */
+    public static BuildCommand(): string
+    {
+        return `${DockerEnv.BuildHintPrefix}${DockerEnv.ImageName}${DockerEnv.BuildHintSuffix}`
+    }
+
+    /** Throws when the docker CLI/daemon is unreachable (distinguishes daemon-down from image-missing). */
+    public async EnsureDaemon(): Promise<void>
+    {
+        try
+        {
+            await this.Exec([DockerEnv.VersionCmd])
+        }
+        catch
+        {
+            throw new Error(DockerEnv.DaemonUnreachableMessage)
+        }
+    }
+
+    /** Removes the env's data volume; absence is the desired end state. */
+    public async RemoveVolume(def: EnvDefinition): Promise<void>
+    {
+        try
+        {
+            await this.Exec([DockerEnv.VolumeCmd, DockerEnv.RmCmd, DockerEnv.VolumeName(def)])
+        }
+        catch
+        {
+            // volume rm on a missing volume errors; absence is the desired end state
+        }
+    }
+
+    /** True iff the named container exists and is running. */
+    public async RunningByName(containerName: string): Promise<boolean>
+    {
+        try
+        {
+            const out = await this.Exec([DockerEnv.InspectCmd, DockerEnv.FormatFlag, DockerEnv.RunningFormat, containerName])
+            return out.trim() === DockerEnv.RunningTrue
+        }
+        catch
+        {
+            return false
+        }
+    }
+
     /** Checks the image exists; if not, prints the one-time BuildKit command (never builds: the build needs a secret). */
     public async EnsureImage(): Promise<boolean>
     {
@@ -123,7 +172,7 @@ export class DockerEnv
         }
         catch
         {
-            console.log(`${DockerEnv.BuildHintPrefix}${DockerEnv.ImageName}${DockerEnv.BuildHintSuffix}`)
+            console.log(DockerEnv.BuildCommand())
             return false
         }
     }
@@ -200,17 +249,9 @@ export class DockerEnv
         ])
     }
 
-    private async IsRunning(def: EnvDefinition): Promise<boolean>
+    private IsRunning(def: EnvDefinition): Promise<boolean>
     {
-        try
-        {
-            const out = await this.Exec([DockerEnv.InspectCmd, DockerEnv.FormatFlag, DockerEnv.RunningFormat, DockerEnv.ContainerName(def)])
-            return out.trim() === DockerEnv.RunningTrue
-        }
-        catch
-        {
-            return false
-        }
+        return this.RunningByName(DockerEnv.ContainerName(def))
     }
 
     private Probe(port: number): Promise<boolean>
