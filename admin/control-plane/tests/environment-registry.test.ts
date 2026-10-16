@@ -1,0 +1,98 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { EnvironmentRegistry } from '../environment-registry.js'
+import { EnvStatus, Template, type EnvironmentRecord, type IContainerProbe } from '../environment-record.js'
+
+class FakeProbe implements IContainerProbe
+{
+    public readonly State = new Map<string, boolean>()
+
+    public async Running(containerName: string): Promise<boolean>
+    {
+        return this.State.get(containerName) ?? false
+    }
+}
+
+class RegistryFixture
+{
+    public static Record(name: string, port: number, status: EnvStatus): EnvironmentRecord
+    {
+        return {
+            name,
+            template: Template.DevBlank,
+            tenantId: `tenant-${name}`,
+            hostPort: port,
+            containerName: `c-${name}`,
+            volumeName: `v-${name}`,
+            bundleDir: `/bundles/${name}`,
+            createdAt: '2026-10-16T00:00:00.000Z',
+            status
+        }
+    }
+}
+
+test('persists, reconciles, and removes records', async () =>
+{
+    const dir = await mkdtemp(join(tmpdir(), 'envreg-'))
+    const file = join(dir, 'sub', 'envs.json')
+    try
+    {
+        const probe = new FakeProbe()
+        const a = RegistryFixture.Record('a', 8081, EnvStatus.Unknown)
+        const b = RegistryFixture.Record('b', 8082, EnvStatus.Running)
+        const c = RegistryFixture.Record('c', 8083, EnvStatus.Failed)
+
+        const first = new EnvironmentRegistry(file, probe)
+        await first.Load()
+        await first.Put(a)
+        await first.Put(b)
+
+        const second = new EnvironmentRegistry(file, probe)
+        await second.Load()
+        assert.equal(second.List().length, 2)
+        assert.deepEqual(second.Get('a'), a)
+        assert.deepEqual(second.Get('b'), b)
+
+        await second.Put(c)
+        probe.State.set('c-a', true)
+        probe.State.set('c-b', false)
+        probe.State.set('c-c', true)
+        await second.Reconcile()
+        assert.equal(second.Get('a')?.status, EnvStatus.Running)
+        assert.equal(second.Get('b')?.status, EnvStatus.Stopped)
+        assert.equal(second.Get('c')?.status, EnvStatus.Failed)
+
+        const third = new EnvironmentRegistry(file, probe)
+        await third.Load()
+        assert.equal(third.Get('a')?.status, EnvStatus.Running)
+        assert.equal(third.Get('c')?.status, EnvStatus.Failed)
+
+        await third.Remove('b')
+        const fourth = new EnvironmentRegistry(file, probe)
+        await fourth.Load()
+        assert.equal(fourth.Get('b'), undefined)
+        assert.ok(fourth.Get('a'))
+    }
+    finally
+    {
+        await rm(dir, { recursive: true, force: true })
+    }
+})
+
+test('missing file loads as empty', async () =>
+{
+    const dir = await mkdtemp(join(tmpdir(), 'envreg-'))
+    try
+    {
+        const reg = new EnvironmentRegistry(join(dir, 'none.json'), new FakeProbe())
+        await reg.Load()
+        assert.equal(reg.List().length, 0)
+    }
+    finally
+    {
+        await rm(dir, { recursive: true, force: true })
+    }
+})
