@@ -405,6 +405,19 @@ describe('ControlPlaneHost', () =>
         assert.equal(evilLogin.status, 403)
     })
 
+    it('enforces same-origin on the ws upgrade', async () =>
+    {
+        const addr = host.Address()
+        const evil = new WebSocket(`ws://127.0.0.1:${addr.port}/api/events`, { headers: { Cookie: Harness.AuthCookie, Origin: 'http://evil.example' } })
+        const evilOpened = await new Promise<boolean>(res => { evil.once('open', () => res(true)); evil.once('error', () => res(false)); evil.once('close', () => res(false)) })
+        assert.equal(evilOpened, false)
+        evil.terminate()
+        const same = new WebSocket(`ws://127.0.0.1:${addr.port}/api/events`, { headers: { Cookie: Harness.AuthCookie, Origin: `http://127.0.0.1:${addr.port}` } })
+        const sameOpened = await new Promise<boolean>(res => { same.once('open', () => res(true)); same.once('error', () => res(false)); same.once('close', () => res(false)) })
+        assert.equal(sameOpened, true)
+        same.close()
+    })
+
     it('rejects ws upgrades without a valid session cookie', async () =>
     {
         const addr = host.Address()

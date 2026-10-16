@@ -85,6 +85,7 @@ export class ControlPlaneHost
     private static readonly LogoutPath = '/api/logout'
     private static readonly SetCookieHeader = 'set-cookie'
     private static readonly OriginHeader = 'origin'
+    private static readonly CookieHeader = 'cookie'
     private static readonly StatusUnauthorized = 401
     private static readonly InvalidCredentialsMessage = 'Invalid email or password'
     private static readonly UnauthenticatedMessage = 'Authentication required'
@@ -169,7 +170,7 @@ export class ControlPlaneHost
         server.on('upgrade', (req, socket, head) =>
         {
             const path = new URL(req.url ?? ControlPlaneHost.RootPath, ControlPlaneHost.BaseUrl).pathname
-            if (path !== ControlPlaneHost.EventsPath || !ControlPlaneHost.HostAllowed(req))
+            if (path !== ControlPlaneHost.EventsPath || !ControlPlaneHost.HostAllowed(req) || !ControlPlaneHost.OriginAllowed(req))
             {
                 socket.destroy()
                 return
@@ -254,6 +255,7 @@ export class ControlPlaneHost
             {
                 if (ControlPlaneHost.IsMutating(req) && !ControlPlaneHost.OriginAllowed(req))
                 {
+                    req.resume()
                     this.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.BadOriginMessage })
                     return
                 }
@@ -305,7 +307,7 @@ export class ControlPlaneHost
         }
         if (path === ControlPlaneHost.LogoutPath && method === ControlPlaneHost.MethodPost)
         {
-            const token = SessionCookie.Read(req.headers.cookie)
+            const token = SessionCookie.Read(req.headers[ControlPlaneHost.CookieHeader])
             if (token !== undefined)
             {
                 await this.operator.Revoke(token)
@@ -409,7 +411,7 @@ export class ControlPlaneHost
 
     private async Principal(req: IncomingMessage): Promise<{ email: string } | null>
     {
-        const token = SessionCookie.Read(req.headers.cookie)
+        const token = SessionCookie.Read(req.headers[ControlPlaneHost.CookieHeader])
         return token === undefined || token.length === 0 ? null : await this.operator.ValidateToken(token)
     }
 
