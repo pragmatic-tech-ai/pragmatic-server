@@ -86,7 +86,10 @@ class FakeConnector implements IAdminConnector
     }
 }
 
-const info: AdminConnectInfo = { httpUrl: 'http://h', wsUrl: 'ws://h', tenant: 't', email: 'e', password: 'p' }
+class Fixtures
+{
+    public static readonly Info: AdminConnectInfo = { httpUrl: 'http://h', wsUrl: 'ws://h', tenant: 't', email: 'e', password: 'p' }
+}
 
 describe('AdminProxy', () =>
 {
@@ -94,7 +97,7 @@ describe('AdminProxy', () =>
     {
         const conn = new FakeConnection()
         const connector = new FakeConnector(conn)
-        const snap = await new AdminProxy(connector).LoadAdmin(info)
+        const snap = await new AdminProxy(connector).LoadAdmin(Fixtures.Info)
         assert.equal(connector.Opens, 1)
         assert.equal(conn.Disposed, 1)
         assert.deepEqual(conn.Calls, ['ListAccounts', 'ListGrants:a', 'ListGrants:b', 'GetConfig'])
@@ -106,11 +109,11 @@ describe('AdminProxy', () =>
     it('each mutation opens, calls and disposes once', async () =>
     {
         const cases: Array<[string, (p: AdminProxy) => Promise<void>]> = [
-            ['CreateAccount', p => p.CreateAccount(info, {} as any)],
-            ['DisableAccount:a', p => p.DisableAccount(info, 'a')],
-            ['GrantRole', p => p.GrantRole(info, {} as any)],
-            ['RevokeRole', p => p.RevokeRole(info, {} as any)],
-            ['SetConfig', p => p.SetConfig(info, {} as any)],
+            ['CreateAccount', p => p.CreateAccount(Fixtures.Info, {} as any)],
+            ['DisableAccount:a', p => p.DisableAccount(Fixtures.Info, 'a')],
+            ['GrantRole', p => p.GrantRole(Fixtures.Info, {} as any)],
+            ['RevokeRole', p => p.RevokeRole(Fixtures.Info, {} as any)],
+            ['SetConfig', p => p.SetConfig(Fixtures.Info, {} as any)],
         ]
         for (const [call, run] of cases)
         {
@@ -126,14 +129,14 @@ describe('AdminProxy', () =>
     it('GetConfig returns the connection config', async () =>
     {
         const conn = new FakeConnection()
-        assert.deepEqual(await new AdminProxy(new FakeConnector(conn)).GetConfig(info), { mode: 'x' })
+        assert.deepEqual(await new AdminProxy(new FakeConnector(conn)).GetConfig(Fixtures.Info), { mode: 'x' })
         assert.equal(conn.Disposed, 1)
     })
 
     it('maps an Open rejection to Connect', async () =>
     {
         const proxy = new AdminProxy(new FakeConnector(new FakeConnection(), new Error('ECONNREFUSED')))
-        await assert.rejects(proxy.GetConfig(info), (e: unknown) => e instanceof AdminProxyError && e.Kind === AdminProxyErrorKind.Connect)
+        await assert.rejects(proxy.GetConfig(Fixtures.Info), (e: unknown) => e instanceof AdminProxyError && e.Kind === AdminProxyErrorKind.Connect)
     })
 
     it('classifies by message', async () =>
@@ -148,7 +151,7 @@ describe('AdminProxy', () =>
         {
             const conn = new FakeConnection()
             conn.FailWith = new Error(message)
-            await assert.rejects(new AdminProxy(new FakeConnector(conn)).RevokeRole(info, {} as any), (e: unknown) =>
+            await assert.rejects(new AdminProxy(new FakeConnector(conn)).RevokeRole(Fixtures.Info, {} as any), (e: unknown) =>
                 e instanceof AdminProxyError && e.Kind === kind && e.message.includes(message))
         }
     })
@@ -157,7 +160,7 @@ describe('AdminProxy', () =>
     {
         const conn = new FakeConnection()
         conn.FailWith = new Error('boom')
-        await assert.rejects(new AdminProxy(new FakeConnector(conn)).LoadAdmin(info))
+        await assert.rejects(new AdminProxy(new FakeConnector(conn)).LoadAdmin(Fixtures.Info))
         assert.equal(conn.Disposed, 1)
     })
 })

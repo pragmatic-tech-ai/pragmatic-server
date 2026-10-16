@@ -537,6 +537,14 @@ describe('ControlPlaneHost', () =>
         assert.equal((await Harness.Send(host, 'GET', '/api/environments/x/admin/snapshot')).status, 404)
     })
 
+    it('maps a non-AdminProxyError thrown on an admin route to a generic 500', async () =>
+    {
+        fake.Throw = new Error('secret internal detail 10.0.0.5')
+        const res = await Harness.Send(host, 'GET', '/api/environments/x/admin/snapshot')
+        assert.equal(res.status, 500)
+        assert.ok(!res.body.includes('secret internal detail'))
+    })
+
     it('rejects an undecodable principalId or environment name in admin paths with 400', async () =>
     {
         assert.equal((await Harness.Send(host, 'DELETE', '/api/environments/x/admin/accounts/%E0%A4%A')).status, 400)

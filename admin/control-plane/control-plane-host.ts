@@ -454,7 +454,8 @@ export class ControlPlaneHost
                 this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.AccountFieldsMessage })
                 return true
             }
-            await this.service.AdminCreateAccount(name, body as unknown as CreateAccountParams)
+            const account = { email: body.email, principalId: body.principalId, password: body.password } as unknown as CreateAccountParams
+            await this.service.AdminCreateAccount(name, account)
             this.WriteJson(res, ControlPlaneHost.StatusCreated, { ok: true })
             return true
         }
@@ -470,7 +471,12 @@ export class ControlPlaneHost
                 this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.GrantFieldsMessage })
                 return true
             }
-            const mutation = body as unknown as GrantMutationDto
+            const mutation = {
+                subject: body.subject,
+                role: body.role,
+                resourceKind: body.resourceKind,
+                resourcePath: body.resourcePath
+            } as unknown as GrantMutationDto
             if (method === ControlPlaneHost.MethodPost)
             {
                 await this.service.AdminGrantRole(name, mutation)
@@ -494,7 +500,15 @@ export class ControlPlaneHost
                 this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ConfigFieldsMessage })
                 return true
             }
-            await this.service.AdminSetConfig(name, body as unknown as IdentityConfigDto)
+            const config = {
+                packId: body.packId,
+                delegationDepth: body.delegationDepth,
+                providerSettings: body.providerSettings,
+                groupRoleMap: body.groupRoleMap,
+                claimsMapping: body.claimsMapping,
+                securityModel: body.securityModel
+            } as unknown as IdentityConfigDto
+            await this.service.AdminSetConfig(name, config)
             this.WriteJson(res, ControlPlaneHost.StatusOk, { ok: true })
             return true
         }

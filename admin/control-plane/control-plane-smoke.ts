@@ -253,7 +253,7 @@ export class ControlPlaneSmoke
         await this.CheckHealth(L.HealthDemo, running.hostPort)
         await this.CheckSeeded(dataRoot, running.hostPort)
         await this.ManageRoundTrip(name)
-        const del =await this.Api(ControlPlaneSmoke.MethodDelete, this.EnvPath(name))
+        const del = await this.Api(ControlPlaneSmoke.MethodDelete, this.EnvPath(name))
         this.Expect(L.DeleteDemo, del.status === ControlPlaneSmoke.StatusOk, ControlPlaneSmoke.StatusWord + String(del.status))
         this.Expect(L.GoneDemo, (await this.Find(name)) === undefined)
     }

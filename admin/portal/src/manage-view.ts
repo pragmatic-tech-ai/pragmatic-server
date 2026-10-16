@@ -24,6 +24,7 @@ export class ManageView extends PortalViewBase
     private static readonly SubjectPrefix = 'Subject: '
     private static readonly OnKeyword = ' on '
     private static readonly PathJoin = ' '
+    private static readonly PathSeparator = '/'
     private static readonly DisableLabel = 'Disable'
     private static readonly CreateLabel = 'Create'
     private static readonly RevokeLabel = 'Revoke'
@@ -53,6 +54,7 @@ export class ManageView extends PortalViewBase
     private readonly pathBox = new TextBox()
     private readonly modelBox = new TextBox()
     private config: IdentityConfigDto | undefined
+    private lastModelText = ''
 
     public constructor(private readonly client: ControlPlaneClient, private readonly nav: IPortalNavigator, private readonly name: string)
     {
@@ -110,7 +112,13 @@ export class ManageView extends PortalViewBase
     private ShowSnapshot(snapshot: AdminSnapshotDto): void
     {
         this.config = snapshot.config
-        this.modelBox.Text = JSON.stringify(snapshot.config.securityModel ?? {}, null, ManageView.JsonIndent)
+        const loaded = JSON.stringify(snapshot.config.securityModel ?? {}, null, ManageView.JsonIndent)
+        // Keep unsaved operator edits: only overwrite the editor when it still shows the last-loaded text.
+        if (this.modelBox.Text === this.lastModelText)
+        {
+            this.modelBox.Text = loaded
+            this.lastModelText = loaded
+        }
         this.Clear(this.accountsPanel)
         for (const a of snapshot.accounts)
         {
@@ -166,7 +174,7 @@ export class ManageView extends PortalViewBase
         const row = new StackPanel()
         row.Orientation = Orientation.Horizontal
         const text = new TextBlock()
-        text.Text = g.role + ManageView.OnKeyword + g.resourceKind + ManageView.PathJoin + g.resourcePath
+        text.Text = g.role + ManageView.OnKeyword + g.resourceKind + ManageView.PathJoin + g.resourcePath.join(ManageView.PathSeparator)
         row.AddChild(text)
         row.AddChild(this.MakeButton(ManageView.RevokeLabel, () =>
         {
@@ -204,7 +212,7 @@ export class ManageView extends PortalViewBase
             return
         }
         const kind = this.kindBox.Text.trim()
-        const path = this.pathBox.Text.trim()
+        const path = this.pathBox.Text.split(ManageView.PathSeparator).map(s => s.trim()).filter(s => s.length > 0)
         await this.Run(() => this.client.GrantRole(this.name, {
             subject: this.subjectBox.Text.trim(),
             role: role.Label,
@@ -230,6 +238,7 @@ export class ManageView extends PortalViewBase
             return
         }
         const next: IdentityConfigDto = { ...this.config, securityModel: parsed }
+        this.lastModelText = this.modelBox.Text
         await this.Run(() => this.client.SetConfig(this.name, next))
     }
 }

@@ -33,7 +33,7 @@ export type GrantDto =
     subject: string
     role: string
     resourceKind: string
-    resourcePath: string
+    resourcePath: string[]
 }
 
 export type GrantMutationDto =
@@ -41,17 +41,17 @@ export type GrantMutationDto =
     subject: string
     role: string
     resourceKind?: string
-    resourcePath?: string
+    resourcePath?: string[]
 }
 
 // securityModel is opaque JSON to the portal.
 export type IdentityConfigDto =
 {
     packId: string
-    delegationDepth: number
-    providerSettings: Record<string, unknown>
-    groupRoleMap: Record<string, unknown>
-    claimsMapping: Record<string, unknown>
+    delegationDepth: string
+    providerSettings: Record<string, string>
+    groupRoleMap: Record<string, string>
+    claimsMapping: Record<string, string>
     securityModel?: unknown
 }
 

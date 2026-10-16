@@ -78,9 +78,12 @@ export interface IAdminProxy
 /** Typed facade over the environment admin protocol; one short-lived authenticated connection per call. */
 export class AdminProxy implements IAdminProxy
 {
+    // Must track the messages thrown in src/host/admin-service.ts (AdminSelfLockoutError / LastAdministratorError).
     private static readonly SelfLockoutText = 'cannot revoke your own'
     private static readonly LastAdminText = 'last administrator'
     private static readonly InvalidParamsText = 'invalid params'
+    private static readonly ConnectionTexts = ['econnreset', 'econnrefused', 'epipe', 'socket hang up', 'closed']
+    private static readonly DisposeFailedLog = 'AdminProxy: connection dispose failed'
 
     public constructor(private readonly connector: IAdminConnector)
     {
@@ -152,7 +155,14 @@ export class AdminProxy implements IAdminProxy
         }
         finally
         {
-            conn.Dispose()
+            try
+            {
+                conn.Dispose()
+            }
+            catch (disposeErr)
+            {
+                console.error(AdminProxy.DisposeFailedLog, disposeErr)
+            }
         }
     }
 
@@ -168,13 +178,18 @@ export class AdminProxy implements IAdminProxy
             return err
         }
         const message = AdminProxy.MessageOf(err)
-        if (message.includes(AdminProxy.SelfLockoutText) || message.includes(AdminProxy.LastAdminText))
+        const lower = message.toLowerCase()
+        if (lower.includes(AdminProxy.SelfLockoutText) || lower.includes(AdminProxy.LastAdminText))
         {
             return new AdminProxyError(AdminProxyErrorKind.Rbac, message)
         }
-        if (message.toLowerCase().includes(AdminProxy.InvalidParamsText))
+        if (lower.includes(AdminProxy.InvalidParamsText))
         {
             return new AdminProxyError(AdminProxyErrorKind.Invalid, message)
+        }
+        if (AdminProxy.ConnectionTexts.some(t => lower.includes(t)))
+        {
+            return new AdminProxyError(AdminProxyErrorKind.Connect, message)
         }
         return new AdminProxyError(AdminProxyErrorKind.Protocol, message)
     }

@@ -25,6 +25,17 @@ class SecurityModelFixture
     public static readonly TenantId = 't1'
     public static readonly PrincipalId = 'p1'
     public static readonly Widget = 'shop.Widget'
+    public static readonly TenantName = 'Tenant One'
+    public static readonly PackId = 'local'
+    public static readonly DelegationDepth = 'AuthnDirectory'
+    public static readonly RootUnitId = 'root'
+    public static readonly RootUnitName = 'Root'
+    public static readonly NoneMessage = 'none'
+    public static readonly NoGraphMessage = 'no graph'
+    public static readonly ReaderRoleId = 'r'
+    public static readonly ReaderRoleName = 'R'
+    public static readonly MalformedField = /securityModel/
+    private static readonly SharedTenant = new Tenant(SecurityModelFixture.TenantId, TenantKind.SelfHosted, SecurityModelFixture.TenantName)
     public readonly Configs = new InMemoryTenantConfigStore()
     public readonly Client: MessageConnection
     public Authorization = new TenantReadAuthorization(this.Configs)
@@ -32,7 +43,7 @@ class SecurityModelFixture
 
     public constructor()
     {
-        const tenant = new Tenant(SecurityModelFixture.TenantId, TenantKind.SelfHosted, 'Tenant One')
+        const tenant = SecurityModelFixture.SharedTenant
         const audit = new NullAuditSink()
         const accounts = new LocalAccountStore()
         const registrar = new LocalAccountRegistrar(accounts, new EncryptedSecretStore(randomBytes(32)), new Argon2PasswordHasher(), audit)
@@ -45,14 +56,14 @@ class SecurityModelFixture
         const languageService = { GraphChanged: { subscribe: () => ({ dispose: () => undefined }) } } as unknown as ILanguageService
         const manager = {} as unknown as SolutionManagerService
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        this.handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, this.Context(), () => Promise.reject(new Error('none')), () => Promise.reject(new Error('no graph')), undefined, undefined, undefined, undefined, admin)
+        this.handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, this.Context(), () => Promise.reject(new Error(SecurityModelFixture.NoneMessage)), () => Promise.reject(new Error(SecurityModelFixture.NoGraphMessage)), undefined, undefined, undefined, undefined, admin)
         this.Client = createMessageConnection(new WebSocketMessageReader(clientSocket), new WebSocketMessageWriter(clientSocket), NullLogger)
         this.Client.listen()
     }
 
     public Context(): AccessContext
     {
-        const tenant = new Tenant(SecurityModelFixture.TenantId, TenantKind.SelfHosted, 'Tenant One')
+        const tenant = SecurityModelFixture.SharedTenant
         const principal = new Principal(SecurityModelFixture.PrincipalId, SecurityModelFixture.TenantId, PrincipalKind.User, new Map(), [])
         const grants = [new Grant(SecurityModelFixture.PrincipalId, Role.Owner, new ResourceRef(ResourceKind.Tenant, SecurityModelFixture.TenantId, []))]
         return new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
@@ -60,13 +71,13 @@ class SecurityModelFixture
 
     public static Dto(securityModel?: SecurityModelDto): IdentityConfigDto
     {
-        const dto: IdentityConfigDto = { packId: 'local', delegationDepth: 'AuthnDirectory', providerSettings: {}, groupRoleMap: {}, claimsMapping: {} }
+        const dto: IdentityConfigDto = { packId: SecurityModelFixture.PackId, delegationDepth: SecurityModelFixture.DelegationDepth, providerSettings: {}, groupRoleMap: {}, claimsMapping: {} }
         return securityModel === undefined ? dto : { ...dto, securityModel }
     }
 
     public static MinimalModel(): SecurityModelDto
     {
-        return { businessUnits: [{ id: 'root', name: 'Root' }], teams: [], membership: { claimsMapping: [], overrides: [] }, ownershipRules: [] } as unknown as SecurityModelDto
+        return { businessUnits: [{ id: SecurityModelFixture.RootUnitId, name: SecurityModelFixture.RootUnitName }], teams: [], membership: { claimsMapping: [], overrides: [] }, ownershipRules: [] } as unknown as SecurityModelDto
     }
 
     /** Model granting the principal Read on the widget concept at Organization level. */
@@ -74,8 +85,8 @@ class SecurityModelFixture
     {
         return {
             ...(SecurityModelFixture.MinimalModel() as object),
-            roles: [{ id: 'r', name: 'R', privileges: [{ action: PrivilegeAction.Read, concept: SecurityModelFixture.Widget, level: AccessLevel.Organization }] }],
-            roleAssignment: { claimsMapping: [], overrides: [{ principalId: SecurityModelFixture.PrincipalId, roles: ['r'] }], teamRoles: [] },
+            roles: [{ id: SecurityModelFixture.ReaderRoleId, name: SecurityModelFixture.ReaderRoleName, privileges: [{ action: PrivilegeAction.Read, concept: SecurityModelFixture.Widget, level: AccessLevel.Organization }] }],
+            roleAssignment: { claimsMapping: [], overrides: [{ principalId: SecurityModelFixture.PrincipalId, roles: [SecurityModelFixture.ReaderRoleId] }], teamRoles: [] },
         } as unknown as SecurityModelDto
     }
 
@@ -125,7 +136,7 @@ test('a malformed securityModel is rejected as invalid params', async () =>
     await Case.Run(async fx =>
     {
         const bad = { ...(SecurityModelFixture.MinimalModel() as object), teams: [{ id: 't', name: 'T', owningBusinessUnit: 'nope' }] } as unknown as SecurityModelDto
-        await assert.rejects(fx.Client.sendRequest(AdminProtocol.SetConfig, SecurityModelFixture.Dto(bad)), /Invalid|params/i)
+        await assert.rejects(fx.Client.sendRequest(AdminProtocol.SetConfig, SecurityModelFixture.Dto(bad)), SecurityModelFixture.MalformedField)
     })
 })
 
