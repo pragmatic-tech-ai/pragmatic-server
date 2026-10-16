@@ -17,7 +17,7 @@ class FakeGraph
         {
             return undefined
         }
-        return { type: { fullName: 'shop.Widget' }, field: (n: string) => (n in row ? { value: row[n] } : undefined) }
+        return { node: { id }, type: { fullName: 'shop.Widget' }, field: (n: string) => (n in row ? { value: row[n] } : undefined) }
     }
 }
 

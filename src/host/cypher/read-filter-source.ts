@@ -115,6 +115,11 @@ export class TenantReadAuthorization implements IReadFilterSource, IWriteAuthori
         return evaluator.MembershipOf(context.Principal)
     }
 
+    public EvaluatorForContext(context: AccessContext): Promise<AccessDepthEvaluator>
+    {
+        return this.EvaluatorFor(context.Tenant.Id)
+    }
+
     private EvaluatorFor(tenantId: string): Promise<AccessDepthEvaluator>
     {
         let built = this.evaluators.get(tenantId)

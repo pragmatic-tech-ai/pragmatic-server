@@ -3,7 +3,7 @@ import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import { trace, isSpanContextValid } from '@opentelemetry/api'
 import { NullAccessAuditSink, AuditSurface, AuditOutcome } from './access-audit.js'
 import type { IAccessAuditSink, AccessAuditEvent } from './access-audit.js'
-import { LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol, AdminProtocol, CypherProtocol, PragmaticAppProtocol, AppDataProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol, AdminProtocol, CypherProtocol, PragmaticAppProtocol, AppDataProtocol, DataSharingProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 interface MethodPolicy
 {
@@ -116,6 +116,9 @@ export class PolicyGate
             [ConnectorProtocol.Refresh.method, connect],
             [CypherProtocol.Query.method, readTenant],
             [AppDataProtocol.Write.method, writeTenant],
+            [DataSharingProtocol.Share.method, writeTenant],
+            [DataSharingProtocol.Unshare.method, writeTenant],
+            [DataSharingProtocol.ListShares.method, readTenant],
             [PragmaticAppProtocol.List.method, readTenant],
             [PragmaticAppProtocol.Open.method, readTenant],
             [AdminProtocol.ListGrants.method, administer],

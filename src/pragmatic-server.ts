@@ -43,7 +43,8 @@ import type { IWriteInstanceGate } from './host/cypher/write-instance-gate.js'
 import { FilteredReadWriteTargetSource } from './host/filtered-read-write-target-source.js'
 import { RuntimeAppWriter } from './host/runtime-app-writer.js'
 import { RuntimeWritePayloadValidator } from './host/runtime-write-payload-validator.js'
-import type { AppWriteOpDto, AppWriteResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { AppWriteOpDto, AppWriteResultDto, ShareParams, ShareResultDto, UnshareParams, UnshareResultDto, ListSharesParams, ListSharesResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { ShareService } from './host/sharing/share-service.js'
 import { AccessPolicySetting } from './host/apps/access-policy-setting.js'
 import { FilteredGraphQuery } from './host/cypher/filtered-graph-query.js'
 import { GraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
@@ -126,6 +127,7 @@ export class PragmaticServer
     private static readonly NamespaceSeparator = '.'
     private static readonly NoLabels: ReferencedLabelSet = { labels: [], wildcard: false, parseFailed: false }
 
+    private static readonly SharingRequiresIdentityError = 'record sharing requires an identity subsystem'
     private static readonly NotStartedError = 'server not started'
     private static readonly ApplicationsRuntimeOnlyError = 'applications are a runtime-tenant feature'
     private static readonly IdentityNotConfiguredError = 'identity not configured'
@@ -352,6 +354,35 @@ export class PragmaticServer
             return filtered
         }
         return new FieldMaskedGraphQuery(filtered, mask)
+    }
+
+    private async ShareServiceFor(context: AccessContext, name: string): Promise<ShareService>
+    {
+        if (this.identity === undefined)
+        {
+            throw new Error(PragmaticServer.SharingRequiresIdentityError)
+        }
+        const store = this.AppShareStore(name)
+        const index = await this.ShareIndexFor(context, name)
+        const evaluator = await (await this.ReadAuthorization()).EvaluatorForContext(context)
+        const target = new FilteredReadWriteTargetSource(this, context, name)
+        const idFields = ConceptIdFields.From((await this.BaseGraphFor(name)).plan)
+        return new ShareService(store, index, evaluator, context.Principal, target, idFields)
+    }
+
+    public async ShareForPragmaticApp(context: AccessContext, name: string, params: ShareParams): Promise<ShareResultDto>
+    {
+        return (await this.ShareServiceFor(context, name)).Share(params)
+    }
+
+    public async UnshareForPragmaticApp(context: AccessContext, name: string, params: UnshareParams): Promise<UnshareResultDto>
+    {
+        return (await this.ShareServiceFor(context, name)).Unshare(params)
+    }
+
+    public async ListSharesForPragmaticApp(context: AccessContext, name: string, params: ListSharesParams): Promise<ListSharesResultDto>
+    {
+        return (await this.ShareServiceFor(context, name)).List(params)
     }
 
     public async WriteForPragmaticApp(context: AccessContext, name: string, operations: readonly AppWriteOpDto[]): Promise<AppWriteResultDto>

@@ -12,7 +12,7 @@ import {
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
-import { ShareSubjectKind } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { ShareSubjectKind, ShareStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { IDataSourceAdapter, ExternalFieldValue } from '@pragmatic-tech-ai/todl'
 import { DataSourceKind, WriteOperationKind } from '@pragmatic-tech-ai/todl'
 import { PragmaticServer } from '../../../pragmatic-server.js'
@@ -246,6 +246,31 @@ test('a share to another principal does not widen this principal', async () =>
         assert.deepEqual(RecordSharingFixture.Rows(graph), [[RecordSharingFixture.VisibleLabel, null]])
         const other = await server.GraphForPragmaticApp(PpSecurityHarness.Context(RecordSharingFixture.Other), RecordSharingFixture.Name, Cypher.ReferencedLabels.Of(RecordSharingFixture.Query))
         assert.deepEqual(RecordSharingFixture.Rows(other), [[RecordSharingFixture.VisibleLabel, null], [RecordSharingFixture.SharedLabel, null]])
+    }
+    finally
+    {
+        await fx.Dispose()
+    }
+})
+
+test('share ops: a Read-only actor is Denied sharing a visible record; List sees grants only for visible records; a hidden record is NotFound', async () =>
+{
+    const fx = new RecordSharingFixture()
+    try
+    {
+        const server = await fx.Setup()
+        const context = PpSecurityHarness.Context(RecordSharingFixture.Principal)
+        const subject = { kind: ShareSubjectKind.Principal, id: RecordSharingFixture.Other }
+        const concept = 'shop.Widget'
+        const denied = await server.ShareForPragmaticApp(context, RecordSharingFixture.Name, { concept, id: 'rec-visible', subject, rights: [PrivilegeAction.Read] })
+        assert.equal(denied.status, ShareStatus.Denied)
+        const hidden = await server.ShareForPragmaticApp(context, RecordSharingFixture.Name, { concept, id: 'rec-hidden', subject, rights: [PrivilegeAction.Read] })
+        assert.equal(hidden.status, ShareStatus.NotFound)
+        await fx.ShareWithPrincipal(server, RecordSharingFixture.Principal)
+        const listed = await server.ListSharesForPragmaticApp(context, RecordSharingFixture.Name, { concept, id: RecordSharingFixture.SharedRecordId })
+        assert.equal(listed.grants.length, 1)
+        const none = await server.ListSharesForPragmaticApp(context, RecordSharingFixture.Name, { concept, id: 'rec-hidden' })
+        assert.equal(none.grants.length, 0)
     }
     finally
     {
