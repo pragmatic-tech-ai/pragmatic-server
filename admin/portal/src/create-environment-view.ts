@@ -1,8 +1,17 @@
 import { TextBlock, TextBox } from '@pragmatic-tech-ai/mural/basic'
 import { ComboBox } from '@pragmatic-tech-ai/mural/framework'
 import type { ControlPlaneClient } from './api-client.js'
-import type { IPortalNavigator, TemplateDto } from './portal-types.js'
+import type { IPortalNavigator } from './portal-types.js'
 import { PortalViewBase } from './portal-view-base.js'
+
+// ComboBox item: Mural's collapsed selection text reads Label/Name/Text only,
+// so the template title is carried as Label alongside the id.
+export class TemplateOption
+{
+    public constructor(public readonly Label: string, public readonly Id: string)
+    {
+    }
+}
 
 // Create form: name, template dropdown (from ListTemplates), optional host port.
 export class CreateEnvironmentView extends PortalViewBase
@@ -12,7 +21,7 @@ export class CreateEnvironmentView extends PortalViewBase
     public static readonly PortPlaceholder = 'Host port (optional)'
     public static readonly TemplatePlaceholder = 'Template'
     private static readonly HeadingText = 'New environment'
-    private static readonly TitlePath = 'title'
+    private static readonly LabelPath = 'Label'
     private static readonly PortInvalid = 'Port must be a whole number'
     private static readonly NoTemplate = 'Choose a template'
 
@@ -31,7 +40,7 @@ export class CreateEnvironmentView extends PortalViewBase
         this.AddChild(this.nameBox)
 
         this.templateBox.Placeholder = CreateEnvironmentView.TemplatePlaceholder
-        this.templateBox.DisplayMemberPath = CreateEnvironmentView.TitlePath
+        this.templateBox.DisplayMemberPath = CreateEnvironmentView.LabelPath
         this.AddChild(this.templateBox)
 
         this.portBox.Placeholder = CreateEnvironmentView.PortPlaceholder
@@ -47,7 +56,7 @@ export class CreateEnvironmentView extends PortalViewBase
         try
         {
             const templates = await this.client.ListTemplates()
-            this.templateBox.ItemsSource = templates
+            this.templateBox.ItemsSource = templates.map(t => new TemplateOption(t.title, t.id))
             if (templates.length > 0 && this.templateBox.SelectedItem === undefined)
             {
                 this.templateBox.SelectedIndex = 0
@@ -61,7 +70,7 @@ export class CreateEnvironmentView extends PortalViewBase
 
     private async Submit(): Promise<void>
     {
-        const selected = this.templateBox.SelectedItem as TemplateDto | undefined
+        const selected = this.templateBox.SelectedItem as TemplateOption | undefined
         if (selected === undefined)
         {
             this.message.Text = PortalViewBase.ErrorPrefix + CreateEnvironmentView.NoTemplate
@@ -80,7 +89,7 @@ export class CreateEnvironmentView extends PortalViewBase
         }
         try
         {
-            await this.client.CreateEnvironment(this.nameBox.Text.trim(), selected.id, port)
+            await this.client.CreateEnvironment(this.nameBox.Text.trim(), selected.Id, port)
         }
         catch (e)
         {
