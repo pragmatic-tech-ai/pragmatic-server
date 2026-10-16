@@ -15,7 +15,6 @@ export abstract class PortalViewBase extends StackPanel implements IPortalView
     public static readonly BackLabel = 'Back'
     protected static readonly ErrorPrefix = 'error: '
     protected static readonly NoMessage = ''
-    private static readonly UnauthorizedStatus = 401
 
     protected readonly message = new TextBlock()
     private sessionNav: IPortalNavigator | undefined
@@ -40,7 +39,7 @@ export abstract class PortalViewBase extends StackPanel implements IPortalView
 
     protected ShowError(e: unknown): void
     {
-        if (e instanceof ApiError && e.Status === PortalViewBase.UnauthorizedStatus && this.sessionNav !== undefined)
+        if (e instanceof ApiError && e.Status === ApiError.UnauthorizedStatus && this.sessionNav !== undefined)
         {
             this.sessionNav.ShowLogin()
             return

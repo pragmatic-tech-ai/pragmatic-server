@@ -33,6 +33,10 @@ class FakeControlPlane
     public static readonly SessionPath = '/api/session'
     public static readonly OperatorEmail = 'op@example.com'
     public static readonly OperatorPassword = 'correct-horse'
+    public static readonly BadCredentialsText = 'Invalid email or password'
+    public static readonly BadPassword = 'wrong-password'
+    private static readonly UnauthenticatedError = 'unauthenticated'
+    private static readonly BadCredentialsError = FakeControlPlane.BadCredentialsText
     private static readonly SetCookieHeader = 'set-cookie'
     private static readonly SessionCookie = 'sid=test; Path=/; HttpOnly'
     private static readonly TenantId = 't-1'
@@ -124,14 +128,20 @@ class FakeControlPlane
             }
             else
             {
-                FakeControlPlane.Json(res, 401, { error: 'unauthenticated' })
+                FakeControlPlane.Json(res, 401, { error: FakeControlPlane.UnauthenticatedError })
             }
             return
         }
         if (path === FakeControlPlane.LoginPath)
         {
             const raw = await FakeControlPlane.ReadBody(req)
-            this.Calls.push({ method, path, body: JSON.parse(raw) })
+            const body = JSON.parse(raw) as { password?: string }
+            this.Calls.push({ method, path, body })
+            if (body.password === FakeControlPlane.BadPassword)
+            {
+                FakeControlPlane.Json(res, 401, { error: FakeControlPlane.BadCredentialsError })
+                return
+            }
             this.Authenticated = true
             res.writeHead(200, { 'content-type': FakeControlPlane.JsonType, [FakeControlPlane.SetCookieHeader]: FakeControlPlane.SessionCookie })
             res.end(JSON.stringify({ email: FakeControlPlane.OperatorEmail }))
@@ -302,6 +312,19 @@ test.describe('admin portal', () =>
             password: FakeControlPlane.OperatorPassword,
         })
         await expect(page.getByText(EnvironmentListView.NewLabel, { exact: true })).toBeVisible()
+    })
+
+    test('bad credentials keep the login view and show the error inline', async ({ page }) =>
+    {
+        fake.Authenticated = false
+        await page.goto(base)
+        await expect(page.getByText(LoginView.LoginLabel, { exact: true })).toBeVisible()
+        await PortalSteps.TypeInto(page, 0, LoginView.EmailPlaceholder, FakeControlPlane.OperatorEmail)
+        await PortalSteps.TypeInto(page, 1, LoginView.PasswordPlaceholder, FakeControlPlane.BadPassword)
+        await page.getByText(LoginView.LoginLabel, { exact: true }).click()
+        await expect(page.getByText(FakeControlPlane.BadCredentialsText)).toBeVisible()
+        await expect(page.getByText(LoginView.LoginLabel, { exact: true })).toBeVisible()
+        await expect(page.getByText(EnvironmentListView.NewLabel, { exact: true })).toHaveCount(0)
     })
 
     test('Logout posts to the server and returns to the login view', async ({ page }) =>

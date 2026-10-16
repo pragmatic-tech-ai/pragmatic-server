@@ -50,6 +50,7 @@ export class App extends StackPanel implements IPortalNavigator
         }
         catch
         {
+            // Session probe failed (network/server error): fall back to the login view.
             operator = null
         }
         if (operator === null)
@@ -77,6 +78,10 @@ export class App extends StackPanel implements IPortalNavigator
 
     public ShowLogin(): void
     {
+        if (this.current instanceof LoginView)
+        {
+            return
+        }
         this.SetLogoutVisible(false)
         this.Show(new LoginView(this.client, this))
     }

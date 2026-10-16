@@ -3,6 +3,8 @@ import type { EnvironmentDto, OperatorDto, TemplateDto } from './portal-types.js
 // Thrown for non-2xx control-plane responses; Message carries the server's error text.
 export class ApiError extends Error
 {
+    public static readonly UnauthorizedStatus = 401
+
     public readonly Status: number
 
     public constructor(status: number, message: string)
@@ -21,7 +23,6 @@ export class ControlPlaneClient
     private static readonly LogoutRoute = '/api/logout'
     private static readonly SessionRoute = '/api/session'
     private static readonly CredentialsMode = 'same-origin'
-    private static readonly UnauthorizedStatus = 401
     private static readonly EventsRoute = '/api/events'
     private static readonly PathSeparator = '/'
     private static readonly StartAction = 'start'
@@ -69,7 +70,7 @@ export class ControlPlaneClient
         }
         catch (e)
         {
-            if (e instanceof ApiError && e.Status === ControlPlaneClient.UnauthorizedStatus)
+            if (e instanceof ApiError && e.Status === ApiError.UnauthorizedStatus)
             {
                 return null
             }
