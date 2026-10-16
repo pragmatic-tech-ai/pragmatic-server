@@ -6,3 +6,4 @@ environments/*/master.key
 environments/*/provisioned-secrets.json
 environments/*/tenants.json
 environments/*/data/
+admin/control-plane/data/
