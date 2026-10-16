@@ -5,9 +5,10 @@ import { Button } from '@pragmatic-tech-ai/mural/framework'
 // button fetches /api/ping and renders the returned JSON text.
 export class SpikeView extends StackPanel
 {
-    private static readonly TitleText = 'Pragmatic Admin'
-    private static readonly PingLabel = 'Ping'
+    public static readonly TitleText = 'Pragmatic Admin'
+    public static readonly PingLabel = 'Ping'
     private static readonly PingUrl = '/api/ping'
+    private static readonly EmptyText = ''
     private static readonly ErrorPrefix = 'error: '
 
     private readonly result: TextBlock
@@ -27,7 +28,7 @@ export class SpikeView extends StackPanel
         this.AddChild(button)
 
         this.result = new TextBlock()
-        this.result.Text = ''
+        this.result.Text = SpikeView.EmptyText
         this.AddChild(this.result)
     }
 

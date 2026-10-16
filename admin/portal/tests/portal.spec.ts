@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
-import { createServer, type Server } from 'node:http'
+import { SpikeView } from '../src/spike-view.js'
+import { createServer, type Server, type ServerResponse } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { extname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -10,8 +11,9 @@ import { fileURLToPath } from 'node:url'
 class StaticDist
 {
     private static readonly IndexFile = 'index.html'
+    private static readonly ParentSegment = '..'
     private static readonly PingPath = '/api/ping'
-    private static readonly PingBody = '{"ok":true}'
+    public static readonly PingBody = '{"ok":true}'
     private static readonly JsonType = 'application/json'
     private static readonly DefaultType = 'application/octet-stream'
     private static readonly Types: Record<string, string> =
@@ -38,7 +40,7 @@ class StaticDist
         await new Promise<void>(resolve => this.server?.close(() => resolve()))
     }
 
-    private async Handle(url: string, res: import('node:http').ServerResponse): Promise<void>
+    private async Handle(url: string, res: ServerResponse): Promise<void>
     {
         const path = url.split('?')[0]!
         if (path === StaticDist.PingPath)
@@ -48,6 +50,12 @@ class StaticDist
             return
         }
         const rel = path === '/' ? StaticDist.IndexFile : normalize(path).slice(1)
+        if (rel.startsWith(StaticDist.ParentSegment))
+        {
+            res.writeHead(404)
+            res.end()
+            return
+        }
         try
         {
             const body = await readFile(join(this.root, rel))
@@ -73,8 +81,8 @@ test.describe('portal spike', () =>
     test('renders the title and shows ok after clicking Ping', async ({ page }) =>
     {
         await page.goto(base)
-        await expect(page.getByText('Pragmatic Admin')).toBeVisible()
-        await page.getByText('Ping', { exact: true }).click()
-        await expect(page.getByText('"ok":true')).toBeVisible()
+        await expect(page.getByText(SpikeView.TitleText)).toBeVisible()
+        await page.getByText(SpikeView.PingLabel, { exact: true }).click()
+        await expect(page.getByText(StaticDist.PingBody)).toBeVisible()
     })
 })
