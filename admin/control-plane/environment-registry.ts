@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { EnvStatus, type EnvironmentRecord, type IContainerProbe } from './environment-record.js'
 
 export class EnvironmentRegistry
@@ -52,7 +53,7 @@ export class EnvironmentRegistry
 
     public async Put(record: EnvironmentRecord): Promise<void>
     {
-        this.records.set(record.name, record)
+        this.records.set(record.name, { ...record })
         await this.persist()
     }
 
@@ -71,7 +72,7 @@ export class EnvironmentRegistry
                 continue
             }
             const running = await this.probe.Running(record.containerName)
-            record.status = running ? EnvStatus.Running : EnvStatus.Stopped
+            this.records.set(record.name, { ...record, status: running ? EnvStatus.Running : EnvStatus.Stopped })
         }
         await this.persist()
     }
@@ -80,7 +81,7 @@ export class EnvironmentRegistry
     {
         await mkdir(dirname(this.filePath), { recursive: true })
         const body = { [EnvironmentRegistry.RootKey]: Object.fromEntries(this.records) }
-        const temp = this.filePath + EnvironmentRegistry.TempSuffix
+        const temp = `${this.filePath}.${randomUUID()}${EnvironmentRegistry.TempSuffix}`
         await writeFile(temp, JSON.stringify(body, null, EnvironmentRegistry.JsonIndent), EnvironmentRegistry.Encoding)
         await rename(temp, this.filePath)
     }

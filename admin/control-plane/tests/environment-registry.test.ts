@@ -82,6 +82,28 @@ test('persists, reconciles, and removes records', async () =>
     }
 })
 
+test('Put and Reconcile do not alias caller records', async () =>
+{
+    const dir = await mkdtemp(join(tmpdir(), 'envreg-'))
+    try
+    {
+        const probe = new FakeProbe()
+        const reg = new EnvironmentRegistry(join(dir, 'envs.json'), probe)
+        const mine = RegistryFixture.Record('a', 8081, EnvStatus.Unknown)
+        await reg.Put(mine)
+        const held = reg.Get('a')
+        probe.State.set('c-a', true)
+        await reg.Reconcile()
+        assert.equal(mine.status, EnvStatus.Unknown)
+        assert.equal(held?.status, EnvStatus.Unknown)
+        assert.equal(reg.Get('a')?.status, EnvStatus.Running)
+    }
+    finally
+    {
+        await rm(dir, { recursive: true, force: true })
+    }
+})
+
 test('missing file loads as empty', async () =>
 {
     const dir = await mkdtemp(join(tmpdir(), 'envreg-'))
