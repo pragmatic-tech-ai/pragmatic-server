@@ -11,7 +11,6 @@ export class UserSeeder
     private static readonly LoginPath = '/auth/login'
     private static readonly TenantQuery = '?tenant='
     private static readonly WsPath = '/'
-    private static readonly AuthorizationHeader = 'Authorization'
     private static readonly BearerPrefix = 'Bearer '
     private static readonly ContentTypeHeader = 'Content-Type'
     private static readonly JsonContentType = 'application/json'
@@ -24,6 +23,7 @@ export class UserSeeder
     private static readonly AlreadyExistsText = 'already exists'
     private static readonly LoginFailedPrefix = 'login failed with HTTP '
     private static readonly MissingPasswordPrefix = 'no password resolved for user '
+    private static readonly MissingTokenMessage = 'login response contained no token'
     private static readonly HttpOkMin = 200
     private static readonly HttpOkMax = 300
 
@@ -34,7 +34,7 @@ export class UserSeeder
 
     public static BearerHeader(token: string): { Authorization: string }
     {
-        return { [UserSeeder.AuthorizationHeader]: UserSeeder.BearerPrefix + token } as { Authorization: string }
+        return { Authorization: UserSeeder.BearerPrefix + token }
     }
 
     public async Login(baseHttpUrl: string, tenant: string, email: string, password: string): Promise<string>
@@ -56,7 +56,12 @@ export class UserSeeder
         {
             throw new Error(UserSeeder.LoginFailedPrefix + result.status)
         }
-        return JSON.parse(result.text).token as string
+        const token = (JSON.parse(result.text) as { token?: unknown }).token
+        if (typeof token !== 'string' || token === '')
+        {
+            throw new Error(UserSeeder.MissingTokenMessage)
+        }
+        return token
     }
 
     public async Connect(wsUrl: string, tenant: string, token: string): Promise<MessageConnection>
@@ -75,12 +80,13 @@ export class UserSeeder
 
     public async SeedUsers(conn: MessageConnection, users: UserSeed[]): Promise<void>
     {
+        const missing = users.find(u => u.password === undefined)
+        if (missing !== undefined)
+        {
+            throw new Error(UserSeeder.MissingPasswordPrefix + missing.principalId)
+        }
         for (const user of users)
         {
-            if (user.password === undefined)
-            {
-                throw new Error(UserSeeder.MissingPasswordPrefix + user.principalId)
-            }
             try
             {
                 await conn.sendRequest(AdminProtocol.CreateAccount, { email: user.email, principalId: user.principalId, password: user.password })

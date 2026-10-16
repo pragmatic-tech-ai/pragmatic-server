@@ -46,6 +46,7 @@ export class SeedCli
     private static readonly BuildNote = 'Run from the workspace parent dir (one level above pragmatic-server):\n  '
     private static readonly SeedingUsersMessage = 'Seeding demo users...'
     private static readonly NoUserSeedingMessage = 'User seeding applies to the demo environment only; skipping for '
+    private static readonly ImageMissingMessage = 'Server image not found: build the image first (see the hint above), then re-run.'
     private static readonly SeededMessage = 'Demo users seeded.'
     private static readonly EnvRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -162,9 +163,12 @@ export class SeedCli
 
     private static async Up(docker: DockerEnv, def: EnvDefinition, bundleDir: string): Promise<void>
     {
-        await docker.EnsureImage()
+        if (!await docker.EnsureImage())
+        {
+            console.error(SeedCli.ImageMissingMessage)
+            return
+        }
         await BundleBuilder.Generate(def, bundleDir)
-        await docker.SeedVolume(def, bundleDir)
         await docker.Up(def, bundleDir)
         await docker.WaitHealthy(def.hostPort, def)
         await SeedCli.SeedDemoUsers(def)

@@ -41,7 +41,7 @@ npx tsx environments/seed/seed.ts down demo
 
 ## Generated files
 
-`master.key`, `provisioned-secrets.json`, and `data/` under each environment dir are generated and gitignored. Copy `demo/seed/provisioned-secrets.example.json` to see the required secret refs; real secrets are generated fresh on first `up`.
+`master.key`, `provisioned-secrets.json`, `tenants.json`, and `data/` under each environment dir are generated and gitignored. Copy `demo/seed/provisioned-secrets.example.json` to see the required secret refs; real secrets are generated fresh on first `up`.
 
 ## Integration smoke
 

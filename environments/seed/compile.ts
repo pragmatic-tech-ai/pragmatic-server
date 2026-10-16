@@ -41,7 +41,7 @@ export class NorthwindApp
         return (rows[0]![0] as { Value: number }).Value
     }
 
-    private static CompileSource()
+    private static CompileSource(): ReturnType<typeof compilePackage>
     {
         return compilePackage([], [{ uri: NorthwindApp.SourceUri, text: NorthwindApp.Source() }], { id: NorthwindApp.Id, version: NorthwindApp.Version })
     }

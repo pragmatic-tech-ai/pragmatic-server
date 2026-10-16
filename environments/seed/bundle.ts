@@ -41,6 +41,9 @@ export class BundleBuilder
     private static readonly AdminEmailSuffix = '.test'
     private static readonly LocalPackId = 'local'
     private static readonly Utf8 = 'utf8'
+    private static readonly HexEncoding = 'hex'
+    private static readonly Newline = '\n'
+    private static readonly BadUserEntryPrefix = 'users.json entry missing principalId: '
     private static readonly KeyBytes = 32
     private static readonly SecretBytes = 24
     private static readonly FullAuthzDepth = 2
@@ -94,9 +97,15 @@ export class BundleBuilder
         {
             return []
         }
-        const parsed = JSON.parse(readFileSync(path, BundleBuilder.Utf8)) as unknown
-        const list = Array.isArray(parsed) ? parsed : (parsed as { users?: unknown[] }).users ?? []
-        return list.map(entry => (entry as { principalId: string }).principalId)
+        const list = JSON.parse(readFileSync(path, BundleBuilder.Utf8)) as { principalId?: unknown }[]
+        return list.map(entry =>
+        {
+            if (typeof entry?.principalId !== 'string' || entry.principalId === '')
+            {
+                throw new Error(BundleBuilder.BadUserEntryPrefix + JSON.stringify(entry))
+            }
+            return entry.principalId
+        })
     }
 
     private static WriteTenants(def: EnvDefinition, bundleDir: string): void
@@ -152,11 +161,11 @@ export class BundleBuilder
 
     private static RandomSecret(): string
     {
-        return randomBytes(BundleBuilder.SecretBytes).toString('hex')
+        return randomBytes(BundleBuilder.SecretBytes).toString(BundleBuilder.HexEncoding)
     }
 
     private static WriteJson(path: string, value: unknown): void
     {
-        writeFileSync(path, JSON.stringify(value, null, BundleBuilder.Indent) + '\n')
+        writeFileSync(path, JSON.stringify(value, null, BundleBuilder.Indent) + BundleBuilder.Newline)
     }
 }
