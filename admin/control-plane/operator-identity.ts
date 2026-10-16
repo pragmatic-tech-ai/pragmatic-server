@@ -48,6 +48,8 @@ export class OperatorIdentity implements IOperatorIdentity
     private static readonly AdminPrincipalId = 'admin'
     private static readonly AdminPasswordRef = 'control-plane-admin-pw'
     private static readonly MasterKeyBytes = 32
+    private static readonly KeyFileMode = 0o600
+    private static readonly SecretDirMode = 0o700
     private static readonly BadMasterKeyMessage = 'Master key file must contain exactly 32 bytes'
 
     private constructor(
@@ -59,8 +61,8 @@ export class OperatorIdentity implements IOperatorIdentity
 
     public static async Compose(options: OperatorComposeOptions): Promise<OperatorIdentity>
     {
-        mkdirSync(dirname(options.masterKeyFile), { recursive: true })
-        mkdirSync(options.identityRoot, { recursive: true })
+        mkdirSync(dirname(options.masterKeyFile), { recursive: true, mode: OperatorIdentity.SecretDirMode })
+        mkdirSync(options.identityRoot, { recursive: true, mode: OperatorIdentity.SecretDirMode })
         const key = OperatorIdentity.LoadOrCreateKey(options.masterKeyFile)
         const tenant = new Tenant(OperatorIdentity.OperatorTenantId, TenantKind.SelfHosted, OperatorIdentity.OperatorTenantDisplay)
         const stores = await FileIdentityStores.Open(new NodeFsStorage(options.identityRoot), key)
@@ -144,7 +146,7 @@ export class OperatorIdentity implements IOperatorIdentity
             return key
         }
         const key = randomBytes(OperatorIdentity.MasterKeyBytes)
-        writeFileSync(file, key)
+        writeFileSync(file, key, { mode: OperatorIdentity.KeyFileMode })
         return key
     }
 }
