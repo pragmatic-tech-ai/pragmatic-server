@@ -16,7 +16,7 @@ import { PortUnavailableError } from './port-allocator.js'
 import { InvalidEnvironmentNameError, TemplateCatalog } from './template-catalog.js'
 import type { IOperatorIdentity } from './operator-identity.js'
 import { SessionCookie } from './session-cookie.js'
-import type { AdminSnapshot } from './admin-proxy.js'
+import { AdminProxyError, AdminProxyErrorKind, type AdminSnapshot } from './admin-proxy.js'
 import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 export interface IEnvironmentService
@@ -106,6 +106,19 @@ export class ControlPlaneHost
     private static readonly EnvPathPattern = new RegExp(
         '^' + ControlPlaneHost.EnvironmentsPath + '/([^/]+)(?:/(' +
         [ControlPlaneHost.StartAction, ControlPlaneHost.StopAction, ControlPlaneHost.LogsAction].join('|') + '))?$')
+    private static readonly AdminSegment = 'admin'
+    private static readonly SnapshotPath = 'snapshot'
+    private static readonly AccountsPath = 'accounts'
+    private static readonly GrantsPath = 'grants'
+    private static readonly ConfigPath = 'config'
+    private static readonly AdminPathPattern = new RegExp(
+        '^' + ControlPlaneHost.EnvironmentsPath + '/([^/]+)/' + ControlPlaneHost.AdminSegment + '/(' +
+        [ControlPlaneHost.SnapshotPath, ControlPlaneHost.AccountsPath, ControlPlaneHost.GrantsPath, ControlPlaneHost.ConfigPath].join('|') + ')(?:/([^/]+))?$')
+    private static readonly MethodPut = 'PUT'
+    private static readonly AccountFieldsMessage = 'email, principalId and password (non-empty strings) are required'
+    private static readonly GrantFieldsMessage = 'subject and role (strings) are required'
+    private static readonly ConfigFieldsMessage = 'packId and delegationDepth (strings) are required'
+    private static readonly BodyObjectMessage = 'Request body must be a JSON object'
     private static readonly MethodGet = 'GET'
     private static readonly MethodPost = 'POST'
     private static readonly MethodDelete = 'DELETE'
@@ -344,17 +357,18 @@ export class ControlPlaneHost
             }
             return false
         }
+        const am = ControlPlaneHost.AdminPathPattern.exec(path)
+        if (am !== null)
+        {
+            return await this.RouteAdmin(req, res, method, am)
+        }
         const m = ControlPlaneHost.EnvPathPattern.exec(path)
         if (m === null)
         {
             return false
         }
-        let name: string
-        try
-        {
-            name = decodeURIComponent(m[1] as string)
-        }
-        catch
+        const name = ControlPlaneHost.Decode(m[1] as string)
+        if (name === undefined)
         {
             this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
             return true
@@ -388,6 +402,124 @@ export class ControlPlaneHost
             return true
         }
         return false
+    }
+
+    /** Dispatches /api/environments/NAME/admin/SUB[/TAIL]; false when the (sub, method, tail) combination is unknown. */
+    private async RouteAdmin(req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
+    {
+        const name = ControlPlaneHost.Decode(m[1] as string)
+        if (name === undefined)
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+            return true
+        }
+        const sub = m[2]
+        const tail = m[3]
+        if (sub === ControlPlaneHost.SnapshotPath && tail === undefined && method === ControlPlaneHost.MethodGet)
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusOk, await this.service.AdminSnapshot(name))
+            return true
+        }
+        if (sub === ControlPlaneHost.ConfigPath && tail === undefined && method === ControlPlaneHost.MethodGet)
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusOk, await this.service.AdminGetConfig(name))
+            return true
+        }
+        if (sub === ControlPlaneHost.AccountsPath && tail !== undefined && method === ControlPlaneHost.MethodDelete)
+        {
+            const principalId = ControlPlaneHost.Decode(tail)
+            if (principalId === undefined)
+            {
+                this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+                return true
+            }
+            await this.service.AdminDisableAccount(name, principalId)
+            this.WriteJson(res, ControlPlaneHost.StatusOk, { ok: true })
+            return true
+        }
+        if (tail !== undefined)
+        {
+            return false
+        }
+        if (sub === ControlPlaneHost.AccountsPath && method === ControlPlaneHost.MethodPost)
+        {
+            const body = await this.ReadJsonObject(req, res)
+            if (body === undefined)
+            {
+                return true
+            }
+            if (!ControlPlaneHost.NonEmpty(body.email) || !ControlPlaneHost.NonEmpty(body.principalId) || !ControlPlaneHost.NonEmpty(body.password))
+            {
+                this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.AccountFieldsMessage })
+                return true
+            }
+            await this.service.AdminCreateAccount(name, body as unknown as CreateAccountParams)
+            this.WriteJson(res, ControlPlaneHost.StatusCreated, { ok: true })
+            return true
+        }
+        if (sub === ControlPlaneHost.GrantsPath && (method === ControlPlaneHost.MethodPost || method === ControlPlaneHost.MethodDelete))
+        {
+            const body = await this.ReadJsonObject(req, res)
+            if (body === undefined)
+            {
+                return true
+            }
+            if (typeof body.subject !== 'string' || typeof body.role !== 'string')
+            {
+                this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.GrantFieldsMessage })
+                return true
+            }
+            const mutation = body as unknown as GrantMutationDto
+            if (method === ControlPlaneHost.MethodPost)
+            {
+                await this.service.AdminGrantRole(name, mutation)
+            }
+            else
+            {
+                await this.service.AdminRevokeRole(name, mutation)
+            }
+            this.WriteJson(res, ControlPlaneHost.StatusOk, { ok: true })
+            return true
+        }
+        if (sub === ControlPlaneHost.ConfigPath && method === ControlPlaneHost.MethodPut)
+        {
+            const body = await this.ReadJsonObject(req, res)
+            if (body === undefined)
+            {
+                return true
+            }
+            if (typeof body.packId !== 'string' || typeof body.delegationDepth !== 'string')
+            {
+                this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ConfigFieldsMessage })
+                return true
+            }
+            await this.service.AdminSetConfig(name, body as unknown as IdentityConfigDto)
+            this.WriteJson(res, ControlPlaneHost.StatusOk, { ok: true })
+            return true
+        }
+        return false
+    }
+
+    /** Reads and parses a JSON object body; writes the 400 and returns undefined when it is not one. */
+    private async ReadJsonObject(req: IncomingMessage, res: ServerResponse): Promise<Record<string, unknown> | undefined>
+    {
+        const raw = await this.ReadBody(req)
+        let body: unknown
+        try
+        {
+            body = JSON.parse(raw)
+        }
+        catch
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadJsonMessage })
+            return undefined
+        }
+        if (body === null || typeof body !== 'object' || Array.isArray(body))
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BodyObjectMessage })
+            return undefined
+        }
+        return body as Record<string, unknown>
     }
 
     private async HandleLogin(req: IncomingMessage, res: ServerResponse): Promise<void>
@@ -576,7 +708,43 @@ export class ControlPlaneHost
         {
             return undefined
         }
+        if (err instanceof AdminProxyError)
+        {
+            return ControlPlaneHost.AdminStatus(err)
+        }
         return ControlPlaneHost.ErrorStatuses.get(err.constructor as ErrorCtor)
+    }
+
+    private static AdminStatus(err: AdminProxyError): number
+    {
+        switch (err.Kind)
+        {
+            case AdminProxyErrorKind.Connect:
+                return ControlPlaneHost.StatusUnavailable
+            case AdminProxyErrorKind.Rbac:
+                return ControlPlaneHost.StatusConflict
+            case AdminProxyErrorKind.Invalid:
+                return ControlPlaneHost.StatusBadRequest
+            default:
+                return ControlPlaneHost.StatusInternal
+        }
+    }
+
+    private static Decode(segment: string): string | undefined
+    {
+        try
+        {
+            return decodeURIComponent(segment)
+        }
+        catch
+        {
+            return undefined
+        }
+    }
+
+    private static NonEmpty(v: unknown): boolean
+    {
+        return typeof v === 'string' && v.length > 0
     }
 
     private WriteJson(res: ServerResponse, status: number, body: unknown): void
@@ -611,7 +779,7 @@ export class ControlPlaneHost
 
     private static IsMutating(req: IncomingMessage): boolean
     {
-        return req.method === ControlPlaneHost.MethodPost || req.method === ControlPlaneHost.MethodDelete
+        return req.method === ControlPlaneHost.MethodPost || req.method === ControlPlaneHost.MethodDelete || req.method === ControlPlaneHost.MethodPut
     }
 
     /** Absent Origin is allowed (non-browser / same-origin navigation); a present one must equal our own origin. */
@@ -623,7 +791,7 @@ export class ControlPlaneHost
 
     private static HasBody(req: IncomingMessage): boolean
     {
-        if (req.method !== ControlPlaneHost.MethodPost)
+        if (req.method !== ControlPlaneHost.MethodPost && req.method !== ControlPlaneHost.MethodPut && req.method !== ControlPlaneHost.MethodDelete)
         {
             return false
         }

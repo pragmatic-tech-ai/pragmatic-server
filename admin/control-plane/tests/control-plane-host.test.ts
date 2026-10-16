@@ -9,7 +9,7 @@ import { CreateFailedError, DockerUnavailableError, EnvironmentExistsError, Envi
 import { PortUnavailableError } from '../port-allocator.js'
 import { InvalidEnvironmentNameError } from '../template-catalog.js'
 import { WebSocket } from 'ws'
-import type { AdminSnapshot } from '../admin-proxy.js'
+import { AdminProxyError, AdminProxyErrorKind, type AdminSnapshot } from '../admin-proxy.js'
 import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { EnvStatus, Template, type EnvironmentRecord } from '../environment-record.js'
 import { TemplateCatalog } from '../template-catalog.js'
@@ -107,38 +107,45 @@ class FakeService implements IEnvironmentService
     public async AdminSnapshot(name: string): Promise<AdminSnapshot>
     {
         this.Calls.push(`adminSnapshot:${name}`)
+        this.MaybeThrow()
         return { accounts: [], grants: [], config: {} as IdentityConfigDto }
     }
 
     public async AdminCreateAccount(name: string, params: CreateAccountParams): Promise<void>
     {
         this.Calls.push(`adminCreateAccount:${name}:${JSON.stringify(params)}`)
+        this.MaybeThrow()
     }
 
     public async AdminDisableAccount(name: string, principalId: string): Promise<void>
     {
         this.Calls.push(`adminDisableAccount:${name}:${principalId}`)
+        this.MaybeThrow()
     }
 
     public async AdminGrantRole(name: string, mutation: GrantMutationDto): Promise<void>
     {
         this.Calls.push(`adminGrantRole:${name}:${JSON.stringify(mutation)}`)
+        this.MaybeThrow()
     }
 
     public async AdminRevokeRole(name: string, mutation: GrantMutationDto): Promise<void>
     {
         this.Calls.push(`adminRevokeRole:${name}:${JSON.stringify(mutation)}`)
+        this.MaybeThrow()
     }
 
     public async AdminGetConfig(name: string): Promise<IdentityConfigDto>
     {
         this.Calls.push(`adminGetConfig:${name}`)
+        this.MaybeThrow()
         return {} as IdentityConfigDto
     }
 
     public async AdminSetConfig(name: string, config: IdentityConfigDto): Promise<void>
     {
         this.Calls.push(`adminSetConfig:${name}:${JSON.stringify(config)}`)
+        this.MaybeThrow()
     }
 
     private MaybeThrow(): void
@@ -172,7 +179,8 @@ class Harness
         const addr = host.Address()
         return new Promise((resolve, reject) =>
         {
-            const req = request({ host: addr.address, port: addr.port, method, path, headers }, res =>
+            const sized = body === undefined ? headers : { 'content-length': String(Buffer.byteLength(body)), ...headers }
+            const req = request({ host: addr.address, port: addr.port, method, path, headers: sized }, res =>
             {
                 const chunks: Buffer[] = []
                 res.on('data', c => chunks.push(c as Buffer))
@@ -455,6 +463,82 @@ describe('ControlPlaneHost', () =>
         const sameOpened = await new Promise<boolean>(res => { same.once('open', () => res(true)); same.once('error', () => res(false)); same.once('close', () => res(false)) })
         assert.equal(sameOpened, true)
         same.close()
+    })
+
+    it('admin routes require a session (401) and a same origin (403) before reaching the service', async () =>
+    {
+        const anon = await Harness.Anon(host, 'GET', '/api/environments/x/admin/snapshot')
+        assert.equal(anon.status, 401)
+        const cross = await Harness.Send(host, 'POST', '/api/environments/x/admin/accounts', JSON.stringify({ email: 'a@b.c', principalId: 'p', password: 'pw' }), { origin: 'http://evil.example' })
+        assert.equal(cross.status, 403)
+        const crossPut = await Harness.Send(host, 'PUT', '/api/environments/x/admin/config', JSON.stringify({ packId: 'a', delegationDepth: 'b' }), { origin: 'http://evil.example' })
+        assert.equal(crossPut.status, 403)
+        assert.deepEqual(fake.Calls, [])
+    })
+
+    it('admin routes delegate with decoded name and args', async () =>
+    {
+        const origin = { origin: `http://127.0.0.1:${host.Address().port}`, host: `127.0.0.1:${host.Address().port}` }
+        const snap = await Harness.Send(host, 'GET', '/api/environments/my%20env/admin/snapshot', undefined, origin)
+        assert.equal(snap.status, 200)
+        assert.deepEqual(JSON.parse(snap.body).accounts, [])
+        const acct = { email: 'a@b.c', principalId: 'p1', password: 'pw' }
+        const create = await Harness.Send(host, 'POST', '/api/environments/x/admin/accounts', JSON.stringify(acct), origin)
+        assert.equal(create.status, 201)
+        assert.deepEqual(JSON.parse(create.body), { ok: true })
+        const dis = await Harness.Send(host, 'DELETE', '/api/environments/x/admin/accounts/user%2F1', undefined, origin)
+        assert.equal(dis.status, 200)
+        const grant = { subject: 's', role: 'r', resourceKind: 'k', resourcePath: 'p' }
+        assert.equal((await Harness.Send(host, 'POST', '/api/environments/x/admin/grants', JSON.stringify(grant), origin)).status, 200)
+        assert.equal((await Harness.Send(host, 'DELETE', '/api/environments/x/admin/grants', JSON.stringify(grant), origin)).status, 200)
+        assert.equal((await Harness.Send(host, 'GET', '/api/environments/x/admin/config', undefined, origin)).status, 200)
+        const cfg = { packId: 'pk', delegationDepth: 'd' }
+        assert.equal((await Harness.Send(host, 'PUT', '/api/environments/x/admin/config', JSON.stringify(cfg), origin)).status, 200)
+        assert.deepEqual(fake.Calls, [
+            'adminSnapshot:my env',
+            `adminCreateAccount:x:${JSON.stringify(acct)}`,
+            'adminDisableAccount:x:user/1',
+            `adminGrantRole:x:${JSON.stringify(grant)}`,
+            `adminRevokeRole:x:${JSON.stringify(grant)}`,
+            'adminGetConfig:x',
+            `adminSetConfig:x:${JSON.stringify(cfg)}`
+        ])
+    })
+
+    it('admin routes validate bodies and unknown sub-routes', async () =>
+    {
+        assert.equal((await Harness.Send(host, 'POST', '/api/environments/x/admin/accounts', JSON.stringify({ email: 'a' }))).status, 400)
+        assert.equal((await Harness.Send(host, 'POST', '/api/environments/x/admin/grants', '{bad')).status, 400)
+        assert.equal((await Harness.Send(host, 'PUT', '/api/environments/x/admin/config', JSON.stringify({ packId: 1 }))).status, 400)
+        assert.equal((await Harness.Send(host, 'POST', '/api/environments/x/admin/snapshot')).status, 404)
+        assert.deepEqual(fake.Calls, [])
+    })
+
+    it('maps AdminProxyError kinds and unknown environments to statuses', async () =>
+    {
+        fake.Throw = new AdminProxyError(AdminProxyErrorKind.Connect)
+        assert.equal((await Harness.Send(host, 'GET', '/api/environments/x/admin/snapshot')).status, 503)
+        fake.Throw = new AdminProxyError(AdminProxyErrorKind.Rbac, 'last admin cannot be removed')
+        const rbac = await Harness.Send(host, 'DELETE', '/api/environments/x/admin/grants', JSON.stringify({ subject: 's', role: 'r' }))
+        assert.equal(rbac.status, 409)
+        assert.equal(JSON.parse(rbac.body).error, 'last admin cannot be removed')
+        fake.Throw = new AdminProxyError(AdminProxyErrorKind.Invalid, 'bad principal')
+        const inv = await Harness.Send(host, 'POST', '/api/environments/x/admin/accounts', JSON.stringify({ email: 'a', principalId: 'p', password: 'w' }))
+        assert.equal(inv.status, 400)
+        assert.equal(JSON.parse(inv.body).error, 'bad principal')
+        fake.Throw = new AdminProxyError(AdminProxyErrorKind.Protocol, 'internal detail')
+        const proto = await Harness.Send(host, 'GET', '/api/environments/x/admin/config')
+        assert.equal(proto.status, 500)
+        assert.ok(!proto.body.includes('internal detail'))
+        fake.Throw = new EnvironmentNotFoundError('x')
+        assert.equal((await Harness.Send(host, 'GET', '/api/environments/x/admin/snapshot')).status, 404)
+    })
+
+    it('rejects an undecodable principalId or environment name in admin paths with 400', async () =>
+    {
+        assert.equal((await Harness.Send(host, 'DELETE', '/api/environments/x/admin/accounts/%E0%A4%A')).status, 400)
+        assert.equal((await Harness.Send(host, 'GET', '/api/environments/%E0%A4%A/admin/snapshot')).status, 400)
+        assert.deepEqual(fake.Calls, [])
     })
 
     it('rejects ws upgrades without a valid session cookie', async () =>
