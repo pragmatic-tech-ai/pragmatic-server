@@ -60,6 +60,7 @@ class FakeDocker implements IDockerEnv
     public ImageOk = true
     public DaemonDown = false
     public FailUp = false
+    public FailDown = false
 
     public constructor(private readonly calls: string[])
     {
@@ -87,6 +88,10 @@ class FakeDocker implements IDockerEnv
     public async Down(): Promise<void>
     {
         this.calls.push('down')
+        if (this.FailDown)
+        {
+            throw new Error('down failed')
+        }
     }
 
     public async Logs(): Promise<string>
@@ -170,6 +175,20 @@ class FakeSeeder implements IUserSeeder
     }
 }
 
+class RecordingRegistry extends EnvironmentRegistry
+{
+    public constructor(path: string, probe: IContainerProbe, private readonly calls: string[])
+    {
+        super(path, probe)
+    }
+
+    public override async Put(record: EnvironmentRecord): Promise<void>
+    {
+        this.calls.push(`put:${record.status}`)
+        await super.Put(record)
+    }
+}
+
 class Harness
 {
     public readonly Calls: string[] = []
@@ -185,7 +204,7 @@ class Harness
         const h = new Harness()
         const dir = await mkdtemp(join(tmpdir(), 'envsvc-'))
         h.DataRoot = join(dir, 'data')
-        h.Registry = new EnvironmentRegistry(join(dir, 'envs.json'), new FakeProbe())
+        h.Registry = new RecordingRegistry(join(dir, 'envs.json'), new FakeProbe(), h.Calls)
         await h.Registry.Load()
         h.Service = new EnvironmentService(h.Registry, new FakeAllocator(h.Calls, busy), h.Docker, h.Bundle, h.Seeder, h.DataRoot)
         return h
@@ -201,7 +220,7 @@ test('Create demo runs the full ordered flow and persists a Running record', asy
 {
     const h = await Harness.Make()
     const rec = await h.Service.Create('demo1', Template.DemoContoso)
-    assert.deepEqual(h.Calls, ['allocate', 'generate', 'ensureImage', 'up', 'waitHealthy', 'login', 'connect', 'seedUsers', 'dispose'])
+    assert.deepEqual(h.Calls, ['allocate', 'generate', 'ensureImage', 'up', 'waitHealthy', 'login', 'connect', 'seedUsers', 'dispose', 'put:running'])
     assert.equal(h.Bundle.Args?.bundleDir, join(h.DataRoot, 'demo1'))
     assert.ok(h.Bundle.Args?.seedDir)
     assert.equal(h.Seeder.Seeded.length, 4)
@@ -219,7 +238,7 @@ test('Create dev skips user seeding', async () =>
 {
     const h = await Harness.Make()
     const rec = await h.Service.Create('dev1', Template.DevBlank)
-    assert.deepEqual(h.Calls, ['allocate', 'generate', 'ensureImage', 'up', 'waitHealthy'])
+    assert.deepEqual(h.Calls, ['allocate', 'generate', 'ensureImage', 'up', 'waitHealthy', 'put:running'])
     assert.equal(rec.status, EnvStatus.Running)
 })
 
@@ -227,6 +246,8 @@ test('Create duplicate throws before any docker or port call', async () =>
 {
     const h = await Harness.Make()
     await h.Registry.Put(Harness.Record('dup', EnvStatus.Stopped))
+    h.Calls.length = 0
+    h.Calls.length = 0
     await assert.rejects(() => h.Service.Create('dup', Template.DevBlank), EnvironmentExistsError)
     assert.deepEqual(h.Calls, [])
 })
@@ -252,7 +273,16 @@ test('Create rolls back when Up fails', async () =>
     const h = await Harness.Make()
     h.Docker.FailUp = true
     await assert.rejects(() => h.Service.Create('a', Template.DevBlank), CreateFailedError)
-    assert.ok(h.Calls.includes('down'))
+    assert.equal(h.Calls.filter(c => c === 'down').length, 1)
+    assert.equal(h.Registry.Get('a')?.status, EnvStatus.Failed)
+})
+
+test('Create still records Failed and throws CreateFailedError when rollback Down throws', async () =>
+{
+    const h = await Harness.Make()
+    h.Docker.FailUp = true
+    h.Docker.FailDown = true
+    await assert.rejects(() => h.Service.Create('a', Template.DevBlank), CreateFailedError)
     assert.equal(h.Registry.Get('a')?.status, EnvStatus.Failed)
 })
 
@@ -271,8 +301,9 @@ test('Stop calls Down and marks Stopped', async () =>
 {
     const h = await Harness.Make()
     await h.Registry.Put(Harness.Record('s1', EnvStatus.Running))
+    h.Calls.length = 0
     const rec = await h.Service.Stop('s1')
-    assert.deepEqual(h.Calls, ['down'])
+    assert.deepEqual(h.Calls, ['down', 'put:stopped'])
     assert.equal(rec.status, EnvStatus.Stopped)
     assert.equal(h.Registry.Get('s1')?.status, EnvStatus.Stopped)
 })
@@ -281,6 +312,7 @@ test('Delete downs, removes volume, and unregisters', async () =>
 {
     const h = await Harness.Make()
     await h.Registry.Put(Harness.Record('s1', EnvStatus.Running))
+    h.Calls.length = 0
     await h.Service.Delete('s1')
     assert.deepEqual(h.Calls, ['down', 'removeVolume'])
     assert.equal(h.Service.List().length, 0)

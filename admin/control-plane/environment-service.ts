@@ -150,7 +150,14 @@ export class EnvironmentService
         }
         catch (err)
         {
-            await this.docker.Down(def)
+            try
+            {
+                await this.docker.Down(def)
+            }
+            catch
+            {
+                // teardown is best-effort; the Failed record and CreateFailedError must still happen
+            }
             await this.registry.Put({ ...record, status: EnvStatus.Failed })
             throw new CreateFailedError(err instanceof Error ? err.message : String(err))
         }
