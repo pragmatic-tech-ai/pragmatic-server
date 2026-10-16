@@ -9,6 +9,8 @@ import { CreateFailedError, DockerUnavailableError, EnvironmentExistsError, Envi
 import { PortUnavailableError } from '../port-allocator.js'
 import { InvalidEnvironmentNameError } from '../template-catalog.js'
 import { WebSocket } from 'ws'
+import type { AdminSnapshot } from '../admin-proxy.js'
+import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { EnvStatus, Template, type EnvironmentRecord } from '../environment-record.js'
 import { TemplateCatalog } from '../template-catalog.js'
 
@@ -100,6 +102,43 @@ class FakeService implements IEnvironmentService
     {
         this.Calls.push(`logs:${name}`)
         return 'log-line'
+    }
+
+    public async AdminSnapshot(name: string): Promise<AdminSnapshot>
+    {
+        this.Calls.push(`adminSnapshot:${name}`)
+        return { accounts: [], grants: [], config: {} as IdentityConfigDto }
+    }
+
+    public async AdminCreateAccount(name: string, params: CreateAccountParams): Promise<void>
+    {
+        this.Calls.push(`adminCreateAccount:${name}:${JSON.stringify(params)}`)
+    }
+
+    public async AdminDisableAccount(name: string, principalId: string): Promise<void>
+    {
+        this.Calls.push(`adminDisableAccount:${name}:${principalId}`)
+    }
+
+    public async AdminGrantRole(name: string, mutation: GrantMutationDto): Promise<void>
+    {
+        this.Calls.push(`adminGrantRole:${name}:${JSON.stringify(mutation)}`)
+    }
+
+    public async AdminRevokeRole(name: string, mutation: GrantMutationDto): Promise<void>
+    {
+        this.Calls.push(`adminRevokeRole:${name}:${JSON.stringify(mutation)}`)
+    }
+
+    public async AdminGetConfig(name: string): Promise<IdentityConfigDto>
+    {
+        this.Calls.push(`adminGetConfig:${name}`)
+        return {} as IdentityConfigDto
+    }
+
+    public async AdminSetConfig(name: string, config: IdentityConfigDto): Promise<void>
+    {
+        this.Calls.push(`adminSetConfig:${name}:${JSON.stringify(config)}`)
     }
 
     private MaybeThrow(): void

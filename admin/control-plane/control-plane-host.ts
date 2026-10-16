@@ -16,6 +16,8 @@ import { PortUnavailableError } from './port-allocator.js'
 import { InvalidEnvironmentNameError, TemplateCatalog } from './template-catalog.js'
 import type { IOperatorIdentity } from './operator-identity.js'
 import { SessionCookie } from './session-cookie.js'
+import type { AdminSnapshot } from './admin-proxy.js'
+import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 export interface IEnvironmentService
 {
@@ -26,6 +28,13 @@ export interface IEnvironmentService
     List(): readonly EnvironmentRecord[]
     ListReconciled(): Promise<readonly EnvironmentRecord[]>
     Logs(name: string): Promise<string>
+    AdminSnapshot(name: string): Promise<AdminSnapshot>
+    AdminCreateAccount(name: string, params: CreateAccountParams): Promise<void>
+    AdminDisableAccount(name: string, principalId: string): Promise<void>
+    AdminGrantRole(name: string, mutation: GrantMutationDto): Promise<void>
+    AdminRevokeRole(name: string, mutation: GrantMutationDto): Promise<void>
+    AdminGetConfig(name: string): Promise<IdentityConfigDto>
+    AdminSetConfig(name: string, config: IdentityConfigDto): Promise<void>
 }
 
 /** The only shape ever sent to a client: connect info, no internals or secrets. */

@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DockerEnv } from '../../environments/seed/docker.js'
 import { UserSeeder } from '../../environments/seed/users.js'
+import { AdminProxy, WsAdminConnector } from './admin-proxy.js'
 import { ControlPlaneHost } from './control-plane-host.js'
 import { BundleBuilderAdapter, DockerEnvAdapter, UserSeederAdapter } from './docker-env-port.js'
 import { EnvironmentRegistry } from './environment-registry.js'
@@ -49,7 +50,7 @@ export class ControlPlaneServer
         const allocator = new PortAllocator(ControlPlaneServer.EnvPortFloor, new NetPortProbe())
         const bundle = new BundleBuilderAdapter()
         const seeder = new UserSeederAdapter(new UserSeeder())
-        const service = new EnvironmentService(registry, allocator, docker, bundle, seeder, dataRoot)
+        const service = new EnvironmentService(registry, allocator, docker, bundle, seeder, dataRoot, new AdminProxy(new WsAdminConnector()))
         const staticRoot = join(here, ControlPlaneServer.ParentSegment, ControlPlaneServer.PortalSegment, ControlPlaneServer.DistSegment)
         const host = new ControlPlaneHost(service, staticRoot, operator, opts.secureCookie)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])

@@ -8,6 +8,8 @@ import { EnvStatus, type Template, type EnvironmentRecord } from './environment-
 import type { EnvironmentRegistry } from './environment-registry.js'
 import type { PortAllocator } from './port-allocator.js'
 import { TemplateCatalog } from './template-catalog.js'
+import type { AdminConnectInfo, AdminSnapshot, IAdminProxy } from './admin-proxy.js'
+import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { IDockerEnv, IBundleBuilder, IUserSeeder } from './docker-env-port.js'
 
 export class EnvironmentExistsError extends Error
@@ -86,7 +88,8 @@ export class EnvironmentService
         private readonly docker: IDockerEnv,
         private readonly bundle: IBundleBuilder,
         private readonly seeder: IUserSeeder,
-        private readonly dataRoot: string)
+        private readonly dataRoot: string,
+        private readonly proxy: IAdminProxy)
     {
     }
 
@@ -227,6 +230,67 @@ export class EnvironmentService
         return this.docker.Logs(EnvironmentService.DefOf(rec))
     }
 
+    public async AdminSnapshot(name: string): Promise<AdminSnapshot>
+    {
+        const info = await this.AdminInfo(name)
+        return this.proxy.LoadAdmin(info)
+    }
+
+    public async AdminCreateAccount(name: string, params: CreateAccountParams): Promise<void>
+    {
+        const info = await this.AdminInfo(name)
+        return this.proxy.CreateAccount(info, params)
+    }
+
+    public async AdminDisableAccount(name: string, principalId: string): Promise<void>
+    {
+        const info = await this.AdminInfo(name)
+        return this.proxy.DisableAccount(info, principalId)
+    }
+
+    public async AdminGrantRole(name: string, mutation: GrantMutationDto): Promise<void>
+    {
+        const info = await this.AdminInfo(name)
+        return this.proxy.GrantRole(info, mutation)
+    }
+
+    public async AdminRevokeRole(name: string, mutation: GrantMutationDto): Promise<void>
+    {
+        const info = await this.AdminInfo(name)
+        return this.proxy.RevokeRole(info, mutation)
+    }
+
+    public async AdminGetConfig(name: string): Promise<IdentityConfigDto>
+    {
+        const info = await this.AdminInfo(name)
+        return this.proxy.GetConfig(info)
+    }
+
+    public async AdminSetConfig(name: string, config: IdentityConfigDto): Promise<void>
+    {
+        const info = await this.AdminInfo(name)
+        return this.proxy.SetConfig(info, config)
+    }
+
+    /** Resolves the environment's stored Owner credential into connect info for the admin proxy. */
+    private async AdminInfo(name: string): Promise<AdminConnectInfo>
+    {
+        const rec = this.Require(name)
+        const secrets = await EnvironmentService.ReadSecrets(rec.bundleDir)
+        return {
+            httpUrl: EnvironmentService.HttpPrefix + String(rec.hostPort),
+            wsUrl: EnvironmentService.WsPrefix + String(rec.hostPort),
+            tenant: rec.tenantId,
+            email: BundleBuilder.AdminEmailPrefix + rec.tenantId + BundleBuilder.AdminEmailSuffix,
+            password: EnvironmentService.Secret(secrets, rec.tenantId + BundleBuilder.AdminSecretSuffix)
+        }
+    }
+
+    private static async ReadSecrets(bundleDir: string): Promise<Record<string, string>>
+    {
+        return JSON.parse(await readFile(join(bundleDir, EnvironmentService.SecretsFile), EnvironmentService.Utf8)) as Record<string, string>
+    }
+
     private Require(name: string): EnvironmentRecord
     {
         const rec = this.registry.Get(name)
@@ -252,7 +316,7 @@ export class EnvironmentService
 
     private async SeedDemoUsers(def: EnvDefinition, bundleDir: string, seedDir: string, port: number): Promise<void>
     {
-        const secrets = JSON.parse(await readFile(join(bundleDir, EnvironmentService.SecretsFile), EnvironmentService.Utf8)) as Record<string, string>
+        const secrets = await EnvironmentService.ReadSecrets(bundleDir)
         const users = JSON.parse(await readFile(join(seedDir, EnvironmentService.UsersFile), EnvironmentService.Utf8)) as UserSeed[]
         for (const user of users)
         {

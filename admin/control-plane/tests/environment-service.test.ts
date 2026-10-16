@@ -10,6 +10,8 @@ import { EnvironmentService, EnvironmentExistsError, EnvironmentNotFoundError, I
 import type { IDockerEnv, IBundleBuilder, IUserSeeder } from '../docker-env-port.js'
 import type { EnvDefinition } from '../../../environments/seed/bundle.js'
 import type { UserSeed } from '../../../environments/seed/users.js'
+import type { IAdminProxy, AdminConnectInfo, AdminSnapshot } from '../admin-proxy.js'
+import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 class Fixture
 {
@@ -189,8 +191,53 @@ class RecordingRegistry extends EnvironmentRegistry
     }
 }
 
+class FakeAdminProxy implements IAdminProxy
+{
+    public Calls: { method: string; info: AdminConnectInfo; args: unknown[] }[] = []
+    public Snapshot = { accounts: [], grants: [], config: {} } as unknown as AdminSnapshot
+    public Config = { marker: 'cfg' } as unknown as IdentityConfigDto
+
+    public async LoadAdmin(info: AdminConnectInfo): Promise<AdminSnapshot>
+    {
+        this.Calls.push({ method: 'LoadAdmin', info, args: [] })
+        return this.Snapshot
+    }
+
+    public async CreateAccount(info: AdminConnectInfo, params: CreateAccountParams): Promise<void>
+    {
+        this.Calls.push({ method: 'CreateAccount', info, args: [params] })
+    }
+
+    public async DisableAccount(info: AdminConnectInfo, principalId: string): Promise<void>
+    {
+        this.Calls.push({ method: 'DisableAccount', info, args: [principalId] })
+    }
+
+    public async GrantRole(info: AdminConnectInfo, mutation: GrantMutationDto): Promise<void>
+    {
+        this.Calls.push({ method: 'GrantRole', info, args: [mutation] })
+    }
+
+    public async RevokeRole(info: AdminConnectInfo, mutation: GrantMutationDto): Promise<void>
+    {
+        this.Calls.push({ method: 'RevokeRole', info, args: [mutation] })
+    }
+
+    public async GetConfig(info: AdminConnectInfo): Promise<IdentityConfigDto>
+    {
+        this.Calls.push({ method: 'GetConfig', info, args: [] })
+        return this.Config
+    }
+
+    public async SetConfig(info: AdminConnectInfo, config: IdentityConfigDto): Promise<void>
+    {
+        this.Calls.push({ method: 'SetConfig', info, args: [config] })
+    }
+}
+
 class Harness
 {
+    public readonly Proxy = new FakeAdminProxy()
     public readonly Calls: string[] = []
     public readonly Docker = new FakeDocker(this.Calls)
     public readonly Bundle = new FakeBundle(this.Calls)
@@ -206,7 +253,7 @@ class Harness
         h.DataRoot = join(dir, 'data')
         h.Registry = new RecordingRegistry(join(dir, 'envs.json'), new FakeProbe(), h.Calls)
         await h.Registry.Load()
-        h.Service = new EnvironmentService(h.Registry, new FakeAllocator(h.Calls, busy), h.Docker, h.Bundle, h.Seeder, h.DataRoot)
+        h.Service = new EnvironmentService(h.Registry, new FakeAllocator(h.Calls, busy), h.Docker, h.Bundle, h.Seeder, h.DataRoot, h.Proxy)
         return h
     }
 
@@ -323,4 +370,74 @@ test('user-supplied busy port propagates before any docker call', async () =>
     const h = await Harness.Make(true)
     await assert.rejects(() => h.Service.Create('a', Template.DevBlank, 9300), PortUnavailableError)
     assert.deepEqual(h.Calls, ['check'])
+})
+
+class AdminFixture
+{
+    public static readonly Name = 'adm'
+    public static readonly Password = 'owner-secret'
+
+    public static async Seed(h: Harness, withSecret = true): Promise<void>
+    {
+        const bundleDir = await mkdtemp(join(tmpdir(), 'envsvc-bundle-'))
+        const secrets: Record<string, string> = withSecret ? { 'adm-admin-pw': AdminFixture.Password } : {}
+        await writeFile(join(bundleDir, 'provisioned-secrets.json'), JSON.stringify(secrets))
+        await h.Registry.Put({ ...Harness.Record(AdminFixture.Name, EnvStatus.Running), bundleDir })
+    }
+}
+
+test('AdminSnapshot builds the exact connect info from the record and stored secret', async () =>
+{
+    const h = await Harness.Make()
+    await AdminFixture.Seed(h)
+    const snap = await h.Service.AdminSnapshot(AdminFixture.Name)
+    assert.equal(snap, h.Proxy.Snapshot)
+    assert.equal(h.Proxy.Calls.length, 1)
+    assert.equal(h.Proxy.Calls[0].method, 'LoadAdmin')
+    assert.deepEqual(h.Proxy.Calls[0].info, {
+        httpUrl: 'http://localhost:9200',
+        wsUrl: 'ws://localhost:9200',
+        tenant: 'adm',
+        email: 'admin@adm.test',
+        password: AdminFixture.Password
+    })
+})
+
+test('other Admin methods delegate with the same info and their args', async () =>
+{
+    const h = await Harness.Make()
+    await AdminFixture.Seed(h)
+    const params = { email: 'a@b.c' } as unknown as CreateAccountParams
+    const mutation = { principalId: 'p' } as unknown as GrantMutationDto
+    const config = { marker: 'new' } as unknown as IdentityConfigDto
+    await h.Service.AdminCreateAccount(AdminFixture.Name, params)
+    await h.Service.AdminDisableAccount(AdminFixture.Name, 'p1')
+    await h.Service.AdminGrantRole(AdminFixture.Name, mutation)
+    await h.Service.AdminRevokeRole(AdminFixture.Name, mutation)
+    const got = await h.Service.AdminGetConfig(AdminFixture.Name)
+    await h.Service.AdminSetConfig(AdminFixture.Name, config)
+    assert.equal(got, h.Proxy.Config)
+    assert.deepEqual(h.Proxy.Calls.map(c => c.method), ['CreateAccount', 'DisableAccount', 'GrantRole', 'RevokeRole', 'GetConfig', 'SetConfig'])
+    assert.deepEqual(h.Proxy.Calls.map(c => c.args), [[params], ['p1'], [mutation], [mutation], [], [config]])
+    for (const c of h.Proxy.Calls)
+    {
+        assert.equal(c.info.password, AdminFixture.Password)
+        assert.equal(c.info.email, 'admin@adm.test')
+    }
+})
+
+test('Admin methods on an unknown environment throw EnvironmentNotFoundError without calling the proxy', async () =>
+{
+    const h = await Harness.Make()
+    await assert.rejects(() => h.Service.AdminSnapshot('nope'), EnvironmentNotFoundError)
+    await assert.rejects(() => h.Service.AdminSetConfig('nope', {} as IdentityConfigDto), EnvironmentNotFoundError)
+    assert.equal(h.Proxy.Calls.length, 0)
+})
+
+test('Admin methods throw when the admin secret is missing and never call the proxy', async () =>
+{
+    const h = await Harness.Make()
+    await AdminFixture.Seed(h, false)
+    await assert.rejects(() => h.Service.AdminSnapshot(AdminFixture.Name), /no provisioned secret for adm-admin-pw/)
+    assert.equal(h.Proxy.Calls.length, 0)
 })
