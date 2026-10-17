@@ -44,3 +44,17 @@ test('ToMap rejects a non-finite number', () =>
 {
     assert.throws(() => CypherParamConverter.ToMap({ n: Number.POSITIVE_INFINITY }), CypherParamError)
 })
+
+test('Canonical sorts keys recursively so key order does not change the text', () =>
+{
+    const a = CypherParamConverter.Canonical({ b: 1, a: { y: [{ q: 1, p: 2 }], x: null } })
+    const b = CypherParamConverter.Canonical({ a: { x: null, y: [{ p: 2, q: 1 }] }, b: 1 })
+    assert.equal(a, b)
+    assert.equal(a, '{"a":{"x":null,"y":[{"p":2,"q":1}]},"b":1}')
+})
+
+test('Canonical keeps list order and treats absent parameters as empty', () =>
+{
+    assert.notEqual(CypherParamConverter.Canonical({ xs: [1, 2] }), CypherParamConverter.Canonical({ xs: [2, 1] }))
+    assert.equal(CypherParamConverter.Canonical(undefined), CypherParamConverter.Canonical({}))
+})

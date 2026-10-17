@@ -28,6 +28,7 @@ import { TenantPurpose } from '../tenancy/tenant-purpose.js'
 import type { PragmaticAppsRegistry } from './apps/pragmatic-apps-registry.js'
 import { CypherLimits } from '../config/cypher-limits.js'
 import { PagingLimits } from '../config/paging-limits.js'
+import { PageFingerprint, PageRequest } from './paging/page-request.js'
 import { BuildStateMapper } from './build-state-mapper.js'
 import { CypherParamConverter, CypherParamError } from './cypher/cypher-param-converter.js'
 import { AdapterPackError, AdapterPackErrorKind } from '@pragmatic-tech-ai/todl-connectors-host'
@@ -63,6 +64,7 @@ export class ServerConnectionHandler
     private static readonly InvalidParamsPrefix = 'invalid params: '
     private static readonly CypherField = 'cypher'
     private static readonly CypherTimeoutMessage = 'cypher query timed out'
+    private static readonly CypherFingerprintTag = 'cypher'
     private static readonly NotRuntimeMessage = 'operation requires a runtime tenant'
     private static readonly NotDevelopmentMessage = 'operation requires a development tenant'
     private static readonly NameMismatchMessage = 'application manifest name does not match requested name: '
@@ -424,11 +426,14 @@ export class ServerConnectionHandler
         const graph = this.purpose === TenantPurpose.Runtime
             ? await this.RequireBoundAppGraph(Cypher.ReferencedLabels.Of(source))
             : await this.graphProvider(this.accessContext)
+        // read the revision only once the graph is in hand: acquiring it may itself commit the first build
+        const fingerprint = PageFingerprint.Of(ServerConnectionHandler.CypherFingerprintTag, source, CypherParamConverter.Canonical(params.parameters), String(this.languageService.GraphRevision))
+        const page = PageRequest.Resolve(params, fingerprint, this.paging, this.cypherLimits.RowCap)
         try
         {
             const engine = Cypher.CypherEngine.OverQuery(graph, { MaxVarLength: this.cypherLimits.MaxVarLength })
-            const result = engine.Execute(source, parameters, { RowCap: this.cypherLimits.RowCap, Cancel: Cypher.Deadline.After(this.cypherLimits.TimeoutMs) })
-            return CypherResultMapper.ToWire(Cypher.CypherEngine.ToDto(result))
+            const result = engine.Execute(source, parameters, { Skip: page.Offset, RowCap: page.Size, Cancel: Cypher.Deadline.After(this.cypherLimits.TimeoutMs) })
+            return CypherResultMapper.ToWire(Cypher.CypherEngine.ToDto(result), page.NextCursor(result.HasMore))
         }
         catch (error)
         {

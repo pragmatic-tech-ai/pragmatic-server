@@ -196,13 +196,17 @@ test('cypher/query rejects an empty query with InvalidParams', async () =>
     })
 })
 
-test('cypher/query honours an overridden low row cap with truncated true', async () =>
+test('cypher/query caps the page at an overridden low row cap and pages the rest via nextCursor', async () =>
 {
     await CypherSurfaceFixture.With(async client =>
     {
         const result = await client.CypherQuery(CypherSurfaceFixture.NameQuery)
         assert.equal(result.items.length, 1)
-        assert.equal(result.truncated, true)
+        assert.equal(result.truncated, false)
+        assert.ok(result.nextCursor !== undefined)
+        const rest = await client.CypherQuery(CypherSurfaceFixture.NameQuery, undefined, { cursor: result.nextCursor })
+        assert.equal(rest.items.length, 1)
+        assert.equal(rest.nextCursor, undefined)
     }, new CypherLimits(1))
 })
 

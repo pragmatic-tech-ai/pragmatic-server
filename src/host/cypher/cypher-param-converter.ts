@@ -35,6 +35,30 @@ export class CypherParamConverter
         return map
     }
 
+    /** Canonical JSON of the wire parameters (recursively key-sorted), so equal bindings yield equal text regardless of key order. */
+    public static Canonical(parameters: { [k: string]: CypherParamValue } | undefined): string
+    {
+        return JSON.stringify(CypherParamConverter.Sorted(parameters ?? {}))
+    }
+
+    private static Sorted(value: unknown): unknown
+    {
+        if (Array.isArray(value))
+        {
+            return value.map(v => CypherParamConverter.Sorted(v))
+        }
+        if (value !== null && typeof value === 'object')
+        {
+            const record: { [key: string]: unknown } = Object.create(null)
+            for (const key of Object.keys(value).sort())
+            {
+                record[key] = CypherParamConverter.Sorted((value as { [key: string]: unknown })[key])
+            }
+            return record
+        }
+        return value
+    }
+
     public static ToValue(value: unknown): ParameterValue
     {
         if (value === null || typeof value === 'string' || typeof value === 'boolean')
