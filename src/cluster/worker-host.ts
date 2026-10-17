@@ -126,7 +126,6 @@ export class WorkerHost
     private static readonly StepObservability = 'observability-shutdown'
     private static readonly StepRegistry = 'registry-dispose'
     private static readonly DefaultDrainTimeoutMs = 0
-    private static readonly ZeroInFlight: IInFlightSource = { InFlight: () => 0 }
 
     private readonly httpsServer: HttpsServer
     private readonly wss: WebSocketServer

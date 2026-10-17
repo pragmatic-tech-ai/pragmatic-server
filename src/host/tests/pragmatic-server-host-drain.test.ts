@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { trace, metrics } from '@opentelemetry/api'
 import { WebSocket } from 'ws'
+import { TransportCloseCode } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { Grant, Role, ResourceRef, ResourceKind } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServerHost } from '../pragmatic-server-host.js'
 import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
@@ -355,6 +356,25 @@ test('the heartbeat monitor watches a live ws client and is emptied on dispose',
     finally
     {
         await host.DisposeAsync()
+        rmSync(baseDir, { recursive: true, force: true })
+    }
+})
+
+test('a cleanly drained ws client is closed with GoingAway (1001)', async () =>
+{
+    const baseDir = mkdtempSync(join(tmpdir(), 'ps-drain-'))
+    mkdirSync(join(baseDir, 't1'), { recursive: true })
+    cpSync(join(import.meta.dirname, '..', '..', 'tests', 'fixtures', 'sample-solution'), join(baseDir, 't1', 'solution'), { recursive: true })
+    const host = await DrainFixture.Start(baseDir, 3000)
+    try
+    {
+        const ws = await WsFixture.Connect(host, 't1')
+        const closeCode = new Promise<number>(resolve => ws.once('close', code => resolve(code)))
+        await host.DisposeAsync()
+        assert.equal(await closeCode, TransportCloseCode.GoingAway)
+    }
+    finally
+    {
         rmSync(baseDir, { recursive: true, force: true })
     }
 })

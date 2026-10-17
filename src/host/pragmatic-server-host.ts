@@ -130,7 +130,6 @@ export class PragmaticServerHost
     private static readonly StepRegistry = 'registry-dispose'
     private static readonly StepWait = 'in-flight-wait'
     private static readonly DefaultDrainTimeoutMs = 0
-    private static readonly ZeroInFlight: IInFlightSource = { InFlight: () => 0 }
 
     private readonly httpServer: HttpServer | HttpsServer
     private readonly wss: WebSocketServer
