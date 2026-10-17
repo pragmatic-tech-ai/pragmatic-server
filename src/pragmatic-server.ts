@@ -36,10 +36,10 @@ import type { ConnectorsPolicy } from './host/connector-policy.js'
 import { Action } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import { IdentityEnforcement, PolicyCatalog, CompositeInstanceFilter } from '@pragmatic-tech-ai/todl-identity-engine'
-import { TenantReadAuthorization, AllowAllReadFilterSource } from './host/cypher/read-filter-source.js'
+import { TenantReadAuthorization, AllowAllReadFilterSource, AllowAllFieldReadMaskSource } from './host/cypher/read-filter-source.js'
 import { FieldMaskedGraphQuery, AllowAllFieldReadMask } from './host/cypher/field-masked-graph-query.js'
 import { AllowAllWriteAuthorizerSource } from './host/cypher/read-filter-source.js'
-import type { IReadFilterSource, IWriteAuthorizerSource } from './host/cypher/read-filter-source.js'
+import type { IReadFilterSource, IWriteAuthorizerSource, IFieldReadMaskSource } from './host/cypher/read-filter-source.js'
 import { AllowAllWriteInstanceGate } from './host/cypher/write-instance-gate.js'
 import type { IWriteInstanceGate } from './host/cypher/write-instance-gate.js'
 import { FilteredReadWriteTargetSource } from './host/filtered-read-write-target-source.js'
@@ -259,6 +259,16 @@ export class PragmaticServer
             throw new Error(PragmaticServer.NotStartedError)
         }
         return this.root.Resolve(TenantConfigStoreKey)
+    }
+
+    /** The per-request field-read mask source: allow-all without identity, else the tenant's field security. */
+    public async FieldReadMaskSource(): Promise<IFieldReadMaskSource>
+    {
+        if (this.identity === undefined)
+        {
+            return AllowAllFieldReadMaskSource.Instance
+        }
+        return this.ReadAuthorization()
     }
 
     private async DepthFilterSource(): Promise<IReadFilterSource>

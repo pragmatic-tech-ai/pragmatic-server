@@ -26,6 +26,7 @@ class ModelFixture
     private static readonly PackagesPrefix = 'ps-pkgs-'
     public static readonly WidgetId = 'acme.Widget'
     public static readonly UnknownMember = 'no/such/member'
+    public static readonly OntologyTier = 'Ontology'
 
     public static SolutionDir(): string
     {
@@ -82,6 +83,11 @@ test('ModelView over the wire projects the member model to JSON including the fi
             const projection = await client.ModelView(memberId)
             const ids = projection.items.map(m => m.id)
             assert.ok(ids.includes(ModelFixture.WidgetId))
+            assert.equal(projection.nextCursor, undefined)
+            const widget = projection.items.find(m => m.id === ModelFixture.WidgetId)!
+            assert.equal(widget.tier, ModelFixture.OntologyTier)
+            assert.equal(typeof widget.attrs, 'object')
+            assert.ok(Array.isArray(widget.edges))
             // the projection must be plain JSON - survives a round-trip unchanged
             assert.deepEqual(JSON.parse(JSON.stringify(projection)), projection)
         })

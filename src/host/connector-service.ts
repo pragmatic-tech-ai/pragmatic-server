@@ -2,6 +2,7 @@ import type { ConnectorRuntime } from '../connectors/connector-runtime.js'
 import type { ConnectorModelDto, ConnectorWriteBackParams, EntityDto, FlushOutcomeDto, Page, PageParams, ConnectionProbeDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { PagingLimits } from '../config/paging-limits.js'
 import { PageFingerprint, PageRequest } from './paging/page-request.js'
+import { WireScalar } from './wire-scalar.js'
 
 /** Per-connection façade over the 6A ConnectorRuntime: lazily holds one runtime (rebuilt on Invalidate, i.e.
  *  connector/refresh or solution/open) and maps engine info shapes to camelCase wire DTOs. Carries names,
@@ -63,7 +64,7 @@ export class ConnectorService
         const fingerprint = PageFingerprint.Of(ConnectorService.ConnectorFingerprintTag, modelId, concept, runtime.Revision)
         const page = PageRequest.Resolve(params, fingerprint, limits)
         const result = await runtime.ReadEntities(modelId, concept, { Skip: page.Offset, Take: page.Size })
-        const items = result.Entities.map((e) => ({ id: e.id, concept: e.concept, fields: ConnectorService.Fields(e.Snapshot()) }))
+        const items = result.Entities.map((e) => ({ id: e.id, concept: e.concept, fields: WireScalar.Record(e.Snapshot()) }))
         const nextCursor = page.NextCursor(result.HasMore)
         return nextCursor === undefined ? { items } : { items, nextCursor }
     }
@@ -73,7 +74,7 @@ export class ConnectorService
         const runtime = await this.Runtime()
         const outcome = await runtime.WriteBack(params.modelId, params.dirty, params.deleted)
         return {
-            results: outcome.Results.map((r) => ({ applied: r.Applied, conflicts: r.Conflicts.map((c) => ({ key: ConnectorService.Scalar(c.Key), reason: c.Reason })) })),
+            results: outcome.Results.map((r) => ({ applied: r.Applied, conflicts: r.Conflicts.map((c) => ({ key: WireScalar.Of(c.Key), reason: c.Reason })) })),
             diagnostics: outcome.Diagnostics.map((d) => ({ code: d.code, message: d.message })),
         }
     }
@@ -83,22 +84,5 @@ export class ConnectorService
         const runtime = await this.Runtime()
         const probe = await runtime.TestConnection(modelId, connectorName)
         return probe.Detail === undefined ? { ok: probe.Ok } : { ok: probe.Ok, detail: probe.Detail }
-    }
-
-    private static Fields(snapshot: Record<string, unknown>): Record<string, string | number | boolean | null>
-    {
-        const out: Record<string, string | number | boolean | null> = {}
-        for (const key of Object.keys(snapshot))
-        {
-            out[key] = ConnectorService.Scalar(snapshot[key])
-        }
-        return out
-    }
-
-    private static Scalar(value: unknown): string | number | boolean | null
-    {
-        if (value === null || value === undefined) { return null }
-        if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') { return value }
-        return String(value)
     }
 }

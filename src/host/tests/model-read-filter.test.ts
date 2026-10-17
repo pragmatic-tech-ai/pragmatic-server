@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { Repository } from '@pragmatic-tech-ai/todl'
 import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { ModelReadFilter } from '../model-read-filter.js'
+import { AllowAllFieldReadMask } from '../cypher/field-masked-graph-query.js'
 
 class ModelFixture
 {
@@ -10,6 +11,7 @@ class ModelFixture
     public static readonly Region = 'region'
     public static readonly Eu = 'shop.Customer:cust-eu'
     public static readonly Us = 'shop.Customer:cust-us'
+    public static readonly All = 1000
 
     public static Context(): AccessContext
     {
@@ -58,45 +60,45 @@ class ModelFixture
 
 test('a policy allow-where rule keeps the matching instance and drops the rest', () =>
 {
-    const filter = new ModelReadFilter(ModelFixture.WithPolicy(), ModelFixture.Context())
-    const ids = filter.Project(new Map()).items.map(member => member.id)
+    const filter = new ModelReadFilter(ModelFixture.WithPolicy(), ModelFixture.Context(), AllowAllFieldReadMask.Instance)
+    const ids = filter.Page(new Map(), 0, ModelFixture.All).Items.map(member => member.id)
     assert.ok(ids.includes(ModelFixture.Eu))
     assert.ok(!ids.includes(ModelFixture.Us))
 })
 
 test('a hidden instance id does not leak through provenanceOf', () =>
 {
-    const filter = new ModelReadFilter(ModelFixture.WithPolicy(), ModelFixture.Context())
+    const filter = new ModelReadFilter(ModelFixture.WithPolicy(), ModelFixture.Context(), AllowAllFieldReadMask.Instance)
     const provenance = new Map([[ModelFixture.Eu, 'a.todl'], [ModelFixture.Us, 'b.todl']])
-    const projection = filter.Project(provenance)
-    assert.equal(projection.provenanceOf[ModelFixture.Eu], 'a.todl')
-    assert.equal(ModelFixture.Us in projection.provenanceOf, false)
+    const projection = filter.Page(provenance, 0, ModelFixture.All)
+    assert.equal(projection.ProvenanceOf[ModelFixture.Eu], 'a.todl')
+    assert.equal(ModelFixture.Us in projection.ProvenanceOf, false)
 })
 
 test('Hidden reports the dropped instance and not the permitted one', () =>
 {
-    const filter = new ModelReadFilter(ModelFixture.WithPolicy(), ModelFixture.Context())
+    const filter = new ModelReadFilter(ModelFixture.WithPolicy(), ModelFixture.Context(), AllowAllFieldReadMask.Instance)
     assert.equal(filter.Hidden(ModelFixture.Us), true)
     assert.equal(filter.Hidden(ModelFixture.Eu), false)
 })
 
 test('a model with no policy keeps every instance', () =>
 {
-    const filter = new ModelReadFilter(ModelFixture.NoPolicy(), ModelFixture.Context())
-    const ids = filter.Project(new Map()).items.map(member => member.id)
+    const filter = new ModelReadFilter(ModelFixture.NoPolicy(), ModelFixture.Context(), AllowAllFieldReadMask.Instance)
+    const ids = filter.Page(new Map(), 0, ModelFixture.All).Items.map(member => member.id)
     assert.ok(ids.includes(ModelFixture.Eu))
     assert.ok(ids.includes(ModelFixture.Us))
 })
 
 test('Hidden is false for an id the model cannot resolve', () =>
 {
-    const filter = new ModelReadFilter(ModelFixture.WithPolicy(), ModelFixture.Context())
+    const filter = new ModelReadFilter(ModelFixture.WithPolicy(), ModelFixture.Context(), AllowAllFieldReadMask.Instance)
     assert.equal(filter.Hidden('shop.Customer:does-not-exist'), false)
 })
 
 test('a structural definition node survives filtering', () =>
 {
-    const filter = new ModelReadFilter(ModelFixture.WithPolicy(), ModelFixture.Context())
-    const ids = filter.Project(new Map()).items.map(member => member.id)
+    const filter = new ModelReadFilter(ModelFixture.WithPolicy(), ModelFixture.Context(), AllowAllFieldReadMask.Instance)
+    const ids = filter.Page(new Map(), 0, ModelFixture.All).Items.map(member => member.id)
     assert.ok(ids.includes(ModelFixture.Concept))
 })

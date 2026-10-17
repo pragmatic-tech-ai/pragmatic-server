@@ -15,6 +15,12 @@ export interface IReadFilterSource
     ReadFilterFor(context: AccessContext): Promise<IInstanceFilter>
 }
 
+/** Produces the FIELD-READ mask for a request. One of two impls is chosen by the server per the identity state. */
+export interface IFieldReadMaskSource
+{
+    FieldReadMaskFor(context: AccessContext): Promise<IFieldReadMask>
+}
+
 /** Coarse (view-free) per-concept write gate: EffectiveLevel !== None. Per-instance depth is SP-3d. */
 export interface IWriteAuthorizer
 {
@@ -74,7 +80,7 @@ export class AllowAllWriteAuthorizerSource implements IWriteAuthorizerSource
  * The SecurityModel is static post-Start (runtime role editing is deferred), so the evaluator is
  * built once per tenant. Cache invalidation on config change is a deferred follow-up.
  */
-export class TenantReadAuthorization implements IReadFilterSource, IWriteAuthorizerSource
+export class TenantReadAuthorization implements IReadFilterSource, IWriteAuthorizerSource, IFieldReadMaskSource
 {
     private readonly evaluators = new Map<string, Promise<AccessDepthEvaluator>>()
 
@@ -159,5 +165,16 @@ export class AllowAllReadFilterSource implements IReadFilterSource
     public async ReadFilterFor(): Promise<IInstanceFilter>
     {
         return new AllowAllInstanceFilter()
+    }
+}
+
+/** No identity subsystem: field security is inactive; every field is readable. */
+export class AllowAllFieldReadMaskSource implements IFieldReadMaskSource
+{
+    public static readonly Instance = new AllowAllFieldReadMaskSource()
+
+    public async FieldReadMaskFor(): Promise<IFieldReadMask>
+    {
+        return AllowAllFieldReadMask.Instance
     }
 }
