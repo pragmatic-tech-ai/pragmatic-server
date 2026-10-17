@@ -32,9 +32,24 @@ export class PageRequest
         this.fingerprint = fingerprint
     }
 
+    /** Rejects a non-positive or non-integer pageSize with InvalidParams; an absent pageSize is valid (the default applies). */
+    public static ValidatePageSize(params: PageParams): void
+    {
+        const pageSize: unknown = params?.pageSize
+        if (pageSize === undefined || pageSize === null)
+        {
+            return
+        }
+        if (typeof pageSize !== 'number' || !Number.isSafeInteger(pageSize) || pageSize <= 0)
+        {
+            throw new ResponseError(ErrorCodes.InvalidParams, PageRequest.BadPageSize)
+        }
+    }
+
     public static Resolve(params: PageParams, fingerprint: string, limits: PagingLimits, cap?: number): PageRequest
     {
-        const size = Math.min(PageRequest.RequestedSize(params?.pageSize, limits), limits.MaxPageSize, cap ?? Infinity)
+        PageRequest.ValidatePageSize(params)
+        const size = Math.min(params?.pageSize ?? limits.PageSize, limits.MaxPageSize, cap ?? Infinity)
         return new PageRequest(PageRequest.OffsetOf(params?.cursor, fingerprint), size, fingerprint)
     }
 
@@ -45,19 +60,6 @@ export class PageRequest
             return undefined
         }
         return PageCursorCodec.Encode({ offset: this.Offset + this.Size, fingerprint: this.fingerprint })
-    }
-
-    private static RequestedSize(pageSize: unknown, limits: PagingLimits): number
-    {
-        if (pageSize === undefined || pageSize === null)
-        {
-            return limits.PageSize
-        }
-        if (typeof pageSize !== 'number' || !Number.isSafeInteger(pageSize) || pageSize <= 0)
-        {
-            throw new ResponseError(ErrorCodes.InvalidParams, PageRequest.BadPageSize)
-        }
-        return pageSize
     }
 
     private static OffsetOf(cursor: unknown, fingerprint: string): number

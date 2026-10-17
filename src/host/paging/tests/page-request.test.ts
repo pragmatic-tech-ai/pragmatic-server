@@ -54,7 +54,19 @@ for (const bad of [0, -1, 2.5])
     {
         Fixture.AssertCode(() => PageRequest.Resolve({ pageSize: bad }, Fixture.Fingerprint, Fixture.Limits()), ErrorCodes.InvalidParams)
     })
+
+    test(`ValidatePageSize rejects pageSize ${bad} with InvalidParams`, () =>
+    {
+        Fixture.AssertCode(() => PageRequest.ValidatePageSize({ pageSize: bad }), ErrorCodes.InvalidParams)
+    })
 }
+
+test('ValidatePageSize accepts an absent or positive integer pageSize', () =>
+{
+    PageRequest.ValidatePageSize({})
+    PageRequest.ValidatePageSize({ pageSize: 1 })
+    PageRequest.ValidatePageSize({ pageSize: 6000 })
+})
 
 test('a cursor from another fingerprint throws the stale-cursor error', () =>
 {

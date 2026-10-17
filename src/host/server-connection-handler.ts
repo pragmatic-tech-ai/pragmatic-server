@@ -410,6 +410,7 @@ export class ServerConnectionHandler
     public async RunCypherQuery(params: CypherQueryParams): Promise<CypherQueryPageDto>
     {
         const source = this.RequireNonEmptyString(params?.cypher, ServerConnectionHandler.CypherField)
+        PageRequest.ValidatePageSize(params)
         let parameters: ReadonlyMap<string, Cypher.ParameterValue>
         try
         {
@@ -426,7 +427,9 @@ export class ServerConnectionHandler
         const graph = this.purpose === TenantPurpose.Runtime
             ? await this.RequireBoundAppGraph(Cypher.ReferencedLabels.Of(source))
             : await this.graphProvider(this.accessContext)
-        // read the revision only once the graph is in hand: acquiring it may itself commit the first build
+        // read the revision only once the graph is in hand: acquiring it may itself commit the first build, so
+        // reading GraphRevision before the fetch would fingerprint page 1 against the pre-build revision and
+        // page 2 would then always be rejected as stale
         const fingerprint = PageFingerprint.Of(ServerConnectionHandler.CypherFingerprintTag, source, CypherParamConverter.Canonical(params.parameters), String(this.languageService.GraphRevision))
         const page = PageRequest.Resolve(params, fingerprint, this.paging, this.cypherLimits.RowCap)
         try

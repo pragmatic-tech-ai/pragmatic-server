@@ -7,6 +7,7 @@ import { InMemoryMessageSocket, PragmaticClient, ErrorCodes, CursorStaleError } 
 import type { CypherParamValue, CypherQueryPageDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
+import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import { CypherLimits } from '../../config/cypher-limits.js'
 import { TenantPurpose } from '../../tenancy/tenant-purpose.js'
 import { PragmaticServer } from '../../pragmatic-server.js'
@@ -21,6 +22,7 @@ class CypherPagingWorld
     private readonly manager: SolutionManagerService
     private readonly limits: CypherLimits | undefined
     private readonly connections: { client: PragmaticClient, handler: ServerConnectionHandler }[] = []
+    private graphFetches = 0
 
     public constructor(server: PragmaticServer, language: SolutionLanguageService, manager: SolutionManagerService, limits: CypherLimits | undefined)
     {
@@ -40,10 +42,22 @@ class CypherPagingWorld
     public Connect(): PragmaticClient
     {
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, this.Language, this.manager, CypherPagingFixture.Permissive(), () => Promise.reject(new Error(CypherPagingFixture.NoConnectors)), ctx => this.server.Graph(ctx), undefined, undefined, undefined, undefined, undefined, this.limits, TenantPurpose.Development)
+        const handler = ServerConnectionHandler.Attach(serverSocket, this.Language, this.manager, CypherPagingFixture.Permissive(), () => Promise.reject(new Error(CypherPagingFixture.NoConnectors)), ctx => this.FetchGraph(ctx), undefined, undefined, undefined, undefined, undefined, this.limits, TenantPurpose.Development)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         this.connections.push({ client, handler })
         return client
+    }
+
+    /** How many times any attached handler asked for the tenant graph. */
+    public get GraphFetches(): number
+    {
+        return this.graphFetches
+    }
+
+    private FetchGraph(context: AccessContext): Promise<IGraphQuery>
+    {
+        this.graphFetches++
+        return this.server.Graph(context)
     }
 
     public async Dispose(): Promise<void>
@@ -240,11 +254,14 @@ test('pageSize above RowCap is capped at RowCap', async () =>
     }, new CypherLimits(3))
 })
 
-test('pageSize 0 is InvalidParams', async () =>
+test('pageSize 0 is InvalidParams and is rejected before the graph is fetched', async () =>
 {
     await CypherPagingFixture.With(async world =>
     {
         const client = world.Connect()
         await assert.rejects(() => client.CypherQuery(CypherPagingFixture.OrderedLabels, undefined, { pageSize: 0 }), (error: { code?: number }) => error.code === ErrorCodes.InvalidParams)
+        assert.equal(world.GraphFetches, 0)
+        await client.CypherQuery(CypherPagingFixture.OrderedLabels, undefined, { pageSize: 1 })
+        assert.equal(world.GraphFetches, 1)
     })
 })
