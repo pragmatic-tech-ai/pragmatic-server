@@ -9,6 +9,11 @@ import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-s
 import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
+import { InMemorySpanExporter } from '@opentelemetry/sdk-trace-base'
+import { PeriodicExportingMetricReader, InMemoryMetricExporter, AggregationTemporality } from '@opentelemetry/sdk-metrics'
+import { Observability, ObservabilityRole } from '../../observability/observability.js'
+import { RequestInstrumentation } from '../../observability/request-instrumentation.js'
+import { NullLogger } from '../../observability/logger.js'
 import { DrainController } from '../../observability/drain-controller.js'
 import { WsInFlightSource } from '../../observability/ws-in-flight-source.js'
 
@@ -50,14 +55,14 @@ class Harness
         this.Client = client
     }
 
-    public static async Create(gate: Promise<void>): Promise<Harness>
+    public static async Create(gate: Promise<void>, instrumentation?: RequestInstrumentation): Promise<Harness>
     {
         const server = new PragmaticServer({ packagesRoot: mkdtempSync(join(tmpdir(), 'ps-pkgs-drain-')) })
         await server.Start()
         const service = (await server.LanguageService()) as SolutionLanguageService
         const manager = await server.Manager()
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, Fixtures.Gated(service, gate), manager, Fixtures.OwnerContext(), () => Promise.reject(new Error('no connectors')), () => Promise.reject(new Error('no graph')))
+        const handler = ServerConnectionHandler.Attach(serverSocket, Fixtures.Gated(service, gate), manager, Fixtures.OwnerContext(), () => Promise.reject(new Error('no connectors')), () => Promise.reject(new Error('no graph')), instrumentation)
         return new Harness(server, service, handler, PragmaticClient.CreateOverSocket(clientSocket))
     }
 
@@ -125,5 +130,35 @@ test('a running request completes after BeginDrain while a new request is reject
     finally
     {
         await harness.Close()
+    }
+})
+
+test('the instrumented dispatch path returns InFlight to 0 on both success and failure', async () =>
+{
+    const observability = Observability.ForTest({ role: ObservabilityRole.Host, serviceName: 'svc' }, new InMemorySpanExporter(), new PeriodicExportingMetricReader({ exporter: new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE), exportIntervalMillis: 2_147_483_647 }))
+    const instrumentation = RequestInstrumentation.FromObservability(observability, new NullLogger())
+    const failing = Promise.reject(new Error('boom'))
+    failing.catch(() => undefined)
+    const ok = await Harness.Create(Promise.resolve(), instrumentation)
+    try
+    {
+        await ok.Client.DiagnosticsFor('file:///a.todl')
+        await Ticks.Settle()
+        assert.equal(ok.Handler.InFlight(), 0)
+    }
+    finally
+    {
+        await ok.Close()
+    }
+    const bad = await Harness.Create(failing, instrumentation)
+    try
+    {
+        await assert.rejects(() => bad.Client.DiagnosticsFor('file:///a.todl'))
+        await Ticks.Settle()
+        assert.equal(bad.Handler.InFlight(), 0)
+    }
+    finally
+    {
+        await bad.Close()
     }
 })
