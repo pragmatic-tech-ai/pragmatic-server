@@ -20,6 +20,7 @@ import type { MachineAuthContext } from './auth-http-endpoint.js'
 import type { MasterKeyRef } from '../identity/master-key-resolver.js'
 import type { CypherLimits } from '../config/cypher-limits.js'
 import type { IProvisionedSecretSource } from '../config/provisioned-secret-source.js'
+import type { AdapterPacksConfig } from '../config/server-config.js'
 import type { PragmaticServer } from '../pragmatic-server.js'
 import { ServerConnectionHandler } from './server-connection-handler.js'
 import { AdminService } from './admin-service.js'
@@ -63,6 +64,7 @@ export interface PragmaticServerHostOptions
     redisUrl?: string
     replicaId?: string
     provisionedSecrets?: IProvisionedSecretSource
+    adapterPacks?: AdapterPacksConfig
     clientTls?: MachineTlsRef
     logger?: ILogger
     observability?: Observability
@@ -208,7 +210,7 @@ export class PragmaticServerHost
             ? new RedisTenantOwnership(options.redisUrl, options.replicaId ?? randomUUID())
             : new InMemoryTenantOwnership()
         await ownership.Start().catch(() => {})
-        const registry = new TenantRegistry(options.baseDir, options.masterKey, options.provisioning, coordinator, options.platform, options.deploymentMode, ownership, options.provisionedSecrets, PragmaticServerHost.BuildIdentityRuntime(options.redisUrl))
+        const registry = new TenantRegistry(options.baseDir, options.masterKey, options.provisioning, coordinator, options.platform, options.deploymentMode, ownership, options.provisionedSecrets, PragmaticServerHost.BuildIdentityRuntime(options.redisUrl), options.adapterPacks)
         const host = options.host ?? PragmaticServerHost.DefaultHost
         const httpServer = options.clientTls === undefined ? createServer() : httpsCreateServer(MachineTls.OptionalServer(options.clientTls))
         const wss = new WebSocketServer({ noServer: true })

@@ -6,7 +6,8 @@ import type { MachineTlsRef } from '../cluster/machine-tls.js'
 import { AuditSinkKind } from './audit-sink-kind.js'
 import type { RateLimitConfig, RateLimitSettings } from '../host/rate-limiter.js'
 import { OtlpProtocol } from '../observability/otlp-protocol.js'
-import type { GatewayConfig, ServerConfig, SingleTenantConfig } from './server-config.js'
+import { SandboxStrategy } from './server-config.js'
+import type { AdapterPacksConfig, AdapterPacksEviction, AdapterPacksResourceLimits, GatewayConfig, ServerConfig, SingleTenantConfig } from './server-config.js'
 
 interface ConfigFile
 {
@@ -129,6 +130,102 @@ export class ServerConfigLoader
     private static readonly EnvTenantBurst = 'PRAGMATIC_RATELIMIT_TENANT_BURST'
     private static readonly EnvPrincipalRps = 'PRAGMATIC_RATELIMIT_PRINCIPAL_RPS'
     private static readonly EnvPrincipalBurst = 'PRAGMATIC_RATELIMIT_PRINCIPAL_BURST'
+
+    private static readonly EnvAdapterPacksDir = 'PRAGMATIC_ADAPTER_PACKS_DIR'
+    private static readonly EnvAdapterPacksSandbox = 'PRAGMATIC_ADAPTER_PACKS_SANDBOX'
+    private static readonly EnvAdapterPacksRequireSignatures = 'PRAGMATIC_ADAPTER_PACKS_REQUIRE_SIGNATURES'
+    private static readonly EnvAdapterPacksMaxOldMb = 'PRAGMATIC_ADAPTER_PACKS_MAX_OLD_MB'
+    private static readonly EnvAdapterPacksMaxYoungMb = 'PRAGMATIC_ADAPTER_PACKS_MAX_YOUNG_MB'
+    private static readonly EnvAdapterPacksStackMb = 'PRAGMATIC_ADAPTER_PACKS_STACK_MB'
+    private static readonly EnvAdapterPacksEvictVersions = 'PRAGMATIC_ADAPTER_PACKS_EVICT_MAX_VERSIONS'
+    private static readonly EnvAdapterPacksEvictAgeMs = 'PRAGMATIC_ADAPTER_PACKS_EVICT_MAX_AGE_MS'
+    private static readonly BadSandboxStrategy = 'PRAGMATIC_ADAPTER_PACKS_SANDBOX must be worker or child'
+    private static readonly BadRequireSignatures = 'PRAGMATIC_ADAPTER_PACKS_REQUIRE_SIGNATURES must be true or false'
+    private static readonly BadAdapterPacksNumber = 'PRAGMATIC_ADAPTER_PACKS_* limits and eviction values must be positive integers'
+
+    private static AdapterPacks(env: Record<string, string | undefined>): AdapterPacksConfig | undefined
+    {
+        const sandboxStrategy = ServerConfigLoader.SandboxStrategyOf(env[ServerConfigLoader.EnvAdapterPacksSandbox])
+        const cacheDir = ServerConfigLoader.NonEmpty(env[ServerConfigLoader.EnvAdapterPacksDir])
+        if (cacheDir === undefined)
+        {
+            return undefined
+        }
+        return {
+            cacheDir,
+            sandboxStrategy: sandboxStrategy ?? SandboxStrategy.Worker,
+            requireSignatures: ServerConfigLoader.StrictBool(env[ServerConfigLoader.EnvAdapterPacksRequireSignatures], ServerConfigLoader.BadRequireSignatures),
+            resourceLimits: ServerConfigLoader.PackLimits(env),
+            eviction: ServerConfigLoader.PackEviction(env),
+        }
+    }
+
+    private static SandboxStrategyOf(value: string | undefined): SandboxStrategy | undefined
+    {
+        if (value === undefined || value.length === 0)
+        {
+            return undefined
+        }
+        if (value === SandboxStrategy.Worker || value === SandboxStrategy.Child)
+        {
+            return value
+        }
+        throw new Error(ServerConfigLoader.BadSandboxStrategy)
+    }
+
+    private static StrictBool(value: string | undefined, badMessage: string): boolean | undefined
+    {
+        if (value === undefined || value.length === 0)
+        {
+            return undefined
+        }
+        const lowered = value.toLowerCase()
+        if (lowered === ServerConfigLoader.TrueValue)
+        {
+            return true
+        }
+        if (lowered === ServerConfigLoader.FalseValue)
+        {
+            return false
+        }
+        throw new Error(badMessage)
+    }
+
+    private static PositiveNumber(value: string | undefined): number | undefined
+    {
+        if (value === undefined || value.length === 0)
+        {
+            return undefined
+        }
+        if (!ServerConfigLoader.PositiveIntPattern.test(value) || !Number.isSafeInteger(Number(value)))
+        {
+            throw new Error(ServerConfigLoader.BadAdapterPacksNumber)
+        }
+        return Number(value)
+    }
+
+    private static PackLimits(env: Record<string, string | undefined>): AdapterPacksResourceLimits | undefined
+    {
+        const maxOldGenerationSizeMb = ServerConfigLoader.PositiveNumber(env[ServerConfigLoader.EnvAdapterPacksMaxOldMb])
+        const maxYoungGenerationSizeMb = ServerConfigLoader.PositiveNumber(env[ServerConfigLoader.EnvAdapterPacksMaxYoungMb])
+        const stackSizeMb = ServerConfigLoader.PositiveNumber(env[ServerConfigLoader.EnvAdapterPacksStackMb])
+        if (maxOldGenerationSizeMb === undefined && maxYoungGenerationSizeMb === undefined && stackSizeMb === undefined)
+        {
+            return undefined
+        }
+        return { maxOldGenerationSizeMb, maxYoungGenerationSizeMb, stackSizeMb }
+    }
+
+    private static PackEviction(env: Record<string, string | undefined>): AdapterPacksEviction | undefined
+    {
+        const maxVersionsPerPack = ServerConfigLoader.PositiveNumber(env[ServerConfigLoader.EnvAdapterPacksEvictVersions])
+        const maxAgeMs = ServerConfigLoader.PositiveNumber(env[ServerConfigLoader.EnvAdapterPacksEvictAgeMs])
+        if (maxVersionsPerPack === undefined && maxAgeMs === undefined)
+        {
+            return undefined
+        }
+        return { maxVersionsPerPack, maxAgeMs }
+    }
 
     private static GatewaySecurity(env: Record<string, string | undefined>): { auditSink?: AuditSinkKind; auditFile?: string; rateLimit?: RateLimitConfig }
     {
@@ -410,6 +507,7 @@ export class ServerConfigLoader
             ...ServerConfigLoader.Security(env, deploymentMode),
             ...ServerConfigLoader.Cloud(env, deploymentMode),
             drainTimeoutMs: ServerConfigLoader.DrainTimeout(env[ServerConfigLoader.EnvDrainTimeout]),
+            adapterPacks: ServerConfigLoader.AdapterPacks(env),
         }
     }
 

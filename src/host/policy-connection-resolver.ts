@@ -7,8 +7,10 @@ import type { ConnectorsPolicy } from './connector-policy.js'
  *  adapter open): rejects a disallowed adapter kind; under catalog-only, inline resolution is never used —
  *  an unnamed spec is rejected, and a named spec resolves only when a catalog resolver is injected (the
  *  deferred named-connection catalog). With no such resolver a catalog-only tenant can open no connector
- *  (fail-closed). Otherwise delegates to the inner resolver. The policy's provider-override fields are
- *  carried through unenforced. Registered under ConnectionResolverKey, which bypasses the catalog's
+ *  (fail-closed). Otherwise delegates to the inner resolver. The provider-override fields
+ *  (AllowProviderOverride/ProviderAllowlist) are NOT enforced here: ConnectorSpec.Provider now exists, and that
+ *  gate is enforced by the composed NpmAdapterPackProvider, which runs earlier (the catalog resolves the adapter
+ *  factory before this resolver is hit). Registered under ConnectionResolverKey, which bypasses the catalog's
  *  default inline fallback. */
 export class PolicyConnectionResolver implements IConnectionResolver
 {
@@ -42,9 +44,9 @@ export class PolicyConnectionResolver implements IConnectionResolver
         {
             return Promise.reject(new Error(`${PolicyConnectionResolver.CatalogOnlyViolation}: ${spec.Name}`))
         }
-        // Provider-override gate: ConnectorSpec carries no provider/package field today, so there is nothing
-        // to reject. The policy's AllowProviderOverride/ProviderAllowlist are carried for when a provider
-        // surface exists; no live check is added (adding a dead rejection path would be untestable).
+        // Provider-override gate: ConnectorSpec.Provider exists, but AllowProviderOverride/ProviderAllowlist are
+        // enforced by the composed NpmAdapterPackProvider gate, which runs before this resolver (the catalog
+        // resolves the factory first). Deliberately no rejection path here.
         return this.inner.Resolve(spec, services)
     }
 }

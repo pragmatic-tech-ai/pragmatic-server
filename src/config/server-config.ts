@@ -6,6 +6,35 @@ import type { OtlpProtocol } from '../observability/otlp-protocol.js'
 import type { DeploymentMode } from '../platform/deployment-mode.js'
 import type { DeploymentProvider } from '../platform/deployment-provider.js'
 
+export enum SandboxStrategy
+{
+    Worker = 'worker',
+    Child = 'child',
+}
+
+export interface AdapterPacksResourceLimits
+{
+    readonly maxOldGenerationSizeMb?: number
+    readonly maxYoungGenerationSizeMb?: number
+    readonly stackSizeMb?: number
+}
+
+export interface AdapterPacksEviction
+{
+    readonly maxVersionsPerPack?: number
+    readonly maxAgeMs?: number
+}
+
+/** Deployment-global adapter-pack settings; each tenant builds its own provider from these plus its ConnectorsPolicy gate. */
+export interface AdapterPacksConfig
+{
+    readonly cacheDir: string
+    readonly sandboxStrategy: SandboxStrategy
+    readonly requireSignatures?: boolean
+    readonly resourceLimits?: AdapterPacksResourceLimits
+    readonly eviction?: AdapterPacksEviction
+}
+
 export interface SingleTenantConfig
 {
     id: string
@@ -76,6 +105,7 @@ export interface ServerConfig
     cloudMasterKeyRef?: string
     cloudAuditAnchorKeyRef?: string
     cloudAuditAnchorInterval?: number
+    readonly adapterPacks?: AdapterPacksConfig
 }
 
 export interface GatewayConfig

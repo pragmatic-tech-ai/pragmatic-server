@@ -3,7 +3,7 @@ import { LazyCompositionRoot, HostKinds, ModuleStateKind } from '@pragmatic-tech
 import { TenantPurpose } from './tenancy/tenant-purpose.js'
 import type { ModuleStateProperty } from '@pragmatic-tech-ai/todl-runtime'
 import { SolutionManagerService, StoragePackageSource, StoragePackageStore, PackageStoreKey, ConnectorPrefetch, ConnectorRuntimeGraphQuery, DataSourceAdapterCatalog } from '@pragmatic-tech-ai/todl'
-import type { ModelConnectorPlan } from '@pragmatic-tech-ai/todl'
+import type { ModelConnectorPlan, IDataSourceAdapterProvider } from '@pragmatic-tech-ai/todl'
 import type { Domain } from '@pragmatic-tech-ai/todl/domain'
 import { NodeProjectSystemComposer } from '@pragmatic-tech-ai/todl/project-system'
 import { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
@@ -22,7 +22,9 @@ import { ServerBootstrap } from './identity/server-bootstrap.js'
 import { DeploymentMode } from './platform/deployment-mode.js'
 import { PlatformSelector } from './platform/platform-selector.js'
 import type { PlatformServices } from './platform/platform-services.js'
-import { ConnectorsHost } from '@pragmatic-tech-ai/todl-connectors-host'
+import { ConnectorsHost, NpmAdapterPackProvider, WorkerThreadSandboxFactory, ChildProcessSandboxFactory } from '@pragmatic-tech-ai/todl-connectors-host'
+import { SandboxStrategy } from './config/server-config.js'
+import type { AdapterPacksConfig } from './config/server-config.js'
 import type { ConnectorsHostOptions } from '@pragmatic-tech-ai/todl-connectors-host'
 import { BuiltinAdapterFactory } from './host/connectors/builtin-adapter-factory.js'
 import { BuiltinBindings } from './host/connectors/builtin-bindings.js'
@@ -109,6 +111,7 @@ export interface PragmaticServerOptions
     platform?: PlatformServices
     connectors?: ConnectorsHostOptions
     connectorsPolicy?: ConnectorsPolicy
+    readonly adapterPacks?: AdapterPacksConfig
 }
 
 /** The node labels a Cypher query references; wildcard when any node pattern is unlabeled; parseFailed when the text is not valid Cypher (nothing is prefetched). */
@@ -177,12 +180,34 @@ export class PragmaticServer
 
     private static ConnectorsOptions(options: PragmaticServerOptions): ConnectorsHostOptions | undefined
     {
+        const provider = options.connectors?.provider ?? PragmaticServer.AdapterPackProvider(options)
         if (options.connectorsPolicy === undefined)
         {
-            return options.connectors
+            return provider === undefined ? options.connectors : { ...options.connectors, provider }
         }
         const resolver = new PolicyConnectionResolver(options.connectorsPolicy, options.connectors?.connectionResolver)
-        return { ...options.connectors, connectionResolver: resolver }
+        return { ...options.connectors, connectionResolver: resolver, provider }
+    }
+
+    /** Builds this tenant's adapter-pack provider: its own ConnectorsPolicy gate over the deployment-global pack settings. */
+    private static AdapterPackProvider(options: PragmaticServerOptions): IDataSourceAdapterProvider | undefined
+    {
+        const packs = options.adapterPacks
+        if (packs === undefined)
+        {
+            return undefined
+        }
+        const limits = packs.resourceLimits
+        const eviction = packs.eviction
+        return new NpmAdapterPackProvider({
+            cacheDir: packs.cacheDir,
+            sandboxFactory: packs.sandboxStrategy === SandboxStrategy.Child ? new ChildProcessSandboxFactory() : new WorkerThreadSandboxFactory(),
+            sandboxOptions: limits === undefined ? undefined : { resourceLimits: limits },
+            allowProviderOverride: options.connectorsPolicy?.AllowProviderOverride ?? false,
+            providerAllowlist: options.connectorsPolicy?.ProviderAllowlist ?? [],
+            requireSignatures: packs.requireSignatures,
+            eviction: eviction === undefined ? undefined : { MaxVersionsPerPack: eviction.maxVersionsPerPack, MaxAgeMs: eviction.maxAgeMs },
+        })
     }
 
     public async Start(): Promise<void>

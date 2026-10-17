@@ -29,6 +29,7 @@ import { WorkerRegistration } from './worker-registration.js'
 import { HealthEndpoint } from '../host/health-endpoint.js'
 import type { CypherLimits } from '../config/cypher-limits.js'
 import type { IProvisionedSecretSource } from '../config/provisioned-secret-source.js'
+import type { AdapterPacksConfig } from '../config/server-config.js'
 import type { WorkerEndpoint } from './worker-router.js'
 import type { ITenantProvisioning } from '../tenancy/tenant-provisioning.js'
 import { MachineTls } from './machine-tls.js'
@@ -64,6 +65,7 @@ export interface WorkerHostOptions
     redisUrl?: string
     replicaId?: string
     provisionedSecrets?: IProvisionedSecretSource
+    adapterPacks?: AdapterPacksConfig
     healthPort?: number
     advertise?: WorkerEndpoint
     logger?: ILogger
@@ -247,7 +249,7 @@ export class WorkerHost
             ? new RedisTenantOwnership(options.redisUrl!, options.replicaId ?? randomUUID())
             : new InMemoryTenantOwnership()
         await ownership.Start().catch(() => {})
-        const registry = new TenantRegistry(options.baseDir, options.masterKey, options.provisioning, coordinator, options.platform, options.deploymentMode, ownership, options.provisionedSecrets)
+        const registry = new TenantRegistry(options.baseDir, options.masterKey, options.provisioning, coordinator, options.platform, options.deploymentMode, ownership, options.provisionedSecrets, undefined, options.adapterPacks)
         const host = options.host ?? WorkerHost.DefaultHost
         const httpsServer = createServer(MachineTls.Server(options.tls))
         const wss = new WebSocketServer({ noServer: true })

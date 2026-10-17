@@ -9,6 +9,7 @@ import type { ITenantCoordinator } from './tenant-coordinator.js'
 import { InMemoryTenantOwnership, TenantOwnedElsewhereError } from './tenant-ownership.js'
 import type { ITenantOwnership, TenantLostHandler } from './tenant-ownership.js'
 import type { IdentityRuntime } from '../identity/identity-runtime.js'
+import type { AdapterPacksConfig } from '../config/server-config.js'
 import type { ITenantProvisioning, TenantProvisioning } from './tenant-provisioning.js'
 
 export class InMemoryTenantProvisioning implements ITenantProvisioning
@@ -47,13 +48,15 @@ export class TenantRegistry
     private readonly lostDuringBuild = new Set<string>()
     private readonly identityRuntime: IdentityRuntime | undefined
     private readonly platform: PlatformServices | undefined
+    private readonly adapterPacks: AdapterPacksConfig | undefined
     private readonly deploymentMode: DeploymentMode | undefined
     private readonly servers = new Map<string, PragmaticServer>()
     private readonly pending = new Map<string, Promise<PragmaticServer>>()
     private readonly disposing = new Map<string, Promise<void>>()
 
-    public constructor(baseDir: string, masterKey: MasterKeyRef, provisioning: ITenantProvisioning, coordinator: ITenantCoordinator, platform?: PlatformServices, deploymentMode?: DeploymentMode, ownership: ITenantOwnership = new InMemoryTenantOwnership(), provisionedSecrets?: IProvisionedSecretSource, identityRuntime?: IdentityRuntime)
+    public constructor(baseDir: string, masterKey: MasterKeyRef, provisioning: ITenantProvisioning, coordinator: ITenantCoordinator, platform?: PlatformServices, deploymentMode?: DeploymentMode, ownership: ITenantOwnership = new InMemoryTenantOwnership(), provisionedSecrets?: IProvisionedSecretSource, identityRuntime?: IdentityRuntime, adapterPacks?: AdapterPacksConfig)
     {
+        this.adapterPacks = adapterPacks
         this.baseDir = baseDir
         this.masterKey = masterKey
         this.provisioning = provisioning
@@ -231,6 +234,7 @@ export class TenantRegistry
             deploymentMode: this.deploymentMode,
             connectorsPolicy: provisioning.connectorsPolicy,
             connectors: provisioning.connectors,
+            adapterPacks: this.adapterPacks,
             identity: {
                 identityRoot: join(this.baseDir, tenantId, TenantRegistry.IdentityDir),
                 masterKey: this.masterKey,
