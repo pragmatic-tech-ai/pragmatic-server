@@ -147,3 +147,36 @@ test('health recovers via the heartbeat after Redis comes back, with no held key
     assert.equal(ownership.Healthy(), true)
     await ownership.ReleaseAll()
 })
+
+test('a Release that fails while Redis is down is flushed on the next successful renew tick', async () =>
+{
+    let failEval = true
+    const evals: Array<{ keys: string[], args: string[] }> = []
+    const fake =
+    {
+        isOpen: true,
+        on(): void {},
+        async connect(): Promise<void> {},
+        async quit(): Promise<void> {},
+        async set(): Promise<string | null> { return 'OK' },
+        async eval(_script: string, opts: { keys: string[], arguments: string[] }): Promise<number>
+        {
+            if (failEval)
+            {
+                throw new Error('unreachable')
+            }
+            evals.push({ keys: opts.keys, args: opts.arguments })
+            return 1
+        },
+    }
+    const ownership = new RedisTenantOwnership('redis://unused', 'replica-a', () => 1000, () => fake as unknown as RedisClientType)
+    await ownership.Start()
+    assert.equal(await ownership.Acquire('t1'), true)
+    await ownership.Release('t1')
+    assert.equal(ownership.PendingReleaseCountForTest(), 1)
+    failEval = false
+    await ownership.RenewNowForTest()
+    assert.equal(ownership.PendingReleaseCountForTest(), 0)
+    assert.ok(evals.some(e => e.keys[0] === 'pragmatic:own:t1'))
+    await ownership.ReleaseAll()
+})

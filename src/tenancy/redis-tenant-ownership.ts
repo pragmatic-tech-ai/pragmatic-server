@@ -27,6 +27,7 @@ export class RedisTenantOwnership implements ITenantOwnership
     private renewing = false
     private readonly lastRenewMs = new Map<string, number>()
     private readonly held = new Set<string>()
+    private readonly pendingReleases = new Set<string>()
     private client: RedisClientType | null = null
     private connecting: Promise<RedisClientType> | null = null
     private healthy = false
@@ -79,7 +80,7 @@ export class RedisTenantOwnership implements ITenantOwnership
         }
     }
 
-    /** If Redis is unreachable the eval throws and the key lingers until its TTL (another replica can reclaim after at most one TTL). */
+    /** CAS-deletes the lease. If Redis is unreachable the delete is queued in pendingReleases and flushed on the next ready/renew that reaches Redis (instead of lingering for the full TTL). */
     public async Release(tenantId: string): Promise<void>
     {
         const key = RedisTenantOwnership.KeyPrefix + tenantId
@@ -88,8 +89,16 @@ export class RedisTenantOwnership implements ITenantOwnership
             return
         }
         this.lastRenewMs.delete(key)
-        const client = await this.Connected()
-        await this.WithTimeout(client.eval(RedisTenantOwnership.ReleaseScript, { keys: [key], arguments: [this.self] }))
+        try
+        {
+            const client = await this.Connected()
+            await this.WithTimeout(client.eval(RedisTenantOwnership.ReleaseScript, { keys: [key], arguments: [this.self] }))
+        }
+        catch
+        {
+            this.pendingReleases.add(key)
+            this.healthy = false
+        }
     }
 
     public async ReleaseAll(): Promise<void>
@@ -105,6 +114,7 @@ export class RedisTenantOwnership implements ITenantOwnership
         {
             this.held.clear()
             this.lastRenewMs.clear()
+            this.pendingReleases.clear()
             return
         }
         try
@@ -115,6 +125,7 @@ export class RedisTenantOwnership implements ITenantOwnership
             }
             this.held.clear()
             this.lastRenewMs.clear()
+            this.pendingReleases.clear()
         }
         finally
         {
@@ -130,6 +141,11 @@ export class RedisTenantOwnership implements ITenantOwnership
     public async RenewNowForTest(): Promise<void>
     {
         await this.RenewAll()
+    }
+
+    public PendingReleaseCountForTest(): number
+    {
+        return this.pendingReleases.size
     }
 
     private EnsureRenew(): void
@@ -164,6 +180,10 @@ export class RedisTenantOwnership implements ITenantOwnership
                 }
             }
             const client = this.client
+            if (client !== null && client.isOpen && this.pendingReleases.size > 0)
+            {
+                await this.FlushPendingReleases(client)
+            }
             const now = this.now()
             for (const key of [...this.held])
             {
@@ -200,6 +220,24 @@ export class RedisTenantOwnership implements ITenantOwnership
         finally
         {
             this.renewing = false
+        }
+    }
+
+    /** Best-effort CAS-delete of keys whose Release failed while Redis was down. Stops on the first failure (Redis still flaky). */
+    private async FlushPendingReleases(client: RedisClientType): Promise<void>
+    {
+        for (const key of [...this.pendingReleases])
+        {
+            try
+            {
+                await this.WithTimeout(client.eval(RedisTenantOwnership.ReleaseScript, { keys: [key], arguments: [this.self] }))
+                this.pendingReleases.delete(key)
+            }
+            catch
+            {
+                this.healthy = false
+                return
+            }
         }
     }
 
@@ -265,6 +303,10 @@ export class RedisTenantOwnership implements ITenantOwnership
         client.on(RedisTenantOwnership.ReadyEvent, () =>
         {
             this.healthy = true
+            if (this.pendingReleases.size > 0)
+            {
+                void this.FlushPendingReleases(client)
+            }
         })
         await client.connect()
         this.client = client
