@@ -62,6 +62,8 @@ export class AdminService
     private static readonly DisableAccountAction = 'disable-account'
     private static readonly IssueTokenAction = 'issue-token'
     private static readonly RevokeTokenAction = 'revoke-token'
+    private static readonly InvalidatePackAction = 'invalidate-pack'
+    private static readonly PackNameKey = 'pack'
     private static readonly PrincipalIdKey = 'principalId'
     private static readonly EmailKey = 'email'
     private static readonly TokenRefKey = 'tokenRef'
@@ -76,9 +78,11 @@ export class AdminService
     private readonly accounts: ILocalAccountStore
     private readonly registrar: LocalAccountRegistrar
     private readonly tokens: IServiceTokenStore
+    private readonly invalidatePack: (name: string) => Promise<void>
 
-    public constructor(grants: IRoleGrantStore, audit: IAuditSink, configStore: ITenantConfigStore, tenant: Tenant, evict: () => Promise<void>, accounts: ILocalAccountStore, registrar: LocalAccountRegistrar, tokens: IServiceTokenStore)
+    public constructor(grants: IRoleGrantStore, audit: IAuditSink, configStore: ITenantConfigStore, tenant: Tenant, evict: () => Promise<void>, accounts: ILocalAccountStore, registrar: LocalAccountRegistrar, tokens: IServiceTokenStore, invalidatePack: (name: string) => Promise<void>)
     {
+        this.invalidatePack = invalidatePack
         this.grants = grants
         this.audit = audit
         this.configStore = configStore
@@ -203,6 +207,17 @@ export class AdminService
             [AdminService.ActorKey, actor],
             [AdminService.ActionKey, AdminService.RevokeTokenAction],
             [AdminService.TokenRefKey, tokenRef],
+        ])
+        await this.Audit(null, detail)
+    }
+
+    public async InvalidatePack(actor: string, name: string): Promise<void>
+    {
+        await this.invalidatePack(name)
+        const detail = new Map<string, string>([
+            [AdminService.ActorKey, actor],
+            [AdminService.ActionKey, AdminService.InvalidatePackAction],
+            [AdminService.PackNameKey, name],
         ])
         await this.Audit(null, detail)
     }

@@ -86,6 +86,7 @@ class AdminFixture
     public readonly Accounts = new LocalAccountStore()
     public readonly Tokens = new ServiceTokenStore()
     public readonly Registrar = new LocalAccountRegistrar(this.Accounts, new EncryptedSecretStore(randomBytes(32)), new Argon2PasswordHasher(), new RecordingAuditSink())
+    public readonly Invalidated: string[] = []
     public readonly Service: AdminService
 
     public constructor()
@@ -95,7 +96,7 @@ class AdminFixture
 
     public ServiceFor(tenant: Tenant, audit: IAuditSink, evict: () => Promise<void>): AdminService
     {
-        return new AdminService(this.Grants, audit, this.Config, tenant, evict, this.Accounts, this.Registrar, this.Tokens)
+        return new AdminService(this.Grants, audit, this.Config, tenant, evict, this.Accounts, this.Registrar, this.Tokens, async name => { this.Invalidated.push(name) })
     }
 
     public TenantRoot(): ResourceRef
@@ -453,4 +454,24 @@ test('a failing audit fails DisableAccount closed', async () =>
     await f.Service.CreateAccount('u1', 'a@x.io', 'p9', new PresentedSecret('pw'))
     const failing = f.ServiceFor(f.Tenant, new FailingAuditSink(), async () => {})
     await assert.rejects(failing.DisableAccount('u1', 'p9'), /audit down/)
+})
+
+test('InvalidatePack invokes the callback then audits the pack name only', async () =>
+{
+    const f = new AdminFixture()
+    await f.Service.InvalidatePack('actor-1', 'acme-pack')
+    assert.deepEqual(f.Invalidated, ['acme-pack'])
+    assert.equal(f.Audit.Events.length, 1)
+    const event = f.Audit.Events[0]
+    assert.equal(event.Kind, AuditEventKind.AdminAction)
+    assert.equal(event.Detail.get('actor'), 'actor-1')
+    assert.equal(event.Detail.get('action'), 'invalidate-pack')
+    assert.equal(event.Detail.get('pack'), 'acme-pack')
+})
+
+test('a failing audit fails InvalidatePack closed after the invalidate ran', async () =>
+{
+    const f = new AdminFixture()
+    const failing = f.ServiceFor(f.Tenant, new FailingAuditSink(), async () => {})
+    await assert.rejects(failing.InvalidatePack('u1', 'acme-pack'), /audit down/)
 })

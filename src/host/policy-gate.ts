@@ -133,6 +133,7 @@ export class PolicyGate
             [AdminProtocol.ListTokens.method, administer],
             [AdminProtocol.IssueToken.method, administer],
             [AdminProtocol.RevokeToken.method, administer],
+            [AdminProtocol.InvalidatePack.method, administer],
         ])
     }
 }

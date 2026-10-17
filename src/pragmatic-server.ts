@@ -687,6 +687,11 @@ export class PragmaticServer
         return this.disposing
     }
 
+    public InvalidateAdapterPack(name: string): Promise<void>
+    {
+        return this.connectorsHost.InvalidateProvider(name)
+    }
+
     private async DoDispose(): Promise<void>
     {
         try

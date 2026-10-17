@@ -51,6 +51,7 @@ export class ServerConnectionHandler
     private static readonly EmailField = 'email'
     private static readonly PasswordField = 'password'
     private static readonly TokenRefField = 'tokenRef'
+    private static readonly PackNameField = 'name'
     private static readonly ScopesField = 'scopes'
     private static readonly ExpiresInField = 'expiresInSeconds'
     private static readonly EmailTakenMessage = 'email already registered'
@@ -532,6 +533,12 @@ export class ServerConnectionHandler
         {
             const tokenRef = this.RequireTokenRef(p?.tokenRef)
             await this.AdminCall(() => admin.RevokeToken(this.actor(), tokenRef))
+            return { ok: true as const }
+        })
+        this.guarded(AdminProtocol.InvalidatePack, async p =>
+        {
+            const name = this.RequireNonEmptyString(p?.name, ServerConnectionHandler.PackNameField)
+            await this.AdminCall(() => admin.InvalidatePack(this.actor(), name))
             return { ok: true as const }
         })
     }

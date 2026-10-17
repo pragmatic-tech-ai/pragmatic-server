@@ -60,7 +60,7 @@ class AdminFixture
         const context = new AccessContext(principal, tenant, [new Grant('p1', role, new ResourceRef(ResourceKind.Tenant, 't1', []))], new ResourceAuthorizationPolicy())
         const accounts = this.Accounts
         const registrar = new LocalAccountRegistrar(accounts, new EncryptedSecretStore(randomBytes(32)), new Argon2PasswordHasher(), this.Audit)
-        const admin = new AdminService(this.Grants, this.Audit, this.Configs, tenant, async () => undefined, accounts, registrar, new ServiceTokenStore())
+        const admin = new AdminService(this.Grants, this.Audit, this.Configs, tenant, async () => undefined, accounts, registrar, new ServiceTokenStore(), async () => undefined)
         const languageService = { GraphChanged: { subscribe: () => ({ dispose: () => undefined }) } } as unknown as ILanguageService
         const manager = {} as unknown as SolutionManagerService
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
@@ -433,6 +433,8 @@ test('missing params and non-string fields are InvalidParams naming the field', 
         await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.RevokeToken, undefined as never), 'tokenRef')
         await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.RevokeToken, {} as never), 'tokenRef')
         await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.RevokeToken, { tokenRef: 7 } as never), 'tokenRef')
+        await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.InvalidatePack, {} as never), 'name')
+        await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.InvalidatePack, { name: '' } as never), 'name')
         await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.CreateAccount, { email: 5, principalId: 'a', password: AccountTokenCases.Password } as never), 'email')
     }
     finally
