@@ -82,7 +82,7 @@ namespace shop {
             const r1 = await s1.Connectors()
             const r2 = await s2.Connectors()
             await assert.rejects(() => r1.ReadEntities(r1.ModelsWithConnectors()[0]!.ModelId, TwoTenantPolicyFixture.ConceptId), /catalog-only/)
-            const entities = await r2.ReadEntities(r2.ModelsWithConnectors()[0]!.ModelId, TwoTenantPolicyFixture.ConceptId)
+            const entities = (await r2.ReadEntities(r2.ModelsWithConnectors()[0]!.ModelId, TwoTenantPolicyFixture.ConceptId)).Entities
             assert.ok(entities.length >= 1)
         }
         finally

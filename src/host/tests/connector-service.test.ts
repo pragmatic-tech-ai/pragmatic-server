@@ -5,6 +5,7 @@ import { check, DataSourceAdapterCatalog, DataSourceKind } from '@pragmatic-tech
 import type { IDataSourceAdapter, IDataSourceAdapterFactory, ResolvedConnection, QueryRequest, WriteBatch, WriteResult, ExternalRecord } from '@pragmatic-tech-ai/todl'
 import { SolutionConnectorPlanner } from '../../connectors/solution-connector-planner.js'
 import { ConnectorRuntime } from '../../connectors/connector-runtime.js'
+import { PagingLimits } from '../../config/paging-limits.js'
 import { ConnectorService } from '../connector-service.js'
 
 const META = `
@@ -63,7 +64,7 @@ test('Read projects entity id/concept + scalar fields via Snapshot', async () =>
 {
     const service = new ConnectorService(() => Promise.resolve(Harness.Runtime()))
     const models = await service.List()
-    const entities = (await service.Read(models[0]!.modelId, 'shop.Customer')).items
+    const entities = (await service.Read(models[0]!.modelId, 'shop.Customer', {}, new PagingLimits())).items
     assert.ok(entities.length >= 1)
     assert.equal(entities[0]!.concept, 'shop.Customer')
     assert.equal(entities[0]!.fields.name, 'Acme')

@@ -114,6 +114,14 @@ namespace crm {
         return services
     }
 
+    public static FiveCustomers(): InMemoryAdapterFactory
+    {
+        const rows = new Map<string, readonly ExternalRecord[]>([
+            ['Customer', ['C5', 'C2', 'C4', 'C1', 'C3'].map(id => ({ customer_id: id, name: `n${id}` }))],
+        ])
+        return new InMemoryAdapterFactory(DataSourceKind.Sql, rows)
+    }
+
     public static Flaky(): InMemoryAdapterFactory
     {
         return new FlakyAdapterFactory(DataSourceKind.Sql, Fixtures.Rows)
@@ -137,7 +145,7 @@ test('PrepareModel is lazy: only the touched model opens its connector', async (
     const { services, factory } = Fixtures.Services()
     const runtime = new ConnectorRuntime([Fixtures.Model('shop'), Fixtures.Model('crm')], services)
     assert.equal(factory.OpenCount, 0)
-    const entities = await runtime.ReadEntities('shop', 'shop.Customer')
+    const entities = (await runtime.ReadEntities('shop', 'shop.Customer')).Entities
     assert.ok(entities.length >= 1)
     assert.equal(factory.OpenCount, 1)
 })
@@ -163,14 +171,14 @@ test('WriteBack of a writable binding applies; a read-only binding yields connec
 {
     const w = Fixtures.Services()
     const writable = new ConnectorRuntime([Fixtures.Model('shop', true)], w.services)
-    const writableId = (await writable.ReadEntities('shop', 'shop.Customer'))[0]!.id
+    const writableId = (await writable.ReadEntities('shop', 'shop.Customer')).Entities[0]!.id
     const applied = await writable.WriteBack('shop', [writableId], [])
     assert.equal(applied.Diagnostics.length, 0)
     assert.ok(w.factory.Adapters[0]!.Applied.length >= 1)
 
     const ro = Fixtures.Services()
     const readonlyRuntime = new ConnectorRuntime([Fixtures.Model('shop', false)], ro.services)
-    const readonlyId = (await readonlyRuntime.ReadEntities('shop', 'shop.Customer'))[0]!.id
+    const readonlyId = (await readonlyRuntime.ReadEntities('shop', 'shop.Customer')).Entities[0]!.id
     const blocked = await readonlyRuntime.WriteBack('shop', [readonlyId], [])
     assert.ok(blocked.Diagnostics.some(d => d.code === DiagnosticCode.ConnectorReadOnly))
     assert.equal(ro.factory.Adapters[0]!.Applied.length, 0)
@@ -208,4 +216,41 @@ test('a failed PrepareModel clears the cache so a retry re-opens and succeeds', 
     await assert.rejects(() => runtime.PrepareModel('shop'))
     await runtime.PrepareModel('shop')
     assert.equal(factory.OpenCount, 2)
+})
+
+test('ReadEntities pages by id order with HasMore', async () =>
+{
+    const { services } = Fixtures.Services(Fixtures.FiveCustomers())
+    const runtime = new ConnectorRuntime([Fixtures.Model('shop')], services)
+    const pages = [
+        await runtime.ReadEntities('shop', 'shop.Customer', { Skip: 0, Take: 2 }),
+        await runtime.ReadEntities('shop', 'shop.Customer', { Skip: 2, Take: 2 }),
+        await runtime.ReadEntities('shop', 'shop.Customer', { Skip: 4, Take: 2 }),
+    ]
+    assert.deepEqual(pages.map(p => p.Entities.length), [2, 2, 1])
+    assert.deepEqual(pages.map(p => p.HasMore), [true, true, false])
+    const ids = pages.flatMap(p => p.Entities.map(e => e.id))
+    assert.deepEqual(ids, [...ids].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)))
+    assert.equal(new Set(ids).size, 5)
+})
+
+test('unpaged ReadEntities returns all', async () =>
+{
+    const { services } = Fixtures.Services(Fixtures.FiveCustomers())
+    const runtime = new ConnectorRuntime([Fixtures.Model('shop')], services)
+    const all = await runtime.ReadEntities('shop', 'shop.Customer')
+    assert.equal(all.Entities.length, 5)
+    assert.equal(all.HasMore, false)
+})
+
+test('Revision changes after WriteBack and differs across runtimes', async () =>
+{
+    const { services } = Fixtures.Services(Fixtures.FiveCustomers())
+    const runtime = new ConnectorRuntime([Fixtures.Model('shop')], services)
+    const other = new ConnectorRuntime([Fixtures.Model('shop')], services)
+    const before = runtime.Revision
+    assert.notEqual(before, other.Revision)
+    const id = (await runtime.ReadEntities('shop', 'shop.Customer')).Entities[0]!.id
+    await runtime.WriteBack('shop', [id], [])
+    assert.notEqual(runtime.Revision, before)
 })

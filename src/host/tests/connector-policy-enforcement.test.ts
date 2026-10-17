@@ -61,7 +61,7 @@ namespace shop {
             await server.OpenSolution(dir)
             const runtime = await server.Connectors()
             const models = runtime.ModelsWithConnectors()
-            await body(() => runtime.ReadEntities(models[0]!.ModelId, Fixture.ConceptId))
+            await body(async () => (await runtime.ReadEntities(models[0]!.ModelId, Fixture.ConceptId)).Entities as unknown[])
         }
         finally
         {

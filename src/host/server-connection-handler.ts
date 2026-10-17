@@ -329,7 +329,7 @@ export class ServerConnectionHandler
             this.connectorService.Invalidate()
         }))
         this.guarded(ConnectorProtocol.Prepare, p => this.connectorService.Prepare(p.modelId))
-        this.guarded(ConnectorProtocol.Read, p => this.connectorService.Read(p.modelId, p.concept))
+        this.guarded(ConnectorProtocol.Read, p => this.connectorService.Read(p.modelId, p.concept, p, this.paging))
         this.guarded(ConnectorProtocol.WriteBack, p => this.connectorService.WriteBack(p))
         this.guarded(ConnectorProtocol.Test, p => this.connectorService.Test(p.modelId, p.connectorName))
     }

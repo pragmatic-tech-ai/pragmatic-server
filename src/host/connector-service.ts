@@ -1,11 +1,15 @@
 import type { ConnectorRuntime } from '../connectors/connector-runtime.js'
-import type { ConnectorModelDto, ConnectorWriteBackParams, EntityDto, FlushOutcomeDto, Page, ConnectionProbeDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { ConnectorModelDto, ConnectorWriteBackParams, EntityDto, FlushOutcomeDto, Page, PageParams, ConnectionProbeDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { PagingLimits } from '../config/paging-limits.js'
+import { PageFingerprint, PageRequest } from './paging/page-request.js'
 
 /** Per-connection façade over the 6A ConnectorRuntime: lazily holds one runtime (rebuilt on Invalidate, i.e.
  *  connector/refresh or solution/open) and maps engine info shapes to camelCase wire DTOs. Carries names,
  *  node ids, and scalar field values only — never a connection Config or secret. */
 export class ConnectorService
 {
+    private static readonly ConnectorFingerprintTag = 'connector'
+
     private readonly runtimeFactory: () => Promise<ConnectorRuntime>
     private runtimePromise: Promise<ConnectorRuntime> | undefined
 
@@ -52,11 +56,16 @@ export class ConnectorService
         await runtime.PrepareModel(modelId)
     }
 
-    public async Read(modelId: string, concept: string): Promise<Page<EntityDto>>
+    public async Read(modelId: string, concept: string, params: PageParams, limits: PagingLimits): Promise<Page<EntityDto>>
     {
+        PageRequest.ValidatePageSize(params)
         const runtime = await this.Runtime()
-        const entities = await runtime.ReadEntities(modelId, concept)
-        return { items: entities.map((e) => ({ id: e.id, concept: e.concept, fields: ConnectorService.Fields(e.Snapshot()) })) }
+        const fingerprint = PageFingerprint.Of(ConnectorService.ConnectorFingerprintTag, modelId, concept, runtime.Revision)
+        const page = PageRequest.Resolve(params, fingerprint, limits)
+        const result = await runtime.ReadEntities(modelId, concept, { Skip: page.Offset, Take: page.Size })
+        const items = result.Entities.map((e) => ({ id: e.id, concept: e.concept, fields: ConnectorService.Fields(e.Snapshot()) }))
+        const nextCursor = page.NextCursor(result.HasMore)
+        return nextCursor === undefined ? { items } : { items, nextCursor }
     }
 
     public async WriteBack(params: ConnectorWriteBackParams): Promise<FlushOutcomeDto>

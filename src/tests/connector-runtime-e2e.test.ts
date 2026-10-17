@@ -74,7 +74,7 @@ test('a solution model with a SQL datasource reads its entities through the work
         assert.equal(models.length, 1)
         assert.ok(models[0]!.Bindings.length >= 1)
         assert.equal(models[0]!.Bindings[0]!.Source, 'Customer')
-        const entities = await runtime.ReadEntities(models[0]!.ModelId, 'shop.Customer')
+        const entities = (await runtime.ReadEntities(models[0]!.ModelId, 'shop.Customer')).Entities
         assert.ok(entities.length >= 1)
     }
     finally

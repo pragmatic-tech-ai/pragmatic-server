@@ -30,6 +30,19 @@ export interface ConnectionProbe
     readonly Detail?: string
 }
 
+/** A skip/take window over the id-sorted instances of one concept. */
+export interface EntityPage
+{
+    readonly Skip: number
+    readonly Take: number
+}
+
+export interface EntityPageResult
+{
+    readonly Entities: readonly ReflectedEntity[]
+    readonly HasMore: boolean
+}
+
 /** Per-solution in-process connector host: lazily prepares each connector-bearing model's FederatedModelDataConnector
  *  on first touch (cached) and serves reads/write-back. Carries names/node-ids only; never a secret or raw error text. */
 export class ConnectorRuntime
@@ -38,6 +51,10 @@ export class ConnectorRuntime
     private static readonly UnknownConnectorDetail = 'unknown connector'
     private static readonly ProbeFailedDetail = 'connection probe failed'
 
+    private static nextInstanceId = 0
+
+    private readonly instanceId = ++ConnectorRuntime.nextInstanceId
+    private writeBackCount = 0
     private readonly models: ReadonlyMap<string, ConnectorModel>
     private readonly services: IServiceProvider
     private readonly registry = new ModelRegistry()
@@ -53,6 +70,12 @@ export class ConnectorRuntime
         }
         this.models = map
         this.services = services
+    }
+
+    /** Identifies this runtime's data generation: changes on every write-back and differs across runtimes, so a page cursor never outlives the data it paged. */
+    public get Revision(): string
+    {
+        return `${this.instanceId}:${this.writeBackCount}`
     }
 
     public ModelsWithConnectors(): readonly ConnectorModelInfo[]
@@ -109,10 +132,27 @@ export class ConnectorRuntime
         return this.registry.GetRequired(modelId).ConceptNames()
     }
 
-    public async ReadEntities(modelId: string, concept: string): Promise<readonly ReflectedEntity[]>
+    /** Reads the prefetched instances sorted by id (ordinal). Paging slices that in-memory set; it never reaches the adapters. */
+    public async ReadEntities(modelId: string, concept: string, page?: EntityPage): Promise<EntityPageResult>
     {
         await this.PrepareModel(modelId)
-        return this.registry.GetRequired(modelId).Instances(concept)
+        const sorted = [...this.registry.GetRequired(modelId).Instances(concept)].sort((a, b) => ConnectorRuntime.CompareOrdinal(a.id, b.id))
+        if (page === undefined)
+        {
+            return { Entities: sorted, HasMore: false }
+        }
+        const window = sorted.slice(page.Skip, page.Skip + page.Take + 1)
+        const hasMore = window.length > page.Take
+        return { Entities: hasMore ? window.slice(0, page.Take) : window, HasMore: hasMore }
+    }
+
+    private static CompareOrdinal(a: string, b: string): number
+    {
+        if (a < b)
+        {
+            return -1
+        }
+        return a > b ? 1 : 0
     }
 
     public async Entity(modelId: string, id: string): Promise<ReflectedEntity | undefined>
@@ -149,6 +189,7 @@ export class ConnectorRuntime
         }
         const catalog = this.services.getRequired(DataSourceAdapterCatalog.ServiceKey)
         const outcome = await working.Flush(catalog, this.services)
+        this.writeBackCount++
         return { Results: outcome.Results, Diagnostics: [...marks, ...outcome.Diagnostics] }
     }
 

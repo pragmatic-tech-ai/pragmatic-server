@@ -90,7 +90,7 @@ namespace shop {
             await s2.OpenSolution(dir2)
             const r1 = await s1.Connectors()
             const r2 = await s2.Connectors()
-            const rows = await r1.ReadEntities(r1.ModelsWithConnectors()[0]!.ModelId, Fixture.ConceptId)
+            const rows = (await r1.ReadEntities(r1.ModelsWithConnectors()[0]!.ModelId, Fixture.ConceptId)).Entities
             assert.ok(rows.length >= 1)
             assert.equal(Fixture.Captured?.database, 'app')
             assert.equal(Fixture.Captured?.password, 'db-password')

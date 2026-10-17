@@ -123,7 +123,7 @@ namespace shop {
         const models = runtime.ModelsWithConnectors()
         assert.equal(models.length, 1)
         assert.equal(models[0]!.Bindings[0]!.Source, PackE2E.WidgetsSource)
-        const entities = await runtime.ReadEntities(models[0]!.ModelId, PackE2E.WidgetConcept)
+        const entities = (await runtime.ReadEntities(models[0]!.ModelId, PackE2E.WidgetConcept)).Entities
         const names = entities.map(e => String((e.Snapshot() as Record<string, unknown>)[PackE2E.NameField])).sort()
         assert.deepEqual(names, [PackE2E.Alpha, PackE2E.Beta])
     }
