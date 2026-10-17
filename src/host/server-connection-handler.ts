@@ -537,11 +537,7 @@ export class ServerConnectionHandler
         })
         this.guarded(AdminProtocol.InvalidatePack, async p =>
         {
-            const name = this.RequireNonEmptyString(p?.name, ServerConnectionHandler.PackNameField)
-            if (name.trim().length === 0)
-            {
-                throw this.InvalidParams(new AdminEnumError(ServerConnectionHandler.PackNameField))
-            }
+            const name = this.RequirePackName(p?.name)
             await this.AdminCall(() => admin.InvalidatePack(this.actor(), name))
             return { ok: true as const }
         })
@@ -553,21 +549,13 @@ export class ServerConnectionHandler
         }))
         this.guarded(AdminProtocol.AllowPackScripts, async p =>
         {
-            const name = this.RequireNonEmptyString(p?.name, ServerConnectionHandler.PackNameField)
-            if (name.trim().length === 0)
-            {
-                throw this.InvalidParams(new AdminEnumError(ServerConnectionHandler.PackNameField))
-            }
+            const name = this.RequirePackName(p?.name)
             await this.AdminCall(() => admin.AllowPackScripts(this.actor(), name))
             return { ok: true as const }
         })
         this.guarded(AdminProtocol.DenyPackScripts, async p =>
         {
-            const name = this.RequireNonEmptyString(p?.name, ServerConnectionHandler.PackNameField)
-            if (name.trim().length === 0)
-            {
-                throw this.InvalidParams(new AdminEnumError(ServerConnectionHandler.PackNameField))
-            }
+            const name = this.RequirePackName(p?.name)
             await this.AdminCall(() => admin.DenyPackScripts(this.actor(), name))
             return { ok: true as const }
         })
@@ -623,6 +611,16 @@ export class ServerConnectionHandler
     private RequireSubject(value: unknown): string
     {
         return this.RequireNonEmptyString(value, ServerConnectionHandler.SubjectField)
+    }
+
+    private RequirePackName(name: unknown): string
+    {
+        const value = this.RequireNonEmptyString(name, ServerConnectionHandler.PackNameField)
+        if (value.trim().length === 0)
+        {
+            throw this.InvalidParams(new AdminEnumError(ServerConnectionHandler.PackNameField))
+        }
+        return value
     }
 
     private RequireNonEmptyString(value: unknown, field: string): string

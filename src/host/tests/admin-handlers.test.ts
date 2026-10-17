@@ -461,6 +461,31 @@ test('missing params and non-string fields are InvalidParams naming the field', 
     }
 })
 
+test('a Viewer is rejected on every pack method and no pack callback runs', async () =>
+{
+    const fx = new AdminFixture(Role.Viewer)
+    try
+    {
+        const calls: Promise<unknown>[] = [
+            fx.Client.sendRequest(AdminProtocol.InvalidatePack, { name: 'acme-pack' }),
+            fx.Client.sendRequest(AdminProtocol.ListScriptAllowlist),
+            fx.Client.sendRequest(AdminProtocol.AllowPackScripts, { name: 'acme-pack' }),
+            fx.Client.sendRequest(AdminProtocol.DenyPackScripts, { name: 'acme-pack' }),
+        ]
+        for (const call of calls)
+        {
+            await assert.rejects(call, (e: unknown) => e instanceof ResponseError && e.code === ErrorCodes.InvalidRequest)
+        }
+        assert.deepEqual(fx.InvalidatedPacks, [])
+        assert.deepEqual(fx.AllowedPacks, [])
+        assert.deepEqual(fx.DeniedPacks, [])
+    }
+    finally
+    {
+        fx.Dispose()
+    }
+})
+
 test('a valid pack name reaches the invalidatePack callback', async () =>
 {
     const fx = new AdminFixture(Role.Owner)
