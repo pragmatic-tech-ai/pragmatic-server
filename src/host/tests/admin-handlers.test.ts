@@ -79,7 +79,7 @@ class AdminFixture
                 DenyScripts: async name => { this.DeniedPacks.push(name) },
                 ListScriptAllowlist: async () => ['seed-pack', ...this.AllowedPacks],
             })
-        const languageService = { GraphChanged: { subscribe: () => ({ dispose: () => undefined }) } } as unknown as ILanguageService
+        const languageService = { GraphChanged: { subscribe: () => ({ dispose: () => undefined }) }, BuildStateChanged: { subscribe: () => ({ dispose: () => undefined }) } } as unknown as ILanguageService
         const manager = {} as unknown as SolutionManagerService
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         this.Handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, context, () => Promise.reject(new Error('none')), () => Promise.reject(new Error('no graph')), undefined, undefined, undefined, undefined, admin)

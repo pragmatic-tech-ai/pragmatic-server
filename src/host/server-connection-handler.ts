@@ -84,6 +84,7 @@ export class ServerConnectionHandler
     private readonly gate: PolicyGate
     private readonly connectorService: ConnectorService
     private readonly graphSubscription: IDisposable
+    private readonly buildStateSubscription: IDisposable
     private readonly instrumentation: RequestInstrumentation | undefined
     private readonly parent: Context | undefined
     private readonly rateLimit: RateLimitGuard | undefined
@@ -160,6 +161,21 @@ export class ServerConnectionHandler
                 // fail-closed: a push to a closing connection must not crash the process
             }
         })
+        this.buildStateSubscription = languageService.BuildStateChanged.subscribe(async state =>
+        {
+            if (!this.gate.CanRead())
+            {
+                return
+            }
+            try
+            {
+                await connection.sendNotification(SolutionProtocol.BuildStateChanged, { buildState: BuildStateMapper.ToWire(state) })
+            }
+            catch
+            {
+                // fail-closed: a push to a closing connection must not crash the process
+            }
+        })
     }
 
     /** The runtime-only Attach arguments (application registry + per-app graph provider); both undefined unless the server is a Runtime tenant. */
@@ -195,6 +211,7 @@ export class ServerConnectionHandler
     public Dispose(): void
     {
         this.graphSubscription.dispose()
+        this.buildStateSubscription.dispose()
         this.connection.dispose()
     }
 

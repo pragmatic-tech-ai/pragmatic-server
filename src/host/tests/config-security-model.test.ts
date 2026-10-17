@@ -53,7 +53,7 @@ class SecurityModelFixture
             this.Authorization = new TenantReadAuthorization(this.Configs)
         }
         const admin = new AdminService(new InMemoryRoleGrantStore(), audit, this.Configs, tenant, evict, accounts, registrar, new ServiceTokenStore(), { Invalidate: async () => undefined, AllowScripts: async () => undefined, DenyScripts: async () => undefined, ListScriptAllowlist: async () => [] })
-        const languageService = { GraphChanged: { subscribe: () => ({ dispose: () => undefined }) } } as unknown as ILanguageService
+        const languageService = { GraphChanged: { subscribe: () => ({ dispose: () => undefined }) }, BuildStateChanged: { subscribe: () => ({ dispose: () => undefined }) } } as unknown as ILanguageService
         const manager = {} as unknown as SolutionManagerService
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         this.handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, this.Context(), () => Promise.reject(new Error(SecurityModelFixture.NoneMessage)), () => Promise.reject(new Error(SecurityModelFixture.NoGraphMessage)), undefined, undefined, undefined, undefined, admin)
