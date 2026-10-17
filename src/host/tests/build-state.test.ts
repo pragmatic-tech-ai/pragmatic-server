@@ -29,28 +29,43 @@ class ContextFixture
     }
 }
 
-/** Records engine build-state transitions and resolves once a Building -> Ready settle has been observed. */
+/**
+ * Records engine build-state transitions and counts each completed Building -> Ready settle. WhenSettled(n) resolves
+ * only once the n-th settle has been observed, so a caller that issued two switches can wait for the LATEST one and
+ * cannot pass on a stale first-solution settle.
+ */
 class TransitionLog
 {
-    private readonly states: GraphBuildState[] = []
     private readonly subscription: { dispose(): void }
+    private settles = 0
+    private sawBuilding = false
+    private target = 1
     private waiter: (() => void) | undefined
 
     public constructor(language: SolutionLanguageService)
     {
         this.subscription = language.BuildStateChanged.subscribe(state =>
         {
-            this.states.push(state)
-            if (this.Settled())
+            if (state === GraphBuildState.Building)
             {
-                this.waiter?.()
+                this.sawBuilding = true
+            }
+            else if (state === GraphBuildState.Ready && this.sawBuilding)
+            {
+                this.sawBuilding = false
+                this.settles += 1
+                if (this.settles >= this.target)
+                {
+                    this.waiter?.()
+                }
             }
         })
     }
 
-    public WhenSettled(): Promise<void>
+    public WhenSettled(count = 1): Promise<void>
     {
-        if (this.Settled())
+        this.target = count
+        if (this.settles >= this.target)
         {
             return Promise.resolve()
         }
@@ -63,11 +78,6 @@ class TransitionLog
     public Dispose(): void
     {
         this.subscription.dispose()
-    }
-
-    private Settled(): boolean
-    {
-        return this.states.includes(GraphBuildState.Building) && this.states[this.states.length - 1] === GraphBuildState.Ready
     }
 }
 
@@ -231,6 +241,19 @@ test('no push when the gate cannot read', async () =>
     })
 })
 
+test('the same emit path DOES push under a permissive gate (positive control)', async () =>
+{
+    await BuildStateFixture.Run(ContextFixture.Permissive(), async (_server, client, language) =>
+    {
+        const pushes = new PushLog(client)
+        await BuildStateFixture.Flush(language)
+        const before = pushes.Seen().length
+        language.BuildStateChanged.emit(GraphBuildState.Failed)
+        await pushes.WhenCount(before + 1)
+        assert.equal(pushes.Seen()[pushes.Seen().length - 1], BuildState.Failed)
+    })
+})
+
 test('a fresh client reads current buildState from solution/active after a switch', async () =>
 {
     const first = BuildStateFixture.SolutionDir()
@@ -242,7 +265,8 @@ test('a fresh client reads current buildState from solution/active after a switc
             const log = new TransitionLog(language)
             await client.OpenSolution(first)
             await client.OpenSolution(second)
-            await log.WhenSettled()
+            // wait for the SECOND solution's settle (two Building -> Ready cycles), not the stale first one
+            await log.WhenSettled(2)
             log.Dispose()
             await BuildStateFixture.Flush(language)
             const fresh = attach()

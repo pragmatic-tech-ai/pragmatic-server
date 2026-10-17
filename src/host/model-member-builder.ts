@@ -68,7 +68,8 @@ export class ModelMemberBuilder
     /** An edge survives when its target is visible and, for a field-carried edge, the via field is visible and readable. */
     private Keeps(node: Node, edge: Edge): boolean
     {
-        if (!this.Visible(edge.to))
+        // a target outside the visible set (hidden or unresolvable) drops the edge (fail-closed)
+        if (!this.visible.has(edge.to))
         {
             return false
         }
@@ -83,12 +84,6 @@ export class ModelMemberBuilder
             return false
         }
         return this.CanRead(node, viaNode?.localId ?? edge.via)
-    }
-
-    /** A target outside the visible set (hidden or unresolvable) drops the edge (fail-closed). */
-    private Visible(id: string): boolean
-    {
-        return this.visible.has(id)
     }
 
     private CanRead(node: Node, field: string): boolean

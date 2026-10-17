@@ -11,6 +11,7 @@ export class CypherResultMapper
         const page: CypherQueryPageDto = {
             columns: [...dto.Columns],
             items: dto.Rows.map(row => row.map(cell => CypherResultMapper.Cell(cell))),
+            // truncated is always false under paging; clients detect more pages via nextCursor, not this flag
             truncated: dto.Truncated,
         }
         if (nextCursor !== undefined)
