@@ -145,6 +145,10 @@ class FakeNpm implements INpmCli
     public async AuditSignatures(_cwd: string): Promise<void>
     {
     }
+
+    public async RunInstallScripts(_cwd: string): Promise<void>
+    {
+    }
 }
 
 /** Minimal in-process npm registry serving one packument + its tarball. */

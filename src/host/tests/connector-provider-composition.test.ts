@@ -27,6 +27,10 @@ class CountingNpm implements INpmCli
     public async AuditSignatures(_cwd: string): Promise<void>
     {
     }
+
+    public async RunInstallScripts(_cwd: string): Promise<void>
+    {
+    }
 }
 
 class CountingSandboxFactory

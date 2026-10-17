@@ -423,7 +423,12 @@ export class PragmaticServerHost
             const languageService = await server.LanguageService()
             const manager = await server.Manager()
             const pack = await server.Pack()
-            const admin = new AdminService(pack.Grants, pack.Audit, await server.TenantConfigStore(), server.Tenant(), () => this.registry.DisposeTenant(tenantId), pack.Accounts, pack.Registrar, pack.Tokens, name => server.InvalidateAdapterPack(name))
+            const admin = new AdminService(pack.Grants, pack.Audit, await server.TenantConfigStore(), server.Tenant(), () => this.registry.DisposeTenant(tenantId), pack.Accounts, pack.Registrar, pack.Tokens, {
+                Invalidate: name => server.InvalidateAdapterPack(name),
+                AllowScripts: name => server.AllowAdapterPackScripts(name),
+                DenyScripts: name => server.DenyAdapterPackScripts(name),
+                ListScriptAllowlist: () => server.ListAdapterPackScripts(),
+            })
             if (this.disposed)
             {
                 this.RejectRetryable(socket)

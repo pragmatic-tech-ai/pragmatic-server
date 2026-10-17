@@ -2,6 +2,7 @@ import { Action, AuditEvent, AuditEventKind, Grant, ResourceRef, Role, RoleCapab
 import type { LocalAccount, ServiceTokenSummary, PresentedSecret, IRoleGrantStore, IAuditSink, ITenantConfigStore, ILocalAccountStore, IServiceTokenStore, ServiceTokenGrant, Tenant, IdentityConfig } from '@pragmatic-tech-ai/todl-identity'
 import type { LocalAccountRegistrar } from '@pragmatic-tech-ai/todl-identity-local'
 import { AdminEnums } from './admin-enums.js'
+import type { IAdapterPackAdmin } from './adapter-pack-admin.js'
 
 /** Raised when a caller tries to revoke their own tenant-Owner grant. */
 export class AdminSelfLockoutError extends Error
@@ -63,6 +64,8 @@ export class AdminService
     private static readonly IssueTokenAction = 'issue-token'
     private static readonly RevokeTokenAction = 'revoke-token'
     private static readonly InvalidatePackAction = 'invalidate-pack'
+    private static readonly AllowPackScriptsAction = 'allow-pack-scripts'
+    private static readonly DenyPackScriptsAction = 'deny-pack-scripts'
     private static readonly PackNameKey = 'pack'
     private static readonly PrincipalIdKey = 'principalId'
     private static readonly EmailKey = 'email'
@@ -78,11 +81,11 @@ export class AdminService
     private readonly accounts: ILocalAccountStore
     private readonly registrar: LocalAccountRegistrar
     private readonly tokens: IServiceTokenStore
-    private readonly invalidatePack: (name: string) => Promise<void>
+    private readonly packs: IAdapterPackAdmin
 
-    public constructor(grants: IRoleGrantStore, audit: IAuditSink, configStore: ITenantConfigStore, tenant: Tenant, evict: () => Promise<void>, accounts: ILocalAccountStore, registrar: LocalAccountRegistrar, tokens: IServiceTokenStore, invalidatePack: (name: string) => Promise<void>)
+    public constructor(grants: IRoleGrantStore, audit: IAuditSink, configStore: ITenantConfigStore, tenant: Tenant, evict: () => Promise<void>, accounts: ILocalAccountStore, registrar: LocalAccountRegistrar, tokens: IServiceTokenStore, packs: IAdapterPackAdmin)
     {
-        this.invalidatePack = invalidatePack
+        this.packs = packs
         this.grants = grants
         this.audit = audit
         this.configStore = configStore
@@ -213,13 +216,40 @@ export class AdminService
 
     public async InvalidatePack(actor: string, name: string): Promise<void>
     {
-        await this.invalidatePack(name)
+        await this.packs.Invalidate(name)
         const detail = new Map<string, string>([
             [AdminService.ActorKey, actor],
             [AdminService.ActionKey, AdminService.InvalidatePackAction],
             [AdminService.PackNameKey, name],
         ])
         await this.Audit(null, detail)
+    }
+
+    public async AllowPackScripts(actor: string, name: string): Promise<void>
+    {
+        await this.packs.AllowScripts(name)
+        const detail = new Map<string, string>([
+            [AdminService.ActorKey, actor],
+            [AdminService.ActionKey, AdminService.AllowPackScriptsAction],
+            [AdminService.PackNameKey, name],
+        ])
+        await this.Audit(null, detail)
+    }
+
+    public async DenyPackScripts(actor: string, name: string): Promise<void>
+    {
+        await this.packs.DenyScripts(name)
+        const detail = new Map<string, string>([
+            [AdminService.ActorKey, actor],
+            [AdminService.ActionKey, AdminService.DenyPackScriptsAction],
+            [AdminService.PackNameKey, name],
+        ])
+        await this.Audit(null, detail)
+    }
+
+    public async ListScriptAllowlist(): Promise<readonly string[]>
+    {
+        return this.packs.ListScriptAllowlist()
     }
 
     private async Audit(subject: string | null, detail: ReadonlyMap<string, string>): Promise<void>

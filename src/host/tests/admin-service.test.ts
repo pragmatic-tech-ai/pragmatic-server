@@ -7,6 +7,7 @@ import type { IAuditSink, AuditEvent, ITenantConfigStore, IRoleGrantStore } from
 import { InMemoryRoleGrantStore, LocalAccountStore, ServiceTokenStore, LocalAccountRegistrar, EncryptedSecretStore, Argon2PasswordHasher } from '@pragmatic-tech-ai/todl-identity-local'
 import { AdminService, AdminTokenNotFoundError, AdminSelfLockoutError, LastAdministratorError, AdminConfigMissingError } from '../admin-service.js'
 import { AdminEnums, AdminEnumError } from '../admin-enums.js'
+import type { IAdapterPackAdmin } from '../adapter-pack-admin.js'
 
 class RecordingAuditSink implements IAuditSink
 {
@@ -87,6 +88,15 @@ class AdminFixture
     public readonly Tokens = new ServiceTokenStore()
     public readonly Registrar = new LocalAccountRegistrar(this.Accounts, new EncryptedSecretStore(randomBytes(32)), new Argon2PasswordHasher(), new RecordingAuditSink())
     public readonly Invalidated: string[] = []
+    public readonly Allowed: string[] = []
+    public readonly Denied: string[] = []
+    public readonly ScriptAllowlist: string[] = ['seed-pack']
+    public readonly Packs: IAdapterPackAdmin = {
+        Invalidate: async name => { this.Invalidated.push(name) },
+        AllowScripts: async name => { this.Allowed.push(name) },
+        DenyScripts: async name => { this.Denied.push(name) },
+        ListScriptAllowlist: async () => this.ScriptAllowlist,
+    }
     public readonly Service: AdminService
 
     public constructor()
@@ -96,7 +106,7 @@ class AdminFixture
 
     public ServiceFor(tenant: Tenant, audit: IAuditSink, evict: () => Promise<void>): AdminService
     {
-        return new AdminService(this.Grants, audit, this.Config, tenant, evict, this.Accounts, this.Registrar, this.Tokens, async name => { this.Invalidated.push(name) })
+        return new AdminService(this.Grants, audit, this.Config, tenant, evict, this.Accounts, this.Registrar, this.Tokens, this.Packs)
     }
 
     public TenantRoot(): ResourceRef
@@ -474,4 +484,43 @@ test('a failing audit fails InvalidatePack closed after the invalidate ran', asy
     const f = new AdminFixture()
     const failing = f.ServiceFor(f.Tenant, new FailingAuditSink(), async () => {})
     await assert.rejects(failing.InvalidatePack('u1', 'acme-pack'), /audit down/)
+})
+
+test('AllowPackScripts records the allow then audits actor, action and pack only', async () =>
+{
+    const f = new AdminFixture()
+    await f.Service.AllowPackScripts('actor-1', 'acme-pack')
+    assert.deepEqual(f.Allowed, ['acme-pack'])
+    assert.equal(f.Audit.Events.length, 1)
+    const event = f.Audit.Events[0]
+    assert.equal(event.Kind, AuditEventKind.AdminAction)
+    assert.deepEqual([...event.Detail.entries()], [['actor', 'actor-1'], ['action', 'allow-pack-scripts'], ['pack', 'acme-pack']])
+})
+
+test('DenyPackScripts records the deny then audits actor, action and pack only', async () =>
+{
+    const f = new AdminFixture()
+    await f.Service.DenyPackScripts('actor-1', 'acme-pack')
+    assert.deepEqual(f.Denied, ['acme-pack'])
+    assert.equal(f.Audit.Events.length, 1)
+    const event = f.Audit.Events[0]
+    assert.equal(event.Kind, AuditEventKind.AdminAction)
+    assert.deepEqual([...event.Detail.entries()], [['actor', 'actor-1'], ['action', 'deny-pack-scripts'], ['pack', 'acme-pack']])
+})
+
+test('a failing audit fails AllowPackScripts and DenyPackScripts closed after the mutation ran', async () =>
+{
+    const f = new AdminFixture()
+    const failing = f.ServiceFor(f.Tenant, new FailingAuditSink(), async () => {})
+    await assert.rejects(failing.AllowPackScripts('u1', 'acme-pack'), /audit down/)
+    await assert.rejects(failing.DenyPackScripts('u1', 'acme-pack'), /audit down/)
+    assert.deepEqual(f.Allowed, ['acme-pack'])
+    assert.deepEqual(f.Denied, ['acme-pack'])
+})
+
+test('ListScriptAllowlist returns the list and emits no audit event', async () =>
+{
+    const f = new AdminFixture()
+    assert.deepEqual(await f.Service.ListScriptAllowlist(), ['seed-pack'])
+    assert.equal(f.Audit.Events.length, 0)
 })

@@ -51,6 +51,8 @@ class AdminFixture
     public readonly Audit = new CapturingAuditSink()
     public readonly Accounts = new FaultingAccountStore()
     public readonly InvalidatedPacks: string[] = []
+    public readonly AllowedPacks: string[] = []
+    public readonly DeniedPacks: string[] = []
     public readonly Handler: ServerConnectionHandler
     public readonly Client: MessageConnection
 
@@ -61,7 +63,12 @@ class AdminFixture
         const context = new AccessContext(principal, tenant, [new Grant('p1', role, new ResourceRef(ResourceKind.Tenant, 't1', []))], new ResourceAuthorizationPolicy())
         const accounts = this.Accounts
         const registrar = new LocalAccountRegistrar(accounts, new EncryptedSecretStore(randomBytes(32)), new Argon2PasswordHasher(), this.Audit)
-        const admin = new AdminService(this.Grants, this.Audit, this.Configs, tenant, async () => undefined, accounts, registrar, new ServiceTokenStore(), async name => { this.InvalidatedPacks.push(name) })
+        const admin = new AdminService(this.Grants, this.Audit, this.Configs, tenant, async () => undefined, accounts, registrar, new ServiceTokenStore(), {
+            Invalidate: async name => { this.InvalidatedPacks.push(name) },
+            AllowScripts: async name => { this.AllowedPacks.push(name) },
+            DenyScripts: async name => { this.DeniedPacks.push(name) },
+            ListScriptAllowlist: async () => ['seed-pack', ...this.AllowedPacks],
+        })
         const languageService = { GraphChanged: { subscribe: () => ({ dispose: () => undefined }) } } as unknown as ILanguageService
         const manager = {} as unknown as SolutionManagerService
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
@@ -438,6 +445,14 @@ test('missing params and non-string fields are InvalidParams naming the field', 
         await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.InvalidatePack, { name: '' } as never), 'name')
         await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.InvalidatePack, { name: '   ' } as never), 'name')
         assert.deepEqual(fx.InvalidatedPacks, [])
+        for (const method of [AdminProtocol.AllowPackScripts, AdminProtocol.DenyPackScripts])
+        {
+            await AccountTokenCases.Invalid(fx.Client.sendRequest(method, {} as never), 'name')
+            await AccountTokenCases.Invalid(fx.Client.sendRequest(method, { name: '' } as never), 'name')
+            await AccountTokenCases.Invalid(fx.Client.sendRequest(method, { name: '   ' } as never), 'name')
+        }
+        assert.deepEqual(fx.AllowedPacks, [])
+        assert.deepEqual(fx.DeniedPacks, [])
         await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.CreateAccount, { email: 5, principalId: 'a', password: AccountTokenCases.Password } as never), 'email')
     }
     finally
@@ -454,6 +469,23 @@ test('a valid pack name reaches the invalidatePack callback', async () =>
         const ack = await fx.Client.sendRequest(AdminProtocol.InvalidatePack, { name: 'acme-pack' })
         assert.deepEqual(ack, { ok: true })
         assert.deepEqual(fx.InvalidatedPacks, ['acme-pack'])
+    }
+    finally
+    {
+        fx.Dispose()
+    }
+})
+
+test('valid pack names reach the allow and deny callbacks and list returns names', async () =>
+{
+    const fx = new AdminFixture(Role.Owner)
+    try
+    {
+        assert.deepEqual(await fx.Client.sendRequest(AdminProtocol.AllowPackScripts, { name: 'acme-pack' }), { ok: true })
+        assert.deepEqual(await fx.Client.sendRequest(AdminProtocol.DenyPackScripts, { name: 'other-pack' }), { ok: true })
+        assert.deepEqual(fx.AllowedPacks, ['acme-pack'])
+        assert.deepEqual(fx.DeniedPacks, ['other-pack'])
+        assert.deepEqual(await fx.Client.sendRequest(AdminProtocol.ListScriptAllowlist), { names: ['seed-pack', 'acme-pack'] })
     }
     finally
     {

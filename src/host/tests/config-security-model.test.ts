@@ -52,7 +52,7 @@ class SecurityModelFixture
         {
             this.Authorization = new TenantReadAuthorization(this.Configs)
         }
-        const admin = new AdminService(new InMemoryRoleGrantStore(), audit, this.Configs, tenant, evict, accounts, registrar, new ServiceTokenStore(), async () => undefined)
+        const admin = new AdminService(new InMemoryRoleGrantStore(), audit, this.Configs, tenant, evict, accounts, registrar, new ServiceTokenStore(), { Invalidate: async () => undefined, AllowScripts: async () => undefined, DenyScripts: async () => undefined, ListScriptAllowlist: async () => [] })
         const languageService = { GraphChanged: { subscribe: () => ({ dispose: () => undefined }) } } as unknown as ILanguageService
         const manager = {} as unknown as SolutionManagerService
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()

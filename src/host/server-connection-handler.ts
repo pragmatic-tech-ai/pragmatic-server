@@ -545,6 +545,32 @@ export class ServerConnectionHandler
             await this.AdminCall(() => admin.InvalidatePack(this.actor(), name))
             return { ok: true as const }
         })
+        this.connection.onRequest(AdminProtocol.ListScriptAllowlist, () => this.Dispatch(AdminProtocol.ListScriptAllowlist.method, async () =>
+        {
+            this.EnforceRate(AdminProtocol.ListScriptAllowlist.method)
+            this.authorize(AdminProtocol.ListScriptAllowlist.method)
+            return { names: [...await this.AdminCall(() => admin.ListScriptAllowlist())] }
+        }))
+        this.guarded(AdminProtocol.AllowPackScripts, async p =>
+        {
+            const name = this.RequireNonEmptyString(p?.name, ServerConnectionHandler.PackNameField)
+            if (name.trim().length === 0)
+            {
+                throw this.InvalidParams(new AdminEnumError(ServerConnectionHandler.PackNameField))
+            }
+            await this.AdminCall(() => admin.AllowPackScripts(this.actor(), name))
+            return { ok: true as const }
+        })
+        this.guarded(AdminProtocol.DenyPackScripts, async p =>
+        {
+            const name = this.RequireNonEmptyString(p?.name, ServerConnectionHandler.PackNameField)
+            if (name.trim().length === 0)
+            {
+                throw this.InvalidParams(new AdminEnumError(ServerConnectionHandler.PackNameField))
+            }
+            await this.AdminCall(() => admin.DenyPackScripts(this.actor(), name))
+            return { ok: true as const }
+        })
     }
 
     private actor(): string

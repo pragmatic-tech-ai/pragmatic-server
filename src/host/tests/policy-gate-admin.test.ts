@@ -19,6 +19,9 @@ class AdminGateFixture
         AdminProtocol.IssueToken.method,
         AdminProtocol.RevokeToken.method,
         AdminProtocol.InvalidatePack.method,
+        AdminProtocol.ListScriptAllowlist.method,
+        AdminProtocol.AllowPackScripts.method,
+        AdminProtocol.DenyPackScripts.method,
     ]
 
     public static readonly Untabled = 'admin/accounts/bogus'
