@@ -466,12 +466,14 @@ export class Gateway
         return assessment.overHardSince
     }
 
+    /** @internal test seam */
     public BridgeForTest(clientWs: WebSocket, workerWs: WebSocket): void
     {
         this.workerSockets.add(workerWs)
         this.Bridge(clientWs, workerWs)
     }
 
+    /** @internal test seam */
     public WorkerSocketCountForTest(): number
     {
         return this.workerSockets.size

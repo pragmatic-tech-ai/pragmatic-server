@@ -118,3 +118,26 @@ test('gateway forwards to a destination whose buffer is under the hard limit', a
         await gateway.DisposeAsync()
     }
 })
+
+test('gateway sheds a slow client leg (worker-to-client) and tears down the peer worker leg on client close', async () =>
+{
+    const gateway = await ShedFixture.Start(10)
+    try
+    {
+        const client = new FakeWs(20)
+        const worker = new FakeWs(0)
+        gateway.BridgeForTest(client.AsWs(), worker.AsWs())
+        ShedFixture.Frame(worker)
+        assert.deepEqual(client.Closed, [TransportCloseCode.TryAgainLater])
+        assert.equal(client.Terminated, true)
+        assert.equal(client.Sent.length, 0)
+        assert.deepEqual(worker.Closed, [])
+        client.emit('close')
+        assert.equal(worker.Closed.length, 1)
+        assert.equal(gateway.WorkerSocketCountForTest(), 0)
+    }
+    finally
+    {
+        await gateway.DisposeAsync()
+    }
+})
