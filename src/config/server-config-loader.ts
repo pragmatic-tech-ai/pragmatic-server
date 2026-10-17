@@ -7,6 +7,7 @@ import { AuditSinkKind } from './audit-sink-kind.js'
 import type { RateLimitConfig, RateLimitSettings } from '../host/rate-limiter.js'
 import { OtlpProtocol } from '../observability/otlp-protocol.js'
 import { SandboxStrategy } from './server-config.js'
+import { PagingLimits } from './paging-limits.js'
 import type { AdapterPacksConfig, AdapterPacksEviction, AdapterPacksResourceLimits, GatewayConfig, ServerConfig, SingleTenantConfig, WsResilienceConfig } from './server-config.js'
 
 interface ConfigFile
@@ -222,7 +223,7 @@ export class ServerConfigLoader
         throw new Error(badMessage)
     }
 
-    private static PositiveNumber(value: string | undefined): number | undefined
+    private static PositiveNumber(value: string | undefined, badMessage: string = ServerConfigLoader.BadAdapterPacksNumber): number | undefined
     {
         if (value === undefined || value.length === 0)
         {
@@ -230,7 +231,7 @@ export class ServerConfigLoader
         }
         if (!ServerConfigLoader.PositiveIntPattern.test(value) || !Number.isSafeInteger(Number(value)))
         {
-            throw new Error(ServerConfigLoader.BadAdapterPacksNumber)
+            throw new Error(badMessage)
         }
         return Number(value)
     }
@@ -357,26 +358,19 @@ export class ServerConfigLoader
     private static readonly EnvPageSizeDefault = 'PRAGMATIC_PAGE_SIZE_DEFAULT'
     private static readonly EnvPageSizeMax = 'PRAGMATIC_PAGE_SIZE_MAX'
     private static readonly BadPageSize = 'PRAGMATIC_PAGE_SIZE_DEFAULT / PRAGMATIC_PAGE_SIZE_MAX must be positive integers'
+    private static readonly ExceedsWord = ' exceeds '
 
     private static Paging(env: Record<string, string | undefined>): Pick<ServerConfig, 'pagingPageSize' | 'pagingMaxPageSize'>
     {
-        return {
-            pagingPageSize: ServerConfigLoader.PageSize(env[ServerConfigLoader.EnvPageSizeDefault]),
-            pagingMaxPageSize: ServerConfigLoader.PageSize(env[ServerConfigLoader.EnvPageSizeMax]),
-        }
-    }
-
-    private static PageSize(value: string | undefined): number | undefined
-    {
-        if (value === undefined || value.length === 0)
+        const pagingPageSize = ServerConfigLoader.PositiveNumber(env[ServerConfigLoader.EnvPageSizeDefault], ServerConfigLoader.BadPageSize)
+        const pagingMaxPageSize = ServerConfigLoader.PositiveNumber(env[ServerConfigLoader.EnvPageSizeMax], ServerConfigLoader.BadPageSize)
+        const effectiveDefault = pagingPageSize ?? PagingLimits.DefaultPageSize
+        const effectiveMax = pagingMaxPageSize ?? PagingLimits.DefaultMaxPageSize
+        if (effectiveDefault > effectiveMax)
         {
-            return undefined
+            throw new Error(`${ServerConfigLoader.EnvPageSizeDefault} (${effectiveDefault})${ServerConfigLoader.ExceedsWord}${ServerConfigLoader.EnvPageSizeMax} (${effectiveMax})`)
         }
-        if (!ServerConfigLoader.PositiveIntPattern.test(value) || !Number.isSafeInteger(Number(value)))
-        {
-            throw new Error(ServerConfigLoader.BadPageSize)
-        }
-        return Number(value)
+        return { pagingPageSize, pagingMaxPageSize }
     }
 
     private static WsInt(value: string | undefined, fallback: number): number

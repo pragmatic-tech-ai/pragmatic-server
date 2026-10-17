@@ -18,6 +18,11 @@ class Fixture
     {
         assert.throws(action, (error: unknown) => error instanceof ResponseError && error.code === code)
     }
+
+    public static AssertStale(action: () => unknown): void
+    {
+        assert.throws(action, (error: unknown) => error instanceof ResponseError && error.code === -32032 && error.message === CursorStaleError.Message)
+    }
 }
 
 test('a missing pageSize uses the default 500 at offset 0', () =>
@@ -54,13 +59,19 @@ for (const bad of [0, -1, 2.5])
 test('a cursor from another fingerprint throws the stale-cursor error', () =>
 {
     const cursor = PageCursorCodec.Encode({ offset: 10, fingerprint: Fixture.OtherFingerprint })
-    Fixture.AssertCode(() => PageRequest.Resolve({ cursor }, Fixture.Fingerprint, Fixture.Limits()), -32032)
+    Fixture.AssertStale(() => PageRequest.Resolve({ cursor }, Fixture.Fingerprint, Fixture.Limits()))
     assert.equal(CursorStaleError.Code, -32032)
 })
 
 test('a garbage cursor throws the stale-cursor error', () =>
 {
-    Fixture.AssertCode(() => PageRequest.Resolve({ cursor: 'not-a-cursor!!' }, Fixture.Fingerprint, Fixture.Limits()), CursorStaleError.Code)
+    Fixture.AssertStale(() => PageRequest.Resolve({ cursor: 'not-a-cursor!!' }, Fixture.Fingerprint, Fixture.Limits()))
+})
+
+test('a cursor with a negative offset throws the stale-cursor error', () =>
+{
+    const cursor = Buffer.from(JSON.stringify({ offset: -5, fingerprint: Fixture.Fingerprint })).toString('base64url')
+    Fixture.AssertStale(() => PageRequest.Resolve({ cursor }, Fixture.Fingerprint, Fixture.Limits()))
 })
 
 test('a matching cursor resumes at its offset', () =>

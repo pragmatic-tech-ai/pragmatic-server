@@ -434,3 +434,15 @@ for (const [name, value] of [['PRAGMATIC_PAGE_SIZE_DEFAULT', '0'], ['PRAGMATIC_P
         assert.throws(() => ServerConfigLoader.Load(env, Env.NoRead), /PRAGMATIC_PAGE_SIZE_/)
     })
 }
+
+test('a paging max below the effective default fails at load naming both values', () =>
+{
+    const env = { ...Env.Minimal(), PRAGMATIC_PAGE_SIZE_MAX: '100' }
+    assert.throws(() => ServerConfigLoader.Load(env, Env.NoRead), (error: unknown) => error instanceof Error && error.message === 'PRAGMATIC_PAGE_SIZE_DEFAULT (500) exceeds PRAGMATIC_PAGE_SIZE_MAX (100)')
+})
+
+test('a paging default above the effective max fails at load naming both values', () =>
+{
+    const env = { ...Env.Minimal(), PRAGMATIC_PAGE_SIZE_DEFAULT: '6000' }
+    assert.throws(() => ServerConfigLoader.Load(env, Env.NoRead), /PRAGMATIC_PAGE_SIZE_DEFAULT \(6000\) exceeds PRAGMATIC_PAGE_SIZE_MAX \(5000\)/)
+})
