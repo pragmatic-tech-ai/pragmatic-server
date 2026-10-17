@@ -50,7 +50,7 @@ namespace shop {
     }
 
     /** Opens the fixture solution under the given policy and runs the body against the connector runtime. */
-    public static async WithServer(policy: ConnectorsPolicy, body: (read: () => Promise<unknown[]>) => Promise<void>): Promise<void>
+    public static async WithServer(policy: ConnectorsPolicy, body: (read: () => Promise<readonly unknown[]>) => Promise<void>): Promise<void>
     {
         const dir = Fixture.SolutionDir()
         const pool = Fixture.Pool()
@@ -61,7 +61,7 @@ namespace shop {
             await server.OpenSolution(dir)
             const runtime = await server.Connectors()
             const models = runtime.ModelsWithConnectors()
-            await body(async () => (await runtime.ReadEntities(models[0]!.ModelId, Fixture.ConceptId)).Entities as unknown[])
+            await body(async () => (await runtime.ReadEntities(models[0]!.ModelId, Fixture.ConceptId)).Entities)
         }
         finally
         {

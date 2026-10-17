@@ -41,6 +41,23 @@ class InMemoryAdapterFactory implements IDataSourceAdapterFactory
     }
 }
 
+class ThrowingApplyAdapter extends InMemoryAdapter
+{
+    public override Apply(_batch: WriteBatch): Promise<WriteResult>
+    {
+        return Promise.reject(new Error('apply failed part-way'))
+    }
+}
+
+class ThrowingApplyFactory extends InMemoryAdapterFactory
+{
+    public override Open(_connection: ResolvedConnection): Promise<IDataSourceAdapter>
+    {
+        this.OpenCount++
+        return Promise.resolve(new ThrowingApplyAdapter(new Map([['Customer', [{ customer_id: 'C1', name: 'Acme' }]]])))
+    }
+}
+
 class FlakyAdapterFactory extends InMemoryAdapterFactory
 {
     public override Open(connection: ResolvedConnection): Promise<IDataSourceAdapter>
@@ -252,5 +269,15 @@ test('Revision changes after WriteBack and differs across runtimes', async () =>
     assert.notEqual(before, other.Revision)
     const id = (await runtime.ReadEntities('shop', 'shop.Customer')).Entities[0]!.id
     await runtime.WriteBack('shop', [id], [])
+    assert.notEqual(runtime.Revision, before)
+})
+
+test('Revision still changes when WriteBack throws', async () =>
+{
+    const factory = new ThrowingApplyFactory(DataSourceKind.Sql, new Map())
+    const runtime = new ConnectorRuntime([Fixtures.Model('shop')], Fixtures.ServicesFor(factory))
+    const id = (await runtime.ReadEntities('shop', 'shop.Customer')).Entities[0]!.id
+    const before = runtime.Revision
+    await assert.rejects(() => runtime.WriteBack('shop', [id], []))
     assert.notEqual(runtime.Revision, before)
 })

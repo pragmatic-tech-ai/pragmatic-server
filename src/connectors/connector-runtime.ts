@@ -169,28 +169,36 @@ export class ConnectorRuntime
         {
             throw new Error(`${ConnectorRuntime.NoConnectorsPrefix}${modelId}`)
         }
-        const working = connector.WorkingCopy()
-        const marks: Diagnostic[] = []
-        for (const id of dirty)
+        // count every attempt, even one that throws part-way: a partial apply may already have changed the data, and
+        // a false stale-cursor error is safe whereas a falsely valid cursor over changed data is not
+        try
         {
-            const diag = working.MarkDirty(id)
-            if (diag !== undefined)
+            const working = connector.WorkingCopy()
+            const marks: Diagnostic[] = []
+            for (const id of dirty)
             {
-                marks.push(diag)
+                const diag = working.MarkDirty(id)
+                if (diag !== undefined)
+                {
+                    marks.push(diag)
+                }
             }
+            for (const id of deleted)
+            {
+                const diag = working.MarkDeleted(id)
+                if (diag !== undefined)
+                {
+                    marks.push(diag)
+                }
+            }
+            const catalog = this.services.getRequired(DataSourceAdapterCatalog.ServiceKey)
+            const outcome = await working.Flush(catalog, this.services)
+            return { Results: outcome.Results, Diagnostics: [...marks, ...outcome.Diagnostics] }
         }
-        for (const id of deleted)
+        finally
         {
-            const diag = working.MarkDeleted(id)
-            if (diag !== undefined)
-            {
-                marks.push(diag)
-            }
+            this.writeBackCount++
         }
-        const catalog = this.services.getRequired(DataSourceAdapterCatalog.ServiceKey)
-        const outcome = await working.Flush(catalog, this.services)
-        this.writeBackCount++
-        return { Results: outcome.Results, Diagnostics: [...marks, ...outcome.Diagnostics] }
     }
 
     public async TestConnection(modelId: string, connectorName: string): Promise<ConnectionProbe>
