@@ -7,7 +7,7 @@ import { AuditSinkKind } from './audit-sink-kind.js'
 import type { RateLimitConfig, RateLimitSettings } from '../host/rate-limiter.js'
 import { OtlpProtocol } from '../observability/otlp-protocol.js'
 import { SandboxStrategy } from './server-config.js'
-import type { AdapterPacksConfig, AdapterPacksEviction, AdapterPacksResourceLimits, GatewayConfig, ServerConfig, SingleTenantConfig } from './server-config.js'
+import type { AdapterPacksConfig, AdapterPacksEviction, AdapterPacksResourceLimits, GatewayConfig, ServerConfig, SingleTenantConfig, WsResilienceConfig } from './server-config.js'
 
 interface ConfigFile
 {
@@ -328,6 +328,45 @@ export class ServerConfigLoader
         return { Rps: parsedRps, Burst: parsedBurst }
     }
 
+    private static readonly EnvWsHeartbeat = 'PRAGMATIC_WS_HEARTBEAT_MS'
+    private static readonly EnvWsReadIdle = 'PRAGMATIC_WS_READ_IDLE_MS'
+    private static readonly EnvWsBpSoft = 'PRAGMATIC_WS_BP_SOFT_BYTES'
+    private static readonly EnvWsBpHard = 'PRAGMATIC_WS_BP_HARD_BYTES'
+    private static readonly EnvWsBpGrace = 'PRAGMATIC_WS_BP_GRACE_MS'
+    private static readonly EnvWsMaxInbound = 'PRAGMATIC_WS_MAX_INBOUND_BYTES'
+    private static readonly BadWsValue = 'PRAGMATIC_WS_* values must be positive integers'
+    private static readonly DefaultHeartbeatMs = 30000
+    private static readonly DefaultReadIdleMs = 60000
+    private static readonly DefaultBpSoftBytes = 1048576
+    private static readonly DefaultBpHardBytes = 8388608
+    private static readonly DefaultBpGraceMs = 5000
+    private static readonly DefaultMaxInboundBytes = 16777216
+
+    private static WsResilience(env: Record<string, string | undefined>): WsResilienceConfig
+    {
+        return {
+            heartbeatIntervalMs: ServerConfigLoader.WsInt(env[ServerConfigLoader.EnvWsHeartbeat], ServerConfigLoader.DefaultHeartbeatMs),
+            readIdleMs: ServerConfigLoader.WsInt(env[ServerConfigLoader.EnvWsReadIdle], ServerConfigLoader.DefaultReadIdleMs),
+            backpressureSoftBytes: ServerConfigLoader.WsInt(env[ServerConfigLoader.EnvWsBpSoft], ServerConfigLoader.DefaultBpSoftBytes),
+            backpressureHardBytes: ServerConfigLoader.WsInt(env[ServerConfigLoader.EnvWsBpHard], ServerConfigLoader.DefaultBpHardBytes),
+            backpressureGraceMs: ServerConfigLoader.WsInt(env[ServerConfigLoader.EnvWsBpGrace], ServerConfigLoader.DefaultBpGraceMs),
+            maxInboundBytes: ServerConfigLoader.WsInt(env[ServerConfigLoader.EnvWsMaxInbound], ServerConfigLoader.DefaultMaxInboundBytes),
+        }
+    }
+
+    private static WsInt(value: string | undefined, fallback: number): number
+    {
+        if (value === undefined || value.length === 0)
+        {
+            return fallback
+        }
+        if (!ServerConfigLoader.PositiveIntPattern.test(value) || !Number.isSafeInteger(Number(value)))
+        {
+            throw new Error(ServerConfigLoader.BadWsValue)
+        }
+        return Number(value)
+    }
+
     public static LoadGateway(env: Record<string, string | undefined>): GatewayConfig
     {
         const tls = ServerConfigLoader.Tls(env)
@@ -341,6 +380,7 @@ export class ServerConfigLoader
             throw new Error(ServerConfigLoader.GatewayNeedsRedis)
         }
         return {
+            wsResilience: ServerConfigLoader.WsResilience(env),
             host: env.PRAGMATIC_HOST ?? ServerConfigLoader.DefaultHost,
             port: ServerConfigLoader.Int(env.PRAGMATIC_PORT) ?? ServerConfigLoader.DefaultPort,
             tls,
@@ -517,6 +557,7 @@ export class ServerConfigLoader
         const clientTls = ServerConfigLoader.ClientTls(env)
         const deploymentMode = ServerConfigLoader.Mode(env.PRAGMATIC_DEPLOYMENT_MODE ?? file.deploymentMode)
         return {
+            wsResilience: ServerConfigLoader.WsResilience(env),
             host: env.PRAGMATIC_HOST ?? file.host ?? ServerConfigLoader.DefaultHost,
             port: ServerConfigLoader.Int(env.PRAGMATIC_PORT) ?? file.port ?? ServerConfigLoader.DefaultPort,
             baseDir,

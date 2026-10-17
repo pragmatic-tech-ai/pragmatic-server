@@ -386,3 +386,23 @@ test('the azure provider does not require the gcp or aws vars', () =>
     assert.equal(config.gcsBucket, undefined)
     assert.equal(config.s3Bucket, undefined)
 })
+
+test('ws resilience defaults when no env vars are set', () =>
+{
+    const config = ServerConfigLoader.Load(Env.Minimal(), Env.NoRead)
+    assert.deepEqual(config.wsResilience, { heartbeatIntervalMs: 30000, readIdleMs: 60000, backpressureSoftBytes: 1048576, backpressureHardBytes: 8388608, backpressureGraceMs: 5000, maxInboundBytes: 16777216 })
+})
+
+test('ws resilience env overrides parse as positive integers', () =>
+{
+    const env = { ...Env.Minimal(), PRAGMATIC_WS_HEARTBEAT_MS: '5000', PRAGMATIC_WS_MAX_INBOUND_BYTES: '2048' }
+    const config = ServerConfigLoader.Load(env, Env.NoRead)
+    assert.equal(config.wsResilience!.heartbeatIntervalMs, 5000)
+    assert.equal(config.wsResilience!.maxInboundBytes, 2048)
+})
+
+test('a non-positive ws resilience value is rejected', () =>
+{
+    const env = { ...Env.Minimal(), PRAGMATIC_WS_BP_HARD_BYTES: '0' }
+    assert.throws(() => ServerConfigLoader.Load(env, Env.NoRead), /PRAGMATIC_WS_/)
+})

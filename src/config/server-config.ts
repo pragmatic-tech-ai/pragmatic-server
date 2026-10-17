@@ -42,6 +42,16 @@ export interface SingleTenantConfig
     displayName: string
 }
 
+export interface WsResilienceConfig
+{
+    heartbeatIntervalMs: number
+    readIdleMs: number
+    backpressureSoftBytes: number
+    backpressureHardBytes: number
+    backpressureGraceMs: number
+    maxInboundBytes: number
+}
+
 export interface ServerConfig
 {
     host: string
@@ -107,6 +117,7 @@ export interface ServerConfig
     cloudAuditAnchorKeyRef?: string
     cloudAuditAnchorInterval?: number
     readonly adapterPacks?: AdapterPacksConfig
+    wsResilience?: WsResilienceConfig
 }
 
 export interface GatewayConfig
@@ -128,4 +139,5 @@ export interface GatewayConfig
     auditFile?: string
     rateLimit?: RateLimitConfig
     drainTimeoutMs?: number
+    wsResilience?: WsResilienceConfig
 }
