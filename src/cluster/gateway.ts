@@ -369,7 +369,6 @@ export class Gateway
         const wsOptions = { key: client.key, cert: client.cert, ca: client.ca, rejectUnauthorized: true, servername: this.serverName, headers }
         const workerWs = new WebSocket(`${Gateway.WsScheme}${endpoint.host}:${endpoint.port}/`, wsOptions)
         this.workerSockets.add(workerWs)
-        this.heartbeat.Watch(workerWs)
         let opened = false
         let bridged = false
         workerWs.once(Gateway.OpenEvent, () =>
@@ -381,6 +380,7 @@ export class Gateway
                 this.RejectRetryable(socket)
                 return
             }
+            this.heartbeat.Watch(workerWs)
             this.wss.handleUpgrade(req, socket, head, (clientWs: WebSocket) =>
             {
                 bridged = true
