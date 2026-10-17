@@ -2,7 +2,7 @@ import {
     createMessageConnection, NullLogger, WebSocketMessageReader, WebSocketMessageWriter, LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol, AdminProtocol, CypherProtocol, PragmaticAppProtocol,
 } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, ModelProjection, ResolvedResourceDto, GrantDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, AccountDto, CreateAccountParams, ServiceTokenSummaryDto, IssueTokenParams, TokenIssuedDto, CypherQueryParams, CypherQueryResultDto, PragmaticAppSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { ResponseError, ErrorCodes, AppDataProtocol, DataSharingProtocol, DataAssignmentProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { ResponseError, ErrorCodes, DrainingError, AppDataProtocol, DataSharingProtocol, DataAssignmentProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AppWriteParams, AppWriteResultDto, AppWriteOpDto, ShareParams, ShareResultDto, UnshareParams, UnshareResultDto, ListSharesParams, ListSharesResultDto, AssignParams, AssignResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { RequestType, NotificationType } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ResourceRef, IdentityConfig, PresentedSecret, LocalAccountNotFoundError } from '@pragmatic-tech-ai/todl-identity'
@@ -91,6 +91,8 @@ export class ServerConnectionHandler
     private readonly listSharesProvider: ((context: AccessContext, name: string, params: ListSharesParams) => Promise<ListSharesResultDto>) | undefined
     private readonly assignProvider: ((context: AccessContext, name: string, params: AssignParams) => Promise<AssignResultDto>) | undefined
     private boundApp: PragmaticAppSummaryDto | undefined
+    private inFlight = 0
+    private draining = false
 
     private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, graphProvider: (context: AccessContext) => Promise<IGraphQuery>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: TenantPurpose = TenantPurpose.Development, applications?: PragmaticAppsRegistry, appGraphProvider?: (context: AccessContext, name: string, labels: ReferencedLabelSet) => Promise<IGraphQuery>, appWriteProvider?: (context: AccessContext, name: string, operations: readonly AppWriteOpDto[]) => Promise<AppWriteResultDto>, shareProvider?: (context: AccessContext, name: string, params: ShareParams) => Promise<ShareResultDto>, unshareProvider?: (context: AccessContext, name: string, params: UnshareParams) => Promise<UnshareResultDto>, listSharesProvider?: (context: AccessContext, name: string, params: ListSharesParams) => Promise<ListSharesResultDto>, assignProvider?: (context: AccessContext, name: string, params: AssignParams) => Promise<AssignResultDto>)
     {
@@ -166,6 +168,18 @@ export class ServerConnectionHandler
         return handler
     }
 
+    /** Count of JSON-RPC requests currently executing on this connection (for drain). */
+    public InFlight(): number
+    {
+        return this.inFlight
+    }
+
+    /** Puts the connection into draining state: new requests are rejected with the draining error; in-flight ones finish. */
+    public BeginDrain(): void
+    {
+        this.draining = true
+    }
+
     public Dispose(): void
     {
         this.graphSubscription.dispose()
@@ -198,11 +212,32 @@ export class ServerConnectionHandler
 
     private Dispatch<R>(method: string, operation: () => R | Promise<R>): R | Promise<R>
     {
-        if (this.instrumentation === undefined)
+        if (this.draining)
         {
-            return operation()
+            throw new ResponseError(DrainingError.Code, DrainingError.Message)
         }
-        return this.instrumentation.Run({ method, tenant: this.accessContext.Tenant.Id, principal: this.accessContext.Principal.Id }, operation, this.parent)
+        this.inFlight++
+        const settle = <T>(value: T): T =>
+        {
+            this.inFlight--
+            return value
+        }
+        const fail = (error: unknown): never =>
+        {
+            this.inFlight--
+            throw error
+        }
+        try
+        {
+            const result = this.instrumentation === undefined
+                ? operation()
+                : this.instrumentation.Run({ method, tenant: this.accessContext.Tenant.Id, principal: this.accessContext.Principal.Id }, operation, this.parent)
+            return result instanceof Promise ? result.then(settle, fail) : settle(result)
+        }
+        catch (error)
+        {
+            return fail(error)
+        }
     }
 
     private guarded<P, R, E>(type: RequestType<P, R, E>, handler: (params: P) => R | Promise<R>): void

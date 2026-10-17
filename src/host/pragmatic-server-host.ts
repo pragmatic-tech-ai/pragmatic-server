@@ -8,7 +8,7 @@ import type { Socket } from 'node:net'
 import type { AddressInfo } from 'node:net'
 import { WebSocketServer } from 'ws'
 import type { WebSocket } from 'ws'
-import { WsMessageSocket, HeartbeatMonitor, BackpressurePolicy } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { WsMessageSocket, HeartbeatMonitor, BackpressurePolicy, TransportCloseCode } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { AuthMethod } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext, Tenant } from '@pragmatic-tech-ai/todl-identity'
@@ -47,6 +47,7 @@ import type { ILogger } from '../observability/logger.js'
 import { RequestInstrumentation } from '../observability/request-instrumentation.js'
 import type { Observability } from '../observability/observability.js'
 import { DrainController } from '../observability/drain-controller.js'
+import { WsInFlightSource } from '../observability/ws-in-flight-source.js'
 import type { IInFlightSource } from '../observability/drain-controller.js'
 import { RequestCorrelation } from '../observability/request-correlation.js'
 
@@ -322,7 +323,14 @@ export class PragmaticServerHost
         {
             for (const client of this.wss.clients)
             {
-                client.terminate()
+                if (drained)
+                {
+                    client.close(TransportCloseCode.GoingAway)
+                }
+                else
+                {
+                    client.terminate()
+                }
             }
         })
         await this.Step(PragmaticServerHost.StepWss, () => new Promise<void>(resolve => this.wss.close(() => resolve())))
@@ -374,8 +382,12 @@ export class PragmaticServerHost
     {
         try
         {
-            // InFlight() counts HTTP requests; live ws sessions are terminated after the wait by design.
-            const source = this.drainSource ?? this.instrumentation ?? PragmaticServerHost.ZeroInFlight
+            // Wait for in-flight ws RPC (and HTTP) to settle; on drain we close ws with GoingAway, on timeout we force-terminate.
+            for (const handler of this.handlers)
+            {
+                handler.BeginDrain()
+            }
+            const source = this.drainSource ?? new WsInFlightSource(this.handlers, this.instrumentation)
             this.logger.Info(PragmaticServerHost.DrainBeginLine, { [PragmaticServerHost.EventKey]: PragmaticServerHost.DrainBeginEvent, [PragmaticServerHost.InFlightField]: this.CountOf(source) })
             const controller = this.drainController ?? new DrainController(this.drainTimeoutMs)
             const outcome = await controller.WaitForDrain(source)

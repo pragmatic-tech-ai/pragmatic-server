@@ -7,7 +7,7 @@ import type { Socket } from 'node:net'
 import type { AddressInfo } from 'node:net'
 import { WebSocketServer } from 'ws'
 import type { WebSocket } from 'ws'
-import { WsMessageSocket, HeartbeatMonitor, BackpressurePolicy } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { WsMessageSocket, HeartbeatMonitor, BackpressurePolicy, TransportCloseCode } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import type { MasterKeyRef } from '../identity/master-key-resolver.js'
 import type { PragmaticServer } from '../pragmatic-server.js'
@@ -48,6 +48,7 @@ import { RequestInstrumentation } from '../observability/request-instrumentation
 import type { Observability } from '../observability/observability.js'
 import { RequestCorrelation } from '../observability/request-correlation.js'
 import { DrainController } from '../observability/drain-controller.js'
+import { WsInFlightSource } from '../observability/ws-in-flight-source.js'
 import type { IInFlightSource } from '../observability/drain-controller.js'
 
 export interface WorkerHostOptions
@@ -351,7 +352,14 @@ export class WorkerHost
         {
             for (const client of this.wss.clients)
             {
-                client.terminate()
+                if (drained)
+                {
+                    client.close(TransportCloseCode.GoingAway)
+                }
+                else
+                {
+                    client.terminate()
+                }
             }
         })
         await this.Step(WorkerHost.StepWss, () => new Promise<void>(resolve => this.wss.close(() => resolve())))
@@ -417,7 +425,12 @@ export class WorkerHost
     {
         try
         {
-            const source = this.drainSource ?? this.instrumentation ?? WorkerHost.ZeroInFlight
+            // Wait for in-flight ws RPC (and HTTP) to settle; on drain we close ws with GoingAway, on timeout we force-terminate.
+            for (const handler of this.handlers)
+            {
+                handler.BeginDrain()
+            }
+            const source = this.drainSource ?? new WsInFlightSource(this.handlers, this.instrumentation)
             this.logger.Info(WorkerHost.DrainBeginLine, { [WorkerHost.EventKey]: WorkerHost.DrainBeginEvent, [WorkerHost.InFlightField]: this.CountOf(source) })
             const controller = this.drainController ?? new DrainController(this.drainTimeoutMs)
             const outcome = await controller.WaitForDrain(source)
