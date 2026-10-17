@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { ServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
-import { check, DataSourceAdapterCatalog, DataSourceKind, DiagnosticCode } from '@pragmatic-tech-ai/todl'
+import { check, DataSourceAdapterCatalog, DataSourceKind, DiagnosticCode, WriteFailureKind } from '@pragmatic-tech-ai/todl'
 import type { IDataSourceAdapter, IDataSourceAdapterFactory, ResolvedConnection, QueryRequest, WriteBatch, WriteResult, WriteOperation, ExternalRecord, ModelConnectorPlan } from '@pragmatic-tech-ai/todl'
 import { ConnectorRuntime } from '../connector-runtime.js'
 import { SolutionConnectorPlanner } from '../solution-connector-planner.js'
@@ -20,7 +20,7 @@ class InMemoryAdapter implements IDataSourceAdapter
     public Apply(batch: WriteBatch): Promise<WriteResult>
     {
         for (const op of batch.Operations) { this.Applied.push(op) }
-        return Promise.resolve({ Applied: batch.Operations.length, Conflicts: [] })
+        return Promise.resolve({ Applied: batch.Operations.length, Failures: [] })
     }
     public Dispose(): Promise<void> { return Promise.resolve() }
 }
@@ -272,12 +272,15 @@ test('Revision changes after WriteBack and differs across runtimes', async () =>
     assert.notEqual(runtime.Revision, before)
 })
 
-test('Revision still changes when WriteBack throws', async () =>
+test('a throwing adapter surfaces an Error failure rather than rejecting, and the Revision still changes', async () =>
 {
     const factory = new ThrowingApplyFactory(DataSourceKind.Sql, new Map())
     const runtime = new ConnectorRuntime([Fixtures.Model('shop')], Fixtures.ServicesFor(factory))
     const id = (await runtime.ReadEntities('shop', 'shop.Customer')).Entities[0]!.id
     const before = runtime.Revision
-    await assert.rejects(() => runtime.WriteBack('shop', [id], []))
+    const outcome = await runtime.WriteBack('shop', [id], [])
+    const failures = outcome.Results.flatMap(r => r.Failures)
+    assert.ok(failures.length >= 1)
+    assert.ok(failures.every(f => f.Kind === WriteFailureKind.Error))
     assert.notEqual(runtime.Revision, before)
 })

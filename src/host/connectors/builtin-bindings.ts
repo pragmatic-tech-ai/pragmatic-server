@@ -1,5 +1,5 @@
 import type { ModelConnectorPlan, ConnectorBinding, ConnectorSpec } from '@pragmatic-tech-ai/todl'
-import { DataSourceKind } from '@pragmatic-tech-ai/todl'
+import { DataSourceKind, WriteConcurrency, WriteAtomicity } from '@pragmatic-tech-ai/todl'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import { BuiltinAdapterFactory } from './builtin-adapter-factory.js'
 import type { BuiltinStoreEngine } from './builtin-store-engine.js'
@@ -57,7 +57,7 @@ export class BuiltinBindings
         {
             fieldMap[field.name] = field.name
         }
-        return { Concept: type.fullName, Connector: connectorName, Source: BuiltinBindings.CollectionFor(type.fullName), IdKey: BuiltinBindings.IdMember, FieldMap: fieldMap, Writable: true }
+        return { Concept: type.fullName, Connector: connectorName, Source: BuiltinBindings.CollectionFor(type.fullName), IdKey: BuiltinBindings.IdMember, FieldMap: fieldMap, Writable: true, Concurrency: WriteConcurrency.LastWriteWins, Atomicity: WriteAtomicity.Sequential }
     }
 
     /** The store collection for a concept: its id with namespace dots turned into slashes (document identifiers may not contain dots; concept ids never contain slashes, so this is injective). */

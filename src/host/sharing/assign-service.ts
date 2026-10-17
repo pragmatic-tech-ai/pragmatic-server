@@ -1,5 +1,5 @@
-import type { IInstanceView, ModelConnectorPlan, WriteBatch, WriteOperation, WriteResult, DataSourceAdapterCatalog } from '@pragmatic-tech-ai/todl'
-import { WriteOperationKind } from '@pragmatic-tech-ai/todl'
+import type { IInstanceView, ModelConnectorPlan, WriteBatch, WriteOperation, WriteResult, WriteFailure, DataSourceAdapterCatalog } from '@pragmatic-tech-ai/todl'
+import { WriteOperationKind, WriteFailureKind } from '@pragmatic-tech-ai/todl'
 import type { IServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import { PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
 import type { Principal } from '@pragmatic-tech-ai/todl-identity'
@@ -119,7 +119,7 @@ export class AssignService
             return { status: AssignStatus.Invalid, reason: AssignService.NoOwnershipColumns }
         }
         const operation: WriteOperation = { Kind: WriteOperationKind.Upsert, Key: recordId, Fields: mapped }
-        const batch: WriteBatch = { Source: binding.Source, IdKey: binding.IdKey, Operations: [operation], VersionField: binding.VersionField }
+        const batch: WriteBatch = { Source: binding.Source, IdKey: binding.IdKey, Operations: [operation], Concurrency: binding.Concurrency, Atomicity: binding.Atomicity, VersionField: binding.VersionField }
         let result: WriteResult
         try
         {
@@ -130,9 +130,13 @@ export class AssignService
         {
             return { status: AssignStatus.Denied, reason: AssignService.WriteFailedReason }
         }
-        const conflicted = result.Conflicts.some(c => String(c.Key) === String(recordId))
-        return conflicted
+        const failure = result.Failures.find((f: WriteFailure) => String(f.Key) === String(recordId))
+        if (failure === undefined)
+        {
+            return { status: AssignStatus.Applied }
+        }
+        return failure.Kind === WriteFailureKind.Conflict
             ? { status: AssignStatus.Denied, reason: AssignService.WriteConflictReason }
-            : { status: AssignStatus.Applied }
+            : { status: AssignStatus.Denied, reason: AssignService.WriteFailedReason }
     }
 }

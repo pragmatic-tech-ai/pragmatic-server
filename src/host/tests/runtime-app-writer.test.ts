@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { Cardinality, WriteOperationKind, DataSourceKind } from '@pragmatic-tech-ai/todl'
-import type { ModelConnectorPlan, WriteBatch, WriteResult, IInstanceView } from '@pragmatic-tech-ai/todl'
+import { Cardinality, WriteOperationKind, DataSourceKind, WriteFailureKind, WriteConcurrency, WriteAtomicity } from '@pragmatic-tech-ai/todl'
+import type { ModelConnectorPlan, WriteBatch, WriteResult, WriteFailure, IInstanceView } from '@pragmatic-tech-ai/todl'
 import { PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
 import { AppWriteOpKind, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AppWriteOpDto } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -15,7 +15,7 @@ import type { IWriteInstanceGate } from '../cypher/write-instance-gate.js'
 class FakeAdapter
 {
     public batches: WriteBatch[] = []
-    constructor(private readonly conflictKeys: Set<string> = new Set(), private readonly throwOnApply = false, private readonly throwOnSource = '') {}
+    constructor(private readonly conflictKeys: Set<string> = new Set(), private readonly throwOnApply = false, private readonly throwOnSource = '', private readonly errorKeys: Set<string> = new Set()) {}
     public async Query(): Promise<readonly never[]> { return [] }
     public async Apply(batch: WriteBatch): Promise<WriteResult>
     {
@@ -24,8 +24,20 @@ class FakeAdapter
             throw new Error('adapter exploded')
         }
         this.batches.push(batch)
-        const conflicts = batch.Operations.filter(o => this.conflictKeys.has(String(o.Key))).map(o => ({ Key: o.Key, Reason: 'version' }))
-        return { Applied: batch.Operations.length - conflicts.length, Conflicts: conflicts }
+        const failures: WriteFailure[] = []
+        for (const op of batch.Operations)
+        {
+            const key = String(op.Key)
+            if (this.conflictKeys.has(key))
+            {
+                failures.push({ Key: op.Key, Kind: WriteFailureKind.Conflict, Reason: 'version' })
+            }
+            else if (this.errorKeys.has(key))
+            {
+                failures.push({ Key: op.Key, Kind: WriteFailureKind.Error, Reason: 'driver blew up' })
+            }
+        }
+        return { Applied: batch.Operations.length - failures.length, Failures: failures }
     }
     public async Dispose(): Promise<void> {}
 }
@@ -68,8 +80,8 @@ class Fx
             Model: 'shop', Version: '1',
             Connectors: [{ Name: 'c', Kind: DataSourceKind.Builtin, Config: {} }],
             Bindings: [
-                { Concept: 'shop.Order', Connector: 'c', Source: 'orders', IdKey: 'id', FieldMap: {}, Writable: true },
-                { Concept: 'shop.Gadget', Connector: 'c', Source: 'gadgets', IdKey: 'id', FieldMap: {}, Writable: true },
+                { Concept: 'shop.Order', Connector: 'c', Source: 'orders', IdKey: 'id', FieldMap: {}, Writable: true, Concurrency: WriteConcurrency.LastWriteWins, Atomicity: WriteAtomicity.Sequential },
+                { Concept: 'shop.Gadget', Connector: 'c', Source: 'gadgets', IdKey: 'id', FieldMap: {}, Writable: true, Concurrency: WriteConcurrency.LastWriteWins, Atomicity: WriteAtomicity.Sequential },
             ],
         } as ModelConnectorPlan
     }
@@ -79,7 +91,7 @@ class Fx
         return {
             Model: 'shop', Version: '1',
             Connectors: [{ Name: 'c', Kind: DataSourceKind.Builtin, Config: {} }],
-            Bindings: [{ Concept: 'shop.Order', Connector: 'c', Source: 'orders', IdKey: 'oid', FieldMap: { label: 'lbl', ident: 'oid' }, Writable: true }],
+            Bindings: [{ Concept: 'shop.Order', Connector: 'c', Source: 'orders', IdKey: 'oid', FieldMap: { label: 'lbl', ident: 'oid' }, Writable: true, Concurrency: WriteConcurrency.LastWriteWins, Atomicity: WriteAtomicity.Sequential }],
         } as ModelConnectorPlan
     }
 
@@ -97,7 +109,7 @@ class Fx
         return {
             Model: 'shop', Version: '1',
             Connectors: [{ Name: 'c', Kind: kind, Config: {} }],
-            Bindings: [{ Concept: 'shop.Order', Connector: 'c', Source: 'orders', IdKey: 'id', FieldMap: {}, Writable: writable }],
+            Bindings: [{ Concept: 'shop.Order', Connector: 'c', Source: 'orders', IdKey: 'id', FieldMap: {}, Writable: writable, Concurrency: WriteConcurrency.LastWriteWins, Atomicity: WriteAtomicity.Sequential }],
         } as ModelConnectorPlan
     }
 
@@ -180,13 +192,28 @@ test('batch partial success keeps input order', async () =>
     assert.equal(out.results[2].status, AppWriteStatus.Applied)
 })
 
-test('adapter exception maps the group to Conflict and still returns', async () =>
+test('adapter exception maps the group to Failed and still returns', async () =>
 {
     const adapter = new FakeAdapter(new Set(), true)
     const w = Fx.Writer(Fx.Plan(true, DataSourceKind.Builtin), adapter, new AllowAll())
     const out = await w.Apply([{ op: AppWriteOpKind.Update, concept: 'shop.Order', id: 'o1', fields: { title: 'a' } }])
-    assert.equal(out.results[0].status, AppWriteStatus.Conflict)
+    assert.equal(out.results[0].status, AppWriteStatus.Failed)
     assert.ok(out.results[0].reason)
+})
+
+test('a driver Error is reported as AppWriteStatus.Failed, a version conflict as Conflict (not both Conflict)', async () =>
+{
+    const adapter = new FakeAdapter(new Set(['o2']), false, '', new Set(['o3']))
+    const w = Fx.Writer(Fx.Plan(true, DataSourceKind.Builtin), adapter, new AllowAll())
+    const out = await w.Apply([
+        { op: AppWriteOpKind.Update, concept: 'shop.Order', id: 'o1', fields: { title: 'a' } },
+        { op: AppWriteOpKind.Update, concept: 'shop.Order', id: 'o2', fields: { title: 'b' } },
+        { op: AppWriteOpKind.Update, concept: 'shop.Order', id: 'o3', fields: { title: 'c' } },
+    ])
+    assert.equal(out.results[0].status, AppWriteStatus.Applied)
+    assert.equal(out.results[1].status, AppWriteStatus.Conflict)
+    assert.equal(out.results[2].status, AppWriteStatus.Failed)
+    assert.notEqual(out.results[1].status, out.results[2].status)
 })
 
 test('interleaved ops across two bindings land in input order', async () =>
@@ -223,7 +250,7 @@ test('adapter throw in one binding leaves the other group applied', async () =>
         { op: AppWriteOpKind.Update, concept: 'shop.Order', id: 'o1', fields: { title: 'a' } },
         { op: AppWriteOpKind.Update, concept: 'shop.Gadget', id: 'g2', fields: { title: 'c' } },
     ])
-    assert.deepEqual(out.results.map(r => r.status), [AppWriteStatus.Conflict, AppWriteStatus.Applied, AppWriteStatus.Conflict])
+    assert.deepEqual(out.results.map(r => r.status), [AppWriteStatus.Failed, AppWriteStatus.Applied, AppWriteStatus.Failed])
     assert.equal(out.results[0].reason, Fx.WriteFailed)
     assert.equal(out.results[2].reason, Fx.WriteFailed)
     assert.equal(out.results[1].reason, undefined)

@@ -14,7 +14,7 @@ import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
 import { ShareSubjectKind, ShareStatus, AppWriteOpKind, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { IDataSourceAdapter, ExternalFieldValue } from '@pragmatic-tech-ai/todl'
-import { DataSourceKind, WriteOperationKind } from '@pragmatic-tech-ai/todl'
+import { DataSourceKind, WriteOperationKind, WriteConcurrency, WriteAtomicity } from '@pragmatic-tech-ai/todl'
 import { PragmaticServer } from '../../../pragmatic-server.js'
 import { TenantPurpose } from '../../../tenancy/tenant-purpose.js'
 import { NodePlatform } from '../../../platform/node-platform.js'
@@ -112,6 +112,7 @@ class RecordSharingFixture
         const result = await (await this.Store()).Apply({
             Source: BuiltinBindings.CollectionFor(RecordSharingFixture.Qualified), IdKey: RecordSharingFixture.IdField,
             Operations: [{ Kind: WriteOperationKind.Upsert, Key: key, Fields: fields }],
+            Concurrency: WriteConcurrency.LastWriteWins, Atomicity: WriteAtomicity.Sequential,
         })
         assert.equal(result.Applied, 1)
     }

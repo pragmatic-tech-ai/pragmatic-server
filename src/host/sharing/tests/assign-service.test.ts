@@ -5,6 +5,8 @@ import { ShareStore } from '../share-store.js'
 import { ShareGrantIndex } from '../share-grant-index.js'
 import { ConceptIdFields } from '../concept-id-fields.js'
 import { AssignStatus, ShareSubjectKind } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { WriteFailureKind } from '@pragmatic-tech-ai/todl'
+import type { WriteFailure } from '@pragmatic-tech-ai/todl'
 import { PrivilegeAction, Principal, PrincipalKind, OwnershipSourceKind } from '@pragmatic-tech-ai/todl-identity'
 import { AccessDepthEvaluator } from '@pragmatic-tech-ai/todl-identity-engine'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
@@ -62,8 +64,8 @@ class FakeTarget
 class FakeAdapter
 {
     public readonly batches: any[] = []
-    constructor(private readonly conflicts: { Key: string; Reason: string }[], private readonly fails: boolean = false) {}
-    public async Apply(batch: unknown): Promise<unknown> { if (this.fails) { throw new Error('boom') } this.batches.push(batch); return { Applied: 1, Conflicts: this.conflicts } }
+    constructor(private readonly failures: WriteFailure[], private readonly fails: boolean = false) {}
+    public async Apply(batch: unknown): Promise<unknown> { if (this.fails) { throw new Error('boom') } this.batches.push(batch); return { Applied: 1, Failures: this.failures } }
 }
 
 class FakeCatalog
@@ -84,9 +86,9 @@ class Factory
 {
     public static Principal(): Principal { return new Principal('u1', 't1', PrincipalKind.User, new Map(), []) }
 
-    public static Build(opts: { assignOk: boolean; concept?: string; visible?: boolean; index?: ShareGrantIndex; conflicts?: { Key: string; Reason: string }[]; fail?: boolean }): { svc: AssignService; adapter: FakeAdapter }
+    public static Build(opts: { assignOk: boolean; concept?: string; visible?: boolean; index?: ShareGrantIndex; failures?: WriteFailure[]; fail?: boolean }): { svc: AssignService; adapter: FakeAdapter }
     {
-        const adapter = new FakeAdapter(opts.conflicts ?? [], opts.fail === true)
+        const adapter = new FakeAdapter(opts.failures ?? [], opts.fail === true)
         const concept = opts.visible === false ? undefined : (opts.concept ?? Fx.Lead)
         const svc = new AssignService(new FakeEvaluator(opts.assignOk) as never, opts.index ?? ShareGrantIndex.Empty(), Factory.Principal(), new FakeTarget(concept) as never, ConceptIdFields.From(Fx.Plan), Fx.Plan, new FakeCatalog(adapter) as never, {} as never)
         return { svc, adapter }
@@ -192,7 +194,16 @@ test('an adapter fault is denied with a write-failed reason, not a conflict', as
 
 test('a write conflict denies the assign', async () =>
 {
-    const { svc } = Factory.Build({ assignOk: true, conflicts: [{ Key: 'r1', Reason: 'etag' }] })
+    const { svc } = Factory.Build({ assignOk: true, failures: [{ Key: 'r1', Kind: WriteFailureKind.Conflict, Reason: 'etag' }] })
     const result = await svc.Assign({ concept: Fx.Lead, id: 'r1', owner: { kind: ShareSubjectKind.Principal, id: 'u9' }, owningBu: 'sales' })
     assert.equal(result.status, AssignStatus.Denied)
+    assert.equal(result.reason, 'write conflict')
+})
+
+test('a non-conflict driver failure denies the assign with a write-failed reason', async () =>
+{
+    const { svc } = Factory.Build({ assignOk: true, failures: [{ Key: 'r1', Kind: WriteFailureKind.Error, Reason: 'driver blew up' }] })
+    const result = await svc.Assign({ concept: Fx.Lead, id: 'r1', owner: { kind: ShareSubjectKind.Principal, id: 'u9' }, owningBu: 'sales' })
+    assert.equal(result.status, AssignStatus.Denied)
+    assert.equal(result.reason, Fx.WriteFailed)
 })

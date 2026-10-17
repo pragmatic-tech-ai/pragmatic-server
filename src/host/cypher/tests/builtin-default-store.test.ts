@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { newDb } from 'pg-mem'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
-import { compilePackage, BlobPackageStore, StoragePackageSink, Cypher, DataSourceKind, WriteOperationKind, PolicyNodeKind, PolicyRefRoot, PolicyCompareOp } from '@pragmatic-tech-ai/todl'
+import { compilePackage, BlobPackageStore, StoragePackageSink, Cypher, DataSourceKind, WriteOperationKind, WriteConcurrency, WriteAtomicity, PolicyNodeKind, PolicyRefRoot, PolicyCompareOp } from '@pragmatic-tech-ai/todl'
 import type { IDataSourceAdapter, ExternalFieldValue } from '@pragmatic-tech-ai/todl'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
@@ -111,6 +111,7 @@ namespace shop {
         const result = await (await this.Store()).Apply({
             Source: BuiltinBindings.CollectionFor(concept), IdKey: BuiltinFixture.IdKey,
             Operations: [{ Kind: WriteOperationKind.Upsert, Key: key, Fields: fields }],
+            Concurrency: WriteConcurrency.LastWriteWins, Atomicity: WriteAtomicity.Sequential,
         })
         assert.equal(result.Applied, 1)
     }
@@ -120,6 +121,7 @@ namespace shop {
         const result = await (await this.Store()).Apply({
             Source: BuiltinBindings.CollectionFor(concept), IdKey: BuiltinFixture.IdKey,
             Operations: [{ Kind: WriteOperationKind.Delete, Key: key, Fields: {} }],
+            Concurrency: WriteConcurrency.LastWriteWins, Atomicity: WriteAtomicity.Sequential,
         })
         assert.equal(result.Applied, 1)
     }

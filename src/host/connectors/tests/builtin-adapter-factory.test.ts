@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { newDb } from 'pg-mem'
 import type { Pool } from 'pg'
-import { DataSourceKind, WriteOperationKind } from '@pragmatic-tech-ai/todl'
+import { DataSourceKind, WriteOperationKind, WriteConcurrency, WriteAtomicity } from '@pragmatic-tech-ai/todl'
 import type { ResolvedConnection } from '@pragmatic-tech-ai/todl'
 import { PgSession, ObjectStoreProviderRegistry, CloudSecretManagerSecretStore } from '@pragmatic-tech-ai/todl-platform-cloud'
 import { BuiltinAdapterFactory } from '../builtin-adapter-factory.js'
@@ -38,7 +38,9 @@ class BuiltinFixture
             const result = await adapter.Apply({
                 Source: BuiltinFixture.Source,
                 IdKey: BuiltinFixture.IdKey,
-                Operations: [{ Kind: WriteOperationKind.Upsert, Key: BuiltinFixture.RowKey, Fields: { [BuiltinFixture.NameField]: BuiltinFixture.NameValue } }]
+                Operations: [{ Kind: WriteOperationKind.Upsert, Key: BuiltinFixture.RowKey, Fields: { [BuiltinFixture.NameField]: BuiltinFixture.NameValue } }],
+                Concurrency: WriteConcurrency.LastWriteWins,
+                Atomicity: WriteAtomicity.Sequential
             })
             assert.equal(result.Applied, 1)
             const rows = await adapter.Query({ Source: BuiltinFixture.Source, Fields: [BuiltinFixture.IdKey, BuiltinFixture.NameField] })

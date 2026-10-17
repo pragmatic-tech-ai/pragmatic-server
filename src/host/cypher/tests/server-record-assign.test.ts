@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
-import { Repository, Cardinality, toJSON, BlobPackageStore, StoragePackageSink, DataSourceKind, WriteOperationKind } from '@pragmatic-tech-ai/todl'
+import { Repository, Cardinality, toJSON, BlobPackageStore, StoragePackageSink, DataSourceKind, WriteOperationKind, WriteConcurrency, WriteAtomicity } from '@pragmatic-tech-ai/todl'
 import type { PackageDocument, CompiledPackage, IDataSourceAdapter, ExternalFieldValue } from '@pragmatic-tech-ai/todl'
 import type { ISecurityModelConfig, AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import { PrivilegeAction, OwnershipSourceKind } from '@pragmatic-tech-ai/todl-identity'
@@ -137,6 +137,7 @@ class RecordAssignFixture
         const result = await (await this.Store()).Apply({
             Source: BuiltinBindings.CollectionFor(RecordAssignFixture.Qualified), IdKey: RecordAssignFixture.IdField,
             Operations: [{ Kind: WriteOperationKind.Upsert, Key: key, Fields: fields }],
+            Concurrency: WriteConcurrency.LastWriteWins, Atomicity: WriteAtomicity.Sequential,
         })
         assert.equal(result.Applied, 1)
     }

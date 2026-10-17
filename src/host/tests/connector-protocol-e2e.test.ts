@@ -6,8 +6,10 @@ import { join } from 'node:path'
 import { newDb } from 'pg-mem'
 import { InMemoryMessageSocket, PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
+import { WriteFailureKind } from '@pragmatic-tech-ai/todl'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
+import { ConnectorService } from '../connector-service.js'
 
 /** Drives connector/* over the in-memory transport against a server over a pg-mem fixture. */
 class E2e
@@ -102,4 +104,30 @@ namespace shop {
 test('a client lists, reads (with fields), tests and writes back connectors over the wire', async () =>
 {
     await E2e.Run()
+})
+
+test('connector/writeBack surfaces a failures list with distinct kinds', async () =>
+{
+    const outcome =
+    {
+        Results: [{
+            Applied: 1,
+            Failures: [
+                { Key: 'C2', Kind: WriteFailureKind.Conflict, Reason: 'etag mismatch' },
+                { Key: 'C3', Kind: WriteFailureKind.Error, Reason: 'driver blew up' },
+            ],
+        }],
+        Diagnostics: [],
+    }
+    const runtime = { WriteBack: () => Promise.resolve(outcome) }
+    const service = new ConnectorService(() => Promise.resolve(runtime as never))
+    const result = await service.WriteBack({ modelId: 'm', dirty: ['C1', 'C2', 'C3'], deleted: [] })
+    assert.equal(result.results.length, 1)
+    const failures = result.results[0]!.failures
+    assert.equal(failures.length, 2)
+    assert.deepEqual([...failures.map(f => f.kind)].sort(), [WriteFailureKind.Conflict, WriteFailureKind.Error])
+    assert.equal(failures.find(f => f.kind === WriteFailureKind.Conflict)!.key, 'C2')
+    assert.equal(failures.find(f => f.kind === WriteFailureKind.Conflict)!.reason, 'etag mismatch')
+    assert.equal(failures.find(f => f.kind === WriteFailureKind.Error)!.key, 'C3')
+    assert.equal(failures.find(f => f.kind === WriteFailureKind.Error)!.reason, 'driver blew up')
 })

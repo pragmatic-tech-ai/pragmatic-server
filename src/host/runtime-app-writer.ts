@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { WriteOperationKind, DataSourceKind } from '@pragmatic-tech-ai/todl'
-import type { ModelConnectorPlan, ConnectorBinding, ConnectorSpec, WriteBatch, WriteOperation, WriteResult, ExternalFieldValue, DataSourceAdapterCatalog, IInstanceView, Scalar } from '@pragmatic-tech-ai/todl'
+import { WriteOperationKind, DataSourceKind, WriteFailureKind } from '@pragmatic-tech-ai/todl'
+import type { ModelConnectorPlan, ConnectorBinding, ConnectorSpec, WriteBatch, WriteOperation, WriteResult, WriteFailure, ExternalFieldValue, DataSourceAdapterCatalog, IInstanceView, Scalar } from '@pragmatic-tech-ai/todl'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import { PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
@@ -272,9 +272,24 @@ export class RuntimeAppWriter
         return group
     }
 
+    /** Maps a typed {@link WriteFailure.Kind} to the wire status, de-conflating a driver error from a version
+     *  conflict: a real conflict stays Conflict, a driver Error becomes Failed, an Unsupported batch becomes Invalid. */
+    private static AppWriteStatusOf(kind: WriteFailureKind): AppWriteStatus
+    {
+        switch (kind)
+        {
+            case WriteFailureKind.Conflict:
+                return AppWriteStatus.Conflict
+            case WriteFailureKind.Error:
+                return AppWriteStatus.Failed
+            case WriteFailureKind.Unsupported:
+                return AppWriteStatus.Invalid
+        }
+    }
+
     private async ApplyGroup(group: WriteGroup, results: (AppWriteOpResultDto | undefined)[]): Promise<void>
     {
-        const batch: WriteBatch = { Source: group.binding.Source, IdKey: group.binding.IdKey, Operations: group.items.map(i => i.operation), VersionField: group.binding.VersionField }
+        const batch: WriteBatch = { Source: group.binding.Source, IdKey: group.binding.IdKey, Operations: group.items.map(i => i.operation), Concurrency: group.binding.Concurrency, Atomicity: group.binding.Atomicity, VersionField: group.binding.VersionField }
         let result: WriteResult
         try
         {
@@ -286,17 +301,17 @@ export class RuntimeAppWriter
             const reason = RuntimeAppWriter.WriteFailed
             for (const item of group.items)
             {
-                results[item.index] = { status: AppWriteStatus.Conflict, id: String(item.key), reason }
+                results[item.index] = { status: AppWriteStatus.Failed, id: String(item.key), reason }
             }
             return
         }
-        const conflicts = new Map(result.Conflicts.map(c => [String(c.Key), c.Reason]))
+        const failures = new Map<string, WriteFailure>(result.Failures.map(f => [String(f.Key), f]))
         for (const item of group.items)
         {
-            const conflict = conflicts.get(String(item.key))
-            results[item.index] = conflict === undefined
+            const failure = failures.get(String(item.key))
+            results[item.index] = failure === undefined
                 ? { status: AppWriteStatus.Applied, id: String(item.key) }
-                : { status: AppWriteStatus.Conflict, id: String(item.key), reason: conflict.length > 0 ? conflict : RuntimeAppWriter.DefaultConflict }
+                : { status: RuntimeAppWriter.AppWriteStatusOf(failure.Kind), id: String(item.key), reason: failure.Reason.length > 0 ? failure.Reason : RuntimeAppWriter.DefaultConflict }
         }
     }
 }

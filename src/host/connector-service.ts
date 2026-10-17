@@ -74,7 +74,7 @@ export class ConnectorService
         const runtime = await this.Runtime()
         const outcome = await runtime.WriteBack(params.modelId, params.dirty, params.deleted)
         return {
-            results: outcome.Results.map((r) => ({ applied: r.Applied, conflicts: r.Conflicts.map((c) => ({ key: WireScalar.Of(c.Key), reason: c.Reason })) })),
+            results: outcome.Results.map((r) => ({ applied: r.Applied, failures: r.Failures.map((f) => ({ key: WireScalar.Of(f.Key), kind: f.Kind, reason: f.Reason })) })),
             diagnostics: outcome.Diagnostics.map((d) => ({ code: d.code, message: d.message })),
         }
     }
