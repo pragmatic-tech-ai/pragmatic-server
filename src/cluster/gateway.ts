@@ -5,7 +5,7 @@ import type { TLSSocket } from 'node:tls'
 import type { Socket } from 'node:net'
 import type { AddressInfo } from 'node:net'
 import { WebSocketServer, WebSocket } from 'ws'
-import { HeartbeatMonitor } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { HeartbeatMonitor, BackpressurePolicy, BackpressureAction, TransportCloseCode } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { WsResilienceConfig } from '../config/server-config.js'
 import type { RawData } from 'ws'
 import type { WebSocketAddress } from '../host/pragmatic-server-host.js'
@@ -70,6 +70,8 @@ export class Gateway
     private static readonly DrainCompleteEvent = 'drain-complete'
     private static readonly DrainFailedEvent = 'drain-failed'
     private static readonly EventKey = 'event'
+    private static readonly ShedLine = 'ws shed'
+    private static readonly ShedEvent = 'ws-shed'
     private static readonly InFlightField = 'inFlight'
     private static readonly RemainingField = 'remaining'
     private static readonly ElapsedField = 'elapsedMs'
@@ -104,6 +106,7 @@ export class Gateway
     private readonly drainTimeoutMs: number
     private readonly wsResilience: WsResilienceConfig
     private readonly heartbeat: HeartbeatMonitor
+    private readonly backpressure: BackpressurePolicy
     private drainSource: IInFlightSource | undefined
     private drainController: DrainController | undefined
     private disposing: Promise<void> | undefined
@@ -113,6 +116,7 @@ export class Gateway
     private constructor(httpServer: HttpServer, wss: WebSocketServer, router: IWorkerRouter, clientTls: ClientTlsMaterial, address: WebSocketAddress, serverName: string, machineTlsConfigured: boolean, logger: ILogger, rateLimit: RateLimitGuard = new RateLimitGuard(), observability?: Observability, drainTimeoutMs: number = Gateway.DefaultDrainTimeoutMs, resilience: WsResilienceConfig = Gateway.DefaultWsResilience)
     {
         this.wsResilience = resilience
+        this.backpressure = new BackpressurePolicy(resilience.backpressureSoftBytes, resilience.backpressureHardBytes, resilience.backpressureGraceMs)
         this.heartbeat = new HeartbeatMonitor(resilience.heartbeatIntervalMs)
         this.heartbeat.Start()
         this.observability = observability
@@ -417,19 +421,15 @@ export class Gateway
 
     private Bridge(clientWs: WebSocket, workerWs: WebSocket): void
     {
+        let workerOverSince: number | undefined
+        let clientOverSince: number | undefined
         clientWs.on(Gateway.MessageEvent, (data: RawData, isBinary: boolean) =>
         {
-            if (workerWs.readyState === WebSocket.OPEN)
-            {
-                workerWs.send(data, { binary: isBinary })
-            }
+            workerOverSince = this.Forward(workerWs, data, isBinary, workerOverSince)
         })
         workerWs.on(Gateway.MessageEvent, (data: RawData, isBinary: boolean) =>
         {
-            if (clientWs.readyState === WebSocket.OPEN)
-            {
-                clientWs.send(data, { binary: isBinary })
-            }
+            clientOverSince = this.Forward(clientWs, data, isBinary, clientOverSince)
         })
         clientWs.on(Gateway.CloseEvent, () =>
         {
@@ -443,6 +443,38 @@ export class Gateway
             workerWs.terminate()
         })
         workerWs.on(Gateway.ErrorEvent, () => clientWs.terminate())
+    }
+
+    /** Forwards one frame to `dest`; if `dest`'s outbound buffer stays over the hard limit past the grace window, sheds `dest`
+     *  (close 1013 + terminate) and stops forwarding to it. Returns the updated over-hard timestamp for this leg. */
+    private Forward(dest: WebSocket, data: RawData, isBinary: boolean, overSince: number | undefined): number | undefined
+    {
+        if (dest.readyState !== WebSocket.OPEN)
+        {
+            return overSince
+        }
+        const assessment = this.backpressure.Assess(dest.bufferedAmount, overSince, Date.now())
+        if (assessment.action === BackpressureAction.Shed)
+        {
+            this.workerSockets.delete(dest)
+            this.logger.Info(Gateway.ShedLine, { [Gateway.EventKey]: Gateway.ShedEvent })
+            dest.close(TransportCloseCode.TryAgainLater)
+            dest.terminate()
+            return assessment.overHardSince
+        }
+        dest.send(data, { binary: isBinary })
+        return assessment.overHardSince
+    }
+
+    public BridgeForTest(clientWs: WebSocket, workerWs: WebSocket): void
+    {
+        this.workerSockets.add(workerWs)
+        this.Bridge(clientWs, workerWs)
+    }
+
+    public WorkerSocketCountForTest(): number
+    {
+        return this.workerSockets.size
     }
 
     private CloseSafe(ws: WebSocket): void

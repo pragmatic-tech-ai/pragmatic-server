@@ -8,7 +8,7 @@ import type { Socket } from 'node:net'
 import type { AddressInfo } from 'node:net'
 import { WebSocketServer } from 'ws'
 import type { WebSocket } from 'ws'
-import { WsMessageSocket, HeartbeatMonitor } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { WsMessageSocket, HeartbeatMonitor, BackpressurePolicy } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { AuthMethod } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext, Tenant } from '@pragmatic-tech-ai/todl-identity'
@@ -107,6 +107,8 @@ export class PragmaticServerHost
     private static readonly DrainBeginEvent = 'drain-begin'
     private static readonly DrainCompleteEvent = 'drain-complete'
     private static readonly EventKey = 'event'
+    private static readonly ShedLine = 'ws shed'
+    private static readonly ShedEvent = 'ws-shed'
     private static readonly InFlightField = 'inFlight'
     private static readonly RemainingField = 'remaining'
     private static readonly ElapsedField = 'elapsedMs'
@@ -455,7 +457,12 @@ export class PragmaticServerHost
                 try
                 {
                     const runtime = ServerConnectionHandler.RuntimeAttachArgs(server)
-                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors(), ctx => server.Graph(ctx), this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, server.Purpose(), runtime.applications, runtime.appGraphProvider, runtime.appWriteProvider, runtime.shareProvider, runtime.unshareProvider, runtime.listSharesProvider, runtime.assignProvider)
+                    const resilience = this.wsResilience
+                    const socket = new WsMessageSocket(ws, {
+                        policy: new BackpressurePolicy(resilience.backpressureSoftBytes, resilience.backpressureHardBytes, resilience.backpressureGraceMs),
+                        onShed: () => this.logger.Info(PragmaticServerHost.ShedLine, { [PragmaticServerHost.EventKey]: PragmaticServerHost.ShedEvent }),
+                    })
+                    const handler = ServerConnectionHandler.Attach(socket, languageService, manager, context, () => server.Connectors(), ctx => server.Graph(ctx), this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, server.Purpose(), runtime.applications, runtime.appGraphProvider, runtime.appWriteProvider, runtime.shareProvider, runtime.unshareProvider, runtime.listSharesProvider, runtime.assignProvider)
                     this.handlers.add(handler)
                     this.heartbeat.Watch(ws)
                     ws.on(PragmaticServerHost.CloseEvent, () =>

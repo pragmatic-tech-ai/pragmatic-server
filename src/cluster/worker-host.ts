@@ -7,7 +7,7 @@ import type { Socket } from 'node:net'
 import type { AddressInfo } from 'node:net'
 import { WebSocketServer } from 'ws'
 import type { WebSocket } from 'ws'
-import { WsMessageSocket, HeartbeatMonitor } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { WsMessageSocket, HeartbeatMonitor, BackpressurePolicy } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import type { MasterKeyRef } from '../identity/master-key-resolver.js'
 import type { PragmaticServer } from '../pragmatic-server.js'
@@ -102,6 +102,8 @@ export class WorkerHost
     private static readonly DrainCompleteEvent = 'drain-complete'
     private static readonly DrainFailedEvent = 'drain-failed'
     private static readonly EventKey = 'event'
+    private static readonly ShedLine = 'ws shed'
+    private static readonly ShedEvent = 'ws-shed'
     private static readonly InFlightField = 'inFlight'
     private static readonly RemainingField = 'remaining'
     private static readonly ElapsedField = 'elapsedMs'
@@ -516,7 +518,12 @@ export class WorkerHost
                 try
                 {
                     const runtime = ServerConnectionHandler.RuntimeAttachArgs(server)
-                    const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors(), ctx => server.Graph(ctx), this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, server.Purpose(), runtime.applications, runtime.appGraphProvider, runtime.appWriteProvider, runtime.shareProvider, runtime.unshareProvider, runtime.listSharesProvider, runtime.assignProvider)
+                    const resilience = this.wsResilience
+                    const socket = new WsMessageSocket(ws, {
+                        policy: new BackpressurePolicy(resilience.backpressureSoftBytes, resilience.backpressureHardBytes, resilience.backpressureGraceMs),
+                        onShed: () => this.logger.Info(WorkerHost.ShedLine, { [WorkerHost.EventKey]: WorkerHost.ShedEvent }),
+                    })
+                    const handler = ServerConnectionHandler.Attach(socket, languageService, manager, context, () => server.Connectors(), ctx => server.Graph(ctx), this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, server.Purpose(), runtime.applications, runtime.appGraphProvider, runtime.appWriteProvider, runtime.shareProvider, runtime.unshareProvider, runtime.listSharesProvider, runtime.assignProvider)
                     this.handlers.add(handler)
                     this.heartbeat.Watch(ws)
                     ws.on(WorkerHost.CloseEvent, () =>
