@@ -354,6 +354,31 @@ export class ServerConfigLoader
         }
     }
 
+    private static readonly EnvPageSizeDefault = 'PRAGMATIC_PAGE_SIZE_DEFAULT'
+    private static readonly EnvPageSizeMax = 'PRAGMATIC_PAGE_SIZE_MAX'
+    private static readonly BadPageSize = 'PRAGMATIC_PAGE_SIZE_DEFAULT / PRAGMATIC_PAGE_SIZE_MAX must be positive integers'
+
+    private static Paging(env: Record<string, string | undefined>): Pick<ServerConfig, 'pagingPageSize' | 'pagingMaxPageSize'>
+    {
+        return {
+            pagingPageSize: ServerConfigLoader.PageSize(env[ServerConfigLoader.EnvPageSizeDefault]),
+            pagingMaxPageSize: ServerConfigLoader.PageSize(env[ServerConfigLoader.EnvPageSizeMax]),
+        }
+    }
+
+    private static PageSize(value: string | undefined): number | undefined
+    {
+        if (value === undefined || value.length === 0)
+        {
+            return undefined
+        }
+        if (!ServerConfigLoader.PositiveIntPattern.test(value) || !Number.isSafeInteger(Number(value)))
+        {
+            throw new Error(ServerConfigLoader.BadPageSize)
+        }
+        return Number(value)
+    }
+
     private static WsInt(value: string | undefined, fallback: number): number
     {
         if (value === undefined || value.length === 0)
@@ -580,6 +605,7 @@ export class ServerConfigLoader
             ...ServerConfigLoader.Cloud(env, deploymentMode),
             drainTimeoutMs: ServerConfigLoader.DrainTimeout(env[ServerConfigLoader.EnvDrainTimeout]),
             adapterPacks: ServerConfigLoader.AdapterPacks(env),
+            ...ServerConfigLoader.Paging(env),
         }
     }
 

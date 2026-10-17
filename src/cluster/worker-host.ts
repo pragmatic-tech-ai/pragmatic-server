@@ -28,6 +28,7 @@ import { RedisTenantOwnership } from '../tenancy/redis-tenant-ownership.js'
 import { WorkerRegistration } from './worker-registration.js'
 import { HealthEndpoint } from '../host/health-endpoint.js'
 import type { CypherLimits } from '../config/cypher-limits.js'
+import type { PagingLimits } from '../config/paging-limits.js'
 import type { IProvisionedSecretSource } from '../config/provisioned-secret-source.js'
 import type { AdapterPacksConfig, WsResilienceConfig } from '../config/server-config.js'
 import type { WorkerEndpoint } from './worker-router.js'
@@ -75,6 +76,7 @@ export interface WorkerHostOptions
     audit?: IAccessAuditSink
     drainTimeoutMs?: number
     cypherLimits?: CypherLimits
+    paging?: PagingLimits
     wsResilience?: WsResilienceConfig
 }
 
@@ -146,6 +148,7 @@ export class WorkerHost
     private readonly observability: Observability | undefined
     private readonly drainTimeoutMs: number
     private readonly cypherLimits: CypherLimits | undefined
+    private readonly paging: PagingLimits | undefined
     private readonly wsResilience: WsResilienceConfig
     private readonly heartbeat: HeartbeatMonitor
     private drainSource: IInFlightSource | undefined
@@ -171,9 +174,11 @@ export class WorkerHost
         observability?: Observability,
         drainTimeoutMs: number = WorkerHost.DefaultDrainTimeoutMs,
         cypherLimits?: CypherLimits,
-        wsResilience: WsResilienceConfig = WorkerHost.DefaultWsResilience)
+        wsResilience: WsResilienceConfig = WorkerHost.DefaultWsResilience,
+        paging?: PagingLimits)
     {
         this.cypherLimits = cypherLimits
+        this.paging = paging
         this.wsResilience = wsResilience
         this.heartbeat = new HeartbeatMonitor(wsResilience.heartbeatIntervalMs)
         this.heartbeat.Start()
@@ -307,7 +312,7 @@ export class WorkerHost
             await registry.DisposeAll().catch(() => {})
             throw error
         }
-        const started = new WorkerHost(httpsServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? WorkerHost.DefaultIdleTtlMs, options.idleSweepMs ?? WorkerHost.DefaultIdleSweepMs, healthServer, healthAddress, registration, options.logger ?? new NullLogger(), options.observability !== undefined ? RequestInstrumentation.FromObservability(options.observability, options.logger ?? new NullLogger()) : undefined, options.rateLimit, options.audit, options.observability, options.drainTimeoutMs ?? WorkerHost.DefaultDrainTimeoutMs, options.cypherLimits, resilience)
+        const started = new WorkerHost(httpsServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? WorkerHost.DefaultIdleTtlMs, options.idleSweepMs ?? WorkerHost.DefaultIdleSweepMs, healthServer, healthAddress, registration, options.logger ?? new NullLogger(), options.observability !== undefined ? RequestInstrumentation.FromObservability(options.observability, options.logger ?? new NullLogger()) : undefined, options.rateLimit, options.audit, options.observability, options.drainTimeoutMs ?? WorkerHost.DefaultDrainTimeoutMs, options.cypherLimits, resilience, options.paging)
         started.MarkReady()
         return started
     }
@@ -535,7 +540,7 @@ export class WorkerHost
                         policy: new BackpressurePolicy(resilience.backpressureSoftBytes, resilience.backpressureHardBytes, resilience.backpressureGraceMs),
                         onShed: () => this.logger.Info(WorkerHost.ShedLine, { [WorkerHost.EventKey]: WorkerHost.ShedEvent }),
                     })
-                    const handler = ServerConnectionHandler.Attach(socket, languageService, manager, context, () => server.Connectors(), ctx => server.Graph(ctx), this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, server.Purpose(), runtime.applications, runtime.appGraphProvider, runtime.appWriteProvider, runtime.shareProvider, runtime.unshareProvider, runtime.listSharesProvider, runtime.assignProvider)
+                    const handler = ServerConnectionHandler.Attach(socket, languageService, manager, context, () => server.Connectors(), ctx => server.Graph(ctx), this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, server.Purpose(), runtime.applications, runtime.appGraphProvider, runtime.appWriteProvider, runtime.shareProvider, runtime.unshareProvider, runtime.listSharesProvider, runtime.assignProvider, this.paging)
                     this.handlers.add(handler)
                     this.heartbeat.Watch(ws)
                     ws.on(WorkerHost.CloseEvent, () =>

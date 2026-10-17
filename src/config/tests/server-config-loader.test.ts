@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { DeploymentMode } from '../../platform/deployment-mode.js'
 import { DeploymentProvider } from '../../platform/deployment-provider.js'
 import { ServerConfigLoader } from '../server-config-loader.js'
+import { PagingLimits } from '../paging-limits.js'
 
 class Env
 {
@@ -406,3 +407,30 @@ test('a non-positive ws resilience value is rejected', () =>
     const env = { ...Env.Minimal(), PRAGMATIC_WS_BP_HARD_BYTES: '0' }
     assert.throws(() => ServerConfigLoader.Load(env, Env.NoRead), /PRAGMATIC_WS_/)
 })
+
+test('paging env vars parse as positive integers', () =>
+{
+    const env = { ...Env.Minimal(), PRAGMATIC_PAGE_SIZE_DEFAULT: '250', PRAGMATIC_PAGE_SIZE_MAX: '2500' }
+    const config = ServerConfigLoader.Load(env, Env.NoRead)
+    assert.equal(config.pagingPageSize, 250)
+    assert.equal(config.pagingMaxPageSize, 2500)
+})
+
+test('paging defaults apply when the env vars are unset', () =>
+{
+    const config = ServerConfigLoader.Load(Env.Minimal(), Env.NoRead)
+    assert.equal(config.pagingPageSize, undefined)
+    assert.equal(config.pagingMaxPageSize, undefined)
+    const limits = new PagingLimits(config.pagingPageSize, config.pagingMaxPageSize)
+    assert.equal(limits.PageSize, 500)
+    assert.equal(limits.MaxPageSize, 5000)
+})
+
+for (const [name, value] of [['PRAGMATIC_PAGE_SIZE_DEFAULT', '0'], ['PRAGMATIC_PAGE_SIZE_DEFAULT', 'abc'], ['PRAGMATIC_PAGE_SIZE_MAX', '0'], ['PRAGMATIC_PAGE_SIZE_MAX', 'abc']])
+{
+    test(`a bad paging value ${name}=${value} is rejected`, () =>
+    {
+        const env = { ...Env.Minimal(), [name]: value }
+        assert.throws(() => ServerConfigLoader.Load(env, Env.NoRead), /PRAGMATIC_PAGE_SIZE_/)
+    })
+}

@@ -154,7 +154,7 @@ test('cypher/query returns columns and rows over the wire', async () =>
     {
         const result = await client.CypherQuery(CypherSurfaceFixture.NameQuery)
         assert.deepEqual(result.columns, ['a.label'])
-        assert.deepEqual(result.rows.map(r => r[0]).sort(), ['alpha', 'beta'])
+        assert.deepEqual(result.items.map(r => r[0]).sort(), ['alpha', 'beta'])
         assert.equal(result.truncated, false)
     })
 })
@@ -164,7 +164,7 @@ test('cypher/query binds $param values', async () =>
     await CypherSurfaceFixture.With(async client =>
     {
         const result = await client.CypherQuery(CypherSurfaceFixture.ParamQuery, { n: 'beta' })
-        assert.deepEqual(result.rows, [['beta']])
+        assert.deepEqual(result.items, [['beta']])
     })
 })
 
@@ -173,7 +173,7 @@ test('cypher/query returns node cells as plain JSON', async () =>
     await CypherSurfaceFixture.With(async client =>
     {
         const result = await client.CypherQuery(CypherSurfaceFixture.NodeQuery)
-        const node = result.rows.map(r => r[0]).find(c => (c as { label: string }).label === 'alpha') as { concept: string, fields: Record<string, { value: unknown }> }
+        const node = result.items.map(r => r[0]).find(c => (c as { label: string }).label === 'alpha') as { concept: string, fields: Record<string, { value: unknown }> }
         assert.ok(node.concept.endsWith('Service'))
         assert.equal(node.fields.label!.value, 'alpha')
         assert.equal(node.fields.description!.value, null)
@@ -201,7 +201,7 @@ test('cypher/query honours an overridden low row cap with truncated true', async
     await CypherSurfaceFixture.With(async client =>
     {
         const result = await client.CypherQuery(CypherSurfaceFixture.NameQuery)
-        assert.equal(result.rows.length, 1)
+        assert.equal(result.items.length, 1)
         assert.equal(result.truncated, true)
     }, new CypherLimits(1))
 })
@@ -211,7 +211,7 @@ test('cypher/query resolves a simple-name label for a namespaced concept', async
     await CypherSurfaceFixture.With(async client =>
     {
         const result = await client.CypherQuery(CypherSurfaceFixture.LabelQuery)
-        assert.deepEqual(result.rows.map(r => r[0]).sort(), ['alpha', 'beta'])
+        assert.deepEqual(result.items.map(r => r[0]).sort(), ['alpha', 'beta'])
     })
 })
 
@@ -220,7 +220,7 @@ test('cypher/query node cell rehydrates through SnapshotReader', async () =>
     await CypherSurfaceFixture.With(async client =>
     {
         const result = await client.CypherQuery(CypherSurfaceFixture.NodeQuery)
-        const cells = result.rows.map(r => r[0]) as unknown as ConstructorParameters<typeof SnapshotReader>[0][]
+        const cells = result.items.map(r => r[0]) as unknown as ConstructorParameters<typeof SnapshotReader>[0][]
         const readers = cells.map(c => new SnapshotReader(c))
         const alpha = readers.find(r => r.field('label') === 'alpha')
         assert.ok(alpha !== undefined)
@@ -235,11 +235,11 @@ test('cypher/query hides RBAC-restricted instances from RETURN and from count', 
     await CypherSurfaceFixture.WithOptions(options, async client =>
     {
         const labels = await client.CypherQuery(CypherSurfaceFixture.AccountLabels)
-        assert.deepEqual(labels.rows, [['visible']])
+        assert.deepEqual(labels.items, [['visible']])
         const count = await client.CypherQuery(CypherSurfaceFixture.AccountCount)
-        assert.deepEqual(count.rows, [[1]])
+        assert.deepEqual(count.items, [[1]])
         const nodes = await client.CypherQuery(CypherSurfaceFixture.AccountNodes)
-        assert.equal(nodes.rows.length, 1)
+        assert.equal(nodes.items.length, 1)
     })
 })
 
@@ -249,7 +249,7 @@ test('cypher/query spans every member project of the active solution', async () 
     await CypherSurfaceFixture.WithOptions({ secondMember: true }, async client =>
     {
         const result = await client.CypherQuery(CypherSurfaceFixture.NameQuery)
-        assert.deepEqual(result.rows.map(r => r[0]).sort(), ['alpha', 'beta', 'gamma'])
+        assert.deepEqual(result.items.map(r => r[0]).sort(), ['alpha', 'beta', 'gamma'])
     })
 })
 
@@ -258,9 +258,9 @@ test('cypher/query round-trips list and map parameters', async () =>
     await CypherSurfaceFixture.With(async client =>
     {
         const list = await client.CypherQuery(CypherSurfaceFixture.ListQuery, { xs: [1, 2, 3] })
-        assert.deepEqual(list.rows.map(r => r[0]), [1, 2, 3])
+        assert.deepEqual(list.items.map(r => r[0]), [1, 2, 3])
         const map = await client.CypherQuery(CypherSurfaceFixture.MapQuery, { m: { k: 'v1' } })
-        assert.deepEqual(map.rows, [['v1']])
+        assert.deepEqual(map.items, [['v1']])
     })
 })
 
@@ -278,7 +278,7 @@ test('cypher/query with no solution open returns no rows and is not truncated', 
     await CypherSurfaceFixture.WithOptions({ openSolution: false }, async client =>
     {
         const result = await client.CypherQuery(CypherSurfaceFixture.NameQuery)
-        assert.deepEqual(result.rows, [])
+        assert.deepEqual(result.items, [])
         assert.equal(result.truncated, false)
     })
 })

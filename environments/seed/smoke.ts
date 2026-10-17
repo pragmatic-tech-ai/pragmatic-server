@@ -11,7 +11,7 @@
  */
 import { fileURLToPath } from 'node:url'
 import { PragmaticClient, ShareSubjectKind, ShareStatus, AssignStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { CypherQueryResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { CypherQueryPageDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { Command, SeedCli } from './seed.js'
 import { UserSeeder } from './users.js'
 import { NorthwindApp } from './compile.js'
@@ -222,8 +222,8 @@ export class DemoSmoke
 
     private async Orders(client: PragmaticClient): Promise<OrderRow[]>
     {
-        const result: CypherQueryResultDto = await client.CypherQuery(DemoSmoke.OrdersQuery)
-        return result.rows.map(r => ({ id: (r[0] as { id: string }).id, orderNo: String(r[1]), owner: String(r[2]), owningBu: String(r[3]) }))
+        const result: CypherQueryPageDto = await client.CypherQuery(DemoSmoke.OrdersQuery)
+        return result.items.map(r => ({ id: (r[0] as { id: string }).id, orderNo: String(r[1]), owner: String(r[2]), owningBu: String(r[3]) }))
     }
 
     private async OrderByNumber(client: PragmaticClient, orderNo: string): Promise<OrderRow>
@@ -239,7 +239,7 @@ export class DemoSmoke
     private async CreditLimits(client: PragmaticClient): Promise<unknown[]>
     {
         const result = await client.CypherQuery(DemoSmoke.CreditQuery)
-        return result.rows.map(r => r[1])
+        return result.items.map(r => r[1])
     }
 
     /** Logs in as the principal (password from the generated secrets via its (principal)-pw ref), connects, binds northwind. */

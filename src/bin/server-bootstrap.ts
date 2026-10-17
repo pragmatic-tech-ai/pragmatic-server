@@ -12,6 +12,7 @@ import type { ILogger } from '../observability/logger.js'
 import type { Observability, IObservabilityOptions, ObservabilityRole } from '../observability/observability.js'
 import type { OtlpProtocol } from '../observability/otlp-protocol.js'
 import { CypherLimits } from '../config/cypher-limits.js'
+import { PagingLimits } from '../config/paging-limits.js'
 import { AuditSinkKind } from '../config/audit-sink-kind.js'
 import { NullAccessAuditSink } from '../host/access-audit.js'
 import type { IAccessAuditSink } from '../host/access-audit.js'
@@ -89,12 +90,18 @@ export class ServerBootstrap
             rateLimit,
             drainTimeoutMs: config.drainTimeoutMs,
             cypherLimits: ServerBootstrap.CypherLimitsOf(config),
+            paging: ServerBootstrap.PagingLimitsOf(config),
         }
     }
 
     private static CypherLimitsOf(config: ServerConfig): CypherLimits
     {
         return new CypherLimits(config.cypherRowCap, config.cypherTimeoutMs, config.cypherMaxVarLength)
+    }
+
+    private static PagingLimitsOf(config: ServerConfig): PagingLimits
+    {
+        return new PagingLimits(config.pagingPageSize, config.pagingMaxPageSize)
     }
 
     public static StartupLine(config: ServerConfig, tenantCount: number): string
@@ -140,6 +147,7 @@ export class ServerBootstrap
             rateLimit,
             drainTimeoutMs: config.drainTimeoutMs,
             cypherLimits: ServerBootstrap.CypherLimitsOf(config),
+            paging: ServerBootstrap.PagingLimitsOf(config),
         }
     }
 

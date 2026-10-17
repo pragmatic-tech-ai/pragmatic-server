@@ -188,9 +188,9 @@ class RuntimeSurfaceFixture
         rmSync(this.Apps, { recursive: true, force: true })
     }
 
-    public static Column(result: { rows: unknown[][] }): unknown[]
+    public static Column(result: { items: unknown[][] }): unknown[]
     {
-        return result.rows.map(r => r[0]).sort()
+        return result.items.map(r => r[0]).sort()
     }
 
     private Connect(server: PragmaticServer, languageService: Awaited<ReturnType<PragmaticServer['LanguageService']>>, manager: Awaited<ReturnType<PragmaticServer['Manager']>>, purpose: TenantPurpose): PragmaticClient
@@ -268,19 +268,19 @@ test('runtime e2e: access policy hides instances and edges, is live, and fails c
         const client = (await fx.Runtime())()
         await client.OpenApplication(RuntimeSurfaceFixture.AppA)
         const before = await client.CypherQuery(RuntimeSurfaceFixture.EdgeQuery)
-        assert.equal(before.rows.length, 1)
+        assert.equal(before.items.length, 1)
 
         fx.DenyLabel(RuntimeSurfaceFixture.AppA, RuntimeSurfaceFixture.Widget, RuntimeSurfaceFixture.Bye)
         const denied = await client.CypherQuery(RuntimeSurfaceFixture.WidgetLabels)
         assert.deepEqual(RuntimeSurfaceFixture.Column(denied), [RuntimeSurfaceFixture.Hi])
         const edges = await client.CypherQuery(RuntimeSurfaceFixture.EdgeQuery)
-        assert.equal(edges.rows.length, 0)
+        assert.equal(edges.items.length, 0)
 
         fx.WritePolicy(RuntimeSurfaceFixture.AppA, RuntimeSurfaceFixture.OpenPolicy)
         const open = await client.CypherQuery(RuntimeSurfaceFixture.WidgetLabels)
         assert.deepEqual(RuntimeSurfaceFixture.Column(open), [RuntimeSurfaceFixture.Bye, RuntimeSurfaceFixture.Hi])
         const reopenedEdges = await client.CypherQuery(RuntimeSurfaceFixture.EdgeQuery)
-        assert.equal(reopenedEdges.rows.length, 1)
+        assert.equal(reopenedEdges.items.length, 1)
 
         fx.WritePolicy(RuntimeSurfaceFixture.AppA, RuntimeSurfaceFixture.MalformedPolicy)
         await assert.rejects(() => client.CypherQuery(RuntimeSurfaceFixture.WidgetLabels), RuntimeSurfaceFixture.MalformedPolicyMessage)

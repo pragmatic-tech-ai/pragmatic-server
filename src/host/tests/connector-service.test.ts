@@ -63,7 +63,7 @@ test('Read projects entity id/concept + scalar fields via Snapshot', async () =>
 {
     const service = new ConnectorService(() => Promise.resolve(Harness.Runtime()))
     const models = await service.List()
-    const entities = await service.Read(models[0]!.modelId, 'shop.Customer')
+    const entities = (await service.Read(models[0]!.modelId, 'shop.Customer')).items
     assert.ok(entities.length >= 1)
     assert.equal(entities[0]!.concept, 'shop.Customer')
     assert.equal(entities[0]!.fields.name, 'Acme')

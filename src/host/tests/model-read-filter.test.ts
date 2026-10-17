@@ -59,7 +59,7 @@ class ModelFixture
 test('a policy allow-where rule keeps the matching instance and drops the rest', () =>
 {
     const filter = new ModelReadFilter(ModelFixture.WithPolicy(), ModelFixture.Context())
-    const ids = filter.Project(new Map()).members.map(member => member.id)
+    const ids = filter.Project(new Map()).items.map(member => member.id)
     assert.ok(ids.includes(ModelFixture.Eu))
     assert.ok(!ids.includes(ModelFixture.Us))
 })
@@ -83,7 +83,7 @@ test('Hidden reports the dropped instance and not the permitted one', () =>
 test('a model with no policy keeps every instance', () =>
 {
     const filter = new ModelReadFilter(ModelFixture.NoPolicy(), ModelFixture.Context())
-    const ids = filter.Project(new Map()).members.map(member => member.id)
+    const ids = filter.Project(new Map()).items.map(member => member.id)
     assert.ok(ids.includes(ModelFixture.Eu))
     assert.ok(ids.includes(ModelFixture.Us))
 })
@@ -97,6 +97,6 @@ test('Hidden is false for an id the model cannot resolve', () =>
 test('a structural definition node survives filtering', () =>
 {
     const filter = new ModelReadFilter(ModelFixture.WithPolicy(), ModelFixture.Context())
-    const ids = filter.Project(new Map()).members.map(member => member.id)
+    const ids = filter.Project(new Map()).items.map(member => member.id)
     assert.ok(ids.includes(ModelFixture.Concept))
 })

@@ -80,7 +80,7 @@ test('ModelView over the wire projects the member model to JSON including the fi
             const memberId = summary.members[0].id
             await language.WhenIdle()
             const projection = await client.ModelView(memberId)
-            const ids = projection.members.map(m => m.id)
+            const ids = projection.items.map(m => m.id)
             assert.ok(ids.includes(ModelFixture.WidgetId))
             // the projection must be plain JSON - survives a round-trip unchanged
             assert.deepEqual(JSON.parse(JSON.stringify(projection)), projection)

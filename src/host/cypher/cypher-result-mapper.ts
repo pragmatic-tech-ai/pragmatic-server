@@ -1,16 +1,16 @@
-import type { CypherCellDto, CypherQueryResultDto, CypherNodeCellDto, CypherFieldSnapshotDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { CypherCellDto, CypherQueryPageDto, CypherNodeCellDto, CypherFieldSnapshotDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { Cypher } from '@pragmatic-tech-ai/todl'
 
-/** Maps the engine's PascalCase result DTO to the camelCase plain-JSON wire DTO. */
+/** Maps the engine's PascalCase result DTO to the camelCase plain-JSON wire page (a single page until cypher paging lands). */
 export class CypherResultMapper
 {
     private static readonly NoOrigin = ''
 
-    public static ToWire(dto: Cypher.CypherResultDto): CypherQueryResultDto
+    public static ToWire(dto: Cypher.CypherResultDto): CypherQueryPageDto
     {
         return {
             columns: [...dto.Columns],
-            rows: dto.Rows.map(row => row.map(cell => CypherResultMapper.Cell(cell))),
+            items: dto.Rows.map(row => row.map(cell => CypherResultMapper.Cell(cell))),
             truncated: dto.Truncated,
         }
     }

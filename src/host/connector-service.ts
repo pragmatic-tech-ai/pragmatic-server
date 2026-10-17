@@ -1,5 +1,5 @@
 import type { ConnectorRuntime } from '../connectors/connector-runtime.js'
-import type { ConnectorModelDto, ConnectorWriteBackParams, EntityDto, FlushOutcomeDto, ConnectionProbeDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { ConnectorModelDto, ConnectorWriteBackParams, EntityDto, FlushOutcomeDto, Page, ConnectionProbeDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 /** Per-connection façade over the 6A ConnectorRuntime: lazily holds one runtime (rebuilt on Invalidate, i.e.
  *  connector/refresh or solution/open) and maps engine info shapes to camelCase wire DTOs. Carries names,
@@ -52,11 +52,11 @@ export class ConnectorService
         await runtime.PrepareModel(modelId)
     }
 
-    public async Read(modelId: string, concept: string): Promise<EntityDto[]>
+    public async Read(modelId: string, concept: string): Promise<Page<EntityDto>>
     {
         const runtime = await this.Runtime()
         const entities = await runtime.ReadEntities(modelId, concept)
-        return entities.map((e) => ({ id: e.id, concept: e.concept, fields: ConnectorService.Fields(e.Snapshot()) }))
+        return { items: entities.map((e) => ({ id: e.id, concept: e.concept, fields: ConnectorService.Fields(e.Snapshot()) })) }
     }
 
     public async WriteBack(params: ConnectorWriteBackParams): Promise<FlushOutcomeDto>

@@ -1,13 +1,16 @@
 import { Action } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import { IdentityEnforcement } from '@pragmatic-tech-ai/todl-identity-engine'
+import { Tier } from '@pragmatic-tech-ai/todl'
 import type { Repository, IInstanceFilter, Node } from '@pragmatic-tech-ai/todl'
-import type { ModelMemberDto, ModelProjection } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { ModelMemberDto, ModelViewPageDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 /** Authoritative in-memory read filter over a model Repository: drops instances a policy rule hides,
  *  before DTO projection, and strips their ids from provenance. Non-policy models pass through unchanged. */
 export class ModelReadFilter
 {
+    private static readonly Absent = ''
+
     private readonly model: Repository
     private readonly filter: IInstanceFilter
 
@@ -17,7 +20,7 @@ export class ModelReadFilter
         this.filter = IdentityEnforcement.ForRepository(model, context, Action.Read).InstanceFilter()
     }
 
-    public Project(provenance: ReadonlyMap<string, string>): ModelProjection
+    public Project(provenance: ReadonlyMap<string, string>): ModelViewPageDto
     {
         const members: ModelMemberDto[] = []
         const kept = new Set<string>()
@@ -28,7 +31,7 @@ export class ModelReadFilter
                 continue
             }
             kept.add(node.id)
-            members.push({ id: node.id, kind: node.metaKind ?? node.type })
+            members.push(ModelReadFilter.Member(node))
         }
         const provenanceOf: Record<string, string> = {}
         for (const [id, source] of provenance)
@@ -38,7 +41,7 @@ export class ModelReadFilter
                 provenanceOf[id] = source
             }
         }
-        return { members, provenanceOf }
+        return { items: members, provenanceOf }
     }
 
     public Hidden(nodeId: string): boolean
@@ -49,6 +52,20 @@ export class ModelReadFilter
             return false
         }
         return !this.keep(node)
+    }
+
+    private static Member(node: Node): ModelMemberDto
+    {
+        return {
+            id: node.id,
+            kind: node.metaKind ?? node.type,
+            localId: node.localId ?? ModelReadFilter.Absent,
+            namespace: node.namespace ?? ModelReadFilter.Absent,
+            tier: Tier[node.tier],
+            isClass: node.isClass,
+            attrs: {},
+            edges: [],
+        }
     }
 
     private keep(node: Node): boolean

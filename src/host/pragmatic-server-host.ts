@@ -19,6 +19,7 @@ import { MachineCertIdentity } from './machine-principal-map.js'
 import type { MachineAuthContext } from './auth-http-endpoint.js'
 import type { MasterKeyRef } from '../identity/master-key-resolver.js'
 import type { CypherLimits } from '../config/cypher-limits.js'
+import type { PagingLimits } from '../config/paging-limits.js'
 import type { IProvisionedSecretSource } from '../config/provisioned-secret-source.js'
 import type { AdapterPacksConfig, WsResilienceConfig } from '../config/server-config.js'
 import type { PragmaticServer } from '../pragmatic-server.js'
@@ -73,6 +74,7 @@ export interface PragmaticServerHostOptions
     audit?: IAccessAuditSink
     drainTimeoutMs?: number
     cypherLimits?: CypherLimits
+    paging?: PagingLimits
     wsResilience?: WsResilienceConfig
 }
 
@@ -150,6 +152,7 @@ export class PragmaticServerHost
     private readonly observability: Observability | undefined
     private readonly drainTimeoutMs: number
     private readonly cypherLimits: CypherLimits | undefined
+    private readonly paging: PagingLimits | undefined
     private readonly wsResilience: WsResilienceConfig
     private readonly heartbeat: HeartbeatMonitor
     private drainSource: IInFlightSource | undefined
@@ -171,9 +174,11 @@ export class PragmaticServerHost
         observability?: Observability,
         drainTimeoutMs: number = PragmaticServerHost.DefaultDrainTimeoutMs,
         cypherLimits?: CypherLimits,
-        wsResilience: WsResilienceConfig = PragmaticServerHost.DefaultWsResilience)
+        wsResilience: WsResilienceConfig = PragmaticServerHost.DefaultWsResilience,
+        paging?: PagingLimits)
     {
         this.cypherLimits = cypherLimits
+        this.paging = paging
         this.wsResilience = wsResilience
         this.heartbeat = new HeartbeatMonitor(wsResilience.heartbeatIntervalMs)
         this.heartbeat.Start()
@@ -233,7 +238,7 @@ export class PragmaticServerHost
             httpServer.listen(options.port, host)
         })
         const resolved = httpServer.address() as AddressInfo
-        const started = new PragmaticServerHost(httpServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? PragmaticServerHost.DefaultIdleTtlMs, options.idleSweepMs ?? PragmaticServerHost.DefaultIdleSweepMs, options.clientTls !== undefined, options.logger ?? new NullLogger(), options.observability !== undefined ? RequestInstrumentation.FromObservability(options.observability, options.logger ?? new NullLogger()) : undefined, options.rateLimit, options.audit, options.observability, options.drainTimeoutMs ?? PragmaticServerHost.DefaultDrainTimeoutMs, options.cypherLimits, resilience)
+        const started = new PragmaticServerHost(httpServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? PragmaticServerHost.DefaultIdleTtlMs, options.idleSweepMs ?? PragmaticServerHost.DefaultIdleSweepMs, options.clientTls !== undefined, options.logger ?? new NullLogger(), options.observability !== undefined ? RequestInstrumentation.FromObservability(options.observability, options.logger ?? new NullLogger()) : undefined, options.rateLimit, options.audit, options.observability, options.drainTimeoutMs ?? PragmaticServerHost.DefaultDrainTimeoutMs, options.cypherLimits, resilience, options.paging)
         started.MarkReady()
         return started
     }
@@ -473,7 +478,7 @@ export class PragmaticServerHost
                         policy: new BackpressurePolicy(resilience.backpressureSoftBytes, resilience.backpressureHardBytes, resilience.backpressureGraceMs),
                         onShed: () => this.logger.Info(PragmaticServerHost.ShedLine, { [PragmaticServerHost.EventKey]: PragmaticServerHost.ShedEvent }),
                     })
-                    const handler = ServerConnectionHandler.Attach(socket, languageService, manager, context, () => server.Connectors(), ctx => server.Graph(ctx), this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, server.Purpose(), runtime.applications, runtime.appGraphProvider, runtime.appWriteProvider, runtime.shareProvider, runtime.unshareProvider, runtime.listSharesProvider, runtime.assignProvider)
+                    const handler = ServerConnectionHandler.Attach(socket, languageService, manager, context, () => server.Connectors(), ctx => server.Graph(ctx), this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, server.Purpose(), runtime.applications, runtime.appGraphProvider, runtime.appWriteProvider, runtime.shareProvider, runtime.unshareProvider, runtime.listSharesProvider, runtime.assignProvider, this.paging)
                     this.handlers.add(handler)
                     this.heartbeat.Watch(ws)
                     ws.on(PragmaticServerHost.CloseEvent, () =>

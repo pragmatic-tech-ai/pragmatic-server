@@ -83,6 +83,8 @@ export interface ServerConfig
     rateLimit?: RateLimitConfig
     drainTimeoutMs?: number
     cypherRowCap?: number
+    pagingPageSize?: number
+    pagingMaxPageSize?: number
     cypherTimeoutMs?: number
     cypherMaxVarLength?: number
     cloudProvider?: DeploymentProvider

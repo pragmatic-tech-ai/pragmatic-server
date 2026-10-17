@@ -80,7 +80,7 @@ namespace shop {
             const models = await client.Connectors()
             assert.equal(models.length, 1)
             const modelId = models[0]!.modelId
-            const entities = await client.ReadEntities(modelId, E2e.ConceptId)
+            const entities = (await client.ReadEntities(modelId, E2e.ConceptId)).items
             assert.ok(entities.length >= 1)
             assert.equal(entities[0]!.fields.name, 'Acme')
             const probe = await client.TestConnection(modelId, E2e.ConnectorName)
