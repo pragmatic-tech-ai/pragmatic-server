@@ -13,6 +13,7 @@ import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../../pragmatic-server.js'
 import { TenantPurpose } from '../../../tenancy/tenant-purpose.js'
 import { PpSecurityHarness } from './pp-security-harness.js'
+import { AllowAllFieldReadMaskSource, TenantReadAuthorization } from '../read-filter-source.js'
 
 class FieldSecurityFixture
 {
@@ -238,6 +239,36 @@ test('a whole-node RETURN omits the secured field without the profile and includ
         const grantedNode = FieldSecurityFixture.NodeSnapshot(granted)
         assert.ok(grantedNode.includes('secret'))
         assert.ok(grantedNode.includes(FieldSecurityFixture.Hidden))
+    }
+    finally
+    {
+        await fx.Dispose()
+    }
+})
+
+test('FieldReadMaskSource is allow-all with identity off', async () =>
+{
+    const fx = new FieldSecurityFixture()
+    try
+    {
+        const server = await fx.Setup(false)
+        assert.equal(await server.FieldReadMaskSource(), AllowAllFieldReadMaskSource.Instance)
+    }
+    finally
+    {
+        await fx.Dispose()
+    }
+})
+
+test('FieldReadMaskSource is the tenant read authorization with identity on', async () =>
+{
+    const fx = new FieldSecurityFixture()
+    try
+    {
+        const server = await fx.Setup()
+        const source = await server.FieldReadMaskSource()
+        assert.ok(source instanceof TenantReadAuthorization)
+        assert.notEqual(source, AllowAllFieldReadMaskSource.Instance)
     }
     finally
     {

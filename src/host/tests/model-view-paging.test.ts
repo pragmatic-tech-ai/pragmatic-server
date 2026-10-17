@@ -3,10 +3,10 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, cpSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { InMemoryMessageSocket, PragmaticClient, CursorStaleError } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { InMemoryMessageSocket, PragmaticClient, CursorStaleError, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ModelViewPageDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { Repository } from '@pragmatic-tech-ai/todl'
-import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
+import { Repository, EdgeKind } from '@pragmatic-tech-ai/todl'
+import type { SolutionManagerService, Edge } from '@pragmatic-tech-ai/todl'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { ModelReadFilter } from '../model-read-filter.js'
@@ -28,6 +28,25 @@ class DenyOneFieldMask implements IFieldReadMask
     }
 }
 
+/** Allows every field and records each (concept, field) pair it is asked about. */
+class RecordingFieldMask implements IFieldReadMask
+{
+    private static readonly Separator = '/'
+
+    public readonly Asked: string[] = []
+
+    public static Key(concept: string, field: string): string
+    {
+        return concept + RecordingFieldMask.Separator + field
+    }
+
+    public CanRead(concept: string, field: string): boolean
+    {
+        this.Asked.push(RecordingFieldMask.Key(concept, field))
+        return true
+    }
+}
+
 class DenyOneFieldMaskSource implements IFieldReadMaskSource
 {
     constructor(private readonly mask: IFieldReadMask) {}
@@ -35,6 +54,21 @@ class DenyOneFieldMaskSource implements IFieldReadMaskSource
     public async FieldReadMaskFor(): Promise<IFieldReadMask>
     {
         return this.mask
+    }
+}
+
+/** A repository whose outEdges for one node also yields an edge to a target the model cannot resolve. */
+class DanglingEdgeRepository extends Repository
+{
+    constructor(private readonly from: string, private readonly via: string, private readonly to: string)
+    {
+        super()
+    }
+
+    public override outEdges(id: string): Edge[]
+    {
+        const edges = super.outEdges(id)
+        return id === this.from ? [...edges, { kind: EdgeKind.Relationship, via: this.via, from: this.from, to: this.to }] : edges
     }
 }
 
@@ -60,27 +94,37 @@ class FilterFixture
     public static readonly RelationshipKind = 'Relationship'
     public static readonly InstanceTier = 'Instance'
     public static readonly OntologyTier = 'Ontology'
+    public static readonly Ghost = 'shop.ghost'
+    public static readonly Eu2Local = 'eu2'
+    public static readonly TenantId = 't1'
+    public static readonly TenantName = 'Tenant One'
+    public static readonly ReaderId = 'u1'
+    private static readonly StringType = 'string'
+    private static readonly PolicySuffix = '@policy'
+    private static readonly AllowEffect = 'allow'
+    private static readonly ReadAction = 'read'
+    private static readonly MissingMemberPrefix = 'member must be on the page: '
+    private static readonly SizePrefix = 'size '
 
     public static Context(): AccessContext
     {
-        const tenant = new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
-        const principal = new Principal('u1', 't1', PrincipalKind.User, new Map(), [])
+        const tenant = new Tenant(FilterFixture.TenantId, TenantKind.SelfHosted, FilterFixture.TenantName)
+        const principal = new Principal(FilterFixture.ReaderId, FilterFixture.TenantId, PrincipalKind.User, new Map(), [])
         return new AccessContext(principal, tenant, [], new ResourceAuthorizationPolicy())
     }
 
-    public static Build(withPolicy: boolean): Repository
+    public static Build(withPolicy: boolean, repo: Repository = new Repository()): Repository
     {
-        const repo = new Repository()
         const b = repo.builder()
         b.setNamespace(FilterFixture.Namespace)
-        b.definePrimitive('string')
+        b.definePrimitive(FilterFixture.StringType)
         b.defineConcept(FilterFixture.Concept)
-        b.addField(FilterFixture.Concept, FilterFixture.Region, 'string')
-        b.addField(FilterFixture.Concept, FilterFixture.Secret, 'string')
+        b.addField(FilterFixture.Concept, FilterFixture.Region, FilterFixture.StringType)
+        b.addField(FilterFixture.Concept, FilterFixture.Secret, FilterFixture.StringType)
         if (withPolicy)
         {
             const predicate = { kind: 2, op: 0, left: { kind: 0, root: 1, member: FilterFixture.Region }, right: { kind: 1, value: FilterFixture.EuValue } }
-            b.definePolicy(`${FilterFixture.Concept}@policy`, FilterFixture.Concept, JSON.stringify([{ effect: 'allow', action: 'read', predicate }]))
+            b.definePolicy(FilterFixture.Concept + FilterFixture.PolicySuffix, FilterFixture.Concept, JSON.stringify([{ effect: FilterFixture.AllowEffect, action: FilterFixture.ReadAction, predicate }]))
         }
         FilterFixture.Customer(b, FilterFixture.Eu1, FilterFixture.EuValue)
         b.setField(FilterFixture.Eu1, FilterFixture.Secret, FilterFixture.SecretValue)
@@ -98,8 +142,13 @@ class FilterFixture
     public static Member(page: ModelMemberPage, id: string): ModelMemberPage['Items'][number]
     {
         const member = page.Items.find(m => m.id === id)
-        assert.ok(member !== undefined, `member ${id} must be on the page`)
+        assert.ok(member !== undefined, FilterFixture.MissingMemberPrefix + id)
         return member
+    }
+
+    public static SizeLabel(size: number): string
+    {
+        return FilterFixture.SizePrefix + size
     }
 
     /** Pages the filter from offset 0 to the end, returning every page. */
@@ -137,6 +186,13 @@ class WireWorld
     public static readonly ServiceConcept = 'acme.Service'
     public static readonly Label = 'label'
     public static readonly ModelTodl = 'namespace acme { concept Service { label : string?; } model Shop : acme { Service s1 { label = "e"; } Service s2 { label = "c"; } Service s3 { label = "a"; } Service s4 { label = "d"; } Service s5 { label = "b"; } } }'
+    public static readonly PolicyModelTodl = 'namespace acme { concept Service { label : string?; } policy Service { allow read when entity.label == "a"; allow read when entity.label == "b"; allow read when entity.label == "c"; } model Shop : acme { Service s1 { label = "e"; } Service s2 { label = "c"; } Service s3 { label = "a"; } Service s4 { label = "d"; } Service s5 { label = "b"; } } }'
+    public static readonly HiddenServices = ['acme.s1', 'acme.s4']
+    public static readonly VisibleServices = ['acme.s2', 'acme.s3', 'acme.s5']
+    public static readonly RevisionMustMove = 'the edit must move the graph revision'
+    private static readonly OwnerId = 'p1'
+    private static readonly TenantId = 't1'
+    private static readonly TenantName = 'Tenant One'
     public static readonly EditedModelTodl = 'namespace acme { concept Service { label : string?; } model Shop : acme { Service s1 { label = "e"; } Service s2 { label = "c"; } Service s3 { label = "a"; } Service s4 { label = "d"; } Service s5 { label = "b"; } Service s6 { label = "f"; } } }'
 
     public readonly Language: SolutionLanguageService
@@ -164,9 +220,9 @@ class WireWorld
 
     public static Permissive(): AccessContext
     {
-        const tenant = new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
-        const principal = new Principal('p1', 't1', PrincipalKind.User, new Map(), [])
-        const grants = [new Grant('p1', Role.Owner, new ResourceRef(ResourceKind.Tenant, 't1', []))]
+        const tenant = new Tenant(WireWorld.TenantId, TenantKind.SelfHosted, WireWorld.TenantName)
+        const principal = new Principal(WireWorld.OwnerId, WireWorld.TenantId, PrincipalKind.User, new Map(), [])
+        const grants = [new Grant(WireWorld.OwnerId, Role.Owner, new ResourceRef(ResourceKind.Tenant, WireWorld.TenantId, []))]
         return new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
     }
 
@@ -179,12 +235,12 @@ class WireWorld
         return client
     }
 
-    public static async With(body: (world: WireWorld) => Promise<void>): Promise<void>
+    public static async With(body: (world: WireWorld) => Promise<void>, modelTodl: string = WireWorld.ModelTodl): Promise<void>
     {
         const solution = mkdtempSync(join(tmpdir(), WireWorld.SolutionPrefix))
         const packages = mkdtempSync(join(tmpdir(), WireWorld.PackagesPrefix))
         cpSync(join(import.meta.dirname, '..', '..', 'tests', 'fixtures', 'sample-solution'), solution, { recursive: true })
-        writeFileSync(join(solution, WireWorld.ModelFile), WireWorld.ModelTodl)
+        writeFileSync(join(solution, WireWorld.ModelFile), modelTodl)
         const server = new PragmaticServer({ packagesRoot: packages })
         await server.Start()
         await server.OpenSolution(solution)
@@ -221,6 +277,11 @@ class WireWorld
     public static IsStale(error: { code?: number }): boolean
     {
         return error.code === CursorStaleError.Code
+    }
+
+    public static IsInvalidParams(error: { code?: number }): boolean
+    {
+        return error.code === ErrorCodes.InvalidParams
     }
 
     private async Dispose(): Promise<void>
@@ -285,12 +346,12 @@ test('hidden nodes are excluded before paging', () =>
     {
         const pages = FilterFixture.Walk(filter, new Map(), size)
         const items = pages.flatMap(p => p.Items.map(m => m.id))
-        assert.equal(items.length, visible, `size ${size}`)
-        assert.equal(new Set(items).size, visible, `size ${size}`)
-        assert.equal(pages.length, Math.ceil(visible / size), `size ${size}`)
-        assert.ok(pages.slice(0, -1).every(p => p.HasMore), `size ${size}`)
-        assert.equal(pages[pages.length - 1]!.HasMore, false, `size ${size}`)
-        assert.ok(pages.every(p => p.Items.length > 0), `size ${size}`)
+        assert.equal(items.length, visible, FilterFixture.SizeLabel(size))
+        assert.equal(new Set(items).size, visible, FilterFixture.SizeLabel(size))
+        assert.equal(pages.length, Math.ceil(visible / size), FilterFixture.SizeLabel(size))
+        assert.ok(pages.slice(0, -1).every(p => p.HasMore), FilterFixture.SizeLabel(size))
+        assert.equal(pages[pages.length - 1]!.HasMore, false, FilterFixture.SizeLabel(size))
+        assert.ok(pages.every(p => p.Items.length > 0), FilterFixture.SizeLabel(size))
         for (const hidden of [FilterFixture.Us1, FilterFixture.Us2, FilterFixture.Us3])
         {
             assert.ok(!items.includes(hidden))
@@ -367,7 +428,7 @@ test('a graph edit between pages makes the cursor stale', async () =>
         // the notification is fire-and-forget: a round-trip request flushes it ahead of WhenIdle
         await client.ModelView(world.MemberId, { pageSize: 1 })
         await world.Language.WhenIdle()
-        assert.ok(world.Language.GraphRevision > before, 'the edit must move the graph revision')
+        assert.ok(world.Language.GraphRevision > before, WireWorld.RevisionMustMove)
         await assert.rejects(() => client.ModelView(world.MemberId, { cursor: first.nextCursor, pageSize: 2 }), WireWorld.IsStale)
     })
 })
@@ -377,6 +438,68 @@ test('a non-positive pageSize is rejected', async () =>
     await WireWorld.With(async world =>
     {
         const client = world.Connect()
-        await assert.rejects(() => client.ModelView(world.MemberId, { pageSize: 0 }))
+        await assert.rejects(() => client.ModelView(world.MemberId, { pageSize: 0 }), WireWorld.IsInvalidParams)
+        await assert.rejects(() => client.ModelView(world.MemberId, { pageSize: 1.5 }), WireWorld.IsInvalidParams)
     })
+})
+
+test('an edge to an unresolvable node is dropped', () =>
+{
+    // the graph store rejects a dangling edge on insert, so a repository surfaces one from outEdges instead
+    const repo = FilterFixture.Build(false, new DanglingEdgeRepository(FilterFixture.Eu1, FilterFixture.Peer, FilterFixture.Ghost))
+    assert.equal(repo.resolve(FilterFixture.Ghost), undefined)
+    assert.ok(repo.outEdges(FilterFixture.Eu1).some(e => e.to === FilterFixture.Ghost))
+    const filter = new ModelReadFilter(repo, FilterFixture.Context(), AllowAllFieldReadMask.Instance)
+    const member = FilterFixture.Member(filter.Page(new Map(), 0, 100), FilterFixture.Eu1)
+    assert.ok(member.edges.length > 0)
+    assert.ok(member.edges.every(e => e.to !== FilterFixture.Ghost))
+})
+
+test('a via that resolves to a visible node is kept and masked by its localId', () =>
+{
+    const repo = FilterFixture.Build(true)
+    repo.addEdge({ kind: EdgeKind.Relationship, via: FilterFixture.Eu2, from: FilterFixture.Eu1, to: FilterFixture.Eu2 })
+    const mask = new RecordingFieldMask()
+    const filter = new ModelReadFilter(repo, FilterFixture.Context(), mask)
+    const member = FilterFixture.Member(filter.Page(new Map(), 0, 100), FilterFixture.Eu1)
+    assert.ok(member.edges.some(e => e.via === FilterFixture.Eu2 && e.to === FilterFixture.Eu2))
+    assert.ok(mask.Asked.includes(RecordingFieldMask.Key(FilterFixture.Concept, FilterFixture.Eu2Local)))
+    assert.ok(!mask.Asked.includes(RecordingFieldMask.Key(FilterFixture.Concept, FilterFixture.Eu2)))
+})
+
+test('a via that resolves to a hidden node is dropped', () =>
+{
+    const repo = FilterFixture.Build(true)
+    repo.addEdge({ kind: EdgeKind.Relationship, via: FilterFixture.Us2, from: FilterFixture.Eu1, to: FilterFixture.Eu2 })
+    assert.ok(repo.outEdges(FilterFixture.Eu1).some(e => e.via === FilterFixture.Us2))
+    const filter = new ModelReadFilter(repo, FilterFixture.Context(), AllowAllFieldReadMask.Instance)
+    const member = FilterFixture.Member(filter.Page(new Map(), 0, 100), FilterFixture.Eu1)
+    assert.ok(member.edges.length > 0)
+    assert.ok(member.edges.every(e => e.via !== FilterFixture.Us2))
+})
+
+test('under a hiding policy the wire nextCursor is absent exactly on the last page', async () =>
+{
+    await WireWorld.With(async world =>
+    {
+        const client = world.Connect()
+        const unpaged = await client.ModelView(world.MemberId)
+        const ids = unpaged.items.map(m => m.id)
+        for (const hidden of WireWorld.HiddenServices)
+        {
+            assert.ok(!ids.includes(hidden))
+        }
+        for (const shown of WireWorld.VisibleServices)
+        {
+            assert.ok(ids.includes(shown))
+        }
+        for (const size of [1, 2, ids.length])
+        {
+            const pages = await WireWorld.Walk(client, world.MemberId, size)
+            assert.deepEqual(pages.flatMap(p => p.items.map(m => m.id)), ids, FilterFixture.SizeLabel(size))
+            assert.equal(pages.length, Math.ceil(ids.length / size), FilterFixture.SizeLabel(size))
+            assert.ok(pages.slice(0, -1).every(p => p.nextCursor !== undefined && p.items.length === size), FilterFixture.SizeLabel(size))
+            assert.equal(pages[pages.length - 1]!.nextCursor, undefined, FilterFixture.SizeLabel(size))
+        }
+    }, WireWorld.PolicyModelTodl)
 })

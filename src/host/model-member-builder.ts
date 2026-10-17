@@ -85,14 +85,16 @@ export class ModelMemberBuilder
         return this.CanRead(node, viaNode?.localId ?? edge.via)
     }
 
-    /** A target the model cannot resolve is not a policy-governed instance, so it cannot be hidden (matches ModelReadFilter.Hidden). */
+    /** A target outside the visible set (hidden or unresolvable) drops the edge (fail-closed). */
     private Visible(id: string): boolean
     {
-        return this.visible.has(id) || this.model.resolve(id) === undefined
+        return this.visible.has(id)
     }
 
     private CanRead(node: Node, field: string): boolean
     {
+        // untyped nodes are ontology definitions / model containers (never policy-governed instances), so field
+        // security does not apply; matches ModelReadFilter.keep
         return node.type === null || this.mask.CanRead(node.type, field)
     }
 }
