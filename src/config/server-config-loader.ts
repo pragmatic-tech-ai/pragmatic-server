@@ -139,6 +139,8 @@ export class ServerConfigLoader
     private static readonly EnvAdapterPacksStackMb = 'PRAGMATIC_ADAPTER_PACKS_STACK_MB'
     private static readonly EnvAdapterPacksEvictVersions = 'PRAGMATIC_ADAPTER_PACKS_EVICT_MAX_VERSIONS'
     private static readonly EnvAdapterPacksEvictAgeMs = 'PRAGMATIC_ADAPTER_PACKS_EVICT_MAX_AGE_MS'
+    private static readonly EnvAdapterPacksScriptAllowlist = 'PRAGMATIC_ADAPTER_PACKS_SCRIPT_ALLOWLIST'
+    private static readonly CsvSeparator = ','
     private static readonly BadSandboxStrategy = 'PRAGMATIC_ADAPTER_PACKS_SANDBOX must be worker or child'
     private static readonly BadRequireSignatures = 'PRAGMATIC_ADAPTER_PACKS_REQUIRE_SIGNATURES must be true or false'
     private static readonly PacksOptionsWithoutDir = 'PRAGMATIC_ADAPTER_PACKS_* options (signatures, limits, eviction) require PRAGMATIC_ADAPTER_PACKS_DIR; the feature is off without it'
@@ -162,7 +164,18 @@ export class ServerConfigLoader
             requireSignatures: ServerConfigLoader.StrictBool(env[ServerConfigLoader.EnvAdapterPacksRequireSignatures], ServerConfigLoader.BadRequireSignatures),
             resourceLimits: ServerConfigLoader.PackLimits(env),
             eviction: ServerConfigLoader.PackEviction(env),
+            scriptAllowlist: ServerConfigLoader.CsvNames(env[ServerConfigLoader.EnvAdapterPacksScriptAllowlist]),
         }
+    }
+
+    private static CsvNames(value: string | undefined): readonly string[] | undefined
+    {
+        if (value === undefined || value.length === 0)
+        {
+            return undefined
+        }
+        const names = value.split(ServerConfigLoader.CsvSeparator).map(n => n.trim()).filter(n => n.length > 0)
+        return names.length === 0 ? undefined : names
     }
 
     private static AdapterPackOptionEnvs(): string[]
@@ -174,6 +187,7 @@ export class ServerConfigLoader
             ServerConfigLoader.EnvAdapterPacksStackMb,
             ServerConfigLoader.EnvAdapterPacksEvictVersions,
             ServerConfigLoader.EnvAdapterPacksEvictAgeMs,
+            ServerConfigLoader.EnvAdapterPacksScriptAllowlist,
         ]
     }
 

@@ -33,6 +33,7 @@ export interface AdapterPacksConfig
     readonly requireSignatures?: boolean
     readonly resourceLimits?: AdapterPacksResourceLimits
     readonly eviction?: AdapterPacksEviction
+    readonly scriptAllowlist?: readonly string[]
 }
 
 export interface SingleTenantConfig

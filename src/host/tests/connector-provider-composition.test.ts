@@ -214,6 +214,17 @@ test('loader: pack options without DIR are rejected with a typed message, DIR-le
     assert.equal(ServerConfigLoader.Load(Fixture.BaseEnv(), () => '{}').adapterPacks, undefined)
 })
 
+test('loader: the script allowlist env parses as trimmed csv names', () =>
+{
+    const env = { ...Fixture.BaseEnv(), PRAGMATIC_ADAPTER_PACKS_DIR: '/packs', PRAGMATIC_ADAPTER_PACKS_SCRIPT_ALLOWLIST: 'a, @scope/b ,,c' }
+    assert.deepEqual(ServerConfigLoader.Load(env, () => '{}').adapterPacks?.scriptAllowlist, ['a', '@scope/b', 'c'])
+})
+
+test('loader: the script allowlist env without DIR is rejected', () =>
+{
+    assert.throws(() => ServerConfigLoader.Load({ ...Fixture.BaseEnv(), PRAGMATIC_ADAPTER_PACKS_SCRIPT_ALLOWLIST: 'a' }, () => '{}'), /require PRAGMATIC_ADAPTER_PACKS_DIR/)
+})
+
 test('AdapterPackProvider returns undefined when adapterPacks is absent', () =>
 {
     assert.equal(Fixture.AdapterPackProvider({ connectorsPolicy: Denied }), undefined)
@@ -243,6 +254,7 @@ test('loader: a well-formed adapter packs block loads with the enum value', () =
         requireSignatures: true,
         resourceLimits: { maxOldGenerationSizeMb: 128, maxYoungGenerationSizeMb: undefined, stackSizeMb: undefined },
         eviction: { maxVersionsPerPack: 3, maxAgeMs: undefined },
+        scriptAllowlist: undefined,
     })
     assert.equal(ServerConfigLoader.Load(Fixture.BaseEnv(), () => '{}').adapterPacks, undefined)
     assert.equal(ServerConfigLoader.Load({ ...Fixture.BaseEnv(), PRAGMATIC_ADAPTER_PACKS_DIR: '/p' }, () => '{}').adapterPacks?.sandboxStrategy, SandboxStrategy.Worker)

@@ -207,6 +207,7 @@ export class PragmaticServer
             providerAllowlist: options.connectorsPolicy?.ProviderAllowlist ?? [],
             requireSignatures: packs.requireSignatures,
             eviction: eviction === undefined ? undefined : { MaxVersionsPerPack: eviction.maxVersionsPerPack, MaxAgeMs: eviction.maxAgeMs },
+            scriptAllowlist: packs.scriptAllowlist,
         })
     }
 
@@ -690,6 +691,21 @@ export class PragmaticServer
     public InvalidateAdapterPack(name: string): Promise<void>
     {
         return this.connectorsHost.InvalidateProvider(name)
+    }
+
+    public AllowAdapterPackScripts(name: string): Promise<void>
+    {
+        return this.connectorsHost.AllowPackScripts(name)
+    }
+
+    public DenyAdapterPackScripts(name: string): Promise<void>
+    {
+        return this.connectorsHost.DenyPackScripts(name)
+    }
+
+    public ListAdapterPackScripts(): Promise<readonly string[]>
+    {
+        return this.connectorsHost.ListPackScriptAllowlist()
     }
 
     private async DoDispose(): Promise<void>
