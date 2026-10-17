@@ -180,3 +180,40 @@ test('a Release that fails while Redis is down is flushed on the next successful
     assert.ok(evals.some(e => e.keys[0] === 'pragmatic:own:t1'))
     await ownership.ReleaseAll()
 })
+
+test('a queued release is dropped when the tenant is re-acquired, so the fresh lease is not deleted', async () =>
+{
+    let failEval = true
+    const deletes: string[] = []
+    const fake =
+    {
+        isOpen: true,
+        on(): void {},
+        async connect(): Promise<void> {},
+        async quit(): Promise<void> {},
+        async set(): Promise<string | null> { return 'OK' },
+        async eval(script: string, opts: { keys: string[], arguments: string[] }): Promise<number>
+        {
+            if (failEval)
+            {
+                throw new Error('unreachable')
+            }
+            if (script.includes("'del'"))
+            {
+                deletes.push(opts.keys[0])
+            }
+            return 1
+        },
+    }
+    const ownership = new RedisTenantOwnership('redis://unused', 'replica-a', () => 1000, () => fake as unknown as RedisClientType)
+    await ownership.Start()
+    assert.equal(await ownership.Acquire('t1'), true)
+    await ownership.Release('t1')
+    assert.equal(ownership.PendingReleaseCountForTest(), 1)
+    failEval = false
+    assert.equal(await ownership.Acquire('t1'), true)
+    await ownership.RenewNowForTest()
+    assert.equal(ownership.PendingReleaseCountForTest(), 0)
+    assert.equal(deletes.includes('pragmatic:own:t1'), false)
+    await ownership.ReleaseAll()
+})

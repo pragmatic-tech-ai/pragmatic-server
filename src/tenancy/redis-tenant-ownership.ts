@@ -27,6 +27,7 @@ export class RedisTenantOwnership implements ITenantOwnership
     private renewing = false
     private readonly lastRenewMs = new Map<string, number>()
     private readonly held = new Set<string>()
+    /** Keys whose Release CAS-delete failed while Redis was down; flushed on reconnect/renew. Bounded by the held-tenant set. */
     private readonly pendingReleases = new Set<string>()
     private client: RedisClientType | null = null
     private connecting: Promise<RedisClientType> | null = null
@@ -70,6 +71,7 @@ export class RedisTenantOwnership implements ITenantOwnership
             }
             this.held.add(key)
             this.lastRenewMs.set(key, this.now())
+            this.pendingReleases.delete(key)
             this.EnsureRenew()
             return true
         }
@@ -228,6 +230,11 @@ export class RedisTenantOwnership implements ITenantOwnership
     {
         for (const key of [...this.pendingReleases])
         {
+            if (this.held.has(key))
+            {
+                this.pendingReleases.delete(key)
+                continue
+            }
             try
             {
                 await this.WithTimeout(client.eval(RedisTenantOwnership.ReleaseScript, { keys: [key], arguments: [this.self] }))
