@@ -6,8 +6,8 @@ import { join } from 'node:path'
 import { newDb } from 'pg-mem'
 import { DataSourceKind } from '@pragmatic-tech-ai/todl'
 import type { IDataSourceAdapterProvider } from '@pragmatic-tech-ai/todl'
-import { NpmAdapterPackProvider } from '@pragmatic-tech-ai/todl-connectors-host'
-import type { INpmCli } from '@pragmatic-tech-ai/todl-connectors-host'
+import { NpmAdapterPackProvider, ChildProcessSandboxFactory, WorkerThreadSandboxFactory } from '@pragmatic-tech-ai/todl-connectors-host'
+import type { INpmCli, NpmAdapterPackProviderOptions } from '@pragmatic-tech-ai/todl-connectors-host'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import type { PragmaticServerOptions } from '../../pragmatic-server.js'
 import { ConnectorsPolicy } from '../connector-policy.js'
@@ -102,6 +102,10 @@ namespace shop {
         return new (db.adapters.createPg()).Pool()
     }
 
+    public static readonly AllowedPack = '@acme/allowed-pack'
+    public static readonly OtherPack = '@acme/other-pack'
+    public static readonly InstallReached = 'install reached'
+
     public static get Plain(): string
     {
         return Fixture.PlainDatasource
@@ -166,13 +170,48 @@ test('AdapterPackProvider builds a real NpmAdapterPackProvider from adapterPacks
             const provider = Fixture.AdapterPackProvider({ adapterPacks: { ...Fixture.Packs(cacheDir, strategy), requireSignatures: true, resourceLimits: { maxOldGenerationSizeMb: 64 }, eviction: { maxVersionsPerPack: 2, maxAgeMs: 1000 } }, connectorsPolicy: Denied })
             assert.ok(provider instanceof NpmAdapterPackProvider)
             assert.equal(typeof provider.Resolve, 'function')
-            await (provider as NpmAdapterPackProvider).Dispose()
+            const options = (provider as unknown as { options: NpmAdapterPackProviderOptions }).options
+            const isChild = strategy === SandboxStrategy.Child
+            assert.equal(options.sandboxFactory instanceof ChildProcessSandboxFactory, isChild)
+            assert.equal(options.sandboxFactory instanceof WorkerThreadSandboxFactory, !isChild)
+            assert.deepEqual(options.eviction, { MaxVersionsPerPack: 2, MaxAgeMs: 1000 })
+            assert.deepEqual(options.sandboxOptions, { resourceLimits: { maxOldGenerationSizeMb: 64 } })
+            assert.equal(options.requireSignatures, true)
+            assert.equal(options.cacheDir, cacheDir)
+            await provider.Dispose()
         }
     }
     finally
     {
         rmSync(cacheDir, { recursive: true, force: true })
     }
+})
+
+test('AdapterPackProvider positive path: override on and pack allowlisted passes the gate and reaches install', async () =>
+{
+    const cacheDir = Fixture.TempDir()
+    try
+    {
+        const policy = new ConnectorsPolicy([DataSourceKind.Sql], false, true, [Fixture.AllowedPack])
+        const provider = Fixture.AdapterPackProvider({ adapterPacks: Fixture.Packs(cacheDir), connectorsPolicy: policy }) as NpmAdapterPackProvider
+        const reached = new Error(Fixture.InstallReached)
+        const internals = provider as unknown as { installer: { Install(): Promise<never> } }
+        internals.installer = { Install: async () => { throw reached } }
+        await assert.rejects(provider.Resolve({ Provider: `${Fixture.AllowedPack}@1.0.0`, Kind: DataSourceKind.Sql } as never), (e: unknown) => e === reached)
+        await assert.rejects(provider.Resolve({ Provider: `${Fixture.OtherPack}@1.0.0`, Kind: DataSourceKind.Sql } as never), /not allowlisted/)
+        await provider.Dispose()
+    }
+    finally
+    {
+        rmSync(cacheDir, { recursive: true, force: true })
+    }
+})
+
+test('loader: pack options without DIR are rejected with a typed message, DIR-less env stays feature-off', () =>
+{
+    assert.throws(() => ServerConfigLoader.Load({ ...Fixture.BaseEnv(), PRAGMATIC_ADAPTER_PACKS_MAX_OLD_MB: '64' }, () => '{}'), /require PRAGMATIC_ADAPTER_PACKS_DIR/)
+    assert.throws(() => ServerConfigLoader.Load({ ...Fixture.BaseEnv(), PRAGMATIC_ADAPTER_PACKS_EVICT_MAX_VERSIONS: '2' }, () => '{}'), /require PRAGMATIC_ADAPTER_PACKS_DIR/)
+    assert.equal(ServerConfigLoader.Load(Fixture.BaseEnv(), () => '{}').adapterPacks, undefined)
 })
 
 test('AdapterPackProvider returns undefined when adapterPacks is absent', () =>

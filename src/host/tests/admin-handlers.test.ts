@@ -50,6 +50,7 @@ class AdminFixture
     public readonly Configs = new InMemoryTenantConfigStore()
     public readonly Audit = new CapturingAuditSink()
     public readonly Accounts = new FaultingAccountStore()
+    public readonly InvalidatedPacks: string[] = []
     public readonly Handler: ServerConnectionHandler
     public readonly Client: MessageConnection
 
@@ -60,7 +61,7 @@ class AdminFixture
         const context = new AccessContext(principal, tenant, [new Grant('p1', role, new ResourceRef(ResourceKind.Tenant, 't1', []))], new ResourceAuthorizationPolicy())
         const accounts = this.Accounts
         const registrar = new LocalAccountRegistrar(accounts, new EncryptedSecretStore(randomBytes(32)), new Argon2PasswordHasher(), this.Audit)
-        const admin = new AdminService(this.Grants, this.Audit, this.Configs, tenant, async () => undefined, accounts, registrar, new ServiceTokenStore(), async () => undefined)
+        const admin = new AdminService(this.Grants, this.Audit, this.Configs, tenant, async () => undefined, accounts, registrar, new ServiceTokenStore(), async name => { this.InvalidatedPacks.push(name) })
         const languageService = { GraphChanged: { subscribe: () => ({ dispose: () => undefined }) } } as unknown as ILanguageService
         const manager = {} as unknown as SolutionManagerService
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
@@ -435,7 +436,24 @@ test('missing params and non-string fields are InvalidParams naming the field', 
         await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.RevokeToken, { tokenRef: 7 } as never), 'tokenRef')
         await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.InvalidatePack, {} as never), 'name')
         await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.InvalidatePack, { name: '' } as never), 'name')
+        await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.InvalidatePack, { name: '   ' } as never), 'name')
+        assert.deepEqual(fx.InvalidatedPacks, [])
         await AccountTokenCases.Invalid(fx.Client.sendRequest(AdminProtocol.CreateAccount, { email: 5, principalId: 'a', password: AccountTokenCases.Password } as never), 'email')
+    }
+    finally
+    {
+        fx.Dispose()
+    }
+})
+
+test('a valid pack name reaches the invalidatePack callback', async () =>
+{
+    const fx = new AdminFixture(Role.Owner)
+    try
+    {
+        const ack = await fx.Client.sendRequest(AdminProtocol.InvalidatePack, { name: 'acme-pack' })
+        assert.deepEqual(ack, { ok: true })
+        assert.deepEqual(fx.InvalidatedPacks, ['acme-pack'])
     }
     finally
     {

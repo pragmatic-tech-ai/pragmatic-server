@@ -538,6 +538,10 @@ export class ServerConnectionHandler
         this.guarded(AdminProtocol.InvalidatePack, async p =>
         {
             const name = this.RequireNonEmptyString(p?.name, ServerConnectionHandler.PackNameField)
+            if (name.trim().length === 0)
+            {
+                throw this.InvalidParams(new AdminEnumError(ServerConnectionHandler.PackNameField))
+            }
             await this.AdminCall(() => admin.InvalidatePack(this.actor(), name))
             return { ok: true as const }
         })

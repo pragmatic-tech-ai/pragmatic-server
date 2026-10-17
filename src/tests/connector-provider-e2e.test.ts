@@ -44,6 +44,17 @@ class PackE2E
     private static readonly NameField = 'name'
     private static readonly Alpha = 'alpha'
     private static readonly Beta = 'beta'
+    public static readonly SolutionDirName = 'solution'
+    public static readonly CacheDirName = 'cache'
+    public static readonly PackagesDirName = 'packages'
+    public static readonly NpmCacheDirName = 'npm-cache'
+    public static readonly LockFile = 'package-lock.json'
+    public static readonly EnvRegistry = 'npm_config_registry'
+    public static readonly EnvScopedRegistry = 'npm_config_@pragmatic-tech-ai:registry'
+    public static readonly EnvNpmCache = 'npm_config_cache'
+    public static readonly AnyRange = '*'
+    public static readonly RegistryHitMessage = 'the fake registry must have served the install'
+    public static readonly PreconditionMessage = 'adapter-pack-example fixture is not built: build the adapter-pack-example fixture first (npm run build in todl-connectors-host/fixtures/adapter-pack-example)'
 
     public static get FixtureDir(): string
     {
@@ -58,6 +69,15 @@ class PackE2E
     public static FixtureVersion(): string
     {
         return PackE2E.FixtureManifest()['version'] as string
+    }
+
+    /** Throws an actionable error when the gitignored built fixture dist is absent (clean checkout). */
+    public static RequireBuiltFixture(): void
+    {
+        if (!existsSync(join(PackE2E.FixtureDir, PackE2E.DistDir)))
+        {
+            throw new Error(PackE2E.PreconditionMessage)
+        }
     }
 
     public static MakeTempDir(): string
@@ -119,7 +139,7 @@ class FakeNpm implements INpmCli
         this.Installs++
         PackE2E.SeedBuiltPack(cwd)
         const lock = { lockfileVersion: 3, packages: { [`node_modules/${PackE2E.PackName}`]: { version: PackE2E.FixtureVersion() } } }
-        writeFileSync(join(cwd, 'package-lock.json'), JSON.stringify(lock))
+        writeFileSync(join(cwd, PackE2E.LockFile), JSON.stringify(lock))
     }
 
     public async AuditSignatures(_cwd: string): Promise<void>
@@ -136,10 +156,16 @@ class FakeRegistry
 
     private readonly http: Server
     private port = 0
+    private hits = 0
 
     public constructor(private readonly name: string, private readonly version: string, private readonly manifest: Record<string, unknown>, private readonly tarball: Buffer)
     {
         this.http = createServer((req, res) => this.Handle(req.url ?? '', res))
+    }
+
+    public get Hits(): number
+    {
+        return this.hits
     }
 
     public get Url(): string
@@ -161,6 +187,7 @@ class FakeRegistry
 
     private Handle(url: string, res: ServerResponse): void
     {
+        this.hits++
         const path = decodeURIComponent(url.split('?')[0]!)
         const tarPath = `/tarballs/${this.version}.tgz`
         if (path === tarPath)
@@ -217,67 +244,79 @@ class EnvScope
 
 test('a provider-declared connector resolves through the composed server and the real worker sandbox', async () =>
 {
-    const work = PackE2E.MakeTempDir()
-    const solution = join(work, 'solution')
-    mkdirSync(solution)
-    PackE2E.WriteSolution(solution, `${PackE2E.PackName}@*`)
-    const npm = new FakeNpm()
-    const provider = new NpmAdapterPackProvider({
-        cacheDir: join(work, 'cache'),
-        npm,
-        sandboxFactory: new WorkerThreadSandboxFactory(),
-        allowProviderOverride: true,
-        providerAllowlist: [PackE2E.PackName],
-    })
-    const server = new PragmaticServer({ packagesRoot: join(work, 'packages'), connectors: { provider } })
+    PackE2E.RequireBuiltFixture()
+    let work: string | undefined
+    let server: PragmaticServer | undefined
     try
     {
+        work = PackE2E.MakeTempDir()
+        const solution = join(work, PackE2E.SolutionDirName)
+        mkdirSync(solution)
+        PackE2E.WriteSolution(solution, `${PackE2E.PackName}@${PackE2E.AnyRange}`)
+        const npm = new FakeNpm()
+        const provider = new NpmAdapterPackProvider({
+            cacheDir: join(work, PackE2E.CacheDirName),
+            npm,
+            sandboxFactory: new WorkerThreadSandboxFactory(),
+            allowProviderOverride: true,
+            providerAllowlist: [PackE2E.PackName],
+        })
+        server = new PragmaticServer({ packagesRoot: join(work, PackE2E.PackagesDirName), connectors: { provider } })
         await PackE2E.AssertSeededRows(server, solution)
         assert.equal(npm.Installs, 1)
     }
     finally
     {
-        await server.Dispose()
-        rmSync(work, { recursive: true, force: true })
+        await server?.Dispose()
+        if (work !== undefined)
+        {
+            rmSync(work, { recursive: true, force: true })
+        }
     }
 })
 
 test('a provider-declared connector installs from a fake registry with real npm and resolves rows', { skip: !Gate.Enabled, timeout: 300000 }, async () =>
 {
-    const work = PackE2E.MakeTempDir()
-    const solution = join(work, 'solution')
-    mkdirSync(solution)
+    PackE2E.RequireBuiltFixture()
     const env = new EnvScope()
+    let work: string | undefined
     let registry: FakeRegistry | undefined
     let server: PragmaticServer | undefined
     try
     {
+        work = PackE2E.MakeTempDir()
+        const solution = join(work, PackE2E.SolutionDirName)
+        mkdirSync(solution)
         const shell = process.platform === 'win32'
         const packOut = execFileSync('npm', ['pack', '--pack-destination', work], { cwd: PackE2E.FixtureDir, encoding: 'utf8', shell }).trim().split(/\r?\n/)
         const tarball = readFileSync(join(work, packOut[packOut.length - 1]!.trim()))
         const version = PackE2E.FixtureVersion()
         registry = new FakeRegistry(PackE2E.PackName, version, PackE2E.FixtureManifest(), tarball)
         await registry.Start()
-        env.Set('npm_config_registry', registry.Url)
-        env.Set('npm_config_@pragmatic-tech-ai:registry', registry.Url)
-        env.Set('npm_config_cache', join(work, 'npm-cache'))
+        env.Set(PackE2E.EnvRegistry, registry.Url)
+        env.Set(PackE2E.EnvScopedRegistry, registry.Url)
+        env.Set(PackE2E.EnvNpmCache, join(work, PackE2E.NpmCacheDirName))
         PackE2E.WriteSolution(solution, `${PackE2E.PackName}@^${version}`)
         const provider = new NpmAdapterPackProvider({
-            cacheDir: join(work, 'cache'),
+            cacheDir: join(work, PackE2E.CacheDirName),
             npm: new NpmCli(),
             sandboxFactory: new WorkerThreadSandboxFactory(),
             allowProviderOverride: true,
             providerAllowlist: [PackE2E.PackName],
         })
-        server = new PragmaticServer({ packagesRoot: join(work, 'packages'), connectors: { provider } })
+        server = new PragmaticServer({ packagesRoot: join(work, PackE2E.PackagesDirName), connectors: { provider } })
         await PackE2E.AssertSeededRows(server, solution)
-        assert.ok(existsSync(join(work, 'cache')))
+        assert.ok(existsSync(join(work, PackE2E.CacheDirName)))
+        assert.ok(registry.Hits > 0, PackE2E.RegistryHitMessage)
     }
     finally
     {
         await server?.Dispose()
         await registry?.Stop()
         env.Restore()
-        rmSync(work, { recursive: true, force: true })
+        if (work !== undefined)
+        {
+            rmSync(work, { recursive: true, force: true })
+        }
     }
 })

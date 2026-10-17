@@ -141,6 +141,7 @@ export class ServerConfigLoader
     private static readonly EnvAdapterPacksEvictAgeMs = 'PRAGMATIC_ADAPTER_PACKS_EVICT_MAX_AGE_MS'
     private static readonly BadSandboxStrategy = 'PRAGMATIC_ADAPTER_PACKS_SANDBOX must be worker or child'
     private static readonly BadRequireSignatures = 'PRAGMATIC_ADAPTER_PACKS_REQUIRE_SIGNATURES must be true or false'
+    private static readonly PacksOptionsWithoutDir = 'PRAGMATIC_ADAPTER_PACKS_* options (signatures, limits, eviction) require PRAGMATIC_ADAPTER_PACKS_DIR; the feature is off without it'
     private static readonly BadAdapterPacksNumber = 'PRAGMATIC_ADAPTER_PACKS_* limits and eviction values must be positive integers'
 
     private static AdapterPacks(env: Record<string, string | undefined>): AdapterPacksConfig | undefined
@@ -149,6 +150,10 @@ export class ServerConfigLoader
         const cacheDir = ServerConfigLoader.NonEmpty(env[ServerConfigLoader.EnvAdapterPacksDir])
         if (cacheDir === undefined)
         {
+            if (ServerConfigLoader.AdapterPackOptionEnvs().some(key => ServerConfigLoader.NonEmpty(env[key]) !== undefined))
+            {
+                throw new Error(ServerConfigLoader.PacksOptionsWithoutDir)
+            }
             return undefined
         }
         return {
@@ -158,6 +163,18 @@ export class ServerConfigLoader
             resourceLimits: ServerConfigLoader.PackLimits(env),
             eviction: ServerConfigLoader.PackEviction(env),
         }
+    }
+
+    private static AdapterPackOptionEnvs(): string[]
+    {
+        return [
+            ServerConfigLoader.EnvAdapterPacksRequireSignatures,
+            ServerConfigLoader.EnvAdapterPacksMaxOldMb,
+            ServerConfigLoader.EnvAdapterPacksMaxYoungMb,
+            ServerConfigLoader.EnvAdapterPacksStackMb,
+            ServerConfigLoader.EnvAdapterPacksEvictVersions,
+            ServerConfigLoader.EnvAdapterPacksEvictAgeMs,
+        ]
     }
 
     private static SandboxStrategyOf(value: string | undefined): SandboxStrategy | undefined
