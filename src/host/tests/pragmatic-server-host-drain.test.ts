@@ -336,3 +336,25 @@ test('a throw in the readiness-close step does not prevent drain and the remaini
         rmSync(baseDir, { recursive: true, force: true })
     }
 })
+
+test('the heartbeat monitor watches a live ws client and is emptied on dispose', async () =>
+{
+    const baseDir = mkdtempSync(join(tmpdir(), 'ps-drain-'))
+    mkdirSync(join(baseDir, 't1'), { recursive: true })
+    cpSync(join(import.meta.dirname, '..', '..', 'tests', 'fixtures', 'sample-solution'), join(baseDir, 't1', 'solution'), { recursive: true })
+    const host = await DrainFixture.Start(baseDir, 100)
+    try
+    {
+        const ws = await WsFixture.Connect(host, 't1')
+        assert.equal(host.HeartbeatCountForTest(), 1)
+        const closed = new Promise<void>(resolve => ws.once('close', () => resolve()))
+        await host.DisposeAsync()
+        await closed
+        assert.equal(host.HeartbeatCountForTest(), 0)
+    }
+    finally
+    {
+        await host.DisposeAsync()
+        rmSync(baseDir, { recursive: true, force: true })
+    }
+})

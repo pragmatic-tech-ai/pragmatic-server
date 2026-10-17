@@ -7,7 +7,7 @@ import type { Socket } from 'node:net'
 import type { AddressInfo } from 'node:net'
 import { WebSocketServer } from 'ws'
 import type { WebSocket } from 'ws'
-import { WsMessageSocket } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { WsMessageSocket, HeartbeatMonitor } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import type { MasterKeyRef } from '../identity/master-key-resolver.js'
 import type { PragmaticServer } from '../pragmatic-server.js'
@@ -29,7 +29,7 @@ import { WorkerRegistration } from './worker-registration.js'
 import { HealthEndpoint } from '../host/health-endpoint.js'
 import type { CypherLimits } from '../config/cypher-limits.js'
 import type { IProvisionedSecretSource } from '../config/provisioned-secret-source.js'
-import type { AdapterPacksConfig } from '../config/server-config.js'
+import type { AdapterPacksConfig, WsResilienceConfig } from '../config/server-config.js'
 import type { WorkerEndpoint } from './worker-router.js'
 import type { ITenantProvisioning } from '../tenancy/tenant-provisioning.js'
 import { MachineTls } from './machine-tls.js'
@@ -74,6 +74,7 @@ export interface WorkerHostOptions
     audit?: IAccessAuditSink
     drainTimeoutMs?: number
     cypherLimits?: CypherLimits
+    wsResilience?: WsResilienceConfig
 }
 
 /** Internal mutual-TLS wss worker: the gateway (a verified client cert) forwards x-pragmatic-tenant + authorization;
@@ -112,6 +113,8 @@ export class WorkerHost
     private static readonly StepReadiness = 'readiness-close'
     private static readonly StepWait = 'in-flight-wait'
     private static readonly StepHandlers = 'dispose-handlers'
+    private static readonly DefaultWsResilience: WsResilienceConfig = { heartbeatIntervalMs: 30000, readIdleMs: 60000, backpressureSoftBytes: 1048576, backpressureHardBytes: 8388608, backpressureGraceMs: 5000, maxInboundBytes: 16777216 }
+    private static readonly StepHeartbeat = 'heartbeat-stop'
     private static readonly StepTerminate = 'terminate-clients'
     private static readonly StepWss = 'close-wss'
     private static readonly StepHttps = 'close-https'
@@ -141,6 +144,8 @@ export class WorkerHost
     private readonly observability: Observability | undefined
     private readonly drainTimeoutMs: number
     private readonly cypherLimits: CypherLimits | undefined
+    private readonly wsResilience: WsResilienceConfig
+    private readonly heartbeat: HeartbeatMonitor
     private drainSource: IInFlightSource | undefined
     private drainController: DrainController | undefined
     private disposing: Promise<void> | undefined
@@ -163,9 +168,13 @@ export class WorkerHost
         audit: IAccessAuditSink = new NullAccessAuditSink(),
         observability?: Observability,
         drainTimeoutMs: number = WorkerHost.DefaultDrainTimeoutMs,
-        cypherLimits?: CypherLimits)
+        cypherLimits?: CypherLimits,
+        wsResilience: WsResilienceConfig = WorkerHost.DefaultWsResilience)
     {
         this.cypherLimits = cypherLimits
+        this.wsResilience = wsResilience
+        this.heartbeat = new HeartbeatMonitor(wsResilience.heartbeatIntervalMs)
+        this.heartbeat.Start()
         this.observability = observability
         this.drainTimeoutMs = drainTimeoutMs
         this.audit = audit
@@ -227,6 +236,11 @@ export class WorkerHost
         this.drainController = controller
     }
 
+    public HeartbeatCountForTest(): number
+    {
+        return this.heartbeat.WatchedCountForTest()
+    }
+
     public HandlerCountForTest(): number
     {
         return this.handlers.size
@@ -252,7 +266,8 @@ export class WorkerHost
         const registry = new TenantRegistry(options.baseDir, options.masterKey, options.provisioning, coordinator, options.platform, options.deploymentMode, ownership, options.provisionedSecrets, undefined, options.adapterPacks)
         const host = options.host ?? WorkerHost.DefaultHost
         const httpsServer = createServer(MachineTls.Server(options.tls))
-        const wss = new WebSocketServer({ noServer: true })
+        const resilience = options.wsResilience ?? WorkerHost.DefaultWsResilience
+        const wss = new WebSocketServer({ noServer: true, maxPayload: resilience.maxInboundBytes })
         await new Promise<void>((resolve, reject) =>
         {
             httpsServer.once(WorkerHost.ListeningEvent, () => resolve())
@@ -290,7 +305,7 @@ export class WorkerHost
             await registry.DisposeAll().catch(() => {})
             throw error
         }
-        const started = new WorkerHost(httpsServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? WorkerHost.DefaultIdleTtlMs, options.idleSweepMs ?? WorkerHost.DefaultIdleSweepMs, healthServer, healthAddress, registration, options.logger ?? new NullLogger(), options.observability !== undefined ? RequestInstrumentation.FromObservability(options.observability, options.logger ?? new NullLogger()) : undefined, options.rateLimit, options.audit, options.observability, options.drainTimeoutMs ?? WorkerHost.DefaultDrainTimeoutMs, options.cypherLimits)
+        const started = new WorkerHost(httpsServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? WorkerHost.DefaultIdleTtlMs, options.idleSweepMs ?? WorkerHost.DefaultIdleSweepMs, healthServer, healthAddress, registration, options.logger ?? new NullLogger(), options.observability !== undefined ? RequestInstrumentation.FromObservability(options.observability, options.logger ?? new NullLogger()) : undefined, options.rateLimit, options.audit, options.observability, options.drainTimeoutMs ?? WorkerHost.DefaultDrainTimeoutMs, options.cypherLimits, resilience)
         started.MarkReady()
         return started
     }
@@ -329,6 +344,7 @@ export class WorkerHost
             }
             this.handlers.clear()
         })
+        await this.Step(WorkerHost.StepHeartbeat, () => this.heartbeat.Stop())
         await this.Step(WorkerHost.StepTerminate, () =>
         {
             for (const client of this.wss.clients)
@@ -502,6 +518,7 @@ export class WorkerHost
                     const runtime = ServerConnectionHandler.RuntimeAttachArgs(server)
                     const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors(), ctx => server.Graph(ctx), this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, server.Purpose(), runtime.applications, runtime.appGraphProvider, runtime.appWriteProvider, runtime.shareProvider, runtime.unshareProvider, runtime.listSharesProvider, runtime.assignProvider)
                     this.handlers.add(handler)
+                    this.heartbeat.Watch(ws)
                     ws.on(WorkerHost.CloseEvent, () =>
                     {
                         if (this.disposed)

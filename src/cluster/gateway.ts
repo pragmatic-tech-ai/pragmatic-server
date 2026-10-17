@@ -5,6 +5,8 @@ import type { TLSSocket } from 'node:tls'
 import type { Socket } from 'node:net'
 import type { AddressInfo } from 'node:net'
 import { WebSocketServer, WebSocket } from 'ws'
+import { HeartbeatMonitor } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { WsResilienceConfig } from '../config/server-config.js'
 import type { RawData } from 'ws'
 import type { WebSocketAddress } from '../host/pragmatic-server-host.js'
 import type { IWorkerRouter, WorkerEndpoint } from './worker-router.js'
@@ -35,6 +37,7 @@ export interface GatewayOptions
     rateLimit?: RateLimitGuard
     observability?: Observability
     drainTimeoutMs?: number
+    wsResilience?: WsResilienceConfig
 }
 
 /** Public plain-ws front door. Holds NO identity pack and never parses JSON-RPC: it reads the ?tenant hint,
@@ -77,6 +80,8 @@ export class Gateway
     private static readonly DrainFailedLine = 'drain step failed'
     private static readonly StepReadiness = 'readiness-close'
     private static readonly StepWait = 'in-flight-wait'
+    private static readonly DefaultWsResilience: WsResilienceConfig = { heartbeatIntervalMs: 30000, readIdleMs: 60000, backpressureSoftBytes: 1048576, backpressureHardBytes: 8388608, backpressureGraceMs: 5000, maxInboundBytes: 16777216 }
+    private static readonly StepHeartbeat = 'heartbeat-stop'
     private static readonly StepWorkerSockets = 'terminate-worker-sockets'
     private static readonly StepTerminate = 'terminate-clients'
     private static readonly StepWss = 'close-wss'
@@ -97,14 +102,19 @@ export class Gateway
     private readonly health = new HealthEndpoint()
     private readonly observability: Observability | undefined
     private readonly drainTimeoutMs: number
+    private readonly wsResilience: WsResilienceConfig
+    private readonly heartbeat: HeartbeatMonitor
     private drainSource: IInFlightSource | undefined
     private drainController: DrainController | undefined
     private disposing: Promise<void> | undefined
     private ready = true
     private disposed = false
 
-    private constructor(httpServer: HttpServer, wss: WebSocketServer, router: IWorkerRouter, clientTls: ClientTlsMaterial, address: WebSocketAddress, serverName: string, machineTlsConfigured: boolean, logger: ILogger, rateLimit: RateLimitGuard = new RateLimitGuard(), observability?: Observability, drainTimeoutMs: number = Gateway.DefaultDrainTimeoutMs)
+    private constructor(httpServer: HttpServer, wss: WebSocketServer, router: IWorkerRouter, clientTls: ClientTlsMaterial, address: WebSocketAddress, serverName: string, machineTlsConfigured: boolean, logger: ILogger, rateLimit: RateLimitGuard = new RateLimitGuard(), observability?: Observability, drainTimeoutMs: number = Gateway.DefaultDrainTimeoutMs, resilience: WsResilienceConfig = Gateway.DefaultWsResilience)
     {
+        this.wsResilience = resilience
+        this.heartbeat = new HeartbeatMonitor(resilience.heartbeatIntervalMs)
+        this.heartbeat.Start()
         this.observability = observability
         this.drainTimeoutMs = drainTimeoutMs
         this.rateLimit = rateLimit
@@ -131,7 +141,8 @@ export class Gateway
     {
         const host = options.host ?? Gateway.DefaultHost
         const httpServer: HttpServer = options.clientTls ? httpsCreateServer(MachineTls.OptionalServer(options.clientTls)) : createServer()
-        const wss = new WebSocketServer({ noServer: true })
+        const resilience = options.wsResilience ?? Gateway.DefaultWsResilience
+        const wss = new WebSocketServer({ noServer: true, maxPayload: resilience.maxInboundBytes })
         await new Promise<void>((resolve, reject) =>
         {
             httpServer.once(Gateway.ListeningEvent, () => resolve())
@@ -140,7 +151,7 @@ export class Gateway
         })
         const resolved = httpServer.address() as AddressInfo
         const clientTls = MachineTls.Client(options.tls)
-        return new Gateway(httpServer, wss, options.router, clientTls, { host, port: resolved.port }, options.serverName ?? Gateway.DefaultServerName, options.clientTls !== undefined, options.logger ?? new NullLogger(), options.rateLimit, options.observability, options.drainTimeoutMs ?? Gateway.DefaultDrainTimeoutMs)
+        return new Gateway(httpServer, wss, options.router, clientTls, { host, port: resolved.port }, options.serverName ?? Gateway.DefaultServerName, options.clientTls !== undefined, options.logger ?? new NullLogger(), options.rateLimit, options.observability, options.drainTimeoutMs ?? Gateway.DefaultDrainTimeoutMs, resilience)
     }
 
     /** Anti-spoof: ALWAYS strips any inbound fingerprint header, then stamps the verified peer-cert fingerprint only when client TLS is configured and the peer was authorized. */
@@ -164,6 +175,11 @@ export class Gateway
         Gateway.StampMachineFingerprint(headers, req.socket as TLSSocket, clientTlsConfigured)
         RequestCorrelation.Inject(RequestCorrelation.Extract(req.headers), headers)
         return headers
+    }
+
+    public HeartbeatCountForTest(): number
+    {
+        return this.heartbeat.WatchedCountForTest()
     }
 
     public ClientCountForTest(): number
@@ -200,6 +216,7 @@ export class Gateway
         this.disposed = true
         await this.Step(Gateway.StepReadiness, () => this.httpServer.closeIdleConnections())
         const drained = await this.Drain()
+        await this.Step(Gateway.StepHeartbeat, () => this.heartbeat.Stop())
         await this.Step(Gateway.StepWorkerSockets, () =>
         {
             for (const workerWs of this.workerSockets)
@@ -352,6 +369,7 @@ export class Gateway
         const wsOptions = { key: client.key, cert: client.cert, ca: client.ca, rejectUnauthorized: true, servername: this.serverName, headers }
         const workerWs = new WebSocket(`${Gateway.WsScheme}${endpoint.host}:${endpoint.port}/`, wsOptions)
         this.workerSockets.add(workerWs)
+        this.heartbeat.Watch(workerWs)
         let opened = false
         let bridged = false
         workerWs.once(Gateway.OpenEvent, () =>
@@ -366,6 +384,7 @@ export class Gateway
             this.wss.handleUpgrade(req, socket, head, (clientWs: WebSocket) =>
             {
                 bridged = true
+                this.heartbeat.Watch(clientWs)
                 this.Bridge(clientWs, workerWs)
             })
         })

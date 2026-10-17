@@ -352,3 +352,23 @@ test('a throwing in-flight source degrades to zero: clean drain-begin and a boun
         Fixture.Cleanup(baseDir)
     }
 })
+
+test('the heartbeat monitor watches a live ws client and is emptied on dispose', async () =>
+{
+    const baseDir = Fixture.NewBaseDir()
+    const worker = await Fixture.Start(baseDir, 100)
+    worker.SetDrainControllerForTest(new FakeClock().Controller(100))
+    try
+    {
+        const ws = await Fixture.Connect(worker)
+        assert.equal(worker.HeartbeatCountForTest(), 1)
+        const closed = new Promise<void>(resolve => ws.once('close', () => resolve()))
+        await worker.DisposeAsync()
+        await closed
+        assert.equal(worker.HeartbeatCountForTest(), 0)
+    }
+    finally
+    {
+        Fixture.Cleanup(baseDir)
+    }
+})

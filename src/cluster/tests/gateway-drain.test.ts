@@ -330,3 +330,30 @@ test('a throwing in-flight source degrades to zero: clean drain-begin and a boun
     assert.ok(complete !== undefined)
     assert.equal(complete['drained'], true)
 })
+
+test('the heartbeat monitor watches both the client leg and the worker leg and is emptied on dispose', async () =>
+{
+    const backing = await BackingWorker.Start()
+    const gateway = await Gateway.StartAsync({ host: '127.0.0.1', port: 0, router: new StubRouter(backing.Worker.Address()), tls: GwFixture.ClientTls(), serverName: '127.0.0.1', drainTimeoutMs: 100 })
+    try
+    {
+        const token = await backing.Token()
+        const ws = new WebSocket(`ws://127.0.0.1:${gateway.Address().port}/?tenant=t1`, { headers: { authorization: `Bearer ${token}` } })
+        await new Promise<void>((resolve, reject) =>
+        {
+            ws.once('open', () => resolve())
+            ws.once('error', reject)
+        })
+        assert.equal(gateway.HeartbeatCountForTest(), 2)
+        gateway.SetDrainControllerForTest(new FakeClock().Controller(100))
+        const closed = new Promise<void>(resolve => ws.once('close', () => resolve()))
+        await gateway.DisposeAsync()
+        await closed
+        assert.equal(gateway.HeartbeatCountForTest(), 0)
+    }
+    finally
+    {
+        await gateway.DisposeAsync()
+        await backing.Stop()
+    }
+})

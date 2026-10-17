@@ -8,7 +8,7 @@ import type { Socket } from 'node:net'
 import type { AddressInfo } from 'node:net'
 import { WebSocketServer } from 'ws'
 import type { WebSocket } from 'ws'
-import { WsMessageSocket } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { WsMessageSocket, HeartbeatMonitor } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { AuthMethod } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext, Tenant } from '@pragmatic-tech-ai/todl-identity'
@@ -20,7 +20,7 @@ import type { MachineAuthContext } from './auth-http-endpoint.js'
 import type { MasterKeyRef } from '../identity/master-key-resolver.js'
 import type { CypherLimits } from '../config/cypher-limits.js'
 import type { IProvisionedSecretSource } from '../config/provisioned-secret-source.js'
-import type { AdapterPacksConfig } from '../config/server-config.js'
+import type { AdapterPacksConfig, WsResilienceConfig } from '../config/server-config.js'
 import type { PragmaticServer } from '../pragmatic-server.js'
 import { ServerConnectionHandler } from './server-connection-handler.js'
 import { AdminService } from './admin-service.js'
@@ -72,6 +72,7 @@ export interface PragmaticServerHostOptions
     audit?: IAccessAuditSink
     drainTimeoutMs?: number
     cypherLimits?: CypherLimits
+    wsResilience?: WsResilienceConfig
 }
 
 export interface WebSocketAddress
@@ -117,6 +118,8 @@ export class PragmaticServerHost
     private static readonly StepField = 'step'
     private static readonly StepReadiness = 'readiness-close'
     private static readonly StepHandlers = 'dispose-handlers'
+    private static readonly DefaultWsResilience: WsResilienceConfig = { heartbeatIntervalMs: 30000, readIdleMs: 60000, backpressureSoftBytes: 1048576, backpressureHardBytes: 8388608, backpressureGraceMs: 5000, maxInboundBytes: 16777216 }
+    private static readonly StepHeartbeat = 'heartbeat-stop'
     private static readonly StepTerminate = 'terminate-clients'
     private static readonly StepWss = 'close-wss'
     private static readonly StepHttp = 'close-http'
@@ -145,6 +148,8 @@ export class PragmaticServerHost
     private readonly observability: Observability | undefined
     private readonly drainTimeoutMs: number
     private readonly cypherLimits: CypherLimits | undefined
+    private readonly wsResilience: WsResilienceConfig
+    private readonly heartbeat: HeartbeatMonitor
     private drainSource: IInFlightSource | undefined
     private disposing: Promise<void> | undefined
     private drainController: DrainController | undefined
@@ -163,9 +168,13 @@ export class PragmaticServerHost
         audit: IAccessAuditSink = new NullAccessAuditSink(),
         observability?: Observability,
         drainTimeoutMs: number = PragmaticServerHost.DefaultDrainTimeoutMs,
-        cypherLimits?: CypherLimits)
+        cypherLimits?: CypherLimits,
+        wsResilience: WsResilienceConfig = PragmaticServerHost.DefaultWsResilience)
     {
         this.cypherLimits = cypherLimits
+        this.wsResilience = wsResilience
+        this.heartbeat = new HeartbeatMonitor(wsResilience.heartbeatIntervalMs)
+        this.heartbeat.Start()
         this.observability = observability
         this.drainTimeoutMs = drainTimeoutMs
         this.audit = audit
@@ -213,7 +222,8 @@ export class PragmaticServerHost
         const registry = new TenantRegistry(options.baseDir, options.masterKey, options.provisioning, coordinator, options.platform, options.deploymentMode, ownership, options.provisionedSecrets, PragmaticServerHost.BuildIdentityRuntime(options.redisUrl), options.adapterPacks)
         const host = options.host ?? PragmaticServerHost.DefaultHost
         const httpServer = options.clientTls === undefined ? createServer() : httpsCreateServer(MachineTls.OptionalServer(options.clientTls))
-        const wss = new WebSocketServer({ noServer: true })
+        const resilience = options.wsResilience ?? PragmaticServerHost.DefaultWsResilience
+        const wss = new WebSocketServer({ noServer: true, maxPayload: resilience.maxInboundBytes })
         await new Promise<void>((resolve, reject) =>
         {
             httpServer.once(PragmaticServerHost.ListeningEvent, () => resolve())
@@ -221,7 +231,7 @@ export class PragmaticServerHost
             httpServer.listen(options.port, host)
         })
         const resolved = httpServer.address() as AddressInfo
-        const started = new PragmaticServerHost(httpServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? PragmaticServerHost.DefaultIdleTtlMs, options.idleSweepMs ?? PragmaticServerHost.DefaultIdleSweepMs, options.clientTls !== undefined, options.logger ?? new NullLogger(), options.observability !== undefined ? RequestInstrumentation.FromObservability(options.observability, options.logger ?? new NullLogger()) : undefined, options.rateLimit, options.audit, options.observability, options.drainTimeoutMs ?? PragmaticServerHost.DefaultDrainTimeoutMs, options.cypherLimits)
+        const started = new PragmaticServerHost(httpServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? PragmaticServerHost.DefaultIdleTtlMs, options.idleSweepMs ?? PragmaticServerHost.DefaultIdleSweepMs, options.clientTls !== undefined, options.logger ?? new NullLogger(), options.observability !== undefined ? RequestInstrumentation.FromObservability(options.observability, options.logger ?? new NullLogger()) : undefined, options.rateLimit, options.audit, options.observability, options.drainTimeoutMs ?? PragmaticServerHost.DefaultDrainTimeoutMs, options.cypherLimits, resilience)
         started.MarkReady()
         return started
     }
@@ -269,6 +279,11 @@ export class PragmaticServerHost
         return (await this.registry.ServerFor(tenantId)).LanguageService()
     }
 
+    public HeartbeatCountForTest(): number
+    {
+        return this.heartbeat.WatchedCountForTest()
+    }
+
     /** Test seam: number of live authenticated connections. */
     public HandlerCountForTest(): number
     {
@@ -300,6 +315,7 @@ export class PragmaticServerHost
             }
             this.handlers.clear()
         })
+        await this.Step(PragmaticServerHost.StepHeartbeat, () => this.heartbeat.Stop())
         await this.Step(PragmaticServerHost.StepTerminate, () =>
         {
             for (const client of this.wss.clients)
@@ -441,6 +457,7 @@ export class PragmaticServerHost
                     const runtime = ServerConnectionHandler.RuntimeAttachArgs(server)
                     const handler = ServerConnectionHandler.Attach(new WsMessageSocket(ws), languageService, manager, context, () => server.Connectors(), ctx => server.Graph(ctx), this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, server.Purpose(), runtime.applications, runtime.appGraphProvider, runtime.appWriteProvider, runtime.shareProvider, runtime.unshareProvider, runtime.listSharesProvider, runtime.assignProvider)
                     this.handlers.add(handler)
+                    this.heartbeat.Watch(ws)
                     ws.on(PragmaticServerHost.CloseEvent, () =>
                     {
                         if (this.disposed)
