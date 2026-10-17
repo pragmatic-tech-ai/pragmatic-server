@@ -12,6 +12,7 @@ import { InMemoryRoleGrantStore, LocalAccountStore, ServiceTokenStore, LocalAcco
 import { InMemoryTenantConfigStore } from '@pragmatic-tech-ai/todl-identity-host'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
 import { AdminService } from '../admin-service.js'
+import { AdapterPackError, AdapterPackErrorKind } from '@pragmatic-tech-ai/todl-connectors-host'
 
 class CapturingAuditSink implements IAuditSink
 {
@@ -56,19 +57,28 @@ class AdminFixture
     public readonly Handler: ServerConnectionHandler
     public readonly Client: MessageConnection
 
-    public constructor(role: Role)
+    private static readonly NoProviderMessage = 'no adapter pack provider is configured'
+
+    public constructor(role: Role, faultPacks = false)
     {
         const tenant = new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
         const principal = new Principal('p1', 't1', PrincipalKind.User, new Map(), [])
         const context = new AccessContext(principal, tenant, [new Grant('p1', role, new ResourceRef(ResourceKind.Tenant, 't1', []))], new ResourceAuthorizationPolicy())
         const accounts = this.Accounts
         const registrar = new LocalAccountRegistrar(accounts, new EncryptedSecretStore(randomBytes(32)), new Argon2PasswordHasher(), this.Audit)
-        const admin = new AdminService(this.Grants, this.Audit, this.Configs, tenant, async () => undefined, accounts, registrar, new ServiceTokenStore(), {
-            Invalidate: async name => { this.InvalidatedPacks.push(name) },
-            AllowScripts: async name => { this.AllowedPacks.push(name) },
-            DenyScripts: async name => { this.DeniedPacks.push(name) },
-            ListScriptAllowlist: async () => ['seed-pack', ...this.AllowedPacks],
-        })
+        const admin = new AdminService(this.Grants, this.Audit, this.Configs, tenant, async () => undefined, accounts, registrar, new ServiceTokenStore(), faultPacks
+            ? {
+                Invalidate: async () => { throw new AdapterPackError(AdapterPackErrorKind.ProviderNotConfigured, AdminFixture.NoProviderMessage) },
+                AllowScripts: async () => { throw new AdapterPackError(AdapterPackErrorKind.ProviderNotConfigured, AdminFixture.NoProviderMessage) },
+                DenyScripts: async () => { throw new AdapterPackError(AdapterPackErrorKind.ProviderNotConfigured, AdminFixture.NoProviderMessage) },
+                ListScriptAllowlist: async () => { throw new AdapterPackError(AdapterPackErrorKind.ProviderNotConfigured, AdminFixture.NoProviderMessage) },
+            }
+            : {
+                Invalidate: async name => { this.InvalidatedPacks.push(name) },
+                AllowScripts: async name => { this.AllowedPacks.push(name) },
+                DenyScripts: async name => { this.DeniedPacks.push(name) },
+                ListScriptAllowlist: async () => ['seed-pack', ...this.AllowedPacks],
+            })
         const languageService = { GraphChanged: { subscribe: () => ({ dispose: () => undefined }) } } as unknown as ILanguageService
         const manager = {} as unknown as SolutionManagerService
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
@@ -479,6 +489,30 @@ test('a Viewer is rejected on every pack method and no pack callback runs', asyn
         assert.deepEqual(fx.InvalidatedPacks, [])
         assert.deepEqual(fx.AllowedPacks, [])
         assert.deepEqual(fx.DeniedPacks, [])
+    }
+    finally
+    {
+        fx.Dispose()
+    }
+})
+
+test('pack admin ops surface a clean error when no pack provider is configured', async () =>
+{
+    const fx = new AdminFixture(Role.Owner, true)
+    try
+    {
+        const calls: Promise<unknown>[] = [
+            fx.Client.sendRequest(AdminProtocol.InvalidatePack, { name: 'acme-pack' }),
+            fx.Client.sendRequest(AdminProtocol.ListScriptAllowlist),
+            fx.Client.sendRequest(AdminProtocol.AllowPackScripts, { name: 'acme-pack' }),
+            fx.Client.sendRequest(AdminProtocol.DenyPackScripts, { name: 'acme-pack' }),
+        ]
+        for (const call of calls)
+        {
+            await assert.rejects(call, (e: unknown) => e instanceof ResponseError && e.code === ErrorCodes.InvalidRequest && /no adapter pack provider is configured/.test(e.message))
+        }
+        // The mutation failed closed, so nothing was audited as having happened.
+        assert.equal(fx.Audit.Events.length, 0)
     }
     finally
     {

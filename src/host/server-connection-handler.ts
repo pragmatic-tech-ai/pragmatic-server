@@ -28,6 +28,7 @@ import { TenantPurpose } from '../tenancy/tenant-purpose.js'
 import type { PragmaticAppsRegistry } from './apps/pragmatic-apps-registry.js'
 import { CypherLimits } from '../config/cypher-limits.js'
 import { CypherParamConverter, CypherParamError } from './cypher/cypher-param-converter.js'
+import { AdapterPackError, AdapterPackErrorKind } from '@pragmatic-tech-ai/todl-connectors-host'
 import { CypherResultMapper } from './cypher/cypher-result-mapper.js'
 import { trace } from '@opentelemetry/api'
 import type { Context } from '@opentelemetry/api'
@@ -575,6 +576,10 @@ export class ServerConnectionHandler
         catch (error)
         {
             if (error instanceof AdminSelfLockoutError || error instanceof LastAdministratorError || error instanceof AdminConfigMissingError || error instanceof LocalAccountNotFoundError || error instanceof AdminTokenNotFoundError)
+            {
+                throw new ResponseError(ErrorCodes.InvalidRequest, error.message)
+            }
+            if (error instanceof AdapterPackError && error.Kind === AdapterPackErrorKind.ProviderNotConfigured)
             {
                 throw new ResponseError(ErrorCodes.InvalidRequest, error.message)
             }
