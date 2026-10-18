@@ -118,4 +118,5 @@ test('Viewer may list/read connectors but not write/test/prepare/refresh', () =>
     assert.equal(gate.Authorize(ConnectorProtocol.Test.method).Allowed, false)
     assert.equal(gate.Authorize(ConnectorProtocol.Prepare.method).Allowed, false)
     assert.equal(gate.Authorize(ConnectorProtocol.Refresh.method).Allowed, false)
+    assert.equal(gate.Authorize(ConnectorProtocol.RefreshModel.method).Allowed, false)
 })
