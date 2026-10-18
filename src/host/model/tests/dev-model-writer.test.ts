@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import type { IStorage, StorageEntry } from '@pragmatic-tech-ai/todl-runtime'
 import { checkAgainst, toJSON } from '@pragmatic-tech-ai/todl'
 import type { TodlDocument } from '@pragmatic-tech-ai/todl'
-import { DevModelWriter, DevModelWriteFailedError, type IDevLanguageService } from '../dev-model-writer.js'
+import { DevModelWriter, DevModelWriteFailedError, DevModelSchemaColocatedError, type IDevLanguageService } from '../dev-model-writer.js'
 import { TodlSourceCollector } from '../todl-source-collector.js'
 
 class MemoryStorage implements IStorage
@@ -172,5 +172,12 @@ describe('DevModelWriter', () =>
         assert.equal(a, b)
         f.Storage.Files.set('model.todl', Fixture.Model + '\n')
         assert.notEqual(f.Writer.SourceHash(await collector.Collect(f.Storage)), a)
+    })
+
+    test('Prepare refuses a member whose own sources hold schema beside instances', async () =>
+    {
+        const f = new Fixture()
+        f.Storage.Files.set('extra.todl', 'namespace shop { concept Order { total : string?; } }')
+        await assert.rejects(() => f.Writer.Prepare(f.Member, Fixture.Identity), DevModelSchemaColocatedError)
     })
 })
