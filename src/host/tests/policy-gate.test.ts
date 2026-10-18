@@ -102,6 +102,7 @@ test('Owner may list/read/write/test/prepare/refresh connectors', () =>
     const gate = GateFixture.Gate(Role.Owner)
     assert.equal(gate.Authorize(ConnectorProtocol.List.method).Allowed, true)
     assert.equal(gate.Authorize(ConnectorProtocol.Read.method).Allowed, true)
+    assert.equal(gate.Authorize(ConnectorProtocol.ReadPage.method).Allowed, true)
     assert.equal(gate.Authorize(ConnectorProtocol.WriteBack.method).Allowed, true)
     assert.equal(gate.Authorize(ConnectorProtocol.Test.method).Allowed, true)
     assert.equal(gate.Authorize(ConnectorProtocol.Prepare.method).Allowed, true)
@@ -114,9 +115,16 @@ test('Viewer may list/read connectors but not write/test/prepare/refresh', () =>
     const gate = GateFixture.Gate(Role.Viewer)
     assert.equal(gate.Authorize(ConnectorProtocol.List.method).Allowed, true)
     assert.equal(gate.Authorize(ConnectorProtocol.Read.method).Allowed, true)
+    assert.equal(gate.Authorize(ConnectorProtocol.ReadPage.method).Allowed, true)
     assert.equal(gate.Authorize(ConnectorProtocol.WriteBack.method).Allowed, false)
     assert.equal(gate.Authorize(ConnectorProtocol.Test.method).Allowed, false)
     assert.equal(gate.Authorize(ConnectorProtocol.Prepare.method).Allowed, false)
     assert.equal(gate.Authorize(ConnectorProtocol.Refresh.method).Allowed, false)
     assert.equal(gate.Authorize(ConnectorProtocol.RefreshModel.method).Allowed, false)
+})
+
+test('connector/readPage is allowed for a reader and denied with no role', () =>
+{
+    assert.equal(GateFixture.Gate(Role.Viewer).Authorize(ConnectorProtocol.ReadPage.method).Allowed, true)
+    assert.equal(GateFixture.Gate(null).Authorize(ConnectorProtocol.ReadPage.method).Allowed, false)
 })

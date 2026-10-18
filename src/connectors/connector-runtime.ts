@@ -1,5 +1,5 @@
 import { ModelRegistry, GenericModelDataSource, FederatedModelDataConnector, DataSourceAdapterCatalog } from '@pragmatic-tech-ai/todl'
-import type { ReflectedEntity, DataSourceKind, FlushOutcome, Diagnostic, ConnectorSpec } from '@pragmatic-tech-ai/todl'
+import type { ReflectedEntity, DataSourceKind, FlushOutcome, Diagnostic, ConnectorSpec, ModelConnectorPlan, IDataSourceAdapter } from '@pragmatic-tech-ai/todl'
 import type { IServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import type { ConnectorModel } from './solution-connector-planner.js'
 
@@ -100,6 +100,23 @@ export class ConnectorRuntime
             out.push(...model.Plan.Connectors)
         }
         return out
+    }
+
+    /** The model's connector plan, with no preparation or data pull. Throws when the model has no connectors. */
+    public PlanOf(modelId: string): ModelConnectorPlan
+    {
+        const model = this.models.get(modelId)
+        if (model === undefined)
+        {
+            throw new Error(`${ConnectorRuntime.NoConnectorsPrefix}${modelId}`)
+        }
+        return model.Plan
+    }
+
+    /** Opens (through the shared catalog) the adapter of ONE connector spec, without preparing the model. */
+    public OpenAdapter(spec: ConnectorSpec): Promise<IDataSourceAdapter>
+    {
+        return this.Catalog().Open(spec, this.services)
     }
 
     public ModelsWithConnectors(): readonly ConnectorModelInfo[]

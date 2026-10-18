@@ -3,6 +3,8 @@ import type { ConnectorModelDto, ConnectorWriteBackParams, EntityDto, FlushOutco
 import type { PagingLimits } from '../config/paging-limits.js'
 import { PageFingerprint, PageRequest } from './paging/page-request.js'
 import { WireScalar } from './wire-scalar.js'
+import { EntityDtoMapper } from './entity-dto-mapper.js'
+import { ConnectorPageReader } from '../connectors/connector-page-reader.js'
 
 /** Per-connection façade over the 6A ConnectorRuntime: lazily holds one runtime (rebuilt on Invalidate, i.e.
  *  connector/refresh or solution/open) and maps engine info shapes to camelCase wire DTOs. Carries names,
@@ -88,9 +90,16 @@ export class ConnectorService
         const fingerprint = PageFingerprint.Of(ConnectorService.ConnectorFingerprintTag, modelId, concept, runtime.Revision)
         const page = PageRequest.Resolve(params, fingerprint, limits)
         const result = await runtime.ReadEntities(modelId, concept, { Skip: page.Offset, Take: page.Size })
-        const items = result.Entities.map((e) => ({ id: e.id, concept: e.concept, fields: WireScalar.Record(e.Snapshot()) }))
+        const items = result.Entities.map((e) => EntityDtoMapper.FromEntity(e))
         const nextCursor = page.NextCursor(result.HasMore)
         return nextCursor === undefined ? { items } : { items, nextCursor }
+    }
+
+    /** On-demand keyset-paged read of ONE connector binding: never prepares the model nor opens any other concept's adapter. */
+    public async ReadPage(modelId: string, concept: string, params: PageParams, limits: PagingLimits): Promise<Page<EntityDto>>
+    {
+        const runtime = await this.Runtime()
+        return new ConnectorPageReader(runtime).ReadPage(modelId, concept, params, limits)
     }
 
     public async WriteBack(params: ConnectorWriteBackParams): Promise<FlushOutcomeDto>
