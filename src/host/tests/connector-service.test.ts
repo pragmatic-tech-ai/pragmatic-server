@@ -9,7 +9,10 @@ import { PagingLimits } from '../../config/paging-limits.js'
 import { AppWriteStatus, ConnectorWriteOp } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ConnectorService } from '../connector-service.js'
 import { ConnectorReadAuthorizations } from '../connector-read-authorization.js'
-import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
+import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, ResourceAuthorizationPolicy, Grant, Role, ResourceRef, ResourceKind } from '@pragmatic-tech-ai/todl-identity'
+import type { IInstanceFilter, IInstanceView } from '@pragmatic-tech-ai/todl'
+import { AllowAllFieldReadMask } from '../cypher/field-masked-graph-query.js'
+import type { IFieldReadMask } from '../cypher/field-masked-graph-query.js'
 
 class Ctx
 {
@@ -337,4 +340,153 @@ test('ReadPage with AllowAll readAuthorizationFor returns keyset pages with a ne
     assert.equal(second.items.length, 1)
     assert.equal(second.items[0]!.fields.name, 'n2')
     assert.equal('nextCursor' in second, false)
+})
+
+const META_OWNED = `
+namespace shop {
+  concept Customer { owner : string; name : string; secret : string; }
+  datasource pg { kind = sql; }
+  model shop : shop {
+    annotate entrypoint { }
+    connect pg;
+    populate Customer key customer_id { owner = "owner"; name = "name"; secret = "secret"; }
+  }
+}
+`
+
+enum DepthLevel
+{
+    Organization,
+    User,
+    None,
+}
+
+class OwnerFilter implements IInstanceFilter
+{
+    public constructor(private readonly level: DepthLevel, private readonly principalId: string) {}
+
+    public Keep(view: IInstanceView): boolean
+    {
+        if (this.level === DepthLevel.Organization)
+        {
+            return true
+        }
+        return this.level === DepthLevel.User && view.Field('owner') === this.principalId
+    }
+}
+
+class SecretMask implements IFieldReadMask
+{
+    public CanRead(_concept: string, field: string): boolean
+    {
+        return field !== 'secret'
+    }
+}
+
+class OwnedFixture
+{
+    public static Key(id: string): string
+    {
+        return id.slice(id.lastIndexOf('#') + 1)
+    }
+
+    public static Rows(): ExternalRecord[]
+    {
+        return [
+            { customer_id: 'C1', owner: 'p1', name: 'a', secret: 's1' },
+            { customer_id: 'C2', owner: 'p2', name: 'b', secret: 's2' },
+            { customer_id: 'C3', owner: 'p1', name: 'c', secret: 's3' },
+            { customer_id: 'C4', owner: 'p2', name: 'd', secret: 's4' },
+            { customer_id: 'C5', owner: 'p1', name: 'e', secret: 's5' },
+        ]
+    }
+
+    public static Runtime(): ConnectorRuntime
+    {
+        const rows = OwnedFixture.Rows()
+        const adapter: IDataSourceAdapter =
+        {
+            Query(_request: QueryRequest): Promise<readonly ExternalRecord[]> { return Promise.resolve(rows) },
+            Apply(batch: WriteBatch): Promise<WriteResult> { return Promise.resolve({ Applied: batch.Operations.length, Failures: [] }) },
+            Dispose(): Promise<void> { return Promise.resolve() },
+        }
+        const factory: IDataSourceAdapterFactory = { Kind: DataSourceKind.Sql, Open(_c: ResolvedConnection): Promise<IDataSourceAdapter> { return Promise.resolve(adapter) } }
+        const { model } = check([{ uri: 'shop.todl', text: META_OWNED }])
+        const services = new ServiceProvider()
+        services.registerInstance(DataSourceAdapterCatalog.ServiceKey, new DataSourceAdapterCatalog().Register(factory))
+        return new ConnectorRuntime(SolutionConnectorPlanner.Plan(model), services)
+    }
+
+    public static Service(level: DepthLevel, mask: IFieldReadMask = AllowAllFieldReadMask.Instance): ConnectorService
+    {
+        return new ConnectorService(() => Promise.resolve(OwnedFixture.Runtime()), undefined, async (ctx) => ({ Filter: new OwnerFilter(level, ctx.Principal.Id), FieldMask: mask }))
+    }
+
+    public static Ctx(id: string, role: Role = Role.Owner): AccessContext
+    {
+        return new AccessContext(new Principal(id, 't1', PrincipalKind.User, new Map(), []), new Tenant('t1', TenantKind.SelfHosted, 'Tenant One'), [new Grant(id, role, new ResourceRef(ResourceKind.Tenant, 't1', []))], new ResourceAuthorizationPolicy())
+    }
+
+    public static async ModelId(service: ConnectorService): Promise<string>
+    {
+        return (await service.List())[0]!.modelId
+    }
+}
+
+test('User-level read returns only the principal\'s own rows; Organization-level returns all; None returns none', async () =>
+{
+    const read = async (level: DepthLevel): Promise<string[]> =>
+    {
+        const service = OwnedFixture.Service(level)
+        const result = await service.Read(await OwnedFixture.ModelId(service), 'shop.Customer', {}, new PagingLimits(), OwnedFixture.Ctx('p1'))
+        return result.items.map(i => OwnedFixture.Key(i.id))
+    }
+    assert.deepEqual(await read(DepthLevel.User), ['C1', 'C3', 'C5'])
+    assert.deepEqual(await read(DepthLevel.Organization), ['C1', 'C2', 'C3', 'C4', 'C5'])
+    assert.deepEqual(await read(DepthLevel.None), [])
+})
+
+test('offset paging counts only VISIBLE rows', async () =>
+{
+    const service = OwnedFixture.Service(DepthLevel.User)
+    const modelId = await OwnedFixture.ModelId(service)
+    const ctx = OwnedFixture.Ctx('p1')
+    const first = await service.Read(modelId, 'shop.Customer', { pageSize: 2 }, new PagingLimits(), ctx)
+    assert.deepEqual(first.items.map(i => OwnedFixture.Key(i.id)), ['C1', 'C3'])
+    assert.ok(first.nextCursor !== undefined)
+    const second = await service.Read(modelId, 'shop.Customer', { pageSize: 2, cursor: first.nextCursor }, new PagingLimits(), ctx)
+    assert.deepEqual(second.items.map(i => OwnedFixture.Key(i.id)), ['C5'])
+    assert.equal(second.nextCursor, undefined)
+})
+
+test('a secured field is masked in the returned EntityDto.fields', async () =>
+{
+    const service = OwnedFixture.Service(DepthLevel.Organization, new SecretMask())
+    const result = await service.Read(await OwnedFixture.ModelId(service), 'shop.Customer', {}, new PagingLimits(), OwnedFixture.Ctx('p1'))
+    assert.equal(result.items.length, 5)
+    for (const item of result.items)
+    {
+        assert.equal('secret' in item.fields, false)
+        assert.ok('name' in item.fields)
+    }
+})
+
+test('the read fingerprint differs per principal', async () =>
+{
+    const service = OwnedFixture.Service(DepthLevel.Organization)
+    const modelId = await OwnedFixture.ModelId(service)
+    const first = await service.Read(modelId, 'shop.Customer', { pageSize: 2 }, new PagingLimits(), OwnedFixture.Ctx('p1'))
+    const cursor = first.nextCursor!
+    const same = await service.Read(modelId, 'shop.Customer', { pageSize: 2, cursor }, new PagingLimits(), OwnedFixture.Ctx('p1'))
+    assert.deepEqual(same.items.map(i => OwnedFixture.Key(i.id)), ['C3', 'C4'])
+    await assert.rejects(() => service.Read(modelId, 'shop.Customer', { pageSize: 2, cursor }, new PagingLimits(), OwnedFixture.Ctx('p2')))
+})
+
+test('no-identity (AllowAll) read is unchanged', async () =>
+{
+    const service = new ConnectorService(() => Promise.resolve(OwnedFixture.Runtime()))
+    const result = await service.Read(await OwnedFixture.ModelId(service), 'shop.Customer', {}, new PagingLimits(), OwnedFixture.Ctx('p1'))
+    assert.deepEqual(result.items.map(i => OwnedFixture.Key(i.id)), ['C1', 'C2', 'C3', 'C4', 'C5'])
+    assert.equal(result.items[0]!.fields.secret, 's1')
+    assert.equal(result.items[0]!.fields.owner, 'p1')
 })

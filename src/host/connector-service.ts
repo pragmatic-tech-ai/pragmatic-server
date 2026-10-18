@@ -4,12 +4,13 @@ import type { PagingLimits } from '../config/paging-limits.js'
 import { PageFingerprint, PageRequest } from './paging/page-request.js'
 import { WireScalar } from './wire-scalar.js'
 import { EntityDtoMapper } from './entity-dto-mapper.js'
+import { EntityInstanceView } from './entity-instance-view.js'
 import { ConnectorPageReader } from '../connectors/connector-page-reader.js'
 import { ConnectorHydrateWriter } from './connector-hydrate-writer.js'
 import type { IHydrateAuthorization } from './connector-hydrate-writer.js'
 import type { IWriteTargetSource } from './write-target-source.js'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
-import { ConnectorReadAuthorizations } from './connector-read-authorization.js'
+import { ConnectorReadAuthorizations, ConnectorPrincipalDigest } from './connector-read-authorization.js'
 import type { IConnectorReadAuthorization } from './connector-read-authorization.js'
 
 /** Per-connection façade over the 6A ConnectorRuntime: lazily holds one runtime (rebuilt on Invalidate, i.e.
@@ -105,13 +106,15 @@ export class ConnectorService
     {
         PageRequest.ValidatePageSize(params)
         const authz = await this.ReadAuthorization(context)
-        void authz
         const runtime = await this.Runtime()
-        const fingerprint = PageFingerprint.Of(ConnectorService.ConnectorFingerprintTag, modelId, concept, runtime.Revision)
+        const fingerprint = PageFingerprint.Of(ConnectorService.ConnectorFingerprintTag, modelId, concept, runtime.Revision, ConnectorPrincipalDigest.Of(context))
         const page = PageRequest.Resolve(params, fingerprint, limits)
-        const result = await runtime.ReadEntities(modelId, concept, { Skip: page.Offset, Take: page.Size })
-        const items = result.Entities.map((e) => EntityDtoMapper.FromEntity(e))
-        const nextCursor = page.NextCursor(result.HasMore)
+        const all = await runtime.ReadConceptInstances(modelId, concept)
+        const visible = all.filter(e => authz.Filter.Keep(new EntityInstanceView(e)))
+        const window = visible.slice(page.Offset, page.Offset + page.Size + 1)
+        const hasMore = window.length > page.Size
+        const items = (hasMore ? window.slice(0, page.Size) : window).map((e) => EntityDtoMapper.FromEntity(e, authz.FieldMask))
+        const nextCursor = page.NextCursor(hasMore)
         return nextCursor === undefined ? { items } : { items, nextCursor }
     }
 

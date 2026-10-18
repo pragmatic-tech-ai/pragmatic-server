@@ -232,11 +232,17 @@ export class ConnectorRuntime
         return this.registry.GetRequired(modelId).ConceptNames()
     }
 
+    /** The FULL prefetched instance list of a concept sorted by id (ordinal), unsliced; a fresh array the caller may filter. */
+    public async ReadConceptInstances(modelId: string, concept: string): Promise<readonly ReflectedEntity[]>
+    {
+        await this.PrepareModel(modelId)
+        return [...this.registry.GetRequired(modelId).Instances(concept)].sort((a, b) => ConnectorRuntime.CompareOrdinal(a.id, b.id))
+    }
+
     /** Reads the prefetched instances sorted by id (ordinal). Paging slices that in-memory set; it never reaches the adapters. */
     public async ReadEntities(modelId: string, concept: string, page?: EntityPage): Promise<EntityPageResult>
     {
-        await this.PrepareModel(modelId)
-        const sorted = [...this.registry.GetRequired(modelId).Instances(concept)].sort((a, b) => ConnectorRuntime.CompareOrdinal(a.id, b.id))
+        const sorted = await this.ReadConceptInstances(modelId, concept)
         if (page === undefined)
         {
             return { Entities: sorted, HasMore: false }
