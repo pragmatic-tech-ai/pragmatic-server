@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { ServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import { DataSourceAdapterCatalog, DataSourceKind, WriteConcurrency, WriteAtomicity } from '@pragmatic-tech-ai/todl'
 import type { ConnectorSpec, ConnectorBinding, IDataSourceAdapter, IDataSourceAdapterFactory, ResolvedConnection, QueryRequest, WriteBatch, WriteResult, ExternalRecord, PageQuery, PageSlice } from '@pragmatic-tech-ai/todl'
-import { CursorStaleError } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { CursorStaleError, PageCursorCodec } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ConnectorRuntime } from '../connector-runtime.js'
 import { ConnectorPageReader } from '../connector-page-reader.js'
 import { PagingLimits } from '../../config/paging-limits.js'
@@ -72,8 +72,7 @@ class RecordingFactory implements IDataSourceAdapterFactory
     }
 }
 
-/** Opens the factory's adapter directly. The engine catalog wraps every adapter in a ReconnectingAdapter that does
- *  not (yet) forward CanPage/QueryPage, which would mask pageability from the reader under test. */
+/** Records which specs are opened (bypassing the catalog's memoization) by handing back the factory's adapter directly. */
 class RawCatalog extends DataSourceAdapterCatalog
 {
     private readonly raw: RecordingFactory
@@ -184,6 +183,19 @@ test('readPage does not materialize the model nor open another concept adapter',
     assert.equal(factory.Adapters.get('a')!.Queries, 0)
 })
 
+test('a forged cursor whose key payload is not a string or number is stale', async () =>
+{
+    const reader = new ConnectorPageReader(Fixtures.Two(new RecordingFactory(true, Fixtures.Rows(5))))
+    const first = await reader.ReadPage(Fixtures.ModelId, 'shop.A', { pageSize: 2 }, Fixtures.Limits)
+    const decoded = PageCursorCodec.Decode(first.nextCursor!)!
+    const prefix = decoded.fingerprint.slice(0, decoded.fingerprint.indexOf('\u0000') + 1)
+    for (const payload of ['{"a":1}', '[1]', 'true', 'null'])
+    {
+        const forged = PageCursorCodec.Encode({ offset: 0, fingerprint: `${prefix}${payload}` })
+        await assert.rejects(() => reader.ReadPage(Fixtures.ModelId, 'shop.A', { cursor: forged, pageSize: 2 }, Fixtures.Limits), Fixtures.IsStale)
+    }
+})
+
 test('a readPage cursor minted for a different concept is stale', async () =>
 {
     const reader = new ConnectorPageReader(Fixtures.Two(new RecordingFactory(true, Fixtures.Rows(5))))
@@ -195,7 +207,7 @@ test('a readPage cursor minted for a different concept is stale', async () =>
 
 test('keyset cursor round-trips keys containing the separator and JSON metacharacters', async () =>
 {
-    const keys = ['a\u0000b', 'q"uote', 'back\slash', '{"x":1}']
+    const keys = ['a\u0000b', 'q"uote', 'back\\slash', 'has#hash', '{"x":1}']
     const rows = keys.map(k => ({ id: k, name: 'n' }))
     const reader = new ConnectorPageReader(Fixtures.Two(new RecordingFactory(true, rows)))
     const seen: string[] = []
@@ -203,7 +215,7 @@ test('keyset cursor round-trips keys containing the separator and JSON metachara
     do
     {
         const page = await reader.ReadPage(Fixtures.ModelId, 'shop.A', { cursor, pageSize: 1 }, Fixtures.Limits)
-        seen.push(...page.items.map(i => i.id.split('#')[2]!))
+        seen.push(...page.items.map(i => i.id.slice('shop.A#a.A#'.length)))
         cursor = page.nextCursor
     }
     while (cursor !== undefined)

@@ -2,7 +2,6 @@ import type { ReflectedEntity } from '@pragmatic-tech-ai/todl'
 import type { EntityDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { WireScalar } from './wire-scalar.js'
 
-/** The one projection of a connector entity onto the wire EntityDto: id, concept, and scalar field values only. */
 /** The minimal node shape projected (structurally satisfied by the engine's ReflectedNode). */
 export interface EntityNodeShape
 {
@@ -11,6 +10,7 @@ export interface EntityNodeShape
     readonly attrs: Record<string, unknown>
 }
 
+/** The one projection of a connector entity onto the wire EntityDto: id, concept, and scalar field values only. */
 export class EntityDtoMapper
 {
     public static FromEntity(entity: ReflectedEntity): EntityDto

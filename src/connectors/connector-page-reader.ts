@@ -1,7 +1,7 @@
 import { ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { EntityDto, Page, PageParams } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ConnectorMirrorMapper } from '@pragmatic-tech-ai/todl'
-import type { ConnectorBinding, ConnectorSpec, ModelConnectorPlan, QueryRequest } from '@pragmatic-tech-ai/todl'
+import type { ConnectorBinding, ConnectorSpec, ModelConnectorPlan, PageQuery, QueryRequest } from '@pragmatic-tech-ai/todl'
 import type { PagingLimits } from '../config/paging-limits.js'
 import { EntityDtoMapper } from '../host/entity-dto-mapper.js'
 import { KeysetPage } from '../host/paging/keyset-page.js'
@@ -31,14 +31,14 @@ export class ConnectorPageReader
         const plan = this.runtime.PlanOf(modelId)
         const binding = ConnectorPageReader.SingleBinding(plan, concept)
         const spec = ConnectorPageReader.SpecOf(plan, binding)
-        const fingerprint = PageFingerprint.Of(ConnectorPageReader.FingerprintTag, modelId, concept, binding.Connector, binding.Source)
+        const fingerprint = PageFingerprint.Of(ConnectorPageReader.FingerprintTag, modelId, concept, binding.Connector, binding.Source, binding.IdKey)
         const page = KeysetPage.Resolve(params, fingerprint, limits)
         const adapter = await this.runtime.OpenAdapter(spec)
         if (adapter.CanPage !== true || adapter.QueryPage === undefined)
         {
             throw ConnectorPageReader.Unsupported(concept, ConnectorPageReader.UnsupportedNotPageable)
         }
-        const slice = await adapter.QueryPage(ConnectorPageReader.RequestFor(binding), page.After === undefined ? { Limit: page.Size } : { After: page.After, Limit: page.Size })
+        const slice = await adapter.QueryPage(ConnectorPageReader.RequestFor(binding), ConnectorPageReader.PageQueryFor(page))
         const items: EntityDto[] = []
         for (const record of slice.Records)
         {
@@ -80,8 +80,13 @@ export class ConnectorPageReader
         return { Source: binding.Source, Fields: [...new Set(fields)], OrderKey: binding.IdKey }
     }
 
+    private static PageQueryFor(page: KeysetPage): PageQuery
+    {
+        return page.After === undefined ? { Limit: page.Size } : { After: page.After, Limit: page.Size }
+    }
+
     private static Unsupported(concept: string, reason: string): ResponseError<undefined>
     {
-        return new ResponseError(ErrorCodes.InvalidRequest, `${ConnectorPageReader.UnsupportedPrefix}${concept}${reason}`)
+        return new ResponseError(ErrorCodes.InvalidParams, `${ConnectorPageReader.UnsupportedPrefix}${concept}${reason}`)
     }
 }

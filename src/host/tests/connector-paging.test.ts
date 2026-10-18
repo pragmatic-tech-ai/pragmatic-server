@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { newDb } from 'pg-mem'
 import { InMemoryMessageSocket, PragmaticClient, CursorStaleError, ConnectorProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { EntityDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { EntityDto, Page } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { PagingLimits } from '../../config/paging-limits.js'
@@ -94,6 +94,12 @@ namespace shop {
             try { await server.Dispose() } catch { /* keep cleaning up */ }
             rmSync(dir, { recursive: true, force: true })
         }
+    }
+
+    /** connector/readPage via the client's request channel (the client exposes no typed wrapper yet). */
+    public static ReadPage(client: PragmaticClient, modelId: string, cursor: string | undefined, pageSize: number): Promise<Page<EntityDto>>
+    {
+        return client['Request'](ConnectorProtocol.ReadPage, { modelId, concept: ConnectorPagingFixture.ConceptId, cursor, pageSize })
     }
 
     /** Follows nextCursor from the first page to the last, returning every page fetched. */
@@ -189,7 +195,7 @@ test('connector/readPage tiles a SQL binding through the real reconnecting catal
         let cursor: string | undefined
         do
         {
-            const page = await client['Request'](ConnectorProtocol.ReadPage, { modelId, concept: ConnectorPagingFixture.ConceptId, cursor, pageSize: 2 })
+            const page = await ConnectorPagingFixture.ReadPage(client, modelId, cursor, 2)
             ids.push(...page.items.map((e: EntityDto) => e.id))
             sizes.push(page.items.length)
             cursor = page.nextCursor

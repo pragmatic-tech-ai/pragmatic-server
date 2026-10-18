@@ -34,7 +34,7 @@ export class KeysetPage
     /** The cursor for the page after this one; undefined nextAfter means the last page, so no cursor. */
     public NextCursor(nextAfter: ExternalFieldValue | undefined): string | undefined
     {
-        if (nextAfter === undefined)
+        if (nextAfter === undefined || nextAfter === null)
         {
             return undefined
         }
@@ -55,12 +55,17 @@ export class KeysetPage
         }
         try
         {
-            return JSON.parse(decoded.fingerprint.slice(prefix.length)) as ExternalFieldValue
+            const after: unknown = JSON.parse(decoded.fingerprint.slice(prefix.length))
+            if (typeof after === 'string' || typeof after === 'number')
+            {
+                return after
+            }
         }
         catch
         {
-            throw KeysetPage.Stale()
+            // falls through to the stale error below
         }
+        throw KeysetPage.Stale()
     }
 
     private static Stale(): ResponseError<undefined>
