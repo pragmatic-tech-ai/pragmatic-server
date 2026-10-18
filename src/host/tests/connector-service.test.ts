@@ -154,3 +154,30 @@ test('refresh with no runtime loaded evicts nothing', async () =>
     assert.equal(catalog.Invalidated.length, 0)
     assert.equal(catalog.DisposeCalls, 0)
 })
+
+test('refresh after a rejected build resolves and evicts nothing', async () =>
+{
+    const catalog = new RecordingCatalog().Register(Harness.Factory()) as RecordingCatalog
+    const service = new ConnectorService(() => Promise.reject(new Error('build failed')))
+    await assert.rejects(service.List())
+    await service.Invalidate()
+    assert.equal(catalog.Invalidated.length, 0)
+    assert.equal(catalog.DisposeCalls, 0)
+})
+
+test('refresh during an in-flight build evicts after the build resolves', async () =>
+{
+    const catalog = new RecordingCatalog().Register(Harness.Factory()) as RecordingCatalog
+    let release: (runtime: ConnectorRuntime) => void = () => undefined
+    const gate = new Promise<ConnectorRuntime>((resolve) => { release = resolve })
+    const service = new ConnectorService(() => gate)
+    const listing = service.List()
+    const invalidating = service.Invalidate()
+    await Promise.resolve()
+    assert.equal(catalog.Invalidated.length, 0)
+    release(Harness.TwoConnectorRuntime(catalog))
+    await invalidating
+    await listing
+    assert.deepEqual([...catalog.Invalidated].sort(), ['pg', 'rest'])
+    assert.equal(catalog.DisposeCalls, 0)
+})

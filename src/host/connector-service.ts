@@ -24,6 +24,9 @@ export class ConnectorService
     public async Invalidate(): Promise<void>
     {
         const pending = this.runtimePromise
+        // Cleared before the awaits on purpose; self-healing. If a concurrent request rebuilds the runtime while we
+        // evict, an adapter it reopened is simply evicted/reopened once more on next use (one extra reopen). We
+        // deliberately add no locking for that cost.
         this.runtimePromise = undefined
         if (pending === undefined)
         {
