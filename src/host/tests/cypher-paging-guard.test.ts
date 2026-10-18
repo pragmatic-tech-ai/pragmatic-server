@@ -16,6 +16,7 @@ class PagingGuardFixture
     public static readonly TrailingLimit = 'MATCH (a:Service) RETURN a.label ORDER BY a.label LIMIT 2'
     public static readonly TrailingSkip = 'MATCH (a:Service) RETURN a.label ORDER BY a.label SKIP 1'
     public static readonly Plain = 'MATCH (a:Service) RETURN a.label ORDER BY a.label'
+    public static readonly InteriorWithLimit = 'MATCH (a:Service) WITH a ORDER BY a.label LIMIT 3 RETURN a.label ORDER BY a.label'
     public static readonly Malformed = 'MATCH (a:Service RETURN'
     private static readonly SolutionPrefix = 'cpg-sol-'
     private static readonly PackagesPrefix = 'cpg-pkgs-'
@@ -108,5 +109,15 @@ test('a paged malformed query is still InvalidParams', async () =>
     await PagingGuardFixture.With(async client =>
     {
         await assert.rejects(() => client.CypherQuery(PagingGuardFixture.Malformed, undefined, { pageSize: 1 }), PagingGuardFixture.IsInvalidParams)
+    })
+})
+
+test('a paged request with an interior WITH ... LIMIT and a clean final RETURN is not refused', async () =>
+{
+    await PagingGuardFixture.With(async client =>
+    {
+        const result = await client.CypherQuery(PagingGuardFixture.InteriorWithLimit, undefined, { pageSize: 2 })
+        assert.deepEqual(result.items.map(r => r[0]), ['a', 'b'])
+        assert.ok(result.nextCursor !== undefined)
     })
 })

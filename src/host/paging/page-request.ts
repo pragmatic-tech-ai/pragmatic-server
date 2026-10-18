@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { CursorStaleError, ErrorCodes, PageCursorCodec, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { PageParams } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { PagingLimits } from '../../config/paging-limits.js'
+import { InvalidParamsPrefix } from '../invalid-params-prefix.js'
 
 /** A stable digest over the inputs that define a paged result; a cursor is only valid for the same fingerprint. */
 export class PageFingerprint
@@ -19,7 +20,7 @@ export class PageFingerprint
 /** A validated page window resolved from wire PageParams against the server limits and the result fingerprint. */
 export class PageRequest
 {
-    private static readonly BadPageSize = 'invalid params: pageSize must be a positive integer'
+    private static readonly BadPageSize = `${InvalidParamsPrefix.Text}pageSize must be a positive integer`
 
     public readonly Offset: number
     public readonly Size: number

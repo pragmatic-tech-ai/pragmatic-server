@@ -72,6 +72,7 @@ import { ShareWideningInstanceFilter } from './host/sharing/share-widening-insta
 import { ConceptIdFields } from './host/sharing/concept-id-fields.js'
 import { ShareWideningWriteInstanceGate } from './host/sharing/share-widening-write-instance-gate.js'
 import { ShareWideningWriteAuthorizer } from './host/sharing/share-widening-write-authorizer.js'
+import { InvalidParamsPrefix } from './host/invalid-params-prefix.js'
 
 export interface OidcServerOptions
 {
@@ -149,7 +150,7 @@ export class PragmaticServer
     private static readonly NoModelViewForConnectors = 'Active solution produced no model view'
 
     private static readonly GraphModelVersion = '0.0.0'
-    private static readonly ModelNotFoundMessage = 'invalid params: model not found'
+    private static readonly ModelNotFoundMessage = `${InvalidParamsPrefix.Text}model not found`
 
     private readonly root: LazyCompositionRoot
     private readonly options: PragmaticServerOptions

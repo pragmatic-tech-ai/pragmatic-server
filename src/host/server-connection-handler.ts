@@ -14,6 +14,7 @@ import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import type { ReferencedLabelSet } from '../pragmatic-server.js'
+import { InvalidParamsPrefix } from './invalid-params-prefix.js'
 import { PolicyGate } from './policy-gate.js'
 import { AuditSurface } from './access-audit.js'
 import type { IAccessAuditSink } from './access-audit.js'
@@ -68,15 +69,14 @@ export class ServerConnectionHandler
     private static readonly EmailTakenMessage = 'email already registered'
     private static readonly PrincipalTakenMessage = 'principal already registered'
     private static readonly AccountExistsMessage = 'account already exists'
-    private static readonly InvalidParamsPrefix = 'invalid params: '
     private static readonly CypherField = 'cypher'
     private static readonly CypherTimeoutMessage = 'cypher query timed out'
-    private static readonly PagedExplicitBoundsMessage = 'invalid params: paging cannot be combined with an explicit SKIP or LIMIT'
+    private static readonly PagedExplicitBoundsMessage = `${InvalidParamsPrefix.Text}paging cannot be combined with an explicit SKIP or LIMIT`
     private static readonly CypherFingerprintTag = 'cypher'
     private static readonly ModelScopeFingerprintTag = 'model'
     private static readonly ModelIdField = 'modelId'
-    private static readonly RuntimeModelScopeMessage = 'invalid params: model-scoped query not available on a runtime tenant'
-    private static readonly ModelScopeUnavailableMessage = 'invalid params: model-scoped query not available'
+    private static readonly RuntimeModelScopeMessage = `${InvalidParamsPrefix.Text}model-scoped query is not available on a runtime tenant`
+    private static readonly ModelScopeUnavailableMessage = `${InvalidParamsPrefix.Text}model-scoped query not available`
     private static readonly ModelViewFingerprintTag = 'modelView'
     private static readonly NotRuntimeMessage = 'operation requires a runtime tenant'
     private static readonly NotDevelopmentMessage = 'operation requires a development tenant'
@@ -460,7 +460,7 @@ export class ServerConnectionHandler
         {
             if (error instanceof CypherParamError)
             {
-                throw new ResponseError(ErrorCodes.InvalidParams, `${ServerConnectionHandler.InvalidParamsPrefix}${error.message}`)
+                throw new ResponseError(ErrorCodes.InvalidParams, `${InvalidParamsPrefix.Text}${error.message}`)
             }
             throw error
         }
@@ -498,7 +498,7 @@ export class ServerConnectionHandler
         {
             if (error instanceof Cypher.CypherSyntaxError || error instanceof Cypher.CypherSemanticError)
             {
-                throw new ResponseError(ErrorCodes.InvalidParams, `${ServerConnectionHandler.InvalidParamsPrefix}${error.message}`)
+                throw new ResponseError(ErrorCodes.InvalidParams, `${InvalidParamsPrefix.Text}${error.message}`)
             }
             if (error instanceof Cypher.CypherTimeout)
             {
@@ -508,7 +508,11 @@ export class ServerConnectionHandler
         }
     }
 
-    /** A paged request translates to engine Skip/RowCap, so a tail SKIP/LIMIT in the text would double-offset: refuse it. */
+    /**
+     * A paged request translates to engine Skip/RowCap, so a tail SKIP/LIMIT in the text would double-offset: refuse it.
+     * Judges ONLY the FINAL QueryPart.Projection: an interior WITH ... LIMIT is query-internal and intentionally allowed;
+     * only a tail SKIP/LIMIT conflicts with paging.
+     */
     private RefuseExplicitBoundsWhenPaged(source: string, params: CypherQueryParams): void
     {
         const paged = (params.cursor !== undefined && params.cursor !== null) || (params.pageSize !== undefined && params.pageSize !== null)
@@ -529,7 +533,7 @@ export class ServerConnectionHandler
         {
             if (error instanceof Cypher.CypherSyntaxError || error instanceof Cypher.CypherSemanticError)
             {
-                throw new ResponseError(ErrorCodes.InvalidParams, `${ServerConnectionHandler.InvalidParamsPrefix}${error.message}`)
+                throw new ResponseError(ErrorCodes.InvalidParams, `${InvalidParamsPrefix.Text}${error.message}`)
             }
             throw error
         }
@@ -747,7 +751,7 @@ export class ServerConnectionHandler
             return error
         }
         const field = error instanceof AdminEnumError ? error.Field : ServerConnectionHandler.InvalidConfigField
-        return new ResponseError(ErrorCodes.InvalidParams, `${ServerConnectionHandler.InvalidParamsPrefix}${field}`)
+        return new ResponseError(ErrorCodes.InvalidParams, `${InvalidParamsPrefix.Text}${field}`)
     }
 
     private ParseMutation(dto: GrantMutationDto): { subject: string, role: Role, resource: ResourceRef }
