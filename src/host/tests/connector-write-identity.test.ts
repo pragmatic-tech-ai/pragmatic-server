@@ -1,5 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { randomBytes } from 'node:crypto'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { IdentityConfig } from '@pragmatic-tech-ai/todl-identity'
+import { TenantPurpose } from '../../tenancy/tenant-purpose.js'
+import { BuiltinStoreEngine } from '../connectors/builtin-store-engine.js'
 import { ServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import { check, DataSourceAdapterCatalog, DataSourceKind } from '@pragmatic-tech-ai/todl'
 import type { IDataSourceAdapter, IDataSourceAdapterFactory, ResolvedConnection, QueryRequest, WriteBatch, WriteResult, ExternalRecord } from '@pragmatic-tech-ai/todl'
@@ -92,9 +99,14 @@ namespace shop {
 
     public static async Write(service: ConnectorService, op: ConnectorWriteOp, key: string, ctx: AccessContext)
     {
+        return WriteFixture.WriteMany(service, [[op, key]], ctx)
+    }
+
+    public static async WriteMany(service: ConnectorService, ops: [ConnectorWriteOp, string][], ctx: AccessContext)
+    {
         const model = (await service.List())[0]!
         const binding = model.bindings[0]!
-        return service.WritePaged({ modelId: model.modelId, operations: [{ op, concept: binding.concept, connector: binding.connector, source: binding.source, key, fields: { name: 'Edited' } }] }, ctx)
+        return service.WritePaged({ modelId: model.modelId, operations: ops.map(([op, key]) => ({ op, concept: binding.concept, connector: binding.connector, source: binding.source, key, fields: { name: 'Edited' } })) }, ctx)
     }
 }
 
@@ -135,8 +147,8 @@ test('authorization reads the row via the ONE keyed Fetch, not a whole-concept p
     const fx = new WriteFixture()
     await WriteFixture.Write(fx.Service(), ConnectorWriteOp.Upsert, 'C1', WriteFixture.Ctx('p1'))
     const keyed = fx.Queries.filter(q => q.Where?.All?.[0]?.Field === 'customer_id' && q.Where.All[0].Value === 'C1')
-    assert.ok(keyed.length >= 1)
-    assert.equal(fx.Queries.filter(q => q.Where === undefined).length, 0)
+    assert.equal(fx.Queries.length, 1)
+    assert.equal(keyed.length, 1)
     assert.equal(fx.Opens, 1)
 })
 
@@ -148,4 +160,56 @@ test('no identity => AllowAll (unchanged from item #1)', async () =>
     const res = await WriteFixture.Write(service, ConnectorWriteOp.Upsert, 'C2', WriteFixture.Ctx('p1'))
     assert.equal(res.results[0]!.status, AppWriteStatus.Applied)
     assert.equal(fx.Queries.length, 0)
+})
+
+test('under identity, an upsert of a key that does not exist is Denied, nothing sent (fail-closed: no create-authorization yet)', async () =>
+{
+    const fx = new WriteFixture()
+    const res = await WriteFixture.Write(fx.Service(), ConnectorWriteOp.Upsert, 'C9', WriteFixture.Ctx('p1'))
+    assert.equal(res.results[0]!.status, AppWriteStatus.Denied)
+    assert.equal(fx.Applied.length, 0)
+})
+
+test('a mixed batch applies the writable op, denies the other, and only the allowed op reaches the adapter', async () =>
+{
+    const fx = new WriteFixture()
+    const res = await WriteFixture.WriteMany(fx.Service(), [[ConnectorWriteOp.Upsert, 'C1'], [ConnectorWriteOp.Upsert, 'C2']], WriteFixture.Ctx('p1'))
+    assert.equal(res.results[0]!.status, AppWriteStatus.Applied)
+    assert.equal(res.results[1]!.status, AppWriteStatus.Denied)
+    assert.equal(fx.Applied.length, 1)
+    assert.equal(fx.Applied[0]!.Operations.length, 1)
+})
+
+test('production ConnectorWriteAuthorizationFor with identity configured denies a non-owned row and allows an owned one', async () =>
+{
+    const keyEnv = 'PS_CWI_KEY'
+    process.env[keyEnv] = randomBytes(32).toString('base64')
+    const dirs = [mkdtempSync(join(tmpdir(), 'cwi-pk-')), mkdtempSync(join(tmpdir(), 'cwi-ap-')), mkdtempSync(join(tmpdir(), 'cwi-id-'))]
+    const server = new PragmaticServer({
+        packagesRoot: dirs[0]!, applicationsRoot: dirs[1]!, purpose: TenantPurpose.Runtime, builtinStoreEngine: BuiltinStoreEngine.Document,
+        identity: { identityRoot: dirs[2]!, masterKey: { base64Env: keyEnv }, tenant: { id: 't1', displayName: 'Tenant One' } },
+    })
+    try
+    {
+        await server.Start()
+        const store = await server.TenantConfigStore()
+        const seeded = await store.Get('t1')
+        await store.Save('t1', new IdentityConfig(seeded!.PackId, seeded!.DelegationDepth, seeded!.ProviderSettings, seeded!.GroupRoleMap, seeded!.ClaimsMapping, WriteFixture.Model()))
+        const fx = new WriteFixture()
+        const service = new ConnectorService(() => Promise.resolve(fx.Runtime()), (ctx, target) => server.ConnectorWriteAuthorizationFor(ctx, target))
+        const denied = await WriteFixture.Write(service, ConnectorWriteOp.Upsert, 'C2', WriteFixture.Ctx('p1'))
+        assert.equal(denied.results[0]!.status, AppWriteStatus.Denied)
+        assert.equal(fx.Applied.length, 0)
+        const ok = await WriteFixture.Write(service, ConnectorWriteOp.Upsert, 'C1', WriteFixture.Ctx('p1'))
+        assert.equal(ok.results[0]!.status, AppWriteStatus.Applied)
+    }
+    finally
+    {
+        await server.Dispose()
+        delete process.env[keyEnv]
+        for (const d of dirs)
+        {
+            rmSync(d, { recursive: true, force: true })
+        }
+    }
 })

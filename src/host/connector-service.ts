@@ -135,7 +135,11 @@ export class ConnectorService
         return new ConnectorPageReader(runtime).ReadPage(modelId, concept, params, limits, authz, digest)
     }
 
-    /** Hydrate-on-write: edits paged entities by id+fields, reconstructing each write target with one keyed read. Never prepares the model. */
+    /** Hydrate-on-write: edits paged entities by id+fields, reconstructing each write target with one keyed read. Never prepares the model.
+     *  Under identity every op is authorized against the row read by the single keyed Fetch, so an upsert for a key that does
+     *  not yet exist is Denied (no row to authorize): hydrate-on-write can UPDATE an existing owned row but cannot CREATE one.
+     *  This is the deliberate fail-closed limit until create-authorization (gate CreateDefaults) lands. Numeric keys are
+     *  matched through String(op.key) in KeyedWriteTargetSource. */
     public async WritePaged(params: ConnectorPagedWriteParams, context?: AccessContext): Promise<ConnectorPagedWriteResultDto>
     {
         const runtime = await this.Runtime()
