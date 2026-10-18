@@ -1,4 +1,4 @@
-import { ModelDraft, ModelDraftBaker, ModelDraftWriter, SnowflakeIdGenerator, checkAgainst, parse } from '@pragmatic-tech-ai/todl'
+import { ModelDraft, ModelDraftBaker, ModelDraftWriter, SnowflakeIdGenerator, checkAgainst } from '@pragmatic-tech-ai/todl'
 import type { Cypher, SourceFile, TodlDocument } from '@pragmatic-tech-ai/todl'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import { TodlSourceCollector } from './todl-source-collector.js'
@@ -12,11 +12,12 @@ export interface IDevLanguageService
     readonly GraphRevision: number
 }
 
-/** The model identity the read graph tags this member's repository with. */
+/** The model identity the read graph tags this member's repository with, plus the draft's own namespace. */
 export interface DevModelIdentity
 {
     model: string
     version: string
+    namespace: string
 }
 
 export interface DevModelPrepared
@@ -52,18 +53,17 @@ export class DevModelWriter
         private readonly collector: TodlSourceCollector = new TodlSourceCollector(),
     ) {}
 
-    public async Prepare(member: { Storage: IStorage }, identity: DevModelIdentity, fallbackNamespace: string = identity.model): Promise<DevModelPrepared>
+    public async Prepare(member: { Storage: IStorage }, identity: DevModelIdentity): Promise<DevModelPrepared>
     {
         const sources = await this.collector.Collect(member.Storage)
         const resolved = await this.languageService.ResolveBasesFor(member.Storage)
         const bases = checkAgainst(resolved.bases, []).model
-        const namespace = this.NamespaceOf(sources, fallbackNamespace)
-        const draft = ModelDraft.fromSources([bases], sources, { namespace })
+        const draft = ModelDraft.fromSources([bases], sources, { namespace: identity.namespace })
         const writer = new ModelDraftWriter(draft, new SnowflakeIdGenerator(), d => ModelDraftBaker.Bake(d, { model: identity.model, version: identity.version }))
         return { draft, writer, sources }
     }
 
-    public async Persist(draft: ModelDraft, member: { Storage: IStorage }, _sources: readonly SourceFile[]): Promise<number>
+    public async Persist(draft: ModelDraft, member: { Storage: IStorage }): Promise<number>
     {
         const storage = member.Storage
         const targets = [...draft.toTodlByFile()]
@@ -85,6 +85,8 @@ export class DevModelWriter
                 : ''
             throw new DevModelWriteFailedError(DevModelWriter.FailedPrefix + reason + suffix)
         }
+        // Post-write refresh. Contract: the files are already written. If DidChange/WhenIdle throws
+        // from here on, the files stay changed and the in-memory graph is stale until the next refresh.
         for (const [uri, text] of targets) this.languageService.DidChange(uri, text)
         await this.languageService.WhenIdle()
         return this.languageService.GraphRevision
@@ -117,12 +119,5 @@ export class DevModelWriter
             }
         }
         return failed
-    }
-
-    private NamespaceOf(sources: readonly SourceFile[], fallback: string): string
-    {
-        const first = sources[0]
-        if (first === undefined) return fallback
-        return parse(first.text, first.uri).namespace.path || fallback
     }
 }

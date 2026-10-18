@@ -10,12 +10,12 @@ export class TodlSourceCollector
 {
     private static readonly TodlExtension = '.todl'
     private static readonly PathSeparator = '/'
-    private static readonly BuildOutputDirs: readonly string[] = ['dist']
+    private static readonly SkippedDirs: readonly string[] = ['dist', 'build', 'out', 'node_modules', '.git']
     private static readonly HashAlgorithm = 'sha256'
     private static readonly HashEncoding = 'hex'
     private static readonly FieldSeparator = '\u0000'
 
-    /** Every `.todl` file under the storage root, excluding top-level build-output folders. */
+    /** Every `.todl` file under the storage root, excluding build/vendor folders (dist, build, out, node_modules, .git) at any depth. */
     public async Collect(storage: IStorage): Promise<SourceFile[]>
     {
         const out: SourceFile[] = []
@@ -42,7 +42,7 @@ export class TodlSourceCollector
     {
         for (const entry of await storage.List(dir))
         {
-            if (dir === '' && entry.IsDirectory && TodlSourceCollector.BuildOutputDirs.includes(entry.Name)) continue
+            if (entry.IsDirectory && TodlSourceCollector.SkippedDirs.includes(entry.Name)) continue
             const path = dir === '' ? entry.Name : dir + TodlSourceCollector.PathSeparator + entry.Name
             if (entry.IsDirectory)
             {

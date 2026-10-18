@@ -65,7 +65,7 @@ class Fixture
     public readonly Lang = new FakeLanguageService()
     public readonly Writer = new DevModelWriter(this.Lang)
     public readonly Member = { Storage: this.Storage }
-    public static readonly Identity = { model: 'sol', version: '0.0.0' }
+    public static readonly Identity = { model: 'sol', version: '0.0.0', namespace: 'shop' }
 
     constructor()
     {
@@ -89,15 +89,54 @@ describe('DevModelWriter', () =>
         assert.equal(graph.NodesByLabel('Customer').length, 2)
     })
 
+    test('the baked graph carries the explicit model and version, not the namespace default', async () =>
+    {
+        const f = new Fixture()
+        const { writer } = await f.Writer.Prepare(f.Member, Fixture.Identity)
+        writer.Begin()
+        writer.CreateNode('shop.Customer', new Map())
+        const type = writer.Commit().NodesByLabel('Customer')[0]!.type as unknown as { manifest: { model: string; version: string } }
+        assert.equal(type.manifest.model, Fixture.Identity.model)
+        assert.equal(type.manifest.version, Fixture.Identity.version)
+        assert.notEqual(type.manifest.model, Fixture.Identity.namespace)
+    })
+
+    test('collector skips build and vendor directories at any depth', async () =>
+    {
+        const f = new Fixture()
+        for (const dir of ['node_modules/pkg', '.git/x', 'out', 'build', 'sub/node_modules/pkg', 'sub/dist', 'sub/deep/.git']) f.Storage.Files.set(dir + '/hidden.todl', 'garbage')
+        f.Storage.Files.set('sub/kept.todl', Fixture.Schema)
+        const uris = (await new TodlSourceCollector().Collect(f.Storage)).map(s => s.uri).sort()
+        assert.deepEqual(uris, ['model.todl', 'schema.todl', 'sub/kept.todl'])
+    })
+
+    test('restore deletes a file that did not exist before the failed write', async () =>
+    {
+        const f = new Fixture()
+        const { draft, writer } = await f.Writer.Prepare(f.Member, Fixture.Identity)
+        writer.Begin()
+        writer.CreateNode('shop.Customer', new Map())
+        writer.Commit()
+        const targets = [...draft.toTodlByFile().keys()]
+        const created = targets[0] as string
+        f.Storage.Files.delete(created)
+        const survivors = new Map(targets.slice(1).map(uri => [uri, f.Storage.Files.get(uri)]))
+        f.Storage.ResetWrites()
+        f.Storage.FailOnWriteNumber = 2
+        await assert.rejects(() => f.Writer.Persist(draft, f.Member), DevModelWriteFailedError)
+        assert.equal(f.Storage.Files.has(created), false)
+        for (const [uri, text] of survivors) assert.equal(f.Storage.Files.get(uri), text)
+    })
+
     test('Persist writes changed files and returns a bumped revision', async () =>
     {
         const f = new Fixture()
-        const { draft, writer, sources } = await f.Writer.Prepare(f.Member, Fixture.Identity)
+        const { draft, writer } = await f.Writer.Prepare(f.Member, Fixture.Identity)
         writer.Begin()
         writer.CreateNode('shop.Customer', new Map())
         writer.Commit()
         const before = f.Lang.GraphRevision
-        const revision = await f.Writer.Persist(draft, f.Member, sources)
+        const revision = await f.Writer.Persist(draft, f.Member)
         assert.ok(revision > before)
         assert.ok(f.Lang.Changes.length > 0)
         for (const [uri, text] of draft.toTodlByFile()) assert.equal(f.Storage.Files.get(uri), text)
@@ -108,7 +147,7 @@ describe('DevModelWriter', () =>
         const f = new Fixture()
         f.Storage.Files.set('schema.todl', Fixture.Schema + Fixture.Padding)
         f.Storage.Files.set('model.todl', Fixture.Model + Fixture.Padding)
-        const { draft, sources } = await f.Writer.Prepare(f.Member, Fixture.Identity)
+        const { draft } = await f.Writer.Prepare(f.Member, Fixture.Identity)
         const targets = [...draft.toTodlByFile().keys()]
         assert.ok(targets.length >= 2, 'fixture must yield two target files')
         const prior = new Map(targets.map(uri => [uri, f.Storage.Files.get(uri)]))
@@ -116,7 +155,7 @@ describe('DevModelWriter', () =>
         assert.notEqual(draft.toTodlByFile().get(first), prior.get(first), 'first write must actually change the file')
         f.Storage.ResetWrites()
         f.Storage.FailOnWriteNumber = 2
-        await assert.rejects(() => f.Writer.Persist(draft, f.Member, sources), DevModelWriteFailedError)
+        await assert.rejects(() => f.Writer.Persist(draft, f.Member), DevModelWriteFailedError)
         f.Storage.FailOnWriteNumber = 0
         for (const [uri, text] of prior) assert.equal(f.Storage.Files.get(uri), text)
         assert.equal(f.Lang.Changes.length, 0)
