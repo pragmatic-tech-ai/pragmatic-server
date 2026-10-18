@@ -71,6 +71,7 @@ export class ServerConnectionHandler
     private static readonly InvalidParamsPrefix = 'invalid params: '
     private static readonly CypherField = 'cypher'
     private static readonly CypherTimeoutMessage = 'cypher query timed out'
+    private static readonly PagedExplicitBoundsMessage = 'invalid params: paging cannot be combined with an explicit SKIP or LIMIT'
     private static readonly CypherFingerprintTag = 'cypher'
     private static readonly ModelScopeFingerprintTag = 'model'
     private static readonly ModelIdField = 'modelId'
@@ -449,6 +450,7 @@ export class ServerConnectionHandler
     {
         const source = this.RequireNonEmptyString(params?.cypher, ServerConnectionHandler.CypherField)
         PageRequest.ValidatePageSize(params)
+        this.RefuseExplicitBoundsWhenPaged(source, params)
         let parameters: ReadonlyMap<string, Cypher.ParameterValue>
         try
         {
@@ -501,6 +503,33 @@ export class ServerConnectionHandler
             if (error instanceof Cypher.CypherTimeout)
             {
                 throw new ResponseError(ServerConnectionHandler.CypherTimeoutCode, ServerConnectionHandler.CypherTimeoutMessage)
+            }
+            throw error
+        }
+    }
+
+    /** A paged request translates to engine Skip/RowCap, so a tail SKIP/LIMIT in the text would double-offset: refuse it. */
+    private RefuseExplicitBoundsWhenPaged(source: string, params: CypherQueryParams): void
+    {
+        const paged = (params.cursor !== undefined && params.cursor !== null) || (params.pageSize !== undefined && params.pageSize !== null)
+        if (!paged)
+        {
+            return
+        }
+        try
+        {
+            const parts = new Cypher.CypherParser(source).Parse().Parts
+            const last = parts[parts.length - 1]?.Projection
+            if (last !== undefined && (last.Skip !== undefined || last.Limit !== undefined))
+            {
+                throw new ResponseError(ErrorCodes.InvalidParams, ServerConnectionHandler.PagedExplicitBoundsMessage)
+            }
+        }
+        catch (error)
+        {
+            if (error instanceof Cypher.CypherSyntaxError || error instanceof Cypher.CypherSemanticError)
+            {
+                throw new ResponseError(ErrorCodes.InvalidParams, `${ServerConnectionHandler.InvalidParamsPrefix}${error.message}`)
             }
             throw error
         }
