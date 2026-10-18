@@ -381,3 +381,16 @@ test('a schema co-located with instances is refused in-band (Invalid), nothing p
         assert.ok(world.Source().includes('concept Widget'))
     }, true)
 })
+
+test('a model owned by the FIRST instance-bearing member resolves too (not only the second)', async () =>
+{
+    await ExecFixture.With(false, async world =>
+    {
+        const handler = world.Connect(ExecFixture.Context(ExecFixture.Plain))
+        const baseModel = world.ModelIds.find(i => i.includes('BaseM'))!
+        // BaseM lives in the first member (schema co-located with its instances): resolution succeeds, the schema guard refuses in-band
+        const result = await handler.RunCypherExecute(ExecFixture.P(baseModel, ExecFixture.Create))
+        assert.equal(result.status, AppWriteStatus.Invalid)
+        assert.ok((result.reason ?? '').includes('co-located'))
+    })
+})

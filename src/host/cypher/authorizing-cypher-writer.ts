@@ -97,13 +97,13 @@ export class AuthorizingCypherWriter implements Cypher.ICypherWriter
 
     public CreateRelationship(fromId: string, member: string, toId: string): boolean
     {
-        this.AuthorizeLink(fromId, toId)
+        this.AuthorizeLink(fromId, member, toId)
         return this.inner.CreateRelationship(fromId, member, toId)
     }
 
     public DeleteRelationship(fromId: string, member: string, toId: string): boolean
     {
-        this.AuthorizeLink(fromId, toId)
+        this.AuthorizeLink(fromId, member, toId)
         return this.inner.DeleteRelationship(fromId, member, toId)
     }
 
@@ -142,10 +142,12 @@ export class AuthorizingCypherWriter implements Cypher.ICypherWriter
         return view
     }
 
-    private AuthorizeLink(fromId: string, toId: string): void
+    private AuthorizeLink(fromId: string, member: string, toId: string): void
     {
         const source = this.Resolve(fromId)
         if (!this.gate.Authorize(PrivilegeAction.Update, source)) throw new WriteAuthorizationError(source.Concept, PrivilegeAction.Update)
+        // a reference member is a field like any other: field security applies to setting/clearing it via an edge, same as SET
+        if (!this.gate.CanWriteField(source.Concept, member, PrivilegeAction.Update)) throw new WriteAuthorizationError(source.Concept, PrivilegeAction.Update, member)
         if (!this.created.has(toId) && this.graph.Reflect(toId) === undefined) throw new WriteAuthorizationError(undefined, undefined)
     }
 

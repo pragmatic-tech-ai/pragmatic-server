@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import type { IStorage, StorageEntry } from '@pragmatic-tech-ai/todl-runtime'
 import { checkAgainst, toJSON } from '@pragmatic-tech-ai/todl'
 import type { TodlDocument } from '@pragmatic-tech-ai/todl'
-import { DevModelWriter, DevModelWriteFailedError, DevModelSchemaColocatedError, type IDevLanguageService } from '../dev-model-writer.js'
+import { DevModelWriter, DevModelWriteFailedError, DevModelSchemaColocatedError, type IDevLanguageService, type IDevWriteDiagnostics } from '../dev-model-writer.js'
 import { TodlSourceCollector } from '../todl-source-collector.js'
 
 class MemoryStorage implements IStorage
@@ -179,5 +179,35 @@ describe('DevModelWriter', () =>
         const f = new Fixture()
         f.Storage.Files.set('extra.todl', 'namespace shop { concept Order { total : string?; } }')
         await assert.rejects(() => f.Writer.Prepare(f.Member, Fixture.Identity), DevModelSchemaColocatedError)
+    })
+
+    test('a refresh failure after a successful write still persists and returns the last-known revision', async () =>
+    {
+        const f = new Fixture()
+        const seen: unknown[] = []
+        const diagnostics: IDevWriteDiagnostics = { RefreshFailed: e => { seen.push(e) }, WriteFailed: () => {} }
+        f.Lang.DidChange = (): void => { throw new Error('refresh exploded at /secret/path') }
+        const writer = new DevModelWriter(f.Lang, undefined, diagnostics)
+        const { draft, writer: cypher } = await writer.Prepare(f.Member, Fixture.Identity)
+        cypher.Begin()
+        cypher.CreateNode('shop.Customer', new Map())
+        cypher.Commit()
+        const before = f.Lang.GraphRevision
+        const revision = await writer.Persist(draft, f.Member)
+        assert.equal(revision, before)
+        assert.equal(seen.length, 1)
+        for (const [uri, text] of draft.toTodlByFile()) assert.equal(f.Storage.Files.get(uri), text)
+    })
+
+    test('DevModelWriteFailedError carries no raw error text or file paths', async () =>
+    {
+        const f = new Fixture()
+        const { draft, writer } = await f.Writer.Prepare(f.Member, Fixture.Identity)
+        writer.Begin()
+        writer.CreateNode('shop.Customer', new Map())
+        writer.Commit()
+        f.Storage.ResetWrites()
+        f.Storage.FailOnWriteNumber = 1
+        await assert.rejects(() => f.Writer.Persist(draft, f.Member), (e: unknown) => e instanceof DevModelWriteFailedError && !e.message.includes('disk full') && !e.message.includes('.todl'))
     })
 })

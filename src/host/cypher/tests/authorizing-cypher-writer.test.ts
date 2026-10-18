@@ -259,3 +259,18 @@ test('Begin/Commit/Rollback/Stats delegate to the inner writer', () =>
     w.Stats()
     assert.deepEqual(inner.Calls, ['Begin', 'Commit', 'Rollback', 'Stats'])
 })
+
+test('a secured reference member is blocked for edge CREATE and DELETE, matching SET', () =>
+{
+    const inner = new FakeInner()
+    const gate = new StubGate()
+    gate.DenyFields.add('rel')
+    const w = new AuthorizingCypherWriter(inner, gate, Fx.Graph(Visible))
+    assert.throws(() => w.SetProperty('a', 'rel', 'b'), WriteAuthorizationError)
+    const create = (): boolean => w.CreateRelationship('a', 'rel', 'b')
+    const remove = (): boolean => w.DeleteRelationship('a', 'rel', 'b')
+    assert.throws(create, (e: unknown) => e instanceof WriteAuthorizationError && e.Field === 'rel')
+    assert.throws(remove, (e: unknown) => e instanceof WriteAuthorizationError && e.Field === 'rel')
+    assert.deepEqual(inner.Calls, [])
+    assert.equal(w.CreateRelationship('a', 'other', 'b'), true)
+})

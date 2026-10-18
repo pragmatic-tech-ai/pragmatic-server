@@ -748,6 +748,7 @@ export class PragmaticServer
         }
         const languageService = await this.LanguageService()
         const namespace = modelId.includes(PragmaticServer.NamespaceSeparator) ? modelId.slice(0, modelId.lastIndexOf(PragmaticServer.NamespaceSeparator)) : solution.Name
+        // Memoized on first use: assumes LanguageService() resolves to a stable singleton for this server's lifetime.
         const writer = this.cypherWriter ??= new DevModelWriter(languageService as SolutionLanguageService)
         // The owning member is the one whose storage is the recorded origin of the model node (deterministic, node-id based).
         const member = await this.OwningMember(languageService, solution.Members.ToArray(), modelId)
@@ -764,15 +765,19 @@ export class PragmaticServer
 
     private async OwningMember(languageService: ILanguageService, members: readonly { Storage?: IStorage }[], modelId: string): Promise<{ Storage: IStorage } | undefined>
     {
-        const anchor = members.find(m => m.Storage !== undefined)
-        const view = anchor?.Storage === undefined ? undefined : await languageService.ModelView(anchor.Storage)
-        const origin = view?.originOf.get(modelId)
-        if (origin === undefined || origin.kind !== WikiOriginKind.OpenProject)
+        // each member's view may record origins for the nodes it owns: look through ALL members until the model's origin is found
+        for (const candidate of members)
         {
-            return undefined
+            const view = candidate.Storage === undefined ? undefined : await languageService.ModelView(candidate.Storage)
+            const origin = view?.originOf.get(modelId)
+            if (origin === undefined || origin.kind !== WikiOriginKind.OpenProject)
+            {
+                continue
+            }
+            const owner = members.find(m => m.Storage === origin.storage)
+            return owner?.Storage === undefined ? undefined : { Storage: owner.Storage }
         }
-        const owner = members.find(m => m.Storage === origin.storage)
-        return owner?.Storage === undefined ? undefined : { Storage: owner.Storage }
+        return undefined
     }
 
     private async CollectGraphSources(): Promise<readonly TenantRepository[]>

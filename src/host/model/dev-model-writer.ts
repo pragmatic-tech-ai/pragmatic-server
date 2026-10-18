@@ -48,6 +48,35 @@ export interface DevModelPrepared
     graph: Cypher.ICypherGraph
 }
 
+/** Internal diagnostics for persist problems; implementations must log error names only (messages can carry paths). */
+export interface IDevWriteDiagnostics
+{
+    RefreshFailed(error: unknown): void
+    WriteFailed(error: unknown): void
+}
+
+export class ConsoleDevWriteDiagnostics implements IDevWriteDiagnostics
+{
+    private static readonly RefreshLine = 'dev model write persisted but the language-service refresh failed: '
+    private static readonly WriteLine = 'dev model write failed and was restored: '
+    private static readonly UnknownName = 'UnknownError'
+
+    public RefreshFailed(error: unknown): void
+    {
+        console.error(ConsoleDevWriteDiagnostics.RefreshLine + ConsoleDevWriteDiagnostics.NameOf(error))
+    }
+
+    public WriteFailed(error: unknown): void
+    {
+        console.error(ConsoleDevWriteDiagnostics.WriteLine + ConsoleDevWriteDiagnostics.NameOf(error))
+    }
+
+    private static NameOf(error: unknown): string
+    {
+        return error instanceof Error ? error.name : ConsoleDevWriteDiagnostics.UnknownName
+    }
+}
+
 /** Thrown by Prepare when the member's own sources hold schema (concepts etc.) beside instances: a write would not round-trip it. */
 export class DevModelSchemaColocatedError extends Error
 {
@@ -76,15 +105,15 @@ export class DevModelWriteFailedError extends Error
  */
 export class DevModelWriter
 {
-    private static readonly FailedPrefix = 'Failed to persist model write: '
-    private static readonly RestoreFailedSuffix = ' (restore also failed for: '
-    private static readonly RestoreFailedClose = ')'
+    private static readonly FailedMessage = 'Failed to persist model write'
+    private static readonly RestoreFailedSuffix = ' (restore also failed for '
+    private static readonly RestoreFailedClose = ' file(s))'
     private static readonly RootSeparator = '/'
-    private static readonly ListSeparator = ', '
 
     constructor(
         private readonly languageService: IDevLanguageService,
         private readonly collector: TodlSourceCollector = new TodlSourceCollector(),
+        private readonly diagnostics: IDevWriteDiagnostics = new ConsoleDevWriteDiagnostics(),
     ) {}
 
     public async Prepare(member: { Storage: IStorage }, identity: DevModelIdentity, mask: IDraftGraphMask = NoopDraftGraphMask.Instance): Promise<DevModelPrepared>
@@ -125,16 +154,22 @@ export class DevModelWriter
         catch (error)
         {
             const unrestored = await this.Restore(storage, snapshots)
-            const reason = error instanceof Error ? error.message : String(error)
-            const suffix = unrestored.length > 0
-                ? DevModelWriter.RestoreFailedSuffix + unrestored.join(DevModelWriter.ListSeparator) + DevModelWriter.RestoreFailedClose
-                : ''
-            throw new DevModelWriteFailedError(DevModelWriter.FailedPrefix + reason + suffix)
+            // fixed text + counts only: raw errors and storage-relative paths stay out of the message
+            const suffix = unrestored.length > 0 ? DevModelWriter.RestoreFailedSuffix + String(unrestored.length) + DevModelWriter.RestoreFailedClose : ''
+            this.diagnostics.WriteFailed(error)
+            throw new DevModelWriteFailedError(DevModelWriter.FailedMessage + suffix)
         }
-        // Post-write refresh. Contract: the files are already written. If DidChange/WhenIdle throws
-        // from here on, the files stay changed and the in-memory graph is stale until the next refresh.
-        for (const [uri, text] of targets) this.languageService.DidChange(DevModelWriter.AbsoluteUri(storage, uri), text)
-        await this.languageService.WhenIdle()
+        // Post-write refresh. The files are ALREADY persisted, so a refresh failure must not turn an applied write into a
+        // failure the client may retry: log it and report the last-known revision (the in-memory graph is stale until the next refresh).
+        try
+        {
+            for (const [uri, text] of targets) this.languageService.DidChange(DevModelWriter.AbsoluteUri(storage, uri), text)
+            await this.languageService.WhenIdle()
+        }
+        catch (error)
+        {
+            this.diagnostics.RefreshFailed(error)
+        }
         return this.languageService.GraphRevision
     }
 
