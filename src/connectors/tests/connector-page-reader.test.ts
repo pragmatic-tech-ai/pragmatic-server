@@ -192,3 +192,20 @@ test('a readPage cursor minted for a different concept is stale', async () =>
     await assert.rejects(() => reader.ReadPage(Fixtures.ModelId, 'shop.B', { cursor: first.nextCursor, pageSize: 2 }, Fixtures.Limits), Fixtures.IsStale)
     await assert.rejects(() => reader.ReadPage(Fixtures.ModelId, 'shop.A', { cursor: 'garbage', pageSize: 2 }, Fixtures.Limits), Fixtures.IsStale)
 })
+
+test('keyset cursor round-trips keys containing the separator and JSON metacharacters', async () =>
+{
+    const keys = ['a\u0000b', 'q"uote', 'back\slash', '{"x":1}']
+    const rows = keys.map(k => ({ id: k, name: 'n' }))
+    const reader = new ConnectorPageReader(Fixtures.Two(new RecordingFactory(true, rows)))
+    const seen: string[] = []
+    let cursor: string | undefined
+    do
+    {
+        const page = await reader.ReadPage(Fixtures.ModelId, 'shop.A', { cursor, pageSize: 1 }, Fixtures.Limits)
+        seen.push(...page.items.map(i => i.id.split('#')[2]!))
+        cursor = page.nextCursor
+    }
+    while (cursor !== undefined)
+    assert.deepEqual([...seen].sort(), [...keys].sort())
+})

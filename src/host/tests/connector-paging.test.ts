@@ -179,3 +179,24 @@ test('pageSize above max is clamped', async () =>
         assert.ok(page.nextCursor !== undefined)
     }, new PagingLimits(2, 3))
 })
+
+test('connector/readPage tiles a SQL binding through the real reconnecting catalog', async () =>
+{
+    await ConnectorPagingFixture.With(5, async (client, modelId) =>
+    {
+        const ids: string[] = []
+        const sizes: number[] = []
+        let cursor: string | undefined
+        do
+        {
+            const page = await client['Request'](ConnectorProtocol.ReadPage, { modelId, concept: ConnectorPagingFixture.ConceptId, cursor, pageSize: 2 })
+            ids.push(...page.items.map((e: EntityDto) => e.id))
+            sizes.push(page.items.length)
+            cursor = page.nextCursor
+        }
+        while (cursor !== undefined)
+        assert.deepEqual(sizes, [2, 2, 1])
+        assert.equal(new Set(ids).size, 5)
+        assert.deepEqual(ids, [...ids].sort())
+    })
+})
