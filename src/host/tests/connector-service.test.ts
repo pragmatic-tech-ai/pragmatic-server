@@ -64,6 +64,14 @@ class Harness
         return new ConnectorRuntime(SolutionConnectorPlanner.Plan(model), services)
     }
 
+    public static CatalogRuntime(catalog: DataSourceAdapterCatalog): ConnectorRuntime
+    {
+        const { model } = check([{ uri: 'shop.todl', text: META }])
+        const services = new ServiceProvider()
+        services.registerInstance(DataSourceAdapterCatalog.ServiceKey, catalog)
+        return new ConnectorRuntime(SolutionConnectorPlanner.Plan(model), services)
+    }
+
     public static Rows(): ReadonlyMap<string, readonly ExternalRecord[]>
     {
         return new Map<string, readonly ExternalRecord[]>([['Customer', [{ customer_id: 'C1', name: 'Acme' }]]])
@@ -180,4 +188,54 @@ test('refresh during an in-flight build evicts after the build resolves', async 
     await listing
     assert.deepEqual([...catalog.Invalidated].sort(), ['pg', 'rest'])
     assert.equal(catalog.DisposeCalls, 0)
+})
+
+test('RefreshModel with no runtime loaded is a no-op and evicts nothing', async () =>
+{
+    const catalog = new RecordingCatalog().Register(Harness.Factory()) as RecordingCatalog
+    let built = 0
+    const service = new ConnectorService(() => { built++; return Promise.resolve(Harness.TwoConnectorRuntime(catalog)) })
+    const outcome = await service.RefreshModel('m')
+    assert.deepEqual(outcome, { diagnostics: [] })
+    assert.equal(built, 0)
+    assert.equal(catalog.Invalidated.length, 0)
+    assert.equal(catalog.DisposeCalls, 0)
+})
+
+test('RefreshModel on a loaded runtime refreshes and maps dropped-op diagnostics to DiagnosticDto', async () =>
+{
+    const rows: ExternalRecord[] = [{ customer_id: 'C1', name: 'Acme' }]
+    const adapter: IDataSourceAdapter =
+    {
+        Query(_request: QueryRequest): Promise<readonly ExternalRecord[]> { return Promise.resolve([...rows]) },
+        Apply(_batch: WriteBatch): Promise<WriteResult> { return Promise.reject(new Error('apply failed')) },
+        Dispose(): Promise<void> { return Promise.resolve() },
+    }
+    const factory: IDataSourceAdapterFactory = { Kind: DataSourceKind.Sql, Open(_c: ResolvedConnection): Promise<IDataSourceAdapter> { return Promise.resolve(adapter) } }
+    const { model } = check([{ uri: 'shop.todl', text: META }])
+    const services = new ServiceProvider()
+    services.registerInstance(DataSourceAdapterCatalog.ServiceKey, new DataSourceAdapterCatalog().Register(factory))
+    const runtime = new ConnectorRuntime(SolutionConnectorPlanner.Plan(model), services)
+    const service = new ConnectorService(() => Promise.resolve(runtime))
+    const modelId = (await service.List())[0]!.modelId
+    const entity = (await service.Read(modelId, 'shop.Customer', {}, new PagingLimits())).items[0]!
+    await runtime.WriteBack(modelId, [entity.id], [])
+    rows.splice(0, rows.length, { customer_id: 'C9', name: 'Other' })
+    const outcome = await service.RefreshModel(modelId)
+    assert.ok(outcome.diagnostics.length > 0)
+    assert.equal(typeof outcome.diagnostics[0]!.code, 'string')
+    assert.equal(typeof outcome.diagnostics[0]!.message, 'string')
+    assert.deepEqual(Object.keys(outcome.diagnostics[0]!).sort(), ['code', 'message'])
+})
+
+test('RefreshModel does not evict adapters, unlike Invalidate', async () =>
+{
+    const catalog = new RecordingCatalog().Register(Harness.Factory()) as RecordingCatalog
+    const service = new ConnectorService(() => Promise.resolve(Harness.CatalogRuntime(catalog)))
+    const modelId = (await service.List())[0]!.modelId
+    await service.RefreshModel(modelId)
+    assert.equal(catalog.Invalidated.length, 0)
+    assert.equal(catalog.DisposeCalls, 0)
+    await service.Invalidate()
+    assert.deepEqual([...catalog.Invalidated].sort(), ['pg'])
 })

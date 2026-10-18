@@ -106,6 +106,7 @@ test('Owner may list/read/write/test/prepare/refresh connectors', () =>
     assert.equal(gate.Authorize(ConnectorProtocol.Test.method).Allowed, true)
     assert.equal(gate.Authorize(ConnectorProtocol.Prepare.method).Allowed, true)
     assert.equal(gate.Authorize(ConnectorProtocol.Refresh.method).Allowed, true)
+    assert.equal(gate.Authorize(ConnectorProtocol.RefreshModel.method).Allowed, true)
 })
 
 test('Viewer may list/read connectors but not write/test/prepare/refresh', () =>

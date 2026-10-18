@@ -1,5 +1,5 @@
 import type { ConnectorRuntime } from '../connectors/connector-runtime.js'
-import type { ConnectorModelDto, ConnectorWriteBackParams, EntityDto, FlushOutcomeDto, Page, PageParams, ConnectionProbeDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { ConnectorModelDto, ConnectorWriteBackParams, EntityDto, FlushOutcomeDto, Page, PageParams, ConnectionProbeDto, ConnectorRefreshOutcomeDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { PagingLimits } from '../config/paging-limits.js'
 import { PageFingerprint, PageRequest } from './paging/page-request.js'
 import { WireScalar } from './wire-scalar.js'
@@ -101,6 +101,19 @@ export class ConnectorService
             results: outcome.Results.map((r) => ({ applied: r.Applied, failures: r.Failures.map((f) => ({ key: WireScalar.Of(f.Key), kind: f.Kind, reason: f.Reason })) })),
             diagnostics: outcome.Diagnostics.map((d) => ({ code: d.code, message: d.message })),
         }
+    }
+
+    /** In-place data refresh of one model: adapters stay open, nothing is evicted (unlike Invalidate). With no runtime
+     *  built yet there is nothing materialized to refresh, so it is a no-op that never builds one. */
+    public async RefreshModel(modelId: string): Promise<ConnectorRefreshOutcomeDto>
+    {
+        if (this.runtimePromise === undefined)
+        {
+            return { diagnostics: [] }
+        }
+        const runtime = await this.Runtime()
+        const outcome = await runtime.RefreshModel(modelId)
+        return { diagnostics: outcome.Diagnostics.map((d) => ({ code: d.code, message: d.message })) }
     }
 
     public async Test(modelId: string, connectorName: string): Promise<ConnectionProbeDto>

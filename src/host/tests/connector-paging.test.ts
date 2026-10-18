@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { newDb } from 'pg-mem'
-import { InMemoryMessageSocket, PragmaticClient, CursorStaleError } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { InMemoryMessageSocket, PragmaticClient, CursorStaleError, ConnectorProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { EntityDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../pragmatic-server.js'
@@ -154,6 +154,18 @@ test('cursor is stale after connector/refresh', async () =>
         const first = await client.ReadEntities(modelId, ConnectorPagingFixture.ConceptId, { pageSize: 2 })
         assert.ok(first.nextCursor !== undefined)
         await client.RefreshConnectors()
+        await assert.rejects(() => client.ReadEntities(modelId, ConnectorPagingFixture.ConceptId, { cursor: first.nextCursor, pageSize: 2 }), ConnectorPagingFixture.IsStale)
+    })
+})
+
+test('cursor is stale after connector/refreshModel', async () =>
+{
+    await ConnectorPagingFixture.With(5, async (client, modelId) =>
+    {
+        const first = await client.ReadEntities(modelId, ConnectorPagingFixture.ConceptId, { pageSize: 2 })
+        assert.ok(first.nextCursor !== undefined)
+        const outcome = await client['Request'](ConnectorProtocol.RefreshModel, { modelId })
+        assert.deepEqual(outcome.diagnostics, [])
         await assert.rejects(() => client.ReadEntities(modelId, ConnectorPagingFixture.ConceptId, { cursor: first.nextCursor, pageSize: 2 }), ConnectorPagingFixture.IsStale)
     })
 })
