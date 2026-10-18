@@ -189,7 +189,7 @@ test('a forged cursor whose key payload is not a string or number is stale', asy
     const first = await reader.ReadPage(Fixtures.ModelId, 'shop.A', { pageSize: 2 }, Fixtures.Limits)
     const decoded = PageCursorCodec.Decode(first.nextCursor!)!
     const prefix = decoded.fingerprint.slice(0, decoded.fingerprint.indexOf('\u0000') + 1)
-    for (const payload of ['{"a":1}', '[1]', 'true', 'null'])
+    for (const payload of ['{"a":1}', '[1]', 'true', 'null', '1e999'])
     {
         const forged = PageCursorCodec.Encode({ offset: 0, fingerprint: `${prefix}${payload}` })
         await assert.rejects(() => reader.ReadPage(Fixtures.ModelId, 'shop.A', { cursor: forged, pageSize: 2 }, Fixtures.Limits), Fixtures.IsStale)

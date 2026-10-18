@@ -56,7 +56,7 @@ export class KeysetPage
         try
         {
             const after: unknown = JSON.parse(decoded.fingerprint.slice(prefix.length))
-            if (typeof after === 'string' || typeof after === 'number')
+            if (typeof after === 'string' || (typeof after === 'number' && Number.isFinite(after)))
             {
                 return after
             }
