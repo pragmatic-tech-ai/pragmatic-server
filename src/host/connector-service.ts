@@ -103,9 +103,9 @@ export class ConnectorService
 
     public async Read(modelId: string, concept: string, params: PageParams, limits: PagingLimits, context: AccessContext): Promise<Page<EntityDto>>
     {
+        PageRequest.ValidatePageSize(params)
         const authz = await this.ReadAuthorization(context)
         void authz
-        PageRequest.ValidatePageSize(params)
         const runtime = await this.Runtime()
         const fingerprint = PageFingerprint.Of(ConnectorService.ConnectorFingerprintTag, modelId, concept, runtime.Revision)
         const page = PageRequest.Resolve(params, fingerprint, limits)
@@ -118,9 +118,9 @@ export class ConnectorService
     /** On-demand keyset-paged read of ONE connector binding: never prepares the model nor opens any other concept's adapter. */
     public async ReadPage(modelId: string, concept: string, params: PageParams, limits: PagingLimits, context: AccessContext): Promise<Page<EntityDto>>
     {
+        const runtime = await this.Runtime()
         const authz = await this.ReadAuthorization(context)
         void authz
-        const runtime = await this.Runtime()
         return new ConnectorPageReader(runtime).ReadPage(modelId, concept, params, limits)
     }
 

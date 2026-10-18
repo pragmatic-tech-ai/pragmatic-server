@@ -32,7 +32,10 @@ test('AllowAll keeps every view and masks no field', () =>
 {
     const bundle = ConnectorReadAuthorizations.AllowAll()
     assert.equal(bundle.Filter.Keep({} as never), true)
-    assert.equal(bundle.FieldMask.CanRead('shop.Customer', 'name'), true)
+    for (const [concept, field] of [['shop.Customer', 'name'], ['shop.Customer', 'ssn'], ['shop.Order', 'total'], ['x.Y', '']])
+    {
+        assert.equal(bundle.FieldMask.CanRead(concept!, field!), true)
+    }
 })
 
 test('Digest is stable per principal+roles, differs otherwise, and carries no secret', () =>
@@ -42,4 +45,14 @@ test('Digest is stable per principal+roles, differs otherwise, and carries no se
     assert.notEqual(ConnectorPrincipalDigest.Of(Fx.Context('p2', Role.Owner, ['g1', 'g2'])), a)
     assert.notEqual(ConnectorPrincipalDigest.Of(Fx.Context('p1', Role.Viewer, ['g1', 'g2'])), a)
     assert.equal(a.includes(Fx.Secret), false)
+})
+
+test('Digest differs for the same role on different resources and is stable for identical grants', () =>
+{
+    const tenant = new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
+    const principal = new Principal('p1', 't1', PrincipalKind.User, new Map(), [])
+    const on = (path: string[]): AccessContext => new AccessContext(principal, tenant, [new Grant('p1', Role.Owner, new ResourceRef(ResourceKind.Tenant, 't1', path))], new ResourceAuthorizationPolicy())
+    assert.notEqual(ConnectorPrincipalDigest.Of(on(['a'])), ConnectorPrincipalDigest.Of(on(['b'])))
+    assert.notEqual(ConnectorPrincipalDigest.Of(on(['a', 'b'])), ConnectorPrincipalDigest.Of(on(['a,b'])))
+    assert.equal(ConnectorPrincipalDigest.Of(on(['a'])), ConnectorPrincipalDigest.Of(on(['a'])))
 })

@@ -1,8 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { ServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
-import { check, DataSourceAdapterCatalog, DataSourceKind } from '@pragmatic-tech-ai/todl'
-import type { ConnectorSpec, IDataSourceAdapter, IDataSourceAdapterFactory, ResolvedConnection, QueryRequest, WriteBatch, WriteResult, ExternalRecord } from '@pragmatic-tech-ai/todl'
+import { check, DataSourceAdapterCatalog, DataSourceKind, WriteConcurrency, WriteAtomicity } from '@pragmatic-tech-ai/todl'
+import type { ConnectorSpec, IDataSourceAdapter, IDataSourceAdapterFactory, ResolvedConnection, QueryRequest, PageQuery, PageSlice, WriteBatch, WriteResult, ExternalRecord } from '@pragmatic-tech-ai/todl'
 import { SolutionConnectorPlanner } from '../../connectors/solution-connector-planner.js'
 import { ConnectorRuntime } from '../../connectors/connector-runtime.js'
 import { PagingLimits } from '../../config/paging-limits.js'
@@ -287,28 +287,54 @@ test('WritePaged validates field values against the schema type: wrong-typed and
     assert.deepEqual(batches[0]!.Operations.map(o => o.Key), ['C3'])
 })
 
-test('Read/ReadPage with AllowAll readAuthorizationFor return exactly what they return with none wired', async () =>
+test('Read with AllowAll readAuthorizationFor returns the literal unfiltered rows and page shape', async () =>
 {
-    const plain = new ConnectorService(() => Promise.resolve(Harness.Runtime()))
-    const wired = new ConnectorService(() => Promise.resolve(Harness.Runtime()), undefined, async () => ConnectorReadAuthorizations.AllowAll())
-    const modelId = (await plain.List())[0]!.modelId
-    const a = await plain.Read(modelId, 'shop.Customer', {}, new PagingLimits(), Ctx.Any())
-    const b = await wired.Read(modelId, 'shop.Customer', {}, new PagingLimits(), Ctx.Any())
-    assert.deepEqual(b, a)
-    // The harness adapter cannot serve keyset pages: ReadPage must fail identically with and without the factory.
-    const failure = async (service: ConnectorService): Promise<string> =>
+    const service = new ConnectorService(() => Promise.resolve(Harness.Runtime()), undefined, async () => ConnectorReadAuthorizations.AllowAll())
+    const modelId = (await service.List())[0]!.modelId
+    const result = await service.Read(modelId, 'shop.Customer', {}, new PagingLimits(), Ctx.Any())
+    assert.equal(result.items.length, 1)
+    assert.equal(result.items[0]!.fields.name, 'Acme')
+    assert.equal(result.items[0]!.concept, 'shop.Customer')
+    assert.equal('nextCursor' in result, false)
+})
+
+test('ReadPage with AllowAll readAuthorizationFor returns keyset pages with a nextCursor, then the tail without one', async () =>
+{
+    const rows: ExternalRecord[] = [0, 1, 2].map(i => ({ id: `C${i}`, name: `n${i}` }))
+    const factory: IDataSourceAdapterFactory =
     {
-        try
+        Kind: DataSourceKind.Sql,
+        Open(_c: ResolvedConnection): Promise<IDataSourceAdapter>
         {
-            await service.ReadPage(modelId, 'shop.Customer', {}, new PagingLimits(), Ctx.Any())
-            return ''
-        }
-        catch (e)
-        {
-            return (e as Error).message
-        }
+            const adapter: IDataSourceAdapter & { CanPage: boolean } =
+            {
+                CanPage: true,
+                Query(): Promise<readonly ExternalRecord[]> { return Promise.resolve(rows) },
+                QueryPage(_r: QueryRequest, page: PageQuery): Promise<PageSlice>
+                {
+                    const rest = page.After === undefined ? rows : rows.filter(r => String(r['id']) > String(page.After))
+                    const records = rest.slice(0, page.Limit)
+                    return Promise.resolve(records.length === page.Limit ? { Records: records, NextAfter: records[records.length - 1]!['id']! } : { Records: records })
+                },
+                Apply(): Promise<WriteResult> { return Promise.resolve({ Applied: 0, Failures: [] }) },
+                Dispose(): Promise<void> { return Promise.resolve() },
+            }
+            return Promise.resolve(adapter)
+        },
     }
-    const expected = await failure(plain)
-    assert.notEqual(expected, '')
-    assert.equal(await failure(wired), expected)
+    const catalog = new DataSourceAdapterCatalog()
+    catalog.Register(factory)
+    const services = new ServiceProvider()
+    services.registerInstance(DataSourceAdapterCatalog.ServiceKey, catalog)
+    const plan = { Model: 'shop', Version: '1', Connectors: [{ Name: 'pg', Kind: DataSourceKind.Sql, Config: {} }], Bindings: [{ Concept: 'shop.Customer', Connector: 'pg', Source: 'Customer', IdKey: 'id', FieldMap: { name: 'name' }, Writable: false, Concurrency: WriteConcurrency.LastWriteWins, Atomicity: WriteAtomicity.Sequential }] }
+    const runtime = new ConnectorRuntime([{ ModelId: 'shop', Plan: plan, Base: {} as never }], services)
+    const service = new ConnectorService(() => Promise.resolve(runtime), undefined, async () => ConnectorReadAuthorizations.AllowAll())
+    const first = await service.ReadPage('shop', 'shop.Customer', { pageSize: 2 }, new PagingLimits(100, 1000), Ctx.Any())
+    assert.equal(first.items.length, 2)
+    assert.equal(first.items[0]!.fields.name, 'n0')
+    assert.equal(typeof first.nextCursor, 'string')
+    const second = await service.ReadPage('shop', 'shop.Customer', { pageSize: 2, cursor: first.nextCursor }, new PagingLimits(100, 1000), Ctx.Any())
+    assert.equal(second.items.length, 1)
+    assert.equal(second.items[0]!.fields.name, 'n2')
+    assert.equal('nextCursor' in second, false)
 })
