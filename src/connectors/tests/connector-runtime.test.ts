@@ -115,6 +115,42 @@ class GatedFactory extends MutableRowsFactory
     }
 }
 
+class QueryGatedAdapter extends InMemoryAdapter
+{
+    public Gate: Promise<void> | undefined
+    public override async Query(request: QueryRequest): Promise<readonly ExternalRecord[]>
+    {
+        if (this.Gate !== undefined)
+        {
+            await this.Gate
+        }
+        return super.Query(request)
+    }
+}
+
+class QueryGatedFactory extends MutableRowsFactory
+{
+    public Release: () => void = () => {}
+    public constructor()
+    {
+        super(false)
+    }
+    public Arm(): void
+    {
+        const gate = new Promise<void>(resolve => { this.Release = resolve })
+        for (const adapter of this.Adapters)
+        {
+            (adapter as QueryGatedAdapter).Gate = gate
+        }
+    }
+    public override Open(_connection: ResolvedConnection): Promise<IDataSourceAdapter>
+    {
+        const adapter = new QueryGatedAdapter(this.Rows)
+        this.Adapters.push(adapter)
+        return Promise.resolve(adapter)
+    }
+}
+
 class EvictionForbiddenCatalog extends DataSourceAdapterCatalog
 {
     public override Invalidate(_spec: ConnectorSpec): Promise<void>
@@ -404,4 +440,23 @@ test('RefreshModel awaits an in-flight first prepare before refreshing', async (
     assert.equal((await runtime.ReadEntities('shop', 'shop.Customer')).Entities.length, 1)
     // one prepare pull + one refresh pull; a refresh racing the prepare must not start a second concurrent prepare
     assert.equal(factory.Adapters.reduce((n, a) => n + a.Queries, 0), 2)
+})
+
+test('concurrent RefreshModel calls on a prepared model share one refresh pull', async () =>
+{
+    const factory = new QueryGatedFactory()
+    factory.Rows.set('Customer', [{ customer_id: 'C1', name: 'Acme' }])
+    const runtime = new ConnectorRuntime([Fixtures.Model('shop')], Fixtures.ServicesFor(factory))
+    await runtime.PrepareModel('shop')
+    const queriesAfterPrepare = factory.Adapters.reduce((n, a) => n + a.Queries, 0)
+    factory.Arm()
+    const first = runtime.RefreshModel('shop')
+    const second = runtime.RefreshModel('shop')
+    factory.Release()
+    const [a, b] = await Promise.all([first, second])
+    assert.equal(a, b)
+    assert.equal(factory.Adapters.reduce((n, x) => n + x.Queries, 0) - queriesAfterPrepare, 1)
+    // the in-flight entry is cleared, so a later refresh pulls again
+    await runtime.RefreshModel('shop')
+    assert.equal(factory.Adapters.reduce((n, x) => n + x.Queries, 0) - queriesAfterPrepare, 2)
 })

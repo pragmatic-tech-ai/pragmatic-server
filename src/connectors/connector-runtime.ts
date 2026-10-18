@@ -66,6 +66,7 @@ export class ConnectorRuntime
     private readonly registry = new ModelRegistry()
     private readonly connectors = new Map<string, FederatedModelDataConnector>()
     private readonly prepared = new Map<string, Promise<void>>()
+    private readonly refreshing = new Map<string, Promise<RefreshModelOutcome>>()
 
     public constructor(models: readonly ConnectorModel[], services: IServiceProvider)
     {
@@ -140,7 +141,8 @@ export class ConnectorRuntime
         }
     }
 
-    /** Re-pulls one model's data in place (adapters reused, never evicted). An unprepared model is simply prepared. Surfaces dropped-pending-op diagnostics. */
+    /** Re-pulls one model's data in place (adapters reused, never evicted). An unprepared model is simply prepared. Surfaces dropped-pending-op diagnostics.
+     *  Concurrent refreshes of one model share a single in-flight pull. Refresh is authoritative over un-flushed edits: a surviving pending/retained-failed write re-flushes the REFRESHED upstream values, and a pending op whose row vanished is dropped with a `connector.refresh-dropped` diagnostic. */
     public async RefreshModel(modelId: string): Promise<RefreshModelOutcome>
     {
         if (!this.prepared.has(modelId))
@@ -148,6 +150,25 @@ export class ConnectorRuntime
             await this.PrepareModel(modelId)
             return { Diagnostics: [] }
         }
+        const inFlight = this.refreshing.get(modelId)
+        if (inFlight !== undefined)
+        {
+            return inFlight
+        }
+        const refresh = this.RefreshPrepared(modelId)
+        this.refreshing.set(modelId, refresh)
+        try
+        {
+            return await refresh
+        }
+        finally
+        {
+            this.refreshing.delete(modelId)
+        }
+    }
+
+    private async RefreshPrepared(modelId: string): Promise<RefreshModelOutcome>
+    {
         const model = this.models.get(modelId)
         if (model === undefined)
         {
