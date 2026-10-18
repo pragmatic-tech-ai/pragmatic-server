@@ -37,7 +37,7 @@ export class ConnectorPageReader
      *  rows are field-masked; successive keyset slices are fetched until the page is full, the source is exhausted, or
      *  MaxSlicesPerPage is hit (the ONLY case that returns a short page that still carries a cursor). The cursor resumes after
      *  the last RAW key consumed, so filtered rows are never re-scanned, duplicated or skipped. A principal digest (passed only
-     *  when identity is wired) is folded into the fingerprint so a cursor is bound to its principal. */
+     *  when the authorization is identity-backed) is folded into the fingerprint so a cursor is bound to its principal. */
     public async ReadPage(modelId: string, concept: string, params: PageParams, limits: PagingLimits, authz?: IConnectorReadAuthorization, principalDigest?: string): Promise<Page<EntityDto>>
     {
         const plan = this.runtime.PlanOf(modelId)
@@ -80,6 +80,7 @@ export class ConnectorPageReader
                 if (items.length >= page.Size && i < slice.Records.length - 1)
                 {
                     // Page filled mid-slice: resume after the last raw row actually consumed.
+                    // Unreachable invariant guard: the filling row was just pushed, so NodeFor minted a node, which requires a non-null id.
                     // A null key here violates the keyset invariant; falling back to the slice's NextAfter would silently skip rows, so fail loud.
                     const resume = ConnectorPageReader.KeyOf(record, binding)
                     if (resume === undefined || resume === null)
