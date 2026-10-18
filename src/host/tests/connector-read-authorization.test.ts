@@ -56,3 +56,11 @@ test('Digest differs for the same role on different resources and is stable for 
     assert.notEqual(ConnectorPrincipalDigest.Of(on(['a', 'b'])), ConnectorPrincipalDigest.Of(on(['a,b'])))
     assert.equal(ConnectorPrincipalDigest.Of(on(['a'])), ConnectorPrincipalDigest.Of(on(['a'])))
 })
+
+test('Digest differs for otherwise-identical grants that differ only by Subject', () =>
+{
+    const tenant = new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
+    const principal = new Principal('p1', 't1', PrincipalKind.User, new Map(), [])
+    const by = (subject: string): AccessContext => new AccessContext(principal, tenant, [new Grant(subject, Role.Owner, new ResourceRef(ResourceKind.Tenant, 't1', []))], new ResourceAuthorizationPolicy())
+    assert.notEqual(ConnectorPrincipalDigest.Of(by('p1')), ConnectorPrincipalDigest.Of(by('group:admins')))
+})

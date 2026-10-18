@@ -32,10 +32,10 @@ export class ConnectorReadAuthorizations
  *  Claims and credentials are deliberately excluded: only identifiers the evaluator keys on are used. */
 export class ConnectorPrincipalDigest
 {
-    /** Per-grant tuple [role, resource kind, resource tenant, resource path]; JSON-encoded so no delimiter in an id can alias two grants. */
+    /** Per-grant tuple [subject, role, resource kind, resource tenant, resource path]; JSON-encoded so no delimiter in an id can alias two grants. */
     private static GrantKey(grant: AccessContext['Grants'][number]): string
     {
-        return JSON.stringify([String(grant.Role), String(grant.Resource.Kind), grant.Resource.TenantId, [...grant.Resource.Path]])
+        return JSON.stringify([grant.Subject, String(grant.Role), String(grant.Resource.Kind), grant.Resource.TenantId, [...grant.Resource.Path]])
     }
 
     public static Of(context: AccessContext): string
