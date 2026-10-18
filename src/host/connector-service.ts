@@ -1,10 +1,13 @@
 import type { ConnectorRuntime } from '../connectors/connector-runtime.js'
-import type { ConnectorModelDto, ConnectorWriteBackParams, EntityDto, FlushOutcomeDto, Page, PageParams, ConnectionProbeDto, ConnectorRefreshOutcomeDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { ConnectorModelDto, ConnectorWriteBackParams, ConnectorPagedWriteParams, ConnectorPagedWriteResultDto, EntityDto, FlushOutcomeDto, Page, PageParams, ConnectionProbeDto, ConnectorRefreshOutcomeDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { PagingLimits } from '../config/paging-limits.js'
 import { PageFingerprint, PageRequest } from './paging/page-request.js'
 import { WireScalar } from './wire-scalar.js'
 import { EntityDtoMapper } from './entity-dto-mapper.js'
 import { ConnectorPageReader } from '../connectors/connector-page-reader.js'
+import { ConnectorHydrateWriter } from './connector-hydrate-writer.js'
+import type { IHydrateAuthorization } from './connector-hydrate-writer.js'
+import type { IWriteTargetSource } from './write-target-source.js'
 
 /** Per-connection façade over the 6A ConnectorRuntime: lazily holds one runtime (rebuilt on Invalidate, i.e.
  *  connector/refresh or solution/open) and maps engine info shapes to camelCase wire DTOs. Carries names,
@@ -15,10 +18,14 @@ export class ConnectorService
 
     private readonly runtimeFactory: () => Promise<ConnectorRuntime>
     private runtimePromise: Promise<ConnectorRuntime> | undefined
+    private readonly authorizationFor: ((target: IWriteTargetSource) => IHydrateAuthorization) | undefined
 
-    public constructor(runtimeFactory: () => Promise<ConnectorRuntime>)
+    /** authorizationFor (optional) builds the identity authorizer+gate over the KEYED write-target source; absent => allow-all
+     *  (the per-method policy gate still guards connector/writePaged). */
+    public constructor(runtimeFactory: () => Promise<ConnectorRuntime>, authorizationFor?: (target: IWriteTargetSource) => IHydrateAuthorization)
     {
         this.runtimeFactory = runtimeFactory
+        this.authorizationFor = authorizationFor
     }
 
     /** Evicts (targeted, per spec) this connection's connector adapters from the process-wide catalog so the next
@@ -100,6 +107,15 @@ export class ConnectorService
     {
         const runtime = await this.Runtime()
         return new ConnectorPageReader(runtime).ReadPage(modelId, concept, params, limits)
+    }
+
+    /** Hydrate-on-write: edits paged entities by id+fields, reconstructing each write target with one keyed read. Never prepares the model. */
+    public async WritePaged(params: ConnectorPagedWriteParams): Promise<ConnectorPagedWriteResultDto>
+    {
+        const runtime = await this.Runtime()
+        const plan = runtime.PlanOf(params.modelId)
+        const authorization = this.authorizationFor === undefined ? ConnectorHydrateWriter.AllowAll() : this.authorizationFor(ConnectorHydrateWriter.KeyedTarget(plan, runtime))
+        return new ConnectorHydrateWriter(plan, runtime, authorization).Apply(params)
     }
 
     public async WriteBack(params: ConnectorWriteBackParams): Promise<FlushOutcomeDto>

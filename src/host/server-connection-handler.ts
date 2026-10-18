@@ -355,6 +355,7 @@ export class ServerConnectionHandler
         this.guarded(ConnectorProtocol.Read, p => this.connectorService.Read(p.modelId, p.concept, p, this.paging))
         this.guarded(ConnectorProtocol.ReadPage, p => this.connectorService.ReadPage(p.modelId, p.concept, p, this.paging))
         this.guarded(ConnectorProtocol.RefreshModel, p => this.connectorService.RefreshModel(p.modelId))
+        this.guarded(ConnectorProtocol.WritePaged, p => this.connectorService.WritePaged(p))
         this.guarded(ConnectorProtocol.WriteBack, p => this.connectorService.WriteBack(p))
         this.guarded(ConnectorProtocol.Test, p => this.connectorService.Test(p.modelId, p.connectorName))
     }

@@ -112,6 +112,7 @@ export class PolicyGate
             [ConnectorProtocol.Read.method, readConnector],
             [ConnectorProtocol.ReadPage.method, readConnector],
             [ConnectorProtocol.WriteBack.method, writeConnector],
+            [ConnectorProtocol.WritePaged.method, writeConnector],
             [ConnectorProtocol.Test.method, connect],
             [ConnectorProtocol.Prepare.method, connect],
             [ConnectorProtocol.Refresh.method, connect],

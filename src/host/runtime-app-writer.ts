@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { WriteOperationKind, DataSourceKind, WriteFailureKind, WriteAtomicity } from '@pragmatic-tech-ai/todl'
+import { WriteOperationKind, DataSourceKind, WriteAtomicity } from '@pragmatic-tech-ai/todl'
 import type { ModelConnectorPlan, ConnectorBinding, ConnectorSpec, WriteBatch, WriteOperation, WriteResult, WriteFailure, ExternalFieldValue, DataSourceAdapterCatalog, IInstanceView, Scalar } from '@pragmatic-tech-ai/todl'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import { PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
 import { AppWriteOpKind, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AppWriteOpDto, AppWriteOpResultDto, AppWriteResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { AppWriteStatuses } from './app-write-status.js'
 import { ConnectorWrites } from './connector-writes.js'
 import type { IConceptType } from './runtime-write-payload-validator.js'
 import { RuntimeWritePayloadValidator } from './runtime-write-payload-validator.js'
@@ -273,21 +274,6 @@ export class RuntimeAppWriter
         return group
     }
 
-    /** Maps a typed {@link WriteFailure.Kind} to the wire status, de-conflating a driver error from a version
-     *  conflict: a real conflict stays Conflict, a driver Error becomes Failed, an Unsupported batch becomes Invalid. */
-    private static AppWriteStatusOf(kind: WriteFailureKind): AppWriteStatus
-    {
-        switch (kind)
-        {
-            case WriteFailureKind.Conflict:
-                return AppWriteStatus.Conflict
-            case WriteFailureKind.Error:
-                return AppWriteStatus.Failed
-            case WriteFailureKind.Unsupported:
-                return AppWriteStatus.Invalid
-        }
-    }
-
     private async ApplyGroup(group: WriteGroup, results: (AppWriteOpResultDto | undefined)[]): Promise<void>
     {
         const batch: WriteBatch = { Source: group.binding.Source, IdKey: group.binding.IdKey, Operations: group.items.map(i => i.operation), Concurrency: group.binding.Concurrency, Atomicity: group.binding.Atomicity, VersionField: group.binding.VersionField }
@@ -317,7 +303,7 @@ export class RuntimeAppWriter
             const failure = failures.get(String(item.key))
             if (failure !== undefined)
             {
-                results[item.index] = { status: RuntimeAppWriter.AppWriteStatusOf(failure.Kind), id: String(item.key), reason: failure.Reason.length > 0 ? failure.Reason : RuntimeAppWriter.DefaultRefusal }
+                results[item.index] = { status: AppWriteStatuses.Of(failure.Kind), id: String(item.key), reason: failure.Reason.length > 0 ? failure.Reason : RuntimeAppWriter.DefaultRefusal }
             }
             else if (rolledBack)
             {

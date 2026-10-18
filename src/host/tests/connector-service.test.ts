@@ -6,6 +6,7 @@ import type { ConnectorSpec, IDataSourceAdapter, IDataSourceAdapterFactory, Reso
 import { SolutionConnectorPlanner } from '../../connectors/solution-connector-planner.js'
 import { ConnectorRuntime } from '../../connectors/connector-runtime.js'
 import { PagingLimits } from '../../config/paging-limits.js'
+import { AppWriteStatus, ConnectorWriteOp } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ConnectorService } from '../connector-service.js'
 
 const META = `
@@ -238,4 +239,16 @@ test('RefreshModel does not evict adapters, unlike Invalidate', async () =>
     assert.equal(catalog.DisposeCalls, 0)
     await service.Invalidate()
     assert.deepEqual([...catalog.Invalidated].sort(), ['pg'])
+})
+
+test('WritePaged applies a keyed edit through the real plan without preparing the model', async () =>
+{
+    const service = new ConnectorService(() => Promise.resolve(Harness.Runtime()))
+    const models = await service.List()
+    const binding = models[0]!.bindings[0]!
+    const res = await service.WritePaged({ modelId: models[0]!.modelId, operations: [{ op: ConnectorWriteOp.Upsert, concept: binding.concept, connector: binding.connector, source: binding.source, key: 'C1', fields: { name: 'Edited' } }] })
+    assert.equal(res.results.length, 1)
+    assert.equal(res.results[0]!.key, 'C1')
+    assert.equal(res.results[0]!.status, AppWriteStatus.Applied)
+    assert.equal(JSON.stringify(res).includes('Config'), false)
 })
