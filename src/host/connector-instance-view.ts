@@ -18,6 +18,7 @@ export class ConnectorInstanceView implements IInstanceView
         return this.binding.Concept
     }
 
+    /** Fail closed: a member NOT in binding.FieldMap is undefined, so a security rule on an unmapped member never reads a stray column or the raw member name. */
     public Field(name: string): Scalar | undefined
     {
         const column = Object.hasOwn(this.binding.FieldMap, name) ? this.binding.FieldMap[name] : undefined
