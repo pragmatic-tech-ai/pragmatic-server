@@ -1,10 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DataSourceKind, WriteConcurrency, WriteAtomicity, WriteFailureKind, WriteOperationKind } from '@pragmatic-tech-ai/todl'
+import { Cardinality, DataSourceKind, WriteConcurrency, WriteAtomicity, WriteFailureKind, WriteOperationKind } from '@pragmatic-tech-ai/todl'
 import type { ConnectorBinding, ConnectorSpec, IDataSourceAdapter, IInstanceView, ModelConnectorPlan, QueryRequest, WriteBatch, WriteResult, ExternalRecord } from '@pragmatic-tech-ai/todl'
 import { PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
 import { AppWriteStatus, ConnectorWriteOp } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ConnectorWriteOpDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { IConceptType } from '../runtime-write-payload-validator.js'
 import { ConnectorHydrateWriter } from '../connector-hydrate-writer.js'
 import type { IHydrateAuthorization } from '../connector-hydrate-writer.js'
 import { KeyedWriteTargetSource } from '../keyed-write-target-source.js'
@@ -70,6 +71,15 @@ class Opener
     }
 }
 
+/** Permissive schema stub: every member is an untyped optional scalar field (these tests exercise key/auth/concurrency, not value types; the service test covers value validation). */
+class PermissiveTypes
+{
+    public TypeOf(concept: string): IConceptType
+    {
+        return { name: concept, baseType: undefined, getField: (name: string) => ({ name, cardinality: Cardinality.Optional, fieldType: undefined }), getFields: () => [], getRelationships: () => [] }
+    }
+}
+
 class Fx
 {
     public static Binding(concept: string, connector: string, extra: Partial<ConnectorBinding> = {}): ConnectorBinding
@@ -100,7 +110,7 @@ class Fx
 
     public static Writer(w: { opener: Opener; plan: ModelConnectorPlan }, auth?: IHydrateAuthorization): ConnectorHydrateWriter
     {
-        return new ConnectorHydrateWriter(w.plan, w.opener, auth ?? ConnectorHydrateWriter.AllowAll())
+        return new ConnectorHydrateWriter(w.plan, w.opener, auth ?? ConnectorHydrateWriter.AllowAll(), new PermissiveTypes())
     }
 }
 

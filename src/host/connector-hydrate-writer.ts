@@ -74,10 +74,10 @@ export class ConnectorHydrateWriter
     private readonly plan: ModelConnectorPlan
     private readonly opener: IAdapterOpener
     private readonly authorization: IHydrateAuthorization
-    private readonly types: IConceptTypeSource | undefined
+    private readonly types: IConceptTypeSource
     private readonly validator = new RuntimeWritePayloadValidator()
 
-    public constructor(plan: ModelConnectorPlan, opener: IAdapterOpener, authorization: IHydrateAuthorization, types?: IConceptTypeSource)
+    public constructor(plan: ModelConnectorPlan, opener: IAdapterOpener, authorization: IHydrateAuthorization, types: IConceptTypeSource)
     {
         this.plan = plan
         this.opener = opener
@@ -158,7 +158,7 @@ export class ConnectorHydrateWriter
             results[index] = ConnectorHydrateWriter.Refuse(op, AppWriteStatus.Invalid, ConnectorHydrateWriter.FieldNotWritable)
             return
         }
-        if (op.op === ConnectorWriteOp.Upsert && this.types !== undefined)
+        if (op.op === ConnectorWriteOp.Upsert)
         {
             const reason = this.validator.Validate(this.types.TypeOf(op.concept), false, op.fields)
             if (reason !== undefined)
