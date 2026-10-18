@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { WriteOperationKind, DataSourceKind, WriteFailureKind } from '@pragmatic-tech-ai/todl'
+import { WriteOperationKind, DataSourceKind, WriteFailureKind, WriteAtomicity } from '@pragmatic-tech-ai/todl'
 import type { ModelConnectorPlan, ConnectorBinding, ConnectorSpec, WriteBatch, WriteOperation, WriteResult, WriteFailure, ExternalFieldValue, DataSourceAdapterCatalog, IInstanceView, Scalar } from '@pragmatic-tech-ai/todl'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
@@ -36,7 +36,8 @@ export class RuntimeAppWriter
     private static readonly IdRequired = 'id is required'
     private static readonly IdRequiredExternal = 'id is required for an external concept'
     private static readonly MissingConnector = 'connector not found for binding'
-    private static readonly DefaultConflict = 'write was refused'
+    private static readonly DefaultRefusal = 'write was refused'
+    private static readonly RolledBack = 'atomic batch rolled back'
     private static readonly DuplicateKey = 'duplicate key in batch'
     private static readonly WriteFailed = 'write failed'
     private static readonly NotProcessed = 'operation was not processed'
@@ -306,12 +307,26 @@ export class RuntimeAppWriter
             return
         }
         const failures = new Map<string, WriteFailure>(result.Failures.map(f => [String(f.Key), f]))
+        // A transactional batch that applied nothing rolled back wholesale: the adapter returns only the
+        // faulting op in Failures, so the ops ABSENT from Failures succeeded-then-rolled-back and persisted
+        // NOTHING. They must NOT be reported Applied (silent partial-commit illusion / data loss); mirror
+        // ConnectorWorkingCopy.Flush's rollback detection and report them as a retryable Failed instead.
+        const rolledBack = group.binding.Atomicity === WriteAtomicity.Transactional && result.Applied === 0 && group.items.length > 0
         for (const item of group.items)
         {
             const failure = failures.get(String(item.key))
-            results[item.index] = failure === undefined
-                ? { status: AppWriteStatus.Applied, id: String(item.key) }
-                : { status: RuntimeAppWriter.AppWriteStatusOf(failure.Kind), id: String(item.key), reason: failure.Reason.length > 0 ? failure.Reason : RuntimeAppWriter.DefaultConflict }
+            if (failure !== undefined)
+            {
+                results[item.index] = { status: RuntimeAppWriter.AppWriteStatusOf(failure.Kind), id: String(item.key), reason: failure.Reason.length > 0 ? failure.Reason : RuntimeAppWriter.DefaultRefusal }
+            }
+            else if (rolledBack)
+            {
+                results[item.index] = { status: AppWriteStatus.Failed, id: String(item.key), reason: RuntimeAppWriter.RolledBack }
+            }
+            else
+            {
+                results[item.index] = { status: AppWriteStatus.Applied, id: String(item.key) }
+            }
         }
     }
 }

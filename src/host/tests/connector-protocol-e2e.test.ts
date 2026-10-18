@@ -106,6 +106,17 @@ test('a client lists, reads (with fields), tests and writes back connectors over
     await E2e.Run()
 })
 
+/** Fixture literals for the writeBack de-conflation test, hoisted so the keys/reasons cannot drift. */
+class DeConflationFx
+{
+    public static readonly ModelId = 'm'
+    public static readonly FirstKey = 'C1'
+    public static readonly ConflictKey = 'C2'
+    public static readonly ErrorKey = 'C3'
+    public static readonly ConflictReason = 'etag mismatch'
+    public static readonly ErrorReason = 'driver blew up'
+}
+
 test('connector/writeBack surfaces a failures list with distinct kinds', async () =>
 {
     const outcome =
@@ -113,21 +124,21 @@ test('connector/writeBack surfaces a failures list with distinct kinds', async (
         Results: [{
             Applied: 1,
             Failures: [
-                { Key: 'C2', Kind: WriteFailureKind.Conflict, Reason: 'etag mismatch' },
-                { Key: 'C3', Kind: WriteFailureKind.Error, Reason: 'driver blew up' },
+                { Key: DeConflationFx.ConflictKey, Kind: WriteFailureKind.Conflict, Reason: DeConflationFx.ConflictReason },
+                { Key: DeConflationFx.ErrorKey, Kind: WriteFailureKind.Error, Reason: DeConflationFx.ErrorReason },
             ],
         }],
         Diagnostics: [],
     }
     const runtime = { WriteBack: () => Promise.resolve(outcome) }
     const service = new ConnectorService(() => Promise.resolve(runtime as never))
-    const result = await service.WriteBack({ modelId: 'm', dirty: ['C1', 'C2', 'C3'], deleted: [] })
+    const result = await service.WriteBack({ modelId: DeConflationFx.ModelId, dirty: [DeConflationFx.FirstKey, DeConflationFx.ConflictKey, DeConflationFx.ErrorKey], deleted: [] })
     assert.equal(result.results.length, 1)
     const failures = result.results[0]!.failures
     assert.equal(failures.length, 2)
     assert.deepEqual([...failures.map(f => f.kind)].sort(), [WriteFailureKind.Conflict, WriteFailureKind.Error])
-    assert.equal(failures.find(f => f.kind === WriteFailureKind.Conflict)!.key, 'C2')
-    assert.equal(failures.find(f => f.kind === WriteFailureKind.Conflict)!.reason, 'etag mismatch')
-    assert.equal(failures.find(f => f.kind === WriteFailureKind.Error)!.key, 'C3')
-    assert.equal(failures.find(f => f.kind === WriteFailureKind.Error)!.reason, 'driver blew up')
+    assert.equal(failures.find(f => f.kind === WriteFailureKind.Conflict)!.key, DeConflationFx.ConflictKey)
+    assert.equal(failures.find(f => f.kind === WriteFailureKind.Conflict)!.reason, DeConflationFx.ConflictReason)
+    assert.equal(failures.find(f => f.kind === WriteFailureKind.Error)!.key, DeConflationFx.ErrorKey)
+    assert.equal(failures.find(f => f.kind === WriteFailureKind.Error)!.reason, DeConflationFx.ErrorReason)
 })

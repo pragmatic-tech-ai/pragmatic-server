@@ -113,6 +113,15 @@ class Fx
         } as ModelConnectorPlan
     }
 
+    public static TxnPlan(): ModelConnectorPlan
+    {
+        return {
+            Model: 'shop', Version: '1',
+            Connectors: [{ Name: 'c', Kind: DataSourceKind.Builtin, Config: {} }],
+            Bindings: [{ Concept: 'shop.Order', Connector: 'c', Source: 'orders', IdKey: 'id', FieldMap: {}, Writable: true, Concurrency: WriteConcurrency.Optimistic, Atomicity: WriteAtomicity.Transactional }],
+        } as ModelConnectorPlan
+    }
+
     public static Writer(p: ModelConnectorPlan, adapter: FakeAdapter, auth: IWriteAuthorizer): RuntimeAppWriter
     {
         const t = Fx.Type([{ name: 'title', type: 'string', card: Cardinality.One }])
@@ -214,6 +223,46 @@ test('a driver Error is reported as AppWriteStatus.Failed, a version conflict as
     assert.equal(out.results[1].status, AppWriteStatus.Conflict)
     assert.equal(out.results[2].status, AppWriteStatus.Failed)
     assert.notEqual(out.results[1].status, out.results[2].status)
+})
+
+// A transaction-capable adapter that models all-or-nothing rollback: on a Transactional batch where any
+// op faults, it applies NOTHING and returns ONLY the faulting op in Failures (the real adapter contract).
+class TransactionalRollbackAdapter
+{
+    public batches: WriteBatch[] = []
+    constructor(private readonly faultKey: string, private readonly faultKind: WriteFailureKind = WriteFailureKind.Conflict) {}
+    public get CanTransact(): boolean { return true }
+    public async Query(): Promise<readonly never[]> { return [] }
+    public async Apply(batch: WriteBatch): Promise<WriteResult>
+    {
+        this.batches.push(batch)
+        const faulting = batch.Operations.find(op => String(op.Key) === this.faultKey)
+        if (batch.Atomicity === WriteAtomicity.Transactional && faulting !== undefined)
+        {
+            // Rolled back: only the faulting op is reported; the others succeeded-then-rolled-back.
+            return { Applied: 0, Failures: [{ Key: faulting.Key, Kind: this.faultKind, Reason: 'version' }] }
+        }
+        return { Applied: batch.Operations.length, Failures: [] }
+    }
+    public async Dispose(): Promise<void> {}
+}
+
+test('a rolled-back transactional batch reports every op non-Applied (faulting op by kind, others Failed)', async () =>
+{
+    const adapter = new TransactionalRollbackAdapter('o2')
+    const t = Fx.Type([{ name: 'title', type: 'string', card: Cardinality.One }])
+    const w = new RuntimeAppWriter(Fx.TxnPlan(), Fx.Graph(t) as never, new FakeCatalog(adapter as never) as never, {} as never, new AllowAll(), new RuntimeWritePayloadValidator(), AllowAllWriteInstanceGate.Instance)
+    const out = await w.Apply([
+        { op: AppWriteOpKind.Update, concept: 'shop.Order', id: 'o1', fields: { title: 'a' } },
+        { op: AppWriteOpKind.Update, concept: 'shop.Order', id: 'o2', fields: { title: 'b' } },
+        { op: AppWriteOpKind.Update, concept: 'shop.Order', id: 'o3', fields: { title: 'c' } },
+    ])
+    // o2 faulted (Conflict). o1 and o3 are ABSENT from Failures but nothing persisted, so they must NOT be
+    // Applied -- the whole atomic group is non-Applied: the faulting op by its kind, the others Failed.
+    assert.equal(out.results[1].status, AppWriteStatus.Conflict)
+    assert.equal(out.results[0].status, AppWriteStatus.Failed)
+    assert.equal(out.results[2].status, AppWriteStatus.Failed)
+    assert.ok(out.results.every(r => r.status !== AppWriteStatus.Applied))
 })
 
 test('interleaved ops across two bindings land in input order', async () =>
