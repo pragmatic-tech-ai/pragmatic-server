@@ -6,6 +6,7 @@ import type { PagingLimits } from '../config/paging-limits.js'
 import { EntityDtoMapper } from '../host/entity-dto-mapper.js'
 import { KeysetPage } from '../host/paging/keyset-page.js'
 import { PageFingerprint } from '../host/paging/page-request.js'
+import { ConnectorBindingResolver } from './connector-binding-resolver.js'
 import type { ConnectorRuntime } from './connector-runtime.js'
 
 /** Serves one keyset page of ONE connector binding straight from its adapter. It reads the model plan only: it never
@@ -62,11 +63,9 @@ export class ConnectorPageReader
         return bindings[0]!
     }
 
-    /** Links by the qualified ConnectorId when present, else the bare Connector name (same rule as the engine's ConnectorLookup). */
     private static SpecOf(plan: ModelConnectorPlan, binding: ConnectorBinding): ConnectorSpec
     {
-        const key = binding.ConnectorId ?? binding.Connector
-        const spec = plan.Connectors.find(c => (c.Id ?? c.Name) === key)
+        const spec = ConnectorBindingResolver.SpecOf(plan, binding)
         if (spec === undefined)
         {
             throw new ResponseError(ErrorCodes.InvalidRequest, `${ConnectorPageReader.UnknownConnectorPrefix}${binding.Concept}`)

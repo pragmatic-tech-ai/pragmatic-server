@@ -1,5 +1,7 @@
 import { QueryCompareOp } from '@pragmatic-tech-ai/todl'
-import type { ConnectorBinding, ConnectorSpec, IDataSourceAdapter, IInstanceView, ModelConnectorPlan, Scalar } from '@pragmatic-tech-ai/todl'
+import type { ConnectorSpec, IDataSourceAdapter, IInstanceView, ModelConnectorPlan } from '@pragmatic-tech-ai/todl'
+import { ConnectorBindingResolver } from '../connectors/connector-binding-resolver.js'
+import { ConnectorInstanceView } from './connector-instance-view.js'
 import type { IWriteTargetSource } from './write-target-source.js'
 
 /** Opens the adapter of ONE connector spec (satisfied by ConnectorRuntime). */
@@ -30,7 +32,7 @@ export class KeyedWriteTargetSource implements IWriteTargetSource
             return undefined
         }
         const binding = bindings[0]!
-        const spec = KeyedWriteTargetSource.SpecOf(this.plan, binding)
+        const spec = ConnectorBindingResolver.SpecOf(this.plan, binding)
         if (spec === undefined)
         {
             return undefined
@@ -42,14 +44,6 @@ export class KeyedWriteTargetSource implements IWriteTargetSource
         {
             return undefined
         }
-        const row = rows[0]!
-        return { Concept: concept, Field: name => (row[binding.FieldMap[name] ?? name] ?? undefined) as Scalar | undefined }
-    }
-
-    /** Links by the qualified ConnectorId when present, else the bare Connector name (same rule as the engine's ConnectorLookup). */
-    public static SpecOf(plan: ModelConnectorPlan, binding: ConnectorBinding): ConnectorSpec | undefined
-    {
-        const key = binding.ConnectorId ?? binding.Connector
-        return plan.Connectors.find(c => (c.Id ?? c.Name) === key)
+        return new ConnectorInstanceView(binding, rows[0]!)
     }
 }

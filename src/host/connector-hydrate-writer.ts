@@ -5,6 +5,7 @@ import { AppWriteStatus, ConnectorWriteOp } from '@pragmatic-tech-ai/pragmatic-p
 import type { ConnectorPagedWriteParams, ConnectorPagedWriteResultDto, ConnectorWriteOpDto, ConnectorWriteOpResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { AppWriteStatuses } from './app-write-status.js'
 import { ConnectorWrites } from './connector-writes.js'
+import { ConnectorBindingResolver } from '../connectors/connector-binding-resolver.js'
 import { KeyedWriteTargetSource } from './keyed-write-target-source.js'
 import type { IAdapterOpener } from './keyed-write-target-source.js'
 import type { IConceptType } from './runtime-write-payload-validator.js'
@@ -135,7 +136,7 @@ export class ConnectorHydrateWriter
             results[index] = ConnectorHydrateWriter.Refuse(op, AppWriteStatus.Invalid, ConnectorHydrateWriter.UnknownOperation)
             return
         }
-        const spec = KeyedWriteTargetSource.SpecOf(this.plan, binding)
+        const spec = ConnectorBindingResolver.SpecOf(this.plan, binding)
         if (spec === undefined)
         {
             results[index] = ConnectorHydrateWriter.Refuse(op, AppWriteStatus.Invalid, ConnectorHydrateWriter.MissingConnector)
