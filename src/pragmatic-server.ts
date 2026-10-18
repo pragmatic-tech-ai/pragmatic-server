@@ -51,10 +51,12 @@ import { FilteredReadWriteTargetSource } from './host/filtered-read-write-target
 import { RuntimeAppWriter } from './host/runtime-app-writer.js'
 import { RuntimeWritePayloadValidator } from './host/runtime-write-payload-validator.js'
 import type { AppWriteOpDto, AppWriteResultDto, ShareParams, ShareResultDto, UnshareParams, UnshareResultDto, ListSharesParams, ListSharesResultDto, AssignParams, AssignResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { ResponseError, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ShareService } from './host/sharing/share-service.js'
 import { AssignService } from './host/sharing/assign-service.js'
 import { AccessPolicySetting } from './host/apps/access-policy-setting.js'
 import { FilteredGraphQuery } from './host/cypher/filtered-graph-query.js'
+import { ModelShardGraph } from './host/cypher/model-shard-graph.js'
 import { GraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
@@ -147,6 +149,7 @@ export class PragmaticServer
     private static readonly NoModelViewForConnectors = 'Active solution produced no model view'
 
     private static readonly GraphModelVersion = '0.0.0'
+    private static readonly ModelNotFoundMessage = 'invalid params: model not found'
 
     private readonly root: LazyCompositionRoot
     private readonly options: PragmaticServerOptions
@@ -689,6 +692,42 @@ export class PragmaticServer
         const depthSource = await this.DepthFilterSource()
         this.graphCache ??= new TenantGraphCache(() => this.CollectGraphSources(), depthSource)
         return await this.graphCache.GraphFor(context)
+    }
+
+    /**
+     * The queryable graph for ONE model shard of the active solution, RBAC-filtered and field-masked exactly like the
+     * tenant-wide graph. An unknown model id and a shard the principal may not see raise the SAME InvalidParams error, so
+     * existence is not leaked.
+     */
+    public async ModelGraph(context: AccessContext, modelId: string): Promise<IGraphQuery>
+    {
+        let owner: TenantRepository | undefined
+        for (const source of await this.CollectGraphSources())
+        {
+            if (ModelShardGraph.Contains(source.repo, modelId))
+            {
+                owner = source
+                break
+            }
+        }
+        if (owner === undefined)
+        {
+            throw new ResponseError(ErrorCodes.InvalidParams, PragmaticServer.ModelNotFoundMessage)
+        }
+        const base = await ModelShardGraph.Build(owner.repo, modelId)
+        const predicate = IdentityEnforcement.ForRepository(owner.repo, context, Action.Read).InstanceFilter()
+        const depth = await (await this.DepthFilterSource()).ReadFilterFor(context)
+        const filtered = new FilteredGraphQuery(base, new CompositeInstanceFilter([predicate, depth]))
+        if (!ModelShardGraph.IsVisible(base, filtered))
+        {
+            throw new ResponseError(ErrorCodes.InvalidParams, PragmaticServer.ModelNotFoundMessage)
+        }
+        if (this.identity === undefined)
+        {
+            return filtered
+        }
+        const mask = await (await this.ReadAuthorization()).FieldReadMaskFor(context)
+        return mask === AllowAllFieldReadMask.Instance ? filtered : new FieldMaskedGraphQuery(filtered, mask)
     }
 
     private async CollectGraphSources(): Promise<readonly TenantRepository[]>

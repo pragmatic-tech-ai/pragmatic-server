@@ -21,6 +21,7 @@ import { RateLimitGuard } from './rate-limit-guard.js'
 import { RateLimitScope } from './rate-limiter.js'
 import { ConnectorService } from './connector-service.js'
 import type { IConnectorReadAuthorization } from './connector-read-authorization.js'
+import { ConnectorPrincipalDigest } from './connector-read-authorization.js'
 import type { IHydrateAuthorization } from './connector-hydrate-writer.js'
 import type { IWriteTargetSource } from './write-target-source.js'
 import type { ConnectorRuntime } from '../connectors/connector-runtime.js'
@@ -71,6 +72,10 @@ export class ServerConnectionHandler
     private static readonly CypherField = 'cypher'
     private static readonly CypherTimeoutMessage = 'cypher query timed out'
     private static readonly CypherFingerprintTag = 'cypher'
+    private static readonly ModelScopeFingerprintTag = 'model'
+    private static readonly ModelIdField = 'modelId'
+    private static readonly RuntimeModelScopeMessage = 'invalid params: model-scoped query not available on a runtime tenant'
+    private static readonly ModelScopeUnavailableMessage = 'invalid params: model-scoped query not available'
     private static readonly ModelViewFingerprintTag = 'modelView'
     private static readonly NotRuntimeMessage = 'operation requires a runtime tenant'
     private static readonly NotDevelopmentMessage = 'operation requires a development tenant'
@@ -97,6 +102,8 @@ export class ServerConnectionHandler
     private readonly paging: PagingLimits
     private readonly fieldMasks: IFieldReadMaskSource
     private readonly purpose: TenantPurpose
+    private readonly modelGraphProvider: ((context: AccessContext, modelId: string) => Promise<IGraphQuery>) | undefined
+    private readonly connectorReadAuthorization: ((context: AccessContext) => Promise<IConnectorReadAuthorization>) | undefined
     private readonly applications: PragmaticAppsRegistry | undefined
     private readonly appGraphProvider: ((context: AccessContext, name: string, labels: ReferencedLabelSet) => Promise<IGraphQuery>) | undefined
     private readonly appWriteProvider: ((context: AccessContext, name: string, operations: readonly AppWriteOpDto[]) => Promise<AppWriteResultDto>) | undefined
@@ -108,12 +115,14 @@ export class ServerConnectionHandler
     private inFlight = 0
     private draining = false
 
-    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, graphProvider: (context: AccessContext) => Promise<IGraphQuery>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: TenantPurpose = TenantPurpose.Development, applications?: PragmaticAppsRegistry, appGraphProvider?: (context: AccessContext, name: string, labels: ReferencedLabelSet) => Promise<IGraphQuery>, appWriteProvider?: (context: AccessContext, name: string, operations: readonly AppWriteOpDto[]) => Promise<AppWriteResultDto>, shareProvider?: (context: AccessContext, name: string, params: ShareParams) => Promise<ShareResultDto>, unshareProvider?: (context: AccessContext, name: string, params: UnshareParams) => Promise<UnshareResultDto>, listSharesProvider?: (context: AccessContext, name: string, params: ListSharesParams) => Promise<ListSharesResultDto>, assignProvider?: (context: AccessContext, name: string, params: AssignParams) => Promise<AssignResultDto>, paging?: PagingLimits, fieldMasks?: IFieldReadMaskSource, connectorReadAuthorization?: (context: AccessContext) => Promise<IConnectorReadAuthorization>, connectorWriteAuthorization?: (context: AccessContext, target: IWriteTargetSource) => Promise<IHydrateAuthorization>)
+    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, graphProvider: (context: AccessContext) => Promise<IGraphQuery>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: TenantPurpose = TenantPurpose.Development, applications?: PragmaticAppsRegistry, appGraphProvider?: (context: AccessContext, name: string, labels: ReferencedLabelSet) => Promise<IGraphQuery>, appWriteProvider?: (context: AccessContext, name: string, operations: readonly AppWriteOpDto[]) => Promise<AppWriteResultDto>, shareProvider?: (context: AccessContext, name: string, params: ShareParams) => Promise<ShareResultDto>, unshareProvider?: (context: AccessContext, name: string, params: UnshareParams) => Promise<UnshareResultDto>, listSharesProvider?: (context: AccessContext, name: string, params: ListSharesParams) => Promise<ListSharesResultDto>, assignProvider?: (context: AccessContext, name: string, params: AssignParams) => Promise<AssignResultDto>, paging?: PagingLimits, fieldMasks?: IFieldReadMaskSource, connectorReadAuthorization?: (context: AccessContext) => Promise<IConnectorReadAuthorization>, connectorWriteAuthorization?: (context: AccessContext, target: IWriteTargetSource) => Promise<IHydrateAuthorization>, modelGraphProvider?: (context: AccessContext, modelId: string) => Promise<IGraphQuery>)
     {
         this.cypherLimits = cypherLimits ?? new CypherLimits()
         this.paging = paging ?? new PagingLimits()
         this.fieldMasks = fieldMasks ?? AllowAllFieldReadMaskSource.Instance
         this.purpose = purpose
+        this.modelGraphProvider = modelGraphProvider
+        this.connectorReadAuthorization = connectorReadAuthorization
         this.applications = applications
         this.appGraphProvider = appGraphProvider
         this.appWriteProvider = appWriteProvider
@@ -191,10 +200,10 @@ export class ServerConnectionHandler
         return { applications: server.Applications(), appGraphProvider: (context, name, labels) => server.GraphForPragmaticApp(context, name, labels), appWriteProvider: (context, name, operations) => server.WriteForPragmaticApp(context, name, operations), shareProvider: (context, name, params) => server.ShareForPragmaticApp(context, name, params), unshareProvider: (context, name, params) => server.UnshareForPragmaticApp(context, name, params), listSharesProvider: (context, name, params) => server.ListSharesForPragmaticApp(context, name, params), assignProvider: (context, name, params) => server.AssignForPragmaticApp(context, name, params) }
     }
 
-    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, graphProvider: (context: AccessContext) => Promise<IGraphQuery>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: TenantPurpose = TenantPurpose.Development, applications?: PragmaticAppsRegistry, appGraphProvider?: (context: AccessContext, name: string, labels: ReferencedLabelSet) => Promise<IGraphQuery>, appWriteProvider?: (context: AccessContext, name: string, operations: readonly AppWriteOpDto[]) => Promise<AppWriteResultDto>, shareProvider?: (context: AccessContext, name: string, params: ShareParams) => Promise<ShareResultDto>, unshareProvider?: (context: AccessContext, name: string, params: UnshareParams) => Promise<UnshareResultDto>, listSharesProvider?: (context: AccessContext, name: string, params: ListSharesParams) => Promise<ListSharesResultDto>, assignProvider?: (context: AccessContext, name: string, params: AssignParams) => Promise<AssignResultDto>, paging?: PagingLimits, fieldMasks?: IFieldReadMaskSource, connectorReadAuthorization?: (context: AccessContext) => Promise<IConnectorReadAuthorization>, connectorWriteAuthorization?: (context: AccessContext, target: IWriteTargetSource) => Promise<IHydrateAuthorization>): ServerConnectionHandler
+    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, graphProvider: (context: AccessContext) => Promise<IGraphQuery>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: TenantPurpose = TenantPurpose.Development, applications?: PragmaticAppsRegistry, appGraphProvider?: (context: AccessContext, name: string, labels: ReferencedLabelSet) => Promise<IGraphQuery>, appWriteProvider?: (context: AccessContext, name: string, operations: readonly AppWriteOpDto[]) => Promise<AppWriteResultDto>, shareProvider?: (context: AccessContext, name: string, params: ShareParams) => Promise<ShareResultDto>, unshareProvider?: (context: AccessContext, name: string, params: UnshareParams) => Promise<UnshareResultDto>, listSharesProvider?: (context: AccessContext, name: string, params: ListSharesParams) => Promise<ListSharesResultDto>, assignProvider?: (context: AccessContext, name: string, params: AssignParams) => Promise<AssignResultDto>, paging?: PagingLimits, fieldMasks?: IFieldReadMaskSource, connectorReadAuthorization?: (context: AccessContext) => Promise<IConnectorReadAuthorization>, connectorWriteAuthorization?: (context: AccessContext, target: IWriteTargetSource) => Promise<IHydrateAuthorization>, modelGraphProvider?: (context: AccessContext, modelId: string) => Promise<IGraphQuery>): ServerConnectionHandler
     {
         const connection = createMessageConnection(new WebSocketMessageReader(socket), new WebSocketMessageWriter(socket), NullLogger)
-        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectorsFactory, graphProvider, instrumentation, parent, audit, rateLimit, admin, cypherLimits, purpose, applications, appGraphProvider, appWriteProvider, shareProvider, unshareProvider, listSharesProvider, assignProvider, paging, fieldMasks, connectorReadAuthorization, connectorWriteAuthorization)
+        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectorsFactory, graphProvider, instrumentation, parent, audit, rateLimit, admin, cypherLimits, purpose, applications, appGraphProvider, appWriteProvider, shareProvider, unshareProvider, listSharesProvider, assignProvider, paging, fieldMasks, connectorReadAuthorization, connectorWriteAuthorization, modelGraphProvider)
         connection.listen()
         return handler
     }
@@ -453,13 +462,29 @@ export class ServerConnectionHandler
             }
             throw error
         }
+        const modelId = params.modelId === undefined ? undefined : this.RequireNonEmptyString(params.modelId, ServerConnectionHandler.ModelIdField)
+        if (modelId !== undefined && this.purpose === TenantPurpose.Runtime)
+        {
+            throw new ResponseError(ErrorCodes.InvalidParams, ServerConnectionHandler.RuntimeModelScopeMessage)
+        }
         const graph = this.purpose === TenantPurpose.Runtime
             ? await this.RequireBoundAppGraph(Cypher.ReferencedLabels.Of(source))
-            : await this.graphProvider(this.accessContext)
+            : modelId === undefined
+                ? await this.graphProvider(this.accessContext)
+                : await this.RequireModelGraph(modelId)
         // read the revision only once the graph is in hand: acquiring it may itself commit the first build, so
         // reading GraphRevision before the fetch would fingerprint page 1 against the pre-build revision and
         // page 2 would then always be rejected as stale
-        const fingerprint = PageFingerprint.Of(ServerConnectionHandler.CypherFingerprintTag, source, CypherParamConverter.Canonical(params.parameters), String(this.languageService.GraphRevision))
+        const parts = [ServerConnectionHandler.CypherFingerprintTag, source, CypherParamConverter.Canonical(params.parameters), String(this.languageService.GraphRevision)]
+        if (modelId !== undefined)
+        {
+            parts.push(ServerConnectionHandler.ModelScopeFingerprintTag, modelId)
+            if (await this.IdentityBacked())
+            {
+                parts.push(ConnectorPrincipalDigest.Of(this.accessContext))
+            }
+        }
+        const fingerprint = PageFingerprint.Of(...parts)
         const page = PageRequest.Resolve(params, fingerprint, this.paging, this.cypherLimits.RowCap)
         try
         {
@@ -479,6 +504,21 @@ export class ServerConnectionHandler
             }
             throw error
         }
+    }
+
+    private async RequireModelGraph(modelId: string): Promise<IGraphQuery>
+    {
+        if (this.modelGraphProvider === undefined)
+        {
+            throw new ResponseError(ErrorCodes.InvalidParams, ServerConnectionHandler.ModelScopeUnavailableMessage)
+        }
+        return await this.modelGraphProvider(this.accessContext, modelId)
+    }
+
+    /** True only with a real identity subsystem: the principal digest then joins the model-scoped cursor fingerprint. */
+    private async IdentityBacked(): Promise<boolean>
+    {
+        return this.connectorReadAuthorization !== undefined && (await this.connectorReadAuthorization(this.accessContext)).IdentityBacked
     }
 
     private RegisterApplicationHandlers(): void
