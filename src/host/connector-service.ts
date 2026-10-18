@@ -19,15 +19,16 @@ import type { IConnectorReadAuthorization } from './connector-read-authorization
 export class ConnectorService
 {
     private static readonly ConnectorFingerprintTag = 'connector'
+    private static readonly ContextRequired = 'connector write authorization requires an access context'
 
     private readonly runtimeFactory: () => Promise<ConnectorRuntime>
     private runtimePromise: Promise<ConnectorRuntime> | undefined
-    private readonly authorizationFor: ((target: IWriteTargetSource) => IHydrateAuthorization) | undefined
+    private readonly authorizationFor: ((context: AccessContext, target: IWriteTargetSource) => Promise<IHydrateAuthorization>) | undefined
     private readonly readAuthorizationFor: ((context: AccessContext) => Promise<IConnectorReadAuthorization>) | undefined
 
     /** authorizationFor (optional) builds the identity authorizer+gate over the KEYED write-target source; absent => allow-all
      *  (the per-method policy gate still guards connector/writePaged). */
-    public constructor(runtimeFactory: () => Promise<ConnectorRuntime>, authorizationFor?: (target: IWriteTargetSource) => IHydrateAuthorization, readAuthorizationFor?: (context: AccessContext) => Promise<IConnectorReadAuthorization>)
+    public constructor(runtimeFactory: () => Promise<ConnectorRuntime>, authorizationFor?: (context: AccessContext, target: IWriteTargetSource) => Promise<IHydrateAuthorization>, readAuthorizationFor?: (context: AccessContext) => Promise<IConnectorReadAuthorization>)
     {
         this.runtimeFactory = runtimeFactory
         this.authorizationFor = authorizationFor
@@ -135,13 +136,17 @@ export class ConnectorService
     }
 
     /** Hydrate-on-write: edits paged entities by id+fields, reconstructing each write target with one keyed read. Never prepares the model. */
-    public async WritePaged(params: ConnectorPagedWriteParams): Promise<ConnectorPagedWriteResultDto>
+    public async WritePaged(params: ConnectorPagedWriteParams, context?: AccessContext): Promise<ConnectorPagedWriteResultDto>
     {
         const runtime = await this.Runtime()
         const plan = runtime.PlanOf(params.modelId)
-        // Keyed per-row authorization is wired-but-DORMANT: the handler builds this service without authorizationFor, so allow-all
-        // applies (parity with connector/writeBack). The per-row-identity item activates it via authorizationFor over the keyed target.
-        const authorization = this.authorizationFor === undefined ? ConnectorHydrateWriter.AllowAll() : this.authorizationFor(ConnectorHydrateWriter.KeyedTarget(plan, runtime))
+        // Keyed per-row authorization: when authorizationFor is set it builds the principal's authorizer+gate over the keyed target
+        // (one Query WHERE idKey=key per op, never a prefetch); absent => allow-all. A set factory with no context fails closed.
+        if (this.authorizationFor !== undefined && context === undefined)
+        {
+            throw new Error(ConnectorService.ContextRequired)
+        }
+        const authorization = this.authorizationFor === undefined ? ConnectorHydrateWriter.AllowAll() : await this.authorizationFor(context!, ConnectorHydrateWriter.KeyedTarget(plan, runtime))
         return new ConnectorHydrateWriter(plan, runtime, authorization, runtime.SchemaOf(params.modelId)).Apply(params)
     }
 

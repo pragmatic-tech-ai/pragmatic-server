@@ -35,13 +35,16 @@ import { PolicyConnectionResolver } from './host/policy-connection-resolver.js'
 import type { ConnectorsPolicy } from './host/connector-policy.js'
 import { Action } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
-import { IdentityEnforcement, PolicyCatalog, CompositeInstanceFilter } from '@pragmatic-tech-ai/todl-identity-engine'
+import { IdentityEnforcement, PolicyCatalog, CompositeInstanceFilter, AllowAllInstanceFilter } from '@pragmatic-tech-ai/todl-identity-engine'
 import { TenantReadAuthorization, AllowAllReadFilterSource, AllowAllFieldReadMaskSource } from './host/cypher/read-filter-source.js'
 import { FieldMaskedGraphQuery, AllowAllFieldReadMask } from './host/cypher/field-masked-graph-query.js'
 import { AllowAllWriteAuthorizerSource } from './host/cypher/read-filter-source.js'
 import type { IReadFilterSource, IWriteAuthorizerSource, IFieldReadMaskSource } from './host/cypher/read-filter-source.js'
 import { ConnectorReadAuthorizations } from './host/connector-read-authorization.js'
 import type { IConnectorReadAuthorization } from './host/connector-read-authorization.js'
+import { ConnectorHydrateWriter } from './host/connector-hydrate-writer.js'
+import type { IHydrateAuthorization } from './host/connector-hydrate-writer.js'
+import type { IWriteTargetSource } from './host/write-target-source.js'
 import { AllowAllWriteInstanceGate } from './host/cypher/write-instance-gate.js'
 import type { IWriteInstanceGate } from './host/cypher/write-instance-gate.js'
 import { FilteredReadWriteTargetSource } from './host/filtered-read-write-target-source.js'
@@ -281,6 +284,19 @@ export class PragmaticServer
             return ConnectorReadAuthorizations.AllowAll()
         }
         return ConnectorReadAuthorizations.From(await this.ReadAuthorization(), context)
+    }
+
+    /** Per-request connector write authorization over the KEYED write target: allow-all without identity, else the tenant's
+     *  depth authorizer plus the depth gate (connector rows have no per-app attribute policy, so the predicate is allow-all,
+     *  mirroring the connector read filter). */
+    public async ConnectorWriteAuthorizationFor(context: AccessContext, target: IWriteTargetSource): Promise<IHydrateAuthorization>
+    {
+        if (this.identity === undefined)
+        {
+            return ConnectorHydrateWriter.AllowAll()
+        }
+        const auth = await this.ReadAuthorization()
+        return { authorizer: await auth.WriteAuthorizerFor(context), gate: await auth.WriteInstanceGateFor(context, new AllowAllInstanceFilter(), target) }
     }
 
     private async DepthFilterSource(): Promise<IReadFilterSource>
