@@ -513,9 +513,11 @@ export class ServerConnectionHandler
         }
     }
 
+    /** `modelId` must be the round-trip-stable canonical model id (`<namespace>Model`): a non-canonical author name is renamed on first write (TODL emitter convention) and the id changes. */
     public async RunCypherExecute(params: CypherExecuteParams): Promise<CypherExecuteResultDto>
     {
         this.EnsureDevelopment()
+        params ??= {} as CypherExecuteParams
         const source = this.RequireNonEmptyString(params?.cypher, ServerConnectionHandler.CypherField)
         let parameters: ReadonlyMap<string, Cypher.ParameterValue>
         try

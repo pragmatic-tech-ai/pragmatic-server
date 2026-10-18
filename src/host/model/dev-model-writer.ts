@@ -48,6 +48,18 @@ export interface DevModelPrepared
     graph: Cypher.ICypherGraph
 }
 
+/** Thrown by Prepare when the member's own sources hold schema (concepts etc.) beside instances: a write would not round-trip it. */
+export class DevModelSchemaColocatedError extends Error
+{
+    public static readonly Message = 'model schema is co-located with instances; writes require the schema in a base project'
+
+    constructor()
+    {
+        super(DevModelSchemaColocatedError.Message)
+        this.name = 'DevModelSchemaColocatedError'
+    }
+}
+
 /** Thrown when persisting fails; any partially written files have been restored. */
 export class DevModelWriteFailedError extends Error
 {
@@ -81,6 +93,10 @@ export class DevModelWriter
         const resolved = await this.languageService.ResolveBasesFor(member.Storage)
         const bases = checkAgainst(resolved.bases, []).model
         const draft = ModelDraft.fromSources([bases], sources, { namespace: identity.namespace })
+        if (draft.toJSON().nodes.some(n => n.metaKind !== null))
+        {
+            throw new DevModelSchemaColocatedError()
+        }
         const bake = (d: ModelDraft): Cypher.ICypherGraph =>
             new Cypher.GraphQueryAdapter(mask.Apply(ModelDraftBaker.BakeQuery(d, { model: identity.model, version: identity.version }), d.model))
         const writer = new ModelDraftWriter(draft, new SnowflakeIdGenerator(), bake)

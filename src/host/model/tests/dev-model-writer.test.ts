@@ -1,6 +1,7 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 import type { IStorage, StorageEntry } from '@pragmatic-tech-ai/todl-runtime'
+import { checkAgainst, toJSON } from '@pragmatic-tech-ai/todl'
 import type { TodlDocument } from '@pragmatic-tech-ai/todl'
 import { DevModelWriter, DevModelWriteFailedError, type IDevLanguageService } from '../dev-model-writer.js'
 import { TodlSourceCollector } from '../todl-source-collector.js'
@@ -51,7 +52,7 @@ class FakeLanguageService implements IDevLanguageService
 {
     public GraphRevision = 1
     public readonly Changes: string[] = []
-    public async ResolveBasesFor(): Promise<{ bases: TodlDocument[] }> { return { bases: [] } }
+    public async ResolveBasesFor(): Promise<{ bases: TodlDocument[] }> { return { bases: [toJSON(checkAgainst([], [{ uri: 'schema.todl', text: Fixture.Schema }]).model)] } }
     public DidChange(uri: string): void { this.Changes.push(uri); this.GraphRevision += 1 }
     public async WhenIdle(): Promise<void> {}
 }
@@ -60,6 +61,7 @@ class Fixture
 {
     public static readonly Schema = 'namespace shop {\n  concept Customer { name : string?; }\n}\n'
     public static readonly Model = 'namespace shop {\n  model M : shop {\n    Customer c1 { name = "Ada"; }\n  }\n}\n'
+    public static readonly Other = 'namespace shop {' + String.fromCharCode(10) + '  model N : shop {' + String.fromCharCode(10) + '    Customer c2 { name = "Bo"; }' + String.fromCharCode(10) + '  }' + String.fromCharCode(10) + '}' + String.fromCharCode(10)
     public static readonly Padding = '\n\n\n'
     public readonly Storage = new MemoryStorage()
     public readonly Lang = new FakeLanguageService()
@@ -69,7 +71,6 @@ class Fixture
 
     constructor()
     {
-        this.Storage.Files.set('schema.todl', Fixture.Schema)
         this.Storage.Files.set('model.todl', Fixture.Model)
         this.Storage.Files.set('dist/skip.todl', 'garbage')
         this.Storage.Files.set('readme.md', 'x')
@@ -82,7 +83,7 @@ describe('DevModelWriter', () =>
     {
         const f = new Fixture()
         const { writer, sources } = await f.Writer.Prepare(f.Member, Fixture.Identity)
-        assert.deepEqual(sources.map(s => s.uri).sort(), ['model.todl', 'schema.todl'])
+        assert.deepEqual(sources.map(s => s.uri).sort(), ['model.todl'])
         writer.Begin()
         writer.CreateNode('shop.Customer', new Map())
         const graph = writer.Commit()
@@ -105,6 +106,7 @@ describe('DevModelWriter', () =>
     {
         const f = new Fixture()
         for (const dir of ['node_modules/pkg', '.git/x', 'out', 'build', 'sub/node_modules/pkg', 'sub/dist', 'sub/deep/.git']) f.Storage.Files.set(dir + '/hidden.todl', 'garbage')
+        f.Storage.Files.set('schema.todl', Fixture.Schema)
         f.Storage.Files.set('sub/kept.todl', Fixture.Schema)
         const uris = (await new TodlSourceCollector().Collect(f.Storage)).map(s => s.uri).sort()
         assert.deepEqual(uris, ['model.todl', 'schema.todl', 'sub/kept.todl'])
@@ -145,7 +147,7 @@ describe('DevModelWriter', () =>
     test('a failing second WriteText restores every file and surfaces Failed', async () =>
     {
         const f = new Fixture()
-        f.Storage.Files.set('schema.todl', Fixture.Schema + Fixture.Padding)
+        f.Storage.Files.set('other.todl', Fixture.Other + Fixture.Padding)
         f.Storage.Files.set('model.todl', Fixture.Model + Fixture.Padding)
         const { draft } = await f.Writer.Prepare(f.Member, Fixture.Identity)
         const targets = [...draft.toTodlByFile().keys()]

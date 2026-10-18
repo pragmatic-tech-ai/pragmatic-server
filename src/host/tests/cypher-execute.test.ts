@@ -81,7 +81,7 @@ class ExecFixture
 {
     public static readonly NoConnectors = 'no connectors'
     public static readonly Plain = 'p1'
-    public static readonly ShopName = 'ShopA'
+    public static readonly ShopName = 'acmeModel'
     public static readonly Secret = 'hush'
     public static readonly Create = "CREATE (:Widget {label: 'zeta'})"
     public static readonly Find = "MATCH (w:Widget) WHERE w.label = 'zeta' RETURN w.label AS label"
@@ -126,7 +126,7 @@ class ExecFixture
         const bu = PpSecurityHarness.OwningBuField
         const sales = PpSecurityHarness.SalesBu
         const widget = PpSecurityHarness.Concept
-        return `namespace acme { model ShopA : acme { ${widget} a1 { ${bu} = "${sales}"; label = "alpha"; secret = "${ExecFixture.Secret}"; } } }`
+        return `namespace acme { model acmeModel : acme { ${widget} a1 { ${bu} = "${sales}"; label = "alpha"; secret = "${ExecFixture.Secret}"; } } }`
     }
 
     public static Context(principalId: string): AccessContext
@@ -149,19 +149,35 @@ class ExecFixture
         }
     }
 
-    public static async With(identityOn: boolean, body: (world: ExecWorld) => Promise<void>): Promise<void>
+    public static CoLocatedTodl(): string
+    {
+        const bu = PpSecurityHarness.OwningBuField
+        const widget = PpSecurityHarness.Concept
+        return `namespace acme { concept ${widget} { ${bu} : string?; label : string?; secret : string?; } `
+            + `model acmeModel : acme { ${widget} a1 { label = "alpha"; } } }`
+    }
+
+    private static WriteBase(solution: string): void
+    {
+        mkdirSync(join(solution, ExecFixture.BaseDir))
+        writeFileSync(join(solution, ExecFixture.BaseDir, ExecFixture.SchemaFile), ExecFixture.SchemaTodl())
+        writeFileSync(join(solution, ExecFixture.BaseDir, ExecFixture.ProjectFile), ExecFixture.BaseProject())
+        writeFileSync(join(solution, ExecFixture.ModelsDir, ExecFixture.ProjectFile), ExecFixture.ModelProject())
+        writeFileSync(join(solution, ExecFixture.SolutionFile), ExecFixture.SolutionManifest())
+    }
+
+    public static async With(identityOn: boolean, body: (world: ExecWorld) => Promise<void>, coLocated: boolean = false): Promise<void>
     {
         const solution = mkdtempSync(join(tmpdir(), ExecFixture.SolutionPrefix))
         const packages = mkdtempSync(join(tmpdir(), ExecFixture.PackagesPrefix))
         const identityRoot = mkdtempSync(join(tmpdir(), ExecFixture.IdentityPrefix))
         cpSync(join(import.meta.dirname, '..', '..', 'tests', 'fixtures', 'sample-solution'), solution, { recursive: true })
         const modelFile = join(solution, ExecFixture.ModelFile)
-        writeFileSync(modelFile, ExecFixture.ModelTodl())
-        mkdirSync(join(solution, ExecFixture.BaseDir))
-        writeFileSync(join(solution, ExecFixture.BaseDir, ExecFixture.SchemaFile), ExecFixture.SchemaTodl())
-        writeFileSync(join(solution, ExecFixture.BaseDir, ExecFixture.ProjectFile), ExecFixture.BaseProject())
-        writeFileSync(join(solution, ExecFixture.ModelsDir, ExecFixture.ProjectFile), ExecFixture.ModelProject())
-        writeFileSync(join(solution, ExecFixture.SolutionFile), ExecFixture.SolutionManifest())
+        writeFileSync(modelFile, coLocated ? ExecFixture.CoLocatedTodl() : ExecFixture.ModelTodl())
+        if (!coLocated)
+        {
+            ExecFixture.WriteBase(solution)
+        }
         PpSecurityHarness.SetKey()
         const server = identityOn
             ? new PragmaticServer({ packagesRoot: packages, identity: PpSecurityHarness.Identity(identityRoot) })
@@ -335,4 +351,33 @@ test('concurrent executes serialize (per-tenant mutex) - both land with distinct
         const source = world.Source()
         assert.ok(source.includes('one') && source.includes('two'))
     })
+})
+
+test('a canonical model id stays stable across writes: second execute and a model-scoped query still resolve it', async () =>
+{
+    await ExecFixture.With(false, async world =>
+    {
+        const handler = world.Connect(ExecFixture.Context(ExecFixture.Plain))
+        const id = world.Shop
+        const first = await handler.RunCypherExecute(ExecFixture.P(id, "CREATE (:Widget {label: 'one'})"))
+        assert.equal(first.status, AppWriteStatus.Applied)
+        const second = await handler.RunCypherExecute(ExecFixture.P(id, "CREATE (:Widget {label: 'two'})"))
+        assert.equal(second.status, AppWriteStatus.Applied)
+        const page = await handler.RunCypherQuery({ cypher: 'MATCH (w:Widget) RETURN w.label AS label ORDER BY label', modelId: id })
+        assert.ok(JSON.stringify(page.items).includes('one') && JSON.stringify(page.items).includes('two'))
+    })
+})
+
+test('a schema co-located with instances is refused in-band (Invalid), nothing persisted and the concept survives', async () =>
+{
+    await ExecFixture.With(false, async world =>
+    {
+        const handler = world.Connect(ExecFixture.Context(ExecFixture.Plain))
+        const source = world.Source()
+        const result = await handler.RunCypherExecute(ExecFixture.P(world.Shop, ExecFixture.Create))
+        assert.equal(result.status, AppWriteStatus.Invalid)
+        assert.ok((result.reason ?? '').includes('co-located'))
+        assert.equal(world.Source(), source)
+        assert.ok(world.Source().includes('concept Widget'))
+    }, true)
 })

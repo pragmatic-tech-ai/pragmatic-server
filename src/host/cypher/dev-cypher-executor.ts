@@ -2,8 +2,8 @@ import { AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherExecuteResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { Cypher } from '@pragmatic-tech-ai/todl'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
-import { DevModelWriter } from '../model/dev-model-writer.js'
-import type { DevModelIdentity } from '../model/dev-model-writer.js'
+import { DevModelWriter, DevModelWriteFailedError, DevModelSchemaColocatedError } from '../model/dev-model-writer.js'
+import type { DevModelIdentity, DevModelPrepared } from '../model/dev-model-writer.js'
 import { AuthorizingCypherWriter, WriteAuthorizationError } from './authorizing-cypher-writer.js'
 import { CypherExecuteResultMapper } from './cypher-execute-result-mapper.js'
 import type { IDevWriteSecurity } from './dev-write-security.js'
@@ -25,10 +25,16 @@ export interface DevCypherTarget
     identity: DevModelIdentity
 }
 
-/** Plan -> authorize -> commit -> persist for one Cypher write, serialized per tenant. Nothing persists on any failure. */
+/**
+ * Plan -> authorize -> commit -> persist for one Cypher write, serialized per tenant. Nothing persists on any failure.
+ * The mutex is per-process: across cluster workers only the source-hash CAS protects, leaving a small CAS-to-Persist
+ * TOCTOU window (acceptable for a dev endpoint; a cross-process lock is a deferred Feature).
+ */
 export class DevCypherExecutor
 {
     private static readonly SourcesChangedReason = 'model sources changed during the write'
+    private static readonly InvalidReason = 'the write is not valid against the model'
+    private static readonly FailedReason = 'the model could not be persisted; no changes were kept'
     private static readonly RevisionReason = 'graph revision has advanced'
     private readonly mutex = new AsyncMutex()
 
@@ -47,7 +53,19 @@ export class DevCypherExecutor
         {
             return CypherExecuteResultMapper.ToWire(AppWriteStatus.Conflict, this.revision(), undefined, DevCypherExecutor.RevisionReason)
         }
-        const prepared = await this.writer.Prepare(target.member, target.identity, security.Mask)
+        let prepared: DevModelPrepared
+        try
+        {
+            prepared = await this.writer.Prepare(target.member, target.identity, security.Mask)
+        }
+        catch (error)
+        {
+            if (error instanceof DevModelSchemaColocatedError)
+            {
+                return CypherExecuteResultMapper.ToWire(AppWriteStatus.Invalid, this.revision(), undefined, DevModelSchemaColocatedError.Message)
+            }
+            throw error
+        }
         const gate = await security.GateFor(prepared.draft.model, prepared.graph)
         let result: Cypher.CypherResult
         try
@@ -63,7 +81,7 @@ export class DevCypherExecutor
             }
             if (error instanceof Cypher.CypherWriteError)
             {
-                return CypherExecuteResultMapper.ToWire(AppWriteStatus.Invalid, this.revision(), undefined, error.message)
+                return CypherExecuteResultMapper.ToWire(AppWriteStatus.Invalid, this.revision(), undefined, DevCypherExecutor.InvalidReason)
             }
             throw error
         }
@@ -76,7 +94,19 @@ export class DevCypherExecutor
         {
             return CypherExecuteResultMapper.ToWire(AppWriteStatus.Conflict, this.revision(), undefined, DevCypherExecutor.SourcesChangedReason)
         }
-        const revision = await this.writer.Persist(prepared.draft, target.member)
+        let revision: number
+        try
+        {
+            revision = await this.writer.Persist(prepared.draft, target.member)
+        }
+        catch (error)
+        {
+            if (error instanceof DevModelWriteFailedError)
+            {
+                return CypherExecuteResultMapper.ToWire(AppWriteStatus.Failed, this.revision(), undefined, DevCypherExecutor.FailedReason)
+            }
+            throw error
+        }
         return CypherExecuteResultMapper.ToWire(AppWriteStatus.Applied, revision, dto)
     }
 }

@@ -2,7 +2,7 @@ import { join } from 'node:path'
 import { LazyCompositionRoot, HostKinds, ModuleStateKind } from '@pragmatic-tech-ai/todl-runtime'
 import { TenantPurpose } from './tenancy/tenant-purpose.js'
 import type { ModuleStateProperty } from '@pragmatic-tech-ai/todl-runtime'
-import { SolutionManagerService, StoragePackageSource, StoragePackageStore, PackageStoreKey, ConnectorPrefetch, ConnectorRuntimeGraphQuery, DataSourceAdapterCatalog } from '@pragmatic-tech-ai/todl'
+import { SolutionManagerService, StoragePackageSource, StoragePackageStore, PackageStoreKey, ConnectorPrefetch, ConnectorRuntimeGraphQuery, DataSourceAdapterCatalog, WikiOriginKind } from '@pragmatic-tech-ai/todl'
 import type { ModelConnectorPlan, IDataSourceAdapterProvider } from '@pragmatic-tech-ai/todl'
 import type { Domain } from '@pragmatic-tech-ai/todl/domain'
 import { NodeProjectSystemComposer } from '@pragmatic-tech-ai/todl/project-system'
@@ -66,7 +66,6 @@ import type { DevCypherRequest } from './host/cypher/dev-cypher-executor.js'
 import { OpenDevWriteSecurity, PrincipalDevWriteSecurity } from './host/cypher/dev-write-security.js'
 import type { IDevWriteSecurity } from './host/cypher/dev-write-security.js'
 import { DevModelWriter } from './host/model/dev-model-writer.js'
-import { TodlSourceCollector } from './host/model/todl-source-collector.js'
 import { PragmaticAppsRegistry } from './host/apps/pragmatic-apps-registry.js'
 import { RuntimeAppGraph } from './host/cypher/runtime-app-graph.js'
 import { AppConnectorPlan } from './host/cypher/app-connector-plan.js'
@@ -157,10 +156,6 @@ export class PragmaticServer
     private static readonly NoModelViewForConnectors = 'Active solution produced no model view'
 
     private static readonly GraphModelVersion = '0.0.0'
-    private static readonly ModelDeclarationPrefix = '\\bmodel\\s+'
-    private static readonly ModelDeclarationSuffix = '\\b'
-    private static readonly RegexSpecials = /[.*+?^${}()|[\]\\]/g
-    private static readonly RegexEscape = '\\$&'
     private static readonly NotDevelopmentMessage = 'operation requires a development tenant'
     private static readonly ModelNotFoundMessage = `${InvalidParamsPrefix.Text}model not found`
 
@@ -180,6 +175,7 @@ export class PragmaticServer
     private readonly shareStores = new Map<string, ShareStore>()
     private readAuth: Promise<TenantReadAuthorization> | undefined
     private cypherExecutor: DevCypherExecutor | undefined
+    private cypherWriter: DevModelWriter | undefined
 
     public constructor(options: PragmaticServerOptions)
     {
@@ -751,17 +747,10 @@ export class PragmaticServer
             throw new ResponseError(ErrorCodes.InvalidParams, PragmaticServer.ModelNotFoundMessage)
         }
         const languageService = await this.LanguageService()
-        const collector = new TodlSourceCollector()
-        const declaration = PragmaticServer.ModelDeclaration(modelId)
-        let member: { Storage: IStorage } | undefined
-        for (const candidate of solution.Members.ToArray())
-        {
-            if (candidate.Storage !== undefined && (await collector.Collect(candidate.Storage)).some(f => declaration.test(f.text)))
-            {
-                member = { Storage: candidate.Storage }
-                break
-            }
-        }
+        const namespace = modelId.includes(PragmaticServer.NamespaceSeparator) ? modelId.slice(0, modelId.lastIndexOf(PragmaticServer.NamespaceSeparator)) : solution.Name
+        const writer = this.cypherWriter ??= new DevModelWriter(languageService as SolutionLanguageService)
+        // The owning member is the one whose storage is the recorded origin of the model node (deterministic, node-id based).
+        const member = await this.OwningMember(languageService, solution.Members.ToArray(), modelId)
         if (member === undefined)
         {
             throw new ResponseError(ErrorCodes.InvalidParams, PragmaticServer.ModelNotFoundMessage)
@@ -769,15 +758,21 @@ export class PragmaticServer
         const security: IDevWriteSecurity = this.identity === undefined
             ? new OpenDevWriteSecurity()
             : await PrincipalDevWriteSecurity.For(context, await this.ReadAuthorization())
-        this.cypherExecutor ??= new DevCypherExecutor(new DevModelWriter(languageService as SolutionLanguageService), () => languageService.GraphRevision)
-        const namespace = modelId.includes(PragmaticServer.NamespaceSeparator) ? modelId.slice(0, modelId.lastIndexOf(PragmaticServer.NamespaceSeparator)) : solution.Name
+        this.cypherExecutor ??= new DevCypherExecutor(writer, () => languageService.GraphRevision)
         return this.cypherExecutor.Execute(request, { member, identity: { model: solution.Name, version: PragmaticServer.GraphModelVersion, namespace } }, security)
     }
 
-    private static ModelDeclaration(modelId: string): RegExp
+    private async OwningMember(languageService: ILanguageService, members: readonly { Storage?: IStorage }[], modelId: string): Promise<{ Storage: IStorage } | undefined>
     {
-        const simple = modelId.slice(modelId.lastIndexOf(PragmaticServer.NamespaceSeparator) + 1)
-        return new RegExp(PragmaticServer.ModelDeclarationPrefix + simple.replace(PragmaticServer.RegexSpecials, PragmaticServer.RegexEscape) + PragmaticServer.ModelDeclarationSuffix)
+        const anchor = members.find(m => m.Storage !== undefined)
+        const view = anchor?.Storage === undefined ? undefined : await languageService.ModelView(anchor.Storage)
+        const origin = view?.originOf.get(modelId)
+        if (origin === undefined || origin.kind !== WikiOriginKind.OpenProject)
+        {
+            return undefined
+        }
+        const owner = members.find(m => m.Storage === origin.storage)
+        return owner?.Storage === undefined ? undefined : { Storage: owner.Storage }
     }
 
     private async CollectGraphSources(): Promise<readonly TenantRepository[]>
