@@ -1,5 +1,7 @@
 import { ModelDraft, ModelDraftBaker, ModelDraftWriter, SnowflakeIdGenerator, checkAgainst } from '@pragmatic-tech-ai/todl'
-import type { Cypher, SourceFile, TodlDocument } from '@pragmatic-tech-ai/todl'
+import { Cypher } from '@pragmatic-tech-ai/todl'
+import type { Repository, SourceFile, TodlDocument } from '@pragmatic-tech-ai/todl'
+import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import { TodlSourceCollector } from './todl-source-collector.js'
 
@@ -20,11 +22,30 @@ export interface DevModelIdentity
     namespace: string
 }
 
+/** Decorates a freshly baked draft graph (row filter + field mask). `repo` is the draft's model, the row-filter basis. */
+export interface IDraftGraphMask
+{
+    Apply(query: IGraphQuery, repo: Repository): IGraphQuery
+}
+
+/** No identity configured: the baked graph is returned unchanged (allow-all). */
+export class NoopDraftGraphMask implements IDraftGraphMask
+{
+    public static readonly Instance = new NoopDraftGraphMask()
+
+    public Apply(query: IGraphQuery): IGraphQuery
+    {
+        return query
+    }
+}
+
 export interface DevModelPrepared
 {
     draft: ModelDraft
     writer: Cypher.ICypherWriter
     sources: SourceFile[]
+    /** The initial (pre-write) masked read graph over the draft. */
+    graph: Cypher.ICypherGraph
 }
 
 /** Thrown when persisting fails; any partially written files have been restored. */
@@ -46,6 +67,7 @@ export class DevModelWriter
     private static readonly FailedPrefix = 'Failed to persist model write: '
     private static readonly RestoreFailedSuffix = ' (restore also failed for: '
     private static readonly RestoreFailedClose = ')'
+    private static readonly RootSeparator = '/'
     private static readonly ListSeparator = ', '
 
     constructor(
@@ -53,14 +75,22 @@ export class DevModelWriter
         private readonly collector: TodlSourceCollector = new TodlSourceCollector(),
     ) {}
 
-    public async Prepare(member: { Storage: IStorage }, identity: DevModelIdentity): Promise<DevModelPrepared>
+    public async Prepare(member: { Storage: IStorage }, identity: DevModelIdentity, mask: IDraftGraphMask = NoopDraftGraphMask.Instance): Promise<DevModelPrepared>
     {
         const sources = await this.collector.Collect(member.Storage)
         const resolved = await this.languageService.ResolveBasesFor(member.Storage)
         const bases = checkAgainst(resolved.bases, []).model
         const draft = ModelDraft.fromSources([bases], sources, { namespace: identity.namespace })
-        const writer = new ModelDraftWriter(draft, new SnowflakeIdGenerator(), d => ModelDraftBaker.Bake(d, { model: identity.model, version: identity.version }))
-        return { draft, writer, sources }
+        const bake = (d: ModelDraft): Cypher.ICypherGraph =>
+            new Cypher.GraphQueryAdapter(mask.Apply(ModelDraftBaker.BakeQuery(d, { model: identity.model, version: identity.version }), d.model))
+        const writer = new ModelDraftWriter(draft, new SnowflakeIdGenerator(), bake)
+        return { draft, writer, sources, graph: bake(draft) }
+    }
+
+    /** Hash of the member's CURRENT on-disk sources (for the compare-and-swap before persisting). */
+    public async CurrentSourceHash(member: { Storage: IStorage }): Promise<string>
+    {
+        return this.collector.SourceHash(await this.collector.Collect(member.Storage))
     }
 
     public async Persist(draft: ModelDraft, member: { Storage: IStorage }): Promise<number>
@@ -87,7 +117,7 @@ export class DevModelWriter
         }
         // Post-write refresh. Contract: the files are already written. If DidChange/WhenIdle throws
         // from here on, the files stay changed and the in-memory graph is stale until the next refresh.
-        for (const [uri, text] of targets) this.languageService.DidChange(uri, text)
+        for (const [uri, text] of targets) this.languageService.DidChange(DevModelWriter.AbsoluteUri(storage, uri), text)
         await this.languageService.WhenIdle()
         return this.languageService.GraphRevision
     }
@@ -95,6 +125,13 @@ export class DevModelWriter
     public SourceHash(sources: readonly SourceFile[]): string
     {
         return this.collector.SourceHash(sources)
+    }
+
+    /** The language service keys files by absolute URI: the storage root (with a trailing separator) + the storage-relative path. */
+    private static AbsoluteUri(storage: IStorage, uri: string): string
+    {
+        const root = storage.Root
+        return (root.endsWith(DevModelWriter.RootSeparator) ? root : root + DevModelWriter.RootSeparator) + uri
     }
 
     private async Restore(storage: IStorage, snapshots: ReadonlyMap<string, string | undefined>): Promise<string[]>
