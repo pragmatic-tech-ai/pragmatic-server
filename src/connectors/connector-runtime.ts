@@ -1,5 +1,5 @@
 import { ModelRegistry, GenericModelDataSource, FederatedModelDataConnector, DataSourceAdapterCatalog } from '@pragmatic-tech-ai/todl'
-import type { ReflectedEntity, DataSourceKind, FlushOutcome, Diagnostic } from '@pragmatic-tech-ai/todl'
+import type { ReflectedEntity, DataSourceKind, FlushOutcome, Diagnostic, ConnectorSpec } from '@pragmatic-tech-ai/todl'
 import type { IServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import type { ConnectorModel } from './solution-connector-planner.js'
 
@@ -76,6 +76,23 @@ export class ConnectorRuntime
     public get Revision(): string
     {
         return `${this.instanceId}:${this.writeBackCount}`
+    }
+
+    /** The process-wide adapter catalog this runtime opens connectors through. */
+    public Catalog(): DataSourceAdapterCatalog
+    {
+        return this.services.getRequired(DataSourceAdapterCatalog.ServiceKey)
+    }
+
+    /** Every connector spec of every model (the exact specs passed to catalog.Open). Carries Config: never log or return. */
+    public ConnectorSpecs(): readonly ConnectorSpec[]
+    {
+        const out: ConnectorSpec[] = []
+        for (const model of this.models.values())
+        {
+            out.push(...model.Plan.Connectors)
+        }
+        return out
     }
 
     public ModelsWithConnectors(): readonly ConnectorModelInfo[]

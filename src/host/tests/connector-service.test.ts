@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { ServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import { check, DataSourceAdapterCatalog, DataSourceKind } from '@pragmatic-tech-ai/todl'
-import type { IDataSourceAdapter, IDataSourceAdapterFactory, ResolvedConnection, QueryRequest, WriteBatch, WriteResult, ExternalRecord } from '@pragmatic-tech-ai/todl'
+import type { ConnectorSpec, IDataSourceAdapter, IDataSourceAdapterFactory, ResolvedConnection, QueryRequest, WriteBatch, WriteResult, ExternalRecord } from '@pragmatic-tech-ai/todl'
 import { SolutionConnectorPlanner } from '../../connectors/solution-connector-planner.js'
 import { ConnectorRuntime } from '../../connectors/connector-runtime.js'
 import { PagingLimits } from '../../config/paging-limits.js'
@@ -20,8 +20,50 @@ namespace shop {
 }
 `
 
+const META_TWO = `
+namespace shop {
+  concept Customer { name : string; }
+  concept Order { total : string; }
+  datasource pg { kind = sql; }
+  datasource rest { kind = rest; }
+  model shop : shop {
+    annotate entrypoint { }
+    connect pg;
+    connect rest;
+    populate Customer key customer_id { name = "name"; }
+    populate Order from rest.orders key order_id { total = "total"; }
+  }
+}
+`
+
+class RecordingCatalog extends DataSourceAdapterCatalog
+{
+    public readonly Invalidated: string[] = []
+    public DisposeCalls = 0
+
+    public override async Invalidate(spec: ConnectorSpec): Promise<void>
+    {
+        this.Invalidated.push(spec.Name)
+        await super.Invalidate(spec)
+    }
+
+    public override async Dispose(): Promise<void>
+    {
+        this.DisposeCalls++
+        await super.Dispose()
+    }
+}
+
 class Harness
 {
+    public static TwoConnectorRuntime(catalog: DataSourceAdapterCatalog): ConnectorRuntime
+    {
+        const { model } = check([{ uri: 'shop.todl', text: META_TWO }])
+        const services = new ServiceProvider()
+        services.registerInstance(DataSourceAdapterCatalog.ServiceKey, catalog)
+        return new ConnectorRuntime(SolutionConnectorPlanner.Plan(model), services)
+    }
+
     public static Rows(): ReadonlyMap<string, readonly ExternalRecord[]>
     {
         return new Map<string, readonly ExternalRecord[]>([['Customer', [{ customer_id: 'C1', name: 'Acme' }]]])
@@ -85,7 +127,30 @@ test('Invalidate forces the factory to run again on the next call', async () =>
     await service.List()
     await service.List()
     assert.equal(built, 1) // cached
-    service.Invalidate()
+    await service.Invalidate()
     await service.List()
     assert.equal(built, 2) // rebuilt after invalidate
+})
+
+test("refresh evicts exactly this connection's connector specs, never Dispose", async () =>
+{
+    const catalog = new RecordingCatalog().Register(Harness.Factory()) as RecordingCatalog
+    let built = 0
+    const service = new ConnectorService(() => { built++; return Promise.resolve(Harness.TwoConnectorRuntime(catalog)) })
+    await service.List()
+    assert.equal(built, 1)
+    await service.Invalidate()
+    assert.deepEqual([...catalog.Invalidated].sort(), ['pg', 'rest'])
+    assert.equal(catalog.DisposeCalls, 0)
+    await service.List()
+    assert.equal(built, 2)
+})
+
+test('refresh with no runtime loaded evicts nothing', async () =>
+{
+    const catalog = new RecordingCatalog().Register(Harness.Factory()) as RecordingCatalog
+    const service = new ConnectorService(() => Promise.resolve(Harness.TwoConnectorRuntime(catalog)))
+    await service.Invalidate()
+    assert.equal(catalog.Invalidated.length, 0)
+    assert.equal(catalog.DisposeCalls, 0)
 })

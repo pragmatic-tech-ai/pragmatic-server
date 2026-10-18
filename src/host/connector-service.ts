@@ -19,9 +19,30 @@ export class ConnectorService
         this.runtimeFactory = runtimeFactory
     }
 
-    public Invalidate(): void
+    /** Evicts (targeted, per spec) this connection's connector adapters from the process-wide catalog so the next
+     *  open re-resolves credentials, then drops the runtime. Never disposes the whole catalog (other tenants share it). */
+    public async Invalidate(): Promise<void>
     {
+        const pending = this.runtimePromise
         this.runtimePromise = undefined
+        if (pending === undefined)
+        {
+            return
+        }
+        let runtime: ConnectorRuntime
+        try
+        {
+            runtime = await pending
+        }
+        catch
+        {
+            return
+        }
+        const catalog = runtime.Catalog()
+        for (const spec of runtime.ConnectorSpecs())
+        {
+            await catalog.Invalidate(spec)
+        }
     }
 
     private Runtime(): Promise<ConnectorRuntime>

@@ -345,11 +345,11 @@ export class ServerConnectionHandler
             this.authorize(ConnectorProtocol.List.method)
             return this.connectorService.List()
         }))
-        this.connection.onRequest(ConnectorProtocol.Refresh, () => this.Dispatch(ConnectorProtocol.Refresh.method, () =>
+        this.connection.onRequest(ConnectorProtocol.Refresh, () => this.Dispatch(ConnectorProtocol.Refresh.method, async () =>
         {
             this.EnforceRate(ConnectorProtocol.Refresh.method)
             this.authorize(ConnectorProtocol.Refresh.method)
-            this.connectorService.Invalidate()
+            await this.connectorService.Invalidate()
         }))
         this.guarded(ConnectorProtocol.Prepare, p => this.connectorService.Prepare(p.modelId))
         this.guarded(ConnectorProtocol.Read, p => this.connectorService.Read(p.modelId, p.concept, p, this.paging))
@@ -964,7 +964,7 @@ export class ServerConnectionHandler
         {
             this.EnsureDevelopment()
             await this.manager.OpenSolution(p.location)
-            this.connectorService.Invalidate()
+            await this.connectorService.Invalidate()
             return this.SummariseActiveSolution()
         })
         this.guardedNoParams(SolutionProtocol.ActiveSolution, () => this.ActiveSolutionOrNull())
