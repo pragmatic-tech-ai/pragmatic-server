@@ -1,6 +1,7 @@
 import { ModelRegistry, GenericModelDataSource, FederatedModelDataConnector, DataSourceAdapterCatalog } from '@pragmatic-tech-ai/todl'
 import type { ReflectedEntity, DataSourceKind, FlushOutcome, Diagnostic, ConnectorSpec, ModelConnectorPlan, IDataSourceAdapter } from '@pragmatic-tech-ai/todl'
 import type { IServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
+import { ModelSchemaTypes } from './model-schema-types.js'
 import type { ConnectorModel } from './solution-connector-planner.js'
 
 export interface ConnectorInfo
@@ -62,6 +63,7 @@ export class ConnectorRuntime
     private writeBackCount = 0
     private refreshCount = 0
     private readonly models: ReadonlyMap<string, ConnectorModel>
+    private readonly schemas = new Map<string, ModelSchemaTypes>()
     private readonly services: IServiceProvider
     private readonly registry = new ModelRegistry()
     private readonly connectors = new Map<string, FederatedModelDataConnector>()
@@ -111,6 +113,23 @@ export class ConnectorRuntime
             throw new Error(`${ConnectorRuntime.NoConnectorsPrefix}${modelId}`)
         }
         return model.Plan
+    }
+
+    /** Schema-only concept types of the model (its base document), for write-payload validation. Pulls no connector data and does not prepare the model. */
+    public SchemaOf(modelId: string): ModelSchemaTypes
+    {
+        const model = this.models.get(modelId)
+        if (model === undefined)
+        {
+            throw new Error(`${ConnectorRuntime.NoConnectorsPrefix}${modelId}`)
+        }
+        let schema = this.schemas.get(modelId)
+        if (schema === undefined)
+        {
+            schema = ModelSchemaTypes.For(model.Base, model.ModelId, model.Plan.Version)
+            this.schemas.set(modelId, schema)
+        }
+        return schema
     }
 
     /** Opens (through the shared catalog) the adapter of ONE connector spec, without preparing the model. */

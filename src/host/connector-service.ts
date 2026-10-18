@@ -117,7 +117,7 @@ export class ConnectorService
         // Keyed per-row authorization is wired-but-DORMANT: the handler builds this service without authorizationFor, so allow-all
         // applies (parity with connector/writeBack). The per-row-identity item activates it via authorizationFor over the keyed target.
         const authorization = this.authorizationFor === undefined ? ConnectorHydrateWriter.AllowAll() : this.authorizationFor(ConnectorHydrateWriter.KeyedTarget(plan, runtime))
-        return new ConnectorHydrateWriter(plan, runtime, authorization).Apply(params)
+        return new ConnectorHydrateWriter(plan, runtime, authorization, runtime.SchemaOf(params.modelId)).Apply(params)
     }
 
     public async WriteBack(params: ConnectorWriteBackParams): Promise<FlushOutcomeDto>

@@ -252,3 +252,27 @@ test('WritePaged applies a keyed edit through the real plan without preparing th
     assert.equal(res.results[0]!.status, AppWriteStatus.Applied)
     assert.equal(JSON.stringify(res).includes('Config'), false)
 })
+
+test('WritePaged validates field values against the schema type: wrong-typed and non-scalar are invalid, a well-typed op still applies', async () =>
+{
+    const rows = Harness.Rows()
+    const batches: WriteBatch[] = []
+    const adapter: IDataSourceAdapter =
+    {
+        Query(_request: QueryRequest): Promise<readonly ExternalRecord[]> { return Promise.resolve(rows.get('Customer') ?? []) },
+        Apply(batch: WriteBatch): Promise<WriteResult> { batches.push(batch); return Promise.resolve({ Applied: batch.Operations.length, Failures: [] }) },
+        Dispose(): Promise<void> { return Promise.resolve() },
+    }
+    const factory: IDataSourceAdapterFactory = { Kind: DataSourceKind.Sql, Open(_c: ResolvedConnection): Promise<IDataSourceAdapter> { return Promise.resolve(adapter) } }
+    const { model } = check([{ uri: 'shop.todl', text: META }])
+    const services = new ServiceProvider()
+    services.registerInstance(DataSourceAdapterCatalog.ServiceKey, new DataSourceAdapterCatalog().Register(factory))
+    const service = new ConnectorService(() => Promise.resolve(new ConnectorRuntime(SolutionConnectorPlanner.Plan(model), services)))
+    const models = await service.List()
+    const b = models[0]!.bindings[0]!
+    const op = (key: string, name: unknown): never => ({ op: ConnectorWriteOp.Upsert, concept: b.concept, connector: b.connector, source: b.source, key, fields: { name } }) as never
+    const res = await service.WritePaged({ modelId: models[0]!.modelId, operations: [op('C1', 42), op('C2', { x: 1 }), op('C3', 'fine')] })
+    assert.deepEqual(res.results.map(r => r.status), [AppWriteStatus.Invalid, AppWriteStatus.Invalid, AppWriteStatus.Applied])
+    assert.equal(batches.length, 1)
+    assert.deepEqual(batches[0]!.Operations.map(o => o.Key), ['C3'])
+})
