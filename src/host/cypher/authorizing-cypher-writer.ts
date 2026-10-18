@@ -156,6 +156,8 @@ export class AuthorizingCypherWriter implements Cypher.ICypherWriter
         if (made !== undefined) return made
         const mirror = this.graph.Reflect(nodeId)
         if (mirror === undefined) throw new WriteAuthorizationError(undefined, undefined)
-        return ReflectedView.Of(mirror)
+        const view = ReflectedView.Of(mirror)
+        if (view === undefined) throw new WriteAuthorizationError(undefined, undefined)
+        return view
     }
 }

@@ -209,6 +209,15 @@ test('CreateRelationship whose SOURCE is Authorize-denied throws and leaves inne
     assert.deepEqual(inner.Calls, [])
 })
 
+test('a typeless reflected mirror is unaddressable (fail closed, no empty concept)', () =>
+{
+    const inner = new FakeInner()
+    const typeless = { Reflect: () => ({ type: undefined, node: { id: 'x' }, field: () => undefined }) } as unknown as Cypher.ICypherGraph
+    const w = new AuthorizingCypherWriter(inner, new StubGate(), typeless)
+    assert.throws(() => w.SetProperty('x', 'n', 1), WriteAuthorizationError)
+    assert.deepEqual(inner.Calls, [])
+})
+
 test('DeleteNode authorizes Delete and a denial throws before delegating', () =>
 {
     const inner = new FakeInner()
