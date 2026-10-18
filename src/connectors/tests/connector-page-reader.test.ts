@@ -260,7 +260,7 @@ class AuthFx
 
     public static Authz(keep: (n: number) => boolean, mask: IFieldReadMask = AllowAllFieldReadMask.Instance): IConnectorReadAuthorization
     {
-        return { Filter: new RowFilter(keep), FieldMask: mask }
+        return { Filter: new RowFilter(keep), FieldMask: mask, IdentityBacked: true }
     }
 
     public static async Drain(reader: ConnectorPageReader, authz: IConnectorReadAuthorization | undefined, digest: string | undefined, size: number): Promise<Page<EntityDto>[]>

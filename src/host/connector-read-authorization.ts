@@ -12,6 +12,8 @@ export interface IConnectorReadAuthorization
     Filter: IInstanceFilter
     /** Masks secured fields; allow-all when no identity or none secured. */
     FieldMask: IFieldReadMask
+    /** True only when backed by a real identity subsystem; the principal digest is folded into cursor fingerprints only then. */
+    IdentityBacked: boolean
 }
 
 export class ConnectorReadAuthorizations
@@ -19,12 +21,12 @@ export class ConnectorReadAuthorizations
     /** No identity subsystem: nothing is filtered or masked. */
     public static AllowAll(): IConnectorReadAuthorization
     {
-        return { Filter: new AllowAllInstanceFilter(), FieldMask: AllowAllFieldReadMask.Instance }
+        return { Filter: new AllowAllInstanceFilter(), FieldMask: AllowAllFieldReadMask.Instance, IdentityBacked: false }
     }
 
     public static async From(auth: TenantReadAuthorization, context: AccessContext): Promise<IConnectorReadAuthorization>
     {
-        return { Filter: await auth.ReadFilterFor(context), FieldMask: await auth.FieldReadMaskFor(context) }
+        return { Filter: await auth.ReadFilterFor(context), FieldMask: await auth.FieldReadMaskFor(context), IdentityBacked: true }
     }
 }
 

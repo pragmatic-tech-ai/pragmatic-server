@@ -109,9 +109,10 @@ export class ConnectorService
         const authz = await this.ReadAuthorization(context)
         const runtime = await this.Runtime()
         const parts = [ConnectorService.ConnectorFingerprintTag, modelId, concept, runtime.Revision]
-        if (this.readAuthorizationFor !== undefined)
+        if (authz.IdentityBacked)
         {
-            // Identity wired: a cursor is bound to the principal's authorization identity. Without identity the fingerprint is principal-independent.
+            // Identity-backed authorization only: a cursor is bound to the principal's authorization identity. A wired but allow-all
+            // factory (no identity subsystem) leaves the fingerprint principal-independent, byte-unchanged.
             parts.push(ConnectorPrincipalDigest.Of(context))
         }
         const fingerprint = PageFingerprint.Of(...parts)
@@ -130,8 +131,8 @@ export class ConnectorService
     {
         const runtime = await this.Runtime()
         const authz = await this.ReadAuthorization(context)
-        // Identity wired: the cursor is bound to the principal's digest. Without identity the fingerprint is principal-independent (unchanged).
-        const digest = this.readAuthorizationFor === undefined ? undefined : ConnectorPrincipalDigest.Of(context)
+        // Folded only when the authorization is identity-backed; allow-all (even via a wired factory) keeps the fingerprint principal-independent.
+        const digest = !authz.IdentityBacked ? undefined : ConnectorPrincipalDigest.Of(context)
         return new ConnectorPageReader(runtime).ReadPage(modelId, concept, params, limits, authz, digest)
     }
 

@@ -79,7 +79,9 @@ export class ConnectorPageReader
                 if (items.length >= page.Size && i < slice.Records.length - 1)
                 {
                     // Page filled mid-slice: resume after the last raw row actually consumed.
-                    nextAfter = ConnectorPageReader.KeyOf(record, binding)
+                    // A null record key is effectively unreachable (a visible row needs an id); fall back to the slice's own
+                    // NextAfter rather than dropping the cursor, which would silently truncate the source.
+                    nextAfter = ConnectorPageReader.KeyOf(record, binding) ?? slice.NextAfter
                     break
                 }
             }

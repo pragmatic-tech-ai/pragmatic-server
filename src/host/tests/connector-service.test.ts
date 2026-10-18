@@ -9,6 +9,7 @@ import { PagingLimits } from '../../config/paging-limits.js'
 import { AppWriteStatus, ConnectorWriteOp } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ConnectorService } from '../connector-service.js'
 import { ConnectorReadAuthorizations } from '../connector-read-authorization.js'
+import type { IConnectorReadAuthorization } from '../connector-read-authorization.js'
 import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, ResourceAuthorizationPolicy, Grant, Role, ResourceRef, ResourceKind, OwnershipSourceKind, PrivilegeAction, AccessLevel } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecurityModelConfig, ITenantConfigStore } from '@pragmatic-tech-ai/todl-identity'
 import { TenantReadAuthorization } from '../cypher/read-filter-source.js'
@@ -303,8 +304,10 @@ test('Read with AllowAll readAuthorizationFor returns the literal unfiltered row
     assert.equal('nextCursor' in result, false)
 })
 
-test('ReadPage with AllowAll readAuthorizationFor returns keyset pages with a nextCursor, then the tail without one', async () =>
+class KeysetFixture
 {
+    public static Runtime(): ConnectorRuntime
+    {
     const rows: ExternalRecord[] = [0, 1, 2].map(i => ({ id: `C${i}`, name: `n${i}` }))
     const factory: IDataSourceAdapterFactory =
     {
@@ -333,6 +336,13 @@ test('ReadPage with AllowAll readAuthorizationFor returns keyset pages with a ne
     services.registerInstance(DataSourceAdapterCatalog.ServiceKey, catalog)
     const plan = { Model: 'shop', Version: '1', Connectors: [{ Name: 'pg', Kind: DataSourceKind.Sql, Config: {} }], Bindings: [{ Concept: 'shop.Customer', Connector: 'pg', Source: 'Customer', IdKey: 'id', FieldMap: { name: 'name' }, Writable: false, Concurrency: WriteConcurrency.LastWriteWins, Atomicity: WriteAtomicity.Sequential }] }
     const runtime = new ConnectorRuntime([{ ModelId: 'shop', Plan: plan, Base: {} as never }], services)
+        return runtime
+    }
+}
+
+test('ReadPage with AllowAll readAuthorizationFor returns keyset pages with a nextCursor, then the tail without one', async () =>
+{
+    const runtime = KeysetFixture.Runtime()
     const service = new ConnectorService(() => Promise.resolve(runtime), undefined, async () => ConnectorReadAuthorizations.AllowAll())
     const first = await service.ReadPage('shop', 'shop.Customer', { pageSize: 2 }, new PagingLimits(100, 1000), Ctx.Any())
     assert.equal(first.items.length, 2)
@@ -422,7 +432,7 @@ class OwnedFixture
 
     public static Service(level: StubVisibility, mask: IFieldReadMask = AllowAllFieldReadMask.Instance): ConnectorService
     {
-        return new ConnectorService(() => Promise.resolve(OwnedFixture.Runtime()), undefined, async (ctx) => ({ Filter: new StubOwnerFilter(level, ctx.Principal.Id), FieldMask: mask }))
+        return new ConnectorService(() => Promise.resolve(OwnedFixture.Runtime()), undefined, async (ctx) => ({ Filter: new StubOwnerFilter(level, ctx.Principal.Id), FieldMask: mask, IdentityBacked: true }))
     }
 
     public static Ctx(id: string, role: Role = Role.Owner): AccessContext
@@ -511,7 +521,7 @@ test('paging skips leading hidden rows and omits nextCursor when visible count e
 {
     // p3 owns nothing in the fixture; give it exactly the LAST row via a custom filter so raw-offset paging would miss it.
     const lastOnly: IInstanceFilter = { Keep: (view: IInstanceView) => view.Field('name') === 'e' }
-    const service = new ConnectorService(() => Promise.resolve(OwnedFixture.Runtime()), undefined, async () => ({ Filter: lastOnly, FieldMask: AllowAllFieldReadMask.Instance }))
+    const service = new ConnectorService(() => Promise.resolve(OwnedFixture.Runtime()), undefined, async () => ({ Filter: lastOnly, FieldMask: AllowAllFieldReadMask.Instance, IdentityBacked: true }))
     const modelId = await OwnedFixture.ModelId(service)
     const one = await service.Read(modelId, 'shop.Customer', { pageSize: 1 }, new PagingLimits(), OwnedFixture.Ctx('p3'))
     assert.deepEqual(one.items.map(i => OwnedFixture.Key(i.id)), ['C5'])
@@ -566,4 +576,32 @@ test('REAL evaluator: a bare-concept security model does not match the qualified
     const service = RealEvaluatorFixture.Service('Customer')
     const result = await service.Read(await OwnedFixture.ModelId(service), 'shop.Customer', {}, new PagingLimits(), OwnedFixture.Ctx('p1'))
     assert.deepEqual(result.items, [])
+})
+
+test('production no-identity shape: a wired AllowAll (IdentityBacked=false) factory mints the SAME cursor for different principals on Read and ReadPage', async () =>
+{
+    const allowAll = async (): Promise<IConnectorReadAuthorization> => ConnectorReadAuthorizations.AllowAll()
+    assert.equal((await allowAll()).IdentityBacked, false)
+    const read = new ConnectorService(() => Promise.resolve(OwnedFixture.Runtime()), undefined, allowAll)
+    const modelId = await OwnedFixture.ModelId(read)
+    const r1 = await read.Read(modelId, 'shop.Customer', { pageSize: 2 }, new PagingLimits(), OwnedFixture.Ctx('p1'))
+    const r2 = await read.Read(modelId, 'shop.Customer', { pageSize: 2 }, new PagingLimits(), OwnedFixture.Ctx('p2'))
+    assert.equal(typeof r1.nextCursor, 'string')
+    assert.equal(r1.nextCursor, r2.nextCursor)
+    const paged = new ConnectorService(() => Promise.resolve(KeysetFixture.Runtime()), undefined, allowAll)
+    const limits = new PagingLimits(100, 1000)
+    const p1 = await paged.ReadPage('shop', 'shop.Customer', { pageSize: 2 }, limits, OwnedFixture.Ctx('p1'))
+    const p2 = await paged.ReadPage('shop', 'shop.Customer', { pageSize: 2 }, limits, OwnedFixture.Ctx('p2'))
+    assert.equal(typeof p1.nextCursor, 'string')
+    assert.equal(p1.nextCursor, p2.nextCursor)
+})
+
+test('identity-backed ReadPage mints DIFFERENT cursors per principal', async () =>
+{
+    const backed = async (): Promise<IConnectorReadAuthorization> => ({ ...ConnectorReadAuthorizations.AllowAll(), IdentityBacked: true })
+    const paged = new ConnectorService(() => Promise.resolve(KeysetFixture.Runtime()), undefined, backed)
+    const limits = new PagingLimits(100, 1000)
+    const p1 = await paged.ReadPage('shop', 'shop.Customer', { pageSize: 2 }, limits, OwnedFixture.Ctx('p1'))
+    const p2 = await paged.ReadPage('shop', 'shop.Customer', { pageSize: 2 }, limits, OwnedFixture.Ctx('p2'))
+    assert.notEqual(p1.nextCursor, p2.nextCursor)
 })
