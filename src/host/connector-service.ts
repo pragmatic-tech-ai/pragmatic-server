@@ -96,7 +96,7 @@ export class ConnectorService
         await runtime.PrepareModel(modelId)
     }
 
-    /** The per-request read authorization (allow-all when no factory is wired). Filtering lands in later tasks. */
+    /** The per-request read authorization (allow-all when no factory is wired). The materialized Read is filtered and masked by it; ReadPage still ignores it (pending). */
     private ReadAuthorization(context: AccessContext): Promise<IConnectorReadAuthorization>
     {
         return this.readAuthorizationFor === undefined ? Promise.resolve(ConnectorReadAuthorizations.AllowAll()) : this.readAuthorizationFor(context)
@@ -107,7 +107,13 @@ export class ConnectorService
         PageRequest.ValidatePageSize(params)
         const authz = await this.ReadAuthorization(context)
         const runtime = await this.Runtime()
-        const fingerprint = PageFingerprint.Of(ConnectorService.ConnectorFingerprintTag, modelId, concept, runtime.Revision, ConnectorPrincipalDigest.Of(context))
+        const parts = [ConnectorService.ConnectorFingerprintTag, modelId, concept, runtime.Revision]
+        if (this.readAuthorizationFor !== undefined)
+        {
+            // Identity wired: a cursor is bound to the principal's authorization identity. Without identity the fingerprint is principal-independent.
+            parts.push(ConnectorPrincipalDigest.Of(context))
+        }
+        const fingerprint = PageFingerprint.Of(...parts)
         const page = PageRequest.Resolve(params, fingerprint, limits)
         const all = await runtime.ReadConceptInstances(modelId, concept)
         const visible = all.filter(e => authz.Filter.Keep(new EntityInstanceView(e)))

@@ -9,7 +9,9 @@ import { PagingLimits } from '../../config/paging-limits.js'
 import { AppWriteStatus, ConnectorWriteOp } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ConnectorService } from '../connector-service.js'
 import { ConnectorReadAuthorizations } from '../connector-read-authorization.js'
-import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, ResourceAuthorizationPolicy, Grant, Role, ResourceRef, ResourceKind } from '@pragmatic-tech-ai/todl-identity'
+import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, ResourceAuthorizationPolicy, Grant, Role, ResourceRef, ResourceKind, OwnershipSourceKind, PrivilegeAction, AccessLevel } from '@pragmatic-tech-ai/todl-identity'
+import type { ISecurityModelConfig, ITenantConfigStore } from '@pragmatic-tech-ai/todl-identity'
+import { TenantReadAuthorization } from '../cypher/read-filter-source.js'
 import type { IInstanceFilter, IInstanceView } from '@pragmatic-tech-ai/todl'
 import { AllowAllFieldReadMask } from '../cypher/field-masked-graph-query.js'
 import type { IFieldReadMask } from '../cypher/field-masked-graph-query.js'
@@ -354,24 +356,25 @@ namespace shop {
 }
 `
 
-enum DepthLevel
+/** Stand-in row visibility (NOT the real access-depth evaluator; see the real-evaluator tests below). */
+enum StubVisibility
 {
-    Organization,
-    User,
-    None,
+    All,
+    OwnRows,
+    NoRows,
 }
 
-class OwnerFilter implements IInstanceFilter
+class StubOwnerFilter implements IInstanceFilter
 {
-    public constructor(private readonly level: DepthLevel, private readonly principalId: string) {}
+    public constructor(private readonly level: StubVisibility, private readonly principalId: string) {}
 
     public Keep(view: IInstanceView): boolean
     {
-        if (this.level === DepthLevel.Organization)
+        if (this.level === StubVisibility.All)
         {
             return true
         }
-        return this.level === DepthLevel.User && view.Field('owner') === this.principalId
+        return this.level === StubVisibility.OwnRows && view.Field('owner') === this.principalId
     }
 }
 
@@ -417,9 +420,9 @@ class OwnedFixture
         return new ConnectorRuntime(SolutionConnectorPlanner.Plan(model), services)
     }
 
-    public static Service(level: DepthLevel, mask: IFieldReadMask = AllowAllFieldReadMask.Instance): ConnectorService
+    public static Service(level: StubVisibility, mask: IFieldReadMask = AllowAllFieldReadMask.Instance): ConnectorService
     {
-        return new ConnectorService(() => Promise.resolve(OwnedFixture.Runtime()), undefined, async (ctx) => ({ Filter: new OwnerFilter(level, ctx.Principal.Id), FieldMask: mask }))
+        return new ConnectorService(() => Promise.resolve(OwnedFixture.Runtime()), undefined, async (ctx) => ({ Filter: new StubOwnerFilter(level, ctx.Principal.Id), FieldMask: mask }))
     }
 
     public static Ctx(id: string, role: Role = Role.Owner): AccessContext
@@ -435,20 +438,20 @@ class OwnedFixture
 
 test('User-level read returns only the principal\'s own rows; Organization-level returns all; None returns none', async () =>
 {
-    const read = async (level: DepthLevel): Promise<string[]> =>
+    const read = async (level: StubVisibility): Promise<string[]> =>
     {
         const service = OwnedFixture.Service(level)
         const result = await service.Read(await OwnedFixture.ModelId(service), 'shop.Customer', {}, new PagingLimits(), OwnedFixture.Ctx('p1'))
         return result.items.map(i => OwnedFixture.Key(i.id))
     }
-    assert.deepEqual(await read(DepthLevel.User), ['C1', 'C3', 'C5'])
-    assert.deepEqual(await read(DepthLevel.Organization), ['C1', 'C2', 'C3', 'C4', 'C5'])
-    assert.deepEqual(await read(DepthLevel.None), [])
+    assert.deepEqual(await read(StubVisibility.OwnRows), ['C1', 'C3', 'C5'])
+    assert.deepEqual(await read(StubVisibility.All), ['C1', 'C2', 'C3', 'C4', 'C5'])
+    assert.deepEqual(await read(StubVisibility.NoRows), [])
 })
 
 test('offset paging counts only VISIBLE rows', async () =>
 {
-    const service = OwnedFixture.Service(DepthLevel.User)
+    const service = OwnedFixture.Service(StubVisibility.OwnRows)
     const modelId = await OwnedFixture.ModelId(service)
     const ctx = OwnedFixture.Ctx('p1')
     const first = await service.Read(modelId, 'shop.Customer', { pageSize: 2 }, new PagingLimits(), ctx)
@@ -461,7 +464,7 @@ test('offset paging counts only VISIBLE rows', async () =>
 
 test('a secured field is masked in the returned EntityDto.fields', async () =>
 {
-    const service = OwnedFixture.Service(DepthLevel.Organization, new SecretMask())
+    const service = OwnedFixture.Service(StubVisibility.All, new SecretMask())
     const result = await service.Read(await OwnedFixture.ModelId(service), 'shop.Customer', {}, new PagingLimits(), OwnedFixture.Ctx('p1'))
     assert.equal(result.items.length, 5)
     for (const item of result.items)
@@ -473,7 +476,7 @@ test('a secured field is masked in the returned EntityDto.fields', async () =>
 
 test('the read fingerprint differs per principal', async () =>
 {
-    const service = OwnedFixture.Service(DepthLevel.Organization)
+    const service = OwnedFixture.Service(StubVisibility.All)
     const modelId = await OwnedFixture.ModelId(service)
     const first = await service.Read(modelId, 'shop.Customer', { pageSize: 2 }, new PagingLimits(), OwnedFixture.Ctx('p1'))
     const cursor = first.nextCursor!
@@ -489,4 +492,78 @@ test('no-identity (AllowAll) read is unchanged', async () =>
     assert.deepEqual(result.items.map(i => OwnedFixture.Key(i.id)), ['C1', 'C2', 'C3', 'C4', 'C5'])
     assert.equal(result.items[0]!.fields.secret, 's1')
     assert.equal(result.items[0]!.fields.owner, 'p1')
+})
+
+test('without readAuthorizationFor two principals mint the SAME cursor; with it they mint DIFFERENT cursors', async () =>
+{
+    const mint = async (service: ConnectorService, principal: string): Promise<string | undefined> =>
+    {
+        const first = await service.Read(await OwnedFixture.ModelId(service), 'shop.Customer', { pageSize: 2 }, new PagingLimits(), OwnedFixture.Ctx(principal))
+        return first.nextCursor
+    }
+    const open = new ConnectorService(() => Promise.resolve(OwnedFixture.Runtime()))
+    assert.equal(await mint(open, 'p1'), await mint(open, 'p2'))
+    const secured = OwnedFixture.Service(StubVisibility.All)
+    assert.notEqual(await mint(secured, 'p1'), await mint(secured, 'p2'))
+})
+
+test('paging skips leading hidden rows and omits nextCursor when visible count equals the page size', async () =>
+{
+    // p3 owns nothing in the fixture; give it exactly the LAST row via a custom filter so raw-offset paging would miss it.
+    const lastOnly: IInstanceFilter = { Keep: (view: IInstanceView) => view.Field('name') === 'e' }
+    const service = new ConnectorService(() => Promise.resolve(OwnedFixture.Runtime()), undefined, async () => ({ Filter: lastOnly, FieldMask: AllowAllFieldReadMask.Instance }))
+    const modelId = await OwnedFixture.ModelId(service)
+    const one = await service.Read(modelId, 'shop.Customer', { pageSize: 1 }, new PagingLimits(), OwnedFixture.Ctx('p3'))
+    assert.deepEqual(one.items.map(i => OwnedFixture.Key(i.id)), ['C5'])
+    assert.equal(one.nextCursor, undefined)
+    const own = OwnedFixture.Service(StubVisibility.OwnRows)
+    const exact = await own.Read(await OwnedFixture.ModelId(own), 'shop.Customer', { pageSize: 3 }, new PagingLimits(), OwnedFixture.Ctx('p1'))
+    assert.equal(exact.items.length, 3)
+    assert.equal(exact.nextCursor, undefined)
+})
+
+class RealEvaluatorFixture
+{
+    /** The QUALIFIED concept name: the form ReflectedEntity.concept (and so EntityInstanceView.Concept and the FieldMask.CanRead arg) carries. */
+    public static readonly Concept = 'shop.Customer'
+
+    public static Model(concept: string): ISecurityModelConfig
+    {
+        return {
+            businessUnits: [{ id: 'root', name: 'Root' }],
+            teams: [],
+            membership: { claimsMapping: [], overrides: [] },
+            ownershipRules: [{ concept, owningBusinessUnit: { kind: OwnershipSourceKind.Fixed, value: 'root' }, owner: { kind: OwnershipSourceKind.FromField, value: 'owner' } }],
+            roles: [{ id: 'user-reader', name: 'User Reader', privileges: [{ action: PrivilegeAction.Read, concept, level: AccessLevel.User }] }],
+            roleAssignment: { claimsMapping: [], overrides: [{ principalId: 'p1', roles: ['user-reader'] }], teamRoles: [] },
+            fieldSecurity: { securedFields: [{ concept, field: 'secret' }], profiles: [], profileAssignment: { claimsMapping: [], overrides: [], teamProfiles: [] } },
+        }
+    }
+
+    public static Service(concept: string): ConnectorService
+    {
+        const store = { Get: async () => ({ SecurityModel: RealEvaluatorFixture.Model(concept) }) } as unknown as ITenantConfigStore
+        const auth = new TenantReadAuthorization(store)
+        return new ConnectorService(() => Promise.resolve(OwnedFixture.Runtime()), undefined, (ctx) => ConnectorReadAuthorizations.From(auth, ctx))
+    }
+}
+
+test('REAL evaluator: user-depth principal sees only its own rows and the secured field is absent', async () =>
+{
+    const service = RealEvaluatorFixture.Service(RealEvaluatorFixture.Concept)
+    const result = await service.Read(await OwnedFixture.ModelId(service), 'shop.Customer', {}, new PagingLimits(), OwnedFixture.Ctx('p1'))
+    assert.deepEqual(result.items.map(i => OwnedFixture.Key(i.id)), ['C1', 'C3', 'C5'])
+    for (const item of result.items)
+    {
+        assert.equal(item.concept, RealEvaluatorFixture.Concept)
+        assert.equal('secret' in item.fields, false)
+        assert.equal(item.fields.owner, 'p1')
+    }
+})
+
+test('REAL evaluator: a bare-concept security model does not match the qualified concept (form is pinned, fails closed)', async () =>
+{
+    const service = RealEvaluatorFixture.Service('Customer')
+    const result = await service.Read(await OwnedFixture.ModelId(service), 'shop.Customer', {}, new PagingLimits(), OwnedFixture.Ctx('p1'))
+    assert.deepEqual(result.items, [])
 })
