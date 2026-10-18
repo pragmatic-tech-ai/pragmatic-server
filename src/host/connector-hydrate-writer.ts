@@ -62,6 +62,7 @@ export class ConnectorHydrateWriter
     private static readonly ReadOnlyBinding = 'binding is read-only'
     private static readonly NotAuthorizedRecord = 'not authorized for this record'
     private static readonly VersionRequired = 'expectedVersion is required for an optimistic binding'
+    private static readonly FieldNotWritable = 'field not writable'
     private static readonly DuplicateKey = 'duplicate key in batch'
     private static readonly MissingConnector = 'connector not found for binding'
     private static readonly DefaultRefusal = 'write was refused'
@@ -90,7 +91,8 @@ export class ConnectorHydrateWriter
         return { authorizer: new AllowAllConnectorWriteAuthorizer(), gate: AllowAllWriteInstanceGate.Instance }
     }
 
-    /** The keyed write-target source an identity gate should read through. */
+    /** The keyed write-target source an identity gate should read through. This is the ready seam for the per-row-identity
+     *  program item: the keyed Fetch is wired-but-dormant until a ConnectorService authorizationFor factory activates it. */
     public static KeyedTarget(plan: ModelConnectorPlan, opener: IAdapterOpener): KeyedWriteTargetSource
     {
         return new KeyedWriteTargetSource(plan, opener)
@@ -151,6 +153,11 @@ export class ConnectorHydrateWriter
             results[index] = ConnectorHydrateWriter.Refuse(op, AppWriteStatus.Denied, ConnectorHydrateWriter.ReadOnlyBinding)
             return
         }
+        if (op.op === ConnectorWriteOp.Upsert && !ConnectorHydrateWriter.FieldsWritable(binding, op.fields))
+        {
+            results[index] = ConnectorHydrateWriter.Refuse(op, AppWriteStatus.Invalid, ConnectorHydrateWriter.FieldNotWritable)
+            return
+        }
         if (op.op === ConnectorWriteOp.Upsert && this.types !== undefined)
         {
             const reason = this.validator.Validate(this.types.TypeOf(op.concept), false, op.fields)
@@ -175,11 +182,11 @@ export class ConnectorHydrateWriter
                     return
                 }
             }
-            if (ConnectorHydrateWriter.IsOptimistic(binding) && op.expectedVersion === undefined)
-            {
-                results[index] = ConnectorHydrateWriter.Refuse(op, AppWriteStatus.Conflict, ConnectorHydrateWriter.VersionRequired)
-                return
-            }
+        }
+        if (ConnectorHydrateWriter.IsOptimistic(binding) && op.expectedVersion === undefined)
+        {
+            results[index] = ConnectorHydrateWriter.Refuse(op, AppWriteStatus.Conflict, ConnectorHydrateWriter.VersionRequired)
+            return
         }
         const operation = ConnectorHydrateWriter.OperationFor(op, binding)
         const group = ConnectorHydrateWriter.GroupFor(groups, binding, spec)
@@ -193,6 +200,20 @@ export class ConnectorHydrateWriter
         group.items.push({ index, key: op.key, operation })
     }
 
+    /** Only members mapped by the binding are writable, and never its id or version column (client keys are never raw column names). */
+    private static FieldsWritable(binding: ConnectorBinding, fields: Record<string, unknown> | undefined): boolean
+    {
+        for (const member of Object.keys(fields ?? {}))
+        {
+            const external = binding.FieldMap[member]
+            if (!Object.prototype.hasOwnProperty.call(binding.FieldMap, member) || external === binding.IdKey || external === binding.VersionField)
+            {
+                return false
+            }
+        }
+        return true
+    }
+
     private static IsOptimistic(binding: ConnectorBinding): boolean
     {
         return binding.Concurrency === WriteConcurrency.Optimistic || binding.VersionField !== undefined
@@ -202,7 +223,9 @@ export class ConnectorHydrateWriter
     {
         if (op.op === ConnectorWriteOp.Delete)
         {
-            return { Kind: WriteOperationKind.Delete, Key: op.key, Fields: {} }
+            return op.expectedVersion === undefined
+                ? { Kind: WriteOperationKind.Delete, Key: op.key, Fields: {} }
+                : { Kind: WriteOperationKind.Delete, Key: op.key, Fields: {}, Version: op.expectedVersion }
         }
         const fields = ConnectorWrites.ToExternalFields(binding, op.fields ?? {})
         return op.expectedVersion === undefined

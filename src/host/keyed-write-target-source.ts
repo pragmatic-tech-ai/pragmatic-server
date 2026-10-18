@@ -9,7 +9,8 @@ export interface IAdapterOpener
 }
 
 /** Reconstructs a write target with a SINGLE keyed read (Query WHERE idKey = key); it never prefetches a concept.
- *  Absent, ambiguous (more than one row) or unbound => undefined (fail closed). */
+ *  Single-binding only: a concept with other than exactly one binding yields undefined (multi-binding keyed writes are
+ *  deferred, same scope boundary as readPage). Absent, ambiguous (more than one row) or unbound => undefined (fail closed). */
 export class KeyedWriteTargetSource implements IWriteTargetSource
 {
     private readonly plan: ModelConnectorPlan
