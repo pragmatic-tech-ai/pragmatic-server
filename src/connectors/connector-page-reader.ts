@@ -3,12 +3,12 @@ import type { EntityDto, Page, PageParams } from '@pragmatic-tech-ai/pragmatic-p
 import { ConnectorMirrorMapper } from '@pragmatic-tech-ai/todl'
 import type { ConnectorBinding, ConnectorSpec, ExternalFieldValue, ExternalRecord, ModelConnectorPlan, PageQuery, QueryRequest } from '@pragmatic-tech-ai/todl'
 import type { PagingLimits } from '../config/paging-limits.js'
+import { ConnectorInstanceView } from '../host/connector-instance-view.js'
 import { EntityDtoMapper } from '../host/entity-dto-mapper.js'
 import type { EntityNodeShape } from '../host/entity-dto-mapper.js'
 import { KeysetPage } from '../host/paging/keyset-page.js'
 import { PageFingerprint } from '../host/paging/page-request.js'
 import { ConnectorBindingResolver } from './connector-binding-resolver.js'
-import { ConnectorInstanceView } from '../host/connector-instance-view.js'
 import type { IConnectorReadAuthorization } from '../host/connector-read-authorization.js'
 import type { ConnectorRuntime } from './connector-runtime.js'
 
@@ -61,6 +61,12 @@ export class ConnectorPageReader
         for (let slices = 0; slices < ConnectorPageReader.MaxSlicesPerPage; slices++)
         {
             const slice = await adapter.QueryPage(request, ConnectorPageReader.PageQueryFor(page, after))
+            if (after !== undefined && slice.NextAfter === after)
+            {
+                // A non-advancing cursor (misbehaving adapter) would re-emit the same rows: treat the source as exhausted.
+                nextAfter = undefined
+                break
+            }
             nextAfter = slice.NextAfter
             for (let i = 0; i < slice.Records.length; i++)
             {
@@ -73,7 +79,7 @@ export class ConnectorPageReader
                 if (items.length >= page.Size && i < slice.Records.length - 1)
                 {
                     // Page filled mid-slice: resume after the last raw row actually consumed.
-                    nextAfter = record[binding.IdKey] as ExternalFieldValue
+                    nextAfter = ConnectorPageReader.KeyOf(record, binding)
                     break
                 }
             }
@@ -85,6 +91,12 @@ export class ConnectorPageReader
         }
         const nextCursor = page.NextCursor(nextAfter)
         return nextCursor === undefined ? { items } : { items, nextCursor }
+    }
+
+    private static KeyOf(record: ExternalRecord, binding: ConnectorBinding): ExternalFieldValue | undefined
+    {
+        const key = record[binding.IdKey]
+        return key === null ? undefined : key
     }
 
     private static VisibleNode(binding: ConnectorBinding, record: ExternalRecord, authz: IConnectorReadAuthorization | undefined): EntityNodeShape | undefined

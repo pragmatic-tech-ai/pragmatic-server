@@ -185,7 +185,7 @@ test('readPage does not materialize the model nor open another concept adapter',
     const page = await new ConnectorPageReader(runtime).ReadPage(Fixtures.ModelId, 'shop.A', { pageSize: 2 }, Fixtures.Limits)
     assert.equal(page.items.length, 2)
     assert.equal(prepared, 0)
-    assert.deepEqual([...new Set(factory.Opened)], ['a'])
+    assert.deepEqual(factory.Opened, ['a'])
     assert.equal(factory.Adapters.get('a')!.Queries, 0)
 })
 
@@ -357,4 +357,22 @@ test('the field mask hides masked fields on paged rows using the qualified conce
     const page = await reader.ReadPage(Fixtures.ModelId, 'shop.A', { pageSize: 5 }, Fixtures.Limits, AuthFx.Authz(() => true, new DenyNameMask()), 'p')
     assert.equal(page.items.length, 3)
     assert.ok(page.items.every(i => !('name' in i.fields)))
+})
+
+class StuckAdapter extends KeysetAdapter
+{
+    public override QueryPage(_request: QueryRequest, page: PageQuery): Promise<PageSlice>
+    {
+        return Promise.resolve({ Records: [{ id: 'C0', name: 'n0' }, { id: 'C1', name: 'n1' }], NextAfter: page.After ?? 'C1' })
+    }
+}
+
+test('a non-advancing NextAfter terminates without duplicate rows', async () =>
+{
+    const factory = new RecordingFactory(true, [])
+    factory.Open = (_connection: ResolvedConnection): Promise<IDataSourceAdapter> => Promise.resolve(new StuckAdapter([], true))
+    const reader = new ConnectorPageReader(Fixtures.Two(factory))
+    const page = await reader.ReadPage(Fixtures.ModelId, 'shop.A', { pageSize: 5 }, Fixtures.Limits)
+    assert.deepEqual(page.items.map(AuthFx.IdOf), ['C0', 'C1'])
+    assert.equal(page.nextCursor, undefined)
 })
