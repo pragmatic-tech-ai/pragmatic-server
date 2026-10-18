@@ -60,6 +60,13 @@ import { ModelShardGraph } from './host/cypher/model-shard-graph.js'
 import { GraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
+import type { CypherExecuteResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { DevCypherExecutor } from './host/cypher/dev-cypher-executor.js'
+import type { DevCypherRequest } from './host/cypher/dev-cypher-executor.js'
+import { OpenDevWriteSecurity, PrincipalDevWriteSecurity } from './host/cypher/dev-write-security.js'
+import type { IDevWriteSecurity } from './host/cypher/dev-write-security.js'
+import { DevModelWriter } from './host/model/dev-model-writer.js'
+import { TodlSourceCollector } from './host/model/todl-source-collector.js'
 import { PragmaticAppsRegistry } from './host/apps/pragmatic-apps-registry.js'
 import { RuntimeAppGraph } from './host/cypher/runtime-app-graph.js'
 import { AppConnectorPlan } from './host/cypher/app-connector-plan.js'
@@ -150,6 +157,11 @@ export class PragmaticServer
     private static readonly NoModelViewForConnectors = 'Active solution produced no model view'
 
     private static readonly GraphModelVersion = '0.0.0'
+    private static readonly ModelDeclarationPrefix = '\\bmodel\\s+'
+    private static readonly ModelDeclarationSuffix = '\\b'
+    private static readonly RegexSpecials = /[.*+?^${}()|[\]\\]/g
+    private static readonly RegexEscape = '\\$&'
+    private static readonly NotDevelopmentMessage = 'operation requires a development tenant'
     private static readonly ModelNotFoundMessage = `${InvalidParamsPrefix.Text}model not found`
 
     private readonly root: LazyCompositionRoot
@@ -167,6 +179,7 @@ export class PragmaticServer
     private readonly appGraphs = new Map<string, Promise<AppBase>>()
     private readonly shareStores = new Map<string, ShareStore>()
     private readAuth: Promise<TenantReadAuthorization> | undefined
+    private cypherExecutor: DevCypherExecutor | undefined
 
     public constructor(options: PragmaticServerOptions)
     {
@@ -718,6 +731,53 @@ export class PragmaticServer
         }
         const mask = await (await this.ReadAuthorization()).FieldReadMaskFor(context)
         return mask === AllowAllFieldReadMask.Instance ? filtered : new FieldMaskedGraphQuery(filtered, mask)
+    }
+
+    /**
+     * Executes a Cypher WRITE against the dev member that declares `modelId`. Visibility is membership in the tenant's own
+     * sources (unknown / non-member => InvalidParams, no existence oracle). Dev tenants only; serialized per tenant.
+     */
+    public async ExecuteCypher(context: AccessContext, modelId: string, request: DevCypherRequest): Promise<CypherExecuteResultDto>
+    {
+        if (this.Purpose() !== TenantPurpose.Development)
+        {
+            throw new ResponseError(ErrorCodes.InvalidRequest, PragmaticServer.NotDevelopmentMessage)
+        }
+        const sources = await this.CollectGraphSources()
+        const shard = ModelShardGraph.Locate(sources.map(s => s.repo), modelId)
+        const solution = (await this.Manager()).ActiveSolution
+        if (shard === undefined || solution === undefined)
+        {
+            throw new ResponseError(ErrorCodes.InvalidParams, PragmaticServer.ModelNotFoundMessage)
+        }
+        const languageService = await this.LanguageService()
+        const collector = new TodlSourceCollector()
+        const declaration = PragmaticServer.ModelDeclaration(modelId)
+        let member: { Storage: IStorage } | undefined
+        for (const candidate of solution.Members.ToArray())
+        {
+            if (candidate.Storage !== undefined && (await collector.Collect(candidate.Storage)).some(f => declaration.test(f.text)))
+            {
+                member = { Storage: candidate.Storage }
+                break
+            }
+        }
+        if (member === undefined)
+        {
+            throw new ResponseError(ErrorCodes.InvalidParams, PragmaticServer.ModelNotFoundMessage)
+        }
+        const security: IDevWriteSecurity = this.identity === undefined
+            ? new OpenDevWriteSecurity()
+            : await PrincipalDevWriteSecurity.For(context, await this.ReadAuthorization())
+        this.cypherExecutor ??= new DevCypherExecutor(new DevModelWriter(languageService as SolutionLanguageService), () => languageService.GraphRevision)
+        const namespace = modelId.includes(PragmaticServer.NamespaceSeparator) ? modelId.slice(0, modelId.lastIndexOf(PragmaticServer.NamespaceSeparator)) : solution.Name
+        return this.cypherExecutor.Execute(request, { member, identity: { model: solution.Name, version: PragmaticServer.GraphModelVersion, namespace } }, security)
+    }
+
+    private static ModelDeclaration(modelId: string): RegExp
+    {
+        const simple = modelId.slice(modelId.lastIndexOf(PragmaticServer.NamespaceSeparator) + 1)
+        return new RegExp(PragmaticServer.ModelDeclarationPrefix + simple.replace(PragmaticServer.RegexSpecials, PragmaticServer.RegexEscape) + PragmaticServer.ModelDeclarationSuffix)
     }
 
     private async CollectGraphSources(): Promise<readonly TenantRepository[]>

@@ -130,3 +130,10 @@ test('connector/readPage is allowed for a reader and denied with no role', () =>
     assert.equal(GateFixture.Gate(Role.Viewer).Authorize(ConnectorProtocol.ReadPage.method).Allowed, true)
     assert.equal(GateFixture.Gate(null).Authorize(ConnectorProtocol.ReadPage.method).Allowed, false)
 })
+
+test('cypher/execute needs tenant write: Owner allowed, Viewer and no role denied', () =>
+{
+    assert.equal(GateFixture.Gate(Role.Owner).Authorize(CypherProtocol.Execute.method).Allowed, true)
+    assert.equal(GateFixture.Gate(Role.Viewer).Authorize(CypherProtocol.Execute.method).Allowed, false)
+    assert.equal(GateFixture.Gate(null).Authorize(CypherProtocol.Execute.method).Allowed, false)
+})
