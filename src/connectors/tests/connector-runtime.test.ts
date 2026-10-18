@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { ServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import { check, DataSourceAdapterCatalog, DataSourceKind, DiagnosticCode, WriteFailureKind } from '@pragmatic-tech-ai/todl'
-import type { IDataSourceAdapter, IDataSourceAdapterFactory, ResolvedConnection, QueryRequest, WriteBatch, WriteResult, WriteOperation, ExternalRecord, ModelConnectorPlan } from '@pragmatic-tech-ai/todl'
+import type { ConnectorSpec, IDataSourceAdapter, IDataSourceAdapterFactory, ResolvedConnection, QueryRequest, WriteBatch, WriteResult, WriteOperation, ExternalRecord, ModelConnectorPlan } from '@pragmatic-tech-ai/todl'
 import { ConnectorRuntime } from '../connector-runtime.js'
 import { SolutionConnectorPlanner } from '../solution-connector-planner.js'
 import type { ConnectorModel } from '../solution-connector-planner.js'
@@ -75,6 +75,37 @@ class AlwaysFailingFactory implements IDataSourceAdapterFactory
 {
     public readonly Kind = DataSourceKind.Sql
     public Open(): Promise<IDataSourceAdapter> { return Promise.reject(new Error('connect to secret-dsn failed')) }
+}
+
+class MutableRowsFactory implements IDataSourceAdapterFactory
+{
+    public readonly Kind = DataSourceKind.Sql
+    public readonly Rows = new Map<string, readonly ExternalRecord[]>()
+    public constructor(private readonly failApply: boolean) {}
+    public Open(_connection: ResolvedConnection): Promise<IDataSourceAdapter>
+    {
+        return Promise.resolve(this.failApply ? new FailingResultAdapter(this.Rows) : new InMemoryAdapter(this.Rows))
+    }
+}
+
+class FailingResultAdapter extends InMemoryAdapter
+{
+    public override Apply(_batch: WriteBatch): Promise<WriteResult>
+    {
+        return Promise.reject(new Error('apply failed'))
+    }
+}
+
+class EvictionForbiddenCatalog extends DataSourceAdapterCatalog
+{
+    public override Invalidate(_spec: ConnectorSpec): Promise<void>
+    {
+        return Promise.reject(new Error('Invalidate must not be called'))
+    }
+    public override Dispose(): Promise<void>
+    {
+        return Promise.reject(new Error('Dispose must not be called'))
+    }
 }
 
 class Fixtures
@@ -283,4 +314,59 @@ test('a throwing adapter surfaces an Error failure rather than rejecting, and th
     assert.ok(failures.length >= 1)
     assert.ok(failures.every(f => f.Kind === WriteFailureKind.Error))
     assert.notEqual(runtime.Revision, before)
+})
+
+test('RefreshModel re-pulls a prepared model and bumps the Revision', async () =>
+{
+    const factory = new MutableRowsFactory(false)
+    factory.Rows.set('Customer', [{ customer_id: 'C1', name: 'Acme' }])
+    const runtime = new ConnectorRuntime([Fixtures.Model('shop')], Fixtures.ServicesFor(factory))
+    assert.equal((await runtime.ReadEntities('shop', 'shop.Customer')).Entities.length, 1)
+    const before = runtime.Revision
+    factory.Rows.set('Customer', [{ customer_id: 'C1', name: 'Acme' }, { customer_id: 'C2', name: 'Beta' }])
+    const outcome = await runtime.RefreshModel('shop')
+    assert.equal(outcome.Diagnostics.length, 0)
+    assert.equal((await runtime.ReadEntities('shop', 'shop.Customer')).Entities.length, 2)
+    assert.notEqual(runtime.Revision, before)
+})
+
+test('RefreshModel prepares a not-yet-prepared model', async () =>
+{
+    const { services } = Fixtures.Services(Fixtures.FiveCustomers())
+    const runtime = new ConnectorRuntime([Fixtures.Model('shop')], services)
+    const outcome = await runtime.RefreshModel('shop')
+    assert.equal(outcome.Diagnostics.length, 0)
+    assert.equal((await runtime.ReadEntities('shop', 'shop.Customer')).Entities.length, 5)
+})
+
+test('RefreshModel on an unknown model id throws naming the model', async () =>
+{
+    const { services } = Fixtures.Services()
+    const runtime = new ConnectorRuntime([Fixtures.Model('shop')], services)
+    await assert.rejects(() => runtime.RefreshModel('nope'), /nope/)
+})
+
+test('RefreshModel does NOT evict adapters', async () =>
+{
+    const factory = new MutableRowsFactory(false)
+    factory.Rows.set('Customer', [{ customer_id: 'C1', name: 'Acme' }])
+    const catalog = new EvictionForbiddenCatalog().Register(factory)
+    const services = new ServiceProvider()
+    services.registerInstance(DataSourceAdapterCatalog.ServiceKey, catalog)
+    const runtime = new ConnectorRuntime([Fixtures.Model('shop')], services)
+    await runtime.PrepareModel('shop')
+    await runtime.RefreshModel('shop')
+    assert.equal((await runtime.ReadEntities('shop', 'shop.Customer')).Entities.length, 1)
+})
+
+test('RefreshModel surfaces dropped-pending-op diagnostics', async () =>
+{
+    const factory = new MutableRowsFactory(true)
+    factory.Rows.set('Customer', [{ customer_id: 'C1', name: 'Acme' }])
+    const runtime = new ConnectorRuntime([Fixtures.Model('shop')], Fixtures.ServicesFor(factory))
+    const id = (await runtime.ReadEntities('shop', 'shop.Customer')).Entities[0]!.id
+    await runtime.WriteBack('shop', [id], [])
+    factory.Rows.set('Customer', [{ customer_id: 'C9', name: 'Other' }])
+    const outcome = await runtime.RefreshModel('shop')
+    assert.ok(outcome.Diagnostics.some(d => d.code === DiagnosticCode.ConnectorRefreshDropped))
 })

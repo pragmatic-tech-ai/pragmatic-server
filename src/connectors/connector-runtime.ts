@@ -43,6 +43,11 @@ export interface EntityPageResult
     readonly HasMore: boolean
 }
 
+export interface RefreshModelOutcome
+{
+    readonly Diagnostics: readonly Diagnostic[]
+}
+
 /** Per-solution in-process connector host: lazily prepares each connector-bearing model's FederatedModelDataConnector
  *  on first touch (cached) and serves reads/write-back. Carries names/node-ids only; never a secret or raw error text. */
 export class ConnectorRuntime
@@ -55,6 +60,7 @@ export class ConnectorRuntime
 
     private readonly instanceId = ++ConnectorRuntime.nextInstanceId
     private writeBackCount = 0
+    private refreshCount = 0
     private readonly models: ReadonlyMap<string, ConnectorModel>
     private readonly services: IServiceProvider
     private readonly registry = new ModelRegistry()
@@ -72,10 +78,10 @@ export class ConnectorRuntime
         this.services = services
     }
 
-    /** Identifies this runtime's data generation: changes on every write-back and differs across runtimes, so a page cursor never outlives the data it paged. */
+    /** Identifies this runtime's data generation: changes on every write-back and refresh and differs across runtimes, so a page cursor never outlives the data it paged. */
     public get Revision(): string
     {
-        return `${this.instanceId}:${this.writeBackCount}`
+        return `${this.instanceId}:${this.writeBackCount}:${this.refreshCount}`
     }
 
     /** The process-wide adapter catalog this runtime opens connectors through. */
@@ -132,6 +138,25 @@ export class ConnectorRuntime
             this.prepared.delete(modelId)
             throw error
         }
+    }
+
+    /** Re-pulls one model's data in place (adapters reused, never evicted). An unprepared model is simply prepared. Surfaces dropped-pending-op diagnostics. */
+    public async RefreshModel(modelId: string): Promise<RefreshModelOutcome>
+    {
+        if (!this.prepared.has(modelId))
+        {
+            await this.PrepareModel(modelId)
+            return { Diagnostics: [] }
+        }
+        const model = this.models.get(modelId)
+        if (model === undefined)
+        {
+            throw new Error(`${ConnectorRuntime.NoConnectorsPrefix}${modelId}`)
+        }
+        await this.registry.GetRequired(modelId).Refresh(this.services)
+        this.refreshCount++
+        const diagnostics = this.connectors.get(modelId)?.LastRefreshDiagnostics() ?? []
+        return { Diagnostics: diagnostics }
     }
 
     private async Build(model: ConnectorModel): Promise<void>
