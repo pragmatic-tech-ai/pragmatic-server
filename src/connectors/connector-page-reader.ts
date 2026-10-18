@@ -23,6 +23,7 @@ export class ConnectorPageReader
     private static readonly UnsupportedNotPageable = ' (its adapter cannot serve keyset pages)'
     /** Upper bound on keyset slices scanned to fill one page, so a mostly-filtered source cannot make one request unbounded. */
     private static readonly MaxSlicesPerPage = 20
+    private static readonly NullKeyAtFillBoundary = 'connector/readPage invariant violated: null keyset key at page fill boundary for concept: '
     private static readonly UnknownConnectorPrefix = 'no connector for concept: '
 
     private readonly runtime: ConnectorRuntime
@@ -79,9 +80,13 @@ export class ConnectorPageReader
                 if (items.length >= page.Size && i < slice.Records.length - 1)
                 {
                     // Page filled mid-slice: resume after the last raw row actually consumed.
-                    // A null record key is effectively unreachable (a visible row needs an id); fall back to the slice's own
-                    // NextAfter rather than dropping the cursor, which would silently truncate the source.
-                    nextAfter = ConnectorPageReader.KeyOf(record, binding) ?? slice.NextAfter
+                    // A null key here violates the keyset invariant; falling back to the slice's NextAfter would silently skip rows, so fail loud.
+                    const resume = ConnectorPageReader.KeyOf(record, binding)
+                    if (resume === undefined || resume === null)
+                    {
+                        throw new Error(`${ConnectorPageReader.NullKeyAtFillBoundary}${concept}`)
+                    }
+                    nextAfter = resume
                     break
                 }
             }
