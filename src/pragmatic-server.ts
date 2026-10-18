@@ -295,6 +295,7 @@ export class PragmaticServer
         {
             return ConnectorHydrateWriter.AllowAll()
         }
+        // Connector rows have no app attribute policy, so the sharing predicate is allow-all and ownership is enforced solely by the depth evaluator, mirroring the depth-only connector READ side.
         const auth = await this.ReadAuthorization()
         return { authorizer: await auth.WriteAuthorizerFor(context), gate: await auth.WriteInstanceGateFor(context, new AllowAllInstanceFilter(), target) }
     }
