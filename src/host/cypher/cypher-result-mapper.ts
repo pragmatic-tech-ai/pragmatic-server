@@ -21,7 +21,7 @@ export class CypherResultMapper
         return page
     }
 
-    private static Cell(cell: unknown): CypherCellDto
+    public static Cell(cell: unknown): CypherCellDto
     {
         if (cell === null || cell === undefined)
         {
