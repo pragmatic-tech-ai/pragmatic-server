@@ -32,8 +32,21 @@ export class EntityDtoMapper
         return { id: entity.id, concept: entity.concept, fields: visible }
     }
 
-    public static FromNode(node: EntityNodeShape): EntityDto
+    public static FromNode(node: EntityNodeShape, mask?: IFieldReadMask): EntityDto
     {
-        return { id: node.id, concept: node.type, fields: WireScalar.Record(node.attrs) }
+        const fields = WireScalar.Record(node.attrs)
+        if (mask === undefined)
+        {
+            return { id: node.id, concept: node.type, fields }
+        }
+        const visible: typeof fields = {}
+        for (const name of Object.keys(fields))
+        {
+            if (mask.CanRead(node.type, name))
+            {
+                visible[name] = fields[name]!
+            }
+        }
+        return { id: node.id, concept: node.type, fields: visible }
     }
 }

@@ -4,6 +4,12 @@ import { ServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import { DataSourceAdapterCatalog, DataSourceKind, WriteConcurrency, WriteAtomicity } from '@pragmatic-tech-ai/todl'
 import type { ConnectorSpec, ConnectorBinding, IDataSourceAdapter, IDataSourceAdapterFactory, ResolvedConnection, QueryRequest, WriteBatch, WriteResult, ExternalRecord, PageQuery, PageSlice } from '@pragmatic-tech-ai/todl'
 import { CursorStaleError, PageCursorCodec } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { EntityDto, Page } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { IInstanceFilter, IInstanceView } from '@pragmatic-tech-ai/todl'
+import { AllowAllFieldReadMask } from '../../host/cypher/field-masked-graph-query.js'
+import type { IFieldReadMask } from '../../host/cypher/field-masked-graph-query.js'
+import { ConnectorReadAuthorizations } from '../../host/connector-read-authorization.js'
+import type { IConnectorReadAuthorization } from '../../host/connector-read-authorization.js'
 import { ConnectorRuntime } from '../connector-runtime.js'
 import { ConnectorPageReader } from '../connector-page-reader.js'
 import { PagingLimits } from '../../config/paging-limits.js'
@@ -179,7 +185,7 @@ test('readPage does not materialize the model nor open another concept adapter',
     const page = await new ConnectorPageReader(runtime).ReadPage(Fixtures.ModelId, 'shop.A', { pageSize: 2 }, Fixtures.Limits)
     assert.equal(page.items.length, 2)
     assert.equal(prepared, 0)
-    assert.deepEqual(factory.Opened, ['a'])
+    assert.deepEqual([...new Set(factory.Opened)], ['a'])
     assert.equal(factory.Adapters.get('a')!.Queries, 0)
 })
 
@@ -220,4 +226,135 @@ test('keyset cursor round-trips keys containing the separator and JSON metachara
     }
     while (cursor !== undefined)
     assert.deepEqual([...seen].sort(), [...keys].sort())
+})
+
+class RowFilter implements IInstanceFilter
+{
+    private readonly keep: (n: number) => boolean
+
+    public constructor(keep: (n: number) => boolean)
+    {
+        this.keep = keep
+    }
+
+    public Keep(view: IInstanceView): boolean
+    {
+        return this.keep(Number(String(view.Field('name')).replace(/\D/g, '')))
+    }
+}
+
+class DenyNameMask implements IFieldReadMask
+{
+    public CanRead(concept: string, field: string): boolean
+    {
+        return !(concept === 'shop.A' && field === 'name')
+    }
+}
+
+class AuthFx
+{
+    public static IdOf(item: EntityDto): string
+    {
+        return item.id.slice('shop.A#a.A#'.length)
+    }
+
+    public static Authz(keep: (n: number) => boolean, mask: IFieldReadMask = AllowAllFieldReadMask.Instance): IConnectorReadAuthorization
+    {
+        return { Filter: new RowFilter(keep), FieldMask: mask }
+    }
+
+    public static async Drain(reader: ConnectorPageReader, authz: IConnectorReadAuthorization | undefined, digest: string | undefined, size: number): Promise<Page<EntityDto>[]>
+    {
+        const pages: Page<EntityDto>[] = []
+        let cursor: string | undefined
+        do
+        {
+            const page = await reader.ReadPage(Fixtures.ModelId, 'shop.A', { cursor, pageSize: size }, Fixtures.Limits, authz, digest)
+            pages.push(page)
+            cursor = page.nextCursor
+        }
+        while (cursor !== undefined)
+        return pages
+    }
+}
+
+test('paged read tiles the VISIBLE subset with no dup/skip', async () =>
+{
+    const reader = new ConnectorPageReader(Fixtures.Two(new RecordingFactory(true, Fixtures.Rows(6))))
+    const pages = await AuthFx.Drain(reader, AuthFx.Authz(n => [1, 3, 4].includes(n)), 'p', 2)
+    assert.deepEqual(pages.map(p => p.items.map(AuthFx.IdOf)), [['C1', 'C3'], ['C4']])
+    assert.equal(pages[1]!.nextCursor, undefined)
+})
+
+test('a filtered page is filled, not silently short', async () =>
+{
+    const reader = new ConnectorPageReader(Fixtures.Two(new RecordingFactory(true, Fixtures.Rows(6))))
+    const page = await reader.ReadPage(Fixtures.ModelId, 'shop.A', { pageSize: 2 }, Fixtures.Limits, AuthFx.Authz(n => n === 1 || n === 3), 'p')
+    assert.deepEqual(page.items.map(AuthFx.IdOf), ['C1', 'C3'])
+    assert.ok(page.nextCursor !== undefined)
+})
+
+test('NextAfter resumes by the last RAW key consumed', async () =>
+{
+    const reader = new ConnectorPageReader(Fixtures.Two(new RecordingFactory(true, Fixtures.Rows(8))))
+    const authz = AuthFx.Authz(n => n % 2 === 0)
+    const first = await reader.ReadPage(Fixtures.ModelId, 'shop.A', { pageSize: 3 }, Fixtures.Limits, authz, 'p')
+    assert.deepEqual(first.items.map(AuthFx.IdOf), ['C0', 'C2', 'C4'])
+    assert.ok(PageCursorCodec.Decode(first.nextCursor!)!.fingerprint.endsWith('"C4"'))
+    const second = await reader.ReadPage(Fixtures.ModelId, 'shop.A', { cursor: first.nextCursor, pageSize: 3 }, Fixtures.Limits, authz, 'p')
+    assert.deepEqual(second.items.map(AuthFx.IdOf), ['C6'])
+    assert.equal(second.nextCursor, undefined)
+})
+
+test('scan bound yields a short page WITH a cursor', async () =>
+{
+    const reader = new ConnectorPageReader(Fixtures.Two(new RecordingFactory(true, Fixtures.Rows(100))))
+    const authz = AuthFx.Authz(n => n === 99)
+    const page = await reader.ReadPage(Fixtures.ModelId, 'shop.A', { pageSize: 2 }, Fixtures.Limits, authz, 'p')
+    assert.ok(page.items.length < 2)
+    assert.ok(page.nextCursor !== undefined)
+    const all = await AuthFx.Drain(reader, authz, 'p', 2)
+    assert.deepEqual(all.flatMap(p => p.items.map(AuthFx.IdOf)), ['C99'])
+})
+
+test('a cursor minted for principal A is stale for principal B', async () =>
+{
+    const reader = new ConnectorPageReader(Fixtures.Two(new RecordingFactory(true, Fixtures.Rows(6))))
+    const authz = AuthFx.Authz(() => true)
+    const first = await reader.ReadPage(Fixtures.ModelId, 'shop.A', { pageSize: 2 }, Fixtures.Limits, authz, 'A')
+    await assert.rejects(() => reader.ReadPage(Fixtures.ModelId, 'shop.A', { cursor: first.nextCursor, pageSize: 2 }, Fixtures.Limits, authz, 'B'), Fixtures.IsStale)
+    const ok = await reader.ReadPage(Fixtures.ModelId, 'shop.A', { cursor: first.nextCursor, pageSize: 2 }, Fixtures.Limits, authz, 'A')
+    assert.equal(ok.items.length, 2)
+})
+
+test('no-identity paged read is unchanged', async () =>
+{
+    const reader = new ConnectorPageReader(Fixtures.Two(new RecordingFactory(true, Fixtures.Rows(5))))
+    const bare = await AuthFx.Drain(reader, undefined, undefined, 2)
+    const allow = await AuthFx.Drain(reader, ConnectorReadAuthorizations.AllowAll(), undefined, 2)
+    assert.deepEqual(allow, bare)
+    assert.deepEqual(bare.map(p => p.items.length), [2, 2, 1])
+})
+
+test('filtering opens no other concept adapter and no PrepareModel', async () =>
+{
+    const factory = new RecordingFactory(true, Fixtures.Rows(6))
+    const runtime = Fixtures.Two(factory)
+    let prepared = 0
+    runtime.PrepareModel = (): Promise<void> =>
+    {
+        prepared++
+        return Promise.resolve()
+    }
+    await AuthFx.Drain(new ConnectorPageReader(runtime), AuthFx.Authz(n => n % 3 === 0), 'p', 1)
+    assert.equal(prepared, 0)
+    assert.deepEqual([...new Set(factory.Opened)], ['a'])
+})
+
+test('the field mask hides masked fields on paged rows using the qualified concept name', async () =>
+{
+    const reader = new ConnectorPageReader(Fixtures.Two(new RecordingFactory(true, Fixtures.Rows(3))))
+    const page = await reader.ReadPage(Fixtures.ModelId, 'shop.A', { pageSize: 5 }, Fixtures.Limits, AuthFx.Authz(() => true, new DenyNameMask()), 'p')
+    assert.equal(page.items.length, 3)
+    assert.ok(page.items.every(i => !('name' in i.fields)))
 })

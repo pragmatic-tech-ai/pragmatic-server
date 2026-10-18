@@ -96,7 +96,7 @@ export class ConnectorService
         await runtime.PrepareModel(modelId)
     }
 
-    /** The per-request read authorization (allow-all when no factory is wired). The materialized Read is filtered and masked by it; ReadPage still ignores it (pending). */
+    /** The per-request read authorization (allow-all when no factory is wired). The materialized Read is filtered and masked by it; so is the paged ReadPage. */
     private ReadAuthorization(context: AccessContext): Promise<IConnectorReadAuthorization>
     {
         return this.readAuthorizationFor === undefined ? Promise.resolve(ConnectorReadAuthorizations.AllowAll()) : this.readAuthorizationFor(context)
@@ -129,8 +129,9 @@ export class ConnectorService
     {
         const runtime = await this.Runtime()
         const authz = await this.ReadAuthorization(context)
-        void authz
-        return new ConnectorPageReader(runtime).ReadPage(modelId, concept, params, limits)
+        // Identity wired: the cursor is bound to the principal's digest. Without identity the fingerprint is principal-independent (unchanged).
+        const digest = this.readAuthorizationFor === undefined ? undefined : ConnectorPrincipalDigest.Of(context)
+        return new ConnectorPageReader(runtime).ReadPage(modelId, concept, params, limits, authz, digest)
     }
 
     /** Hydrate-on-write: edits paged entities by id+fields, reconstructing each write target with one keyed read. Never prepares the model. */
