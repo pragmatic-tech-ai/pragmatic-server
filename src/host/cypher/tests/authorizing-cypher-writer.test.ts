@@ -1,13 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Cypher } from '@pragmatic-tech-ai/todl'
-import type { IInstanceView } from '@pragmatic-tech-ai/todl'
+import type { IInstanceView, Scalar } from '@pragmatic-tech-ai/todl'
 import { PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
 import { AllowAllWriteInstanceGate } from '../write-instance-gate.js'
 import type { IWriteInstanceGate } from '../write-instance-gate.js'
 import { AuthorizingCypherWriter, WriteAuthorizationError } from '../authorizing-cypher-writer.js'
-
-type Scalar = string | number | boolean
 
 class FakeInner implements Cypher.ICypherWriter
 {
@@ -188,6 +186,27 @@ test('SET on a node CREATEd earlier this query authorizes against the create, no
     const del = gate.Seen[gate.Seen.length - 1]
     assert.equal(del.action, PrivilegeAction.Delete)
     assert.equal(del.secret, 'X')
+})
+
+test('SET on a created node with CanWriteField(Update) denied throws and does not call inner', () =>
+{
+    const inner = new FakeInner()
+    const gate = new StubGate()
+    const w = new AuthorizingCypherWriter(inner, gate, Fx.Graph({}))
+    const id = w.CreateNode(Widget, Fx.Props({ n: 1 }))
+    gate.DenyFields.add('salary')
+    assert.throws(() => w.SetProperty(id, 'salary', 5), WriteAuthorizationError)
+    assert.deepEqual(inner.Calls, ['CreateNode:' + Widget])
+})
+
+test('CreateRelationship whose SOURCE is Authorize-denied throws and leaves inner uncalled', () =>
+{
+    const inner = new FakeInner()
+    const gate = new StubGate()
+    gate.DenyActions.add(PrivilegeAction.Update)
+    const w = new AuthorizingCypherWriter(inner, gate, Fx.Graph(Visible))
+    assert.throws(() => w.CreateRelationship('a', 'rel', 'b'), WriteAuthorizationError)
+    assert.deepEqual(inner.Calls, [])
 })
 
 test('DeleteNode authorizes Delete and a denial throws before delegating', () =>

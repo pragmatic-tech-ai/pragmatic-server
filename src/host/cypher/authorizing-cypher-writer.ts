@@ -1,8 +1,7 @@
-import type { Cypher, IInstanceView } from '@pragmatic-tech-ai/todl'
+import type { Cypher, IInstanceView, Scalar } from '@pragmatic-tech-ai/todl'
 import { PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
 import type { IWriteInstanceGate } from './write-instance-gate.js'
-
-type Scalar = string | number | boolean
+import { ReflectedView } from './reflected-view.js'
 
 /** A write was denied. Carries only the concept / action / field NAME - never a field value or secret. */
 export class WriteAuthorizationError extends Error
@@ -66,6 +65,7 @@ export class AuthorizingCypherWriter implements Cypher.ICypherWriter
 
     public CreateNode(concept: string, properties: ReadonlyMap<string, Scalar>): string
     {
+        // CreateDefaults fields are system-stamped: intentionally NOT subject to CanWriteField (only the caller's explicit props are checked), matching the connector/app write path.
         const merged = new Map<string, Scalar>(properties)
         for (const d of this.gate.CreateDefaults(concept)) merged.set(d.field, d.value)
         const view = new PayloadView(concept, merged)
@@ -81,6 +81,7 @@ export class AuthorizingCypherWriter implements Cypher.ICypherWriter
 
     public SetProperty(nodeId: string, name: string, value: Scalar): void
     {
+        // The tracked created-node view is updated AFTER the delegated write: the op is authorized against the current (pre-write) state, later ops see the new value.
         this.AuthorizeUpdate(nodeId, name)
         this.inner.SetProperty(nodeId, name, value)
         this.created.get(nodeId)?.Set(name, value)
@@ -88,6 +89,7 @@ export class AuthorizingCypherWriter implements Cypher.ICypherWriter
 
     public RemoveProperty(nodeId: string, name: string): void
     {
+        // Tracked view updated AFTER the delegated write (authorized against pre-write state).
         this.AuthorizeUpdate(nodeId, name)
         this.inner.RemoveProperty(nodeId, name)
         this.created.get(nodeId)?.Remove(name)
@@ -154,6 +156,6 @@ export class AuthorizingCypherWriter implements Cypher.ICypherWriter
         if (made !== undefined) return made
         const mirror = this.graph.Reflect(nodeId)
         if (mirror === undefined) throw new WriteAuthorizationError(undefined, undefined)
-        return { Concept: mirror.type.fullName, Field: (name: string) => mirror.field(name)?.value }
+        return ReflectedView.Of(mirror)
     }
 }
