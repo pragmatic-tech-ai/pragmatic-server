@@ -8,6 +8,9 @@ import { ConnectorPageReader } from '../connectors/connector-page-reader.js'
 import { ConnectorHydrateWriter } from './connector-hydrate-writer.js'
 import type { IHydrateAuthorization } from './connector-hydrate-writer.js'
 import type { IWriteTargetSource } from './write-target-source.js'
+import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
+import { ConnectorReadAuthorizations } from './connector-read-authorization.js'
+import type { IConnectorReadAuthorization } from './connector-read-authorization.js'
 
 /** Per-connection façade over the 6A ConnectorRuntime: lazily holds one runtime (rebuilt on Invalidate, i.e.
  *  connector/refresh or solution/open) and maps engine info shapes to camelCase wire DTOs. Carries names,
@@ -19,13 +22,15 @@ export class ConnectorService
     private readonly runtimeFactory: () => Promise<ConnectorRuntime>
     private runtimePromise: Promise<ConnectorRuntime> | undefined
     private readonly authorizationFor: ((target: IWriteTargetSource) => IHydrateAuthorization) | undefined
+    private readonly readAuthorizationFor: ((context: AccessContext) => Promise<IConnectorReadAuthorization>) | undefined
 
     /** authorizationFor (optional) builds the identity authorizer+gate over the KEYED write-target source; absent => allow-all
      *  (the per-method policy gate still guards connector/writePaged). */
-    public constructor(runtimeFactory: () => Promise<ConnectorRuntime>, authorizationFor?: (target: IWriteTargetSource) => IHydrateAuthorization)
+    public constructor(runtimeFactory: () => Promise<ConnectorRuntime>, authorizationFor?: (target: IWriteTargetSource) => IHydrateAuthorization, readAuthorizationFor?: (context: AccessContext) => Promise<IConnectorReadAuthorization>)
     {
         this.runtimeFactory = runtimeFactory
         this.authorizationFor = authorizationFor
+        this.readAuthorizationFor = readAuthorizationFor
     }
 
     /** Evicts (targeted, per spec) this connection's connector adapters from the process-wide catalog so the next
@@ -90,8 +95,16 @@ export class ConnectorService
         await runtime.PrepareModel(modelId)
     }
 
-    public async Read(modelId: string, concept: string, params: PageParams, limits: PagingLimits): Promise<Page<EntityDto>>
+    /** The per-request read authorization (allow-all when no factory is wired). Filtering lands in later tasks. */
+    private ReadAuthorization(context: AccessContext): Promise<IConnectorReadAuthorization>
     {
+        return this.readAuthorizationFor === undefined ? Promise.resolve(ConnectorReadAuthorizations.AllowAll()) : this.readAuthorizationFor(context)
+    }
+
+    public async Read(modelId: string, concept: string, params: PageParams, limits: PagingLimits, context: AccessContext): Promise<Page<EntityDto>>
+    {
+        const authz = await this.ReadAuthorization(context)
+        void authz
         PageRequest.ValidatePageSize(params)
         const runtime = await this.Runtime()
         const fingerprint = PageFingerprint.Of(ConnectorService.ConnectorFingerprintTag, modelId, concept, runtime.Revision)
@@ -103,8 +116,10 @@ export class ConnectorService
     }
 
     /** On-demand keyset-paged read of ONE connector binding: never prepares the model nor opens any other concept's adapter. */
-    public async ReadPage(modelId: string, concept: string, params: PageParams, limits: PagingLimits): Promise<Page<EntityDto>>
+    public async ReadPage(modelId: string, concept: string, params: PageParams, limits: PagingLimits, context: AccessContext): Promise<Page<EntityDto>>
     {
+        const authz = await this.ReadAuthorization(context)
+        void authz
         const runtime = await this.Runtime()
         return new ConnectorPageReader(runtime).ReadPage(modelId, concept, params, limits)
     }

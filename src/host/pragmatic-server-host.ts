@@ -479,7 +479,7 @@ export class PragmaticServerHost
                         policy: new BackpressurePolicy(resilience.backpressureSoftBytes, resilience.backpressureHardBytes, resilience.backpressureGraceMs),
                         onShed: () => this.logger.Info(PragmaticServerHost.ShedLine, { [PragmaticServerHost.EventKey]: PragmaticServerHost.ShedEvent }),
                     })
-                    const handler = ServerConnectionHandler.Attach(socket, languageService, manager, context, () => server.Connectors(), ctx => server.Graph(ctx), this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, server.Purpose(), runtime.applications, runtime.appGraphProvider, runtime.appWriteProvider, runtime.shareProvider, runtime.unshareProvider, runtime.listSharesProvider, runtime.assignProvider, this.paging, fieldMasks)
+                    const handler = ServerConnectionHandler.Attach(socket, languageService, manager, context, () => server.Connectors(), ctx => server.Graph(ctx), this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, server.Purpose(), runtime.applications, runtime.appGraphProvider, runtime.appWriteProvider, runtime.shareProvider, runtime.unshareProvider, runtime.listSharesProvider, runtime.assignProvider, this.paging, fieldMasks, ctx => server.ConnectorReadAuthorizationFor(ctx))
                     this.handlers.add(handler)
                     this.heartbeat.Watch(ws)
                     ws.on(PragmaticServerHost.CloseEvent, () =>

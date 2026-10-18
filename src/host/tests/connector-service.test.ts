@@ -8,6 +8,16 @@ import { ConnectorRuntime } from '../../connectors/connector-runtime.js'
 import { PagingLimits } from '../../config/paging-limits.js'
 import { AppWriteStatus, ConnectorWriteOp } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ConnectorService } from '../connector-service.js'
+import { ConnectorReadAuthorizations } from '../connector-read-authorization.js'
+import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
+
+class Ctx
+{
+    public static Any(): AccessContext
+    {
+        return new AccessContext(new Principal('p1', 't1', PrincipalKind.User, new Map(), []), new Tenant('t1', TenantKind.SelfHosted, 'Tenant One'), [], new ResourceAuthorizationPolicy())
+    }
+}
 
 const META = `
 namespace shop {
@@ -115,7 +125,7 @@ test('Read projects entity id/concept + scalar fields via Snapshot', async () =>
 {
     const service = new ConnectorService(() => Promise.resolve(Harness.Runtime()))
     const models = await service.List()
-    const entities = (await service.Read(models[0]!.modelId, 'shop.Customer', {}, new PagingLimits())).items
+    const entities = (await service.Read(models[0]!.modelId, 'shop.Customer', {}, new PagingLimits(), Ctx.Any())).items
     assert.ok(entities.length >= 1)
     assert.equal(entities[0]!.concept, 'shop.Customer')
     assert.equal(entities[0]!.fields.name, 'Acme')
@@ -219,7 +229,7 @@ test('RefreshModel on a loaded runtime refreshes and maps dropped-op diagnostics
     const runtime = new ConnectorRuntime(SolutionConnectorPlanner.Plan(model), services)
     const service = new ConnectorService(() => Promise.resolve(runtime))
     const modelId = (await service.List())[0]!.modelId
-    const entity = (await service.Read(modelId, 'shop.Customer', {}, new PagingLimits())).items[0]!
+    const entity = (await service.Read(modelId, 'shop.Customer', {}, new PagingLimits(), Ctx.Any())).items[0]!
     await runtime.WriteBack(modelId, [entity.id], [])
     rows.splice(0, rows.length, { customer_id: 'C9', name: 'Other' })
     const outcome = await service.RefreshModel(modelId)
@@ -275,4 +285,30 @@ test('WritePaged validates field values against the schema type: wrong-typed and
     assert.deepEqual(res.results.map(r => r.status), [AppWriteStatus.Invalid, AppWriteStatus.Invalid, AppWriteStatus.Applied])
     assert.equal(batches.length, 1)
     assert.deepEqual(batches[0]!.Operations.map(o => o.Key), ['C3'])
+})
+
+test('Read/ReadPage with AllowAll readAuthorizationFor return exactly what they return with none wired', async () =>
+{
+    const plain = new ConnectorService(() => Promise.resolve(Harness.Runtime()))
+    const wired = new ConnectorService(() => Promise.resolve(Harness.Runtime()), undefined, async () => ConnectorReadAuthorizations.AllowAll())
+    const modelId = (await plain.List())[0]!.modelId
+    const a = await plain.Read(modelId, 'shop.Customer', {}, new PagingLimits(), Ctx.Any())
+    const b = await wired.Read(modelId, 'shop.Customer', {}, new PagingLimits(), Ctx.Any())
+    assert.deepEqual(b, a)
+    // The harness adapter cannot serve keyset pages: ReadPage must fail identically with and without the factory.
+    const failure = async (service: ConnectorService): Promise<string> =>
+    {
+        try
+        {
+            await service.ReadPage(modelId, 'shop.Customer', {}, new PagingLimits(), Ctx.Any())
+            return ''
+        }
+        catch (e)
+        {
+            return (e as Error).message
+        }
+    }
+    const expected = await failure(plain)
+    assert.notEqual(expected, '')
+    assert.equal(await failure(wired), expected)
 })

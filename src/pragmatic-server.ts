@@ -40,6 +40,8 @@ import { TenantReadAuthorization, AllowAllReadFilterSource, AllowAllFieldReadMas
 import { FieldMaskedGraphQuery, AllowAllFieldReadMask } from './host/cypher/field-masked-graph-query.js'
 import { AllowAllWriteAuthorizerSource } from './host/cypher/read-filter-source.js'
 import type { IReadFilterSource, IWriteAuthorizerSource, IFieldReadMaskSource } from './host/cypher/read-filter-source.js'
+import { ConnectorReadAuthorizations } from './host/connector-read-authorization.js'
+import type { IConnectorReadAuthorization } from './host/connector-read-authorization.js'
 import { AllowAllWriteInstanceGate } from './host/cypher/write-instance-gate.js'
 import type { IWriteInstanceGate } from './host/cypher/write-instance-gate.js'
 import { FilteredReadWriteTargetSource } from './host/filtered-read-write-target-source.js'
@@ -269,6 +271,16 @@ export class PragmaticServer
             return AllowAllFieldReadMaskSource.Instance
         }
         return this.ReadAuthorization()
+    }
+
+    /** Per-request connector read authorization: allow-all without identity, else the tenant's access-depth filter + field mask. */
+    public async ConnectorReadAuthorizationFor(context: AccessContext): Promise<IConnectorReadAuthorization>
+    {
+        if (this.identity === undefined)
+        {
+            return ConnectorReadAuthorizations.AllowAll()
+        }
+        return ConnectorReadAuthorizations.From(await this.ReadAuthorization(), context)
     }
 
     private async DepthFilterSource(): Promise<IReadFilterSource>
