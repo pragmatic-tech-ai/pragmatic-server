@@ -695,33 +695,22 @@ export class PragmaticServer
     }
 
     /**
-     * The queryable graph for ONE model shard of the active solution, RBAC-filtered and field-masked exactly like the
-     * tenant-wide graph. An unknown model id and a shard the principal may not see raise the SAME InvalidParams error, so
-     * existence is not leaked.
+     * The queryable graph for ONE model shard of the active solution, RBAC-filtered and field-masked.
+     * Visibility is membership in the tenant's own sources: a non-member id raises InvalidParams; a member shard returns
+     * whatever the principal sees (possibly nothing), so row presence is never an oracle.
      */
     public async ModelGraph(context: AccessContext, modelId: string): Promise<IGraphQuery>
     {
-        let owner: TenantRepository | undefined
-        for (const source of await this.CollectGraphSources())
-        {
-            if (ModelShardGraph.Contains(source.repo, modelId))
-            {
-                owner = source
-                break
-            }
-        }
-        if (owner === undefined)
+        const sources = await this.CollectGraphSources()
+        const shard = ModelShardGraph.Locate(sources.map(s => s.repo), modelId)
+        if (shard === undefined)
         {
             throw new ResponseError(ErrorCodes.InvalidParams, PragmaticServer.ModelNotFoundMessage)
         }
-        const base = await ModelShardGraph.Build(owner.repo, modelId)
-        const predicate = IdentityEnforcement.ForRepository(owner.repo, context, Action.Read).InstanceFilter()
+        const base = await ModelShardGraph.Build(shard)
+        const predicate = IdentityEnforcement.ForRepository(shard.Repo, context, Action.Read).InstanceFilter()
         const depth = await (await this.DepthFilterSource()).ReadFilterFor(context)
         const filtered = new FilteredGraphQuery(base, new CompositeInstanceFilter([predicate, depth]))
-        if (!ModelShardGraph.IsVisible(base, filtered))
-        {
-            throw new ResponseError(ErrorCodes.InvalidParams, PragmaticServer.ModelNotFoundMessage)
-        }
         if (this.identity === undefined)
         {
             return filtered

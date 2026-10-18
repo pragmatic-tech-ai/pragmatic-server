@@ -78,6 +78,7 @@ class ModelScopedFixture
     public static readonly Plain = 'p1'
     public static readonly Granted = 'p2'
     public static readonly Unknown = 'no-such-model'
+    public static readonly OtherUnknown = 'another-missing-model'
     public static readonly Secret = 'hush'
     public static readonly LabelQuery = 'MATCH (w:Widget) RETURN w.label AS label ORDER BY label'
     public static readonly SecretQuery = 'MATCH (w:Widget) RETURN w.secret AS secret'
@@ -250,7 +251,7 @@ test('a secured field is masked in model-scoped results', async () =>
     })
 })
 
-test('an unknown modelId is InvalidParams', async () =>
+test('an UNKNOWN modelId is InvalidParams', async () =>
 {
     await ModelScopedFixture.With(true, async world =>
     {
@@ -260,16 +261,40 @@ test('an unknown modelId is InvalidParams', async () =>
     })
 })
 
-test('a modelId the principal may not see is InvalidParams, identical to an unknown one', async () =>
+test('any non-member modelId is InvalidParams with an identical error', async () =>
 {
     await ModelScopedFixture.With(true, async world =>
     {
         const handler = world.Connect(ModelScopedFixture.Context(ModelScopedFixture.Plain))
-        const forbidden = await ModelScopedFixture.CodeOf(handler.RunCypherQuery(ModelScopedFixture.Params(world.ModelIds[2])))
-        const unknown = await ModelScopedFixture.CodeOf(handler.RunCypherQuery(ModelScopedFixture.Params(ModelScopedFixture.Unknown)))
-        assert.equal(forbidden.code, ErrorCodes.InvalidParams)
-        assert.deepEqual(forbidden, unknown)
-        assert.ok(!forbidden.message.includes(world.ModelIds[2]))
+        const first = await ModelScopedFixture.CodeOf(handler.RunCypherQuery(ModelScopedFixture.Params(ModelScopedFixture.Unknown)))
+        const second = await ModelScopedFixture.CodeOf(handler.RunCypherQuery(ModelScopedFixture.Params(ModelScopedFixture.OtherUnknown)))
+        assert.equal(first.code, ErrorCodes.InvalidParams)
+        assert.deepEqual(first, second)
+        assert.ok(!first.message.includes(ModelScopedFixture.Unknown))
+    })
+})
+
+test('a member shard where the principal sees no rows returns an empty page', async () =>
+{
+    await ModelScopedFixture.With(true, async world =>
+    {
+        const handler = world.Connect(ModelScopedFixture.Context(ModelScopedFixture.Plain))
+        const page = await handler.RunCypherQuery(ModelScopedFixture.Params(world.ModelIds[2]))
+        assert.deepEqual(page.items, [])
+        assert.equal(page.nextCursor, undefined)
+    })
+})
+
+test('a secured field is masked in a tenant-wide (no modelId) result', async () =>
+{
+    await ModelScopedFixture.With(true, async world =>
+    {
+        const plain = world.Connect(ModelScopedFixture.Context(ModelScopedFixture.Plain))
+        const granted = world.Connect(ModelScopedFixture.Context(ModelScopedFixture.Granted))
+        const masked = ModelScopedFixture.Text(await plain.RunCypherQuery(ModelScopedFixture.Params(undefined, ModelScopedFixture.SecretQuery)))
+        const open = ModelScopedFixture.Text(await granted.RunCypherQuery(ModelScopedFixture.Params(undefined, ModelScopedFixture.SecretQuery)))
+        assert.ok(!masked.includes(ModelScopedFixture.Secret))
+        assert.ok(open.includes(ModelScopedFixture.Secret))
     })
 })
 

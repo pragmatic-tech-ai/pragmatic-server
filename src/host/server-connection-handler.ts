@@ -28,7 +28,7 @@ import type { ConnectorRuntime } from '../connectors/connector-runtime.js'
 import { ModelReadFilter } from './model-read-filter.js'
 import { AllowAllFieldReadMaskSource } from './cypher/read-filter-source.js'
 import type { IFieldReadMaskSource } from './cypher/read-filter-source.js'
-import { AllowAllFieldReadMask } from './cypher/field-masked-graph-query.js'
+import { AllowAllFieldReadMask, FieldMaskedGraphQuery } from './cypher/field-masked-graph-query.js'
 import { AdminService, AdminSelfLockoutError, LastAdministratorError, AdminConfigMissingError, AdminTokenNotFoundError } from './admin-service.js'
 import { AdminEnums, AdminEnumError } from './admin-enums.js'
 import { TenantPurpose } from '../tenancy/tenant-purpose.js'
@@ -470,7 +470,7 @@ export class ServerConnectionHandler
         const graph = this.purpose === TenantPurpose.Runtime
             ? await this.RequireBoundAppGraph(Cypher.ReferencedLabels.Of(source))
             : modelId === undefined
-                ? await this.graphProvider(this.accessContext)
+                ? await this.MaskedTenantGraph()
                 : await this.RequireModelGraph(modelId)
         // read the revision only once the graph is in hand: acquiring it may itself commit the first build, so
         // reading GraphRevision before the fetch would fingerprint page 1 against the pre-build revision and
@@ -504,6 +504,14 @@ export class ServerConnectionHandler
             }
             throw error
         }
+    }
+
+    /** The tenant-wide dev graph behind the per-context field mask, so every Cypher graph path masks uniformly. */
+    private async MaskedTenantGraph(): Promise<IGraphQuery>
+    {
+        const graph = await this.graphProvider(this.accessContext)
+        const mask = await this.fieldMasks.FieldReadMaskFor(this.accessContext)
+        return mask === AllowAllFieldReadMask.Instance ? graph : new FieldMaskedGraphQuery(graph, mask)
     }
 
     private async RequireModelGraph(modelId: string): Promise<IGraphQuery>
