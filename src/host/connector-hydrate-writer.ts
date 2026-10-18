@@ -183,7 +183,7 @@ export class ConnectorHydrateWriter
                 }
             }
         }
-        if (ConnectorHydrateWriter.IsOptimistic(binding) && op.expectedVersion === undefined)
+        if (ConnectorHydrateWriter.IsOptimistic(binding) && op.expectedVersion == null)
         {
             results[index] = ConnectorHydrateWriter.Refuse(op, AppWriteStatus.Conflict, ConnectorHydrateWriter.VersionRequired)
             return
@@ -223,12 +223,12 @@ export class ConnectorHydrateWriter
     {
         if (op.op === ConnectorWriteOp.Delete)
         {
-            return op.expectedVersion === undefined
+            return op.expectedVersion == null
                 ? { Kind: WriteOperationKind.Delete, Key: op.key, Fields: {} }
                 : { Kind: WriteOperationKind.Delete, Key: op.key, Fields: {}, Version: op.expectedVersion }
         }
         const fields = ConnectorWrites.ToExternalFields(binding, op.fields ?? {})
-        return op.expectedVersion === undefined
+        return op.expectedVersion == null
             ? { Kind: WriteOperationKind.Upsert, Key: op.key, Fields: fields }
             : { Kind: WriteOperationKind.Upsert, Key: op.key, Fields: fields, Version: op.expectedVersion }
     }

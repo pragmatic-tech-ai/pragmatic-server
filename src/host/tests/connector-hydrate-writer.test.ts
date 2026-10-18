@@ -301,4 +301,17 @@ test('a transactional batch that rolled back reports the unfaulted ops as failed
     w.a.Custom = { Applied: 0, Failures: [{ Key: 'C2', Kind: WriteFailureKind.Error, Reason: 'boom' }] }
     const res = await Fx.Writer(w).Apply({ modelId: 'm', operations: [Fx.Op({ key: 'C1' }), Fx.Op({ key: 'C2' })] })
     assert.deepEqual(res.results.map(r => r.status), [AppWriteStatus.Failed, AppWriteStatus.Failed])
+    assert.equal(res.results[0]!.reason, 'atomic batch rolled back')
+    assert.equal(res.results[1]!.reason, 'boom')
+})
+
+test('a null expectedVersion is treated as missing on an optimistic upsert and delete (fail-closed)', async () =>
+{
+    const w = Fx.World(Fx.Binding('Customer', 'a', { Concurrency: WriteConcurrency.Optimistic, VersionField: 'ver' }))
+    const res = await Fx.Writer(w).Apply({ modelId: 'm', operations: [
+        Fx.Op({ key: 'C1', expectedVersion: null }),
+        Fx.Op({ key: 'C2', op: ConnectorWriteOp.Delete, fields: undefined, expectedVersion: null }),
+    ] })
+    assert.deepEqual(res.results.map(r => r.status), [AppWriteStatus.Conflict, AppWriteStatus.Conflict])
+    assert.equal(w.a.Batches.length, 0)
 })
