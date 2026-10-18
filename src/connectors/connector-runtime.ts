@@ -153,6 +153,7 @@ export class ConnectorRuntime
         {
             throw new Error(`${ConnectorRuntime.NoConnectorsPrefix}${modelId}`)
         }
+        await this.prepared.get(modelId) // an in-flight first prepare must finish before the source can refresh
         await this.registry.GetRequired(modelId).Refresh(this.services)
         this.refreshCount++
         const diagnostics = this.connectors.get(modelId)?.LastRefreshDiagnostics() ?? []

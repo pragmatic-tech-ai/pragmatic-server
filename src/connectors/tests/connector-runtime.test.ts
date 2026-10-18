@@ -81,10 +81,13 @@ class MutableRowsFactory implements IDataSourceAdapterFactory
 {
     public readonly Kind = DataSourceKind.Sql
     public readonly Rows = new Map<string, readonly ExternalRecord[]>()
+    public readonly Adapters: InMemoryAdapter[] = []
     public constructor(private readonly failApply: boolean) {}
     public Open(_connection: ResolvedConnection): Promise<IDataSourceAdapter>
     {
-        return Promise.resolve(this.failApply ? new FailingResultAdapter(this.Rows) : new InMemoryAdapter(this.Rows))
+        const adapter = this.failApply ? new FailingResultAdapter(this.Rows) : new InMemoryAdapter(this.Rows)
+        this.Adapters.push(adapter)
+        return Promise.resolve(adapter)
     }
 }
 
@@ -93,6 +96,22 @@ class FailingResultAdapter extends InMemoryAdapter
     public override Apply(_batch: WriteBatch): Promise<WriteResult>
     {
         return Promise.reject(new Error('apply failed'))
+    }
+}
+
+class GatedFactory extends MutableRowsFactory
+{
+    public Release: () => void = () => {}
+    private readonly gate: Promise<void>
+    public constructor()
+    {
+        super(false)
+        this.gate = new Promise<void>(resolve => { this.Release = resolve })
+    }
+    public override async Open(connection: ResolvedConnection): Promise<IDataSourceAdapter>
+    {
+        await this.gate
+        return super.Open(connection)
     }
 }
 
@@ -369,4 +388,20 @@ test('RefreshModel surfaces dropped-pending-op diagnostics', async () =>
     factory.Rows.set('Customer', [{ customer_id: 'C9', name: 'Other' }])
     const outcome = await runtime.RefreshModel('shop')
     assert.ok(outcome.Diagnostics.some(d => d.code === DiagnosticCode.ConnectorRefreshDropped))
+})
+
+test('RefreshModel awaits an in-flight first prepare before refreshing', async () =>
+{
+    const factory = new GatedFactory()
+    factory.Rows.set('Customer', [{ customer_id: 'C1', name: 'Acme' }])
+    const runtime = new ConnectorRuntime([Fixtures.Model('shop')], Fixtures.ServicesFor(factory))
+    const read = runtime.ReadEntities('shop', 'shop.Customer')
+    const refresh = runtime.RefreshModel('shop')
+    factory.Release()
+    const [page, outcome] = await Promise.all([read, refresh])
+    assert.equal(page.Entities.length, 1)
+    assert.equal(outcome.Diagnostics.length, 0)
+    assert.equal((await runtime.ReadEntities('shop', 'shop.Customer')).Entities.length, 1)
+    // one prepare pull + one refresh pull; a refresh racing the prepare must not start a second concurrent prepare
+    assert.equal(factory.Adapters.reduce((n, a) => n + a.Queries, 0), 2)
 })
