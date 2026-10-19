@@ -1,0 +1,15 @@
+namespace hello
+{
+    concept greeting
+    {
+        message : string;
+    }
+
+    model HelloModel : hello
+    {
+        greeting g1
+        {
+            message = "hello from the tenant";
+        }
+    }
+}

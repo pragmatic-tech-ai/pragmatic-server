@@ -1,0 +1,23 @@
+import { Application } from "@pragmatic-tech-ai/mural";
+import { Observable } from "@pragmatic-tech-ai/mural/runtime";
+import { model } from "../generated/data.js";
+
+export class HelloAppApp extends Observable
+{
+    private static readonly HelloTextProperty = "HelloText";
+    private static readonly NoGreeting = "no greeting";
+
+    constructor()
+    {
+        super();
+        Application.current?.Services.addInstance(this);
+        // The remote model's data arrives asynchronously after the view is bound; re-raise the bound
+        // property when the live fetch lands so the view reads the loaded value.
+        model.DataChanged.subscribe(() => this.RaisePropertyChanged(HelloAppApp.HelloTextProperty, undefined, this.HelloText));
+    }
+
+    public get HelloText(): string
+    {
+        return model.helloGreetings[0]?.message ?? HelloAppApp.NoGreeting;
+    }
+}

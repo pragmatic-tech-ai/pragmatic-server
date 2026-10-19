@@ -1,0 +1,7 @@
+{
+  "type": "architecture",
+  "name": "hello-app",
+  "version": 1,
+  "id": "hello-app",
+  "packageVersion": "0.1.0"
+}
