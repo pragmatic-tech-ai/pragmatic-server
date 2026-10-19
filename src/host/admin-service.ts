@@ -1,8 +1,9 @@
-import { Action, AuditEvent, AuditEventKind, Grant, ResourceRef, Role, RoleCapabilities, ResourceKind } from '@pragmatic-tech-ai/todl-identity'
-import type { LocalAccount, ServiceTokenSummary, PresentedSecret, IRoleGrantStore, IAuditSink, ITenantConfigStore, ILocalAccountStore, IServiceTokenStore, ServiceTokenGrant, Tenant, IdentityConfig } from '@pragmatic-tech-ai/todl-identity'
+import { Action, AuditEvent, AuditEventKind, Grant, ResourceRef, Role, RoleCapabilities, ResourceKind, IdentityConfig } from '@pragmatic-tech-ai/todl-identity'
+import type { LocalAccount, ServiceTokenSummary, PresentedSecret, IRoleGrantStore, IAuditSink, ITenantConfigStore, ILocalAccountStore, IServiceTokenStore, ServiceTokenGrant, Tenant, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import type { LocalAccountRegistrar } from '@pragmatic-tech-ai/todl-identity-local'
 import { AdminEnums } from './admin-enums.js'
 import type { IAdapterPackAdmin } from './adapter-pack-admin.js'
+import type { ISecurityModelReload } from './cypher/read-filter-source.js'
 
 /** Raised when a caller tries to revoke their own tenant-Owner grant. */
 export class AdminSelfLockoutError extends Error
@@ -59,6 +60,7 @@ export class AdminService
     private static readonly GrantRoleAction = 'grant-role'
     private static readonly RevokeRoleAction = 'revoke-role'
     private static readonly SetConfigAction = 'set-config'
+    private static readonly SetSecurityModelAction = 'set-security-model'
     private static readonly CreateAccountAction = 'create-account'
     private static readonly DisableAccountAction = 'disable-account'
     private static readonly IssueTokenAction = 'issue-token'
@@ -82,8 +84,9 @@ export class AdminService
     private readonly registrar: LocalAccountRegistrar
     private readonly tokens: IServiceTokenStore
     private readonly packs: IAdapterPackAdmin
+    private readonly securityModelReload: ISecurityModelReload
 
-    public constructor(grants: IRoleGrantStore, audit: IAuditSink, configStore: ITenantConfigStore, tenant: Tenant, evict: () => Promise<void>, accounts: ILocalAccountStore, registrar: LocalAccountRegistrar, tokens: IServiceTokenStore, packs: IAdapterPackAdmin)
+    public constructor(grants: IRoleGrantStore, audit: IAuditSink, configStore: ITenantConfigStore, tenant: Tenant, evict: () => Promise<void>, accounts: ILocalAccountStore, registrar: LocalAccountRegistrar, tokens: IServiceTokenStore, packs: IAdapterPackAdmin, securityModelReload: ISecurityModelReload)
     {
         this.packs = packs
         this.grants = grants
@@ -94,6 +97,7 @@ export class AdminService
         this.accounts = accounts
         this.registrar = registrar
         this.tokens = tokens
+        this.securityModelReload = securityModelReload
     }
 
     public async ListGrants(subject: string): Promise<readonly Grant[]>
@@ -148,6 +152,36 @@ export class AdminService
         ])
         await this.Audit(null, detail)
         await this.evict()
+    }
+
+    /** The tenant's current access SecurityModel, or undefined when no config or no model is stored. */
+    public async GetSecurityModel(): Promise<ISecurityModelConfig | undefined>
+    {
+        const config = await this.configStore.Get(this.tenant.Id)
+        return config?.SecurityModel
+    }
+
+    /**
+     * Replaces ONLY the tenant's SecurityModel (every other config field is preserved), persists it, then
+     * invalidates the live authorizer so the change takes effect on the next request without a restart.
+     * The model is validated by the caller; the tenant must already have a stored config.
+     */
+    public async SetSecurityModel(actor: string, model: ISecurityModelConfig): Promise<void>
+    {
+        const config = await this.configStore.Get(this.tenant.Id)
+        if (config === null)
+        {
+            throw new AdminConfigMissingError()
+        }
+        const next = new IdentityConfig(config.PackId, config.DelegationDepth, config.ProviderSettings, config.GroupRoleMap, config.ClaimsMapping, model)
+        await this.configStore.Save(this.tenant.Id, next)
+        const detail = new Map<string, string>([
+            [AdminService.ActorKey, actor],
+            [AdminService.ActionKey, AdminService.SetSecurityModelAction],
+            [AdminService.PackIdKey, config.PackId],
+        ])
+        await this.Audit(null, detail)
+        this.securityModelReload.Invalidate(this.tenant.Id)
     }
 
     public async ListAccounts(): Promise<readonly LocalAccount[]>

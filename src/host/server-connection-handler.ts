@@ -1,7 +1,7 @@
 import {
     createMessageConnection, NullLogger, WebSocketMessageReader, WebSocketMessageWriter, LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol, AdminProtocol, CypherProtocol, PragmaticAppProtocol,
 } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, ModelViewPageDto, ModelViewParams, ResolvedResourceDto, GrantDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, AccountDto, CreateAccountParams, ServiceTokenSummaryDto, IssueTokenParams, TokenIssuedDto, CypherQueryParams, CypherQueryPageDto, CypherExecuteParams, CypherExecuteResultDto, PragmaticAppSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, ModelViewPageDto, ModelViewParams, ResolvedResourceDto, GrantDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, SetSecurityModelParams, AccountDto, CreateAccountParams, ServiceTokenSummaryDto, IssueTokenParams, TokenIssuedDto, CypherQueryParams, CypherQueryPageDto, CypherExecuteParams, CypherExecuteResultDto, PragmaticAppSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ResponseError, ErrorCodes, DrainingError, ApplicationDeployProtocol, AppDataProtocol, DataSharingProtocol, DataAssignmentProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherAppDeployParamsDto, AppDeployResultDto, AppWriteParams, AppWriteResultDto, AppWriteOpDto, ShareParams, ShareResultDto, UnshareParams, UnshareResultDto, ListSharesParams, ListSharesResultDto, AssignParams, AssignResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { RequestType, NotificationType } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -714,6 +714,19 @@ export class ServerConnectionHandler
             await this.AdminCall(() => admin.SetConfig(this.actor(), config))
             return { ok: true as const }
         })
+        this.connection.onRequest(AdminProtocol.GetSecurityModel, () => this.Dispatch(AdminProtocol.GetSecurityModel.method, async () =>
+        {
+            this.EnforceRate(AdminProtocol.GetSecurityModel.method)
+            this.authorize(AdminProtocol.GetSecurityModel.method)
+            // ISecurityModelConfig and SecurityModelDto are field-identical, JSON-safe shapes.
+            return await this.AdminCall(() => admin.GetSecurityModel()) as SecurityModelDto | undefined
+        }))
+        this.guarded(AdminProtocol.SetSecurityModel, async p =>
+        {
+            const model = this.ParseSecurityModel(p)
+            await this.AdminCall(() => admin.SetSecurityModel(this.actor(), model))
+            return { ok: true as const }
+        })
         this.connection.onRequest(AdminProtocol.ListAccounts, () => this.Dispatch(AdminProtocol.ListAccounts.method, async () =>
         {
             this.EnforceRate(AdminProtocol.ListAccounts.method)
@@ -1059,6 +1072,22 @@ export class ServerConnectionHandler
         {
             throw this.InvalidParams(error)
         }
+    }
+
+    /** Validates the incoming model via the evaluator (as ParseConfigDto does) and rejects a malformed one before any write. */
+    private ParseSecurityModel(dto: SetSecurityModelParams): ISecurityModelConfig
+    {
+        // ISecurityModelConfig and SecurityModelDto are field-identical, JSON-safe shapes.
+        const candidate = dto?.securityModel as unknown as ISecurityModelConfig
+        try
+        {
+            AccessDepthEvaluator.FromConfig(candidate)
+        }
+        catch
+        {
+            throw this.InvalidParams(new AdminEnumError(ServerConnectionHandler.SecurityModelField))
+        }
+        return candidate
     }
 
     private async ResourceHidden(nodeId: string): Promise<boolean>

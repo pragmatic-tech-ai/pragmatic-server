@@ -39,7 +39,7 @@ import { IdentityEnforcement, PolicyCatalog, CompositeInstanceFilter, AllowAllIn
 import { TenantReadAuthorization, AllowAllReadFilterSource, AllowAllFieldReadMaskSource } from './host/cypher/read-filter-source.js'
 import { FieldMaskedGraphQuery, AllowAllFieldReadMask } from './host/cypher/field-masked-graph-query.js'
 import { AllowAllWriteAuthorizerSource } from './host/cypher/read-filter-source.js'
-import type { IReadFilterSource, IWriteAuthorizerSource, IFieldReadMaskSource } from './host/cypher/read-filter-source.js'
+import type { IReadFilterSource, IWriteAuthorizerSource, IFieldReadMaskSource, ISecurityModelReload } from './host/cypher/read-filter-source.js'
 import { ConnectorReadAuthorizations } from './host/connector-read-authorization.js'
 import type { IConnectorReadAuthorization } from './host/connector-read-authorization.js'
 import { ConnectorHydrateWriter } from './host/connector-hydrate-writer.js'
@@ -289,6 +289,12 @@ export class PragmaticServer
         {
             return AllowAllFieldReadMaskSource.Instance
         }
+        return this.ReadAuthorization()
+    }
+
+    /** The live authorizer-reload seam: an admin SecurityModel change invalidates the cached per-tenant evaluator so the next request re-reads it. Requires identity. */
+    public SecurityModelReload(): Promise<ISecurityModelReload>
+    {
         return this.ReadAuthorization()
     }
 

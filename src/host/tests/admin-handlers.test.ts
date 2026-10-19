@@ -12,6 +12,7 @@ import { InMemoryRoleGrantStore, LocalAccountStore, ServiceTokenStore, LocalAcco
 import { InMemoryTenantConfigStore } from '@pragmatic-tech-ai/todl-identity-host'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
 import { AdminService } from '../admin-service.js'
+import { TenantReadAuthorization } from '../cypher/read-filter-source.js'
 import { AdapterPackError, AdapterPackErrorKind } from '@pragmatic-tech-ai/todl-connectors-host'
 
 class CapturingAuditSink implements IAuditSink
@@ -78,7 +79,7 @@ class AdminFixture
                 AllowScripts: async name => { this.AllowedPacks.push(name) },
                 DenyScripts: async name => { this.DeniedPacks.push(name) },
                 ListScriptAllowlist: async () => ['seed-pack', ...this.AllowedPacks],
-            })
+            }, new TenantReadAuthorization(this.Configs))
         const languageService = { GraphChanged: { subscribe: () => ({ dispose: () => undefined }) }, BuildStateChanged: { subscribe: () => ({ dispose: () => undefined }) } } as unknown as ILanguageService
         const manager = {} as unknown as SolutionManagerService
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()

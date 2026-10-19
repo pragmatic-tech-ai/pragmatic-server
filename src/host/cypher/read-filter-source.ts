@@ -33,6 +33,12 @@ export interface IWriteAuthorizerSource
     WriteAuthorizerFor(context: AccessContext): Promise<IWriteAuthorizer>
 }
 
+/** Drops a tenant's cached access evaluator so the next request re-reads its SecurityModel from the store (live reload, no restart). */
+export interface ISecurityModelReload
+{
+    Invalidate(tenantId: string): void
+}
+
 class AccessDepthWriteAuthorizer implements IWriteAuthorizer
 {
     constructor(private readonly evaluator: AccessDepthEvaluator, private readonly principal: Principal) {}
@@ -77,10 +83,10 @@ export class AllowAllWriteAuthorizerSource implements IWriteAuthorizerSource
 /**
  * Identity configured: builds and caches one AccessDepthEvaluator per tenant from the tenant's
  * SecurityModel (absent/null ⇒ DenyAll, fail-closed), and returns a per-principal depth filter.
- * The SecurityModel is static post-Start (runtime role editing is deferred), so the evaluator is
- * built once per tenant. Cache invalidation on config change is a deferred follow-up.
+ * The evaluator is built once per tenant and reused; a runtime SecurityModel change calls Invalidate
+ * to drop the cached evaluator so the next request re-reads the store — live, without a restart.
  */
-export class TenantReadAuthorization implements IReadFilterSource, IWriteAuthorizerSource, IFieldReadMaskSource
+export class TenantReadAuthorization implements IReadFilterSource, IWriteAuthorizerSource, IFieldReadMaskSource, ISecurityModelReload
 {
     private readonly evaluators = new Map<string, Promise<AccessDepthEvaluator>>()
 
@@ -124,6 +130,11 @@ export class TenantReadAuthorization implements IReadFilterSource, IWriteAuthori
     public EvaluatorForContext(context: AccessContext): Promise<AccessDepthEvaluator>
     {
         return this.EvaluatorFor(context.Tenant.Id)
+    }
+
+    public Invalidate(tenantId: string): void
+    {
+        this.evaluators.delete(tenantId)
     }
 
     private EvaluatorFor(tenantId: string): Promise<AccessDepthEvaluator>

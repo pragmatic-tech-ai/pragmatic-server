@@ -534,7 +534,7 @@ export class WorkerHost
                 AllowScripts: name => server.AllowAdapterPackScripts(name),
                 DenyScripts: name => server.DenyAdapterPackScripts(name),
                 ListScriptAllowlist: () => server.ListAdapterPackScripts(),
-            })
+            }, await server.SecurityModelReload())
             if (this.disposed)
             {
                 this.RejectRetryable(socket)

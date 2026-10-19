@@ -6,6 +6,7 @@ import { Grant } from '@pragmatic-tech-ai/todl-identity'
 import type { IAuditSink, AuditEvent, ITenantConfigStore, IRoleGrantStore } from '@pragmatic-tech-ai/todl-identity'
 import { InMemoryRoleGrantStore, LocalAccountStore, ServiceTokenStore, LocalAccountRegistrar, EncryptedSecretStore, Argon2PasswordHasher } from '@pragmatic-tech-ai/todl-identity-local'
 import { AdminService, AdminTokenNotFoundError, AdminSelfLockoutError, LastAdministratorError, AdminConfigMissingError } from '../admin-service.js'
+import { TenantReadAuthorization } from '../cypher/read-filter-source.js'
 import { AdminEnums, AdminEnumError } from '../admin-enums.js'
 import type { IAdapterPackAdmin } from '../adapter-pack-admin.js'
 
@@ -106,7 +107,7 @@ class AdminFixture
 
     public ServiceFor(tenant: Tenant, audit: IAuditSink, evict: () => Promise<void>): AdminService
     {
-        return new AdminService(this.Grants, audit, this.Config, tenant, evict, this.Accounts, this.Registrar, this.Tokens, this.Packs)
+        return new AdminService(this.Grants, audit, this.Config, tenant, evict, this.Accounts, this.Registrar, this.Tokens, this.Packs, new TenantReadAuthorization(this.Config))
     }
 
     public TenantRoot(): ResourceRef
