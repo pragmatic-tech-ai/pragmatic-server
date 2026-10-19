@@ -58,7 +58,10 @@ export class AppIngestService
     private static readonly TempSuffix = '.tmp'
     private static readonly KeySeparator = '@'
     private static readonly Base64Encoding = 'base64'
-    private static readonly Base64Pattern = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
+    // A linear char-class scan plus a group-size check: canonical base64 only, with padding solely at the end. The
+    // earlier grouped-quantifier form ((?:...){4})* overflowed the regex stack (RangeError) on multi-megabyte assets.
+    private static readonly Base64Pattern = /^[A-Za-z0-9+/]*={0,2}$/
+    private static readonly Base64GroupSize = 4
     private static readonly UnsafeSegmentPattern = /[\\:\0]/
     private static readonly MalformedMessage = 'deploy request is malformed'
     private static readonly NameMismatchMessage = 'manifest name/version does not match the deploy request'
@@ -258,7 +261,7 @@ export class AppIngestService
         for (const asset of params.uiBundle)
         {
             const path = AppIngestService.SafeRelativePath(asset?.path)
-            if (typeof asset.contentBase64 !== 'string' || asset.contentBase64 === '' || !AppIngestService.Base64Pattern.test(asset.contentBase64))
+            if (typeof asset.contentBase64 !== 'string' || asset.contentBase64 === '' || asset.contentBase64.length % AppIngestService.Base64GroupSize !== 0 || !AppIngestService.Base64Pattern.test(asset.contentBase64))
             {
                 throw new IngestRejection(AppWriteStatus.Invalid, AppIngestService.BadBase64Message)
             }

@@ -359,6 +359,30 @@ test('a bundle asset named like a temp file does not collide with staging', asyn
     })
 })
 
+test('a multi-megabyte UI asset is accepted (base64 validation scales past the regex stack limit)', async () =>
+{
+    await IngestFixture.Run(async fx =>
+    {
+        const largeBytes = 8 * 1024 * 1024
+        const params = IngestFixture.Params()
+        params.uiBundle[0]!.contentBase64 = Buffer.alloc(largeBytes, 0x61).toString('base64')
+        const result = await fx.Service.Ingest(params)
+        assert.equal(result.status, AppWriteStatus.Applied)
+        assert.equal(readFileSync(join(fx.AppsDir, 'shop', 'ui', IngestFixture.Entry)).length, largeBytes)
+    })
+})
+
+test('a UI asset whose length is not a base64 multiple of four is rejected', async () =>
+{
+    await IngestFixture.Run(async fx =>
+    {
+        const params = IngestFixture.Params()
+        params.uiBundle[0]!.contentBase64 = 'QUJD'.slice(0, 3)
+        const result = await fx.Service.Ingest(params)
+        assert.equal(result.status, AppWriteStatus.Invalid)
+    })
+})
+
 test('concurrent deploys of the same app serialize: exactly one is Applied, the other is a Conflict', async () =>
 {
     await IngestFixture.Run(async fx =>
