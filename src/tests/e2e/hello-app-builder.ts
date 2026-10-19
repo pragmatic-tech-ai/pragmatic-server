@@ -13,7 +13,7 @@ import type { CypherAppDeployParamsDto } from '@pragmatic-tech-ai/pragmatic-prot
 import { TodlRemoteBuildRegistry } from './todl-remote-build-registry.js'
 
 /** A package source that knows no packages: the hello app depends only on the implicit prelude. */
-class EmptyPackageSource implements IPackageSource
+export class EmptyPackageSource implements IPackageSource
 {
     public TryGet(): Promise<undefined>
     {
@@ -47,7 +47,7 @@ class DataMirroringStorage extends NodeFsStorage
 }
 
 /** On-disk sandboxes and outputs under one scratch root. */
-class ScratchBuildStorage implements IBuildStorageProvider
+export class ScratchBuildStorage implements IBuildStorageProvider
 {
     private static readonly SandboxPrefix = 'sandbox-'
     private static readonly OutputDir = 'output'
