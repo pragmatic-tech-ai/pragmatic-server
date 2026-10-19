@@ -521,6 +521,10 @@ test('SP1 capstone: generate a per-concept CRUD app, configure roles live, admin
         assert.equal(deployed.status, AppWriteStatus.Applied)
 
         // (c) Before any role config, an admin create is DENIED — the per-concept gate is real.
+        // This denial is FAIL-CLOSED: the tenant is seeded with NO security model, so an
+        // identity-configured tenant denies every write until roles are configured below. (Contrast
+        // the post-config reader denial in step (f), which is the per-concept RULE denial — the reader
+        // has coarse Write yet only a Read privilege on this concept.)
         admin = await DataSession.Open(tenant, await tenant.AdminBearer())
         WriteAssert.Status(await admin.Create({ [Sp1AppBuilder.TitleField]: Sp1Accounts.TitleAlpha }), AppWriteStatus.Denied)
 
