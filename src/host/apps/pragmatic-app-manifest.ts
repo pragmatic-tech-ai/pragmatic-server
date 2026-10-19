@@ -1,7 +1,15 @@
+import { PragmaticAppsRegistry } from './pragmatic-apps-registry.js'
+
 export interface PragmaticAppPackageRef
 {
     id: string
     version: string
+}
+
+export interface PragmaticAppUi
+{
+    entry: string
+    assets: string[]
 }
 
 export interface PragmaticAppManifest
@@ -9,6 +17,7 @@ export interface PragmaticAppManifest
     name: string
     version: string
     packages: PragmaticAppPackageRef[]
+    ui?: PragmaticAppUi
 }
 
 /** Fail-closed parser for an on-disk `application.json`. */
@@ -22,6 +31,9 @@ export class PragmaticAppManifestParser
     private static readonly NotObjectError = 'application manifest must be an object'
     private static readonly BadFieldError = 'application manifest has a missing or empty field: '
     private static readonly PackagesNotArrayError = 'application manifest packages must be an array'
+    private static readonly BadUiError = 'application manifest has an invalid ui section'
+    private static readonly Separator = '/'
+    private static readonly UnsafeSegmentPattern = /[\\:\0]/
     private static readonly BadPackageError = 'application manifest has an invalid package entry'
 
     public static Parse(text: string): PragmaticAppManifest
@@ -50,7 +62,46 @@ export class PragmaticAppManifestParser
                 version: PragmaticAppManifestParser.NonEmpty(rec.version, PragmaticAppManifestParser.PackageVersionField),
             }
         })
-        return { name, version, packages }
+        const manifest: PragmaticAppManifest = { name, version, packages }
+        if (obj.ui !== undefined && obj.ui !== null)
+        {
+            manifest.ui = PragmaticAppManifestParser.ParseUi(obj.ui)
+        }
+        return manifest
+    }
+
+    /** Validates `ui.entry` and every `ui.assets` path as safe relative paths; the on-disk file is never trusted. */
+    private static ParseUi(raw: unknown): PragmaticAppUi
+    {
+        const rec = PragmaticAppManifestParser.AsRecord(raw, PragmaticAppManifestParser.BadUiError)
+        const entry = PragmaticAppManifestParser.SafeRelativePath(rec.entry)
+        const rawAssets = rec.assets === undefined ? [] : rec.assets
+        if (!Array.isArray(rawAssets))
+        {
+            throw new Error(PragmaticAppManifestParser.BadUiError)
+        }
+        return { entry, assets: rawAssets.map((a: unknown) => PragmaticAppManifestParser.SafeRelativePath(a)) }
+    }
+
+    private static SafeRelativePath(value: unknown): string
+    {
+        if (typeof value !== 'string' || value === '' || value.startsWith(PragmaticAppManifestParser.Separator)
+            || PragmaticAppManifestParser.UnsafeSegmentPattern.test(value))
+        {
+            throw new Error(PragmaticAppManifestParser.BadUiError)
+        }
+        for (const segment of value.split(PragmaticAppManifestParser.Separator))
+        {
+            try
+            {
+                PragmaticAppsRegistry.AssertValidName(segment)
+            }
+            catch
+            {
+                throw new Error(PragmaticAppManifestParser.BadUiError)
+            }
+        }
+        return value
     }
 
     private static AsRecord(value: unknown, message: string): Record<string, unknown>

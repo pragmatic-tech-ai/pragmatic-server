@@ -1,4 +1,5 @@
 import { createServer } from 'node:https'
+import { AppServingEndpoint } from '../host/apps/app-serving-endpoint.js'
 import type { Server as HttpsServer } from 'node:https'
 import { createServer as createHttpServer } from 'node:http'
 import type { Server as PlainHttpServer, IncomingMessage, ServerResponse } from 'node:http'
@@ -94,6 +95,7 @@ export class WorkerHost
     private static readonly TenantHeader = 'x-pragmatic-tenant'
     private static readonly BearerPrefix = 'Bearer '
     private static readonly ServiceUnavailableResponse = 'HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nConnection: close\r\n\r\n'
+    private static readonly BaseUrl = 'http://localhost'
     private static readonly NotFoundStatus = 404
     private static readonly DefaultHealthHost = '0.0.0.0'
     private static readonly ContentTypeHeader = 'content-type'
@@ -594,6 +596,12 @@ export class WorkerHost
     {
         try
         {
+            const path = new URL(req.url ?? '/', WorkerHost.BaseUrl).pathname
+            if (AppServingEndpoint.Matches(path))
+            {
+                await new AppServingEndpoint(this.registry).Handle(req, res)
+                return
+            }
             const tenantId = this.TenantHint(req)
             if (tenantId === null)
             {

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { AppServingEndpoint } from './apps/app-serving-endpoint.js'
 import { createServer } from 'node:http'
 import { createServer as httpsCreateServer } from 'node:https'
 import type { Server as HttpsServer } from 'node:https'
@@ -544,6 +545,11 @@ export class PragmaticServerHost
             {
                 res.writeHead(PragmaticServerHost.ServiceUnavailableStatus, { [PragmaticServerHost.RetryAfterHeader]: PragmaticServerHost.RetryAfterSeconds })
                 res.end()
+                return
+            }
+            if (AppServingEndpoint.Matches(path))
+            {
+                await new AppServingEndpoint(this.registry).Handle(req, res)
                 return
             }
             const tenantId = this.TenantHint(req)
