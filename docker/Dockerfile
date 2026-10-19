@@ -60,12 +60,22 @@ RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
 # compiled dist with plain `node`, so dev dependencies (TypeScript, tsx, test tooling)
 # are not needed at runtime. Prune them workspace-wide; prod deps (incl. native argon2)
 # and the file: sibling links are kept.
-RUN set -e; for d in todl-runtime TODL pragmatic-protocol todl-identity todl-identity-local \
+# TODL declares esbuild and typescript as devDependencies, yet its html-bundle build system (reached
+# through the project-system import) imports both at module load (esbuild-bundler.js imports esbuild,
+# tsc-type-checker.js imports typescript), so the server cannot start without them. Stash those two
+# packages across TODL's prune and restore them afterwards; the rest of TODL's dev tooling is dropped.
+RUN set -e; mkdir /todl-dev-stash; for pkg in esbuild typescript; do \
+      cp -a "/workspace/TODL/node_modules/$pkg" "/todl-dev-stash/$pkg"; \
+    done; \
+    for d in todl-runtime TODL pragmatic-protocol todl-identity todl-identity-local \
       todl-identity-host todl-identity-cloud todl-identity-engine todl-connectors-host \
       todl-platform-node todl-platform-cloud todl-platform-aws todl-platform-azure \
       todl-platform-gcp todl-identity-node pragmatic-server; do \
       (cd "/workspace/$d" && npm prune --omit=dev --no-audit --no-fund); \
     done; \
+    for pkg in esbuild typescript; do \
+      cp -a "/todl-dev-stash/$pkg" "/workspace/TODL/node_modules/$pkg"; \
+    done; rm -rf /todl-dev-stash; \
     find /workspace -type f \( -name '*.map' -o -name '*.tsbuildinfo' \) -delete 2>/dev/null || true
 
 FROM node:22-slim AS runtime
