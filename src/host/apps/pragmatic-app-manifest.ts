@@ -32,7 +32,7 @@ export class PragmaticAppManifestParser
     private static readonly BadFieldError = 'application manifest has a missing or empty field: '
     private static readonly PackagesNotArrayError = 'application manifest packages must be an array'
     private static readonly BadUiError = 'application manifest has an invalid ui section'
-    private static readonly Separator = '/'
+    public static readonly Separator = '/'
     private static readonly UnsafeSegmentPattern = /[\\:\0]/
     private static readonly BadPackageError = 'application manifest has an invalid package entry'
 
@@ -83,25 +83,39 @@ export class PragmaticAppManifestParser
         return { entry, assets: rawAssets.map((a: unknown) => PragmaticAppManifestParser.SafeRelativePath(a)) }
     }
 
-    private static SafeRelativePath(value: unknown): string
+    /** Parses a relative, forward-slash path whose every segment is a safe name; throws on traversal, absolute, drive-letter or backslash forms. */
+    public static SafeRelativePath(value: unknown): string
     {
-        if (typeof value !== 'string' || value === '' || value.startsWith(PragmaticAppManifestParser.Separator)
-            || PragmaticAppManifestParser.UnsafeSegmentPattern.test(value))
+        if (typeof value !== 'string' || value === '' || value.startsWith(PragmaticAppManifestParser.Separator))
         {
             throw new Error(PragmaticAppManifestParser.BadUiError)
         }
         for (const segment of value.split(PragmaticAppManifestParser.Separator))
         {
-            try
-            {
-                PragmaticAppsRegistry.AssertValidName(segment)
-            }
-            catch
+            if (!PragmaticAppManifestParser.IsSafeSegment(segment))
             {
                 throw new Error(PragmaticAppManifestParser.BadUiError)
             }
         }
         return value
+    }
+
+    /** The one shared path-segment validator: a valid name with no backslash, colon or NUL. */
+    public static IsSafeSegment(segment: string): boolean
+    {
+        if (PragmaticAppManifestParser.UnsafeSegmentPattern.test(segment))
+        {
+            return false
+        }
+        try
+        {
+            PragmaticAppsRegistry.AssertValidName(segment)
+            return true
+        }
+        catch
+        {
+            return false
+        }
     }
 
     private static AsRecord(value: unknown, message: string): Record<string, unknown>

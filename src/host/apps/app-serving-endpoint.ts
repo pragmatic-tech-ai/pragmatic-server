@@ -2,7 +2,6 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import { PragmaticAppManifestParser } from './pragmatic-app-manifest.js'
 import type { PragmaticAppManifest } from './pragmatic-app-manifest.js'
-import { PragmaticAppsRegistry } from './pragmatic-apps-registry.js'
 
 /** The slice of a per-tenant server the endpoint needs: its applications storage. */
 export interface IAppStorageSource
@@ -35,11 +34,10 @@ interface AppRoute
 export class AppServingEndpoint
 {
     public static readonly RoutePrefix = '/app/'
-    private static readonly Separator = '/'
+    private static readonly Separator = PragmaticAppManifestParser.Separator
     private static readonly Empty = ''
     private static readonly UiDir = 'ui'
     private static readonly ManifestFile = 'application.json'
-    private static readonly UnsafeSegmentPattern = /[\\:\0]/
     private static readonly AmpersandPattern = /&/g
     private static readonly QuotePattern = /"/g
     private static readonly LessThanPattern = /</g
@@ -147,6 +145,7 @@ export class AppServingEndpoint
             return
         }
         const isAsset = route.rest !== AppServingEndpoint.Empty && route.rest !== ui.entry && ui.assets.includes(route.rest)
+        // SP0 limitation: a client route whose last segment contains a dot is treated as a missing asset (404), not the shell.
         const isShell = route.rest === AppServingEndpoint.Empty || route.rest === ui.entry
             || (!isAsset && !AppServingEndpoint.LastSegmentHasExtension(route.rest))
         if (!isAsset && !isShell)
@@ -272,15 +271,7 @@ export class AppServingEndpoint
         {
             return null
         }
-        if (AppServingEndpoint.UnsafeSegmentPattern.test(value))
-        {
-            return null
-        }
-        try
-        {
-            PragmaticAppsRegistry.AssertValidName(value)
-        }
-        catch
+        if (!PragmaticAppManifestParser.IsSafeSegment(value))
         {
             return null
         }
