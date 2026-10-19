@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { Role, ResourceKind, PresentedSecret, LocalAccount } from '@pragmatic-tech-ai/todl-identity'
 import type { ResourceRef } from '@pragmatic-tech-ai/todl-identity'
 import type { AdminService } from '../../host/admin-service.js'
+import { DeploymentMode } from '../../platform/deployment-mode.js'
 import { RuntimePrincipals } from '../runtime-principals.js'
 
 class FakeAdmin
@@ -53,4 +54,57 @@ test('SeedDevAccount creates the dev account and is idempotent', async () =>
     await RuntimePrincipals.SeedDevAccount(fake.AsAdmin(), 'admin')
     assert.equal(fake.Accounts.length, 1)
     assert.equal(fake.Grants.length, 1)
+})
+
+class ModeEnv
+{
+    private static readonly Key = 'PRAGMATIC_DEPLOYMENT_MODE'
+
+    public static async With(value: string | undefined, body: () => Promise<void>): Promise<void>
+    {
+        const saved = process.env[ModeEnv.Key]
+        if (value === undefined)
+        {
+            delete process.env[ModeEnv.Key]
+        }
+        else
+        {
+            process.env[ModeEnv.Key] = value
+        }
+        try
+        {
+            await body()
+        }
+        finally
+        {
+            if (saved === undefined)
+            {
+                delete process.env[ModeEnv.Key]
+            }
+            else
+            {
+                process.env[ModeEnv.Key] = saved
+            }
+        }
+    }
+}
+
+test('SeedDevAccount refuses when the deployment mode is not local', async () =>
+{
+    await ModeEnv.With(DeploymentMode.Cloud, async () =>
+    {
+        const fake = new FakeAdmin()
+        await assert.rejects(() => RuntimePrincipals.SeedDevAccount(fake.AsAdmin(), 'admin'), /refused/)
+        assert.equal(fake.Accounts.length, 0)
+    })
+})
+
+test('SeedDevAccount proceeds when the deployment mode is explicitly local', async () =>
+{
+    await ModeEnv.With(DeploymentMode.Local, async () =>
+    {
+        const fake = new FakeAdmin()
+        await RuntimePrincipals.SeedDevAccount(fake.AsAdmin(), 'admin')
+        assert.equal(fake.Accounts.length, 1)
+    })
 })

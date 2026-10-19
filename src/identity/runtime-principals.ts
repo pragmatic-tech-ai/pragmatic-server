@@ -1,5 +1,6 @@
 import { Role, ResourceRef, ResourceKind, PresentedSecret } from '@pragmatic-tech-ai/todl-identity'
 import type { AdminService } from '../host/admin-service.js'
+import { DeploymentMode } from '../platform/deployment-mode.js'
 
 /** Seeding helpers for the runtime-tenant principals the RBAC proof needs, plus the default local dev account. */
 export class RuntimePrincipals
@@ -21,6 +22,10 @@ export class RuntimePrincipals
     /** Well-known local-development credential; never used for a non-dev deployment. */
     private static readonly DevPassword = 'dev'
 
+    /** Environment key the server reads its deployment mode from (see ServerConfigLoader); unset means local. */
+    private static readonly DeploymentModeEnvKey = 'PRAGMATIC_DEPLOYMENT_MODE'
+    private static readonly NotLocalMode = 'SeedDevAccount refused: the dev/dev account may only be seeded when PRAGMATIC_DEPLOYMENT_MODE is local'
+
     /** Creates the reader account and gives it only the coarse capability; per-concept roles come from the security model. */
     public static async SeedReader(admin: AdminService, actor: string, email: string, principalId: string, password: PresentedSecret): Promise<void>
     {
@@ -28,9 +33,14 @@ export class RuntimePrincipals
         await admin.GrantRole(actor, principalId, RuntimePrincipals.ReaderCoarseRole, new ResourceRef(ResourceKind.Tenant, account.TenantId, []))
     }
 
-    /** Seeds the default local dev account; a no-op when it already exists. */
+    /** Seeds the default local dev account; throws unless the deployment mode is local; a no-op when it already exists. */
     public static async SeedDevAccount(admin: AdminService, actor: string): Promise<void>
     {
+        const mode = process.env[RuntimePrincipals.DeploymentModeEnvKey]
+        if (mode !== undefined && mode !== DeploymentMode.Local)
+        {
+            throw new Error(RuntimePrincipals.NotLocalMode)
+        }
         const existing = await admin.ListAccounts()
         if (existing.some(a => a.PrincipalId === RuntimePrincipals.DevPrincipalId))
         {
