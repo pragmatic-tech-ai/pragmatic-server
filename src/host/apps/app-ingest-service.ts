@@ -297,6 +297,15 @@ export class AppIngestService
         const suffix = AppIngestService.TempPrefix + randomUUID() + AppIngestService.TempSuffix
         const staged: PlannedFile[] = []
         const renamed: PlannedFile[] = []
+        // Only paths this commit newly creates may be removed on failure; a pre-existing file is never deleted.
+        const preExisting = new Set<PlannedFile>()
+        for (const file of ordered)
+        {
+            if (await file.storage.Exists(file.path))
+            {
+                preExisting.add(file)
+            }
+        }
         try
         {
             for (const file of ordered)
@@ -313,14 +322,17 @@ export class AppIngestService
         }
         catch (error)
         {
-            // Best effort: drop leftover temps and already-renamed files, marker first so the version is never listed.
+            // Best effort: drop leftover temps and files this commit newly created (never pre-existing ones).
             for (const file of staged)
             {
                 await file.storage.Delete(file.path + suffix).catch(() => undefined)
             }
             for (const file of renamed.reverse())
             {
-                await file.storage.Delete(file.path).catch(() => undefined)
+                if (!preExisting.has(file))
+                {
+                    await file.storage.Delete(file.path).catch(() => undefined)
+                }
             }
             throw error
         }

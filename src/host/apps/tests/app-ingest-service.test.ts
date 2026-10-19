@@ -383,3 +383,24 @@ test('only a whitelisted manifest projection is persisted', async () =>
         })
     })
 })
+
+test('a mid-commit failure never deletes a pre-existing file the commit overwrote', async () =>
+{
+    await IngestFixture.Run(async fx =>
+    {
+        assert.equal((await fx.Service.Ingest(IngestFixture.Params())).status, AppWriteStatus.Applied)
+        const apps = new FailingStorage(fx.AppsDir)
+        apps.FailRenameTo = 'shop/application.json'
+        const service = new AppIngestService(fx.Packages, apps, fx.Invalidator)
+        const next = IngestFixture.Params()
+        next.appVersion = '2.0.0'
+        next.manifest.version = '2.0.0'
+        next.uiBundle.push({ path: 'extra.js', contentBase64: Buffer.from('n').toString('base64') })
+        const result = await service.Ingest(next)
+        assert.equal(result.status, AppWriteStatus.Failed)
+        assert.ok(existsSync(join(fx.AppsDir, 'shop', 'ui', 'index.html')))
+        assert.ok(existsSync(join(fx.AppsDir, 'shop', 'ui', 'assets', 'app.js')))
+        assert.equal(existsSync(join(fx.AppsDir, 'shop', 'ui', 'extra.js')), false)
+        assert.equal(JSON.parse(readFileSync(join(fx.AppsDir, 'shop', 'application.json'), 'utf8')).version, '1.0.0')
+    })
+})
