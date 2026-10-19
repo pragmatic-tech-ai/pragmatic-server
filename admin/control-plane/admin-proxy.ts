@@ -1,5 +1,5 @@
 import { AdminProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { AccountDto, CreateAccountParams, GrantDto, GrantMutationDto, IdentityConfigDto, MessageConnection } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { AccountDto, CreateAccountParams, GrantDto, GrantMutationDto, IdentityConfigDto, MessageConnection, SecurityModelDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { UserSeeder } from '../../environments/seed/users.js'
 
 export type AdminConnectInfo = { httpUrl: string; wsUrl: string; tenant: string; email: string; password: string }
@@ -56,6 +56,8 @@ export interface IAdminConnection
     RevokeRole(mutation: GrantMutationDto): Promise<void>
     GetConfig(): Promise<IdentityConfigDto>
     SetConfig(config: IdentityConfigDto): Promise<void>
+    GetSecurityModel(): Promise<SecurityModelDto | undefined>
+    SetSecurityModel(securityModel: SecurityModelDto): Promise<void>
     Dispose(): void
 }
 
@@ -73,6 +75,8 @@ export interface IAdminProxy
     RevokeRole(info: AdminConnectInfo, mutation: GrantMutationDto): Promise<void>
     GetConfig(info: AdminConnectInfo): Promise<IdentityConfigDto>
     SetConfig(info: AdminConnectInfo, config: IdentityConfigDto): Promise<void>
+    GetSecurityModel(info: AdminConnectInfo): Promise<SecurityModelDto | undefined>
+    SetSecurityModel(info: AdminConnectInfo, securityModel: SecurityModelDto): Promise<void>
 }
 
 /** Typed facade over the environment admin protocol; one short-lived authenticated connection per call. */
@@ -132,6 +136,16 @@ export class AdminProxy implements IAdminProxy
     public async SetConfig(info: AdminConnectInfo, config: IdentityConfigDto): Promise<void>
     {
         await this.With(info, conn => conn.SetConfig(config))
+    }
+
+    public async GetSecurityModel(info: AdminConnectInfo): Promise<SecurityModelDto | undefined>
+    {
+        return this.With(info, conn => conn.GetSecurityModel())
+    }
+
+    public async SetSecurityModel(info: AdminConnectInfo, securityModel: SecurityModelDto): Promise<void>
+    {
+        await this.With(info, conn => conn.SetSecurityModel(securityModel))
     }
 
     private async With<T>(info: AdminConnectInfo, body: (conn: IAdminConnection) => Promise<T>): Promise<T>
@@ -240,6 +254,18 @@ export class WsAdminConnection implements IAdminConnection
     public async SetConfig(config: IdentityConfigDto): Promise<void>
     {
         await this.conn.sendRequest(AdminProtocol.SetConfig, config)
+    }
+
+    public async GetSecurityModel(): Promise<SecurityModelDto | undefined>
+    {
+        // The wire serializes an absent model as null; surface it as undefined.
+        const model = await this.conn.sendRequest(AdminProtocol.GetSecurityModel, undefined)
+        return model ?? undefined
+    }
+
+    public async SetSecurityModel(securityModel: SecurityModelDto): Promise<void>
+    {
+        await this.conn.sendRequest(AdminProtocol.SetSecurityModel, { securityModel })
     }
 
     public Dispose(): void

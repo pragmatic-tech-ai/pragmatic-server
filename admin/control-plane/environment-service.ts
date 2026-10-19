@@ -9,7 +9,7 @@ import type { EnvironmentRegistry } from './environment-registry.js'
 import type { PortAllocator } from './port-allocator.js'
 import { TemplateCatalog } from './template-catalog.js'
 import type { AdminConnectInfo, AdminSnapshot, IAdminProxy } from './admin-proxy.js'
-import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, SecurityModelDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { IDockerEnv, IBundleBuilder, IUserSeeder } from './docker-env-port.js'
 
 export class EnvironmentExistsError extends Error
@@ -270,6 +270,18 @@ export class EnvironmentService
     {
         const info = await this.AdminInfo(name)
         return this.proxy.SetConfig(info, config)
+    }
+
+    public async AdminGetSecurityModel(name: string): Promise<SecurityModelDto | undefined>
+    {
+        const info = await this.AdminInfo(name)
+        return this.proxy.GetSecurityModel(info)
+    }
+
+    public async AdminSetSecurityModel(name: string, securityModel: SecurityModelDto): Promise<void>
+    {
+        const info = await this.AdminInfo(name)
+        return this.proxy.SetSecurityModel(info, securityModel)
     }
 
     /** Resolves the environment's stored Owner credential into connect info for the admin proxy. */

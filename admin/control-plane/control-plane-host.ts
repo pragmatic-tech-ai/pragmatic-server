@@ -17,7 +17,7 @@ import { InvalidEnvironmentNameError, TemplateCatalog } from './template-catalog
 import type { IOperatorIdentity } from './operator-identity.js'
 import { SessionCookie } from './session-cookie.js'
 import { AdminProxyError, AdminProxyErrorKind, type AdminSnapshot } from './admin-proxy.js'
-import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, SecurityModelDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 export interface IEnvironmentService
 {
@@ -35,6 +35,8 @@ export interface IEnvironmentService
     AdminRevokeRole(name: string, mutation: GrantMutationDto): Promise<void>
     AdminGetConfig(name: string): Promise<IdentityConfigDto>
     AdminSetConfig(name: string, config: IdentityConfigDto): Promise<void>
+    AdminGetSecurityModel(name: string): Promise<SecurityModelDto | undefined>
+    AdminSetSecurityModel(name: string, securityModel: SecurityModelDto): Promise<void>
 }
 
 /** The only shape ever sent to a client: connect info, no internals or secrets. */
@@ -111,13 +113,15 @@ export class ControlPlaneHost
     private static readonly AccountsPath = 'accounts'
     private static readonly GrantsPath = 'grants'
     private static readonly ConfigPath = 'config'
+    private static readonly SecurityModelPath = 'security-model'
     private static readonly AdminPathPattern = new RegExp(
         '^' + ControlPlaneHost.EnvironmentsPath + '/([^/]+)/' + ControlPlaneHost.AdminSegment + '/(' +
-        [ControlPlaneHost.SnapshotPath, ControlPlaneHost.AccountsPath, ControlPlaneHost.GrantsPath, ControlPlaneHost.ConfigPath].join('|') + ')(?:/([^/]+))?$')
+        [ControlPlaneHost.SnapshotPath, ControlPlaneHost.AccountsPath, ControlPlaneHost.GrantsPath, ControlPlaneHost.ConfigPath, ControlPlaneHost.SecurityModelPath].join('|') + ')(?:/([^/]+))?$')
     private static readonly MethodPut = 'PUT'
     private static readonly AccountFieldsMessage = 'email, principalId and password (non-empty strings) are required'
     private static readonly GrantFieldsMessage = 'subject and role (strings) are required'
     private static readonly ConfigFieldsMessage = 'packId and delegationDepth (strings) are required'
+    private static readonly SecurityModelFieldMessage = 'securityModel (object) is required'
     private static readonly BodyObjectMessage = 'Request body must be a JSON object'
     private static readonly ConnectUnavailableMessage = 'Environment is not reachable'
     private static readonly MethodGet = 'GET'
@@ -426,6 +430,12 @@ export class ControlPlaneHost
             this.WriteJson(res, ControlPlaneHost.StatusOk, await this.service.AdminGetConfig(name))
             return true
         }
+        if (sub === ControlPlaneHost.SecurityModelPath && tail === undefined && method === ControlPlaneHost.MethodGet)
+        {
+            // JSON null (not undefined) so the body is always valid JSON when no model is stored.
+            this.WriteJson(res, ControlPlaneHost.StatusOk, await this.service.AdminGetSecurityModel(name) ?? null)
+            return true
+        }
         if (sub === ControlPlaneHost.AccountsPath && tail !== undefined && method === ControlPlaneHost.MethodDelete)
         {
             const principalId = ControlPlaneHost.Decode(tail)
@@ -485,6 +495,22 @@ export class ControlPlaneHost
             {
                 await this.service.AdminRevokeRole(name, mutation)
             }
+            this.WriteJson(res, ControlPlaneHost.StatusOk, { ok: true })
+            return true
+        }
+        if (sub === ControlPlaneHost.SecurityModelPath && method === ControlPlaneHost.MethodPut)
+        {
+            const body = await this.ReadJsonObject(req, res)
+            if (body === undefined)
+            {
+                return true
+            }
+            if (typeof body.securityModel !== 'object' || body.securityModel === null)
+            {
+                this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.SecurityModelFieldMessage })
+                return true
+            }
+            await this.service.AdminSetSecurityModel(name, body.securityModel as SecurityModelDto)
             this.WriteJson(res, ControlPlaneHost.StatusOk, { ok: true })
             return true
         }

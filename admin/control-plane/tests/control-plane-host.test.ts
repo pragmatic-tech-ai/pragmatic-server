@@ -142,6 +142,19 @@ class FakeService implements IEnvironmentService
         return {} as IdentityConfigDto
     }
 
+    public async AdminGetSecurityModel(name: string): Promise<any>
+    {
+        this.Calls.push(`adminGetSecurityModel:${name}`)
+        this.MaybeThrow()
+        return undefined
+    }
+
+    public async AdminSetSecurityModel(name: string, model: any): Promise<void>
+    {
+        this.Calls.push(`adminSetSecurityModel:${name}:${JSON.stringify(model)}`)
+        this.MaybeThrow()
+    }
+
     public async AdminSetConfig(name: string, config: IdentityConfigDto): Promise<void>
     {
         this.Calls.push(`adminSetConfig:${name}:${JSON.stringify(config)}`)
@@ -503,6 +516,18 @@ describe('ControlPlaneHost', () =>
             'adminGetConfig:x',
             `adminSetConfig:x:${JSON.stringify(cfg)}`
         ])
+    })
+
+    it('security-model routes delegate and map an absent model to JSON null', async () =>
+    {
+        const origin = { origin: `http://127.0.0.1:${host.Address().port}`, host: `127.0.0.1:${host.Address().port}` }
+        const got = await Harness.Send(host, 'GET', '/api/environments/x/admin/security-model', undefined, origin)
+        assert.equal(got.status, 200)
+        assert.equal(JSON.parse(got.body), null)
+        const model = { roles: [{ id: 'r', name: 'R', privileges: [] }] }
+        assert.equal((await Harness.Send(host, 'PUT', '/api/environments/x/admin/security-model', JSON.stringify({ securityModel: model }), origin)).status, 200)
+        assert.equal((await Harness.Send(host, 'PUT', '/api/environments/x/admin/security-model', JSON.stringify({ securityModel: 1 }), origin)).status, 400)
+        assert.deepEqual(fake.Calls, ['adminGetSecurityModel:x', `adminSetSecurityModel:x:${JSON.stringify(model)}`])
     })
 
     it('admin routes validate bodies and unknown sub-routes', async () =>

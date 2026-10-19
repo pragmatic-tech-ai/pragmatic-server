@@ -61,6 +61,17 @@ class FakeConnection implements IAdminConnection
         this.Record('SetConfig')
     }
 
+    public async GetSecurityModel(): Promise<any>
+    {
+        this.Record('GetSecurityModel')
+        return { roles: [] }
+    }
+
+    public async SetSecurityModel(_m: any): Promise<void>
+    {
+        this.Record('SetSecurityModel')
+    }
+
     public Dispose(): void
     {
         this.Disposed++
@@ -114,6 +125,7 @@ describe('AdminProxy', () =>
             ['GrantRole', p => p.GrantRole(Fixtures.Info, {} as any)],
             ['RevokeRole', p => p.RevokeRole(Fixtures.Info, {} as any)],
             ['SetConfig', p => p.SetConfig(Fixtures.Info, {} as any)],
+            ['SetSecurityModel', p => p.SetSecurityModel(Fixtures.Info, {} as any)],
         ]
         for (const [call, run] of cases)
         {
@@ -130,6 +142,14 @@ describe('AdminProxy', () =>
     {
         const conn = new FakeConnection()
         assert.deepEqual(await new AdminProxy(new FakeConnector(conn)).GetConfig(Fixtures.Info), { mode: 'x' })
+        assert.equal(conn.Disposed, 1)
+    })
+
+    it('GetSecurityModel returns the connection security model', async () =>
+    {
+        const conn = new FakeConnection()
+        assert.deepEqual(await new AdminProxy(new FakeConnector(conn)).GetSecurityModel(Fixtures.Info), { roles: [] })
+        assert.deepEqual(conn.Calls, ['GetSecurityModel'])
         assert.equal(conn.Disposed, 1)
     })
 

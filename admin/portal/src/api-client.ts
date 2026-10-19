@@ -1,4 +1,4 @@
-import type { AdminSnapshotDto, EnvironmentDto, GrantMutationDto, IdentityConfigDto, OperatorDto, TemplateDto } from './portal-types.js'
+import type { AdminSnapshotDto, EnvironmentDto, GrantMutationDto, IdentityConfigDto, OperatorDto, SecurityModelDto, TemplateDto } from './portal-types.js'
 
 // Thrown for non-2xx control-plane responses; Message carries the server's error text.
 export class ApiError extends Error
@@ -36,6 +36,7 @@ export class ControlPlaneClient
     private static readonly AccountsLeaf = 'accounts'
     private static readonly GrantsLeaf = 'grants'
     private static readonly ConfigLeaf = 'config'
+    private static readonly SecurityModelLeaf = 'security-model'
     private static readonly ContentTypeHeader = 'content-type'
     private static readonly JsonType = 'application/json'
     private static readonly EmptyBody = '{}'
@@ -155,6 +156,18 @@ export class ControlPlaneClient
     public async SetConfig(name: string, config: IdentityConfigDto): Promise<void>
     {
         await this.Send<unknown>(this.AdminRoute(name, ControlPlaneClient.ConfigLeaf), { method: ControlPlaneClient.MethodPut, body: JSON.stringify(config) })
+    }
+
+    // The tenant's access SecurityModel; null when none is stored yet.
+    public async GetSecurityModel(name: string): Promise<SecurityModelDto | null>
+    {
+        return await this.Send<SecurityModelDto | null>(this.AdminRoute(name, ControlPlaneClient.SecurityModelLeaf), undefined)
+    }
+
+    public async SetSecurityModel(name: string, securityModel: SecurityModelDto): Promise<void>
+    {
+        await this.Send<unknown>(this.AdminRoute(name, ControlPlaneClient.SecurityModelLeaf),
+            { method: ControlPlaneClient.MethodPut, body: JSON.stringify({ securityModel }) })
     }
 
     // Registers a handler; the single /api/events socket is opened on first use.

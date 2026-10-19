@@ -229,6 +229,17 @@ class FakeAdminProxy implements IAdminProxy
         return this.Config
     }
 
+    public async GetSecurityModel(info: AdminConnectInfo): Promise<any>
+    {
+        this.Calls.push({ method: 'GetSecurityModel', info, args: [] })
+        return { roles: [] }
+    }
+
+    public async SetSecurityModel(info: AdminConnectInfo, model: any): Promise<void>
+    {
+        this.Calls.push({ method: 'SetSecurityModel', info, args: [model] })
+    }
+
     public async SetConfig(info: AdminConnectInfo, config: IdentityConfigDto): Promise<void>
     {
         this.Calls.push({ method: 'SetConfig', info, args: [config] })
@@ -416,9 +427,12 @@ test('other Admin methods delegate with the same info and their args', async () 
     await h.Service.AdminRevokeRole(AdminFixture.Name, mutation)
     const got = await h.Service.AdminGetConfig(AdminFixture.Name)
     await h.Service.AdminSetConfig(AdminFixture.Name, config)
+    const model = { roles: [] } as any
+    assert.deepEqual(await h.Service.AdminGetSecurityModel(AdminFixture.Name), { roles: [] })
+    await h.Service.AdminSetSecurityModel(AdminFixture.Name, model)
     assert.equal(got, h.Proxy.Config)
-    assert.deepEqual(h.Proxy.Calls.map(c => c.method), ['CreateAccount', 'DisableAccount', 'GrantRole', 'RevokeRole', 'GetConfig', 'SetConfig'])
-    assert.deepEqual(h.Proxy.Calls.map(c => c.args), [[params], ['p1'], [mutation], [mutation], [], [config]])
+    assert.deepEqual(h.Proxy.Calls.map(c => c.method), ['CreateAccount', 'DisableAccount', 'GrantRole', 'RevokeRole', 'GetConfig', 'SetConfig', 'GetSecurityModel', 'SetSecurityModel'])
+    assert.deepEqual(h.Proxy.Calls.map(c => c.args), [[params], ['p1'], [mutation], [mutation], [], [config], [], [model]])
     for (const c of h.Proxy.Calls)
     {
         assert.equal(c.info.password, AdminFixture.Password)

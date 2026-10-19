@@ -62,6 +62,46 @@ export type AdminSnapshotDto =
     config: IdentityConfigDto
 }
 
+// Structural mirror of the wire SecurityModelDto (the portal does not import the protocol package).
+export type PrivilegeDto =
+{
+    action: string
+    concept: string
+    level: string
+}
+
+export type RoleConfigDto =
+{
+    id: string
+    name: string
+    privileges: PrivilegeDto[]
+}
+
+export type RoleOverrideDto =
+{
+    principalId: string
+    roles: string[]
+}
+
+export type RoleAssignmentDto =
+{
+    claimsMapping: unknown[]
+    overrides: RoleOverrideDto[]
+    teamRoles: unknown[]
+}
+
+// Fields the role-config surface does not edit are carried through untouched.
+export type SecurityModelDto =
+{
+    businessUnits: unknown[]
+    teams: unknown[]
+    membership: unknown
+    ownershipRules: unknown[]
+    roles?: RoleConfigDto[]
+    roleAssignment?: RoleAssignmentDto
+    fieldSecurity?: unknown
+}
+
 // Navigation contract the App implements and the views call into.
 export interface IPortalNavigator
 {
@@ -70,6 +110,7 @@ export interface IPortalNavigator
     ShowCreate(): void
     ShowDetail(name: string): void
     ShowManage(name: string): void
+    ShowRoles(name: string): void
 }
 
 // A screen that can re-fetch and re-render itself (on environments-changed).
