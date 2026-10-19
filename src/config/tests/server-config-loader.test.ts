@@ -446,3 +446,16 @@ test('a paging default above the effective max fails at load naming both values'
     const env = { ...Env.Minimal(), PRAGMATIC_PAGE_SIZE_DEFAULT: '6000' }
     assert.throws(() => ServerConfigLoader.Load(env, Env.NoRead), /PRAGMATIC_PAGE_SIZE_DEFAULT \(6000\) exceeds PRAGMATIC_PAGE_SIZE_MAX \(5000\)/)
 })
+
+test('parses PRAGMATIC_ALLOWED_ORIGINS into a trimmed origin list', () =>
+{
+    const env = { ...Env.Minimal(), PRAGMATIC_ALLOWED_ORIGINS: 'http://localhost:8099, https://app.example.com ' }
+    const config = ServerConfigLoader.Load(env, Env.NoRead)
+    assert.deepEqual(config.allowedOrigins, ['http://localhost:8099', 'https://app.example.com'])
+})
+
+test('leaves allowedOrigins undefined when PRAGMATIC_ALLOWED_ORIGINS is absent', () =>
+{
+    const config = ServerConfigLoader.Load(Env.Minimal(), Env.NoRead)
+    assert.equal(config.allowedOrigins, undefined)
+})

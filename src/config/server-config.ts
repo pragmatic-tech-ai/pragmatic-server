@@ -59,6 +59,7 @@ export interface ServerConfig
     baseDir: string
     masterKey: MasterKeyRef
     deploymentMode: DeploymentMode
+    allowedOrigins?: readonly string[]
     tenantsFile?: string
     singleTenant?: SingleTenantConfig
     idleTtlMs?: number

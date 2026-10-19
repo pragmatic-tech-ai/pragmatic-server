@@ -43,6 +43,7 @@ export class ServerConfigLoader
     private static readonly BadMetricsPort = 'PRAGMATIC_METRICS_PORT must be an integer port between 1 and 65535'
     private static readonly BadDrainTimeout = 'PRAGMATIC_DRAIN_TIMEOUT_MS must be a positive integer (milliseconds)'
     private static readonly EnvDrainTimeout = 'PRAGMATIC_DRAIN_TIMEOUT_MS'
+    private static readonly EnvAllowedOrigins = 'PRAGMATIC_ALLOWED_ORIGINS'
     private static readonly DefaultDrainTimeoutMs = 25000
     private static readonly BadSampling = 'PRAGMATIC_TRACE_SAMPLING must be a ratio between 0 and 1'
     private static readonly BadOtlpProtocol = 'PRAGMATIC_OTLP_PROTOCOL must be http-protobuf or grpc'
@@ -582,6 +583,7 @@ export class ServerConfigLoader
             baseDir,
             masterKey,
             deploymentMode,
+            allowedOrigins: ServerConfigLoader.CsvNames(env[ServerConfigLoader.EnvAllowedOrigins]),
             tenantsFile,
             singleTenant,
             idleTtlMs: ServerConfigLoader.Int(env.PRAGMATIC_IDLE_TTL_MS) ?? file.idleTtlMs,
