@@ -1,0 +1,58 @@
+import { afterEach, describe, it } from 'node:test'
+import assert from 'node:assert/strict'
+import { ControlPlaneClient } from '../src/api-client.js'
+import type { SecurityModelDto } from '../src/portal-types.js'
+
+type Recorded = { route: string; init: RequestInit | undefined }
+
+class FetchStub
+{
+    public static readonly Original = globalThis.fetch
+    public static Calls: Recorded[] = []
+
+    public static Install(payload: unknown): void
+    {
+        FetchStub.Calls = []
+        globalThis.fetch = (async (route: string, init?: RequestInit) =>
+        {
+            FetchStub.Calls.push({ route, init })
+            return { ok: true, status: 200, json: async () => payload } as Response
+        }) as typeof fetch
+    }
+
+    public static Restore(): void
+    {
+        globalThis.fetch = FetchStub.Original
+    }
+}
+
+describe('ControlPlaneClient security model', () =>
+{
+    afterEach(() => { FetchStub.Restore() })
+
+    it('GetSecurityModel GETs the security-model route and returns the payload', async () =>
+    {
+        const model = { roles: [] }
+        FetchStub.Install(model)
+        assert.deepEqual(await new ControlPlaneClient().GetSecurityModel('my env'), model)
+        assert.equal(FetchStub.Calls[0]!.route, '/api/environments/my%20env/admin/security-model')
+        assert.equal(FetchStub.Calls[0]!.init?.method, undefined)
+    })
+
+    it('GetSecurityModel passes a null payload through', async () =>
+    {
+        FetchStub.Install(null)
+        assert.equal(await new ControlPlaneClient().GetSecurityModel('e'), null)
+    })
+
+    it('SetSecurityModel PUTs { securityModel } to the security-model route', async () =>
+    {
+        FetchStub.Install({ ok: true })
+        const model = { businessUnits: [], teams: [], membership: {}, ownershipRules: [], roles: [] } as SecurityModelDto
+        await new ControlPlaneClient().SetSecurityModel('e', model)
+        const call = FetchStub.Calls[0]!
+        assert.equal(call.route, '/api/environments/e/admin/security-model')
+        assert.equal(call.init?.method, 'PUT')
+        assert.deepEqual(JSON.parse(call.init?.body as string), { securityModel: model })
+    })
+})

@@ -29,6 +29,14 @@ class FakeSource implements IRoleConfigSource
     }
 }
 
+class FailingSaveSource extends FakeSource
+{
+    public override async SetSecurityModel(): Promise<void>
+    {
+        throw new Error('rejected')
+    }
+}
+
 class Fixtures
 {
     public static Model(): SecurityModelDto
@@ -109,5 +117,51 @@ describe('RoleConfigViewModel', () =>
         const vm = new RoleConfigViewModel(new FakeSource(null, new Error('boom')), 'env1')
         await vm.Open()
         assert.equal(vm.Status, RoleConfigViewModel.ErrorPrefix + 'boom')
+    })
+
+    it('a failed Save returns false and surfaces the error status', async () =>
+    {
+        const vm = new RoleConfigViewModel(new FailingSaveSource(Fixtures.Model()), 'env1')
+        await vm.Open()
+        assert.equal(await vm.Save(), false)
+        assert.equal(vm.Status, RoleConfigViewModel.ErrorPrefix + 'rejected')
+    })
+
+    it('rejects empty or whitespace role id, concept and principal', async () =>
+    {
+        const vm = new RoleConfigViewModel(new FakeSource(Fixtures.Model()), 'env1')
+        await vm.Open()
+        vm.AddRoleConcept('  ', 'x', 'Order')
+        assert.equal(vm.Status, RoleConfigViewModel.EmptyInputStatus)
+        vm.AddRoleConcept('sales', 'Sales', ' ')
+        assert.equal(vm.Status, RoleConfigViewModel.EmptyInputStatus)
+        vm.AssignRole(' ', 'sales')
+        assert.equal(vm.Status, RoleConfigViewModel.EmptyInputStatus)
+        assert.deepEqual(vm.RoleIds, ['sales'])
+        assert.equal(vm.Assignments.length, 0)
+    })
+
+    it('rejects assigning an unknown role', async () =>
+    {
+        const vm = new RoleConfigViewModel(new FakeSource(Fixtures.Model()), 'env1')
+        await vm.Open()
+        vm.AssignRole('user-1', 'ghost')
+        assert.equal(vm.Status, RoleConfigViewModel.UnknownRoleStatus + 'ghost')
+        assert.equal(vm.Assignments.length, 0)
+    })
+
+    it('after a failed load Rows are cleared and Save is refused', async () =>
+    {
+        const source = new FakeSource(Fixtures.Model())
+        const vm = new RoleConfigViewModel(source, 'env1')
+        await vm.Open()
+        assert.equal(vm.Rows.length, 1)
+        source.Fail = new Error('boom')
+        await vm.Open()
+        assert.equal(vm.Rows.length, 0)
+        assert.equal(vm.CanSave, false)
+        assert.equal(await vm.Save(), false)
+        assert.equal(source.Sets.length, 0)
+        assert.equal(vm.Status, RoleConfigViewModel.NotLoadedStatus)
     })
 })

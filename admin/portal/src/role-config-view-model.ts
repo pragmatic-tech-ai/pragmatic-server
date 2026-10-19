@@ -44,11 +44,15 @@ export class RoleConfigViewModel extends Observable
     public static readonly StatusProperty = 'Status'
     public static readonly SavedStatus = 'saved'
     public static readonly ErrorPrefix = 'error: '
+    public static readonly EmptyInputStatus = 'role id, concept and principal must not be empty'
+    public static readonly UnknownRoleStatus = 'unknown role: '
+    public static readonly NotLoadedStatus = 'the model is not loaded; reopen before saving'
     private static readonly Actions: readonly RoleAction[] = [RoleAction.Create, RoleAction.Read, RoleAction.Update, RoleAction.Delete]
 
     private model: SecurityModelDto = RoleConfigViewModel.EmptyModel()
     private rows: readonly RoleConceptRow[] = []
     private status = ''
+    private loaded = false
 
     public constructor(private readonly source: IRoleConfigSource, private readonly environment: string)
     {
@@ -65,6 +69,12 @@ export class RoleConfigViewModel extends Observable
         return this.status
     }
 
+    // False until a load succeeds; Save is refused so a failed load can never be saved over.
+    public get CanSave(): boolean
+    {
+        return this.loaded
+    }
+
     public get RoleIds(): string[]
     {
         return (this.model.roles ?? []).map(r => r.id)
@@ -79,15 +89,19 @@ export class RoleConfigViewModel extends Observable
     // Loads the current model; null/undefined (none stored yet) starts from an empty editable model.
     public async Open(): Promise<void>
     {
+        this.loaded = false
         try
         {
             const loaded = await this.source.GetSecurityModel(this.environment)
             this.model = loaded === null || loaded === undefined ? RoleConfigViewModel.EmptyModel() : structuredClone(loaded)
+            this.loaded = true
             this.Rebuild()
             this.SetStatus('')
         }
         catch (e)
         {
+            this.model = RoleConfigViewModel.EmptyModel()
+            this.Rebuild()
             this.SetStatus(RoleConfigViewModel.ErrorPrefix + (e as Error).message)
         }
     }
@@ -115,11 +129,18 @@ export class RoleConfigViewModel extends Observable
     // Ensures a role exists and has all four CRUD rows (at None) for the concept.
     public AddRoleConcept(roleId: string, roleName: string, concept: string): void
     {
+        roleId = roleId.trim()
+        concept = concept.trim()
+        if (roleId.length === 0 || concept.length === 0)
+        {
+            this.SetStatus(RoleConfigViewModel.EmptyInputStatus)
+            return
+        }
         const roles = this.model.roles ?? (this.model.roles = [])
         let role = roles.find(r => r.id === roleId)
         if (role === undefined)
         {
-            role = { id: roleId, name: roleName, privileges: [] }
+            role = { id: roleId, name: roleName.trim().length > 0 ? roleName.trim() : roleId, privileges: [] }
             roles.push(role)
         }
         for (const action of RoleConfigViewModel.Actions)
@@ -135,6 +156,18 @@ export class RoleConfigViewModel extends Observable
     // Assigns a role to a principal via a roleAssignment override (idempotent).
     public AssignRole(principalId: string, roleId: string): void
     {
+        principalId = principalId.trim()
+        roleId = roleId.trim()
+        if (principalId.length === 0 || roleId.length === 0)
+        {
+            this.SetStatus(RoleConfigViewModel.EmptyInputStatus)
+            return
+        }
+        if (this.FindRole(roleId) === undefined)
+        {
+            this.SetStatus(RoleConfigViewModel.UnknownRoleStatus + roleId)
+            return
+        }
         const assignment = this.model.roleAssignment ?? (this.model.roleAssignment = { claimsMapping: [], overrides: [], teamRoles: [] })
         let override = assignment.overrides.find(o => o.principalId === principalId)
         if (override === undefined)
@@ -151,6 +184,11 @@ export class RoleConfigViewModel extends Observable
 
     public async Save(): Promise<boolean>
     {
+        if (!this.loaded)
+        {
+            this.SetStatus(RoleConfigViewModel.NotLoadedStatus)
+            return false
+        }
         try
         {
             await this.source.SetSecurityModel(this.environment, structuredClone(this.model))
