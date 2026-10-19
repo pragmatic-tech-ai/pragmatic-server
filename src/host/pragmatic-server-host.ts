@@ -526,7 +526,7 @@ export class PragmaticServerHost
         const header = req.headers[PragmaticServerHost.AuthorizationHeader]
         if (header === undefined)
         {
-            const credential = this.browserAuth.Credential(req.headers, true)
+            const credential = this.browserAuth.Credential(req, true)
             if (credential === null || credential.Tenant !== server.Tenant().Id)
             {
                 return null

@@ -34,6 +34,7 @@ export class AuthHttpEndpoint
     private static readonly OidcBeginPath = '/auth/oidc/begin'
     private static readonly OidcCallbackPath = '/auth/oidc/callback'
     private static readonly MachinePath = '/auth/machine'
+    private static readonly BrowserLoginPath = '/auth/browser-login'
     private static readonly SessionPath = '/auth/session'
     private static readonly LogoutPath = '/auth/logout'
     private static readonly SetCookieHeader = 'Set-Cookie'
@@ -130,7 +131,17 @@ export class AuthHttpEndpoint
                 this.WriteJson(res, AuthHttpEndpoint.MethodNotAllowedStatus, AuthHttpEndpoint.MethodNotAllowedError)
                 return
             }
-            await this.Login(req, res)
+            await this.Login(req, res, false)
+            return
+        }
+        if (url.pathname === AuthHttpEndpoint.BrowserLoginPath)
+        {
+            if (method !== AuthHttpEndpoint.PostMethod)
+            {
+                this.WriteJson(res, AuthHttpEndpoint.MethodNotAllowedStatus, AuthHttpEndpoint.MethodNotAllowedError)
+                return
+            }
+            await this.Login(req, res, true)
             return
         }
         if (url.pathname === AuthHttpEndpoint.OidcBeginPath)
@@ -230,7 +241,7 @@ export class AuthHttpEndpoint
 
     private async ResolveCookieSession(req: IncomingMessage, requireOrigin: boolean): Promise<Session | null>
     {
-        const credential = this.browser.Credential(req.headers, requireOrigin)
+        const credential = this.browser.Credential(req, requireOrigin)
         if (credential === null || credential.Tenant !== this.tenant.Id)
         {
             return null
@@ -254,11 +265,11 @@ export class AuthHttpEndpoint
             this.WriteJson(res, AuthHttpEndpoint.UnauthorizedStatus, AuthHttpEndpoint.MachineUnauthorizedError)
             return
         }
-        await this.MintSession(res, result)
+        await this.MintSession(res, result, false)
         this.Emit(AuthHttpEndpoint.MachinePath, AuditOutcome.Allow, result.Principal.Id)
     }
 
-    private async Login(req: IncomingMessage, res: ServerResponse): Promise<void>
+    private async Login(req: IncomingMessage, res: ServerResponse, browser: boolean): Promise<void>
     {
         const body = await RequestBody.ReadJson(req, AuthHttpEndpoint.MaxBodyBytes)
         const email = body?.[AuthHttpEndpoint.EmailKey]
@@ -285,8 +296,8 @@ export class AuthHttpEndpoint
                 this.WriteJson(res, AuthHttpEndpoint.UnauthorizedStatus, AuthHttpEndpoint.InvalidCredentialsError)
                 return
             }
-            await this.MintSession(res, result)
-            this.Emit(AuthHttpEndpoint.LoginPath, AuditOutcome.Allow, result.Principal.Id)
+            await this.MintSession(res, result, browser)
+            this.Emit(browser ? AuthHttpEndpoint.BrowserLoginPath : AuthHttpEndpoint.LoginPath, AuditOutcome.Allow, result.Principal.Id)
         }
         finally
         {
@@ -333,7 +344,7 @@ export class AuthHttpEndpoint
                 this.WriteJson(res, AuthHttpEndpoint.UnauthorizedStatus, AuthHttpEndpoint.InvalidCredentialsError)
                 return
             }
-            await this.MintSession(res, result)
+            await this.MintSession(res, result, false)
             this.Emit(AuthHttpEndpoint.OidcCallbackPath, AuditOutcome.Allow, result.Principal.Id)
         }
         finally
@@ -364,10 +375,16 @@ export class AuthHttpEndpoint
         }
     }
 
-    private async MintSession(res: ServerResponse, result: AuthenticatedResult): Promise<void>
+    /** Bearer mode returns the token in the body (Node clients). Browser mode sets the HttpOnly cookie and returns only non-secret metadata. */
+    private async MintSession(res: ServerResponse, result: AuthenticatedResult, browser: boolean): Promise<void>
     {
         const session = await this.pack.Sessions.Issue(result.Principal)
-        res.setHeader(AuthHttpEndpoint.SetCookieHeader, this.browser.BuildSetCookie(res.req, this.tenant.Id, session.Id, session.ExpiresAt))
+        if (browser)
+        {
+            res.setHeader(AuthHttpEndpoint.SetCookieHeader, this.browser.BuildSetCookie(res.req, this.tenant.Id, session.Id, session.ExpiresAt))
+            this.WriteBody(res, AuthHttpEndpoint.OkStatus, JSON.stringify({ [AuthHttpEndpoint.TenantKey]: this.tenant.Id, [AuthHttpEndpoint.PrincipalIdKey]: session.PrincipalId, [AuthHttpEndpoint.ExpiresAtKey]: session.ExpiresAt.toISOString() }))
+            return
+        }
         this.WriteBody(res, AuthHttpEndpoint.OkStatus, JSON.stringify({ [AuthHttpEndpoint.TokenKey]: session.Id, [AuthHttpEndpoint.ExpiresAtKey]: session.ExpiresAt.toISOString() }))
     }
 

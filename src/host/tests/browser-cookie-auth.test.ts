@@ -83,9 +83,9 @@ class CookieFixture
         this.base = `http://${this.host.Address().host}:${this.host.Address().port}`
     }
 
-    public async LoginAsync(password: string = CookieFixture.Password): Promise<Response>
+    public async LoginAsync(password: string = CookieFixture.Password, path = '/auth/browser-login'): Promise<Response>
     {
-        return fetch(`${this.base}/auth/login?tenant=t1`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: CookieFixture.Email, password }) })
+        return fetch(`${this.base}${path}?tenant=t1`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: CookieFixture.Email, password }) })
     }
 
     /** The name=value pair of the Set-Cookie header, as a browser would send it back. */
@@ -261,7 +261,8 @@ test('the Authorization Bearer path still works and is unaffected by cookies', a
     await fixture.StartAsync()
     try
     {
-        const login = await fixture.LoginAsync()
+        const login = await fixture.LoginAsync(CookieFixture.Password, '/auth/login')
+        assert.equal(login.headers.get('set-cookie'), null)
         const { token } = await login.json() as { token: string }
         const url = `ws://${fixture.host.Address().host}:${fixture.host.Address().port}/?tenant=t1`
         const client = await PragmaticClient.ConnectAsync(url, { bearerToken: token })
@@ -287,6 +288,45 @@ test('the cookie/session value appears in no log line or audit event', async () 
         await fetch(`${fixture.base}/auth/session`, { headers: { Cookie: cookie, Origin: fixture.base } })
         const captured = fixture.Logger.Lines.join('\n') + JSON.stringify(fixture.Audit.Events)
         assert.ok(!captured.includes(token))
+    }
+    finally
+    {
+        await fixture.StopAsync()
+    }
+})
+
+test('browser login body carries no session token; the Bearer login still returns its token', async () =>
+{
+    const fixture = new CookieFixture()
+    await fixture.StartAsync()
+    try
+    {
+        const browser = await fixture.LoginAsync()
+        const token = CookieFixture.TokenOf(CookieFixture.CookiePair(browser))
+        const text = await browser.text()
+        assert.ok(!text.includes(token))
+        const body = JSON.parse(text) as Record<string, unknown>
+        assert.equal(body.token, undefined)
+        assert.equal(body.tenant, 't1')
+        assert.equal(body.principalId, 'admin')
+        const bearer = await (await fixture.LoginAsync(CookieFixture.Password, '/auth/login')).json() as { token: string }
+        assert.ok(bearer.token.length > 0)
+    }
+    finally
+    {
+        await fixture.StopAsync()
+    }
+})
+
+test('a scheme-mismatched Origin is not same-origin', async () =>
+{
+    const fixture = new CookieFixture()
+    await fixture.StartAsync()
+    try
+    {
+        const cookie = CookieFixture.CookiePair(await fixture.LoginAsync())
+        const httpsOrigin = fixture.base.replace('http://', 'https://')
+        assert.equal(await fixture.ConnectAsync({ Cookie: cookie, Origin: httpsOrigin }), '401')
     }
     finally
     {

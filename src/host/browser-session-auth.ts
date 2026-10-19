@@ -21,6 +21,8 @@ export class BrowserSessionAuth
     private static readonly HostHeader = 'host'
     private static readonly ForwardedProtoHeader = 'x-forwarded-proto'
     private static readonly HttpsProto = 'https'
+    private static readonly SecureOriginScheme = 'https://'
+    private static readonly PlainOriginScheme = 'http://'
     private static readonly PairSeparator = ';'
     private static readonly NameValueSeparator = '='
     private static readonly TenantTokenSeparator = '.'
@@ -67,18 +69,19 @@ export class BrowserSessionAuth
 
     /** The cookie credential if the request carries a well-formed cookie and its Origin is acceptable; otherwise null (deny).
      *  requireOrigin = true (WebSocket upgrade, state-changing requests): a missing Origin is denied. */
-    public Credential(headers: IncomingHttpHeaders, requireOrigin: boolean): BrowserCredential | null
+    public Credential(req: IncomingMessage, requireOrigin: boolean): BrowserCredential | null
     {
-        const credential = this.Parse(headers)
-        if (credential === null || !this.OriginAllowed(headers, requireOrigin))
+        const credential = this.Parse(req.headers)
+        if (credential === null || !this.OriginAllowed(req, requireOrigin))
         {
             return null
         }
         return credential
     }
 
-    public OriginAllowed(headers: IncomingHttpHeaders, requireOrigin: boolean): boolean
+    private OriginAllowed(req: IncomingMessage, requireOrigin: boolean): boolean
     {
+        const headers = req.headers
         const origin = headers[BrowserSessionAuth.OriginHeader]
         if (origin === undefined)
         {
@@ -95,7 +98,8 @@ export class BrowserSessionAuth
         const host = headers[BrowserSessionAuth.HostHeader]
         try
         {
-            return typeof host === 'string' && host.length > 0 && new URL(origin).host === host
+            const scheme = this.IsSecure(req) ? BrowserSessionAuth.SecureOriginScheme : BrowserSessionAuth.PlainOriginScheme
+            return typeof host === 'string' && host.length > 0 && origin === scheme + host
         }
         catch
         {
