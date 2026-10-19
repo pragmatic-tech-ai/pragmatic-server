@@ -30,6 +30,7 @@ import { RateLimitGuard } from './rate-limit-guard.js'
 import { RateLimitScope } from './rate-limiter.js'
 import { AuditSurface, NullAccessAuditSink } from './access-audit.js'
 import type { IAccessAuditSink } from './access-audit.js'
+import { BrowserSessionAuth } from './browser-session-auth.js'
 import { ConnectionAuthenticator } from './connection-authenticator.js'
 import { AuthHttpEndpoint } from './auth-http-endpoint.js'
 import { HealthEndpoint } from './health-endpoint.js'
@@ -77,6 +78,8 @@ export interface PragmaticServerHostOptions
     cypherLimits?: CypherLimits
     paging?: PagingLimits
     wsResilience?: WsResilienceConfig
+    /** Extra browser Origins (beyond same-origin) allowed to use the session cookie. */
+    allowedOrigins?: readonly string[]
 }
 
 export interface WebSocketAddress
@@ -103,6 +106,7 @@ export class PragmaticServerHost
     private static readonly UnauthorizedResponse = 'HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'
     private static readonly ServiceUnavailableResponse = 'HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nConnection: close\r\n\r\n'
     private static readonly NotFoundStatus = 404
+    private static readonly UnauthorizedStatus = 401
     private static readonly ServiceUnavailableStatus = 503
     private static readonly RetryAfterHeader = 'Retry-After'
     private static readonly RetryAfterSeconds = '1'
@@ -138,6 +142,7 @@ export class PragmaticServerHost
     private readonly wss: WebSocketServer
     private readonly registry: TenantRegistry
     private readonly authenticator: ConnectionAuthenticator
+    private readonly browserAuth: BrowserSessionAuth
     private readonly audit: IAccessAuditSink
     private readonly handlers = new Set<ServerConnectionHandler>()
     private readonly address: WebSocketAddress
@@ -176,8 +181,10 @@ export class PragmaticServerHost
         drainTimeoutMs: number = PragmaticServerHost.DefaultDrainTimeoutMs,
         cypherLimits?: CypherLimits,
         wsResilience: WsResilienceConfig = PragmaticServerHost.DefaultWsResilience,
-        paging?: PagingLimits)
+        paging?: PagingLimits,
+        browserAuth: BrowserSessionAuth = new BrowserSessionAuth([], false))
     {
+        this.browserAuth = browserAuth
         this.cypherLimits = cypherLimits
         this.paging = paging
         this.wsResilience = wsResilience
@@ -239,7 +246,7 @@ export class PragmaticServerHost
             httpServer.listen(options.port, host)
         })
         const resolved = httpServer.address() as AddressInfo
-        const started = new PragmaticServerHost(httpServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? PragmaticServerHost.DefaultIdleTtlMs, options.idleSweepMs ?? PragmaticServerHost.DefaultIdleSweepMs, options.clientTls !== undefined, options.logger ?? new NullLogger(), options.observability !== undefined ? RequestInstrumentation.FromObservability(options.observability, options.logger ?? new NullLogger()) : undefined, options.rateLimit, options.audit, options.observability, options.drainTimeoutMs ?? PragmaticServerHost.DefaultDrainTimeoutMs, options.cypherLimits, resilience, options.paging)
+        const started = new PragmaticServerHost(httpServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? PragmaticServerHost.DefaultIdleTtlMs, options.idleSweepMs ?? PragmaticServerHost.DefaultIdleSweepMs, options.clientTls !== undefined, options.logger ?? new NullLogger(), options.observability !== undefined ? RequestInstrumentation.FromObservability(options.observability, options.logger ?? new NullLogger()) : undefined, options.rateLimit, options.audit, options.observability, options.drainTimeoutMs ?? PragmaticServerHost.DefaultDrainTimeoutMs, options.cypherLimits, resilience, options.paging, new BrowserSessionAuth(options.allowedOrigins ?? [], false))
         started.MarkReady()
         return started
     }
@@ -517,6 +524,15 @@ export class PragmaticServerHost
     private async AuthenticateAgainst(req: IncomingMessage, server: PragmaticServer): Promise<AccessContext | null>
     {
         const header = req.headers[PragmaticServerHost.AuthorizationHeader]
+        if (header === undefined)
+        {
+            const credential = this.browserAuth.Credential(req.headers, true)
+            if (credential === null || credential.Tenant !== server.Tenant().Id)
+            {
+                return null
+            }
+            return this.authenticator.ResolveAsync(credential.Token, server.Tenant(), await server.Pack())
+        }
         if (typeof header !== 'string' || !header.startsWith(PragmaticServerHost.BearerPrefix))
         {
             return null
@@ -555,13 +571,13 @@ export class PragmaticServerHost
             const tenantId = this.TenantHint(req)
             if (tenantId === null)
             {
-                res.writeHead(PragmaticServerHost.NotFoundStatus)
+                res.writeHead(BrowserSessionAuth.IsSessionPath(path) ? PragmaticServerHost.UnauthorizedStatus : PragmaticServerHost.NotFoundStatus)
                 res.end()
                 return
             }
             const server = await this.registry.ServerFor(tenantId)
             const pack = await server.Pack()
-            const endpoint = new AuthHttpEndpoint(pack, server.Tenant(), server.Oidc(), this.MachineContext(req, pack), this.instrumentation, this.audit)
+            const endpoint = new AuthHttpEndpoint(pack, server.Tenant(), server.Oidc(), this.MachineContext(req, pack), this.instrumentation, this.audit, this.browserAuth)
             await endpoint.Handle(req, res)
         }
         catch (error)
@@ -575,11 +591,16 @@ export class PragmaticServerHost
                 }
                 else
                 {
-                    res.writeHead(PragmaticServerHost.NotFoundStatus)
+                    res.writeHead(this.IsSessionRequest(req) ? PragmaticServerHost.UnauthorizedStatus : PragmaticServerHost.NotFoundStatus)
                     res.end()
                 }
             }
         }
+    }
+
+    private IsSessionRequest(req: IncomingMessage): boolean
+    {
+        return BrowserSessionAuth.IsSessionPath(new URL(req.url ?? '/', PragmaticServerHost.BaseUrl).pathname)
     }
 
     private MachineContext(req: IncomingMessage, pack: ServerIdentityPack): MachineAuthContext | undefined
@@ -601,7 +622,7 @@ export class PragmaticServerHost
     {
         const url = new URL(req.url ?? '/', PragmaticServerHost.BaseUrl)
         const tenant = url.searchParams.get(PragmaticServerHost.TenantParam)
-        return tenant !== null && tenant.length > 0 ? tenant : null
+        return tenant !== null && tenant.length > 0 ? tenant : this.browserAuth.CookieTenant(req.headers)
     }
 
     private RejectRetryable(socket: Socket): void

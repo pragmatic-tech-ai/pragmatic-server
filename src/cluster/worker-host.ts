@@ -18,6 +18,7 @@ import { RateLimitGuard } from '../host/rate-limit-guard.js'
 import { RateLimitScope } from '../host/rate-limiter.js'
 import { AuditSurface, NullAccessAuditSink } from '../host/access-audit.js'
 import type { IAccessAuditSink } from '../host/access-audit.js'
+import { BrowserSessionAuth } from '../host/browser-session-auth.js'
 import { ConnectionAuthenticator } from '../host/connection-authenticator.js'
 import { AuthHttpEndpoint } from '../host/auth-http-endpoint.js'
 import type { WebSocketAddress } from '../host/pragmatic-server-host.js'
@@ -79,6 +80,8 @@ export interface WorkerHostOptions
     cypherLimits?: CypherLimits
     paging?: PagingLimits
     wsResilience?: WsResilienceConfig
+    /** Extra browser Origins (beyond same-origin) allowed to use the session cookie. */
+    allowedOrigins?: readonly string[]
 }
 
 /** Internal mutual-TLS wss worker: the gateway (a verified client cert) forwards x-pragmatic-tenant + authorization;
@@ -97,6 +100,7 @@ export class WorkerHost
     private static readonly ServiceUnavailableResponse = 'HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nConnection: close\r\n\r\n'
     private static readonly BaseUrl = 'http://localhost'
     private static readonly NotFoundStatus = 404
+    private static readonly UnauthorizedStatus = 401
     private static readonly DefaultHealthHost = '0.0.0.0'
     private static readonly ContentTypeHeader = 'content-type'
     private static readonly TextPlain = 'text/plain'
@@ -135,6 +139,7 @@ export class WorkerHost
     private readonly wss: WebSocketServer
     private readonly registry: TenantRegistry
     private readonly authenticator: ConnectionAuthenticator
+    private readonly browserAuth: BrowserSessionAuth
     private readonly audit: IAccessAuditSink
     private readonly handlers = new Set<ServerConnectionHandler>()
     private readonly address: WebSocketAddress
@@ -177,8 +182,10 @@ export class WorkerHost
         drainTimeoutMs: number = WorkerHost.DefaultDrainTimeoutMs,
         cypherLimits?: CypherLimits,
         wsResilience: WsResilienceConfig = WorkerHost.DefaultWsResilience,
-        paging?: PagingLimits)
+        paging?: PagingLimits,
+        browserAuth: BrowserSessionAuth = new BrowserSessionAuth([], true))
     {
+        this.browserAuth = browserAuth
         this.cypherLimits = cypherLimits
         this.paging = paging
         this.wsResilience = wsResilience
@@ -314,7 +321,7 @@ export class WorkerHost
             await registry.DisposeAll().catch(() => {})
             throw error
         }
-        const started = new WorkerHost(httpsServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? WorkerHost.DefaultIdleTtlMs, options.idleSweepMs ?? WorkerHost.DefaultIdleSweepMs, healthServer, healthAddress, registration, options.logger ?? new NullLogger(), options.observability !== undefined ? RequestInstrumentation.FromObservability(options.observability, options.logger ?? new NullLogger()) : undefined, options.rateLimit, options.audit, options.observability, options.drainTimeoutMs ?? WorkerHost.DefaultDrainTimeoutMs, options.cypherLimits, resilience, options.paging)
+        const started = new WorkerHost(httpsServer, wss, registry, { host, port: resolved.port }, options.idleTtlMs ?? WorkerHost.DefaultIdleTtlMs, options.idleSweepMs ?? WorkerHost.DefaultIdleSweepMs, healthServer, healthAddress, registration, options.logger ?? new NullLogger(), options.observability !== undefined ? RequestInstrumentation.FromObservability(options.observability, options.logger ?? new NullLogger()) : undefined, options.rateLimit, options.audit, options.observability, options.drainTimeoutMs ?? WorkerHost.DefaultDrainTimeoutMs, options.cypherLimits, resilience, options.paging, new BrowserSessionAuth(options.allowedOrigins ?? [], true))
         started.MarkReady()
         return started
     }
@@ -580,6 +587,15 @@ export class WorkerHost
     private async AuthenticateAgainst(req: IncomingMessage, server: PragmaticServer): Promise<AccessContext | null>
     {
         const header = req.headers[WorkerHost.AuthorizationHeader]
+        if (header === undefined)
+        {
+            const credential = this.browserAuth.Credential(req.headers, true)
+            if (credential === null || credential.Tenant !== server.Tenant().Id)
+            {
+                return null
+            }
+            return this.authenticator.ResolveAsync(credential.Token, server.Tenant(), await server.Pack())
+        }
         if (typeof header !== 'string' || !header.startsWith(WorkerHost.BearerPrefix))
         {
             return null
@@ -605,23 +621,28 @@ export class WorkerHost
             const tenantId = this.TenantHint(req)
             if (tenantId === null)
             {
-                res.writeHead(WorkerHost.NotFoundStatus)
+                res.writeHead(BrowserSessionAuth.IsSessionPath(path) ? WorkerHost.UnauthorizedStatus : WorkerHost.NotFoundStatus)
                 res.end()
                 return
             }
             const server = await this.registry.ServerFor(tenantId)
             const pack = await server.Pack()
-            const endpoint = new AuthHttpEndpoint(pack, server.Tenant(), server.Oidc(), this.MachineContext(req, pack), this.instrumentation, this.audit)
+            const endpoint = new AuthHttpEndpoint(pack, server.Tenant(), server.Oidc(), this.MachineContext(req, pack), this.instrumentation, this.audit, this.browserAuth)
             await endpoint.Handle(req, res)
         }
         catch
         {
             if (!res.headersSent && !res.writableEnded)
             {
-                res.writeHead(WorkerHost.NotFoundStatus)
+                res.writeHead(this.IsSessionRequest(req) ? WorkerHost.UnauthorizedStatus : WorkerHost.NotFoundStatus)
                 res.end()
             }
         }
+    }
+
+    private IsSessionRequest(req: IncomingMessage): boolean
+    {
+        return BrowserSessionAuth.IsSessionPath(new URL(req.url ?? '/', WorkerHost.BaseUrl).pathname)
     }
 
     /** Trusts the gateway-forwarded fingerprint (the gateway strips client-supplied values; this listener only accepts mTLS peers). */
@@ -648,6 +669,6 @@ export class WorkerHost
     private TenantHint(req: IncomingMessage): string | null
     {
         const header = req.headers[WorkerHost.TenantHeader]
-        return typeof header === 'string' && header.length > 0 ? header : null
+        return typeof header === 'string' && header.length > 0 ? header : this.browserAuth.CookieTenant(req.headers)
     }
 }

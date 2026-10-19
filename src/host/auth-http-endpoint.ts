@@ -1,9 +1,10 @@
 import { AuthMethod, Credential, PresentedSecret, AuthenticatedResult } from '@pragmatic-tech-ai/todl-identity'
-import type { IAuthenticator, Tenant } from '@pragmatic-tech-ai/todl-identity'
+import type { IAuthenticator, Session, Tenant } from '@pragmatic-tech-ai/todl-identity'
 import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { RequestBody } from './request-body.js'
 import type { MachineCertIdentity } from './machine-principal-map.js'
+import { BrowserSessionAuth } from './browser-session-auth.js'
 import { trace } from '@opentelemetry/api'
 import { NullAccessAuditSink, AuditSurface, AuditOutcome } from './access-audit.js'
 import type { IAccessAuditSink, AccessAuditEvent } from './access-audit.js'
@@ -33,6 +34,13 @@ export class AuthHttpEndpoint
     private static readonly OidcBeginPath = '/auth/oidc/begin'
     private static readonly OidcCallbackPath = '/auth/oidc/callback'
     private static readonly MachinePath = '/auth/machine'
+    private static readonly SessionPath = '/auth/session'
+    private static readonly LogoutPath = '/auth/logout'
+    private static readonly SetCookieHeader = 'Set-Cookie'
+    private static readonly TenantKey = 'tenant'
+    private static readonly PrincipalIdKey = 'principalId'
+    private static readonly NoContentStatus = 204
+    private static readonly UnauthenticatedError = 'unauthenticated'
     private static readonly AuthOk = 'authenticated'
     private static readonly AuthRejected = 'authentication rejected'
     private static readonly MachineUnauthorizedError = 'machine authentication failed'
@@ -71,9 +79,11 @@ export class AuthHttpEndpoint
     private readonly machine: MachineAuthContext | undefined
     private readonly audit: IAccessAuditSink
     private readonly instrumentation: RequestInstrumentation | undefined
+    private readonly browser: BrowserSessionAuth
 
-    public constructor(pack: ServerIdentityPack, tenant: Tenant, oidc?: OidcFrontDoor, machine?: MachineAuthContext, instrumentation?: RequestInstrumentation, audit: IAccessAuditSink = new NullAccessAuditSink())
+    public constructor(pack: ServerIdentityPack, tenant: Tenant, oidc?: OidcFrontDoor, machine?: MachineAuthContext, instrumentation?: RequestInstrumentation, audit: IAccessAuditSink = new NullAccessAuditSink(), browser: BrowserSessionAuth = new BrowserSessionAuth())
     {
+        this.browser = browser
         this.instrumentation = instrumentation
         this.audit = audit
         this.machine = machine
@@ -168,7 +178,65 @@ export class AuthHttpEndpoint
             await this.MachineLogin(this.machine, res)
             return
         }
+        if (url.pathname === AuthHttpEndpoint.SessionPath)
+        {
+            if (method !== AuthHttpEndpoint.GetMethod)
+            {
+                this.WriteJson(res, AuthHttpEndpoint.MethodNotAllowedStatus, AuthHttpEndpoint.MethodNotAllowedError)
+                return
+            }
+            await this.CurrentSession(req, res)
+            return
+        }
+        if (url.pathname === AuthHttpEndpoint.LogoutPath)
+        {
+            if (method !== AuthHttpEndpoint.PostMethod)
+            {
+                this.WriteJson(res, AuthHttpEndpoint.MethodNotAllowedStatus, AuthHttpEndpoint.MethodNotAllowedError)
+                return
+            }
+            await this.Logout(req, res)
+            return
+        }
         this.WriteJson(res, AuthHttpEndpoint.NotFoundStatus, AuthHttpEndpoint.NotFoundError)
+    }
+
+    /** Cookie-authenticated whoami: 200 with the session's tenant + principal, else a clean 401 (never echoes the cookie). */
+    private async CurrentSession(req: IncomingMessage, res: ServerResponse): Promise<void>
+    {
+        const session = await this.ResolveCookieSession(req, false)
+        if (session === null)
+        {
+            this.WriteJson(res, AuthHttpEndpoint.UnauthorizedStatus, AuthHttpEndpoint.UnauthenticatedError)
+            return
+        }
+        this.WriteBody(res, AuthHttpEndpoint.OkStatus, JSON.stringify({ [AuthHttpEndpoint.TenantKey]: session.TenantId, [AuthHttpEndpoint.PrincipalIdKey]: session.PrincipalId, [AuthHttpEndpoint.ExpiresAtKey]: session.ExpiresAt.toISOString() }))
+    }
+
+    private async Logout(req: IncomingMessage, res: ServerResponse): Promise<void>
+    {
+        const session = await this.ResolveCookieSession(req, true)
+        if (session === null)
+        {
+            this.WriteJson(res, AuthHttpEndpoint.UnauthorizedStatus, AuthHttpEndpoint.UnauthenticatedError)
+            return
+        }
+        await this.pack.Sessions.Revoke(session.Id)
+        res.setHeader(AuthHttpEndpoint.SetCookieHeader, this.browser.BuildClearCookie(req))
+        res.setHeader(AuthHttpEndpoint.CacheControlHeader, AuthHttpEndpoint.NoStore)
+        res.statusCode = AuthHttpEndpoint.NoContentStatus
+        res.end()
+    }
+
+    private async ResolveCookieSession(req: IncomingMessage, requireOrigin: boolean): Promise<Session | null>
+    {
+        const credential = this.browser.Credential(req.headers, requireOrigin)
+        if (credential === null || credential.Tenant !== this.tenant.Id)
+        {
+            return null
+        }
+        const session = await this.pack.Sessions.Validate(credential.Token)
+        return session !== null && session.TenantId === this.tenant.Id ? session : null
     }
 
     private async MachineLogin(machine: MachineAuthContext, res: ServerResponse): Promise<void>
@@ -299,6 +367,7 @@ export class AuthHttpEndpoint
     private async MintSession(res: ServerResponse, result: AuthenticatedResult): Promise<void>
     {
         const session = await this.pack.Sessions.Issue(result.Principal)
+        res.setHeader(AuthHttpEndpoint.SetCookieHeader, this.browser.BuildSetCookie(res.req, this.tenant.Id, session.Id, session.ExpiresAt))
         this.WriteBody(res, AuthHttpEndpoint.OkStatus, JSON.stringify({ [AuthHttpEndpoint.TokenKey]: session.Id, [AuthHttpEndpoint.ExpiresAtKey]: session.ExpiresAt.toISOString() }))
     }
 
