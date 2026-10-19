@@ -226,7 +226,7 @@ class RuntimeTenant
         return ((await response.json()) as { token: string }).token
     }
 
-    public StopAsync(): void
+    public Stop(): void
     {
         if (this.started)
         {
@@ -363,7 +363,7 @@ test('SP0 capstone: a remote app deploys to a Docker runtime tenant and a browse
     finally
     {
         await client?.DisposeAsync()
-        tenant.StopAsync()
+        tenant.Stop()
         built?.Dispose()
     }
 })

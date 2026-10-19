@@ -8,52 +8,52 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 make g+
 
 # Copy each package, then install+build in dependency order.
 COPY todl-runtime/ ./todl-runtime/
-RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd todl-runtime && npm install --no-audit --no-fund && npm run build
 COPY TODL/ ./TODL/
-RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd TODL && npm install --no-audit --no-fund && npm run build
 COPY pragmatic-protocol/ ./pragmatic-protocol/
-RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd pragmatic-protocol && npm install --no-audit --no-fund && npm run build
 COPY todl-identity/ ./todl-identity/
-RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd todl-identity && npm install --no-audit --no-fund && npm run build
 COPY todl-identity-local/ ./todl-identity-local/
-RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd todl-identity-local && npm install --no-audit --no-fund && npm run build
 COPY todl-identity-host/ ./todl-identity-host/
-RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd todl-identity-host && npm install --no-audit --no-fund && npm run build
 COPY todl-identity-cloud/ ./todl-identity-cloud/
-RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd todl-identity-cloud && npm install --no-audit --no-fund && npm run build
 COPY todl-identity-engine/ ./todl-identity-engine/
-RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd todl-identity-engine && npm install --no-audit --no-fund && npm run build
 COPY todl-connectors-host/ ./todl-connectors-host/
-RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd todl-connectors-host && npm install --no-audit --no-fund && npm run build
 COPY todl-platform-node/ ./todl-platform-node/
-RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd todl-platform-node && npm install --no-audit --no-fund && npm run build
 COPY todl-platform-cloud/ ./todl-platform-cloud/
-RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd todl-platform-cloud && npm install --no-audit --no-fund && npm run build
 COPY todl-platform-aws/ ./todl-platform-aws/
-RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd todl-platform-aws && npm install --no-audit --no-fund && npm run build
 COPY todl-platform-azure/ ./todl-platform-azure/
-RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd todl-platform-azure && npm install --no-audit --no-fund && npm run build
 COPY todl-platform-gcp/ ./todl-platform-gcp/
-RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd todl-platform-gcp && npm install --no-audit --no-fund && npm run build
 COPY todl-identity-node/ ./todl-identity-node/
-RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd todl-identity-node && npm install --no-audit --no-fund && npm run build
 COPY pragmatic-server/ ./pragmatic-server/
-RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd pragmatic-server && npm install --no-audit --no-fund && npm run build
 
 # Slim the tree that gets baked into the runtime image: the entrypoint runs the

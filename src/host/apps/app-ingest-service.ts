@@ -46,7 +46,13 @@ interface IngestPlan
  * unique temp names and renamed into place, and `application.json` is renamed in LAST as the commit marker, so a
  * version is never listed or loadable half-ingested. A hard crash mid-commit can still leave non-servable orphan
  * files (no `application.json` for the version means it is not listed). Concurrent ingests of one app are
- * serialized. Client paths are never trusted. Request size is bounded by the wire frame limit (acceptable for SP0).
+ * serialized per app (the lock does NOT serialize shared-package writes across DIFFERENT apps: a pathological
+ * cross-app race on the same package id@version is acceptable for SP0). Client paths are never trusted.
+ *
+ * Versioning caveat: only packages are version-qualified on disk. UI assets and application.json live under the app
+ * name alone, so deploying a NEW version overwrites the live version's UI/manifest in place; the immutability
+ * guarantee holds only per name@version. Version-scoped UI storage + an atomic directory swap is a deferred
+ * Feature (R6). Request size is bounded by the wire frame limit (acceptable for SP0).
  */
 export class AppIngestService
 {
@@ -74,6 +80,7 @@ export class AppIngestService
     private static readonly DuplicatePathMessage = 'a UI bundle path is supplied more than once'
     private static readonly ClosureMessage = 'package closure is incomplete; missing: '
     private static readonly EntryMessage = 'the UI entry file is not part of the UI bundle'
+    private static readonly AssetMessage = 'a manifest UI asset is not part of the UI bundle'
     private static readonly WriteFailedMessage = 'the application could not be written'
     private static readonly ListSeparator = ', '
     private static readonly VersionExistsMessage = 'this application version is already deployed; versions are immutable'
@@ -283,8 +290,12 @@ export class AppIngestService
             {
                 throw new IngestRejection(AppWriteStatus.Invalid, AppIngestService.EntryMessage)
             }
-            const assets = Array.isArray(manifest.ui.assets) ? manifest.ui.assets : []
-            projection.ui = { entry: manifest.ui.entry, assets: assets.map(asset => AppIngestService.SafeRelativePath(asset)) }
+            const assets = (Array.isArray(manifest.ui.assets) ? manifest.ui.assets : []).map(asset => AppIngestService.SafeRelativePath(asset))
+            if (assets.some(asset => !uiPaths.has(asset)))
+            {
+                throw new IngestRejection(AppWriteStatus.Invalid, AppIngestService.AssetMessage)
+            }
+            projection.ui = { entry: manifest.ui.entry, assets }
         }
         const marker: PlannedFile = {
             storage: this.applications,

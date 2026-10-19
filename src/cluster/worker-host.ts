@@ -666,6 +666,8 @@ export class WorkerHost
         return { authenticator, identity: MachineCertIdentity.FromPeerCertificate(true, { fingerprint256: header }) }
     }
 
+    // Cluster cookie path (deferred beyond SP0): this assumes the mTLS gateway STRIPS any client-supplied `Cookie`
+    // and `Origin` headers on the forwarded leg; the full cluster-cookie story is out of SP0 scope.
     private TenantHint(req: IncomingMessage): string | null
     {
         const header = req.headers[WorkerHost.TenantHeader]

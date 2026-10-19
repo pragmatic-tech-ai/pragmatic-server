@@ -53,7 +53,7 @@ class CookieFixture
     public static readonly KeyEnv = 'PS_COOKIE_KEY'
     public static readonly Email = 'admin@t1.test'
     public static readonly Password = 'admin-pw-12345'
-    public static readonly AllowedOrigin = 'https://app.example.com'
+    public static readonly AllowedOrigin = 'http://127.0.0.1:5173'
 
     public readonly Logger = new CapturingLogger()
     public readonly Audit = new CapturingAudit()
@@ -177,6 +177,9 @@ test('WebSocket with a valid cookie + same-origin or allowlisted Origin authenti
     {
         const cookie = CookieFixture.CookiePair(await fixture.LoginAsync())
         assert.equal(await fixture.ConnectAsync({ Cookie: cookie, Origin: fixture.base }), 'open')
+        // The cookie is minted SameSite=Strict, so a real browser only sends it from the same site: allowedOrigins is
+        // effectively same-site-only. Genuine cross-site cookie-WS is a deferred hardening Feature, so the allowlisted
+        // Origin here is SAME-SITE (same host, different port), which is the only shape a real browser would send.
         assert.equal(await fixture.ConnectAsync({ Cookie: cookie, Origin: CookieFixture.AllowedOrigin }), 'open')
     }
     finally
