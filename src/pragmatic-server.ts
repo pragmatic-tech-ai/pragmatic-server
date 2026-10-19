@@ -60,13 +60,14 @@ import { ModelShardGraph } from './host/cypher/model-shard-graph.js'
 import { GraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
-import type { CypherExecuteResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { CypherExecuteResultDto, CypherAppDeployParamsDto, AppDeployResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { DevCypherExecutor } from './host/cypher/dev-cypher-executor.js'
 import type { DevCypherRequest } from './host/cypher/dev-cypher-executor.js'
 import { OpenDevWriteSecurity, PrincipalDevWriteSecurity } from './host/cypher/dev-write-security.js'
 import type { IDevWriteSecurity } from './host/cypher/dev-write-security.js'
 import { DevModelWriter } from './host/model/dev-model-writer.js'
 import { PragmaticAppsRegistry } from './host/apps/pragmatic-apps-registry.js'
+import { AppIngestService } from './host/apps/app-ingest-service.js'
 import { RuntimeAppGraph } from './host/cypher/runtime-app-graph.js'
 import { AppConnectorPlan } from './host/cypher/app-connector-plan.js'
 import type { PragmaticAppManifest } from './host/apps/pragmatic-app-manifest.js'
@@ -391,6 +392,24 @@ export class PragmaticServer
         return this.appsStorage
     }
 
+    public PackagesStorage(): IStorage
+    {
+        return this.platform.CreateStorage(this.options.packagesRoot ?? PragmaticServer.DefaultPackagesDir)
+    }
+
+    /** Evicts the cached app graph for `name@version` so the next query rebuilds it from storage. */
+    public InvalidateApp(nameAtVersion: string): void
+    {
+        this.appGraphs.delete(nameAtVersion)
+    }
+
+    /** Ingests a deployed application onto this runtime tenant; the caller has already authorized Administer on the tenant. */
+    public async DeployApplication(context: AccessContext, params: CypherAppDeployParamsDto): Promise<AppDeployResultDto>
+    {
+        this.Applications()
+        return new AppIngestService(this.PackagesStorage(), this.AppsStorage(), this).Ingest(context.Tenant, params)
+    }
+
     public Applications(): PragmaticAppsRegistry
     {
         if (this.Purpose() !== TenantPurpose.Runtime)
@@ -572,7 +591,7 @@ export class PragmaticServer
 
     private async BuildBaseFor(manifest: PragmaticAppManifest): Promise<AppBase>
     {
-        const packagesStorage = this.platform.CreateStorage(this.options.packagesRoot ?? PragmaticServer.DefaultPackagesDir)
+        const packagesStorage = this.PackagesStorage()
         const domain = await RuntimeAppGraph.BuildDomain(new StoragePackageSource(packagesStorage), manifest)
         const plan = await AppConnectorPlan.For(packagesStorage, manifest)
         const nativeBase = new GraphQuery(domain.graph)
