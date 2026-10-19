@@ -1,6 +1,7 @@
 import { Action, AuditEvent, AuditEventKind, Grant, ResourceRef, Role, RoleCapabilities, ResourceKind, IdentityConfig } from '@pragmatic-tech-ai/todl-identity'
 import type { LocalAccount, ServiceTokenSummary, PresentedSecret, IRoleGrantStore, IAuditSink, ITenantConfigStore, ILocalAccountStore, IServiceTokenStore, ServiceTokenGrant, Tenant, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import type { LocalAccountRegistrar } from '@pragmatic-tech-ai/todl-identity-local'
+import { AccessDepthEvaluator } from '@pragmatic-tech-ai/todl-identity-engine'
 import { AdminEnums } from './admin-enums.js'
 import type { IAdapterPackAdmin } from './adapter-pack-admin.js'
 import type { ISecurityModelReload } from './cypher/read-filter-source.js'
@@ -168,6 +169,8 @@ export class AdminService
      */
     public async SetSecurityModel(actor: string, model: ISecurityModelConfig): Promise<void>
     {
+        // Defense-in-depth: reject a malformed model before any read/write, even though the RPC handler already validates.
+        AccessDepthEvaluator.FromConfig(model)
         const config = await this.configStore.Get(this.tenant.Id)
         if (config === null)
         {

@@ -3,10 +3,11 @@ import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
 import { Tenant, TenantKind, Role, ResourceKind, ResourceRef, IdentityConfig, DelegationDepth, AuditEventKind, PresentedSecret, LocalAccountNotFoundError } from '@pragmatic-tech-ai/todl-identity'
 import { Grant } from '@pragmatic-tech-ai/todl-identity'
-import type { IAuditSink, AuditEvent, ITenantConfigStore, IRoleGrantStore } from '@pragmatic-tech-ai/todl-identity'
+import type { IAuditSink, AuditEvent, ITenantConfigStore, IRoleGrantStore, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { InMemoryRoleGrantStore, LocalAccountStore, ServiceTokenStore, LocalAccountRegistrar, EncryptedSecretStore, Argon2PasswordHasher } from '@pragmatic-tech-ai/todl-identity-local'
 import { AdminService, AdminTokenNotFoundError, AdminSelfLockoutError, LastAdministratorError, AdminConfigMissingError } from '../admin-service.js'
 import { TenantReadAuthorization } from '../cypher/read-filter-source.js'
+import type { ISecurityModelReload } from '../cypher/read-filter-source.js'
 import { AdminEnums, AdminEnumError } from '../admin-enums.js'
 import type { IAdapterPackAdmin } from '../adapter-pack-admin.js'
 
@@ -25,6 +26,16 @@ class FailingAuditSink implements IAuditSink
     public async Record(_event: AuditEvent): Promise<void>
     {
         throw new Error('audit down')
+    }
+}
+
+class RecordingReload implements ISecurityModelReload
+{
+    public readonly Invalidated: string[] = []
+
+    public Invalidate(tenantId: string): void
+    {
+        this.Invalidated.push(tenantId)
     }
 }
 
@@ -98,6 +109,7 @@ class AdminFixture
         DenyScripts: async name => { this.Denied.push(name) },
         ListScriptAllowlist: async () => this.ScriptAllowlist,
     }
+    public readonly Reload = new RecordingReload()
     public readonly Service: AdminService
 
     public constructor()
@@ -107,7 +119,7 @@ class AdminFixture
 
     public ServiceFor(tenant: Tenant, audit: IAuditSink, evict: () => Promise<void>): AdminService
     {
-        return new AdminService(this.Grants, audit, this.Config, tenant, evict, this.Accounts, this.Registrar, this.Tokens, this.Packs, new TenantReadAuthorization(this.Config))
+        return new AdminService(this.Grants, audit, this.Config, tenant, evict, this.Accounts, this.Registrar, this.Tokens, this.Packs, this.Reload)
     }
 
     public TenantRoot(): ResourceRef
@@ -524,4 +536,29 @@ test('ListScriptAllowlist returns the list and emits no audit event', async () =
     const f = new AdminFixture()
     assert.deepEqual(await f.Service.ListScriptAllowlist(), ['seed-pack'])
     assert.equal(f.Audit.Events.length, 0)
+})
+
+test('SetSecurityModel rejects a malformed model directly: store unchanged, no reload, no audit', async () =>
+{
+    const f = new AdminFixture()
+    f.Config.Stored = new IdentityConfig('local', DelegationDepth.AuthnDirectory, new Map([['k', 'v']]), new Map(), new Map())
+    const bad = { businessUnits: [{ id: 'root', name: 'Root' }], teams: [{ id: 't', name: 'T', owningBusinessUnit: 'nope' }], membership: { claimsMapping: [], overrides: [] }, ownershipRules: [] } as unknown as ISecurityModelConfig
+    await assert.rejects(f.Service.SetSecurityModel('actor-1', bad))
+    assert.deepEqual(f.Config.Calls, [])
+    assert.equal(f.Config.Stored?.SecurityModel, undefined)
+    assert.deepEqual(f.Reload.Invalidated, [])
+    assert.equal(f.Audit.Events.length, 0)
+})
+
+test('SetSecurityModel persists a valid model, preserves other fields and fires the reload directly', async () =>
+{
+    const f = new AdminFixture()
+    f.Config.Stored = new IdentityConfig('local', DelegationDepth.AuthnDirectory, new Map([['k', 'v']]), new Map(), new Map())
+    const model: ISecurityModelConfig = { businessUnits: [{ id: 'root', name: 'Root' }], teams: [], membership: { claimsMapping: [], overrides: [] }, ownershipRules: [] }
+    await f.Service.SetSecurityModel('actor-1', model)
+    assert.deepEqual(f.Config.Stored?.SecurityModel, model)
+    assert.equal(f.Config.Stored?.PackId, 'local')
+    assert.equal(f.Config.Stored?.ProviderSettings.get('k'), 'v')
+    assert.deepEqual(f.Reload.Invalidated, ['t1'])
+    assert.equal(f.Audit.Events.length, 1)
 })
