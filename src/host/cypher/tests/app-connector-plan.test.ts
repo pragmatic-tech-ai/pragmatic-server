@@ -16,6 +16,8 @@ class PlanFixture
     private static readonly SourceUri = 'shop.todl'
     public static readonly BoundId = 'shop'
     public static readonly PlainId = 'plain'
+    public static readonly InventoryId = 'inventory'
+    public static readonly ShopConflictId = 'shop-conflict'
     private static readonly BoundTodl = `
 namespace shop {
   concept Customer { name : string; }
@@ -30,6 +32,30 @@ namespace shop {
     private static readonly PlainTodl = `
 namespace plain {
   concept Widget { label : string; }
+}
+`
+    // Same bare connector name "pg" as shop, but a different namespace -> a distinct qualified id.
+    private static readonly InventoryTodl = `
+namespace inventory {
+  concept Item { label : string; }
+  datasource pg { kind = sql; database = "inv"; }
+  model Inv : inventory {
+    annotate entrypoint { }
+    connect pg;
+    populate Item key item_id { label = "label"; }
+  }
+}
+`
+    // Same namespace+connector as shop (identity shop@connector:pg) but a DIFFERENT config -> a conflict.
+    private static readonly ShopConflictTodl = `
+namespace shop {
+  concept Customer { name : string; }
+  datasource pg { kind = sql; database = "other"; }
+  model Shop2 : shop {
+    annotate entrypoint { }
+    connect pg;
+    populate Customer key customer_id { name = "name"; }
+  }
 }
 `
 
@@ -51,6 +77,16 @@ namespace plain {
     public async PublishPlain(): Promise<void>
     {
         await this.Publish(PlanFixture.PlainId, PlanFixture.PlainTodl)
+    }
+
+    public async PublishInventory(): Promise<void>
+    {
+        await this.Publish(PlanFixture.InventoryId, PlanFixture.InventoryTodl)
+    }
+
+    public async PublishShopConflict(): Promise<void>
+    {
+        await this.Publish(PlanFixture.ShopConflictId, PlanFixture.ShopConflictTodl)
     }
 
     public static Manifest(...ids: string[]): PragmaticAppManifest
@@ -81,6 +117,48 @@ test('For reconstructs the datasource and populate binding from the published pa
         assert.equal(binding.IdKey, 'customer_id')
         assert.equal(binding.FieldMap.name, 'name')
         assert.equal(binding.FieldMap.id, 'customer_id')
+    }
+    finally
+    {
+        fx.Dispose()
+    }
+})
+
+test('For keeps same-named connectors from different namespaces as distinct specs', async () =>
+{
+    const fx = new PlanFixture()
+    try
+    {
+        await fx.PublishBound()
+        await fx.PublishInventory()
+        const plan = await AppConnectorPlan.For(fx.Storage, PlanFixture.Manifest(PlanFixture.BoundId, PlanFixture.InventoryId))
+        assert.equal(plan.Connectors.length, 2)
+        assert.deepEqual(plan.Connectors.map(c => c.Id).sort(), ['inventory@connector:pg', 'shop@connector:pg'])
+        assert.deepEqual(plan.Connectors.map(c => c.Name), ['pg', 'pg'])
+        // Every binding links to its own namespace's connector by the qualified ConnectorId.
+        assert.equal(plan.Bindings.length, 2)
+        for (const binding of plan.Bindings)
+        {
+            assert.ok(binding.ConnectorId === 'shop@connector:pg' || binding.ConnectorId === 'inventory@connector:pg')
+            assert.equal(binding.Connector, 'pg')
+        }
+    }
+    finally
+    {
+        fx.Dispose()
+    }
+})
+
+test('For rejects two packages that declare the same connector identity with different config', async () =>
+{
+    const fx = new PlanFixture()
+    try
+    {
+        await fx.PublishBound()
+        await fx.PublishShopConflict()
+        await assert.rejects(
+            AppConnectorPlan.For(fx.Storage, PlanFixture.Manifest(PlanFixture.BoundId, PlanFixture.ShopConflictId)),
+            /conflicting definitions/)
     }
     finally
     {
