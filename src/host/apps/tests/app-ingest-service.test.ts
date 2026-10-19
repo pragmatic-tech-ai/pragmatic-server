@@ -12,6 +12,7 @@ import type { IAppCacheInvalidator } from '../app-ingest-service.js'
 import { PragmaticAppsRegistry } from '../pragmatic-apps-registry.js'
 import { PragmaticServer } from '../../../pragmatic-server.js'
 import { TenantPurpose } from '../../../tenancy/tenant-purpose.js'
+import { StructuredLogger } from '../../../observability/logger.js'
 import { ServerConnectionHandler } from '../../server-connection-handler.js'
 
 class RecordingStorage extends NodeFsStorage
@@ -110,7 +111,7 @@ test('a valid deploy writes packages, UI assets and application.json last, and t
 {
     await IngestFixture.Run(async fx =>
     {
-        const result = await fx.Service.Ingest(IngestFixture.Tenant(), IngestFixture.Params())
+        const result = await fx.Service.Ingest(IngestFixture.Params())
         assert.equal(result.status, AppWriteStatus.Applied)
         assert.equal(result.reason, undefined)
         assert.ok(existsSync(join(fx.PackagesDir, 'shop.core', '1.0.0', 'model.json')))
@@ -131,7 +132,7 @@ test('an incomplete package closure is rejected and nothing servable is written'
     {
         const params = IngestFixture.Params()
         params.packages = params.packages.filter(p => p.id !== 'shop.base')
-        const result = await fx.Service.Ingest(IngestFixture.Tenant(), params)
+        const result = await fx.Service.Ingest(params)
         assert.notEqual(result.status, AppWriteStatus.Applied)
         assert.match(result.reason ?? '', /shop\.base@2\.0\.0/)
         assert.equal(existsSync(join(fx.AppsDir, 'shop', 'application.json')), false)
@@ -147,7 +148,7 @@ test('a manifest-referenced package that is not supplied is rejected', async () 
     {
         const params = IngestFixture.Params()
         params.manifest.packages.push({ id: 'ghost', version: '1.0.0' })
-        const result = await fx.Service.Ingest(IngestFixture.Tenant(), params)
+        const result = await fx.Service.Ingest(params)
         assert.notEqual(result.status, AppWriteStatus.Applied)
         assert.match(result.reason ?? '', /ghost@1\.0\.0/)
     })
@@ -160,6 +161,14 @@ test('path traversal in UI paths, package ids and app name is rejected without l
         p => { p.uiBundle[0]!.path = 'a/../../evil.js' },
         p => { p.uiBundle[0]!.path = '/etc/passwd' },
         p => { p.uiBundle[0]!.path = 'C:/evil.js' },
+        p => { p.uiBundle[0]!.path = 'a/.../b.js' },
+        p => { p.uiBundle[0]!.path = '.git/config' },
+        p => { p.uiBundle[0]!.path = 'CON' },
+        p => { p.uiBundle[0]!.path = 'x/nul.txt' },
+        p => { p.uiBundle[0]!.path = 'trailing.' },
+        p => { p.uiBundle[0]!.path = 'trailing ' },
+        p => { p.uiBundle[0]!.contentBase64 = '' },
+        p => { p.packages[1]!.id = 'COM1' },
         p => { p.uiBundle[0]!.path = 'a\\..\\evil.js' },
         p => { p.packages[1]!.id = '..' },
         p => { p.packages[1]!.id = '../x' },
@@ -173,7 +182,7 @@ test('path traversal in UI paths, package ids and app name is rejected without l
         {
             const params = IngestFixture.Params()
             mutate(params)
-            const result = await fx.Service.Ingest(IngestFixture.Tenant(), params)
+            const result = await fx.Service.Ingest(params)
             assert.equal(result.status, AppWriteStatus.Invalid)
             assert.equal((result.reason ?? '').includes(IngestFixture.Secret), false)
             assert.equal(existsSync(fx.PackagesDir), false)
@@ -256,5 +265,121 @@ test('RunDeploy lets an Admin deploy and the app is then listed', async () =>
         {
             await wire.Dispose()
         }
+    })
+})
+
+class FailingStorage extends RecordingStorage
+{
+    public FailRenameTo = ''
+
+    public override async Rename(from: string, to: string): Promise<void>
+    {
+        if (to === this.FailRenameTo)
+        {
+            throw new Error('boom ' + IngestFixture.Secret)
+        }
+        await super.Rename(from, to)
+    }
+}
+
+test('redeploying an existing name@version is refused and leaves the live app untouched', async () =>
+{
+    await IngestFixture.Run(async fx =>
+    {
+        assert.equal((await fx.Service.Ingest(IngestFixture.Params())).status, AppWriteStatus.Applied)
+        const before = readFileSync(join(fx.AppsDir, 'shop', 'application.json'), 'utf8')
+        const again = IngestFixture.Params()
+        again.uiBundle[0]!.contentBase64 = Buffer.from('<html>changed</html>').toString('base64')
+        const result = await fx.Service.Ingest(again)
+        assert.equal(result.status, AppWriteStatus.Conflict)
+        assert.match(result.reason ?? '', /immutable/)
+        assert.equal(readFileSync(join(fx.AppsDir, 'shop', 'application.json'), 'utf8'), before)
+        assert.equal(readFileSync(join(fx.AppsDir, 'shop', 'ui', 'index.html'), 'utf8'), '<html></html>')
+    })
+})
+
+test('a package version already deployed with different content is refused', async () =>
+{
+    await IngestFixture.Run(async fx =>
+    {
+        assert.equal((await fx.Service.Ingest(IngestFixture.Params())).status, AppWriteStatus.Applied)
+        const next = IngestFixture.Params()
+        next.appVersion = '2.0.0'
+        next.manifest.version = '2.0.0'
+        next.packages[1]!.modelJson = '{"changed":true}'
+        const result = await fx.Service.Ingest(next)
+        assert.equal(result.status, AppWriteStatus.Conflict)
+        assert.equal(readFileSync(join(fx.PackagesDir, 'shop.base', '2.0.0', 'model.json'), 'utf8'), '{}')
+    })
+})
+
+test('an invalidation failure after the marker landed does not flip the deploy to Failed', async () =>
+{
+    await IngestFixture.Run(async fx =>
+    {
+        const throwing: IAppCacheInvalidator = { InvalidateApp: () => { throw new Error('evict failed') } }
+        const service = new AppIngestService(fx.Packages, fx.Apps, throwing)
+        const result = await service.Ingest(IngestFixture.Params())
+        assert.equal(result.status, AppWriteStatus.Applied)
+        assert.ok(existsSync(join(fx.AppsDir, 'shop', 'application.json')))
+    })
+})
+
+test('a failure during commit removes renamed files, logs only class/code, and keeps the reason secret-free', async () =>
+{
+    await IngestFixture.Run(async fx =>
+    {
+        const apps = new FailingStorage(fx.AppsDir)
+        apps.FailRenameTo = 'shop/application.json'
+        const lines: string[] = []
+        const logger = StructuredLogger.ToSink(line => lines.push(line))
+        const service = new AppIngestService(fx.Packages, apps, fx.Invalidator, logger)
+        const result = await service.Ingest(IngestFixture.Params())
+        assert.equal(result.status, AppWriteStatus.Failed)
+        assert.equal(JSON.stringify(result).includes(IngestFixture.Secret), false)
+        assert.equal(lines.join('').includes(IngestFixture.Secret), false)
+        assert.match(lines.join(''), /"errorClass":"Error"/)
+        assert.equal(existsSync(join(fx.AppsDir, 'shop', 'application.json')), false)
+        assert.equal(existsSync(join(fx.AppsDir, 'shop', 'ui', 'index.html')), false)
+        assert.deepEqual(readdirSync(join(fx.AppsDir, 'shop', 'ui')).filter(n => n.includes('.ingest-')), [])
+        assert.deepEqual(fx.Invalidator.Keys, [])
+    })
+})
+
+test('a bundle asset named like a temp file does not collide with staging', async () =>
+{
+    await IngestFixture.Run(async fx =>
+    {
+        const params = IngestFixture.Params()
+        params.uiBundle.push({ path: 'assets/app.js.ingest-tmp', contentBase64: Buffer.from('x').toString('base64') })
+        const result = await fx.Service.Ingest(params)
+        assert.equal(result.status, AppWriteStatus.Applied)
+        assert.equal(readFileSync(join(fx.AppsDir, 'shop', 'ui', 'assets', 'app.js'), 'utf8'), IngestFixture.Secret)
+        assert.equal(readFileSync(join(fx.AppsDir, 'shop', 'ui', 'assets', 'app.js.ingest-tmp'), 'utf8'), 'x')
+    })
+})
+
+test('concurrent deploys of the same app serialize: exactly one is Applied, the other is a Conflict', async () =>
+{
+    await IngestFixture.Run(async fx =>
+    {
+        const results = await Promise.all([fx.Service.Ingest(IngestFixture.Params()), fx.Service.Ingest(IngestFixture.Params())])
+        assert.deepEqual(results.map(r => r.status).sort(), [AppWriteStatus.Applied, AppWriteStatus.Conflict])
+    })
+})
+
+test('only a whitelisted manifest projection is persisted', async () =>
+{
+    await IngestFixture.Run(async fx =>
+    {
+        const params = IngestFixture.Params()
+        ;(params.manifest as unknown as Record<string, unknown>).evil = 'x'
+        ;(params.manifest.packages[0] as unknown as Record<string, unknown>).extra = 'y'
+        await fx.Service.Ingest(params)
+        const stored = JSON.parse(readFileSync(join(fx.AppsDir, 'shop', 'application.json'), 'utf8'))
+        assert.deepEqual(stored, {
+            name: 'shop', version: '1.0.0', packages: [{ id: 'shop.core', version: '1.0.0' }],
+            ui: { entry: 'index.html', assets: ['assets/app.js'] },
+        })
     })
 })

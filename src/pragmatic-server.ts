@@ -67,6 +67,7 @@ import { OpenDevWriteSecurity, PrincipalDevWriteSecurity } from './host/cypher/d
 import type { IDevWriteSecurity } from './host/cypher/dev-write-security.js'
 import { DevModelWriter } from './host/model/dev-model-writer.js'
 import { PragmaticAppsRegistry } from './host/apps/pragmatic-apps-registry.js'
+import { StructuredLogger } from './observability/logger.js'
 import { AppIngestService } from './host/apps/app-ingest-service.js'
 import { RuntimeAppGraph } from './host/cypher/runtime-app-graph.js'
 import { AppConnectorPlan } from './host/cypher/app-connector-plan.js'
@@ -172,6 +173,7 @@ export class PragmaticServer
     private graphCache: TenantGraphCache | undefined
     private appsStorage: IStorage | undefined
     private appsRegistry: PragmaticAppsRegistry | undefined
+    private appIngest: AppIngestService | undefined
     private readonly appGraphs = new Map<string, Promise<AppBase>>()
     private readonly shareStores = new Map<string, ShareStore>()
     private readAuth: Promise<TenantReadAuthorization> | undefined
@@ -404,18 +406,25 @@ export class PragmaticServer
     }
 
     /** Ingests a deployed application onto this runtime tenant; the caller has already authorized Administer on the tenant. */
-    public async DeployApplication(context: AccessContext, params: CypherAppDeployParamsDto): Promise<AppDeployResultDto>
+    public async DeployApplication(params: CypherAppDeployParamsDto): Promise<AppDeployResultDto>
     {
-        this.Applications()
-        return new AppIngestService(this.PackagesStorage(), this.AppsStorage(), this).Ingest(context.Tenant, params)
+        this.AssertRuntimePurpose()
+        this.appIngest ??= new AppIngestService(this.PackagesStorage(), this.AppsStorage(), this, StructuredLogger.ToStdout())
+        return this.appIngest.Ingest(params)
     }
 
-    public Applications(): PragmaticAppsRegistry
+    /** Throws unless this is a Runtime tenant: deploy and the applications registry exist only there. */
+    private AssertRuntimePurpose(): void
     {
         if (this.Purpose() !== TenantPurpose.Runtime)
         {
             throw new Error(PragmaticServer.ApplicationsRuntimeOnlyError)
         }
+    }
+
+    public Applications(): PragmaticAppsRegistry
+    {
+        this.AssertRuntimePurpose()
         this.appsRegistry ??= new PragmaticAppsRegistry(this.AppsStorage())
         return this.appsRegistry
     }

@@ -1,8 +1,10 @@
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
-import type { Tenant } from '@pragmatic-tech-ai/todl-identity'
+import { randomUUID } from 'node:crypto'
 import { AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AppDeployResultDto, CypherAppDeployParamsDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { PragmaticAppsRegistry } from './pragmatic-apps-registry.js'
+import { NullLogger } from '../../observability/logger.js'
+import type { ILogger } from '../../observability/logger.js'
 
 /** Evicts a cached app graph keyed `name@version`; implemented by the server that owns the cache. */
 export interface IAppCacheInvalidator
@@ -27,6 +29,8 @@ interface PlannedFile
     storage: IStorage
     path: string
     bytes: Uint8Array
+    /** Already present with identical content: nothing to write. */
+    skip?: boolean
 }
 
 interface IngestPlan
@@ -36,9 +40,13 @@ interface IngestPlan
 }
 
 /**
- * Ingests a published remote application onto a runtime tenant. Everything is validated before the first byte is
- * written; package and UI files go in first (each via temp file + rename) and `application.json` is renamed in LAST
- * as the commit marker, so a half-ingested app is never listed or loadable. Client paths are never trusted.
+ * Ingests a published remote application onto a runtime tenant. The storages are bound to the per-tenant
+ * `PragmaticServer`, so ingest is already tenant-scoped. Everything is validated before the first byte is written;
+ * an already-present `name@version` is refused (versions are immutable), package and UI files are staged under
+ * unique temp names and renamed into place, and `application.json` is renamed in LAST as the commit marker, so a
+ * version is never listed or loadable half-ingested. A hard crash mid-commit can still leave non-servable orphan
+ * files (no `application.json` for the version means it is not listed). Concurrent ingests of one app are
+ * serialized. Client paths are never trusted. Request size is bounded by the wire frame limit (acceptable for SP0).
  */
 export class AppIngestService
 {
@@ -46,13 +54,12 @@ export class AppIngestService
     private static readonly ModelFile = 'model.json'
     private static readonly UiDir = 'ui'
     private static readonly Separator = '/'
-    private static readonly TempSuffix = '.ingest-tmp'
+    private static readonly TempPrefix = '.ingest-'
+    private static readonly TempSuffix = '.tmp'
     private static readonly KeySeparator = '@'
     private static readonly Base64Encoding = 'base64'
     private static readonly Base64Pattern = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
     private static readonly UnsafeSegmentPattern = /[\\:\0]/
-    private static readonly CurrentSegment = '.'
-    private static readonly ParentSegment = '..'
     private static readonly MalformedMessage = 'deploy request is malformed'
     private static readonly NameMismatchMessage = 'manifest name/version does not match the deploy request'
     private static readonly UnsafeNameMessage = 'application name or version is not a safe path segment'
@@ -66,37 +73,139 @@ export class AppIngestService
     private static readonly EntryMessage = 'the UI entry file is not part of the UI bundle'
     private static readonly WriteFailedMessage = 'the application could not be written'
     private static readonly ListSeparator = ', '
+    private static readonly VersionExistsMessage = 'this application version is already deployed; versions are immutable'
+    private static readonly PackageDiffersMessage = 'a package version is already deployed with different content; versions are immutable'
+    private static readonly InvalidateFailedLine = 'app cache invalidation failed after a successful deploy'
+    private static readonly WriteFailedLine = 'app ingest write failed'
+    private static readonly ErrorClassField = 'errorClass'
+    private static readonly ErrorCodeField = 'errorCode'
+    private static readonly UnknownClass = 'unknown'
 
     private readonly packages: IStorage
     private readonly applications: IStorage
     private readonly invalidator: IAppCacheInvalidator
+    private readonly logger: ILogger
+    private readonly locks = new Map<string, Promise<unknown>>()
 
-    public constructor(packages: IStorage, applications: IStorage, invalidator: IAppCacheInvalidator)
+    public constructor(packages: IStorage, applications: IStorage, invalidator: IAppCacheInvalidator, logger: ILogger = new NullLogger())
     {
+        this.logger = logger
         this.packages = packages
         this.applications = applications
         this.invalidator = invalidator
     }
 
-    public async Ingest(_tenant: Tenant, params: CypherAppDeployParamsDto): Promise<AppDeployResultDto>
+    public async Ingest(params: CypherAppDeployParamsDto): Promise<AppDeployResultDto>
     {
         const appName = typeof params?.appName === 'string' ? params.appName : ''
         const appVersion = typeof params?.appVersion === 'string' ? params.appVersion : ''
+        let plan: IngestPlan
         try
         {
-            const plan = this.Validate(params)
-            await this.Commit(plan)
-            this.invalidator.InvalidateApp(appName + AppIngestService.KeySeparator + appVersion)
-            return { status: AppWriteStatus.Applied, appName, appVersion }
+            plan = this.Validate(params)
         }
         catch (error)
         {
-            const rejected = error instanceof IngestRejection
-            return {
-                status: rejected ? error.Status : AppWriteStatus.Failed,
-                reason: rejected ? error.message : AppIngestService.WriteFailedMessage,
-                appName,
-                appVersion,
+            return this.Failure(error, appName, appVersion)
+        }
+        return this.Serialized(appName, async () =>
+        {
+            try
+            {
+                await this.AssertImmutable(plan, params)
+                await this.Commit(plan)
+            }
+            catch (error)
+            {
+                return this.Failure(error, appName, appVersion)
+            }
+            // The deploy has landed: an eviction failure must not turn it into a Failed result.
+            try
+            {
+                this.invalidator.InvalidateApp(appName + AppIngestService.KeySeparator + appVersion)
+            }
+            catch (error)
+            {
+                this.logger.Warn(AppIngestService.InvalidateFailedLine, AppIngestService.ErrorFields(error))
+            }
+            return { status: AppWriteStatus.Applied, appName, appVersion }
+        })
+    }
+
+    private Failure(error: unknown, appName: string, appVersion: string): AppDeployResultDto
+    {
+        const rejected = error instanceof IngestRejection
+        if (!rejected)
+        {
+            // Class/code only: never the message (may embed paths) or any payload bytes.
+            this.logger.Error(AppIngestService.WriteFailedLine, AppIngestService.ErrorFields(error))
+        }
+        return {
+            status: rejected ? error.Status : AppWriteStatus.Failed,
+            reason: rejected ? error.message : AppIngestService.WriteFailedMessage,
+            appName,
+            appVersion,
+        }
+    }
+
+    private static ErrorFields(error: unknown): Record<string, unknown>
+    {
+        const code = (error as { code?: unknown } | null)?.code
+        return {
+            [AppIngestService.ErrorClassField]: error instanceof Error ? error.constructor.name : AppIngestService.UnknownClass,
+            [AppIngestService.ErrorCodeField]: typeof code === 'string' || typeof code === 'number' ? code : undefined,
+        }
+    }
+
+    /** Runs `section` after any in-flight ingest of the same app finishes (per-app in-memory lock). */
+    private async Serialized<T>(appName: string, section: () => Promise<T>): Promise<T>
+    {
+        const previous = this.locks.get(appName) ?? Promise.resolve()
+        const run = previous.then(section, section)
+        const tail = run.catch(() => undefined)
+        this.locks.set(appName, tail)
+        try
+        {
+            return await run
+        }
+        finally
+        {
+            if (this.locks.get(appName) === tail)
+            {
+                this.locks.delete(appName)
+            }
+        }
+    }
+
+    /** Versions are immutable: refuse an already-deployed name@version and a package version whose content differs. */
+    private async AssertImmutable(plan: IngestPlan, params: CypherAppDeployParamsDto): Promise<void>
+    {
+        if (await this.applications.Exists(plan.marker.path))
+        {
+            let existing: unknown
+            try
+            {
+                existing = JSON.parse(await this.applications.ReadText(plan.marker.path))
+            }
+            catch
+            {
+                existing = undefined
+            }
+            if ((existing as { version?: unknown } | undefined)?.version === params.appVersion)
+            {
+                throw new IngestRejection(AppWriteStatus.Conflict, AppIngestService.VersionExistsMessage)
+            }
+        }
+        for (const file of plan.files)
+        {
+            if (file.storage === this.packages && await this.packages.Exists(file.path))
+            {
+                const current = await this.packages.ReadBytes(file.path)
+                if (Buffer.compare(Buffer.from(current), Buffer.from(file.bytes)) !== 0)
+                {
+                    throw new IngestRejection(AppWriteStatus.Conflict, AppIngestService.PackageDiffersMessage)
+                }
+                file.skip = true
             }
         }
     }
@@ -149,7 +258,7 @@ export class AppIngestService
         for (const asset of params.uiBundle)
         {
             const path = AppIngestService.SafeRelativePath(asset?.path)
-            if (typeof asset.contentBase64 !== 'string' || !AppIngestService.Base64Pattern.test(asset.contentBase64))
+            if (typeof asset.contentBase64 !== 'string' || asset.contentBase64 === '' || !AppIngestService.Base64Pattern.test(asset.contentBase64))
             {
                 throw new IngestRejection(AppWriteStatus.Invalid, AppIngestService.BadBase64Message)
             }
@@ -160,40 +269,58 @@ export class AppIngestService
             uiPaths.add(path)
             files.push({ storage: this.applications, path: [params.appName, AppIngestService.UiDir, path].join(AppIngestService.Separator), bytes: Buffer.from(asset.contentBase64, AppIngestService.Base64Encoding) })
         }
-        if (manifest.ui !== undefined && manifest.ui !== null && !uiPaths.has(AppIngestService.SafeRelativePath(manifest.ui.entry)))
+        const projection: Record<string, unknown> = {
+            name: manifest.name,
+            version: manifest.version,
+            packages: manifest.packages.map(ref => ({ id: ref.id, version: ref.version })),
+        }
+        if (manifest.ui !== undefined && manifest.ui !== null)
         {
-            throw new IngestRejection(AppWriteStatus.Invalid, AppIngestService.EntryMessage)
+            if (!uiPaths.has(AppIngestService.SafeRelativePath(manifest.ui.entry)))
+            {
+                throw new IngestRejection(AppWriteStatus.Invalid, AppIngestService.EntryMessage)
+            }
+            const assets = Array.isArray(manifest.ui.assets) ? manifest.ui.assets : []
+            projection.ui = { entry: manifest.ui.entry, assets: assets.map(asset => AppIngestService.SafeRelativePath(asset)) }
         }
         const marker: PlannedFile = {
             storage: this.applications,
             path: params.appName + AppIngestService.Separator + AppIngestService.ManifestFile,
-            bytes: new TextEncoder().encode(JSON.stringify(manifest)),
+            bytes: new TextEncoder().encode(JSON.stringify(projection)),
         }
         return { files, marker }
     }
 
     private async Commit(plan: IngestPlan): Promise<void>
     {
-        const ordered = [...plan.files, plan.marker]
+        const ordered = [...plan.files.filter(f => f.skip !== true), plan.marker]
+        const suffix = AppIngestService.TempPrefix + randomUUID() + AppIngestService.TempSuffix
         const staged: PlannedFile[] = []
+        const renamed: PlannedFile[] = []
         try
         {
             for (const file of ordered)
             {
                 staged.push(file)
-                await file.storage.WriteBytes(file.path + AppIngestService.TempSuffix, file.bytes)
+                await file.storage.WriteBytes(file.path + suffix, file.bytes)
             }
             for (const file of ordered)
             {
-                await file.storage.Rename(file.path + AppIngestService.TempSuffix, file.path)
+                await file.storage.Rename(file.path + suffix, file.path)
                 staged.splice(staged.indexOf(file), 1)
+                renamed.push(file)
             }
         }
         catch (error)
         {
+            // Best effort: drop leftover temps and already-renamed files, marker first so the version is never listed.
             for (const file of staged)
             {
-                await file.storage.Delete(file.path + AppIngestService.TempSuffix).catch(() => undefined)
+                await file.storage.Delete(file.path + suffix).catch(() => undefined)
+            }
+            for (const file of renamed.reverse())
+            {
+                await file.storage.Delete(file.path).catch(() => undefined)
             }
             throw error
         }
@@ -234,10 +361,7 @@ export class AppIngestService
         }
         for (const segment of value.split(AppIngestService.Separator))
         {
-            if (segment === '' || segment === AppIngestService.CurrentSegment || segment === AppIngestService.ParentSegment)
-            {
-                throw new IngestRejection(AppWriteStatus.Invalid, AppIngestService.UnsafePathMessage)
-            }
+            AppIngestService.AssertSegment(segment, AppIngestService.UnsafePathMessage)
         }
         return value
     }

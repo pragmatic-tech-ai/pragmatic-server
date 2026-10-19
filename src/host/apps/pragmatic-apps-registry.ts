@@ -14,8 +14,11 @@ export class PragmaticAppsRegistry
     private static readonly ManifestFile = 'application.json'
     private static readonly RootPath = '.'
     private static readonly Separator = '/'
-    private static readonly ParentSegment = '..'
     private static readonly SeparatorPattern = /[\\/:]/
+    private static readonly DotsOnlyPattern = /^\.+$/
+    private static readonly EdgeDotOrSpacePattern = /^\.|[. ]$/
+    private static readonly ReservedDevicePattern = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i
+    private static readonly ExtensionSeparator = '.'
     private static readonly InvalidNameError = 'invalid application name: '
     private static readonly NotFoundError = 'application not found: '
 
@@ -53,10 +56,15 @@ export class PragmaticAppsRegistry
         return new PragmaticApplication(PragmaticAppManifestParser.Parse(await this.storage.ReadText(path)))
     }
 
-    /** Rejects names that are empty, `.`, `..`, or contain a path separator; shared with the access-policy loader. */
+    /**
+     * Rejects names that are empty, dots-only (`.`, `..`, `...`), dot-leading (`.git`), end in a dot or space, are Windows
+     * reserved device names (`CON`, `NUL`, `COM1`, ... with or without an extension), or contain a path separator.
+     * Shared with the access-policy loader and the app ingest (package ids, versions, every UI path segment).
+     */
     public static AssertValidName(name: string): void
     {
-        if (name === '' || name === PragmaticAppsRegistry.RootPath || name === PragmaticAppsRegistry.ParentSegment || PragmaticAppsRegistry.SeparatorPattern.test(name))
+        if (name === '' || PragmaticAppsRegistry.DotsOnlyPattern.test(name) || PragmaticAppsRegistry.EdgeDotOrSpacePattern.test(name)
+            || PragmaticAppsRegistry.ReservedDevicePattern.test(name.split(PragmaticAppsRegistry.ExtensionSeparator)[0]!) || PragmaticAppsRegistry.SeparatorPattern.test(name))
         {
             throw new Error(PragmaticAppsRegistry.InvalidNameError + name)
         }
