@@ -126,9 +126,11 @@ class FakeService implements IEnvironmentService
         this.MaybeThrow()
     }
 
-    public async AdminIssueMakerToken(_name: string): Promise<any>
+    public async AdminIssueMakerToken(name: string): Promise<any>
     {
-        throw new Error('unused')
+        this.Calls.push(`adminIssueMakerToken:${name}`)
+        this.MaybeThrow()
+        return { token: 'SECRET-MAKER-TOKEN-123', tokenRef: 'ref-1', principalId: 'maker-1', scopes: ['graph:write'], expiresAt: '2027-01-01T00:00:00.000Z' }
     }
 
     public async AdminGrantRole(name: string, mutation: GrantMutationDto): Promise<void>
@@ -730,5 +732,62 @@ describe('ControlPlaneHost', () =>
         assert.equal((await Harness.Anon(host, 'GET', '/api/environments/dev1/graphs')).status, 401)
         assert.equal((await Harness.Anon(host, 'POST', '/api/environments/dev1/graphs', JSON.stringify({ name: 'g1', description: 'd' }))).status, 401)
         assert.deepEqual(fakeGraph.Calls, [])
+    })
+
+    it('POST maker-token returns 201 with only token, principalId, expiresAt', async () =>
+    {
+        const r = await Harness.Send(host, 'POST', '/api/environments/dev1/maker-token')
+        assert.equal(r.status, 201)
+        const dto = JSON.parse(r.body)
+        assert.deepEqual(dto, { token: 'SECRET-MAKER-TOKEN-123', principalId: 'maker-1', expiresAt: '2027-01-01T00:00:00.000Z' })
+        assert.equal((await Harness.Send(host, 'GET', '/api/environments/dev1/maker-token')).status, 404)
+    })
+
+    it('maker-token requires a session (401) and a same origin (403)', async () =>
+    {
+        assert.equal((await Harness.Anon(host, 'POST', '/api/environments/dev1/maker-token')).status, 401)
+        const cross = await Harness.Send(host, 'POST', '/api/environments/dev1/maker-token', undefined, { origin: 'http://evil.example.com' })
+        assert.equal(cross.status, 403)
+        assert.ok(!fake.Calls.some(c => c.startsWith('adminIssueMakerToken')))
+    })
+
+    it('maps maker-token service errors to statuses', async () =>
+    {
+        const path = '/api/environments/dev1/maker-token'
+        fake.Throw = new EnvironmentNotDevelopmentError('dev1')
+        assert.equal((await Harness.Send(host, 'POST', path)).status, 400)
+        fake.Throw = new EnvironmentNotFoundError('dev1')
+        assert.equal((await Harness.Send(host, 'POST', path)).status, 404)
+        fake.Throw = new AdminProxyError(AdminProxyErrorKind.Rbac, 'denied')
+        assert.equal((await Harness.Send(host, 'POST', path)).status, 409)
+        fake.Throw = new AdminProxyError(AdminProxyErrorKind.Invalid, 'bad')
+        assert.equal((await Harness.Send(host, 'POST', path)).status, 400)
+    })
+
+    it('never logs the maker token, even when the service fails', async () =>
+    {
+        const lines: string[] = []
+        const orig = { e: console.error, l: console.log, w: console.warn, i: console.info }
+        const capture = (...a: unknown[]): void => { lines.push(a.map(x => String(x)).join(' ')) }
+        console.error = capture
+        console.log = capture
+        console.warn = capture
+        console.info = capture
+        try
+        {
+            const ok = await Harness.Send(host, 'POST', '/api/environments/dev1/maker-token')
+            assert.ok(ok.body.includes('SECRET-MAKER-TOKEN-123'))
+            fake.Throw = new Error('boom')
+            await Harness.Send(host, 'POST', '/api/environments/dev1/maker-token')
+        }
+        finally
+        {
+            console.error = orig.e
+            console.log = orig.l
+            console.warn = orig.w
+            console.info = orig.i
+        }
+        assert.ok(lines.length > 0)
+        assert.ok(!lines.some(l => l.includes('SECRET-MAKER-TOKEN-123')))
     })
 })
