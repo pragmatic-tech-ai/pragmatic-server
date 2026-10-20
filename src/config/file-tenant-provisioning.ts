@@ -59,7 +59,6 @@ interface FileShape
 export class FileTenantProvisioning implements ITenantProvisioning
 {
     private static readonly BadPurpose = 'tenants file has an invalid purpose (expected a TenantPurpose value)'
-    private static readonly PurposeNames: ReadonlyMap<string, TenantPurpose> = FileTenantProvisioning.BuildPurposeNames()
     private static readonly BadJson = 'tenants file is not valid JSON'
     private static readonly BadShape = 'tenants file has an invalid shape'
     private static readonly BadKind = 'unknown adapter kind in tenants file'
@@ -88,6 +87,7 @@ export class FileTenantProvisioning implements ITenantProvisioning
     private static readonly RoleEditor = 'editor'
     private static readonly RoleAdmin = 'admin'
     private static readonly RoleOwner = 'owner'
+    private static readonly PurposeNames: ReadonlyMap<string, TenantPurpose> = FileTenantProvisioning.BuildPurposeNames()
 
     private readonly entries: ReadonlyMap<string, TenantProvisioning>
 

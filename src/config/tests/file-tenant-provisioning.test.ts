@@ -108,7 +108,7 @@ test('still accepts the numeric purpose value', () =>
 
 test('fails closed on an unknown purpose name, numeric string or out-of-range number', () =>
 {
-    for (const bad of ['Bogus', '0', 5])
+    for (const bad of ['Bogus', '0', 5, true, {}, null])
     {
         assert.throws(() => FileTenantProvisioning.FromText(PurposeFiles.Of(bad)).OptionsFor('acme'), /invalid purpose/)
     }
