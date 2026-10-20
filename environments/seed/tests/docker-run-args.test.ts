@@ -5,23 +5,23 @@ import type { EnvDefinition } from '../docker.js'
 
 class RunArgsProbe
 {
-    private static readonly BundleDir = '/abs/bundle'
-    private static readonly RuntimeHostPort = 8137
+    public static readonly BundleDir = '/abs/bundle'
+    public static readonly RuntimeHostPort = 8137
+    public static readonly DevelopmentHostPort = 8080
+    private static readonly RuntimeName = 'runtime'
+    private static readonly DevelopmentName = 'dev'
+    private static readonly TenantId = 'contoso'
+    private static readonly DevelopmentTenantId = 'dev'
     private static readonly OriginScheme = 'http://localhost:'
 
     public static RuntimeDef(hostPort: number): EnvDefinition
     {
-        return { name: 'runtime', kind: EnvKind.Demo, tenantId: 'contoso', purpose: TenantPurposeName.Runtime, hostPort }
+        return { name: RunArgsProbe.RuntimeName, kind: EnvKind.Demo, tenantId: RunArgsProbe.TenantId, purpose: TenantPurposeName.Runtime, hostPort }
     }
 
     public static DevelopmentDef(hostPort: number): EnvDefinition
     {
-        return { name: 'dev', kind: EnvKind.Dev, tenantId: 'dev', purpose: TenantPurposeName.Development, hostPort }
-    }
-
-    public static Bundle(): string
-    {
-        return RunArgsProbe.BundleDir
+        return { name: RunArgsProbe.DevelopmentName, kind: EnvKind.Dev, tenantId: RunArgsProbe.DevelopmentTenantId, purpose: TenantPurposeName.Development, hostPort }
     }
 
     public static ExpectedOriginPair(hostPort: number): string
@@ -33,22 +33,18 @@ class RunArgsProbe
     {
         return args.some((arg, index) => index > 0 && args[index - 1] === flag && arg === value)
     }
-
-    public static RuntimeHost(): number
-    {
-        return RunArgsProbe.RuntimeHostPort
-    }
 }
 
 test('RunArgs sets PRAGMATIC_ALLOWED_ORIGINS to the served origin for runtime envs', () =>
 {
-    const port = RunArgsProbe.RuntimeHost()
-    const args = DockerEnv.RunArgs(RunArgsProbe.RuntimeDef(port), RunArgsProbe.Bundle())
-    assert.ok(RunArgsProbe.HasAdjacentPair(args, DockerEnv.EnvFlag, RunArgsProbe.ExpectedOriginPair(port)))
+    const args = DockerEnv.RunArgs(RunArgsProbe.RuntimeDef(RunArgsProbe.RuntimeHostPort), RunArgsProbe.BundleDir)
+    assert.ok(RunArgsProbe.HasAdjacentPair(args, DockerEnv.EnvFlag, RunArgsProbe.ExpectedOriginPair(RunArgsProbe.RuntimeHostPort)))
+    assert.equal(args[args.length - 1], DockerEnv.ImageName)
 })
 
-test('RunArgs omits PRAGMATIC_ALLOWED_ORIGINS for development envs', () =>
+test('RunArgs omits PRAGMATIC_ALLOWED_ORIGINS for development envs and keeps the image last', () =>
 {
-    const args = DockerEnv.RunArgs(RunArgsProbe.DevelopmentDef(8080), RunArgsProbe.Bundle())
+    const args = DockerEnv.RunArgs(RunArgsProbe.DevelopmentDef(RunArgsProbe.DevelopmentHostPort), RunArgsProbe.BundleDir)
     assert.equal(args.some(arg => arg.startsWith(`${DockerEnv.EnvAllowedOrigins}=`)), false)
+    assert.equal(args[args.length - 1], DockerEnv.ImageName)
 })
