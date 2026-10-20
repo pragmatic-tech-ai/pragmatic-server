@@ -11,7 +11,7 @@ import {
     EnvironmentNotFoundError,
     ImageMissingError
 } from './environment-service.js'
-import { EnvStatus, Template, type EnvironmentRecord } from './environment-record.js'
+import { EnvStatus, EnvType, Template, type EnvironmentRecord } from './environment-record.js'
 import { PortUnavailableError } from './port-allocator.js'
 import { InvalidEnvironmentNameError, TemplateCatalog } from './template-catalog.js'
 import type { IOperatorIdentity } from './operator-identity.js'
@@ -21,7 +21,7 @@ import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, Security
 
 export interface IEnvironmentService
 {
-    Create(name: string, template: Template, hostPort?: number): Promise<EnvironmentRecord>
+    Create(name: string, template: Template, type: EnvType, hostPort?: number): Promise<EnvironmentRecord>
     Start(name: string): Promise<EnvironmentRecord>
     Stop(name: string): Promise<EnvironmentRecord>
     Delete(name: string): Promise<void>
@@ -43,6 +43,7 @@ export interface IEnvironmentService
 export type EnvironmentDto = {
     name: string
     template: Template
+    type: EnvType
     tenantId: string
     hostPort: number
     status: EnvStatus
@@ -54,7 +55,7 @@ export type EnvironmentDto = {
 export type ChangedEvent = { type: string }
 
 type ErrorCtor = abstract new (...args: never[]) => Error
-type CreateBody = { name?: unknown; template?: unknown; hostPort?: unknown }
+type CreateBody = { name?: unknown; template?: unknown; type?: unknown; hostPort?: unknown }
 type LoginBody = { email?: unknown; password?: unknown }
 
 class BodyTooLargeError extends Error
@@ -149,6 +150,7 @@ export class ControlPlaneHost
     private static readonly BadJsonMessage = 'Request body must be valid JSON'
     private static readonly NameRequiredMessage = 'name (string) is required'
     private static readonly TemplateInvalidMessage = 'template must be one of: '
+    private static readonly TypeInvalidMessage = 'type must be one of: '
     private static readonly HostPortInvalidMessage = 'hostPort must be an integer between 1 and 65535'
     private static readonly MaxPort = 65535
     private static readonly MimeTypes: ReadonlyMap<string, string> = new Map([
@@ -626,6 +628,12 @@ export class ControlPlaneHost
             this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.TemplateInvalidMessage + valid.join(', ') })
             return
         }
+        const validTypes = Object.values(EnvType) as string[]
+        if (typeof body.type !== 'string' || !validTypes.includes(body.type))
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.TypeInvalidMessage + validTypes.join(', ') })
+            return
+        }
         let hostPort: number | undefined
         if (body.hostPort !== undefined)
         {
@@ -636,7 +644,7 @@ export class ControlPlaneHost
             }
             hostPort = body.hostPort
         }
-        const rec = await this.service.Create(body.name, body.template as Template, hostPort)
+        const rec = await this.service.Create(body.name, body.template as Template, body.type as EnvType, hostPort)
         this.WriteJson(res, ControlPlaneHost.StatusCreated, ControlPlaneHost.ToDto(rec))
         this.Broadcast(ControlPlaneHost.Changed())
     }
@@ -862,6 +870,7 @@ export class ControlPlaneHost
         return {
             name: r.name,
             template: r.template,
+            type: r.type,
             tenantId: r.tenantId,
             hostPort: r.hostPort,
             status: r.status,
