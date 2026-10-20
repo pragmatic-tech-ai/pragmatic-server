@@ -48,6 +48,18 @@ export class EnvironmentNotDevelopmentError extends Error
     }
 }
 
+export class EnvironmentNotRuntimeError extends Error
+{
+    private static readonly ErrorName = 'EnvironmentNotRuntimeError'
+    private static readonly MessagePrefix = 'Environment is not a runtime environment: '
+
+    public constructor(envName: string)
+    {
+        super(EnvironmentNotRuntimeError.MessagePrefix + envName)
+        this.name = EnvironmentNotRuntimeError.ErrorName
+    }
+}
+
 export class ImageMissingError extends Error
 {
     private static readonly ErrorName = 'ImageMissingError'

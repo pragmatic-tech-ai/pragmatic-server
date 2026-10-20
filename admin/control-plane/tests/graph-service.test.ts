@@ -1,12 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import type { GraphCreateParamsDto, GraphDetailDto, GraphRefParamsDto, GraphSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { GraphCreateParamsDto, GraphDetailDto, GraphExportDto, GraphLoadParamsDto, GraphLoadedDto, GraphRefParamsDto, GraphSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import { EnvironmentNotFoundError } from '../environment-service.js'
 import { AdminProxyError, AdminProxyErrorKind, type AdminConnectInfo, type AdminSnapshot, type IAdminProxy } from '../admin-proxy.js'
 import { GraphExistsError as ContainerExistsError, GraphNotFoundError as ContainerNotFoundError, GraphNameInvalidError as ContainerInvalidError } from '../../../src/host/graphs/dev-graph-service.js'
 import { GraphService, GraphExistsError, GraphNotFoundError, GraphNameInvalidError, type IEnvironmentLookup } from '../graph-service.js'
-import { EnvironmentNotDevelopmentError } from '../environment-service.js'
+import { EnvironmentNotDevelopmentError, EnvironmentNotRuntimeError } from '../environment-service.js'
 
 class Fixture
 {
@@ -23,6 +23,9 @@ class Fixture
     public static readonly ExistsName = 'already exists'
     public static readonly OtherMessage = 'boom'
     public static readonly Unused = 'unused'
+    public static readonly Rt1 = 'rt1'
+    public static readonly Dev2 = 'dev2'
+    public static readonly PromotedAt = '2026-10-20T01:00:00.000Z'
 
     public static readonly Info: AdminConnectInfo = { httpUrl: 'http://h', wsUrl: 'ws://h', tenant: 'dev1', email: 'e', password: 'p' }
 
@@ -69,6 +72,26 @@ class FakeAdminProxy implements IAdminProxy
     public Infos: AdminConnectInfo[] = []
     public Throw: Error | undefined
     public Detail: GraphDetailDto = { name: Fixture.G1, description: Fixture.Description, packages: [{ id: 'p', version: '1' }, { id: 'q', version: '2' }], createdAt: Fixture.CreatedAt }
+    public Export: GraphExportDto = { name: Fixture.G1, packages: [{ id: 'p', version: '1', modelJson: '{"p":1}' }, { id: 'q', version: '2', modelJson: '{"q":2}' }] }
+    public Loaded: GraphLoadedDto = { name: Fixture.G1, packages: [{ id: 'p', version: '1' }, { id: 'q', version: '2' }], promotedAt: Fixture.PromotedAt }
+
+    public async ExportGraph(info: AdminConnectInfo, params: GraphRefParamsDto): Promise<GraphExportDto>
+    {
+        this.Track(info, `export:${params.graphName}`)
+        return this.Export
+    }
+
+    public async LoadGraph(info: AdminConnectInfo, params: GraphLoadParamsDto): Promise<GraphLoadedDto>
+    {
+        this.Track(info, `load:${params.graphName}:${params.packages.length}`)
+        return this.Loaded
+    }
+
+    public async GetLoadedGraph(info: AdminConnectInfo): Promise<GraphLoadedDto | null>
+    {
+        this.Track(info, 'loaded')
+        return this.Loaded
+    }
 
     public async CreateGraph(info: AdminConnectInfo, params: GraphCreateParamsDto): Promise<GraphSummaryDto>
     {
@@ -274,4 +297,47 @@ test('an invalid name that embeds a sentinel phrase is still classified as inval
     await assert.rejects(h.Service.Create(Fixture.Dev1, Fixture.NotFoundName, ''), GraphNameInvalidError)
     h.Proxy.Throw = new AdminProxyError(AdminProxyErrorKind.Protocol, new ContainerInvalidError(Fixture.ExistsName).message)
     await assert.rejects(h.Service.Create(Fixture.Dev1, Fixture.ExistsName, ''), GraphNameInvalidError)
+})
+
+test('promote_rejects_runtime_source_and_development_target', async () =>
+{
+    // A Runtime SOURCE fails the Development gate before any proxy call.
+    const runtimeSource = new Harness()
+    runtimeSource.Lookup.Add(Fixture.Record(Fixture.Rt1, EnvType.Runtime))
+    await assert.rejects(runtimeSource.Service.Promote(Fixture.Rt1, Fixture.G1, Fixture.Dev1), EnvironmentNotDevelopmentError)
+    assert.deepEqual(runtimeSource.Proxy.Calls, [])
+
+    // A Development TARGET fails the Runtime gate before any proxy call.
+    const devTarget = new Harness()
+    devTarget.Lookup.Add(Fixture.Record(Fixture.Dev2, EnvType.Development))
+    await assert.rejects(devTarget.Service.Promote(Fixture.Dev1, Fixture.G1, Fixture.Dev2), EnvironmentNotRuntimeError)
+    assert.deepEqual(devTarget.Proxy.Calls, [])
+})
+
+test('Promote exports from the dev source and loads the exported packages into the runtime target', async () =>
+{
+    const h = new Harness()
+    h.Lookup.Add(Fixture.Record(Fixture.Rt1, EnvType.Runtime))
+    const result = await h.Service.Promote(Fixture.Dev1, Fixture.G1, Fixture.Rt1)
+    assert.deepEqual(h.Proxy.Calls, [`export:${Fixture.G1}`, `load:${Fixture.G1}:2`])
+    assert.deepEqual(h.InfoCalls, [Fixture.Dev1, Fixture.Rt1])
+    assert.deepEqual(result, { graphName: Fixture.G1, packageCount: 2, targetEnv: Fixture.Rt1 })
+})
+
+test('a container Protocol error from ExportGraph maps via Classify', async () =>
+{
+    const h = new Harness()
+    h.Lookup.Add(Fixture.Record(Fixture.Rt1, EnvType.Runtime))
+    h.Proxy.Throw = new AdminProxyError(AdminProxyErrorKind.Protocol, Fixture.NotFoundMessage)
+    await assert.rejects(h.Service.Promote(Fixture.Dev1, Fixture.G1, Fixture.Rt1), GraphNotFoundError)
+})
+
+test('GetLoaded requires a Runtime environment and returns the loaded manifest', async () =>
+{
+    const h = new Harness()
+    h.Lookup.Add(Fixture.Record(Fixture.Rt1, EnvType.Runtime))
+    const loaded = await h.Service.GetLoaded(Fixture.Rt1)
+    assert.deepEqual(h.Proxy.Calls, ['loaded'])
+    assert.deepEqual(loaded, { name: Fixture.G1, packages: [{ id: 'p', version: '1' }, { id: 'q', version: '2' }], promotedAt: Fixture.PromotedAt })
+    await assert.rejects(h.Service.GetLoaded(Fixture.Dev1), EnvironmentNotRuntimeError)
 })

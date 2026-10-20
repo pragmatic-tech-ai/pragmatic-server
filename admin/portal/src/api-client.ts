@@ -1,4 +1,4 @@
-import type { AdminSnapshotDto, EnvironmentDto, GraphDto, GrantMutationDto, IdentityConfigDto, MakerTokenDto, OperatorDto, SecurityModelDto, TemplateDto } from './portal-types.js'
+import type { AdminSnapshotDto, EnvironmentDto, GraphDto, GraphLoadedDto, GrantMutationDto, IdentityConfigDto, MakerTokenDto, OperatorDto, PromotionResultDto, SecurityModelDto, TemplateDto } from './portal-types.js'
 
 // Thrown for non-2xx control-plane responses; Message carries the server's error text.
 export class ApiError extends Error
@@ -27,6 +27,8 @@ export class ControlPlaneClient
     private static readonly PathSeparator = '/'
     private static readonly GraphsLeaf = 'graphs'
     private static readonly MakerTokenLeaf = 'maker-token'
+    private static readonly PromoteLeaf = 'promote'
+    private static readonly LoadedGraphLeaf = 'loaded-graph'
     private static readonly StartAction = 'start'
     private static readonly StopAction = 'stop'
     private static readonly LogsAction = 'logs'
@@ -241,6 +243,16 @@ export class ControlPlaneClient
         return this.EnvRoute(envName) + ControlPlaneClient.PathSeparator + ControlPlaneClient.GraphsLeaf
     }
 
+    private PromoteRoute(envName: string, graphName: string): string
+    {
+        return this.GraphsRoute(envName) + ControlPlaneClient.PathSeparator + encodeURIComponent(graphName) + ControlPlaneClient.PathSeparator + ControlPlaneClient.PromoteLeaf
+    }
+
+    private LoadedGraphRoute(envName: string): string
+    {
+        return this.EnvRoute(envName) + ControlPlaneClient.PathSeparator + ControlPlaneClient.LoadedGraphLeaf
+    }
+
     private MakerTokenRoute(envName: string): string
     {
         return this.EnvRoute(envName) + ControlPlaneClient.PathSeparator + ControlPlaneClient.MakerTokenLeaf
@@ -264,6 +276,18 @@ export class ControlPlaneClient
     public async DeleteGraph(envName: string, graphName: string): Promise<void>
     {
         await this.Send<unknown>(this.GraphsRoute(envName) + ControlPlaneClient.PathSeparator + encodeURIComponent(graphName), { method: ControlPlaneClient.MethodDelete })
+    }
+
+    // Promotes a development graph into a runtime environment.
+    public async PromoteGraph(sourceEnv: string, graphName: string, targetEnv: string): Promise<PromotionResultDto>
+    {
+        return await this.Send<PromotionResultDto>(this.PromoteRoute(sourceEnv, graphName), { method: ControlPlaneClient.MethodPost, body: JSON.stringify({ targetEnv }) })
+    }
+
+    // The runtime's loaded graph; null when none has been promoted.
+    public async GetLoadedGraph(runtimeEnv: string): Promise<GraphLoadedDto | null>
+    {
+        return await this.Send<GraphLoadedDto | null>(this.LoadedGraphRoute(runtimeEnv), undefined)
     }
 
     private EnvRoute(name: string): string

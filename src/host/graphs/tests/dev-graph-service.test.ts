@@ -4,6 +4,7 @@ import type { IStorage, StorageEntry } from '@pragmatic-tech-ai/todl-runtime'
 import type { ContributedPackageDto, GraphRefParamsDto, GraphSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { DevGraphStore } from '../dev-graph-store.js'
 import { GraphPackageConflictError, GraphPackageIngest } from '../graph-package-ingest.js'
+import { GraphPackageReader } from '../graph-package-reader.js'
 import { DevGraphService, GraphExistsError, GraphNameInvalidError, GraphNotFoundError } from '../dev-graph-service.js'
 
 class MemoryStorage implements IStorage
@@ -42,7 +43,7 @@ class Fixture
 
     public static ServiceOver(graphs: MemoryStorage, packages: MemoryStorage): DevGraphService
     {
-        return new DevGraphService(new DevGraphStore(graphs), new GraphPackageIngest(packages))
+        return new DevGraphService(new DevGraphStore(graphs), new GraphPackageIngest(packages), new GraphPackageReader(packages))
     }
 
     public static Pkg(id: string, version: string, modelJson: string = '{}'): ContributedPackageDto
@@ -174,4 +175,27 @@ test('an empty contribution sets the slice to empty and the union reflects it', 
     await service.ContributeGraph({ graphName: 'g1', solutionId: 's2', packages: [Fixture.Pkg('b', '1')] })
     const detail = await service.ContributeGraph({ graphName: 'g1', solutionId: 's1', packages: [] })
     assert.deepEqual(Fixture.Keys(detail.packages), ['b@1'])
+})
+
+test('ExportGraph returns the deduped union of a two-solution graph with content', async () =>
+{
+    const service = Fixture.Service()
+    await Fixture.Create(service, 'd')
+    await service.ContributeGraph({ graphName: 'g1', solutionId: 's1', packages: [Fixture.Pkg('a', '1', '{"k":1}'), Fixture.Pkg('b', '1', '{"k":2}')] })
+    await service.ContributeGraph({ graphName: 'g1', solutionId: 's2', packages: [Fixture.Pkg('b', '1', '{"k":2}'), Fixture.Pkg('c', '1', '{"k":3}')] })
+    const exported = await service.ExportGraph(Fixture.Ref())
+    assert.equal(exported.name, 'g1')
+    assert.deepEqual(exported.packages, [Fixture.Pkg('a', '1', '{"k":1}'), Fixture.Pkg('b', '1', '{"k":2}'), Fixture.Pkg('c', '1', '{"k":3}')])
+})
+
+test('ExportGraph on an empty graph returns no packages', async () =>
+{
+    const service = Fixture.Service()
+    await Fixture.Create(service, 'd')
+    assert.deepEqual(await service.ExportGraph(Fixture.Ref()), { name: 'g1', packages: [] })
+})
+
+test('ExportGraph on an unknown graph rejects GraphNotFoundError', async () =>
+{
+    await assert.rejects(Fixture.Service().ExportGraph(Fixture.Ref()), GraphNotFoundError)
 })

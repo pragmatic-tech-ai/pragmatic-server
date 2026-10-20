@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import type { ContributedPackageDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { PragmaticAppsRegistry } from '../apps/pragmatic-apps-registry.js'
+import { PackagePath } from './package-path.js'
 
 export class GraphPackageConflictError extends Error
 {
@@ -45,8 +46,6 @@ interface PlannedPackage
  */
 export class GraphPackageIngest
 {
-    private static readonly ModelFile = 'model.json'
-    private static readonly Separator = '/'
     private static readonly TempPrefix = '.ingest-'
     private static readonly TempSuffix = '.tmp'
 
@@ -71,7 +70,7 @@ export class GraphPackageIngest
         const byPath = new Map<string, PlannedPackage>()
         for (const pkg of packages)
         {
-            const path = [pkg.id, pkg.version, GraphPackageIngest.ModelFile].join(GraphPackageIngest.Separator)
+            const path = PackagePath.ModelJsonPath(pkg.id, pkg.version)
             const bytes = new TextEncoder().encode(pkg.modelJson)
             const earlier = byPath.get(path)
             if (earlier !== undefined)

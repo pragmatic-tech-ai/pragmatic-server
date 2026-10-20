@@ -15,12 +15,15 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { AdminProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { Repository, toJSON } from '@pragmatic-tech-ai/todl'
+import type { PackageDocument } from '@pragmatic-tech-ai/todl'
+import { AdminProtocol, CypherProtocol, GraphProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { ContributedPackageDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { DockerEnv } from '../../environments/seed/docker.js'
 import { UserSeeder } from '../../environments/seed/users.js'
 import { AdminProxy, WsAdminConnector } from './admin-proxy.js'
 import { ControlPlaneHost } from './control-plane-host.js'
-import type { EnvironmentDto } from './control-plane-host.js'
+import type { EnvironmentDto, MakerTokenDto, PromotionResultDto } from './control-plane-host.js'
 import { BundleBuilderAdapter, DockerEnvAdapter, UserSeederAdapter } from './docker-env-port.js'
 import { EnvStatus, EnvType, Template } from './environment-record.js'
 import { EnvironmentRegistry } from './environment-registry.js'
@@ -105,6 +108,25 @@ export class ControlPlaneSmoke
     private static readonly MissingOpen = ' missing=['
     private static readonly MissingClose = '] admin='
     private static readonly Comma = ','
+    private static readonly PackagesWord = ' packages='
+    private static readonly EmptyString = ''
+    private static readonly PromoteDevName = 'smoke-promote-dev'
+    private static readonly PromoteRuntimeName = 'smoke-promote-rt'
+    private static readonly PromoteGraphName = 'smoke-graph'
+    private static readonly PromoteGraphDescription = 'smoke promotion graph'
+    private static readonly PromoteSolutionId = 'smoke-solution'
+    private static readonly PromoteNamespace = 'smokepromo'
+    private static readonly PromoteVersion = '1.0.0'
+    private static readonly PromoteConcept = 'Widget'
+    private static readonly PromoteBaseConcept = 'Element'
+    private static readonly PromoteInstanceSuffix = '.one'
+    private static readonly PromoteCypher = 'MATCH (w:Widget) RETURN count(w) AS n'
+    private static readonly GraphsSegment = '/graphs'
+    private static readonly PromoteSegment = '/promote'
+    private static readonly MakerTokenAction = '/maker-token'
+    private static readonly LoadedGraphAction = '/loaded-graph'
+    private static readonly PromotedPackageCount = 1
+    private static readonly PromoteExpectedRows = 1
     private static readonly DataEvent = 'data'
     private static readonly EndEvent = 'end'
     private static readonly ErrorEvent = 'error'
@@ -135,12 +157,22 @@ export class ControlPlaneSmoke
         ManageRevoke: 'manage: revoke Viewer returns 200',
         ManageGetConfig: 'manage: get config returns 200',
         ManagePutConfig: 'manage: put unchanged config returns 200',
-        ManageLockout: 'manage: revoking own Owner grant is refused with 409'
+        ManageLockout: 'manage: revoking own Owner grant is refused with 409',
+        PromoteCreateDev: 'promote: development env create returns 201 and reaches running',
+        PromoteCreateGraph: 'promote: create graph on dev env returns 201',
+        PromoteMakerToken: 'promote: maker token mint returns 201 with a token',
+        PromoteContribute: 'promote: graph/contribute with maker token returns the graph with its package',
+        PromoteCreateRuntime: 'promote: runtime env create returns 201 and reaches running',
+        PromoteResult: 'promote: promote returns 200 with graph name, package count and target env',
+        PromoteLoaded: 'promote: loaded-graph on the runtime reflects the promoted graph',
+        PromoteCypherRead: 'promote: cypher query on the runtime env graph returns the promoted content',
+        PromoteDeleteDev: 'promote: development env delete returns 200',
+        PromoteDeleteRuntime: 'promote: runtime env delete returns 200'
     }
 
     private failed = false
     private controlPort = 0
-    private sessionCookie = ''
+    private sessionCookie = ControlPlaneSmoke.EmptyString
 
     public static async Main(): Promise<void>
     {
@@ -177,6 +209,7 @@ export class ControlPlaneSmoke
             {
                 await this.DevLifecycle(dataRoot)
                 await this.DemoSeeded(dataRoot)
+                await this.PromotionRoundTrip(dataRoot)
             }
         }
         catch (err)
@@ -213,7 +246,7 @@ export class ControlPlaneSmoke
     /** Best-effort removal of both smoke environments so a rerun starts clean. */
     private async Cleanup(): Promise<void>
     {
-        for (const name of [ControlPlaneSmoke.DevName, ControlPlaneSmoke.DemoName])
+        for (const name of [ControlPlaneSmoke.DevName, ControlPlaneSmoke.DemoName, ControlPlaneSmoke.PromoteDevName, ControlPlaneSmoke.PromoteRuntimeName])
         {
             try
             {
@@ -270,6 +303,122 @@ export class ControlPlaneSmoke
         const del = await this.Api(ControlPlaneSmoke.MethodDelete, this.EnvPath(name))
         this.Expect(L.DeleteDemo, del.status === ControlPlaneSmoke.StatusOk, ControlPlaneSmoke.StatusWord + String(del.status))
         this.Expect(L.GoneDemo, (await this.Find(name)) === undefined)
+    }
+
+    /** End to end: dev graph + maker contribute, promote into a runtime env, then read the loaded env graph. */
+    private async PromotionRoundTrip(dataRoot: string): Promise<void>
+    {
+        const S = ControlPlaneSmoke
+        const L = S.Labels
+        const dev = S.PromoteDevName
+        const runtime = S.PromoteRuntimeName
+        const graph = S.PromoteGraphName
+        const devCreated = await this.Api(S.MethodPost, S.EnvironmentsPath, { name: dev, template: Template.DevBlank, type: EnvType.Development })
+        const devRunning = devCreated.status === S.StatusCreated ? await this.WaitFor(dev, EnvStatus.Running) : undefined
+        this.Expect(L.PromoteCreateDev, devRunning !== undefined, S.StatusWord + String(devCreated.status))
+        if (devRunning === undefined)
+        {
+            return
+        }
+        const madeGraph = await this.Api(S.MethodPost, this.EnvPath(dev) + S.GraphsSegment, { name: graph, description: S.PromoteGraphDescription })
+        this.Expect(L.PromoteCreateGraph, madeGraph.status === S.StatusCreated, S.StatusWord + String(madeGraph.status))
+        const minted = await this.Api(S.MethodPost, this.EnvPath(dev) + S.MakerTokenAction)
+        const makerToken = (minted.json as MakerTokenDto | undefined)?.token ?? S.EmptyString
+        this.Expect(L.PromoteMakerToken, minted.status === S.StatusCreated && makerToken !== S.EmptyString, S.StatusWord + String(minted.status))
+        if (makerToken === S.EmptyString)
+        {
+            return
+        }
+        await this.ContributeAs(devRunning.hostPort, dev, makerToken)
+
+        const rtCreated = await this.Api(S.MethodPost, S.EnvironmentsPath, { name: runtime, template: Template.DemoContoso, type: EnvType.Runtime })
+        const rtRunning = rtCreated.status === S.StatusCreated ? await this.WaitFor(runtime, EnvStatus.Running) : undefined
+        this.Expect(L.PromoteCreateRuntime, rtRunning !== undefined, S.StatusWord + String(rtCreated.status))
+        if (rtRunning === undefined)
+        {
+            return
+        }
+        const promotePath = this.EnvPath(dev) + S.GraphsSegment + S.PathSep + encodeURIComponent(graph) + S.PromoteSegment
+        const promoted = await this.Api(S.MethodPost, promotePath, { targetEnv: runtime })
+        const result = promoted.json as PromotionResultDto | undefined
+        const resultOk = promoted.status === S.StatusOk && result?.graphName === graph && result.packageCount === S.PromotedPackageCount && result.targetEnv === runtime
+        this.Expect(L.PromoteResult, resultOk, S.StatusWord + String(promoted.status))
+        const loadedRes = await this.Api(S.MethodGet, this.EnvPath(runtime) + S.LoadedGraphAction)
+        const loaded = loadedRes.json as GraphLoadedDto | null | undefined
+        const loadedOk = loadedRes.status === S.StatusOk && loaded?.name === graph && loaded.packages.length === S.PromotedPackageCount && (loaded.promotedAt ?? S.EmptyString) !== S.EmptyString
+        this.Expect(L.PromoteLoaded, loadedOk, S.StatusWord + String(loadedRes.status))
+        await this.CheckRuntimeGraphRead(dataRoot, rtRunning.hostPort)
+
+        const delDev = await this.Api(S.MethodDelete, this.EnvPath(dev))
+        this.Expect(L.PromoteDeleteDev, delDev.status === S.StatusOk, S.StatusWord + String(delDev.status))
+        const delRt = await this.Api(S.MethodDelete, this.EnvPath(runtime))
+        this.Expect(L.PromoteDeleteRuntime, delRt.status === S.StatusOk, S.StatusWord + String(delRt.status))
+    }
+
+    /** Contributes the small fixture package over a maker-token WS to the dev container and records the outcome; a rejection is reported (message only, never the token) instead of escaping. */
+    private async ContributeAs(port: number, tenantId: string, makerToken: string): Promise<void>
+    {
+        const S = ControlPlaneSmoke
+        try
+        {
+            const conn = await new UserSeeder().Connect(S.WsPrefix + String(port), tenantId, makerToken)
+            try
+            {
+                const detail = await conn.sendRequest(GraphProtocol.Contribute, { graphName: S.PromoteGraphName, solutionId: S.PromoteSolutionId, packages: [S.FixturePackage()] })
+                const ok = detail.name === S.PromoteGraphName && detail.packages.length === S.PromotedPackageCount
+                this.Expect(S.Labels.PromoteContribute, ok, detail.name + S.PackagesWord + String(detail.packages.length))
+            }
+            finally
+            {
+                conn.dispose()
+            }
+        }
+        catch (err)
+        {
+            this.Expect(S.Labels.PromoteContribute, false, err instanceof Error ? err.message : String(err))
+        }
+    }
+
+    /** Opens the runtime tenant as its Owner (no bound app, so cypher resolves to the env graph) and counts the promoted instances. */
+    private async CheckRuntimeGraphRead(dataRoot: string, port: number): Promise<void>
+    {
+        const S = ControlPlaneSmoke
+        const secretsPath = join(dataRoot, S.PromoteRuntimeName, S.SecretsFile)
+        const secrets = JSON.parse(readFileSync(secretsPath, S.Utf8)) as Record<string, string>
+        const adminPw = secrets[S.AdminPwKey]
+        if (adminPw === undefined)
+        {
+            this.Expect(S.Labels.PromoteCypherRead, false, S.AdminPwKey)
+            return
+        }
+        const seeder = new UserSeeder()
+        const token = await seeder.Login(S.HttpPrefix + String(port), S.DemoTenant, S.AdminEmail, adminPw)
+        const conn = await seeder.Connect(S.WsPrefix + String(port), S.DemoTenant, token)
+        try
+        {
+            const page = await conn.sendRequest(CypherProtocol.Query, { cypher: S.PromoteCypher })
+            const cell = page.items[0]?.[0]
+            this.Expect(S.Labels.PromoteCypherRead, page.items.length === S.PromoteExpectedRows && cell === S.PromoteExpectedRows, String(cell))
+        }
+        finally
+        {
+            conn.dispose()
+        }
+    }
+
+    /** A tiny compiled package with one queryable instance, built through the TODL repository (as the host tests do). */
+    private static FixturePackage(): ContributedPackageDto
+    {
+        const S = ControlPlaneSmoke
+        const repo = new Repository()
+        repo.builder()
+            .defineConcept(S.PromoteBaseConcept)
+            .defineConcept(S.PromoteConcept, S.PromoteBaseConcept)
+            .setNamespace(S.PromoteNamespace)
+            .assertInstance(S.PromoteConcept, S.PromoteNamespace + S.PromoteInstanceSuffix)
+            .commit()
+        const document = toJSON(repo) as PackageDocument
+        return { id: S.PromoteNamespace, version: S.PromoteVersion, modelJson: JSON.stringify(document) }
     }
 
     private CheckPurpose(label: string, dataRoot: string, envName: string, tenantId: string, expected: number): void

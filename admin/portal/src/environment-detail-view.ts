@@ -1,7 +1,8 @@
 import { StackPanel, TextBlock, Orientation } from '@pragmatic-tech-ai/mural/basic'
 import { ScrollViewer } from '@pragmatic-tech-ai/mural/framework'
 import type { ControlPlaneClient } from './api-client.js'
-import type { EnvironmentDto, IPortalNavigator } from './portal-types.js'
+import { EnvironmentType } from './portal-types.js'
+import type { EnvironmentDto, GraphLoadedDto, IPortalNavigator } from './portal-types.js'
 import { PortalViewBase } from './portal-view-base.js'
 
 // One environment: connect info, scrollable logs pane, Start / Stop / Delete.
@@ -11,7 +12,12 @@ export class EnvironmentDetailView extends PortalViewBase
     public static readonly RolesLabel = 'Roles'
     public static readonly GraphsLabel = 'Graphs'
     public static readonly MakerTokenLabel = 'Mint maker token'
-    private static readonly DevelopmentType = 'development'
+    public static readonly PromoteLabel = 'Promote graph\u2026'
+    private static readonly LoadedGraphPrefix = 'Loaded graph: '
+    private static readonly PackagesPrefix = 'Packages: '
+    private static readonly PromotedAtPrefix = 'Promoted at: '
+    private static readonly NoGraphMessage = 'No graph loaded'
+    private static readonly LoadedSeparator = '  |  '
     private static readonly LogsHeading = 'Logs'
     private static readonly HttpPrefix = 'HTTP: '
     private static readonly WsPrefix = 'WebSocket: '
@@ -25,6 +31,7 @@ export class EnvironmentDetailView extends PortalViewBase
     private readonly http = new TextBlock()
     private readonly ws = new TextBlock()
     private readonly logs = new TextBlock()
+    private readonly loadedGraph = new TextBlock()
     private readonly actions = new StackPanel()
     private confirming = false
     private envType: string | undefined
@@ -38,6 +45,7 @@ export class EnvironmentDetailView extends PortalViewBase
         this.AddChild(this.status)
         this.AddChild(this.http)
         this.AddChild(this.ws)
+        this.AddChild(this.loadedGraph)
         this.actions.Orientation = Orientation.Horizontal
         this.AddChild(this.actions)
         this.AddChild(this.message)
@@ -63,12 +71,35 @@ export class EnvironmentDetailView extends PortalViewBase
             }
             this.ShowEnvironment(env)
             this.logs.Text = await this.FetchLogs()
+            await this.ShowLoadedGraph()
             this.message.Text = PortalViewBase.NoMessage
         }
         catch (e)
         {
             this.ShowError(e)
         }
+    }
+
+    // Runtime environments show their loaded graph; other types show nothing.
+    private async ShowLoadedGraph(): Promise<void>
+    {
+        if (this.envType !== EnvironmentType.Runtime)
+        {
+            this.loadedGraph.Text = PortalViewBase.NoMessage
+            return
+        }
+        this.loadedGraph.Text = EnvironmentDetailView.DescribeLoaded(await this.client.GetLoadedGraph(this.name))
+    }
+
+    public static DescribeLoaded(loaded: GraphLoadedDto | null): string
+    {
+        if (loaded === null)
+        {
+            return EnvironmentDetailView.NoGraphMessage
+        }
+        return [EnvironmentDetailView.LoadedGraphPrefix + loaded.name,
+            EnvironmentDetailView.PackagesPrefix + String(loaded.packages.length),
+            EnvironmentDetailView.PromotedAtPrefix + loaded.promotedAt].join(EnvironmentDetailView.LoadedSeparator)
     }
 
     private async FetchLogs(): Promise<string>
@@ -112,9 +143,10 @@ export class EnvironmentDetailView extends PortalViewBase
         }
         this.actions.AddChild(this.MakeButton(EnvironmentDetailView.ManageLabel, () => { this.nav.ShowManage(this.name) }))
         this.actions.AddChild(this.MakeButton(EnvironmentDetailView.RolesLabel, () => { this.nav.ShowRoles(this.name) }))
-        if (this.envType === EnvironmentDetailView.DevelopmentType)
+        if (this.envType === EnvironmentType.Development)
         {
             this.actions.AddChild(this.MakeButton(EnvironmentDetailView.GraphsLabel, () => { this.nav.ShowGraphs(this.name) }))
+            this.actions.AddChild(this.MakeButton(EnvironmentDetailView.PromoteLabel, () => { this.nav.ShowPromoteGraph(this.name) }))
             this.actions.AddChild(this.MakeButton(EnvironmentDetailView.MakerTokenLabel, () => { this.nav.ShowMakerToken(this.name) }))
         }
         this.actions.AddChild(this.MakeButton(PortalViewBase.BackLabel, () => { this.nav.ShowList() }))
