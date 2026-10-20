@@ -70,6 +70,8 @@ export class GraphService
     {
         const env = this.Require(envName)
         GraphService.SanitizeGraphName(name)
+        // Single-writer by design: the operator portal issues one request at a time, so
+        // load -> duplicate-check -> put (and Delete's equivalent) is not guarded against concurrent callers.
         const store = this.StoreFor(env)
         await store.Load()
         if (store.Get(name))
@@ -133,12 +135,11 @@ export class GraphService
         return new GraphRegistry(join(record.bundleDir, GraphService.GraphsFile))
     }
 
-    private static SanitizeGraphName(name: string): string
+    private static SanitizeGraphName(name: string): void
     {
         if (!GraphService.GraphNamePattern.test(name))
         {
             throw new GraphNameInvalidError(name)
         }
-        return name
     }
 }

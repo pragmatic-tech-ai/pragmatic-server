@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, access } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
@@ -20,6 +20,7 @@ class Fixture
     public static readonly Description = 'first'
     public static readonly BadName = 'Bad Name'
     public static readonly Missing = 'missing'
+    public static readonly NotFoundCode = 'ENOENT'
 
     public static async TempDir(): Promise<string>
     {
@@ -81,6 +82,7 @@ test('Create against a Runtime environment is rejected', async () =>
     lookup.Add(Fixture.Record(Fixture.Dev1, EnvType.Runtime, dir))
     const svc = new GraphService(lookup)
     await assert.rejects(svc.Create(Fixture.Dev1, Fixture.G1, ''), EnvironmentNotDevelopmentError)
+    await assert.rejects(access(join(dir, Fixture.GraphsFile)), { code: Fixture.NotFoundCode })
 })
 
 test('Create against an unknown environment is rejected', async () =>
