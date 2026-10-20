@@ -69,3 +69,26 @@ describe('ControlPlaneClient security model', () =>
         assert.deepEqual(JSON.parse(call.init?.body as string), { securityModel: model })
     })
 })
+
+describe('ControlPlaneClient graphs', () =>
+{
+    afterEach(() => { FetchStub.Restore() })
+
+    it('CreateGraph posts name+description to the nested env graphs route', async () =>
+    {
+        FetchStub.Install({})
+        await new ControlPlaneClient().CreateGraph('dev1', 'g1', 'first')
+        const call = FetchStub.Calls[0]!
+        assert.equal(call.route, '/api/environments/dev1/graphs')
+        assert.equal(call.init?.method, 'POST')
+        assert.deepEqual(JSON.parse(call.init?.body as string), { name: 'g1', description: 'first' })
+    })
+
+    it('ListGraphs GETs the nested env graphs route', async () =>
+    {
+        FetchStub.Install([])
+        await new ControlPlaneClient().ListGraphs('dev1')
+        assert.equal(FetchStub.Calls[0]!.route, '/api/environments/dev1/graphs')
+        assert.equal(FetchStub.Calls[0]!.init?.method, undefined)
+    })
+})

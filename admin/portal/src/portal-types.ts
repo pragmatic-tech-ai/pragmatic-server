@@ -11,6 +11,14 @@ export type EnvironmentDto =
     wsUrl: string
 }
 
+export type GraphDto =
+{
+    name: string
+    description: string
+    packageCount: number
+    createdAt: string
+}
+
 export type TemplateDto =
 {
     id: string
@@ -112,6 +120,8 @@ export interface IPortalNavigator
     ShowDetail(name: string): void
     ShowManage(name: string): void
     ShowRoles(name: string): void
+    ShowGraphs(name: string): void
+    ShowCreateGraph(name: string): void
 }
 
 // A screen that can re-fetch and re-render itself (on environments-changed).

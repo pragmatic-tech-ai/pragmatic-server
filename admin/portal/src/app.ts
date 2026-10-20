@@ -5,6 +5,8 @@ import { ControlPlaneClient } from './api-client.js'
 import { CreateEnvironmentView } from './create-environment-view.js'
 import { EnvironmentDetailView } from './environment-detail-view.js'
 import { EnvironmentListView } from './environment-list-view.js'
+import { GraphListView } from './graph-list-view.js'
+import { CreateGraphView } from './create-graph-view.js'
 import { LoginView } from './login-view.js'
 import { RoleConfigView } from './role-config-view.js'
 import { ManageView } from './manage-view.js'
@@ -131,6 +133,18 @@ export class App extends StackPanel implements IPortalNavigator
     {
         this.SetLogoutVisible(true)
         this.Show(new RoleConfigView(this.client, this, name))
+    }
+
+    public ShowGraphs(name: string): void
+    {
+        this.SetLogoutVisible(true)
+        this.Show(new GraphListView(this.client, this, name))
+    }
+
+    public ShowCreateGraph(name: string): void
+    {
+        this.SetLogoutVisible(true)
+        this.Show(new CreateGraphView(this.client, this, name))
     }
 
     private Show(view: Visual & IPortalView): void

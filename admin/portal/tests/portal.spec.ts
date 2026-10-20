@@ -3,6 +3,9 @@ import { App } from '../src/app.js'
 import { CreateEnvironmentView } from '../src/create-environment-view.js'
 import { LoginView } from '../src/login-view.js'
 import { EnvironmentListView } from '../src/environment-list-view.js'
+import { EnvironmentDetailView } from '../src/environment-detail-view.js'
+import { GraphListView } from '../src/graph-list-view.js'
+import { CreateGraphView } from '../src/create-graph-view.js'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { extname, join, normalize } from 'node:path'
@@ -22,11 +25,15 @@ class FakeControlPlane
     public static readonly TemplateOneTitle = 'Blank development'
     public static readonly TemplateTwoId = 'demo-contoso'
     public static readonly TemplateTwoTitle = 'Contoso demo'
-    public static readonly ListedType = 'runtime'
+    public static readonly ListedType = 'development'
     public static readonly RowSeparator = '  |  '
     public static readonly RowPortText = 'port 4101'
     public static readonly NewName = 'beta'
     public static readonly EnvironmentsPath = '/api/environments'
+    public static readonly GraphsPath = '/api/environments/alpha/graphs'
+    public static readonly NewGraphName = 'g1'
+    public static readonly NewGraphDescription = 'first graph'
+    public static readonly GraphCreatedAt = '2026-01-01T00:00:00.000Z'
     public static readonly StopPath = '/api/environments/alpha/stop'
     public static readonly DeletePath = '/api/environments/alpha'
     public static readonly MethodPost = 'POST'
@@ -66,6 +73,7 @@ class FakeControlPlane
 
     public readonly Calls: Call[] = []
     public TemplatesRequests = 0
+    public Graphs: Array<{ name: string; description: string; packageCount: number; createdAt: string }> = []
     public Authenticated = true
     private readonly root = fileURLToPath(new URL('../dist/', import.meta.url))
     private server: Server | undefined
@@ -166,6 +174,21 @@ class FakeControlPlane
                 { id: FakeControlPlane.TemplateOneId, title: FakeControlPlane.TemplateOneTitle },
                 { id: FakeControlPlane.TemplateTwoId, title: FakeControlPlane.TemplateTwoTitle },
             ])
+            return
+        }
+        if (path === FakeControlPlane.GraphsPath)
+        {
+            if (method === FakeControlPlane.MethodPost)
+            {
+                const raw = await FakeControlPlane.ReadBody(req)
+                const body = JSON.parse(raw) as { name: string; description: string }
+                this.Calls.push({ method, path, body })
+                const graph = { name: body.name, description: body.description, packageCount: 0, createdAt: FakeControlPlane.GraphCreatedAt }
+                this.Graphs.push(graph)
+                FakeControlPlane.Json(res, 201, graph)
+                return
+            }
+            FakeControlPlane.Json(res, 200, this.Graphs)
             return
         }
         if (path === FakeControlPlane.EnvironmentsPath || path.startsWith(FakeControlPlane.EnvPrefix))
@@ -342,5 +365,26 @@ test.describe('admin portal', () =>
         await page.getByText(App.LogoutLabel, { exact: true }).click()
         await expect.poll(() => fake.Find(FakeControlPlane.MethodPost, FakeControlPlane.LogoutPath)).toBeDefined()
         await expect(page.getByText(LoginView.LoginLabel, { exact: true })).toBeVisible()
+    })
+
+    test('creating a graph from the Development detail view lists it', async ({ page }) =>
+    {
+        await page.goto(base)
+        await page.getByText(EnvironmentListView.OpenLabel, { exact: true }).click()
+        await expect(page.getByText(EnvironmentDetailView.GraphsLabel, { exact: true })).toBeVisible()
+        await page.getByText(EnvironmentDetailView.GraphsLabel, { exact: true }).click()
+        await expect(page.getByText(GraphListView.HeadingText, { exact: true })).toBeVisible()
+        await expect(page.getByText(GraphListView.EmptyText, { exact: true })).toBeVisible()
+        await page.getByText(GraphListView.NewLabel, { exact: true }).click()
+        await PortalSteps.TypeInto(page, 0, CreateGraphView.NamePlaceholder, FakeControlPlane.NewGraphName)
+        await PortalSteps.TypeInto(page, 1, CreateGraphView.DescriptionPlaceholder, FakeControlPlane.NewGraphDescription)
+        await page.getByText(CreateGraphView.CreateLabel, { exact: true }).click()
+        await expect.poll(() => fake.Find(FakeControlPlane.MethodPost, FakeControlPlane.GraphsPath)).toBeDefined()
+        expect(fake.Find(FakeControlPlane.MethodPost, FakeControlPlane.GraphsPath)!.body).toEqual({
+            name: FakeControlPlane.NewGraphName,
+            description: FakeControlPlane.NewGraphDescription,
+        })
+        const row = [FakeControlPlane.NewGraphName, FakeControlPlane.NewGraphDescription, '0'].join(FakeControlPlane.RowSeparator)
+        await expect(page.getByText(row, { exact: true })).toBeVisible()
     })
 })
