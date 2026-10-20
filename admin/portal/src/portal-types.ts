@@ -19,6 +19,20 @@ export type GraphDto =
     createdAt: string
 }
 
+export type PromotionResultDto =
+{
+    graphName: string
+    packageCount: number
+    targetEnv: string
+}
+
+export type GraphLoadedDto =
+{
+    name: string
+    packages: { id: string; version: string }[]
+    promotedAt: string
+}
+
 export type MakerTokenDto =
 {
     token: string
@@ -130,6 +144,7 @@ export interface IPortalNavigator
     ShowGraphs(name: string): void
     ShowCreateGraph(name: string): void
     ShowMakerToken(envName: string): void
+    ShowPromoteGraph(devEnvName: string): void
 }
 
 // A screen that can re-fetch and re-render itself (on environments-changed).

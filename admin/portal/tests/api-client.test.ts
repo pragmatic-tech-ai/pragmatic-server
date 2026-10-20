@@ -115,3 +115,36 @@ describe('ControlPlaneClient graphs', () =>
         assert.equal(FetchStub.Calls[0]!.init?.method, 'DELETE')
     })
 })
+
+describe('ControlPlaneClient promotion', () =>
+{
+    afterEach(() => { FetchStub.Restore() })
+
+    it('PromoteGraph POSTs the target env to the graph promote route', async () =>
+    {
+        const result = { graphName: 'g1', packageCount: 2, targetEnv: 'rt1' }
+        FetchStub.Install(result)
+        const dto = await new ControlPlaneClient().PromoteGraph('dev1', 'g1', 'rt1')
+        const call = FetchStub.Calls[0]!
+        assert.equal(call.route, '/api/environments/dev1/graphs/g1/promote')
+        assert.equal(call.init?.method, 'POST')
+        assert.equal(call.init?.body, '{"targetEnv":"rt1"}')
+        assert.deepEqual(dto, result)
+    })
+
+    it('GetLoadedGraph GETs the loaded-graph route and returns the dto', async () =>
+    {
+        const loaded = { name: 'g1', packages: [{ id: 'p', version: '1.0.0' }], promotedAt: '2026-10-20T00:00:00Z' }
+        FetchStub.Install(loaded)
+        const dto = await new ControlPlaneClient().GetLoadedGraph('rt1')
+        assert.equal(FetchStub.Calls[0]!.route, '/api/environments/rt1/loaded-graph')
+        assert.equal(FetchStub.Calls[0]!.init?.method, undefined)
+        assert.deepEqual(dto, loaded)
+    })
+
+    it('GetLoadedGraph returns null when nothing is loaded', async () =>
+    {
+        FetchStub.Install(null)
+        assert.equal(await new ControlPlaneClient().GetLoadedGraph('rt1'), null)
+    })
+})
