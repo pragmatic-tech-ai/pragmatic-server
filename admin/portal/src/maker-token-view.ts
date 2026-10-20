@@ -15,6 +15,7 @@ export class MakerTokenView extends PortalViewBase
     private static readonly NeverExpires = 'Expires: never'
     private static readonly ExpiresPrefix = 'Expires: '
 
+    // Mural's TextBox has no IsReadOnly, so this is editable; harmless because it holds only a shown-once display copy of a secret the operator already has, and it is dropped on navigation. Set IsReadOnly here if Mural ever gains it.
     private readonly tokenBox = new TextBox()
     private readonly warning = new TextBlock()
     private readonly details = new TextBlock()

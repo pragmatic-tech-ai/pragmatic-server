@@ -422,7 +422,8 @@ test.describe('admin portal', () =>
         await page.getByText(MakerTokenView.MintLabel, { exact: true }).click()
         await expect.poll(() => fake.Find(FakeControlPlane.MethodPost, FakeControlPlane.MakerTokenPath)).toBeDefined()
         await expect(page.getByText(MakerTokenView.WarningText, { exact: true })).toBeVisible()
-        await expect(page.locator('input, textarea').filter({ hasText: FakeControlPlane.MakerTokenValue }).or(page.locator(`input[value="${FakeControlPlane.MakerTokenValue}"]`))).toHaveCount(1)
+        // toHaveValue reads the value property (robust to Mural setting the property rather than the value attribute). MakerTokenView renders a single textbox; confirm this locator when the gated spec is first run.
+        await expect(page.getByRole('textbox')).toHaveValue(FakeControlPlane.MakerTokenValue)
     })
 
     test('a runtime environment does not show the Mint maker token button', async ({ page }) =>
