@@ -80,6 +80,8 @@ import { ShareWideningInstanceFilter } from './host/sharing/share-widening-insta
 import { ConceptIdFields } from './host/sharing/concept-id-fields.js'
 import { ShareWideningWriteInstanceGate } from './host/sharing/share-widening-write-instance-gate.js'
 import { ShareWideningWriteAuthorizer } from './host/sharing/share-widening-write-authorizer.js'
+import { DevGraphStore } from './host/graphs/dev-graph-store.js'
+import { DevGraphService, type IDevGraphService } from './host/graphs/dev-graph-service.js'
 import { InvalidParamsPrefix } from './host/invalid-params-prefix.js'
 
 export interface OidcServerOptions
@@ -176,6 +178,7 @@ export class PragmaticServer
     private appsStorage: IStorage | undefined
     private appsRegistry: PragmaticAppsRegistry | undefined
     private appIngest: AppIngestService | undefined
+    private devGraphService: IDevGraphService | undefined
     private readonly appGraphs = new Map<string, Promise<AppBase>>()
     private readonly shareStores = new Map<string, ShareStore>()
     private readAuth: Promise<TenantReadAuthorization> | undefined
@@ -424,6 +427,23 @@ export class PragmaticServer
         this.AssertRuntimePurpose()
         this.appIngest ??= new AppIngestService(this.PackagesStorage(), this.AppsStorage(), this, StructuredLogger.ToStdout())
         return this.appIngest.Ingest(params)
+    }
+
+    /** The container-owned graph catalog; development tenants only. */
+    public GraphService(): IDevGraphService
+    {
+        this.AssertDevelopmentPurpose()
+        this.devGraphService ??= new DevGraphService(new DevGraphStore(this.GraphsStorage()))
+        return this.devGraphService
+    }
+
+    /** Throws unless this is a Development tenant: the graph catalog exists only there. */
+    private AssertDevelopmentPurpose(): void
+    {
+        if (this.Purpose() !== TenantPurpose.Development)
+        {
+            throw new ResponseError(ErrorCodes.InvalidRequest, PragmaticServer.NotDevelopmentMessage)
+        }
     }
 
     /** Throws unless this is a Runtime tenant: deploy and the applications registry exist only there. */
