@@ -1,6 +1,7 @@
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import type { ContributedPackageDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { PackageRef } from './dev-graph-store.js'
+import { PackagePath } from './package-path.js'
 
 export class GraphPackageMissingError extends Error
 {
@@ -18,8 +19,6 @@ export class GraphPackageMissingError extends Error
 /** Reads compiled package content (`<id>/<version>/model.json`) from the packages store written by GraphPackageIngest. */
 export class GraphPackageReader
 {
-    private static readonly ModelFile = 'model.json'
-    private static readonly Separator = '/'
 
     public constructor(private readonly packages: IStorage)
     {
@@ -30,7 +29,7 @@ export class GraphPackageReader
         const result: ContributedPackageDto[] = []
         for (const ref of refs)
         {
-            const path = [ref.id, ref.version, GraphPackageReader.ModelFile].join(GraphPackageReader.Separator)
+            const path = PackagePath.ModelJsonPath(ref.id, ref.version)
             if (!(await this.packages.Exists(path)))
             {
                 throw new GraphPackageMissingError(ref)

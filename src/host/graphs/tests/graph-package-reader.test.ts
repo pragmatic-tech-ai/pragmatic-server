@@ -20,3 +20,22 @@ test('export_missing_blob_throws_named', async () =>
         new GraphPackageReader(storage).ReadAll([{ id: 'a', version: '1' }, { id: 'ghost', version: '9.9' }]),
         (e: Error) => e instanceof GraphPackageMissingError && e.message.includes('ghost') && e.message.includes('9.9'))
 })
+
+class ThrowingReadStorage extends FakeStorage
+{
+    public static readonly Failure = 'disk read failed'
+
+    public override async ReadText(_path: string): Promise<string>
+    {
+        throw new Error(ThrowingReadStorage.Failure)
+    }
+}
+
+test('a ReadText failure on an existing blob propagates and is not reported as missing', async () =>
+{
+    const storage = new ThrowingReadStorage()
+    await storage.WriteText('a/1/model.json', '{}')
+    await assert.rejects(
+        new GraphPackageReader(storage).ReadAll([{ id: 'a', version: '1' }]),
+        (e: Error) => !(e instanceof GraphPackageMissingError) && e.message === ThrowingReadStorage.Failure)
+})
