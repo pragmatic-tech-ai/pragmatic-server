@@ -1,5 +1,5 @@
 import type { GraphCreateParamsDto, GraphDetailDto, GraphRefParamsDto, GraphSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { DevGraphRecord, DevGraphStore } from './dev-graph-store.js'
+import type { DevGraphRecord, DevGraphStore, PackageRef } from './dev-graph-store.js'
 
 export class GraphExistsError extends Error
 {
@@ -48,6 +48,7 @@ export interface IDevGraphService
 /** Container-owned graph catalog: create/list/get/delete over the DevGraphStore. */
 export class DevGraphService implements IDevGraphService
 {
+    private static readonly KeySeparator = '@'
     private static readonly GraphNamePattern = /^[a-z0-9][a-z0-9-]*$/
 
     public constructor(private readonly store: DevGraphStore)
@@ -62,7 +63,7 @@ export class DevGraphService implements IDevGraphService
         {
             throw new GraphExistsError(params.graphName)
         }
-        const record: DevGraphRecord = { name: params.graphName, description: params.description, packages: [], createdAt: new Date().toISOString() }
+        const record: DevGraphRecord = { name: params.graphName, description: params.description, slices: {}, createdAt: new Date().toISOString() }
         await this.store.Put(record)
         return DevGraphService.ToSummary(record)
     }
@@ -102,13 +103,30 @@ export class DevGraphService implements IDevGraphService
         }
     }
 
+    private static EffectivePackages(record: DevGraphRecord): PackageRef[]
+    {
+        const seen = new Set<string>()
+        const result: PackageRef[] = []
+        for (const refs of Object.values(record.slices))
+        {
+            for (const ref of refs)
+            {
+                const key = ref.id + DevGraphService.KeySeparator + ref.version
+                if (seen.has(key)) continue
+                seen.add(key)
+                result.push({ id: ref.id, version: ref.version })
+            }
+        }
+        return result
+    }
+
     private static ToSummary(r: DevGraphRecord): GraphSummaryDto
     {
-        return { name: r.name, description: r.description, packageCount: r.packages.length, createdAt: r.createdAt }
+        return { name: r.name, description: r.description, packageCount: DevGraphService.EffectivePackages(r).length, createdAt: r.createdAt }
     }
 
     private static ToDetail(r: DevGraphRecord): GraphDetailDto
     {
-        return { name: r.name, description: r.description, packages: r.packages.map(p => ({ id: p.id, version: p.version })), createdAt: r.createdAt }
+        return { name: r.name, description: r.description, packages: DevGraphService.EffectivePackages(r), createdAt: r.createdAt }
     }
 }

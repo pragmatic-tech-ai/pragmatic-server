@@ -1,6 +1,9 @@
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 
-export type DevGraphRecord = { name: string; description: string; packages: { id: string; version: string }[]; createdAt: string }
+export type PackageRef = { id: string; version: string }
+
+/** Slices are keyed by stable solution id; each holds that solution's contributed package refs. */
+export type DevGraphRecord = { name: string; description: string; slices: Record<string, PackageRef[]>; createdAt: string }
 
 type GraphsDocument = { graphs: Record<string, DevGraphRecord> }
 
@@ -56,7 +59,12 @@ export class DevGraphStore
 
     private static Copy(record: DevGraphRecord): DevGraphRecord
     {
-        return { ...record, packages: record.packages.map(p => ({ ...p })) }
+        const slices: Record<string, PackageRef[]> = {}
+        for (const [solutionId, refs] of Object.entries(record.slices ?? {}))
+        {
+            slices[solutionId] = refs.map(p => ({ id: p.id, version: p.version }))
+        }
+        return { name: record.name, description: record.description, slices, createdAt: record.createdAt }
     }
 
     private async Persist(): Promise<void>

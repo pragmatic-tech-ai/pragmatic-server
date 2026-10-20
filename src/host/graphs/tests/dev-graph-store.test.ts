@@ -32,7 +32,7 @@ class Fixture
 {
     public static Record(name: string, description: string): DevGraphRecord
     {
-        return { name, description, packages: [], createdAt: '2026-10-20T00:00:00.000Z' }
+        return { name, description, slices: {}, createdAt: '2026-10-20T00:00:00.000Z' }
     }
 
     public static async Reload(storage: IStorage): Promise<DevGraphStore>
@@ -43,7 +43,7 @@ class Fixture
     }
 }
 
-test('a graph with an empty package list round-trips through Put/Load', async () =>
+test('a graph with no slices round-trips through Put/Load', async () =>
 {
     const storage = new MemoryStorage()
     await new DevGraphStore(storage).Put(Fixture.Record('g1', 'first'))
@@ -51,7 +51,7 @@ test('a graph with an empty package list round-trips through Put/Load', async ()
     const got = reloaded.Get('g1')
     assert.equal(got?.name, 'g1')
     assert.equal(got?.description, 'first')
-    assert.ok(Array.isArray(got?.packages) && got.packages.length === 0)
+    assert.deepEqual(got?.slices, {})
 })
 
 test('Load on empty storage yields an empty list', async () =>
@@ -76,9 +76,35 @@ test('mutating a returned record does not change stored state', async () =>
 {
     const storage = new MemoryStorage()
     const store = new DevGraphStore(storage)
-    await store.Put(Fixture.Record('g', 'd'))
-    store.Get('g')?.packages.push({ id: 'x', version: '1' })
-    store.List()[0].packages.push({ id: 'y', version: '1' })
-    assert.equal(store.Get('g')?.packages.length, 0)
-    assert.equal((await Fixture.Reload(storage)).Get('g')?.packages.length, 0)
+    await store.Put({ ...Fixture.Record('g', 'd'), slices: { s1: [{ id: 'a', version: '1' }] } })
+    const got = store.Get('g')
+    got?.slices.s1.push({ id: 'x', version: '1' })
+    if (got !== undefined) got.slices.s1[0].version = '99'
+    store.List()[0].slices.s2 = []
+    assert.deepEqual(store.Get('g')?.slices, { s1: [{ id: 'a', version: '1' }] })
+    assert.deepEqual((await Fixture.Reload(storage)).Get('g')?.slices, { s1: [{ id: 'a', version: '1' }] })
+})
+
+test('a record with two slices persists and reloads intact', async () =>
+{
+    const storage = new MemoryStorage()
+    const slices = { s1: [{ id: 'a', version: '1' }], s2: [{ id: 'b', version: '2' }, { id: 'c', version: '3' }] }
+    await new DevGraphStore(storage).Put({ ...Fixture.Record('g', 'd'), slices })
+    assert.deepEqual((await Fixture.Reload(storage)).Get('g')?.slices, slices)
+})
+
+test('an empty slice round-trips as an empty array', async () =>
+{
+    const storage = new MemoryStorage()
+    await new DevGraphStore(storage).Put({ ...Fixture.Record('g', 'd'), slices: { s1: [] } })
+    assert.deepEqual((await Fixture.Reload(storage)).Get('g')?.slices, { s1: [] })
+})
+
+test('Load on an entry without a slices key yields empty slices and ignores legacy packages', async () =>
+{
+    const storage = new MemoryStorage()
+    storage.Files.set('graphs.json', JSON.stringify({ graphs: { g: { name: 'g', description: 'd', packages: [{ id: 'a', version: '1' }], createdAt: 't' } } }))
+    const got = (await Fixture.Reload(storage)).Get('g')
+    assert.deepEqual(got?.slices, {})
+    assert.equal('packages' in (got ?? {}), false)
 })
