@@ -41,6 +41,7 @@ export interface IEnvironmentService
     AdminGetSecurityModel(name: string): Promise<SecurityModelDto | undefined>
     AdminSetSecurityModel(name: string, securityModel: SecurityModelDto): Promise<void>
     AdminIssueMakerToken(name: string): Promise<TokenIssuedDto>
+    AdminGrantAppReader(name: string): Promise<void>
 }
 
 export interface IGraphService
@@ -161,6 +162,9 @@ export class ControlPlaneHost
     private static readonly MakerTokenSegment = 'maker-token'
     private static readonly MakerTokenPathPattern = new RegExp(
         '^' + ControlPlaneHost.EnvironmentsPath + '/([^/]+)/' + ControlPlaneHost.MakerTokenSegment + '$')
+    private static readonly AppReaderSegment = 'app-reader-grant'
+    private static readonly AppReaderPathPattern = new RegExp(
+        '^' + ControlPlaneHost.EnvironmentsPath + '/([^/]+)/' + ControlPlaneHost.AppReaderSegment + '$')
     private static readonly PromoteSegment = 'promote'
     private static readonly PromotePathPattern = new RegExp(
         '^' + ControlPlaneHost.EnvironmentsPath + '/([^/]+)/' + ControlPlaneHost.GraphsSegment + '/([^/]+)/' + ControlPlaneHost.PromoteSegment + '$')
@@ -430,6 +434,11 @@ export class ControlPlaneHost
         {
             return await this.RouteMakerToken(req, res, method, tm)
         }
+        const rm = ControlPlaneHost.AppReaderPathPattern.exec(path)
+        if (rm !== null)
+        {
+            return await this.RouteAppReaderGrant(res, method, rm)
+        }
         const pm = ControlPlaneHost.PromotePathPattern.exec(path)
         if (pm !== null)
         {
@@ -510,6 +519,25 @@ export class ControlPlaneHost
         const issued = await this.service.AdminIssueMakerToken(name)
         const dto: MakerTokenDto = { token: issued.token, principalId: issued.principalId, expiresAt: issued.expiresAt }
         this.WriteJson(res, ControlPlaneHost.StatusCreated, dto)
+    }
+
+    /** Dispatches POST /api/environments/NAME/app-reader-grant; false (unknown route) for any other method. */
+    private async RouteAppReaderGrant(res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
+    {
+        if (method !== ControlPlaneHost.MethodPost)
+        {
+            return false
+        }
+        const name = ControlPlaneHost.Decode(m[1] as string)
+        if (name === undefined)
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+            return true
+        }
+        // Grants the well-known app-reader principal a read role on the runtime; no token or secret is minted or returned.
+        await this.service.AdminGrantAppReader(name)
+        this.WriteJson(res, ControlPlaneHost.StatusOk, { ok: true })
+        return true
     }
 
     /** Relays POST /api/environments/SOURCE/graphs/GRAPH/promote into the runtime target; false for any other method. */
