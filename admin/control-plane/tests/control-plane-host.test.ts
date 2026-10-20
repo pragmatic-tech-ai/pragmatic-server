@@ -14,7 +14,8 @@ import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto } from '@
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import { TemplateCatalog } from '../template-catalog.js'
 
-import { EnvironmentNotDevelopmentError, GraphExistsError, GraphNotFoundError } from '../graph-service.js'
+import { EnvironmentNotDevelopmentError } from '../environment-service.js'
+import { GraphExistsError, GraphNotFoundError } from '../graph-service.js'
 import type { IOperatorIdentity, OperatorPrincipal, OperatorSession } from '../operator-identity.js'
 
 type Reply = { status: number; body: string; setCookie?: string[] | undefined }

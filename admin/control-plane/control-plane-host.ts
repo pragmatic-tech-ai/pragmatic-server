@@ -9,9 +9,10 @@ import {
     DockerUnavailableError,
     EnvironmentExistsError,
     EnvironmentNotFoundError,
-    ImageMissingError
+    ImageMissingError,
+    EnvironmentNotDevelopmentError
 } from './environment-service.js'
-import { EnvironmentNotDevelopmentError, GraphExistsError, GraphNameInvalidError, GraphNotFoundError } from './graph-service.js'
+import { GraphExistsError, GraphNameInvalidError, GraphNotFoundError } from './graph-service.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from './environment-record.js'
 import { PortUnavailableError } from './port-allocator.js'
 import { InvalidEnvironmentNameError, TemplateCatalog } from './template-catalog.js'
@@ -33,12 +34,12 @@ export interface IEnvironmentService
     AdminCreateAccount(name: string, params: CreateAccountParams): Promise<void>
     AdminDisableAccount(name: string, principalId: string): Promise<void>
     AdminGrantRole(name: string, mutation: GrantMutationDto): Promise<void>
-    AdminIssueMakerToken(name: string): Promise<TokenIssuedDto>
     AdminRevokeRole(name: string, mutation: GrantMutationDto): Promise<void>
     AdminGetConfig(name: string): Promise<IdentityConfigDto>
     AdminSetConfig(name: string, config: IdentityConfigDto): Promise<void>
     AdminGetSecurityModel(name: string): Promise<SecurityModelDto | undefined>
     AdminSetSecurityModel(name: string, securityModel: SecurityModelDto): Promise<void>
+    AdminIssueMakerToken(name: string): Promise<TokenIssuedDto>
 }
 
 export interface IGraphService

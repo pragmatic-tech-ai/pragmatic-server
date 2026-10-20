@@ -6,8 +6,7 @@ import { join } from 'node:path'
 import { EnvironmentRegistry } from '../environment-registry.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord, type IContainerProbe } from '../environment-record.js'
 import { PortAllocator, PortUnavailableError, type IPortProbe } from '../port-allocator.js'
-import { EnvironmentNotDevelopmentError } from '../graph-service.js'
-import { EnvironmentService, EnvironmentExistsError, EnvironmentNotFoundError, ImageMissingError, DockerUnavailableError, CreateFailedError } from '../environment-service.js'
+import { EnvironmentService, EnvironmentNotDevelopmentError, EnvironmentExistsError, EnvironmentNotFoundError, ImageMissingError, DockerUnavailableError, CreateFailedError } from '../environment-service.js'
 import type { IDockerEnv, IBundleBuilder, IUserSeeder } from '../docker-env-port.js'
 import { TenantPurposeName, type EnvDefinition } from '../../../environments/seed/bundle.js'
 import type { UserSeed } from '../../../environments/seed/users.js'
@@ -534,7 +533,7 @@ test('a failed Create releases its in-flight reservation so the name can be retr
     assert.equal(rec.status, EnvStatus.Running)
 })
 
-test('AdminIssueMakerToken grants Maker once then issues a maker token (idempotent on repeat)', async () =>
+test('AdminIssueMakerToken grants Maker then issues a maker token; repeat call succeeds', async () =>
 {
     const h = await Harness.Make()
     await AdminFixture.Seed(h)

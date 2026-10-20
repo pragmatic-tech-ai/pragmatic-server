@@ -5,7 +5,8 @@ import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environ
 import { EnvironmentNotFoundError } from '../environment-service.js'
 import { AdminProxyError, AdminProxyErrorKind, type AdminConnectInfo, type AdminSnapshot, type IAdminProxy } from '../admin-proxy.js'
 import { GraphExistsError as ContainerExistsError, GraphNotFoundError as ContainerNotFoundError, GraphNameInvalidError as ContainerInvalidError } from '../../../src/host/graphs/dev-graph-service.js'
-import { GraphService, GraphExistsError, GraphNotFoundError, GraphNameInvalidError, EnvironmentNotDevelopmentError, type IEnvironmentLookup } from '../graph-service.js'
+import { GraphService, GraphExistsError, GraphNotFoundError, GraphNameInvalidError, type IEnvironmentLookup } from '../graph-service.js'
+import { EnvironmentNotDevelopmentError } from '../environment-service.js'
 
 class Fixture
 {

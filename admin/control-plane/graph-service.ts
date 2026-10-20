@@ -1,7 +1,7 @@
 import type { GraphDetailDto, GraphSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { AdminProxyError, AdminProxyErrorKind, type AdminConnectInfo, type IAdminProxy } from './admin-proxy.js'
 import { EnvType, type EnvironmentRecord } from './environment-record.js'
-import { EnvironmentNotFoundError } from './environment-service.js'
+import { EnvironmentNotDevelopmentError, EnvironmentNotFoundError } from './environment-service.js'
 import type { GraphDto } from './control-plane-host.js'
 
 export interface IEnvironmentLookup
@@ -42,18 +42,6 @@ export class GraphNameInvalidError extends Error
     {
         super(GraphNameInvalidError.MessagePrefix + graphName)
         this.name = GraphNameInvalidError.ErrorName
-    }
-}
-
-export class EnvironmentNotDevelopmentError extends Error
-{
-    private static readonly ErrorName = 'EnvironmentNotDevelopmentError'
-    private static readonly MessagePrefix = 'Environment is not a development environment: '
-
-    public constructor(envName: string)
-    {
-        super(EnvironmentNotDevelopmentError.MessagePrefix + envName)
-        this.name = EnvironmentNotDevelopmentError.ErrorName
     }
 }
 

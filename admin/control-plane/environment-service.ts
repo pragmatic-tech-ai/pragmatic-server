@@ -10,7 +10,6 @@ import type { PortAllocator } from './port-allocator.js'
 import { TemplateCatalog } from './template-catalog.js'
 import type { AdminConnectInfo, AdminSnapshot, IAdminProxy } from './admin-proxy.js'
 import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { EnvironmentNotDevelopmentError } from './graph-service.js'
 import type { IDockerEnv, IBundleBuilder, IUserSeeder } from './docker-env-port.js'
 
 export class EnvironmentExistsError extends Error
@@ -34,6 +33,18 @@ export class EnvironmentNotFoundError extends Error
     {
         super(EnvironmentNotFoundError.MessagePrefix + envName)
         this.name = EnvironmentNotFoundError.ErrorName
+    }
+}
+
+export class EnvironmentNotDevelopmentError extends Error
+{
+    private static readonly ErrorName = 'EnvironmentNotDevelopmentError'
+    private static readonly MessagePrefix = 'Environment is not a development environment: '
+
+    public constructor(envName: string)
+    {
+        super(EnvironmentNotDevelopmentError.MessagePrefix + envName)
+        this.name = EnvironmentNotDevelopmentError.ErrorName
     }
 }
 
