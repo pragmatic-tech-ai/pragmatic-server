@@ -6,7 +6,6 @@ import { join } from 'node:path'
 import { EnvironmentRegistry } from '../environment-registry.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord, type IContainerProbe } from '../environment-record.js'
 import { PortAllocator, PortUnavailableError, type IPortProbe } from '../port-allocator.js'
-
 import { EnvironmentService, EnvironmentExistsError, EnvironmentNotFoundError, ImageMissingError, DockerUnavailableError, CreateFailedError } from '../environment-service.js'
 import type { IDockerEnv, IBundleBuilder, IUserSeeder } from '../docker-env-port.js'
 import { TenantPurposeName, type EnvDefinition } from '../../../environments/seed/bundle.js'
@@ -305,7 +304,6 @@ test('Create duplicate throws before any docker or port call', async () =>
 {
     const h = await Harness.Make()
     await h.Registry.Put(Harness.Record('dup', EnvStatus.Stopped))
-    h.Calls.length = 0
     h.Calls.length = 0
     await assert.rejects(() => h.Service.Create('dup', Template.DevBlank, EnvType.Development), EnvironmentExistsError)
     assert.deepEqual(h.Calls, [])

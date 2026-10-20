@@ -321,7 +321,7 @@ export class EnvironmentService
         return updated
     }
 
-    /** The record does not store kind/purpose, so re-derive the definition from its template. */
+    /** Re-derives the definition from the stored type, falling back to the template default (DefaultTypeFor) for legacy records with no type. */
     private static DefOf(rec: EnvironmentRecord): EnvDefinition
     {
         return TemplateCatalog.Resolve(rec.template, rec.name, rec.hostPort, rec.type ?? TemplateCatalog.DefaultTypeFor(rec.template)).def
