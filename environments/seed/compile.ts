@@ -38,7 +38,7 @@ export class NorthwindApp
         const domain = new Domain(new StoragePackageSource(new NodeFsStorage(packagesDir)))
         await domain.load({ model: NorthwindApp.Id, version: NorthwindApp.Version })
         const rows = Cypher.CypherEngine.OverQuery(new GraphQuery(domain.graph)).Execute(NorthwindApp.OrderCountQuery).Rows
-        return (rows[0]![0] as { Value: number }).Value
+        return (rows[0]![0] as unknown as { Value: number }).Value
     }
 
     private static CompileSource(): ReturnType<typeof compilePackage>

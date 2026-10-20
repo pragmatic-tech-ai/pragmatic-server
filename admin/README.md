@@ -67,3 +67,7 @@ admin/control-plane/data/ holds generated bundles, registry.json, provisioned se
 ```
 npx playwright install chromium
 ```
+
+## Type-check gate
+
+`npm run typecheck:tools` type-checks the tsx-run `environments/` and `admin/control-plane/` trees (which the `src` build does not cover) plus the portal. Run it before relying on those trees.

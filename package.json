@@ -20,6 +20,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "typecheck:tools": "tsc -p tsconfig.tools.json && tsc -p admin/portal/tsconfig.json --noEmit",
     "test": "tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
