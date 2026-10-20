@@ -10,6 +10,10 @@ class CatalogFixture
 {
     public static readonly SecurityModel = 'security-model.json'
     public static readonly Backslash = String.fromCharCode(92)
+    public static readonly DevName = 'e1'
+    public static readonly DemoName = 'e2'
+    public static readonly DemoTenantId = 'contoso'
+    public static readonly DevBlankSeedSuffix = 'templates/dev-blank'
     public static readonly DemoSuffix = 'environments/demo/seed'
 
     public static Norm(p: string): string
@@ -65,19 +69,19 @@ describe('TemplateCatalog', () =>
 
     it('maps the explicit type to the tenant purpose, overriding the template default', () =>
     {
-        assert.equal(TemplateCatalog.Resolve(Template.DevBlank, 'e1', 8080, EnvType.Runtime).def.purpose, TenantPurposeName.Runtime)
-        assert.equal(TemplateCatalog.Resolve(Template.DemoContoso, 'e2', 8081, EnvType.Development).def.purpose, TenantPurposeName.Development)
+        assert.equal(TemplateCatalog.Resolve(Template.DevBlank, CatalogFixture.DevName, 8080, EnvType.Runtime).def.purpose, TenantPurposeName.Runtime)
+        assert.equal(TemplateCatalog.Resolve(Template.DemoContoso, CatalogFixture.DemoName, 8081, EnvType.Development).def.purpose, TenantPurposeName.Development)
     })
 
     it('still takes kind, seedDir and tenantId from the template', () =>
     {
-        const dev = TemplateCatalog.Resolve(Template.DevBlank, 'e1', 8080, EnvType.Runtime)
+        const dev = TemplateCatalog.Resolve(Template.DevBlank, CatalogFixture.DevName, 8080, EnvType.Runtime)
         assert.equal(dev.def.kind, EnvKind.Dev)
-        assert.equal(dev.def.tenantId, 'e1')
-        assert.ok(CatalogFixture.Norm(dev.seedDir).endsWith('templates/dev-blank'))
-        const demo = TemplateCatalog.Resolve(Template.DemoContoso, 'e2', 8081, EnvType.Development)
+        assert.equal(dev.def.tenantId, CatalogFixture.DevName)
+        assert.ok(CatalogFixture.Norm(dev.seedDir).endsWith(CatalogFixture.DevBlankSeedSuffix))
+        const demo = TemplateCatalog.Resolve(Template.DemoContoso, CatalogFixture.DemoName, 8081, EnvType.Development)
         assert.equal(demo.def.kind, EnvKind.Demo)
-        assert.equal(demo.def.tenantId, 'contoso')
+        assert.equal(demo.def.tenantId, CatalogFixture.DemoTenantId)
         assert.ok(CatalogFixture.Norm(demo.seedDir).endsWith(CatalogFixture.DemoSuffix))
     })
 

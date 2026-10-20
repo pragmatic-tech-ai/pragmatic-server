@@ -54,7 +54,18 @@ export class TemplateCatalog
 
     private static PurposeFor(type: EnvType): TenantPurposeName
     {
-        return type === EnvType.Runtime ? TenantPurposeName.Runtime : TenantPurposeName.Development
+        switch (type)
+        {
+            case EnvType.Development:
+                return TenantPurposeName.Development
+            case EnvType.Runtime:
+                return TenantPurposeName.Runtime
+            default:
+            {
+                const _exhaustive: never = type
+                return _exhaustive
+            }
+        }
     }
 
     public static Resolve(template: Template, name: string, hostPort: number, type: EnvType): { def: EnvDefinition; seedDir: string }
