@@ -1,7 +1,7 @@
 import {
-    createMessageConnection, NullLogger, WebSocketMessageReader, WebSocketMessageWriter, LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol, AdminProtocol, CypherProtocol, PragmaticAppProtocol,
+    createMessageConnection, NullLogger, WebSocketMessageReader, WebSocketMessageWriter, LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol, AdminProtocol, CypherProtocol, PragmaticAppProtocol, GraphProtocol,
 } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, ModelViewPageDto, ModelViewParams, ResolvedResourceDto, GrantDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, SetSecurityModelParams, AccountDto, CreateAccountParams, ServiceTokenSummaryDto, IssueTokenParams, TokenIssuedDto, CypherQueryParams, CypherQueryPageDto, CypherExecuteParams, CypherExecuteResultDto, PragmaticAppSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, ModelViewPageDto, ModelViewParams, ResolvedResourceDto, GrantDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, SetSecurityModelParams, AccountDto, CreateAccountParams, ServiceTokenSummaryDto, IssueTokenParams, TokenIssuedDto, CypherQueryParams, CypherQueryPageDto, CypherExecuteParams, CypherExecuteResultDto, PragmaticAppSummaryDto, GraphSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ResponseError, ErrorCodes, DrainingError, ApplicationDeployProtocol, AppDataProtocol, DataSharingProtocol, DataAssignmentProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherAppDeployParamsDto, AppDeployResultDto, AppWriteParams, AppWriteResultDto, AppWriteOpDto, ShareParams, ShareResultDto, UnshareParams, UnshareResultDto, ListSharesParams, ListSharesResultDto, AssignParams, AssignResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { RequestType, NotificationType } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -33,6 +33,7 @@ import { AllowAllFieldReadMask, FieldMaskedGraphQuery } from './cypher/field-mas
 import { AdminService, AdminSelfLockoutError, LastAdministratorError, AdminConfigMissingError, AdminTokenNotFoundError } from './admin-service.js'
 import { AdminEnums, AdminEnumError } from './admin-enums.js'
 import { TenantPurpose } from '../tenancy/tenant-purpose.js'
+import type { IDevGraphService } from './graphs/dev-graph-service.js'
 import type { PragmaticAppsRegistry } from './apps/pragmatic-apps-registry.js'
 import { CypherLimits } from '../config/cypher-limits.js'
 import { PagingLimits } from '../config/paging-limits.js'
@@ -82,6 +83,7 @@ export class ServerConnectionHandler
     private static readonly NotRuntimeMessage = 'operation requires a runtime tenant'
     private static readonly ExecuteModelIdRequiredMessage = `${InvalidParamsPrefix.Text}modelId is required: a write must name its target model`
     private static readonly NotDevelopmentMessage = 'operation requires a development tenant'
+    private static readonly GraphServiceUnavailableMessage = 'graph service is not available on this tenant'
     private static readonly NameMismatchMessage = 'application manifest name does not match requested name: '
     private static readonly NoApplicationSelectedMessage = 'no application selected: call application/open first'
     private static readonly ApplicationsUnavailableMessage = 'pragmatic applications are not available on this connection'
@@ -116,11 +118,12 @@ export class ServerConnectionHandler
     private readonly unshareProvider: ((context: AccessContext, name: string, params: UnshareParams) => Promise<UnshareResultDto>) | undefined
     private readonly listSharesProvider: ((context: AccessContext, name: string, params: ListSharesParams) => Promise<ListSharesResultDto>) | undefined
     private readonly assignProvider: ((context: AccessContext, name: string, params: AssignParams) => Promise<AssignResultDto>) | undefined
+    private readonly devGraphService: IDevGraphService | undefined
     private boundApp: PragmaticAppSummaryDto | undefined
     private inFlight = 0
     private draining = false
 
-    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, graphProvider: (context: AccessContext) => Promise<IGraphQuery>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: TenantPurpose = TenantPurpose.Development, applications?: PragmaticAppsRegistry, appGraphProvider?: (context: AccessContext, name: string, labels: ReferencedLabelSet) => Promise<IGraphQuery>, appWriteProvider?: (context: AccessContext, name: string, operations: readonly AppWriteOpDto[]) => Promise<AppWriteResultDto>, shareProvider?: (context: AccessContext, name: string, params: ShareParams) => Promise<ShareResultDto>, unshareProvider?: (context: AccessContext, name: string, params: UnshareParams) => Promise<UnshareResultDto>, listSharesProvider?: (context: AccessContext, name: string, params: ListSharesParams) => Promise<ListSharesResultDto>, assignProvider?: (context: AccessContext, name: string, params: AssignParams) => Promise<AssignResultDto>, paging?: PagingLimits, fieldMasks?: IFieldReadMaskSource, connectorReadAuthorization?: (context: AccessContext) => Promise<IConnectorReadAuthorization>, connectorWriteAuthorization?: (context: AccessContext, target: IWriteTargetSource) => Promise<IHydrateAuthorization>, modelGraphProvider?: (context: AccessContext, modelId: string) => Promise<IGraphQuery>, cypherExecuteProvider?: (context: AccessContext, modelId: string, request: DevCypherRequest) => Promise<CypherExecuteResultDto>, deployProvider?: (params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>)
+    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, graphProvider: (context: AccessContext) => Promise<IGraphQuery>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: TenantPurpose = TenantPurpose.Development, applications?: PragmaticAppsRegistry, appGraphProvider?: (context: AccessContext, name: string, labels: ReferencedLabelSet) => Promise<IGraphQuery>, appWriteProvider?: (context: AccessContext, name: string, operations: readonly AppWriteOpDto[]) => Promise<AppWriteResultDto>, shareProvider?: (context: AccessContext, name: string, params: ShareParams) => Promise<ShareResultDto>, unshareProvider?: (context: AccessContext, name: string, params: UnshareParams) => Promise<UnshareResultDto>, listSharesProvider?: (context: AccessContext, name: string, params: ListSharesParams) => Promise<ListSharesResultDto>, assignProvider?: (context: AccessContext, name: string, params: AssignParams) => Promise<AssignResultDto>, paging?: PagingLimits, fieldMasks?: IFieldReadMaskSource, connectorReadAuthorization?: (context: AccessContext) => Promise<IConnectorReadAuthorization>, connectorWriteAuthorization?: (context: AccessContext, target: IWriteTargetSource) => Promise<IHydrateAuthorization>, modelGraphProvider?: (context: AccessContext, modelId: string) => Promise<IGraphQuery>, cypherExecuteProvider?: (context: AccessContext, modelId: string, request: DevCypherRequest) => Promise<CypherExecuteResultDto>, deployProvider?: (params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>, devGraphService?: IDevGraphService)
     {
         this.cypherLimits = cypherLimits ?? new CypherLimits()
         this.paging = paging ?? new PagingLimits()
@@ -129,6 +132,7 @@ export class ServerConnectionHandler
         this.modelGraphProvider = modelGraphProvider
         this.cypherExecuteProvider = cypherExecuteProvider
         this.deployProvider = deployProvider
+        this.devGraphService = devGraphService
         this.connectorReadAuthorization = connectorReadAuthorization
         this.applications = applications
         this.appGraphProvider = appGraphProvider
@@ -158,6 +162,7 @@ export class ServerConnectionHandler
         this.RegisterConnectorHandlers()
         this.RegisterCypherHandlers()
         this.RegisterApplicationHandlers()
+        this.RegisterGraphHandlers()
         this.RegisterAppDataHandlers()
         this.RegisterDataSharingHandlers()
         this.RegisterDataAssignmentHandlers()
@@ -207,10 +212,16 @@ export class ServerConnectionHandler
         return { deployProvider: params => server.DeployApplication(params), applications: server.Applications(), appGraphProvider: (context, name, labels) => server.GraphForPragmaticApp(context, name, labels), appWriteProvider: (context, name, operations) => server.WriteForPragmaticApp(context, name, operations), shareProvider: (context, name, params) => server.ShareForPragmaticApp(context, name, params), unshareProvider: (context, name, params) => server.UnshareForPragmaticApp(context, name, params), listSharesProvider: (context, name, params) => server.ListSharesForPragmaticApp(context, name, params), assignProvider: (context, name, params) => server.AssignForPragmaticApp(context, name, params) }
     }
 
-    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, graphProvider: (context: AccessContext) => Promise<IGraphQuery>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: TenantPurpose = TenantPurpose.Development, applications?: PragmaticAppsRegistry, appGraphProvider?: (context: AccessContext, name: string, labels: ReferencedLabelSet) => Promise<IGraphQuery>, appWriteProvider?: (context: AccessContext, name: string, operations: readonly AppWriteOpDto[]) => Promise<AppWriteResultDto>, shareProvider?: (context: AccessContext, name: string, params: ShareParams) => Promise<ShareResultDto>, unshareProvider?: (context: AccessContext, name: string, params: UnshareParams) => Promise<UnshareResultDto>, listSharesProvider?: (context: AccessContext, name: string, params: ListSharesParams) => Promise<ListSharesResultDto>, assignProvider?: (context: AccessContext, name: string, params: AssignParams) => Promise<AssignResultDto>, paging?: PagingLimits, fieldMasks?: IFieldReadMaskSource, connectorReadAuthorization?: (context: AccessContext) => Promise<IConnectorReadAuthorization>, connectorWriteAuthorization?: (context: AccessContext, target: IWriteTargetSource) => Promise<IHydrateAuthorization>, modelGraphProvider?: (context: AccessContext, modelId: string) => Promise<IGraphQuery>, cypherExecuteProvider?: (context: AccessContext, modelId: string, request: DevCypherRequest) => Promise<CypherExecuteResultDto>, deployProvider?: (params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>): ServerConnectionHandler
+    /** The development-only Attach argument (the container-owned graph service); undefined unless the server is a Development tenant. */
+    public static DevelopmentAttachArgs(server: { Purpose(): TenantPurpose; GraphService(): IDevGraphService }): { devGraphService: IDevGraphService | undefined }
+    {
+        return { devGraphService: server.Purpose() === TenantPurpose.Development ? server.GraphService() : undefined }
+    }
+
+    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, graphProvider: (context: AccessContext) => Promise<IGraphQuery>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: TenantPurpose = TenantPurpose.Development, applications?: PragmaticAppsRegistry, appGraphProvider?: (context: AccessContext, name: string, labels: ReferencedLabelSet) => Promise<IGraphQuery>, appWriteProvider?: (context: AccessContext, name: string, operations: readonly AppWriteOpDto[]) => Promise<AppWriteResultDto>, shareProvider?: (context: AccessContext, name: string, params: ShareParams) => Promise<ShareResultDto>, unshareProvider?: (context: AccessContext, name: string, params: UnshareParams) => Promise<UnshareResultDto>, listSharesProvider?: (context: AccessContext, name: string, params: ListSharesParams) => Promise<ListSharesResultDto>, assignProvider?: (context: AccessContext, name: string, params: AssignParams) => Promise<AssignResultDto>, paging?: PagingLimits, fieldMasks?: IFieldReadMaskSource, connectorReadAuthorization?: (context: AccessContext) => Promise<IConnectorReadAuthorization>, connectorWriteAuthorization?: (context: AccessContext, target: IWriteTargetSource) => Promise<IHydrateAuthorization>, modelGraphProvider?: (context: AccessContext, modelId: string) => Promise<IGraphQuery>, cypherExecuteProvider?: (context: AccessContext, modelId: string, request: DevCypherRequest) => Promise<CypherExecuteResultDto>, deployProvider?: (params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>, devGraphService?: IDevGraphService): ServerConnectionHandler
     {
         const connection = createMessageConnection(new WebSocketMessageReader(socket), new WebSocketMessageWriter(socket), NullLogger)
-        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectorsFactory, graphProvider, instrumentation, parent, audit, rateLimit, admin, cypherLimits, purpose, applications, appGraphProvider, appWriteProvider, shareProvider, unshareProvider, listSharesProvider, assignProvider, paging, fieldMasks, connectorReadAuthorization, connectorWriteAuthorization, modelGraphProvider, cypherExecuteProvider, deployProvider)
+        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectorsFactory, graphProvider, instrumentation, parent, audit, rateLimit, admin, cypherLimits, purpose, applications, appGraphProvider, appWriteProvider, shareProvider, unshareProvider, listSharesProvider, assignProvider, paging, fieldMasks, connectorReadAuthorization, connectorWriteAuthorization, modelGraphProvider, cypherExecuteProvider, deployProvider, devGraphService)
         connection.listen()
         return handler
     }
@@ -300,7 +311,8 @@ export class ServerConnectionHandler
 
     private guardedNoParams(type: typeof SolutionProtocol.ActiveSolution, handler: () => ActiveSolutionSummary | null): void
     private guardedNoParams(type: typeof PragmaticAppProtocol.List, handler: () => PragmaticAppSummaryDto[] | Promise<PragmaticAppSummaryDto[]>): void
-    private guardedNoParams(type: typeof SolutionProtocol.ActiveSolution | typeof PragmaticAppProtocol.List, handler: () => unknown): void
+    private guardedNoParams(type: typeof GraphProtocol.List, handler: () => GraphSummaryDto[] | Promise<GraphSummaryDto[]>): void
+    private guardedNoParams(type: typeof SolutionProtocol.ActiveSolution | typeof PragmaticAppProtocol.List | typeof GraphProtocol.List, handler: () => unknown): void
     {
         this.connection.onRequest(type as typeof SolutionProtocol.ActiveSolution, () => this.Dispatch(type.method, () =>
         {
@@ -650,6 +662,39 @@ export class ServerConnectionHandler
             this.boundApp = { name: app.Manifest.name, version: app.Manifest.version }
             return this.boundApp
         })
+    }
+
+    private RegisterGraphHandlers(): void
+    {
+        this.guarded(GraphProtocol.Create, async p =>
+        {
+            this.EnsureDevelopment()
+            return await this.RequireGraphService().CreateGraph(p)
+        })
+        this.guardedNoParams(GraphProtocol.List, async () =>
+        {
+            this.EnsureDevelopment()
+            return await this.RequireGraphService().ListGraphs()
+        })
+        this.guarded(GraphProtocol.Get, async p =>
+        {
+            this.EnsureDevelopment()
+            return await this.RequireGraphService().GetGraph(p)
+        })
+        this.guarded(GraphProtocol.Delete, async p =>
+        {
+            this.EnsureDevelopment()
+            await this.RequireGraphService().DeleteGraph(p)
+        })
+    }
+
+    private RequireGraphService(): IDevGraphService
+    {
+        if (this.devGraphService === undefined)
+        {
+            throw new ResponseError(ErrorCodes.InvalidRequest, ServerConnectionHandler.GraphServiceUnavailableMessage)
+        }
+        return this.devGraphService
     }
 
     private EnsureRuntime(): void

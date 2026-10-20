@@ -12,7 +12,6 @@ import {
     ImageMissingError
 } from './environment-service.js'
 import { EnvironmentNotDevelopmentError, GraphExistsError, GraphNameInvalidError, GraphNotFoundError } from './graph-service.js'
-import type { GraphRecord } from './graph-record.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from './environment-record.js'
 import { PortUnavailableError } from './port-allocator.js'
 import { InvalidEnvironmentNameError, TemplateCatalog } from './template-catalog.js'
@@ -43,9 +42,9 @@ export interface IEnvironmentService
 
 export interface IGraphService
 {
-    Create(envName: string, name: string, description: string): Promise<GraphRecord>
-    List(envName: string): Promise<readonly GraphRecord[]>
-    Get(envName: string, graphName: string): Promise<GraphRecord>
+    Create(envName: string, name: string, description: string): Promise<GraphDto>
+    List(envName: string): Promise<readonly GraphDto[]>
+    Get(envName: string, graphName: string): Promise<GraphDto>
     Delete(envName: string, graphName: string): Promise<void>
 }
 
@@ -455,7 +454,7 @@ export class ControlPlaneHost
         {
             if (method === ControlPlaneHost.MethodGet)
             {
-                this.WriteJson(res, ControlPlaneHost.StatusOk, (await this.graphService.List(env)).map(r => ControlPlaneHost.ToGraphDto(r)))
+                this.WriteJson(res, ControlPlaneHost.StatusOk, await this.graphService.List(env))
                 return true
             }
             if (method === ControlPlaneHost.MethodPost)
@@ -473,7 +472,7 @@ export class ControlPlaneHost
         }
         if (method === ControlPlaneHost.MethodGet)
         {
-            this.WriteJson(res, ControlPlaneHost.StatusOk, ControlPlaneHost.ToGraphDto(await this.graphService.Get(env, graph)))
+            this.WriteJson(res, ControlPlaneHost.StatusOk, await this.graphService.Get(env, graph))
             return true
         }
         if (method === ControlPlaneHost.MethodDelete)
@@ -503,7 +502,7 @@ export class ControlPlaneHost
             return
         }
         const rec = await this.graphService.Create(env, body.name as string, body.description as string)
-        this.WriteJson(res, ControlPlaneHost.StatusCreated, ControlPlaneHost.ToGraphDto(rec))
+        this.WriteJson(res, ControlPlaneHost.StatusCreated, rec)
     }
 
     /** Dispatches /api/environments/NAME/admin/SUB[/TAIL]; false when the (sub, method, tail) combination is unknown. */
@@ -958,16 +957,6 @@ export class ControlPlaneHost
     private static Changed(): ChangedEvent
     {
         return { type: ControlPlaneHost.ChangedType }
-    }
-
-    private static ToGraphDto(r: GraphRecord): GraphDto
-    {
-        return {
-            name: r.manifest.name,
-            description: r.manifest.description,
-            packageCount: r.manifest.packages.length,
-            createdAt: r.createdAt
-        }
     }
 
     private static ToDto(r: EnvironmentRecord): EnvironmentDto

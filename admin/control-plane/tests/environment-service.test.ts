@@ -240,6 +240,26 @@ class FakeAdminProxy implements IAdminProxy
         this.Calls.push({ method: 'SetSecurityModel', info, args: [model] })
     }
 
+    public async CreateGraph(_info: AdminConnectInfo, _p: any): Promise<any>
+    {
+        throw new Error('unused')
+    }
+
+    public async ListGraphs(_info: AdminConnectInfo): Promise<any[]>
+    {
+        throw new Error('unused')
+    }
+
+    public async GetGraph(_info: AdminConnectInfo, _p: any): Promise<any>
+    {
+        throw new Error('unused')
+    }
+
+    public async DeleteGraph(_info: AdminConnectInfo, _p: any): Promise<void>
+    {
+        throw new Error('unused')
+    }
+
     public async SetConfig(info: AdminConnectInfo, config: IdentityConfigDto): Promise<void>
     {
         this.Calls.push({ method: 'SetConfig', info, args: [config] })
