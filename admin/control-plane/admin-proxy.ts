@@ -1,5 +1,5 @@
 import { AdminProtocol, GraphProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { AccountDto, CreateAccountParams, GraphCreateParamsDto, GraphDetailDto, GraphRefParamsDto, GraphSummaryDto, GrantDto, GrantMutationDto, IdentityConfigDto, MessageConnection, SecurityModelDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { AccountDto, CreateAccountParams, GraphCreateParamsDto, GraphDetailDto, GraphRefParamsDto, GraphSummaryDto, GrantDto, GrantMutationDto, IdentityConfigDto, IssueTokenParams, MessageConnection, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { UserSeeder } from '../../environments/seed/users.js'
 
 export type AdminConnectInfo = { httpUrl: string; wsUrl: string; tenant: string; email: string; password: string }
@@ -62,6 +62,7 @@ export interface IAdminConnection
     ListGraphs(): Promise<GraphSummaryDto[]>
     GetGraph(params: GraphRefParamsDto): Promise<GraphDetailDto>
     DeleteGraph(params: GraphRefParamsDto): Promise<void>
+    IssueToken(params: IssueTokenParams): Promise<TokenIssuedDto>
     Dispose(): void
 }
 
@@ -85,6 +86,7 @@ export interface IAdminProxy
     ListGraphs(info: AdminConnectInfo): Promise<GraphSummaryDto[]>
     GetGraph(info: AdminConnectInfo, params: GraphRefParamsDto): Promise<GraphDetailDto>
     DeleteGraph(info: AdminConnectInfo, params: GraphRefParamsDto): Promise<void>
+    IssueToken(info: AdminConnectInfo, params: IssueTokenParams): Promise<TokenIssuedDto>
 }
 
 /** Typed facade over the environment admin protocol; one short-lived authenticated connection per call. */
@@ -174,6 +176,11 @@ export class AdminProxy implements IAdminProxy
     public async DeleteGraph(info: AdminConnectInfo, params: GraphRefParamsDto): Promise<void>
     {
         await this.With(info, conn => conn.DeleteGraph(params))
+    }
+
+    public async IssueToken(info: AdminConnectInfo, params: IssueTokenParams): Promise<TokenIssuedDto>
+    {
+        return this.With(info, conn => conn.IssueToken(params))
     }
 
     private async With<T>(info: AdminConnectInfo, body: (conn: IAdminConnection) => Promise<T>): Promise<T>
@@ -314,6 +321,11 @@ export class WsAdminConnection implements IAdminConnection
     public async DeleteGraph(params: GraphRefParamsDto): Promise<void>
     {
         await this.conn.sendRequest(GraphProtocol.Delete, params)
+    }
+
+    public IssueToken(params: IssueTokenParams): Promise<TokenIssuedDto>
+    {
+        return this.conn.sendRequest(AdminProtocol.IssueToken, params)
     }
 
     public Dispose(): void

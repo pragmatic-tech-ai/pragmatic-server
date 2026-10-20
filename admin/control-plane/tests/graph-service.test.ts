@@ -87,6 +87,11 @@ class FakeAdminProxy implements IAdminProxy
         return this.Detail
     }
 
+    public async IssueToken(_info: AdminConnectInfo, _params: any): Promise<any>
+    {
+        throw new Error('unused')
+    }
+
     public async DeleteGraph(info: AdminConnectInfo, params: GraphRefParamsDto): Promise<void>
     {
         this.Track(info, `delete:${params.graphName}`)

@@ -95,6 +95,12 @@ class FakeConnection implements IAdminConnection
         this.Record('DeleteGraph')
     }
 
+    public async IssueToken(_p: any): Promise<any>
+    {
+        this.Record('IssueToken')
+        return { token: 'tok', principalId: 'maker' }
+    }
+
     public Dispose(): void
     {
         this.Disposed++
@@ -153,6 +159,7 @@ describe('AdminProxy', () =>
             ['ListGraphs', async p => { await p.ListGraphs(Fixtures.Info) }],
             ['GetGraph', async p => { await p.GetGraph(Fixtures.Info, {} as any) }],
             ['DeleteGraph', p => p.DeleteGraph(Fixtures.Info, {} as any)],
+            ['IssueToken', async p => { await p.IssueToken(Fixtures.Info, {} as any) }],
         ]
         for (const [call, run] of cases)
         {
@@ -201,6 +208,19 @@ describe('AdminProxy', () =>
             await assert.rejects(new AdminProxy(new FakeConnector(conn)).RevokeRole(Fixtures.Info, {} as any), (e: unknown) =>
                 e instanceof AdminProxyError && e.Kind === kind && e.message.includes(message))
         }
+    })
+
+    it('IssueToken returns the issued token dto and classifies errors', async () =>
+    {
+        const conn = new FakeConnection()
+        const got = await new AdminProxy(new FakeConnector(conn)).IssueToken(Fixtures.Info, { principalId: 'maker', scopes: [], expiresInSeconds: 60 })
+        assert.deepEqual(got, { token: 'tok', principalId: 'maker' })
+        assert.equal(conn.Disposed, 1)
+        const bad = new FakeConnection()
+        bad.FailWith = new Error('invalid params: nope')
+        await assert.rejects(new AdminProxy(new FakeConnector(bad)).IssueToken(Fixtures.Info, {} as any), (e: unknown) =>
+            e instanceof AdminProxyError && e.Kind === AdminProxyErrorKind.Invalid)
+        assert.equal(bad.Disposed, 1)
     })
 
     it('disposes in finally when a method throws', async () =>

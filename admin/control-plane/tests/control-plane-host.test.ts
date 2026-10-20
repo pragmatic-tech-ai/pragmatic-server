@@ -125,6 +125,11 @@ class FakeService implements IEnvironmentService
         this.MaybeThrow()
     }
 
+    public async AdminIssueMakerToken(_name: string): Promise<any>
+    {
+        throw new Error('unused')
+    }
+
     public async AdminGrantRole(name: string, mutation: GrantMutationDto): Promise<void>
     {
         this.Calls.push(`adminGrantRole:${name}:${JSON.stringify(mutation)}`)

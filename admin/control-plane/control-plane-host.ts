@@ -18,7 +18,7 @@ import { InvalidEnvironmentNameError, TemplateCatalog } from './template-catalog
 import type { IOperatorIdentity } from './operator-identity.js'
 import { SessionCookie } from './session-cookie.js'
 import { AdminProxyError, AdminProxyErrorKind, type AdminSnapshot } from './admin-proxy.js'
-import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, SecurityModelDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 export interface IEnvironmentService
 {
@@ -33,6 +33,7 @@ export interface IEnvironmentService
     AdminCreateAccount(name: string, params: CreateAccountParams): Promise<void>
     AdminDisableAccount(name: string, principalId: string): Promise<void>
     AdminGrantRole(name: string, mutation: GrantMutationDto): Promise<void>
+    AdminIssueMakerToken(name: string): Promise<TokenIssuedDto>
     AdminRevokeRole(name: string, mutation: GrantMutationDto): Promise<void>
     AdminGetConfig(name: string): Promise<IdentityConfigDto>
     AdminSetConfig(name: string, config: IdentityConfigDto): Promise<void>
