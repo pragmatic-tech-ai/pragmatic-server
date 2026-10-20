@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import { get } from 'node:http'
+import { TenantPurposeName } from './bundle.js'
 import type { EnvDefinition } from './bundle.js'
 
 export { EnvKind, TenantPurposeName } from './bundle.js'
@@ -33,7 +34,7 @@ export class DockerEnv
     private static readonly NameFlag = '--name'
     private static readonly PortFlag = '-p'
     private static readonly VolumeFlag = '-v'
-    private static readonly EnvFlag = '-e'
+    public static readonly EnvFlag = '-e'
     private static readonly EntrypointFlag = '--entrypoint'
     private static readonly Sh = 'sh'
     private static readonly ShCommandFlag = '-c'
@@ -54,6 +55,8 @@ export class DockerEnv
     private static readonly EnvPort = 'PRAGMATIC_PORT'
     private static readonly EnvDeploymentMode = 'PRAGMATIC_DEPLOYMENT_MODE'
     private static readonly DeploymentModeLocal = 'local'
+    public static readonly EnvAllowedOrigins = 'PRAGMATIC_ALLOWED_ORIGINS'
+    private static readonly LocalhostOriginPrefix = 'http://localhost:'
 
     private static readonly SeedMarkerName = '.env-seeded'
     private static readonly ImageCmd = 'image'
@@ -98,7 +101,7 @@ export class DockerEnv
 
     public static RunArgs(def: EnvDefinition, bundleDir: string): string[]
     {
-        return [
+        const args = [
             DockerEnv.Run, DockerEnv.Detach, DockerEnv.NameFlag, DockerEnv.ContainerName(def),
             DockerEnv.PortFlag, `${def.hostPort}:${DockerEnv.InternalPort}`,
             DockerEnv.VolumeFlag, `${DockerEnv.VolumeName(def)}:${DockerEnv.DataMount}`,
@@ -111,9 +114,14 @@ export class DockerEnv
             DockerEnv.EnvFlag, `${DockerEnv.EnvMasterKeyFile}=${DockerEnv.MasterKeyMount}`,
             DockerEnv.EnvFlag, `${DockerEnv.EnvSecretsFile}=${DockerEnv.SecretsMount}`,
             DockerEnv.EnvFlag, `${DockerEnv.EnvPort}=${DockerEnv.InternalPort}`,
-            DockerEnv.EnvFlag, `${DockerEnv.EnvDeploymentMode}=${DockerEnv.DeploymentModeLocal}`,
-            DockerEnv.ImageName
+            DockerEnv.EnvFlag, `${DockerEnv.EnvDeploymentMode}=${DockerEnv.DeploymentModeLocal}`
         ]
+        if (def.purpose === TenantPurposeName.Runtime)
+        {
+            args.push(DockerEnv.EnvFlag, `${DockerEnv.EnvAllowedOrigins}=${DockerEnv.LocalhostOriginPrefix}${def.hostPort}`)
+        }
+        args.push(DockerEnv.ImageName)
+        return args
     }
 
     /** The full one-time build command (the same text EnsureImage prints). */
