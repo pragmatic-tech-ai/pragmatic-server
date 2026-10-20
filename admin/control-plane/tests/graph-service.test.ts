@@ -5,7 +5,8 @@ import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environ
 import { EnvironmentNotFoundError } from '../environment-service.js'
 import { AdminProxyError, AdminProxyErrorKind, type AdminConnectInfo, type AdminSnapshot, type IAdminProxy } from '../admin-proxy.js'
 import { GraphExistsError as ContainerExistsError, GraphNotFoundError as ContainerNotFoundError, GraphNameInvalidError as ContainerInvalidError } from '../../../src/host/graphs/dev-graph-service.js'
-import { GraphService, GraphExistsError, GraphNotFoundError, GraphNameInvalidError, EnvironmentNotDevelopmentError, type IEnvironmentLookup } from '../graph-service.js'
+import { GraphService, GraphExistsError, GraphNotFoundError, GraphNameInvalidError, type IEnvironmentLookup } from '../graph-service.js'
+import { EnvironmentNotDevelopmentError } from '../environment-service.js'
 
 class Fixture
 {
@@ -85,6 +86,11 @@ class FakeAdminProxy implements IAdminProxy
     {
         this.Track(info, `get:${params.graphName}`)
         return this.Detail
+    }
+
+    public async IssueToken(_info: AdminConnectInfo, _params: any): Promise<any>
+    {
+        throw new Error('unused')
     }
 
     public async DeleteGraph(info: AdminConnectInfo, params: GraphRefParamsDto): Promise<void>

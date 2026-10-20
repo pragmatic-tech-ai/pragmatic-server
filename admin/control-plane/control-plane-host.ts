@@ -9,16 +9,17 @@ import {
     DockerUnavailableError,
     EnvironmentExistsError,
     EnvironmentNotFoundError,
-    ImageMissingError
+    ImageMissingError,
+    EnvironmentNotDevelopmentError
 } from './environment-service.js'
-import { EnvironmentNotDevelopmentError, GraphExistsError, GraphNameInvalidError, GraphNotFoundError } from './graph-service.js'
+import { GraphExistsError, GraphNameInvalidError, GraphNotFoundError } from './graph-service.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from './environment-record.js'
 import { PortUnavailableError } from './port-allocator.js'
 import { InvalidEnvironmentNameError, TemplateCatalog } from './template-catalog.js'
 import type { IOperatorIdentity } from './operator-identity.js'
 import { SessionCookie } from './session-cookie.js'
 import { AdminProxyError, AdminProxyErrorKind, type AdminSnapshot } from './admin-proxy.js'
-import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, SecurityModelDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 export interface IEnvironmentService
 {
@@ -38,6 +39,7 @@ export interface IEnvironmentService
     AdminSetConfig(name: string, config: IdentityConfigDto): Promise<void>
     AdminGetSecurityModel(name: string): Promise<SecurityModelDto | undefined>
     AdminSetSecurityModel(name: string, securityModel: SecurityModelDto): Promise<void>
+    AdminIssueMakerToken(name: string): Promise<TokenIssuedDto>
 }
 
 export interface IGraphService
@@ -59,6 +61,14 @@ export type EnvironmentDto = {
     createdAt: string
     httpUrl: string
     wsUrl: string
+}
+
+/** The only fields of an issued maker token revealed to the operator. */
+export interface MakerTokenDto
+{
+    token: string
+    principalId: string
+    expiresAt: string | null
 }
 
 export type GraphDto = {
@@ -138,6 +148,9 @@ export class ControlPlaneHost
     private static readonly GraphsSegment = 'graphs'
     private static readonly GraphPathPattern = new RegExp(
         '^' + ControlPlaneHost.EnvironmentsPath + '/([^/]+)/' + ControlPlaneHost.GraphsSegment + '(?:/([^/]+))?$')
+    private static readonly MakerTokenSegment = 'maker-token'
+    private static readonly MakerTokenPathPattern = new RegExp(
+        '^' + ControlPlaneHost.EnvironmentsPath + '/([^/]+)/' + ControlPlaneHost.MakerTokenSegment + '$')
     private static readonly DescriptionRequiredMessage = 'description (string) is required'
     private static readonly AccountFieldsMessage = 'email, principalId and password (non-empty strings) are required'
     private static readonly GrantFieldsMessage = 'subject and role (strings) are required'
@@ -394,6 +407,11 @@ export class ControlPlaneHost
         {
             return await this.RouteAdmin(req, res, method, am)
         }
+        const tm = ControlPlaneHost.MakerTokenPathPattern.exec(path)
+        if (tm !== null)
+        {
+            return await this.RouteMakerToken(req, res, method, tm)
+        }
         const gm = ControlPlaneHost.GraphPathPattern.exec(path)
         if (gm !== null)
         {
@@ -439,6 +457,31 @@ export class ControlPlaneHost
             return true
         }
         return false
+    }
+
+    /** Dispatches POST /api/environments/NAME/maker-token; false (unknown route) for any other method. */
+    private async RouteMakerToken(_req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
+    {
+        if (method !== ControlPlaneHost.MethodPost)
+        {
+            return false
+        }
+        const name = ControlPlaneHost.Decode(m[1] as string)
+        if (name === undefined)
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+            return true
+        }
+        await this.HandleIssueMakerToken(res, name)
+        return true
+    }
+
+    /** Mints a maker token; the secret is returned once in the response body and never logged. */
+    private async HandleIssueMakerToken(res: ServerResponse, name: string): Promise<void>
+    {
+        const issued = await this.service.AdminIssueMakerToken(name)
+        const dto: MakerTokenDto = { token: issued.token, principalId: issued.principalId, expiresAt: issued.expiresAt }
+        this.WriteJson(res, ControlPlaneHost.StatusCreated, dto)
     }
 
     /** Dispatches /api/environments/NAME/graphs[/GRAPH]; false when the (graph, method) combination is unknown. */

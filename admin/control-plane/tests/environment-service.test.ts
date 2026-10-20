@@ -6,12 +6,12 @@ import { join } from 'node:path'
 import { EnvironmentRegistry } from '../environment-registry.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord, type IContainerProbe } from '../environment-record.js'
 import { PortAllocator, PortUnavailableError, type IPortProbe } from '../port-allocator.js'
-import { EnvironmentService, EnvironmentExistsError, EnvironmentNotFoundError, ImageMissingError, DockerUnavailableError, CreateFailedError } from '../environment-service.js'
+import { EnvironmentService, EnvironmentNotDevelopmentError, EnvironmentExistsError, EnvironmentNotFoundError, ImageMissingError, DockerUnavailableError, CreateFailedError } from '../environment-service.js'
 import type { IDockerEnv, IBundleBuilder, IUserSeeder } from '../docker-env-port.js'
 import { TenantPurposeName, type EnvDefinition } from '../../../environments/seed/bundle.js'
 import type { UserSeed } from '../../../environments/seed/users.js'
 import type { IAdminProxy, AdminConnectInfo, AdminSnapshot } from '../admin-proxy.js'
-import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, IssueTokenParams, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 class Fixture
 {
@@ -258,6 +258,12 @@ class FakeAdminProxy implements IAdminProxy
     public async DeleteGraph(_info: AdminConnectInfo, _p: any): Promise<void>
     {
         throw new Error('unused')
+    }
+
+    public async IssueToken(info: AdminConnectInfo, params: IssueTokenParams): Promise<TokenIssuedDto>
+    {
+        this.Calls.push({ method: 'IssueToken', info, args: [params] })
+        return { tokenRef: 'ref', token: 'secret-token', principalId: params.principalId, scopes: params.scopes, expiresAt: 'later' } as unknown as TokenIssuedDto
     }
 
     public async SetConfig(info: AdminConnectInfo, config: IdentityConfigDto): Promise<void>
@@ -525,4 +531,29 @@ test('a failed Create releases its in-flight reservation so the name can be retr
     h.Docker.ImageOk = true
     const rec = await h.Service.Create('e1', Template.DevBlank, EnvType.Development)
     assert.equal(rec.status, EnvStatus.Running)
+})
+
+test('AdminIssueMakerToken grants Maker then issues a maker token; repeat call succeeds', async () =>
+{
+    const h = await Harness.Make()
+    await AdminFixture.Seed(h)
+    const dto = await h.Service.AdminIssueMakerToken(AdminFixture.Name)
+    assert.deepEqual(h.Proxy.Calls.map(c => c.method), ['GrantRole', 'IssueToken'])
+    assert.deepEqual(h.Proxy.Calls[0].args, [{ subject: 'maker', role: 'Maker', resourceKind: 'Tenant', resourcePath: [] }])
+    const params = h.Proxy.Calls[1].args[0] as IssueTokenParams
+    assert.equal(params.principalId, 'maker')
+    assert.deepEqual(params.scopes, ['graph-contribute'])
+    assert.equal(dto.token, 'secret-token')
+    assert.equal(h.Proxy.Calls[0].info.password, AdminFixture.Password)
+    await h.Service.AdminIssueMakerToken(AdminFixture.Name)
+    assert.equal(h.Proxy.Calls.length, 4)
+})
+
+test('AdminIssueMakerToken on a non-Development env throws before any proxy call', async () =>
+{
+    const h = await Harness.Make()
+    await AdminFixture.Seed(h)
+    await h.Registry.Put({ ...h.Registry.Get(AdminFixture.Name)!, type: EnvType.Runtime })
+    await assert.rejects(() => h.Service.AdminIssueMakerToken(AdminFixture.Name), EnvironmentNotDevelopmentError)
+    assert.equal(h.Proxy.Calls.length, 0)
 })

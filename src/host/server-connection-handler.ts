@@ -686,6 +686,11 @@ export class ServerConnectionHandler
             this.EnsureDevelopment()
             await this.RequireGraphService().DeleteGraph(p)
         })
+        this.guarded(GraphProtocol.Contribute, async p =>
+        {
+            this.EnsureDevelopment()
+            return await this.RequireGraphService().ContributeGraph(p)
+        })
     }
 
     private RequireGraphService(): IDevGraphService

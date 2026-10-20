@@ -19,6 +19,13 @@ export type GraphDto =
     createdAt: string
 }
 
+export type MakerTokenDto =
+{
+    token: string
+    principalId: string
+    expiresAt: string | null
+}
+
 export type TemplateDto =
 {
     id: string
@@ -122,6 +129,7 @@ export interface IPortalNavigator
     ShowRoles(name: string): void
     ShowGraphs(name: string): void
     ShowCreateGraph(name: string): void
+    ShowMakerToken(envName: string): void
 }
 
 // A screen that can re-fetch and re-render itself (on environments-changed).

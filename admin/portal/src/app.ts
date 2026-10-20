@@ -6,6 +6,7 @@ import { CreateEnvironmentView } from './create-environment-view.js'
 import { EnvironmentDetailView } from './environment-detail-view.js'
 import { EnvironmentListView } from './environment-list-view.js'
 import { CreateGraphView } from './create-graph-view.js'
+import { MakerTokenView } from './maker-token-view.js'
 import { GraphListView } from './graph-list-view.js'
 import { LoginView } from './login-view.js'
 import { RoleConfigView } from './role-config-view.js'
@@ -145,6 +146,12 @@ export class App extends StackPanel implements IPortalNavigator
     {
         this.SetLogoutVisible(true)
         this.Show(new CreateGraphView(this.client, this, name))
+    }
+
+    public ShowMakerToken(envName: string): void
+    {
+        this.SetLogoutVisible(true)
+        this.Show(new MakerTokenView(this.client, this, envName))
     }
 
     private Show(view: Visual & IPortalView): void

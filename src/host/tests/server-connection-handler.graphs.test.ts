@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { InMemoryMessageSocket, PragmaticClient, ErrorCodes, GraphProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { GraphCreateParamsDto, GraphDetailDto, GraphRefParamsDto, GraphSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { InMemoryMessageSocket, PragmaticClient, ErrorCodes, GraphProtocol, AdminProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { GraphContributeParamsDto, GraphCreateParamsDto, GraphDetailDto, GraphRefParamsDto, GraphSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
@@ -32,6 +32,12 @@ class FakeGraphService implements IDevGraphService
         return { name: params.graphName, description: GraphFixture.Description, packages: [], createdAt: GraphFixture.Stamp }
     }
 
+    public async ContributeGraph(params: GraphContributeParamsDto): Promise<GraphDetailDto>
+    {
+        this.Calls.push(GraphFixture.ContributeCall + params.graphName)
+        return { name: params.graphName, description: GraphFixture.Description, packages: [], createdAt: GraphFixture.Stamp }
+    }
+
     public async DeleteGraph(params: GraphRefParamsDto): Promise<void>
     {
         this.Calls.push(GraphFixture.DeleteCall + params.graphName)
@@ -47,6 +53,8 @@ class GraphFixture
     public static readonly ListCall = 'list'
     public static readonly GetCall = 'get:'
     public static readonly DeleteCall = 'delete:'
+    public static readonly ContributeCall = 'contribute:'
+    public static readonly SolutionId = 'sol-1'
     public static readonly UnavailableText = 'graph service is not available'
     public static readonly NotDevelopmentText = 'operation requires a development tenant'
     private static readonly TenantId = 't1'
@@ -143,6 +151,7 @@ test('every graph op is rejected on a Runtime tenant with NotDevelopment', async
             client.ListGraphs(),
             client.GetGraph(ref),
             client.DeleteGraph(ref),
+            client.ContributeGraph({ graphName: GraphFixture.GraphName, solutionId: GraphFixture.SolutionId, packages: [] }),
         ]
         for (const attempt of attempts)
         {
@@ -183,4 +192,49 @@ test('a Development tenant with no graph service rejects graph ops with InvalidR
         assert.ok((error.message ?? '').includes(GraphFixture.UnavailableText))
         assert.deepEqual(fixture.Service.Calls, [])
     }, false)
+})
+
+test('graph/contribute delegates to the service and returns the detail (Development)', async () =>
+{
+    const fixture = new GraphFixture()
+    await fixture.With(TenantPurpose.Development, async client =>
+    {
+        const detail = await client.ContributeGraph({ graphName: GraphFixture.GraphName, solutionId: GraphFixture.SolutionId, packages: [] })
+        assert.equal(detail.name, GraphFixture.GraphName)
+        assert.deepEqual(fixture.Service.Calls, [GraphFixture.ContributeCall + GraphFixture.GraphName])
+    })
+})
+
+test('graph/contribute with no graph service rejects with the unavailable error', async () =>
+{
+    const fixture = new GraphFixture()
+    await fixture.With(TenantPurpose.Development, async client =>
+    {
+        const error = await GraphFixture.ErrorOf(client.ContributeGraph({ graphName: GraphFixture.GraphName, solutionId: GraphFixture.SolutionId, packages: [] }))
+        assert.equal(error.code, ErrorCodes.InvalidRequest)
+        assert.ok((error.message ?? '').includes(GraphFixture.UnavailableText))
+    }, false)
+})
+
+test('the policy gate maps graph/contribute to the Contribute action on the tenant', () =>
+{
+    const decision = GraphFixture.Gate(Role.Maker).Authorize(GraphProtocol.Contribute.method)
+    assert.equal(decision.Allowed, true)
+    assert.equal(GraphFixture.Gate(null).Authorize(GraphProtocol.Contribute.method).Allowed, false)
+    assert.equal(GraphFixture.Gate(Role.Viewer).Authorize(GraphProtocol.Contribute.method).Allowed, false)
+})
+
+test('a Maker-only principal may contribute but nothing else', () =>
+{
+    const gate = GraphFixture.Gate(Role.Maker)
+    assert.equal(gate.Authorize(GraphProtocol.Contribute.method).Allowed, true)
+    for (const method of [GraphProtocol.Create.method, GraphProtocol.Delete.method, GraphProtocol.List.method, GraphProtocol.Get.method, AdminProtocol.IssueToken.method])
+    {
+        assert.equal(gate.Authorize(method).Allowed, false, method)
+    }
+})
+
+test('an Owner may contribute', () =>
+{
+    assert.equal(GraphFixture.Gate(Role.Owner).Authorize(GraphProtocol.Contribute.method).Allowed, true)
 })

@@ -4,12 +4,12 @@ import { join } from 'node:path'
 import { BundleBuilder, EnvKind, type EnvDefinition } from '../../environments/seed/bundle.js'
 import { DockerEnv } from '../../environments/seed/docker.js'
 import type { UserSeed } from '../../environments/seed/users.js'
-import { EnvStatus, type EnvType, type Template, type EnvironmentRecord } from './environment-record.js'
+import { EnvStatus, EnvType, type Template, type EnvironmentRecord } from './environment-record.js'
 import type { EnvironmentRegistry } from './environment-registry.js'
 import type { PortAllocator } from './port-allocator.js'
 import { TemplateCatalog } from './template-catalog.js'
 import type { AdminConnectInfo, AdminSnapshot, IAdminProxy } from './admin-proxy.js'
-import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, SecurityModelDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { IDockerEnv, IBundleBuilder, IUserSeeder } from './docker-env-port.js'
 
 export class EnvironmentExistsError extends Error
@@ -33,6 +33,18 @@ export class EnvironmentNotFoundError extends Error
     {
         super(EnvironmentNotFoundError.MessagePrefix + envName)
         this.name = EnvironmentNotFoundError.ErrorName
+    }
+}
+
+export class EnvironmentNotDevelopmentError extends Error
+{
+    private static readonly ErrorName = 'EnvironmentNotDevelopmentError'
+    private static readonly MessagePrefix = 'Environment is not a development environment: '
+
+    public constructor(envName: string)
+    {
+        super(EnvironmentNotDevelopmentError.MessagePrefix + envName)
+        this.name = EnvironmentNotDevelopmentError.ErrorName
     }
 }
 
@@ -81,6 +93,12 @@ export class EnvironmentService
     private static readonly UsersFile = 'users.json'
     private static readonly Utf8 = 'utf8'
     private static readonly MissingSecretPrefix = 'no provisioned secret for '
+    private static readonly MakerPrincipalId = 'maker'
+    private static readonly MakerRoleName = 'Maker'
+    private static readonly TenantKindName = 'Tenant'
+    private static readonly MakerScope = 'graph-contribute'
+    /** One hour: a maker token is short-lived, so a leaked one expires quickly; callers re-mint on demand. */
+    private static readonly MakerTokenTtlSeconds = 3600
 
     /** Safe names with a Create currently running; closes the race between the existence check and the final registry Put. */
     private readonly inFlight = new Set<string>()
@@ -264,6 +282,18 @@ export class EnvironmentService
     {
         const info = await this.AdminInfoFor(name)
         return this.proxy.GrantRole(info, mutation)
+    }
+
+    public async AdminIssueMakerToken(name: string): Promise<TokenIssuedDto>
+    {
+        const rec = this.Require(name)
+        if (rec.type !== EnvType.Development)
+        {
+            throw new EnvironmentNotDevelopmentError(name)
+        }
+        const info = await this.AdminInfoFor(name)
+        await this.proxy.GrantRole(info, { subject: EnvironmentService.MakerPrincipalId, role: EnvironmentService.MakerRoleName, resourceKind: EnvironmentService.TenantKindName, resourcePath: [] })
+        return this.proxy.IssueToken(info, { principalId: EnvironmentService.MakerPrincipalId, scopes: [EnvironmentService.MakerScope], expiresInSeconds: EnvironmentService.MakerTokenTtlSeconds })
     }
 
     public async AdminRevokeRole(name: string, mutation: GrantMutationDto): Promise<void>

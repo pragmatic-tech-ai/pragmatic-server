@@ -5,6 +5,7 @@ import { LoginView } from '../src/login-view.js'
 import { EnvironmentListView } from '../src/environment-list-view.js'
 import { EnvironmentDetailView } from '../src/environment-detail-view.js'
 import { GraphListView } from '../src/graph-list-view.js'
+import { MakerTokenView } from '../src/maker-token-view.js'
 import { CreateGraphView } from '../src/create-graph-view.js'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { readFile } from 'node:fs/promises'
@@ -31,6 +32,8 @@ class FakeControlPlane
     public static readonly NewName = 'beta'
     public static readonly EnvironmentsPath = '/api/environments'
     public static readonly GraphsPath = '/api/environments/alpha/graphs'
+    public static readonly MakerTokenPath = '/api/environments/alpha/maker-token'
+    public static readonly MakerTokenValue = 'tok-secret-123'
     public static readonly NewGraphName = 'g1'
     public static readonly NewGraphDescription = 'first graph'
     public static readonly NewGraphPackageCount = '0'
@@ -177,6 +180,12 @@ class FakeControlPlane
                 { id: FakeControlPlane.TemplateOneId, title: FakeControlPlane.TemplateOneTitle },
                 { id: FakeControlPlane.TemplateTwoId, title: FakeControlPlane.TemplateTwoTitle },
             ])
+            return
+        }
+        if (path === FakeControlPlane.MakerTokenPath && method === FakeControlPlane.MethodPost)
+        {
+            this.Calls.push({ method, path, body: undefined })
+            FakeControlPlane.Json(res, 201, { token: FakeControlPlane.MakerTokenValue, principalId: 'maker-1', expiresAt: null })
             return
         }
         if (path === FakeControlPlane.GraphsPath)
@@ -402,5 +411,27 @@ test.describe('admin portal', () =>
         await page.getByText(EnvironmentListView.OpenLabel, { exact: true }).click()
         await expect(page.getByText(EnvironmentDetailView.RolesLabel, { exact: true })).toBeVisible()
         await expect(page.getByText(EnvironmentDetailView.GraphsLabel, { exact: true })).toHaveCount(0)
+    })
+
+    test('minting a maker token from the Development detail view reveals it once', async ({ page }) =>
+    {
+        await page.goto(base)
+        await page.getByText(EnvironmentListView.OpenLabel, { exact: true }).click()
+        await page.getByText(EnvironmentDetailView.MakerTokenLabel, { exact: true }).click()
+        await expect(page.getByText(MakerTokenView.HeadingText, { exact: true })).toBeVisible()
+        await page.getByText(MakerTokenView.MintLabel, { exact: true }).click()
+        await expect.poll(() => fake.Find(FakeControlPlane.MethodPost, FakeControlPlane.MakerTokenPath)).toBeDefined()
+        await expect(page.getByText(MakerTokenView.WarningText, { exact: true })).toBeVisible()
+        // toHaveValue reads the value property (robust to Mural setting the property rather than the value attribute). MakerTokenView renders a single textbox; confirm this locator when the gated spec is first run.
+        await expect(page.getByRole('textbox')).toHaveValue(FakeControlPlane.MakerTokenValue)
+    })
+
+    test('a runtime environment does not show the Mint maker token button', async ({ page }) =>
+    {
+        fake.EnvType = FakeControlPlane.RuntimeType
+        await page.goto(base)
+        await page.getByText(EnvironmentListView.OpenLabel, { exact: true }).click()
+        await expect(page.getByText(EnvironmentDetailView.RolesLabel, { exact: true })).toBeVisible()
+        await expect(page.getByText(EnvironmentDetailView.MakerTokenLabel, { exact: true })).toHaveCount(0)
     })
 })
