@@ -278,7 +278,11 @@ test.describe('admin portal', () =>
 
     test.beforeAll(async () => { base = await fake.Start() })
     test.afterAll(async () => { await fake.Stop() })
-    test.beforeEach(() => { fake.Authenticated = true; fake.EnvType = FakeControlPlane.ListedType })
+    test.beforeEach(() =>
+    {
+        fake.Authenticated = true
+        fake.EnvType = FakeControlPlane.ListedType
+    })
 
     test('lists the environment with its status', async ({ page }) =>
     {
