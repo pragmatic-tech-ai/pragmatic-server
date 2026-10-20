@@ -1,5 +1,5 @@
 import type { GraphDetailDto, GraphSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { AdminConnectInfo, IAdminProxy } from './admin-proxy.js'
+import { AdminProxyError, AdminProxyErrorKind, type AdminConnectInfo, type IAdminProxy } from './admin-proxy.js'
 import { EnvType, type EnvironmentRecord } from './environment-record.js'
 import { EnvironmentNotFoundError } from './environment-service.js'
 import type { GraphDto } from './control-plane-host.js'
@@ -118,7 +118,7 @@ export class GraphService
         return record
     }
 
-    /** Maps the container's graph failure messages back onto the graph error classes; anything else passes through. */
+    /** Maps the container's graph failure messages (Protocol-kind proxy errors only) back onto the graph error classes; anything else passes through. */
     private static async Classify<T>(graphName: string, call: () => Promise<T>): Promise<T>
     {
         try
@@ -127,7 +127,11 @@ export class GraphService
         }
         catch (err)
         {
-            const lower = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase()
+            if (!(err instanceof AdminProxyError) || err.Kind !== AdminProxyErrorKind.Protocol)
+            {
+                throw err
+            }
+            const lower = err.message.toLowerCase()
             if (lower.includes(GraphService.ExistsText))
             {
                 throw new GraphExistsError(graphName)

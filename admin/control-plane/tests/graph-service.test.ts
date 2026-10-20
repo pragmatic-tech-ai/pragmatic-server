@@ -4,6 +4,7 @@ import type { GraphCreateParamsDto, GraphDetailDto, GraphRefParamsDto, GraphSumm
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import { EnvironmentNotFoundError } from '../environment-service.js'
 import { AdminProxyError, AdminProxyErrorKind, type AdminConnectInfo, type AdminSnapshot, type IAdminProxy } from '../admin-proxy.js'
+import { GraphExistsError as ContainerExistsError, GraphNotFoundError as ContainerNotFoundError, GraphNameInvalidError as ContainerInvalidError } from '../../../src/host/graphs/dev-graph-service.js'
 import { GraphService, GraphExistsError, GraphNotFoundError, GraphNameInvalidError, EnvironmentNotDevelopmentError, type IEnvironmentLookup } from '../graph-service.js'
 
 class Fixture
@@ -238,4 +239,22 @@ test('an unrecognised container error passes through unchanged', async () =>
     const h = new Harness()
     h.Proxy.Throw = new AdminProxyError(AdminProxyErrorKind.Protocol, Fixture.OtherMessage)
     await assert.rejects(h.Service.Get(Fixture.Dev1, Fixture.G1), (err: unknown) => err instanceof AdminProxyError && err.message === Fixture.OtherMessage)
+})
+
+test('the classifier recognises the real container error messages', async () =>
+{
+    const h = new Harness()
+    h.Proxy.Throw = new AdminProxyError(AdminProxyErrorKind.Protocol, new ContainerExistsError(Fixture.G1).message)
+    await assert.rejects(h.Service.Create(Fixture.Dev1, Fixture.G1, ''), GraphExistsError)
+    h.Proxy.Throw = new AdminProxyError(AdminProxyErrorKind.Protocol, new ContainerNotFoundError(Fixture.G1).message)
+    await assert.rejects(h.Service.Get(Fixture.Dev1, Fixture.G1), GraphNotFoundError)
+    h.Proxy.Throw = new AdminProxyError(AdminProxyErrorKind.Protocol, new ContainerInvalidError(Fixture.BadName).message)
+    await assert.rejects(h.Service.Create(Fixture.Dev1, Fixture.BadName, ''), GraphNameInvalidError)
+})
+
+test('a non-Protocol proxy error is never reclassified as a graph error', async () =>
+{
+    const h = new Harness()
+    h.Proxy.Throw = new AdminProxyError(AdminProxyErrorKind.Connect, Fixture.NotFoundMessage)
+    await assert.rejects(h.Service.Get(Fixture.Dev1, Fixture.G1), (err: unknown) => err instanceof AdminProxyError && err.Kind === AdminProxyErrorKind.Connect)
 })
