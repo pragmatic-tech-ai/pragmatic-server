@@ -85,6 +85,7 @@ export class PolicyGate
         const administer: MethodPolicy = { action: Action.Administer, resourceKind: ResourceKind.Tenant }
         const readTenant: MethodPolicy = { action: Action.Read, resourceKind: ResourceKind.Tenant }
         const writeTenant: MethodPolicy = { action: Action.Write, resourceKind: ResourceKind.Tenant }
+        const contribute: MethodPolicy = { action: Action.Contribute, resourceKind: ResourceKind.Tenant }
         const connect: MethodPolicy = { action: Action.Connect, resourceKind: ResourceKind.Connector }
         const readConnector: MethodPolicy = { action: Action.Read, resourceKind: ResourceKind.Connector }
         const writeConnector: MethodPolicy = { action: Action.Write, resourceKind: ResourceKind.Connector }
@@ -131,6 +132,7 @@ export class PolicyGate
             [GraphProtocol.Delete.method, administer],
             [GraphProtocol.List.method, readTenant],
             [GraphProtocol.Get.method, readTenant],
+            [GraphProtocol.Contribute.method, contribute],
             [AdminProtocol.ListGrants.method, administer],
             [AdminProtocol.GrantRole.method, administer],
             [AdminProtocol.RevokeRole.method, administer],
