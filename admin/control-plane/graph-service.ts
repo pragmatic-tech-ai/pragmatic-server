@@ -1,8 +1,8 @@
-import type { GraphDetailDto, GraphSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { GraphDetailDto, GraphLoadedDto, GraphSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { AdminProxyError, AdminProxyErrorKind, type AdminConnectInfo, type IAdminProxy } from './admin-proxy.js'
 import { EnvType, type EnvironmentRecord } from './environment-record.js'
-import { EnvironmentNotDevelopmentError, EnvironmentNotFoundError } from './environment-service.js'
-import type { GraphDto } from './control-plane-host.js'
+import { EnvironmentNotDevelopmentError, EnvironmentNotFoundError, EnvironmentNotRuntimeError } from './environment-service.js'
+import type { GraphDto, PromotionResultDto } from './control-plane-host.js'
 
 export interface IEnvironmentLookup
 {
@@ -86,9 +86,32 @@ export class GraphService
         await GraphService.Classify(graphName, () => this.proxy.DeleteGraph(info, { graphName }))
     }
 
+    /** Relays a dev-environment graph into a runtime environment: read the packages out of the source (as its Owner), write them into the target (as its Owner). The two containers never touch. */
+    public async Promote(sourceEnv: string, graphName: string, targetEnv: string): Promise<PromotionResultDto>
+    {
+        // Both env-type gates run before any proxy call, so a wrong type never opens a container connection.
+        const sourceInfo = await this.InfoFor(sourceEnv)
+        const targetInfo = await this.RuntimeInfoFor(targetEnv)
+        const exported = await GraphService.Classify(graphName, () => this.proxy.ExportGraph(sourceInfo, { graphName }))
+        const loaded = await this.proxy.LoadGraph(targetInfo, { graphName, packages: exported.packages })
+        return { graphName: loaded.name, packageCount: loaded.packages.length, targetEnv }
+    }
+
+    public async GetLoaded(runtimeEnv: string): Promise<GraphLoadedDto | null>
+    {
+        const info = await this.RuntimeInfoFor(runtimeEnv)
+        return this.proxy.GetLoadedGraph(info)
+    }
+
     private async InfoFor(envName: string): Promise<AdminConnectInfo>
     {
         this.Require(envName)
+        return this.adminInfoFor(envName)
+    }
+
+    private async RuntimeInfoFor(envName: string): Promise<AdminConnectInfo>
+    {
+        this.RequireRuntime(envName)
         return this.adminInfoFor(envName)
     }
 
@@ -102,6 +125,20 @@ export class GraphService
         if (record.type !== EnvType.Development)
         {
             throw new EnvironmentNotDevelopmentError(envName)
+        }
+        return record
+    }
+
+    private RequireRuntime(envName: string): EnvironmentRecord
+    {
+        const record = this.environments.Get(envName)
+        if (!record)
+        {
+            throw new EnvironmentNotFoundError(envName)
+        }
+        if (record.type !== EnvType.Runtime)
+        {
+            throw new EnvironmentNotRuntimeError(envName)
         }
         return record
     }

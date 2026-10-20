@@ -260,6 +260,21 @@ class FakeAdminProxy implements IAdminProxy
         throw new Error('unused')
     }
 
+    public async ExportGraph(_info: AdminConnectInfo, _p: any): Promise<any>
+    {
+        throw new Error('unused')
+    }
+
+    public async LoadGraph(_info: AdminConnectInfo, _p: any): Promise<any>
+    {
+        throw new Error('unused')
+    }
+
+    public async GetLoadedGraph(_info: AdminConnectInfo): Promise<any>
+    {
+        throw new Error('unused')
+    }
+
     public async IssueToken(info: AdminConnectInfo, params: IssueTokenParams): Promise<TokenIssuedDto>
     {
         this.Calls.push({ method: 'IssueToken', info, args: [params] })

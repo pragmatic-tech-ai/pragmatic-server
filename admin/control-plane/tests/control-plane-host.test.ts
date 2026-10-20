@@ -4,7 +4,8 @@ import { request } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'node:test'
-import { ControlPlaneHost, type GraphDto, type IEnvironmentService, type IGraphService } from '../control-plane-host.js'
+import { ControlPlaneHost, type GraphDto, type IEnvironmentService, type IGraphService, type PromotionResultDto } from '../control-plane-host.js'
+import type { GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { CreateFailedError, DockerUnavailableError, EnvironmentExistsError, EnvironmentNotFoundError, ImageMissingError } from '../environment-service.js'
 import { PortUnavailableError } from '../port-allocator.js'
 import { InvalidEnvironmentNameError } from '../template-catalog.js'
@@ -14,7 +15,7 @@ import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto } from '@
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import { TemplateCatalog } from '../template-catalog.js'
 
-import { EnvironmentNotDevelopmentError } from '../environment-service.js'
+import { EnvironmentNotDevelopmentError, EnvironmentNotRuntimeError } from '../environment-service.js'
 import { GraphExistsError, GraphNotFoundError } from '../graph-service.js'
 import type { IOperatorIdentity, OperatorPrincipal, OperatorSession } from '../operator-identity.js'
 
@@ -185,6 +186,7 @@ class FakeGraphService implements IGraphService
     public Throw: Error | undefined
     public Calls: string[] = []
     public Seed: GraphDto[] = []
+    public Loaded: GraphLoadedDto | null = { name: 'g1', packages: [{ id: 'p', version: '1' }], promotedAt: '2026-10-20T01:00:00.000Z' }
 
     public async Create(envName: string, name: string, description: string): Promise<GraphDto>
     {
@@ -216,6 +218,20 @@ class FakeGraphService implements IGraphService
     {
         this.Calls.push(`delete:${envName}:${graphName}`)
         this.MaybeThrow()
+    }
+
+    public async Promote(sourceEnv: string, graphName: string, targetEnv: string): Promise<PromotionResultDto>
+    {
+        this.Calls.push(`promote:${sourceEnv}:${graphName}:${targetEnv}`)
+        this.MaybeThrow()
+        return { graphName, packageCount: 2, targetEnv }
+    }
+
+    public async GetLoaded(runtimeEnv: string): Promise<GraphLoadedDto | null>
+    {
+        this.Calls.push(`getLoaded:${runtimeEnv}`)
+        this.MaybeThrow()
+        return this.Loaded
     }
 
     private MaybeThrow(): void
@@ -732,6 +748,47 @@ describe('ControlPlaneHost', () =>
         assert.equal((await Harness.Anon(host, 'GET', '/api/environments/dev1/graphs')).status, 401)
         assert.equal((await Harness.Anon(host, 'POST', '/api/environments/dev1/graphs', JSON.stringify({ name: 'g1', description: 'd' }))).status, 401)
         assert.deepEqual(fakeGraph.Calls, [])
+    })
+
+    it('POST promote relays to the graph service and returns the promotion DTO', async () =>
+    {
+        const r = await Harness.Send(host, 'POST', '/api/environments/dev1/graphs/g1/promote', JSON.stringify({ targetEnv: 'rt1' }))
+        assert.equal(r.status, 200)
+        assert.deepEqual(fakeGraph.Calls, ['promote:dev1:g1:rt1'])
+        assert.deepEqual(JSON.parse(r.body), { graphName: 'g1', packageCount: 2, targetEnv: 'rt1' })
+    })
+
+    it('a non-POST on the promote path is not handled (404)', async () =>
+    {
+        const get = await Harness.Send(host, 'GET', '/api/environments/dev1/graphs/g1/promote')
+        assert.equal(get.status, 404)
+        assert.deepEqual(fakeGraph.Calls, [])
+    })
+
+    it('promote with a missing or empty targetEnv is 400', async () =>
+    {
+        assert.equal((await Harness.Send(host, 'POST', '/api/environments/dev1/graphs/g1/promote', JSON.stringify({}))).status, 400)
+        assert.equal((await Harness.Send(host, 'POST', '/api/environments/dev1/graphs/g1/promote', JSON.stringify({ targetEnv: '' }))).status, 400)
+        assert.deepEqual(fakeGraph.Calls, [])
+    })
+
+    it('maps a Development target promote error to 400', async () =>
+    {
+        fakeGraph.Throw = new EnvironmentNotRuntimeError('rt1')
+        const r = await Harness.Send(host, 'POST', '/api/environments/dev1/graphs/g1/promote', JSON.stringify({ targetEnv: 'rt1' }))
+        assert.equal(r.status, 400)
+    })
+
+    it('GET loaded-graph returns the runtime manifest, or JSON null when none', async () =>
+    {
+        const r = await Harness.Send(host, 'GET', '/api/environments/rt1/loaded-graph')
+        assert.equal(r.status, 200)
+        assert.deepEqual(fakeGraph.Calls, ['getLoaded:rt1'])
+        assert.equal(JSON.parse(r.body).promotedAt, '2026-10-20T01:00:00.000Z')
+        fakeGraph.Loaded = null
+        const none = await Harness.Send(host, 'GET', '/api/environments/rt1/loaded-graph')
+        assert.equal(none.status, 200)
+        assert.equal(JSON.parse(none.body), null)
     })
 
     it('POST maker-token returns 201 with only token, principalId, expiresAt', async () =>

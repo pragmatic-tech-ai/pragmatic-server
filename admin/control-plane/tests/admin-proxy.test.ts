@@ -95,6 +95,24 @@ class FakeConnection implements IAdminConnection
         this.Record('DeleteGraph')
     }
 
+    public async ExportGraph(_p: any): Promise<any>
+    {
+        this.Record('ExportGraph')
+        return { name: 'g', packages: [] }
+    }
+
+    public async LoadGraph(_p: any): Promise<any>
+    {
+        this.Record('LoadGraph')
+        return { name: 'g', packages: [], promotedAt: '2026-10-20T00:00:00.000Z' }
+    }
+
+    public async GetLoadedGraph(): Promise<any>
+    {
+        this.Record('GetLoadedGraph')
+        return null
+    }
+
     public async IssueToken(_p: any): Promise<any>
     {
         this.Record('IssueToken')

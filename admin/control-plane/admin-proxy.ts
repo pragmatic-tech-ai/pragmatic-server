@@ -1,5 +1,5 @@
 import { AdminProtocol, GraphProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { AccountDto, CreateAccountParams, GraphCreateParamsDto, GraphDetailDto, GraphRefParamsDto, GraphSummaryDto, GrantDto, GrantMutationDto, IdentityConfigDto, IssueTokenParams, MessageConnection, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { AccountDto, CreateAccountParams, GraphCreateParamsDto, GraphDetailDto, GraphExportDto, GraphLoadParamsDto, GraphLoadedDto, GraphRefParamsDto, GraphSummaryDto, GrantDto, GrantMutationDto, IdentityConfigDto, IssueTokenParams, MessageConnection, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { UserSeeder } from '../../environments/seed/users.js'
 
 export type AdminConnectInfo = { httpUrl: string; wsUrl: string; tenant: string; email: string; password: string }
@@ -62,6 +62,9 @@ export interface IAdminConnection
     ListGraphs(): Promise<GraphSummaryDto[]>
     GetGraph(params: GraphRefParamsDto): Promise<GraphDetailDto>
     DeleteGraph(params: GraphRefParamsDto): Promise<void>
+    ExportGraph(params: GraphRefParamsDto): Promise<GraphExportDto>
+    LoadGraph(params: GraphLoadParamsDto): Promise<GraphLoadedDto>
+    GetLoadedGraph(): Promise<GraphLoadedDto | null>
     IssueToken(params: IssueTokenParams): Promise<TokenIssuedDto>
     Dispose(): void
 }
@@ -86,6 +89,9 @@ export interface IAdminProxy
     ListGraphs(info: AdminConnectInfo): Promise<GraphSummaryDto[]>
     GetGraph(info: AdminConnectInfo, params: GraphRefParamsDto): Promise<GraphDetailDto>
     DeleteGraph(info: AdminConnectInfo, params: GraphRefParamsDto): Promise<void>
+    ExportGraph(info: AdminConnectInfo, params: GraphRefParamsDto): Promise<GraphExportDto>
+    LoadGraph(info: AdminConnectInfo, params: GraphLoadParamsDto): Promise<GraphLoadedDto>
+    GetLoadedGraph(info: AdminConnectInfo): Promise<GraphLoadedDto | null>
     IssueToken(info: AdminConnectInfo, params: IssueTokenParams): Promise<TokenIssuedDto>
 }
 
@@ -176,6 +182,21 @@ export class AdminProxy implements IAdminProxy
     public async DeleteGraph(info: AdminConnectInfo, params: GraphRefParamsDto): Promise<void>
     {
         await this.With(info, conn => conn.DeleteGraph(params))
+    }
+
+    public async ExportGraph(info: AdminConnectInfo, params: GraphRefParamsDto): Promise<GraphExportDto>
+    {
+        return this.With(info, conn => conn.ExportGraph(params))
+    }
+
+    public async LoadGraph(info: AdminConnectInfo, params: GraphLoadParamsDto): Promise<GraphLoadedDto>
+    {
+        return this.With(info, conn => conn.LoadGraph(params))
+    }
+
+    public async GetLoadedGraph(info: AdminConnectInfo): Promise<GraphLoadedDto | null>
+    {
+        return this.With(info, conn => conn.GetLoadedGraph())
     }
 
     public async IssueToken(info: AdminConnectInfo, params: IssueTokenParams): Promise<TokenIssuedDto>
@@ -321,6 +342,21 @@ export class WsAdminConnection implements IAdminConnection
     public async DeleteGraph(params: GraphRefParamsDto): Promise<void>
     {
         await this.conn.sendRequest(GraphProtocol.Delete, params)
+    }
+
+    public ExportGraph(params: GraphRefParamsDto): Promise<GraphExportDto>
+    {
+        return this.conn.sendRequest(GraphProtocol.Export, params)
+    }
+
+    public LoadGraph(params: GraphLoadParamsDto): Promise<GraphLoadedDto>
+    {
+        return this.conn.sendRequest(GraphProtocol.Load, params)
+    }
+
+    public GetLoadedGraph(): Promise<GraphLoadedDto | null>
+    {
+        return this.conn.sendRequest(GraphProtocol.Loaded) as Promise<GraphLoadedDto | null>
     }
 
     public IssueToken(params: IssueTokenParams): Promise<TokenIssuedDto>

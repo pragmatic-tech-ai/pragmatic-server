@@ -10,7 +10,8 @@ import {
     EnvironmentExistsError,
     EnvironmentNotFoundError,
     ImageMissingError,
-    EnvironmentNotDevelopmentError
+    EnvironmentNotDevelopmentError,
+    EnvironmentNotRuntimeError
 } from './environment-service.js'
 import { GraphExistsError, GraphNameInvalidError, GraphNotFoundError } from './graph-service.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from './environment-record.js'
@@ -19,7 +20,7 @@ import { InvalidEnvironmentNameError, TemplateCatalog } from './template-catalog
 import type { IOperatorIdentity } from './operator-identity.js'
 import { SessionCookie } from './session-cookie.js'
 import { AdminProxyError, AdminProxyErrorKind, type AdminSnapshot } from './admin-proxy.js'
-import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { CreateAccountParams, GraphLoadedDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 export interface IEnvironmentService
 {
@@ -48,6 +49,8 @@ export interface IGraphService
     List(envName: string): Promise<readonly GraphDto[]>
     Get(envName: string, graphName: string): Promise<GraphDto>
     Delete(envName: string, graphName: string): Promise<void>
+    Promote(sourceEnv: string, graphName: string, targetEnv: string): Promise<PromotionResultDto>
+    GetLoaded(runtimeEnv: string): Promise<GraphLoadedDto | null>
 }
 
 /** The only shape ever sent to a client: connect info, no internals or secrets. */
@@ -76,6 +79,13 @@ export type GraphDto = {
     description: string
     packageCount: number
     createdAt: string
+}
+
+/** The result of promoting a dev graph into a runtime environment: non-secret refs only. */
+export type PromotionResultDto = {
+    graphName: string
+    packageCount: number
+    targetEnv: string
 }
 
 export type ChangedEvent = { type: string }
@@ -151,6 +161,13 @@ export class ControlPlaneHost
     private static readonly MakerTokenSegment = 'maker-token'
     private static readonly MakerTokenPathPattern = new RegExp(
         '^' + ControlPlaneHost.EnvironmentsPath + '/([^/]+)/' + ControlPlaneHost.MakerTokenSegment + '$')
+    private static readonly PromoteSegment = 'promote'
+    private static readonly PromotePathPattern = new RegExp(
+        '^' + ControlPlaneHost.EnvironmentsPath + '/([^/]+)/' + ControlPlaneHost.GraphsSegment + '/([^/]+)/' + ControlPlaneHost.PromoteSegment + '$')
+    private static readonly LoadedGraphSegment = 'loaded-graph'
+    private static readonly LoadedGraphPathPattern = new RegExp(
+        '^' + ControlPlaneHost.EnvironmentsPath + '/([^/]+)/' + ControlPlaneHost.LoadedGraphSegment + '$')
+    private static readonly TargetEnvRequiredMessage = 'targetEnv (non-empty string) is required'
     private static readonly DescriptionRequiredMessage = 'description (string) is required'
     private static readonly AccountFieldsMessage = 'email, principalId and password (non-empty strings) are required'
     private static readonly GrantFieldsMessage = 'subject and role (strings) are required'
@@ -209,7 +226,8 @@ export class ControlPlaneHost
         [GraphExistsError, ControlPlaneHost.StatusConflict],
         [GraphNotFoundError, ControlPlaneHost.StatusNotFound],
         [GraphNameInvalidError, ControlPlaneHost.StatusBadRequest],
-        [EnvironmentNotDevelopmentError, ControlPlaneHost.StatusBadRequest]
+        [EnvironmentNotDevelopmentError, ControlPlaneHost.StatusBadRequest],
+        [EnvironmentNotRuntimeError, ControlPlaneHost.StatusBadRequest]
     ])
 
     private httpServer: HttpServer | undefined
@@ -412,6 +430,16 @@ export class ControlPlaneHost
         {
             return await this.RouteMakerToken(req, res, method, tm)
         }
+        const pm = ControlPlaneHost.PromotePathPattern.exec(path)
+        if (pm !== null)
+        {
+            return await this.RoutePromote(req, res, method, pm)
+        }
+        const lm = ControlPlaneHost.LoadedGraphPathPattern.exec(path)
+        if (lm !== null)
+        {
+            return await this.RouteLoadedGraph(res, method, lm)
+        }
         const gm = ControlPlaneHost.GraphPathPattern.exec(path)
         if (gm !== null)
         {
@@ -482,6 +510,52 @@ export class ControlPlaneHost
         const issued = await this.service.AdminIssueMakerToken(name)
         const dto: MakerTokenDto = { token: issued.token, principalId: issued.principalId, expiresAt: issued.expiresAt }
         this.WriteJson(res, ControlPlaneHost.StatusCreated, dto)
+    }
+
+    /** Relays POST /api/environments/SOURCE/graphs/GRAPH/promote into the runtime target; false for any other method. */
+    private async RoutePromote(req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
+    {
+        if (method !== ControlPlaneHost.MethodPost)
+        {
+            return false
+        }
+        const env = ControlPlaneHost.Decode(m[1] as string)
+        const graph = ControlPlaneHost.Decode(m[2] as string)
+        if (env === undefined || graph === undefined)
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+            return true
+        }
+        const body = await this.ReadJsonObject(req, res)
+        if (body === undefined)
+        {
+            return true
+        }
+        if (!ControlPlaneHost.NonEmpty(body.targetEnv))
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.TargetEnvRequiredMessage })
+            return true
+        }
+        const dto = await this.graphService.Promote(env, graph, body.targetEnv as string)
+        this.WriteJson(res, ControlPlaneHost.StatusOk, dto)
+        return true
+    }
+
+    /** Serves GET /api/environments/RUNTIME/loaded-graph (the promoted-graph manifest, or JSON null); false for any other method. */
+    private async RouteLoadedGraph(res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
+    {
+        if (method !== ControlPlaneHost.MethodGet)
+        {
+            return false
+        }
+        const env = ControlPlaneHost.Decode(m[1] as string)
+        if (env === undefined)
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+            return true
+        }
+        this.WriteJson(res, ControlPlaneHost.StatusOk, await this.graphService.GetLoaded(env))
+        return true
     }
 
     /** Dispatches /api/environments/NAME/graphs[/GRAPH]; false when the (graph, method) combination is unknown. */
