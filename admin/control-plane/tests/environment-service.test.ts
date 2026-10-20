@@ -4,11 +4,12 @@ import { mkdtemp, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EnvironmentRegistry } from '../environment-registry.js'
-import { EnvStatus, Template, type EnvironmentRecord, type IContainerProbe } from '../environment-record.js'
+import { EnvStatus, EnvType, Template, type EnvironmentRecord, type IContainerProbe } from '../environment-record.js'
 import { PortAllocator, PortUnavailableError, type IPortProbe } from '../port-allocator.js'
+
 import { EnvironmentService, EnvironmentExistsError, EnvironmentNotFoundError, ImageMissingError, DockerUnavailableError, CreateFailedError } from '../environment-service.js'
 import type { IDockerEnv, IBundleBuilder, IUserSeeder } from '../docker-env-port.js'
-import type { EnvDefinition } from '../../../environments/seed/bundle.js'
+import { TenantPurposeName, type EnvDefinition } from '../../../environments/seed/bundle.js'
 import type { UserSeed } from '../../../environments/seed/users.js'
 import type { IAdminProxy, AdminConnectInfo, AdminSnapshot } from '../admin-proxy.js'
 import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -270,14 +271,14 @@ class Harness
 
     public static Record(name: string, status: EnvStatus): EnvironmentRecord
     {
-        return { name, template: Template.DevBlank, tenantId: name, hostPort: 9200, containerName: `pragmatic-env-${name}`, volumeName: `pragmatic-env-${name}-data`, bundleDir: `/b/${name}`, createdAt: '2026-10-16T00:00:00.000Z', status }
+        return { name, template: Template.DevBlank, tenantId: name, hostPort: 9200, type: EnvType.Development, containerName: `pragmatic-env-${name}`, volumeName: `pragmatic-env-${name}-data`, bundleDir: `/b/${name}`, createdAt: '2026-10-16T00:00:00.000Z', status }
     }
 }
 
 test('Create demo runs the full ordered flow and persists a Running record', async () =>
 {
     const h = await Harness.Make()
-    const rec = await h.Service.Create('demo1', Template.DemoContoso)
+    const rec = await h.Service.Create('demo1', Template.DemoContoso, EnvType.Runtime)
     assert.deepEqual(h.Calls, ['allocate', 'generate', 'ensureImage', 'up', 'waitHealthy', 'login', 'connect', 'seedUsers', 'dispose', 'put:running'])
     assert.equal(h.Bundle.Args?.bundleDir, join(h.DataRoot, 'demo1'))
     assert.ok(h.Bundle.Args?.seedDir)
@@ -295,7 +296,7 @@ test('Create demo runs the full ordered flow and persists a Running record', asy
 test('Create dev skips user seeding', async () =>
 {
     const h = await Harness.Make()
-    const rec = await h.Service.Create('dev1', Template.DevBlank)
+    const rec = await h.Service.Create('dev1', Template.DevBlank, EnvType.Development)
     assert.deepEqual(h.Calls, ['allocate', 'generate', 'ensureImage', 'up', 'waitHealthy', 'put:running'])
     assert.equal(rec.status, EnvStatus.Running)
 })
@@ -306,7 +307,7 @@ test('Create duplicate throws before any docker or port call', async () =>
     await h.Registry.Put(Harness.Record('dup', EnvStatus.Stopped))
     h.Calls.length = 0
     h.Calls.length = 0
-    await assert.rejects(() => h.Service.Create('dup', Template.DevBlank), EnvironmentExistsError)
+    await assert.rejects(() => h.Service.Create('dup', Template.DevBlank, EnvType.Development), EnvironmentExistsError)
     assert.deepEqual(h.Calls, [])
 })
 
@@ -314,7 +315,7 @@ test('Create with missing image throws ImageMissingError and never calls Up', as
 {
     const h = await Harness.Make()
     h.Docker.ImageOk = false
-    await assert.rejects(() => h.Service.Create('a', Template.DevBlank), (e: unknown) => e instanceof ImageMissingError && e.buildCommand.length > 0)
+    await assert.rejects(() => h.Service.Create('a', Template.DevBlank, EnvType.Development), (e: unknown) => e instanceof ImageMissingError && e.buildCommand.length > 0)
     assert.ok(!h.Calls.includes('up'))
 })
 
@@ -322,7 +323,7 @@ test('Create with daemon down throws DockerUnavailableError and never calls Up',
 {
     const h = await Harness.Make()
     h.Docker.DaemonDown = true
-    await assert.rejects(() => h.Service.Create('a', Template.DevBlank), (e: unknown) => e instanceof DockerUnavailableError && /docker/i.test(e.message))
+    await assert.rejects(() => h.Service.Create('a', Template.DevBlank, EnvType.Development), (e: unknown) => e instanceof DockerUnavailableError && /docker/i.test(e.message))
     assert.ok(!h.Calls.includes('up'))
 })
 
@@ -330,7 +331,7 @@ test('Create rolls back when Up fails', async () =>
 {
     const h = await Harness.Make()
     h.Docker.FailUp = true
-    await assert.rejects(() => h.Service.Create('a', Template.DevBlank), CreateFailedError)
+    await assert.rejects(() => h.Service.Create('a', Template.DevBlank, EnvType.Development), CreateFailedError)
     assert.equal(h.Calls.filter(c => c === 'down').length, 1)
     assert.equal(h.Registry.Get('a')?.status, EnvStatus.Failed)
 })
@@ -340,7 +341,7 @@ test('Create still records Failed and throws CreateFailedError when rollback Dow
     const h = await Harness.Make()
     h.Docker.FailUp = true
     h.Docker.FailDown = true
-    await assert.rejects(() => h.Service.Create('a', Template.DevBlank), CreateFailedError)
+    await assert.rejects(() => h.Service.Create('a', Template.DevBlank, EnvType.Development), CreateFailedError)
     assert.equal(h.Registry.Get('a')?.status, EnvStatus.Failed)
 })
 
@@ -379,7 +380,7 @@ test('Delete downs, removes volume, and unregisters', async () =>
 test('user-supplied busy port propagates before any docker call', async () =>
 {
     const h = await Harness.Make(true)
-    await assert.rejects(() => h.Service.Create('a', Template.DevBlank, 9300), PortUnavailableError)
+    await assert.rejects(() => h.Service.Create('a', Template.DevBlank, EnvType.Development, 9300), PortUnavailableError)
     assert.deepEqual(h.Calls, ['check'])
 })
 
@@ -454,4 +455,32 @@ test('Admin methods throw when the admin secret is missing and never call the pr
     await AdminFixture.Seed(h, false)
     await assert.rejects(() => h.Service.AdminSnapshot(AdminFixture.Name), /no provisioned secret for adm-admin-pw/)
     assert.equal(h.Proxy.Calls.length, 0)
+})
+
+class DefOfProbe
+{
+    public static Purpose(rec: EnvironmentRecord): TenantPurposeName
+    {
+        return ((EnvironmentService as any).DefOf(rec) as EnvDefinition).purpose
+    }
+}
+
+test('Create stores the chosen type on the record', async () =>
+{
+    const h = await Harness.Make()
+    const rec = await h.Service.Create('e1', Template.DevBlank, EnvType.Runtime)
+    assert.equal(rec.type, EnvType.Runtime)
+    assert.equal(h.Registry.Get('e1')?.type, EnvType.Runtime)
+})
+
+test('DefOf re-derives purpose from the stored type, not the template default', () =>
+{
+    const rec = { ...Harness.Record('r1', EnvStatus.Stopped), template: Template.DevBlank, type: EnvType.Runtime }
+    assert.equal(DefOfProbe.Purpose(rec), TenantPurposeName.Runtime)
+})
+
+test('DefOf falls back to the template default when a legacy record has no type', () =>
+{
+    const rec = { ...Harness.Record('l1', EnvStatus.Stopped), template: Template.DemoContoso, type: undefined } as unknown as EnvironmentRecord
+    assert.equal(DefOfProbe.Purpose(rec), TenantPurposeName.Runtime)
 })

@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { BundleBuilder, EnvKind, type EnvDefinition } from '../../environments/seed/bundle.js'
 import { DockerEnv } from '../../environments/seed/docker.js'
 import type { UserSeed } from '../../environments/seed/users.js'
-import { EnvStatus, type Template, type EnvironmentRecord } from './environment-record.js'
+import { EnvStatus, type EnvType, type Template, type EnvironmentRecord } from './environment-record.js'
 import type { EnvironmentRegistry } from './environment-registry.js'
 import type { PortAllocator } from './port-allocator.js'
 import { TemplateCatalog } from './template-catalog.js'
@@ -93,7 +93,7 @@ export class EnvironmentService
     {
     }
 
-    public async Create(name: string, template: Template, hostPort?: number): Promise<EnvironmentRecord>
+    public async Create(name: string, template: Template, type: EnvType, hostPort?: number): Promise<EnvironmentRecord>
     {
         const safe = TemplateCatalog.SanitizeName(name)
         if (this.registry.Get(safe) !== undefined)
@@ -111,7 +111,7 @@ export class EnvironmentService
         {
             port = await this.allocator.Allocate(taken)
         }
-        const { def, seedDir } = TemplateCatalog.Resolve(template, safe, port)
+        const { def, seedDir } = TemplateCatalog.Resolve(template, safe, port, type)
         const bundleDir = join(this.dataRoot, def.name)
         await this.bundle.Generate(def, bundleDir, seedDir)
 
@@ -134,6 +134,7 @@ export class EnvironmentService
         const record: EnvironmentRecord = {
             name: def.name,
             template,
+            type,
             tenantId: def.tenantId,
             hostPort: port,
             containerName: DockerEnv.ContainerName(def),
@@ -323,7 +324,7 @@ export class EnvironmentService
     /** The record does not store kind/purpose, so re-derive the definition from its template. */
     private static DefOf(rec: EnvironmentRecord): EnvDefinition
     {
-        return TemplateCatalog.Resolve(rec.template, rec.name, rec.hostPort).def
+        return TemplateCatalog.Resolve(rec.template, rec.name, rec.hostPort, rec.type ?? TemplateCatalog.DefaultTypeFor(rec.template)).def
     }
 
     private async SeedDemoUsers(def: EnvDefinition, bundleDir: string, seedDir: string, port: number): Promise<void>
