@@ -90,9 +90,9 @@ export class ControlPlaneClient
         return await this.Send<TemplateDto[]>(ControlPlaneClient.TemplatesRoute, undefined)
     }
 
-    public async CreateEnvironment(name: string, template: string, hostPort?: number): Promise<EnvironmentDto>
+    public async CreateEnvironment(name: string, template: string, type: string, hostPort?: number): Promise<EnvironmentDto>
     {
-        const body: Record<string, unknown> = { name, template }
+        const body: Record<string, unknown> = { name, template, type }
         if (hostPort !== undefined)
         {
             body.hostPort = hostPort

@@ -26,6 +26,19 @@ class FetchStub
     }
 }
 
+describe('ControlPlaneClient create', () =>
+{
+    afterEach(() => { FetchStub.Restore() })
+
+    it('CreateEnvironment posts the type in the body', async () =>
+    {
+        FetchStub.Install({})
+        await new ControlPlaneClient().CreateEnvironment('e1', 'dev-blank', 'development', 8080)
+        const call = FetchStub.Calls[0]!
+        assert.deepEqual(JSON.parse(call.init?.body as string), { name: 'e1', template: 'dev-blank', type: 'development', hostPort: 8080 })
+    })
+})
+
 describe('ControlPlaneClient security model', () =>
 {
     afterEach(() => { FetchStub.Restore() })
