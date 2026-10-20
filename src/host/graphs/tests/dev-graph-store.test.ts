@@ -20,7 +20,11 @@ class MemoryStorage implements IStorage
     public async Exists(path: string): Promise<boolean> { return this.Files.has(path) }
     public async Delete(path: string): Promise<void> { this.Files.delete(path) }
     public async CreateDirectory(): Promise<void> {}
-    public async Rename(from: string, to: string): Promise<void> { this.Files.set(to, await this.ReadText(from)); this.Files.delete(from) }
+    public async Rename(from: string, to: string): Promise<void>
+    {
+        this.Files.set(to, await this.ReadText(from))
+        this.Files.delete(from)
+    }
     public async List(): Promise<readonly StorageEntry[]> { return [] }
 }
 
@@ -66,4 +70,15 @@ test('Remove deletes a graph; it is gone after reload', async () =>
     const reloaded = await Fixture.Reload(storage)
     assert.deepEqual(reloaded.List().map(r => r.name), ['b'])
     assert.equal(reloaded.Get('a'), undefined)
+})
+
+test('mutating a returned record does not change stored state', async () =>
+{
+    const storage = new MemoryStorage()
+    const store = new DevGraphStore(storage)
+    await store.Put(Fixture.Record('g', 'd'))
+    store.Get('g')?.packages.push({ id: 'x', version: '1' })
+    store.List()[0].packages.push({ id: 'y', version: '1' })
+    assert.equal(store.Get('g')?.packages.length, 0)
+    assert.equal((await Fixture.Reload(storage)).Get('g')?.packages.length, 0)
 })

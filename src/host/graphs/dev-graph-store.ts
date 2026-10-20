@@ -4,7 +4,7 @@ export type DevGraphRecord = { name: string; description: string; packages: { id
 
 type GraphsDocument = { graphs: Record<string, DevGraphRecord> }
 
-/** Persistent store of a dev environment's graph records: one JSON document in the tenant graphs volume, over IStorage. */
+/** Returns defensive copies so callers cannot mutate persisted state. Persistent store of a dev environment's graph records: one JSON document in the tenant graphs volume, over IStorage. */
 export class DevGraphStore
 {
     private static readonly FileName = 'graphs.json'
@@ -27,23 +27,24 @@ export class DevGraphStore
         const graphs = document[DevGraphStore.RootKey] ?? {}
         for (const [name, record] of Object.entries(graphs))
         {
-            this.records.set(name, { ...record })
+            this.records.set(name, DevGraphStore.Copy(record))
         }
     }
 
     public List(): readonly DevGraphRecord[]
     {
-        return [...this.records.values()]
+        return [...this.records.values()].map(r => DevGraphStore.Copy(r))
     }
 
     public Get(name: string): DevGraphRecord | undefined
     {
-        return this.records.get(name)
+        const record = this.records.get(name)
+        return record === undefined ? undefined : DevGraphStore.Copy(record)
     }
 
     public async Put(record: DevGraphRecord): Promise<void>
     {
-        this.records.set(record.name, { ...record })
+        this.records.set(record.name, DevGraphStore.Copy(record))
         await this.Persist()
     }
 
@@ -51,6 +52,11 @@ export class DevGraphStore
     {
         this.records.delete(name)
         await this.Persist()
+    }
+
+    private static Copy(record: DevGraphRecord): DevGraphRecord
+    {
+        return { ...record, packages: record.packages.map(p => ({ ...p })) }
     }
 
     private async Persist(): Promise<void>
