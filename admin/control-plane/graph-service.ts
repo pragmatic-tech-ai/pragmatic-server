@@ -71,7 +71,7 @@ export class GraphService
         const env = this.Require(envName)
         GraphService.SanitizeGraphName(name)
         // Single-writer by design: the operator portal issues one request at a time, so
-        // load -> duplicate-check -> put (and Delete's equivalent) is not guarded against concurrent callers.
+        // load -> duplicate-check -> put (and Delete's load -> check -> remove) is not guarded against concurrent callers.
         const store = this.StoreFor(env)
         await store.Load()
         if (store.Get(name))
