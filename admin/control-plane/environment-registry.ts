@@ -3,6 +3,8 @@ import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { EnvStatus, EnvType, type EnvironmentRecord, type IContainerProbe } from './environment-record.js'
 
+type PersistedEnvironmentRecord = Omit<EnvironmentRecord, 'type'> & { type?: EnvType }
+
 export class EnvironmentRegistry
 {
     private static readonly Encoding = 'utf8'
@@ -33,7 +35,7 @@ export class EnvironmentRegistry
             }
             throw err
         }
-        const parsed = JSON.parse(text) as Record<string, Record<string, EnvironmentRecord> | undefined>
+        const parsed = JSON.parse(text) as Record<string, Record<string, PersistedEnvironmentRecord> | undefined>
         const envs = parsed[EnvironmentRegistry.RootKey] ?? {}
         for (const [name, record] of Object.entries(envs))
         {

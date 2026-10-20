@@ -18,6 +18,8 @@ class FakeProbe implements IContainerProbe
 
 class RegistryFixture
 {
+    public static readonly Encoding = 'utf8'
+
     public static Record(name: string, port: number, status: EnvStatus): EnvironmentRecord
     {
         return {
@@ -128,7 +130,7 @@ test('Load normalizes a legacy record with no type to Development', async () =>
     {
         const legacy: Record<string, unknown> = { ...RegistryFixture.Record('old', 8090, EnvStatus.Running) }
         delete legacy.type
-        await writeFile(file, JSON.stringify({ environments: { old: legacy } }), 'utf8')
+        await writeFile(file, JSON.stringify({ environments: { old: legacy } }), RegistryFixture.Encoding)
         const reg = new EnvironmentRegistry(file, new FakeProbe())
         await reg.Load()
         assert.equal(reg.Get('old')!.type, EnvType.Development)
