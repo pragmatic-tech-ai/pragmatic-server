@@ -17,8 +17,10 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Repository, toJSON } from '@pragmatic-tech-ai/todl'
 import type { PackageDocument } from '@pragmatic-tech-ai/todl'
-import { AdminProtocol, CypherProtocol, GraphProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { RemoteBindMode } from '@pragmatic-tech-ai/todl/build-system-core'
+import { AdminProtocol, AppWriteStatus, CypherProtocol, GraphProtocol, PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ContributedPackageDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { HelloAppBuilder } from '../../src/tests/e2e/hello-app-builder.js'
 import { DockerEnv } from '../../environments/seed/docker.js'
 import { UserSeeder } from '../../environments/seed/users.js'
 import { AdminProxy, WsAdminConnector } from './admin-proxy.js'
@@ -121,6 +123,17 @@ export class ControlPlaneSmoke
     private static readonly PromoteBaseConcept = 'Element'
     private static readonly PromoteInstanceSuffix = '.one'
     private static readonly PromoteCypher = 'MATCH (w:Widget) RETURN count(w) AS n'
+    private static readonly RepromoteSolutionId = 'smoke-solution-2'
+    private static readonly RepromoteNamespace = 'smokepromo2'
+    private static readonly RepromoteConcept = 'Gadget'
+    private static readonly RepromoteCypher = 'MATCH (g:Gadget) RETURN count(g) AS n'
+    private static readonly BundledCypher = 'MATCH (g:greeting) RETURN count(g) AS n'
+    private static readonly RepromotedPackageCount = 2
+    private static readonly EnvAppName = 'hello-env'
+    private static readonly EnvReaderPrincipal = 'env-reader'
+    private static readonly EnvReaderEmail = 'env-reader@contoso.test'
+    private static readonly EnvReaderPassword = 'env-reader-test-password'
+    private static readonly WsTenantQuery = '/?tenant='
     private static readonly GraphsSegment = '/graphs'
     private static readonly PromoteSegment = '/promote'
     private static readonly MakerTokenAction = '/maker-token'
@@ -166,6 +179,13 @@ export class ControlPlaneSmoke
         PromoteResult: 'promote: promote returns 200 with graph name, package count and target env',
         PromoteLoaded: 'promote: loaded-graph on the runtime reflects the promoted graph',
         PromoteCypherRead: 'promote: cypher query on the runtime env graph returns the promoted content',
+        EnvAppDeploy: 'env-app: environment-bound app deploys to the runtime env',
+        EnvAppBundledDeploy: 'env-app: bundled (application-bound) app deploys to the same runtime env',
+        EnvAppReaderCreate: 'env-app: runtime reader account created and granted Viewer at Tenant scope',
+        EnvAppRead: 'env-app: Viewer reads the promoted env graph with no OpenApplication',
+        EnvAppRepromote: 'env-app: re-promote of the changed graph returns 200 with both packages',
+        EnvAppLiveRead: 'env-app: same reader connection sees the re-promoted content with no redeploy',
+        EnvAppBundledRead: 'env-app: bundled app still reads its own per-app graph unchanged',
         PromoteDeleteDev: 'promote: development env delete returns 200',
         PromoteDeleteRuntime: 'promote: runtime env delete returns 200'
     }
@@ -329,7 +349,7 @@ export class ControlPlaneSmoke
         {
             return
         }
-        await this.ContributeAs(devRunning.hostPort, dev, makerToken)
+        await this.ContributeAs(devRunning.hostPort, dev, makerToken, S.PromoteSolutionId, S.FixturePackage(), S.PromotedPackageCount)
 
         const rtCreated = await this.Api(S.MethodPost, S.EnvironmentsPath, { name: runtime, template: Template.DemoContoso, type: EnvType.Runtime })
         const rtRunning = rtCreated.status === S.StatusCreated ? await this.WaitFor(runtime, EnvStatus.Running) : undefined
@@ -348,6 +368,7 @@ export class ControlPlaneSmoke
         const loadedOk = loadedRes.status === S.StatusOk && loaded?.name === graph && loaded.packages.length === S.PromotedPackageCount && (loaded.promotedAt ?? S.EmptyString) !== S.EmptyString
         this.Expect(L.PromoteLoaded, loadedOk, S.StatusWord + String(loadedRes.status))
         await this.CheckRuntimeGraphRead(dataRoot, rtRunning.hostPort)
+        await this.RemoteEnvAppRoundTrip(dataRoot, devRunning.hostPort, rtRunning.hostPort, makerToken)
 
         const delDev = await this.Api(S.MethodDelete, this.EnvPath(dev))
         this.Expect(L.PromoteDeleteDev, delDev.status === S.StatusOk, S.StatusWord + String(delDev.status))
@@ -355,8 +376,117 @@ export class ControlPlaneSmoke
         this.Expect(L.PromoteDeleteRuntime, delRt.status === S.StatusOk, S.StatusWord + String(delRt.status))
     }
 
+    /**
+     * FR6 proof: deploy an environment-bound remote app to the runtime env, then read the PROMOTED env graph as a real
+     * runtime account granted Viewer at Tenant scope (no OpenApplication). Re-promote a changed graph and re-read on the
+     * same connection (live, no redeploy); a bundled app on the same tenant still reads its own per-app graph.
+     */
+    private async RemoteEnvAppRoundTrip(dataRoot: string, devPort: number, rtPort: number, makerToken: string): Promise<void>
+    {
+        const S = ControlPlaneSmoke
+        const L = S.Labels
+        const secrets = JSON.parse(readFileSync(join(dataRoot, S.PromoteRuntimeName, S.SecretsFile), S.Utf8)) as Record<string, string>
+        const adminPw = secrets[S.AdminPwKey]
+        if (adminPw === undefined)
+        {
+            this.Expect(L.EnvAppDeploy, false, S.AdminPwKey)
+            return
+        }
+        const seeder = new UserSeeder()
+        const http = S.HttpPrefix + String(rtPort)
+        const wsUrl = S.WsPrefix + String(rtPort) + S.WsTenantQuery + S.DemoTenant
+        const adminToken = await seeder.Login(http, S.DemoTenant, S.AdminEmail, adminPw)
+        let envApp: Awaited<ReturnType<typeof HelloAppBuilder.Build>> | undefined
+        let bundledApp: Awaited<ReturnType<typeof HelloAppBuilder.Build>> | undefined
+        let adminClient: PragmaticClient | undefined
+        let readerClient: PragmaticClient | undefined
+        try
+        {
+            envApp = await HelloAppBuilder.Build(RemoteBindMode.Environment, S.EnvAppName)
+            bundledApp = await HelloAppBuilder.Build()
+            adminClient = await PragmaticClient.ConnectAsync(wsUrl, { bearerToken: adminToken })
+            const envDeployed = await adminClient.DeployApplication(envApp.DeployParams())
+            this.Expect(L.EnvAppDeploy, envDeployed.status === AppWriteStatus.Applied, String(envDeployed.status))
+            const bundledDeployed = await adminClient.DeployApplication(bundledApp.DeployParams())
+            this.Expect(L.EnvAppBundledDeploy, bundledDeployed.status === AppWriteStatus.Applied, String(bundledDeployed.status))
+
+            const adminConn = await seeder.Connect(S.WsPrefix + String(rtPort), S.DemoTenant, adminToken)
+            try
+            {
+                await adminConn.sendRequest(AdminProtocol.CreateAccount, { email: S.EnvReaderEmail, principalId: S.EnvReaderPrincipal, password: S.EnvReaderPassword })
+                await adminConn.sendRequest(AdminProtocol.GrantRole, { subject: S.EnvReaderPrincipal, role: S.ViewerRole, resourceKind: S.TenantKind, resourcePath: [] })
+                this.Expect(L.EnvAppReaderCreate, true)
+            }
+            finally
+            {
+                adminConn.dispose()
+            }
+
+            const readerToken = await seeder.Login(http, S.DemoTenant, S.EnvReaderEmail, S.EnvReaderPassword)
+            readerClient = await PragmaticClient.ConnectAsync(wsUrl, { bearerToken: readerToken })
+            const first = await ControlPlaneSmoke.ScalarCount(readerClient, S.PromoteCypher)
+            this.Expect(L.EnvAppRead, first === S.PromoteExpectedRows, String(first))
+
+            const repromoted = await this.Repromote(devPort, makerToken)
+            this.Expect(L.EnvAppRepromote, repromoted)
+            const widgets = await ControlPlaneSmoke.ScalarCount(readerClient, S.PromoteCypher)
+            const gadgets = await ControlPlaneSmoke.ScalarCount(readerClient, S.RepromoteCypher)
+            this.Expect(L.EnvAppLiveRead, widgets === S.PromoteExpectedRows && gadgets === S.PromoteExpectedRows, String(widgets) + S.Comma + String(gadgets))
+
+            await adminClient.OpenApplication(HelloAppBuilder.AppName)
+            const greetings = await ControlPlaneSmoke.ScalarCount(adminClient, S.BundledCypher)
+            this.Expect(L.EnvAppBundledRead, greetings === S.PromoteExpectedRows, String(greetings))
+        }
+        catch (err)
+        {
+            this.Expect(L.EnvAppRead, false, err instanceof Error ? err.message : String(err))
+        }
+        finally
+        {
+            await readerClient?.DisposeAsync()
+            await adminClient?.DisposeAsync()
+            envApp?.Dispose()
+            bundledApp?.Dispose()
+        }
+    }
+
+    /** Contributes a second solution (a Gadget package) to the dev graph and promotes it again into the runtime; true on a 200 carrying both packages. */
+    private async Repromote(devPort: number, makerToken: string): Promise<boolean>
+    {
+        const S = ControlPlaneSmoke
+        await this.ContributeAs(devPort, S.PromoteDevName, makerToken, S.RepromoteSolutionId, S.RepromotePackage(), S.RepromotedPackageCount)
+        const path = this.EnvPath(S.PromoteDevName) + S.GraphsSegment + S.PathSep + encodeURIComponent(S.PromoteGraphName) + S.PromoteSegment
+        const promoted = await this.Api(S.MethodPost, path, { targetEnv: S.PromoteRuntimeName })
+        const result = promoted.json as PromotionResultDto | undefined
+        return promoted.status === S.StatusOk && result?.packageCount === S.RepromotedPackageCount
+    }
+
+    /** Runs a single-row count query and returns the first cell (undefined when absent). */
+    private static async ScalarCount(client: PragmaticClient, cypher: string): Promise<unknown>
+    {
+        for await (const page of client.QueryAll(cypher))
+        {
+            return page.items[0]?.[0]
+        }
+        return undefined
+    }
+
+    /** A second compiled package (a distinct concept + one instance) used to prove the re-promoted graph is read live. */
+    private static RepromotePackage(): ContributedPackageDto
+    {
+        const S = ControlPlaneSmoke
+        const repo = new Repository()
+        repo.builder()
+            .defineConcept(S.RepromoteConcept)
+            .setNamespace(S.RepromoteNamespace)
+            .assertInstance(S.RepromoteConcept, S.RepromoteNamespace + S.PromoteInstanceSuffix)
+            .commit()
+        const document = toJSON(repo) as PackageDocument
+        return { id: S.RepromoteNamespace, version: S.PromoteVersion, modelJson: JSON.stringify(document) }
+    }
+
     /** Contributes the small fixture package over a maker-token WS to the dev container and records the outcome; a rejection is reported (message only, never the token) instead of escaping. */
-    private async ContributeAs(port: number, tenantId: string, makerToken: string): Promise<void>
+    private async ContributeAs(port: number, tenantId: string, makerToken: string, solutionId: string, pkg: ContributedPackageDto, expectedPackages: number): Promise<void>
     {
         const S = ControlPlaneSmoke
         try
@@ -364,8 +494,8 @@ export class ControlPlaneSmoke
             const conn = await new UserSeeder().Connect(S.WsPrefix + String(port), tenantId, makerToken)
             try
             {
-                const detail = await conn.sendRequest(GraphProtocol.Contribute, { graphName: S.PromoteGraphName, solutionId: S.PromoteSolutionId, packages: [S.FixturePackage()] })
-                const ok = detail.name === S.PromoteGraphName && detail.packages.length === S.PromotedPackageCount
+                const detail = await conn.sendRequest(GraphProtocol.Contribute, { graphName: S.PromoteGraphName, solutionId, packages: [pkg] })
+                const ok = detail.name === S.PromoteGraphName && detail.packages.length === expectedPackages
                 this.Expect(S.Labels.PromoteContribute, ok, detail.name + S.PackagesWord + String(detail.packages.length))
             }
             finally
