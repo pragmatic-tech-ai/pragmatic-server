@@ -85,6 +85,7 @@ export class ServerConnectionHandler
     private static readonly ExecuteModelIdRequiredMessage = `${InvalidParamsPrefix.Text}modelId is required: a write must name its target model`
     private static readonly NotDevelopmentMessage = 'operation requires a development tenant'
     private static readonly GraphServiceUnavailableMessage = 'graph service is not available on this tenant'
+    private static readonly EnvironmentGraphHostUnavailableMessage = 'environment graph host is not available on this tenant'
     private static readonly NameMismatchMessage = 'application manifest name does not match requested name: '
     private static readonly NoApplicationSelectedMessage = 'no application selected: call application/open first'
     private static readonly ApplicationsUnavailableMessage = 'pragmatic applications are not available on this connection'
@@ -725,7 +726,7 @@ export class ServerConnectionHandler
     {
         if (this.environmentGraphHost === undefined)
         {
-            throw new ResponseError(ErrorCodes.InvalidRequest, ServerConnectionHandler.GraphServiceUnavailableMessage)
+            throw new ResponseError(ErrorCodes.InvalidRequest, ServerConnectionHandler.EnvironmentGraphHostUnavailableMessage)
         }
         return this.environmentGraphHost
     }

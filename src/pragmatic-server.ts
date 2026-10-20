@@ -454,9 +454,10 @@ export class PragmaticServer implements IEnvironmentGraphHost
         await new GraphPackageIngest(this.PackagesStorage()).Store(params.packages)
         const refs = params.packages.map(p => ({ id: p.id, version: p.version }))
         const graph = await EnvironmentGraph.Build(new StoragePackageSource(this.PackagesStorage()), params.graphName, refs)
-        this.environmentGraph = graph
         const record = graph.Record()
+        // Persist first: a Save failure leaves the prior live instance and the persisted record both intact and consistent.
         await this.LoadedGraphStore().Save(record)
+        this.environmentGraph = graph
         return record
     }
 

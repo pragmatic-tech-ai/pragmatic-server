@@ -1,13 +1,13 @@
 import type { StoragePackageSource } from '@pragmatic-tech-ai/todl'
 import { Domain } from '@pragmatic-tech-ai/todl/domain'
 import { GraphQuery, type IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
-import type { PragmaticAppManifest } from '../apps/pragmatic-app-manifest.js'
+import type { PragmaticAppManifest, PragmaticAppPackageRef } from '../apps/pragmatic-app-manifest.js'
 
 /** Composes published packages into one queryable graph via the Domain resolver. */
 export class RuntimeAppGraph
 {
     /** Loads every package ref into a fresh Domain (the single home for the load loop). */
-    public static async BuildDomainFromPackages(source: StoragePackageSource, refs: readonly { id: string; version: string }[]): Promise<Domain>
+    public static async BuildDomainFromPackages(source: StoragePackageSource, refs: readonly PragmaticAppPackageRef[]): Promise<Domain>
     {
         const domain = new Domain(source)
         for (const ref of refs)
@@ -17,7 +17,7 @@ export class RuntimeAppGraph
         return domain
     }
 
-    public static async BuildQueryFromPackages(source: StoragePackageSource, refs: readonly { id: string; version: string }[]): Promise<IGraphQuery>
+    public static async BuildQueryFromPackages(source: StoragePackageSource, refs: readonly PragmaticAppPackageRef[]): Promise<IGraphQuery>
     {
         return new GraphQuery((await RuntimeAppGraph.BuildDomainFromPackages(source, refs)).graph)
     }
