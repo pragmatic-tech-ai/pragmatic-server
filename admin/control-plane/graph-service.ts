@@ -132,6 +132,10 @@ export class GraphService
                 throw err
             }
             const lower = err.message.toLowerCase()
+            if (lower.includes(GraphService.InvalidNameText))
+            {
+                throw new GraphNameInvalidError(graphName)
+            }
             if (lower.includes(GraphService.ExistsText))
             {
                 throw new GraphExistsError(graphName)
@@ -139,10 +143,6 @@ export class GraphService
             if (lower.includes(GraphService.NotFoundText))
             {
                 throw new GraphNotFoundError(graphName)
-            }
-            if (lower.includes(GraphService.InvalidNameText))
-            {
-                throw new GraphNameInvalidError(graphName)
             }
             throw err
         }

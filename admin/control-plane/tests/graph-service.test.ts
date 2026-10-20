@@ -18,6 +18,8 @@ class Fixture
     public static readonly NotFoundMessage = 'Graph not found: g1'
     public static readonly InvalidMessage = 'Invalid graph name: Bad Name'
     public static readonly BadName = 'Bad Name'
+    public static readonly NotFoundName = 'not found'
+    public static readonly ExistsName = 'already exists'
     public static readonly OtherMessage = 'boom'
     public static readonly Unused = 'unused'
 
@@ -257,4 +259,13 @@ test('a non-Protocol proxy error is never reclassified as a graph error', async 
     const h = new Harness()
     h.Proxy.Throw = new AdminProxyError(AdminProxyErrorKind.Connect, Fixture.NotFoundMessage)
     await assert.rejects(h.Service.Get(Fixture.Dev1, Fixture.G1), (err: unknown) => err instanceof AdminProxyError && err.Kind === AdminProxyErrorKind.Connect)
+})
+
+test('an invalid name that embeds a sentinel phrase is still classified as invalid', async () =>
+{
+    const h = new Harness()
+    h.Proxy.Throw = new AdminProxyError(AdminProxyErrorKind.Protocol, new ContainerInvalidError(Fixture.NotFoundName).message)
+    await assert.rejects(h.Service.Create(Fixture.Dev1, Fixture.NotFoundName, ''), GraphNameInvalidError)
+    h.Proxy.Throw = new AdminProxyError(AdminProxyErrorKind.Protocol, new ContainerInvalidError(Fixture.ExistsName).message)
+    await assert.rejects(h.Service.Create(Fixture.Dev1, Fixture.ExistsName, ''), GraphNameInvalidError)
 })
