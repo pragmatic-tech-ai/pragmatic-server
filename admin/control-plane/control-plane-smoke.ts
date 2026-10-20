@@ -20,6 +20,7 @@ import type { PackageDocument } from '@pragmatic-tech-ai/todl'
 import { RemoteBindMode } from '@pragmatic-tech-ai/todl/build-system-core'
 import { AdminProtocol, AppWriteStatus, CypherProtocol, GraphProtocol, PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ContributedPackageDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { BuiltHelloApp } from '../../src/tests/e2e/hello-app-builder.js'
 import { HelloAppBuilder } from '../../src/tests/e2e/hello-app-builder.js'
 import { DockerEnv } from '../../environments/seed/docker.js'
 import { UserSeeder } from '../../environments/seed/users.js'
@@ -133,6 +134,7 @@ export class ControlPlaneSmoke
     private static readonly EnvReaderPrincipal = 'env-reader'
     private static readonly EnvReaderEmail = 'env-reader@contoso.test'
     private static readonly EnvReaderPassword = 'env-reader-test-password'
+    private static readonly AckOkWord = 'ok='
     private static readonly WsTenantQuery = '/?tenant='
     private static readonly GraphsSegment = '/graphs'
     private static readonly PromoteSegment = '/promote'
@@ -179,6 +181,9 @@ export class ControlPlaneSmoke
         PromoteResult: 'promote: promote returns 200 with graph name, package count and target env',
         PromoteLoaded: 'promote: loaded-graph on the runtime reflects the promoted graph',
         PromoteCypherRead: 'promote: cypher query on the runtime env graph returns the promoted content',
+        EnvAppAdminLogin: 'env-app: runtime admin login',
+        EnvAppNoAdminPw: 'env-app: provisioned runtime admin password is present',
+        EnvAppError: 'env-app: step failed with an unexpected error',
         EnvAppDeploy: 'env-app: environment-bound app deploys to the runtime env',
         EnvAppBundledDeploy: 'env-app: bundled (application-bound) app deploys to the same runtime env',
         EnvAppReaderCreate: 'env-app: runtime reader account created and granted Viewer at Tenant scope',
@@ -385,23 +390,22 @@ export class ControlPlaneSmoke
     {
         const S = ControlPlaneSmoke
         const L = S.Labels
-        const secrets = JSON.parse(readFileSync(join(dataRoot, S.PromoteRuntimeName, S.SecretsFile), S.Utf8)) as Record<string, string>
-        const adminPw = secrets[S.AdminPwKey]
-        if (adminPw === undefined)
-        {
-            this.Expect(L.EnvAppDeploy, false, S.AdminPwKey)
-            return
-        }
         const seeder = new UserSeeder()
         const http = S.HttpPrefix + String(rtPort)
         const wsUrl = S.WsPrefix + String(rtPort) + S.WsTenantQuery + S.DemoTenant
-        const adminToken = await seeder.Login(http, S.DemoTenant, S.AdminEmail, adminPw)
-        let envApp: Awaited<ReturnType<typeof HelloAppBuilder.Build>> | undefined
-        let bundledApp: Awaited<ReturnType<typeof HelloAppBuilder.Build>> | undefined
+        let step = L.EnvAppAdminLogin
+        let envApp: BuiltHelloApp | undefined
+        let bundledApp: BuiltHelloApp | undefined
         let adminClient: PragmaticClient | undefined
         let readerClient: PragmaticClient | undefined
         try
         {
+            const adminToken = await this.RuntimeAdminToken(dataRoot, rtPort, seeder, L.EnvAppNoAdminPw)
+            if (adminToken === undefined)
+            {
+                return
+            }
+            step = L.EnvAppDeploy
             envApp = await HelloAppBuilder.Build(RemoteBindMode.Environment, S.EnvAppName)
             bundledApp = await HelloAppBuilder.Build()
             adminClient = await PragmaticClient.ConnectAsync(wsUrl, { bearerToken: adminToken })
@@ -410,36 +414,41 @@ export class ControlPlaneSmoke
             const bundledDeployed = await adminClient.DeployApplication(bundledApp.DeployParams())
             this.Expect(L.EnvAppBundledDeploy, bundledDeployed.status === AppWriteStatus.Applied, String(bundledDeployed.status))
 
+            step = L.EnvAppReaderCreate
             const adminConn = await seeder.Connect(S.WsPrefix + String(rtPort), S.DemoTenant, adminToken)
             try
             {
-                await adminConn.sendRequest(AdminProtocol.CreateAccount, { email: S.EnvReaderEmail, principalId: S.EnvReaderPrincipal, password: S.EnvReaderPassword })
-                await adminConn.sendRequest(AdminProtocol.GrantRole, { subject: S.EnvReaderPrincipal, role: S.ViewerRole, resourceKind: S.TenantKind, resourcePath: [] })
-                this.Expect(L.EnvAppReaderCreate, true)
+                const created = await adminConn.sendRequest(AdminProtocol.CreateAccount, { email: S.EnvReaderEmail, principalId: S.EnvReaderPrincipal, password: S.EnvReaderPassword })
+                const granted = await adminConn.sendRequest(AdminProtocol.GrantRole, { subject: S.EnvReaderPrincipal, role: S.ViewerRole, resourceKind: S.TenantKind, resourcePath: [] })
+                this.Expect(L.EnvAppReaderCreate, created.ok === true && granted.ok === true, S.AckOkWord + String(created.ok) + S.Comma + String(granted.ok))
             }
             finally
             {
                 adminConn.dispose()
             }
 
+            step = L.EnvAppRead
             const readerToken = await seeder.Login(http, S.DemoTenant, S.EnvReaderEmail, S.EnvReaderPassword)
             readerClient = await PragmaticClient.ConnectAsync(wsUrl, { bearerToken: readerToken })
             const first = await ControlPlaneSmoke.ScalarCount(readerClient, S.PromoteCypher)
             this.Expect(L.EnvAppRead, first === S.PromoteExpectedRows, String(first))
 
+            step = L.EnvAppRepromote
             const repromoted = await this.Repromote(devPort, makerToken)
-            this.Expect(L.EnvAppRepromote, repromoted)
+            this.Expect(L.EnvAppRepromote, repromoted.ok, repromoted.detail)
+            step = L.EnvAppLiveRead
             const widgets = await ControlPlaneSmoke.ScalarCount(readerClient, S.PromoteCypher)
             const gadgets = await ControlPlaneSmoke.ScalarCount(readerClient, S.RepromoteCypher)
             this.Expect(L.EnvAppLiveRead, widgets === S.PromoteExpectedRows && gadgets === S.PromoteExpectedRows, String(widgets) + S.Comma + String(gadgets))
 
+            step = L.EnvAppBundledRead
             await adminClient.OpenApplication(HelloAppBuilder.AppName)
             const greetings = await ControlPlaneSmoke.ScalarCount(adminClient, S.BundledCypher)
             this.Expect(L.EnvAppBundledRead, greetings === S.PromoteExpectedRows, String(greetings))
         }
         catch (err)
         {
-            this.Expect(L.EnvAppRead, false, err instanceof Error ? err.message : String(err))
+            this.Expect(L.EnvAppError, false, step + S.DetailSep + (err instanceof Error ? err.message : String(err)))
         }
         finally
         {
@@ -451,14 +460,29 @@ export class ControlPlaneSmoke
     }
 
     /** Contributes a second solution (a Gadget package) to the dev graph and promotes it again into the runtime; true on a 200 carrying both packages. */
-    private async Repromote(devPort: number, makerToken: string): Promise<boolean>
+    private async Repromote(devPort: number, makerToken: string): Promise<{ ok: boolean; detail: string }>
     {
         const S = ControlPlaneSmoke
         await this.ContributeAs(devPort, S.PromoteDevName, makerToken, S.RepromoteSolutionId, S.RepromotePackage(), S.RepromotedPackageCount)
         const path = this.EnvPath(S.PromoteDevName) + S.GraphsSegment + S.PathSep + encodeURIComponent(S.PromoteGraphName) + S.PromoteSegment
         const promoted = await this.Api(S.MethodPost, path, { targetEnv: S.PromoteRuntimeName })
         const result = promoted.json as PromotionResultDto | undefined
-        return promoted.status === S.StatusOk && result?.packageCount === S.RepromotedPackageCount
+        const ok = promoted.status === S.StatusOk && result?.packageCount === S.RepromotedPackageCount
+        return { ok, detail: S.StatusWord + String(promoted.status) + S.PackagesWord + String(result?.packageCount) }
+    }
+
+    /** Reads the runtime env's provisioned admin password and logs in; reports under the given label and returns undefined when the password is absent. */
+    private async RuntimeAdminToken(dataRoot: string, port: number, seeder: UserSeeder, missingLabel: string): Promise<string | undefined>
+    {
+        const S = ControlPlaneSmoke
+        const secrets = JSON.parse(readFileSync(join(dataRoot, S.PromoteRuntimeName, S.SecretsFile), S.Utf8)) as Record<string, string>
+        const adminPw = secrets[S.AdminPwKey]
+        if (adminPw === undefined)
+        {
+            this.Expect(missingLabel, false, S.AdminPwKey)
+            return undefined
+        }
+        return seeder.Login(S.HttpPrefix + String(port), S.DemoTenant, S.AdminEmail, adminPw)
     }
 
     /** Runs a single-row count query and returns the first cell (undefined when absent). */
@@ -513,16 +537,12 @@ export class ControlPlaneSmoke
     private async CheckRuntimeGraphRead(dataRoot: string, port: number): Promise<void>
     {
         const S = ControlPlaneSmoke
-        const secretsPath = join(dataRoot, S.PromoteRuntimeName, S.SecretsFile)
-        const secrets = JSON.parse(readFileSync(secretsPath, S.Utf8)) as Record<string, string>
-        const adminPw = secrets[S.AdminPwKey]
-        if (adminPw === undefined)
+        const seeder = new UserSeeder()
+        const token = await this.RuntimeAdminToken(dataRoot, port, seeder, S.Labels.PromoteCypherRead)
+        if (token === undefined)
         {
-            this.Expect(S.Labels.PromoteCypherRead, false, S.AdminPwKey)
             return
         }
-        const seeder = new UserSeeder()
-        const token = await seeder.Login(S.HttpPrefix + String(port), S.DemoTenant, S.AdminEmail, adminPw)
         const conn = await seeder.Connect(S.WsPrefix + String(port), S.DemoTenant, token)
         try
         {
