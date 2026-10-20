@@ -11,6 +11,8 @@ import {
     EnvironmentNotFoundError,
     ImageMissingError
 } from './environment-service.js'
+import { EnvironmentNotDevelopmentError, GraphExistsError, GraphNameInvalidError, GraphNotFoundError } from './graph-service.js'
+import type { GraphRecord } from './graph-record.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from './environment-record.js'
 import { PortUnavailableError } from './port-allocator.js'
 import { InvalidEnvironmentNameError, TemplateCatalog } from './template-catalog.js'
@@ -39,6 +41,14 @@ export interface IEnvironmentService
     AdminSetSecurityModel(name: string, securityModel: SecurityModelDto): Promise<void>
 }
 
+export interface IGraphService
+{
+    Create(envName: string, name: string, description: string): Promise<GraphRecord>
+    List(envName: string): Promise<readonly GraphRecord[]>
+    Get(envName: string, graphName: string): Promise<GraphRecord>
+    Delete(envName: string, graphName: string): Promise<void>
+}
+
 /** The only shape ever sent to a client: connect info, no internals or secrets. */
 export type EnvironmentDto = {
     name: string
@@ -50,6 +60,13 @@ export type EnvironmentDto = {
     createdAt: string
     httpUrl: string
     wsUrl: string
+}
+
+export type GraphDto = {
+    name: string
+    description: string
+    packageCount: number
+    createdAt: string
 }
 
 export type ChangedEvent = { type: string }
@@ -119,6 +136,10 @@ export class ControlPlaneHost
         '^' + ControlPlaneHost.EnvironmentsPath + '/([^/]+)/' + ControlPlaneHost.AdminSegment + '/(' +
         [ControlPlaneHost.SnapshotPath, ControlPlaneHost.AccountsPath, ControlPlaneHost.GrantsPath, ControlPlaneHost.ConfigPath, ControlPlaneHost.SecurityModelPath].join('|') + ')(?:/([^/]+))?$')
     private static readonly MethodPut = 'PUT'
+    private static readonly GraphsSegment = 'graphs'
+    private static readonly GraphPathPattern = new RegExp(
+        '^' + ControlPlaneHost.EnvironmentsPath + '/([^/]+)/' + ControlPlaneHost.GraphsSegment + '(?:/([^/]+))?$')
+    private static readonly DescriptionRequiredMessage = 'description (string) is required'
     private static readonly AccountFieldsMessage = 'email, principalId and password (non-empty strings) are required'
     private static readonly GrantFieldsMessage = 'subject and role (strings) are required'
     private static readonly ConfigFieldsMessage = 'packId and delegationDepth (strings) are required'
@@ -172,7 +193,11 @@ export class ControlPlaneHost
         [PortUnavailableError, ControlPlaneHost.StatusConflict],
         [ImageMissingError, ControlPlaneHost.StatusConflict],
         [DockerUnavailableError, ControlPlaneHost.StatusUnavailable],
-        [CreateFailedError, ControlPlaneHost.StatusInternal]
+        [CreateFailedError, ControlPlaneHost.StatusInternal],
+        [GraphExistsError, ControlPlaneHost.StatusConflict],
+        [GraphNotFoundError, ControlPlaneHost.StatusNotFound],
+        [GraphNameInvalidError, ControlPlaneHost.StatusBadRequest],
+        [EnvironmentNotDevelopmentError, ControlPlaneHost.StatusBadRequest]
     ])
 
     private httpServer: HttpServer | undefined
@@ -182,6 +207,7 @@ export class ControlPlaneHost
 
     public constructor(
         private readonly service: IEnvironmentService,
+        private readonly graphService: IGraphService,
         staticRoot: string,
         private readonly operator: IOperatorIdentity,
         private readonly secureCookie: boolean)
@@ -369,6 +395,11 @@ export class ControlPlaneHost
         {
             return await this.RouteAdmin(req, res, method, am)
         }
+        const gm = ControlPlaneHost.GraphPathPattern.exec(path)
+        if (gm !== null)
+        {
+            return await this.RouteGraphs(req, res, method, gm)
+        }
         const m = ControlPlaneHost.EnvPathPattern.exec(path)
         if (m === null)
         {
@@ -409,6 +440,70 @@ export class ControlPlaneHost
             return true
         }
         return false
+    }
+
+    /** Dispatches /api/environments/NAME/graphs[/GRAPH]; false when the (graph, method) combination is unknown. */
+    private async RouteGraphs(req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
+    {
+        const env = ControlPlaneHost.Decode(m[1] as string)
+        if (env === undefined)
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+            return true
+        }
+        if (m[2] === undefined)
+        {
+            if (method === ControlPlaneHost.MethodGet)
+            {
+                this.WriteJson(res, ControlPlaneHost.StatusOk, (await this.graphService.List(env)).map(r => ControlPlaneHost.ToGraphDto(r)))
+                return true
+            }
+            if (method === ControlPlaneHost.MethodPost)
+            {
+                await this.HandleCreateGraph(env, req, res)
+                return true
+            }
+            return false
+        }
+        const graph = ControlPlaneHost.Decode(m[2])
+        if (graph === undefined)
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+            return true
+        }
+        if (method === ControlPlaneHost.MethodGet)
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusOk, ControlPlaneHost.ToGraphDto(await this.graphService.Get(env, graph)))
+            return true
+        }
+        if (method === ControlPlaneHost.MethodDelete)
+        {
+            await this.graphService.Delete(env, graph)
+            this.WriteJson(res, ControlPlaneHost.StatusOk, { ok: true })
+            return true
+        }
+        return false
+    }
+
+    private async HandleCreateGraph(env: string, req: IncomingMessage, res: ServerResponse): Promise<void>
+    {
+        const body = await this.ReadJsonObject(req, res)
+        if (body === undefined)
+        {
+            return
+        }
+        if (!ControlPlaneHost.NonEmpty(body.name))
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.NameRequiredMessage })
+            return
+        }
+        if (!ControlPlaneHost.NonEmpty(body.description))
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.DescriptionRequiredMessage })
+            return
+        }
+        const rec = await this.graphService.Create(env, body.name as string, body.description as string)
+        this.WriteJson(res, ControlPlaneHost.StatusCreated, ControlPlaneHost.ToGraphDto(rec))
     }
 
     /** Dispatches /api/environments/NAME/admin/SUB[/TAIL]; false when the (sub, method, tail) combination is unknown. */
@@ -863,6 +958,16 @@ export class ControlPlaneHost
     private static Changed(): ChangedEvent
     {
         return { type: ControlPlaneHost.ChangedType }
+    }
+
+    private static ToGraphDto(r: GraphRecord): GraphDto
+    {
+        return {
+            name: r.manifest.name,
+            description: r.manifest.description,
+            packageCount: r.manifest.packages.length,
+            createdAt: r.createdAt
+        }
     }
 
     private static ToDto(r: EnvironmentRecord): EnvironmentDto

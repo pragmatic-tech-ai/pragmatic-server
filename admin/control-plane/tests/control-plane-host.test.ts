@@ -4,7 +4,7 @@ import { request } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'node:test'
-import { ControlPlaneHost, type IEnvironmentService } from '../control-plane-host.js'
+import { ControlPlaneHost, type IEnvironmentService, type IGraphService } from '../control-plane-host.js'
 import { CreateFailedError, DockerUnavailableError, EnvironmentExistsError, EnvironmentNotFoundError, ImageMissingError } from '../environment-service.js'
 import { PortUnavailableError } from '../port-allocator.js'
 import { InvalidEnvironmentNameError } from '../template-catalog.js'
@@ -14,6 +14,8 @@ import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto } from '@
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import { TemplateCatalog } from '../template-catalog.js'
 
+import { EnvironmentNotDevelopmentError, GraphExistsError, GraphNotFoundError } from '../graph-service.js'
+import type { GraphRecord } from '../graph-record.js'
 import type { IOperatorIdentity, OperatorPrincipal, OperatorSession } from '../operator-identity.js'
 
 type Reply = { status: number; body: string; setCookie?: string[] | undefined }
@@ -171,9 +173,57 @@ class FakeService implements IEnvironmentService
     }
 }
 
+class FakeGraphService implements IGraphService
+{
+    public Throw: Error | undefined
+    public Calls: string[] = []
+    public Seed: GraphRecord[] = []
+
+    public async Create(envName: string, name: string, description: string): Promise<GraphRecord>
+    {
+        this.Calls.push(`create:${envName}:${name}`)
+        this.MaybeThrow()
+        return { manifest: { name, description, packages: [] }, createdAt: '2026-10-20T00:00:00.000Z' }
+    }
+
+    public async List(envName: string): Promise<readonly GraphRecord[]>
+    {
+        this.Calls.push(`list:${envName}`)
+        this.MaybeThrow()
+        return this.Seed
+    }
+
+    public async Get(envName: string, graphName: string): Promise<GraphRecord>
+    {
+        this.Calls.push(`get:${envName}:${graphName}`)
+        this.MaybeThrow()
+        const found = this.Seed.find(r => r.manifest.name === graphName)
+        if (found === undefined)
+        {
+            throw new GraphNotFoundError(graphName)
+        }
+        return found
+    }
+
+    public async Delete(envName: string, graphName: string): Promise<void>
+    {
+        this.Calls.push(`delete:${envName}:${graphName}`)
+        this.MaybeThrow()
+    }
+
+    private MaybeThrow(): void
+    {
+        if (this.Throw !== undefined)
+        {
+            throw this.Throw
+        }
+    }
+}
+
 class Harness
 {
     public static readonly DtoKeys = ['createdAt', 'hostPort', 'httpUrl', 'name', 'status', 'template', 'tenantId', 'type', 'wsUrl']
+    public static readonly GraphDtoKeys = ['createdAt', 'description', 'name', 'packageCount']
     public static readonly Forbidden = ['bundleDir', 'containerName', 'volumeName', 'master', 'secret', 'password', 'ctr-secret-name', 'vol-secret-name', '/secret/bundle']
 
     public static readonly AuthCookie = 'cp_session=valid-token'
@@ -209,6 +259,7 @@ class Harness
 describe('ControlPlaneHost', () =>
 {
     let fake: FakeService
+    let fakeGraph: FakeGraphService
     let operator: FakeOperator
     let host: ControlPlaneHost
     let root: string
@@ -224,8 +275,9 @@ describe('ControlPlaneHost', () =>
         mkdirSync(join(root, 'assets'))
         writeFileSync(join(root, 'assets', 'app.js'), 'var a=1')
         fake = new FakeService()
+        fakeGraph = new FakeGraphService()
         operator = new FakeOperator()
-        host = new ControlPlaneHost(fake, root, operator, false)
+        host = new ControlPlaneHost(fake, fakeGraph, root, operator, false)
         await host.Listen(0, '127.0.0.1')
     })
 
@@ -621,5 +673,57 @@ describe('ControlPlaneHost', () =>
             assert.equal(opened, false)
             ws.terminate()
         }
+    })
+
+    it('POST graphs with name+description returns 201 and a leak-free GraphDto', async () =>
+    {
+        const r = await Harness.Send(host, 'POST', '/api/environments/dev1/graphs', JSON.stringify({ name: 'g1', description: 'first' }))
+        assert.equal(r.status, 201)
+        const dto = JSON.parse(r.body)
+        assert.deepEqual(Object.keys(dto).sort(), Harness.GraphDtoKeys)
+        assert.equal(dto.packageCount, 0)
+        for (const f of Harness.Forbidden)
+        {
+            assert.ok(!r.body.includes(f), `body leaked ${f}`)
+        }
+    })
+
+    it('GET graphs lists the environment graphs', async () =>
+    {
+        fakeGraph.Seed = [{ manifest: { name: 'g1', description: 'd', packages: [{ id: 'p', version: '1' }] }, createdAt: '2026-10-20T00:00:00.000Z' }]
+        const r = await Harness.Send(host, 'GET', '/api/environments/dev1/graphs')
+        assert.equal(r.status, 200)
+        const arr = JSON.parse(r.body)
+        assert.equal(arr.length, 1)
+        assert.deepEqual(Object.keys(arr[0]).sort(), Harness.GraphDtoKeys)
+        assert.equal(arr[0].packageCount, 1)
+        const one = await Harness.Send(host, 'GET', '/api/environments/dev1/graphs/g1')
+        assert.equal(one.status, 200)
+        assert.equal(JSON.parse(one.body).name, 'g1')
+        const del = await Harness.Send(host, 'DELETE', '/api/environments/dev1/graphs/g1')
+        assert.equal(del.status, 200)
+    })
+
+    it('maps graph service errors to statuses', async () =>
+    {
+        const body = JSON.stringify({ name: 'g1', description: 'd' })
+        fakeGraph.Throw = new EnvironmentNotDevelopmentError('dev1')
+        assert.equal((await Harness.Send(host, 'POST', '/api/environments/dev1/graphs', body)).status, 400)
+        fakeGraph.Throw = new EnvironmentNotFoundError('dev1')
+        assert.equal((await Harness.Send(host, 'POST', '/api/environments/dev1/graphs', body)).status, 404)
+        fakeGraph.Throw = new GraphExistsError('g1')
+        assert.equal((await Harness.Send(host, 'POST', '/api/environments/dev1/graphs', body)).status, 409)
+    })
+
+    it('a missing graph name/description is 400; an unauthenticated graphs request is 401', async () =>
+    {
+        const noName = await Harness.Send(host, 'POST', '/api/environments/dev1/graphs', JSON.stringify({ description: 'd' }))
+        assert.equal(noName.status, 400)
+        const noDesc = await Harness.Send(host, 'POST', '/api/environments/dev1/graphs', JSON.stringify({ name: 'g1' }))
+        assert.equal(noDesc.status, 400)
+        assert.equal((await Harness.Send(host, 'GET', '/api/environments/%zz/graphs')).status, 400)
+        assert.equal((await Harness.Anon(host, 'GET', '/api/environments/dev1/graphs')).status, 401)
+        assert.equal((await Harness.Anon(host, 'POST', '/api/environments/dev1/graphs', JSON.stringify({ name: 'g1', description: 'd' }))).status, 401)
+        assert.deepEqual(fakeGraph.Calls, [])
     })
 })
