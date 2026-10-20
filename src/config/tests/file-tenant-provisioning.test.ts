@@ -106,7 +106,7 @@ test('still accepts the numeric purpose value', () =>
     assert.equal(FileTenantProvisioning.FromText(PurposeFiles.Of(1)).OptionsFor('acme')?.purpose, TenantPurpose.Runtime)
 })
 
-test('fails closed on an unknown purpose name, numeric string or out-of-range number', () =>
+test('fails closed on an unknown purpose name, numeric string, out-of-range number, or non-primitive value', () =>
 {
     for (const bad of ['Bogus', '0', 5, true, {}, null])
     {
