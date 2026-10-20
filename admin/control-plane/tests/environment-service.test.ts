@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { EnvironmentRegistry } from '../environment-registry.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord, type IContainerProbe } from '../environment-record.js'
 import { PortAllocator, PortUnavailableError, type IPortProbe } from '../port-allocator.js'
-import { EnvironmentService, EnvironmentNotDevelopmentError, EnvironmentExistsError, EnvironmentNotFoundError, ImageMissingError, DockerUnavailableError, CreateFailedError } from '../environment-service.js'
+import { EnvironmentService, EnvironmentNotDevelopmentError, EnvironmentNotRuntimeError, EnvironmentExistsError, EnvironmentNotFoundError, ImageMissingError, DockerUnavailableError, CreateFailedError } from '../environment-service.js'
 import type { IDockerEnv, IBundleBuilder, IUserSeeder } from '../docker-env-port.js'
 import { TenantPurposeName, type EnvDefinition } from '../../../environments/seed/bundle.js'
 import type { UserSeed } from '../../../environments/seed/users.js'
@@ -570,5 +570,27 @@ test('AdminIssueMakerToken on a non-Development env throws before any proxy call
     await AdminFixture.Seed(h)
     await h.Registry.Put({ ...h.Registry.Get(AdminFixture.Name)!, type: EnvType.Runtime })
     await assert.rejects(() => h.Service.AdminIssueMakerToken(AdminFixture.Name), EnvironmentNotDevelopmentError)
+    assert.equal(h.Proxy.Calls.length, 0)
+})
+
+test('AdminGrantAppReader grants the app-reader Viewer role as Owner via the proxy; repeat call succeeds; returns no secret', async () =>
+{
+    const h = await Harness.Make()
+    await AdminFixture.Seed(h)
+    await h.Registry.Put({ ...h.Registry.Get(AdminFixture.Name)!, type: EnvType.Runtime })
+    const result = await h.Service.AdminGrantAppReader(AdminFixture.Name)
+    assert.equal(result, undefined)
+    assert.deepEqual(h.Proxy.Calls.map(c => c.method), ['GrantRole'])
+    assert.deepEqual(h.Proxy.Calls[0].args, [{ subject: 'app-reader', role: 'Viewer', resourceKind: 'Tenant', resourcePath: [] }])
+    assert.equal(h.Proxy.Calls[0].info.password, AdminFixture.Password)
+    await h.Service.AdminGrantAppReader(AdminFixture.Name)
+    assert.equal(h.Proxy.Calls.length, 2)
+})
+
+test('AdminGrantAppReader on a non-Runtime env throws before any proxy call', async () =>
+{
+    const h = await Harness.Make()
+    await AdminFixture.Seed(h)
+    await assert.rejects(() => h.Service.AdminGrantAppReader(AdminFixture.Name), EnvironmentNotRuntimeError)
     assert.equal(h.Proxy.Calls.length, 0)
 })

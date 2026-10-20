@@ -75,6 +75,10 @@ class EnvReadFixture
     public static readonly Prefix = 'envread-'
     public static readonly SomeModelId = 'm1'
     public static readonly ModelScopeMessage = /model-scoped query is not available on a runtime tenant/
+    public static readonly ReaderPrincipalId = 'p-reader'
+    public static readonly UngrantedPrincipalId = 'p-none'
+    public static readonly DenyMessage = /no grant covers this action/
+    public static readonly WriteCypher = 'CREATE (w:Widget) RETURN w'
 
     public readonly Dir = mkdtempSync(join(tmpdir(), EnvReadFixture.Prefix))
     public readonly Apps = mkdtempSync(join(tmpdir(), EnvReadFixture.Prefix))
@@ -127,7 +131,7 @@ class EnvReadFixture
         return RuntimeAppGraph.BuildQueryFromPackages(source, [{ id: EnvReadFixture.EnvPkg, version: EnvReadFixture.Version }])
     }
 
-    public async Connect(host: IEnvironmentGraphHost): Promise<PragmaticClient>
+    public async Connect(host: IEnvironmentGraphHost, context: AccessContext = EnvReadFixture.Permissive()): Promise<PragmaticClient>
     {
         const server = new PragmaticServer({ packagesRoot: this.Dir, applicationsRoot: this.Apps, purpose: TenantPurpose.Runtime })
         await server.Start()
@@ -140,7 +144,7 @@ class EnvReadFixture
         })
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const handler = ServerConnectionHandler.Attach(
-            serverSocket, languageService, manager, EnvReadFixture.Permissive(),
+            serverSocket, languageService, manager, context,
             () => Promise.reject(new Error(EnvReadFixture.NoConnectors)), ctx => server.Graph(ctx),
             undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Runtime,
             server.Applications(),
@@ -177,6 +181,23 @@ class EnvReadFixture
         const principal = new Principal(EnvReadFixture.PrincipalId, EnvReadFixture.TenantId, PrincipalKind.User, new Map(), [])
         const grants = [new Grant(EnvReadFixture.PrincipalId, Role.Owner, new ResourceRef(ResourceKind.Tenant, EnvReadFixture.TenantId, []))]
         return new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
+    }
+
+    /** A non-Owner runtime principal holding the general tenant read grant (Role.Viewer, covering Action.Read). */
+    public static GrantedReader(): AccessContext
+    {
+        const tenant = new Tenant(EnvReadFixture.TenantId, TenantKind.SelfHosted, EnvReadFixture.TenantName)
+        const principal = new Principal(EnvReadFixture.ReaderPrincipalId, EnvReadFixture.TenantId, PrincipalKind.User, new Map(), [])
+        const grants = [new Grant(EnvReadFixture.ReaderPrincipalId, Role.Viewer, new ResourceRef(ResourceKind.Tenant, EnvReadFixture.TenantId, []))]
+        return new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
+    }
+
+    /** A non-Owner runtime principal with NO grant: the fail-closed DenyAll a no-security-model tenant applies. */
+    public static Ungranted(): AccessContext
+    {
+        const tenant = new Tenant(EnvReadFixture.TenantId, TenantKind.SelfHosted, EnvReadFixture.TenantName)
+        const principal = new Principal(EnvReadFixture.UngrantedPrincipalId, EnvReadFixture.TenantId, PrincipalKind.User, new Map(), [])
+        return new AccessContext(principal, tenant, [], new ResourceAuthorizationPolicy())
     }
 }
 
@@ -228,6 +249,56 @@ test('a model-scoped query on a runtime tenant is rejected as InvalidParams', as
         await assert.rejects(
             () => client.CypherQuery(EnvReadFixture.WidgetLabels, undefined, undefined, EnvReadFixture.SomeModelId),
             (e: { code?: number; message?: string }) => e.code === ErrorCodes.InvalidParams && EnvReadFixture.ModelScopeMessage.test(String(e.message)))
+        assert.equal(host.Consulted, 0)
+    })
+})
+
+test('granted_principal_reads_env_graph', async () =>
+{
+    await EnvReadFixture.Run(async fx =>
+    {
+        await fx.PublishPackage(EnvReadFixture.EnvPkg, EnvReadFixture.EnvLabel)
+        const host = new FakeEnvironmentGraphHost(await fx.EnvQuery())
+        const client = await fx.Connect(host, EnvReadFixture.GrantedReader())
+        const result = await client.CypherQuery(EnvReadFixture.WidgetLabels)
+        assert.deepEqual(EnvReadFixture.Column(result), [EnvReadFixture.EnvLabel])
+        assert.equal(host.Consulted, 1)
+    })
+})
+
+test('ungranted_principal_refused', async () =>
+{
+    await EnvReadFixture.Run(async fx =>
+    {
+        await fx.PublishPackage(EnvReadFixture.EnvPkg, EnvReadFixture.EnvLabel)
+        const host = new FakeEnvironmentGraphHost(await fx.EnvQuery())
+        const client = await fx.Connect(host, EnvReadFixture.Ungranted())
+        await assert.rejects(
+            () => client.CypherQuery(EnvReadFixture.WidgetLabels),
+            (e: { code?: number; message?: string }) => e.code === ErrorCodes.InvalidRequest && EnvReadFixture.DenyMessage.test(String(e.message)))
+        assert.equal(host.Consulted, 0)
+    })
+})
+
+test('env_graph_read_without_load_errors_clearly_for_app_principal', async () =>
+{
+    await EnvReadFixture.Run(async fx =>
+    {
+        const client = await fx.Connect(new FakeEnvironmentGraphHost(undefined), EnvReadFixture.GrantedReader())
+        await assert.rejects(() => client.CypherQuery(EnvReadFixture.WidgetLabels), EnvReadFixture.NoGraphMessage)
+    })
+})
+
+test('authoring stays closed on a runtime tenant for a granted reader', async () =>
+{
+    await EnvReadFixture.Run(async fx =>
+    {
+        await fx.PublishPackage(EnvReadFixture.EnvPkg, EnvReadFixture.EnvLabel)
+        const host = new FakeEnvironmentGraphHost(await fx.EnvQuery())
+        const client = await fx.Connect(host, EnvReadFixture.GrantedReader())
+        await assert.rejects(
+            () => client.CypherExecute(EnvReadFixture.WriteCypher),
+            (e: { code?: number; message?: string }) => e.code === ErrorCodes.InvalidRequest && EnvReadFixture.DenyMessage.test(String(e.message)))
         assert.equal(host.Consulted, 0)
     })
 })

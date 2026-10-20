@@ -140,6 +140,12 @@ class FakeService implements IEnvironmentService
         this.MaybeThrow()
     }
 
+    public async AdminGrantAppReader(name: string): Promise<void>
+    {
+        this.Calls.push(`adminGrantAppReader:${name}`)
+        this.MaybeThrow()
+    }
+
     public async AdminRevokeRole(name: string, mutation: GrantMutationDto): Promise<void>
     {
         this.Calls.push(`adminRevokeRole:${name}:${JSON.stringify(mutation)}`)
@@ -819,6 +825,34 @@ describe('ControlPlaneHost', () =>
         assert.equal((await Harness.Send(host, 'POST', path)).status, 409)
         fake.Throw = new AdminProxyError(AdminProxyErrorKind.Invalid, 'bad')
         assert.equal((await Harness.Send(host, 'POST', path)).status, 400)
+    })
+
+    it('POST app-reader-grant provisions the read grant and returns no secret', async () =>
+    {
+        const r = await Harness.Send(host, 'POST', '/api/environments/rt1/app-reader-grant')
+        assert.equal(r.status, 200)
+        assert.deepEqual(JSON.parse(r.body), { ok: true })
+        assert.deepEqual(fake.Calls, ['adminGrantAppReader:rt1'])
+        assert.equal((await Harness.Send(host, 'GET', '/api/environments/rt1/app-reader-grant')).status, 404)
+    })
+
+    it('app-reader-grant requires a session (401) and a same origin (403)', async () =>
+    {
+        assert.equal((await Harness.Anon(host, 'POST', '/api/environments/rt1/app-reader-grant')).status, 401)
+        const cross = await Harness.Send(host, 'POST', '/api/environments/rt1/app-reader-grant', undefined, { origin: 'http://evil.example.com' })
+        assert.equal(cross.status, 403)
+        assert.ok(!fake.Calls.some(c => c.startsWith('adminGrantAppReader')))
+    })
+
+    it('maps app-reader-grant service errors to statuses', async () =>
+    {
+        const path = '/api/environments/rt1/app-reader-grant'
+        fake.Throw = new EnvironmentNotRuntimeError('rt1')
+        assert.equal((await Harness.Send(host, 'POST', path)).status, 400)
+        fake.Throw = new EnvironmentNotFoundError('rt1')
+        assert.equal((await Harness.Send(host, 'POST', path)).status, 404)
+        fake.Throw = new AdminProxyError(AdminProxyErrorKind.Rbac, 'denied')
+        assert.equal((await Harness.Send(host, 'POST', path)).status, 409)
     })
 
     it('never logs the maker token, even when the service fails', async () =>

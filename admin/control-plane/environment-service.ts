@@ -109,6 +109,10 @@ export class EnvironmentService
     private static readonly MakerRoleName = 'Maker'
     private static readonly TenantKindName = 'Tenant'
     private static readonly MakerScope = 'graph-contribute'
+    /** The well-known runtime principal a served environment-bound app authenticates as; holds the general read grant. */
+    private static readonly AppReaderPrincipalId = 'app-reader'
+    /** A read-only coarse role: Role.Viewer covers Action.Read, which the CypherProtocol.Query readTenant gate requires. */
+    private static readonly AppReaderRoleName = 'Viewer'
     /** One hour: a maker token is short-lived, so a leaked one expires quickly; callers re-mint on demand. */
     private static readonly MakerTokenTtlSeconds = 3600
 
@@ -306,6 +310,18 @@ export class EnvironmentService
         const info = await this.AdminInfoFor(name)
         await this.proxy.GrantRole(info, { subject: EnvironmentService.MakerPrincipalId, role: EnvironmentService.MakerRoleName, resourceKind: EnvironmentService.TenantKindName, resourcePath: [] })
         return this.proxy.IssueToken(info, { principalId: EnvironmentService.MakerPrincipalId, scopes: [EnvironmentService.MakerScope], expiresInSeconds: EnvironmentService.MakerTokenTtlSeconds })
+    }
+
+    /** Idempotently grants the well-known app-reader principal a read-capable role on a runtime environment, as Owner via the proxy, so a served environment-bound app passes the readTenant gate without weakening authoring gates. Returns nothing: no token or secret is minted or surfaced. */
+    public async AdminGrantAppReader(name: string): Promise<void>
+    {
+        const rec = this.Require(name)
+        if (rec.type !== EnvType.Runtime)
+        {
+            throw new EnvironmentNotRuntimeError(name)
+        }
+        const info = await this.AdminInfoFor(name)
+        await this.proxy.GrantRole(info, { subject: EnvironmentService.AppReaderPrincipalId, role: EnvironmentService.AppReaderRoleName, resourceKind: EnvironmentService.TenantKindName, resourcePath: [] })
     }
 
     public async AdminRevokeRole(name: string, mutation: GrantMutationDto): Promise<void>
