@@ -285,7 +285,6 @@ export class LoopOrchestrator
         }
     }
 
-    /** Idempotent: removes whichever of the loop environments exist; an absent one is ignored. */
     /** Promotes a dev graph into the EXISTING runtime env (never creates it); re-runnable: each call replaces the promoted content. */
     public async Promote(graphName: string): Promise<PromoteDescriptor>
     {
@@ -294,6 +293,7 @@ export class LoopOrchestrator
         return { graphName: result.graphName, packageCount: result.packageCount, targetEnv: result.targetEnv }
     }
 
+    /** Idempotent: removes whichever of the loop environments exist; an absent one is ignored. */
     public async Teardown(): Promise<TeardownDescriptor>
     {
         for (const name of [LoopOrchestrator.DevEnvName, LoopOrchestrator.RuntimeEnvName])
@@ -323,7 +323,7 @@ export class LoopOrchestrator
             case LoopCommand.CreateRuntime:
                 return this.CreateRuntime()
             case LoopCommand.Promote:
-                return this.Promote(parsed.graph ?? LoopOrchestrator.DefaultGraphName)
+                return this.Promote(LoopOrchestrator.RequireGraph(parsed))
             case LoopCommand.Teardown:
                 return this.Teardown()
             default:
@@ -332,6 +332,16 @@ export class LoopOrchestrator
                 throw new Error(LoopOrchestrator.UnhandledCommand + String(unhandled))
             }
         }
+    }
+
+    /** ParseCommand guarantees --graph for promote; this narrows the type and never substitutes a default. */
+    private static RequireGraph(parsed: ParsedLoopCommand): string
+    {
+        if (parsed.graph === undefined)
+        {
+            throw new Error(LoopOrchestrator.MissingGraph)
+        }
+        return parsed.graph
     }
 
     /** EnvironmentService.Create returns only after the container is healthy (WaitHealthy, environment-service.ts), so Running is already guaranteed; this guards that contract. */
