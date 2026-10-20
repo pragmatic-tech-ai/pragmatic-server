@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { EnvStatus, type EnvironmentRecord, type IContainerProbe } from './environment-record.js'
+import { EnvStatus, EnvType, type EnvironmentRecord, type IContainerProbe } from './environment-record.js'
 
 export class EnvironmentRegistry
 {
@@ -37,7 +37,7 @@ export class EnvironmentRegistry
         const envs = parsed[EnvironmentRegistry.RootKey] ?? {}
         for (const [name, record] of Object.entries(envs))
         {
-            this.records.set(name, record)
+            this.records.set(name, { ...record, type: record.type ?? EnvType.Development })
         }
     }
 

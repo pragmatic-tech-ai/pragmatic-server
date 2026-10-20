@@ -1,10 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EnvironmentRegistry } from '../environment-registry.js'
-import { EnvStatus, Template, type EnvironmentRecord, type IContainerProbe } from '../environment-record.js'
+import { EnvStatus, EnvType, Template, type EnvironmentRecord, type IContainerProbe } from '../environment-record.js'
 
 class FakeProbe implements IContainerProbe
 {
@@ -22,6 +22,7 @@ class RegistryFixture
     {
         return {
             name,
+            type: EnvType.Development,
             template: Template.DevBlank,
             tenantId: `tenant-${name}`,
             hostPort: port,
@@ -112,6 +113,44 @@ test('missing file loads as empty', async () =>
         const reg = new EnvironmentRegistry(join(dir, 'none.json'), new FakeProbe())
         await reg.Load()
         assert.equal(reg.List().length, 0)
+    }
+    finally
+    {
+        await rm(dir, { recursive: true, force: true })
+    }
+})
+
+test('Load normalizes a legacy record with no type to Development', async () =>
+{
+    const dir = await mkdtemp(join(tmpdir(), 'envreg-'))
+    const file = join(dir, 'envs.json')
+    try
+    {
+        const legacy: Record<string, unknown> = { ...RegistryFixture.Record('old', 8090, EnvStatus.Running) }
+        delete legacy.type
+        await writeFile(file, JSON.stringify({ environments: { old: legacy } }), 'utf8')
+        const reg = new EnvironmentRegistry(file, new FakeProbe())
+        await reg.Load()
+        assert.equal(reg.Get('old')!.type, EnvType.Development)
+    }
+    finally
+    {
+        await rm(dir, { recursive: true, force: true })
+    }
+})
+
+test('a record with an explicit type round-trips through persist/Load', async () =>
+{
+    const dir = await mkdtemp(join(tmpdir(), 'envreg-'))
+    const file = join(dir, 'envs.json')
+    try
+    {
+        const probe = new FakeProbe()
+        const first = new EnvironmentRegistry(file, probe)
+        await first.Put({ ...RegistryFixture.Record('rt', 8091, EnvStatus.Running), type: EnvType.Runtime })
+        const second = new EnvironmentRegistry(file, probe)
+        await second.Load()
+        assert.equal(second.Get('rt')!.type, EnvType.Runtime)
     }
     finally
     {
