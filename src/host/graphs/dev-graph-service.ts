@@ -1,5 +1,6 @@
-import type { GraphContributeParamsDto, GraphCreateParamsDto, GraphDetailDto, GraphRefParamsDto, GraphSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { GraphContributeParamsDto, GraphExportDto, GraphCreateParamsDto, GraphDetailDto, GraphRefParamsDto, GraphSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { GraphPackageIngest } from './graph-package-ingest.js'
+import type { GraphPackageReader } from './graph-package-reader.js'
 import type { DevGraphRecord, DevGraphStore, PackageRef } from './dev-graph-store.js'
 
 export class GraphExistsError extends Error
@@ -45,6 +46,7 @@ export interface IDevGraphService
     GetGraph(params: GraphRefParamsDto): Promise<GraphDetailDto>
     DeleteGraph(params: GraphRefParamsDto): Promise<void>
     ContributeGraph(params: GraphContributeParamsDto): Promise<GraphDetailDto>
+    ExportGraph(params: GraphRefParamsDto): Promise<GraphExportDto>
 }
 
 /** Container-owned graph catalog: create/list/get/delete over the DevGraphStore. */
@@ -53,7 +55,7 @@ export class DevGraphService implements IDevGraphService
     private static readonly KeySeparator = '\u0000'
     private static readonly GraphNamePattern = /^[a-z0-9][a-z0-9-]*$/
 
-    public constructor(private readonly store: DevGraphStore, private readonly ingest: GraphPackageIngest)
+    public constructor(private readonly store: DevGraphStore, private readonly ingest: GraphPackageIngest, private readonly reader: GraphPackageReader)
     {
     }
 
@@ -111,6 +113,19 @@ export class DevGraphService implements IDevGraphService
         record.slices[params.solutionId] = params.packages.map(p => ({ id: p.id, version: p.version }))
         await this.store.Put(record)
         return DevGraphService.ToDetail(record)
+    }
+
+    /** Dev-side export: the graph's effective (deduped) packages with their compiled model.json content. */
+    public async ExportGraph(params: GraphRefParamsDto): Promise<GraphExportDto>
+    {
+        await this.store.Load()
+        const record = this.store.Get(params.graphName)
+        if (record === undefined)
+        {
+            throw new GraphNotFoundError(params.graphName)
+        }
+        const packages = await this.reader.ReadAll(DevGraphService.EffectivePackages(record))
+        return { name: record.name, packages }
     }
 
     private static SanitizeGraphName(name: string): void

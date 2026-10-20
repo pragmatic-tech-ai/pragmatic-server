@@ -691,6 +691,11 @@ export class ServerConnectionHandler
             this.EnsureDevelopment()
             return await this.RequireGraphService().ContributeGraph(p)
         })
+        this.guarded(GraphProtocol.Export, async p =>
+        {
+            this.EnsureDevelopment()
+            return await this.RequireGraphService().ExportGraph(p)
+        })
     }
 
     private RequireGraphService(): IDevGraphService

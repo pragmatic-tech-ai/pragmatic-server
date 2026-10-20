@@ -82,6 +82,7 @@ import { ShareWideningWriteInstanceGate } from './host/sharing/share-widening-wr
 import { ShareWideningWriteAuthorizer } from './host/sharing/share-widening-write-authorizer.js'
 import { DevGraphStore } from './host/graphs/dev-graph-store.js'
 import { GraphPackageIngest } from './host/graphs/graph-package-ingest.js'
+import { GraphPackageReader } from './host/graphs/graph-package-reader.js'
 import { DevGraphService, type IDevGraphService } from './host/graphs/dev-graph-service.js'
 import { InvalidParamsPrefix } from './host/invalid-params-prefix.js'
 
@@ -434,7 +435,7 @@ export class PragmaticServer
     public GraphService(): IDevGraphService
     {
         this.AssertDevelopmentPurpose()
-        this.devGraphService ??= new DevGraphService(new DevGraphStore(this.GraphsStorage()), new GraphPackageIngest(this.PackagesStorage()))
+        this.devGraphService ??= new DevGraphService(new DevGraphStore(this.GraphsStorage()), new GraphPackageIngest(this.PackagesStorage()), new GraphPackageReader(this.PackagesStorage()))
         return this.devGraphService
     }
 
