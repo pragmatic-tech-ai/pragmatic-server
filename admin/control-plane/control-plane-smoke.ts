@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url'
 import { Repository, toJSON } from '@pragmatic-tech-ai/todl'
 import type { PackageDocument } from '@pragmatic-tech-ai/todl'
 import { AdminProtocol, CypherProtocol, GraphProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { ContributedPackageDto, GraphDetailDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { ContributedPackageDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { DockerEnv } from '../../environments/seed/docker.js'
 import { UserSeeder } from '../../environments/seed/users.js'
 import { AdminProxy, WsAdminConnector } from './admin-proxy.js'
@@ -108,6 +108,8 @@ export class ControlPlaneSmoke
     private static readonly MissingOpen = ' missing=['
     private static readonly MissingClose = '] admin='
     private static readonly Comma = ','
+    private static readonly PackagesWord = ' packages='
+    private static readonly EmptyString = ''
     private static readonly PromoteDevName = 'smoke-promote-dev'
     private static readonly PromoteRuntimeName = 'smoke-promote-rt'
     private static readonly PromoteGraphName = 'smoke-graph'
@@ -170,7 +172,7 @@ export class ControlPlaneSmoke
 
     private failed = false
     private controlPort = 0
-    private sessionCookie = ''
+    private sessionCookie = ControlPlaneSmoke.EmptyString
 
     public static async Main(): Promise<void>
     {
@@ -321,14 +323,13 @@ export class ControlPlaneSmoke
         const madeGraph = await this.Api(S.MethodPost, this.EnvPath(dev) + S.GraphsSegment, { name: graph, description: S.PromoteGraphDescription })
         this.Expect(L.PromoteCreateGraph, madeGraph.status === S.StatusCreated, S.StatusWord + String(madeGraph.status))
         const minted = await this.Api(S.MethodPost, this.EnvPath(dev) + S.MakerTokenAction)
-        const makerToken = (minted.json as MakerTokenDto | undefined)?.token ?? ''
-        this.Expect(L.PromoteMakerToken, minted.status === S.StatusCreated && makerToken !== '', S.StatusWord + String(minted.status))
-        if (makerToken === '')
+        const makerToken = (minted.json as MakerTokenDto | undefined)?.token ?? S.EmptyString
+        this.Expect(L.PromoteMakerToken, minted.status === S.StatusCreated && makerToken !== S.EmptyString, S.StatusWord + String(minted.status))
+        if (makerToken === S.EmptyString)
         {
             return
         }
-        const contributed = await this.ContributeAs(devRunning.hostPort, dev, makerToken)
-        this.Expect(L.PromoteContribute, contributed?.name === graph && contributed.packages.length === S.PromotedPackageCount)
+        await this.ContributeAs(devRunning.hostPort, dev, makerToken)
 
         const rtCreated = await this.Api(S.MethodPost, S.EnvironmentsPath, { name: runtime, template: Template.DemoContoso, type: EnvType.Runtime })
         const rtRunning = rtCreated.status === S.StatusCreated ? await this.WaitFor(runtime, EnvStatus.Running) : undefined
@@ -344,7 +345,7 @@ export class ControlPlaneSmoke
         this.Expect(L.PromoteResult, resultOk, S.StatusWord + String(promoted.status))
         const loadedRes = await this.Api(S.MethodGet, this.EnvPath(runtime) + S.LoadedGraphAction)
         const loaded = loadedRes.json as GraphLoadedDto | null | undefined
-        const loadedOk = loadedRes.status === S.StatusOk && loaded?.name === graph && loaded.packages.length === S.PromotedPackageCount && (loaded.promotedAt ?? '') !== ''
+        const loadedOk = loadedRes.status === S.StatusOk && loaded?.name === graph && loaded.packages.length === S.PromotedPackageCount && (loaded.promotedAt ?? S.EmptyString) !== S.EmptyString
         this.Expect(L.PromoteLoaded, loadedOk, S.StatusWord + String(loadedRes.status))
         await this.CheckRuntimeGraphRead(dataRoot, rtRunning.hostPort)
 
@@ -354,18 +355,27 @@ export class ControlPlaneSmoke
         this.Expect(L.PromoteDeleteRuntime, delRt.status === S.StatusOk, S.StatusWord + String(delRt.status))
     }
 
-    /** Contributes the small fixture package into the smoke graph over a maker-token WS to the dev container. */
-    private async ContributeAs(port: number, tenantId: string, makerToken: string): Promise<GraphDetailDto | undefined>
+    /** Contributes the small fixture package over a maker-token WS to the dev container and records the outcome; a rejection is reported (message only, never the token) instead of escaping. */
+    private async ContributeAs(port: number, tenantId: string, makerToken: string): Promise<void>
     {
         const S = ControlPlaneSmoke
-        const conn = await new UserSeeder().Connect(S.WsPrefix + String(port), tenantId, makerToken)
         try
         {
-            return await conn.sendRequest(GraphProtocol.Contribute, { graphName: S.PromoteGraphName, solutionId: S.PromoteSolutionId, packages: [S.FixturePackage()] })
+            const conn = await new UserSeeder().Connect(S.WsPrefix + String(port), tenantId, makerToken)
+            try
+            {
+                const detail = await conn.sendRequest(GraphProtocol.Contribute, { graphName: S.PromoteGraphName, solutionId: S.PromoteSolutionId, packages: [S.FixturePackage()] })
+                const ok = detail.name === S.PromoteGraphName && detail.packages.length === S.PromotedPackageCount
+                this.Expect(S.Labels.PromoteContribute, ok, detail.name + S.PackagesWord + String(detail.packages.length))
+            }
+            finally
+            {
+                conn.dispose()
+            }
         }
-        finally
+        catch (err)
         {
-            conn.dispose()
+            this.Expect(S.Labels.PromoteContribute, false, err instanceof Error ? err.message : String(err))
         }
     }
 
