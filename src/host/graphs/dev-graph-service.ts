@@ -1,4 +1,5 @@
-import type { GraphCreateParamsDto, GraphDetailDto, GraphRefParamsDto, GraphSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { GraphContributeParamsDto, GraphCreateParamsDto, GraphDetailDto, GraphRefParamsDto, GraphSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { GraphPackageIngest } from './graph-package-ingest.js'
 import type { DevGraphRecord, DevGraphStore, PackageRef } from './dev-graph-store.js'
 
 export class GraphExistsError extends Error
@@ -43,6 +44,7 @@ export interface IDevGraphService
     ListGraphs(): Promise<GraphSummaryDto[]>
     GetGraph(params: GraphRefParamsDto): Promise<GraphDetailDto>
     DeleteGraph(params: GraphRefParamsDto): Promise<void>
+    ContributeGraph(params: GraphContributeParamsDto): Promise<GraphDetailDto>
 }
 
 /** Container-owned graph catalog: create/list/get/delete over the DevGraphStore. */
@@ -51,7 +53,7 @@ export class DevGraphService implements IDevGraphService
     private static readonly KeySeparator = '\u0000'
     private static readonly GraphNamePattern = /^[a-z0-9][a-z0-9-]*$/
 
-    public constructor(private readonly store: DevGraphStore)
+    public constructor(private readonly store: DevGraphStore, private readonly ingest: GraphPackageIngest)
     {
     }
 
@@ -93,6 +95,21 @@ export class DevGraphService implements IDevGraphService
             throw new GraphNotFoundError(params.graphName)
         }
         await this.store.Remove(params.graphName)
+    }
+
+    /** Replaces one solution's slice. Package bytes are ingested first so a Conflict leaves the manifest untouched. */
+    public async ContributeGraph(params: GraphContributeParamsDto): Promise<GraphDetailDto>
+    {
+        await this.store.Load()
+        const record = this.store.Get(params.graphName)
+        if (record === undefined)
+        {
+            throw new GraphNotFoundError(params.graphName)
+        }
+        await this.ingest.Store(params.packages)
+        record.slices[params.solutionId] = params.packages.map(p => ({ id: p.id, version: p.version }))
+        await this.store.Put(record)
+        return DevGraphService.ToDetail(record)
     }
 
     private static SanitizeGraphName(name: string): void

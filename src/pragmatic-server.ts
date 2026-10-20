@@ -81,6 +81,7 @@ import { ConceptIdFields } from './host/sharing/concept-id-fields.js'
 import { ShareWideningWriteInstanceGate } from './host/sharing/share-widening-write-instance-gate.js'
 import { ShareWideningWriteAuthorizer } from './host/sharing/share-widening-write-authorizer.js'
 import { DevGraphStore } from './host/graphs/dev-graph-store.js'
+import { GraphPackageIngest } from './host/graphs/graph-package-ingest.js'
 import { DevGraphService, type IDevGraphService } from './host/graphs/dev-graph-service.js'
 import { InvalidParamsPrefix } from './host/invalid-params-prefix.js'
 
@@ -433,7 +434,7 @@ export class PragmaticServer
     public GraphService(): IDevGraphService
     {
         this.AssertDevelopmentPurpose()
-        this.devGraphService ??= new DevGraphService(new DevGraphStore(this.GraphsStorage()))
+        this.devGraphService ??= new DevGraphService(new DevGraphStore(this.GraphsStorage()), new GraphPackageIngest(this.PackagesStorage()))
         return this.devGraphService
     }
 
