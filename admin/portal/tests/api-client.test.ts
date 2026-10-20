@@ -70,6 +70,21 @@ describe('ControlPlaneClient security model', () =>
     })
 })
 
+describe('ControlPlaneClient maker token', () =>
+{
+    afterEach(() => { FetchStub.Restore() })
+
+    it('IssueMakerToken POSTs to the maker-token route and returns the parsed token', async () =>
+    {
+        const issued = { token: 'tok-abc', principalId: 'maker-1', expiresAt: null }
+        FetchStub.Install(issued)
+        const result = await new ControlPlaneClient().IssueMakerToken('envX')
+        assert.equal(FetchStub.Calls[0]!.route, '/api/environments/envX/maker-token')
+        assert.equal(FetchStub.Calls[0]!.init?.method, 'POST')
+        assert.deepEqual(result, issued)
+    })
+})
+
 describe('ControlPlaneClient graphs', () =>
 {
     afterEach(() => { FetchStub.Restore() })

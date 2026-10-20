@@ -10,6 +10,7 @@ export class EnvironmentDetailView extends PortalViewBase
     private static readonly ManageLabel = 'Manage'
     public static readonly RolesLabel = 'Roles'
     public static readonly GraphsLabel = 'Graphs'
+    public static readonly MakerTokenLabel = 'Mint maker token'
     private static readonly DevelopmentType = 'development'
     private static readonly LogsHeading = 'Logs'
     private static readonly HttpPrefix = 'HTTP: '
@@ -114,6 +115,7 @@ export class EnvironmentDetailView extends PortalViewBase
         if (this.envType === EnvironmentDetailView.DevelopmentType)
         {
             this.actions.AddChild(this.MakeButton(EnvironmentDetailView.GraphsLabel, () => { this.nav.ShowGraphs(this.name) }))
+            this.actions.AddChild(this.MakeButton(EnvironmentDetailView.MakerTokenLabel, () => { this.nav.ShowMakerToken(this.name) }))
         }
         this.actions.AddChild(this.MakeButton(PortalViewBase.BackLabel, () => { this.nav.ShowList() }))
     }

@@ -1,4 +1,4 @@
-import type { AdminSnapshotDto, EnvironmentDto, GraphDto, GrantMutationDto, IdentityConfigDto, OperatorDto, SecurityModelDto, TemplateDto } from './portal-types.js'
+import type { AdminSnapshotDto, EnvironmentDto, GraphDto, GrantMutationDto, IdentityConfigDto, MakerTokenDto, OperatorDto, SecurityModelDto, TemplateDto } from './portal-types.js'
 
 // Thrown for non-2xx control-plane responses; Message carries the server's error text.
 export class ApiError extends Error
@@ -26,6 +26,7 @@ export class ControlPlaneClient
     private static readonly EventsRoute = '/api/events'
     private static readonly PathSeparator = '/'
     private static readonly GraphsLeaf = 'graphs'
+    private static readonly MakerTokenLeaf = 'maker-token'
     private static readonly StartAction = 'start'
     private static readonly StopAction = 'stop'
     private static readonly LogsAction = 'logs'
@@ -238,6 +239,16 @@ export class ControlPlaneClient
     private GraphsRoute(envName: string): string
     {
         return this.EnvRoute(envName) + ControlPlaneClient.PathSeparator + ControlPlaneClient.GraphsLeaf
+    }
+
+    private MakerTokenRoute(envName: string): string
+    {
+        return this.EnvRoute(envName) + ControlPlaneClient.PathSeparator + ControlPlaneClient.MakerTokenLeaf
+    }
+
+    public async IssueMakerToken(envName: string): Promise<MakerTokenDto>
+    {
+        return await this.Send<MakerTokenDto>(this.MakerTokenRoute(envName), { method: ControlPlaneClient.MethodPost, body: ControlPlaneClient.EmptyBody })
     }
 
     public async ListGraphs(envName: string): Promise<GraphDto[]>
