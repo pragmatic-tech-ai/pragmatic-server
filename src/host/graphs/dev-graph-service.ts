@@ -48,7 +48,7 @@ export interface IDevGraphService
 /** Container-owned graph catalog: create/list/get/delete over the DevGraphStore. */
 export class DevGraphService implements IDevGraphService
 {
-    private static readonly KeySeparator = '@'
+    private static readonly KeySeparator = '\u0000'
     private static readonly GraphNamePattern = /^[a-z0-9][a-z0-9-]*$/
 
     public constructor(private readonly store: DevGraphStore)
