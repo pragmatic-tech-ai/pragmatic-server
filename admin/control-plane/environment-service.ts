@@ -82,6 +82,9 @@ export class EnvironmentService
     private static readonly Utf8 = 'utf8'
     private static readonly MissingSecretPrefix = 'no provisioned secret for '
 
+    /** Safe names with a Create currently running; closes the race between the existence check and the final registry Put. */
+    private readonly inFlight = new Set<string>()
+
     public constructor(
         private readonly registry: EnvironmentRegistry,
         private readonly allocator: PortAllocator,
@@ -96,85 +99,93 @@ export class EnvironmentService
     public async Create(name: string, template: Template, type: EnvType, hostPort?: number): Promise<EnvironmentRecord>
     {
         const safe = TemplateCatalog.SanitizeName(name)
-        if (this.registry.Get(safe) !== undefined)
+        if (this.registry.Get(safe) !== undefined || this.inFlight.has(safe))
         {
             throw new EnvironmentExistsError(safe)
         }
-        const taken = this.registry.List().map(r => r.hostPort)
-        let port: number
-        if (hostPort !== undefined)
-        {
-            await this.allocator.Check(hostPort, taken)
-            port = hostPort
-        }
-        else
-        {
-            port = await this.allocator.Allocate(taken)
-        }
-        const { def, seedDir } = TemplateCatalog.Resolve(template, safe, port, type)
-        const bundleDir = join(this.dataRoot, def.name)
-        await this.bundle.Generate(def, bundleDir, seedDir)
-
-        let imageOk: boolean
+        this.inFlight.add(safe)
         try
         {
-            imageOk = await this.docker.EnsureImage()
-        }
-        catch
-        {
-            EnvironmentService.RemoveBundleDir(bundleDir)
-            throw new DockerUnavailableError()
-        }
-        if (!imageOk)
-        {
-            EnvironmentService.RemoveBundleDir(bundleDir)
-            throw new ImageMissingError(this.docker.BuildCommand())
-        }
-
-        const record: EnvironmentRecord = {
-            name: def.name,
-            template,
-            type,
-            tenantId: def.tenantId,
-            hostPort: port,
-            containerName: DockerEnv.ContainerName(def),
-            volumeName: DockerEnv.VolumeName(def),
-            bundleDir,
-            createdAt: new Date().toISOString(),
-            status: EnvStatus.Running
-        }
-        try
-        {
-            await this.docker.Up(def, bundleDir)
-            await this.docker.WaitHealthy(port, def)
-            if (def.kind === EnvKind.Demo)
+            const taken = this.registry.List().map(r => r.hostPort)
+            let port: number
+            if (hostPort !== undefined)
             {
-                await this.SeedDemoUsers(def, bundleDir, seedDir, port)
+                await this.allocator.Check(hostPort, taken)
+                port = hostPort
             }
-        }
-        catch (err)
-        {
+            else
+            {
+                port = await this.allocator.Allocate(taken)
+            }
+            const { def, seedDir } = TemplateCatalog.Resolve(template, safe, port, type)
+            const bundleDir = join(this.dataRoot, def.name)
+            await this.bundle.Generate(def, bundleDir, seedDir)
+
+            let imageOk: boolean
             try
             {
-                await this.docker.Down(def)
+                imageOk = await this.docker.EnsureImage()
             }
             catch
             {
-                // teardown is best-effort; the Failed record and CreateFailedError must still happen
+                EnvironmentService.RemoveBundleDir(bundleDir)
+                throw new DockerUnavailableError()
+            }
+            if (!imageOk)
+            {
+                EnvironmentService.RemoveBundleDir(bundleDir)
+                throw new ImageMissingError(this.docker.BuildCommand())
+            }
+
+            const record: EnvironmentRecord = {
+                name: def.name,
+                template,
+                type,
+                tenantId: def.tenantId,
+                hostPort: port,
+                containerName: DockerEnv.ContainerName(def),
+                volumeName: DockerEnv.VolumeName(def),
+                bundleDir,
+                createdAt: new Date().toISOString(),
+                status: EnvStatus.Running
             }
             try
             {
-                await this.docker.RemoveVolume(def)
+                await this.docker.Up(def, bundleDir)
+                await this.docker.WaitHealthy(port, def)
+                if (def.kind === EnvKind.Demo)
+                {
+                    await this.SeedDemoUsers(def, bundleDir, seedDir, port)
+                }
             }
-            catch
+            catch (err)
             {
-                // volume removal is best-effort too
+                try
+                {
+                    await this.docker.Down(def)
+                }
+                catch
+                {
+                    // teardown is best-effort; the Failed record and CreateFailedError must still happen
+                }
+                try
+                {
+                    await this.docker.RemoveVolume(def)
+                }
+                catch
+                {
+                    // volume removal is best-effort too
+                }
+                await this.registry.Put({ ...record, status: EnvStatus.Failed })
+                throw new CreateFailedError(err instanceof Error ? err.message : String(err))
             }
-            await this.registry.Put({ ...record, status: EnvStatus.Failed })
-            throw new CreateFailedError(err instanceof Error ? err.message : String(err))
+            await this.registry.Put(record)
+            return record
         }
-        await this.registry.Put(record)
-        return record
+        finally
+        {
+            this.inFlight.delete(safe)
+        }
     }
 
     public async Start(name: string): Promise<EnvironmentRecord>

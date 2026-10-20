@@ -482,3 +482,27 @@ test('DefOf falls back to the template default when a legacy record has no type'
     const rec = { ...Harness.Record('l1', EnvStatus.Stopped), template: Template.DemoContoso, type: undefined } as unknown as EnvironmentRecord
     assert.equal(DefOfProbe.Purpose(rec), TenantPurposeName.Runtime)
 })
+
+test('two overlapping Creates for the same name yield one environment and one EnvironmentExistsError', async () =>
+{
+    const h = await Harness.Make()
+    const p1 = h.Service.Create('e1', Template.DevBlank, EnvType.Development)
+    const p2 = h.Service.Create('e1', Template.DevBlank, EnvType.Development)
+    const results = await Promise.allSettled([p1, p2])
+    assert.equal(results.filter(r => r.status === 'fulfilled').length, 1)
+    const rejected = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+    assert.equal(rejected.length, 1)
+    assert.ok(rejected[0].reason instanceof EnvironmentExistsError)
+    assert.equal(h.Calls.filter(c => c === 'up').length, 1)
+    assert.equal(h.Registry.List().length, 1)
+})
+
+test('a failed Create releases its in-flight reservation so the name can be retried', async () =>
+{
+    const h = await Harness.Make()
+    h.Docker.ImageOk = false
+    await assert.rejects(() => h.Service.Create('e1', Template.DevBlank, EnvType.Development), ImageMissingError)
+    h.Docker.ImageOk = true
+    const rec = await h.Service.Create('e1', Template.DevBlank, EnvType.Development)
+    assert.equal(rec.status, EnvStatus.Running)
+})
