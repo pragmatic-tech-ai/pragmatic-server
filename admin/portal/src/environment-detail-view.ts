@@ -8,7 +8,9 @@ import { PortalViewBase } from './portal-view-base.js'
 export class EnvironmentDetailView extends PortalViewBase
 {
     private static readonly ManageLabel = 'Manage'
-    private static readonly RolesLabel = 'Roles'
+    public static readonly RolesLabel = 'Roles'
+    public static readonly GraphsLabel = 'Graphs'
+    private static readonly DevelopmentType = 'development'
     private static readonly LogsHeading = 'Logs'
     private static readonly HttpPrefix = 'HTTP: '
     private static readonly WsPrefix = 'WebSocket: '
@@ -24,6 +26,7 @@ export class EnvironmentDetailView extends PortalViewBase
     private readonly logs = new TextBlock()
     private readonly actions = new StackPanel()
     private confirming = false
+    private envType: string | undefined
 
     public constructor(private readonly client: ControlPlaneClient, private readonly nav: IPortalNavigator, private readonly name: string)
     {
@@ -81,10 +84,12 @@ export class EnvironmentDetailView extends PortalViewBase
 
     private ShowEnvironment(env: EnvironmentDto): void
     {
+        this.envType = env.type
         this.type.Text = EnvironmentDetailView.TypePrefix + env.type
         this.status.Text = EnvironmentDetailView.StatusPrefix + env.status
         this.http.Text = EnvironmentDetailView.HttpPrefix + env.httpUrl
         this.ws.Text = EnvironmentDetailView.WsPrefix + env.wsUrl
+        this.RenderActions()
     }
 
     private RenderActions(): void
@@ -106,6 +111,10 @@ export class EnvironmentDetailView extends PortalViewBase
         }
         this.actions.AddChild(this.MakeButton(EnvironmentDetailView.ManageLabel, () => { this.nav.ShowManage(this.name) }))
         this.actions.AddChild(this.MakeButton(EnvironmentDetailView.RolesLabel, () => { this.nav.ShowRoles(this.name) }))
+        if (this.envType === EnvironmentDetailView.DevelopmentType)
+        {
+            this.actions.AddChild(this.MakeButton(EnvironmentDetailView.GraphsLabel, () => { this.nav.ShowGraphs(this.name) }))
+        }
         this.actions.AddChild(this.MakeButton(PortalViewBase.BackLabel, () => { this.nav.ShowList() }))
     }
 

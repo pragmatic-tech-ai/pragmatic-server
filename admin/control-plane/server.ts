@@ -8,6 +8,7 @@ import { ControlPlaneHost } from './control-plane-host.js'
 import { BundleBuilderAdapter, DockerEnvAdapter, UserSeederAdapter } from './docker-env-port.js'
 import { EnvironmentRegistry } from './environment-registry.js'
 import { EnvironmentService } from './environment-service.js'
+import { GraphService } from './graph-service.js'
 import { OperatorIdentity, type OperatorComposeOptions } from './operator-identity.js'
 import { NetPortProbe, PortAllocator } from './port-allocator.js'
 
@@ -51,8 +52,9 @@ export class ControlPlaneServer
         const bundle = new BundleBuilderAdapter()
         const seeder = new UserSeederAdapter(new UserSeeder())
         const service = new EnvironmentService(registry, allocator, docker, bundle, seeder, dataRoot, new AdminProxy(new WsAdminConnector()))
+        const graphService = new GraphService(registry)
         const staticRoot = join(here, ControlPlaneServer.ParentSegment, ControlPlaneServer.PortalSegment, ControlPlaneServer.DistSegment)
-        const host = new ControlPlaneHost(service, staticRoot, operator, opts.secureCookie)
+        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
         await host.Listen(port, ControlPlaneServer.BindHost)
         console.log(ControlPlaneServer.ListeningPrefix + String(port) + ControlPlaneServer.ListeningSuffix)

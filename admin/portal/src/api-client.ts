@@ -1,4 +1,4 @@
-import type { AdminSnapshotDto, EnvironmentDto, GrantMutationDto, IdentityConfigDto, OperatorDto, SecurityModelDto, TemplateDto } from './portal-types.js'
+import type { AdminSnapshotDto, EnvironmentDto, GraphDto, GrantMutationDto, IdentityConfigDto, OperatorDto, SecurityModelDto, TemplateDto } from './portal-types.js'
 
 // Thrown for non-2xx control-plane responses; Message carries the server's error text.
 export class ApiError extends Error
@@ -25,6 +25,7 @@ export class ControlPlaneClient
     private static readonly CredentialsMode = 'same-origin'
     private static readonly EventsRoute = '/api/events'
     private static readonly PathSeparator = '/'
+    private static readonly GraphsLeaf = 'graphs'
     private static readonly StartAction = 'start'
     private static readonly StopAction = 'stop'
     private static readonly LogsAction = 'logs'
@@ -232,6 +233,26 @@ export class ControlPlaneClient
                 h()
             }
         }
+    }
+
+    private GraphsRoute(envName: string): string
+    {
+        return this.EnvRoute(envName) + ControlPlaneClient.PathSeparator + ControlPlaneClient.GraphsLeaf
+    }
+
+    public async ListGraphs(envName: string): Promise<GraphDto[]>
+    {
+        return await this.Send<GraphDto[]>(this.GraphsRoute(envName), undefined)
+    }
+
+    public async CreateGraph(envName: string, name: string, description: string): Promise<GraphDto>
+    {
+        return await this.Send<GraphDto>(this.GraphsRoute(envName), { method: ControlPlaneClient.MethodPost, body: JSON.stringify({ name, description }) })
+    }
+
+    public async DeleteGraph(envName: string, graphName: string): Promise<void>
+    {
+        await this.Send<unknown>(this.GraphsRoute(envName) + ControlPlaneClient.PathSeparator + encodeURIComponent(graphName), { method: ControlPlaneClient.MethodDelete })
     }
 
     private EnvRoute(name: string): string

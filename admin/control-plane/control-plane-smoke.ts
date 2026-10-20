@@ -25,6 +25,7 @@ import { BundleBuilderAdapter, DockerEnvAdapter, UserSeederAdapter } from './doc
 import { EnvStatus, EnvType, Template } from './environment-record.js'
 import { EnvironmentRegistry } from './environment-registry.js'
 import { EnvironmentService } from './environment-service.js'
+import { GraphService } from './graph-service.js'
 import { OperatorIdentity } from './operator-identity.js'
 import { NetPortProbe, PortAllocator } from './port-allocator.js'
 
@@ -166,7 +167,7 @@ export class ControlPlaneSmoke
             operatorEmail: ControlPlaneSmoke.OperatorEmail,
             initialPassword: ControlPlaneSmoke.OperatorPassword
         })
-        const host = new ControlPlaneHost(service, staticRoot, operator, false)
+        const host = new ControlPlaneHost(service, new GraphService(registry), staticRoot, operator, false)
         try
         {
             await host.Listen(0, ControlPlaneSmoke.LoopbackHost)
