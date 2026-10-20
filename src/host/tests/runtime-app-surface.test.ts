@@ -54,7 +54,7 @@ class RuntimeSurfaceFixture
     public static readonly Nut = 'Nut'
     public static readonly Bolt = 'Bolt'
     public static readonly Alpha = 'alpha'
-    public static readonly NoAppSelected = /no environment graph is loaded/i
+    public static readonly NoEnvironmentGraph = /no environment graph is loaded/i
     public static readonly NotRuntime = /operation requires a runtime tenant/
     public static readonly NameMismatch = /does not match requested name/
     public static readonly TenantId = 't1'
@@ -231,13 +231,13 @@ test('runtime e2e: list, open and query an application', async () =>
     })
 })
 
-test('runtime e2e: query before opening an application is rejected', async () =>
+test('runtime e2e: query before opening an application reports no environment graph loaded', async () =>
 {
     await RuntimeSurfaceFixture.Run(async fx =>
     {
         await fx.Seed(RuntimeSurfaceFixture.AppA, RuntimeSurfaceFixture.PkgA, RuntimeSurfaceFixture.Widget, [RuntimeSurfaceFixture.Hi], false)
         const client = (await fx.Runtime())()
-        await assert.rejects(() => client.CypherQuery(RuntimeSurfaceFixture.WidgetLabels), RuntimeSurfaceFixture.NoAppSelected)
+        await assert.rejects(() => client.CypherQuery(RuntimeSurfaceFixture.WidgetLabels), RuntimeSurfaceFixture.NoEnvironmentGraph)
     })
 })
 

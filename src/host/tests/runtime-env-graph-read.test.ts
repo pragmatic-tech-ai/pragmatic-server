@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { InMemoryMessageSocket, PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { InMemoryMessageSocket, PragmaticClient, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
 import {
     Repository, Cardinality, toJSON, BlobPackageStore, StoragePackageSink, StoragePackageSource,
@@ -73,6 +73,8 @@ class EnvReadFixture
     public static readonly WidgetLabels = 'MATCH (w:Widget) RETURN w.label AS label'
     public static readonly NoGraphMessage = /no environment graph is loaded/
     public static readonly Prefix = 'envread-'
+    public static readonly SomeModelId = 'm1'
+    public static readonly ModelScopeMessage = /model-scoped query is not available on a runtime tenant/
 
     public readonly Dir = mkdtempSync(join(tmpdir(), EnvReadFixture.Prefix))
     public readonly Apps = mkdtempSync(join(tmpdir(), EnvReadFixture.Prefix))
@@ -212,6 +214,20 @@ test('runtime with a bound app still queries the app graph and never consults th
         await client.OpenApplication(EnvReadFixture.AppName)
         const result = await client.CypherQuery(EnvReadFixture.WidgetLabels)
         assert.deepEqual(EnvReadFixture.Column(result), [EnvReadFixture.AppLabel])
+        assert.equal(host.Consulted, 0)
+    })
+})
+
+test('a model-scoped query on a runtime tenant is rejected as InvalidParams', async () =>
+{
+    await EnvReadFixture.Run(async fx =>
+    {
+        await fx.PublishPackage(EnvReadFixture.EnvPkg, EnvReadFixture.EnvLabel)
+        const host = new FakeEnvironmentGraphHost(await fx.EnvQuery())
+        const client = await fx.Connect(host)
+        await assert.rejects(
+            () => client.CypherQuery(EnvReadFixture.WidgetLabels, undefined, undefined, EnvReadFixture.SomeModelId),
+            (e: { code?: number; message?: string }) => e.code === ErrorCodes.InvalidParams && EnvReadFixture.ModelScopeMessage.test(String(e.message)))
         assert.equal(host.Consulted, 0)
     })
 })
