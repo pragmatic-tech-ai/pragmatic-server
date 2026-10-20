@@ -33,6 +33,8 @@ class FakeControlPlane
     public static readonly GraphsPath = '/api/environments/alpha/graphs'
     public static readonly NewGraphName = 'g1'
     public static readonly NewGraphDescription = 'first graph'
+    public static readonly NewGraphPackageCount = '0'
+    public static readonly RuntimeType = 'runtime'
     public static readonly GraphCreatedAt = '2026-01-01T00:00:00.000Z'
     public static readonly StopPath = '/api/environments/alpha/stop'
     public static readonly DeletePath = '/api/environments/alpha'
@@ -73,6 +75,7 @@ class FakeControlPlane
 
     public readonly Calls: Call[] = []
     public TemplatesRequests = 0
+    public EnvType = FakeControlPlane.ListedType
     public Graphs: Array<{ name: string; description: string; packageCount: number; createdAt: string }> = []
     public Authenticated = true
     private readonly root = fileURLToPath(new URL('../dist/', import.meta.url))
@@ -97,12 +100,12 @@ class FakeControlPlane
         return this.Calls.find(c => c.method === method && c.path === path)
     }
 
-    private static Env(): Record<string, unknown>
+    private Env(): Record<string, unknown>
     {
         return {
             name: FakeControlPlane.EnvName,
             template: FakeControlPlane.TemplateOneId,
-            type: FakeControlPlane.ListedType,
+            type: this.EnvType,
             tenantId: FakeControlPlane.TenantId,
             hostPort: 4101,
             status: FakeControlPlane.EnvStatus,
@@ -195,7 +198,7 @@ class FakeControlPlane
         {
             if (method === FakeControlPlane.MethodGet && path === FakeControlPlane.EnvironmentsPath)
             {
-                FakeControlPlane.Json(res, 200, [FakeControlPlane.Env()])
+                FakeControlPlane.Json(res, 200, [this.Env()])
                 return
             }
             const raw = method === FakeControlPlane.MethodPost ? await FakeControlPlane.ReadBody(req) : ''
@@ -206,7 +209,7 @@ class FakeControlPlane
             }
             this.Calls.push(call)
             const created = method === FakeControlPlane.MethodPost && path === FakeControlPlane.EnvironmentsPath
-            FakeControlPlane.Json(res, created ? 201 : 200, FakeControlPlane.Env())
+            FakeControlPlane.Json(res, created ? 201 : 200, this.Env())
             return
         }
         await this.Serve(path, res)
@@ -275,7 +278,7 @@ test.describe('admin portal', () =>
 
     test.beforeAll(async () => { base = await fake.Start() })
     test.afterAll(async () => { await fake.Stop() })
-    test.beforeEach(() => { fake.Authenticated = true })
+    test.beforeEach(() => { fake.Authenticated = true; fake.EnvType = FakeControlPlane.ListedType })
 
     test('lists the environment with its status', async ({ page }) =>
     {
@@ -384,7 +387,16 @@ test.describe('admin portal', () =>
             name: FakeControlPlane.NewGraphName,
             description: FakeControlPlane.NewGraphDescription,
         })
-        const row = [FakeControlPlane.NewGraphName, FakeControlPlane.NewGraphDescription, '0'].join(FakeControlPlane.RowSeparator)
+        const row = [FakeControlPlane.NewGraphName, FakeControlPlane.NewGraphDescription, FakeControlPlane.NewGraphPackageCount].join(FakeControlPlane.RowSeparator)
         await expect(page.getByText(row, { exact: true })).toBeVisible()
+    })
+
+    test('a runtime environment does not show the Graphs button', async ({ page }) =>
+    {
+        fake.EnvType = FakeControlPlane.RuntimeType
+        await page.goto(base)
+        await page.getByText(EnvironmentListView.OpenLabel, { exact: true }).click()
+        await expect(page.getByText(EnvironmentDetailView.RolesLabel, { exact: true })).toBeVisible()
+        await expect(page.getByText(EnvironmentDetailView.GraphsLabel, { exact: true })).toHaveCount(0)
     })
 })

@@ -8,7 +8,7 @@ import { PortalViewBase } from './portal-view-base.js'
 export class EnvironmentDetailView extends PortalViewBase
 {
     private static readonly ManageLabel = 'Manage'
-    private static readonly RolesLabel = 'Roles'
+    public static readonly RolesLabel = 'Roles'
     public static readonly GraphsLabel = 'Graphs'
     private static readonly DevelopmentType = 'development'
     private static readonly LogsHeading = 'Logs'

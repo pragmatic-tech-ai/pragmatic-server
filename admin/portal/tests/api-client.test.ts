@@ -91,4 +91,12 @@ describe('ControlPlaneClient graphs', () =>
         assert.equal(FetchStub.Calls[0]!.route, '/api/environments/dev1/graphs')
         assert.equal(FetchStub.Calls[0]!.init?.method, undefined)
     })
+
+    it('DeleteGraph DELETEs the graph under the nested env graphs route', async () =>
+    {
+        FetchStub.Install({})
+        await new ControlPlaneClient().DeleteGraph('dev1', 'g1')
+        assert.equal(FetchStub.Calls[0]!.route, '/api/environments/dev1/graphs/g1')
+        assert.equal(FetchStub.Calls[0]!.init?.method, 'DELETE')
+    })
 })
