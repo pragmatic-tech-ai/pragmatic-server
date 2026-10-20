@@ -305,9 +305,11 @@ describe('ControlPlaneHost', () =>
     {
         const bad = await Harness.Send(host, 'POST', '/api/environments', JSON.stringify({ name: 'e', template: 'dev-blank', type: 'bogus' }))
         assert.equal(bad.status, 400)
-        assert.ok(JSON.parse(bad.body).error.includes('development, runtime'))
+        assert.ok(JSON.parse(bad.body).error.includes(Object.values(EnvType).join(', ')))
         const missing = await Harness.Send(host, 'POST', '/api/environments', JSON.stringify({ name: 'e', template: 'dev-blank' }))
         assert.equal(missing.status, 400)
+        const nonString = await Harness.Send(host, 'POST', '/api/environments', JSON.stringify({ name: 'e', template: 'dev-blank', type: 123 }))
+        assert.equal(nonString.status, 400)
         assert.equal(fake.Calls.length, 0)
     })
 
