@@ -7,7 +7,8 @@
  * tokens and passwords: nothing secret is ever passed to the logger (stderr).
  *
  *   npx tsx admin/control-plane/loop-orchestrator.ts create-dev --data-root <dir>
- *   npx tsx admin/control-plane/loop-orchestrator.ts promote-and-provision --data-root <dir> --graph <g>
+ *   npx tsx admin/control-plane/loop-orchestrator.ts create-runtime --data-root <dir>
+ *   npx tsx admin/control-plane/loop-orchestrator.ts promote --data-root <dir> --graph <g>
  *   npx tsx admin/control-plane/loop-orchestrator.ts teardown --data-root <dir>
  */
 import { randomBytes } from 'node:crypto'
@@ -31,7 +32,8 @@ import { NetPortProbe, PortAllocator } from './port-allocator.js'
 export enum LoopCommand
 {
     CreateDev = 'create-dev',
-    PromoteAndProvision = 'promote-and-provision',
+    CreateRuntime = 'create-runtime',
+    Promote = 'promote',
     Teardown = 'teardown'
 }
 
@@ -58,7 +60,7 @@ export interface DevDescriptor
     makerToken: string
 }
 
-/** Output of promote-and-provision: the cross-task JSON contract consumed by the e2e (keys are fixed). */
+/** Output of create-runtime (no promotion): the cross-task JSON contract consumed by the e2e (keys are fixed). */
 export interface RuntimeDescriptor
 {
     runtimeEnv: string
@@ -71,13 +73,21 @@ export interface RuntimeDescriptor
     ungranted: CredentialDescriptor
 }
 
+/** Output of promote: the non-secret promotion result. */
+export interface PromoteDescriptor
+{
+    graphName: string
+    packageCount: number
+    targetEnv: string
+}
+
 /** Output of teardown. */
 export interface TeardownDescriptor
 {
     ok: true
 }
 
-export type LoopDescriptor = DevDescriptor | RuntimeDescriptor | TeardownDescriptor
+export type LoopDescriptor = DevDescriptor | RuntimeDescriptor | PromoteDescriptor | TeardownDescriptor
 
 export interface ILoopLogger
 {
@@ -157,8 +167,9 @@ export class LoopOrchestrator
     private static readonly MsgCreatingRuntime = 'creating runtime environment'
     private static readonly MsgPromoting = 'promoting graph to runtime environment'
     private static readonly MsgProvisioning = 'provisioning reader and ungranted accounts'
-    private static readonly UsageMessage = 'usage: loop-orchestrator <create-dev|promote-and-provision|teardown> --data-root <dir> [--graph <name>]'
+    private static readonly UsageMessage = 'usage: loop-orchestrator <create-dev|create-runtime|promote|teardown> --data-root <dir> [--graph <name>] (--graph is required for promote)'
     private static readonly MissingDataRoot = 'missing --data-root'
+    private static readonly MissingGraph = 'promote requires --graph'
     private static readonly MissingValue = 'missing value for '
     private static readonly UnknownCommand = 'unknown command: '
     private static readonly UsageSep = '; '
@@ -194,6 +205,10 @@ export class LoopOrchestrator
             throw new Error(LoopOrchestrator.MissingDataRoot + LoopOrchestrator.UsageSep + LoopOrchestrator.UsageMessage)
         }
         const graph = LoopOrchestrator.FlagValue(argv, LoopOrchestrator.GraphFlag)
+        if (command === LoopCommand.Promote && graph === undefined)
+        {
+            throw new Error(LoopOrchestrator.MissingGraph + LoopOrchestrator.UsageSep + LoopOrchestrator.UsageMessage)
+        }
         return graph === undefined ? { command, dataRoot } : { command, dataRoot, graph }
     }
 
@@ -244,13 +259,11 @@ export class LoopOrchestrator
         }
     }
 
-    public async PromoteAndProvision(graphName: string = LoopOrchestrator.DefaultGraphName): Promise<RuntimeDescriptor>
+    public async CreateRuntime(): Promise<RuntimeDescriptor>
     {
         const name = LoopOrchestrator.RuntimeEnvName
         this.logger.Log(LoopOrchestrator.MsgCreatingRuntime)
         const rec = LoopOrchestrator.RequireRunning(await this.envs.Create(name, Template.DemoContoso, EnvType.Runtime))
-        this.logger.Log(LoopOrchestrator.MsgPromoting)
-        await this.graphs.Promote(LoopOrchestrator.DevEnvName, graphName, name)
         // AdminInfoFor reads the env's provisioned-secrets.json (`<tenant>-admin-pw`) into connect info.
         const info = await this.envs.AdminInfoFor(name)
         this.secrets.add(info.password)
@@ -273,6 +286,14 @@ export class LoopOrchestrator
     }
 
     /** Idempotent: removes whichever of the loop environments exist; an absent one is ignored. */
+    /** Promotes a dev graph into the EXISTING runtime env (never creates it); re-runnable: each call replaces the promoted content. */
+    public async Promote(graphName: string): Promise<PromoteDescriptor>
+    {
+        this.logger.Log(LoopOrchestrator.MsgPromoting)
+        const result = await this.graphs.Promote(LoopOrchestrator.DevEnvName, graphName, LoopOrchestrator.RuntimeEnvName)
+        return { graphName: result.graphName, packageCount: result.packageCount, targetEnv: result.targetEnv }
+    }
+
     public async Teardown(): Promise<TeardownDescriptor>
     {
         for (const name of [LoopOrchestrator.DevEnvName, LoopOrchestrator.RuntimeEnvName])
@@ -299,8 +320,10 @@ export class LoopOrchestrator
         {
             case LoopCommand.CreateDev:
                 return this.CreateDev(parsed.graph)
-            case LoopCommand.PromoteAndProvision:
-                return this.PromoteAndProvision(parsed.graph)
+            case LoopCommand.CreateRuntime:
+                return this.CreateRuntime()
+            case LoopCommand.Promote:
+                return this.Promote(parsed.graph ?? LoopOrchestrator.DefaultGraphName)
             case LoopCommand.Teardown:
                 return this.Teardown()
             default:

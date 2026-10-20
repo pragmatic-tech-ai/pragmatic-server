@@ -5,7 +5,7 @@ import type { AdminConnectInfo } from '../admin-proxy.js'
 import type { GraphDto, PromotionResultDto } from '../control-plane-host.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import { EnvironmentNotFoundError } from '../environment-service.js'
-import { LoopCommand, LoopOrchestrator, type ILoopEnvironments, type ILoopGraphs, type ILoopLogger, type ILoopLogin, type DevDescriptor, type RuntimeDescriptor } from '../loop-orchestrator.js'
+import { LoopCommand, LoopOrchestrator, type ILoopEnvironments, type ILoopGraphs, type ILoopLogger, type ILoopLogin, type DevDescriptor, type RuntimeDescriptor, type PromoteDescriptor } from '../loop-orchestrator.js'
 
 class Fixture
 {
@@ -125,10 +125,13 @@ test('ParseCommand maps create-dev with data-root', () =>
     assert.deepEqual(parsed, { command: LoopCommand.CreateDev, dataRoot: Fixture.Root })
 })
 
-test('ParseCommand maps promote-and-provision with graph and rejects bad input', () =>
+test('ParseCommand maps create-runtime and promote, requires --graph for promote, and rejects bad input', () =>
 {
-    const parsed = LoopOrchestrator.ParseCommand(['promote-and-provision', '--data-root', Fixture.Root, '--graph', Fixture.Graph])
-    assert.deepEqual(parsed, { command: LoopCommand.PromoteAndProvision, dataRoot: Fixture.Root, graph: Fixture.Graph })
+    const parsed = LoopOrchestrator.ParseCommand(['promote', '--data-root', Fixture.Root, '--graph', Fixture.Graph])
+    assert.deepEqual(parsed, { command: LoopCommand.Promote, dataRoot: Fixture.Root, graph: Fixture.Graph })
+    assert.deepEqual(LoopOrchestrator.ParseCommand(['create-runtime', '--data-root', Fixture.Root]), { command: LoopCommand.CreateRuntime, dataRoot: Fixture.Root })
+    assert.throws(() => LoopOrchestrator.ParseCommand(['promote', '--data-root', Fixture.Root]))
+    assert.throws(() => LoopOrchestrator.ParseCommand(['promote-and-provision', '--data-root', Fixture.Root]))
     assert.equal(LoopOrchestrator.ParseCommand(['teardown', '--data-root', Fixture.Root]).command, LoopCommand.Teardown)
     assert.throws(() => LoopOrchestrator.ParseCommand(['bogus', '--data-root', Fixture.Root]))
     assert.throws(() => LoopOrchestrator.ParseCommand(['create-dev']))
@@ -147,10 +150,10 @@ test('CreateDev descriptor carries devWsUrl/graphName/makerToken keys', async ()
     assert.equal(h.envs.created[0].template, Template.DevBlank)
 })
 
-test('PromoteAndProvision descriptor has the exact contract keys and grants only the reader', async () =>
+test('CreateRuntime descriptor has the exact contract keys, grants only the reader, and does not promote', async () =>
 {
     const h = new Harness()
-    const d = await h.orchestrator.PromoteAndProvision(Fixture.Graph)
+    const d = await h.orchestrator.CreateRuntime()
     const round = JSON.parse(JSON.stringify(d)) as RuntimeDescriptor
     assert.deepEqual(Object.keys(round).sort(), ['appOriginBase', 'deployToken', 'reader', 'runtimeEnv', 'runtimeHostPort', 'runtimeWsUrl', 'tenant', 'ungranted'])
     assert.equal(round.appOriginBase, 'http://localhost:8102')
@@ -160,7 +163,7 @@ test('PromoteAndProvision descriptor has the exact contract keys and grants only
     assert.equal(h.envs.accounts.length, 2)
     assert.equal(h.envs.grants.length, 1)
     assert.equal(h.envs.grants[0].subject, 'loop-reader')
-    assert.deepEqual(h.graphs.promoted, ['loop-dev>loop-rt'])
+    assert.deepEqual(h.graphs.promoted, [])
     assert.notEqual(round.reader.password, round.ungranted.password)
 })
 
@@ -168,7 +171,7 @@ test('Teardown deletes created envs and reports ok', async () =>
 {
     const h = new Harness()
     await h.orchestrator.CreateDev()
-    await h.orchestrator.PromoteAndProvision()
+    await h.orchestrator.CreateRuntime()
     const d = await h.orchestrator.Teardown()
     assert.deepEqual(d, { ok: true })
     assert.deepEqual(h.envs.deleted, ['loop-dev', 'loop-rt'])
@@ -178,7 +181,7 @@ test('tokens are never written to the injected logger', async () =>
 {
     const h = new Harness()
     const dev = await h.orchestrator.CreateDev()
-    const rt = await h.orchestrator.PromoteAndProvision()
+    const rt = await h.orchestrator.CreateRuntime()
     await h.orchestrator.Teardown()
     const secrets = [Fixture.MakerToken, Fixture.DeployToken, Fixture.AdminPw, rt.reader.password, rt.ungranted.password]
     assert.ok(h.logger.lines.length > 0)
@@ -206,7 +209,7 @@ test('ReportFailure redacts held secrets but keeps the error class and message',
 {
     const h = new Harness()
     await h.orchestrator.CreateDev()
-    const rt = await h.orchestrator.PromoteAndProvision()
+    const rt = await h.orchestrator.CreateRuntime()
     h.logger.lines.length = 0
     h.orchestrator.ReportFailure(new RangeError('login failed for ' + Fixture.DeployToken + ' pw ' + rt.reader.password))
     const out = h.logger.lines.join(' | ')
@@ -228,5 +231,27 @@ test('Run dispatches create-dev honoring --graph', async () =>
 {
     const h = new Harness()
     const d = await h.orchestrator.Run(LoopOrchestrator.ParseCommand(['create-dev', '--data-root', Fixture.Root, '--graph', Fixture.Graph])) as DevDescriptor
+    assert.equal(d.graphName, Fixture.Graph)
+})
+
+test('Promote returns the exact keys, targets the existing runtime env, creates nothing, and is re-runnable', async () =>
+{
+    const h = new Harness()
+    await h.orchestrator.CreateDev()
+    await h.orchestrator.CreateRuntime()
+    const createdBefore = h.envs.created.length
+    const first = await h.orchestrator.Promote(Fixture.Graph)
+    const second = await h.orchestrator.Promote(Fixture.Graph) as PromoteDescriptor
+    assert.deepEqual(Object.keys(second).sort(), ['graphName', 'packageCount', 'targetEnv'])
+    assert.deepEqual(second, first)
+    assert.equal(second.targetEnv, 'loop-rt')
+    assert.equal(h.envs.created.length, createdBefore)
+    assert.deepEqual(h.graphs.promoted, ['loop-dev>loop-rt', 'loop-dev>loop-rt'])
+})
+
+test('Run dispatches promote', async () =>
+{
+    const h = new Harness()
+    const d = await h.orchestrator.Run(LoopOrchestrator.ParseCommand(['promote', '--data-root', Fixture.Root, '--graph', Fixture.Graph])) as PromoteDescriptor
     assert.equal(d.graphName, Fixture.Graph)
 })
