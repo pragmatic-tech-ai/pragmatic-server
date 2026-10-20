@@ -6,12 +6,12 @@ The live-loop e2e drives the whole author-to-serve path on one machine. A local 
 
 ## One-time prerequisites
 
-1. Docker is running.
+1. Docker is running. If the Docker daemon is not running, the image build and the suite both fail immediately. Start Docker Desktop, or the Docker service, and confirm with `docker info`.
 
-2. Build the server image `pragmatic-server:dev`. The build context must be the workspace parent directory (`architecture-agent/`), not the repo itself. The build needs a private `.npmrc` that holds a GitHub Packages token with the `read:packages` scope. Keep that file outside the repo and never commit it. Replace `<path>` with the location of your `.npmrc`:
+2. Build the server image `pragmatic-server:dev`. From the workspace root `architecture-agent/` (the directory that holds `pragmatic-server` and all sibling packages), run the build with the context set to `.`. The image tag must be `pragmatic-server:dev`, because the control-plane path requires it. The build needs a private `.npmrc` that holds a GitHub Packages token with the `read:packages` scope. Keep that file outside the repo and never commit it. In the command below, `<path>` is a placeholder that goes in the `src=` argument of the `--secret` flag. Replace it with the real location of your `.npmrc`:
 
 ```
-DOCKER_BUILDKIT=1 docker build -f pragmatic-server/docker/Dockerfile --secret id=npmrc,src=<path>/.npmrc -t pragmatic-server:dev ..
+DOCKER_BUILDKIT=1 docker build -f pragmatic-server/docker/Dockerfile --secret id=npmrc,src=<path>/.npmrc -t pragmatic-server:dev .
 ```
 
 The token is mounted only during the `npm install` steps and is never written into an image layer.
@@ -22,7 +22,7 @@ The token is mounted only during the `npm install` steps and is never written in
 npx playwright install chromium
 ```
 
-4. Build Plexus so that `apps/plexus/out/main/index.js` exists. Rebuild any sibling `dist` that the build consumes before you build Plexus. From `Plexus/apps/plexus`:
+4. Build Plexus so that `apps/plexus/out/main/index.js` exists. Rebuild any sibling `dist` that the build consumes before you build Plexus. From `apps/plexus` in the Plexus repo:
 
 ```
 npm run build
@@ -30,13 +30,13 @@ npm run build
 
 ## Run
 
-From `Plexus/apps/plexus`, set the gate and run the spec. The gate is `SP_RUNTIME_LOOP_E2E=1`. On Windows PowerShell use `$env:SP_RUNTIME_LOOP_E2E = '1'` before the command. On Git Bash use `SP_RUNTIME_LOOP_E2E=1 npx playwright test runtime-live-loop.spec.ts`.
+The spec is `apps/plexus/e2e/runtime-live-loop.spec.ts` in the Plexus repo. Issue the run command from `apps/plexus`. Set the gate `SP_RUNTIME_LOOP_E2E=1`. On Windows PowerShell use `$env:SP_RUNTIME_LOOP_E2E = '1'` before the command. On Git Bash use the inline form shown below.
 
 ```
 SP_RUNTIME_LOOP_E2E=1 npx playwright test runtime-live-loop.spec.ts
 ```
 
-The suite skips unless `SP_RUNTIME_LOOP_E2E=1` is set, so it never runs in normal unit or CI runs. It composes the control-plane orchestrator in-process (`pragmatic-server/admin/control-plane/loop-orchestrator.ts`) and creates real Docker containers. It tears them down at the end, including when a step fails.
+The suite skips unless `SP_RUNTIME_LOOP_E2E=1` is set, so it never runs in normal unit or CI runs. When it runs, it spawns the control-plane orchestrator automatically. The orchestrator lives at `admin/control-plane/loop-orchestrator.ts` relative to the pragmatic-server repo root. Do not run that file by hand. The suite locates the pragmatic-server repo through `SP_SERVER_REPO`, and when that is unset it uses the sibling location. The orchestrator creates real Docker containers, and the suite tears them down at the end, including when a step fails.
 
 Optional environment variables:
 
@@ -59,18 +59,26 @@ Optional environment variables:
 
 ## What to watch
 
-Two steps carry the most operator risk, so check them first when a run fails.
+Three checks carry the most operator risk, so look at them first when a run fails.
 
-Step 5, the pre-promote check, is unconditional. It must reject with NoEnvironmentGraphError. If it returns rows, something has already been promoted into the Runtime, so the environment was not clean when the run started. If it hangs or crashes, the Runtime container or its connection is at fault, not the graph.
+Step 5, the pre-promote check, is unconditional. It must reject with NoEnvironmentGraphError. If it returns rows, something was already promoted into the Runtime, so the environment was not clean when the run started. If it hangs or crashes, the Runtime container or its connection is more likely at fault than the graph, though that is not a definitive diagnosis.
+
+Step 9, the ungranted read, must fail with a permission refusal. If the error is the no-graph message instead, first confirm that promote actually ran, then confirm the grant state is what the test expects.
 
 Step 10, the re-promote, depends on the second build picking up the rewritten `.todl` source. The test changes the seeded value in the cloned solution, re-contributes, and promotes again. If the reloaded app still shows the original value, check that the re-contribute step reported success and that the promote step rebuilt from the rewritten source, not a cached build.
 
 ## Troubleshooting
 
-If the suite fails with a message that the `pragmatic-server:dev` image is missing, run the image build step from the prerequisites.
+If the Docker daemon is not running, the suite and the image build both fail at the first Docker call. Start Docker, confirm with `docker info`, and run again.
 
-If it reports that the chromium executable is missing, run `npx playwright install chromium`.
+If the image build fails at the BuildKit secret step, the `.npmrc` path is probably wrong, or the token lacks the `read:packages` scope. Check that the `src=` path points to an existing `.npmrc` file, and that its GitHub Packages token has `read:packages`. Then rebuild.
+
+If the suite fails with a message that the `pragmatic-server:dev` image is missing, run the image build step from the prerequisites. Confirm that the tag is exactly `pragmatic-server:dev`.
+
+If the chromium executable is missing, run `npx playwright install chromium`.
 
 If the Plexus or chromium windows open on the wrong monitor, set `SP_E2E_WINDOW_ORIGIN` to the `x,y` origin of your second monitor and run again.
 
-If it fails with a missing `out/main/index.js` message, run `npm run build` in `Plexus/apps/plexus`.
+If the suite fails with a message that `out/main/index.js` is missing, run `npm run build` in `apps/plexus` of the Plexus repo.
+
+If the step 9 ungranted read fails with the no-graph error where a permission refusal was expected, the promote step may not have run. Check the earlier steps first, then the grant state, then run again.
