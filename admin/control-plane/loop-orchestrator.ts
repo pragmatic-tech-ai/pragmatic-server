@@ -21,10 +21,10 @@ import { AdminProxy, WsAdminConnector } from './admin-proxy.js'
 import type { AdminConnectInfo } from './admin-proxy.js'
 import type { GraphDto, PromotionResultDto } from './control-plane-host.js'
 import { BundleBuilderAdapter, DockerEnvAdapter, UserSeederAdapter } from './docker-env-port.js'
-import { EnvType, Template } from './environment-record.js'
+import { EnvStatus, EnvType, Template } from './environment-record.js'
 import type { EnvironmentRecord } from './environment-record.js'
 import { EnvironmentRegistry } from './environment-registry.js'
-import { EnvironmentService } from './environment-service.js'
+import { EnvironmentNotFoundError, EnvironmentService } from './environment-service.js'
 import { GraphService } from './graph-service.js'
 import { NetPortProbe, PortAllocator } from './port-allocator.js'
 
@@ -48,24 +48,36 @@ export interface CredentialDescriptor
     password: string
 }
 
-/** The cross-task JSON contract consumed by the e2e: keys are fixed. Each subcommand fills its own subset. */
-export interface LoopDescriptor
+/** Output of create-dev: the cross-task JSON contract consumed by the e2e (keys are fixed). */
+export interface DevDescriptor
 {
-    dataRoot?: string
-    devEnv?: string
-    devWsUrl?: string
-    graphName?: string
-    makerToken?: string
-    runtimeEnv?: string
-    tenant?: string
-    runtimeWsUrl?: string
-    runtimeHostPort?: number
-    appOriginBase?: string
-    deployToken?: string
-    reader?: CredentialDescriptor
-    ungranted?: CredentialDescriptor
-    ok?: boolean
+    dataRoot: string
+    devEnv: string
+    devWsUrl: string
+    graphName: string
+    makerToken: string
 }
+
+/** Output of promote-and-provision: the cross-task JSON contract consumed by the e2e (keys are fixed). */
+export interface RuntimeDescriptor
+{
+    runtimeEnv: string
+    tenant: string
+    runtimeWsUrl: string
+    runtimeHostPort: number
+    appOriginBase: string
+    deployToken: string
+    reader: CredentialDescriptor
+    ungranted: CredentialDescriptor
+}
+
+/** Output of teardown. */
+export interface TeardownDescriptor
+{
+    ok: true
+}
+
+export type LoopDescriptor = DevDescriptor | RuntimeDescriptor | TeardownDescriptor
 
 export interface ILoopLogger
 {
@@ -113,6 +125,11 @@ export class SeederLoopLogin implements ILoopLogin
     }
 }
 
+/** Marks a failure already reported (redacted) to the logger. */
+export class LoopFailure extends Error
+{
+}
+
 export class LoopOrchestrator
 {
     private static readonly EnvPortFloor = 8100
@@ -140,13 +157,18 @@ export class LoopOrchestrator
     private static readonly MsgCreatingRuntime = 'creating runtime environment'
     private static readonly MsgPromoting = 'promoting graph to runtime environment'
     private static readonly MsgProvisioning = 'provisioning reader and ungranted accounts'
-    private static readonly MsgTearingDown = 'tearing down environment'
     private static readonly UsageMessage = 'usage: loop-orchestrator <create-dev|promote-and-provision|teardown> --data-root <dir> [--graph <name>]'
     private static readonly MissingDataRoot = 'missing --data-root'
     private static readonly MissingValue = 'missing value for '
     private static readonly UnknownCommand = 'unknown command: '
     private static readonly UsageSep = '; '
-    private static readonly NewLine = '\n'
+    private static readonly Redacted = '***'
+    private static readonly FailureSep = ': '
+    private static readonly NotRunningPrefix = 'environment did not reach running: '
+    private static readonly MsgTearingDownPrefix = 'tearing down environment '
+    private static readonly UnhandledCommand = 'unhandled command: '
+
+    private readonly secrets = new Set<string>()
 
     public constructor(
         private readonly envs: ILoopEnvironments,
@@ -205,13 +227,14 @@ export class LoopOrchestrator
         return new LoopOrchestrator(service, graphs, new SeederLoopLogin(), logger, dataRoot)
     }
 
-    public async CreateDev(graphName: string = LoopOrchestrator.DefaultGraphName): Promise<LoopDescriptor>
+    public async CreateDev(graphName: string = LoopOrchestrator.DefaultGraphName): Promise<DevDescriptor>
     {
         const name = LoopOrchestrator.DevEnvName
         this.logger.Log(LoopOrchestrator.MsgCreatingDev)
-        const rec = await this.envs.Create(name, Template.DevBlank, EnvType.Development)
+        const rec = LoopOrchestrator.RequireRunning(await this.envs.Create(name, Template.DevBlank, EnvType.Development))
         await this.graphs.Create(name, graphName, LoopOrchestrator.GraphDescription)
         const minted = await this.envs.AdminIssueMakerToken(name)
+        this.secrets.add(minted.token)
         return {
             dataRoot: this.dataRoot,
             devEnv: name,
@@ -221,16 +244,18 @@ export class LoopOrchestrator
         }
     }
 
-    public async PromoteAndProvision(graphName: string = LoopOrchestrator.DefaultGraphName): Promise<LoopDescriptor>
+    public async PromoteAndProvision(graphName: string = LoopOrchestrator.DefaultGraphName): Promise<RuntimeDescriptor>
     {
         const name = LoopOrchestrator.RuntimeEnvName
         this.logger.Log(LoopOrchestrator.MsgCreatingRuntime)
-        const rec = await this.envs.Create(name, Template.DemoContoso, EnvType.Runtime)
+        const rec = LoopOrchestrator.RequireRunning(await this.envs.Create(name, Template.DemoContoso, EnvType.Runtime))
         this.logger.Log(LoopOrchestrator.MsgPromoting)
         await this.graphs.Promote(LoopOrchestrator.DevEnvName, graphName, name)
         // AdminInfoFor reads the env's provisioned-secrets.json (`<tenant>-admin-pw`) into connect info.
         const info = await this.envs.AdminInfoFor(name)
+        this.secrets.add(info.password)
         const deployToken = await this.login.Login(info.httpUrl, rec.tenantId, info.email, info.password)
+        this.secrets.add(deployToken)
         this.logger.Log(LoopOrchestrator.MsgProvisioning)
         const reader = await this.Provision(name, LoopOrchestrator.ReaderPrincipal, LoopOrchestrator.ReaderEmail, true)
         const ungranted = await this.Provision(name, LoopOrchestrator.UngrantedPrincipal, LoopOrchestrator.UngrantedEmail, false)
@@ -247,14 +272,22 @@ export class LoopOrchestrator
         }
     }
 
-    public async Teardown(): Promise<LoopDescriptor>
+    /** Idempotent: removes whichever of the loop environments exist; an absent one is ignored. */
+    public async Teardown(): Promise<TeardownDescriptor>
     {
         for (const name of [LoopOrchestrator.DevEnvName, LoopOrchestrator.RuntimeEnvName])
         {
-            if (this.envs.List().some(e => e.name === name))
+            this.logger.Log(LoopOrchestrator.MsgTearingDownPrefix + name)
+            try
             {
-                this.logger.Log(LoopOrchestrator.MsgTearingDown)
                 await this.envs.Delete(name)
+            }
+            catch (err)
+            {
+                if (!(err instanceof EnvironmentNotFoundError))
+                {
+                    throw err
+                }
             }
         }
         return { ok: true }
@@ -268,14 +301,52 @@ export class LoopOrchestrator
                 return this.CreateDev(parsed.graph)
             case LoopCommand.PromoteAndProvision:
                 return this.PromoteAndProvision(parsed.graph)
-            default:
+            case LoopCommand.Teardown:
                 return this.Teardown()
+            default:
+            {
+                const unhandled: never = parsed.command
+                throw new Error(LoopOrchestrator.UnhandledCommand + String(unhandled))
+            }
         }
+    }
+
+    /** EnvironmentService.Create returns only after the container is healthy (WaitHealthy, environment-service.ts), so Running is already guaranteed; this guards that contract. */
+    private static RequireRunning(rec: EnvironmentRecord): EnvironmentRecord
+    {
+        if (rec.status !== EnvStatus.Running)
+        {
+            throw new Error(LoopOrchestrator.NotRunningPrefix + rec.name)
+        }
+        return rec
+    }
+
+    /** Replaces every held secret in the text with a placeholder. */
+    public Redact(text: string): string
+    {
+        let out = text
+        for (const secret of this.secrets)
+        {
+            if (secret !== '')
+            {
+                out = out.split(secret).join(LoopOrchestrator.Redacted)
+            }
+        }
+        return out
+    }
+
+    /** Logs the error class name and the message with held secrets redacted. */
+    public ReportFailure(err: unknown): void
+    {
+        const kind = err instanceof Error ? err.name : typeof err
+        const message = err instanceof Error ? err.message : String(err)
+        this.logger.Log(this.Redact(kind + LoopOrchestrator.FailureSep + message))
     }
 
     private async Provision(env: string, principalId: string, email: string, grantViewer: boolean): Promise<CredentialDescriptor>
     {
         const password = randomBytes(LoopOrchestrator.PasswordBytes).toString(LoopOrchestrator.PasswordEncoding)
+        this.secrets.add(password)
         await this.envs.AdminCreateAccount(env, { email, principalId, password })
         if (grantViewer)
         {
@@ -287,14 +358,17 @@ export class LoopOrchestrator
     public static async Main(argv: readonly string[]): Promise<void>
     {
         const parsed = LoopOrchestrator.ParseCommand(argv)
-        const orchestrator = await LoopOrchestrator.Compose(parsed.dataRoot, new StderrLoopLogger())
-        console.log(JSON.stringify(await orchestrator.Run(parsed)))
-    }
-
-    /** Prints a failure message (never a descriptor or secret) to stderr. */
-    public static ReportFailure(err: unknown): void
-    {
-        process.stderr.write((err instanceof Error ? err.message : String(err)) + LoopOrchestrator.NewLine)
+        const logger = new StderrLoopLogger()
+        const orchestrator = await LoopOrchestrator.Compose(parsed.dataRoot, logger)
+        try
+        {
+            console.log(JSON.stringify(await orchestrator.Run(parsed)))
+        }
+        catch (err)
+        {
+            orchestrator.ReportFailure(err)
+            throw new LoopFailure()
+        }
     }
 
     /** True when this module is the process entry point (not when imported). */
@@ -313,7 +387,10 @@ if (LoopOrchestrator.IsEntryPoint())
     }
     catch (err)
     {
-        LoopOrchestrator.ReportFailure(err)
+        if (!(err instanceof LoopFailure))
+        {
+            new StderrLoopLogger().Log(err instanceof Error ? err.message : String(err))
+        }
         process.exit(1)
     }
 }

@@ -4,7 +4,8 @@ import type { CreateAccountParams, GrantMutationDto, TokenIssuedDto } from '@pra
 import type { AdminConnectInfo } from '../admin-proxy.js'
 import type { GraphDto, PromotionResultDto } from '../control-plane-host.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
-import { LoopCommand, LoopOrchestrator, type ILoopEnvironments, type ILoopGraphs, type ILoopLogger, type ILoopLogin, type LoopDescriptor } from '../loop-orchestrator.js'
+import { EnvironmentNotFoundError } from '../environment-service.js'
+import { LoopCommand, LoopOrchestrator, type ILoopEnvironments, type ILoopGraphs, type ILoopLogger, type ILoopLogin, type DevDescriptor, type RuntimeDescriptor } from '../loop-orchestrator.js'
 
 class Fixture
 {
@@ -18,6 +19,7 @@ class Fixture
 class FakeEnvs implements ILoopEnvironments
 {
     public readonly created: EnvironmentRecord[] = []
+    public status: EnvStatus = EnvStatus.Running
     public readonly deleted: string[] = []
     public readonly accounts: CreateAccountParams[] = []
     public readonly grants: GrantMutationDto[] = []
@@ -34,7 +36,7 @@ class FakeEnvs implements ILoopEnvironments
             volumeName: name,
             bundleDir: name,
             createdAt: '',
-            status: EnvStatus.Running
+            status: this.status
         }
         this.created.push(rec)
         return rec
@@ -42,6 +44,10 @@ class FakeEnvs implements ILoopEnvironments
 
     public async Delete(name: string): Promise<void>
     {
+        if (!this.created.some(e => e.name === name))
+        {
+            throw new EnvironmentNotFoundError(name)
+        }
         this.deleted.push(name)
     }
 
@@ -133,7 +139,7 @@ test('CreateDev descriptor carries devWsUrl/graphName/makerToken keys', async ()
 {
     const h = new Harness()
     const d = await h.orchestrator.CreateDev(Fixture.Graph)
-    const round = JSON.parse(JSON.stringify(d)) as LoopDescriptor
+    const round = JSON.parse(JSON.stringify(d)) as DevDescriptor
     assert.deepEqual(Object.keys(round).sort(), ['dataRoot', 'devEnv', 'devWsUrl', 'graphName', 'makerToken'])
     assert.equal(round.devWsUrl, 'ws://localhost:8101/?tenant=loop-dev')
     assert.equal(round.graphName, Fixture.Graph)
@@ -145,17 +151,17 @@ test('PromoteAndProvision descriptor has the exact contract keys and grants only
 {
     const h = new Harness()
     const d = await h.orchestrator.PromoteAndProvision(Fixture.Graph)
-    const round = JSON.parse(JSON.stringify(d)) as LoopDescriptor
+    const round = JSON.parse(JSON.stringify(d)) as RuntimeDescriptor
     assert.deepEqual(Object.keys(round).sort(), ['appOriginBase', 'deployToken', 'reader', 'runtimeEnv', 'runtimeHostPort', 'runtimeWsUrl', 'tenant', 'ungranted'])
     assert.equal(round.appOriginBase, 'http://localhost:8102')
     assert.equal(round.runtimeWsUrl, 'ws://localhost:8102/?tenant=contoso')
     assert.equal(round.deployToken, Fixture.DeployToken)
-    assert.deepEqual(Object.keys(round.reader ?? {}).sort(), ['email', 'password'])
+    assert.deepEqual(Object.keys(round.reader).sort(), ['email', 'password'])
     assert.equal(h.envs.accounts.length, 2)
     assert.equal(h.envs.grants.length, 1)
     assert.equal(h.envs.grants[0].subject, 'loop-reader')
     assert.deepEqual(h.graphs.promoted, ['loop-dev>loop-rt'])
-    assert.notEqual(round.reader?.password, round.ungranted?.password)
+    assert.notEqual(round.reader.password, round.ungranted.password)
 })
 
 test('Teardown deletes created envs and reports ok', async () =>
@@ -174,7 +180,7 @@ test('tokens are never written to the injected logger', async () =>
     const dev = await h.orchestrator.CreateDev()
     const rt = await h.orchestrator.PromoteAndProvision()
     await h.orchestrator.Teardown()
-    const secrets = [Fixture.MakerToken, Fixture.DeployToken, Fixture.AdminPw, rt.reader?.password ?? '', rt.ungranted?.password ?? '']
+    const secrets = [Fixture.MakerToken, Fixture.DeployToken, Fixture.AdminPw, rt.reader.password, rt.ungranted.password]
     assert.ok(h.logger.lines.length > 0)
     for (const line of h.logger.lines)
     {
@@ -184,4 +190,43 @@ test('tokens are never written to the injected logger', async () =>
         }
     }
     assert.equal(dev.makerToken, Fixture.MakerToken)
+})
+
+test('Teardown is idempotent when only the dev env exists or none do', async () =>
+{
+    const h = new Harness()
+    assert.deepEqual(await h.orchestrator.Teardown(), { ok: true })
+    await h.orchestrator.CreateDev()
+    assert.deepEqual(await h.orchestrator.Teardown(), { ok: true })
+    assert.deepEqual(h.envs.deleted, ['loop-dev'])
+    assert.ok(h.logger.lines.some(l => l.includes('loop-dev')))
+})
+
+test('ReportFailure redacts held secrets but keeps the error class and message', async () =>
+{
+    const h = new Harness()
+    await h.orchestrator.CreateDev()
+    const rt = await h.orchestrator.PromoteAndProvision()
+    h.logger.lines.length = 0
+    h.orchestrator.ReportFailure(new RangeError('login failed for ' + Fixture.DeployToken + ' pw ' + rt.reader.password))
+    const out = h.logger.lines.join(' | ')
+    assert.ok(out.includes('***'))
+    assert.ok(out.includes('RangeError'))
+    assert.ok(out.includes('login failed for'))
+    assert.ok(!out.includes(Fixture.DeployToken))
+    assert.ok(!out.includes(rt.reader.password))
+})
+
+test('CreateDev refuses an environment that is not running', async () =>
+{
+    const h = new Harness()
+    h.envs.status = EnvStatus.Failed
+    await assert.rejects(() => h.orchestrator.CreateDev())
+})
+
+test('Run dispatches create-dev honoring --graph', async () =>
+{
+    const h = new Harness()
+    const d = await h.orchestrator.Run(LoopOrchestrator.ParseCommand(['create-dev', '--data-root', Fixture.Root, '--graph', Fixture.Graph])) as DevDescriptor
+    assert.equal(d.graphName, Fixture.Graph)
 })
