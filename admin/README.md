@@ -54,7 +54,7 @@ From the portal, create either a dev-blank environment (the name must be a lower
 
 ## Gated integration smoke
 
-Requires Docker and the built image. It creates, starts, stops and deletes a dev and a demo environment end to end, and checks the seeded users. On the demo environment it also runs a Manage round-trip over the admin routes: snapshot, create an account, grant and revoke a role, read and re-save the security model unchanged, and confirm that revoking the tenant Owner's own grant is refused with 409. It is not part of the normal test run.
+Requires Docker and the built image. It creates, starts, stops and deletes a dev and a demo environment end to end, and checks the seeded users. It creates the dev environment as a Development type and the demo as a Runtime type, and asserts each type reaches the numeric purpose in the generated tenants.json (0 and 1). The smoke is operator-run: it needs Docker and the pragmatic-server:dev image. On the demo environment it also runs a Manage round-trip over the admin routes: snapshot, create an account, grant and revoke a role, read and re-save the security model unchanged, and confirm that revoking the tenant Owner's own grant is refused with 409. It is not part of the normal test run.
 
 ```
 npx tsx admin/control-plane/control-plane-smoke.ts
