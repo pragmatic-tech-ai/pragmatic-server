@@ -47,6 +47,7 @@ class GraphFixture
     public static readonly ListCall = 'list'
     public static readonly GetCall = 'get:'
     public static readonly DeleteCall = 'delete:'
+    public static readonly UnavailableText = 'graph service is not available'
     public static readonly NotDevelopmentText = 'operation requires a development tenant'
     private static readonly TenantId = 't1'
     private static readonly PrincipalId = 'p1'
@@ -86,13 +87,13 @@ class GraphFixture
         return {}
     }
 
-    public async With(purpose: TenantPurpose, body: (client: PragmaticClient) => Promise<void>): Promise<void>
+    public async With(purpose: TenantPurpose, body: (client: PragmaticClient) => Promise<void>, wired: boolean = true): Promise<void>
     {
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const handler = ServerConnectionHandler.Attach(
             serverSocket, GraphFixture.Language(), {} as SolutionManagerService, GraphFixture.Context(Role.Owner), () => Promise.reject(new Error()), () => Promise.reject(new Error()),
             undefined, undefined, undefined, undefined, undefined, undefined, purpose, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-            undefined, undefined, undefined, undefined, undefined, undefined, this.Service)
+            undefined, undefined, undefined, undefined, undefined, undefined, wired ? this.Service : undefined)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         try
         {
@@ -170,4 +171,16 @@ test('the policy gate maps the graph ops: create/delete=administer, list/get=rea
     {
         assert.equal(GraphFixture.Gate(Role.Viewer).Authorize(method).Allowed, true, method)
     }
+})
+
+test('a Development tenant with no graph service rejects graph ops with InvalidRequest (defensive branch)', async () =>
+{
+    const fixture = new GraphFixture()
+    await fixture.With(TenantPurpose.Development, async client =>
+    {
+        const error = await GraphFixture.ErrorOf(client.CreateGraph({ graphName: GraphFixture.GraphName, description: GraphFixture.Description }))
+        assert.equal(error.code, ErrorCodes.InvalidRequest)
+        assert.ok((error.message ?? '').includes(GraphFixture.UnavailableText))
+        assert.deepEqual(fixture.Service.Calls, [])
+    }, false)
 })
