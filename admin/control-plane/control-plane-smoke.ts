@@ -160,14 +160,15 @@ export class ControlPlaneSmoke
         await registry.Load()
         await registry.Reconcile()
         const allocator = new PortAllocator(ControlPlaneSmoke.EnvPortFloor, new NetPortProbe())
-        const service = new EnvironmentService(registry, allocator, docker, new BundleBuilderAdapter(), new UserSeederAdapter(new UserSeeder()), dataRoot, new AdminProxy(new WsAdminConnector()))
+        const proxy = new AdminProxy(new WsAdminConnector())
+        const service = new EnvironmentService(registry, allocator, docker, new BundleBuilderAdapter(), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy)
         const operator = await OperatorIdentity.Compose({
             identityRoot: join(dataRoot, ControlPlaneSmoke.IdentityDir),
             masterKeyFile: join(dataRoot, ControlPlaneSmoke.MasterKeyFile),
             operatorEmail: ControlPlaneSmoke.OperatorEmail,
             initialPassword: ControlPlaneSmoke.OperatorPassword
         })
-        const host = new ControlPlaneHost(service, new GraphService(registry), staticRoot, operator, false)
+        const host = new ControlPlaneHost(service, new GraphService(registry, proxy, name => service.AdminInfoFor(name)), staticRoot, operator, false)
         try
         {
             await host.Listen(0, ControlPlaneSmoke.LoopbackHost)

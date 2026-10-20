@@ -1,8 +1,8 @@
-import { join } from 'node:path'
+import type { GraphDetailDto, GraphSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { AdminConnectInfo, IAdminProxy } from './admin-proxy.js'
 import { EnvType, type EnvironmentRecord } from './environment-record.js'
 import { EnvironmentNotFoundError } from './environment-service.js'
-import type { GraphRecord } from './graph-record.js'
-import { GraphRegistry } from './graph-registry.js'
+import type { GraphDto } from './control-plane-host.js'
 
 export interface IEnvironmentLookup
 {
@@ -59,61 +59,49 @@ export class EnvironmentNotDevelopmentError extends Error
 
 export class GraphService
 {
-    private static readonly GraphsFile = 'graphs.json'
-    private static readonly GraphNamePattern = /^[a-z0-9][a-z0-9-]*$/
+    // Must track the messages thrown in src/host/graphs/dev-graph-service.ts.
+    private static readonly ExistsText = 'already exists'
+    private static readonly NotFoundText = 'not found'
+    private static readonly InvalidNameText = 'invalid graph name'
 
-    public constructor(private readonly environments: IEnvironmentLookup)
+    public constructor(
+        private readonly environments: IEnvironmentLookup,
+        private readonly proxy: IAdminProxy,
+        private readonly adminInfoFor: (name: string) => Promise<AdminConnectInfo>)
     {
     }
 
-    public async Create(envName: string, name: string, description: string): Promise<GraphRecord>
+    public async Create(envName: string, name: string, description: string): Promise<GraphDto>
     {
-        const env = this.Require(envName)
-        GraphService.SanitizeGraphName(name)
-        // Single-writer by design: the operator portal issues one request at a time, so
-        // load -> duplicate-check -> put (and Delete's load -> check -> remove) is not guarded against concurrent callers.
-        const store = this.StoreFor(env)
-        await store.Load()
-        if (store.Get(name))
-        {
-            throw new GraphExistsError(name)
-        }
-        const record: GraphRecord = {
-            manifest: { name, description, packages: [] },
-            createdAt: new Date().toISOString()
-        }
-        await store.Put(record)
-        return record
+        const info = await this.InfoFor(envName)
+        const summary = await GraphService.Classify(name, () => this.proxy.CreateGraph(info, { graphName: name, description }))
+        return GraphService.FromSummary(summary)
     }
 
-    public async List(envName: string): Promise<readonly GraphRecord[]>
+    public async List(envName: string): Promise<GraphDto[]>
     {
-        const store = this.StoreFor(this.Require(envName))
-        await store.Load()
-        return store.List()
+        const info = await this.InfoFor(envName)
+        const summaries = await this.proxy.ListGraphs(info)
+        return summaries.map(s => GraphService.FromSummary(s))
     }
 
-    public async Get(envName: string, graphName: string): Promise<GraphRecord>
+    public async Get(envName: string, graphName: string): Promise<GraphDto>
     {
-        const store = this.StoreFor(this.Require(envName))
-        await store.Load()
-        const record = store.Get(graphName)
-        if (!record)
-        {
-            throw new GraphNotFoundError(graphName)
-        }
-        return record
+        const info = await this.InfoFor(envName)
+        const detail = await GraphService.Classify(graphName, () => this.proxy.GetGraph(info, { graphName }))
+        return GraphService.FromDetail(detail)
     }
 
     public async Delete(envName: string, graphName: string): Promise<void>
     {
-        const store = this.StoreFor(this.Require(envName))
-        await store.Load()
-        if (!store.Get(graphName))
-        {
-            throw new GraphNotFoundError(graphName)
-        }
-        await store.Remove(graphName)
+        const info = await this.InfoFor(envName)
+        await GraphService.Classify(graphName, () => this.proxy.DeleteGraph(info, { graphName }))
+    }
+
+    private async InfoFor(envName: string): Promise<AdminConnectInfo>
+    {
+        this.Require(envName)
+        return this.adminInfoFor(envName)
     }
 
     private Require(envName: string): EnvironmentRecord
@@ -130,16 +118,39 @@ export class GraphService
         return record
     }
 
-    private StoreFor(record: EnvironmentRecord): GraphRegistry
+    /** Maps the container's graph failure messages back onto the graph error classes; anything else passes through. */
+    private static async Classify<T>(graphName: string, call: () => Promise<T>): Promise<T>
     {
-        return new GraphRegistry(join(record.bundleDir, GraphService.GraphsFile))
+        try
+        {
+            return await call()
+        }
+        catch (err)
+        {
+            const lower = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase()
+            if (lower.includes(GraphService.ExistsText))
+            {
+                throw new GraphExistsError(graphName)
+            }
+            if (lower.includes(GraphService.NotFoundText))
+            {
+                throw new GraphNotFoundError(graphName)
+            }
+            if (lower.includes(GraphService.InvalidNameText))
+            {
+                throw new GraphNameInvalidError(graphName)
+            }
+            throw err
+        }
     }
 
-    private static SanitizeGraphName(name: string): void
+    private static FromSummary(s: GraphSummaryDto): GraphDto
     {
-        if (!GraphService.GraphNamePattern.test(name))
-        {
-            throw new GraphNameInvalidError(name)
-        }
+        return { name: s.name, description: s.description, packageCount: s.packageCount, createdAt: s.createdAt }
+    }
+
+    private static FromDetail(d: GraphDetailDto): GraphDto
+    {
+        return { name: d.name, description: d.description, packageCount: d.packages.length, createdAt: d.createdAt }
     }
 }

@@ -1,5 +1,5 @@
-import { AdminProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { AccountDto, CreateAccountParams, GrantDto, GrantMutationDto, IdentityConfigDto, MessageConnection, SecurityModelDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { AdminProtocol, GraphProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { AccountDto, CreateAccountParams, GraphCreateParamsDto, GraphDetailDto, GraphRefParamsDto, GraphSummaryDto, GrantDto, GrantMutationDto, IdentityConfigDto, MessageConnection, SecurityModelDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { UserSeeder } from '../../environments/seed/users.js'
 
 export type AdminConnectInfo = { httpUrl: string; wsUrl: string; tenant: string; email: string; password: string }
@@ -58,6 +58,10 @@ export interface IAdminConnection
     SetConfig(config: IdentityConfigDto): Promise<void>
     GetSecurityModel(): Promise<SecurityModelDto | undefined>
     SetSecurityModel(securityModel: SecurityModelDto): Promise<void>
+    CreateGraph(params: GraphCreateParamsDto): Promise<GraphSummaryDto>
+    ListGraphs(): Promise<GraphSummaryDto[]>
+    GetGraph(params: GraphRefParamsDto): Promise<GraphDetailDto>
+    DeleteGraph(params: GraphRefParamsDto): Promise<void>
     Dispose(): void
 }
 
@@ -77,6 +81,10 @@ export interface IAdminProxy
     SetConfig(info: AdminConnectInfo, config: IdentityConfigDto): Promise<void>
     GetSecurityModel(info: AdminConnectInfo): Promise<SecurityModelDto | undefined>
     SetSecurityModel(info: AdminConnectInfo, securityModel: SecurityModelDto): Promise<void>
+    CreateGraph(info: AdminConnectInfo, params: GraphCreateParamsDto): Promise<GraphSummaryDto>
+    ListGraphs(info: AdminConnectInfo): Promise<GraphSummaryDto[]>
+    GetGraph(info: AdminConnectInfo, params: GraphRefParamsDto): Promise<GraphDetailDto>
+    DeleteGraph(info: AdminConnectInfo, params: GraphRefParamsDto): Promise<void>
 }
 
 /** Typed facade over the environment admin protocol; one short-lived authenticated connection per call. */
@@ -146,6 +154,26 @@ export class AdminProxy implements IAdminProxy
     public async SetSecurityModel(info: AdminConnectInfo, securityModel: SecurityModelDto): Promise<void>
     {
         await this.With(info, conn => conn.SetSecurityModel(securityModel))
+    }
+
+    public async CreateGraph(info: AdminConnectInfo, params: GraphCreateParamsDto): Promise<GraphSummaryDto>
+    {
+        return this.With(info, conn => conn.CreateGraph(params))
+    }
+
+    public async ListGraphs(info: AdminConnectInfo): Promise<GraphSummaryDto[]>
+    {
+        return this.With(info, conn => conn.ListGraphs())
+    }
+
+    public async GetGraph(info: AdminConnectInfo, params: GraphRefParamsDto): Promise<GraphDetailDto>
+    {
+        return this.With(info, conn => conn.GetGraph(params))
+    }
+
+    public async DeleteGraph(info: AdminConnectInfo, params: GraphRefParamsDto): Promise<void>
+    {
+        await this.With(info, conn => conn.DeleteGraph(params))
     }
 
     private async With<T>(info: AdminConnectInfo, body: (conn: IAdminConnection) => Promise<T>): Promise<T>
@@ -266,6 +294,26 @@ export class WsAdminConnection implements IAdminConnection
     public async SetSecurityModel(securityModel: SecurityModelDto): Promise<void>
     {
         await this.conn.sendRequest(AdminProtocol.SetSecurityModel, { securityModel })
+    }
+
+    public CreateGraph(params: GraphCreateParamsDto): Promise<GraphSummaryDto>
+    {
+        return this.conn.sendRequest(GraphProtocol.Create, params)
+    }
+
+    public ListGraphs(): Promise<GraphSummaryDto[]>
+    {
+        return this.conn.sendRequest(GraphProtocol.List)
+    }
+
+    public GetGraph(params: GraphRefParamsDto): Promise<GraphDetailDto>
+    {
+        return this.conn.sendRequest(GraphProtocol.Get, params)
+    }
+
+    public async DeleteGraph(params: GraphRefParamsDto): Promise<void>
+    {
+        await this.conn.sendRequest(GraphProtocol.Delete, params)
     }
 
     public Dispose(): void

@@ -244,60 +244,60 @@ export class EnvironmentService
 
     public async AdminSnapshot(name: string): Promise<AdminSnapshot>
     {
-        const info = await this.AdminInfo(name)
+        const info = await this.AdminInfoFor(name)
         return this.proxy.LoadAdmin(info)
     }
 
     public async AdminCreateAccount(name: string, params: CreateAccountParams): Promise<void>
     {
-        const info = await this.AdminInfo(name)
+        const info = await this.AdminInfoFor(name)
         return this.proxy.CreateAccount(info, params)
     }
 
     public async AdminDisableAccount(name: string, principalId: string): Promise<void>
     {
-        const info = await this.AdminInfo(name)
+        const info = await this.AdminInfoFor(name)
         return this.proxy.DisableAccount(info, principalId)
     }
 
     public async AdminGrantRole(name: string, mutation: GrantMutationDto): Promise<void>
     {
-        const info = await this.AdminInfo(name)
+        const info = await this.AdminInfoFor(name)
         return this.proxy.GrantRole(info, mutation)
     }
 
     public async AdminRevokeRole(name: string, mutation: GrantMutationDto): Promise<void>
     {
-        const info = await this.AdminInfo(name)
+        const info = await this.AdminInfoFor(name)
         return this.proxy.RevokeRole(info, mutation)
     }
 
     public async AdminGetConfig(name: string): Promise<IdentityConfigDto>
     {
-        const info = await this.AdminInfo(name)
+        const info = await this.AdminInfoFor(name)
         return this.proxy.GetConfig(info)
     }
 
     public async AdminSetConfig(name: string, config: IdentityConfigDto): Promise<void>
     {
-        const info = await this.AdminInfo(name)
+        const info = await this.AdminInfoFor(name)
         return this.proxy.SetConfig(info, config)
     }
 
     public async AdminGetSecurityModel(name: string): Promise<SecurityModelDto | undefined>
     {
-        const info = await this.AdminInfo(name)
+        const info = await this.AdminInfoFor(name)
         return this.proxy.GetSecurityModel(info)
     }
 
     public async AdminSetSecurityModel(name: string, securityModel: SecurityModelDto): Promise<void>
     {
-        const info = await this.AdminInfo(name)
+        const info = await this.AdminInfoFor(name)
         return this.proxy.SetSecurityModel(info, securityModel)
     }
 
     /** Resolves the environment's stored Owner credential into connect info for the admin proxy. */
-    private async AdminInfo(name: string): Promise<AdminConnectInfo>
+    public async AdminInfoFor(name: string): Promise<AdminConnectInfo>
     {
         const rec = this.Require(name)
         const secrets = await EnvironmentService.ReadSecrets(rec.bundleDir)

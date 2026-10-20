@@ -4,7 +4,7 @@ import { request } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'node:test'
-import { ControlPlaneHost, type IEnvironmentService, type IGraphService } from '../control-plane-host.js'
+import { ControlPlaneHost, type GraphDto, type IEnvironmentService, type IGraphService } from '../control-plane-host.js'
 import { CreateFailedError, DockerUnavailableError, EnvironmentExistsError, EnvironmentNotFoundError, ImageMissingError } from '../environment-service.js'
 import { PortUnavailableError } from '../port-allocator.js'
 import { InvalidEnvironmentNameError } from '../template-catalog.js'
@@ -15,7 +15,6 @@ import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environ
 import { TemplateCatalog } from '../template-catalog.js'
 
 import { EnvironmentNotDevelopmentError, GraphExistsError, GraphNotFoundError } from '../graph-service.js'
-import type { GraphRecord } from '../graph-record.js'
 import type { IOperatorIdentity, OperatorPrincipal, OperatorSession } from '../operator-identity.js'
 
 type Reply = { status: number; body: string; setCookie?: string[] | undefined }
@@ -177,27 +176,27 @@ class FakeGraphService implements IGraphService
 {
     public Throw: Error | undefined
     public Calls: string[] = []
-    public Seed: GraphRecord[] = []
+    public Seed: GraphDto[] = []
 
-    public async Create(envName: string, name: string, description: string): Promise<GraphRecord>
+    public async Create(envName: string, name: string, description: string): Promise<GraphDto>
     {
         this.Calls.push(`create:${envName}:${name}`)
         this.MaybeThrow()
-        return { manifest: { name, description, packages: [] }, createdAt: '2026-10-20T00:00:00.000Z' }
+        return { name, description, packageCount: 0, createdAt: '2026-10-20T00:00:00.000Z' }
     }
 
-    public async List(envName: string): Promise<readonly GraphRecord[]>
+    public async List(envName: string): Promise<readonly GraphDto[]>
     {
         this.Calls.push(`list:${envName}`)
         this.MaybeThrow()
         return this.Seed
     }
 
-    public async Get(envName: string, graphName: string): Promise<GraphRecord>
+    public async Get(envName: string, graphName: string): Promise<GraphDto>
     {
         this.Calls.push(`get:${envName}:${graphName}`)
         this.MaybeThrow()
-        const found = this.Seed.find(r => r.manifest.name === graphName)
+        const found = this.Seed.find(r => r.name === graphName)
         if (found === undefined)
         {
             throw new GraphNotFoundError(graphName)
@@ -690,7 +689,7 @@ describe('ControlPlaneHost', () =>
 
     it('GET graphs lists the environment graphs', async () =>
     {
-        fakeGraph.Seed = [{ manifest: { name: 'g1', description: 'd', packages: [{ id: 'p', version: '1' }] }, createdAt: '2026-10-20T00:00:00.000Z' }]
+        fakeGraph.Seed = [{ name: 'g1', description: 'd', packageCount: 1, createdAt: '2026-10-20T00:00:00.000Z' }]
         const r = await Harness.Send(host, 'GET', '/api/environments/dev1/graphs')
         assert.equal(r.status, 200)
         const arr = JSON.parse(r.body)

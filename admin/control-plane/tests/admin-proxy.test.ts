@@ -72,6 +72,29 @@ class FakeConnection implements IAdminConnection
         this.Record('SetSecurityModel')
     }
 
+    public async CreateGraph(_p: any): Promise<any>
+    {
+        this.Record('CreateGraph')
+        return {}
+    }
+
+    public async ListGraphs(): Promise<any[]>
+    {
+        this.Record('ListGraphs')
+        return []
+    }
+
+    public async GetGraph(_p: any): Promise<any>
+    {
+        this.Record('GetGraph')
+        return {}
+    }
+
+    public async DeleteGraph(_p: any): Promise<void>
+    {
+        this.Record('DeleteGraph')
+    }
+
     public Dispose(): void
     {
         this.Disposed++
@@ -126,6 +149,10 @@ describe('AdminProxy', () =>
             ['RevokeRole', p => p.RevokeRole(Fixtures.Info, {} as any)],
             ['SetConfig', p => p.SetConfig(Fixtures.Info, {} as any)],
             ['SetSecurityModel', p => p.SetSecurityModel(Fixtures.Info, {} as any)],
+            ['CreateGraph', async p => { await p.CreateGraph(Fixtures.Info, {} as any) }],
+            ['ListGraphs', async p => { await p.ListGraphs(Fixtures.Info) }],
+            ['GetGraph', async p => { await p.GetGraph(Fixtures.Info, {} as any) }],
+            ['DeleteGraph', p => p.DeleteGraph(Fixtures.Info, {} as any)],
         ]
         for (const [call, run] of cases)
         {
