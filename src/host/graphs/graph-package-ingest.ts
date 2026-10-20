@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import type { ContributedPackageDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { PragmaticAppsRegistry } from '../apps/pragmatic-apps-registry.js'
 
 export class GraphPackageConflictError extends Error
 {
@@ -11,6 +12,18 @@ export class GraphPackageConflictError extends Error
     {
         super(GraphPackageConflictError.ConflictMessage)
         this.name = GraphPackageConflictError.ErrorName
+    }
+}
+
+export class GraphPackageSegmentError extends Error
+{
+    private static readonly ErrorName = 'GraphPackageSegmentError'
+    private static readonly SegmentMessage = 'invalid package id or version segment'
+
+    public constructor()
+    {
+        super(GraphPackageSegmentError.SegmentMessage)
+        this.name = GraphPackageSegmentError.ErrorName
     }
 }
 
@@ -25,7 +38,10 @@ interface PlannedPackage
  * Writes contributed package bytes into the packages store with immutability and crash-safe staging.
  * MIRRORS AppIngestService's immutability discipline (AssertImmutable + Commit): byte-identical existing
  * versions are skipped, differing bytes are a Conflict, and nothing is written until every package is checked.
- * The two must stay consistent.
+ * The two must stay consistent on package bytes. UNLIKE AppIngestService, this does NOT serialize concurrent commits
+ * and does NOT recheck existence at commit time (it relies on the Plan-time skip flags), so concurrent contributes to
+ * one graph are last-writer-wins. That matches the single-maker dev-env posture; full concurrency hardening is a
+ * deferred follow-up.
  */
 export class GraphPackageIngest
 {
@@ -47,6 +63,11 @@ export class GraphPackageIngest
     /** Validates the whole batch against existing content before anything is written. */
     private async Plan(packages: readonly ContributedPackageDto[]): Promise<PlannedPackage[]>
     {
+        for (const pkg of packages)
+        {
+            GraphPackageIngest.AssertSegment(pkg?.id)
+            GraphPackageIngest.AssertSegment(pkg.version)
+        }
         const byPath = new Map<string, PlannedPackage>()
         for (const pkg of packages)
         {
@@ -74,6 +95,23 @@ export class GraphPackageIngest
             byPath.set(path, planned)
         }
         return [...byPath.values()]
+    }
+
+    /** Delegates to the shared app-name guard (single source of the path-safety rule) with a package-appropriate error. */
+    private static AssertSegment(value: unknown): void
+    {
+        try
+        {
+            if (typeof value !== 'string')
+            {
+                throw new Error()
+            }
+            PragmaticAppsRegistry.AssertValidName(value)
+        }
+        catch
+        {
+            throw new GraphPackageSegmentError()
+        }
     }
 
     private async Commit(files: readonly PlannedPackage[]): Promise<void>

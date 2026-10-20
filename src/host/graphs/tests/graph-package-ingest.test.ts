@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { IStorage, StorageEntry } from '@pragmatic-tech-ai/todl-runtime'
 import type { ContributedPackageDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { GraphPackageConflictError, GraphPackageIngest } from '../graph-package-ingest.js'
+import { GraphPackageConflictError, GraphPackageIngest, GraphPackageSegmentError } from '../graph-package-ingest.js'
 
 class MemoryStorage implements IStorage
 {
@@ -90,3 +90,29 @@ test('a mid-commit failure removes temps and newly created files but keeps pre-e
     assert.deepEqual([...storage.Files.keys()], ['keep/1.0.0/model.json'])
     assert.equal(storage.Files.get('keep/1.0.0/model.json'), 'k')
 })
+
+class BadSegments
+{
+    public static readonly Values = ['..', '../x', '', 'a/b', '\u0000']
+}
+
+for (const bad of BadSegments.Values)
+{
+    test(`an invalid package id ${JSON.stringify(bad)} rejects the whole batch with nothing written`, async () =>
+    {
+        const storage = new MemoryStorage()
+        await assert.rejects(
+            new GraphPackageIngest(storage).Store([Fixture.Pkg('ok', '1.0.0', '{}'), Fixture.Pkg(bad, '1.0.0', '{}')]),
+            GraphPackageSegmentError)
+        assert.equal(storage.Files.size, 0)
+    })
+
+    test(`an invalid package version ${JSON.stringify(bad)} rejects the whole batch with nothing written`, async () =>
+    {
+        const storage = new MemoryStorage()
+        await assert.rejects(
+            new GraphPackageIngest(storage).Store([Fixture.Pkg('ok', '1.0.0', '{}'), Fixture.Pkg('b', bad, '{}')]),
+            GraphPackageSegmentError)
+        assert.equal(storage.Files.size, 0)
+    })
+}

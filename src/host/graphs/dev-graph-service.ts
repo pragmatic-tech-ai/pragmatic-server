@@ -97,7 +97,8 @@ export class DevGraphService implements IDevGraphService
         await this.store.Remove(params.graphName)
     }
 
-    /** Replaces one solution's slice. Package bytes are ingested first so a Conflict leaves the manifest untouched. */
+    /** Replaces one solution's slice. Package bytes are ingested first so a Conflict leaves the manifest untouched.
+     *  Unlocked Load/Get/Store/Put: concurrent contributes to one graph are last-writer-wins (single-maker dev-env posture; hardening deferred). */
     public async ContributeGraph(params: GraphContributeParamsDto): Promise<GraphDetailDto>
     {
         await this.store.Load()
