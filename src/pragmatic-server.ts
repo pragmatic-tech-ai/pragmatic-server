@@ -84,6 +84,9 @@ import { DevGraphStore } from './host/graphs/dev-graph-store.js'
 import { GraphPackageIngest } from './host/graphs/graph-package-ingest.js'
 import { GraphPackageReader } from './host/graphs/graph-package-reader.js'
 import { DevGraphService, type IDevGraphService } from './host/graphs/dev-graph-service.js'
+import { EnvironmentGraph, LoadedGraphStore, NoEnvironmentGraphError } from './host/graphs/environment-graph.js'
+import type { IEnvironmentGraphHost } from './host/graphs/environment-graph.js'
+import type { GraphLoadParamsDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { InvalidParamsPrefix } from './host/invalid-params-prefix.js'
 
 export interface OidcServerOptions
@@ -141,7 +144,7 @@ export type ReferencedLabelSet = { labels: readonly string[]; wildcard: boolean;
 type AppBase = { domain: Domain; plan: ModelConnectorPlan; nativeBase: IGraphQuery; defaultConcepts: ReadonlySet<string> }
 
 /** Headless single-tenant in-process host: composes the engine over the lazy root and opens a solution. */
-export class PragmaticServer
+export class PragmaticServer implements IEnvironmentGraphHost
 {
     private static readonly DefaultPackagesDir = 'packages'
     private static readonly DefaultGraphsDir = 'graphs'
@@ -181,6 +184,8 @@ export class PragmaticServer
     private appsRegistry: PragmaticAppsRegistry | undefined
     private appIngest: AppIngestService | undefined
     private devGraphService: IDevGraphService | undefined
+    private environmentGraph: EnvironmentGraph | undefined
+    private loadedGraphStore: LoadedGraphStore | undefined
     private readonly appGraphs = new Map<string, Promise<AppBase>>()
     private readonly shareStores = new Map<string, ShareStore>()
     private readAuth: Promise<TenantReadAuthorization> | undefined
@@ -437,6 +442,48 @@ export class PragmaticServer
         this.AssertDevelopmentPurpose()
         this.devGraphService ??= new DevGraphService(new DevGraphStore(this.GraphsStorage()), new GraphPackageIngest(this.PackagesStorage()), new GraphPackageReader(this.PackagesStorage()))
         return this.devGraphService
+    }
+
+    /**
+     * Ingests the promoted packages immutably, builds the ONE live environment-graph instance (replacing any prior),
+     * persists the loaded-manifest record, and returns it. Runtime tenants only.
+     */
+    public async LoadEnvironmentGraph(params: GraphLoadParamsDto): Promise<GraphLoadedDto>
+    {
+        this.AssertRuntimePurpose()
+        await new GraphPackageIngest(this.PackagesStorage()).Store(params.packages)
+        const refs = params.packages.map(p => ({ id: p.id, version: p.version }))
+        const graph = await EnvironmentGraph.Build(new StoragePackageSource(this.PackagesStorage()), params.graphName, refs)
+        this.environmentGraph = graph
+        const record = graph.Record()
+        await this.LoadedGraphStore().Save(record)
+        return record
+    }
+
+    /** The loaded environment graph's query; throws if nothing is loaded. RBAC is enforced at the policy gate, so no context is taken. */
+    public async EnvironmentGraphQuery(): Promise<IGraphQuery>
+    {
+        if (this.environmentGraph === undefined)
+        {
+            throw new NoEnvironmentGraphError()
+        }
+        return this.environmentGraph.Query()
+    }
+
+    /** The loaded-manifest record: the live instance's record if present, else the persisted one (survives a restart), else null. */
+    public async LoadedGraph(): Promise<GraphLoadedDto | null>
+    {
+        if (this.environmentGraph !== undefined)
+        {
+            return this.environmentGraph.Record()
+        }
+        return this.LoadedGraphStore().Read()
+    }
+
+    private LoadedGraphStore(): LoadedGraphStore
+    {
+        this.loadedGraphStore ??= new LoadedGraphStore(this.GraphsStorage())
+        return this.loadedGraphStore
     }
 
     /** Throws unless this is a Development tenant: the graph catalog exists only there. */

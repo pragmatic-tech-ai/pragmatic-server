@@ -134,6 +134,8 @@ export class PolicyGate
             [GraphProtocol.Get.method, readTenant],
             [GraphProtocol.Export.method, readTenant],
             [GraphProtocol.Contribute.method, contribute],
+            [GraphProtocol.Load.method, administer],
+            [GraphProtocol.Loaded.method, readTenant],
             [AdminProtocol.ListGrants.method, administer],
             [AdminProtocol.GrantRole.method, administer],
             [AdminProtocol.RevokeRole.method, administer],
