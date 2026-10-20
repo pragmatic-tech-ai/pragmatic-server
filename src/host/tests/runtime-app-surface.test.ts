@@ -54,7 +54,7 @@ class RuntimeSurfaceFixture
     public static readonly Nut = 'Nut'
     public static readonly Bolt = 'Bolt'
     public static readonly Alpha = 'alpha'
-    public static readonly NoAppSelected = /no application selected/i
+    public static readonly NoAppSelected = /no environment graph is loaded/i
     public static readonly NotRuntime = /operation requires a runtime tenant/
     public static readonly NameMismatch = /does not match requested name/
     public static readonly TenantId = 't1'
@@ -202,7 +202,9 @@ class RuntimeSurfaceFixture
             () => Promise.reject(new Error(RuntimeSurfaceFixture.NoConnectors)), ctx => server.Graph(ctx),
             undefined, undefined, undefined, undefined, undefined, undefined, purpose,
             runtime ? server.Applications() : undefined,
-            runtime ? (ctx, name, labels) => server.GraphForPragmaticApp(ctx, name, labels) : undefined)
+            runtime ? (ctx, name, labels) => server.GraphForPragmaticApp(ctx, name, labels) : undefined,
+            undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+            runtime ? server : undefined)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         this.disposables.push(async () =>
         {

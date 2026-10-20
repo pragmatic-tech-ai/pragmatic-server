@@ -34,7 +34,7 @@ import { AdminService, AdminSelfLockoutError, LastAdministratorError, AdminConfi
 import { AdminEnums, AdminEnumError } from './admin-enums.js'
 import { TenantPurpose } from '../tenancy/tenant-purpose.js'
 import type { IDevGraphService } from './graphs/dev-graph-service.js'
-import type { IEnvironmentGraphHost } from './graphs/environment-graph.js'
+import { NoEnvironmentGraphError, type IEnvironmentGraphHost } from './graphs/environment-graph.js'
 import type { PragmaticAppsRegistry } from './apps/pragmatic-apps-registry.js'
 import { CypherLimits } from '../config/cypher-limits.js'
 import { PagingLimits } from '../config/paging-limits.js'
@@ -504,7 +504,9 @@ export class ServerConnectionHandler
             throw new ResponseError(ErrorCodes.InvalidParams, ServerConnectionHandler.RuntimeModelScopeMessage)
         }
         const graph = this.purpose === TenantPurpose.Runtime
-            ? await this.RequireBoundAppGraph(Cypher.ReferencedLabels.Of(source))
+            ? this.boundApp !== undefined
+                ? await this.RequireBoundAppGraph(Cypher.ReferencedLabels.Of(source))
+                : await this.RequireEnvironmentGraph()
             : modelId === undefined
                 ? await this.MaskedTenantGraph()
                 : await this.RequireModelGraph(modelId)
@@ -729,6 +731,22 @@ export class ServerConnectionHandler
             throw new ResponseError(ErrorCodes.InvalidRequest, ServerConnectionHandler.EnvironmentGraphHostUnavailableMessage)
         }
         return this.environmentGraphHost
+    }
+
+    private async RequireEnvironmentGraph(): Promise<IGraphQuery>
+    {
+        try
+        {
+            return await this.RequireEnvironmentGraphHost().EnvironmentGraphQuery()
+        }
+        catch (error)
+        {
+            if (error instanceof NoEnvironmentGraphError)
+            {
+                throw new ResponseError(ErrorCodes.InvalidRequest, error.message)
+            }
+            throw error
+        }
     }
 
     private EnsureRuntime(): void
