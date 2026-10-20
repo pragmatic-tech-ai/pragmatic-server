@@ -33,6 +33,7 @@ export class TenantRegistry
 {
     private static readonly PackagesDir = 'packages'
     private static readonly ApplicationsDir = 'applications'
+    private static readonly GraphsDir = 'graphs'
     private static readonly IdentityDir = 'identity'
     private static readonly UnprovisionedError = 'tenant is not provisioned'
     private static readonly InvalidTenantError = 'invalid tenant id'
@@ -230,6 +231,7 @@ export class TenantRegistry
             packagesRoot: join(this.baseDir, tenantId, TenantRegistry.PackagesDir),
             purpose: provisioning.purpose,
             applicationsRoot: join(this.baseDir, tenantId, TenantRegistry.ApplicationsDir),
+            graphsRoot: join(this.baseDir, tenantId, TenantRegistry.GraphsDir),
             platform: this.platform,
             deploymentMode: this.deploymentMode,
             connectorsPolicy: provisioning.connectorsPolicy,

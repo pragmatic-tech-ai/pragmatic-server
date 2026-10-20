@@ -121,6 +121,7 @@ export interface PragmaticServerOptions
     purpose?: TenantPurpose
     applicationsRoot?: string
     packagesRoot?: string
+    graphsRoot?: string
     identity?: PragmaticServerIdentityOptions
     deploymentMode?: DeploymentMode
     builtinStoreEngine?: BuiltinStoreEngine
@@ -139,6 +140,7 @@ type AppBase = { domain: Domain; plan: ModelConnectorPlan; nativeBase: IGraphQue
 export class PragmaticServer
 {
     private static readonly DefaultPackagesDir = 'packages'
+    private static readonly DefaultGraphsDir = 'graphs'
     private static readonly AppGraphKeySeparator = '@'
     private static readonly BuiltinConnectorPrefix = '__builtin__@'
     private static readonly AppDataDir = 'data'
@@ -403,6 +405,11 @@ export class PragmaticServer
     public PackagesStorage(): IStorage
     {
         return this.platform.CreateStorage(this.options.packagesRoot ?? PragmaticServer.DefaultPackagesDir)
+    }
+
+    public GraphsStorage(): IStorage
+    {
+        return this.platform.CreateStorage(this.options.graphsRoot ?? PragmaticServer.DefaultGraphsDir)
     }
 
     /** Evicts the cached app graph for `name@version` so the next query rebuilds it from storage. */
