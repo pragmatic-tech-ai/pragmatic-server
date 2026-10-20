@@ -37,9 +37,6 @@ export class SeedCli
     private static readonly WsScheme = 'ws://'
     private static readonly LocalHost = '127.0.0.1'
     private static readonly PortSeparator = ':'
-    private static readonly AdminEmailPrefix = 'admin@'
-    private static readonly AdminEmailSuffix = '.test'
-    private static readonly AdminSecretSuffix = '-admin-pw'
     private static readonly MissingSecretPrefix = 'missing secret in provisioned-secrets.json: '
     private static readonly BuildCommandPrefix = 'DOCKER_BUILDKIT=1 docker build -f pragmatic-server/docker/Dockerfile --secret id=npmrc,src=<path-to>/.npmrc -t '
     private static readonly BuildCommandSuffix = ' ..'
@@ -91,13 +88,13 @@ export class SeedCli
 
     public static AdminEmail(def: EnvDefinition): string
     {
-        return SeedCli.AdminEmailPrefix + def.tenantId + SeedCli.AdminEmailSuffix
+        return BundleBuilder.AdminEmailPrefix + def.tenantId + BundleBuilder.AdminEmailSuffix
     }
 
     /** The admin password for the tenant, resolved from the generated secrets under (tenant)-admin-pw. */
     public static AdminPassword(def: EnvDefinition, secrets: Record<string, string>): string
     {
-        return SeedCli.Secret(secrets, def.tenantId + SeedCli.AdminSecretSuffix)
+        return SeedCli.Secret(secrets, def.tenantId + BundleBuilder.AdminSecretSuffix)
     }
 
     public static async Run(command: Command, env: string): Promise<void>
@@ -165,8 +162,7 @@ export class SeedCli
     {
         if (!await docker.EnsureImage())
         {
-            console.error(SeedCli.ImageMissingMessage)
-            return
+            throw new Error(SeedCli.ImageMissingMessage)
         }
         await BundleBuilder.Generate(def, bundleDir)
         await docker.Up(def, bundleDir)
