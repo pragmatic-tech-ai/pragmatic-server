@@ -1,4 +1,5 @@
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
+import { EnvironmentType } from './portal-types.js'
 import type { EnvironmentDto, GraphDto, PromotionResultDto } from './portal-types.js'
 
 // The slice of ControlPlaneClient the view-model needs (a seam so tests need no live server).
@@ -17,7 +18,6 @@ export class PromoteGraphViewModel extends Observable
     public static readonly SelectedGraphProperty = 'SelectedGraph'
     public static readonly SelectedTargetEnvProperty = 'SelectedTargetEnv'
     public static readonly NothingSelectedStatus = 'select a graph and a target runtime environment'
-    private static readonly RuntimeType = 'runtime'
 
     private graphs: readonly GraphDto[] = []
     private targets: readonly EnvironmentDto[] = []
@@ -74,7 +74,7 @@ export class PromoteGraphViewModel extends Observable
         const oldGraphs = this.graphs
         const oldTargets = this.targets
         this.graphs = await this.source.ListGraphs(this.devEnvName)
-        this.targets = (await this.source.ListEnvironments()).filter(e => e.type === PromoteGraphViewModel.RuntimeType)
+        this.targets = (await this.source.ListEnvironments()).filter(e => e.type === EnvironmentType.Runtime)
         this.RaisePropertyChanged(PromoteGraphViewModel.GraphsProperty, oldGraphs, this.graphs)
         this.RaisePropertyChanged(PromoteGraphViewModel.TargetsProperty, oldTargets, this.targets)
     }

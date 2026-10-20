@@ -1,3 +1,10 @@
+// Environment kinds; values match the server wire strings in EnvironmentDto.type.
+export enum EnvironmentType
+{
+    Development = 'development',
+    Runtime = 'runtime'
+}
+
 export type EnvironmentDto =
 {
     name: string
