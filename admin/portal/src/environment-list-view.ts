@@ -68,7 +68,7 @@ export class EnvironmentListView extends PortalViewBase
         const row = new StackPanel()
         row.Orientation = Orientation.Horizontal
         const info = new TextBlock()
-        info.Text = [env.name, env.template, env.status, EnvironmentListView.PortPrefix + String(env.hostPort)].join(EnvironmentListView.FieldSeparator)
+        info.Text = [env.name, env.template, env.type, env.status, EnvironmentListView.PortPrefix + String(env.hostPort)].join(EnvironmentListView.FieldSeparator)
         row.AddChild(info)
         const running = env.status === EnvironmentListView.RunningStatus
         row.AddChild(running

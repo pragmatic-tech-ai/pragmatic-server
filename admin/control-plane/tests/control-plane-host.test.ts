@@ -11,7 +11,7 @@ import { InvalidEnvironmentNameError } from '../template-catalog.js'
 import { WebSocket } from 'ws'
 import { AdminProxyError, AdminProxyErrorKind, type AdminSnapshot } from '../admin-proxy.js'
 import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { EnvStatus, Template, type EnvironmentRecord } from '../environment-record.js'
+import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import { TemplateCatalog } from '../template-catalog.js'
 
 import type { IOperatorIdentity, OperatorPrincipal, OperatorSession } from '../operator-identity.js'
@@ -52,6 +52,7 @@ class FakeService implements IEnvironmentService
     public Record: EnvironmentRecord = {
         name: 'x',
         template: Template.DevBlank,
+        type: EnvType.Development,
         tenantId: 'dev',
         hostPort: 8101,
         containerName: 'ctr-secret-name',
@@ -61,11 +62,11 @@ class FakeService implements IEnvironmentService
         status: EnvStatus.Running
     }
 
-    public async Create(name: string, template: Template, hostPort?: number): Promise<EnvironmentRecord>
+    public async Create(name: string, template: Template, type: EnvType, hostPort?: number): Promise<EnvironmentRecord>
     {
-        this.Calls.push(`create:${name}:${template}:${String(hostPort)}`)
+        this.Calls.push(`create:${name}:${template}:${type}:${String(hostPort)}`)
         this.MaybeThrow()
-        return { ...this.Record, name, template }
+        return { ...this.Record, name, template, type }
     }
 
     public async Start(name: string): Promise<EnvironmentRecord>
@@ -172,7 +173,7 @@ class FakeService implements IEnvironmentService
 
 class Harness
 {
-    public static readonly DtoKeys = ['createdAt', 'hostPort', 'httpUrl', 'name', 'status', 'template', 'tenantId', 'wsUrl']
+    public static readonly DtoKeys = ['createdAt', 'hostPort', 'httpUrl', 'name', 'status', 'template', 'tenantId', 'type', 'wsUrl']
     public static readonly Forbidden = ['bundleDir', 'containerName', 'volumeName', 'master', 'secret', 'password', 'ctr-secret-name', 'vol-secret-name', '/secret/bundle']
 
     public static readonly AuthCookie = 'cp_session=valid-token'
@@ -247,11 +248,11 @@ describe('ControlPlaneHost', () =>
 
     it('creates, validates input', async () =>
     {
-        const ok = await Harness.Send(host, 'POST', '/api/environments', JSON.stringify({ name: 'e1', template: 'dev-blank' }))
+        const ok = await Harness.Send(host, 'POST', '/api/environments', JSON.stringify({ name: 'e1', template: 'dev-blank', type: 'development' }))
         assert.equal(ok.status, 201)
-        assert.deepEqual(fake.Calls, ['create:e1:dev-blank:undefined'])
+        assert.deepEqual(fake.Calls, ['create:e1:dev-blank:development:undefined'])
         assert.equal(JSON.parse(ok.body).name, 'e1')
-        const noName = await Harness.Send(host, 'POST', '/api/environments', JSON.stringify({ template: 'dev-blank' }))
+        const noName = await Harness.Send(host, 'POST', '/api/environments', JSON.stringify({ template: 'dev-blank', type: 'development' }))
         assert.equal(noName.status, 400)
         assert.ok(JSON.parse(noName.body).error.length > 0)
         const badTpl = await Harness.Send(host, 'POST', '/api/environments', JSON.stringify({ name: 'e', template: 'nope' }))
@@ -292,10 +293,43 @@ describe('ControlPlaneHost', () =>
         assert.ok(!gen.body.includes('weird'))
     })
 
+    it('creates with a valid type and carries it in the DTO', async () =>
+    {
+        const r = await Harness.Send(host, 'POST', '/api/environments', JSON.stringify({ name: 'e2', template: 'dev-blank', type: 'runtime' }))
+        assert.equal(r.status, 201)
+        assert.equal(JSON.parse(r.body).type, 'runtime')
+        assert.deepEqual(fake.Calls, ['create:e2:dev-blank:runtime:undefined'])
+    })
+
+    it('rejects an unknown or missing type with 400 listing valid types', async () =>
+    {
+        const bad = await Harness.Send(host, 'POST', '/api/environments', JSON.stringify({ name: 'e', template: 'dev-blank', type: 'bogus' }))
+        assert.equal(bad.status, 400)
+        assert.ok(JSON.parse(bad.body).error.includes(Object.values(EnvType).join(', ')))
+        const missing = await Harness.Send(host, 'POST', '/api/environments', JSON.stringify({ name: 'e', template: 'dev-blank' }))
+        assert.equal(missing.status, 400)
+        const nonString = await Harness.Send(host, 'POST', '/api/environments', JSON.stringify({ name: 'e', template: 'dev-blank', type: 123 }))
+        assert.equal(nonString.status, 400)
+        assert.equal(fake.Calls.length, 0)
+    })
+
+    it('list DTO carries type', async () =>
+    {
+        const list = await Harness.Send(host, 'GET', '/api/environments')
+        assert.equal(JSON.parse(list.body)[0].type, 'development')
+    })
+
+    it('unauthenticated create is 401 before validation', async () =>
+    {
+        const r = await Harness.Anon(host, 'POST', '/api/environments', JSON.stringify({ name: 'e', template: 'dev-blank', type: 'bogus' }))
+        assert.equal(r.status, 401)
+        assert.equal(fake.Calls.length, 0)
+    })
+
     it('never leaks secret or internal fields', async () =>
     {
         const list = await Harness.Send(host, 'GET', '/api/environments')
-        const created = await Harness.Send(host, 'POST', '/api/environments', JSON.stringify({ name: 'e1', template: 'dev-blank' }))
+        const created = await Harness.Send(host, 'POST', '/api/environments', JSON.stringify({ name: 'e1', template: 'dev-blank', type: 'development' }))
         const started = await Harness.Send(host, 'POST', '/api/environments/x/start')
         assert.deepEqual(Object.keys(JSON.parse(created.body)).sort(), Harness.DtoKeys)
         assert.deepEqual(Object.keys(JSON.parse(started.body)).sort(), Harness.DtoKeys)
@@ -391,7 +425,7 @@ describe('ControlPlaneHost', () =>
         const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/api/events`, { headers: { Cookie: Harness.AuthCookie } })
         await new Promise<void>((res, rej) => { ws.once('open', () => res()); ws.once('error', rej) })
         const msg = new Promise<string>(res => ws.once('message', d => res(d.toString())))
-        await Harness.Send(host, 'POST', '/api/environments', JSON.stringify({ name: 'e1', template: 'dev-blank' }))
+        await Harness.Send(host, 'POST', '/api/environments', JSON.stringify({ name: 'e1', template: 'dev-blank', type: 'development' }))
         assert.deepEqual(JSON.parse(await msg), { type: 'environments-changed' })
         ws.close()
     })
@@ -452,7 +486,7 @@ describe('ControlPlaneHost', () =>
 
     it('enforces same-origin on mutating API requests', async () =>
     {
-        const body = JSON.stringify({ name: 'e1', template: 'dev-blank' })
+        const body = JSON.stringify({ name: 'e1', template: 'dev-blank', type: 'development' })
         const evil = await Harness.Send(host, 'POST', '/api/environments', body, { origin: 'http://evil.example' })
         assert.equal(evil.status, 403)
         assert.equal(fake.Calls.length, 0)

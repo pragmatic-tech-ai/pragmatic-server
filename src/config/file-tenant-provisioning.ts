@@ -44,7 +44,7 @@ interface TenantShape
 {
     identity?: IdentityShape
     displayName: string
-    purpose?: TenantPurpose
+    purpose?: TenantPurpose | string
     bootstrap?: TenantProvisioning['bootstrap']
     oidc?: TenantProvisioning['oidc']
     connectorsPolicy?: PolicyShape
@@ -87,6 +87,7 @@ export class FileTenantProvisioning implements ITenantProvisioning
     private static readonly RoleEditor = 'editor'
     private static readonly RoleAdmin = 'admin'
     private static readonly RoleOwner = 'owner'
+    private static readonly PurposeNames: ReadonlyMap<string, TenantPurpose> = FileTenantProvisioning.BuildPurposeNames()
 
     private readonly entries: ReadonlyMap<string, TenantProvisioning>
 
@@ -156,14 +157,30 @@ export class FileTenantProvisioning implements ITenantProvisioning
         }
     }
 
+    private static BuildPurposeNames(): ReadonlyMap<string, TenantPurpose>
+    {
+        const names = new Map<string, TenantPurpose>()
+        for (const key of Object.keys(TenantPurpose))
+        {
+            const mapped = (TenantPurpose as unknown as Record<string, unknown>)[key]
+            if (typeof mapped === 'number') names.set(key, mapped as TenantPurpose)
+        }
+        return names
+    }
+
     private static Purpose(value: unknown): TenantPurpose | undefined
     {
         if (value === undefined) return undefined
-        if (typeof value !== 'number' || TenantPurpose[value] === undefined)
+        if (typeof value === 'number' && TenantPurpose[value] !== undefined)
         {
-            throw new Error(FileTenantProvisioning.BadPurpose)
+            return value as TenantPurpose
         }
-        return value as TenantPurpose
+        if (typeof value === 'string')
+        {
+            const named = FileTenantProvisioning.PurposeNames.get(value)
+            if (named !== undefined) return named
+        }
+        throw new Error(FileTenantProvisioning.BadPurpose)
     }
 
     private static LegacyIdentity(oidc: TenantShape['oidc']): IdentityConfig | undefined

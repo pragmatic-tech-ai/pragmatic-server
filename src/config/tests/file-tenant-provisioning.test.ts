@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DataSourceKind } from '@pragmatic-tech-ai/todl'
 import { FileTenantProvisioning } from '../file-tenant-provisioning.js'
+import { TenantPurpose } from '../../tenancy/tenant-purpose.js'
 
 class Files
 {
@@ -83,4 +84,32 @@ test('accepts a valid purpose and an absent purpose', () =>
     const provisioning = FileTenantProvisioning.FromText(ok)
     assert.equal(provisioning.OptionsFor('acme')?.purpose, 1)
     assert.equal(provisioning.OptionsFor('beta')?.purpose, undefined)
+})
+
+class PurposeFiles
+{
+    public static Of(purpose: unknown): string
+    {
+        return JSON.stringify({ tenants: { acme: { displayName: 'Acme', purpose } } })
+    }
+}
+
+test('accepts the purpose enum name', () =>
+{
+    assert.equal(FileTenantProvisioning.FromText(PurposeFiles.Of('Development')).OptionsFor('acme')?.purpose, TenantPurpose.Development)
+    assert.equal(FileTenantProvisioning.FromText(PurposeFiles.Of('Runtime')).OptionsFor('acme')?.purpose, TenantPurpose.Runtime)
+})
+
+test('still accepts the numeric purpose value', () =>
+{
+    assert.equal(FileTenantProvisioning.FromText(PurposeFiles.Of(0)).OptionsFor('acme')?.purpose, TenantPurpose.Development)
+    assert.equal(FileTenantProvisioning.FromText(PurposeFiles.Of(1)).OptionsFor('acme')?.purpose, TenantPurpose.Runtime)
+})
+
+test('fails closed on an unknown purpose name, numeric string, out-of-range number, or wrong-typed value', () =>
+{
+    for (const bad of ['Bogus', '0', 5, true, {}, null])
+    {
+        assert.throws(() => FileTenantProvisioning.FromText(PurposeFiles.Of(bad)).OptionsFor('acme'), /invalid purpose/)
+    }
 })

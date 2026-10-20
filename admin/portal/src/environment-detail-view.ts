@@ -12,10 +12,12 @@ export class EnvironmentDetailView extends PortalViewBase
     private static readonly LogsHeading = 'Logs'
     private static readonly HttpPrefix = 'HTTP: '
     private static readonly WsPrefix = 'WebSocket: '
+    private static readonly TypePrefix = 'Type: '
     private static readonly StatusPrefix = 'Status: '
     private static readonly NoLogsMessage = 'No logs available (environment not running).'
 
     private readonly title = new TextBlock()
+    private readonly type = new TextBlock()
     private readonly status = new TextBlock()
     private readonly http = new TextBlock()
     private readonly ws = new TextBlock()
@@ -28,6 +30,7 @@ export class EnvironmentDetailView extends PortalViewBase
         super()
         this.title.Text = name
         this.AddChild(this.title)
+        this.AddChild(this.type)
         this.AddChild(this.status)
         this.AddChild(this.http)
         this.AddChild(this.ws)
@@ -78,6 +81,7 @@ export class EnvironmentDetailView extends PortalViewBase
 
     private ShowEnvironment(env: EnvironmentDto): void
     {
+        this.type.Text = EnvironmentDetailView.TypePrefix + env.type
         this.status.Text = EnvironmentDetailView.StatusPrefix + env.status
         this.http.Text = EnvironmentDetailView.HttpPrefix + env.httpUrl
         this.ws.Text = EnvironmentDetailView.WsPrefix + env.wsUrl

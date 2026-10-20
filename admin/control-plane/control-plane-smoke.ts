@@ -22,13 +22,18 @@ import { AdminProxy, WsAdminConnector } from './admin-proxy.js'
 import { ControlPlaneHost } from './control-plane-host.js'
 import type { EnvironmentDto } from './control-plane-host.js'
 import { BundleBuilderAdapter, DockerEnvAdapter, UserSeederAdapter } from './docker-env-port.js'
-import { EnvStatus, Template } from './environment-record.js'
+import { EnvStatus, EnvType, Template } from './environment-record.js'
 import { EnvironmentRegistry } from './environment-registry.js'
 import { EnvironmentService } from './environment-service.js'
 import { OperatorIdentity } from './operator-identity.js'
 import { NetPortProbe, PortAllocator } from './port-allocator.js'
 
 type HttpResult = { status: number; json: unknown; setCookie: string[] }
+
+interface TenantsShape
+{
+    tenants: Record<string, { purpose: number } | undefined>
+}
 
 export class ControlPlaneSmoke
 {
@@ -39,6 +44,9 @@ export class ControlPlaneSmoke
     private static readonly StaticDir = 'static'
     private static readonly SecretsFile = 'provisioned-secrets.json'
     private static readonly Utf8 = 'utf8'
+    private static readonly TenantsFile = 'tenants.json'
+    private static readonly DevPurpose = 0
+    private static readonly DemoPurpose = 1
     private static readonly EnvironmentsPath = '/api/environments'
     private static readonly PathSep = '/'
     private static readonly StopAction = '/stop'
@@ -117,6 +125,8 @@ export class ControlPlaneSmoke
         SeededDemo: 'demo-contoso: four demo principals plus admin seeded',
         DeleteDemo: 'demo-contoso: delete returns 200',
         GoneDemo: 'demo-contoso: no longer listed',
+        PurposeDev: 'dev-blank: tenants.json purpose is Development (0)',
+        PurposeDemo: 'demo-contoso: tenants.json purpose is Runtime (1)',
         ManageSnapshot: 'manage: snapshot returns 200 with admin, demo principals and config',
         ManageCreate: 'manage: create account returns 201',
         ManageListed: 'manage: new account appears in snapshot',
@@ -163,7 +173,7 @@ export class ControlPlaneSmoke
             this.controlPort = host.Address().port
             if (await this.Authenticate())
             {
-                await this.DevLifecycle()
+                await this.DevLifecycle(dataRoot)
                 await this.DemoSeeded(dataRoot)
             }
         }
@@ -214,11 +224,11 @@ export class ControlPlaneSmoke
         }
     }
 
-    private async DevLifecycle(): Promise<void>
+    private async DevLifecycle(dataRoot: string): Promise<void>
     {
         const L = ControlPlaneSmoke.Labels
         const name = ControlPlaneSmoke.DevName
-        const created = await this.Api(ControlPlaneSmoke.MethodPost, ControlPlaneSmoke.EnvironmentsPath, { name, template: Template.DevBlank })
+        const created = await this.Api(ControlPlaneSmoke.MethodPost, ControlPlaneSmoke.EnvironmentsPath, { name, template: Template.DevBlank, type: EnvType.Development })
         this.Expect(L.CreateDev, created.status === ControlPlaneSmoke.StatusCreated, ControlPlaneSmoke.StatusWord + String(created.status))
         const running = await this.WaitFor(name, EnvStatus.Running)
         this.Expect(L.RunningDev, running !== undefined)
@@ -227,6 +237,7 @@ export class ControlPlaneSmoke
             return
         }
         await this.CheckHealth(L.HealthDev, running.hostPort)
+        this.CheckPurpose(L.PurposeDev, dataRoot, name, name, ControlPlaneSmoke.DevPurpose)
         const stop = await this.Api(ControlPlaneSmoke.MethodPost, this.EnvPath(name) + ControlPlaneSmoke.StopAction)
         this.Expect(L.StopDev, stop.status === ControlPlaneSmoke.StatusOk, ControlPlaneSmoke.StatusWord + String(stop.status))
         this.Expect(L.StoppedDev, (await this.WaitFor(name, EnvStatus.Stopped)) !== undefined)
@@ -242,7 +253,7 @@ export class ControlPlaneSmoke
     {
         const L = ControlPlaneSmoke.Labels
         const name = ControlPlaneSmoke.DemoName
-        const created = await this.Api(ControlPlaneSmoke.MethodPost, ControlPlaneSmoke.EnvironmentsPath, { name, template: Template.DemoContoso })
+        const created = await this.Api(ControlPlaneSmoke.MethodPost, ControlPlaneSmoke.EnvironmentsPath, { name, template: Template.DemoContoso, type: EnvType.Runtime })
         this.Expect(L.CreateDemo, created.status === ControlPlaneSmoke.StatusCreated, ControlPlaneSmoke.StatusWord + String(created.status))
         const running = await this.WaitFor(name, EnvStatus.Running)
         this.Expect(L.RunningDemo, running !== undefined)
@@ -251,11 +262,20 @@ export class ControlPlaneSmoke
             return
         }
         await this.CheckHealth(L.HealthDemo, running.hostPort)
+        this.CheckPurpose(L.PurposeDemo, dataRoot, name, ControlPlaneSmoke.DemoTenant, ControlPlaneSmoke.DemoPurpose)
         await this.CheckSeeded(dataRoot, running.hostPort)
         await this.ManageRoundTrip(name)
         const del = await this.Api(ControlPlaneSmoke.MethodDelete, this.EnvPath(name))
         this.Expect(L.DeleteDemo, del.status === ControlPlaneSmoke.StatusOk, ControlPlaneSmoke.StatusWord + String(del.status))
         this.Expect(L.GoneDemo, (await this.Find(name)) === undefined)
+    }
+
+    private CheckPurpose(label: string, dataRoot: string, envName: string, tenantId: string, expected: number): void
+    {
+        const tenantsPath = join(dataRoot, envName, ControlPlaneSmoke.TenantsFile)
+        const parsed = JSON.parse(readFileSync(tenantsPath, ControlPlaneSmoke.Utf8)) as TenantsShape
+        const purpose = parsed.tenants[tenantId]?.purpose
+        this.Expect(label, purpose === expected, String(purpose))
     }
 
     private async CheckSeeded(dataRoot: string, port: number): Promise<void>

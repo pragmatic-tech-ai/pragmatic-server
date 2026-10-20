@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true, "declaration": false, "rootDir": "." },
+  "include": ["src/**/*.ts", "environments/**/*.ts", "admin/control-plane/**/*.ts"],
+  "exclude": ["src/**/*.test.ts", "src/**/tests/**"]
+}

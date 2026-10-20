@@ -22,6 +22,9 @@ class FakeControlPlane
     public static readonly TemplateOneTitle = 'Blank development'
     public static readonly TemplateTwoId = 'demo-contoso'
     public static readonly TemplateTwoTitle = 'Contoso demo'
+    public static readonly ListedType = 'runtime'
+    public static readonly RowSeparator = '  |  '
+    public static readonly RowPortText = 'port 4101'
     public static readonly NewName = 'beta'
     public static readonly EnvironmentsPath = '/api/environments'
     public static readonly StopPath = '/api/environments/alpha/stop'
@@ -91,6 +94,7 @@ class FakeControlPlane
         return {
             name: FakeControlPlane.EnvName,
             template: FakeControlPlane.TemplateOneId,
+            type: FakeControlPlane.ListedType,
             tenantId: FakeControlPlane.TenantId,
             hostPort: 4101,
             status: FakeControlPlane.EnvStatus,
@@ -256,6 +260,8 @@ test.describe('admin portal', () =>
         await expect(page.getByText(App.TitleText)).toBeVisible()
         await expect(page.getByText(FakeControlPlane.EnvName).first()).toBeVisible()
         await expect(page.getByText(FakeControlPlane.EnvStatus).first()).toBeVisible()
+        const row = [FakeControlPlane.EnvName, FakeControlPlane.TemplateOneId, FakeControlPlane.ListedType, FakeControlPlane.EnvStatus, FakeControlPlane.RowPortText].join(FakeControlPlane.RowSeparator)
+        await expect(page.getByText(row, { exact: true })).toBeVisible()
     })
 
     test('create form populates from the API and posts the preselected one', async ({ page }) =>
@@ -269,12 +275,14 @@ test.describe('admin portal', () =>
         // native popup is deliberately not driven (Mural ComboBox has no stable locator).
         await expect(page.getByText(FakeControlPlane.TemplateOneTitle)).toBeVisible()
         expect(fake.TemplatesRequests).toBeGreaterThan(0)
+        await expect(page.getByText(CreateEnvironmentView.DevelopmentLabel, { exact: true })).toBeVisible()
 
         await page.getByText(CreateEnvironmentView.CreateLabel, { exact: true }).click()
         await expect.poll(() => fake.Find(FakeControlPlane.MethodPost, FakeControlPlane.EnvironmentsPath)).toBeDefined()
         expect(fake.Find(FakeControlPlane.MethodPost, FakeControlPlane.EnvironmentsPath)!.body).toEqual({
             name: FakeControlPlane.NewName,
             template: FakeControlPlane.TemplateOneId,
+            type: CreateEnvironmentView.DevelopmentId,
         })
     })
 

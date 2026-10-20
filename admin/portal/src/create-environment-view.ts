@@ -13,6 +13,14 @@ export class TemplateOption
     }
 }
 
+// ComboBox item for the environment type; Label is what the collapsed selection renders.
+export class TypeOption
+{
+    public constructor(public readonly Label: string, public readonly Id: string)
+    {
+    }
+}
+
 // Create form: name, template dropdown (from ListTemplates), optional host port.
 export class CreateEnvironmentView extends PortalViewBase
 {
@@ -20,14 +28,21 @@ export class CreateEnvironmentView extends PortalViewBase
     public static readonly NamePlaceholder = 'Environment name'
     public static readonly PortPlaceholder = 'Host port (optional)'
     public static readonly TemplatePlaceholder = 'Template'
+    private static readonly TypePlaceholder = 'Type'
+    public static readonly DevelopmentLabel = 'Development'
+    public static readonly DevelopmentId = 'development'
+    private static readonly RuntimeLabel = 'Runtime'
+    private static readonly RuntimeId = 'runtime'
     private static readonly HeadingText = 'New environment'
     private static readonly LabelPath = 'Label'
     private static readonly PortInvalid = 'Port must be a whole number'
     private static readonly NoTemplate = 'Choose a template'
+    private static readonly NoType = 'Choose a type'
 
     private readonly nameBox = new TextBox()
     private readonly portBox = new TextBox()
     private readonly templateBox = new ComboBox()
+    private readonly typeBox = new ComboBox()
 
     public constructor(private readonly client: ControlPlaneClient, private readonly nav: IPortalNavigator)
     {
@@ -42,6 +57,15 @@ export class CreateEnvironmentView extends PortalViewBase
         this.templateBox.Placeholder = CreateEnvironmentView.TemplatePlaceholder
         this.templateBox.DisplayMemberPath = CreateEnvironmentView.LabelPath
         this.AddChild(this.templateBox)
+
+        this.typeBox.Placeholder = CreateEnvironmentView.TypePlaceholder
+        this.typeBox.DisplayMemberPath = CreateEnvironmentView.LabelPath
+        this.typeBox.ItemsSource = [
+            new TypeOption(CreateEnvironmentView.DevelopmentLabel, CreateEnvironmentView.DevelopmentId),
+            new TypeOption(CreateEnvironmentView.RuntimeLabel, CreateEnvironmentView.RuntimeId),
+        ]
+        this.typeBox.SelectedIndex = 0
+        this.AddChild(this.typeBox)
 
         this.portBox.Placeholder = CreateEnvironmentView.PortPlaceholder
         this.AddChild(this.portBox)
@@ -76,6 +100,12 @@ export class CreateEnvironmentView extends PortalViewBase
             this.message.Text = PortalViewBase.ErrorPrefix + CreateEnvironmentView.NoTemplate
             return
         }
+        const selectedType = this.typeBox.SelectedItem as TypeOption | undefined
+        if (selectedType === undefined)
+        {
+            this.message.Text = PortalViewBase.ErrorPrefix + CreateEnvironmentView.NoType
+            return
+        }
         let port: number | undefined
         const portText = this.portBox.Text.trim()
         if (portText.length > 0)
@@ -89,7 +119,7 @@ export class CreateEnvironmentView extends PortalViewBase
         }
         try
         {
-            await this.client.CreateEnvironment(this.nameBox.Text.trim(), selected.Id, port)
+            await this.client.CreateEnvironment(this.nameBox.Text.trim(), selected.Id, selectedType.Id, port)
         }
         catch (e)
         {

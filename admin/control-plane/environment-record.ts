@@ -6,6 +6,12 @@ export enum EnvStatus
     Unknown = 'unknown'
 }
 
+export enum EnvType
+{
+    Development = 'development',
+    Runtime = 'runtime'
+}
+
 export enum Template
 {
     DevBlank = 'dev-blank',
@@ -14,6 +20,7 @@ export enum Template
 
 export type EnvironmentRecord = {
     name: string
+    type: EnvType
     template: Template
     tenantId: string
     hostPort: number

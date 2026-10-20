@@ -3,13 +3,17 @@ import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { TemplateCatalog, InvalidEnvironmentNameError } from '../template-catalog.js'
-import { Template } from '../environment-record.js'
+import { Template, EnvType } from '../environment-record.js'
 import { EnvKind, TenantPurposeName } from '../../../environments/seed/bundle.js'
 
 class CatalogFixture
 {
     public static readonly SecurityModel = 'security-model.json'
     public static readonly Backslash = String.fromCharCode(92)
+    public static readonly DevName = 'e1'
+    public static readonly DemoName = 'e2'
+    public static readonly DemoTenantId = 'contoso'
+    public static readonly DevBlankSeedSuffix = 'templates/dev-blank'
     public static readonly DemoSuffix = 'environments/demo/seed'
 
     public static Norm(p: string): string
@@ -22,7 +26,7 @@ describe('TemplateCatalog', () =>
 {
     it('resolves demo-contoso', () =>
     {
-        const r = TemplateCatalog.Resolve(Template.DemoContoso, 'demo1', 8081)
+        const r = TemplateCatalog.Resolve(Template.DemoContoso, 'demo1', 8081, EnvType.Runtime)
         assert.equal(r.def.kind, EnvKind.Demo)
         assert.equal(r.def.tenantId, 'contoso')
         assert.equal(r.def.purpose, TenantPurposeName.Runtime)
@@ -35,7 +39,7 @@ describe('TemplateCatalog', () =>
 
     it('resolves dev-blank', () =>
     {
-        const r = TemplateCatalog.Resolve(Template.DevBlank, 'dev1', 8080)
+        const r = TemplateCatalog.Resolve(Template.DevBlank, 'dev1', 8080, EnvType.Development)
         assert.equal(r.def.kind, EnvKind.Dev)
         assert.equal(r.def.tenantId, 'dev1')
         assert.equal(r.def.purpose, TenantPurposeName.Development)
@@ -45,8 +49,8 @@ describe('TemplateCatalog', () =>
 
     it('rejects invalid names', () =>
     {
-        assert.throws(() => TemplateCatalog.Resolve(Template.DevBlank, 'My Env!', 8080), InvalidEnvironmentNameError)
-        assert.throws(() => TemplateCatalog.Resolve(Template.DemoContoso, 'My Env!', 8080), InvalidEnvironmentNameError)
+        assert.throws(() => TemplateCatalog.Resolve(Template.DevBlank, 'My Env!', 8080, EnvType.Development), InvalidEnvironmentNameError)
+        assert.throws(() => TemplateCatalog.Resolve(Template.DemoContoso, 'My Env!', 8080, EnvType.Runtime), InvalidEnvironmentNameError)
         assert.throws(() => TemplateCatalog.SanitizeName(''), InvalidEnvironmentNameError)
         assert.throws(() => TemplateCatalog.SanitizeName('Dev1'), InvalidEnvironmentNameError)
         assert.throws(() => TemplateCatalog.SanitizeName('a_b'), InvalidEnvironmentNameError)
@@ -61,5 +65,29 @@ describe('TemplateCatalog', () =>
         {
             assert.ok(t.title.length > 0)
         }
+    })
+
+    it('maps the explicit type to the tenant purpose, overriding the template default', () =>
+    {
+        assert.equal(TemplateCatalog.Resolve(Template.DevBlank, CatalogFixture.DevName, 8080, EnvType.Runtime).def.purpose, TenantPurposeName.Runtime)
+        assert.equal(TemplateCatalog.Resolve(Template.DemoContoso, CatalogFixture.DemoName, 8081, EnvType.Development).def.purpose, TenantPurposeName.Development)
+    })
+
+    it('still takes kind, seedDir and tenantId from the template', () =>
+    {
+        const dev = TemplateCatalog.Resolve(Template.DevBlank, CatalogFixture.DevName, 8080, EnvType.Runtime)
+        assert.equal(dev.def.kind, EnvKind.Dev)
+        assert.equal(dev.def.tenantId, CatalogFixture.DevName)
+        assert.ok(CatalogFixture.Norm(dev.seedDir).endsWith(CatalogFixture.DevBlankSeedSuffix))
+        const demo = TemplateCatalog.Resolve(Template.DemoContoso, CatalogFixture.DemoName, 8081, EnvType.Development)
+        assert.equal(demo.def.kind, EnvKind.Demo)
+        assert.equal(demo.def.tenantId, CatalogFixture.DemoTenantId)
+        assert.ok(CatalogFixture.Norm(demo.seedDir).endsWith(CatalogFixture.DemoSuffix))
+    })
+
+    it('DefaultTypeFor mirrors the historical template purpose', () =>
+    {
+        assert.equal(TemplateCatalog.DefaultTypeFor(Template.DevBlank), EnvType.Development)
+        assert.equal(TemplateCatalog.DefaultTypeFor(Template.DemoContoso), EnvType.Runtime)
     })
 })

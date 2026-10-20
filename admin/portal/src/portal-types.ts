@@ -2,6 +2,7 @@ export type EnvironmentDto =
 {
     name: string
     template: string
+    type: string
     tenantId: string
     hostPort: number
     status: string

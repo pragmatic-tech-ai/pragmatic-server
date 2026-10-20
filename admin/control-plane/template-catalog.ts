@@ -1,7 +1,7 @@
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { EnvKind, TenantPurposeName, type EnvDefinition } from '../../environments/seed/bundle.js'
-import { Template } from './environment-record.js'
+import { Template, EnvType } from './environment-record.js'
 
 export class InvalidEnvironmentNameError extends Error
 {
@@ -47,18 +47,40 @@ export class TemplateCatalog
         return name
     }
 
-    public static Resolve(template: Template, name: string, hostPort: number): { def: EnvDefinition; seedDir: string }
+    public static DefaultTypeFor(template: Template): EnvType
+    {
+        return template === Template.DemoContoso ? EnvType.Runtime : EnvType.Development
+    }
+
+    private static PurposeFor(type: EnvType): TenantPurposeName
+    {
+        switch (type)
+        {
+            case EnvType.Development:
+                return TenantPurposeName.Development
+            case EnvType.Runtime:
+                return TenantPurposeName.Runtime
+            default:
+            {
+                const _exhaustive: never = type
+                return _exhaustive
+            }
+        }
+    }
+
+    public static Resolve(template: Template, name: string, hostPort: number, type: EnvType): { def: EnvDefinition; seedDir: string }
     {
         const safe = TemplateCatalog.SanitizeName(name)
+        const purpose = TemplateCatalog.PurposeFor(type)
         if (template === Template.DemoContoso)
         {
             return {
-                def: { name: safe, kind: EnvKind.Demo, tenantId: TemplateCatalog.DemoTenantId, purpose: TenantPurposeName.Runtime, hostPort },
+                def: { name: safe, kind: EnvKind.Demo, tenantId: TemplateCatalog.DemoTenantId, purpose, hostPort },
                 seedDir: join(TemplateCatalog.HereDir, TemplateCatalog.ParentSegment, TemplateCatalog.ParentSegment, TemplateCatalog.EnvironmentsSegment, TemplateCatalog.DemoSegment, TemplateCatalog.SeedSegment),
             }
         }
         return {
-            def: { name: safe, kind: EnvKind.Dev, tenantId: safe, purpose: TenantPurposeName.Development, hostPort },
+            def: { name: safe, kind: EnvKind.Dev, tenantId: safe, purpose, hostPort },
             seedDir: join(TemplateCatalog.HereDir, TemplateCatalog.TemplatesSegment, TemplateCatalog.DevBlankSegment),
         }
     }
