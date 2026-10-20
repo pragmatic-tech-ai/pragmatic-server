@@ -18,11 +18,12 @@ export class PromoteGraphViewModel extends Observable
     public static readonly SelectedGraphProperty = 'SelectedGraph'
     public static readonly SelectedTargetEnvProperty = 'SelectedTargetEnv'
     public static readonly NothingSelectedStatus = 'select a graph and a target runtime environment'
+    private static readonly Unselected = ''
 
     private graphs: readonly GraphDto[] = []
     private targets: readonly EnvironmentDto[] = []
-    private selectedGraph = ''
-    private selectedTargetEnv = ''
+    private selectedGraph = PromoteGraphViewModel.Unselected
+    private selectedTargetEnv = PromoteGraphViewModel.Unselected
 
     public constructor(private readonly source: IPromoteGraphSource, private readonly devEnvName: string)
     {
@@ -65,7 +66,7 @@ export class PromoteGraphViewModel extends Observable
 
     public get CanPromote(): boolean
     {
-        return this.selectedGraph !== '' && this.selectedTargetEnv !== ''
+        return this.selectedGraph !== PromoteGraphViewModel.Unselected && this.selectedTargetEnv !== PromoteGraphViewModel.Unselected
     }
 
     // Loads the dev env's graphs and the runtime-type environments.
