@@ -9,3 +9,4 @@ environments/*/data/
 admin/control-plane/data/
 
 .superpowers/
+test-results/
