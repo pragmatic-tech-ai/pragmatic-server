@@ -4,10 +4,10 @@ Two Docker-backed environments for `pragmatic-server`: a development tenant (`de
 
 ## One-time image build
 
-Run from the workspace PARENT dir, one level above `pragmatic-server`:
+Run from the workspace root `architecture-agent/`, which holds all sibling packages:
 
 ```
-DOCKER_BUILDKIT=1 docker build -f pragmatic-server/docker/Dockerfile --secret id=npmrc,src=<path-to>/.npmrc -t pragmatic-server:dev ..
+DOCKER_BUILDKIT=1 docker build -f pragmatic-server/docker/Dockerfile --secret id=npmrc,src=<path-to>/.npmrc -t pragmatic-server:dev .
 ```
 
 ## Bring-up

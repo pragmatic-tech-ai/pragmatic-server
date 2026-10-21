@@ -4,10 +4,10 @@ The control plane is a local web portal plus HTTP API that creates, starts, stop
 
 ## One-time image build
 
-Needs Docker with BuildKit, and an .npmrc containing the scoped registry token. Run from the workspace parent directory (one level above pragmatic-server):
+Needs Docker with BuildKit, and an .npmrc containing the scoped registry token. Run from the workspace root `architecture-agent/`, which holds all sibling packages:
 
 ```
-DOCKER_BUILDKIT=1 docker build -f pragmatic-server/docker/Dockerfile --secret id=npmrc,src=<path-to>/.npmrc -t pragmatic-server:dev ..
+DOCKER_BUILDKIT=1 docker build -f pragmatic-server/docker/Dockerfile --secret id=npmrc,src=<path-to>/.npmrc -t pragmatic-server:dev .
 ```
 
 ## Build the portal
