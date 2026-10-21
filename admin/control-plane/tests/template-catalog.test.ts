@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { TemplateCatalog, InvalidEnvironmentNameError } from '../template-catalog.js'
 import { Template, EnvType } from '../environment-record.js'
+import { DockerEnv } from '../../../environments/seed/docker.js'
 import { EnvKind, TenantPurposeName } from '../../../environments/seed/bundle.js'
 
 class CatalogFixture
@@ -60,7 +61,7 @@ describe('TemplateCatalog', () =>
     it('lists all templates', () =>
     {
         const all = TemplateCatalog.All()
-        assert.deepEqual(all.map(t => t.id).sort(), [Template.DemoContoso, Template.DevBlank].sort())
+        assert.deepEqual(all.map(t => t.id).sort(), [Template.DemoContoso, Template.DevBlank, Template.RuntimePostgres].sort())
         for (const t of all)
         {
             assert.ok(t.title.length > 0)
@@ -89,5 +90,22 @@ describe('TemplateCatalog', () =>
     {
         assert.equal(TemplateCatalog.DefaultTypeFor(Template.DevBlank), EnvType.Development)
         assert.equal(TemplateCatalog.DefaultTypeFor(Template.DemoContoso), EnvType.Runtime)
+        assert.equal(TemplateCatalog.DefaultTypeFor(Template.RuntimePostgres), EnvType.Runtime)
+    })
+
+    it('RuntimePostgres resolves to a runtime def with an appdb database', () =>
+    {
+        const r = TemplateCatalog.Resolve(Template.RuntimePostgres, 'e', 8080, EnvType.Runtime)
+        assert.equal(r.def.purpose, TenantPurposeName.Runtime)
+        const db = r.def.database
+        assert.ok(db)
+        assert.equal(db.connectionName, 'appdb')
+        assert.equal(db.host, DockerEnv.DbContainerName(r.def))
+        assert.equal(db.port, 5432)
+        assert.equal(db.database, 'appdb')
+        assert.equal(db.user, 'appuser')
+        assert.ok(db.password.length > 0)
+        assert.notEqual(db.hostPort, r.def.hostPort)
+        assert.ok(CatalogFixture.Norm(r.seedDir).endsWith(CatalogFixture.DevBlankSeedSuffix))
     })
 })

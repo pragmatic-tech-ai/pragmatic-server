@@ -65,3 +65,27 @@ test('generate is idempotent: a second run keeps the same master key', async () 
     await BundleBuilder.Generate(def, dir)
     assert.deepEqual(readFileSync(join(dir, 'master.key')), key1)
 })
+
+test('a RuntimePostgres tenant bundle declares the sql connection and allows sql', async () =>
+{
+    const dir = mkdtempSync(join(tmpdir(), 'bundle-'))
+    const database = { connectionName: 'appdb', host: 'pragmatic-env-rt-db', port: 5432, database: 'appdb', user: 'appuser', password: 'pw-secret', hostPort: 55432 }
+    await BundleBuilder.Generate({ name: 'rt', kind: EnvKind.Dev, tenantId: 'rt', purpose: TenantPurposeName.Runtime, hostPort: 8083, database }, dir)
+    const tenant = JSON.parse(readFileSync(join(dir, 'tenants.json'), 'utf8')).tenants.rt
+    assert.deepEqual(tenant.connections.appdb.settings, { host: 'pragmatic-env-rt-db', port: 5432, database: 'appdb', user: 'appuser' })
+    assert.equal(tenant.connections.appdb.secretRef, 'rt/appdb/password')
+    assert.deepEqual(tenant.connectorsPolicy.adapterAllowlist, ['sql'])
+    assert.equal(tenant.connectorsPolicy.catalogOnly, true)
+    const secrets = JSON.parse(readFileSync(join(dir, 'provisioned-secrets.json'), 'utf8'))
+    assert.equal(secrets['rt/appdb/password'], 'pw-secret')
+    assert.ok(!JSON.stringify(tenant).includes('pw-secret'))
+})
+
+test('a tenant without a database keeps deny-all and no connections', async () =>
+{
+    const dir = mkdtempSync(join(tmpdir(), 'bundle-'))
+    await BundleBuilder.Generate({ name: 'dev', kind: EnvKind.Dev, tenantId: 'dev', purpose: TenantPurposeName.Development, hostPort: 8080 }, dir)
+    const tenant = JSON.parse(readFileSync(join(dir, 'tenants.json'), 'utf8')).tenants.dev
+    assert.deepEqual(tenant.connectorsPolicy.adapterAllowlist, [])
+    assert.equal(tenant.connections, undefined)
+})
