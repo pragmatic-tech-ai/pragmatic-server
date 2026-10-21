@@ -78,3 +78,14 @@ test('PostgresRunArgs builds a pinned postgres container on the network', () =>
     assert.ok(RunArgsProbe.HasAdjacentPair(args, DockerEnv.EnvFlag, `POSTGRES_DB=${db.database}`))
     assert.ok(RunArgsProbe.HasAdjacentPair(args, '-p', `${db.hostPort}:5432`))
 })
+
+test('FailureMessage never contains secret-bearing args but keeps stderr', () =>
+{
+    const def = RunArgsProbe.DatabaseDef()
+    const secret = 'SENTINEL-SECRET-VALUE'
+    def.database!.password = secret
+    const message = DockerEnv.FailureMessage(DockerEnv.PostgresRunArgs(def), 'boom: no such image')
+    assert.equal(message.includes(secret), false)
+    assert.ok(message.includes('boom: no such image'))
+    assert.ok(message.startsWith('docker run'))
+})

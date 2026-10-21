@@ -101,6 +101,7 @@ export class DockerEnv
     private static readonly PgDbFlag = '-d'
     private static readonly DbTimeoutMs = 60000
     private static readonly DbIntervalMs = 1000
+    private static readonly FailedSuffix = ' failed'
     private static readonly NoDatabaseMessage = 'Environment has no database descriptor'
     private static readonly DbTimeoutMessage = 'Postgres did not become ready in time: '
 
@@ -379,6 +380,13 @@ export class DockerEnv
             req.on('timeout', () => req.destroy())
             req.on('error', () => resolve(false))
         })
+    }
+
+    /** Redacted failure text: the docker subcommand and stderr only, never the arg list (args may carry secrets such as -e POSTGRES_PASSWORD=...). */
+    public static FailureMessage(args: string[], stderr: string): string
+    {
+        return `${DockerEnv.Docker} ${args[0] ?? ''}${DockerEnv.FailedSuffix}
+${stderr}`
     }
 
     private Exec(args: string[]): Promise<string>
