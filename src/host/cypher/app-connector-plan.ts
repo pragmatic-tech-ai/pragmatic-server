@@ -1,7 +1,7 @@
 import { fromJSON, ModelShardExtractor, ConnectorPlanEmitter } from '@pragmatic-tech-ai/todl'
 import type { ModelConnectorPlan, ConnectorBinding, ConnectorSpec, PackageDocument } from '@pragmatic-tech-ai/todl'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
-import type { PragmaticAppManifest } from '../apps/pragmatic-app-manifest.js'
+import type { PragmaticAppManifest, PragmaticAppPackageRef } from '../apps/pragmatic-app-manifest.js'
 
 /** Reconstructs an application's merged connector plan from its published packages' model.json. */
 export class AppConnectorPlan
@@ -14,10 +14,15 @@ export class AppConnectorPlan
 
     public static async For(storage: IStorage, manifest: PragmaticAppManifest): Promise<ModelConnectorPlan>
     {
+        return AppConnectorPlan.ForPackages(storage, manifest.packages, manifest.name, manifest.version)
+    }
+
+    public static async ForPackages(storage: IStorage, packages: readonly PragmaticAppPackageRef[], model: string, version: string): Promise<ModelConnectorPlan>
+    {
         const connectors: ConnectorSpec[] = []
         const bindings: ConnectorBinding[] = []
         const byIdentity = new Map<string, ConnectorSpec>()
-        for (const pkg of manifest.packages)
+        for (const pkg of packages)
         {
             const path = [pkg.id, pkg.version, AppConnectorPlan.ModelFile].join(AppConnectorPlan.PathSeparator)
             if (!(await storage.Exists(path)))
@@ -35,12 +40,12 @@ export class AppConnectorPlan
                 }
                 for (const spec of plan.Connectors)
                 {
-                    AppConnectorPlan.AddConnector(connectors, byIdentity, spec, manifest.name)
+                    AppConnectorPlan.AddConnector(connectors, byIdentity, spec, model)
                 }
                 bindings.push(...plan.Bindings)
             }
         }
-        return { Model: manifest.name, Version: manifest.version, Connectors: connectors, Bindings: bindings }
+        return { Model: model, Version: version, Connectors: connectors, Bindings: bindings }
     }
 
     // Dedups connectors by their namespace-qualified identity (Id, falling back to the bare Name

@@ -181,3 +181,24 @@ test('For yields empty bindings for a package with no populate', async () =>
         fx.Dispose()
     }
 })
+
+test('ForPackages reconstructs the merged plan from refs without a manifest', async () =>
+{
+    const fx = new PlanFixture()
+    try
+    {
+        await fx.PublishBound()
+        const manifest = PlanFixture.Manifest(PlanFixture.BoundId)
+        const plan = await AppConnectorPlan.ForPackages(fx.Storage, manifest.packages, 'g', '0')
+        assert.equal(plan.Model, 'g')
+        assert.equal(plan.Version, '0')
+        assert.equal(plan.Connectors.length, 1)
+        assert.equal(plan.Bindings.length, 1)
+        const viaFor = await AppConnectorPlan.For(fx.Storage, { name: 'g', version: '0', packages: manifest.packages })
+        assert.deepEqual(viaFor, plan)
+    }
+    finally
+    {
+        fx.Dispose()
+    }
+})
