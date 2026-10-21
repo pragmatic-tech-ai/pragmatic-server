@@ -84,7 +84,7 @@ import { DevGraphStore } from './host/graphs/dev-graph-store.js'
 import { GraphPackageIngest } from './host/graphs/graph-package-ingest.js'
 import { GraphPackageReader } from './host/graphs/graph-package-reader.js'
 import { DevGraphService, type IDevGraphService } from './host/graphs/dev-graph-service.js'
-import { EnvironmentGraph, LoadedGraphStore, NoEnvironmentGraphError } from './host/graphs/environment-graph.js'
+import { EnvironmentGraph, EnvironmentGraphOverlay, LoadedGraphStore, NoEnvironmentGraphError } from './host/graphs/environment-graph.js'
 import type { IEnvironmentGraphHost } from './host/graphs/environment-graph.js'
 import type { GraphLoadParamsDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { InvalidParamsPrefix } from './host/invalid-params-prefix.js'
@@ -453,7 +453,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
         this.AssertRuntimePurpose()
         await new GraphPackageIngest(this.PackagesStorage()).Store(params.packages)
         const refs = params.packages.map(p => ({ id: p.id, version: p.version }))
-        const graph = await EnvironmentGraph.Build(new StoragePackageSource(this.PackagesStorage()), params.graphName, refs)
+        const graph = await EnvironmentGraph.Build(this.PackagesStorage(), params.graphName, refs)
         const record = graph.Record()
         // Persist first: a Save failure leaves the prior live instance and the persisted record both intact and consistent.
         await this.LoadedGraphStore().Save(record)
@@ -468,7 +468,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
         {
             throw new NoEnvironmentGraphError()
         }
-        return this.environmentGraph.Query()
+        return EnvironmentGraphOverlay.Apply(this.environmentGraph, this.root.Services())
     }
 
     /** The loaded-manifest record: the live instance's record if present, else the persisted one (survives a restart), else null. */

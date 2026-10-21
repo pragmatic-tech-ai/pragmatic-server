@@ -1,6 +1,8 @@
+import { randomBytes } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { EnvKind, TenantPurposeName, type EnvDefinition } from '../../environments/seed/bundle.js'
+import { DockerEnv } from '../../environments/seed/docker.js'
 import { Template, EnvType } from './environment-record.js'
 
 export class InvalidEnvironmentNameError extends Error
@@ -29,12 +31,23 @@ export class TemplateCatalog
     private static readonly SeedSegment = 'seed'
     private static readonly DevBlankTitle = 'Blank development environment'
     private static readonly DemoContosoTitle = 'Contoso demo (runtime)'
+    private static readonly RuntimePostgresTitle = 'Runtime environment with provisioned Postgres'
+    /** Convention: the connector fixture authors connection = "appdb". */
+    public static readonly DbConnectionName = 'appdb'
+    private static readonly DbName = 'appdb'
+    private static readonly DbUser = 'appuser'
+    private static readonly DbPort = 5432
+    private static readonly DbPasswordBytes = 24
+    private static readonly HexEncoding = 'hex'
+    private static readonly MaxPort = 65535
+    private static readonly DbHostPortOffset = 10000
 
     public static All(): readonly { id: Template; title: string }[]
     {
         return [
             { id: Template.DevBlank, title: TemplateCatalog.DevBlankTitle },
             { id: Template.DemoContoso, title: TemplateCatalog.DemoContosoTitle },
+            { id: Template.RuntimePostgres, title: TemplateCatalog.RuntimePostgresTitle },
         ]
     }
 
@@ -49,7 +62,7 @@ export class TemplateCatalog
 
     public static DefaultTypeFor(template: Template): EnvType
     {
-        return template === Template.DemoContoso ? EnvType.Runtime : EnvType.Development
+        return template === Template.DemoContoso || template === Template.RuntimePostgres ? EnvType.Runtime : EnvType.Development
     }
 
     private static PurposeFor(type: EnvType): TenantPurposeName
@@ -68,6 +81,13 @@ export class TemplateCatalog
         }
     }
 
+    /** Deterministic (so a re-derived def is stable) host port for the DB sidecar, offset from the server port. */
+    private static DbHostPortFor(hostPort: number): number
+    {
+        const up = hostPort + TemplateCatalog.DbHostPortOffset
+        return up <= TemplateCatalog.MaxPort ? up : hostPort - TemplateCatalog.DbHostPortOffset
+    }
+
     public static Resolve(template: Template, name: string, hostPort: number, type: EnvType): { def: EnvDefinition; seedDir: string }
     {
         const safe = TemplateCatalog.SanitizeName(name)
@@ -78,6 +98,20 @@ export class TemplateCatalog
                 def: { name: safe, kind: EnvKind.Demo, tenantId: TemplateCatalog.DemoTenantId, purpose, hostPort },
                 seedDir: join(TemplateCatalog.HereDir, TemplateCatalog.ParentSegment, TemplateCatalog.ParentSegment, TemplateCatalog.EnvironmentsSegment, TemplateCatalog.DemoSegment, TemplateCatalog.SeedSegment),
             }
+        }
+        if (template === Template.RuntimePostgres)
+        {
+            const def: EnvDefinition = { name: safe, kind: EnvKind.Dev, tenantId: safe, purpose, hostPort }
+            def.database = {
+                connectionName: TemplateCatalog.DbConnectionName,
+                host: DockerEnv.DbContainerName(def),
+                port: TemplateCatalog.DbPort,
+                database: TemplateCatalog.DbName,
+                user: TemplateCatalog.DbUser,
+                password: randomBytes(TemplateCatalog.DbPasswordBytes).toString(TemplateCatalog.HexEncoding),
+                hostPort: TemplateCatalog.DbHostPortFor(hostPort),
+            }
+            return { def, seedDir: join(TemplateCatalog.HereDir, TemplateCatalog.TemplatesSegment, TemplateCatalog.DevBlankSegment) }
         }
         return {
             def: { name: safe, kind: EnvKind.Dev, tenantId: safe, purpose, hostPort },

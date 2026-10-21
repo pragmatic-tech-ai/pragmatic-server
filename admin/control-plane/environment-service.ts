@@ -1,7 +1,7 @@
 import { rmSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { BundleBuilder, EnvKind, type EnvDefinition } from '../../environments/seed/bundle.js'
+import { BundleBuilder, EnvKind, type EnvDatabase, type EnvDefinition } from '../../environments/seed/bundle.js'
 import { DockerEnv } from '../../environments/seed/docker.js'
 import type { UserSeed } from '../../environments/seed/users.js'
 import { EnvStatus, EnvType, type Template, type EnvironmentRecord } from './environment-record.js'
@@ -101,6 +101,7 @@ export class EnvironmentService
 {
     private static readonly HttpPrefix = 'http://localhost:'
     private static readonly WsPrefix = 'ws://localhost:'
+    private static readonly NoDatabasePrefix = 'environment has no provisioned database: '
     private static readonly SecretsFile = 'provisioned-secrets.json'
     private static readonly UsersFile = 'users.json'
     private static readonly Utf8 = 'utf8'
@@ -196,7 +197,7 @@ export class EnvironmentService
             {
                 try
                 {
-                    await this.docker.Down(def)
+                    await this.docker.Down(def, true)
                 }
                 catch
                 {
@@ -242,7 +243,7 @@ export class EnvironmentService
     {
         const rec = this.Require(name)
         const def = EnvironmentService.DefOf(rec)
-        await this.docker.Down(def)
+        await this.docker.Down(def, true)
         await this.docker.RemoveVolume(def)
         await this.registry.Remove(name)
     }
@@ -366,6 +367,19 @@ export class EnvironmentService
             email: BundleBuilder.AdminEmailPrefix + rec.tenantId + BundleBuilder.AdminEmailSuffix,
             password: EnvironmentService.Secret(secrets, rec.tenantId + BundleBuilder.AdminSecretSuffix)
         }
+    }
+
+    /** The env's provisioned Postgres coordinates; the password is the persisted secret, not the (re-randomised) re-derived one. */
+    public async DatabaseInfoFor(name: string): Promise<EnvDatabase>
+    {
+        const rec = this.Require(name)
+        const db = EnvironmentService.DefOf(rec).database
+        if (db === undefined)
+        {
+            throw new Error(EnvironmentService.NoDatabasePrefix + name)
+        }
+        const secrets = await EnvironmentService.ReadSecrets(rec.bundleDir)
+        return { ...db, password: EnvironmentService.Secret(secrets, BundleBuilder.DbSecretRef(EnvironmentService.DefOf(rec), db)) }
     }
 
     private static async ReadSecrets(bundleDir: string): Promise<Record<string, string>>

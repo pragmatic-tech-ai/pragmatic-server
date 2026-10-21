@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { get } from 'node:http'
 import { TenantPurposeName } from './bundle.js'
-import type { EnvDefinition } from './bundle.js'
+import type { EnvDefinition, EnvDatabase } from './bundle.js'
 
 export { EnvKind, TenantPurposeName } from './bundle.js'
 export type { EnvDefinition } from './bundle.js'
@@ -83,6 +83,28 @@ export class DockerEnv
     private static readonly VersionCmd = 'version'
     private static readonly DaemonUnreachableMessage = 'Docker daemon is unreachable. Start Docker and try again.'
 
+    private static readonly NetworkCmd = 'network'
+    private static readonly CreateCmd = 'create'
+    private static readonly ExecCmd = 'exec'
+    private static readonly NetworkFlag = '--network'
+    private static readonly NetworkSuffix = '-net'
+    private static readonly DbSuffix = '-db'
+    private static readonly DbVolumeSuffix = '-db-data'
+    private static readonly PostgresImage = 'postgres:16'
+    private static readonly PostgresPort = '5432'
+    private static readonly PostgresDataMount = '/var/lib/postgresql/data'
+    private static readonly EnvPostgresPassword = 'POSTGRES_PASSWORD'
+    private static readonly EnvPostgresUser = 'POSTGRES_USER'
+    private static readonly EnvPostgresDb = 'POSTGRES_DB'
+    private static readonly PgIsReady = 'pg_isready'
+    private static readonly PgUserFlag = '-U'
+    private static readonly PgDbFlag = '-d'
+    private static readonly DbTimeoutMs = 60000
+    private static readonly DbIntervalMs = 1000
+    private static readonly FailedSuffix = ' failed'
+    private static readonly NoDatabaseMessage = 'Environment has no database descriptor'
+    private static readonly DbTimeoutMessage = 'Postgres did not become ready in time: '
+
     private static SeedScript(): string
     {
         const marker = `${DockerEnv.DataMount}/${DockerEnv.SeedMarkerName}`
@@ -97,6 +119,41 @@ export class DockerEnv
     public static VolumeName(def: EnvDefinition): string
     {
         return `${DockerEnv.NamePrefix}${def.name}${DockerEnv.VolumeSuffix}`
+    }
+
+    public static NetworkName(def: EnvDefinition): string
+    {
+        return `${DockerEnv.NamePrefix}${def.name}${DockerEnv.NetworkSuffix}`
+    }
+
+    public static DbContainerName(def: EnvDefinition): string
+    {
+        return `${DockerEnv.NamePrefix}${def.name}${DockerEnv.DbSuffix}`
+    }
+
+    public static DbVolumeName(def: EnvDefinition): string
+    {
+        return `${DockerEnv.NamePrefix}${def.name}${DockerEnv.DbVolumeSuffix}`
+    }
+
+    /** The Postgres sidecar container; only valid for envs with a database descriptor. */
+    public static PostgresRunArgs(def: EnvDefinition): string[]
+    {
+        const db = def.database
+        if (db === undefined)
+        {
+            throw new Error(DockerEnv.NoDatabaseMessage)
+        }
+        return [
+            DockerEnv.Run, DockerEnv.Detach, DockerEnv.NameFlag, DockerEnv.DbContainerName(def),
+            DockerEnv.NetworkFlag, DockerEnv.NetworkName(def),
+            DockerEnv.VolumeFlag, `${DockerEnv.DbVolumeName(def)}:${DockerEnv.PostgresDataMount}`,
+            DockerEnv.EnvFlag, `${DockerEnv.EnvPostgresPassword}=${db.password}`,
+            DockerEnv.EnvFlag, `${DockerEnv.EnvPostgresUser}=${db.user}`,
+            DockerEnv.EnvFlag, `${DockerEnv.EnvPostgresDb}=${db.database}`,
+            DockerEnv.PortFlag, `${db.hostPort}:${DockerEnv.PostgresPort}`,
+            DockerEnv.PostgresImage
+        ]
     }
 
     public static RunArgs(def: EnvDefinition, bundleDir: string): string[]
@@ -116,6 +173,10 @@ export class DockerEnv
             DockerEnv.EnvFlag, `${DockerEnv.EnvPort}=${DockerEnv.InternalPort}`,
             DockerEnv.EnvFlag, `${DockerEnv.EnvDeploymentMode}=${DockerEnv.DeploymentModeLocal}`
         ]
+        if (def.database !== undefined)
+        {
+            args.push(DockerEnv.NetworkFlag, DockerEnv.NetworkName(def))
+        }
         if (def.purpose === TenantPurposeName.Runtime)
         {
             args.push(DockerEnv.EnvFlag, `${DockerEnv.EnvAllowedOrigins}=${DockerEnv.LocalhostOriginPrefix}${def.hostPort}`)
@@ -190,18 +251,65 @@ export class DockerEnv
     {
         await this.SeedVolume(def, bundleDir)
         await this.Down(def)
+        if (def.database !== undefined)
+        {
+            // the network survives Stop (data is kept), so creation must tolerate an existing one
+            await this.Tolerate([DockerEnv.NetworkCmd, DockerEnv.CreateCmd, DockerEnv.NetworkName(def)])
+            await this.Exec(DockerEnv.PostgresRunArgs(def))
+            await this.WaitDbReady(def, def.database)
+        }
         await this.Exec(DockerEnv.RunArgs(def, bundleDir))
     }
 
-    public async Down(def: EnvDefinition): Promise<void>
+    /** Polls pg_isready inside the sidecar until it accepts connections or the timeout elapses. */
+    private async WaitDbReady(def: EnvDefinition, db: EnvDatabase): Promise<void>
+    {
+        const deadline = Date.now() + DockerEnv.DbTimeoutMs
+        while (Date.now() < deadline)
+        {
+            try
+            {
+                await this.Exec([DockerEnv.ExecCmd, DockerEnv.DbContainerName(def), DockerEnv.PgIsReady, DockerEnv.PgUserFlag, db.user, DockerEnv.PgDbFlag, db.database])
+                return
+            }
+            catch
+            {
+                // not ready yet; retry until the deadline
+            }
+            await new Promise<void>(resolve => setTimeout(resolve, DockerEnv.DbIntervalMs))
+        }
+        throw new Error(`${DockerEnv.DbTimeoutMessage}${DockerEnv.DbContainerName(def)}`)
+    }
+
+    /**
+     * Stops and removes the containers. The DB volume and network are KEPT unless removeData is true
+     * (Stop keeps them so data survives a restart; Delete passes true).
+     */
+    public async Down(def: EnvDefinition, removeData: boolean = false): Promise<void>
+    {
+        await this.Tolerate([DockerEnv.RmCmd, DockerEnv.ForceFlag, DockerEnv.ContainerName(def)])
+        if (def.database === undefined)
+        {
+            return
+        }
+        await this.Tolerate([DockerEnv.RmCmd, DockerEnv.ForceFlag, DockerEnv.DbContainerName(def)])
+        if (!removeData)
+        {
+            return
+        }
+        await this.Tolerate([DockerEnv.VolumeCmd, DockerEnv.RmCmd, DockerEnv.DbVolumeName(def)])
+        await this.Tolerate([DockerEnv.NetworkCmd, DockerEnv.RmCmd, DockerEnv.NetworkName(def)])
+    }
+
+    private async Tolerate(args: string[]): Promise<void>
     {
         try
         {
-            await this.Exec([DockerEnv.RmCmd, DockerEnv.ForceFlag, DockerEnv.ContainerName(def)])
+            await this.Exec(args)
         }
         catch
         {
-            // rm -f on a missing container errors; absence is the desired end state
+            // absence is the desired end state
         }
     }
 
@@ -276,6 +384,13 @@ export class DockerEnv
         })
     }
 
+    /** Redacted failure text: the docker subcommand and stderr only, never the arg list (args may carry secrets such as -e POSTGRES_PASSWORD=...). */
+    public static FailureMessage(args: string[], stderr: string): string
+    {
+        return `${DockerEnv.Docker} ${args[0] ?? ''}${DockerEnv.FailedSuffix}
+${stderr}`
+    }
+
     private Exec(args: string[]): Promise<string>
     {
         return new Promise<string>((resolve, reject) =>
@@ -284,7 +399,7 @@ export class DockerEnv
             {
                 if (err)
                 {
-                    reject(new Error(`${err.message}\n${stderr}`))
+                    reject(new Error(DockerEnv.FailureMessage(args, stderr)))
                     return
                 }
                 resolve(stdout)

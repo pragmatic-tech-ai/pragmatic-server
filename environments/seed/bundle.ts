@@ -17,7 +17,8 @@ export enum TenantPurposeName
     Runtime = '1',
 }
 
-export type EnvDefinition = { name: string; kind: EnvKind; tenantId: string; purpose: TenantPurposeName; hostPort: number }
+export type EnvDatabase = { connectionName: string; host: string; port: number; database: string; user: string; password: string; hostPort: number }
+export type EnvDefinition = { name: string; kind: EnvKind; tenantId: string; purpose: TenantPurposeName; hostPort: number; database?: EnvDatabase }
 
 /** Generates a pragmatic-server config bundle (master key, secrets, tenants, tenant config, demo app) for one environment. */
 export class BundleBuilder
@@ -44,6 +45,9 @@ export class BundleBuilder
     private static readonly HexEncoding = 'hex'
     private static readonly Newline = '\n'
     private static readonly BadUserEntryPrefix = 'users.json entry missing principalId: '
+    private static readonly SqlAdapter = 'sql'
+    private static readonly PathSep = '/'
+    private static readonly DbSecretSuffix = '/password'
     private static readonly KeyBytes = 32
     private static readonly SecretBytes = 24
     private static readonly FullAuthzDepth = 2
@@ -87,7 +91,16 @@ export class BundleBuilder
         {
             secrets[principalId + BundleBuilder.PrincipalSecretSuffix] = BundleBuilder.RandomSecret()
         }
+        if (def.database)
+        {
+            secrets[BundleBuilder.DbSecretRef(def, def.database)] = def.database.password
+        }
         BundleBuilder.WriteJson(path, secrets)
+    }
+
+    public static DbSecretRef(def: EnvDefinition, db: EnvDatabase): string
+    {
+        return def.tenantId + BundleBuilder.PathSep + db.connectionName + BundleBuilder.DbSecretSuffix
     }
 
     private static UserPrincipals(seedDir: string): string[]
@@ -111,7 +124,7 @@ export class BundleBuilder
     private static WriteTenants(def: EnvDefinition, bundleDir: string): void
     {
         const tenants: Record<string, unknown> = {}
-        tenants[def.tenantId] = {
+        const tenant: Record<string, unknown> = {
             displayName: def.tenantId,
             purpose: Number(def.purpose),
             bootstrap: {
@@ -122,6 +135,16 @@ export class BundleBuilder
             },
             connectorsPolicy: { adapterAllowlist: [], catalogOnly: true, allowProviderOverride: false, providerAllowlist: [] },
         }
+        if (def.database)
+        {
+            const db = def.database
+            const policy = tenant.connectorsPolicy as { adapterAllowlist: string[] }
+            policy.adapterAllowlist = [BundleBuilder.SqlAdapter]
+            const connections: Record<string, unknown> = {}
+            connections[db.connectionName] = { settings: { host: db.host, port: String(db.port), database: db.database, user: db.user }, secretRef: BundleBuilder.DbSecretRef(def, db) }
+            tenant.connections = connections
+        }
+        tenants[def.tenantId] = tenant
         BundleBuilder.WriteJson(join(bundleDir, BundleBuilder.TenantsFile), { tenants })
     }
 

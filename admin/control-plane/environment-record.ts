@@ -15,7 +15,8 @@ export enum EnvType
 export enum Template
 {
     DevBlank = 'dev-blank',
-    DemoContoso = 'demo-contoso'
+    DemoContoso = 'demo-contoso',
+    RuntimePostgres = 'runtime-postgres'
 }
 
 export type EnvironmentRecord = {
