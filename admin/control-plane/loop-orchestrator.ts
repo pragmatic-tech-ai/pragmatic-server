@@ -10,12 +10,15 @@
  *   npx tsx admin/control-plane/loop-orchestrator.ts create-runtime --data-root <dir>
  *   npx tsx admin/control-plane/loop-orchestrator.ts promote --data-root <dir> --graph <g>
  *   npx tsx admin/control-plane/loop-orchestrator.ts teardown --data-root <dir>
+ *   npx tsx admin/control-plane/loop-orchestrator.ts db-exec --data-root <dir> --sql <sql>
  */
 import { randomBytes } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import pg from 'pg'
 import type { CreateAccountParams, GrantMutationDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { EnvDatabase } from '../../environments/seed/bundle.js'
 import { DockerEnv } from '../../environments/seed/docker.js'
 import { UserSeeder } from '../../environments/seed/users.js'
 import { AdminProxy, WsAdminConnector } from './admin-proxy.js'
@@ -34,7 +37,8 @@ export enum LoopCommand
     CreateDev = 'create-dev',
     CreateRuntime = 'create-runtime',
     Promote = 'promote',
-    Teardown = 'teardown'
+    Teardown = 'teardown',
+    DbExec = 'db-exec'
 }
 
 export interface ParsedLoopCommand
@@ -42,6 +46,7 @@ export interface ParsedLoopCommand
     command: LoopCommand
     dataRoot: string
     graph?: string
+    sql?: string
 }
 
 export interface CredentialDescriptor
@@ -87,7 +92,14 @@ export interface TeardownDescriptor
     ok: true
 }
 
-export type LoopDescriptor = DevDescriptor | RuntimeDescriptor | PromoteDescriptor | TeardownDescriptor
+/** Output of db-exec. */
+export interface DbExecDescriptor
+{
+    ok: true
+    rowCount: number
+}
+
+export type LoopDescriptor = DevDescriptor | RuntimeDescriptor | PromoteDescriptor | TeardownDescriptor | DbExecDescriptor
 
 export interface ILoopLogger
 {
@@ -114,6 +126,52 @@ export interface ILoopGraphs
 export interface ILoopLogin
 {
     Login(baseHttpUrl: string, tenant: string, email: string, password: string): Promise<string>
+}
+
+/** Runs SQL against an environment's provisioned Postgres; returns the affected-row count of the last statement. */
+export interface ILoopDatabase
+{
+    /** The database password, so the caller can redact it from any failure output. */
+    PasswordFor(env: string): Promise<string>
+    Exec(env: string, sql: string): Promise<number>
+}
+
+/** The slice of the environment service the database executor needs. */
+export interface ILoopDatabaseSource
+{
+    DatabaseInfoFor(name: string): Promise<EnvDatabase>
+}
+
+/** Executes SQL over the host-published DB port (this process runs on the host, not on the docker network). */
+export class PgLoopDatabase implements ILoopDatabase
+{
+    private static readonly HostLoopback = '127.0.0.1'
+
+    public constructor(private readonly source: ILoopDatabaseSource)
+    {
+    }
+
+    public async PasswordFor(env: string): Promise<string>
+    {
+        return (await this.source.DatabaseInfoFor(env)).password
+    }
+
+    public async Exec(env: string, sql: string): Promise<number>
+    {
+        const db = await this.source.DatabaseInfoFor(env)
+        const client = new pg.Client({ host: PgLoopDatabase.HostLoopback, port: db.hostPort, database: db.database, user: db.user, password: db.password })
+        await client.connect()
+        try
+        {
+            const result = await client.query(sql)
+            const last = Array.isArray(result) ? result[result.length - 1] : result
+            return last?.rowCount ?? 0
+        }
+        finally
+        {
+            await client.end()
+        }
+    }
 }
 
 export class StderrLoopLogger implements ILoopLogger
@@ -146,6 +204,7 @@ export class LoopOrchestrator
     private static readonly StaticDir = 'static'
     private static readonly DataRootFlag = '--data-root'
     private static readonly GraphFlag = '--graph'
+    private static readonly SqlFlag = '--sql'
     private static readonly FlagPrefix = '--'
     private static readonly DevEnvName = 'loop-dev'
     private static readonly RuntimeEnvName = 'loop-rt'
@@ -166,9 +225,11 @@ export class LoopOrchestrator
     private static readonly MsgCreatingRuntime = 'creating runtime environment'
     private static readonly MsgPromoting = 'promoting graph to runtime environment'
     private static readonly MsgProvisioning = 'provisioning reader and ungranted accounts'
-    private static readonly UsageMessage = 'usage: loop-orchestrator <create-dev|create-runtime|promote|teardown> --data-root <dir> [--graph <name>] (--graph is required for promote)'
+    private static readonly UsageMessage = 'usage: loop-orchestrator <create-dev|create-runtime|promote|teardown|db-exec> --data-root <dir> [--graph <name>] [--sql <sql>] (--graph is required for promote, --sql for db-exec)'
     private static readonly MissingDataRoot = 'missing --data-root'
     private static readonly MissingGraph = 'promote requires --graph'
+    private static readonly MissingSql = 'db-exec requires --sql'
+    private static readonly MsgDbExec = 'executing SQL against the runtime database'
     private static readonly MissingValue = 'missing value for '
     private static readonly UnknownCommand = 'unknown command: '
     private static readonly UsageSep = '; '
@@ -185,7 +246,8 @@ export class LoopOrchestrator
         private readonly graphs: ILoopGraphs,
         private readonly login: ILoopLogin,
         private readonly logger: ILoopLogger,
-        private readonly dataRoot: string)
+        private readonly dataRoot: string,
+        private readonly database: ILoopDatabase)
     {
     }
 
@@ -208,7 +270,21 @@ export class LoopOrchestrator
         {
             throw new Error(LoopOrchestrator.MissingGraph + LoopOrchestrator.UsageSep + LoopOrchestrator.UsageMessage)
         }
-        return graph === undefined ? { command, dataRoot } : { command, dataRoot, graph }
+        const sql = LoopOrchestrator.FlagValue(argv, LoopOrchestrator.SqlFlag)
+        if (command === LoopCommand.DbExec && sql === undefined)
+        {
+            throw new Error(LoopOrchestrator.MissingSql + LoopOrchestrator.UsageSep + LoopOrchestrator.UsageMessage)
+        }
+        const parsed: ParsedLoopCommand = { command, dataRoot }
+        if (graph !== undefined)
+        {
+            parsed.graph = graph
+        }
+        if (sql !== undefined)
+        {
+            parsed.sql = sql
+        }
+        return parsed
     }
 
     private static FlagValue(argv: readonly string[], flag: string): string | undefined
@@ -238,7 +314,7 @@ export class LoopOrchestrator
         const proxy = new AdminProxy(new WsAdminConnector())
         const service = new EnvironmentService(registry, allocator, docker, new BundleBuilderAdapter(), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy)
         const graphs = new GraphService(registry, proxy, name => service.AdminInfoFor(name))
-        return new LoopOrchestrator(service, graphs, new SeederLoopLogin(), logger, dataRoot)
+        return new LoopOrchestrator(service, graphs, new SeederLoopLogin(), logger, dataRoot, new PgLoopDatabase(service))
     }
 
     public async CreateDev(graphName: string = LoopOrchestrator.DefaultGraphName): Promise<DevDescriptor>
@@ -262,7 +338,7 @@ export class LoopOrchestrator
     {
         const name = LoopOrchestrator.RuntimeEnvName
         this.logger.Log(LoopOrchestrator.MsgCreatingRuntime)
-        const rec = LoopOrchestrator.RequireRunning(await this.envs.Create(name, Template.DemoContoso, EnvType.Runtime))
+        const rec = LoopOrchestrator.RequireRunning(await this.envs.Create(name, Template.RuntimePostgres, EnvType.Runtime))
         // AdminInfoFor reads the env's provisioned-secrets.json (`<tenant>-admin-pw`) into connect info.
         const info = await this.envs.AdminInfoFor(name)
         this.secrets.add(info.password)
@@ -290,6 +366,15 @@ export class LoopOrchestrator
         this.logger.Log(LoopOrchestrator.MsgPromoting)
         const result = await this.graphs.Promote(LoopOrchestrator.DevEnvName, graphName, LoopOrchestrator.RuntimeEnvName)
         return { graphName: result.graphName, packageCount: result.packageCount, targetEnv: result.targetEnv }
+    }
+
+    /** Runs the SQL against the runtime env's provisioned Postgres. The statement text is never logged. */
+    public async DbExec(sql: string): Promise<DbExecDescriptor>
+    {
+        this.logger.Log(LoopOrchestrator.MsgDbExec)
+        this.secrets.add(await this.database.PasswordFor(LoopOrchestrator.RuntimeEnvName))
+        const rowCount = await this.database.Exec(LoopOrchestrator.RuntimeEnvName, sql)
+        return { ok: true, rowCount }
     }
 
     /** Idempotent: removes whichever of the loop environments exist; an absent one is ignored. */
@@ -325,12 +410,24 @@ export class LoopOrchestrator
                 return this.Promote(LoopOrchestrator.RequireGraph(parsed))
             case LoopCommand.Teardown:
                 return this.Teardown()
+            case LoopCommand.DbExec:
+                return this.DbExec(LoopOrchestrator.RequireSql(parsed))
             default:
             {
                 const unhandled: never = parsed.command
                 throw new Error(LoopOrchestrator.UnhandledCommand + String(unhandled))
             }
         }
+    }
+
+    /** ParseCommand guarantees --sql for db-exec; this narrows the type. */
+    private static RequireSql(parsed: ParsedLoopCommand): string
+    {
+        if (parsed.sql === undefined)
+        {
+            throw new Error(LoopOrchestrator.MissingSql)
+        }
+        return parsed.sql
     }
 
     /** ParseCommand guarantees --graph for promote; this narrows the type and never substitutes a default. */

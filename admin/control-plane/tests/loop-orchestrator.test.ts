@@ -5,7 +5,7 @@ import type { AdminConnectInfo } from '../admin-proxy.js'
 import type { GraphDto, PromotionResultDto } from '../control-plane-host.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import { EnvironmentNotFoundError } from '../environment-service.js'
-import { LoopCommand, LoopOrchestrator, type ILoopEnvironments, type ILoopGraphs, type ILoopLogger, type ILoopLogin, type DevDescriptor, type RuntimeDescriptor, type PromoteDescriptor } from '../loop-orchestrator.js'
+import { LoopCommand, LoopOrchestrator, type ILoopEnvironments, type ILoopGraphs, type ILoopLogger, type ILoopLogin, type ILoopDatabase, type DevDescriptor, type RuntimeDescriptor, type PromoteDescriptor } from '../loop-orchestrator.js'
 
 class Fixture
 {
@@ -106,12 +106,28 @@ class RecordingLogger implements ILoopLogger
     }
 }
 
+class FakeDatabase implements ILoopDatabase
+{
+    public readonly executed: string[] = []
+
+    public async PasswordFor(_env: string): Promise<string>
+    {
+        return 'db-pw'
+    }
+
+    public async Exec(_env: string, sql: string): Promise<number>
+    {
+        this.executed.push(sql)
+        return 1
+    }
+}
+
 class Harness
 {
     public readonly envs = new FakeEnvs()
     public readonly graphs = new FakeGraphs()
     public readonly logger = new RecordingLogger()
-    public readonly orchestrator = new LoopOrchestrator(this.envs, this.graphs, new FakeLogin(), this.logger, Fixture.Root)
+    public readonly orchestrator = new LoopOrchestrator(this.envs, this.graphs, new FakeLogin(), this.logger, Fixture.Root, new FakeDatabase())
 }
 
 test('ParseCommand maps create-dev with data-root', () =>

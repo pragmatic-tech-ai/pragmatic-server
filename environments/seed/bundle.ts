@@ -98,7 +98,7 @@ export class BundleBuilder
         BundleBuilder.WriteJson(path, secrets)
     }
 
-    private static DbSecretRef(def: EnvDefinition, db: EnvDatabase): string
+    public static DbSecretRef(def: EnvDefinition, db: EnvDatabase): string
     {
         return def.tenantId + BundleBuilder.PathSep + db.connectionName + BundleBuilder.DbSecretSuffix
     }
