@@ -72,7 +72,9 @@ test('a RuntimePostgres tenant bundle declares the sql connection and allows sql
     const database = { connectionName: 'appdb', host: 'pragmatic-env-rt-db', port: 5432, database: 'appdb', user: 'appuser', password: 'pw-secret', hostPort: 55432 }
     await BundleBuilder.Generate({ name: 'rt', kind: EnvKind.Dev, tenantId: 'rt', purpose: TenantPurposeName.Runtime, hostPort: 8083, database }, dir)
     const tenant = JSON.parse(readFileSync(join(dir, 'tenants.json'), 'utf8')).tenants.rt
-    assert.deepEqual(tenant.connections.appdb.settings, { host: 'pragmatic-env-rt-db', port: 5432, database: 'appdb', user: 'appuser' })
+    assert.ok(Object.values(tenant.connections.appdb.settings).every(v => typeof v === 'string'))
+    assert.equal(tenant.connections.appdb.settings.port, '5432')
+    assert.deepEqual(tenant.connections.appdb.settings, { host: 'pragmatic-env-rt-db', port: '5432', database: 'appdb', user: 'appuser' })
     assert.equal(tenant.connections.appdb.secretRef, 'rt/appdb/password')
     assert.deepEqual(tenant.connectorsPolicy.adapterAllowlist, ['sql'])
     assert.equal(tenant.connectorsPolicy.catalogOnly, true)

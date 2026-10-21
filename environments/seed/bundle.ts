@@ -141,7 +141,7 @@ export class BundleBuilder
             const policy = tenant.connectorsPolicy as { adapterAllowlist: string[] }
             policy.adapterAllowlist = [BundleBuilder.SqlAdapter]
             const connections: Record<string, unknown> = {}
-            connections[db.connectionName] = { settings: { host: db.host, port: db.port, database: db.database, user: db.user }, secretRef: BundleBuilder.DbSecretRef(def, db) }
+            connections[db.connectionName] = { settings: { host: db.host, port: String(db.port), database: db.database, user: db.user }, secretRef: BundleBuilder.DbSecretRef(def, db) }
             tenant.connections = connections
         }
         tenants[def.tenantId] = tenant
