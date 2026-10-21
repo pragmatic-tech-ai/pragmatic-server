@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import type { IStorage, StorageEntry } from '@pragmatic-tech-ai/todl-runtime'
 import type { ContributedPackageDto, GraphRefParamsDto, GraphSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { DevGraphStore } from '../dev-graph-store.js'
-import { GraphPackageConflictError, GraphPackageIngest } from '../graph-package-ingest.js'
+import { GraphPackageIngest } from '../graph-package-ingest.js'
 import { GraphPackageReader } from '../graph-package-reader.js'
 import { DevGraphService, GraphExistsError, GraphNameInvalidError, GraphNotFoundError } from '../dev-graph-service.js'
 
@@ -151,7 +151,7 @@ test('two solutions contributing identical id@version yield one union entry and 
     assert.equal(list[0].packageCount, 2)
 })
 
-test('differing bytes for an existing id@version reject and leave the manifest slice unchanged', async () =>
+test('re-contributing differing bytes for an existing id@version overwrites it (dev last-writer-wins) and updates the slice', async () =>
 {
     const graphs = new MemoryStorage()
     const packages = new MemoryStorage()
@@ -159,12 +159,11 @@ test('differing bytes for an existing id@version reject and leave the manifest s
     await Fixture.Create(service, 'd')
     await service.ContributeGraph({ graphName: 'g1', solutionId: 's1', packages: [Fixture.Pkg('a', '1', '{"k":1}')] })
     await service.ContributeGraph({ graphName: 'g1', solutionId: 's2', packages: [Fixture.Pkg('z', '1')] })
-    await assert.rejects(
-        service.ContributeGraph({ graphName: 'g1', solutionId: 's2', packages: [Fixture.Pkg('y', '1'), Fixture.Pkg('a', '1', '{"k":2}')] }),
-        GraphPackageConflictError)
+    await service.ContributeGraph({ graphName: 'g1', solutionId: 's2', packages: [Fixture.Pkg('y', '1'), Fixture.Pkg('a', '1', '{"k":2}')] })
     const fresh = await Fixture.ServiceOver(graphs, packages).GetGraph(Fixture.Ref())
-    assert.deepEqual(Fixture.Keys(fresh.packages), ['a@1', 'z@1'])
-    assert.equal(packages.Files.has('y/1/model.json'), false)
+    assert.deepEqual(Fixture.Keys(fresh.packages), ['a@1', 'y@1'])
+    assert.equal(packages.Files.get('a/1/model.json'), '{"k":2}')
+    assert.equal(packages.Files.has('y/1/model.json'), true)
 })
 
 test('an empty contribution sets the slice to empty and the union reflects it', async () =>

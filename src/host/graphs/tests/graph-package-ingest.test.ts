@@ -57,16 +57,29 @@ test('identical bytes for an existing id@version are an idempotent no-op', async
     assert.equal(storage.Files.get('a/1.0.0/model.json'), '{"x":1}')
 })
 
-test('differing bytes conflict, leave the file intact and write nothing else from the batch', async () =>
+test('differing bytes overwrite the existing version (dev last-writer-wins) and the rest of the batch is written', async () =>
 {
     const storage = new MemoryStorage()
     const ingest = new GraphPackageIngest(storage)
     await ingest.Store([Fixture.Pkg('a', '1.0.0', '{"x":1}')])
+    await ingest.Store([Fixture.Pkg('b', '1.0.0', '{"y":1}'), Fixture.Pkg('a', '1.0.0', '{"x":2}'), Fixture.Pkg('c', '1.0.0', '{}')])
+    assert.deepEqual([...storage.Files.keys()].sort(), ['a/1.0.0/model.json', 'b/1.0.0/model.json', 'c/1.0.0/model.json'])
+    assert.equal(storage.Files.get('a/1.0.0/model.json'), '{"x":2}')
+    assert.equal(storage.Files.get('b/1.0.0/model.json'), '{"y":1}')
+})
+
+test('a mid-commit failure removes newly created paths but leaves a pre-existing version it overwrote in place', async () =>
+{
+    const storage = new MemoryStorage()
+    const ingest = new GraphPackageIngest(storage)
+    await ingest.Store([Fixture.Pkg('a', '1.0.0', '{"x":1}')])
+    storage.FailRenameOf = 'c/1.0.0/model.json'
     await assert.rejects(
-        ingest.Store([Fixture.Pkg('b', '1.0.0', '{"y":1}'), Fixture.Pkg('a', '1.0.0', '{"x":2}'), Fixture.Pkg('c', '1.0.0', '{}')]),
-        GraphPackageConflictError)
+        ingest.Store([Fixture.Pkg('a', '1.0.0', '{"x":2}'), Fixture.Pkg('c', '1.0.0', '{}')]),
+        /rename failed/)
+    // `a` pre-existed, so it is never deleted (it now carries the overwritten bytes); `c` was new, so it is gone.
     assert.deepEqual([...storage.Files.keys()], ['a/1.0.0/model.json'])
-    assert.equal(storage.Files.get('a/1.0.0/model.json'), '{"x":1}')
+    assert.equal(storage.Files.get('a/1.0.0/model.json'), '{"x":2}')
 })
 
 test('the same id@version twice in one batch with different bytes conflicts and writes nothing', async () =>

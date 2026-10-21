@@ -33,16 +33,21 @@ interface PlannedPackage
     readonly path: string
     readonly bytes: Uint8Array
     skip: boolean
+    // True when the path already existed at plan time (identical skip OR differing overwrite). Rollback
+    // must never delete a pre-existing path — only paths this call created are removed on a mid-commit failure.
+    preexisting: boolean
 }
 
 /**
- * Writes contributed package bytes into the packages store with immutability and crash-safe staging.
- * MIRRORS AppIngestService's immutability discipline (AssertImmutable + Commit): byte-identical existing
- * versions are skipped, differing bytes are a Conflict, and nothing is written until every package is checked.
- * The two must stay consistent on package bytes. UNLIKE AppIngestService, this does NOT serialize concurrent commits
- * and does NOT recheck existence at commit time (it relies on the Plan-time skip flags), so concurrent contributes to
- * one graph are last-writer-wins. That matches the single-maker dev-env posture; full concurrency hardening is a
- * deferred follow-up.
+ * Writes contributed package bytes into the packages store with crash-safe staging, DELIBERATELY MUTABLE:
+ * a dev graph is a maker's working set, so re-contributing an edited `id@version` OVERWRITES the stored bytes
+ * (last-writer-wins) rather than conflicting. Byte-identical bytes are an idempotent no-op; a single id@version
+ * appearing twice in ONE batch with differing bytes is still a Conflict (a malformed build, not a re-contribute).
+ * This INTENTIONALLY DIVERGES from AppIngestService's per-version immutability: immutability belongs to the
+ * runtime/promoted boundary (AppIngestService + promote), not a dev working graph. Nothing is written until every
+ * package is checked. UNLIKE AppIngestService, this does NOT serialize concurrent commits and does NOT recheck
+ * existence at commit time (it relies on the Plan-time flags), so concurrent contributes to one graph are
+ * last-writer-wins. That matches the single-maker dev-env posture; full concurrency hardening is a deferred follow-up.
  */
 export class GraphPackageIngest
 {
@@ -75,21 +80,22 @@ export class GraphPackageIngest
             const earlier = byPath.get(path)
             if (earlier !== undefined)
             {
+                // Same id@version twice in ONE batch with differing bytes is ambiguous (a malformed build,
+                // not a re-contribute), so it stays a hard conflict; an identical duplicate is ignored.
                 if (Buffer.compare(Buffer.from(earlier.bytes), Buffer.from(bytes)) !== 0)
                 {
                     throw new GraphPackageConflictError()
                 }
                 continue
             }
-            const planned: PlannedPackage = { path, bytes, skip: false }
+            const planned: PlannedPackage = { path, bytes, skip: false, preexisting: false }
             if (await this.packages.Exists(path))
             {
+                planned.preexisting = true
                 const current = await this.packages.ReadBytes(path)
-                if (Buffer.compare(Buffer.from(current), Buffer.from(bytes)) !== 0)
-                {
-                    throw new GraphPackageConflictError()
-                }
-                planned.skip = true
+                // Identical bytes → idempotent no-op; differing bytes → overwrite the stored version
+                // (dev working-graph last-writer-wins). Either way the path already exists, so rollback leaves it.
+                planned.skip = Buffer.compare(Buffer.from(current), Buffer.from(bytes)) === 0
             }
             byPath.set(path, planned)
         }
@@ -134,14 +140,19 @@ export class GraphPackageIngest
         }
         catch (error)
         {
-            // Best effort. Skipped (pre-existing) files are never in `files`, so only newly created paths are removed.
+            // Best effort. Remove the un-renamed temps, then remove only the paths this call CREATED —
+            // a pre-existing path we overwrote is left with its new bytes rather than deleted, so a failed
+            // batch never destroys a version that existed before the contribute.
             for (const file of staged)
             {
                 await this.packages.Delete(file.path + suffix).catch(() => undefined)
             }
             for (const file of renamed.reverse())
             {
-                await this.packages.Delete(file.path).catch(() => undefined)
+                if (!file.preexisting)
+                {
+                    await this.packages.Delete(file.path).catch(() => undefined)
+                }
             }
             throw error
         }
