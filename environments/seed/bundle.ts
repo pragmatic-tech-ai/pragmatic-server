@@ -17,7 +17,8 @@ export enum TenantPurposeName
     Runtime = '1',
 }
 
-export type EnvDefinition = { name: string; kind: EnvKind; tenantId: string; purpose: TenantPurposeName; hostPort: number }
+export type EnvDatabase = { connectionName: string; host: string; port: number; database: string; user: string; password: string; hostPort: number }
+export type EnvDefinition = { name: string; kind: EnvKind; tenantId: string; purpose: TenantPurposeName; hostPort: number; database?: EnvDatabase }
 
 /** Generates a pragmatic-server config bundle (master key, secrets, tenants, tenant config, demo app) for one environment. */
 export class BundleBuilder
