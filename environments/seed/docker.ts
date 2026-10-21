@@ -397,7 +397,7 @@ ${stderr}`
             {
                 if (err)
                 {
-                    reject(new Error(`${err.message}\n${stderr}`))
+                    reject(new Error(DockerEnv.FailureMessage(args, stderr)))
                     return
                 }
                 resolve(stdout)
