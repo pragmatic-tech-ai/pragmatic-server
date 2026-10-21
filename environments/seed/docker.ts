@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { get } from 'node:http'
 import { TenantPurposeName } from './bundle.js'
-import type { EnvDefinition } from './bundle.js'
+import type { EnvDefinition, EnvDatabase } from './bundle.js'
 
 export { EnvKind, TenantPurposeName } from './bundle.js'
 export type { EnvDefinition } from './bundle.js'
@@ -253,7 +253,8 @@ export class DockerEnv
         await this.Down(def)
         if (def.database !== undefined)
         {
-            await this.Exec([DockerEnv.NetworkCmd, DockerEnv.CreateCmd, DockerEnv.NetworkName(def)])
+            // the network survives Stop (data is kept), so creation must tolerate an existing one
+            await this.Tolerate([DockerEnv.NetworkCmd, DockerEnv.CreateCmd, DockerEnv.NetworkName(def)])
             await this.Exec(DockerEnv.PostgresRunArgs(def))
             await this.WaitDbReady(def, def.database)
         }
@@ -261,7 +262,7 @@ export class DockerEnv
     }
 
     /** Polls pg_isready inside the sidecar until it accepts connections or the timeout elapses. */
-    public async WaitDbReady(def: EnvDefinition, db: { user: string; database: string }): Promise<void>
+    private async WaitDbReady(def: EnvDefinition, db: EnvDatabase): Promise<void>
     {
         const deadline = Date.now() + DockerEnv.DbTimeoutMs
         while (Date.now() < deadline)
@@ -280,21 +281,22 @@ export class DockerEnv
         throw new Error(`${DockerEnv.DbTimeoutMessage}${DockerEnv.DbContainerName(def)}`)
     }
 
-    public async Down(def: EnvDefinition): Promise<void>
+    /**
+     * Stops and removes the containers. The DB volume and network are KEPT unless removeData is true
+     * (Stop keeps them so data survives a restart; Delete passes true).
+     */
+    public async Down(def: EnvDefinition, removeData: boolean = false): Promise<void>
     {
-        try
-        {
-            await this.Exec([DockerEnv.RmCmd, DockerEnv.ForceFlag, DockerEnv.ContainerName(def)])
-        }
-        catch
-        {
-            // rm -f on a missing container errors; absence is the desired end state
-        }
+        await this.Tolerate([DockerEnv.RmCmd, DockerEnv.ForceFlag, DockerEnv.ContainerName(def)])
         if (def.database === undefined)
         {
             return
         }
         await this.Tolerate([DockerEnv.RmCmd, DockerEnv.ForceFlag, DockerEnv.DbContainerName(def)])
+        if (!removeData)
+        {
+            return
+        }
         await this.Tolerate([DockerEnv.VolumeCmd, DockerEnv.RmCmd, DockerEnv.DbVolumeName(def)])
         await this.Tolerate([DockerEnv.NetworkCmd, DockerEnv.RmCmd, DockerEnv.NetworkName(def)])
     }

@@ -4,7 +4,7 @@ import type { ModelConnectorPlan } from '@pragmatic-tech-ai/todl'
 import type { Domain } from '@pragmatic-tech-ai/todl/domain'
 import { GraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
-import type { IStorage, ServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
+import type { IStorage, IServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import type { GraphLoadParamsDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { RuntimeAppGraph } from '../cypher/runtime-app-graph.js'
 import { AppConnectorPlan } from '../cypher/app-connector-plan.js'
@@ -68,12 +68,6 @@ export class EnvironmentGraph
         return this.domain
     }
 
-    /** The package-only query (no connector overlay). */
-    public Query(): IGraphQuery
-    {
-        return this.base
-    }
-
     public Record(): GraphLoadedDto
     {
         return { name: this.record.name, packages: EnvironmentGraph.CopyRefs(this.record.packages), promotedAt: this.record.promotedAt }
@@ -88,7 +82,7 @@ export class EnvironmentGraph
 /** Builds the live, connector-overlaid query for ONE request: prefetches every bound concept from its adapter now (read-through, never cached). */
 export class EnvironmentGraphOverlay
 {
-    public static async Apply(graph: EnvironmentGraph, services: ServiceProvider): Promise<IGraphQuery>
+    public static async Apply(graph: EnvironmentGraph, services: IServiceProvider): Promise<IGraphQuery>
     {
         const plan = graph.Plan()
         if (plan.Bindings.length === 0)

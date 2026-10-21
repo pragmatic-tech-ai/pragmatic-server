@@ -49,7 +49,7 @@ test('Build yields a queryable instance over the packages', async () =>
     const storage = new FakeStorage()
     await SeededPackages.Seed(storage)
     const graph = await EnvironmentGraph.Build(storage, SeededPackages.GraphName, [{ id: SeededPackages.Id, version: SeededPackages.Version }])
-    const count = Cypher.CypherEngine.OverQuery(graph.Query()).Execute(SeededPackages.Count).Rows[0]?.[0]
+    const count = Cypher.CypherEngine.OverQuery(graph.Base()).Execute(SeededPackages.Count).Rows[0]?.[0]
     assert.equal(Number(count instanceof Cypher.ScalarValue ? count.Value : Number.NaN), 2)
 })
 
@@ -70,7 +70,7 @@ test('Build over an empty package set yields an empty instance', async () =>
     const storage = new FakeStorage()
     const graph = await EnvironmentGraph.Build(storage, SeededPackages.GraphName, [])
     assert.deepEqual(graph.Record().packages, [])
-    assert.ok(graph.Query())
+    assert.ok(graph.Base())
 })
 
 test('LoadedGraphStore round-trips a record', async () =>

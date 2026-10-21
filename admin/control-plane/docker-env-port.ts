@@ -9,7 +9,7 @@ export interface IDockerEnv
 {
     EnsureImage(): Promise<boolean>
     Up(def: EnvDefinition, bundleDir: string): Promise<void>
-    Down(def: EnvDefinition): Promise<void>
+    Down(def: EnvDefinition, removeData?: boolean): Promise<void>
     Logs(def: EnvDefinition): Promise<string>
     WaitHealthy(port: number, def: EnvDefinition): Promise<void>
     Running(containerName: string): Promise<boolean>
@@ -47,9 +47,9 @@ export class DockerEnvAdapter implements IDockerEnv, IContainerProbe
         return this.docker.Up(def, bundleDir)
     }
 
-    public Down(def: EnvDefinition): Promise<void>
+    public Down(def: EnvDefinition, removeData: boolean = false): Promise<void>
     {
-        return this.docker.Down(def)
+        return this.docker.Down(def, removeData)
     }
 
     public Logs(def: EnvDefinition): Promise<string>

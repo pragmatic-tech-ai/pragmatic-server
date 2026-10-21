@@ -197,7 +197,7 @@ export class EnvironmentService
             {
                 try
                 {
-                    await this.docker.Down(def)
+                    await this.docker.Down(def, true)
                 }
                 catch
                 {
@@ -243,7 +243,7 @@ export class EnvironmentService
     {
         const rec = this.Require(name)
         const def = EnvironmentService.DefOf(rec)
-        await this.docker.Down(def)
+        await this.docker.Down(def, true)
         await this.docker.RemoveVolume(def)
         await this.registry.Remove(name)
     }
