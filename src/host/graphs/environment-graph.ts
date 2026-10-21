@@ -1,9 +1,13 @@
 import { randomUUID } from 'node:crypto'
-import type { StoragePackageSource } from '@pragmatic-tech-ai/todl'
+import { StoragePackageSource, ConnectorPrefetch, ConnectorRuntimeGraphQuery, DataSourceAdapterCatalog } from '@pragmatic-tech-ai/todl'
+import type { ModelConnectorPlan } from '@pragmatic-tech-ai/todl'
+import type { Domain } from '@pragmatic-tech-ai/todl/domain'
+import { GraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
-import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
+import type { IStorage, ServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import type { GraphLoadParamsDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { RuntimeAppGraph } from '../cypher/runtime-app-graph.js'
+import { AppConnectorPlan } from '../cypher/app-connector-plan.js'
 import type { PackageRef } from './dev-graph-store.js'
 
 /** The runtime-side load/loaded seam a runtime tenant exposes; the handler reaches it without knowing the server type. */
@@ -27,28 +31,47 @@ export class NoEnvironmentGraphError extends Error
     }
 }
 
-/** The single live environment-graph instance: the composed query plus its loaded-manifest record (refs only, no content). */
+/** The single live environment-graph instance: the base query, its connector plan and domain, plus its loaded-manifest record (refs only, no content). */
 export class EnvironmentGraph
 {
-    private readonly query: IGraphQuery
-    private readonly record: GraphLoadedDto
+    private static readonly PlanVersion = '0'
 
-    private constructor(query: IGraphQuery, record: GraphLoadedDto)
+    private constructor(
+        private readonly base: IGraphQuery,
+        private readonly plan: ModelConnectorPlan,
+        private readonly domain: Domain,
+        private readonly record: GraphLoadedDto)
     {
-        this.query = query
-        this.record = record
     }
 
-    public static async Build(source: StoragePackageSource, graphName: string, refs: readonly PackageRef[]): Promise<EnvironmentGraph>
+    public static async Build(storage: IStorage, graphName: string, refs: readonly PackageRef[]): Promise<EnvironmentGraph>
     {
-        const query = await RuntimeAppGraph.BuildQueryFromPackages(source, refs)
+        const domain = await RuntimeAppGraph.BuildDomainFromPackages(new StoragePackageSource(storage), refs)
+        const base = new GraphQuery(domain.graph)
+        const plan = await AppConnectorPlan.ForPackages(storage, refs, graphName, EnvironmentGraph.PlanVersion)
         const record: GraphLoadedDto = { name: graphName, packages: EnvironmentGraph.CopyRefs(refs), promotedAt: new Date().toISOString() }
-        return new EnvironmentGraph(query, record)
+        return new EnvironmentGraph(base, plan, domain, record)
     }
 
+    public Base(): IGraphQuery
+    {
+        return this.base
+    }
+
+    public Plan(): ModelConnectorPlan
+    {
+        return this.plan
+    }
+
+    public Domain(): Domain
+    {
+        return this.domain
+    }
+
+    /** The package-only query (no connector overlay). */
     public Query(): IGraphQuery
     {
-        return this.query
+        return this.base
     }
 
     public Record(): GraphLoadedDto
@@ -59,6 +82,22 @@ export class EnvironmentGraph
     private static CopyRefs(refs: readonly PackageRef[]): { id: string; version: string }[]
     {
         return refs.map(r => ({ id: r.id, version: r.version }))
+    }
+}
+
+/** Builds the live, connector-overlaid query for ONE request: prefetches every bound concept from its adapter now (read-through, never cached). */
+export class EnvironmentGraphOverlay
+{
+    public static async Apply(graph: EnvironmentGraph, services: ServiceProvider): Promise<IGraphQuery>
+    {
+        const plan = graph.Plan()
+        if (plan.Bindings.length === 0)
+        {
+            return graph.Base()
+        }
+        const concepts = plan.Bindings.map(b => b.Concept)
+        const snapshot = await ConnectorPrefetch.ForConcepts(concepts, plan, services.getRequired(DataSourceAdapterCatalog.ServiceKey), services, graph.Domain())
+        return new ConnectorRuntimeGraphQuery(graph.Base(), snapshot)
     }
 }
 
