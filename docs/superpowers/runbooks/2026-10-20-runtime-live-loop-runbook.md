@@ -8,7 +8,7 @@ The live-loop e2e drives the whole author-to-serve path on one machine. A local 
 
 1. Docker is running. If the Docker daemon is not running, the image build and the suite both fail immediately. Start Docker Desktop, or the Docker service, and confirm with `docker info`.
 
-2. Build the server image `pragmatic-server:dev`. From the workspace root `architecture-agent/` (the directory that holds `pragmatic-server` and all sibling packages), run the build with the context set to `.`. The image tag must be `pragmatic-server:dev`, because the control-plane path requires it. The build needs a private `.npmrc` that holds a GitHub Packages token with the `read:packages` scope. Keep that file outside the repo and never commit it. In the command below, `<path>` is a placeholder that goes in the `src=` argument of the `--secret` flag. Replace it with the real location of your `.npmrc`:
+2. Build the server image `pragmatic-server:dev`. From the workspace root `architecture-agent/` (the directory that holds `pragmatic-server` and all sibling packages), run the build with the context set to `.`. The image tag must be `pragmatic-server:dev`, because the control-plane path requires it. The build needs a private `.npmrc` that holds a GitHub Packages token with the `read:packages` scope. Keep that file outside the repo and never commit it. In the command below, `<path>` is the directory that contains your `.npmrc` (the command appends `/.npmrc`), and it goes in the `src=` argument of the `--secret` flag:
 
 ```
 DOCKER_BUILDKIT=1 docker build -f pragmatic-server/docker/Dockerfile --secret id=npmrc,src=<path>/.npmrc -t pragmatic-server:dev .

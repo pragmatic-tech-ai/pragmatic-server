@@ -51,11 +51,6 @@ class FakeEnvs implements ILoopEnvironments
         this.deleted.push(name)
     }
 
-    public List(): readonly EnvironmentRecord[]
-    {
-        return this.created
-    }
-
     public async AdminInfoFor(_name: string): Promise<AdminConnectInfo>
     {
         return { httpUrl: 'http://localhost:8102', wsUrl: 'ws://localhost:8102', tenant: 'contoso', email: 'admin@contoso.test', password: Fixture.AdminPw }

@@ -99,7 +99,6 @@ export interface ILoopEnvironments
 {
     Create(name: string, template: Template, type: EnvType, hostPort?: number): Promise<EnvironmentRecord>
     Delete(name: string): Promise<void>
-    List(): readonly EnvironmentRecord[]
     AdminInfoFor(name: string): Promise<AdminConnectInfo>
     AdminIssueMakerToken(name: string): Promise<TokenIssuedDto>
     AdminCreateAccount(name: string, params: CreateAccountParams): Promise<void>
@@ -420,6 +419,8 @@ if (LoopOrchestrator.IsEntryPoint())
     }
     catch (err)
     {
+        // Invariant: only ParseCommand/Compose errors (no secrets held yet) reach here unredacted.
+        // Secret-bearing failures go through ReportFailure -> Redact and throw a LoopFailure, which is not re-logged.
         if (!(err instanceof LoopFailure))
         {
             new StderrLoopLogger().Log(err instanceof Error ? err.message : String(err))

@@ -77,8 +77,8 @@ export class DockerEnv
     private static readonly HealthTimeoutMessage = 'Server did not become healthy in time on port '
     private static readonly ContainerExitedMessage = 'Container exited before becoming healthy: '
 
-    private static readonly BuildHintPrefix = 'Image not found. Build it once with BuildKit from the workspace parent dir (one level above pragmatic-server):\n  DOCKER_BUILDKIT=1 docker build -f pragmatic-server/docker/Dockerfile --secret id=npmrc,src=<path-to>/.npmrc -t '
-    private static readonly BuildHintSuffix = ' ..'
+    private static readonly BuildHintPrefix = 'Image not found. Build it once with BuildKit from the workspace root architecture-agent/, which holds all sibling packages:\n  DOCKER_BUILDKIT=1 docker build -f pragmatic-server/docker/Dockerfile --secret id=npmrc,src=<path-to>/.npmrc -t '
+    private static readonly BuildHintSuffix = ' .'
     private static readonly VolumeCmd = 'volume'
     private static readonly VersionCmd = 'version'
     private static readonly DaemonUnreachableMessage = 'Docker daemon is unreachable. Start Docker and try again.'
@@ -180,7 +180,7 @@ export class DockerEnv
         }
         catch
         {
-            console.log(DockerEnv.BuildCommand())
+            console.error(DockerEnv.BuildCommand())
             return false
         }
     }
