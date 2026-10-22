@@ -179,6 +179,10 @@ export interface IPortalNavigator
     ShowCreateGraph(name: string): void
     ShowMakerToken(envName: string): void
     ShowPromoteGraph(devEnvName: string): void
+    ShowClients(): void
+    ShowCreateClient(): void
+    ShowTenants(clientId: string): void
+    ShowCreateTenant(clientId: string): void
 }
 
 // A screen that can re-fetch and re-render itself (on environments-changed).

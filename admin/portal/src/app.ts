@@ -12,6 +12,10 @@ import { GraphListView } from './graph-list-view.js'
 import { LoginView } from './login-view.js'
 import { RoleConfigView } from './role-config-view.js'
 import { ManageView } from './manage-view.js'
+import { ClientListView } from './client-list-view.js'
+import { CreateClientView } from './create-client-view.js'
+import { TenantListView } from './tenant-list-view.js'
+import { CreateTenantView } from './create-tenant-view.js'
 import type { IPortalNavigator, IPortalView } from './portal-types.js'
 
 // Root shell: owns the API client, switches list / create / detail, and
@@ -159,6 +163,30 @@ export class App extends StackPanel implements IPortalNavigator
     {
         this.SetLogoutVisible(true)
         this.Show(new MakerTokenView(this.client, this, envName))
+    }
+
+    public ShowClients(): void
+    {
+        this.SetLogoutVisible(true)
+        this.Show(new ClientListView(this.client, this))
+    }
+
+    public ShowCreateClient(): void
+    {
+        this.SetLogoutVisible(true)
+        this.Show(new CreateClientView(this.client, this))
+    }
+
+    public ShowTenants(clientId: string): void
+    {
+        this.SetLogoutVisible(true)
+        this.Show(new TenantListView(this.client, this, clientId))
+    }
+
+    public ShowCreateTenant(clientId: string): void
+    {
+        this.SetLogoutVisible(true)
+        this.Show(new CreateTenantView(this.client, this, clientId))
     }
 
     private Show(view: Visual & IPortalView): void

@@ -7,6 +7,7 @@ import { PortalViewBase } from './portal-view-base.js'
 export class EnvironmentListView extends PortalViewBase
 {
     public static readonly NewLabel = 'New environment'
+    public static readonly ClientsLabel = 'Clients'
     public static readonly OpenLabel = 'Open'
     private static readonly HeadingText = 'Environments'
     private static readonly EmptyText = 'No environments yet'
@@ -25,6 +26,7 @@ export class EnvironmentListView extends PortalViewBase
         heading.Text = EnvironmentListView.HeadingText
         this.AddChild(heading)
         this.AddChild(this.MakeButton(EnvironmentListView.NewLabel, () => { this.nav.ShowCreate() }))
+        this.AddChild(this.MakeButton(EnvironmentListView.ClientsLabel, () => { this.nav.ShowClients() }))
         this.AddChild(this.message)
         this.rows = new StackPanel()
         this.AddChild(this.rows)
