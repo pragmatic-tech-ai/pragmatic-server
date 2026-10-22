@@ -46,6 +46,7 @@ export type HiveRecord = {
     cluster: ClusterSpec
     registry: RegistrySpec
     trustRootRef?: string
+    agentTokenRef?: string
     createdAt: string
 }
 
