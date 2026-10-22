@@ -68,6 +68,14 @@ Requires Docker Desktop's built-in Kubernetes (context docker-desktop) and the p
 npx tsx admin/control-plane/k8s-hive-smoke.ts
 ```
 
+## Gated registry provenance smoke
+
+Requires Docker, Docker Desktop's built-in Kubernetes (context docker-desktop) and the pragmatic-server:dev image. It starts a real registry:2 container on localhost:5000, pushes the image to it, and signs the image digest with a throwaway dev Ed25519 key kept in temporary key and signature stores. It then drives a real KubectlHiveOrchestrator for a provision-registry hive: the signed image verifies, Apply succeeds, WaitHealthy reports the pod Ready, and the running image ref is localhost:5000/pragmatic-server:dev. It then corrupts the stored signature (and separately swaps the trust root to a different key) and asserts a further Apply throws ImageVerificationError and creates no namespace, proving the gate refuses before kubectl apply. The namespaces, the registry container and the temporary stores are removed in a finally block. It reuses the k8s smoke's local-only boot env. Because the image is also in the local docker image store and the manifest uses imagePullPolicy IfNotPresent, the node may resolve the registry-tagged image locally rather than pulling over HTTP; a node that must really pull from localhost:5000 needs it configured as an insecure registry. Operator-run and not part of the normal test run.
+
+```
+npx tsx admin/control-plane/registry-provenance-smoke.ts
+```
+
 ## Generated data and portal tests
 
 admin/control-plane/data/ holds generated bundles, registry.json, provisioned secrets and master keys. It is generated and gitignored; never commit it. The Playwright portal spec is gated on a one-time browser install:
