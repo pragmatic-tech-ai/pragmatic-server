@@ -43,7 +43,7 @@ export class RegistryProvenanceSmoke
     private static readonly BaseImage = 'pragmatic-server:dev'
     private static readonly RegistryEndpoint = 'localhost:5000'
     private static readonly RegistryImage = 'registry:2'
-    private static readonly RegistryPortMap = '5000:5000'
+    private static readonly RegistryPortMap = '127.0.0.1:5000:5000'
     private static readonly RegistryProbeUrl = 'http://localhost:5000/v2/'
     private static readonly PathSeparator = '/'
     private static readonly ProbeAttempts = 30
@@ -56,6 +56,7 @@ export class RegistryProvenanceSmoke
     private static readonly TagVerb = 'tag'
     private static readonly PushVerb = 'push'
     private static readonly RemoveVerb = 'rm'
+    private static readonly ImageVerb = 'rmi'
     private static readonly ForceFlag = '-f'
     private static readonly Kubectl = 'kubectl'
     private static readonly ContextFlag = '--context'
@@ -97,7 +98,7 @@ export class RegistryProvenanceSmoke
     private static readonly InfoApplyRefused = 'Apply refused: '
     private static readonly Labels = {
         Verified: 'provenance: signed registry image verifies and Apply succeeds',
-        Healthy: 'k8s: WaitHealthy (pod Ready, pulled from the local registry)',
+        Healthy: 'k8s: WaitHealthy (pod Ready)',
         RunningImage: 'k8s: running image ref is the registry ref',
         Tamper: 'provenance: tampered signature -> Apply throws ImageVerificationError',
         NotApplied: 'provenance: refused Apply created no namespace',
@@ -108,6 +109,7 @@ export class RegistryProvenanceSmoke
     private failed = false
     private containerId: string | undefined
     private tempDir: string | undefined
+    private tagged = false
     private readonly exec = new NodeExecFile()
     private readonly namespaces: string[] = []
 
@@ -138,8 +140,9 @@ export class RegistryProvenanceSmoke
             const verifier = new CryptoImageVerifier(new DockerImageDigest(), signatures, keys)
             const good = this.Orchestrator(verifier, S.SigningKeyRef)
             await this.CheckPasses(good)
-            await this.CheckTampered(good, sigPath)
+            // Order matters: the wrong-key check runs while the stored signature is still valid for the real key.
             await this.CheckWrongKey(this.Orchestrator(verifier, S.WrongKeyRef))
+            await this.CheckTampered(good, sigPath)
         }
         catch (err)
         {
@@ -213,7 +216,7 @@ export class RegistryProvenanceSmoke
         catch (e)
         {
             refused = e instanceof ImageVerificationError
-            console.log(S.InfoTag + S.InfoApplyRefused + (e instanceof Error ? e.message : String(e)))
+            console.log(S.InfoTag + S.InfoApplyRefused + KubectlError.Redact(e instanceof Error ? e.message : String(e)))
         }
         this.Expect(refusedLabel, refused)
         this.Expect(absentLabel, !(await this.NamespaceExists(K8sManifestBuilder.NamespaceOf(workload.environmentName))))
@@ -228,6 +231,7 @@ export class RegistryProvenanceSmoke
         console.log(S.InfoTag + S.InfoRegistryUp + this.containerId.slice(0, S.ContainerIdChars))
         await this.WaitRegistry()
         await this.exec.Run(S.Docker, [S.TagVerb, S.BaseImage, S.RegistryRef()])
+        this.tagged = true
         await this.exec.Run(S.Docker, [S.PushVerb, S.RegistryRef()])
         console.log(S.InfoTag + S.InfoPushed + S.RegistryRef())
     }
@@ -346,6 +350,10 @@ export class RegistryProvenanceSmoke
             const id = this.containerId
             await this.BestEffort(id.slice(0, S.ContainerIdChars), async () => { await this.exec.Run(S.Docker, [S.RemoveVerb, S.ForceFlag, id]) })
         }
+        if (this.tagged)
+        {
+            await this.BestEffort(S.RegistryRef(), async () => { await this.exec.Run(S.Docker, [S.ImageVerb, S.RegistryRef()]) })
+        }
         if (this.tempDir !== undefined)
         {
             const dir = this.tempDir
@@ -372,7 +380,7 @@ export class RegistryProvenanceSmoke
         {
             this.failed = true
         }
-        const suffix = ok || detail === RegistryProvenanceSmoke.EmptyString ? RegistryProvenanceSmoke.EmptyString : RegistryProvenanceSmoke.DetailSep + detail
+        const suffix = ok || detail === RegistryProvenanceSmoke.EmptyString ? RegistryProvenanceSmoke.EmptyString : RegistryProvenanceSmoke.DetailSep + KubectlError.Redact(detail)
         console.log((ok ? RegistryProvenanceSmoke.PassTag : RegistryProvenanceSmoke.FailTag) + label + suffix)
     }
 
