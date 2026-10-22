@@ -87,3 +87,11 @@ npx playwright install chromium
 ## Type-check gate
 
 `npm run typecheck:tools` type-checks the tsx-run `environments/` and `admin/control-plane/` trees (which the `src` build does not cover) plus the portal. Run it before relying on those trees.
+
+## Gated rollout push smoke
+
+Requires Docker Desktop's built-in Kubernetes (context docker-desktop) and the pragmatic-server:dev image. It tags the dev image as pragmatic-server:v1 and pragmatic-server:v2 (the same bits under two refs; what differs is the ref the Deployment runs), signs both refs with a throwaway dev Ed25519 key into the stores of the HiveOrchestratorFactory data root, and composes a real PlatformDeploymentRegistry over temporary files. It publishes and gates v1 and v2, brings a throwaway environment up on v1 (reusing the k8s smoke's local-only boot env), then SelectTarget(hive, v2) pushes the roll through the SP-HIVE-3 signature gate and the smoke asserts the live Deployment now runs pragmatic-server:v2; SelectTarget(hive, v1) is the rollback and is asserted the same way. The namespace, the two extra image tags and the temporary stores are removed in a finally block. Operator-run and not part of the normal test run.
+
+```
+npx tsx admin/control-plane/rollout-push-smoke.ts
+```
