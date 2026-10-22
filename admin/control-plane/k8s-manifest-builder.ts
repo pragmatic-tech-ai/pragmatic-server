@@ -43,6 +43,15 @@ export class K8sManifestBuilder
     private static readonly ResourcesKey = 'resources'
     private static readonly RequestsKey = 'requests'
     private static readonly StorageKey = 'storage'
+    private static readonly ServiceAccountNameKey = 'serviceAccountName'
+    private static readonly CommandKey = 'command'
+    private static readonly RulesKey = 'rules'
+    private static readonly ApiGroupsKey = 'apiGroups'
+    private static readonly ApiGroupKey = 'apiGroup'
+    private static readonly VerbsKey = 'verbs'
+    private static readonly ResourceNamesKey = 'resourceNames'
+    private static readonly SubjectsKey = 'subjects'
+    private static readonly RoleRefKey = 'roleRef'
 
     private static readonly ApiVersionCore = 'v1'
     private static readonly ApiVersionApps = 'apps/v1'
@@ -51,6 +60,15 @@ export class K8sManifestBuilder
     private static readonly DeploymentKind = 'Deployment'
     private static readonly ServiceKind = 'Service'
     private static readonly StatefulSetKind = 'StatefulSet'
+    private static readonly ApiVersionRbac = 'rbac.authorization.k8s.io/v1'
+    private static readonly RbacApiGroup = 'rbac.authorization.k8s.io'
+    private static readonly ServiceAccountKind = 'ServiceAccount'
+    private static readonly RoleKind = 'Role'
+    private static readonly RoleBindingKind = 'RoleBinding'
+    private static readonly AppsApiGroup = 'apps'
+    private static readonly DeploymentsResource = 'deployments'
+    private static readonly GetVerb = 'get'
+    private static readonly PatchVerb = 'patch'
     private static readonly IfNotPresent = 'IfNotPresent'
     private static readonly ClusterIpType = 'ClusterIP'
     private static readonly HeadlessClusterIp = 'None'
@@ -74,6 +92,17 @@ export class K8sManifestBuilder
     private static readonly DataVolumeName = 'data'
     private static readonly DataVolumeSize = '1Gi'
     private static readonly SingleReplica = 1
+
+    // Pull-agent conventions.
+    private static readonly AgentSuffix = 'agent'
+    private static readonly AgentImage = 'pragmatic-server:dev'
+    private static readonly AgentContainerName = 'agent'
+    private static readonly AgentEntrypoint = ['node', 'dist/bin/pragmatic-agentd.js']
+    private static readonly AgentRegistryUrlVar = 'PRAGMATIC_AGENT_REGISTRY_URL'
+    private static readonly AgentHiveIdVar = 'PRAGMATIC_AGENT_HIVE_ID'
+    private static readonly AgentEnvNameVar = 'PRAGMATIC_AGENT_ENV_NAME'
+    private static readonly AgentTokenVar = 'PRAGMATIC_AGENT_TOKEN'
+    private static readonly AgentTokenSecretKey = 'token'
 
     public static readonly ServerContainerName = 'server'
 
@@ -109,6 +138,144 @@ export class K8sManifestBuilder
     public static DatabaseOf(environmentName: string): string
     {
         return `${K8sManifestBuilder.NamespaceOf(environmentName)}-${K8sManifestBuilder.DatabaseSuffix}`
+    }
+
+    public static AgentServiceAccountOf(environmentName: string): string
+    {
+        return `${K8sManifestBuilder.NamespaceOf(environmentName)}-${K8sManifestBuilder.AgentSuffix}`
+    }
+
+    public static AgentRoleOf(environmentName: string): string
+    {
+        return `${K8sManifestBuilder.NamespaceOf(environmentName)}-${K8sManifestBuilder.AgentSuffix}`
+    }
+
+    public static AgentRoleBindingOf(environmentName: string): string
+    {
+        return `${K8sManifestBuilder.NamespaceOf(environmentName)}-${K8sManifestBuilder.AgentSuffix}`
+    }
+
+    public static AgentDeploymentOf(environmentName: string): string
+    {
+        return `${K8sManifestBuilder.NamespaceOf(environmentName)}-${K8sManifestBuilder.AgentSuffix}`
+    }
+
+    /** Renders the in-cluster pull agent: SA + least-privilege Role/RoleBinding + Deployment. The token Secret is referenced by name only. */
+    public RenderAgent(workload: EnvironmentWorkload, registryUrl: string, tokenSecretName: string): string
+    {
+        const items: K8sObject[] = [
+            this.AgentServiceAccount(workload),
+            this.AgentRole(workload),
+            this.AgentRoleBinding(workload),
+            this.AgentDeployment(workload, registryUrl, tokenSecretName),
+        ]
+        return JSON.stringify({
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ListKind,
+            [K8sManifestBuilder.ItemsKey]: items,
+        })
+    }
+
+    private AgentMeta(workload: EnvironmentWorkload, name: string): K8sObject
+    {
+        return {
+            ...this.Meta(workload, name),
+            [K8sManifestBuilder.LabelsKey]: {
+                [K8sManifestBuilder.EnvironmentLabel]: workload.environmentName,
+                [K8sManifestBuilder.HiveLabel]: workload.hiveId,
+            },
+        }
+    }
+
+    private EnvLiteral(key: string, value: string): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.NameKey]: key,
+            [K8sManifestBuilder.ValueKey]: value,
+        }
+    }
+
+    private AgentServiceAccount(workload: EnvironmentWorkload): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ServiceAccountKind,
+            [K8sManifestBuilder.MetadataKey]: this.AgentMeta(workload, K8sManifestBuilder.AgentServiceAccountOf(workload.environmentName)),
+        }
+    }
+
+    private AgentRole(workload: EnvironmentWorkload): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionRbac,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.RoleKind,
+            [K8sManifestBuilder.MetadataKey]: this.AgentMeta(workload, K8sManifestBuilder.AgentRoleOf(workload.environmentName)),
+            [K8sManifestBuilder.RulesKey]: [{
+                [K8sManifestBuilder.ApiGroupsKey]: [K8sManifestBuilder.AppsApiGroup],
+                [K8sManifestBuilder.ResourcesKey]: [K8sManifestBuilder.DeploymentsResource],
+                [K8sManifestBuilder.VerbsKey]: [K8sManifestBuilder.GetVerb, K8sManifestBuilder.PatchVerb],
+                [K8sManifestBuilder.ResourceNamesKey]: [K8sManifestBuilder.ServerDeploymentOf(workload.environmentName)],
+            }],
+        }
+    }
+
+    private AgentRoleBinding(workload: EnvironmentWorkload): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionRbac,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.RoleBindingKind,
+            [K8sManifestBuilder.MetadataKey]: this.AgentMeta(workload, K8sManifestBuilder.AgentRoleBindingOf(workload.environmentName)),
+            [K8sManifestBuilder.SubjectsKey]: [{
+                [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ServiceAccountKind,
+                [K8sManifestBuilder.NameKey]: K8sManifestBuilder.AgentServiceAccountOf(workload.environmentName),
+                [K8sManifestBuilder.NamespaceKey]: K8sManifestBuilder.NamespaceOf(workload.environmentName),
+            }],
+            [K8sManifestBuilder.RoleRefKey]: {
+                [K8sManifestBuilder.ApiGroupKey]: K8sManifestBuilder.RbacApiGroup,
+                [K8sManifestBuilder.KindKey]: K8sManifestBuilder.RoleKind,
+                [K8sManifestBuilder.NameKey]: K8sManifestBuilder.AgentRoleOf(workload.environmentName),
+            },
+        }
+    }
+
+    private AgentDeployment(workload: EnvironmentWorkload, registryUrl: string, tokenSecretName: string): K8sObject
+    {
+        const name = K8sManifestBuilder.AgentDeploymentOf(workload.environmentName)
+        return {
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionApps,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.DeploymentKind,
+            [K8sManifestBuilder.MetadataKey]: this.AgentMeta(workload, name),
+            [K8sManifestBuilder.SpecKey]: {
+                [K8sManifestBuilder.ReplicasKey]: K8sManifestBuilder.SingleReplica,
+                [K8sManifestBuilder.SelectorKey]: { [K8sManifestBuilder.MatchLabelsKey]: this.Selector(name) },
+                [K8sManifestBuilder.TemplateKey]: {
+                    [K8sManifestBuilder.MetadataKey]: { [K8sManifestBuilder.LabelsKey]: this.Selector(name) },
+                    [K8sManifestBuilder.SpecKey]: {
+                        [K8sManifestBuilder.ServiceAccountNameKey]: K8sManifestBuilder.AgentServiceAccountOf(workload.environmentName),
+                        [K8sManifestBuilder.ContainersKey]: [{
+                            [K8sManifestBuilder.NameKey]: K8sManifestBuilder.AgentContainerName,
+                            [K8sManifestBuilder.ImageKey]: K8sManifestBuilder.AgentImage,
+                            [K8sManifestBuilder.ImagePullPolicyKey]: K8sManifestBuilder.IfNotPresent,
+                            [K8sManifestBuilder.CommandKey]: K8sManifestBuilder.AgentEntrypoint,
+                            [K8sManifestBuilder.EnvKey]: [
+                                this.EnvLiteral(K8sManifestBuilder.AgentRegistryUrlVar, registryUrl),
+                                this.EnvLiteral(K8sManifestBuilder.AgentHiveIdVar, workload.hiveId),
+                                this.EnvLiteral(K8sManifestBuilder.AgentEnvNameVar, workload.environmentName),
+                                {
+                                    [K8sManifestBuilder.NameKey]: K8sManifestBuilder.AgentTokenVar,
+                                    [K8sManifestBuilder.ValueFromKey]: {
+                                        [K8sManifestBuilder.SecretKeyRefKey]: {
+                                            [K8sManifestBuilder.NameKey]: tokenSecretName,
+                                            [K8sManifestBuilder.KeyKey]: K8sManifestBuilder.AgentTokenSecretKey,
+                                        },
+                                    },
+                                },
+                            ],
+                        }],
+                    },
+                },
+            },
+        }
     }
 
     private DatabaseNameOf(workload: EnvironmentWorkload): string
