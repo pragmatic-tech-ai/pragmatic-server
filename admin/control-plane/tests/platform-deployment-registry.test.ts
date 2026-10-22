@@ -12,6 +12,11 @@ import { RolloutRegistrationRegistry } from '../rollout-registration-record.js'
 import { AgentUnauthorizedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, UnknownHiveError, UnknownManifestError } from '../rollout-errors.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
 import type { HiveRecord } from '../platform-records.js'
+import { UnsupportedBackendError } from '../hive-orchestrator.js'
+import type { IHiveOrchestrator } from '../hive-orchestrator.js'
+import type { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
+import type { EnvironmentRecord } from '../environment-record.js'
+import type { EnvironmentWorkload } from '../environment-workload.js'
 
 class Fx
 {
@@ -34,20 +39,32 @@ class Fx
         return 'registry/pragmatic-server:' + version
     }
 
+    public static readonly HiveB = 'hive-b'
+    public static readonly EnvNames = ['e1', 'e2', 'e3']
+
+    public static EnvRecord(name: string, hiveId: string): EnvironmentRecord
+    {
+        return { name, hiveId, tenantId: Fx.TenantA } as unknown as EnvironmentRecord
+    }
+
     public static Hive(id: string, tenantId: string): HiveRecord
     {
         return { id, tenantId, displayName: id, cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Attach }, agentTokenRef: Fx.TokenRef, createdAt: '2026-10-22T00:00:00.000Z' }
     }
 
-    public static async Run(body: (reg: PlatformDeploymentRegistry, registrations: RolloutRegistrationRegistry) => Promise<void>): Promise<void>
+    public static async Run(body: (reg: PlatformDeploymentRegistry, registrations: RolloutRegistrationRegistry, rolls: string[]) => Promise<void>, unreachable: boolean = false): Promise<void>
     {
         const dir = await mkdtemp(join(tmpdir(), Fx.Prefix))
         try
         {
             const registrations = new RolloutRegistrationRegistry(join(dir, 'x.json'))
             const hives = new Map([[Fx.HiveA, Fx.Hive(Fx.HiveA, Fx.TenantA)]])
-            const reg = new PlatformDeploymentRegistry(new ManifestRegistry(join(dir, 'm.json')), new GatingRegistry(join(dir, 'g.json')), new SelectionRegistry(join(dir, 's.json')), new RolloutReportRegistry(join(dir, 'r.json')), registrations, { GetHive: id => hives.get(id) })
-            await body(reg, registrations)
+            const rolls: string[] = []
+            const orchestrator: IHiveOrchestrator = { Roll: async (w: EnvironmentWorkload, image: string) => { rolls.push((w as unknown as { name: string }).name + '@' + image) } } as unknown as IHiveOrchestrator
+            const factory = { For: () => { if (unreachable) { throw new UnsupportedBackendError(HiveBackend.Aks, InfraMode.Attach) } return orchestrator } } as unknown as HiveOrchestratorFactory
+            const envs = [Fx.EnvRecord(Fx.EnvNames[0], Fx.HiveA), Fx.EnvRecord(Fx.EnvNames[1], Fx.HiveA), Fx.EnvRecord(Fx.EnvNames[2], Fx.HiveB)]
+            const reg = new PlatformDeploymentRegistry(new ManifestRegistry(join(dir, 'm.json')), new GatingRegistry(join(dir, 'g.json')), new SelectionRegistry(join(dir, 's.json')), new RolloutReportRegistry(join(dir, 'r.json')), registrations, { GetHive: id => hives.get(id) }, factory, { List: () => envs }, { WorkloadFor: e => e as unknown as EnvironmentWorkload })
+            await body(reg, registrations, rolls)
         }
         finally
         {
@@ -165,4 +182,25 @@ test('VerifyAgentToken rejects empty and garbage tokens without leaking', async 
             assert.ok(presented === '' || !err.message.includes(presented))
         }
     })
+})
+
+test('SelectTarget rolls exactly the hive-bound environments with the manifest image', async () =>
+{
+    await Fx.Run(async (reg, _registrations, rolls) =>
+    {
+        await Fx.PublishGated(reg, [Fx.V2])
+        await reg.SelectTarget(Fx.HiveA, Fx.V2)
+        assert.deepEqual(rolls, [Fx.EnvNames[0] + '@' + Fx.Image(Fx.V2), Fx.EnvNames[1] + '@' + Fx.Image(Fx.V2)])
+    })
+})
+
+test('SelectTarget on an unreachable backend records the selection and does not throw', async () =>
+{
+    await Fx.Run(async (reg, _registrations, rolls) =>
+    {
+        await Fx.PublishGated(reg, [Fx.V2])
+        await reg.SelectTarget(Fx.HiveA, Fx.V2)
+        assert.equal(reg.TargetFor(Fx.HiveA)?.version, Fx.V2)
+        assert.equal(rolls.length, 0)
+    }, true)
 })

@@ -5,11 +5,21 @@ import type { GatingRegistry } from './gating-record.js'
 import type { SelectionRegistry } from './selection-record.js'
 import type { RolloutReportRegistry } from './rollout-report-record.js'
 import type { RolloutRegistrationRegistry } from './rollout-registration-record.js'
+import type { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
+import { UnsupportedBackendError } from './hive-orchestrator.js'
+import type { IEnvironmentLookup } from './platform-directory.js'
+import type { EnvironmentRecord } from './environment-record.js'
+import type { EnvironmentWorkload } from './environment-workload.js'
 import { AgentUnauthorizedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, UnknownHiveError, UnknownManifestError } from './rollout-errors.js'
 
 export interface IHiveLookup
 {
     GetHive(id: string): HiveRecord | undefined
+}
+
+export interface IWorkloadPlacement
+{
+    WorkloadFor(record: EnvironmentRecord): EnvironmentWorkload
 }
 
 export type RolloutTarget = { version: string; image: string }
@@ -32,7 +42,10 @@ export class PlatformDeploymentRegistry
         private readonly selections: SelectionRegistry,
         private readonly reports: RolloutReportRegistry,
         private readonly registrations: RolloutRegistrationRegistry,
-        private readonly hives: IHiveLookup)
+        private readonly hives: IHiveLookup,
+        private readonly orchestrators: HiveOrchestratorFactory,
+        private readonly environments: IEnvironmentLookup,
+        private readonly placement: IWorkloadPlacement)
     {
     }
 
@@ -99,7 +112,34 @@ export class PlatformDeploymentRegistry
         {
             throw new ManifestNotGatedError(version)
         }
+        const manifest = this.manifests.Get(version)!
         await this.selections.Put({ id: hiveId, hiveId, targetVersion: version, selectedAt: new Date().toISOString() })
+        await this.Push(hive, manifest.image)
+    }
+
+    /** Rolls every environment bound to the hive; an unreachable backend leaves the recorded selection for the pull agent. */
+    private async Push(hive: HiveRecord, image: string): Promise<void>
+    {
+        let orchestrator
+        try
+        {
+            orchestrator = this.orchestrators.For(hive)
+        }
+        catch (error)
+        {
+            if (error instanceof UnsupportedBackendError)
+            {
+                return
+            }
+            throw error
+        }
+        for (const env of this.environments.List())
+        {
+            if (env.hiveId === hive.id)
+            {
+                await orchestrator.Roll(this.placement.WorkloadFor(env), image)
+            }
+        }
     }
 
     public TargetFor(hiveId: string): RolloutTarget | undefined
