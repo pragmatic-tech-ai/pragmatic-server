@@ -191,16 +191,16 @@ export class App extends StackPanel implements IPortalNavigator
         this.Show(new CreateTenantView(this.client, this, clientId))
     }
 
-    public ShowHives(tenantId: string): void
+    public ShowHives(clientId: string, tenantId: string): void
     {
         this.SetLogoutVisible(true)
-        this.Show(new HiveListView(this.client, this, tenantId))
+        this.Show(new HiveListView(this.client, this, clientId, tenantId))
     }
 
-    public ShowCreateHive(tenantId: string): void
+    public ShowCreateHive(clientId: string, tenantId: string): void
     {
         this.SetLogoutVisible(true)
-        this.Show(new CreateHiveView(this.client, this, tenantId))
+        this.Show(new CreateHiveView(this.client, this, clientId, tenantId))
     }
 
     private Show(view: Visual & IPortalView): void

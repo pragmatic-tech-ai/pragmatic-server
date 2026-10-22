@@ -9,7 +9,6 @@ export class GraphListView extends PortalViewBase
     public static readonly NewLabel = 'New graph'
     public static readonly HeadingText = 'Graphs'
     public static readonly EmptyText = 'No graphs yet'
-    private static readonly FieldSeparator = '  |  '
 
     private readonly rows: StackPanel
     private pendingDelete: string | undefined
@@ -66,7 +65,7 @@ export class GraphListView extends PortalViewBase
         const row = new StackPanel()
         row.Orientation = Orientation.Horizontal
         const info = new TextBlock()
-        info.Text = [g.name, g.description, String(g.packageCount)].join(GraphListView.FieldSeparator)
+        info.Text = [g.name, g.description, String(g.packageCount)].join(PortalViewBase.FieldSeparator)
         row.AddChild(info)
         if (this.pendingDelete === g.name)
         {

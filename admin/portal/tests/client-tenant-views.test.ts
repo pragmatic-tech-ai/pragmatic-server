@@ -2,6 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { CreateClientViewModel } from '../src/create-client-view-model.js'
 import { CreateTenantViewModel } from '../src/create-tenant-view-model.js'
+import { ClientListViewModel } from '../src/client-list-view-model.js'
 import { TenantListViewModel } from '../src/tenant-list-view-model.js'
 import type { ClientDto, TenantDto } from '../src/portal-types.js'
 
@@ -30,6 +31,11 @@ class FakeClient
     {
         this.Calls.push(['ListTenants', clientId])
         return []
+    }
+
+    public async DeleteClient(id: string): Promise<void>
+    {
+        this.Calls.push(['DeleteClient', id])
     }
 
     public async DeleteTenant(id: string): Promise<void>
@@ -81,5 +87,13 @@ describe('client/tenant view-models', () =>
         await vm.Load()
         await vm.Delete('t9')
         assert.deepEqual(fake.Calls, [['ListTenants', 'c1'], ['DeleteTenant', 't9']])
+    })
+
+    it('client-list VM delete calls DeleteClient with the id', async () =>
+    {
+        const fake = new FakeClient()
+        const vm = new ClientListViewModel(fake)
+        await vm.Delete('c7')
+        assert.deepEqual(fake.Calls, [['DeleteClient', 'c7']])
     })
 })

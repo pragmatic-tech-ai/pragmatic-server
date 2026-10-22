@@ -16,9 +16,7 @@ export class HiveOption
 // Create-hive form: cluster + registry pickers, reference-name inputs only (no secrets).
 export class CreateHiveView extends PortalViewBase
 {
-    public static readonly CreateLabel = 'Create'
     public static readonly IdPlaceholder = 'Hive id'
-    public static readonly DisplayNamePlaceholder = 'Display name'
     public static readonly BackendPlaceholder = 'Cluster backend'
     public static readonly ClusterModePlaceholder = 'Cluster mode'
     public static readonly ConfigRefPlaceholder = 'Cluster config ref (optional)'
@@ -40,7 +38,7 @@ export class CreateHiveView extends PortalViewBase
     private readonly credentialRefBox = new TextBox()
     private readonly trustRootRefBox = new TextBox()
 
-    public constructor(client: ControlPlaneClient, private readonly nav: IPortalNavigator, private readonly tenantId: string)
+    public constructor(client: ControlPlaneClient, private readonly nav: IPortalNavigator, private readonly clientId: string, private readonly tenantId: string)
     {
         super()
         this.vm = new CreateHiveViewModel(client, tenantId)
@@ -48,7 +46,7 @@ export class CreateHiveView extends PortalViewBase
         heading.Text = CreateHiveView.HeadingPrefix + tenantId
         this.AddChild(heading)
         this.AddText(this.idBox, CreateHiveView.IdPlaceholder)
-        this.AddText(this.nameBox, CreateHiveView.DisplayNamePlaceholder)
+        this.AddText(this.nameBox, PortalViewBase.DisplayNamePlaceholder)
         this.AddPicker(this.backendBox, CreateHiveView.BackendPlaceholder, CreateHiveViewModel.Backends, this.vm.Backend)
         this.AddPicker(this.clusterModeBox, CreateHiveView.ClusterModePlaceholder, CreateHiveViewModel.Modes, this.vm.ClusterMode)
         this.AddText(this.configRefBox, CreateHiveView.ConfigRefPlaceholder)
@@ -56,8 +54,8 @@ export class CreateHiveView extends PortalViewBase
         this.AddText(this.endpointBox, CreateHiveView.EndpointPlaceholder)
         this.AddText(this.credentialRefBox, CreateHiveView.CredentialRefPlaceholder)
         this.AddText(this.trustRootRefBox, CreateHiveView.TrustRootRefPlaceholder)
-        this.AddChild(this.MakeButton(CreateHiveView.CreateLabel, () => { void this.Submit() }))
-        this.AddChild(this.MakeButton(PortalViewBase.BackLabel, () => { this.nav.ShowHives(tenantId) }))
+        this.AddChild(this.MakeButton(PortalViewBase.CreateLabel, () => { void this.Submit() }))
+        this.AddChild(this.MakeButton(PortalViewBase.BackLabel, () => { this.nav.ShowHives(clientId, tenantId) }))
         this.AddChild(this.message)
     }
 
@@ -106,6 +104,6 @@ export class CreateHiveView extends PortalViewBase
             this.ShowError(e)
             return
         }
-        this.nav.ShowHives(this.tenantId)
+        this.nav.ShowHives(this.clientId, this.tenantId)
     }
 }

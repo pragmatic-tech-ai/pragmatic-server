@@ -26,7 +26,6 @@ export class ManageView extends PortalViewBase
     private static readonly PathJoin = ' '
     private static readonly PathSeparator = '/'
     private static readonly DisableLabel = 'Disable'
-    private static readonly CreateLabel = 'Create'
     private static readonly RevokeLabel = 'Revoke'
     private static readonly GrantLabel = 'Grant'
     private static readonly SaveLabel = 'Save'
@@ -71,7 +70,7 @@ export class ManageView extends PortalViewBase
         this.AddChild(this.emailBox)
         this.AddChild(this.principalBox)
         this.AddChild(this.passwordBox)
-        this.AddChild(this.MakeButton(ManageView.CreateLabel, () => { void this.SubmitAccount() }))
+        this.AddChild(this.MakeButton(PortalViewBase.CreateLabel, () => { void this.SubmitAccount() }))
 
         this.AddChild(this.Heading(ManageView.GrantsHeading))
         this.AddChild(this.grantsPanel)

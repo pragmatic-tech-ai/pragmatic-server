@@ -15,7 +15,6 @@ export class PromoteGraphView extends PortalViewBase
     public static readonly NoTargetsText = 'No runtime environments'
     private static readonly SelectedPrefix = '> '
     private static readonly UnselectedPrefix = '  '
-    private static readonly FieldSeparator = '  |  '
 
     private readonly viewModel: PromoteGraphViewModel
     private readonly graphRows = new StackPanel()
@@ -94,7 +93,7 @@ export class PromoteGraphView extends PortalViewBase
         const selected = this.viewModel.SelectedGraph === g.name
         const row = new StackPanel()
         row.Orientation = Orientation.Horizontal
-        row.AddChild(this.MakeButton(this.Marker(selected) + [g.name, String(g.packageCount)].join(PromoteGraphView.FieldSeparator), () =>
+        row.AddChild(this.MakeButton(this.Marker(selected) + [g.name, String(g.packageCount)].join(PortalViewBase.FieldSeparator), () =>
         {
             this.viewModel.SelectedGraph = g.name
             this.RenderRows()

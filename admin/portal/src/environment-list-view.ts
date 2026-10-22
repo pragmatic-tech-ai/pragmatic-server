@@ -12,7 +12,6 @@ export class EnvironmentListView extends PortalViewBase
     private static readonly HeadingText = 'Environments'
     private static readonly EmptyText = 'No environments yet'
     private static readonly RunningStatus = 'running'
-    private static readonly FieldSeparator = '  |  '
     private static readonly PortPrefix = 'port '
 
     private readonly rows: StackPanel
@@ -70,7 +69,7 @@ export class EnvironmentListView extends PortalViewBase
         const row = new StackPanel()
         row.Orientation = Orientation.Horizontal
         const info = new TextBlock()
-        info.Text = [env.name, env.template, env.type, env.status, EnvironmentListView.PortPrefix + String(env.hostPort)].join(EnvironmentListView.FieldSeparator)
+        info.Text = [env.name, env.template, env.type, env.status, EnvironmentListView.PortPrefix + String(env.hostPort)].join(PortalViewBase.FieldSeparator)
         row.AddChild(info)
         const running = env.status === EnvironmentListView.RunningStatus
         row.AddChild(running

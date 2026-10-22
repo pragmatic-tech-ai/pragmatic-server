@@ -7,9 +7,7 @@ import { PortalViewBase } from './portal-view-base.js'
 // Create-client form bound to CreateClientViewModel.
 export class CreateClientView extends PortalViewBase
 {
-    public static readonly CreateLabel = 'Create'
     public static readonly IdPlaceholder = 'Client id'
-    public static readonly DisplayNamePlaceholder = 'Display name'
     public static readonly SubscriptionPlaceholder = 'Subscription ref (optional)'
     private static readonly HeadingText = 'New client'
 
@@ -27,11 +25,11 @@ export class CreateClientView extends PortalViewBase
         this.AddChild(heading)
         this.idBox.Placeholder = CreateClientView.IdPlaceholder
         this.AddChild(this.idBox)
-        this.nameBox.Placeholder = CreateClientView.DisplayNamePlaceholder
+        this.nameBox.Placeholder = PortalViewBase.DisplayNamePlaceholder
         this.AddChild(this.nameBox)
         this.subBox.Placeholder = CreateClientView.SubscriptionPlaceholder
         this.AddChild(this.subBox)
-        this.AddChild(this.MakeButton(CreateClientView.CreateLabel, () => { void this.Submit() }))
+        this.AddChild(this.MakeButton(PortalViewBase.CreateLabel, () => { void this.Submit() }))
         this.AddChild(this.MakeButton(PortalViewBase.BackLabel, () => { this.nav.ShowClients() }))
         this.AddChild(this.message)
     }

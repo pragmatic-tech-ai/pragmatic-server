@@ -12,6 +12,15 @@ export class CreateHiveViewModel extends Observable
 {
     public static readonly Backends: readonly HiveClusterBackend[] = ['aks', 'eks', 'gke', 'private', 'local']
     public static readonly Modes: readonly HiveProvisionMode[] = ['provision', 'attach']
+    public static readonly IdProperty = 'Id'
+    public static readonly DisplayNameProperty = 'DisplayName'
+    public static readonly BackendProperty = 'Backend'
+    public static readonly ClusterModeProperty = 'ClusterMode'
+    public static readonly ConfigRefProperty = 'ConfigRef'
+    public static readonly RegistryModeProperty = 'RegistryMode'
+    public static readonly EndpointProperty = 'Endpoint'
+    public static readonly CredentialRefProperty = 'CredentialRef'
+    public static readonly TrustRootRefProperty = 'TrustRootRef'
     private static readonly Empty = ''
 
     private id = CreateHiveViewModel.Empty
@@ -36,7 +45,9 @@ export class CreateHiveViewModel extends Observable
 
     public set Id(value: string)
     {
+        const old = this.id
         this.id = value
+        this.RaisePropertyChanged(CreateHiveViewModel.IdProperty, old, value)
     }
 
     public get DisplayName(): string
@@ -46,7 +57,9 @@ export class CreateHiveViewModel extends Observable
 
     public set DisplayName(value: string)
     {
+        const old = this.displayName
         this.displayName = value
+        this.RaisePropertyChanged(CreateHiveViewModel.DisplayNameProperty, old, value)
     }
 
     public get Backend(): HiveClusterBackend
@@ -56,7 +69,9 @@ export class CreateHiveViewModel extends Observable
 
     public set Backend(value: HiveClusterBackend)
     {
+        const old = this.backend
         this.backend = value
+        this.RaisePropertyChanged(CreateHiveViewModel.BackendProperty, old, value)
     }
 
     public get ClusterMode(): HiveProvisionMode
@@ -66,7 +81,9 @@ export class CreateHiveViewModel extends Observable
 
     public set ClusterMode(value: HiveProvisionMode)
     {
+        const old = this.clusterMode
         this.clusterMode = value
+        this.RaisePropertyChanged(CreateHiveViewModel.ClusterModeProperty, old, value)
     }
 
     public get ConfigRef(): string
@@ -76,7 +93,9 @@ export class CreateHiveViewModel extends Observable
 
     public set ConfigRef(value: string)
     {
+        const old = this.configRef
         this.configRef = value
+        this.RaisePropertyChanged(CreateHiveViewModel.ConfigRefProperty, old, value)
     }
 
     public get RegistryMode(): HiveProvisionMode
@@ -86,7 +105,9 @@ export class CreateHiveViewModel extends Observable
 
     public set RegistryMode(value: HiveProvisionMode)
     {
+        const old = this.registryMode
         this.registryMode = value
+        this.RaisePropertyChanged(CreateHiveViewModel.RegistryModeProperty, old, value)
     }
 
     public get Endpoint(): string
@@ -96,7 +117,9 @@ export class CreateHiveViewModel extends Observable
 
     public set Endpoint(value: string)
     {
+        const old = this.endpoint
         this.endpoint = value
+        this.RaisePropertyChanged(CreateHiveViewModel.EndpointProperty, old, value)
     }
 
     public get CredentialRef(): string
@@ -106,7 +129,9 @@ export class CreateHiveViewModel extends Observable
 
     public set CredentialRef(value: string)
     {
+        const old = this.credentialRef
         this.credentialRef = value
+        this.RaisePropertyChanged(CreateHiveViewModel.CredentialRefProperty, old, value)
     }
 
     public get TrustRootRef(): string
@@ -116,7 +141,9 @@ export class CreateHiveViewModel extends Observable
 
     public set TrustRootRef(value: string)
     {
+        const old = this.trustRootRef
         this.trustRootRef = value
+        this.RaisePropertyChanged(CreateHiveViewModel.TrustRootRefProperty, old, value)
     }
 
     public async Submit(): Promise<HiveDto>

@@ -16,9 +16,7 @@ export class ClientOption
 // Create-tenant form: client dropdown (from ListClients), id, display name.
 export class CreateTenantView extends PortalViewBase
 {
-    public static readonly CreateLabel = 'Create'
     public static readonly IdPlaceholder = 'Tenant id'
-    public static readonly DisplayNamePlaceholder = 'Display name'
     public static readonly ClientPlaceholder = 'Client'
     private static readonly HeadingText = 'New tenant'
     private static readonly LabelPath = 'Label'
@@ -41,9 +39,9 @@ export class CreateTenantView extends PortalViewBase
         this.AddChild(this.clientBox)
         this.idBox.Placeholder = CreateTenantView.IdPlaceholder
         this.AddChild(this.idBox)
-        this.nameBox.Placeholder = CreateTenantView.DisplayNamePlaceholder
+        this.nameBox.Placeholder = PortalViewBase.DisplayNamePlaceholder
         this.AddChild(this.nameBox)
-        this.AddChild(this.MakeButton(CreateTenantView.CreateLabel, () => { void this.Submit() }))
+        this.AddChild(this.MakeButton(PortalViewBase.CreateLabel, () => { void this.Submit() }))
         this.AddChild(this.MakeButton(PortalViewBase.BackLabel, () => { this.GoBack() }))
         this.AddChild(this.message)
     }

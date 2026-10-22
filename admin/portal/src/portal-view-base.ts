@@ -13,6 +13,9 @@ export abstract class PortalViewBase extends StackPanel implements IPortalView
     public static readonly ConfirmDeleteLabel = 'Confirm delete'
     public static readonly CancelLabel = 'Cancel'
     public static readonly BackLabel = 'Back'
+    protected static readonly FieldSeparator = '  |  '
+    protected static readonly CreateLabel = 'Create'
+    protected static readonly DisplayNamePlaceholder = 'Display name'
     protected static readonly ErrorPrefix = 'error: '
     protected static readonly NoMessage = ''
 

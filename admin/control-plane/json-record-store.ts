@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
@@ -35,30 +35,33 @@ export abstract class JsonRecordStore<TRecord extends { id: string }>
         const stored = parsed[this.rootKey] ?? {}
         for (const [id, record] of Object.entries(stored))
         {
-            this.records.set(id, { ...record })
+            this.records.set(id, structuredClone(record))
         }
     }
 
     public List(): readonly TRecord[]
     {
-        return [...this.records.values()]
+        return [...this.records.values()].map(r => structuredClone(r))
     }
 
     public Get(id: string): TRecord | undefined
     {
-        return this.records.get(id)
+        const record = this.records.get(id)
+        return record === undefined ? undefined : structuredClone(record)
     }
 
     public async Put(record: TRecord): Promise<void>
     {
-        this.records.set(record.id, { ...record })
+        this.records.set(record.id, structuredClone(record))
         await this.persist()
     }
 
     public async Remove(id: string): Promise<void>
     {
-        this.records.delete(id)
-        await this.persist()
+        if (this.records.delete(id))
+        {
+            await this.persist()
+        }
     }
 
     private async persist(): Promise<void>
@@ -67,6 +70,14 @@ export abstract class JsonRecordStore<TRecord extends { id: string }>
         const body = { [this.rootKey]: Object.fromEntries(this.records) }
         const temp = `${this.filePath}.${randomUUID()}${JsonRecordStore.TempSuffix}`
         await writeFile(temp, JSON.stringify(body, null, JsonRecordStore.JsonIndent), JsonRecordStore.Encoding)
-        await rename(temp, this.filePath)
+        try
+        {
+            await rename(temp, this.filePath)
+        }
+        catch (err)
+        {
+            await unlink(temp).catch(() => undefined)
+            throw err
+        }
     }
 }

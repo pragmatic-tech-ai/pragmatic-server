@@ -11,13 +11,12 @@ export class TenantListView extends PortalViewBase
     public static readonly HivesLabel = 'Hives'
     private static readonly HeadingPrefix = 'Tenants of '
     private static readonly EmptyText = 'No tenants yet'
-    private static readonly FieldSeparator = '  |  '
 
     private readonly vm: TenantListViewModel
     private readonly rows: StackPanel
     private pendingDelete: string | undefined
 
-    public constructor(client: ControlPlaneClient, private readonly nav: IPortalNavigator, clientId: string)
+    public constructor(client: ControlPlaneClient, private readonly nav: IPortalNavigator, private readonly clientId: string)
     {
         super()
         this.vm = new TenantListViewModel(client, clientId)
@@ -69,9 +68,9 @@ export class TenantListView extends PortalViewBase
         const row = new StackPanel()
         row.Orientation = Orientation.Horizontal
         const info = new TextBlock()
-        info.Text = [t.id, t.displayName].join(TenantListView.FieldSeparator)
+        info.Text = [t.id, t.displayName].join(PortalViewBase.FieldSeparator)
         row.AddChild(info)
-        row.AddChild(this.MakeButton(TenantListView.HivesLabel, () => { this.nav.ShowHives(t.id) }))
+        row.AddChild(this.MakeButton(TenantListView.HivesLabel, () => { this.nav.ShowHives(this.clientId, t.id) }))
         if (this.pendingDelete === t.id)
         {
             row.AddChild(this.MakeButton(PortalViewBase.ConfirmDeleteLabel, () =>

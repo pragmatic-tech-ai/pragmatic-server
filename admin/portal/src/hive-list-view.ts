@@ -10,21 +10,20 @@ export class HiveListView extends PortalViewBase
     public static readonly NewLabel = 'New hive'
     private static readonly HeadingPrefix = 'Hives of '
     private static readonly EmptyText = 'No hives yet'
-    private static readonly FieldSeparator = '  |  '
 
     private readonly vm: HiveListViewModel
     private readonly rows: StackPanel
     private pendingDelete: string | undefined
 
-    public constructor(client: ControlPlaneClient, private readonly nav: IPortalNavigator, tenantId: string)
+    public constructor(client: ControlPlaneClient, private readonly nav: IPortalNavigator, clientId: string, tenantId: string)
     {
         super()
         this.vm = new HiveListViewModel(client, tenantId)
         const heading = new TextBlock()
         heading.Text = HiveListView.HeadingPrefix + tenantId
         this.AddChild(heading)
-        this.AddChild(this.MakeButton(HiveListView.NewLabel, () => { this.nav.ShowCreateHive(tenantId) }))
-        this.AddChild(this.MakeButton(PortalViewBase.BackLabel, () => { this.nav.ShowClients() }))
+        this.AddChild(this.MakeButton(HiveListView.NewLabel, () => { this.nav.ShowCreateHive(clientId, tenantId) }))
+        this.AddChild(this.MakeButton(PortalViewBase.BackLabel, () => { this.nav.ShowTenants(clientId) }))
         this.AddChild(this.message)
         this.rows = new StackPanel()
         this.AddChild(this.rows)
@@ -68,7 +67,7 @@ export class HiveListView extends PortalViewBase
         const row = new StackPanel()
         row.Orientation = Orientation.Horizontal
         const info = new TextBlock()
-        info.Text = [h.id, h.displayName, h.cluster.backend].join(HiveListView.FieldSeparator)
+        info.Text = [h.id, h.displayName, h.cluster.backend].join(PortalViewBase.FieldSeparator)
         row.AddChild(info)
         if (this.pendingDelete === h.id)
         {

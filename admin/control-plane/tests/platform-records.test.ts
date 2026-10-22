@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { RecordId } from '../platform-records.js'
+import { InvalidRecordIdError, RecordId } from '../platform-records.js'
 
 describe('RecordId', () =>
 {
@@ -10,6 +10,7 @@ describe('RecordId', () =>
         for (const bad of ['', '.', '..', 'a/b', 'a\\b', 'a:b'])
         {
             assert.throws(() => RecordId.Validate(bad), /invalid record id/)
+            assert.throws(() => RecordId.Validate(bad), InvalidRecordIdError)
         }
     })
 })

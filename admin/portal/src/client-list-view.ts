@@ -11,7 +11,6 @@ export class ClientListView extends PortalViewBase
     public static readonly TenantsLabel = 'Tenants'
     private static readonly HeadingText = 'Clients'
     private static readonly EmptyText = 'No clients yet'
-    private static readonly FieldSeparator = '  |  '
 
     private readonly vm: ClientListViewModel
     private readonly rows: StackPanel
@@ -69,7 +68,7 @@ export class ClientListView extends PortalViewBase
         const row = new StackPanel()
         row.Orientation = Orientation.Horizontal
         const info = new TextBlock()
-        info.Text = [c.id, c.displayName].join(ClientListView.FieldSeparator)
+        info.Text = [c.id, c.displayName].join(PortalViewBase.FieldSeparator)
         row.AddChild(info)
         row.AddChild(this.MakeButton(ClientListView.TenantsLabel, () => { this.nav.ShowTenants(c.id) }))
         if (this.pendingDelete === c.id)
