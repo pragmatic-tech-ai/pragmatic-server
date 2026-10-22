@@ -24,6 +24,7 @@ export type EnvironmentRecord = {
     type: EnvType
     template: Template
     tenantId: string
+    hiveId?: string
     hostPort: number
     containerName: string
     volumeName: string
