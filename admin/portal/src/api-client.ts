@@ -1,4 +1,4 @@
-import type { AdminSnapshotDto, EnvironmentDto, GraphDto, GraphLoadedDto, GrantMutationDto, IdentityConfigDto, MakerTokenDto, OperatorDto, PromotionResultDto, SecurityModelDto, TemplateDto } from './portal-types.js'
+import type { AdminSnapshotDto, ClientDto, EnvironmentDto, HiveDto, TenantDto, GraphDto, GraphLoadedDto, GrantMutationDto, IdentityConfigDto, MakerTokenDto, OperatorDto, PromotionResultDto, SecurityModelDto, TemplateDto } from './portal-types.js'
 
 // Thrown for non-2xx control-plane responses; Message carries the server's error text.
 export class ApiError extends Error
@@ -18,6 +18,9 @@ export class ApiError extends Error
 export class ControlPlaneClient
 {
     private static readonly EnvironmentsRoute = '/api/environments'
+    private static readonly ClientsRoute = '/api/clients'
+    private static readonly TenantsRoute = '/api/tenants'
+    private static readonly HivesRoute = '/api/hives'
     private static readonly TemplatesRoute = '/api/templates'
     private static readonly LoginRoute = '/api/login'
     private static readonly LogoutRoute = '/api/logout'
@@ -60,6 +63,65 @@ export class ControlPlaneClient
     public async ListEnvironments(): Promise<EnvironmentDto[]>
     {
         return await this.Send<EnvironmentDto[]>(ControlPlaneClient.EnvironmentsRoute, undefined)
+    }
+
+    public async ListClients(): Promise<ClientDto[]>
+    {
+        return await this.Send<ClientDto[]>(ControlPlaneClient.ClientsRoute, undefined)
+    }
+
+    public async CreateClient(id: string, displayName: string, subscriptionRef?: string): Promise<ClientDto>
+    {
+        const body: Record<string, unknown> = { id, displayName }
+        if (subscriptionRef !== undefined)
+        {
+            body.subscriptionRef = subscriptionRef
+        }
+        return await this.Send<ClientDto>(ControlPlaneClient.ClientsRoute, { method: ControlPlaneClient.MethodPost, body: JSON.stringify(body) })
+    }
+
+    public async DeleteClient(id: string): Promise<void>
+    {
+        await this.Send<unknown>(this.ItemRoute(ControlPlaneClient.ClientsRoute, id), { method: ControlPlaneClient.MethodDelete })
+    }
+
+    // No server-side parent filter exists; filters the full list by clientId when given.
+    public async ListTenants(clientId?: string): Promise<TenantDto[]>
+    {
+        const all = await this.Send<TenantDto[]>(ControlPlaneClient.TenantsRoute, undefined)
+        return clientId === undefined ? all : all.filter(t => t.clientId === clientId)
+    }
+
+    public async CreateTenant(id: string, clientId: string, displayName: string): Promise<TenantDto>
+    {
+        return await this.Send<TenantDto>(ControlPlaneClient.TenantsRoute, { method: ControlPlaneClient.MethodPost, body: JSON.stringify({ id, clientId, displayName }) })
+    }
+
+    public async DeleteTenant(id: string): Promise<void>
+    {
+        await this.Send<unknown>(this.ItemRoute(ControlPlaneClient.TenantsRoute, id), { method: ControlPlaneClient.MethodDelete })
+    }
+
+    // No server-side parent filter exists; filters the full list by tenantId when given.
+    public async ListHives(tenantId?: string): Promise<HiveDto[]>
+    {
+        const all = await this.Send<HiveDto[]>(ControlPlaneClient.HivesRoute, undefined)
+        return tenantId === undefined ? all : all.filter(h => h.tenantId === tenantId)
+    }
+
+    public async CreateHive(input: HiveDto): Promise<HiveDto>
+    {
+        return await this.Send<HiveDto>(ControlPlaneClient.HivesRoute, { method: ControlPlaneClient.MethodPost, body: JSON.stringify(input) })
+    }
+
+    public async DeleteHive(id: string): Promise<void>
+    {
+        await this.Send<unknown>(this.ItemRoute(ControlPlaneClient.HivesRoute, id), { method: ControlPlaneClient.MethodDelete })
+    }
+
+    private ItemRoute(collection: string, id: string): string
+    {
+        return collection + ControlPlaneClient.PathSeparator + encodeURIComponent(id)
     }
 
     public async Login(email: string, password: string): Promise<void>

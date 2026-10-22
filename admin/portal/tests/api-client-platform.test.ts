@@ -1,0 +1,132 @@
+import { afterEach, describe, it } from 'node:test'
+import assert from 'node:assert/strict'
+import { ControlPlaneClient } from '../src/api-client.js'
+import type { HiveDto, TenantDto } from '../src/portal-types.js'
+
+type Recorded = { route: string; init: RequestInit | undefined }
+
+class FetchStub
+{
+    public static readonly Original = globalThis.fetch
+    public static Calls: Recorded[] = []
+
+    public static Install(payload: unknown): void
+    {
+        FetchStub.Calls = []
+        globalThis.fetch = (async (route: string, init?: RequestInit) =>
+        {
+            FetchStub.Calls.push({ route, init })
+            return { ok: true, status: 200, json: async () => payload } as Response
+        }) as typeof fetch
+    }
+
+    public static Restore(): void
+    {
+        globalThis.fetch = FetchStub.Original
+    }
+}
+
+describe('ControlPlaneClient platform records', () =>
+{
+    afterEach(() => { FetchStub.Restore() })
+
+    it('ListClients GETs /api/clients', async () =>
+    {
+        FetchStub.Install([{ id: 'c1', displayName: 'Acme' }])
+        const clients = await new ControlPlaneClient().ListClients()
+        assert.equal(FetchStub.Calls[0]!.route, '/api/clients')
+        assert.equal(FetchStub.Calls[0]!.init?.method, undefined)
+        assert.deepEqual(clients, [{ id: 'c1', displayName: 'Acme' }])
+    })
+
+    it('CreateClient POSTs the body', async () =>
+    {
+        FetchStub.Install({ id: 'c1', displayName: 'Acme', subscriptionRef: 'sub' })
+        const dto = await new ControlPlaneClient().CreateClient('c1', 'Acme', 'sub')
+        const call = FetchStub.Calls[0]!
+        assert.equal(call.route, '/api/clients')
+        assert.equal(call.init?.method, 'POST')
+        assert.deepEqual(JSON.parse(call.init?.body as string), { id: 'c1', displayName: 'Acme', subscriptionRef: 'sub' })
+        assert.equal(dto.id, 'c1')
+    })
+
+    it('CreateClient omits an absent subscriptionRef', async () =>
+    {
+        FetchStub.Install({ id: 'c1', displayName: 'Acme' })
+        await new ControlPlaneClient().CreateClient('c1', 'Acme')
+        assert.deepEqual(JSON.parse(FetchStub.Calls[0]!.init?.body as string), { id: 'c1', displayName: 'Acme' })
+    })
+
+    it('DeleteClient DELETEs the item route', async () =>
+    {
+        FetchStub.Install({ ok: true })
+        await new ControlPlaneClient().DeleteClient('c 1')
+        assert.equal(FetchStub.Calls[0]!.route, '/api/clients/c%201')
+        assert.equal(FetchStub.Calls[0]!.init?.method, 'DELETE')
+    })
+
+    it('ListTenants returns all when no client is given', async () =>
+    {
+        const all: TenantDto[] = [{ id: 't1', clientId: 'c1', displayName: 'T1' }, { id: 't2', clientId: 'c2', displayName: 'T2' }]
+        FetchStub.Install(all)
+        const result = await new ControlPlaneClient().ListTenants()
+        assert.equal(FetchStub.Calls[0]!.route, '/api/tenants')
+        assert.deepEqual(result, all)
+    })
+
+    it('ListTenants filters client-side by clientId', async () =>
+    {
+        FetchStub.Install([{ id: 't1', clientId: 'c1', displayName: 'T1' }, { id: 't2', clientId: 'c2', displayName: 'T2' }])
+        const result = await new ControlPlaneClient().ListTenants('c2')
+        assert.deepEqual(result.map(t => t.id), ['t2'])
+    })
+
+    it('CreateTenant POSTs the body', async () =>
+    {
+        FetchStub.Install({ id: 't1', clientId: 'c1', displayName: 'T1' })
+        const dto = await new ControlPlaneClient().CreateTenant('t1', 'c1', 'T1')
+        const call = FetchStub.Calls[0]!
+        assert.equal(call.route, '/api/tenants')
+        assert.equal(call.init?.method, 'POST')
+        assert.deepEqual(JSON.parse(call.init?.body as string), { id: 't1', clientId: 'c1', displayName: 'T1' })
+        assert.equal(dto.clientId, 'c1')
+    })
+
+    it('DeleteTenant DELETEs the item route', async () =>
+    {
+        FetchStub.Install({ ok: true })
+        await new ControlPlaneClient().DeleteTenant('t1')
+        assert.equal(FetchStub.Calls[0]!.route, '/api/tenants/t1')
+        assert.equal(FetchStub.Calls[0]!.init?.method, 'DELETE')
+    })
+
+    it('ListHives filters client-side by tenantId', async () =>
+    {
+        const hive = (id: string, tenantId: string): HiveDto => ({ id, tenantId, displayName: id, cluster: { backend: 'local', mode: 'attach' }, registry: { mode: 'attach' } })
+        FetchStub.Install([hive('h1', 't1'), hive('h2', 't2')])
+        const client = new ControlPlaneClient()
+        assert.deepEqual((await client.ListHives('t1')).map(h => h.id), ['h1'])
+        assert.equal(FetchStub.Calls[0]!.route, '/api/hives')
+        assert.equal((await client.ListHives()).length, 2)
+    })
+
+    it('CreateHive POSTs the full input', async () =>
+    {
+        const input: HiveDto = { id: 'h1', tenantId: 't1', displayName: 'H', cluster: { backend: 'aks', mode: 'provision', configRef: 'cfg' }, registry: { mode: 'attach', endpoint: 'e', credentialRef: 'k' }, trustRootRef: 'root' }
+        FetchStub.Install(input)
+        const dto = await new ControlPlaneClient().CreateHive(input)
+        const call = FetchStub.Calls[0]!
+        assert.equal(call.route, '/api/hives')
+        assert.equal(call.init?.method, 'POST')
+        assert.deepEqual(JSON.parse(call.init?.body as string), input)
+        assert.equal(dto.cluster.backend, 'aks')
+    })
+
+    it('DeleteHive DELETEs the item route', async () =>
+    {
+        FetchStub.Install({ ok: true })
+        await new ControlPlaneClient().DeleteHive('h1')
+        assert.equal(FetchStub.Calls[0]!.route, '/api/hives/h1')
+        assert.equal(FetchStub.Calls[0]!.init?.method, 'DELETE')
+    })
+})

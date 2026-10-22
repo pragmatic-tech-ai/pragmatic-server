@@ -18,6 +18,33 @@ export type EnvironmentDto =
     wsUrl: string
 }
 
+export type ClientDto =
+{
+    id: string
+    displayName: string
+    subscriptionRef?: string
+}
+
+export type TenantDto =
+{
+    id: string
+    clientId: string
+    displayName: string
+}
+
+export type HiveClusterBackend = 'aks' | 'eks' | 'gke' | 'private' | 'local'
+export type HiveProvisionMode = 'provision' | 'attach'
+
+export type HiveDto =
+{
+    id: string
+    tenantId: string
+    displayName: string
+    cluster: { backend: HiveClusterBackend; mode: HiveProvisionMode; configRef?: string }
+    registry: { mode: HiveProvisionMode; endpoint?: string; credentialRef?: string }
+    trustRootRef?: string
+}
+
 export type GraphDto =
 {
     name: string
