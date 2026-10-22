@@ -94,7 +94,8 @@ export class PlatformDeploymentRegistry
         {
             throw new UnknownManifestError(version)
         }
-        if (this.gating.Get(this.GateId(hive.tenantId, version)) === undefined)
+        const gate = this.gating.Get(this.GateId(hive.tenantId, version))
+        if (gate === undefined || gate.tenantId !== hive.tenantId)
         {
             throw new ManifestNotGatedError(version)
         }

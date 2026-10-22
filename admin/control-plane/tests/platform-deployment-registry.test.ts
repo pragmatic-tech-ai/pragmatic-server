@@ -9,7 +9,7 @@ import { GatingRegistry } from '../gating-record.js'
 import { SelectionRegistry } from '../selection-record.js'
 import { RolloutReportRegistry } from '../rollout-report-record.js'
 import { RolloutRegistrationRegistry } from '../rollout-registration-record.js'
-import { AgentUnauthorizedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, UnknownManifestError } from '../rollout-errors.js'
+import { AgentUnauthorizedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, UnknownHiveError, UnknownManifestError } from '../rollout-errors.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
 import type { HiveRecord } from '../platform-records.js'
 
@@ -25,6 +25,9 @@ class Fx
     public static readonly Wrong = 'not-the-token'
     public static readonly TokenRef = 'secret://x'
     public static readonly Suffix = '-x'
+    public static readonly NoHive = 'no-such-hive'
+    public static readonly GarbageLength = 100000
+    public static readonly GarbageChar = 'x'
 
     public static Image(version: string): string
     {
@@ -85,6 +88,7 @@ test('SelectTarget validates published and gated for the hive tenant', async () 
         await reg.Publish(Fx.V1, Fx.Image(Fx.V1))
         await reg.Gate(Fx.TenantB, Fx.V1)
         await assert.rejects(reg.SelectTarget(Fx.HiveA, Fx.V1), ManifestNotGatedError)
+        assert.equal(reg.ManifestsFor(Fx.TenantA).length, 0)
         assert.equal(reg.TargetFor(Fx.HiveA), undefined)
         await reg.Gate(Fx.TenantA, Fx.V1)
         await reg.SelectTarget(Fx.HiveA, Fx.V1)
@@ -135,5 +139,30 @@ test('machine token is hashed, verified, and never leaked in errors', async () =
         const err = await reg.VerifyAgentToken(Fx.HiveA, Fx.Wrong).then(() => undefined, (e: Error) => e)
         assert.ok(err instanceof AgentUnauthorizedError)
         assert.ok(!err.message.includes(token) && !err.message.includes(stored.agentTokenHash) && !err.message.includes(Fx.Wrong))
+    })
+})
+
+test('SelectTarget on an unknown hive throws UnknownHiveError', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        await reg.Publish(Fx.V1, Fx.Image(Fx.V1))
+        await assert.rejects(reg.SelectTarget(Fx.NoHive, Fx.V1), UnknownHiveError)
+    })
+})
+
+test('VerifyAgentToken rejects empty and garbage tokens without leaking', async () =>
+{
+    await Fx.Run(async (reg, registrations) =>
+    {
+        await reg.RegisterHive(Fx.HiveA)
+        const stored = registrations.Get(Fx.HiveA)!.agentTokenHash
+        for (const presented of ['', Fx.GarbageChar.repeat(Fx.GarbageLength)])
+        {
+            const err = await reg.VerifyAgentToken(Fx.HiveA, presented).then(() => undefined, (e: Error) => e)
+            assert.ok(err instanceof AgentUnauthorizedError)
+            assert.ok(!err.message.includes(stored))
+            assert.ok(presented === '' || !err.message.includes(presented))
+        }
     })
 })
