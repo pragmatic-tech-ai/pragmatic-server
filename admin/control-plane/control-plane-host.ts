@@ -153,6 +153,8 @@ export class ControlPlaneHost
     private static readonly HostHeaderPattern = /^(\[[^\]]+\]|[^:]+)(?::\d+)?$/
     private static readonly HostHeader = 'host'
     private static readonly ContentTypeHeader = 'content-type'
+    private static readonly CacheControlHeader = 'Cache-Control'
+    private static readonly NoStore = 'no-store'
     private static readonly JsonMediaType = 'application/json'
     private static readonly ContentLengthHeader = 'content-length'
     private static readonly TransferEncodingHeader = 'transfer-encoding'
@@ -805,6 +807,7 @@ export class ControlPlaneHost
             }
             // The one-time reveal: the raw agent token appears in this response body only; the registry stores just its hash.
             const dto: RolloutRegistrationDto = { token: await this.deployments.RegisterHive(id) }
+            res.setHeader(ControlPlaneHost.CacheControlHeader, ControlPlaneHost.NoStore)
             this.WriteJson(res, ControlPlaneHost.StatusCreated, dto)
             return true
         }
@@ -819,7 +822,9 @@ export class ControlPlaneHost
         const isReport = sub === ControlPlaneHost.ReportSegment && method === ControlPlaneHost.MethodPost
         if (!isTarget && !isReport)
         {
-            return false
+            // A matched agent path skipped the session gate, so a wrong method is answered here (401), never left to fall through to static serving.
+            req.resume()
+            throw new AgentUnauthorizedError(m[1] as string)
         }
         const id = ControlPlaneHost.Decode(m[1] as string)
         if (id === undefined)

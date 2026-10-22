@@ -43,6 +43,8 @@ export class InClusterK8sApi
     private static readonly NotFound = 404
     private static readonly OkMin = 200
     private static readonly OkMax = 299
+    private static readonly RequestTimeoutMs = 10000
+    private static readonly TimeoutMessage = 'kubernetes API request timed out'
     private static readonly FailurePrefix = 'kubernetes API request failed with status '
 
     public constructor(
@@ -109,6 +111,8 @@ export class InClusterK8sApi
                 res.on(InClusterK8sApi.DataEvent, (chunk: Buffer) => chunks.push(chunk))
                 res.on(InClusterK8sApi.EndEvent, () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString(InClusterK8sApi.Utf8) }))
             })
+            // generic message only: never the token, headers or body
+            req.setTimeout(InClusterK8sApi.RequestTimeoutMs, () => req.destroy(new Error(InClusterK8sApi.TimeoutMessage)))
             req.on(InClusterK8sApi.ErrorEvent, reject)
             if (body !== undefined)
             {

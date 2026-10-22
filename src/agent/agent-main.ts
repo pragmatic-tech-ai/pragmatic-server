@@ -15,6 +15,7 @@ class AgentMain
     private static readonly DefaultPollIntervalMs = 30000
     private static readonly DefaultMaxBackoffMs = 300000
     private static readonly BackoffFactor = 2
+    private static readonly RequestTimeoutMs = 10000
 
     private static readonly NamespacePrefix = 'pragmatic-env-'
     private static readonly ServerDeploymentSuffix = '-server'
@@ -102,7 +103,7 @@ class AgentMain
 
     private static async FetchTarget(url: string, token: string): Promise<IRolloutTarget | undefined>
     {
-        const response = await fetch(url, { headers: { [AgentMain.AuthorizationHeader]: AgentMain.BearerPrefix + token } })
+        const response = await AgentMain.TimedFetch(url, { headers: { [AgentMain.AuthorizationHeader]: AgentMain.BearerPrefix + token } })
         if (response.status === AgentMain.NotFound)
         {
             return undefined
@@ -116,7 +117,7 @@ class AgentMain
 
     private static async Report(url: string, token: string, environmentName: string, runningImage: string, ready: boolean): Promise<void>
     {
-        const response = await fetch(url, {
+        const response = await AgentMain.TimedFetch(url, {
             method: AgentMain.PostMethod,
             headers: { [AgentMain.AuthorizationHeader]: AgentMain.BearerPrefix + token, [AgentMain.ContentTypeHeader]: AgentMain.JsonType },
             body: JSON.stringify({ environmentName, runningImage, ready }),
@@ -124,6 +125,21 @@ class AgentMain
         if (!response.ok)
         {
             throw new Error(AgentMain.RegistryFailurePrefix + response.status)
+        }
+    }
+
+    /** fetch bounded by RequestTimeoutMs: an abort rejects (the loop's catch backs off) instead of hanging the single-threaded loop. */
+    private static async TimedFetch(url: string, init: RequestInit): Promise<Response>
+    {
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), AgentMain.RequestTimeoutMs)
+        try
+        {
+            return await fetch(url, { ...init, signal: controller.signal })
+        }
+        finally
+        {
+            clearTimeout(timer)
         }
     }
 

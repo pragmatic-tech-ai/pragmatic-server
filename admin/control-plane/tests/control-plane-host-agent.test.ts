@@ -14,7 +14,7 @@ import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
 import { RolloutFixture } from './rollout-fixture.js'
 
-type Reply = { status: number; body: string }
+type Reply = { status: number; body: string; cacheControl?: string | string[] }
 type SendOptions = { body?: unknown; cookie?: boolean; authorization?: string }
 
 class FakeOperator implements IOperatorIdentity
@@ -56,7 +56,7 @@ class Harness
             {
                 const chunks: Buffer[] = []
                 res.on('data', c => chunks.push(c as Buffer))
-                res.on('end', () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf8') }))
+                res.on('end', () => resolve({ status: res.statusCode ?? 0, cacheControl: res.headers['cache-control'], body: Buffer.concat(chunks).toString('utf8') }))
             })
             req.on('error', reject)
             req.end(opts.body === undefined ? undefined : JSON.stringify(opts.body))
@@ -138,6 +138,22 @@ describe('ControlPlaneHost agent routes (machine credential)', () =>
         const auth = 'Bearer ' + token
         assert.equal((await Harness.Send(host, 'GET', RolloutPath, { authorization: auth })).status, 401)
         assert.equal((await Harness.Send(host, 'POST', '/api/hives/local1/target', { authorization: auth, body: { version: '1.0.0' } })).status, 401)
+    })
+
+    it('rejects a wrong method on an agent path without falling through to static serving', async () =>
+    {
+        const del = await Harness.Send(host, 'DELETE', TargetPath)
+        assert.equal(del.status, 401)
+        assert.ok(!del.body.includes('portal'))
+        const get = await Harness.Send(host, 'GET', ReportPath, { authorization: 'Bearer ' + token })
+        assert.equal(get.status, 401)
+    })
+
+    it('marks the token-registration response no-store', async () =>
+    {
+        const reply = await Harness.Send(host, 'POST', '/api/hives/local1/rollout-registration', { cookie: true })
+        assert.equal(reply.status, 201)
+        assert.equal(reply.cacheControl, 'no-store')
     })
 
     it('answers 404 for an unregistered hive without echoing the token', async () =>
