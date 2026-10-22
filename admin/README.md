@@ -95,3 +95,13 @@ Requires Docker Desktop's built-in Kubernetes (context docker-desktop) and the p
 ```
 npx tsx admin/control-plane/rollout-push-smoke.ts
 ```
+
+## Gated rollout pull-agent smoke
+
+Proves the pull path on Docker Desktop's Kubernetes (context docker-desktop). The pragmatic-server:dev image must have been built after the pull agent landed, because the agent Deployment runs `node dist/bin/pragmatic-agentd.js` from it (build invocation is in docker/Dockerfile's header; run it from the workspace root architecture-agent/ with context `.`). The smoke tags and signs v1 and v2 as in the push smoke, registers the hive to obtain the machine token, stores it in a Secret (key token) in the environment namespace, brings the environment up on v1, and applies the agent objects (ServiceAccount, Role, RoleBinding, Deployment) pointing at a locally served ControlPlaneHost. The host only accepts loopback Host headers, so a small proxy listening on all interfaces rewrites the Host header and the pod reaches it as host.docker.internal. SelectTarget(hive, v2) goes through a second registry whose backend is unreachable, so it only records the selection and nothing pushes. The smoke then polls (bounded) until the in-cluster agent has patched the server Deployment to v2 on its own and has reported back so the rollout status shows the environment no longer obsolete. The namespace, the local server and proxy, the two extra image tags and the temporary stores are removed in a finally block. Operator-run and not part of the normal test run.
+
+Known caveat: Docker Desktop's kind-style node keeps its own image cache keyed by tag, so a rebuilt pragmatic-server:dev can be shadowed by a stale node copy. If the agent pod fails with a missing module, run `docker exec desktop-control-plane crictl rmi docker.io/library/pragmatic-server:dev` (and the :v1 / :v2 tags) so the node re-pulls from the docker store.
+
+```
+npx tsx admin/control-plane/rollout-pull-smoke.ts
+```
