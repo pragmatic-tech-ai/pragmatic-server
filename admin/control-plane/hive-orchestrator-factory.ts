@@ -1,3 +1,9 @@
+import { join } from 'node:path'
+import { CryptoImageVerifier } from './image-verifier.js'
+import { DockerImageDigest } from './image-digest.js'
+import { EffectiveRegistry } from './effective-registry.js'
+import { FileKeyStore } from './key-store.js'
+import { FileSignatureStore } from './signature-store.js'
 import { UnsupportedBackendError } from './hive-orchestrator.js'
 import type { IHiveOrchestrator } from './hive-orchestrator.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
@@ -11,7 +17,13 @@ export class HiveOrchestratorFactory
 {
     private static readonly DefaultLocalContext = 'docker-desktop'
 
-    public constructor(private readonly localContext: string = HiveOrchestratorFactory.DefaultLocalContext)
+    private static readonly DefaultDataRoot = '.pragmatic-data/control-plane'
+    private static readonly SignaturesFileName = 'signatures.json'
+    private static readonly KeysDirName = 'keys'
+
+    public constructor(
+        private readonly localContext: string = HiveOrchestratorFactory.DefaultLocalContext,
+        private readonly dataRoot: string = HiveOrchestratorFactory.DefaultDataRoot)
     {
     }
 
@@ -20,7 +32,16 @@ export class HiveOrchestratorFactory
         const { backend, mode, configRef } = hive.cluster
         if (backend === HiveBackend.Local && mode === InfraMode.Attach)
         {
-            return new KubectlHiveOrchestrator(new KubectlCli(configRef ?? this.localContext), new K8sManifestBuilder())
+            const verifier = new CryptoImageVerifier(
+                new DockerImageDigest(),
+                new FileSignatureStore(join(this.dataRoot, HiveOrchestratorFactory.SignaturesFileName)),
+                new FileKeyStore(join(this.dataRoot, HiveOrchestratorFactory.KeysDirName)))
+            return new KubectlHiveOrchestrator(
+                new KubectlCli(configRef ?? this.localContext),
+                new K8sManifestBuilder(),
+                EffectiveRegistry.For(hive),
+                verifier,
+                hive.trustRootRef)
         }
         throw new UnsupportedBackendError(backend, mode)
     }

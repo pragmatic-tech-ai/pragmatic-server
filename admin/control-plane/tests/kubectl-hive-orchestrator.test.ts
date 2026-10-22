@@ -5,6 +5,8 @@ import { UnsupportedBackendError } from '../hive-orchestrator.js'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
 import type { IKubectl } from '../kubectl.js'
+import type { EffectiveRegistry } from '../effective-registry.js'
+import type { IImageVerifier } from '../image-verifier.js'
 import type { EnvironmentWorkload } from '../environment-workload.js'
 
 class FakeKubectl implements IKubectl
@@ -30,8 +32,34 @@ class FakeKubectl implements IKubectl
     public DeleteNamespace(n: string) { return this.Record('DeleteNamespace', [n]) }
 }
 
+class FakeRegistry
+{
+    public constructor(private readonly prefix: string = '')
+    {
+    }
+
+    public ImageRef(baseImage: string): string
+    {
+        return this.prefix + baseImage
+    }
+}
+
+class FakeVerifier implements IImageVerifier
+{
+    public verified: Array<[string, string | undefined]> = []
+    public reject = false
+
+    public Verify(imageRef: string, trustRootRef?: string): Promise<void>
+    {
+        this.verified.push([imageRef, trustRootRef])
+        return this.reject ? Promise.reject(new Error('unverified ' + imageRef)) : Promise.resolve()
+    }
+}
+
 class Fixture
 {
+    public static readonly Trust = 'root-1'
+
     public static readonly Ns = 'pragmatic-env-dev1'
     public static readonly Dep = 'pragmatic-env-dev1-server'
 
@@ -53,10 +81,12 @@ class Fixture
         })
     }
 
-    public static Make()
+    public static Make(prefix: string = '')
     {
         const k = new FakeKubectl()
-        return { k, o: new KubectlHiveOrchestrator(k, new K8sManifestBuilder(), { attempts: 3, intervalMs: 1 }) }
+        const v = new FakeVerifier()
+        const registry = new FakeRegistry(prefix) as unknown as EffectiveRegistry
+        return { k, v, o: new KubectlHiveOrchestrator(k, new K8sManifestBuilder(), registry, v, Fixture.Trust, { attempts: 3, intervalMs: 1 }) }
     }
 }
 
@@ -67,6 +97,38 @@ describe('KubectlHiveOrchestrator', () =>
         const { k, o } = Fixture.Make()
         await o.Apply(Fixture.Workload(true))
         assert.deepEqual(k.calls, [['Apply', new K8sManifestBuilder().Render(Fixture.Workload(true))]])
+    })
+
+    it('Apply verifies the effective image and the manifest carries it', async () =>
+    {
+        const { k, v, o } = Fixture.Make('localhost:5000/')
+        await o.Apply(Fixture.Workload(true))
+        assert.deepEqual(v.verified, [['localhost:5000/srv:1', Fixture.Trust]])
+        assert.deepEqual(k.calls, [['Apply', new K8sManifestBuilder().Render({ ...Fixture.Workload(true), image: 'localhost:5000/srv:1' })]])
+    })
+
+    it('Apply never reaches kubectl when verification rejects', async () =>
+    {
+        const { k, v, o } = Fixture.Make('localhost:5000/')
+        v.reject = true
+        await assert.rejects(o.Apply(Fixture.Workload(true)), /unverified localhost:5000\/srv:1/)
+        assert.deepEqual(k.calls, [])
+    })
+
+    it('Roll verifies the effective image before SetImage', async () =>
+    {
+        const { k, v, o } = Fixture.Make('localhost:5000/')
+        await o.Roll(Fixture.Workload(false), 'srv:2')
+        assert.deepEqual(v.verified, [['localhost:5000/srv:2', Fixture.Trust]])
+        assert.deepEqual(k.calls[0], ['SetImage', Fixture.Ns, Fixture.Dep, 'server', 'localhost:5000/srv:2'])
+    })
+
+    it('Roll never reaches SetImage when verification rejects', async () =>
+    {
+        const { k, v, o } = Fixture.Make('localhost:5000/')
+        v.reject = true
+        await assert.rejects(o.Roll(Fixture.Workload(false), 'srv:2'), /unverified/)
+        assert.deepEqual(k.calls, [])
     })
 
     it('WaitHealthy waits for the server rollout only when no database', async () =>

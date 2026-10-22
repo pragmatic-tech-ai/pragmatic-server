@@ -46,6 +46,14 @@ test('without a configRef the default docker-desktop context is used', () =>
     assert.equal((orchestrator.Kubectl as KubectlCli).Context, 'docker-desktop')
 })
 
+test('the wired registry rewrites images to the hive effective registry', () =>
+{
+    const hive = FactoryFixture.Hive(HiveBackend.Local, InfraMode.Attach)
+    hive.registry = { mode: InfraMode.Provision }
+    const orchestrator = new HiveOrchestratorFactory().For(hive) as KubectlHiveOrchestrator
+    assert.equal(orchestrator.Registry.ImageRef('pragmatic-server:dev'), 'localhost:5000/pragmatic-server:dev')
+})
+
 for (const [backend, mode] of FactoryFixture.Unsupported)
 {
     test(`${backend}/${mode} throws UnsupportedBackendError naming backend and mode`, () =>

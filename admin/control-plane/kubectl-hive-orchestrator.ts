@@ -2,6 +2,8 @@ import type { EnvironmentWorkload } from './environment-workload.js'
 import type { IHiveOrchestrator, WorkloadHealth } from './hive-orchestrator.js'
 import type { IKubectl } from './kubectl.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
+import type { EffectiveRegistry } from './effective-registry.js'
+import type { IImageVerifier } from './image-verifier.js'
 
 export type OrchestratorPolling = { attempts: number; intervalMs: number }
 
@@ -30,16 +32,25 @@ export class KubectlHiveOrchestrator implements IHiveOrchestrator
         return this.kubectl
     }
 
+    public get Registry(): EffectiveRegistry
+    {
+        return this.registry
+    }
+
     public constructor(
         private readonly kubectl: IKubectl,
         private readonly manifests: K8sManifestBuilder,
+        private readonly registry: EffectiveRegistry,
+        private readonly verifier: IImageVerifier,
+        private readonly trustRootRef: string | undefined,
         private readonly polling: OrchestratorPolling = KubectlHiveOrchestrator.DefaultPolling)
     {
     }
 
-    public Apply(w: EnvironmentWorkload): Promise<void>
+    public async Apply(w: EnvironmentWorkload): Promise<void>
     {
-        return this.kubectl.Apply(this.manifests.Render(w))
+        const image = await this.VerifiedImage(w.image)
+        await this.kubectl.Apply(this.manifests.Render({ ...w, image }))
     }
 
     public async WaitHealthy(w: EnvironmentWorkload): Promise<void>
@@ -70,13 +81,22 @@ export class KubectlHiveOrchestrator implements IHiveOrchestrator
     {
         const ns = K8sManifestBuilder.NamespaceOf(w.environmentName)
         const deployment = K8sManifestBuilder.ServerDeploymentOf(w.environmentName)
-        await this.kubectl.SetImage(ns, deployment, K8sManifestBuilder.ServerContainerName, image)
+        const verified = await this.VerifiedImage(image)
+        await this.kubectl.SetImage(ns, deployment, K8sManifestBuilder.ServerContainerName, verified)
         await this.kubectl.RolloutStatus(ns, deployment)
     }
 
     public Teardown(w: EnvironmentWorkload): Promise<void>
     {
         return this.kubectl.DeleteNamespace(K8sManifestBuilder.NamespaceOf(w.environmentName))
+    }
+
+    /** Rewrites to the effective registry and verifies the signature; a rejection propagates so the cluster is never touched. */
+    private async VerifiedImage(baseImage: string): Promise<string>
+    {
+        const img = this.registry.ImageRef(baseImage)
+        await this.verifier.Verify(img, this.trustRootRef)
+        return img
     }
 
     /** IKubectl.RolloutStatus is deployment-only, so the StatefulSet is polled via Get until a replica is ready. */
