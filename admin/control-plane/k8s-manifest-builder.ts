@@ -106,9 +106,14 @@ export class K8sManifestBuilder
         })
     }
 
+    public static DatabaseOf(environmentName: string): string
+    {
+        return `${K8sManifestBuilder.NamespaceOf(environmentName)}-${K8sManifestBuilder.DatabaseSuffix}`
+    }
+
     private DatabaseNameOf(workload: EnvironmentWorkload): string
     {
-        return `${K8sManifestBuilder.NamespaceOf(workload.environmentName)}-${K8sManifestBuilder.DatabaseSuffix}`
+        return K8sManifestBuilder.DatabaseOf(workload.environmentName)
     }
 
     private Selector(name: string): Record<string, string>
