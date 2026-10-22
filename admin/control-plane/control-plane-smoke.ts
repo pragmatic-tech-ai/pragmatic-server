@@ -27,6 +27,13 @@ import { UserSeeder } from '../../environments/seed/users.js'
 import { AdminProxy, WsAdminConnector } from './admin-proxy.js'
 import { ControlPlaneHost } from './control-plane-host.js'
 import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
+import { ManifestRegistry } from './manifest-record.js'
+import { GatingRegistry } from './gating-record.js'
+import { SelectionRegistry } from './selection-record.js'
+import { RolloutReportRegistry } from './rollout-report-record.js'
+import { RolloutRegistrationRegistry } from './rollout-registration-record.js'
+import { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
+import { EnvironmentPlacement } from './environment-placement.js'
 import type { EnvironmentDto, MakerTokenDto, PromotionResultDto } from './control-plane-host.js'
 import { BundleBuilderAdapter, DockerEnvAdapter, UserSeederAdapter } from './docker-env-port.js'
 import { EnvStatus, EnvType, Template } from './environment-record.js'
@@ -52,6 +59,11 @@ export class ControlPlaneSmoke
     private static readonly LoopbackHost = '127.0.0.1'
     private static readonly EnvPortFloor = 8100
     private static readonly TempPrefix = 'cp-smoke-'
+    private static readonly ManifestsFile = 'manifests.json'
+    private static readonly GatingFile = 'gating.json'
+    private static readonly SelectionsFile = 'selections.json'
+    private static readonly ReportsFile = 'rollout-reports.json'
+    private static readonly RegistrationsFile = 'rollout-registrations.json'
     private static readonly RegistryFile = 'registry.json'
     private static readonly ClientsFile = 'clients.json'
     private static readonly PlatformTenantsFile = 'tenants.json'
@@ -239,7 +251,15 @@ export class ControlPlaneSmoke
             operatorEmail: ControlPlaneSmoke.OperatorEmail,
             initialPassword: ControlPlaneSmoke.OperatorPassword
         })
-        const host = new ControlPlaneHost(service, new GraphService(registry, proxy, name => service.AdminInfoFor(name)), staticRoot, operator, false, directory, new HiveOrchestratorFactory())
+        const orchestrators = new HiveOrchestratorFactory()
+        const manifests = new ManifestRegistry(join(dataRoot, ControlPlaneSmoke.ManifestsFile))
+        const gating = new GatingRegistry(join(dataRoot, ControlPlaneSmoke.GatingFile))
+        const selections = new SelectionRegistry(join(dataRoot, ControlPlaneSmoke.SelectionsFile))
+        const reports = new RolloutReportRegistry(join(dataRoot, ControlPlaneSmoke.ReportsFile))
+        const registrations = new RolloutRegistrationRegistry(join(dataRoot, ControlPlaneSmoke.RegistrationsFile))
+        await Promise.all([manifests.Load(), gating.Load(), selections.Load(), reports.Load(), registrations.Load()])
+        const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, reports, registrations, directory, orchestrators, registry, new EnvironmentPlacement(directory))
+        const host = new ControlPlaneHost(service, new GraphService(registry, proxy, name => service.AdminInfoFor(name)), staticRoot, operator, false, directory, orchestrators, deployments)
         try
         {
             await host.Listen(0, ControlPlaneSmoke.LoopbackHost)

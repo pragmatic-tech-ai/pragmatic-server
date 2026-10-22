@@ -35,6 +35,9 @@ import { UnsupportedBackendError } from './hive-orchestrator.js'
 import type { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import { EnvironmentPlacement } from './environment-placement.js'
 import { KubectlError } from './kubectl.js'
+import type { HiveRolloutStatus, PlatformDeploymentRegistry } from './platform-deployment-registry.js'
+import type { ManifestRecord } from './manifest-record.js'
+import { AgentUnauthorizedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, UnknownHiveError, UnknownManifestError } from './rollout-errors.js'
 import type { ClientRecord, ClusterSpec, HiveRecord, RegistrySpec, TenantRecord } from './platform-records.js'
 import type { CreateAccountParams, GraphLoadedDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
@@ -118,6 +121,17 @@ export type HiveHealthDto = {
     detail: string
 }
 
+/** A published manifest as shown to the operator: version id, image reference, notes; no secrets. */
+export type ManifestDto = ManifestRecord
+
+/** A hive's rollout state: target version plus per-environment reported state; no secrets. */
+export type HiveRolloutDto = HiveRolloutStatus
+
+/** The one-time reveal of a hive's agent token. Returned by the rollout-registration route and nowhere else; no record stores the raw token. */
+export type RolloutRegistrationDto = {
+    token: string
+}
+
 export type ChangedEvent = { type: string }
 
 type ErrorCtor = abstract new (...args: never[]) => Error
@@ -167,6 +181,20 @@ export class ControlPlaneHost
     private static readonly HealthSegment = 'health'
     private static readonly HiveHealthPathPattern = new RegExp(
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/([^/]+)/' + ControlPlaneHost.HealthSegment + '$')
+    private static readonly ManifestsSegment = 'manifests'
+    private static readonly ManifestsPath = ControlPlaneHost.ApiPrefix + ControlPlaneHost.ManifestsSegment
+    private static readonly GatingSegment = 'gating'
+    private static readonly TargetSegment = 'target'
+    private static readonly RolloutSegment = 'rollout'
+    private static readonly RolloutRegistrationSegment = 'rollout-registration'
+    private static readonly RolloutPathPattern = new RegExp(
+        '^' + ControlPlaneHost.ApiPrefix + '(' + ControlPlaneHost.TenantsSegment + '|' + ControlPlaneHost.HivesSegment + ')/([^/]+)/(' +
+        [ControlPlaneHost.ManifestsSegment, ControlPlaneHost.GatingSegment, ControlPlaneHost.TargetSegment, ControlPlaneHost.RolloutSegment, ControlPlaneHost.RolloutRegistrationSegment].join('|') +
+        ')(?:/([^/]+))?$')
+    private static readonly VersionRequiredMessage = 'version (non-empty string) is required'
+    private static readonly ImageRequiredMessage = 'image (non-empty string) is required'
+    private static readonly NotesInvalidMessage = 'notes must be a string'
+    private static readonly StatusNoContent = 204
     private static readonly IdRequiredMessage = 'id (non-empty string) is required'
     private static readonly DisplayNameRequiredMessage = 'displayName (string) is required'
     private static readonly ClientIdRequiredMessage = 'clientId (non-empty string) is required'
@@ -287,7 +315,14 @@ export class ControlPlaneHost
         [HiveHasEnvironmentsError, ControlPlaneHost.StatusConflict],
         [HivePlacementError, ControlPlaneHost.StatusConflict],
         [UnsupportedBackendError, ControlPlaneHost.StatusBadRequest],
-        [KubectlError, ControlPlaneHost.StatusBadGateway]
+        [KubectlError, ControlPlaneHost.StatusBadGateway],
+        // The tenant is not authorized to that version (it was never gated to it): forbidden, not missing.
+        [ManifestNotGatedError, ControlPlaneHost.StatusForbidden],
+        [UnknownManifestError, ControlPlaneHost.StatusNotFound],
+        [ManifestExistsError, ControlPlaneHost.StatusConflict],
+        [HiveNotRegisteredError, ControlPlaneHost.StatusNotFound],
+        [UnknownHiveError, ControlPlaneHost.StatusNotFound],
+        [AgentUnauthorizedError, ControlPlaneHost.StatusUnauthorized]
     ])
 
     private httpServer: HttpServer | undefined
@@ -302,7 +337,8 @@ export class ControlPlaneHost
         private readonly operator: IOperatorIdentity,
         private readonly secureCookie: boolean,
         private readonly directory: PlatformDirectory,
-        private readonly orchestrators: HiveOrchestratorFactory)
+        private readonly orchestrators: HiveOrchestratorFactory,
+        private readonly deployments: PlatformDeploymentRegistry)
     {
         this.staticRootAbs = resolve(staticRoot)
     }
@@ -467,6 +503,15 @@ export class ControlPlaneHost
         {
             this.WriteJson(res, ControlPlaneHost.StatusOk, TemplateCatalog.All())
             return true
+        }
+        if (path === ControlPlaneHost.ManifestsPath)
+        {
+            return await this.RoutePublishManifest(req, res, method)
+        }
+        const rom = ControlPlaneHost.RolloutPathPattern.exec(path)
+        if (rom !== null)
+        {
+            return await this.RouteRollout(req, res, method, rom)
         }
         const hhm = ControlPlaneHost.HiveHealthPathPattern.exec(path)
         if (hhm !== null)
@@ -639,6 +684,133 @@ export class ControlPlaneHost
         }
         this.WriteJson(res, ControlPlaneHost.StatusOk, dtos)
         return true
+    }
+
+    /** Serves POST /api/manifests: publishes a version/image pair; false for any other method. */
+    private async RoutePublishManifest(req: IncomingMessage, res: ServerResponse, method: string): Promise<boolean>
+    {
+        if (method !== ControlPlaneHost.MethodPost)
+        {
+            return false
+        }
+        const body = await this.ReadJsonObject(req, res)
+        if (body === undefined)
+        {
+            return true
+        }
+        if (!ControlPlaneHost.NonEmpty(body.version))
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.VersionRequiredMessage })
+            return true
+        }
+        if (!ControlPlaneHost.NonEmpty(body.image))
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ImageRequiredMessage })
+            return true
+        }
+        if (!ControlPlaneHost.OptionalString(body.notes))
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.NotesInvalidMessage })
+            return true
+        }
+        const manifest: ManifestDto = await this.deployments.Publish(body.version as string, body.image as string, body.notes as string | undefined)
+        this.WriteJson(res, ControlPlaneHost.StatusCreated, manifest)
+        return true
+    }
+
+    /** Dispatches /api/(tenants|hives)/ID/(manifests|gating[/VERSION]|target|rollout|rollout-registration); false for an unknown (resource, sub, method) combination. */
+    private async RouteRollout(req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
+    {
+        const resource = m[1] as string
+        const sub = m[3] as string
+        const tail = m[4]
+        const known = resource === ControlPlaneHost.TenantsSegment
+            ? sub === ControlPlaneHost.ManifestsSegment || sub === ControlPlaneHost.GatingSegment
+            : sub === ControlPlaneHost.TargetSegment || sub === ControlPlaneHost.RolloutSegment || sub === ControlPlaneHost.RolloutRegistrationSegment
+        if (!known || (tail !== undefined && sub !== ControlPlaneHost.GatingSegment))
+        {
+            return false
+        }
+        const id = ControlPlaneHost.Decode(m[2] as string)
+        const version = tail === undefined ? undefined : ControlPlaneHost.Decode(tail)
+        if (id === undefined || (tail !== undefined && version === undefined))
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+            return true
+        }
+        if (sub === ControlPlaneHost.ManifestsSegment && method === ControlPlaneHost.MethodGet)
+        {
+            const manifests: ManifestDto[] = [...this.deployments.ManifestsFor(id)]
+            this.WriteJson(res, ControlPlaneHost.StatusOk, manifests)
+            return true
+        }
+        if (sub === ControlPlaneHost.GatingSegment && tail === undefined && method === ControlPlaneHost.MethodPost)
+        {
+            const requested = await this.ReadVersion(req, res)
+            if (requested === undefined)
+            {
+                return true
+            }
+            await this.deployments.Gate(id, requested)
+            res.writeHead(ControlPlaneHost.StatusNoContent)
+            res.end()
+            return true
+        }
+        if (sub === ControlPlaneHost.GatingSegment && version !== undefined && method === ControlPlaneHost.MethodDelete)
+        {
+            await this.deployments.Ungate(id, version)
+            res.writeHead(ControlPlaneHost.StatusNoContent)
+            res.end()
+            return true
+        }
+        if (sub === ControlPlaneHost.TargetSegment && method === ControlPlaneHost.MethodPost)
+        {
+            const requested = await this.ReadVersion(req, res)
+            if (requested === undefined)
+            {
+                return true
+            }
+            // Records the selection and pushes it to the hive's environments; an unreachable backend leaves it for the pull agent.
+            await this.deployments.SelectTarget(id, requested)
+            res.writeHead(ControlPlaneHost.StatusNoContent)
+            res.end()
+            return true
+        }
+        if (sub === ControlPlaneHost.RolloutSegment && method === ControlPlaneHost.MethodGet)
+        {
+            const status: HiveRolloutDto = this.deployments.StatusFor(id)
+            this.WriteJson(res, ControlPlaneHost.StatusOk, status)
+            return true
+        }
+        if (sub === ControlPlaneHost.RolloutRegistrationSegment && method === ControlPlaneHost.MethodPost)
+        {
+            if (this.directory.GetHive(id) === undefined)
+            {
+                this.WriteNotFound(res)
+                return true
+            }
+            // The one-time reveal: the raw agent token appears in this response body only; the registry stores just its hash.
+            const dto: RolloutRegistrationDto = { token: await this.deployments.RegisterHive(id) }
+            this.WriteJson(res, ControlPlaneHost.StatusCreated, dto)
+            return true
+        }
+        return false
+    }
+
+    /** Reads the { version } body; writes the 400 and returns undefined when it is missing or invalid. */
+    private async ReadVersion(req: IncomingMessage, res: ServerResponse): Promise<string | undefined>
+    {
+        const body = await this.ReadJsonObject(req, res)
+        if (body === undefined)
+        {
+            return undefined
+        }
+        if (!ControlPlaneHost.NonEmpty(body.version))
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.VersionRequiredMessage })
+            return undefined
+        }
+        return body.version as string
     }
 
     private ListPlatform(resource: string): readonly (ClientDto | TenantDto | HiveDto)[]

@@ -6,6 +6,13 @@ import { UserSeeder } from '../../environments/seed/users.js'
 import { AdminProxy, WsAdminConnector } from './admin-proxy.js'
 import { ControlPlaneHost } from './control-plane-host.js'
 import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
+import { ManifestRegistry } from './manifest-record.js'
+import { GatingRegistry } from './gating-record.js'
+import { SelectionRegistry } from './selection-record.js'
+import { RolloutReportRegistry } from './rollout-report-record.js'
+import { RolloutRegistrationRegistry } from './rollout-registration-record.js'
+import { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
+import { EnvironmentPlacement } from './environment-placement.js'
 import { BundleBuilderAdapter, DockerEnvAdapter, UserSeederAdapter } from './docker-env-port.js'
 import { ClientRegistry } from './client-registry.js'
 import { HiveRegistry } from './hive-registry.js'
@@ -30,6 +37,11 @@ export class ControlPlaneServer
     private static readonly ClientsFile = 'clients.json'
     private static readonly TenantsFile = 'tenants.json'
     private static readonly HivesFile = 'hives.json'
+    private static readonly ManifestsFile = 'manifests.json'
+    private static readonly GatingFile = 'gating.json'
+    private static readonly SelectionsFile = 'selections.json'
+    private static readonly ReportsFile = 'rollout-reports.json'
+    private static readonly RegistrationsFile = 'rollout-registrations.json'
     private static readonly ParentSegment = '..'
     private static readonly PortalSegment = 'portal'
     private static readonly DistSegment = 'dist'
@@ -69,7 +81,15 @@ export class ControlPlaneServer
         const service = new EnvironmentService(registry, allocator, docker, bundle, seeder, dataRoot, proxy)
         const graphService = new GraphService(registry, proxy, name => service.AdminInfoFor(name))
         const staticRoot = join(here, ControlPlaneServer.ParentSegment, ControlPlaneServer.PortalSegment, ControlPlaneServer.DistSegment)
-        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, new HiveOrchestratorFactory())
+        const orchestrators = new HiveOrchestratorFactory()
+        const manifests = new ManifestRegistry(join(dataRoot, ControlPlaneServer.ManifestsFile))
+        const gating = new GatingRegistry(join(dataRoot, ControlPlaneServer.GatingFile))
+        const selections = new SelectionRegistry(join(dataRoot, ControlPlaneServer.SelectionsFile))
+        const reports = new RolloutReportRegistry(join(dataRoot, ControlPlaneServer.ReportsFile))
+        const registrations = new RolloutRegistrationRegistry(join(dataRoot, ControlPlaneServer.RegistrationsFile))
+        await Promise.all([manifests.Load(), gating.Load(), selections.Load(), reports.Load(), registrations.Load()])
+        const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, reports, registrations, directory, orchestrators, registry, new EnvironmentPlacement(directory))
+        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, orchestrators, deployments)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
         await host.Listen(port, ControlPlaneServer.BindHost)
         console.log(ControlPlaneServer.ListeningPrefix + String(port) + ControlPlaneServer.ListeningSuffix)
