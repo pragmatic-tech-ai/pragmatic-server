@@ -8,23 +8,35 @@
  *   npx tsx admin/control-plane/k8s-hive-smoke.ts
  *
  * Drives a throwaway dev-blank environment through Apply -> WaitHealthy -> serve ->
- * Roll -> Teardown via the real HiveOrchestratorFactory / KubectlHiveOrchestrator.
+ * Roll -> Teardown via a real KubectlHiveOrchestrator. SP-HIVE-3 made Apply/Roll fail closed on
+ * image provenance, so the smoke is provenance-aware: it signs the effective image ref with a
+ * throwaway dev Ed25519 key (temp key/signature stores) and composes the orchestrator with a real
+ * CryptoImageVerifier + trust root, exactly as registry-provenance-smoke.ts does.
  */
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
+import { generateKeyPairSync, randomBytes } from 'node:crypto'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { get } from 'node:http'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { EnvironmentWorkloadFactory } from './environment-workload.js'
 import type { EnvironmentWorkload } from './environment-workload.js'
 import { EnvStatus, EnvType, Template } from './environment-record.js'
 import type { EnvironmentRecord } from './environment-record.js'
-import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
+import { EffectiveRegistry } from './effective-registry.js'
 import type { IHiveOrchestrator } from './hive-orchestrator.js'
+import { DockerImageDigest } from './image-digest.js'
+import { ImageSigner } from './image-signer.js'
+import { CryptoImageVerifier } from './image-verifier.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
-import { KubectlError, NodeExecFile } from './kubectl.js'
+import { FileKeyStore } from './key-store.js'
+import { KubectlCli, KubectlError, NodeExecFile } from './kubectl.js'
+import { KubectlHiveOrchestrator } from './kubectl-hive-orchestrator.js'
 import { HiveBackend, InfraMode } from './platform-records.js'
 import type { HiveRecord } from './platform-records.js'
+import { FileSignatureStore } from './signature-store.js'
 
 export class K8sHiveSmoke
 {
@@ -37,6 +49,17 @@ export class K8sHiveSmoke
     private static readonly HiveId = 'smoke-hive'
     private static readonly TenantId = 'smoke-tenant'
     private static readonly Image = 'pragmatic-server:dev'
+    private static readonly KeysDirName = 'keys'
+    private static readonly SignaturesFileName = 'signatures.json'
+    private static readonly TempDirPrefix = 'k8s-smoke-prov-'
+    private static readonly SigningKeyRef = 'dev-signing'
+    private static readonly Ed25519 = 'ed25519'
+    private static readonly Pem = 'pem'
+    private static readonly Spki = 'spki'
+    private static readonly Pkcs8 = 'pkcs8'
+    private static readonly InfoTag = 'INFO '
+    private static readonly InfoSigned = 'signed effective image ref with key ref: '
+    private static readonly CleanupWarning = 'WARN temp key/signature store cleanup failed -- '
     private static readonly HealthPath = '/healthz'
     private static readonly LoopbackHost = '127.0.0.1'
     private static readonly EpochIso = '1970-01-01T00:00:00.000Z'
@@ -92,6 +115,7 @@ export class K8sHiveSmoke
     }
 
     private failed = false
+    private tempDir: string | undefined
 
     public static async Main(): Promise<void>
     {
@@ -105,11 +129,12 @@ export class K8sHiveSmoke
     {
         const S = K8sHiveSmoke
         const workload = S.Workload()
-        const orchestrator = new HiveOrchestratorFactory(S.Context).For(S.Hive())
         const namespace = K8sManifestBuilder.NamespaceOf(workload.environmentName)
+        let orchestrator: IHiveOrchestrator | undefined
         let tornDown = false
         try
         {
+            orchestrator = await this.SignedOrchestrator()
             await orchestrator.Apply(workload)
             this.Expect(S.Labels.Apply, true)
             this.Expect(S.Labels.Namespace, await this.NamespaceExists(namespace))
@@ -134,10 +159,65 @@ export class K8sHiveSmoke
         {
             if (!tornDown)
             {
-                await this.BestEffortTeardown(orchestrator, workload)
+                await this.BestEffortTeardown(orchestrator ?? this.UnsignedOrchestrator(), workload)
             }
+            await this.CleanupTempStores()
         }
         return !this.failed
+    }
+
+    /**
+     * Signs the effective image ref (what VerifiedImage verifies) into temp stores and returns an
+     * orchestrator whose fail-closed verifier reads them, with the trust root set to the dev public key ref.
+     */
+    private async SignedOrchestrator(): Promise<IHiveOrchestrator>
+    {
+        const S = K8sHiveSmoke
+        this.tempDir = await mkdtemp(join(tmpdir(), S.TempDirPrefix))
+        const keysDir = join(this.tempDir, S.KeysDirName)
+        await this.WriteKeyPair(keysDir, S.SigningKeyRef)
+        const keys = new FileKeyStore(keysDir)
+        const signatures = new FileSignatureStore(join(this.tempDir, S.SignaturesFileName))
+        const effective = EffectiveRegistry.For(S.Hive())
+        await new ImageSigner(new DockerImageDigest(), signatures, keys).Sign(effective.ImageRef(S.Image), S.SigningKeyRef)
+        console.log(S.InfoTag + S.InfoSigned + S.SigningKeyRef)
+        const verifier = new CryptoImageVerifier(new DockerImageDigest(), signatures, keys)
+        return new KubectlHiveOrchestrator(new KubectlCli(S.Context), new K8sManifestBuilder(), effective, verifier, S.SigningKeyRef)
+    }
+
+    /** Teardown never verifies provenance, so a trust-root-less orchestrator is enough for cleanup if signing setup itself failed. */
+    private UnsignedOrchestrator(): IHiveOrchestrator
+    {
+        const S = K8sHiveSmoke
+        const effective = EffectiveRegistry.For(S.Hive())
+        const verifier = new CryptoImageVerifier(new DockerImageDigest(), new FileSignatureStore(S.EmptyString), new FileKeyStore(S.EmptyString))
+        return new KubectlHiveOrchestrator(new KubectlCli(S.Context), new K8sManifestBuilder(), effective, verifier, undefined)
+    }
+
+    /** Writes `<ref>.pub` / `<ref>.key` PEM files in the layout FileKeyStore reads. The private PEM is never logged. */
+    private async WriteKeyPair(keysDir: string, ref: string): Promise<void>
+    {
+        const S = K8sHiveSmoke
+        await mkdir(keysDir, { recursive: true })
+        const pair = generateKeyPairSync(S.Ed25519)
+        await writeFile(join(keysDir, ref + FileKeyStore.PublicSuffix), pair.publicKey.export({ type: S.Spki, format: S.Pem }), S.Utf8)
+        await writeFile(join(keysDir, ref + FileKeyStore.PrivateSuffix), pair.privateKey.export({ type: S.Pkcs8, format: S.Pem }), S.Utf8)
+    }
+
+    private async CleanupTempStores(): Promise<void>
+    {
+        if (this.tempDir === undefined)
+        {
+            return
+        }
+        try
+        {
+            await rm(this.tempDir, { recursive: true, force: true })
+        }
+        catch (e)
+        {
+            console.log(K8sHiveSmoke.CleanupWarning + KubectlError.Redact(e instanceof Error ? e.message : String(e)))
+        }
     }
 
     /** A throwaway dev-blank environment, derived exactly as production derives it (no database for dev-blank). */
