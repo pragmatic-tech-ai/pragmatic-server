@@ -22,11 +22,20 @@ class RuntimeGraphFixture
     private readonly packages = mkdtempSync(join(tmpdir(), RuntimeGraphFixture.PackagesPrefix))
     private readonly graphs = mkdtempSync(join(tmpdir(), RuntimeGraphFixture.GraphsPrefix))
     private server: PragmaticServer | undefined
+    private readonly coldServers: PragmaticServer[] = []
 
     public Server(purpose: TenantPurpose = TenantPurpose.Runtime): PragmaticServer
     {
         this.server ??= new PragmaticServer({ purpose, packagesRoot: this.packages, graphsRoot: this.graphs })
         return this.server
+    }
+
+    /** A cold server over the SAME volumes: simulates the per-tenant host after idle teardown or a restart — no live instance held, but the persisted record and immutably-stored packages are intact. */
+    public ColdServer(purpose: TenantPurpose = TenantPurpose.Runtime): PragmaticServer
+    {
+        const server = new PragmaticServer({ purpose, packagesRoot: this.packages, graphsRoot: this.graphs })
+        this.coldServers.push(server)
+        return server
     }
 
     public static Package(namespace: string): ContributedPackageDto
@@ -50,6 +59,10 @@ class RuntimeGraphFixture
     public async Dispose(): Promise<void>
     {
         await this.server?.Dispose()
+        for (const cold of this.coldServers)
+        {
+            await cold.Dispose()
+        }
         rmSync(this.packages, { recursive: true, force: true })
         rmSync(this.graphs, { recursive: true, force: true })
     }
@@ -121,6 +134,38 @@ test('LoadEnvironmentGraph on a development server throws', async () =>
     {
         const server = fx.Server(TenantPurpose.Development)
         await assert.rejects(server.LoadEnvironmentGraph(RuntimeGraphFixture.Params('env', ['alpha'])))
+    }
+    finally
+    {
+        await fx.Dispose()
+    }
+})
+
+test('EnvironmentGraphQuery rehydrates from the persisted record on a cold host (idle teardown / restart)', async () =>
+{
+    const fx = new RuntimeGraphFixture()
+    try
+    {
+        await fx.Server().LoadEnvironmentGraph(RuntimeGraphFixture.Params('env', ['alpha']))
+        // A cold host over the same volumes holds no live instance — a read must rebuild it from
+        // the persisted loaded-manifest record + the stored packages, not throw.
+        const cold = fx.ColdServer()
+        const query = await cold.EnvironmentGraphQuery()
+        const count = Cypher.CypherEngine.OverQuery(query).Execute('MATCH (w:Widget) RETURN count(w) AS n').Rows[0]?.[0]
+        assert.equal(Number(count instanceof Cypher.ScalarValue ? count.Value : Number.NaN), 1)
+    }
+    finally
+    {
+        await fx.Dispose()
+    }
+})
+
+test('EnvironmentGraphQuery throws NoEnvironmentGraphError when nothing was ever promoted', async () =>
+{
+    const fx = new RuntimeGraphFixture()
+    try
+    {
+        await assert.rejects(fx.Server().EnvironmentGraphQuery(), /no environment graph is loaded/)
     }
     finally
     {

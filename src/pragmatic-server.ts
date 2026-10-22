@@ -461,14 +461,25 @@ export class PragmaticServer implements IEnvironmentGraphHost
         return record
     }
 
-    /** The loaded environment graph's query; throws if nothing is loaded. RBAC is enforced at the policy gate, so no context is taken. */
+    /** The loaded environment graph's query; rehydrates on demand from the persisted record when the live instance is absent (idle teardown / restart), and throws only when nothing was ever promoted. RBAC is enforced at the policy gate, so no context is taken. */
     public async EnvironmentGraphQuery(): Promise<IGraphQuery>
+    {
+        return EnvironmentGraphOverlay.Apply(await this.EnsureEnvironmentGraph(), this.root.Services())
+    }
+
+    /** Returns the live environment graph, lazily rebuilding it from the persisted loaded-manifest record (refs) and the immutably-stored packages when no live instance is held. Throws NoEnvironmentGraphError only when no record exists (never promoted). */
+    private async EnsureEnvironmentGraph(): Promise<EnvironmentGraph>
     {
         if (this.environmentGraph === undefined)
         {
-            throw new NoEnvironmentGraphError()
+            const record = await this.LoadedGraphStore().Read()
+            if (record === null)
+            {
+                throw new NoEnvironmentGraphError()
+            }
+            this.environmentGraph = await EnvironmentGraph.Build(this.PackagesStorage(), record.name, record.packages)
         }
-        return EnvironmentGraphOverlay.Apply(this.environmentGraph, this.root.Services())
+        return this.environmentGraph
     }
 
     /** The loaded-manifest record: the live instance's record if present, else the persisted one (survives a restart), else null. */
