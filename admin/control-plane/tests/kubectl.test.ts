@@ -81,14 +81,6 @@ test('DeleteNamespace args', async () =>
     assert.deepEqual(f.Last.args, ['--context', 'kind-hive', 'delete', 'namespace', 'ns1', '--ignore-not-found'])
 })
 
-test('Version args and returns stdout', async () =>
-{
-    const f = new KubectlFixture()
-    f.Fake.Stdout = 'v1.30'
-    assert.equal(await f.Cli.Version(), 'v1.30')
-    assert.deepEqual(f.Last.args, ['--context', 'kind-hive', 'version', '-o', 'json'])
-})
-
 test('failure throws KubectlError with secrets redacted from stderr', async () =>
 {
     const f = new KubectlFixture()

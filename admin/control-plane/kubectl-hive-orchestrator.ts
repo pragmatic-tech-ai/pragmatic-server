@@ -25,6 +25,11 @@ export class KubectlHiveOrchestrator implements IHiveOrchestrator
     private static readonly DatabaseNotReady = 'database not ready: '
     private static readonly MinReady = 1
 
+    public get Kubectl(): IKubectl
+    {
+        return this.kubectl
+    }
+
     public constructor(
         private readonly kubectl: IKubectl,
         private readonly manifests: K8sManifestBuilder,

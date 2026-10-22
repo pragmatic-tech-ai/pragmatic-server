@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import { UnsupportedBackendError } from '../hive-orchestrator.js'
 import { KubectlHiveOrchestrator } from '../kubectl-hive-orchestrator.js'
+import { KubectlCli } from '../kubectl.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
 import type { HiveRecord } from '../platform-records.js'
 
@@ -31,6 +32,18 @@ test('local/attach with a configRef still yields a KubectlHiveOrchestrator', () 
 {
     const factory = new HiveOrchestratorFactory('ignored-default')
     assert.ok(factory.For(FactoryFixture.Hive(HiveBackend.Local, InfraMode.Attach, 'kind-hive')) instanceof KubectlHiveOrchestrator)
+})
+
+test('configRef is used as the kubectl context', () =>
+{
+    const orchestrator = new HiveOrchestratorFactory().For(FactoryFixture.Hive(HiveBackend.Local, InfraMode.Attach, 'kind-hive')) as KubectlHiveOrchestrator
+    assert.equal((orchestrator.Kubectl as KubectlCli).Context, 'kind-hive')
+})
+
+test('without a configRef the default docker-desktop context is used', () =>
+{
+    const orchestrator = new HiveOrchestratorFactory().For(FactoryFixture.Hive(HiveBackend.Local, InfraMode.Attach)) as KubectlHiveOrchestrator
+    assert.equal((orchestrator.Kubectl as KubectlCli).Context, 'docker-desktop')
 })
 
 for (const [backend, mode] of FactoryFixture.Unsupported)

@@ -28,7 +28,6 @@ class FakeKubectl implements IKubectl
         return this.getResponses.length > 1 ? this.getResponses.shift()! : this.getResponses[0]
     }
     public DeleteNamespace(n: string) { return this.Record('DeleteNamespace', [n]) }
-    public async Version() { return 'v' }
 }
 
 class Fixture

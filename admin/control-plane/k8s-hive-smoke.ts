@@ -22,14 +22,18 @@ import type { EnvironmentRecord } from './environment-record.js'
 import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import type { IHiveOrchestrator } from './hive-orchestrator.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
-import { NodeExecFile } from './kubectl.js'
+import { KubectlError, NodeExecFile } from './kubectl.js'
 import { HiveBackend, InfraMode } from './platform-records.js'
 import type { HiveRecord } from './platform-records.js'
 
 export class K8sHiveSmoke
 {
     private static readonly Context = 'docker-desktop'
-    private static readonly EnvName = 'k8s-smoke'
+    private static readonly EnvPrefix = 'k8s-smoke-'
+    private static readonly SuffixBytes = 3
+    private static readonly Hex = 'hex'
+    /** Per-run name so a run never collides with (or tears down) a pre-existing namespace. */
+    private static readonly EnvName = K8sHiveSmoke.EnvPrefix + randomBytes(K8sHiveSmoke.SuffixBytes).toString(K8sHiveSmoke.Hex)
     private static readonly HiveId = 'smoke-hive'
     private static readonly TenantId = 'smoke-tenant'
     private static readonly Image = 'pragmatic-server:dev'
@@ -68,6 +72,7 @@ export class K8sHiveSmoke
     private static readonly PassTag = 'PASS '
     private static readonly FailTag = 'FAIL '
     private static readonly DetailSep = ' -- '
+    private static readonly TeardownWarning = 'WARN best-effort teardown failed for namespace '
     private static readonly OverallPass = 'OVERALL PASS'
     private static readonly OverallFail = 'OVERALL FAIL'
     private static readonly CrashPrefix = 'smoke crashed: '
@@ -304,23 +309,24 @@ export class K8sHiveSmoke
     /** Failure-path cleanup so a crashed run never leaves the namespace behind. */
     private async BestEffortTeardown(orchestrator: IHiveOrchestrator, workload: EnvironmentWorkload): Promise<void>
     {
+        const S = K8sHiveSmoke
         try
         {
             await orchestrator.Teardown(workload)
         }
-        catch
+        catch (e)
         {
-            // already gone or cluster unreachable: ignore
+            console.log(S.TeardownWarning + K8sManifestBuilder.NamespaceOf(workload.environmentName) + S.DetailSep + KubectlError.Redact(e instanceof Error ? e.message : String(e)))
         }
     }
 
-    private Expect(label: string, ok: boolean, detail: string = ''): void
+    private Expect(label: string, ok: boolean, detail: string = K8sHiveSmoke.EmptyString): void
     {
         if (!ok)
         {
             this.failed = true
         }
-        const suffix = ok || detail === '' ? '' : K8sHiveSmoke.DetailSep + detail
+        const suffix = ok || detail === K8sHiveSmoke.EmptyString ? K8sHiveSmoke.EmptyString : K8sHiveSmoke.DetailSep + detail
         console.log((ok ? K8sHiveSmoke.PassTag : K8sHiveSmoke.FailTag) + label + suffix)
     }
 

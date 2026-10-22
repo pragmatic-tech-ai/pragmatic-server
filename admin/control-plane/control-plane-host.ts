@@ -33,7 +33,8 @@ import {
 import { HiveBackend, InfraMode, InvalidRecordIdError } from './platform-records.js'
 import { UnsupportedBackendError } from './hive-orchestrator.js'
 import type { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
-import { EnvironmentWorkloadFactory } from './environment-workload.js'
+import { EnvironmentPlacement } from './environment-placement.js'
+import { KubectlError } from './kubectl.js'
 import type { ClientRecord, ClusterSpec, HiveRecord, RegistrySpec, TenantRecord } from './platform-records.js'
 import type { CreateAccountParams, GraphLoadedDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
@@ -241,6 +242,7 @@ export class ControlPlaneHost
     private static readonly StatusConflict = 409
     private static readonly StatusTooLarge = 413
     private static readonly StatusInternal = 500
+    private static readonly StatusBadGateway = 502
     private static readonly StatusUnavailable = 503
     private static readonly GenericError = 'Internal server error'
     private static readonly NotFoundMessage = 'Not found'
@@ -284,7 +286,8 @@ export class ControlPlaneHost
         [TenantHasHivesError, ControlPlaneHost.StatusConflict],
         [HiveHasEnvironmentsError, ControlPlaneHost.StatusConflict],
         [HivePlacementError, ControlPlaneHost.StatusConflict],
-        [UnsupportedBackendError, ControlPlaneHost.StatusBadRequest]
+        [UnsupportedBackendError, ControlPlaneHost.StatusBadRequest],
+        [KubectlError, ControlPlaneHost.StatusBadGateway]
     ])
 
     private httpServer: HttpServer | undefined
@@ -627,10 +630,11 @@ export class ControlPlaneHost
             return true
         }
         const orchestrator = this.orchestrators.For(hive)
+        const placement = new EnvironmentPlacement(this.directory)
         const dtos: HiveHealthDto[] = []
         for (const env of this.service.List().filter(e => e.hiveId === id))
         {
-            const health = await orchestrator.Health(EnvironmentWorkloadFactory.From(env, hive))
+            const health = await orchestrator.Health(placement.WorkloadFor(env))
             dtos.push({ environmentName: env.name, ready: health.ready, runningImage: health.runningImage, detail: health.detail })
         }
         this.WriteJson(res, ControlPlaneHost.StatusOk, dtos)

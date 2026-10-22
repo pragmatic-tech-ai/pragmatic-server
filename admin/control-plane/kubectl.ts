@@ -12,7 +12,6 @@ export interface IKubectl
     SetImage(namespace: string, deployment: string, container: string, image: string): Promise<void>
     Get(namespace: string, resource: string): Promise<string>
     DeleteNamespace(namespace: string): Promise<void>
-    Version(): Promise<string>
 }
 
 /** A failed kubectl invocation. Stderr is redacted of secret-looking tokens before it is surfaced. */
@@ -21,11 +20,12 @@ export class KubectlError extends Error
     private static readonly Redacted = '[REDACTED]'
     private static readonly SecretPattern = /(password|passwd|token|secret)\s*[=:]\s*\S+|[A-Za-z0-9+/_=-]{32,}/gi
     private static readonly Prefix = 'kubectl failed: '
+    private static readonly ErrorName = 'KubectlError'
 
     public constructor(rawStderr: string)
     {
         super(KubectlError.Prefix + KubectlError.Redact(rawStderr).trim())
-        this.name = 'KubectlError'
+        this.name = KubectlError.ErrorName
     }
 
     public static Redact(text: string): string
@@ -38,12 +38,15 @@ export class KubectlError extends Error
 export class NodeExecFile implements IExecFile
 {
     private static readonly MaxBuffer = 16 * 1024 * 1024
+    /** Upper bound on one kubectl invocation, so a wedged `rollout status` cannot hang forever. */
+    private static readonly TimeoutMs = 300000
+    private static readonly ErrorEvent = 'error'
 
     public Run(file: string, args: readonly string[], stdin?: string): Promise<{ stdout: string; stderr: string }>
     {
         return new Promise((resolve, reject) =>
         {
-            const child = execFile(file, [...args], { maxBuffer: NodeExecFile.MaxBuffer }, (err, stdout, stderr) =>
+            const child = execFile(file, [...args], { maxBuffer: NodeExecFile.MaxBuffer, timeout: NodeExecFile.TimeoutMs }, (err, stdout, stderr) =>
             {
                 if (err)
                 {
@@ -54,6 +57,8 @@ export class NodeExecFile implements IExecFile
             })
             if (stdin !== undefined)
             {
+                // EPIPE if kubectl exits before draining stdin: the exit code is the source of truth.
+                child.stdin?.on(NodeExecFile.ErrorEvent, () => undefined)
                 child.stdin?.end(stdin)
             }
         })
@@ -77,13 +82,17 @@ export class KubectlCli implements IKubectl
     private static readonly Delete = 'delete'
     private static readonly Namespace = 'namespace'
     private static readonly IgnoreNotFound = '--ignore-not-found'
-    private static readonly VersionVerb = 'version'
     private static readonly NamespaceFlag = '-n'
     private static readonly DeploymentPrefix = 'deployment/'
     private static readonly Assign = '='
 
     public constructor(private readonly context: string, private readonly exec: IExecFile = new NodeExecFile())
     {
+    }
+
+    public get Context(): string
+    {
+        return this.context
     }
 
     public async Apply(manifestJson: string): Promise<void>
@@ -109,11 +118,6 @@ export class KubectlCli implements IKubectl
     public async DeleteNamespace(namespace: string): Promise<void>
     {
         await this.Invoke([KubectlCli.Delete, KubectlCli.Namespace, namespace, KubectlCli.IgnoreNotFound])
-    }
-
-    public Version(): Promise<string>
-    {
-        return this.Invoke([KubectlCli.VersionVerb, KubectlCli.OutputFlag, KubectlCli.Json])
     }
 
     private async Invoke(args: readonly string[], stdin?: string): Promise<string>
