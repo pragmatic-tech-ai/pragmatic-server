@@ -20,6 +20,18 @@ import { InvalidEnvironmentNameError, TemplateCatalog } from './template-catalog
 import type { IOperatorIdentity } from './operator-identity.js'
 import { SessionCookie } from './session-cookie.js'
 import { AdminProxyError, AdminProxyErrorKind, type AdminSnapshot } from './admin-proxy.js'
+import {
+    ClientHasTenantsError,
+    HiveHasEnvironmentsError,
+    HivePlacementError,
+    RecordExistsError,
+    TenantHasHivesError,
+    UnknownClientError,
+    UnknownTenantError,
+    type PlatformDirectory
+} from './platform-directory.js'
+import { HiveBackend, InfraMode, InvalidRecordIdError } from './platform-records.js'
+import type { ClientRecord, ClusterSpec, HiveRecord, RegistrySpec, TenantRecord } from './platform-records.js'
 import type { CreateAccountParams, GraphLoadedDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 export interface IEnvironmentService
@@ -89,6 +101,11 @@ export type PromotionResultDto = {
     targetEnv: string
 }
 
+/** Platform record DTOs mirror the stored records 1:1. */
+export type ClientDto = ClientRecord
+export type TenantDto = TenantRecord
+export type HiveDto = HiveRecord
+
 export type ChangedEvent = { type: string }
 
 type ErrorCtor = abstract new (...args: never[]) => Error
@@ -129,6 +146,19 @@ export class ControlPlaneHost
     private static readonly TemplatesPath = '/api/templates'
     private static readonly EnvironmentsPath = '/api/environments'
     private static readonly EventsPath = '/api/events'
+    private static readonly ClientsSegment = 'clients'
+    private static readonly TenantsSegment = 'tenants'
+    private static readonly HivesSegment = 'hives'
+    private static readonly PlatformPathPattern = new RegExp(
+        '^' + ControlPlaneHost.ApiPrefix + '(' +
+        [ControlPlaneHost.ClientsSegment, ControlPlaneHost.TenantsSegment, ControlPlaneHost.HivesSegment].join('|') + ')(?:/([^/]+))?$')
+    private static readonly IdRequiredMessage = 'id (non-empty string) is required'
+    private static readonly DisplayNameRequiredMessage = 'displayName (string) is required'
+    private static readonly ClientIdRequiredMessage = 'clientId (non-empty string) is required'
+    private static readonly TenantIdRequiredMessage = 'tenantId (non-empty string) is required'
+    private static readonly OptionalStringMessage = 'optional reference fields must be strings'
+    private static readonly ClusterInvalidMessage = 'cluster must be { backend, mode } with valid values; backend one of: '
+    private static readonly RegistryInvalidMessage = 'registry must be { mode, endpoint?, credentialRef? } with a valid mode; mode one of: '
     private static readonly LoginPath = '/api/login'
     private static readonly SessionPath = '/api/session'
     private static readonly LogoutPath = '/api/logout'
@@ -231,7 +261,15 @@ export class ControlPlaneHost
         [GraphNotFoundError, ControlPlaneHost.StatusNotFound],
         [GraphNameInvalidError, ControlPlaneHost.StatusBadRequest],
         [EnvironmentNotDevelopmentError, ControlPlaneHost.StatusBadRequest],
-        [EnvironmentNotRuntimeError, ControlPlaneHost.StatusBadRequest]
+        [EnvironmentNotRuntimeError, ControlPlaneHost.StatusBadRequest],
+        [InvalidRecordIdError, ControlPlaneHost.StatusBadRequest],
+        [RecordExistsError, ControlPlaneHost.StatusConflict],
+        [UnknownClientError, ControlPlaneHost.StatusNotFound],
+        [UnknownTenantError, ControlPlaneHost.StatusNotFound],
+        [ClientHasTenantsError, ControlPlaneHost.StatusConflict],
+        [TenantHasHivesError, ControlPlaneHost.StatusConflict],
+        [HiveHasEnvironmentsError, ControlPlaneHost.StatusConflict],
+        [HivePlacementError, ControlPlaneHost.StatusConflict]
     ])
 
     private httpServer: HttpServer | undefined
@@ -244,7 +282,8 @@ export class ControlPlaneHost
         private readonly graphService: IGraphService,
         staticRoot: string,
         private readonly operator: IOperatorIdentity,
-        private readonly secureCookie: boolean)
+        private readonly secureCookie: boolean,
+        private readonly directory: PlatformDirectory)
     {
         this.staticRootAbs = resolve(staticRoot)
     }
@@ -410,6 +449,11 @@ export class ControlPlaneHost
             this.WriteJson(res, ControlPlaneHost.StatusOk, TemplateCatalog.All())
             return true
         }
+        const plm = ControlPlaneHost.PlatformPathPattern.exec(path)
+        if (plm !== null)
+        {
+            return await this.RoutePlatform(req, res, method, plm)
+        }
         if (path === ControlPlaneHost.EnvironmentsPath)
         {
             if (method === ControlPlaneHost.MethodGet)
@@ -494,6 +538,201 @@ export class ControlPlaneHost
             return true
         }
         return false
+    }
+
+    /** Dispatches /api/(clients|tenants|hives)[/ID]; false when the (resource, method) combination is unknown. */
+    private async RoutePlatform(req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
+    {
+        const resource = m[1] as string
+        if (m[2] === undefined)
+        {
+            if (method === ControlPlaneHost.MethodGet)
+            {
+                this.WriteJson(res, ControlPlaneHost.StatusOk, this.ListPlatform(resource))
+                return true
+            }
+            if (method === ControlPlaneHost.MethodPost)
+            {
+                await this.HandleCreatePlatform(resource, req, res)
+                return true
+            }
+            return false
+        }
+        const id = ControlPlaneHost.Decode(m[2])
+        if (id === undefined)
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+            return true
+        }
+        if (method === ControlPlaneHost.MethodGet)
+        {
+            const record = this.GetPlatform(resource, id)
+            if (record === undefined)
+            {
+                this.WriteNotFound(res)
+            }
+            else
+            {
+                this.WriteJson(res, ControlPlaneHost.StatusOk, record)
+            }
+            return true
+        }
+        if (method === ControlPlaneHost.MethodDelete)
+        {
+            await this.DeletePlatform(resource, id)
+            this.WriteJson(res, ControlPlaneHost.StatusOk, { ok: true })
+            return true
+        }
+        return false
+    }
+
+    private ListPlatform(resource: string): readonly (ClientDto | TenantDto | HiveDto)[]
+    {
+        switch (resource)
+        {
+            case ControlPlaneHost.ClientsSegment:
+                return this.directory.ListClients()
+            case ControlPlaneHost.TenantsSegment:
+                return this.directory.ListTenants()
+            default:
+                return this.directory.ListHives()
+        }
+    }
+
+    private GetPlatform(resource: string, id: string): ClientDto | TenantDto | HiveDto | undefined
+    {
+        switch (resource)
+        {
+            case ControlPlaneHost.ClientsSegment:
+                return this.directory.GetClient(id)
+            case ControlPlaneHost.TenantsSegment:
+                return this.directory.GetTenant(id)
+            default:
+                return this.directory.GetHive(id)
+        }
+    }
+
+    private async DeletePlatform(resource: string, id: string): Promise<void>
+    {
+        switch (resource)
+        {
+            case ControlPlaneHost.ClientsSegment:
+                await this.directory.DeleteClient(id)
+                break
+            case ControlPlaneHost.TenantsSegment:
+                await this.directory.DeleteTenant(id)
+                break
+            default:
+                await this.directory.DeleteHive(id)
+                break
+        }
+    }
+
+    private async HandleCreatePlatform(resource: string, req: IncomingMessage, res: ServerResponse): Promise<void>
+    {
+        const body = await this.ReadJsonObject(req, res)
+        if (body === undefined)
+        {
+            return
+        }
+        if (!ControlPlaneHost.NonEmpty(body.id))
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.IdRequiredMessage })
+            return
+        }
+        if (typeof body.displayName !== 'string')
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.DisplayNameRequiredMessage })
+            return
+        }
+        const id = body.id as string
+        const displayName = body.displayName
+        let created: ClientDto | TenantDto | HiveDto
+        if (resource === ControlPlaneHost.ClientsSegment)
+        {
+            if (!ControlPlaneHost.OptionalString(body.subscriptionRef))
+            {
+                this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.OptionalStringMessage })
+                return
+            }
+            created = await this.directory.CreateClient({ id, displayName, subscriptionRef: body.subscriptionRef as string | undefined })
+        }
+        else if (resource === ControlPlaneHost.TenantsSegment)
+        {
+            if (!ControlPlaneHost.NonEmpty(body.clientId))
+            {
+                this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ClientIdRequiredMessage })
+                return
+            }
+            created = await this.directory.CreateTenant({ id, clientId: body.clientId as string, displayName })
+        }
+        else
+        {
+            if (!ControlPlaneHost.NonEmpty(body.tenantId))
+            {
+                this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.TenantIdRequiredMessage })
+                return
+            }
+            const cluster = ControlPlaneHost.ParseCluster(body.cluster)
+            if (cluster === undefined)
+            {
+                this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ClusterInvalidMessage + Object.values(HiveBackend).join(', ') })
+                return
+            }
+            const registry = ControlPlaneHost.ParseRegistry(body.registry)
+            if (registry === undefined)
+            {
+                this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.RegistryInvalidMessage + Object.values(InfraMode).join(', ') })
+                return
+            }
+            if (!ControlPlaneHost.OptionalString(body.trustRootRef))
+            {
+                this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.OptionalStringMessage })
+                return
+            }
+            created = await this.directory.CreateHive({
+                id,
+                tenantId: body.tenantId as string,
+                displayName,
+                cluster,
+                registry,
+                trustRootRef: body.trustRootRef as string | undefined
+            })
+        }
+        this.WriteJson(res, ControlPlaneHost.StatusCreated, created)
+    }
+
+    private static OptionalString(v: unknown): boolean
+    {
+        return v === undefined || typeof v === 'string'
+    }
+
+    private static ParseCluster(v: unknown): ClusterSpec | undefined
+    {
+        if (v === null || typeof v !== 'object')
+        {
+            return undefined
+        }
+        const c = v as Record<string, unknown>
+        if (!(Object.values(HiveBackend) as unknown[]).includes(c.backend) || !(Object.values(InfraMode) as unknown[]).includes(c.mode) || !ControlPlaneHost.OptionalString(c.configRef))
+        {
+            return undefined
+        }
+        return { backend: c.backend as HiveBackend, mode: c.mode as InfraMode, configRef: c.configRef as string | undefined }
+    }
+
+    private static ParseRegistry(v: unknown): RegistrySpec | undefined
+    {
+        if (v === null || typeof v !== 'object')
+        {
+            return undefined
+        }
+        const r = v as Record<string, unknown>
+        if (!(Object.values(InfraMode) as unknown[]).includes(r.mode) || !ControlPlaneHost.OptionalString(r.endpoint) || !ControlPlaneHost.OptionalString(r.credentialRef))
+        {
+            return undefined
+        }
+        return { mode: r.mode as InfraMode, endpoint: r.endpoint as string | undefined, credentialRef: r.credentialRef as string | undefined }
     }
 
     /** Dispatches POST /api/environments/NAME/maker-token; false (unknown route) for any other method. */

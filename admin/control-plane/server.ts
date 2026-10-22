@@ -6,6 +6,10 @@ import { UserSeeder } from '../../environments/seed/users.js'
 import { AdminProxy, WsAdminConnector } from './admin-proxy.js'
 import { ControlPlaneHost } from './control-plane-host.js'
 import { BundleBuilderAdapter, DockerEnvAdapter, UserSeederAdapter } from './docker-env-port.js'
+import { ClientRegistry } from './client-registry.js'
+import { HiveRegistry } from './hive-registry.js'
+import { PlatformDirectory } from './platform-directory.js'
+import { TenantRegistry } from './tenant-registry.js'
 import { EnvironmentRegistry } from './environment-registry.js'
 import { EnvironmentService } from './environment-service.js'
 import { GraphService } from './graph-service.js'
@@ -22,6 +26,9 @@ export class ControlPlaneServer
     private static readonly BindHost = '127.0.0.1'
     private static readonly DataDir = 'data'
     private static readonly RegistryFile = 'registry.json'
+    private static readonly ClientsFile = 'clients.json'
+    private static readonly TenantsFile = 'tenants.json'
+    private static readonly HivesFile = 'hives.json'
     private static readonly ParentSegment = '..'
     private static readonly PortalSegment = 'portal'
     private static readonly DistSegment = 'dist'
@@ -48,6 +55,12 @@ export class ControlPlaneServer
         const registry = new EnvironmentRegistry(join(dataRoot, ControlPlaneServer.RegistryFile), docker)
         await registry.Load()
         await registry.Reconcile()
+        const directory = new PlatformDirectory(
+            new ClientRegistry(join(dataRoot, ControlPlaneServer.ClientsFile)),
+            new TenantRegistry(join(dataRoot, ControlPlaneServer.TenantsFile)),
+            new HiveRegistry(join(dataRoot, ControlPlaneServer.HivesFile)),
+            registry)
+        await directory.Load()
         const allocator = new PortAllocator(ControlPlaneServer.EnvPortFloor, new NetPortProbe())
         const bundle = new BundleBuilderAdapter()
         const seeder = new UserSeederAdapter(new UserSeeder())
@@ -55,7 +68,7 @@ export class ControlPlaneServer
         const service = new EnvironmentService(registry, allocator, docker, bundle, seeder, dataRoot, proxy)
         const graphService = new GraphService(registry, proxy, name => service.AdminInfoFor(name))
         const staticRoot = join(here, ControlPlaneServer.ParentSegment, ControlPlaneServer.PortalSegment, ControlPlaneServer.DistSegment)
-        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie)
+        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
         await host.Listen(port, ControlPlaneServer.BindHost)
         console.log(ControlPlaneServer.ListeningPrefix + String(port) + ControlPlaneServer.ListeningSuffix)

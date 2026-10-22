@@ -29,6 +29,10 @@ import { ControlPlaneHost } from './control-plane-host.js'
 import type { EnvironmentDto, MakerTokenDto, PromotionResultDto } from './control-plane-host.js'
 import { BundleBuilderAdapter, DockerEnvAdapter, UserSeederAdapter } from './docker-env-port.js'
 import { EnvStatus, EnvType, Template } from './environment-record.js'
+import { ClientRegistry } from './client-registry.js'
+import { HiveRegistry } from './hive-registry.js'
+import { PlatformDirectory } from './platform-directory.js'
+import { TenantRegistry } from './tenant-registry.js'
 import { EnvironmentRegistry } from './environment-registry.js'
 import { EnvironmentService } from './environment-service.js'
 import { GraphService } from './graph-service.js'
@@ -48,6 +52,9 @@ export class ControlPlaneSmoke
     private static readonly EnvPortFloor = 8100
     private static readonly TempPrefix = 'cp-smoke-'
     private static readonly RegistryFile = 'registry.json'
+    private static readonly ClientsFile = 'clients.json'
+    private static readonly TenantsFile = 'tenants.json'
+    private static readonly HivesFile = 'hives.json'
     private static readonly StaticDir = 'static'
     private static readonly SecretsFile = 'provisioned-secrets.json'
     private static readonly Utf8 = 'utf8'
@@ -216,6 +223,12 @@ export class ControlPlaneSmoke
         const registry = new EnvironmentRegistry(join(dataRoot, ControlPlaneSmoke.RegistryFile), docker)
         await registry.Load()
         await registry.Reconcile()
+        const directory = new PlatformDirectory(
+            new ClientRegistry(join(dataRoot, ControlPlaneSmoke.ClientsFile)),
+            new TenantRegistry(join(dataRoot, ControlPlaneSmoke.TenantsFile)),
+            new HiveRegistry(join(dataRoot, ControlPlaneSmoke.HivesFile)),
+            registry)
+        await directory.Load()
         const allocator = new PortAllocator(ControlPlaneSmoke.EnvPortFloor, new NetPortProbe())
         const proxy = new AdminProxy(new WsAdminConnector())
         const service = new EnvironmentService(registry, allocator, docker, new BundleBuilderAdapter(), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy)
@@ -225,7 +238,7 @@ export class ControlPlaneSmoke
             operatorEmail: ControlPlaneSmoke.OperatorEmail,
             initialPassword: ControlPlaneSmoke.OperatorPassword
         })
-        const host = new ControlPlaneHost(service, new GraphService(registry, proxy, name => service.AdminInfoFor(name)), staticRoot, operator, false)
+        const host = new ControlPlaneHost(service, new GraphService(registry, proxy, name => service.AdminInfoFor(name)), staticRoot, operator, false, directory)
         try
         {
             await host.Listen(0, ControlPlaneSmoke.LoopbackHost)

@@ -14,6 +14,10 @@ import { AdminProxyError, AdminProxyErrorKind, type AdminSnapshot } from '../adm
 import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import { TemplateCatalog } from '../template-catalog.js'
+import { ClientRegistry } from '../client-registry.js'
+import { TenantRegistry } from '../tenant-registry.js'
+import { HiveRegistry } from '../hive-registry.js'
+import { PlatformDirectory } from '../platform-directory.js'
 
 import { EnvironmentNotDevelopmentError, EnvironmentNotRuntimeError } from '../environment-service.js'
 import { GraphExistsError, GraphNotFoundError } from '../graph-service.js'
@@ -306,7 +310,7 @@ describe('ControlPlaneHost', () =>
         fake = new FakeService()
         fakeGraph = new FakeGraphService()
         operator = new FakeOperator()
-        host = new ControlPlaneHost(fake, fakeGraph, root, operator, false)
+        host = new ControlPlaneHost(fake, fakeGraph, root, operator, false, new PlatformDirectory(new ClientRegistry(join(parent, 'clients.json')), new TenantRegistry(join(parent, 'tenants.json')), new HiveRegistry(join(parent, 'hives.json')), { List: () => [] }))
         await host.Listen(0, '127.0.0.1')
     })
 
