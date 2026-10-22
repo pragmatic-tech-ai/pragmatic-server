@@ -7,7 +7,7 @@ describe('RecordId', () =>
     it('Validate accepts a plain slug and rejects empty/dot/separator ids', () =>
     {
         assert.doesNotThrow(() => RecordId.Validate('acme-eu'))
-        for (const bad of ['', '.', '..', 'a/b', 'a\b', 'a:b'])
+        for (const bad of ['', '.', '..', 'a/b', 'a\\b', 'a:b'])
         {
             assert.throws(() => RecordId.Validate(bad), /invalid record id/)
         }

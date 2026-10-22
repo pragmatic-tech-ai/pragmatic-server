@@ -65,7 +65,7 @@ export class RecordId
     private static readonly InvalidIdMessage = 'invalid record id'
     private static readonly CurrentSegment = '.'
     private static readonly ParentSegment = '..'
-    private static readonly SeparatorPattern = /[\/:]/
+    private static readonly SeparatorPattern = /[\\/:]/
 
     public static Validate(id: string): void
     {
