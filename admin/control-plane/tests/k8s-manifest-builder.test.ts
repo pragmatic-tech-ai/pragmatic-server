@@ -1,0 +1,100 @@
+import { describe, it } from 'node:test'
+import assert from 'node:assert/strict'
+import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
+import type { EnvironmentWorkload } from '../environment-workload.js'
+
+type K8sObject = {
+    kind: string
+    metadata: { name: string; namespace?: string; labels?: Record<string, string> }
+    spec: any
+}
+
+class Fixture
+{
+    public static readonly SecretValue = 's3cr3t-value-token'
+
+    public static Workload(withDb: boolean): EnvironmentWorkload
+    {
+        const workload: EnvironmentWorkload = {
+            environmentName: 'dev1',
+            hiveId: 'hive-a',
+            image: 'pragmatic-server:dev',
+            serverPort: 8080,
+            env: { PRAGMATIC_PORT: '8080', OTHER: 'x' },
+            secretRefs: ['admin-secret'],
+        }
+        if (withDb)
+        {
+            workload.database = { image: 'postgres:16', user: 'app', database: 'appdb', passwordRef: 'db-pass-ref' }
+        }
+        return workload
+    }
+
+    public static Items(withDb: boolean): K8sObject[]
+    {
+        const doc = JSON.parse(new K8sManifestBuilder().Render(Fixture.Workload(withDb)))
+        assert.equal(doc.apiVersion, 'v1')
+        assert.equal(doc.kind, 'List')
+        return doc.items
+    }
+}
+
+describe('K8sManifestBuilder', () =>
+{
+    it('renders all five objects when a database is present', () =>
+    {
+        const items = Fixture.Items(true)
+        assert.deepEqual(items.map(i => i.kind), ['Namespace', 'Deployment', 'Service', 'StatefulSet', 'Service'])
+        const server = items[2]!
+        assert.equal(server.spec.type, 'ClusterIP')
+        assert.equal(server.spec.ports[0].port, 8080)
+        const pgSvc = items[4]!
+        assert.equal(pgSvc.spec.clusterIP, 'None')
+    })
+
+    it('renders only namespace, deployment and service without a database', () =>
+    {
+        assert.deepEqual(Fixture.Items(false).map(i => i.kind), ['Namespace', 'Deployment', 'Service'])
+    })
+
+    it('labels the namespace', () =>
+    {
+        const ns = Fixture.Items(false)[0]!
+        assert.equal(ns.metadata.name, 'pragmatic-env-dev1')
+        assert.equal(ns.metadata.name, K8sManifestBuilder.NamespaceOf('dev1'))
+        assert.equal(ns.metadata.labels!['pragmatic/environment'], 'dev1')
+        assert.equal(ns.metadata.labels!['pragmatic/hive'], 'hive-a')
+    })
+
+    it('renders the server deployment', () =>
+    {
+        const dep = Fixture.Items(false)[1]!
+        assert.equal(dep.metadata.name, K8sManifestBuilder.ServerDeploymentOf('dev1'))
+        assert.equal(dep.metadata.namespace, K8sManifestBuilder.NamespaceOf('dev1'))
+        assert.equal(dep.spec.replicas, 1)
+        const c = dep.spec.template.spec.containers[0]
+        assert.equal(c.name, K8sManifestBuilder.ServerContainerName)
+        assert.equal(c.image, 'pragmatic-server:dev')
+        assert.equal(c.imagePullPolicy, 'IfNotPresent')
+        assert.equal(c.ports[0].containerPort, 8080)
+        assert.deepEqual(c.env.map((e: any) => e.name), ['PRAGMATIC_PORT', 'OTHER'])
+        assert.equal(c.readinessProbe.httpGet.path, '/healthz')
+        assert.equal(c.readinessProbe.httpGet.port, 8080)
+    })
+
+    it('references the postgres password by secretKeyRef only', () =>
+    {
+        const text = new K8sManifestBuilder().Render(Fixture.Workload(true))
+        assert.ok(!text.includes(Fixture.SecretValue))
+        const sts = (JSON.parse(text).items as K8sObject[])[3]!
+        const c = sts.spec.template.spec.containers[0]
+        assert.equal(c.image, 'postgres:16')
+        const byName = (n: string) => c.env.find((e: any) => e.name === n)
+        assert.equal(byName('POSTGRES_USER').value, 'app')
+        assert.equal(byName('POSTGRES_DB').value, 'appdb')
+        const pw = byName('POSTGRES_PASSWORD')
+        assert.equal(pw.value, undefined)
+        assert.equal(pw.valueFrom.secretKeyRef.name, 'db-pass-ref')
+        assert.ok(sts.spec.volumeClaimTemplates[0].spec.resources.requests.storage)
+    })
+})
