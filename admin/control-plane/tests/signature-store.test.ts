@@ -1,9 +1,9 @@
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { FileSignatureStore } from '../signature-store.js'
+import { FileSignatureStore, SignatureStoreCorruptError } from '../signature-store.js'
 
 class SignatureStoreFixture
 {
@@ -56,5 +56,27 @@ describe('FileSignatureStore', () =>
         const parsed = JSON.parse(await readFile(path, SignatureStoreFixture.Encoding))
         assert.deepEqual(parsed, { [SignatureStoreFixture.Digest]: SignatureStoreFixture.Signature })
         assert.equal(await new FileSignatureStore(path).Get(SignatureStoreFixture.Digest), SignatureStoreFixture.Signature)
+    })
+
+    it('throws a fixed-message error naming only the path for a non-JSON file', async () =>
+    {
+        const planted = 'SECRETSIG-not-json'
+        await writeFile(path, planted, SignatureStoreFixture.Encoding)
+        await assert.rejects(() => new FileSignatureStore(path).Get(SignatureStoreFixture.Digest), (err: Error) =>
+        {
+            assert.ok(err instanceof SignatureStoreCorruptError)
+            assert.ok(err.message.includes(path))
+            assert.ok(!err.message.includes(planted))
+            return true
+        })
+    })
+
+    it('throws the corrupt error for a null or array JSON file', async () =>
+    {
+        for (const body of ['null', '["SECRETSIG"]'])
+        {
+            await writeFile(path, body, SignatureStoreFixture.Encoding)
+            await assert.rejects(() => new FileSignatureStore(path).Get(SignatureStoreFixture.Digest), SignatureStoreCorruptError)
+        }
     })
 })

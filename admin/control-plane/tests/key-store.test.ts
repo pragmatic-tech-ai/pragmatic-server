@@ -56,4 +56,14 @@ describe('FileKeyStore', () =>
             })
         }
     })
+
+    it('rejects refs that could escape keysDir', async () =>
+    {
+        const store = new FileKeyStore(dir)
+        for (const ref of ['../x', 'a/b', ''])
+        {
+            await assert.rejects(() => store.PublicKey(ref), KeyNotFoundError)
+            await assert.rejects(() => store.PrivateKey(ref), KeyNotFoundError)
+        }
+    })
 })

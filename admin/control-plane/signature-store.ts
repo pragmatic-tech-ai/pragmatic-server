@@ -8,6 +8,19 @@ export interface ISignatureStore
     Put(digest: string, signature: string): Promise<void>
 }
 
+/** Names the corrupt file path only; never carries file contents. */
+export class SignatureStoreCorruptError extends Error
+{
+    private static readonly ErrorName = 'SignatureStoreCorruptError'
+    private static readonly MessagePrefix = 'signature store corrupt: '
+
+    public constructor(filePath: string)
+    {
+        super(`${SignatureStoreCorruptError.MessagePrefix}${filePath}`)
+        this.name = SignatureStoreCorruptError.ErrorName
+    }
+}
+
 /** Persists a `{ digest: signature }` JSON map; the local analog of cosign's OCI signature artifacts. */
 export class FileSignatureStore implements ISignatureStore
 {
@@ -35,10 +48,10 @@ export class FileSignatureStore implements ISignatureStore
 
     private async load(): Promise<Record<string, string>>
     {
+        let text: string
         try
         {
-            const text = await readFile(this.filePath, FileSignatureStore.Encoding)
-            return JSON.parse(text) as Record<string, string>
+            text = await readFile(this.filePath, FileSignatureStore.Encoding)
         }
         catch (err)
         {
@@ -48,6 +61,20 @@ export class FileSignatureStore implements ISignatureStore
             }
             throw err
         }
+        let parsed: unknown
+        try
+        {
+            parsed = JSON.parse(text)
+        }
+        catch
+        {
+            throw new SignatureStoreCorruptError(this.filePath)
+        }
+        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
+        {
+            throw new SignatureStoreCorruptError(this.filePath)
+        }
+        return parsed as Record<string, string>
     }
 
     private async persist(map: Record<string, string>): Promise<void>
