@@ -8,6 +8,7 @@ import { TenantListViewModel } from './tenant-list-view-model.js'
 export class TenantListView extends PortalViewBase
 {
     public static readonly NewLabel = 'New tenant'
+    public static readonly HivesLabel = 'Hives'
     private static readonly HeadingPrefix = 'Tenants of '
     private static readonly EmptyText = 'No tenants yet'
     private static readonly FieldSeparator = '  |  '
@@ -70,6 +71,7 @@ export class TenantListView extends PortalViewBase
         const info = new TextBlock()
         info.Text = [t.id, t.displayName].join(TenantListView.FieldSeparator)
         row.AddChild(info)
+        row.AddChild(this.MakeButton(TenantListView.HivesLabel, () => { this.nav.ShowHives(t.id) }))
         if (this.pendingDelete === t.id)
         {
             row.AddChild(this.MakeButton(PortalViewBase.ConfirmDeleteLabel, () =>

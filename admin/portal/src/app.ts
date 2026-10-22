@@ -16,6 +16,8 @@ import { ClientListView } from './client-list-view.js'
 import { CreateClientView } from './create-client-view.js'
 import { TenantListView } from './tenant-list-view.js'
 import { CreateTenantView } from './create-tenant-view.js'
+import { HiveListView } from './hive-list-view.js'
+import { CreateHiveView } from './create-hive-view.js'
 import type { IPortalNavigator, IPortalView } from './portal-types.js'
 
 // Root shell: owns the API client, switches list / create / detail, and
@@ -187,6 +189,18 @@ export class App extends StackPanel implements IPortalNavigator
     {
         this.SetLogoutVisible(true)
         this.Show(new CreateTenantView(this.client, this, clientId))
+    }
+
+    public ShowHives(tenantId: string): void
+    {
+        this.SetLogoutVisible(true)
+        this.Show(new HiveListView(this.client, this, tenantId))
+    }
+
+    public ShowCreateHive(tenantId: string): void
+    {
+        this.SetLogoutVisible(true)
+        this.Show(new CreateHiveView(this.client, this, tenantId))
     }
 
     private Show(view: Visual & IPortalView): void

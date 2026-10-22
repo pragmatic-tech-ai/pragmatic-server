@@ -183,6 +183,8 @@ export interface IPortalNavigator
     ShowCreateClient(): void
     ShowTenants(clientId: string): void
     ShowCreateTenant(clientId: string): void
+    ShowHives(tenantId: string): void
+    ShowCreateHive(tenantId: string): void
 }
 
 // A screen that can re-fetch and re-render itself (on environments-changed).
