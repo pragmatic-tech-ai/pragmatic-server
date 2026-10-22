@@ -53,7 +53,7 @@ export class ControlPlaneSmoke
     private static readonly TempPrefix = 'cp-smoke-'
     private static readonly RegistryFile = 'registry.json'
     private static readonly ClientsFile = 'clients.json'
-    private static readonly TenantsFile = 'tenants.json'
+    private static readonly PlatformTenantsFile = 'tenants.json'
     private static readonly HivesFile = 'hives.json'
     private static readonly StaticDir = 'static'
     private static readonly SecretsFile = 'provisioned-secrets.json'
@@ -225,7 +225,7 @@ export class ControlPlaneSmoke
         await registry.Reconcile()
         const directory = new PlatformDirectory(
             new ClientRegistry(join(dataRoot, ControlPlaneSmoke.ClientsFile)),
-            new TenantRegistry(join(dataRoot, ControlPlaneSmoke.TenantsFile)),
+            new TenantRegistry(join(dataRoot, ControlPlaneSmoke.PlatformTenantsFile)),
             new HiveRegistry(join(dataRoot, ControlPlaneSmoke.HivesFile)),
             registry)
         await directory.Load()
