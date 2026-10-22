@@ -1,0 +1,71 @@
+export class UnknownManifestError extends Error
+{
+    private static readonly ErrorName = 'UnknownManifestError'
+    private static readonly MessagePrefix = 'Unknown manifest: '
+
+    public constructor(id: string)
+    {
+        super(UnknownManifestError.MessagePrefix + id)
+        this.name = UnknownManifestError.ErrorName
+    }
+}
+
+export class ManifestExistsError extends Error
+{
+    private static readonly ErrorName = 'ManifestExistsError'
+    private static readonly MessagePrefix = 'Manifest already published: '
+
+    public constructor(id: string)
+    {
+        super(ManifestExistsError.MessagePrefix + id)
+        this.name = ManifestExistsError.ErrorName
+    }
+}
+
+export class ManifestNotGatedError extends Error
+{
+    private static readonly ErrorName = 'ManifestNotGatedError'
+    private static readonly MessagePrefix = 'Manifest not gated for tenant: '
+
+    public constructor(id: string)
+    {
+        super(ManifestNotGatedError.MessagePrefix + id)
+        this.name = ManifestNotGatedError.ErrorName
+    }
+}
+
+export class HiveNotRegisteredError extends Error
+{
+    private static readonly ErrorName = 'HiveNotRegisteredError'
+    private static readonly MessagePrefix = 'Hive not registered for rollout: '
+
+    public constructor(id: string)
+    {
+        super(HiveNotRegisteredError.MessagePrefix + id)
+        this.name = HiveNotRegisteredError.ErrorName
+    }
+}
+
+export class AgentUnauthorizedError extends Error
+{
+    private static readonly ErrorName = 'AgentUnauthorizedError'
+    private static readonly MessagePrefix = 'Agent unauthorized for hive: '
+
+    public constructor(id: string)
+    {
+        super(AgentUnauthorizedError.MessagePrefix + id)
+        this.name = AgentUnauthorizedError.ErrorName
+    }
+}
+
+export class UnknownHiveError extends Error
+{
+    private static readonly ErrorName = 'UnknownHiveError'
+    private static readonly MessagePrefix = 'Unknown hive: '
+
+    public constructor(id: string)
+    {
+        super(UnknownHiveError.MessagePrefix + id)
+        this.name = UnknownHiveError.ErrorName
+    }
+}
