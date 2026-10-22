@@ -191,6 +191,14 @@ export class ControlPlaneHost
         '^' + ControlPlaneHost.ApiPrefix + '(' + ControlPlaneHost.TenantsSegment + '|' + ControlPlaneHost.HivesSegment + ')/([^/]+)/(' +
         [ControlPlaneHost.ManifestsSegment, ControlPlaneHost.GatingSegment, ControlPlaneHost.TargetSegment, ControlPlaneHost.RolloutSegment, ControlPlaneHost.RolloutRegistrationSegment].join('|') +
         ')(?:/([^/]+))?$')
+    private static readonly AgentSegment = 'agent'
+    private static readonly ReportSegment = 'report'
+    private static readonly AgentPathPattern = new RegExp(
+        '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/([^/]+)/' + ControlPlaneHost.AgentSegment + '/(' +
+        [ControlPlaneHost.TargetSegment, ControlPlaneHost.ReportSegment].join('|') + ')$')
+    private static readonly AuthorizationHeader = 'authorization'
+    private static readonly BearerPattern = /^Bearer (\S+)$/
+    private static readonly ReportInvalidMessage = 'environmentName (non-empty string), runningImage (string) and ready (boolean) are required'
     private static readonly VersionRequiredMessage = 'version (non-empty string) is required'
     private static readonly ImageRequiredMessage = 'image (non-empty string) is required'
     private static readonly NotesInvalidMessage = 'notes must be a string'
@@ -442,7 +450,8 @@ export class ControlPlaneHost
                     this.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.BadOriginMessage })
                     return
                 }
-                if (!ControlPlaneHost.IsPublicApi(path) && !(await this.Authenticated(req)))
+                // Agent routes skip the operator-session gate; RouteAgent demands the per-hive bearer instead.
+                if (!ControlPlaneHost.IsPublicApi(path) && !ControlPlaneHost.IsAgentApi(path) && !(await this.Authenticated(req)))
                 {
                     req.resume()
                     this.WriteJson(res, ControlPlaneHost.StatusUnauthorized, { error: ControlPlaneHost.UnauthenticatedMessage })
@@ -507,6 +516,11 @@ export class ControlPlaneHost
         if (path === ControlPlaneHost.ManifestsPath)
         {
             return await this.RoutePublishManifest(req, res, method)
+        }
+        const agm = ControlPlaneHost.AgentPathPattern.exec(path)
+        if (agm !== null)
+        {
+            return await this.RouteAgent(req, res, method, agm)
         }
         const rom = ControlPlaneHost.RolloutPathPattern.exec(path)
         if (rom !== null)
@@ -795,6 +809,69 @@ export class ControlPlaneHost
             return true
         }
         return false
+    }
+
+    /** Machine-credential routes for the in-cluster pull agent: the per-hive bearer is verified before anything else; a bad one throws AgentUnauthorizedError (401). */
+    private async RouteAgent(req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
+    {
+        const sub = m[2] as string
+        const isTarget = sub === ControlPlaneHost.TargetSegment && method === ControlPlaneHost.MethodGet
+        const isReport = sub === ControlPlaneHost.ReportSegment && method === ControlPlaneHost.MethodPost
+        if (!isTarget && !isReport)
+        {
+            return false
+        }
+        const id = ControlPlaneHost.Decode(m[1] as string)
+        if (id === undefined)
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+            return true
+        }
+        const bearer = ControlPlaneHost.BearerToken(req)
+        if (bearer === undefined)
+        {
+            req.resume()
+            throw new AgentUnauthorizedError(id)
+        }
+        await this.deployments.VerifyAgentToken(id, bearer)
+        if (isTarget)
+        {
+            const target = this.deployments.TargetFor(id)
+            if (target === undefined)
+            {
+                this.WriteNotFound(res)
+                return true
+            }
+            this.WriteJson(res, ControlPlaneHost.StatusOk, { version: target.version, image: target.image })
+            return true
+        }
+        const body = await this.ReadJsonObject(req, res)
+        if (body === undefined)
+        {
+            return true
+        }
+        if (typeof body.environmentName !== 'string' || body.environmentName.length === 0 || typeof body.runningImage !== 'string' || typeof body.ready !== 'boolean')
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ReportInvalidMessage })
+            return true
+        }
+        await this.deployments.Report(id, body.environmentName, body.runningImage, body.ready)
+        res.writeHead(ControlPlaneHost.StatusNoContent)
+        res.end()
+        return true
+    }
+
+    /** The token from a well-formed "Authorization: Bearer <token>" header, else undefined. */
+    private static BearerToken(req: IncomingMessage): string | undefined
+    {
+        const header = req.headers[ControlPlaneHost.AuthorizationHeader]
+        const m = typeof header === 'string' ? ControlPlaneHost.BearerPattern.exec(header) : null
+        return m === null ? undefined : m[1]
+    }
+
+    private static IsAgentApi(path: string): boolean
+    {
+        return ControlPlaneHost.AgentPathPattern.test(path)
     }
 
     /** Reads the { version } body; writes the 400 and returns undefined when it is missing or invalid. */
