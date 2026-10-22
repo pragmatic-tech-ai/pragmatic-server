@@ -60,6 +60,14 @@ Requires Docker and the built image. It creates, starts, stops and deletes a dev
 npx tsx admin/control-plane/control-plane-smoke.ts
 ```
 
+## Gated k8s Hive smoke
+
+Requires Docker Desktop's built-in Kubernetes (context docker-desktop) and the pragmatic-server:dev image in the local docker image store. It drives a throwaway dev-blank environment through the real KubectlHiveOrchestrator: Apply, WaitHealthy, a /healthz check through kubectl port-forward, Roll, and Teardown (asserting the namespace is NotFound afterwards); the namespace is removed in a finally block even on failure. The stock workload only sets PRAGMATIC_PORT, so the smoke adds local-only boot env (base dir, tenant id and a throwaway random master key) so the pod can reach Ready; injecting real config and secrets into k8s workloads belongs to SP-HIVE-3. The first run can take about a minute while the node loads the image. Like the control-plane smoke it is operator-run and not part of the normal test run.
+
+```
+npx tsx admin/control-plane/k8s-hive-smoke.ts
+```
+
 ## Generated data and portal tests
 
 admin/control-plane/data/ holds generated bundles, registry.json, provisioned secrets and master keys. It is generated and gitignored; never commit it. The Playwright portal spec is gated on a one-time browser install:
