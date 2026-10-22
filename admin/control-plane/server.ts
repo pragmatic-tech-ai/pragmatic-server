@@ -5,6 +5,7 @@ import { DockerEnv } from '../../environments/seed/docker.js'
 import { UserSeeder } from '../../environments/seed/users.js'
 import { AdminProxy, WsAdminConnector } from './admin-proxy.js'
 import { ControlPlaneHost } from './control-plane-host.js'
+import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import { BundleBuilderAdapter, DockerEnvAdapter, UserSeederAdapter } from './docker-env-port.js'
 import { ClientRegistry } from './client-registry.js'
 import { HiveRegistry } from './hive-registry.js'
@@ -68,7 +69,7 @@ export class ControlPlaneServer
         const service = new EnvironmentService(registry, allocator, docker, bundle, seeder, dataRoot, proxy)
         const graphService = new GraphService(registry, proxy, name => service.AdminInfoFor(name))
         const staticRoot = join(here, ControlPlaneServer.ParentSegment, ControlPlaneServer.PortalSegment, ControlPlaneServer.DistSegment)
-        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory)
+        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, new HiveOrchestratorFactory())
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
         await host.Listen(port, ControlPlaneServer.BindHost)
         console.log(ControlPlaneServer.ListeningPrefix + String(port) + ControlPlaneServer.ListeningSuffix)

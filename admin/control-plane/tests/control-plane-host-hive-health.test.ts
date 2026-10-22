@@ -1,0 +1,176 @@
+import { strict as assert } from 'node:assert'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { request } from 'node:http'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, it } from 'node:test'
+import { ControlPlaneHost, type IEnvironmentService, type IGraphService } from '../control-plane-host.js'
+import type { IOperatorIdentity, OperatorPrincipal, OperatorSession } from '../operator-identity.js'
+import { ClientRegistry } from '../client-registry.js'
+import { TenantRegistry } from '../tenant-registry.js'
+import { HiveRegistry } from '../hive-registry.js'
+import { PlatformDirectory } from '../platform-directory.js'
+import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
+import { UnsupportedBackendError } from '../hive-orchestrator.js'
+import type { IHiveOrchestrator, WorkloadHealth } from '../hive-orchestrator.js'
+import type { EnvironmentWorkload } from '../environment-workload.js'
+import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
+import { HiveBackend, InfraMode } from '../platform-records.js'
+import type { HiveRecord } from '../platform-records.js'
+
+type Reply = { status: number; body: string }
+
+class FakeOperator implements IOperatorIdentity
+{
+    public static readonly Token = 'valid-token'
+
+    public async Authenticate(_email: string, _password: string): Promise<OperatorSession | null>
+    {
+        return { token: FakeOperator.Token, expiresAt: new Date(Date.now() + 3600000) }
+    }
+
+    public async ValidateToken(token: string): Promise<OperatorPrincipal | null>
+    {
+        return token === FakeOperator.Token ? { email: 'op@example.com', principalId: 'p1' } : null
+    }
+
+    public async Revoke(_token: string): Promise<void>
+    {
+    }
+}
+
+class FakeOrchestrator implements IHiveOrchestrator
+{
+    public async Apply(_w: EnvironmentWorkload): Promise<void>
+    {
+    }
+
+    public async WaitHealthy(_w: EnvironmentWorkload): Promise<void>
+    {
+    }
+
+    public async Health(w: EnvironmentWorkload): Promise<WorkloadHealth>
+    {
+        return { ready: w.environmentName === 'dev-a', runningImage: 'img:' + w.environmentName, detail: 'ok ' + w.hiveId }
+    }
+
+    public async Roll(_w: EnvironmentWorkload, _image: string): Promise<void>
+    {
+    }
+
+    public async Teardown(_w: EnvironmentWorkload): Promise<void>
+    {
+    }
+}
+
+class FakeFactory extends HiveOrchestratorFactory
+{
+    public override For(hive: HiveRecord): IHiveOrchestrator
+    {
+        if (hive.cluster.backend !== HiveBackend.Local)
+        {
+            throw new UnsupportedBackendError(hive.cluster.backend, hive.cluster.mode)
+        }
+        return new FakeOrchestrator()
+    }
+}
+
+class FakeService
+{
+    public static Record(name: string, hiveId: string | undefined): EnvironmentRecord
+    {
+        return {
+            name, type: EnvType.Development, template: Template.DevBlank, tenantId: 't1', hiveId, hostPort: 8101,
+            containerName: 'c-' + name, volumeName: 'v-' + name, bundleDir: '/b/' + name, createdAt: '2026-01-01T00:00:00Z', status: EnvStatus.Running
+        }
+    }
+
+    public List(): readonly EnvironmentRecord[]
+    {
+        return [FakeService.Record('dev-a', 'local1'), FakeService.Record('dev-b', 'local1'), FakeService.Record('dev-c', 'cloud1'), FakeService.Record('dev-d', undefined)]
+    }
+}
+
+class Harness
+{
+    public static Get(host: ControlPlaneHost, path: string, authed: boolean = true): Promise<Reply>
+    {
+        const headers: Record<string, string> = {}
+        if (authed)
+        {
+            headers.cookie = 'cp_session=' + FakeOperator.Token
+        }
+        const addr = host.Address()
+        return new Promise((resolve, reject) =>
+        {
+            const req = request({ host: addr.address, port: addr.port, method: 'GET', path, headers }, res =>
+            {
+                const chunks: Buffer[] = []
+                res.on('data', c => chunks.push(c as Buffer))
+                res.on('end', () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf8') }))
+            })
+            req.on('error', reject)
+            req.end()
+        })
+    }
+}
+
+describe('ControlPlaneHost hive health route', () =>
+{
+    let host: ControlPlaneHost
+    let parent: string
+
+    beforeEach(async () =>
+    {
+        parent = mkdtempSync(join(tmpdir(), 'cp-hive-health-'))
+        const root = join(parent, 'static')
+        mkdirSync(root)
+        writeFileSync(join(root, 'index.html'), '<h1>portal</h1>')
+        const directory = new PlatformDirectory(
+            new ClientRegistry(join(parent, 'clients.json')),
+            new TenantRegistry(join(parent, 'tenants.json')),
+            new HiveRegistry(join(parent, 'hives.json')),
+            { List: () => [] })
+        await directory.Load()
+        await directory.CreateClient({ id: 'acme', displayName: 'Acme' })
+        await directory.CreateTenant({ id: 't1', clientId: 'acme', displayName: 'T' })
+        await directory.CreateHive({ id: 'local1', tenantId: 't1', displayName: 'L', cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
+        await directory.CreateHive({ id: 'cloud1', tenantId: 't1', displayName: 'C', cluster: { backend: HiveBackend.Aks, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
+        host = new ControlPlaneHost(new FakeService() as unknown as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, new FakeFactory())
+        await host.Listen(0, '127.0.0.1')
+    })
+
+    afterEach(async () =>
+    {
+        await host.Close()
+        rmSync(parent, { recursive: true, force: true })
+    })
+
+    it('returns one health entry per environment bound to the hive, with no secret fields', async () =>
+    {
+        const r = await Harness.Get(host, '/api/hives/local1/health')
+        assert.equal(r.status, 200)
+        const arr = JSON.parse(r.body)
+        assert.deepEqual(arr.map((e: { environmentName: string }) => e.environmentName), ['dev-a', 'dev-b'])
+        assert.deepEqual(Object.keys(arr[0]).sort(), ['detail', 'environmentName', 'ready', 'runningImage'])
+        assert.equal(arr[0].ready, true)
+        assert.equal(arr[1].ready, false)
+        assert.equal(arr[0].runningImage, 'img:dev-a')
+        assert.doesNotMatch(r.body, /secret|password|token/i)
+    })
+
+    it('maps an unsupported backend to 400', async () =>
+    {
+        assert.equal((await Harness.Get(host, '/api/hives/cloud1/health')).status, 400)
+    })
+
+    it('returns 404 for an unknown hive', async () =>
+    {
+        assert.equal((await Harness.Get(host, '/api/hives/nope/health')).status, 404)
+    })
+
+    it('challenges an unauthenticated request with 401', async () =>
+    {
+        assert.equal((await Harness.Get(host, '/api/hives/local1/health', false)).status, 401)
+    })
+})

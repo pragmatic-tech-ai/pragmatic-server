@@ -31,6 +31,9 @@ import {
     type PlatformDirectory
 } from './platform-directory.js'
 import { HiveBackend, InfraMode, InvalidRecordIdError } from './platform-records.js'
+import { UnsupportedBackendError } from './hive-orchestrator.js'
+import type { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
+import { EnvironmentWorkloadFactory } from './environment-workload.js'
 import type { ClientRecord, ClusterSpec, HiveRecord, RegistrySpec, TenantRecord } from './platform-records.js'
 import type { CreateAccountParams, GraphLoadedDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
@@ -106,6 +109,14 @@ export type ClientDto = ClientRecord
 export type TenantDto = TenantRecord
 export type HiveDto = HiveRecord
 
+/** One environment's live workload health on its hive: no secrets, no internals. */
+export type HiveHealthDto = {
+    environmentName: string
+    ready: boolean
+    runningImage: string | undefined
+    detail: string
+}
+
 export type ChangedEvent = { type: string }
 
 type ErrorCtor = abstract new (...args: never[]) => Error
@@ -152,6 +163,9 @@ export class ControlPlaneHost
     private static readonly PlatformPathPattern = new RegExp(
         '^' + ControlPlaneHost.ApiPrefix + '(' +
         [ControlPlaneHost.ClientsSegment, ControlPlaneHost.TenantsSegment, ControlPlaneHost.HivesSegment].join('|') + ')(?:/([^/]+))?$')
+    private static readonly HealthSegment = 'health'
+    private static readonly HiveHealthPathPattern = new RegExp(
+        '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/([^/]+)/' + ControlPlaneHost.HealthSegment + '$')
     private static readonly IdRequiredMessage = 'id (non-empty string) is required'
     private static readonly DisplayNameRequiredMessage = 'displayName (string) is required'
     private static readonly ClientIdRequiredMessage = 'clientId (non-empty string) is required'
@@ -269,7 +283,8 @@ export class ControlPlaneHost
         [ClientHasTenantsError, ControlPlaneHost.StatusConflict],
         [TenantHasHivesError, ControlPlaneHost.StatusConflict],
         [HiveHasEnvironmentsError, ControlPlaneHost.StatusConflict],
-        [HivePlacementError, ControlPlaneHost.StatusConflict]
+        [HivePlacementError, ControlPlaneHost.StatusConflict],
+        [UnsupportedBackendError, ControlPlaneHost.StatusBadRequest]
     ])
 
     private httpServer: HttpServer | undefined
@@ -283,7 +298,8 @@ export class ControlPlaneHost
         staticRoot: string,
         private readonly operator: IOperatorIdentity,
         private readonly secureCookie: boolean,
-        private readonly directory: PlatformDirectory)
+        private readonly directory: PlatformDirectory,
+        private readonly orchestrators: HiveOrchestratorFactory)
     {
         this.staticRootAbs = resolve(staticRoot)
     }
@@ -449,6 +465,11 @@ export class ControlPlaneHost
             this.WriteJson(res, ControlPlaneHost.StatusOk, TemplateCatalog.All())
             return true
         }
+        const hhm = ControlPlaneHost.HiveHealthPathPattern.exec(path)
+        if (hhm !== null)
+        {
+            return await this.RouteHiveHealth(res, method, hhm)
+        }
         const plm = ControlPlaneHost.PlatformPathPattern.exec(path)
         if (plm !== null)
         {
@@ -584,6 +605,36 @@ export class ControlPlaneHost
             return true
         }
         return false
+    }
+
+    /** Serves GET /api/hives/ID/health: live workload health for each environment bound to the hive; false for any other method. */
+    private async RouteHiveHealth(res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
+    {
+        if (method !== ControlPlaneHost.MethodGet)
+        {
+            return false
+        }
+        const id = ControlPlaneHost.Decode(m[1] as string)
+        if (id === undefined)
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+            return true
+        }
+        const hive = this.directory.GetHive(id)
+        if (hive === undefined)
+        {
+            this.WriteNotFound(res)
+            return true
+        }
+        const orchestrator = this.orchestrators.For(hive)
+        const dtos: HiveHealthDto[] = []
+        for (const env of this.service.List().filter(e => e.hiveId === id))
+        {
+            const health = await orchestrator.Health(EnvironmentWorkloadFactory.From(env, hive))
+            dtos.push({ environmentName: env.name, ready: health.ready, runningImage: health.runningImage, detail: health.detail })
+        }
+        this.WriteJson(res, ControlPlaneHost.StatusOk, dtos)
+        return true
     }
 
     private ListPlatform(resource: string): readonly (ClientDto | TenantDto | HiveDto)[]

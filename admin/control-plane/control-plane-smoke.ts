@@ -26,6 +26,7 @@ import { DockerEnv } from '../../environments/seed/docker.js'
 import { UserSeeder } from '../../environments/seed/users.js'
 import { AdminProxy, WsAdminConnector } from './admin-proxy.js'
 import { ControlPlaneHost } from './control-plane-host.js'
+import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import type { EnvironmentDto, MakerTokenDto, PromotionResultDto } from './control-plane-host.js'
 import { BundleBuilderAdapter, DockerEnvAdapter, UserSeederAdapter } from './docker-env-port.js'
 import { EnvStatus, EnvType, Template } from './environment-record.js'
@@ -238,7 +239,7 @@ export class ControlPlaneSmoke
             operatorEmail: ControlPlaneSmoke.OperatorEmail,
             initialPassword: ControlPlaneSmoke.OperatorPassword
         })
-        const host = new ControlPlaneHost(service, new GraphService(registry, proxy, name => service.AdminInfoFor(name)), staticRoot, operator, false, directory)
+        const host = new ControlPlaneHost(service, new GraphService(registry, proxy, name => service.AdminInfoFor(name)), staticRoot, operator, false, directory, new HiveOrchestratorFactory())
         try
         {
             await host.Listen(0, ControlPlaneSmoke.LoopbackHost)
