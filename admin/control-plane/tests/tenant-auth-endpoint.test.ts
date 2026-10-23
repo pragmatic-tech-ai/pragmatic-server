@@ -18,7 +18,7 @@ class FakeRelyingParty implements ITenantOidcRelyingParty
     public LastTenantId: string | undefined
     public LastCallback: string | undefined
 
-    public async Begin(tenantId: string, callbackUrl?: string): Promise<{ Url: string; State: string }>
+    public async Begin(tenantId: string, callbackUrl: string): Promise<{ Url: string; State: string }>
     {
         this.LastTenantId = tenantId
         this.LastCallback = callbackUrl
@@ -29,7 +29,7 @@ class FakeRelyingParty implements ITenantOidcRelyingParty
         return { Url: FakeRelyingParty.AuthorizeUrl, State: 'abc' }
     }
 
-    public async Complete(tenantId: string, _code: string, _state: string, callbackUrl?: string): Promise<{ principalId: string; email?: string }>
+    public async Complete(tenantId: string, _code: string, _state: string, callbackUrl: string): Promise<{ principalId: string; email?: string }>
     {
         this.LastTenantId = tenantId
         this.LastCallback = callbackUrl

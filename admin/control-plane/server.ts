@@ -86,8 +86,6 @@ export class ControlPlaneServer
     private static readonly TenantListeningPrefix = 'Tenant plane listening on '
     private static readonly SchemeHostSeparator = '://'
     private static readonly HostPortSeparator = ':'
-    // The relying-party ctor's callback fallback is dead: TenantPlaneHost always passes a host-derived callback per call.
-    private static readonly UnusedCallbackFallback = ''
     private static readonly TenantSessionsFile = 'tenant-sessions.json'
     private static readonly TenantSessionTtlMs = 12 * 60 * 60 * 1000
     private static readonly SecretTtlEnvVar = 'PRAGMATIC_TENANT_ADMIN_SECRET_TTL_HOURS'
@@ -202,7 +200,7 @@ export class ControlPlaneServer
             registry: adminClientRegistry,
             secretTtlMs: secretTtlHours * ControlPlaneServer.MsPerHour,
         }
-        const rp = new TenantOidcRelyingParty(idpService, directory, conn => new IdpAdminClient(conn), ControlPlaneServer.UnusedCallbackFallback, undefined, undefined, durability)
+        const rp = new TenantOidcRelyingParty(idpService, directory, conn => new IdpAdminClient(conn), undefined, undefined, durability)
         const endpoint = new TenantAuthEndpoint(rp, sessions, secureCookie)
         const gate = new TenantAuthGate(sessions)
         const api = new TenantApiEndpoint(service, directory, deployments, orchestrators, placement)

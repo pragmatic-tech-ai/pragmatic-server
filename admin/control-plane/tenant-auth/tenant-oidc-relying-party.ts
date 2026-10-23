@@ -31,8 +31,8 @@ export type TenantAdminDurability =
 /** The outcome of a completed tenant-admin login: the IdP subject (principal) and, when mapped, its email. */
 export interface ITenantOidcRelyingParty
 {
-    Begin(tenantId: string, callbackUrl?: string): Promise<{ Url: string; State: string }>
-    Complete(tenantId: string, code: string, state: string, callbackUrl?: string): Promise<{ principalId: string; email?: string }>
+    Begin(tenantId: string, callbackUrl: string): Promise<{ Url: string; State: string }>
+    Complete(tenantId: string, code: string, state: string, callbackUrl: string): Promise<{ principalId: string; email?: string }>
 }
 
 /**
@@ -190,7 +190,6 @@ export class TenantOidcRelyingParty implements ITenantOidcRelyingParty
         private readonly idp: IIdpService,
         private readonly directory: PlatformDirectory,
         private readonly adminClientFactory: (conn: IdpConnection) => IdpAdminClient,
-        private readonly callbackUrl: string,
         private readonly resolverOverride?: IdentityPackResolver,
         flowStates?: IOidcFlowStateStore,
         private readonly durability?: TenantAdminDurability)
@@ -204,11 +203,11 @@ export class TenantOidcRelyingParty implements ITenantOidcRelyingParty
         return this.durability !== undefined
     }
 
-    public async Begin(tenantId: string, callbackUrl?: string): Promise<{ Url: string; State: string }>
+    public async Begin(tenantId: string, callbackUrl: string): Promise<{ Url: string; State: string }>
     {
         try
         {
-            const cb = callbackUrl ?? this.callbackUrl
+            const cb = callbackUrl
             const conn = await this.idp.EnsureForTenant(tenantId, this.displayNameFor(tenantId))
             const secretRef = TenantOidcRelyingParty.SecretRefPrefix + tenantId
             const secret = this.durability === undefined
@@ -278,12 +277,12 @@ export class TenantOidcRelyingParty implements ITenantOidcRelyingParty
         return existing
     }
 
-    public async Complete(tenantId: string, code: string, state: string, callbackUrl?: string): Promise<{ principalId: string; email?: string }>
+    public async Complete(tenantId: string, code: string, state: string, callbackUrl: string): Promise<{ principalId: string; email?: string }>
     {
         const presented = new PresentedSecret(code)
         try
         {
-            const cb = callbackUrl ?? this.callbackUrl
+            const cb = callbackUrl
             const conn = await this.idp.EnsureForTenant(tenantId, this.displayNameFor(tenantId))
             const secretRef = TenantOidcRelyingParty.SecretRefPrefix + tenantId
             const stores = await this.stores()

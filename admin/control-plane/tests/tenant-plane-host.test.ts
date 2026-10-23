@@ -144,17 +144,17 @@ class CapturingRelyingParty implements ITenantOidcRelyingParty
     private static readonly RedirectParam = '?redirect_uri='
     private static readonly TenantParam = '&tn='
 
-    public async Begin(tenantId: string, callbackUrl?: string): Promise<{ Url: string; State: string }>
+    public async Begin(tenantId: string, callbackUrl: string): Promise<{ Url: string; State: string }>
     {
         this.LastTenantId = tenantId
         this.LastCallback = callbackUrl
         return {
-            Url: CapturingRelyingParty.Authorize + CapturingRelyingParty.RedirectParam + encodeURIComponent(callbackUrl ?? '') + CapturingRelyingParty.TenantParam + tenantId,
+            Url: CapturingRelyingParty.Authorize + CapturingRelyingParty.RedirectParam + encodeURIComponent(callbackUrl) + CapturingRelyingParty.TenantParam + tenantId,
             State: 's',
         }
     }
 
-    public async Complete(tenantId: string, _code: string, _state: string, callbackUrl?: string): Promise<{ principalId: string; email?: string }>
+    public async Complete(tenantId: string, _code: string, _state: string, callbackUrl: string): Promise<{ principalId: string; email?: string }>
     {
         this.LastTenantId = tenantId
         this.LastCallback = callbackUrl
