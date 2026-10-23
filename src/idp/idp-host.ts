@@ -146,6 +146,7 @@ export class IdpHost
     private static readonly TokenEndpointField = 'token_endpoint';
     private static readonly JwksUriField = 'jwks_uri';
     private static readonly ErrorField = 'error';
+    private static readonly NoStoreHeaders: Record<string, string> = { [IdpHost.CacheControlHeader]: IdpHost.NoStore };
     private static readonly AdminSegment = '_admin';
     private static readonly AuthorizationHeader = 'authorization';
     private static readonly StatusBadRequest = 400;
@@ -251,7 +252,16 @@ export class IdpHost
             {
                 return false;
             }
-            await this.RouteAdmin(req, res, this.admin, method, segments.slice(1));
+            let decoded: string[];
+            try
+            {
+                decoded = segments.slice(1).map(decodeURIComponent);
+            }
+            catch
+            {
+                return false;
+            }
+            await this.RouteAdmin(req, res, this.admin, method, decoded);
             return true;
         }
         if (segments.length < 2)
@@ -300,7 +310,7 @@ export class IdpHost
         const raw = await this.ReadBody(req);
         if (raw === undefined)
         {
-            this.WriteAdminJson(res, IdpHost.StatusPayloadTooLarge, { [IdpHost.ErrorField]: IdpHost.PayloadTooLargeMessage });
+            this.WriteJson(res, IdpHost.StatusPayloadTooLarge, { [IdpHost.ErrorField]: IdpHost.PayloadTooLargeMessage }, IdpHost.NoStoreHeaders);
             return;
         }
         let parsed: unknown;
@@ -312,25 +322,19 @@ export class IdpHost
             }
             catch
             {
-                this.WriteAdminJson(res, IdpHost.StatusBadRequest, { [IdpHost.ErrorField]: IdpHost.InvalidJsonMessage });
+                this.WriteJson(res, IdpHost.StatusBadRequest, { [IdpHost.ErrorField]: IdpHost.InvalidJsonMessage }, IdpHost.NoStoreHeaders);
                 return;
             }
         }
         try
         {
             const result = await admin.Handle(method, segments, req.headers[IdpHost.AuthorizationHeader], parsed);
-            this.WriteAdminJson(res, result.Status, result.Body);
+            this.WriteJson(res, result.Status, result.Body, IdpHost.NoStoreHeaders);
         }
         catch
         {
-            this.WriteAdminJson(res, IdpHost.StatusServerError, { [IdpHost.ErrorField]: IdpHost.InternalErrorCode });
+            this.WriteJson(res, IdpHost.StatusServerError, { [IdpHost.ErrorField]: IdpHost.InternalErrorCode }, IdpHost.NoStoreHeaders);
         }
-    }
-
-    private WriteAdminJson(res: ServerResponse, status: number, body: unknown): void
-    {
-        res.writeHead(status, { [IdpHost.ContentType]: IdpHost.JsonType, [IdpHost.CacheControlHeader]: IdpHost.NoStore });
-        res.end(JSON.stringify(body));
     }
 
     private async RouteToken(req: IncomingMessage, res: ServerResponse, tenantId: string): Promise<void>
@@ -429,9 +433,9 @@ export class IdpHost
         this.WriteJson(res, IdpHost.StatusNotFound, { [IdpHost.ErrorField]: IdpHost.NotFoundMessage });
     }
 
-    private WriteJson(res: ServerResponse, status: number, body: unknown): void
+    private WriteJson(res: ServerResponse, status: number, body: unknown, extraHeaders?: Record<string, string>): void
     {
-        res.writeHead(status, { [IdpHost.ContentType]: IdpHost.JsonType });
+        res.writeHead(status, { [IdpHost.ContentType]: IdpHost.JsonType, ...extraHeaders });
         res.end(JSON.stringify(body));
     }
 }
