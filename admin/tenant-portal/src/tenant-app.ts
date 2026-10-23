@@ -5,6 +5,7 @@ import { TenantApiClient } from './tenant-api-client.js'
 import { TenantTreeView } from './tenant-tree-view.js'
 import { TenantTreeViewModel } from './tenant-tree-view-model.js'
 import { TenantViewBase } from './tenant-view-base.js'
+import { TenantEventType } from './tenant-types.js'
 import type { EnvironmentDto, HiveDto, ITenantNavigator, ITenantView, SessionDto, TenantEvent } from './tenant-types.js'
 
 // Reads the page location and session storage; injected so tests need no browser.
@@ -77,6 +78,8 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     private readonly treeHost = new StackPanel()
     private readonly detailHost = new StackPanel()
     private current: ITenantView | undefined
+    // Name of the environment the detail pane is showing, so a delete of it swaps the pane back rather than refreshing a gone env.
+    private currentEnvName: string | undefined
     private tree: TenantTreeView | undefined
     private eventUnsub: (() => void) | undefined
 
@@ -156,6 +159,7 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     public ShowEnvironmentDetail(env: EnvironmentDto): void
     {
         this.Show(new EnvironmentDetailView(this.client, env, env.hiveId))
+        this.currentEnvName = env.name
     }
 
     private ShowPrompt(): void
@@ -210,6 +214,12 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     private OnTenantEvent(ev: TenantEvent): void
     {
         this.tree?.ApplyEvent(ev)
+        if (ev.type === TenantEventType.EnvironmentDeleted && ev.environmentName === this.currentEnvName)
+        {
+            // The open environment was deleted: swap the pane back to the placeholder rather than refreshing a gone env.
+            this.Show(new DetailPlaceholderView(TenantApp.EmptySelectionText))
+            return
+        }
         void this.current?.Refresh()
     }
 
@@ -219,6 +229,7 @@ export class TenantApp extends StackPanel implements ITenantNavigator
         this.current?.Dispose?.()
         this.Clear(this.detailHost)
         this.current = view
+        this.currentEnvName = undefined
         view.AttachNavigator(this)
         this.detailHost.AddChild(view)
         void view.Refresh()

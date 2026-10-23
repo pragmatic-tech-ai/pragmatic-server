@@ -97,9 +97,10 @@ export class HiveDetailView extends TenantViewBase
         const panel = new StackPanel()
         panel.Orientation = Orientation.Horizontal
         const label = this.Text(row.manifest.id + HiveDetailView.PillSeparator + HiveDetailView.BadgeLabels[row.badge])
-        if (row.withdrawn)
+        if (row.badge === VersionBadge.Withdrawn)
         {
-            // Struck through to mark the version withdrawn/obsolete; no roll button, as it is not a valid target.
+            // Struck through to mark a withdrawn/obsolete version; the withdrawn version that is still running keeps
+            // its Current badge (and is not struck through), reading as the live version rather than as gone.
             label.TextDecorations = TextDecorations.Strikethrough
         }
         panel.AddChild(label)

@@ -163,6 +163,23 @@ describe('HiveDetailView', () =>
         assert.ok(!texts.includes(HiveDetailView.SetTargetLabel))
     })
 
+    it('does not strike through a withdrawn version that is still the current/running one', async () =>
+    {
+        const src = new FakeSource()
+        src.Target = 'v3'
+        src.SetManifests([
+            { id: 'v1', image: 'img:v1', publishedAt: '2026-01-01' },
+            { id: 'v2', image: 'img:v2', publishedAt: '2026-02-01' },
+            { id: 'v3', image: 'img:v3', publishedAt: '2026-03-01', withdrawn: true },
+        ])
+        const view = new HiveDetailView(src, Hive)
+        await view.Refresh()
+        // v3 is withdrawn but running: keeps the Current badge and is NOT struck through.
+        const currentLabel = 'v3  ' + HiveDetailView.BadgeLabels[0]
+        assert.ok(Fixtures.Texts(view).includes(currentLabel))
+        assert.notEqual(Fixtures.DecorationsOf(view, currentLabel), TextDecorations.Strikethrough)
+    })
+
     it('shows the failure message and stayed-on version after a failed roll', async () =>
     {
         const src = new FakeSource()
