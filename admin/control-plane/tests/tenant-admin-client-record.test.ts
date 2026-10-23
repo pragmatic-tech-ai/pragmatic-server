@@ -14,6 +14,8 @@ describe('TenantAdminClientRegistry', () =>
     const Missing = 'nope'
     const FirstRef = 'r'
     const SecondRef = 'r2'
+    const ClientId = 'c'
+    const RotatedAt = '2026-01-01T00:00:00.000Z'
 
     let dir = ''
     let registry: TenantAdminClientRegistry
@@ -21,9 +23,9 @@ describe('TenantAdminClientRegistry', () =>
     const MakeRecord = (secretRef: string): TenantAdminClientRecord => ({
         id: TenantId,
         tenantId: TenantId,
-        clientId: 'c',
+        clientId: ClientId,
         secretRef,
-        rotatedAt: '2026-01-01T00:00:00.000Z'
+        rotatedAt: RotatedAt
     })
 
     beforeEach(async () =>
@@ -46,10 +48,19 @@ describe('TenantAdminClientRegistry', () =>
         assert.equal(registry.Get(Missing), undefined)
     })
 
-    it('overwrites on a second put', async () =>
+    it('overwrites on a second put rather than appending', async () =>
     {
         await registry.Put(MakeRecord(FirstRef))
         await registry.Put(MakeRecord(SecondRef))
         assert.equal(registry.Get(TenantId)?.secretRef, SecondRef)
+        assert.equal(registry.List().length, 1)
+    })
+
+    it('persists across a reload: a fresh registry over the same file sees the record', async () =>
+    {
+        await registry.Put(MakeRecord(FirstRef))
+        const reloaded = new TenantAdminClientRegistry(join(dir, StoreFileName))
+        await reloaded.Load()
+        assert.deepEqual(reloaded.Get(TenantId), MakeRecord(FirstRef))
     })
 })
