@@ -26,6 +26,7 @@ export class TenantAuthEndpoint
     private static readonly LocationHeader = 'Location'
     private static readonly SetCookieHeader = 'Set-Cookie'
     private static readonly ContentTypeHeader = 'Content-Type'
+    private static readonly AllowHeader = 'Allow'
     private static readonly JsonContentType = 'application/json'
     private static readonly StatusOk = 200
     private static readonly StatusFound = 302
@@ -70,7 +71,7 @@ export class TenantAuthEndpoint
     {
         if (req.method !== method)
         {
-            this.reply(res, TenantAuthEndpoint.StatusMethodNotAllowed, TenantAuthEndpoint.MethodNotAllowedBody)
+            this.reply(res, TenantAuthEndpoint.StatusMethodNotAllowed, TenantAuthEndpoint.MethodNotAllowedBody, { [TenantAuthEndpoint.AllowHeader]: method })
             return
         }
         await run()
@@ -168,9 +169,10 @@ export class TenantAuthEndpoint
         return new URL(req.url ?? TenantAuthEndpoint.RootPath, TenantAuthEndpoint.BaseUrl).searchParams
     }
 
-    private reply(res: ServerResponse, status: number, body: string): void
+    private reply(res: ServerResponse, status: number, body: string, extra: Record<string, string> = {}): void
     {
         res.writeHead(status, {
+            ...extra,
             [TenantAuthEndpoint.ContentTypeHeader]: TenantAuthEndpoint.JsonContentType,
             [TenantAuthEndpoint.CacheControlHeader]: TenantAuthEndpoint.NoStore,
         })
