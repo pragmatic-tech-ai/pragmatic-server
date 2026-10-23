@@ -37,3 +37,16 @@ test('an unknown code returns null', async () =>
 {
     assert.equal(await AuthorizationCodeStoreTestFixture.Store().Take('nope'), null);
 });
+
+test('a code expiring exactly now is not returned', async () =>
+{
+    const store = AuthorizationCodeStoreTestFixture.Store();
+    const code = await store.Issue(AuthorizationCodeStoreTestFixture.Binding(AuthorizationCodeStoreTestFixture.Now));
+    assert.equal(await store.Take(code), null);
+});
+
+test('codeBytes below the entropy minimum is rejected', () =>
+{
+    assert.throws(() => new InMemoryAuthorizationCodeStore(() => AuthorizationCodeStoreTestFixture.Now, 8));
+    assert.doesNotThrow(() => new InMemoryAuthorizationCodeStore());
+});

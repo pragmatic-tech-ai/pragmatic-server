@@ -23,6 +23,8 @@ export interface IAuthorizationCodeStore
 export class InMemoryAuthorizationCodeStore implements IAuthorizationCodeStore
 {
     private static readonly CodeEncoding = 'base64url';
+    private static readonly MinCodeBytes = 16;
+    private static readonly TooFewBytesMessage = 'codeBytes must be at least 16 bytes of entropy';
 
     private readonly entries = new Map<string, AuthorizationCodeBinding>();
 
@@ -30,6 +32,10 @@ export class InMemoryAuthorizationCodeStore implements IAuthorizationCodeStore
         private readonly now: () => Date = () => new Date(),
         private readonly codeBytes: number = 32)
     {
+        if (!(codeBytes >= InMemoryAuthorizationCodeStore.MinCodeBytes))
+        {
+            throw new Error(InMemoryAuthorizationCodeStore.TooFewBytesMessage);
+        }
     }
 
     public async Issue(binding: AuthorizationCodeBinding): Promise<string>
