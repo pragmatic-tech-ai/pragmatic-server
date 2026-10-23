@@ -5,7 +5,7 @@
  *   npx tsx admin/control-plane/idp-sso-smoke.ts
  *
  * Requires the openssl CLI on PATH (DevCa mints a dev CA + server cert at runtime). The smoke stands up
- * the real IdpHost over HTTPS, seeds one tenant account, registers two confidential clients with distinct
+ * the real IdpHost over HTTPS, provisions (via the admin API + IdpAdminClient) one tenant account and two confidential clients with distinct
  * redirect URIs, then proves SINGLE SIGN-ON across the two "environments" using the REAL relying-party
  * verifier (`OidcAuthenticator`): env A performs an interactive login, env B rides the IdP's SSO cookie
  * straight to a code with NO login page. Four negative gates (off-allowlist redirect, code replay, bad
@@ -36,11 +36,13 @@ import {
 import type { IHttpClient } from '@pragmatic-tech-ai/todl-identity-cloud'
 import { InMemoryAuthorizationCodeStore } from '../../src/idp/authorization-code-store.js'
 import { DevCa, IdpTlsMaterial } from '../../src/idp/dev-ca.js'
+import { IdpAdminEndpoint } from '../../src/idp/idp-admin-endpoint.js'
 import { IdpClientStore } from '../../src/idp/idp-client-store.js'
 import { IdpHost, IdpRealmSet } from '../../src/idp/idp-host.js'
 import { IdpRealm } from '../../src/idp/idp-realm.js'
 import { IdpSigningKey } from '../../src/idp/idp-signing-key.js'
 import { IdpSsoSessionStore } from '../../src/idp/idp-sso-session.js'
+import { IdpAdminClient, IdpAdminError } from './idp-admin-client.js'
 
 /** An in-memory `ISecretStore` over a Map — the RP's client-secret vault for one environment. */
 class MapSecretStore implements ISecretStore
@@ -106,8 +108,12 @@ class PendingExchange
 class HttpsCaClient implements IHttpClient
 {
     private static readonly HttpsProtocol = 'https:'
+    private static readonly IdTokenField = 'id_token'
     private static readonly NonHttpsMessage = 'HttpsCaClient: only https URLs are permitted: '
     private static readonly RequestFailedMessage = 'HttpsCaClient: HTTP request failed with status '
+
+    /** The id_token from the most recent token-endpoint reply, captured so claims can be asserted. */
+    public LastIdToken: string | undefined
 
     public constructor(private readonly transport: BrowserClient)
     {
@@ -122,7 +128,10 @@ class HttpsCaClient implements IHttpClient
     public async PostForm(url: string, fields: ReadonlyMap<string, string>): Promise<unknown>
     {
         this.RequireHttps(url)
-        return this.ParseOk(await this.transport.PostForm(url, fields, undefined))
+        const json = this.ParseOk(await this.transport.PostForm(url, fields, undefined))
+        const idToken = (json as Record<string, unknown>)[HttpsCaClient.IdTokenField]
+        this.LastIdToken = typeof idToken === 'string' ? idToken : undefined
+        return json
     }
 
     private ParseOk(response: BrowserResponse): unknown
@@ -291,6 +300,12 @@ export class IdpSsoSmoke
     private static readonly AccountEmail = 'maker@pragmatic.dev'
     private static readonly AccountPrincipalId = 'user-maker-0001'
     private static readonly AccountPassword = 'correct-horse-battery-staple'
+    private static readonly AccountDisplayName = 'Smoke Owner'
+    private static readonly AdminToken = 'smoke-admin-token-7d1c4e9a52b8'
+    private static readonly AdminAbsentRealmId = 'x'
+    private static readonly AdminAbsentDisplayName = 'No Admin'
+    private static readonly StatusNotFound = 404
+    private static readonly NameClaim = 'name'
 
     private static readonly ClientIdA = 'env-a'
     private static readonly ClientIdB = 'env-b'
@@ -321,6 +336,8 @@ export class IdpSsoSmoke
     private static readonly ErrorField = 'error'
     private static readonly InvalidGrant = 'invalid_grant'
     private static readonly InvalidRequest = 'invalid_request'
+    private static readonly ClaimMismatchDetail = 'email/name mismatch'
+    private static readonly NoIdTokenDetail = 'no id_token captured'
     private static readonly FormOpenTag = '<form'
 
     private static readonly StatusOk = 200
@@ -343,7 +360,7 @@ export class IdpSsoSmoke
     private static readonly ResultDetailPrefix = 'result='
     private static readonly TamperedVerifiedDetail = 'tampered id_token verified (must not)'
     private static readonly UnexpectedErrorDetail = 'unexpected verify error: '
-    private static readonly OverallPass = 'OVERALL PASS: two-environment SSO + 4 negative gates proven against the live IdP'
+    private static readonly OverallPass = 'OVERALL PASS: admin-API provisioning + email/name claims + two-environment SSO + 5 negative gates proven against the live IdP'
     private static readonly OverallFail = 'OVERALL FAIL'
     private static readonly CrashPrefix = 'smoke crashed: '
     private static readonly TeardownWarning = 'WARN best-effort teardown failed: '
@@ -356,6 +373,9 @@ export class IdpSsoSmoke
         EnvAAuthenticated: 'env A: real OidcAuthenticator returns AuthenticatedResult with the seeded sub',
         EnvBSso: 'env B: GET /authorize with the jar cookie -> 302 straight to env-b redirect_uri, NO login page',
         EnvBAuthenticated: 'env B: real OidcAuthenticator returns AuthenticatedResult with the SAME sub (SSO proof)',
+        EnvAClaims: 'env A: fresh-login id_token carries email + name equal to the provisioned account',
+        EnvBClaims: 'env B: SSO-cookie id_token carries the SAME email + name',
+        GateAdminAbsent: 'gate: an IdP built with NO admin endpoint answers an _admin PUT with 404',
         GateRedirect: 'gate: off-allowlist redirect_uri is rejected (400 invalid_request, no 302, no code)',
         GateReplayFirst: 'gate: a correct code+verifier exchange succeeds (200, id_token) before replay',
         GateReplay: 'gate: replaying the SAME code+verifier (only the code is reused) -> invalid_grant',
@@ -372,6 +392,10 @@ export class IdpSsoSmoke
     private readonly tenant = new Tenant(IdpSsoSmoke.TenantId, TenantKind.SelfHosted, IdpSsoSmoke.TenantDisplayName)
     private ca!: Buffer
     private browser!: BrowserClient
+    private tls!: { key: Buffer; cert: Buffer }
+    private signingKey!: IdpSigningKey
+    private rpHttp: HttpsCaClient | undefined
+    private extraHost: IdpHost | undefined
 
     public static async Main(): Promise<void>
     {
@@ -391,6 +415,7 @@ export class IdpSsoSmoke
             await this.LoginEnvA()
             await this.SsoEnvB()
             await this.NegativeGates()
+            await this.GateAdminEndpointAbsent()
         }
         catch (err)
         {
@@ -412,22 +437,29 @@ export class IdpSsoSmoke
         this.ca = readFileSync(tlsFiles.caFile)
         this.browser = new BrowserClient(this.ca)
         const tls = IdpTlsMaterial.Load({ certFile: tlsFiles.certFile, keyFile: tlsFiles.keyFile })
+        this.tls = tls
 
         const signingKey = await IdpSigningKey.LoadOrCreate(join(dir, S.SigningKeyFileName))
+        this.signingKey = signingKey
         const masterKey = randomBytes(S.MasterKeyBytes)
-        const realm = await IdpRealm.OpenFor(join(dir, S.RealmsDirName), S.TenantId, S.TenantDisplayName, masterKey)
-        await realm.SeedAccount(S.AccountEmail, S.AccountPrincipalId, S.AccountPassword)
-        const realms = new IdpRealmSet([[S.TenantId, realm]])
-
+        const realmsDir = join(dir, S.RealmsDirName)
+        const realms = new IdpRealmSet([], (tenantId, displayName) => IdpRealm.OpenFor(realmsDir, tenantId, displayName, masterKey))
         const clients = new IdpClientStore()
-        await clients.Register(S.TenantId, S.ClientIdA, [S.RedirectUriA], S.ClientSecretA)
-        await clients.Register(S.TenantId, S.ClientIdB, [S.RedirectUriB], S.ClientSecretB)
+        const adminEndpoint = new IdpAdminEndpoint(S.AdminToken, realms, clients)
 
         const port = await FreePort.Find(S.Host)
         this.baseUrl = S.HttpsOrigin + S.Host + S.PortSeparator + port
-        this.host = new IdpHost(this.baseUrl, signingKey, realms, clients, new InMemoryAuthorizationCodeStore(), new IdpSsoSessionStore(), tls, true)
+        this.host = new IdpHost(this.baseUrl, signingKey, realms, clients, new InMemoryAuthorizationCodeStore(), new IdpSsoSessionStore(), tls, true, adminEndpoint)
         await this.host.Listen(port, S.Host)
         console.log(S.InfoTag + S.ListeningInfo + this.baseUrl)
+
+        const admin = new IdpAdminClient({ baseUrl: this.baseUrl, adminToken: S.AdminToken, ca: this.ca })
+        await admin.EnsureRealm(S.TenantId, S.TenantDisplayName)
+        await admin.SeedAccount(S.TenantId, {
+            email: S.AccountEmail, principalId: S.AccountPrincipalId, displayName: S.AccountDisplayName, password: S.AccountPassword,
+        })
+        await admin.RegisterClient(S.TenantId, { clientId: S.ClientIdA, redirectUris: [S.RedirectUriA], secret: S.ClientSecretA })
+        await admin.RegisterClient(S.TenantId, { clientId: S.ClientIdB, redirectUris: [S.RedirectUriB], secret: S.ClientSecretB })
     }
 
     /** Env A: unauthenticated GET -> login page -> POST credentials -> 302 code -> real authenticator. */
@@ -450,6 +482,7 @@ export class IdpSsoSmoke
         const code = target?.searchParams.get(S.CodeField) ?? ''
         const result = await authenticator.Authenticate(new Credential(AuthMethod.Oidc, begin.State), new PresentedSecret(code), this.tenant)
         this.Check(S.Labels.EnvAAuthenticated, result instanceof AuthenticatedResult && result.Principal.Id === S.AccountPrincipalId, this.ResultDetail(result))
+        await this.CheckClaims(S.Labels.EnvAClaims, S.ClientIdA)
     }
 
     /** Env B: GET with the jar cookie must redirect straight to a code with NO login page served. */
@@ -469,6 +502,51 @@ export class IdpSsoSmoke
         const code = target?.searchParams.get(S.CodeField) ?? ''
         const result = await authenticator.Authenticate(new Credential(AuthMethod.Oidc, begin.State), new PresentedSecret(code), this.tenant)
         this.Check(S.Labels.EnvBAuthenticated, result instanceof AuthenticatedResult && result.Principal.Id === S.AccountPrincipalId, this.ResultDetail(result))
+        await this.CheckClaims(S.Labels.EnvBClaims, S.ClientIdB)
+    }
+
+    /** Verifies the id_token captured from the last RP token exchange and asserts its email + name claims. */
+    private async CheckClaims(label: string, clientId: string): Promise<void>
+    {
+        const S = IdpSsoSmoke
+        const idToken = this.rpHttp?.LastIdToken
+        if (idToken === undefined)
+        {
+            this.Check(label, false, S.NoIdTokenDetail)
+            return
+        }
+        try
+        {
+            const keySet = createLocalJWKSet(await this.FetchJwks())
+            const { payload } = await jwtVerify(idToken, keySet, { issuer: this.Issuer(), audience: clientId, algorithms: [S.Rs256] })
+            const ok = payload[S.EmailClaim] === S.AccountEmail && payload[S.NameClaim] === S.AccountDisplayName
+            this.Check(label, ok, S.ClaimMismatchDetail)
+        }
+        catch (e)
+        {
+            this.Check(label, false, e instanceof Error ? e.message : String(e))
+        }
+    }
+
+    /** Gate: a second IdP constructed WITHOUT an admin endpoint must treat the admin path as not found (404). */
+    private async GateAdminEndpointAbsent(): Promise<void>
+    {
+        const S = IdpSsoSmoke
+        const port = await FreePort.Find(S.Host)
+        const baseUrl = S.HttpsOrigin + S.Host + S.PortSeparator + port
+        this.extraHost = new IdpHost(baseUrl, this.signingKey, new IdpRealmSet(), new IdpClientStore(), new InMemoryAuthorizationCodeStore(), new IdpSsoSessionStore(), this.tls, true)
+        await this.extraHost.Listen(port, S.Host)
+        const client = new IdpAdminClient({ baseUrl, adminToken: S.AdminToken, ca: this.ca })
+        let status = 0
+        try
+        {
+            await client.EnsureRealm(S.AdminAbsentRealmId, S.AdminAbsentDisplayName)
+        }
+        catch (e)
+        {
+            status = e instanceof IdpAdminError ? e.Status : -1
+        }
+        this.Check(S.Labels.GateAdminAbsent, status === S.StatusNotFound, S.StatusDetailPrefix + status)
     }
 
     /** Four fail-closed gates driven directly against the IdP endpoints with the raw browser client. */
@@ -623,6 +701,7 @@ export class IdpSsoSmoke
     {
         const S = IdpSsoSmoke
         const http = new HttpsCaClient(this.browser)
+        this.rpHttp = http
         const secrets = new MapSecretStore()
         await secrets.Put(secretRef, secret)
         return new OidcAuthenticator({
@@ -731,6 +810,7 @@ export class IdpSsoSmoke
         try
         {
             await this.host?.Close()
+            await this.extraHost?.Close()
         }
         catch (e)
         {
