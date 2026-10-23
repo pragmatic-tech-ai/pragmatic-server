@@ -1,12 +1,12 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { TextBox } from '@pragmatic-tech-ai/mural/basic'
+import { StackPanel, TextBox } from '@pragmatic-tech-ai/mural/basic'
 import { Button } from '@pragmatic-tech-ai/mural/framework'
 import { TenantApp } from '../src/tenant-app.js'
 import type { ITenantEnvironment } from '../src/tenant-app.js'
 import { TenantApiError } from '../src/tenant-api-client.js'
 import type { TenantApiClient } from '../src/tenant-api-client.js'
-import type { SessionDto, TenantEvent } from '../src/tenant-types.js'
+import type { EnvironmentDto, HiveDto, ITenantNavigator, ITenantView, SessionDto, TenantEvent } from '../src/tenant-types.js'
 
 class FakeClient
 {
@@ -67,6 +67,24 @@ class StubEnvironment implements ITenantEnvironment
     public StoreTenant(id: string): void
     {
         this.Stored = id
+    }
+}
+
+class DisposableView extends StackPanel implements ITenantView
+{
+    public Disposed = 0
+
+    public AttachNavigator(_nav: ITenantNavigator): void
+    {
+    }
+
+    public Refresh(): void
+    {
+    }
+
+    public Dispose(): void
+    {
+        this.Disposed++
     }
 }
 
@@ -175,5 +193,32 @@ describe('TenantApp', () =>
         await new Promise(r => setTimeout(r, 0))
         assert.deepEqual(client.Calls, ['onevent', 'logout', 'login:acme'])
         assert.equal(client.UnsubCalls, 1)
+    })
+
+    it('Show disposes the outgoing view exactly once; logout disposes the current view', async () =>
+    {
+        const { app, client } = Fixtures.Make(Session, new StubEnvironment('acme'))
+        await app.Boot()
+        const a = new DisposableView()
+        const b = new DisposableView()
+        const show = (app as unknown as { Show(v: ITenantView): void }).Show.bind(app)
+        show(a)
+        show(b)
+        assert.equal(a.Disposed, 1)
+        assert.equal(b.Disposed, 0)
+        Fixtures.Click(Fixtures.Find(app, Button, x => Fixtures.Texts(x).includes(TenantApp.LogoutLabel))!)
+        await new Promise(r => setTimeout(r, 0))
+        assert.equal(b.Disposed, 1)
+        assert.equal(a.Disposed, 1)
+        assert.equal(client.UnsubCalls, 1)
+    })
+
+    it('a second Boot does not stack event subscriptions', async () =>
+    {
+        const { app, client } = Fixtures.Make(Session, new StubEnvironment(null))
+        await app.Boot()
+        await app.Boot()
+        assert.equal(client.UnsubCalls, 1)
+        assert.equal(client.Calls.filter(c => c === 'onevent').length, 2)
     })
 })

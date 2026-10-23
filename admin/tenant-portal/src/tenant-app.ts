@@ -1,5 +1,4 @@
 import { Orientation, StackPanel, TextBlock, TextBox } from '@pragmatic-tech-ai/mural/basic'
-import { Button } from '@pragmatic-tech-ai/mural/framework'
 import { TenantApiClient } from './tenant-api-client.js'
 import { TenantViewBase } from './tenant-view-base.js'
 import type { EnvironmentDto, HiveDto, ITenantNavigator, ITenantView, SessionDto, TenantEvent } from './tenant-types.js'
@@ -75,7 +74,6 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     private readonly treeHost = new StackPanel()
     private readonly detailHost = new StackPanel()
     private current: ITenantView | undefined
-    private tenantId: string | undefined
     private eventUnsub: (() => void) | undefined
 
     public constructor(client: TenantApiClient = new TenantApiClient(), environment: ITenantEnvironment = new BrowserTenantEnvironment())
@@ -88,7 +86,7 @@ export class TenantApp extends StackPanel implements ITenantNavigator
         this.topBar.Orientation = Orientation.Horizontal
         this.topBar.AddChild(title)
         this.topBar.AddChild(this.tenantName)
-        this.topBar.AddChild(this.MakeButton(TenantApp.LogoutLabel, () => { void this.Logout() }))
+        this.topBar.AddChild(TenantViewBase.MakeButton(TenantApp.LogoutLabel, () => { void this.Logout() }))
         this.body.Orientation = Orientation.Horizontal
         this.body.AddChild(this.treeHost)
         this.body.AddChild(this.detailHost)
@@ -113,8 +111,8 @@ export class TenantApp extends StackPanel implements ITenantNavigator
             this.ShowLogin()
             return
         }
-        this.tenantId = session.tenantId
         this.tenantName.Text = session.email ?? session.tenantId
+        this.eventUnsub?.()
         this.eventUnsub = this.client.OnEvent(ev => this.OnTenantEvent(ev))
         this.ShowTree()
     }
@@ -163,9 +161,7 @@ export class TenantApp extends StackPanel implements ITenantNavigator
         const box = new TextBox()
         prompt.AddChild(label)
         prompt.AddChild(box)
-        prompt.AddChild(this.MakeButton(TenantApp.ContinueLabel, () => this.Continue(box.Text)))
-        this.current?.Dispose?.()
-        this.current = undefined
+        prompt.AddChild(TenantViewBase.MakeButton(TenantApp.ContinueLabel, () => this.Continue(box.Text)))
         this.Clear(this.treeHost)
         this.Clear(this.detailHost)
         this.detailHost.AddChild(prompt)
@@ -198,9 +194,10 @@ export class TenantApp extends StackPanel implements ITenantNavigator
 
     private Teardown(): void
     {
+        this.current?.Dispose?.()
+        this.current = undefined
         this.eventUnsub?.()
         this.eventUnsub = undefined
-        this.tenantId = undefined
         this.tenantName.Text = ''
     }
 
@@ -226,15 +223,5 @@ export class TenantApp extends StackPanel implements ITenantNavigator
         {
             host.RemoveChild(child)
         }
-    }
-
-    private MakeButton(label: string, onClick: () => void): Button
-    {
-        const text = new TextBlock()
-        text.Text = label
-        const button = new Button()
-        button.Content = text
-        button.AddClickHandler(onClick)
-        return button
     }
 }

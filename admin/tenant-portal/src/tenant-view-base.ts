@@ -15,7 +15,7 @@ export abstract class TenantViewBase extends StackPanel implements ITenantView
 
     public abstract Refresh(): Promise<void> | void
 
-    protected MakeButton(label: string, onClick: () => void): Button
+    public static MakeButton(label: string, onClick: () => void): Button
     {
         const text = new TextBlock()
         text.Text = label
@@ -23,6 +23,11 @@ export abstract class TenantViewBase extends StackPanel implements ITenantView
         button.Content = text
         button.AddClickHandler(onClick)
         return button
+    }
+
+    protected MakeButton(label: string, onClick: () => void): Button
+    {
+        return TenantViewBase.MakeButton(label, onClick)
     }
 
     // The shell attaches itself so a 401 from any action can drop to login.
