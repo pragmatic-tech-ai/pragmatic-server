@@ -11,7 +11,7 @@ import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
-import { PlatformDirectory, HivePlacementError } from '../platform-directory.js'
+import { PlatformDirectory, HivePlacementError, UnknownHiveError } from '../platform-directory.js'
 import type { IDockerEnv, IBundleBuilder, IUserSeeder } from '../docker-env-port.js'
 import { TenantPurposeName, type EnvDefinition } from '../../../environments/seed/bundle.js'
 import type { UserSeed } from '../../../environments/seed/users.js'
@@ -626,15 +626,15 @@ test('Create with a valid hiveId binds the platform tenant and hive and passes p
     assert.deepEqual(h.Registry.Get('bound1'), rec)
 })
 
-test('Create with an unknown hiveId throws HivePlacementError and creates nothing', async () =>
+test('Create with an unknown hiveId throws UnknownHiveError and creates nothing', async () =>
 {
     const h = await Harness.Make()
-    await assert.rejects(() => h.Service.Create('bound2', Template.DevBlank, EnvType.Development, undefined, 'nope'), HivePlacementError)
+    await assert.rejects(() => h.Service.Create('bound2', Template.DevBlank, EnvType.Development, undefined, 'nope'), UnknownHiveError)
     assert.equal(h.Registry.Get('bound2'), undefined)
     assert.deepEqual(h.Calls, [])
 })
 
-test('Create with a hive owned by another tenant is rejected by placement and creates nothing', async () =>
+test('Create binds the hive owner tenant, and ValidateHivePlacement rejects a different tenant', async () =>
 {
     const h = await Harness.Make()
     await h.Directory.CreateHive({

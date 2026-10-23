@@ -24,6 +24,7 @@ import {
     ClientHasTenantsError,
     HiveHasEnvironmentsError,
     HivePlacementError,
+    UnknownHiveError,
     RecordExistsError,
     TenantHasHivesError,
     UnknownClientError,
@@ -327,6 +328,7 @@ export class ControlPlaneHost
         [TenantHasHivesError, ControlPlaneHost.StatusConflict],
         [HiveHasEnvironmentsError, ControlPlaneHost.StatusConflict],
         [HivePlacementError, ControlPlaneHost.StatusConflict],
+        [UnknownHiveError, ControlPlaneHost.StatusNotFound],
         [UnsupportedBackendError, ControlPlaneHost.StatusBadRequest],
         [KubectlError, ControlPlaneHost.StatusBadGateway],
         // The tenant is not authorized to that version (it was never gated to it): forbidden, not missing.

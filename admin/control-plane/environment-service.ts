@@ -10,7 +10,7 @@ import type { PortAllocator } from './port-allocator.js'
 import { TemplateCatalog } from './template-catalog.js'
 import type { AdminConnectInfo, AdminSnapshot, IAdminProxy } from './admin-proxy.js'
 import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { HivePlacementError, type PlatformDirectory } from './platform-directory.js'
+import { UnknownHiveError, type PlatformDirectory } from './platform-directory.js'
 import type { IDockerEnv, IBundleBuilder, IUserSeeder } from './docker-env-port.js'
 
 export class EnvironmentExistsError extends Error
@@ -100,7 +100,6 @@ export class CreateFailedError extends Error
 /** Orchestrates environment lifecycle over the SP-ENV blocks via fakeable seams. */
 export class EnvironmentService
 {
-    private static readonly UnknownTenant = '(unknown)'
     private static readonly HttpPrefix = 'http://localhost:'
     private static readonly WsPrefix = 'ws://localhost:'
     private static readonly NoDatabasePrefix = 'environment has no provisioned database: '
@@ -134,7 +133,7 @@ export class EnvironmentService
     {
     }
 
-    /** Resolves the platform tenant that owns the hive and validates placement; undefined when unbound. Throws HivePlacementError before any side effect. */
+    /** Resolves the platform tenant that owns the hive and checks the hive exists; undefined when unbound. Placement is enforced at workload time. Throws UnknownHiveError before any side effect. */
     private ResolveHiveTenant(hiveId: string | undefined): string | undefined
     {
         if (hiveId === undefined)
@@ -144,9 +143,8 @@ export class EnvironmentService
         const hive = this.directory.GetHive(hiveId)
         if (hive === undefined)
         {
-            throw new HivePlacementError(EnvironmentService.UnknownTenant, hiveId)
+            throw new UnknownHiveError(hiveId)
         }
-        this.directory.ValidateHivePlacement(hive.tenantId, hiveId)
         return hive.tenantId
     }
 
