@@ -22,7 +22,7 @@ import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createLocalJWKSet, jwtVerify } from 'jose'
+import { createLocalJWKSet, errors, jwtVerify } from 'jose'
 import type { JSONWebKeySet } from 'jose'
 import {
     AuthMethod, AuthenticatedResult, Credential, DelegationDepth,
@@ -77,6 +77,25 @@ class BrowserResponse
     public Json(): Record<string, unknown>
     {
         return JSON.parse(this.Body) as Record<string, unknown>
+    }
+}
+
+/** An authorization code bound to the exact PKCE verifier + client + redirect that will spend it. Immutable. */
+class PendingExchange
+{
+    public constructor(
+        public readonly Code: string,
+        public readonly Verifier: string,
+        public readonly ClientId: string,
+        public readonly RedirectUri: string,
+        public readonly Secret: string)
+    {
+    }
+
+    /** A copy with a different PKCE verifier — for the bad-verifier gate; everything else stays correct. */
+    public WithVerifier(verifier: string): PendingExchange
+    {
+        return new PendingExchange(this.Code, verifier, this.ClientId, this.RedirectUri, this.Secret)
     }
 }
 
@@ -301,6 +320,7 @@ export class IdpSsoSmoke
     private static readonly IdTokenField = 'id_token'
     private static readonly ErrorField = 'error'
     private static readonly InvalidGrant = 'invalid_grant'
+    private static readonly InvalidRequest = 'invalid_request'
     private static readonly FormOpenTag = '<form'
 
     private static readonly StatusOk = 200
@@ -319,6 +339,10 @@ export class IdpSsoSmoke
     private static readonly InfoTag = 'INFO '
     private static readonly DetailSep = ' -- '
     private static readonly StatusDetailPrefix = 'status='
+    private static readonly SubDetailPrefix = 'sub='
+    private static readonly ResultDetailPrefix = 'result='
+    private static readonly TamperedVerifiedDetail = 'tampered id_token verified (must not)'
+    private static readonly UnexpectedErrorDetail = 'unexpected verify error: '
     private static readonly OverallPass = 'OVERALL PASS: two-environment SSO + 4 negative gates proven against the live IdP'
     private static readonly OverallFail = 'OVERALL FAIL'
     private static readonly CrashPrefix = 'smoke crashed: '
@@ -332,10 +356,12 @@ export class IdpSsoSmoke
         EnvAAuthenticated: 'env A: real OidcAuthenticator returns AuthenticatedResult with the seeded sub',
         EnvBSso: 'env B: GET /authorize with the jar cookie -> 302 straight to env-b redirect_uri, NO login page',
         EnvBAuthenticated: 'env B: real OidcAuthenticator returns AuthenticatedResult with the SAME sub (SSO proof)',
-        GateRedirect: 'gate: off-allowlist redirect_uri is rejected (no 302, no code)',
-        GateReplay: 'gate: replaying a consumed authorization code -> invalid_grant',
+        GateRedirect: 'gate: off-allowlist redirect_uri is rejected (400 invalid_request, no 302, no code)',
+        GateReplayFirst: 'gate: a correct code+verifier exchange succeeds (200, id_token) before replay',
+        GateReplay: 'gate: replaying the SAME code+verifier (only the code is reused) -> invalid_grant',
         GatePkce: 'gate: token exchange with a wrong code_verifier -> invalid_grant',
-        GateTamper: 'gate: a tampered id_token signature is rejected by jose against the IdP JWKS',
+        GateTamperControl: 'gate: control -- the untampered id_token verifies against the IdP JWKS',
+        GateTamper: 'gate: a tampered id_token signature is rejected by jose (JWSSignatureVerificationFailed)',
     }
 
     private failed = false
@@ -436,7 +462,8 @@ export class IdpSsoSmoke
         const redirect = await this.browser.Get(begin.Url, this.jar.Value())
         const target = this.ParseRedirect(redirect.Location)
         const landedOnB = redirect.Status === S.StatusFound && this.SameEndpoint(target, S.RedirectUriB)
-        this.Check(S.Labels.EnvBSso, landedOnB && this.HasCodeState(target), S.StatusDetailPrefix + redirect.Status)
+        const noLoginPage = !redirect.Body.includes(S.FormOpenTag)
+        this.Check(S.Labels.EnvBSso, landedOnB && noLoginPage && this.HasCodeState(target), S.StatusDetailPrefix + redirect.Status)
         console.log(S.InfoTag + S.SsoInfo)
 
         const code = target?.searchParams.get(S.CodeField) ?? ''
@@ -449,90 +476,126 @@ export class IdpSsoSmoke
     {
         const S = IdpSsoSmoke
         await this.GateOffAllowlistRedirect()
-        const token = await this.ExchangeCode(S.ClientIdA, S.RedirectUriA, S.ClientSecretA)
-        await this.GateReplay(token.code)
+        const pending = await this.FreshCode(S.ClientIdA, S.RedirectUriA, S.ClientSecretA)
+        const idToken = await this.GateReplay(pending)
         await this.GateBadPkce()
-        await this.GateTamperedIdToken(token.idToken)
+        await this.GateTamperedIdToken(idToken, S.ClientIdA)
     }
 
-    /** (a) An authorize request whose redirect_uri is not on the client's allowlist must not yield a 302/code. */
+    /** (a) An off-allowlist redirect_uri must draw the IdP's exact fail-closed response (400 invalid_request), no code. */
     private async GateOffAllowlistRedirect(): Promise<void>
     {
         const S = IdpSsoSmoke
         const pkce = PkceChallenge.Create()
         const url = this.AuthorizeUrl(S.ClientIdA, S.OffAllowlistRedirect, pkce.Challenge)
         const response = await this.browser.Get(url, this.jar.Value())
-        const noRedirect = response.Status !== S.StatusFound && response.Location === undefined
-        this.Check(S.Labels.GateRedirect, noRedirect && this.ErrorPresent(response), S.StatusDetailPrefix + response.Status)
+        const rejected = response.Status === S.StatusBadRequest
+            && response.Location === undefined
+            && this.ErrorValue(response) === S.InvalidRequest
+        this.Check(S.Labels.GateRedirect, rejected, S.StatusDetailPrefix + response.Status)
     }
 
-    /** (b) Replaying an already-consumed authorization code must be refused with invalid_grant. */
-    private async GateReplay(code: string): Promise<void>
+    /**
+     * (b) Single-use proof: exchange a fresh code with the CORRECT verifier (assert 200 + id_token), then replay the
+     * exact same code+verifier+client+redirect — the only changed condition is that the code is already spent, so the
+     * second exchange must be invalid_grant. Returns the id_token from the successful first exchange (for gate d).
+     */
+    private async GateReplay(pending: PendingExchange): Promise<string>
     {
         const S = IdpSsoSmoke
-        const response = await this.PostToken(this.TokenFields(code, this.FreshVerifier(), S.ClientIdA, S.RedirectUriA, S.ClientSecretA))
-        this.Check(S.Labels.GateReplay, this.IsInvalidGrant(response), S.StatusDetailPrefix + response.Status)
+        const first = await this.PostToken(this.TokenFields(pending))
+        const idToken = first.Json()[S.IdTokenField]
+        this.Check(S.Labels.GateReplayFirst, first.Status === S.StatusOk && typeof idToken === 'string', S.StatusDetailPrefix + first.Status)
+
+        const second = await this.PostToken(this.TokenFields(pending))
+        this.Check(S.Labels.GateReplay, this.IsInvalidGrant(second), S.StatusDetailPrefix + second.Status)
+        return typeof idToken === 'string' ? idToken : ''
     }
 
     /** (c) A fresh code exchanged with the wrong PKCE verifier must be refused with invalid_grant. */
     private async GateBadPkce(): Promise<void>
     {
         const S = IdpSsoSmoke
-        const pkce = PkceChallenge.Create()
-        const url = this.AuthorizeUrl(S.ClientIdA, S.RedirectUriA, pkce.Challenge)
-        const redirect = await this.browser.Get(url, this.jar.Value())
-        const code = this.ParseRedirect(redirect.Location)?.searchParams.get(S.CodeField) ?? ''
-        const response = await this.PostToken(this.TokenFields(code, this.FreshVerifier(), S.ClientIdA, S.RedirectUriA, S.ClientSecretA))
+        const pending = await this.FreshCode(S.ClientIdA, S.RedirectUriA, S.ClientSecretA)
+        const response = await this.PostToken(this.TokenFields(pending.WithVerifier(this.FreshVerifier())))
         this.Check(S.Labels.GatePkce, this.IsInvalidGrant(response), S.StatusDetailPrefix + response.Status)
     }
 
-    /** (d) A valid id_token with a single flipped signature char must fail jose verification against the JWKS. */
-    private async GateTamperedIdToken(idToken: string): Promise<void>
+    /**
+     * (d) First a POSITIVE CONTROL: the untampered id_token verifies against the IdP JWKS with the real
+     * issuer/audience/alg. Then flip one char in the signature segment and require jose to reject with exactly
+     * `JWSSignatureVerificationFailed` — any other error (or a successful verify) fails the gate, never passes it.
+     */
+    private async GateTamperedIdToken(idToken: string, clientId: string): Promise<void>
     {
         const S = IdpSsoSmoke
-        const segments = idToken.split(S.JwtSegmentSeparator)
-        const signature = segments[S.SignatureIndex]
-        const flipped = (signature[0] === S.FlipFrom ? S.FlipTo : S.FlipFrom) + signature.slice(1)
-        segments[S.SignatureIndex] = flipped
-        const tampered = segments.join(S.JwtSegmentSeparator)
-
         const jwks = await this.FetchJwks()
         const keySet = createLocalJWKSet(jwks)
-        let rejected = false
+        const options = { issuer: this.Issuer(), audience: clientId, algorithms: [S.Rs256] }
+
+        let verified = false
         try
         {
-            await jwtVerify(tampered, keySet, { issuer: this.Issuer(), audience: S.ClientIdA, algorithms: [S.Rs256] })
+            await jwtVerify(idToken, keySet, options)
+            verified = true
         }
-        catch
+        catch (e)
         {
-            rejected = true
+            verified = false
+            this.Check(S.Labels.GateTamperControl, false, e instanceof Error ? e.message : String(e))
         }
-        this.Check(S.Labels.GateTamper, rejected)
+        if (verified)
+        {
+            this.Check(S.Labels.GateTamperControl, true)
+        }
+
+        const segments = idToken.split(S.JwtSegmentSeparator)
+        const signature = segments[S.SignatureIndex]
+        segments[S.SignatureIndex] = (signature[0] === S.FlipFrom ? S.FlipTo : S.FlipFrom) + signature.slice(1)
+        const tampered = segments.join(S.JwtSegmentSeparator)
+
+        let rejected = false
+        let detail = S.TamperedVerifiedDetail
+        try
+        {
+            await jwtVerify(tampered, keySet, options)
+        }
+        catch (e)
+        {
+            if (e instanceof errors.JWSSignatureVerificationFailed)
+            {
+                rejected = true
+                detail = ''
+            }
+            else
+            {
+                detail = S.UnexpectedErrorDetail + (e instanceof Error ? e.name : String(e))
+            }
+        }
+        this.Check(S.Labels.GateTamper, rejected, detail)
     }
 
-    /** Drives a full browser authorize+token flow (SSO cookie present) and returns the live code + id_token. */
-    private async ExchangeCode(clientId: string, redirectUri: string, secret: string): Promise<{ code: string; idToken: string }>
+    /** Drives a browser authorize flow (SSO cookie present) and returns a spent-able code bound to its PKCE verifier. */
+    private async FreshCode(clientId: string, redirectUri: string, secret: string): Promise<PendingExchange>
     {
         const S = IdpSsoSmoke
         const pkce = PkceChallenge.Create()
         const url = this.AuthorizeUrl(clientId, redirectUri, pkce.Challenge)
         const redirect = await this.browser.Get(url, this.jar.Value())
         const code = this.ParseRedirect(redirect.Location)?.searchParams.get(S.CodeField) ?? ''
-        const response = await this.PostToken(this.TokenFields(code, pkce.Verifier, clientId, redirectUri, secret))
-        const idToken = response.Json()[S.IdTokenField]
-        return { code, idToken: typeof idToken === 'string' ? idToken : '' }
+        return new PendingExchange(code, pkce.Verifier, clientId, redirectUri, secret)
     }
 
-    private TokenFields(code: string, verifier: string, clientId: string, redirectUri: string, secret: string): Map<string, string>
+    private TokenFields(exchange: PendingExchange): Map<string, string>
     {
         const S = IdpSsoSmoke
         return new Map<string, string>([
             [S.GrantTypeField, S.GrantTypeAuthorizationCode],
-            [S.CodeField, code],
-            [S.CodeVerifierField, verifier],
-            [S.RedirectUriField, redirectUri],
-            [S.ClientIdField, clientId],
-            [S.ClientSecretParam, secret],
+            [S.CodeField, exchange.Code],
+            [S.CodeVerifierField, exchange.Verifier],
+            [S.RedirectUriField, exchange.RedirectUri],
+            [S.ClientIdField, exchange.ClientId],
+            [S.ClientSecretParam, exchange.Secret],
         ])
     }
 
@@ -631,21 +694,25 @@ export class IdpSsoSmoke
         return response.Status === IdpSsoSmoke.StatusBadRequest && response.Json()[IdpSsoSmoke.ErrorField] === IdpSsoSmoke.InvalidGrant
     }
 
-    private ErrorPresent(response: BrowserResponse): boolean
+    /** The JSON `error` field of a response, or undefined when absent or the body is not JSON. */
+    private ErrorValue(response: BrowserResponse): string | undefined
     {
         try
         {
-            return typeof response.Json()[IdpSsoSmoke.ErrorField] === 'string'
+            const value = response.Json()[IdpSsoSmoke.ErrorField]
+            return typeof value === 'string' ? value : undefined
         }
         catch
         {
-            return false
+            return undefined
         }
     }
 
     private ResultDetail(result: unknown): string
     {
-        return result instanceof AuthenticatedResult ? 'sub=' + result.Principal.Id : 'result=' + (result?.constructor?.name ?? String(result))
+        return result instanceof AuthenticatedResult
+            ? IdpSsoSmoke.SubDetailPrefix + result.Principal.Id
+            : IdpSsoSmoke.ResultDetailPrefix + (result?.constructor?.name ?? String(result))
     }
 
     private Check(label: string, ok: boolean, detail = ''): void
