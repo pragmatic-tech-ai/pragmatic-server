@@ -34,6 +34,7 @@ export class HiveDetailView extends TenantViewBase
     {
         super()
         this.vm = new HiveDetailViewModel(source, hive)
+        this.vm.PropertyChanged(HiveDetailViewModel.VersionsProperty).subscribe(() => this.Render())
         this.vm.PropertyChanged(HiveDetailViewModel.PendingProperty).subscribe(() => this.Render())
         this.vm.PropertyChanged(HiveDetailViewModel.FailedRollProperty).subscribe(() => this.Render())
         this.Render()

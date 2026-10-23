@@ -142,6 +142,7 @@ export class HiveDetailViewModel extends Observable
         {
             return false
         }
+        // A failed live refresh is intentionally ignored: the next successful event or Refresh recovers.
         await this.Load().catch(() => undefined)
         return true
     }
