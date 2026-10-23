@@ -51,6 +51,7 @@ export class IdpService implements IIdpService
     private static readonly ReuseIntervalMs = 500
     private static readonly LaunchFailed = 'IdP launch failed for tenant '
     private static readonly LaunchFailedSep = ': '
+    private static readonly RecoverFailed = 'IdP recovery failed for tenant (its identity volume was preserved) '
     private static readonly TenantIdPattern = /^[A-Za-z0-9-]+$/
     private static readonly InvalidTenantId = 'IdpService: invalid tenantId (only letters, digits and hyphens allowed)'
 
@@ -99,9 +100,37 @@ export class IdpService implements IIdpService
             {
                 return reused
             }
-            await this.Cleanup(existing.containerName, existing.volumeName)
+            // Unhealthy/stopped (a reboot, a Docker restart, a transient probe miss): recover IN PLACE on the
+            // same port and the same volume. The volume holds the realm, Owner accounts, signing key, and every
+            // registered OIDC client, and the issuer URL (port) is baked into every already-federated env bundle;
+            // a health miss must NEVER destroy that. Reserve Down+RemoveVolume for Launch's own fresh-tenant rollback.
+            return this.Recover(existing)
         }
         return this.Launch(tenantId)
+    }
+
+    /** Brings a stopped/unhealthy existing IdP back up on its own port and volume without ever removing that volume.
+     *  Re-seeding is a non-destructive `cp -a` (host tls/secrets merged in; realms/ untouched). Throws if it cannot
+     *  come back — the operator sees the failure rather than a silent rebuild that loses the tenant's identity state. */
+    private async Recover(record: IdpRecord): Promise<IdpConnection>
+    {
+        const dir = this.TenantDir(record.tenantId)
+        try
+        {
+            const ca = readFileSync(join(record.caDir, IdpService.CaFileName))
+            const adminToken = readFileSync(join(dir, IdpService.SecretsDirName, record.adminTokenRef), IdpService.FileEncoding)
+            await this.containers.Down(record.containerName)
+            await this.containers.SeedVolume(record.volumeName, dir, this.image)
+            await this.containers.Up({ tenantId: record.tenantId, port: record.port, volumeName: record.volumeName, adminTokenRef: record.adminTokenRef, image: this.image })
+            await this.containers.WaitHealthy(record.port, ca)
+            return { baseUrl: record.baseUrl, ca, adminToken, adminTokenRef: record.adminTokenRef, caDir: record.caDir }
+        }
+        catch (err)
+        {
+            // Only the message is forwarded: the admin token is never part of any message or logged.
+            const detail = err instanceof Error ? err.message : String(err)
+            throw new Error(`${IdpService.RecoverFailed}${record.tenantId}${IdpService.LaunchFailedSep}${detail}`)
+        }
     }
 
     private TenantDir(tenantId: string): string

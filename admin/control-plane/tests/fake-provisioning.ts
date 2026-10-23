@@ -5,6 +5,8 @@ import type { TenantProvisioningService, TenantProvisionInput, TenantProvisionRe
 export class FakeProvisioning
 {
     public static readonly Password = 'one-time-secret'
+    private static readonly OwnerPrincipalId = 'owner'
+    private static readonly IdpBaseUrl = 'https://idp.test'
 
     public FailWith: Error | undefined
 
@@ -21,7 +23,7 @@ export class FakeProvisioning
         {
             throw this.FailWith
         }
-        const record = await this.directory.CreateProvisionedTenant({ ...input, ownerPrincipalId: 'owner', idpBaseUrl: 'https://idp.test' })
+        const record = await this.directory.CreateProvisionedTenant({ ...input, ownerPrincipalId: FakeProvisioning.OwnerPrincipalId, idpBaseUrl: FakeProvisioning.IdpBaseUrl })
         return { record, ownerPassword: FakeProvisioning.Password }
     }
 

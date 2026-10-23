@@ -114,7 +114,17 @@ export type PromotionResultDto = {
 
 /** Platform record DTOs mirror the stored records 1:1. */
 export type ClientDto = ClientRecord
-export type TenantDto = TenantRecord
+/** The tenant shape exposed over HTTP: public coordinates only. The record's internal IdP refs
+ *  (idpBaseUrl, idpCaRef — a host filesystem path — and idpAdminTokenRef) are deliberately omitted. */
+export type TenantDto =
+{
+    id: string
+    clientId: string
+    displayName: string
+    createdAt: string
+    ownerEmail?: string
+    ownerPrincipalId?: string
+}
 export type HiveDto = HiveRecord
 
 /** One environment's live workload health on its hive: no secrets, no internals. */
@@ -912,10 +922,16 @@ export class ControlPlaneHost
             case ControlPlaneHost.ClientsSegment:
                 return this.directory.ListClients()
             case ControlPlaneHost.TenantsSegment:
-                return this.directory.ListTenants()
+                return this.directory.ListTenants().map(t => ControlPlaneHost.ToTenantDto(t))
             default:
                 return this.directory.ListHives()
         }
+    }
+
+    /** Projects a stored tenant to its HTTP shape, dropping the internal IdP refs (base URL, CA path, admin-token ref). */
+    private static ToTenantDto(record: TenantRecord): TenantDto
+    {
+        return { id: record.id, clientId: record.clientId, displayName: record.displayName, createdAt: record.createdAt, ownerEmail: record.ownerEmail, ownerPrincipalId: record.ownerPrincipalId }
     }
 
     private GetPlatform(resource: string, id: string): ClientDto | TenantDto | HiveDto | undefined
@@ -925,7 +941,10 @@ export class ControlPlaneHost
             case ControlPlaneHost.ClientsSegment:
                 return this.directory.GetClient(id)
             case ControlPlaneHost.TenantsSegment:
-                return this.directory.GetTenant(id)
+            {
+                const tenant = this.directory.GetTenant(id)
+                return tenant === undefined ? undefined : ControlPlaneHost.ToTenantDto(tenant)
+            }
             default:
                 return this.directory.GetHive(id)
         }
@@ -996,7 +1015,7 @@ export class ControlPlaneHost
             const { record, ownerPassword } = await this.provisioning.Provision({ id, clientId: body.clientId as string, displayName, ownerEmail: body.ownerEmail as string })
             // The one-time Owner password is revealed exactly once here; never logged or stored.
             res.setHeader(ControlPlaneHost.CacheControlHeader, ControlPlaneHost.NoStore)
-            this.WriteJson(res, ControlPlaneHost.StatusCreated, { ...record, owner: { email: record.ownerEmail, principalId: record.ownerPrincipalId, password: ownerPassword } })
+            this.WriteJson(res, ControlPlaneHost.StatusCreated, { ...ControlPlaneHost.ToTenantDto(record), owner: { email: record.ownerEmail, principalId: record.ownerPrincipalId, password: ownerPassword } })
             return
         }
         else

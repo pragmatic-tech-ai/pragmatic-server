@@ -16,7 +16,7 @@ import { InMemoryAuthorizationCodeStore } from '../authorization-code-store.js';
 interface HttpsReply
 {
     status: number;
-    body: any;
+    body: unknown;
 }
 
 class HealthFixture

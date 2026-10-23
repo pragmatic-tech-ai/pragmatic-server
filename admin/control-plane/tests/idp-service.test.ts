@@ -14,7 +14,9 @@ class FakeContainers
     public readonly Calls: string[] = []
     public Specs: IdpContainerSpec[] = []
     public FailHealthy = false
+    public FailHealthyOnCalls: number[] = []
     public SeenToken = ''
+    private healthCallCount = 0
 
     public async Up(spec: IdpContainerSpec): Promise<void>
     {
@@ -42,7 +44,8 @@ class FakeContainers
     public async WaitHealthy(): Promise<void>
     {
         this.Calls.push('WaitHealthy')
-        if (this.FailHealthy)
+        this.healthCallCount++
+        if (this.FailHealthy || this.FailHealthyOnCalls.includes(this.healthCallCount))
         {
             throw new Error('not healthy')
         }
@@ -151,16 +154,40 @@ test('second EnsureForTenant reuses the running IdP without relaunching', async 
     }
 })
 
-test('reuse falls through to a fresh launch when the IdP is unhealthy', async () =>
+test('unhealthy reuse recovers in place on the same port and volume, never removing it', async () =>
+{
+    const fx = new Fixture()
+    try
+    {
+        const first = await fx.Service.EnsureForTenant('t1', 'T')   // fresh launch: WaitHealthy call #1 ok
+        fx.Containers.FailHealthyOnCalls = [2]                       // #2 = the reuse probe fails; #3 = recovery succeeds
+        const recovered = await fx.Service.EnsureForTenant('t1', 'T')
+        // Recovery brought it back with a second Up after a Down, and NEVER removed the volume.
+        assert.equal(fx.Containers.Calls.filter(c => c === 'Up').length, 2)
+        assert.ok(fx.Containers.Calls.includes('Down:pragmatic-idp-t1'))
+        assert.ok(!fx.Containers.Calls.some(c => c.startsWith('RemoveVolume')))
+        const relaunch = fx.Containers.Specs[1]
+        assert.equal(relaunch.port, 12100)                          // same port -> issuer/discovery URL unchanged
+        assert.equal(relaunch.volumeName, 'pragmatic-idp-data-t1')  // same volume -> realm/accounts/clients preserved
+        assert.equal(recovered.baseUrl, first.baseUrl)
+        assert.equal(recovered.adminToken, first.adminToken)
+        assert.ok(recovered.ca.equals(first.ca))
+    }
+    finally
+    {
+        fx.Dispose()
+    }
+})
+
+test('recovery that cannot come back rejects and still never removes the identity volume', async () =>
 {
     const fx = new Fixture()
     try
     {
         await fx.Service.EnsureForTenant('t1', 'T')
-        fx.Containers.FailHealthy = true
-        // unhealthy reuse -> cleanup -> relaunch, whose own WaitHealthy also fails -> rejects
-        await assert.rejects(fx.Service.EnsureForTenant('t1', 'T'))
-        assert.equal(fx.Containers.Calls.filter(c => c === 'Up').length, 2)
+        fx.Containers.FailHealthy = true     // both the reuse probe and the recovery health check fail
+        await assert.rejects(fx.Service.EnsureForTenant('t1', 'T'), /recovery failed/)
+        assert.ok(!fx.Containers.Calls.some(c => c.startsWith('RemoveVolume')))
     }
     finally
     {
