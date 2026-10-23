@@ -2,6 +2,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { DelegationDepth } from '@pragmatic-tech-ai/todl-identity'
+import { OidcSettingKeys } from '@pragmatic-tech-ai/todl-identity-cloud'
 import { NorthwindApp } from './compile.js'
 
 export enum EnvKind
@@ -18,6 +20,8 @@ export enum TenantPurposeName
 }
 
 export type EnvDatabase = { connectionName: string; host: string; port: number; database: string; user: string; password: string; hostPort: number }
+/** Tenant-IdP federation input: provider settings for the generic-oidc pack plus the raw client secret stored under secretRef. */
+export type EnvOidc = { issuer: string; discoveryUrl: string; clientId: string; redirectUri: string; secretRef: string; secret: string }
 export type EnvDefinition = { name: string; kind: EnvKind; environmentId: string; purpose: TenantPurposeName; hostPort: number; database?: EnvDatabase }
 
 /** Generates a pragmatic-server config bundle (master key, secrets, tenants, tenant config, demo app) for one environment. */
@@ -41,6 +45,7 @@ export class BundleBuilder
     public static readonly AdminEmailPrefix = 'admin@'
     public static readonly AdminEmailSuffix = '.test'
     private static readonly LocalPackId = 'local'
+    private static readonly GenericOidcPackId = 'generic-oidc'
     private static readonly Utf8 = 'utf8'
     private static readonly HexEncoding = 'hex'
     private static readonly Newline = '\n'
@@ -54,15 +59,15 @@ export class BundleBuilder
     private static readonly Indent = 2
     private static readonly SeedRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 
-    public static async Generate(def: EnvDefinition, bundleDir: string, explicitSeedDir?: string): Promise<void>
+    public static async Generate(def: EnvDefinition, bundleDir: string, explicitSeedDir?: string, oidc?: EnvOidc): Promise<void>
     {
         mkdirSync(bundleDir, { recursive: true })
         const seedDir = explicitSeedDir ?? join(BundleBuilder.SeedRoot, def.name, BundleBuilder.SeedDir)
         BundleBuilder.WriteMasterKey(bundleDir)
-        BundleBuilder.WriteSecrets(def, bundleDir, seedDir)
+        BundleBuilder.WriteSecrets(def, bundleDir, seedDir, oidc)
         BundleBuilder.WriteTenants(def, bundleDir)
         const tenantDir = join(bundleDir, BundleBuilder.DataDir, def.environmentId)
-        BundleBuilder.WriteTenantConfig(def, tenantDir, seedDir)
+        BundleBuilder.WriteTenantConfig(def, tenantDir, seedDir, oidc)
         if (def.kind === EnvKind.Demo)
         {
             await BundleBuilder.WriteDemoApplication(tenantDir)
@@ -78,7 +83,7 @@ export class BundleBuilder
         }
     }
 
-    private static WriteSecrets(def: EnvDefinition, bundleDir: string, seedDir: string): void
+    private static WriteSecrets(def: EnvDefinition, bundleDir: string, seedDir: string, oidc?: EnvOidc): void
     {
         const path = join(bundleDir, BundleBuilder.SecretsFile)
         if (existsSync(path))
@@ -94,6 +99,10 @@ export class BundleBuilder
         if (def.database)
         {
             secrets[BundleBuilder.DbSecretRef(def, def.database)] = def.database.password
+        }
+        if (oidc)
+        {
+            secrets[oidc.secretRef] = oidc.secret
         }
         BundleBuilder.WriteJson(path, secrets)
     }
@@ -149,14 +158,14 @@ export class BundleBuilder
     }
 
     /** Matches FileTenantConfigStore: { configs: { <environmentId>: record } }, Map fields serialized as entry arrays. */
-    private static WriteTenantConfig(def: EnvDefinition, tenantDir: string, seedDir: string): void
+    private static WriteTenantConfig(def: EnvDefinition, tenantDir: string, seedDir: string, oidc?: EnvOidc): void
     {
         const identityDir = join(tenantDir, BundleBuilder.IdentityDir)
         mkdirSync(identityDir, { recursive: true })
         const record: Record<string, unknown> = {
-            packId: BundleBuilder.LocalPackId,
-            delegationDepth: BundleBuilder.FullAuthzDepth,
-            providerSettings: [],
+            packId: oidc ? BundleBuilder.GenericOidcPackId : BundleBuilder.LocalPackId,
+            delegationDepth: oidc ? DelegationDepth.AuthnDirectory : BundleBuilder.FullAuthzDepth,
+            providerSettings: oidc ? BundleBuilder.OidcProviderSettings(oidc) : [],
             groupRoleMap: [],
             claimsMapping: [],
         }
@@ -168,6 +177,17 @@ export class BundleBuilder
         const configs: Record<string, unknown> = {}
         configs[def.environmentId] = record
         BundleBuilder.WriteJson(join(identityDir, BundleBuilder.TenantConfigFile), { configs })
+    }
+
+    private static OidcProviderSettings(oidc: EnvOidc): Array<[string, string]>
+    {
+        return [
+            [OidcSettingKeys.Issuer, oidc.issuer],
+            [OidcSettingKeys.DiscoveryUrl, oidc.discoveryUrl],
+            [OidcSettingKeys.ClientId, oidc.clientId],
+            [OidcSettingKeys.RedirectUri, oidc.redirectUri],
+            [OidcSettingKeys.SecretRef, oidc.secretRef],
+        ]
     }
 
     private static async WriteDemoApplication(tenantDir: string): Promise<void>
