@@ -72,7 +72,9 @@ export class DevCa
             keyFile: join(dir, DevCa.ServerKeyFile),
             caFile: join(dir, DevCa.CaCertFile),
         }
-        if (existsSync(result.certFile) && existsSync(result.keyFile) && existsSync(result.caFile))
+        // The mint also drops ca.key into `dir`; include it in the idempotency guard so a
+        // partially-cleaned dir (the three result files present but ca.key gone) regenerates the full set.
+        if (existsSync(result.certFile) && existsSync(result.keyFile) && existsSync(result.caFile) && existsSync(join(dir, DevCa.CaKeyFile)))
         {
             return result
         }

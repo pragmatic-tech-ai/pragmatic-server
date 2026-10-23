@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { X509Certificate } from 'node:crypto'
@@ -23,6 +23,25 @@ test('mints a CA, server cert and key, idempotently', () =>
         }
         const m = IdpTlsMaterial.Load(a)
         assert.ok(m.key.equals(bytesA[1]) && m.cert.equals(bytesA[0]))
+    }
+    finally
+    {
+        rmSync(dir, { recursive: true, force: true })
+    }
+})
+
+test('regenerates the full set when ca.key is missing from an otherwise-complete dir', () =>
+{
+    const dir = mkdtempSync(join(tmpdir(), 'devca-'))
+    try
+    {
+        const first = DevCa.EnsureAt(dir, 'idp.local')
+        const firstCert = readFileSync(first.certFile)
+        rmSync(join(dir, 'ca.key'), { force: true })
+        const second = DevCa.EnsureAt(dir, 'idp.local')
+        // ca.key is back, and a fresh mint happened (the guard did not treat the dir as complete).
+        assert.ok(existsSync(join(dir, 'ca.key')))
+        assert.ok(!readFileSync(second.certFile).equals(firstCert))
     }
     finally
     {
