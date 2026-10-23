@@ -15,6 +15,8 @@ class ProfileSideStore
     private static readonly NotFound = 'ENOENT';
 
     private readonly file: string;
+    private writeQueue: Promise<void> = Promise.resolve();
+    private tmpCounter = 0;
 
     public constructor(private readonly dir: string)
     {
@@ -24,30 +26,37 @@ class ProfileSideStore
     public async Get(principalId: string): Promise<string | undefined>
     {
         const map = await this.Load();
-        return Object.prototype.hasOwnProperty.call(map, principalId) ? map[principalId] : undefined;
+        return map.get(principalId);
     }
 
-    public async Put(principalId: string, displayName: string): Promise<void>
+    public Put(principalId: string, displayName: string): Promise<void>
+    {
+        const result = this.writeQueue.then(() => this.DoPut(principalId, displayName));
+        this.writeQueue = result.catch(() => undefined);
+        return result;
+    }
+
+    private async DoPut(principalId: string, displayName: string): Promise<void>
     {
         const map = await this.Load();
-        map[principalId] = displayName;
+        map.set(principalId, displayName);
         await mkdir(this.dir, { recursive: true });
-        const tmp = this.file + ProfileSideStore.TmpSuffix;
-        await writeFile(tmp, JSON.stringify(map), ProfileSideStore.Encoding);
+        const tmp = this.file + ProfileSideStore.TmpSuffix + (this.tmpCounter++);
+        await writeFile(tmp, JSON.stringify(Object.fromEntries(map)), ProfileSideStore.Encoding);
         await rename(tmp, this.file);
     }
 
-    private async Load(): Promise<Record<string, string>>
+    private async Load(): Promise<Map<string, string>>
     {
         try
         {
-            return JSON.parse(await readFile(this.file, ProfileSideStore.Encoding)) as Record<string, string>;
+            return new Map(Object.entries(JSON.parse(await readFile(this.file, ProfileSideStore.Encoding)) as Record<string, string>));
         }
         catch (e)
         {
             if ((e as NodeJS.ErrnoException).code === ProfileSideStore.NotFound)
             {
-                return {};
+                return new Map();
             }
             throw e;
         }

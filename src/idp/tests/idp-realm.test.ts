@@ -88,6 +88,10 @@ class ProfileFixture
     public static readonly ProfilePrincipal = 'p-2';
     public static readonly ProfileName = 'Bee Person';
     public static readonly UnknownPrincipal = 'p-unknown';
+    public static readonly ProfileFile = 'idp-profiles.json';
+    public static readonly ProtoPrincipal = '__proto__';
+    public static readonly SeedCount = 8;
+    public static readonly SeedPrefix = 'seed-';
 }
 
 test('SeedAccount is idempotent on principalId and does not rotate the password', async () =>
@@ -123,5 +127,58 @@ test('LookupProfile returns null for an unknown principal', async () =>
     await RealmTestFixture.WithRealm(async realm =>
     {
         assert.equal(await realm.LookupProfile(ProfileFixture.UnknownPrincipal), null);
+    });
+});
+
+test('re-seeding with a display name updates the name but does not rotate the password', async () =>
+{
+    await RealmTestFixture.WithRealm(async realm =>
+    {
+        await realm.SeedAccount(RealmTestFixture.Email, RealmTestFixture.PrincipalId, ProfileFixture.OtherPassword, ProfileFixture.ProfileName);
+        assert.equal((await realm.LookupProfile(RealmTestFixture.PrincipalId))?.name, ProfileFixture.ProfileName);
+        assert.ok(await realm.Authenticate(RealmTestFixture.Email, RealmTestFixture.Password));
+        assert.equal(await realm.Authenticate(RealmTestFixture.Email, ProfileFixture.OtherPassword), null);
+    });
+});
+
+test('display names persist across a reopened realm', async () =>
+{
+    await RealmTestFixture.WithRealm(async (realm, dir, key) =>
+    {
+        await realm.SeedAccount(ProfileFixture.ProfileEmail, ProfileFixture.ProfilePrincipal, RealmTestFixture.Password, ProfileFixture.ProfileName);
+        const reopened = await IdpRealm.OpenFor(dir, RealmTestFixture.TenantId, RealmTestFixture.DisplayName, key);
+        assert.deepEqual(await reopened.LookupProfile(ProfileFixture.ProfilePrincipal), { email: ProfileFixture.ProfileEmail, name: ProfileFixture.ProfileName });
+    });
+});
+
+test('concurrent seeds do not lose display names', async () =>
+{
+    await RealmTestFixture.WithRealm(async realm =>
+    {
+        const ids = Array.from({ length: ProfileFixture.SeedCount }, (_, i) => ProfileFixture.SeedPrefix + i);
+        await Promise.all(ids.map(id => realm.SeedAccount(id + '@t', id, RealmTestFixture.Password, id)));
+        for (const id of ids)
+        {
+            assert.equal((await realm.LookupProfile(id))?.name, id);
+        }
+    });
+});
+
+test('LookupProfile falls back to an empty name when the profile row is truly absent', async () =>
+{
+    await RealmTestFixture.WithRealm(async (realm, dir) =>
+    {
+        await realm.SeedAccount(ProfileFixture.ProfileEmail, ProfileFixture.ProfilePrincipal, RealmTestFixture.Password, ProfileFixture.ProfileName);
+        fs.rmSync(path.join(dir, RealmTestFixture.TenantId, ProfileFixture.ProfileFile));
+        assert.deepEqual(await realm.LookupProfile(ProfileFixture.ProfilePrincipal), { email: ProfileFixture.ProfileEmail, name: '' });
+    });
+});
+
+test('a principalId of __proto__ is stored like any other key', async () =>
+{
+    await RealmTestFixture.WithRealm(async realm =>
+    {
+        await realm.SeedAccount(ProfileFixture.ProfileEmail, ProfileFixture.ProtoPrincipal, RealmTestFixture.Password, ProfileFixture.ProfileName);
+        assert.equal((await realm.LookupProfile(ProfileFixture.ProtoPrincipal))?.name, ProfileFixture.ProfileName);
     });
 });
