@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { request } from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -171,6 +171,7 @@ describe('ControlPlaneHost tenant plane', () =>
             api,
             allowedHosts: new Set([TenantHarness.TenantHost]),
             events: new TenantEventBus(),
+            staticRoot: join(parent, 'tenant-static'),
         }
         host = new ControlPlaneHost(
             new StubEnvironments() as unknown as IEnvironmentService,
@@ -308,5 +309,101 @@ describe('ControlPlaneHost without a tenant plane', () =>
     {
         const r = await TenantHarness.Raw(host, HttpMethod.Get, TenantHarness.TenantApiHivesPath, { [TenantHarness.HostHeader]: TenantHarness.LocalHost })
         assert.equal(r.status, 404)
+    })
+})
+
+describe('ControlPlaneHost static bundle by host', () =>
+{
+    const TenantSentinel = 'TENANT-BUNDLE'
+    const OperatorSentinel = 'OPERATOR-BUNDLE'
+    const IndexFile = 'index.html'
+    const SecretFile = 'secret.txt'
+    const RootPath = '/'
+    const TraversalPath = '/../secret.txt'
+    const EncodedTraversalPath = '/..%2fsecret.txt'
+    let parent: string
+    let host: ControlPlaneHost
+    let hostNoTenant: ControlPlaneHost
+
+    beforeEach(async () =>
+    {
+        parent = mkdtempSync(join(tmpdir(), 'cp-static-'))
+        const operatorRoot = join(parent, 'operator-static')
+        const tenantRoot = join(parent, 'tenant-static')
+        mkdirSync(operatorRoot)
+        mkdirSync(tenantRoot)
+        writeFileSync(join(operatorRoot, IndexFile), OperatorSentinel)
+        writeFileSync(join(tenantRoot, IndexFile), TenantSentinel)
+        writeFileSync(join(parent, SecretFile), 'secret')
+        const directory = await TenantHarness.BuildDirectory(parent)
+        const factory = new HiveOrchestratorFactory()
+        const plane: TenantPlane = {
+            endpoint: new TenantAuthEndpoint(new StubRelyingParty(), new TenantSessionStore(join(parent, 'tenant-sessions.json'), 3600000), false),
+            gate: new TenantAuthGate(new TenantSessionStore(join(parent, 'tenant-sessions2.json'), 3600000)),
+            api: new StubTenantApi(),
+            allowedHosts: new Set([TenantHarness.TenantHost]),
+            events: new TenantEventBus(),
+            staticRoot: tenantRoot,
+        }
+        host = new ControlPlaneHost(
+            new StubEnvironments() as unknown as IEnvironmentService,
+            {} as unknown as IGraphService,
+            operatorRoot,
+            new FakeOperator(),
+            false,
+            directory,
+            factory,
+            await RolloutFixture.Create(parent, directory, factory),
+            new FakeProvisioning(directory).AsService(),
+            plane)
+        await host.Listen(0, '127.0.0.1')
+        hostNoTenant = new ControlPlaneHost(
+            new StubEnvironments() as unknown as IEnvironmentService,
+            {} as unknown as IGraphService,
+            operatorRoot,
+            new FakeOperator(),
+            false,
+            directory,
+            factory,
+            await RolloutFixture.Create(parent, directory, factory),
+            new FakeProvisioning(directory).AsService())
+        await hostNoTenant.Listen(0, '127.0.0.1')
+    })
+
+    afterEach(async () =>
+    {
+        await host.Close()
+        await hostNoTenant.Close()
+        rmSync(parent, { recursive: true, force: true })
+    })
+
+    it('serves the tenant bundle on a tenant host', async () =>
+    {
+        const r = await TenantHarness.Raw(host, HttpMethod.Get, RootPath, { [TenantHarness.HostHeader]: TenantHarness.TenantHost })
+        assert.equal(r.status, 200)
+        assert.equal(r.body, TenantSentinel)
+    })
+
+    it('serves the operator bundle on an operator host', async () =>
+    {
+        const r = await TenantHarness.Raw(host, HttpMethod.Get, RootPath, { [TenantHarness.HostHeader]: TenantHarness.LocalHost })
+        assert.equal(r.status, 200)
+        assert.equal(r.body, OperatorSentinel)
+    })
+
+    it('refuses traversal out of the tenant root on a tenant host', async () =>
+    {
+        const plain = await TenantHarness.Raw(host, HttpMethod.Get, TraversalPath, { [TenantHarness.HostHeader]: TenantHarness.TenantHost })
+        assert.equal(plain.status, 404)
+        const encoded = await TenantHarness.Raw(host, HttpMethod.Get, EncodedTraversalPath, { [TenantHarness.HostHeader]: TenantHarness.TenantHost })
+        assert.equal(encoded.status, 404)
+        assert.ok(!encoded.body.includes('secret'))
+    })
+
+    it('serves the operator root when no tenant plane is configured', async () =>
+    {
+        const r = await TenantHarness.Raw(hostNoTenant, HttpMethod.Get, RootPath, { [TenantHarness.HostHeader]: TenantHarness.LocalHost })
+        assert.equal(r.status, 200)
+        assert.equal(r.body, OperatorSentinel)
     })
 })

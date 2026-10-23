@@ -16,7 +16,25 @@ Before the first start. This emits admin/portal/dist/, which the control plane s
 
 ```
 npm --prefix admin/portal install && npm --prefix admin/portal run build
+npm --prefix admin/tenant-portal install && npm --prefix admin/tenant-portal run build
 ```
+
+## Tenant portal
+
+The tenant portal is a second Mural app (admin/tenant-portal/) for tenant owners: hives, versions, rollouts, environment lifecycle and live logs. Build it as shown above, then serve it on a tenant host by setting these on the control plane:
+
+- PRAGMATIC_TENANT_ADMIN_HOSTS: the host names that serve the tenant portal bundle instead of the operator portal.
+- PRAGMATIC_TENANT_ADMIN_CALLBACK_URL: the OIDC callback URL registered for tenant sign-in.
+
+Gated end-to-end test. It runs against a fake control plane (no IdP, no Docker), serving dist/ and canned /tenant-auth and /tenant-api responses. It needs a prior build and Playwright browsers, and is not part of the default unit run (`npm --prefix admin/tenant-portal test`):
+
+```
+npx playwright install chromium
+npm --prefix admin/tenant-portal run build
+npm --prefix admin/tenant-portal run test:e2e
+```
+
+The real-login e2e (a live per-tenant IdP and relying party driving a real roll) is a separate deferred Feature and is not covered here.
 
 ## Start the control plane
 

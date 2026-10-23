@@ -60,6 +60,7 @@ export class ControlPlaneServer
     private static readonly ParentSegment = '..'
     private static readonly PortalSegment = 'portal'
     private static readonly DistSegment = 'dist'
+    private static readonly TenantPortalSegment = 'tenant-portal'
     private static readonly ListeningPrefix = 'Control plane listening on http://localhost:'
     private static readonly ListeningSuffix = '/'
     private static readonly MasterKeyEnvVar = 'PRAGMATIC_ADMIN_MASTER_KEY_FILE'
@@ -112,7 +113,8 @@ export class ControlPlaneServer
         const placement = new EnvironmentPlacement(directory)
         const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, reports, registrations, directory, orchestrators, registry, placement)
         const provisioning = new TenantProvisioningService(idpService, directory, conn => new IdpAdminClient(conn))
-        const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie, service, deployments, orchestrators, placement)
+        const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie, service, deployments, orchestrators, placement,
+            join(here, ControlPlaneServer.ParentSegment, ControlPlaneServer.TenantPortalSegment, ControlPlaneServer.DistSegment))
         const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, orchestrators, deployments, provisioning, tenantPlane)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
         await host.Listen(port, ControlPlaneServer.BindHost)
@@ -147,7 +149,8 @@ export class ControlPlaneServer
         service: IEnvironmentService,
         deployments: PlatformDeploymentRegistry,
         orchestrators: HiveOrchestratorFactory,
-        placement: EnvironmentPlacement): TenantPlane | undefined
+        placement: EnvironmentPlacement,
+        staticRoot: string): TenantPlane | undefined
     {
         const rawHosts = env[ControlPlaneServer.TenantHostsEnvVar]
         const callbackUrl = env[ControlPlaneServer.TenantCallbackEnvVar]
@@ -166,7 +169,7 @@ export class ControlPlaneServer
         const gate = new TenantAuthGate(sessions)
         const api = new TenantApiEndpoint(service, directory, deployments, orchestrators, placement)
         const events = new TenantEventBus()
-        return { endpoint, gate, api, allowedHosts, events }
+        return { endpoint, gate, api, allowedHosts, events, staticRoot }
     }
 
     /** Parses a comma-separated host list into a set of trimmed, lowercased, non-empty hosts. */

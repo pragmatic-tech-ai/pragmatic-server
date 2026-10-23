@@ -205,11 +205,13 @@
 - Consumes: the built `dist/` (vite build) + a `FakeTenantControlPlane` (a `node:http` server serving `dist/` + canned `/tenant-auth/session`, `/tenant-api/*` JSON, and a `/tenant-api/events` + logs websocket) — model on `admin/portal/tests/portal.spec.ts`'s `FakeControlPlane`.
 - Produces: a gated Playwright spec (needs `npm --prefix admin/tenant-portal run build` + Playwright browsers; same gating convention as the portal e2e — it is not part of the default unit run) that drives: a session-present boot → the tree renders hives/envs; selecting a hive → the version list renders and a "Set as target" → confirm → the target POST fires; selecting an environment → Start fires and the logs panel receives a streamed chunk. Assert against the fake's recorded requests.
 
-- [ ] **Step 1:** Write `FakeTenantControlPlane` + the spec (it builds first, then serves `dist/`). Gate it exactly as the portal's `portal.spec.ts` is gated.
-- [ ] **Step 2:** Run `npm --prefix admin/tenant-portal run build`, then the e2e locally if Playwright browsers are present; if not present, leave it as the documented gated step (do NOT block the task on browser availability — the unit suites are the gate).
-- [ ] **Step 3:** Update `admin/README.md`: build (`npm --prefix admin/tenant-portal install && npm --prefix admin/tenant-portal run build`), the env vars to serve it (`PRAGMATIC_TENANT_ADMIN_HOSTS`, `PRAGMATIC_TENANT_ADMIN_CALLBACK_URL`), and the gated e2e command. Note in this plan that the **real-login e2e** (against a live 6c IdP + relying-party) is a separate gated Feature.
-- [ ] **Step 4:** `npm --prefix admin/tenant-portal test` (unit) + `npm run typecheck:tools` (root) green; the e2e either green locally or left gated.
-- [ ] **Step 5: Commit** `test(tenant-portal): gated end-to-end against a fake control-plane + runbook`.
+- [x] **Step 1:** Write `FakeTenantControlPlane` + the spec (it builds first, then serves `dist/`). Gate it exactly as the portal's `portal.spec.ts` is gated.
+- [x] **Step 2:** Run `npm --prefix admin/tenant-portal run build`, then the e2e locally if Playwright browsers are present; if not present, leave it as the documented gated step (do NOT block the task on browser availability — the unit suites are the gate).
+- [x] **Step 3:** Update `admin/README.md`: build (`npm --prefix admin/tenant-portal install && npm --prefix admin/tenant-portal run build`), the env vars to serve it (`PRAGMATIC_TENANT_ADMIN_HOSTS`, `PRAGMATIC_TENANT_ADMIN_CALLBACK_URL`), and the gated e2e command. Note in this plan that the **real-login e2e** (against a live 6c IdP + relying-party) is a separate gated Feature.
+- [x] **Step 4:** `npm --prefix admin/tenant-portal test` (unit) + `npm run typecheck:tools` (root) green; the e2e either green locally or left gated.
+- [x] **Step 5: Commit** `test(tenant-portal): gated end-to-end against a fake control-plane + runbook`.
+
+**Done:** fake-backend e2e passes locally (3 tests). The real-login e2e (live 6c IdP + relying-party) remains a separate deferred Feature.
 
 ---
 

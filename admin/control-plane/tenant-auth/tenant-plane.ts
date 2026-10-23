@@ -26,4 +26,6 @@ export type TenantPlane =
     api: ITenantApiEndpoint
     allowedHosts: ReadonlySet<string>
     events: TenantEventBus
+    /** Absolute directory of the built tenant portal bundle, served on the tenant hosts. */
+    staticRoot: string
 }
