@@ -38,3 +38,16 @@ The platform's existing `admin/portal` is the **operator/platform-admin** app (l
 
 ## 7. What to decide first
 D1 (information architecture) and D2 (version-selection interaction) are the product core — best done against mockups (offer the brainstorming visual companion). S1/S2 are the two backend seams to settle in parallel; both are modest once decided. D3–D5 have sensible defaults (reuse the mural framework shell + Observable VMs + control-plane-served static root) that the user can confirm. This sub-project is the right one to brainstorm interactively with the user present — it is where unattended building would most risk the wrong product.
+
+---
+
+## DECISIONS RESOLVED (2026-10-23, with the user)
+
+- **S1 (client login) = determined by 6c** — browser redirect to the tenant's own per-tenant IdP `/authorize`, riding the runtime host's `/auth/oidc/begin`→`/auth/oidc/callback`→`/auth/session` cookie flow. Depends on SP-HIVE-6c (reachable per-tenant IdP).
+- **S2 = Separate tenant façade.** A distinct tenant-facing API surface (e.g. `/tenant-api/…`) that only ever exposes the caller's own tenant's hives/environments/manifests; the operator `/api` routes stay untouched.
+- **D1/D2 (information architecture + version-selection interaction) = design via MOCKUPS (visual companion).** Not yet pinned — to be designed interactively with the user in a browser tab, then written into the build spec.
+- **D3 = Mural framework shell (editor/viewer-shell + hierarchy nav) + Observable view-models** (per the standing workspace VM rule).
+- **D4 = v1 scope includes environment lifecycle:** OIDC login to the tenant realm, tenant-scoped nav over hives/environments, the SP-HIVE-4 self-service version catalog (list gated versions, per-hive target + health, select/roll, rollback), AND environment start/stop/logs/live-health.
+- **D5 (served origin) = default (confirm):** served by the control-plane as a tenant-facing static root (like `admin/portal`), at a tenant origin consistent with the S1 OIDC callback and 6c topology.
+
+**Status:** decisions resolved EXCEPT the D1/D2 UX, which is slated for a mockup session. Build also depends on SP-HIVE-6c (per-tenant IdP + federation) being built first. Not yet approved for build.
