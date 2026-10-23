@@ -80,3 +80,48 @@ test('the stored secret is a hash, never the password', async () =>
         assert.ok(String(stored).startsWith(RealmTestFixture.Argon2Prefix));
     });
 });
+
+class ProfileFixture
+{
+    public static readonly OtherPassword = 'pw-rotated';
+    public static readonly ProfileEmail = 'b@t';
+    public static readonly ProfilePrincipal = 'p-2';
+    public static readonly ProfileName = 'Bee Person';
+    public static readonly UnknownPrincipal = 'p-unknown';
+}
+
+test('SeedAccount is idempotent on principalId and does not rotate the password', async () =>
+{
+    await RealmTestFixture.WithRealm(async realm =>
+    {
+        assert.ok(await realm.Authenticate(RealmTestFixture.Email, RealmTestFixture.Password));
+        await realm.SeedAccount(RealmTestFixture.Email, RealmTestFixture.PrincipalId, ProfileFixture.OtherPassword);
+        assert.ok(await realm.Authenticate(RealmTestFixture.Email, RealmTestFixture.Password));
+        assert.equal(await realm.Authenticate(RealmTestFixture.Email, ProfileFixture.OtherPassword), null);
+    });
+});
+
+test('SeedAccount stores the display name; LookupProfile returns account email and side-store name', async () =>
+{
+    await RealmTestFixture.WithRealm(async realm =>
+    {
+        await realm.SeedAccount(ProfileFixture.ProfileEmail, ProfileFixture.ProfilePrincipal, RealmTestFixture.Password, ProfileFixture.ProfileName);
+        assert.deepEqual(await realm.LookupProfile(ProfileFixture.ProfilePrincipal), { email: ProfileFixture.ProfileEmail, name: ProfileFixture.ProfileName });
+    });
+});
+
+test('LookupProfile returns an empty name when the account has no profile row', async () =>
+{
+    await RealmTestFixture.WithRealm(async realm =>
+    {
+        assert.deepEqual(await realm.LookupProfile(RealmTestFixture.PrincipalId), { email: RealmTestFixture.Email, name: '' });
+    });
+});
+
+test('LookupProfile returns null for an unknown principal', async () =>
+{
+    await RealmTestFixture.WithRealm(async realm =>
+    {
+        assert.equal(await realm.LookupProfile(ProfileFixture.UnknownPrincipal), null);
+    });
+});
