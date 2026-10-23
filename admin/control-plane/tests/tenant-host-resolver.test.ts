@@ -64,3 +64,10 @@ test('CallbackFor builds the scheme + host + callback path', () =>
 {
     assert.equal(ResolverKit.Make('acme').CallbackFor('acme.admin.example.com'), 'https://acme.admin.example.com/tenant-auth/oidc/callback')
 })
+
+test('rejects a blank or leading-dot base domain at construction', () =>
+{
+    const dir = new StubDirectory(['acme']) as unknown as PlatformDirectory
+    assert.throws(() => new TenantHostResolver('', ResolverKit.Scheme, dir))
+    assert.throws(() => new TenantHostResolver('.admin.example.com', ResolverKit.Scheme, dir))
+})

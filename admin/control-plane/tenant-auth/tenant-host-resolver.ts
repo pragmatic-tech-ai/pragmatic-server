@@ -7,6 +7,7 @@ export class TenantHostResolver
     private static readonly CallbackPath = '/tenant-auth/oidc/callback'
     private static readonly LabelSeparator = '.'
     private static readonly SchemeSeparator = '://'
+    private static readonly BadBaseDomainMessage = 'baseDomain must be a non-empty host with no leading dot'
     private readonly baseDomain: string
 
     public constructor(
@@ -15,7 +16,14 @@ export class TenantHostResolver
         private readonly directory: PlatformDirectory
     )
     {
-        this.baseDomain = baseDomain.toLowerCase()
+        const normalized = baseDomain.toLowerCase()
+        // A blank base domain would make the suffix just "." (so `acme.` resolves to a tenant); a leading dot
+        // would fail every match closed. Both are operator misconfiguration — reject at construction, not per request.
+        if (normalized === '' || normalized.startsWith(TenantHostResolver.LabelSeparator))
+        {
+            throw new Error(TenantHostResolver.BadBaseDomainMessage)
+        }
+        this.baseDomain = normalized
     }
 
     /** The tenant id for a host exactly one label under the base domain, or undefined. */
