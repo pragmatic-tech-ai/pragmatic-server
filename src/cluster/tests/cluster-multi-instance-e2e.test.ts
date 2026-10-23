@@ -68,7 +68,7 @@ class Fixture
 
     public static async OpenAndCheck(addr: { host: string, port: number }, baseDir: string, token: string, tenant: string): Promise<void>
     {
-        const client = await PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?tenant=${tenant}`, { bearerToken: token })
+        const client = await PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?environment=${tenant}`, { bearerToken: token })
         try
         {
             const sum = await client.OpenSolution(join(baseDir, tenant, 'solution'))

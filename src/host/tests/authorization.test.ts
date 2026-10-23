@@ -50,7 +50,7 @@ test('the dispatch gate enforces the role ladder for open vs read', async () =>
 {
     const { baseDir, solution, keyEnv } = AuthzFixture.Start()
     const host = await PragmaticServerHost.StartAsync(AuthzFixture.Options(baseDir, keyEnv))
-    const url = `ws://${host.Address().host}:${host.Address().port}/?tenant=t1`
+    const url = `ws://${host.Address().host}:${host.Address().port}/?environment=t1`
     const pack = await host.IdentityPackForTest('t1')
     const tenant = await host.TenantForTest('t1')
     await pack.Grants.Save(new Grant('admin', Role.Admin, AuthzFixture.TenantRoot()))
@@ -88,7 +88,7 @@ test('graph-change pushes reach a readable connection but not a no-grant one', a
 {
     const { baseDir, solution, keyEnv } = AuthzFixture.Start()
     const host = await PragmaticServerHost.StartAsync(AuthzFixture.Options(baseDir, keyEnv))
-    const url = `ws://${host.Address().host}:${host.Address().port}/?tenant=t1`
+    const url = `ws://${host.Address().host}:${host.Address().port}/?environment=t1`
     const pack = await host.IdentityPackForTest('t1')
     const tenant = await host.TenantForTest('t1')
     await pack.Grants.Save(new Grant('admin', Role.Admin, AuthzFixture.TenantRoot()))

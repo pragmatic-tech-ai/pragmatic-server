@@ -125,7 +125,7 @@ class Soak
 
     public static WsUrl(host: string, port: number): string
     {
-        return `ws://${host}:${port}/?tenant=${Soak.Tenant}`
+        return `ws://${host}:${port}/?environment=${Soak.Tenant}`
     }
 
     public static MakeBaseDir(prefix: string): string

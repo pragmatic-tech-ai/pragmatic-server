@@ -332,7 +332,7 @@ describe('ControlPlaneHost', () =>
         assert.equal(arr.length, 1)
         assert.deepEqual(Object.keys(arr[0]).sort(), Harness.DtoKeys)
         assert.equal(arr[0].httpUrl, 'http://localhost:8101')
-        assert.equal(arr[0].wsUrl, 'ws://localhost:8101/?tenant=dev')
+        assert.equal(arr[0].wsUrl, 'ws://localhost:8101/?environment=dev')
     })
 
     it('creates, validates input', async () =>

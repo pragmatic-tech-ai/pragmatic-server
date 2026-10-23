@@ -40,7 +40,7 @@ export interface GatewayOptions
     wsResilience?: WsResilienceConfig
 }
 
-/** Public plain-ws front door. Holds NO identity pack and never parses JSON-RPC: it reads the ?tenant hint,
+/** Public plain-ws front door. Holds NO identity pack and never parses JSON-RPC: it reads the ?environment hint,
  *  dials the worker over mutual-TLS wss (forwarding tenant + bearer), and relays raw frames both ways.
  *  The client-side upgrade completes only after the worker ws opens, so a worker rejection rejects the client. */
 export class Gateway
@@ -54,8 +54,8 @@ export class Gateway
     private static readonly ErrorEvent = 'error'
     private static readonly ListeningEvent = 'listening'
     private static readonly AuthorizationHeader = 'authorization'
-    private static readonly TenantHeader = 'x-pragmatic-tenant'
-    private static readonly TenantParam = 'tenant'
+    private static readonly TenantHeader = 'x-pragmatic-environment'
+    private static readonly TenantParam = 'environment'
     private static readonly BaseUrl = 'http://localhost'
     private static readonly DefaultServerName = '127.0.0.1'
     private static readonly ContentTypeHeader = 'content-type'

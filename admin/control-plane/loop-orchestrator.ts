@@ -212,7 +212,7 @@ export class LoopOrchestrator
     private static readonly GraphDescription = 'live-loop e2e graph'
     private static readonly WsPrefix = 'ws://localhost:'
     private static readonly HttpPrefix = 'http://localhost:'
-    private static readonly WsTenantQuery = '/?tenant='
+    private static readonly WsTenantQuery = '/?environment='
     private static readonly ViewerRole = 'Viewer'
     private static readonly TenantKind = 'Tenant'
     private static readonly ReaderPrincipal = 'loop-reader'

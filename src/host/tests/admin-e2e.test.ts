@@ -49,7 +49,7 @@ class AdminHostFixture
         await pack.Grants.Save(new Grant(subject, role, new ResourceRef(ResourceKind.Tenant, AdminHostFixture.TenantId, [])))
         const issued = await pack.Tokens.Issue(await this.Host.TenantForTest(AdminHostFixture.TenantId), subject, [], null)
         const address = this.Host.Address()
-        const ws = new WebSocket(`ws://${address.host}:${address.port}/?tenant=${AdminHostFixture.TenantId}`, { headers: { authorization: `Bearer ${issued.Token}` } })
+        const ws = new WebSocket(`ws://${address.host}:${address.port}/?environment=${AdminHostFixture.TenantId}`, { headers: { authorization: `Bearer ${issued.Token}` } })
         await new Promise<void>((resolve, reject) =>
         {
             ws.once(AdminHostFixture.WsOpenEvent, () => resolve())

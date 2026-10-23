@@ -82,7 +82,7 @@ class WorkerFixture
     public static Dial(address: { host: string; port: number }, environmentId: string, bearer: string | null, withClientCert: boolean): WebSocket
     {
         const client = withClientCert ? MachineTls.Client(WorkerFixture.ClientTls()) : undefined
-        const headers: Record<string, string> = { 'x-pragmatic-tenant': environmentId }
+        const headers: Record<string, string> = { 'x-pragmatic-environment': environmentId }
         if (bearer !== null)
         {
             headers['authorization'] = `Bearer ${bearer}`

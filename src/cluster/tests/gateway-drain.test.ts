@@ -248,7 +248,7 @@ test('on timeout a live bridged client is terminated and the log shows drained=f
     try
     {
         const token = await backing.Token()
-        const ws = new WebSocket(`ws://127.0.0.1:${gateway.Address().port}/?tenant=t1`, { headers: { authorization: `Bearer ${token}` } })
+        const ws = new WebSocket(`ws://127.0.0.1:${gateway.Address().port}/?environment=t1`, { headers: { authorization: `Bearer ${token}` } })
         await new Promise<void>((resolve, reject) =>
         {
             ws.once('open', () => resolve())
@@ -279,7 +279,7 @@ test('an upgrade arriving mid-drain is answered 503 and adds no client', async (
     const disposing = gateway.DisposeAsync()
     await GwFixture.Pause(40)
     const before = gateway.ClientCountForTest()
-    assert.equal(await GwFixture.Status(new WebSocket(`ws://127.0.0.1:${gateway.Address().port}/?tenant=t1`)), 503)
+    assert.equal(await GwFixture.Status(new WebSocket(`ws://127.0.0.1:${gateway.Address().port}/?environment=t1`)), 503)
     assert.equal(gateway.ClientCountForTest(), before)
     held.Release()
     await disposing
@@ -338,7 +338,7 @@ test('the heartbeat monitor watches both the client leg and the worker leg and i
     try
     {
         const token = await backing.Token()
-        const ws = new WebSocket(`ws://127.0.0.1:${gateway.Address().port}/?tenant=t1`, { headers: { authorization: `Bearer ${token}` } })
+        const ws = new WebSocket(`ws://127.0.0.1:${gateway.Address().port}/?environment=t1`, { headers: { authorization: `Bearer ${token}` } })
         await new Promise<void>((resolve, reject) =>
         {
             ws.once('open', () => resolve())

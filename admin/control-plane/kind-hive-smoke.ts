@@ -76,7 +76,7 @@ export class KindHiveSmoke
     private static readonly EmptyString = ''
     private static readonly BootBaseDirKey = 'PRAGMATIC_BASE_DIR'
     private static readonly BootBaseDir = '/tmp/pragmatic-data'
-    private static readonly BootTenantKey = 'PRAGMATIC_TENANT_ID'
+    private static readonly BootTenantKey = 'PRAGMATIC_ENVIRONMENT_ID'
     private static readonly BootMasterKeyEnvKey = 'PRAGMATIC_MASTER_KEY_B64_ENV'
     private static readonly BootMasterKeyVar = 'SMOKE_MASTER_KEY_B64'
     private static readonly MasterKeyBytes = 32

@@ -6,7 +6,7 @@ class Env
 {
     public static Base(): Record<string, string | undefined>
     {
-        return { PRAGMATIC_BASE_DIR: '/data', PRAGMATIC_MASTER_KEY_B64_ENV: 'PRAGMATIC_MASTER_KEY', PRAGMATIC_TENANT_ID: 'acme' }
+        return { PRAGMATIC_BASE_DIR: '/data', PRAGMATIC_MASTER_KEY_B64_ENV: 'PRAGMATIC_MASTER_KEY', PRAGMATIC_ENVIRONMENT_ID: 'acme' }
     }
 
     public static NoFile(_path: string): string

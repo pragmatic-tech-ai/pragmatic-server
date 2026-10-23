@@ -88,7 +88,7 @@ export interface WebSocketAddress
     port: number
 }
 
-/** Stateless multi-tenant front door: the ?tenant hint selects a tenant's pack, the bearer authenticated against that pack binds the tenant,
+/** Stateless multi-tenant front door: the ?environment hint selects a tenant's pack, the bearer authenticated against that pack binds the tenant,
  *  each tenant is isolated in its own PragmaticServer, and idle tenants are evicted by the registry sweep. */
 export class PragmaticServerHost
 {
@@ -101,7 +101,7 @@ export class PragmaticServerHost
     private static readonly ErrorEvent = 'error'
     private static readonly AuthorizationHeader = 'authorization'
     private static readonly BearerPrefix = 'Bearer '
-    private static readonly TenantParam = 'tenant'
+    private static readonly TenantParam = 'environment'
     private static readonly BaseUrl = 'http://localhost'
     private static readonly UnauthorizedResponse = 'HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'
     private static readonly ServiceUnavailableResponse = 'HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nConnection: close\r\n\r\n'

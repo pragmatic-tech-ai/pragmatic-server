@@ -27,7 +27,7 @@ State lives in the named volume `pragmatic-data` (mounted at `/data`). Use `dock
 
 ## 4. Connect a client
 
-    ws://localhost:8080/?tenant=acme
+    ws://localhost:8080/?environment=acme
 
 ## Multi-replica
 

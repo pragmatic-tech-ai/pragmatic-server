@@ -91,7 +91,7 @@ class Fixture
     {
         const address = worker.Address()
         const client = MachineTls.Client(Fixture.ClientTls())
-        return new WebSocket(`wss://${address.host}:${address.port}/`, { key: client.key, cert: client.cert, ca: client.ca, rejectUnauthorized: true, servername: '127.0.0.1', headers: { 'x-pragmatic-tenant': 't1', authorization: `Bearer ${token}` } })
+        return new WebSocket(`wss://${address.host}:${address.port}/`, { key: client.key, cert: client.cert, ca: client.ca, rejectUnauthorized: true, servername: '127.0.0.1', headers: { 'x-pragmatic-environment': 't1', authorization: `Bearer ${token}` } })
     }
 
     public static async Connect(worker: WorkerHost): Promise<WebSocket>

@@ -110,8 +110,8 @@ test('app routes serve the shell, assets, client routes; refuse unknown and trav
         assert.equal((await ServeFixture.Get(port, '/readyz')).status, 200)
         assert.equal((await ServeFixture.Get(port, '/nope')).status, 404)
         assert.equal((await ServeFixture.Get(port, '/auth/anything')).status, 404)
-        // /auth/* with ?tenant= routes to AuthHttpEndpoint (method-checked JSON), not the app route or the no-tenant 404.
-        const login = await ServeFixture.Get(port, '/auth/login?tenant=t1')
+        // /auth/* with ?environment= routes to AuthHttpEndpoint (method-checked JSON), not the app route or the no-tenant 404.
+        const login = await ServeFixture.Get(port, '/auth/login?environment=t1')
         assert.equal(login.status, 405)
         assert.match(login.type, /^application\/json/)
     }

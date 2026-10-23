@@ -23,12 +23,12 @@ npx tsx environments/seed/seed.ts up demo
 
 ## Connect
 
-- dev: `ws://localhost:8080/?tenant=dev`
-- demo: `ws://localhost:8081/?tenant=contoso`
+- dev: `ws://localhost:8080/?environment=dev`
+- demo: `ws://localhost:8081/?environment=contoso`
 
 ## Login
 
-`POST /auth/login?tenant=<id>` with `{ "email", "password" }` returns `{ token }`; pass it as `Authorization: Bearer <token>` on the WebSocket upgrade. The admin principal is `admin` / `admin@<tenant>.test`, with the password in the generated `provisioned-secrets.json` under `<tenant>-admin-pw`.
+`POST /auth/login?environment=<id>` with `{ "email", "password" }` returns `{ token }`; pass it as `Authorization: Bearer <token>` on the WebSocket upgrade. The admin principal is `admin` / `admin@<tenant>.test`, with the password in the generated `provisioned-secrets.json` under `<tenant>-admin-pw`.
 
 Demo users (password under `<principalId>-pw`): `rep-boston`, `rep-atlanta`, `manager-north` (Editor) and `finance` (Viewer), all `@contoso.test`.
 

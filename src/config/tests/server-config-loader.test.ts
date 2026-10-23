@@ -9,7 +9,7 @@ class Env
 {
     public static Minimal(): Record<string, string | undefined>
     {
-        return { PRAGMATIC_BASE_DIR: '/data', PRAGMATIC_MASTER_KEY_FILE: '/run/secrets/key', PRAGMATIC_TENANT_ID: 't1' }
+        return { PRAGMATIC_BASE_DIR: '/data', PRAGMATIC_MASTER_KEY_FILE: '/run/secrets/key', PRAGMATIC_ENVIRONMENT_ID: 't1' }
     }
 
     public static NoRead(path: string): string
@@ -39,20 +39,20 @@ test('prefers a tenants file over single-tenant env when both present', () =>
 
 test('reads base64 env master key ref', () =>
 {
-    const env = { PRAGMATIC_BASE_DIR: '/data', PRAGMATIC_MASTER_KEY_B64_ENV: 'PRAGMATIC_KEY', PRAGMATIC_TENANT_ID: 't1' }
+    const env = { PRAGMATIC_BASE_DIR: '/data', PRAGMATIC_MASTER_KEY_B64_ENV: 'PRAGMATIC_KEY', PRAGMATIC_ENVIRONMENT_ID: 't1' }
     const config = ServerConfigLoader.Load(env, Env.NoRead)
     assert.deepEqual(config.masterKey, { base64Env: 'PRAGMATIC_KEY' })
 })
 
 test('fails closed when baseDir is missing', () =>
 {
-    const env = { PRAGMATIC_MASTER_KEY_FILE: '/k', PRAGMATIC_TENANT_ID: 't1' }
+    const env = { PRAGMATIC_MASTER_KEY_FILE: '/k', PRAGMATIC_ENVIRONMENT_ID: 't1' }
     assert.throws(() => ServerConfigLoader.Load(env, Env.NoRead), /PRAGMATIC_BASE_DIR/)
 })
 
 test('fails closed when no master key ref is given', () =>
 {
-    const env = { PRAGMATIC_BASE_DIR: '/data', PRAGMATIC_TENANT_ID: 't1' }
+    const env = { PRAGMATIC_BASE_DIR: '/data', PRAGMATIC_ENVIRONMENT_ID: 't1' }
     assert.throws(() => ServerConfigLoader.Load(env, Env.NoRead), /master key/)
 })
 

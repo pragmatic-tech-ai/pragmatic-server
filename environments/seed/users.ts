@@ -9,7 +9,7 @@ export type UserSeed = { principalId: string; email: string; passwordRef: string
 export class UserSeeder
 {
     private static readonly LoginPath = '/auth/login'
-    private static readonly TenantQuery = '?tenant='
+    private static readonly TenantQuery = '?environment='
     private static readonly WsPath = '/'
     private static readonly BearerPrefix = 'Bearer '
     private static readonly ContentTypeHeader = 'Content-Type'

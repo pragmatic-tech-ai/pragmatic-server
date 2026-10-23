@@ -155,7 +155,7 @@ test('CreateDev descriptor carries devWsUrl/graphName/makerToken keys', async ()
     const d = await h.orchestrator.CreateDev(Fixture.Graph)
     const round = JSON.parse(JSON.stringify(d)) as DevDescriptor
     assert.deepEqual(Object.keys(round).sort(), ['dataRoot', 'devEnv', 'devWsUrl', 'graphName', 'makerToken'])
-    assert.equal(round.devWsUrl, 'ws://localhost:8101/?tenant=loop-dev')
+    assert.equal(round.devWsUrl, 'ws://localhost:8101/?environment=loop-dev')
     assert.equal(round.graphName, Fixture.Graph)
     assert.equal(round.makerToken, Fixture.MakerToken)
     assert.equal(h.envs.created[0].template, Template.DevBlank)
@@ -168,7 +168,7 @@ test('CreateRuntime descriptor has the exact contract keys, grants only the read
     const round = JSON.parse(JSON.stringify(d)) as RuntimeDescriptor
     assert.deepEqual(Object.keys(round).sort(), ['appOriginBase', 'deployToken', 'reader', 'runtimeEnv', 'runtimeHostPort', 'runtimeWsUrl', 'tenant', 'ungranted'])
     assert.equal(round.appOriginBase, 'http://localhost:8102')
-    assert.equal(round.runtimeWsUrl, 'ws://localhost:8102/?tenant=contoso')
+    assert.equal(round.runtimeWsUrl, 'ws://localhost:8102/?environment=contoso')
     assert.equal(round.deployToken, Fixture.DeployToken)
     assert.deepEqual(Object.keys(round.reader).sort(), ['email', 'password'])
     assert.equal(h.envs.accounts.length, 2)

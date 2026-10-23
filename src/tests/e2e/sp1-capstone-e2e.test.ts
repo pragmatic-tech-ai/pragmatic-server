@@ -168,10 +168,10 @@ class RuntimeTenant
     private static readonly DataMount = ':/home/pragmatic/data'
     private static readonly Loopback = 'http://localhost:'
     private static readonly HealthPath = '/healthz'
-    private static readonly LoginPath = '/auth/login?tenant=sp1'
-    private static readonly BrowserLoginPath = '/auth/browser-login?tenant=sp1'
+    private static readonly LoginPath = '/auth/login?environment=sp1'
+    private static readonly BrowserLoginPath = '/auth/browser-login?environment=sp1'
     private static readonly AppPath = '/app/sp1/tasks/'
-    private static readonly WsPath = '/?tenant=sp1'
+    private static readonly WsPath = '/?environment=sp1'
     private static readonly WsScheme = 'ws://localhost:'
     private static readonly JsonHeader = { 'Content-Type': 'application/json' }
     private static readonly PostMethod = 'POST'

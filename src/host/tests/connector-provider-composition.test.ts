@@ -122,7 +122,7 @@ namespace shop {
 
     public static BaseEnv(): Record<string, string | undefined>
     {
-        return { PRAGMATIC_BASE_DIR: '/data', PRAGMATIC_MASTER_KEY_FILE: '/k', PRAGMATIC_TENANT_ID: 't1' }
+        return { PRAGMATIC_BASE_DIR: '/data', PRAGMATIC_MASTER_KEY_FILE: '/k', PRAGMATIC_ENVIRONMENT_ID: 't1' }
     }
 
     public static TempDir(): string

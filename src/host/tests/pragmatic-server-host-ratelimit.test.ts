@@ -58,7 +58,7 @@ test('a per-tenant upgrade breach returns 429 with Retry-After and audits a Rate
     const guard = new RateLimitGuard(new TokenBucketRateLimiter({ perTenant: { Rps: 0.001, Burst: 1 } }), sink)
     const entries = new Map<string, TenantProvisioning>([['t1', { displayName: 'Tenant One' }]])
     const host = await PragmaticServerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir, masterKey: { base64Env: keyEnv }, provisioning: new InMemoryTenantProvisioning(entries), rateLimit: guard })
-    const base = `ws://${host.Address().host}:${host.Address().port}/?tenant=t1`
+    const base = `ws://${host.Address().host}:${host.Address().port}/?environment=t1`
     try
     {
         const first = await UpgradeProbe.Status(base)

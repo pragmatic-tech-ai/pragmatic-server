@@ -40,7 +40,7 @@ export class DemoSmoke
     private static readonly ReadRight = 'read'
     private static readonly OrdersQuery = 'MATCH (o:Order) RETURN o, o.orderNo, o.owner, o.owningBu'
     private static readonly CreditQuery = 'MATCH (c:Customer) RETURN c.company, c.creditLimit'
-    private static readonly WsQuerySeparator = '/?tenant='
+    private static readonly WsQuerySeparator = '/?environment='
     /** rep-boston: businessUnit level reach = home BU (boston) + owning BU of team sales-north (north); no children. */
     private static readonly BostonReach: readonly string[] = ['boston', 'north']
     /** Orders owned by the reach above (10248/10249/10255 boston, 10254 north). */

@@ -85,7 +85,7 @@ class CookieFixture
 
     public async LoginAsync(password: string = CookieFixture.Password, path = '/auth/browser-login'): Promise<Response>
     {
-        return fetch(`${this.base}${path}?tenant=t1`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: CookieFixture.Email, password }) })
+        return fetch(`${this.base}${path}?environment=t1`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: CookieFixture.Email, password }) })
     }
 
     /** The name=value pair of the Set-Cookie header, as a browser would send it back. */
@@ -106,7 +106,7 @@ class CookieFixture
         delete process.env[CookieFixture.KeyEnv]
     }
 
-    /** Opens a raw WebSocket (no ?tenant=) and resolves 'open' or the HTTP status that rejected the upgrade. */
+    /** Opens a raw WebSocket (no ?environment=) and resolves 'open' or the HTTP status that rejected the upgrade. */
     public ConnectAsync(headers: Record<string, string>): Promise<string>
     {
         const address = this.host.Address()
@@ -169,7 +169,7 @@ test('wrong password sets no cookie', async () =>
     }
 })
 
-test('WebSocket with a valid cookie + same-origin or allowlisted Origin authenticates with no ?tenant=', async () =>
+test('WebSocket with a valid cookie + same-origin or allowlisted Origin authenticates with no ?environment=', async () =>
 {
     const fixture = new CookieFixture()
     await fixture.StartAsync()
@@ -227,7 +227,7 @@ test('missing, forged, wrong-tenant and revoked cookies are denied with a clean 
             assert.ok(!text.includes(cookie) && !text.includes(token))
         }
         assert.equal(await fixture.ConnectAsync({ Origin: fixture.base }), '401')
-        assert.equal((await fetch(`${fixture.base}/auth/session?tenant=t1`)).status, 401)
+        assert.equal((await fetch(`${fixture.base}/auth/session?environment=t1`)).status, 401)
         const pack = await fixture.host.IdentityPackForTest('t1')
         await pack.Sessions.Revoke(token)
         assert.equal(await fixture.ConnectAsync({ Cookie: valid, Origin: fixture.base }), '401')
@@ -267,7 +267,7 @@ test('the Authorization Bearer path still works and is unaffected by cookies', a
         const login = await fixture.LoginAsync(CookieFixture.Password, '/auth/login')
         assert.equal(login.headers.get('set-cookie'), null)
         const { token } = await login.json() as { token: string }
-        const url = `ws://${fixture.host.Address().host}:${fixture.host.Address().port}/?tenant=t1`
+        const url = `ws://${fixture.host.Address().host}:${fixture.host.Address().port}/?environment=t1`
         const client = await PragmaticClient.ConnectAsync(url, { bearerToken: token })
         await client.DisposeAsync()
         await assert.rejects(() => PragmaticClient.ConnectAsync(url, { bearerToken: 'bogus' }))

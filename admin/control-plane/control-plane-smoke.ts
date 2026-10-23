@@ -155,7 +155,7 @@ export class ControlPlaneSmoke
     private static readonly EnvReaderEmail = 'env-reader@contoso.test'
     private static readonly EnvReaderPassword = 'env-reader-test-password'
     private static readonly AckOkWord = 'ok='
-    private static readonly WsTenantQuery = '/?tenant='
+    private static readonly WsTenantQuery = '/?environment='
     private static readonly GraphsSegment = '/graphs'
     private static readonly PromoteSegment = '/promote'
     private static readonly MakerTokenAction = '/maker-token'

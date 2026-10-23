@@ -64,7 +64,7 @@ test('an upgrade for an owned-elsewhere tenant is rejected with a retryable 503'
     try
     {
         host.RegistryForTest().SetOwnershipForTest(false)
-        assert.equal(await Probe.Upgrade(host.Address().port, '/?tenant=acme'), 503)
+        assert.equal(await Probe.Upgrade(host.Address().port, '/?environment=acme'), 503)
     }
     finally
     {
@@ -95,7 +95,7 @@ test('an HTTP request for an owned-elsewhere tenant returns a retryable 503', as
     try
     {
         host.RegistryForTest().SetOwnershipForTest(false)
-        assert.equal(await Probe.Get(host.Address().port, '/auth?tenant=acme'), 503)
+        assert.equal(await Probe.Get(host.Address().port, '/auth?environment=acme'), 503)
     }
     finally
     {

@@ -60,7 +60,7 @@ test('a loopback client opens the fixture solution over a real WebSocket', async
     const solution = HostFixture.SolutionDir(baseDir)
     const host = await PragmaticServerHost.StartAsync(HostFixture.Options(baseDir))
     const address = host.Address()
-    const client = await PragmaticClient.ConnectAsync(`ws://${address.host}:${address.port}/?tenant=t1`, { bearerToken: await HostFixture.Token(host) })
+    const client = await PragmaticClient.ConnectAsync(`ws://${address.host}:${address.port}/?environment=t1`, { bearerToken: await HostFixture.Token(host) })
     try
     {
         const summary = await client.OpenSolution(solution)
@@ -82,8 +82,8 @@ test('a graph change pushes to two connected clients', async () =>
     const host = await PragmaticServerHost.StartAsync(HostFixture.Options(baseDir))
     const address = host.Address()
     const token = await HostFixture.Token(host)
-    const first = await PragmaticClient.ConnectAsync(`ws://${address.host}:${address.port}/?tenant=t1`, { bearerToken: token })
-    const second = await PragmaticClient.ConnectAsync(`ws://${address.host}:${address.port}/?tenant=t1`, { bearerToken: token })
+    const first = await PragmaticClient.ConnectAsync(`ws://${address.host}:${address.port}/?environment=t1`, { bearerToken: token })
+    const second = await PragmaticClient.ConnectAsync(`ws://${address.host}:${address.port}/?environment=t1`, { bearerToken: token })
     let firstPushes = 0
     let secondPushes = 0
     first.OnGraphChanged(() => { firstPushes += 1 })

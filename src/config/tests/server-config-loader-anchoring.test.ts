@@ -15,7 +15,7 @@ class AnchorLoaderFixture
         return {
             PRAGMATIC_BASE_DIR: '/data',
             PRAGMATIC_MASTER_KEY_FILE: '/k',
-            PRAGMATIC_TENANT_ID: 't1',
+            PRAGMATIC_ENVIRONMENT_ID: 't1',
             PRAGMATIC_DEPLOYMENT_MODE: 'cloud',
             PRAGMATIC_CLOUD_PROVIDER: provider,
             PRAGMATIC_CLOUD_MASTER_KEY_REF: 'cluster/master-key',
@@ -87,7 +87,7 @@ test('a malformed interval is rejected fail-closed', () =>
 
 test('anchor fields are ignored in non-cloud (local) mode', () =>
 {
-    const cfg = ServerConfigLoader.Load({ PRAGMATIC_BASE_DIR: '/data', PRAGMATIC_MASTER_KEY_FILE: '/k', PRAGMATIC_TENANT_ID: 't1', PRAGMATIC_CLOUD_AUDIT_ANCHOR_KEY_REF: 'r', PRAGMATIC_CLOUD_AUDIT_ANCHOR_INTERVAL: '5' }, AnchorLoaderFixture.NoRead)
+    const cfg = ServerConfigLoader.Load({ PRAGMATIC_BASE_DIR: '/data', PRAGMATIC_MASTER_KEY_FILE: '/k', PRAGMATIC_ENVIRONMENT_ID: 't1', PRAGMATIC_CLOUD_AUDIT_ANCHOR_KEY_REF: 'r', PRAGMATIC_CLOUD_AUDIT_ANCHOR_INTERVAL: '5' }, AnchorLoaderFixture.NoRead)
     assert.equal(cfg.cloudAuditAnchorKeyRef, undefined)
     assert.equal(cfg.cloudAuditAnchorInterval, undefined)
 })

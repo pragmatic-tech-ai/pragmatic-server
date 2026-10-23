@@ -81,7 +81,7 @@ test('the gateway rejects a per-tenant upgrade breach with 429 + Retry-After bef
 {
     const router = new CountingRouter()
     const gateway = await Gateway.StartAsync({ port: 0, router, tls: Fixtures.ServerTls(), rateLimit: Fixtures.Guard() })
-    const url = `ws://127.0.0.1:${gateway.Address().port}/?tenant=t1`
+    const url = `ws://127.0.0.1:${gateway.Address().port}/?environment=t1`
     try
     {
         const first = await Fixtures.Status(new WebSocket(url)).catch(() => ({ status: 0, retryAfter: undefined }))
@@ -106,7 +106,7 @@ test('the worker host rejects a per-tenant upgrade breach with 429 + Retry-After
     const entries = new Map<string, TenantProvisioning>([['t1', { displayName: 't1' }]])
     const worker = await WorkerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir, masterKey: { base64Env: Fixtures.KeyEnv }, provisioning: new InMemoryTenantProvisioning(entries), tls: Fixtures.ServerTls(), rateLimit: Fixtures.Guard() })
     const client = MachineTls.Client(Fixtures.ClientTls())
-    const dial = (): WebSocket => new WebSocket(`wss://${worker.Address().host}:${worker.Address().port}/`, { key: client.key, cert: client.cert, ca: client.ca, rejectUnauthorized: true, servername: '127.0.0.1', headers: { 'x-pragmatic-tenant': 't1' } })
+    const dial = (): WebSocket => new WebSocket(`wss://${worker.Address().host}:${worker.Address().port}/`, { key: client.key, cert: client.cert, ca: client.ca, rejectUnauthorized: true, servername: '127.0.0.1', headers: { 'x-pragmatic-environment': 't1' } })
     try
     {
         const first = await Fixtures.Status(dial()).catch(() => ({ status: 0, retryAfter: undefined }))

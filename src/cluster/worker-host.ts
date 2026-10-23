@@ -84,7 +84,7 @@ export interface WorkerHostOptions
     allowedOrigins?: readonly string[]
 }
 
-/** Internal mutual-TLS wss worker: the gateway (a verified client cert) forwards x-pragmatic-tenant + authorization;
+/** Internal mutual-TLS wss worker: the gateway (a verified client cert) forwards x-pragmatic-environment + authorization;
  *  the worker owns the tenant's pack, authenticates the bearer against it, isolates each tenant in its own PragmaticServer. */
 export class WorkerHost
 {
@@ -95,7 +95,7 @@ export class WorkerHost
     private static readonly ListeningEvent = 'listening'
     private static readonly ErrorEvent = 'error'
     private static readonly AuthorizationHeader = 'authorization'
-    private static readonly TenantHeader = 'x-pragmatic-tenant'
+    private static readonly TenantHeader = 'x-pragmatic-environment'
     private static readonly BearerPrefix = 'Bearer '
     private static readonly ServiceUnavailableResponse = 'HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nConnection: close\r\n\r\n'
     private static readonly BaseUrl = 'http://localhost'

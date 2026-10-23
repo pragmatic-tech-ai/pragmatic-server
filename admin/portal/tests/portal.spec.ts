@@ -56,7 +56,7 @@ class FakeControlPlane
     private static readonly SessionCookie = 'sid=test; Path=/; HttpOnly'
     private static readonly TenantId = 't-1'
     private static readonly HttpUrl = 'http://localhost:4101'
-    private static readonly WsUrl = 'ws://localhost:4101/?tenant=t-1'
+    private static readonly WsUrl = 'ws://localhost:4101/?environment=t-1'
     private static readonly HtmlExt = '.html'
     private static readonly JsExt = '.js'
     private static readonly CssExt = '.css'

@@ -168,7 +168,7 @@ export class ControlPlaneHost
     private static readonly ErrorEvent = 'error'
     private static readonly CloseEvent = 'close'
     private static readonly LogPrefix = '[control-plane] request failed:'
-    private static readonly EnvironmentQuery = '/?tenant='
+    private static readonly EnvironmentQuery = '/?environment='
     private static readonly ApiPrefix = '/api/'
     private static readonly PingPath = '/api/ping'
     private static readonly TemplatesPath = '/api/templates'

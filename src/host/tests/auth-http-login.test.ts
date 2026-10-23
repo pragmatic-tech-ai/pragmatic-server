@@ -51,12 +51,12 @@ test('login mints a session token usable as a WebSocket bearer', async () =>
     await pack.Grants.Save(new Grant('p1', Role.Admin, new ResourceRef(ResourceKind.Tenant, 't1', [])))
     try
     {
-        const response = await fetch(`${base}/auth/login?tenant=t1`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'a@x.io', password: 'pw-123456' }) })
+        const response = await fetch(`${base}/auth/login?environment=t1`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'a@x.io', password: 'pw-123456' }) })
         assert.equal(response.status, 200)
         const payload = await response.json() as { token: string; expiresAt: string }
         assert.ok(payload.token.length > 0)
 
-        const client = await PragmaticClient.ConnectAsync(`ws://${host.Address().host}:${host.Address().port}/?tenant=t1`, { bearerToken: payload.token })
+        const client = await PragmaticClient.ConnectAsync(`ws://${host.Address().host}:${host.Address().port}/?environment=t1`, { bearerToken: payload.token })
         const summary = await client.OpenSolution(solution)
         assert.equal(summary.members.length, 1)
         await ((await host.LanguageServiceForTest('t1')) as SolutionLanguageService).WhenIdle()
@@ -79,9 +79,9 @@ test('bad credentials return a generic 401', async () =>
     await pack.Registrar.Register(await host.TenantForTest('t1'), 'a@x.io', 'p1', new PresentedSecret('pw-123456'))
     try
     {
-        const wrong = await fetch(`${base}/auth/login?tenant=t1`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'a@x.io', password: 'WRONG' }) })
+        const wrong = await fetch(`${base}/auth/login?environment=t1`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'a@x.io', password: 'WRONG' }) })
         assert.equal(wrong.status, 401)
-        const unknown = await fetch(`${base}/auth/login?tenant=t1`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'ghost@x.io', password: 'whatever' }) })
+        const unknown = await fetch(`${base}/auth/login?environment=t1`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'ghost@x.io', password: 'whatever' }) })
         assert.equal(unknown.status, 401)
     }
     finally
@@ -99,9 +99,9 @@ test('malformed body is 400; unknown route is 404; wrong method is 405', async (
     const base = `http://${host.Address().host}:${host.Address().port}`
     try
     {
-        assert.equal((await fetch(`${base}/auth/login?tenant=t1`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: 'not json' })).status, 400)
-        assert.equal((await fetch(`${base}/nope?tenant=t1`)).status, 404)
-        assert.equal((await fetch(`${base}/auth/login?tenant=t1`, { method: 'GET' })).status, 405)
+        assert.equal((await fetch(`${base}/auth/login?environment=t1`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: 'not json' })).status, 400)
+        assert.equal((await fetch(`${base}/nope?environment=t1`)).status, 404)
+        assert.equal((await fetch(`${base}/auth/login?environment=t1`, { method: 'GET' })).status, 405)
     }
     finally
     {
@@ -119,8 +119,8 @@ test('oversized body is 400; body missing password is 400', async () =>
     try
     {
         const oversized = JSON.stringify({ email: 'a@x.io', password: 'x'.repeat(5000) })
-        assert.equal((await fetch(`${base}/auth/login?tenant=t1`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: oversized })).status, 400)
-        assert.equal((await fetch(`${base}/auth/login?tenant=t1`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'a@x.io' }) })).status, 400)
+        assert.equal((await fetch(`${base}/auth/login?environment=t1`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: oversized })).status, 400)
+        assert.equal((await fetch(`${base}/auth/login?environment=t1`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'a@x.io' }) })).status, 400)
     }
     finally
     {

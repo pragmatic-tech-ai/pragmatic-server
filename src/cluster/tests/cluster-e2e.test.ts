@@ -76,8 +76,8 @@ test('two tenants through the gateway each open only their own solution', async 
     {
         const token1 = await ClusterFixture.TokenFor(cluster.WorkerForTest(), 't1')
         const token2 = await ClusterFixture.TokenFor(cluster.WorkerForTest(), 't2')
-        const c1 = await PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?tenant=t1`, { bearerToken: token1 })
-        const c2 = await PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?tenant=t2`, { bearerToken: token2 })
+        const c1 = await PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?environment=t1`, { bearerToken: token1 })
+        const c2 = await PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?environment=t2`, { bearerToken: token2 })
         try
         {
             const sum1 = await c1.OpenSolution(join(baseDir, 't1', 'solution'))
@@ -109,8 +109,8 @@ test('a GraphChanged push on t1 reaches t1 client and not t2 (relay + isolation)
     {
         const token1 = await ClusterFixture.TokenFor(cluster.WorkerForTest(), 't1')
         const token2 = await ClusterFixture.TokenFor(cluster.WorkerForTest(), 't2')
-        const c1 = await PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?tenant=t1`, { bearerToken: token1 })
-        const c2 = await PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?tenant=t2`, { bearerToken: token2 })
+        const c1 = await PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?environment=t1`, { bearerToken: token1 })
+        const c2 = await PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?environment=t2`, { bearerToken: token2 })
         let t1Pushes = 0
         let t2Pushes = 0
         c1.OnGraphChanged(() => { t1Pushes += 1 })
@@ -144,7 +144,7 @@ test('a GraphChanged push on t1 reaches t1 client and not t2 (relay + isolation)
     }
 })
 
-test('a t1 token presented with ?tenant=t2 is rejected at the gateway', async () =>
+test('a t1 token presented with ?environment=t2 is rejected at the gateway', async () =>
 {
     const { baseDir } = ClusterFixture.Start('t1', 't2')
     const cluster = await PragmaticCluster.StartAsync(ClusterFixture.Options(baseDir, ClusterFixture.Provisioning('t1', 't2')))
@@ -152,7 +152,7 @@ test('a t1 token presented with ?tenant=t2 is rejected at the gateway', async ()
     try
     {
         const token1 = await ClusterFixture.TokenFor(cluster.WorkerForTest(), 't1')
-        await assert.rejects(() => PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?tenant=t2`, { bearerToken: token1 }))
+        await assert.rejects(() => PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?environment=t2`, { bearerToken: token1 }))
     }
     finally
     {
@@ -186,8 +186,8 @@ test('a CRLF-injected tenant hint is rejected and the gateway keeps serving vali
     try
     {
         const token1 = await ClusterFixture.TokenFor(cluster.WorkerForTest(), 't1')
-        await assert.rejects(() => PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?tenant=a%0d%0ab`, { bearerToken: token1 }))
-        const c1 = await PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?tenant=t1`, { bearerToken: token1 })
+        await assert.rejects(() => PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?environment=a%0d%0ab`, { bearerToken: token1 }))
+        const c1 = await PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?environment=t1`, { bearerToken: token1 })
         try
         {
             const sum = await c1.OpenSolution(join(baseDir, 't1', 'solution'))

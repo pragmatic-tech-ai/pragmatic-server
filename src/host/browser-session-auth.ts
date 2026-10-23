@@ -10,7 +10,7 @@ export interface BrowserCredential
 
 /** Browser session-cookie auth: builds the Set-Cookie, parses the cookie back into (tenant, token), and enforces the
  *  Origin allowlist that defends the cookie-authenticated WebSocket upgrade against cross-site hijacking.
- *  The cookie value is `<tenant>.<token>` so a same-origin app that sends no ?tenant= still resolves its tenant. */
+ *  The cookie value is `<tenant>.<token>` so a same-origin app that sends no ?environment= still resolves its tenant. */
 export class BrowserSessionAuth
 {
     public static readonly CookieName = 'ps_session'

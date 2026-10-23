@@ -64,7 +64,7 @@ class AuthAuditFixture
 
     public static Login(base: string, password: string): Promise<Response>
     {
-        return fetch(`${base}/auth/login?tenant=t1`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'a@x.io', password }) })
+        return fetch(`${base}/auth/login?environment=t1`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'a@x.io', password }) })
     }
 }
 

@@ -27,7 +27,7 @@ export class ServerConfigLoader
     private static readonly DefaultPort = 8080
     private static readonly MissingBaseDir = 'PRAGMATIC_BASE_DIR is required'
     private static readonly MissingMasterKey = 'master key is required: set PRAGMATIC_MASTER_KEY_FILE or PRAGMATIC_MASTER_KEY_B64_ENV'
-    private static readonly MissingTenant = 'a tenant source is required: set PRAGMATIC_TENANTS_FILE or PRAGMATIC_TENANT_ID'
+    private static readonly MissingTenant = 'a tenant source is required: set PRAGMATIC_TENANTS_FILE or PRAGMATIC_ENVIRONMENT_ID'
     private static readonly BadMode = 'PRAGMATIC_DEPLOYMENT_MODE must be local or cloud'
 
     private static readonly TlsCertMissing = 'PRAGMATIC_TLS_CERT_FILE is required when TLS is configured'
@@ -128,8 +128,8 @@ export class ServerConfigLoader
     private static readonly PositiveIntPattern = /^[1-9][0-9]*$/
     private static readonly EnvAuditSink = 'PRAGMATIC_AUDIT_SINK'
     private static readonly EnvAuditFile = 'PRAGMATIC_AUDIT_FILE'
-    private static readonly EnvTenantRps = 'PRAGMATIC_RATELIMIT_TENANT_RPS'
-    private static readonly EnvTenantBurst = 'PRAGMATIC_RATELIMIT_TENANT_BURST'
+    private static readonly EnvTenantRps = 'PRAGMATIC_RATELIMIT_ENVIRONMENT_RPS'
+    private static readonly EnvTenantBurst = 'PRAGMATIC_RATELIMIT_ENVIRONMENT_BURST'
     private static readonly EnvPrincipalRps = 'PRAGMATIC_RATELIMIT_PRINCIPAL_RPS'
     private static readonly EnvPrincipalBurst = 'PRAGMATIC_RATELIMIT_PRINCIPAL_BURST'
 
@@ -819,12 +819,12 @@ export class ServerConfigLoader
 
     private static SingleTenant(env: Record<string, string | undefined>): SingleTenantConfig | undefined
     {
-        const id = env.PRAGMATIC_TENANT_ID
+        const id = env.PRAGMATIC_ENVIRONMENT_ID
         if (id === undefined || id.length === 0)
         {
             return undefined
         }
-        return { id, displayName: env.PRAGMATIC_TENANT_DISPLAY_NAME ?? id }
+        return { id, displayName: env.PRAGMATIC_ENVIRONMENT_DISPLAY_NAME ?? id }
     }
 
     private static Mode(value: string | undefined): DeploymentMode

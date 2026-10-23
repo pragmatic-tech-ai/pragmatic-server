@@ -52,7 +52,7 @@ test('a client presenting a valid service token opens the solution', async () =>
     let client: PragmaticClient | undefined
     try
     {
-        client = await PragmaticClient.ConnectAsync(`ws://${address.host}:${address.port}/?tenant=t1`, { bearerToken: Token })
+        client = await PragmaticClient.ConnectAsync(`ws://${address.host}:${address.port}/?environment=t1`, { bearerToken: Token })
         const summary = await client.OpenSolution(solution)
         assert.equal(summary.members.length, 1)
         await ((await host.LanguageServiceForTest('t1')) as SolutionLanguageService).WhenIdle()
@@ -73,7 +73,7 @@ test('a client with no bearer is rejected at the upgrade (no connection)', async
     const address = host.Address()
     try
     {
-        await assert.rejects(() => PragmaticClient.ConnectAsync(`ws://${address.host}:${address.port}/?tenant=t1`))
+        await assert.rejects(() => PragmaticClient.ConnectAsync(`ws://${address.host}:${address.port}/?environment=t1`))
         assert.equal(host.HandlerCountForTest(), 0)
     }
     finally
@@ -91,7 +91,7 @@ test('a client with an invalid bearer is rejected at the upgrade', async () =>
     const address = host.Address()
     try
     {
-        await assert.rejects(() => PragmaticClient.ConnectAsync(`ws://${address.host}:${address.port}/?tenant=t1`, { bearerToken: 'not-a-real-token' }))
+        await assert.rejects(() => PragmaticClient.ConnectAsync(`ws://${address.host}:${address.port}/?environment=t1`, { bearerToken: 'not-a-real-token' }))
         assert.equal(host.HandlerCountForTest(), 0)
     }
     finally

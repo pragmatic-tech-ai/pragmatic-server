@@ -97,7 +97,7 @@ class WsFixture
         const tenant = await host.TenantForTest(tenantId)
         const token = (await pack.Tokens.Issue(tenant, tenantId, [], null)).Token
         const address = host.Address()
-        const ws = new WebSocket(`ws://${address.host}:${address.port}/?tenant=${tenantId}`, { headers: { authorization: `Bearer ${token}` } })
+        const ws = new WebSocket(`ws://${address.host}:${address.port}/?environment=${tenantId}`, { headers: { authorization: `Bearer ${token}` } })
         await new Promise<void>((resolve, reject) =>
         {
             ws.once('open', () => resolve())
@@ -296,7 +296,7 @@ test('a draining host answers new requests with 503', async () =>
     {
         const disposing = host.DisposeAsync()
         await new Promise<void>(resolve => setTimeout(resolve, 50))
-        assert.equal(await DrainFixture.Get(port, '/?tenant=t1'), 503)
+        assert.equal(await DrainFixture.Get(port, '/?environment=t1'), 503)
         held.Release()
         await disposing
     }

@@ -82,8 +82,8 @@ test('two tenants connect by hint and each opens only its own solution', async (
     {
         const token1 = await MtFixture.TokenFor(host, 't1')
         const token2 = await MtFixture.TokenFor(host, 't2')
-        const c1 = await PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?tenant=t1`, { bearerToken: token1 })
-        const c2 = await PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?tenant=t2`, { bearerToken: token2 })
+        const c1 = await PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?environment=t1`, { bearerToken: token1 })
+        const c2 = await PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?environment=t2`, { bearerToken: token2 })
         try
         {
             const sum1 = await c1.OpenSolution(join(baseDir, 't1', 'solution'))
@@ -106,7 +106,7 @@ test('two tenants connect by hint and each opens only its own solution', async (
     }
 })
 
-test('a token minted by tenant t1 presented with ?tenant=t2 is rejected', async () =>
+test('a token minted by tenant t1 presented with ?environment=t2 is rejected', async () =>
 {
     const { baseDir } = MtFixture.Start('t1', 't2')
     const host = await PragmaticServerHost.StartAsync(MtFixture.Options(baseDir, MtFixture.Provisioning('t1', 't2')))
@@ -114,7 +114,7 @@ test('a token minted by tenant t1 presented with ?tenant=t2 is rejected', async 
     try
     {
         const token1 = await MtFixture.TokenFor(host, 't1')
-        await assert.rejects(() => PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?tenant=t2`, { bearerToken: token1 }))
+        await assert.rejects(() => PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?environment=t2`, { bearerToken: token1 }))
         assert.equal(host.HandlerCountForTest(), 0)
     }
     finally
@@ -132,7 +132,7 @@ test('an unprovisioned or missing tenant hint is rejected', async () =>
     try
     {
         const token1 = await MtFixture.TokenFor(host, 't1')
-        await assert.rejects(() => PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?tenant=ghost`, { bearerToken: token1 }))
+        await assert.rejects(() => PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?environment=ghost`, { bearerToken: token1 }))
         await assert.rejects(() => PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/`, { bearerToken: token1 }))
         assert.equal(host.HandlerCountForTest(), 0)
     }
@@ -152,7 +152,7 @@ test('closing the only connection releases the tenant so an idle sweep evicts it
     {
         const token1 = await MtFixture.TokenFor(host, 't1')
         const before = await host.RegistryForTest().ServerFor('t1')
-        const c1 = await PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?tenant=t1`, { bearerToken: token1 })
+        const c1 = await PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?environment=t1`, { bearerToken: token1 })
         await c1.OpenSolution(join(baseDir, 't1', 'solution'))
         await ((await host.LanguageServiceForTest('t1')) as SolutionLanguageService).WhenIdle()
         await c1.DisposeAsync()
