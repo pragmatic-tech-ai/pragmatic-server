@@ -15,19 +15,16 @@ export interface ITenantApiEndpoint
 }
 
 /**
- * The composed tenant plane mounted into the control-plane host: the public auth endpoint, the gate that guards
- * the data API, the data API itself, and the set of hosts whose origin the tenant surface accepts. It is an
- * optional, separable plane; when absent the host serves the operator surface exactly as before.
+ * The composed tenant plane served by the dedicated `TenantPlaneHost`: the public auth endpoint, the gate that
+ * guards the data API, the data API itself, and the per-tenant event bus. The listener (its own http.Server), the
+ * host→tenant resolver, and the tenant static root are supplied to `TenantPlaneHost` directly, not carried here.
  */
 export type TenantPlane =
 {
     endpoint: TenantAuthEndpoint
     gate: TenantAuthGate
     api: ITenantApiEndpoint
-    allowedHosts: ReadonlySet<string>
     events: TenantEventBus
-    /** Absolute directory of the built tenant portal bundle, served on the tenant hosts. */
-    staticRoot: string
     /** Whether the auth endpoint's relying-party was wired with the durable reuse/TTL secret path (production) vs the legacy path. */
     isDurable?: boolean
 }

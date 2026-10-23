@@ -31,8 +31,8 @@ export type TenantAdminDurability =
 /** The outcome of a completed tenant-admin login: the IdP subject (principal) and, when mapped, its email. */
 export interface ITenantOidcRelyingParty
 {
-    Begin(tenantId: string): Promise<{ Url: string; State: string }>
-    Complete(tenantId: string, code: string, state: string): Promise<{ principalId: string; email?: string }>
+    Begin(tenantId: string, callbackUrl: string): Promise<{ Url: string; State: string }>
+    Complete(tenantId: string, code: string, state: string, callbackUrl: string): Promise<{ principalId: string; email?: string }>
 }
 
 /**
@@ -190,7 +190,6 @@ export class TenantOidcRelyingParty implements ITenantOidcRelyingParty
         private readonly idp: IIdpService,
         private readonly directory: PlatformDirectory,
         private readonly adminClientFactory: (conn: IdpConnection) => IdpAdminClient,
-        private readonly callbackUrl: string,
         private readonly resolverOverride?: IdentityPackResolver,
         flowStates?: IOidcFlowStateStore,
         private readonly durability?: TenantAdminDurability)
@@ -204,19 +203,20 @@ export class TenantOidcRelyingParty implements ITenantOidcRelyingParty
         return this.durability !== undefined
     }
 
-    public async Begin(tenantId: string): Promise<{ Url: string; State: string }>
+    public async Begin(tenantId: string, callbackUrl: string): Promise<{ Url: string; State: string }>
     {
         try
         {
+            const cb = callbackUrl
             const conn = await this.idp.EnsureForTenant(tenantId, this.displayNameFor(tenantId))
             const secretRef = TenantOidcRelyingParty.SecretRefPrefix + tenantId
             const secret = this.durability === undefined
                 ? await this.FreshSecretForLogin(secretRef)
                 : await this.SecretForLogin(tenantId, secretRef)
-            await this.adminClientFactory(conn).RegisterClient(tenantId, { clientId: TenantOidcRelyingParty.AdminClientId, redirectUris: [this.callbackUrl], secret })
+            await this.adminClientFactory(conn).RegisterClient(tenantId, { clientId: TenantOidcRelyingParty.AdminClientId, redirectUris: [cb], secret })
             const stores = await this.stores()
             const tenant = this.tenantFor(tenantId)
-            const resolved = this.resolverFor(conn).Resolve(tenant, this.configFor(conn, tenantId, secretRef), stores)
+            const resolved = this.resolverFor(conn).Resolve(tenant, this.configFor(conn, tenantId, secretRef, cb), stores)
             if (resolved.Oidc === undefined)
             {
                 throw new TenantLoginError()
@@ -277,16 +277,17 @@ export class TenantOidcRelyingParty implements ITenantOidcRelyingParty
         return existing
     }
 
-    public async Complete(tenantId: string, code: string, state: string): Promise<{ principalId: string; email?: string }>
+    public async Complete(tenantId: string, code: string, state: string, callbackUrl: string): Promise<{ principalId: string; email?: string }>
     {
         const presented = new PresentedSecret(code)
         try
         {
+            const cb = callbackUrl
             const conn = await this.idp.EnsureForTenant(tenantId, this.displayNameFor(tenantId))
             const secretRef = TenantOidcRelyingParty.SecretRefPrefix + tenantId
             const stores = await this.stores()
             const tenant = this.tenantFor(tenantId)
-            const resolved = this.resolverFor(conn).Resolve(tenant, this.configFor(conn, tenantId, secretRef), stores)
+            const resolved = this.resolverFor(conn).Resolve(tenant, this.configFor(conn, tenantId, secretRef, cb), stores)
             const authenticator = resolved.Oidc?.AuthenticatorFor(AuthMethod.Oidc)
             if (authenticator === undefined)
             {
@@ -325,14 +326,14 @@ export class TenantOidcRelyingParty implements ITenantOidcRelyingParty
         return this.resolverOverride ?? new IdentityPackResolver(new CaTrustingHttpClient(conn.ca), this.flowStates)
     }
 
-    private configFor(conn: IdpConnection, tenantId: string, secretRef: string): IdentityConfig
+    private configFor(conn: IdpConnection, tenantId: string, secretRef: string, callbackUrl: string): IdentityConfig
     {
         const issuer = conn.baseUrl + TenantOidcRelyingParty.IssuerSeparator + encodeURIComponent(tenantId)
         const providerSettings = new Map<string, string>([
             [OidcSettingKeys.Issuer, issuer],
             [OidcSettingKeys.DiscoveryUrl, issuer + TenantOidcRelyingParty.WellKnownSuffix],
             [OidcSettingKeys.ClientId, TenantOidcRelyingParty.AdminClientId],
-            [OidcSettingKeys.RedirectUri, this.callbackUrl],
+            [OidcSettingKeys.RedirectUri, callbackUrl],
             [OidcSettingKeys.SecretRef, secretRef],
         ])
         const claimsMapping = new Map<string, string>([[TenantOidcRelyingParty.EmailClaim, TenantOidcRelyingParty.EmailClaim]])

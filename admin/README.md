@@ -21,10 +21,14 @@ npm --prefix admin/tenant-portal install && npm --prefix admin/tenant-portal run
 
 ## Tenant portal
 
-The tenant portal is a second Mural app (admin/tenant-portal/) for tenant owners: hives, versions, rollouts, environment lifecycle and live logs. Build it as shown above, then serve it on a tenant host by setting these on the control plane:
+The tenant portal is a second Mural app (admin/tenant-portal/) for tenant owners: hives, versions, rollouts, environment lifecycle and live logs. It is served by a dedicated tenant listener (its own port), separate from the loopback operator listener, so the operator surface is structurally unreachable on it. Build it as shown above, then turn the tenant listener on by setting these on the control plane:
 
-- PRAGMATIC_TENANT_ADMIN_HOSTS: the host names that serve the tenant portal bundle instead of the operator portal.
-- PRAGMATIC_TENANT_ADMIN_CALLBACK_URL: the OIDC callback URL registered for tenant sign-in.
+- PRAGMATIC_TENANT_ADMIN_PORT: the dedicated tenant listener's port. Its presence (with the base domain) activates the tenant plane; absent → operator-only, exactly as before.
+- PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN: e.g. `admin.example.com`. A request host is a tenant host iff it is `<tenantId>.<baseDomain>`; the tenant id is the first label. Subdomain admin login therefore requires the tenant id to be a lowercase DNS-label-safe string (`[a-z0-9-]`, no dot/underscore/uppercase); a tenant whose id is not DNS-safe cannot reach admin login via a host and such a host simply 403s.
+- PRAGMATIC_TENANT_ADMIN_BIND: the tenant listener's bind address; defaults to `127.0.0.1` (proxy-fronted).
+- PRAGMATIC_TENANT_ADMIN_EXTERNAL_SCHEME: `https` (default) or `http`; the scheme of the externally-visible tenant origin, used to build the per-tenant OIDC callback URL (`<scheme>://<tenantId>.<baseDomain>/tenant-auth/oidc/callback`).
+
+The tenant id and the OIDC callback are derived per request from the request's subdomain host; there is no `?tenant=` query parameter.
 
 Gated end-to-end test. It runs against a fake control plane (no IdP, no Docker), serving dist/ and canned /tenant-auth and /tenant-api responses. It needs a prior build and Playwright browsers, and is not part of the default unit run (`npm --prefix admin/tenant-portal test`):
 

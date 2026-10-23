@@ -34,8 +34,10 @@ import { TenantAdminClientRegistry } from './tenant-auth/tenant-admin-client-rec
 import { MasterKeyFile } from './master-key-file.js'
 import { TenantAuthEndpoint } from './tenant-auth/tenant-auth-endpoint.js'
 import { TenantAuthGate } from './tenant-auth/tenant-auth-gate.js'
+import { TenantHostResolver } from './tenant-auth/tenant-host-resolver.js'
 import { TenantApiEndpoint } from './tenant-api/tenant-api-endpoint.js'
 import { TenantEventBus } from './tenant-api/tenant-events.js'
+import { TenantPlaneHost } from './tenant-plane-host.js'
 import type { TenantPlane } from './tenant-auth/tenant-plane.js'
 import type { IEnvironmentService } from './control-plane-host.js'
 
@@ -74,11 +76,18 @@ export class ControlPlaneServer
     private static readonly IdentitySegment = 'identity'
     private static readonly TrueToken = 'true'
     private static readonly OneToken = '1'
-    private static readonly TenantHostsEnvVar = 'PRAGMATIC_TENANT_ADMIN_HOSTS'
-    private static readonly TenantCallbackEnvVar = 'PRAGMATIC_TENANT_ADMIN_CALLBACK_URL'
+    private static readonly TenantPortEnvVar = 'PRAGMATIC_TENANT_ADMIN_PORT'
+    private static readonly TenantBindEnvVar = 'PRAGMATIC_TENANT_ADMIN_BIND'
+    private static readonly TenantBaseDomainEnvVar = 'PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN'
+    private static readonly TenantSchemeEnvVar = 'PRAGMATIC_TENANT_ADMIN_EXTERNAL_SCHEME'
+    private static readonly DefaultTenantBind = '127.0.0.1'
+    private static readonly DefaultExternalScheme = 'https'
+    private static readonly BadTenantPortPrefix = 'Invalid PRAGMATIC_TENANT_ADMIN_PORT: '
+    private static readonly TenantListeningPrefix = 'Tenant plane listening on '
+    private static readonly SchemeHostSeparator = '://'
+    private static readonly HostPortSeparator = ':'
     private static readonly TenantSessionsFile = 'tenant-sessions.json'
     private static readonly TenantSessionTtlMs = 12 * 60 * 60 * 1000
-    private static readonly HostListSeparator = ','
     private static readonly SecretTtlEnvVar = 'PRAGMATIC_TENANT_ADMIN_SECRET_TTL_HOURS'
     private static readonly DefaultSecretTtlHours = 168
     private static readonly MsPerHour = 3600000
@@ -123,13 +132,32 @@ export class ControlPlaneServer
         const placement = new EnvironmentPlacement(directory)
         const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, reports, registrations, directory, orchestrators, registry, placement)
         const provisioning = new TenantProvisioningService(idpService, directory, conn => new IdpAdminClient(conn))
-        const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie, service, deployments, orchestrators, placement,
-            join(here, ControlPlaneServer.ParentSegment, ControlPlaneServer.TenantPortalSegment, ControlPlaneServer.DistSegment),
-            masterKey, adminClientRegistry, ControlPlaneServer.ParseSecretTtlHours(process.env[ControlPlaneServer.SecretTtlEnvVar]))
-        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, orchestrators, deployments, provisioning, tenantPlane)
+        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, orchestrators, deployments, provisioning)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
+        const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie, service, deployments, orchestrators, placement,
+            masterKey, adminClientRegistry, ControlPlaneServer.ParseSecretTtlHours(process.env[ControlPlaneServer.SecretTtlEnvVar]))
+        // Resolve (and validate) the tenant port + bind BEFORE binding the operator listener, so a misconfigured
+        // tenant port fails fast at startup rather than after the operator socket is already live.
+        let tenantStart: { host: TenantPlaneHost; port: number; bind: string; scheme: string; baseDomain: string } | undefined
+        if (tenantPlane !== undefined)
+        {
+            const baseDomain = process.env[ControlPlaneServer.TenantBaseDomainEnvVar] as string
+            const scheme = ControlPlaneServer.TenantScheme(process.env[ControlPlaneServer.TenantSchemeEnvVar])
+            const resolver = new TenantHostResolver(baseDomain, scheme, directory)
+            const tenantStaticRoot = join(here, ControlPlaneServer.ParentSegment, ControlPlaneServer.TenantPortalSegment, ControlPlaneServer.DistSegment)
+            const tenantHost = new TenantPlaneHost(tenantPlane, resolver, tenantStaticRoot, service)
+            const tenantPort = ControlPlaneServer.ResolveTenantPort(process.env[ControlPlaneServer.TenantPortEnvVar])
+            const tenantBind = ControlPlaneServer.TenantBind(process.env[ControlPlaneServer.TenantBindEnvVar])
+            tenantStart = { host: tenantHost, port: tenantPort, bind: tenantBind, scheme, baseDomain }
+        }
+        // The operator listener is structurally loopback-only: no tenant route is mounted on it.
         await host.Listen(port, ControlPlaneServer.BindHost)
         console.log(ControlPlaneServer.ListeningPrefix + String(port) + ControlPlaneServer.ListeningSuffix)
+        if (tenantStart !== undefined)
+        {
+            await tenantStart.host.Listen(tenantStart.port, tenantStart.bind)
+            console.log(ControlPlaneServer.TenantListeningPrefix + tenantStart.scheme + ControlPlaneServer.SchemeHostSeparator + tenantStart.baseDomain + ControlPlaneServer.HostPortSeparator + String(tenantStart.port) + ControlPlaneServer.ListeningSuffix)
+        }
     }
 
     /** Pure: derives operator-identity compose options and cookie policy from the environment. */
@@ -147,9 +175,10 @@ export class ControlPlaneServer
     }
 
     /**
-     * Composes the optional tenant plane from the environment. Both `PRAGMATIC_TENANT_ADMIN_HOSTS` (comma-separated
-     * hosts) and `PRAGMATIC_TENANT_ADMIN_CALLBACK_URL` must be present (and the host list non-empty); otherwise the
-     * plane is off and the host serves the operator surface exactly as before.
+     * Composes the optional tenant plane from the environment. The dedicated tenant listener activates only when
+     * both `PRAGMATIC_TENANT_ADMIN_PORT` and `PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN` are present; otherwise the plane
+     * is off (fail-closed) and only the operator listener runs, exactly as before. The callback is derived per
+     * request from the tenant subdomain host by `TenantPlaneHost`, so no callback is wired here.
      */
     public static ComposeTenantPlane(
         env: NodeJS.ProcessEnv,
@@ -161,19 +190,13 @@ export class ControlPlaneServer
         deployments: PlatformDeploymentRegistry,
         orchestrators: HiveOrchestratorFactory,
         placement: EnvironmentPlacement,
-        staticRoot: string,
         masterKey: Buffer,
         adminClientRegistry: TenantAdminClientRegistry,
         secretTtlHours: number): TenantPlane | undefined
     {
-        const rawHosts = env[ControlPlaneServer.TenantHostsEnvVar]
-        const callbackUrl = env[ControlPlaneServer.TenantCallbackEnvVar]
-        if (rawHosts === undefined || rawHosts === '' || callbackUrl === undefined || callbackUrl === '')
-        {
-            return undefined
-        }
-        const allowedHosts = ControlPlaneServer.ParseHosts(rawHosts)
-        if (allowedHosts.size === 0)
+        const port = env[ControlPlaneServer.TenantPortEnvVar]
+        const baseDomain = env[ControlPlaneServer.TenantBaseDomainEnvVar]
+        if (port === undefined || port === '' || baseDomain === undefined || baseDomain === '')
         {
             return undefined
         }
@@ -184,12 +207,35 @@ export class ControlPlaneServer
             registry: adminClientRegistry,
             secretTtlMs: secretTtlHours * ControlPlaneServer.MsPerHour,
         }
-        const rp = new TenantOidcRelyingParty(idpService, directory, conn => new IdpAdminClient(conn), callbackUrl, undefined, undefined, durability)
+        const rp = new TenantOidcRelyingParty(idpService, directory, conn => new IdpAdminClient(conn), undefined, undefined, durability)
         const endpoint = new TenantAuthEndpoint(rp, sessions, secureCookie)
         const gate = new TenantAuthGate(sessions)
         const api = new TenantApiEndpoint(service, directory, deployments, orchestrators, placement)
         const events = new TenantEventBus()
-        return { endpoint, gate, api, allowedHosts, events, staticRoot, isDurable: rp.IsDurable }
+        return { endpoint, gate, api, events, isDurable: rp.IsDurable }
+    }
+
+    /** The externally-visible tenant origin scheme; defaults to https when unset or blank. */
+    private static TenantScheme(raw: string | undefined): string
+    {
+        return raw === undefined || raw === '' ? ControlPlaneServer.DefaultExternalScheme : raw
+    }
+
+    /** The tenant listener bind address; defaults to loopback (proxy-fronted) when unset or blank. */
+    private static TenantBind(raw: string | undefined): string
+    {
+        return raw === undefined || raw === '' ? ControlPlaneServer.DefaultTenantBind : raw
+    }
+
+    /** The dedicated tenant listener port; required (the plane only activates when it is set). */
+    private static ResolveTenantPort(raw: string | undefined): number
+    {
+        const port = Number(raw)
+        if (raw === undefined || raw === '' || !Number.isInteger(port) || port < 1 || port > ControlPlaneServer.MaxPort)
+        {
+            throw new Error(ControlPlaneServer.BadTenantPortPrefix + String(raw))
+        }
+        return port
     }
 
     /** Pure: parses the tenant-admin secret TTL in hours; anything but a positive integer yields the default. */
@@ -201,21 +247,6 @@ export class ControlPlaneServer
         }
         const hours = Number.parseInt(raw, 10)
         return hours > 0 ? hours : ControlPlaneServer.DefaultSecretTtlHours
-    }
-
-    /** Parses a comma-separated host list into a set of trimmed, lowercased, non-empty hosts. */
-    private static ParseHosts(raw: string): ReadonlySet<string>
-    {
-        const hosts = new Set<string>()
-        for (const part of raw.split(ControlPlaneServer.HostListSeparator))
-        {
-            const host = part.trim().toLowerCase()
-            if (host.length > 0)
-            {
-                hosts.add(host)
-            }
-        }
-        return hosts
     }
 
     private static ResolvePort(raw: string | undefined): number

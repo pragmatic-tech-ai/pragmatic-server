@@ -28,9 +28,8 @@ describe('ControlPlaneServer.ParseSecretTtlHours', () =>
 
 describe('ControlPlaneServer.ComposeTenantPlane', () =>
 {
-    const Hosts = 'admin.example.com'
-    const Callback = 'https://admin.example.com/cb'
-    const StaticRoot = '/portal/dist'
+    const BaseDomain = 'admin.example.com'
+    const Port = '7100'
     // The deps below are only stored (not called) while composing, so stubs are safe. `never` is assignable to every param.
     const stub = {} as unknown as never
 
@@ -40,7 +39,7 @@ describe('ControlPlaneServer.ComposeTenantPlane', () =>
         try
         {
             const registry = new TenantAdminClientRegistry(join(dir, 'tenant-admin-clients.json'))
-            return ControlPlaneServer.ComposeTenantPlane(env, dir, stub, stub, false, stub, stub, stub, stub, StaticRoot, randomBytes(32), registry, 168)
+            return ControlPlaneServer.ComposeTenantPlane(env, dir, stub, stub, false, stub, stub, stub, stub, randomBytes(32), registry, 168)
         }
         finally
         {
@@ -50,14 +49,19 @@ describe('ControlPlaneServer.ComposeTenantPlane', () =>
 
     it('wires the relying-party with the durable secret path when the tenant env is set', () =>
     {
-        const plane = compose({ PRAGMATIC_TENANT_ADMIN_HOSTS: Hosts, PRAGMATIC_TENANT_ADMIN_CALLBACK_URL: Callback } as NodeJS.ProcessEnv)
+        const plane = compose({ PRAGMATIC_TENANT_ADMIN_PORT: Port, PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN: BaseDomain } as NodeJS.ProcessEnv)
         assert.ok(plane !== undefined)
         // Pins the production wiring: a dropped/reordered `durability` arg would silently revert to the legacy path and flip this false.
         assert.equal(plane.isDurable, true)
     })
 
-    it('returns undefined (fail-closed) when the tenant hosts env is unset', () =>
+    it('returns undefined (fail-closed) when the tenant port env is unset', () =>
     {
-        assert.equal(compose({ PRAGMATIC_TENANT_ADMIN_CALLBACK_URL: Callback } as NodeJS.ProcessEnv), undefined)
+        assert.equal(compose({ PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN: BaseDomain } as NodeJS.ProcessEnv), undefined)
+    })
+
+    it('returns undefined (fail-closed) when the base domain env is unset', () =>
+    {
+        assert.equal(compose({ PRAGMATIC_TENANT_ADMIN_PORT: Port } as NodeJS.ProcessEnv), undefined)
     })
 })

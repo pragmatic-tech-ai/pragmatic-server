@@ -58,9 +58,6 @@ export class TenantApiClient
     private static readonly SessionRoute = '/tenant-auth/session'
     private static readonly LogoutRoute = '/tenant-auth/logout'
     private static readonly BeginLoginRoute = '/tenant-auth/oidc/begin'
-    private static readonly TenantQueryKey = 'tenant'
-    private static readonly QueryStart = '?'
-    private static readonly QueryAssign = '='
     private static readonly HivesRoute = '/tenant-api/hives'
     private static readonly EnvironmentsRoute = '/tenant-api/environments'
     private static readonly ManifestsRoute = '/tenant-api/manifests'
@@ -111,9 +108,9 @@ export class TenantApiClient
         }
     }
 
-    public BeginLogin(tenantId: string): void
+    public BeginLogin(): void
     {
-        this.Navigate(TenantApiClient.BeginLoginRoute + TenantApiClient.QueryStart + TenantApiClient.TenantQueryKey + TenantApiClient.QueryAssign + encodeURIComponent(tenantId))
+        this.Navigate(TenantApiClient.BeginLoginRoute)
     }
 
     public async Logout(): Promise<void>
