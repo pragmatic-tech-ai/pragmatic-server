@@ -18,11 +18,13 @@ export type RealmFactory = (tenantId: string, displayName: string) => Promise<Id
 export class ReservedRealmError extends Error
 {
     private static readonly MessagePrefix = 'Reserved or invalid realm key: ';
+    private static readonly ErrorName = 'ReservedRealmError';
+    private static readonly MaxKeyChars = 64;
 
     public constructor(key: string)
     {
-        super(ReservedRealmError.MessagePrefix + key);
-        this.name = 'ReservedRealmError';
+        super(ReservedRealmError.MessagePrefix + JSON.stringify(key.slice(0, ReservedRealmError.MaxKeyChars)));
+        this.name = ReservedRealmError.ErrorName;
     }
 }
 
@@ -34,6 +36,7 @@ export class IdpRealmSet
     private static readonly NoFactoryMessage = 'IdpRealmSet: realm creation unsupported (no factory configured)';
 
     private readonly realms = new Map<string, IdpRealm>();
+    private readonly pending = new Map<string, Promise<IdpRealm>>();
 
     public constructor(
         entries: Iterable<readonly [string, IdpRealm]> = [],
@@ -67,11 +70,30 @@ export class IdpRealmSet
         {
             return existing;
         }
+        const inFlight = this.pending.get(tenantId);
+        if (inFlight !== undefined)
+        {
+            return inFlight;
+        }
         if (this.factory === undefined)
         {
             throw new Error(IdpRealmSet.NoFactoryMessage);
         }
-        const realm = await this.factory(tenantId, displayName);
+        const creation = this.Create(this.factory, tenantId, displayName);
+        this.pending.set(tenantId, creation);
+        try
+        {
+            return await creation;
+        }
+        finally
+        {
+            this.pending.delete(tenantId);
+        }
+    }
+
+    private async Create(factory: RealmFactory, tenantId: string, displayName: string): Promise<IdpRealm>
+    {
+        const realm = await factory(tenantId, displayName);
         this.realms.set(tenantId, realm);
         return realm;
     }
