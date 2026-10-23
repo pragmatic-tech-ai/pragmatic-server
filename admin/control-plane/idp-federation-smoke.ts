@@ -190,6 +190,8 @@ export class IdpFederationSmoke
     private static readonly PortSep = ':'
     private static readonly HealthPath = '/healthz'
     private static readonly BeginPath = '/auth/oidc/begin'
+    /** The SPA supplies its environment on pre-login requests (no session cookie yet); the host routes `/auth/*` by this hint. Key byte-matches PragmaticServerHost.EnvironmentParam. */
+    private static readonly BeginQuery = '?environment='
     private static readonly CallbackPath = '/auth/oidc/callback'
     private static readonly SessionPath = '/auth/session'
     private static readonly SessionCookieName = 'ps_session'
@@ -434,6 +436,12 @@ export class IdpFederationSmoke
         return IdpFederationSmoke.HttpPrefix + IdpFederationSmoke.LoopbackHost + IdpFederationSmoke.PortSep + String(port) + path
     }
 
+    /** The begin URL carries the environment hint the SPA would add; a dev-blank env's id is its name. */
+    private BeginUrl(env: BoundEnv): string
+    {
+        return this.EnvUrl(env.port, IdpFederationSmoke.BeginPath) + IdpFederationSmoke.BeginQuery + encodeURIComponent(env.name)
+    }
+
     /** Rewrites an absolute URL's host to 127.0.0.1: the IdP cert carries an IP:127.0.0.1 SAN, and the container-facing host.docker.internal need not resolve on the host. */
     private HostSide(location: string | undefined): string | undefined
     {
@@ -450,7 +458,7 @@ export class IdpFederationSmoke
     private async LoginEnvA(client: FlowClient, env: BoundEnv, ownerPassword: string): Promise<boolean>
     {
         const S = IdpFederationSmoke
-        const begin = await client.Get(this.EnvUrl(env.port, S.BeginPath), undefined)
+        const begin = await client.Get(this.BeginUrl(env), undefined)
         const authorizeUrl = this.HostSide(begin.Location)
         if (begin.Status !== S.StatusFound || authorizeUrl === undefined)
         {
@@ -477,7 +485,7 @@ export class IdpFederationSmoke
     private async SsoEnvB(client: FlowClient, env: BoundEnv): Promise<void>
     {
         const S = IdpFederationSmoke
-        const begin = await client.Get(this.EnvUrl(env.port, S.BeginPath), undefined)
+        const begin = await client.Get(this.BeginUrl(env), undefined)
         const authorizeUrl = this.HostSide(begin.Location)
         if (begin.Status !== S.StatusFound || authorizeUrl === undefined)
         {

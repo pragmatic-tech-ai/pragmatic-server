@@ -113,6 +113,8 @@ export class EnvironmentService
     private static readonly MissingSecretPrefix = 'no provisioned secret for '
     /** Must byte-match AuthHttpEndpoint.OidcCallbackPath in the served runtime. */
     private static readonly OidcCallbackPath = '/auth/oidc/callback'
+    /** The callback carries its own environment hint: the IdP redirect lands with no SPA to add `?environment=`, and the host routes by that hint. The key must byte-match PragmaticServerHost.EnvironmentParam. */
+    private static readonly EnvironmentQueryPrefix = '?environment='
     private static readonly OidcSecretRefSuffix = '-oidc-secret'
     private static readonly IssuerSeparator = '/'
     private static readonly DiscoverySuffix = '/.well-known/openid-configuration'
@@ -173,7 +175,7 @@ export class EnvironmentService
             const conn = await this.idp.EnsureForTenant(platformTenantId, displayName)
             secret = randomBytes(EnvironmentService.OidcSecretBytes).toString(EnvironmentService.OidcSecretEncoding)
             const clientId = def.environmentId
-            const redirectUri = EnvironmentService.HttpPrefix + String(port) + EnvironmentService.OidcCallbackPath
+            const redirectUri = EnvironmentService.HttpPrefix + String(port) + EnvironmentService.OidcCallbackPath + EnvironmentService.EnvironmentQueryPrefix + encodeURIComponent(def.environmentId)
             await this.adminClientFactory(conn).RegisterClient(platformTenantId, { clientId, redirectUris: [redirectUri], secret })
             const issuer = conn.baseUrl + EnvironmentService.IssuerSeparator + encodeURIComponent(platformTenantId)
             const oidc: EnvOidc = {
