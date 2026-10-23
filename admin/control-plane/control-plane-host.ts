@@ -15,6 +15,7 @@ import {
 } from './environment-service.js'
 import { GraphExistsError, GraphNameInvalidError, GraphNotFoundError } from './graph-service.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from './environment-record.js'
+import { InvalidTenantIdError } from './idp-service.js'
 import { PortUnavailableError } from './port-allocator.js'
 import type { TenantProvisioningService } from './tenant-provisioning-service.js'
 import { InvalidEnvironmentNameError, TemplateCatalog } from './template-catalog.js'
@@ -324,6 +325,7 @@ export class ControlPlaneHost
         [EnvironmentNotDevelopmentError, ControlPlaneHost.StatusBadRequest],
         [EnvironmentNotRuntimeError, ControlPlaneHost.StatusBadRequest],
         [InvalidRecordIdError, ControlPlaneHost.StatusBadRequest],
+        [InvalidTenantIdError, ControlPlaneHost.StatusBadRequest],
         [RecordExistsError, ControlPlaneHost.StatusConflict],
         [UnknownClientError, ControlPlaneHost.StatusNotFound],
         [UnknownTenantError, ControlPlaneHost.StatusNotFound],

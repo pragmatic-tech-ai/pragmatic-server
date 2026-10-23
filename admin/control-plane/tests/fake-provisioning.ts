@@ -6,6 +6,8 @@ export class FakeProvisioning
 {
     public static readonly Password = 'one-time-secret'
 
+    public FailWith: Error | undefined
+
     public readonly Calls: TenantProvisionInput[] = []
 
     public constructor(private readonly directory: PlatformDirectory)
@@ -15,6 +17,10 @@ export class FakeProvisioning
     public async Provision(input: TenantProvisionInput): Promise<TenantProvisionResult>
     {
         this.Calls.push(input)
+        if (this.FailWith !== undefined)
+        {
+            throw this.FailWith
+        }
         const record = await this.directory.CreateProvisionedTenant({ ...input, ownerPrincipalId: 'owner', idpBaseUrl: 'https://idp.test' })
         return { record, ownerPassword: FakeProvisioning.Password }
     }

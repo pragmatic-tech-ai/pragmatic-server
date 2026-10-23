@@ -12,7 +12,8 @@ import type { IOperatorIdentity, OperatorPrincipal, OperatorSession } from '../o
 import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
-import { PlatformDirectory } from '../platform-directory.js'
+import { InvalidTenantIdError } from '../idp-service.js'
+import { PlatformDirectory, RecordExistsError } from '../platform-directory.js'
 
 type Reply = { status: number; body: string; cacheControl?: string }
 
@@ -69,6 +70,7 @@ class Harness
 describe('ControlPlaneHost platform routes', () =>
 {
     let host: ControlPlaneHost
+    let fake: FakeProvisioning
     let parent: string
 
     beforeEach(async () =>
@@ -84,7 +86,7 @@ describe('ControlPlaneHost platform routes', () =>
             { List: () => [] })
         await directory.Load()
         const factory = new HiveOrchestratorFactory()
-        host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, factory, await RolloutFixture.Create(parent, directory, factory), new FakeProvisioning(directory).AsService())
+        host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, factory, await RolloutFixture.Create(parent, directory, factory), (fake = new FakeProvisioning(directory)).AsService())
         await host.Listen(0, '127.0.0.1')
     })
 
@@ -128,6 +130,17 @@ describe('ControlPlaneHost platform routes', () =>
         assert.equal((await Harness.Send(host, 'POST', '/api/tenants', { id: 't1', clientId: 'acme', displayName: 'T' })).status, 400)
         assert.equal((await Harness.Send(host, 'POST', '/api/tenants', { id: 't1', clientId: 'acme', displayName: 'T', ownerEmail: '' })).status, 400)
         assert.equal((await Harness.Send(host, 'POST', '/api/tenants', { id: '_sys', clientId: 'acme', displayName: 'T', ownerEmail: 'o@x.test' })).status, 400)
+        assert.equal(fake.Calls.length, 0)
+    })
+
+    it('maps provisioning failures to 400 and 409', async () =>
+    {
+        await Harness.Send(host, 'POST', '/api/clients', { id: 'acme', displayName: 'Acme' })
+        const body = { id: 't1', clientId: 'acme', displayName: 'T', ownerEmail: 'o@x.test' }
+        fake.FailWith = new InvalidTenantIdError('bad id')
+        assert.equal((await Harness.Send(host, 'POST', '/api/tenants', body)).status, 400)
+        fake.FailWith = new RecordExistsError('t1')
+        assert.equal((await Harness.Send(host, 'POST', '/api/tenants', body)).status, 409)
     })
 
     it('maps a cascade violation to 409 and an unknown parent to 404', async () =>
