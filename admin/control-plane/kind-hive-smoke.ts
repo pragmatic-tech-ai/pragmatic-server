@@ -40,7 +40,7 @@ import { FileSignatureStore } from './signature-store.js'
 class SmokeHive
 {
     public constructor(
-        public readonly record: HiveRecord,
+        public readonly id: string,
         public readonly workload: EnvironmentWorkload,
         public readonly orchestrator: KindHiveOrchestrator,
     )
@@ -82,6 +82,8 @@ export class KindHiveSmoke
     private static readonly MasterKeyBytes = 32
     private static readonly PassTag = 'PASS '
     private static readonly FailTag = 'FAIL '
+    private static readonly IdSep = ': '
+    private static readonly ListSep = '; '
     private static readonly DetailSep = ' -- '
     private static readonly DestroyWarning = 'WARN best-effort cluster destroy failed for '
     private static readonly OverallPass = 'OVERALL PASS'
@@ -89,8 +91,8 @@ export class KindHiveSmoke
     private static readonly CrashPrefix = 'smoke crashed: '
     private static readonly NotKindOrchestrator = 'factory did not resolve a KindHiveOrchestrator for hive '
     private static readonly Labels = {
-        Apply: 'kind: Apply succeeds (cluster provisioned + workload applied) for both hives',
-        Loaded: 'kind: dev image loaded onto both cluster nodes',
+        Apply: 'kind: Apply schedules the workload on the pre-created cluster for both hives',
+        Loaded: 'kind: clusters pre-created + image loaded onto both nodes',
         Healthy: 'kind: WaitHealthy completes for both hives',
         Ready: 'kind: Health reports ready on the requested image for both hives',
         Distinct: 'kind: the two hives map to two distinct cluster names',
@@ -120,18 +122,20 @@ export class KindHiveSmoke
         {
             const factory = await this.SignedFactory()
             hives.push(this.Resolve(factory, S.HiveIdA), this.Resolve(factory, S.HiveIdB))
+            // kind nodes do not share the host image store: pre-create each cluster and load the image
+            // onto its node BEFORE scheduling, so the pod never hits ImagePullBackOff. Apply's idempotent
+            // EnsureCluster then finds the cluster and only schedules the workload.
+            for (const hive of hives)
+            {
+                await kind.CreateCluster(hive.orchestrator.ClusterName)
+                await kind.LoadImage(S.Image, hive.orchestrator.ClusterName)
+            }
+            this.Expect(S.Labels.Loaded, true)
             for (const hive of hives)
             {
                 await hive.orchestrator.Apply(hive.workload)
             }
             this.Expect(S.Labels.Apply, true)
-            // kind nodes do not share the host image store: load the image once the cluster exists,
-            // before the pod can leave ImagePullBackOff / ErrImageNeverPull.
-            for (const hive of hives)
-            {
-                await kind.LoadImage(S.Image, hive.orchestrator.ClusterName)
-            }
-            this.Expect(S.Labels.Loaded, true)
             for (const hive of hives)
             {
                 await hive.orchestrator.WaitHealthy(hive.workload)
@@ -157,7 +161,7 @@ export class KindHiveSmoke
         {
             if (!destroyed)
             {
-                await this.BestEffortDestroy(hives, S.HiveIdA, S.HiveIdB)
+                await this.BestEffortDestroy(hives, [S.HiveIdA, S.HiveIdB])
             }
             await this.CleanupTempStores()
         }
@@ -167,17 +171,17 @@ export class KindHiveSmoke
     private async CheckReady(hives: readonly SmokeHive[]): Promise<void>
     {
         let ok = true
-        let detail = KindHiveSmoke.EmptyString
+        const details: string[] = []
         for (const hive of hives)
         {
             const health = await hive.orchestrator.Health(hive.workload)
             if (!(health.ready && health.runningImage === KindHiveSmoke.Image))
             {
                 ok = false
-                detail = health.detail
+                details.push(hive.id + KindHiveSmoke.IdSep + health.detail)
             }
         }
-        this.Expect(KindHiveSmoke.Labels.Ready, ok, detail)
+        this.Expect(KindHiveSmoke.Labels.Ready, ok, details.join(KindHiveSmoke.ListSep))
     }
 
     private async CheckIsolated(kind: KindCli, hives: readonly SmokeHive[]): Promise<void>
@@ -215,7 +219,7 @@ export class KindHiveSmoke
         {
             throw new Error(KindHiveSmoke.NotKindOrchestrator + hiveId)
         }
-        return new SmokeHive(record, KindHiveSmoke.Workload(record), orchestrator)
+        return new SmokeHive(hiveId, KindHiveSmoke.Workload(record), orchestrator)
     }
 
     /** Writes `<ref>.pub` / `<ref>.key` PEM files in the layout FileKeyStore reads. The private PEM is never logged. */
@@ -298,7 +302,7 @@ export class KindHiveSmoke
     }
 
     /** Failure-path cleanup so a crashed run never leaks real kind clusters. Destroys by derived name even if resolution failed. */
-    private async BestEffortDestroy(hives: readonly SmokeHive[], ...hiveIds: readonly string[]): Promise<void>
+    private async BestEffortDestroy(hives: readonly SmokeHive[], hiveIds: readonly string[]): Promise<void>
     {
         const S = KindHiveSmoke
         const kind = new KindCli(new NodeExecFile())
