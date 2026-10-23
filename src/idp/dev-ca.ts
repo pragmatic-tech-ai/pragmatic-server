@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 export interface DevCaFiles
@@ -25,6 +25,21 @@ export interface IdpTlsMaterialData
 export class DevCa
 {
     private static readonly Openssl = 'openssl'
+    private static readonly HostPattern = /^[A-Za-z0-9.-]+$/
+    private static readonly InvalidHost = 'DevCa: invalid host (only letters, digits, dots and hyphens allowed): '
+    private static readonly FlagX509 = '-x509'
+    private static readonly FlagNewkey = '-newkey'
+    private static readonly FlagNodes = '-nodes'
+    private static readonly FlagKeyout = '-keyout'
+    private static readonly FlagOut = '-out'
+    private static readonly FlagDays = '-days'
+    private static readonly FlagSubj = '-subj'
+    private static readonly FlagReq = '-req'
+    private static readonly FlagIn = '-in'
+    private static readonly FlagCaKey = '-CAkey'
+    private static readonly FlagCaCreateSerial = '-CAcreateserial'
+    private static readonly FlagCa = '-CA'
+    private static readonly FlagExtfile = '-extfile'
     private static readonly ReqCmd = 'req'
     private static readonly X509Cmd = 'x509'
     private static readonly CaKeyFile = 'ca.key'
@@ -46,8 +61,12 @@ export class DevCa
     private static readonly KeyMode = 0o600
     private static readonly OpensslFailed = 'DevCa: failed to run openssl (is the openssl CLI installed and on PATH?): '
 
-    public static EnsureAt(dir: string, host: string): DevCaFiles
+    public static EnsureAt(dir: string, host: string, openssl: string = DevCa.Openssl): DevCaFiles
     {
+        if (!DevCa.HostPattern.test(host))
+        {
+            throw new Error(DevCa.InvalidHost + host)
+        }
         const result: DevCaFiles = {
             certFile: join(dir, DevCa.ServerCertFile),
             keyFile: join(dir, DevCa.ServerKeyFile),
@@ -58,10 +77,11 @@ export class DevCa
             return result
         }
         // Mint into a staging dir, then move into place so a failure never leaves a half-written set.
+        mkdirSync(dir, { recursive: true })
         const stage = mkdtempSync(join(dir, DevCa.StagingPrefix))
         try
         {
-            DevCa.Mint(stage, host)
+            DevCa.Mint(stage, host, openssl)
             renameSync(join(stage, DevCa.CaKeyFile), join(dir, DevCa.CaKeyFile))
             renameSync(join(stage, DevCa.ServerKeyFile), result.keyFile)
             renameSync(join(stage, DevCa.CaCertFile), result.caFile)
@@ -74,27 +94,27 @@ export class DevCa
         return result
     }
 
-    private static Mint(d: string, host: string): void
+    private static Mint(d: string, host: string, openssl: string): void
     {
         const p = (f: string): string => join(d, f)
-        DevCa.Run([DevCa.ReqCmd, '-x509', '-newkey', DevCa.KeySpec, '-nodes', '-keyout', p(DevCa.CaKeyFile),
-            '-out', p(DevCa.CaCertFile), '-days', DevCa.ValidDays, '-subj', DevCa.CaSubject])
-        DevCa.Run([DevCa.ReqCmd, '-newkey', DevCa.KeySpec, '-nodes', '-keyout', p(DevCa.ServerKeyFile),
-            '-out', p(DevCa.ServerCsrFile), '-subj', DevCa.SubjectPrefix + host])
+        DevCa.Run(openssl, [DevCa.ReqCmd, DevCa.FlagX509, DevCa.FlagNewkey, DevCa.KeySpec, DevCa.FlagNodes, DevCa.FlagKeyout, p(DevCa.CaKeyFile),
+            DevCa.FlagOut, p(DevCa.CaCertFile), DevCa.FlagDays, DevCa.ValidDays, DevCa.FlagSubj, DevCa.CaSubject])
+        DevCa.Run(openssl, [DevCa.ReqCmd, DevCa.FlagNewkey, DevCa.KeySpec, DevCa.FlagNodes, DevCa.FlagKeyout, p(DevCa.ServerKeyFile),
+            DevCa.FlagOut, p(DevCa.ServerCsrFile), DevCa.FlagSubj, DevCa.SubjectPrefix + host])
         writeFileSync(p(DevCa.ExtFile), DevCa.SanPrefix + host + DevCa.SanSuffix + DevCa.Eol + DevCa.BasicConstraints + DevCa.Eol)
-        DevCa.Run([DevCa.X509Cmd, '-req', '-in', p(DevCa.ServerCsrFile), '-CA', p(DevCa.CaCertFile),
-            '-CAkey', p(DevCa.CaKeyFile), '-CAcreateserial', '-out', p(DevCa.ServerCertFile),
-            '-days', DevCa.ValidDays, '-extfile', p(DevCa.ExtFile)])
+        DevCa.Run(openssl, [DevCa.X509Cmd, DevCa.FlagReq, DevCa.FlagIn, p(DevCa.ServerCsrFile), DevCa.FlagCa, p(DevCa.CaCertFile),
+            DevCa.FlagCaKey, p(DevCa.CaKeyFile), DevCa.FlagCaCreateSerial, DevCa.FlagOut, p(DevCa.ServerCertFile),
+            DevCa.FlagDays, DevCa.ValidDays, DevCa.FlagExtfile, p(DevCa.ExtFile)])
         chmodSync(p(DevCa.CaKeyFile), DevCa.KeyMode)
         chmodSync(p(DevCa.ServerKeyFile), DevCa.KeyMode)
         rmSync(p(DevCa.CaSerialFile), { force: true })
     }
 
-    private static Run(args: string[]): void
+    private static Run(openssl: string, args: string[]): void
     {
         try
         {
-            execFileSync(DevCa.Openssl, args, { stdio: 'pipe' })
+            execFileSync(openssl, args, { stdio: 'pipe' })
         }
         catch (e)
         {

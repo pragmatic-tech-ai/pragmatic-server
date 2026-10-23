@@ -41,9 +41,31 @@ test('the server cert carries the host SAN and chains to the minted CA', () =>
         assert.ok(server.subjectAltName?.includes('idp.local'))
         assert.ok(server.subjectAltName?.includes('127.0.0.1'))
         assert.equal(server.verify(ca.publicKey), true)
+        assert.equal(server.ca, false)
     }
     finally
     {
         rmSync(dir, { recursive: true, force: true })
+    }
+})
+
+test('a missing openssl binary raises a clear error naming openssl', () =>
+{
+    const dir = mkdtempSync(join(tmpdir(), 'devca-'))
+    try
+    {
+        assert.throws(() => DevCa.EnsureAt(join(dir, 'nested'), 'idp.local', 'no-such-openssl-binary'), /openssl/)
+    }
+    finally
+    {
+        rmSync(dir, { recursive: true, force: true })
+    }
+})
+
+test('an invalid host is rejected before openssl runs', () =>
+{
+    for (const bad of ['a/b', 'a\nb', 'a,b', ''])
+    {
+        assert.throws(() => DevCa.EnsureAt(tmpdir(), bad, 'no-such-openssl-binary'), /invalid host/)
     }
 })
