@@ -16,7 +16,7 @@
 - **Secrets discipline:** the admin token, Owner password, and client secret are generated, used in memory, and written ONLY where required (admin-token file pre-launch; raw client secret into the bundle by ref; Owner password returned once). NEVER logged, in an error, or in a persisted record. One-time Owner reveal carries `Cache-Control: no-store`.
 - **Fakeability:** `TenantProvisioningService` and `EnvironmentService` depend on `IIdpService` (resolution 9), so their tests run `IdpAdminClient` against an in-process `IdpHost`+`IdpAdminEndpoint` (as `idp-sso-smoke.ts` does) — NO Docker in unit tests.
 - Docker specifics per resolutions: `--entrypoint node` (4), `--no-healthcheck` (5), IdP port published host==container (7), CA pre-minted on host + mounted (2), data-dir seeded writable for uid 10001 (1), `--add-host host.docker.internal:host-gateway` (13).
-- Tests: `npx tsx --test "admin/control-plane/tests/*.test.ts"`, `npx tsx --test "src/idp/tests/*.test.ts"`, `npx tsx --test "environments/seed/tests/*.test.ts"`; `npm run build`; `npm run typecheck:tools`. The federation smoke is gated (Docker Desktop), NOT in any glob — written + type-checked, run by the user. Do NOT `npm install`.
+- Tests: `npx tsx --test "admin/control-plane/tests/*.test.ts"`, `npx tsx --test "src/idp/tests/*.test.ts"`, `npx tsx --test "environments/seed/tests/*.test.ts"`; `npm run build`; `npm run typecheck:tools`. The federation smoke is NOT in any test glob (standalone), but IS run here (Docker is available) after an image rebuild. Do NOT `npm install`.
 - Commit after each task; each task green on its own suites.
 
 ## Review Focus
@@ -88,10 +88,10 @@
 ### Task 11: Gated end-to-end federation smoke (written, Docker-Desktop-only)
 **Files:** `admin/control-plane/idp-federation-smoke.ts` (new).
 - [ ] Write the smoke per spec §7/resolution 14 (PASS/FAIL gates, exit code): provision a tenant (capture the one-time Owner password), create a hive + a bound environment, drive the env `/auth/oidc/begin`→IdP login→callback→`/auth/session` asserting `email`/`name`, a second bound env rides SSO via the shared IdP cookie jar; a `finally` tears down. Header: needs Docker Desktop + the `pragmatic-server:dev` image; NOT in `npm test`.
-- [ ] Do NOT run it (Docker Desktop required). Verify `npm run typecheck:tools` + `npm run build` include it and are clean. Commit `test(control-plane): gated end-to-end per-tenant IdP federation smoke (Docker Desktop)`.
+- [ ] **RUN IT (Docker is available here).** First REBUILD the image so the containers carry the new code: `DOCKER_BUILDKIT=1 docker build -f pragmatic-server/docker/Dockerfile --secret id=npmrc,src=<gitignored .npmrc> -t pragmatic-server:dev ..` (from the parent workspace dir). Then `npx tsx admin/control-plane/idp-federation-smoke.ts` → expect exit 0, all gates PASS. Host-side scripted client addresses the IdP at `127.0.0.1:<idpPort>` (IP SAN); the env container reaches it at `host.docker.internal`. Also confirm `npm run typecheck:tools` + `npm run build` clean. Commit `test(control-plane): end-to-end per-tenant IdP federation smoke (run green on Docker Desktop)`.
 
 ---
 
 ## Final verification (before whole-branch review)
-- `npx tsx --test "admin/control-plane/tests/*.test.ts"`, `"src/idp/tests/*.test.ts"`, `"environments/seed/tests/*.test.ts"` green; `npm run build` + `npm run typecheck:tools` clean; the federation smoke type-checks (not run).
+- `npx tsx --test "admin/control-plane/tests/*.test.ts"`, `"src/idp/tests/*.test.ts"`, `"environments/seed/tests/*.test.ts"` green; `npm run build` + `npm run typecheck:tools` clean; the federation smoke is RUN green (after an image rebuild).
 - Whole-branch review on the most capable model; secret-leakage + the federation-URL model + idempotent reuse re-checked. Tasks 5/6/10 flagged security-sensitive.
