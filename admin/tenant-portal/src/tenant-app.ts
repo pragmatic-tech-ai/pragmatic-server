@@ -1,4 +1,5 @@
 import { Orientation, StackPanel, TextBlock, TextBox } from '@pragmatic-tech-ai/mural/basic'
+import { HiveDetailView } from './hive-detail-view.js'
 import { TenantApiClient } from './tenant-api-client.js'
 import { TenantTreeView } from './tenant-tree-view.js'
 import { TenantTreeViewModel } from './tenant-tree-view-model.js'
@@ -148,7 +149,7 @@ export class TenantApp extends StackPanel implements ITenantNavigator
 
     public ShowHiveDetail(hive: HiveDto): void
     {
-        this.Show(new DetailPlaceholderView(hive.displayName))
+        this.Show(new HiveDetailView(this.client, hive))
     }
 
     public ShowEnvironmentDetail(env: EnvironmentDto): void
