@@ -11,7 +11,8 @@
     "pragmatic-serverd": "dist/bin/pragmatic-serverd.js",
     "pragmatic-workerd": "dist/bin/pragmatic-workerd.js",
     "pragmatic-gatewayd": "dist/bin/pragmatic-gatewayd.js",
-    "pragmatic-agentd": "dist/bin/pragmatic-agentd.js"
+    "pragmatic-agentd": "dist/bin/pragmatic-agentd.js",
+    "pragmatic-idp": "dist/bin/pragmatic-idpd.js"
   },
   "exports": {
     ".": {
