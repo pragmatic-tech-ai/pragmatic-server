@@ -38,6 +38,7 @@ export class IdpAdminEndpoint
     private static readonly InvalidBodyCode = 'invalid_body';
     private static readonly InvalidRealmCode = 'invalid_realm';
     private static readonly NotFoundCode = 'not_found';
+    private static readonly UnknownRealmCode = 'unknown_realm';
     private static readonly ErrorField = 'error';
     private static readonly TenantIdField = 'tenantId';
     private static readonly PrincipalIdField = 'principalId';
@@ -137,7 +138,11 @@ export class IdpAdminEndpoint
         {
             return IdpAdminEndpoint.InvalidBody();
         }
-        const realm = await this.realms.EnsureRealm(tenantId, tenantId);
+        const realm = this.realms.For(tenantId);
+        if (realm === undefined)
+        {
+            return IdpAdminEndpoint.UnknownRealm();
+        }
         await realm.SeedAccount(email, principalId, password, displayName);
         return new AdminResult(IdpAdminEndpoint.OkStatus, { [IdpAdminEndpoint.PrincipalIdField]: principalId });
     }
@@ -156,7 +161,10 @@ export class IdpAdminEndpoint
         {
             return IdpAdminEndpoint.InvalidBody();
         }
-        await this.realms.EnsureRealm(tenantId, tenantId);
+        if (this.realms.For(tenantId) === undefined)
+        {
+            return IdpAdminEndpoint.UnknownRealm();
+        }
         await this.clients.Register(tenantId, clientId, redirectUris, secret);
         return new AdminResult(IdpAdminEndpoint.OkStatus, { [IdpAdminEndpoint.ClientIdField]: clientId });
     }
@@ -202,6 +210,11 @@ export class IdpAdminEndpoint
     private static InvalidBody(): AdminResult
     {
         return IdpAdminEndpoint.Fail(IdpAdminEndpoint.BadRequestStatus, IdpAdminEndpoint.InvalidBodyCode);
+    }
+
+    private static UnknownRealm(): AdminResult
+    {
+        return IdpAdminEndpoint.Fail(IdpAdminEndpoint.NotFoundStatus, IdpAdminEndpoint.UnknownRealmCode);
     }
 
     private static NotFound(): AdminResult

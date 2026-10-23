@@ -154,6 +154,7 @@ test('POST account is 200 and seeds a realm-authenticatable login', async () =>
 test('POST client is 200 and the secret is verifiable but never echoed', async () =>
 {
     const f = await AdminFixture.Create();
+    await f.PutRealm();
     const r = await f.PostClient(f.ClientBody());
     assert.equal(r.Status, AdminFixture.OkStatus);
     assert.deepEqual(r.Body, { clientId: AdminFixture.ClientId });
@@ -164,6 +165,7 @@ test('POST client is 200 and the secret is verifiable but never echoed', async (
 test('a malformed body is 400', async () =>
 {
     const f = await AdminFixture.Create();
+    await f.PutRealm();
     for (const bad of [null, undefined, 'str', 7, [], {}])
     {
         assert.equal((await f.PostAccount(bad)).Status, AdminFixture.BadRequest);
@@ -175,17 +177,30 @@ test('a malformed body is 400', async () =>
     assert.equal((await f.PostClient({ ...f.ClientBody(), secret: '' })).Status, AdminFixture.BadRequest);
 });
 
-test('an underscore-prefixed realm is 400', async () =>
+test('an underscore-prefixed realm is 400 on PUT and never created by POST', async () =>
 {
     const f = await AdminFixture.Create();
     assert.equal((await f.PutRealm(AdminFixture.Reserved)).Status, AdminFixture.BadRequest);
-    assert.equal((await f.PostAccount(f.AccountBody(), AdminFixture.Reserved)).Status, AdminFixture.BadRequest);
-    assert.equal((await f.PostClient(f.ClientBody(), AdminFixture.Reserved)).Status, AdminFixture.BadRequest);
+    assert.equal((await f.PostAccount(f.AccountBody(), AdminFixture.Reserved)).Status, AdminFixture.NotFound);
+    assert.equal((await f.PostClient(f.ClientBody(), AdminFixture.Reserved)).Status, AdminFixture.NotFound);
+});
+
+test('POST accounts to a realm that was never ensured returns 404 unknown_realm', async () =>
+{
+    const f = await AdminFixture.Create();
+    const a = await f.PostAccount(f.AccountBody());
+    const c = await f.PostClient(f.ClientBody());
+    assert.equal(a.Status, AdminFixture.NotFound);
+    assert.deepEqual(a.Body, { error: 'unknown_realm' });
+    assert.equal(c.Status, AdminFixture.NotFound);
+    assert.deepEqual(c.Body, { error: 'unknown_realm' });
+    assert.equal(f.realms.For(AdminFixture.Tenant), undefined);
 });
 
 test('empty or non-array redirectUris is 400', async () =>
 {
     const f = await AdminFixture.Create();
+    await f.PutRealm();
     assert.equal((await f.PostClient({ ...f.ClientBody(), redirectUris: [] })).Status, AdminFixture.BadRequest);
     assert.equal((await f.PostClient({ ...f.ClientBody(), redirectUris: 'https://x/cb' })).Status, AdminFixture.BadRequest);
     assert.equal((await f.PostClient({ ...f.ClientBody(), redirectUris: [1] })).Status, AdminFixture.BadRequest);
@@ -203,6 +218,7 @@ test('unknown path or method after auth is 404', async () =>
 test('no 200 or 400 body contains the password or the client secret', async () =>
 {
     const f = await AdminFixture.Create();
+    await f.PutRealm();
     const results = [
         await f.PutRealm(),
         await f.PostAccount(f.AccountBody()),
