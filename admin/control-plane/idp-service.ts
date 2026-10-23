@@ -20,6 +20,17 @@ export interface IIdpService
     EnsureForTenant(tenantId: string, displayName: string): Promise<IdpConnection>
 }
 
+export class InvalidTenantIdError extends Error
+{
+    private static readonly ErrorName = 'InvalidTenantIdError'
+
+    public constructor(message: string)
+    {
+        super(message)
+        this.name = InvalidTenantIdError.ErrorName
+    }
+}
+
 /** Launches (or reuses) one per-tenant IdP container: pre-mints its CA on the host, provisions its admin token, seeds its data volume. */
 export class IdpService implements IIdpService
 {
@@ -38,6 +49,10 @@ export class IdpService implements IIdpService
     private static readonly ReuseIntervalMs = 500
     private static readonly LaunchFailed = 'IdP launch failed for tenant '
     private static readonly LaunchFailedSep = ': '
+    private static readonly TenantIdPattern = /^[A-Za-z0-9-]+$/
+    private static readonly InvalidTenantId = 'IdpService: invalid tenantId (only letters, digits and hyphens allowed)'
+
+    private readonly locks = new Map<string, Promise<unknown>>()
 
     public constructor(
         private readonly allocator: PortAllocator,
@@ -50,6 +65,28 @@ export class IdpService implements IIdpService
     }
 
     public async EnsureForTenant(tenantId: string, displayName: string): Promise<IdpConnection>
+    {
+        if (!IdpService.TenantIdPattern.test(tenantId))
+        {
+            throw new InvalidTenantIdError(IdpService.InvalidTenantId)
+        }
+        const previous = this.locks.get(tenantId) ?? Promise.resolve()
+        const run = previous.catch(() => undefined).then(() => this.EnsureLocked(tenantId))
+        this.locks.set(tenantId, run)
+        try
+        {
+            return await run
+        }
+        finally
+        {
+            if (this.locks.get(tenantId) === run)
+            {
+                this.locks.delete(tenantId)
+            }
+        }
+    }
+
+    private async EnsureLocked(tenantId: string): Promise<IdpConnection>
     {
         await this.registry.Load()
         const existing = this.registry.Get(tenantId)

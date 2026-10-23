@@ -167,3 +167,38 @@ test('reuse falls through to a fresh launch when the IdP is unhealthy', async ()
         fx.Dispose()
     }
 })
+
+test('concurrent EnsureForTenant for one new tenant launches once and returns the same connection', async () =>
+{
+    const fx = new Fixture()
+    try
+    {
+        const [a, b] = await Promise.all([fx.Service.EnsureForTenant('t1', 'T'), fx.Service.EnsureForTenant('t1', 'T')])
+        assert.equal(fx.Containers.Calls.filter(c => c === 'Up').length, 1)
+        assert.ok(!fx.Containers.Calls.some(c => c.startsWith('Down') || c.startsWith('RemoveVolume')))
+        assert.equal(a.adminToken, b.adminToken)
+        assert.ok(a.ca.equals(b.ca))
+        assert.equal(a.baseUrl, b.baseUrl)
+    }
+    finally
+    {
+        fx.Dispose()
+    }
+})
+
+test('invalid tenantId is rejected before anything launches', async () =>
+{
+    const fx = new Fixture()
+    try
+    {
+        for (const bad of ['a/b', 'a:b', '', '..'])
+        {
+            await assert.rejects(fx.Service.EnsureForTenant(bad, 'T'), /invalid tenantId/)
+        }
+        assert.deepEqual(fx.Containers.Calls, [])
+    }
+    finally
+    {
+        fx.Dispose()
+    }
+})
