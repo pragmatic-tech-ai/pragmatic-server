@@ -45,9 +45,23 @@ D1 (information architecture) and D2 (version-selection interaction) are the pro
 
 - **S1 (client login) = determined by 6c** — browser redirect to the tenant's own per-tenant IdP `/authorize`, riding the runtime host's `/auth/oidc/begin`→`/auth/oidc/callback`→`/auth/session` cookie flow. Depends on SP-HIVE-6c (reachable per-tenant IdP).
 - **S2 = Separate tenant façade.** A distinct tenant-facing API surface (e.g. `/tenant-api/…`) that only ever exposes the caller's own tenant's hives/environments/manifests; the operator `/api` routes stay untouched.
-- **D1/D2 (information architecture + version-selection interaction) = design via MOCKUPS (visual companion).** Not yet pinned — to be designed interactively with the user in a browser tab, then written into the build spec.
+- **D1/D2 (information architecture + version-selection interaction) = PINNED via a mockup session (2026-10-23, user present).** See §8 below for the agreed UX; mockups saved under `.superpowers/brainstorm/9086-1792757898/content/` (`d1-information-architecture.html`, `d2-version-selection.html`, `d4-environment-detail.html`).
 - **D3 = Mural framework shell (editor/viewer-shell + hierarchy nav) + Observable view-models** (per the standing workspace VM rule).
 - **D4 = v1 scope includes environment lifecycle:** OIDC login to the tenant realm, tenant-scoped nav over hives/environments, the SP-HIVE-4 self-service version catalog (list gated versions, per-hive target + health, select/roll, rollback), AND environment start/stop/logs/live-health.
 - **D5 (served origin) = default (confirm):** served by the control-plane as a tenant-facing static root (like `admin/portal`), at a tenant origin consistent with the S1 OIDC callback and 6c topology.
 
-**Status:** decisions resolved EXCEPT the D1/D2 UX, which is slated for a mockup session. Build also depends on SP-HIVE-6c (per-tenant IdP + federation) being built first. Not yet approved for build.
+**Status:** all decisions resolved, including the D1/D2 UX (pinned via the 2026-10-23 mockup session — see §8). SP-HIVE-6c (per-tenant IdP + federation) is now BUILT and merged, so the login dependency is satisfied. Pending final user approval of §8, then → plan (superpowers:writing-plans) → SDD.
+
+---
+
+## 8. v1 UX — pinned via the mockup session (2026-10-23, user present)
+
+The app is a mural root app (framework shell: editor/viewer-shell + `hierarchy/` nav; Observable view-models; Pragmatic theme; html-bundle/vite build), served by the control-plane as a tenant-facing static root (D5), talking only to the tenant façade `/tenant-api/…` (S2).
+
+- **D1 — Information architecture = Layout A (tenant-scoped tree + detail).** A top bar (Pragmatic logo · tenant name · user menu with logout). A left navigation tree rooted at **My Hives**, each hive expandable to **its environments**. Selecting a node fills a single **detail pane**: a hive → its version management (D2); an environment → its lifecycle detail (below). This is the mural hierarchy shell's natural shape and scales as hives/environments grow. *Builder's call (minor): no separate top-level "Versions" browse node in v1 — version selection is always reached through its hive; a read-only catalog browse can be a later addition.*
+
+- **D2 — Version selection = inline list + confirm strip**, in the hive detail pane. The pane header shows the hive's **currently running version** + a **live health** indicator. Below, a list of the tenant's **published versions** (`GET /tenant-api/.../manifests`, newest→oldest), each badged by state derived from the hive's rollout (`/rollout`): **current** (running), **previous** (selecting it = rollback), **available**, or **withdrawn/obsolete** (struck-through, disabled). A selectable version's **Set as target** opens an **inline confirm strip** that names the impact ("restarts prod-env & staging-env") → Confirm issues `POST /tenant-api/hives/:id/target`; **rollback is just selecting the previous version** (same endpoint). Rollout-in-progress and obsoletion are surfaced inline from `/rollout`; health from `/health`. *Builder's calls (minor): surface a failed roll inline on the same strip (error + the version it stayed on); empty state when no versions are published yet.*
+
+- **Environment detail (D4 lifecycle) = approved default.** Selecting an environment fills the detail pane with: a **header** (env name · status dot · running version · env type) and **Start / Stop / Restart** actions; a **live Health strip** (status, uptime, last-check) updated via the `/api/events` websocket so it changes without a reload; and a **live-tailing Logs panel** with a Pause control. Same detail-pane frame as the hive view for a consistent tree experience.
+
+- **Login (S1)** is not a screen this app designs: it redirects to the tenant's own IdP login page (SP-HIVE-6), riding `/auth/oidc/begin → callback → session`, then lands back in the app.
