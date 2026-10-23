@@ -1,5 +1,5 @@
 import type { MessageConnection } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { BundleBuilder, type EnvDefinition } from '../../environments/seed/bundle.js'
+import { BundleBuilder, type EnvDefinition, type EnvOidc } from '../../environments/seed/bundle.js'
 import { DockerEnv } from '../../environments/seed/docker.js'
 import { UserSeeder, type UserSeed } from '../../environments/seed/users.js'
 import type { IContainerProbe } from './environment-record.js'
@@ -8,7 +8,7 @@ import type { IContainerProbe } from './environment-record.js'
 export interface IDockerEnv
 {
     EnsureImage(): Promise<boolean>
-    Up(def: EnvDefinition, bundleDir: string): Promise<void>
+    Up(def: EnvDefinition, bundleDir: string, caHostPath?: string): Promise<void>
     Down(def: EnvDefinition, removeData?: boolean): Promise<void>
     Logs(def: EnvDefinition): Promise<string>
     WaitHealthy(port: number, def: EnvDefinition): Promise<void>
@@ -19,7 +19,7 @@ export interface IDockerEnv
 
 export interface IBundleBuilder
 {
-    Generate(def: EnvDefinition, bundleDir: string, seedDir?: string): Promise<void>
+    Generate(def: EnvDefinition, bundleDir: string, seedDir?: string, oidc?: EnvOidc): Promise<void>
 }
 
 export interface IUserSeeder
@@ -42,9 +42,9 @@ export class DockerEnvAdapter implements IDockerEnv, IContainerProbe
         return this.docker.EnsureImage()
     }
 
-    public Up(def: EnvDefinition, bundleDir: string): Promise<void>
+    public Up(def: EnvDefinition, bundleDir: string, caHostPath?: string): Promise<void>
     {
-        return this.docker.Up(def, bundleDir)
+        return this.docker.Up(def, bundleDir, caHostPath)
     }
 
     public Down(def: EnvDefinition, removeData: boolean = false): Promise<void>
@@ -80,9 +80,9 @@ export class DockerEnvAdapter implements IDockerEnv, IContainerProbe
 
 export class BundleBuilderAdapter implements IBundleBuilder
 {
-    public Generate(def: EnvDefinition, bundleDir: string, seedDir?: string): Promise<void>
+    public Generate(def: EnvDefinition, bundleDir: string, seedDir?: string, oidc?: EnvOidc): Promise<void>
     {
-        return BundleBuilder.Generate(def, bundleDir, seedDir)
+        return BundleBuilder.Generate(def, bundleDir, seedDir, oidc)
     }
 }
 

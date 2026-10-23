@@ -33,6 +33,10 @@ import { TenantRegistry } from './tenant-registry.js'
 import { HiveRegistry } from './hive-registry.js'
 import { PlatformDirectory } from './platform-directory.js'
 import { EnvironmentNotFoundError, EnvironmentService } from './environment-service.js'
+import { ExecFileDockerExec, IdpContainerEnv } from './idp-container-env.js'
+import { IdpRegistry } from './idp-registry.js'
+import { IdpService } from './idp-service.js'
+import { IdpAdminClient } from './idp-admin-client.js'
 import { GraphService } from './graph-service.js'
 import { NetPortProbe, PortAllocator } from './port-allocator.js'
 
@@ -204,6 +208,8 @@ export class LoopFailure extends Error
 export class LoopOrchestrator
 {
     private static readonly EnvPortFloor = 8100
+    private static readonly IdpPortFloor = 12100
+    private static readonly IdpsFile = 'idps.json'
     private static readonly RegistryFile = 'registry.json'
     private static readonly ClientsFile = 'clients.json'
     private static readonly TenantsFile = 'tenants.json'
@@ -325,7 +331,8 @@ export class LoopOrchestrator
         await directory.Load()
         const allocator = new PortAllocator(LoopOrchestrator.EnvPortFloor, new NetPortProbe())
         const proxy = new AdminProxy(new WsAdminConnector())
-        const service = new EnvironmentService(registry, allocator, docker, new BundleBuilderAdapter(), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy, directory)
+        const idpService = new IdpService(new PortAllocator(LoopOrchestrator.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), new IdpRegistry(join(dataRoot, LoopOrchestrator.IdpsFile)), dataRoot, DockerEnv.ImageName)
+        const service = new EnvironmentService(registry, allocator, docker, new BundleBuilderAdapter(), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn))
         const graphs = new GraphService(registry, proxy, name => service.AdminInfoFor(name))
         return new LoopOrchestrator(service, graphs, new SeederLoopLogin(), logger, dataRoot, new PgLoopDatabase(service))
     }

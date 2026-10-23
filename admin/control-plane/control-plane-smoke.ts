@@ -44,6 +44,10 @@ import { PlatformDirectory } from './platform-directory.js'
 import { TenantRegistry } from './tenant-registry.js'
 import { EnvironmentRegistry } from './environment-registry.js'
 import { EnvironmentService } from './environment-service.js'
+import { ExecFileDockerExec, IdpContainerEnv } from './idp-container-env.js'
+import { IdpRegistry } from './idp-registry.js'
+import { IdpService } from './idp-service.js'
+import { IdpAdminClient } from './idp-admin-client.js'
 import { GraphService } from './graph-service.js'
 import { OperatorIdentity } from './operator-identity.js'
 import { NetPortProbe, PortAllocator } from './port-allocator.js'
@@ -59,6 +63,8 @@ export class ControlPlaneSmoke
 {
     private static readonly LoopbackHost = '127.0.0.1'
     private static readonly EnvPortFloor = 8100
+    private static readonly IdpPortFloor = 12100
+    private static readonly IdpsFile = 'idps.json'
     private static readonly TempPrefix = 'cp-smoke-'
     private static readonly ManifestsFile = 'manifests.json'
     private static readonly GatingFile = 'gating.json'
@@ -245,7 +251,8 @@ export class ControlPlaneSmoke
         await directory.Load()
         const allocator = new PortAllocator(ControlPlaneSmoke.EnvPortFloor, new NetPortProbe())
         const proxy = new AdminProxy(new WsAdminConnector())
-        const service = new EnvironmentService(registry, allocator, docker, new BundleBuilderAdapter(), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy, directory)
+        const idpService = new IdpService(new PortAllocator(ControlPlaneSmoke.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), new IdpRegistry(join(dataRoot, ControlPlaneSmoke.IdpsFile)), dataRoot, DockerEnv.ImageName)
+        const service = new EnvironmentService(registry, allocator, docker, new BundleBuilderAdapter(), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn))
         const operator = await OperatorIdentity.Compose({
             identityRoot: join(dataRoot, ControlPlaneSmoke.IdentityDir),
             masterKeyFile: join(dataRoot, ControlPlaneSmoke.MasterKeyFile),
