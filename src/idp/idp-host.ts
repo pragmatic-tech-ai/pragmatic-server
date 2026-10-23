@@ -6,6 +6,7 @@ import type { IAuthorizationCodeStore } from './authorization-code-store.js';
 import { AuthorizeEndpoint } from './authorize-endpoint.js';
 import type { AuthorizeResult } from './authorize-endpoint.js';
 import { TokenEndpoint } from './token-endpoint.js';
+import type { IdpAdminEndpoint } from './idp-admin-endpoint.js';
 import type { IdpClientStore } from './idp-client-store.js';
 import type { IdpRealm } from './idp-realm.js';
 import type { IdpSigningKey } from './idp-signing-key.js';
@@ -145,6 +146,11 @@ export class IdpHost
     private static readonly TokenEndpointField = 'token_endpoint';
     private static readonly JwksUriField = 'jwks_uri';
     private static readonly ErrorField = 'error';
+    private static readonly AdminSegment = '_admin';
+    private static readonly AuthorizationHeader = 'authorization';
+    private static readonly StatusBadRequest = 400;
+    private static readonly InvalidJsonMessage = 'invalid_json';
+    private static readonly InternalErrorCode = 'internal_error';
 
     private httpsServer: Server | undefined;
     private readonly baseUrl: string;
@@ -159,7 +165,8 @@ export class IdpHost
         private readonly codes: IAuthorizationCodeStore,
         private readonly sso: IdpSsoSessionStore,
         private readonly tls: { key: Buffer; cert: Buffer },
-        private readonly secureCookie: boolean)
+        private readonly secureCookie: boolean,
+        private readonly admin?: IdpAdminEndpoint)
     {
         if (new URL(baseUrl).protocol !== IdpHost.HttpsProtocol)
         {
@@ -238,6 +245,15 @@ export class IdpHost
     {
         const method = req.method ?? IdpHost.MethodGet;
         const segments = path.split(IdpHost.PathSeparator).slice(1);
+        if (segments[0] === IdpHost.AdminSegment)
+        {
+            if (this.admin === undefined)
+            {
+                return false;
+            }
+            await this.RouteAdmin(req, res, this.admin, method, segments.slice(1));
+            return true;
+        }
         if (segments.length < 2)
         {
             return false;
@@ -277,6 +293,44 @@ export class IdpHost
             return true;
         }
         return false;
+    }
+
+    private async RouteAdmin(req: IncomingMessage, res: ServerResponse, admin: IdpAdminEndpoint, method: string, segments: string[]): Promise<void>
+    {
+        const raw = await this.ReadBody(req);
+        if (raw === undefined)
+        {
+            this.WriteAdminJson(res, IdpHost.StatusPayloadTooLarge, { [IdpHost.ErrorField]: IdpHost.PayloadTooLargeMessage });
+            return;
+        }
+        let parsed: unknown;
+        if (raw.length > 0)
+        {
+            try
+            {
+                parsed = JSON.parse(raw);
+            }
+            catch
+            {
+                this.WriteAdminJson(res, IdpHost.StatusBadRequest, { [IdpHost.ErrorField]: IdpHost.InvalidJsonMessage });
+                return;
+            }
+        }
+        try
+        {
+            const result = await admin.Handle(method, segments, req.headers[IdpHost.AuthorizationHeader], parsed);
+            this.WriteAdminJson(res, result.Status, result.Body);
+        }
+        catch
+        {
+            this.WriteAdminJson(res, IdpHost.StatusServerError, { [IdpHost.ErrorField]: IdpHost.InternalErrorCode });
+        }
+    }
+
+    private WriteAdminJson(res: ServerResponse, status: number, body: unknown): void
+    {
+        res.writeHead(status, { [IdpHost.ContentType]: IdpHost.JsonType, [IdpHost.CacheControlHeader]: IdpHost.NoStore });
+        res.end(JSON.stringify(body));
     }
 
     private async RouteToken(req: IncomingMessage, res: ServerResponse, tenantId: string): Promise<void>
