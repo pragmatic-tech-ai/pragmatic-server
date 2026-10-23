@@ -42,6 +42,7 @@ import type { ManifestRecord } from './manifest-record.js'
 import { AgentUnauthorizedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, UnknownHiveError, UnknownManifestError } from './rollout-errors.js'
 import type { ClientRecord, ClusterSpec, HiveRecord, RegistrySpec, TenantRecord } from './platform-records.js'
 import type { CreateAccountParams, GraphLoadedDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { TenantPlane } from './tenant-auth/tenant-plane.js'
 
 export interface IEnvironmentService
 {
@@ -185,6 +186,8 @@ export class ControlPlaneHost
     private static readonly LogPrefix = '[control-plane] request failed:'
     private static readonly EnvironmentQuery = '/?environment='
     private static readonly ApiPrefix = '/api/'
+    private static readonly TenantAuthPrefix = '/tenant-auth/'
+    private static readonly TenantApiPrefix = '/tenant-api/'
     private static readonly PingPath = '/api/ping'
     private static readonly TemplatesPath = '/api/templates'
     private static readonly EnvironmentsPath = '/api/environments'
@@ -368,7 +371,8 @@ export class ControlPlaneHost
         private readonly directory: PlatformDirectory,
         private readonly orchestrators: HiveOrchestratorFactory,
         private readonly deployments: PlatformDeploymentRegistry,
-        private readonly provisioning: TenantProvisioningService)
+        private readonly provisioning: TenantProvisioningService,
+        private readonly tenantAuth?: TenantPlane)
     {
         this.staticRootAbs = resolve(staticRoot)
     }
@@ -452,7 +456,7 @@ export class ControlPlaneHost
     {
         try
         {
-            if (!ControlPlaneHost.HostAllowed(req))
+            if (!this.HostAccepted(req))
             {
                 this.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.ForbiddenHostMessage })
                 return
@@ -464,8 +468,19 @@ export class ControlPlaneHost
                 return
             }
             const path = new URL(req.url ?? ControlPlaneHost.RootPath, ControlPlaneHost.BaseUrl).pathname
+            if (this.tenantAuth !== undefined && await this.RouteTenant(req, res, path, this.tenantAuth))
+            {
+                return
+            }
             if (path.startsWith(ControlPlaneHost.ApiPrefix))
             {
+                // The operator surface is operator-hosts-only: a tenant origin accepted above cannot reach /api/*.
+                if (!ControlPlaneHost.HostAllowed(req))
+                {
+                    req.resume()
+                    this.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.ForbiddenHostMessage })
+                    return
+                }
                 if (ControlPlaneHost.IsMutating(req) && !ControlPlaneHost.OriginAllowed(req))
                 {
                     req.resume()
@@ -490,6 +505,39 @@ export class ControlPlaneHost
         {
             this.WriteError(res, err)
         }
+    }
+
+    /**
+     * Dispatches the tenant plane and returns whether it answered. `/tenant-auth/*` is public (no operator gate,
+     * no tenant gate) and delegates to the auth endpoint. `/tenant-api/*` is gated: a mutating request's Origin is
+     * checked against the tenant hosts, then the gate must resolve a principal (else 401); the validated session is
+     * handed to the data API. Any other path is not ours (returns false, so the operator surface and static serving
+     * are reached unchanged).
+     */
+    private async RouteTenant(req: IncomingMessage, res: ServerResponse, path: string, tenant: TenantPlane): Promise<boolean>
+    {
+        if (path.startsWith(ControlPlaneHost.TenantAuthPrefix))
+        {
+            return await tenant.endpoint.Handle(req, res, path)
+        }
+        if (!path.startsWith(ControlPlaneHost.TenantApiPrefix))
+        {
+            return false
+        }
+        if (ControlPlaneHost.IsMutating(req) && !ControlPlaneHost.OriginInHosts(req, tenant.allowedHosts))
+        {
+            req.resume()
+            this.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.BadOriginMessage })
+            return true
+        }
+        const session = await tenant.gate.Principal(req)
+        if (session === null)
+        {
+            req.resume()
+            this.WriteJson(res, ControlPlaneHost.StatusUnauthorized, { error: ControlPlaneHost.UnauthenticatedMessage })
+            return true
+        }
+        return await tenant.api.Handle(req, res, path, session)
     }
 
     /** Returns false when the request does not match any API route (falls through to static). */
@@ -1655,11 +1703,25 @@ export class ControlPlaneHost
         }
     }
 
+    /** Accepts a request whose host is an operator host OR (when a tenant plane is mounted) a configured tenant host.
+     *  With no tenant plane this is exactly HostAllowed, so the operator surface is unchanged. */
+    private HostAccepted(req: IncomingMessage): boolean
+    {
+        return ControlPlaneHost.HostAllowed(req)
+            || (this.tenantAuth !== undefined && ControlPlaneHost.HostIn(req, this.tenantAuth.allowedHosts))
+    }
+
     private static HostAllowed(req: IncomingMessage): boolean
+    {
+        return ControlPlaneHost.HostIn(req, ControlPlaneHost.AllowedHosts)
+    }
+
+    /** True when the request's Host header (port stripped, lowercased) is in the given set. */
+    private static HostIn(req: IncomingMessage, allowed: ReadonlySet<string>): boolean
     {
         const header = req.headers[ControlPlaneHost.HostHeader]
         const m = header === undefined ? null : ControlPlaneHost.HostHeaderPattern.exec(header)
-        return m !== null && ControlPlaneHost.AllowedHosts.has((m[1] as string).toLowerCase())
+        return m !== null && allowed.has((m[1] as string).toLowerCase())
     }
 
     private static IsPublicApi(path: string): boolean
@@ -1677,6 +1739,31 @@ export class ControlPlaneHost
     {
         const origin = req.headers[ControlPlaneHost.OriginHeader]
         return origin === undefined || origin === ControlPlaneHost.HttpScheme + req.headers[ControlPlaneHost.HostHeader]
+    }
+
+    /** The tenant-plane mirror of OriginAllowed: absent Origin allowed; a present one's host must be a configured tenant host. */
+    private static OriginInHosts(req: IncomingMessage, allowed: ReadonlySet<string>): boolean
+    {
+        const origin = req.headers[ControlPlaneHost.OriginHeader]
+        if (origin === undefined)
+        {
+            return true
+        }
+        const host = ControlPlaneHost.OriginHost(origin)
+        return host !== undefined && allowed.has(host)
+    }
+
+    /** The lowercased host (port stripped) of an Origin header, or undefined when it does not parse. */
+    private static OriginHost(origin: string): string | undefined
+    {
+        try
+        {
+            return new URL(origin).hostname.toLowerCase()
+        }
+        catch
+        {
+            return undefined
+        }
     }
 
     private static HasBody(req: IncomingMessage): boolean

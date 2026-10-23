@@ -1,4 +1,5 @@
 import { mkdirSync } from 'node:fs'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DockerEnv } from '../../environments/seed/docker.js'
@@ -28,6 +29,30 @@ import { IdpRegistry } from './idp-registry.js'
 import { IdpService } from './idp-service.js'
 import { IdpAdminClient } from './idp-admin-client.js'
 import { TenantProvisioningService } from './tenant-provisioning-service.js'
+import { TenantSessionStore, type TenantSession } from './tenant-auth/tenant-session.js'
+import { TenantOidcRelyingParty } from './tenant-auth/tenant-oidc-relying-party.js'
+import { TenantAuthEndpoint } from './tenant-auth/tenant-auth-endpoint.js'
+import { TenantAuthGate } from './tenant-auth/tenant-auth-gate.js'
+import type { ITenantApiEndpoint, TenantPlane } from './tenant-auth/tenant-plane.js'
+
+/**
+ * The placeholder tenant data API used until Task 5's `TenantApiEndpoint` lands: every gated `/tenant-api/*`
+ * request is answered 404. The gate, cookie, host and origin wiring are real; only the data surface is stubbed.
+ */
+class PlaceholderTenantApi implements ITenantApiEndpoint
+{
+    private static readonly StatusNotFound = 404
+    private static readonly ContentTypeHeader = 'Content-Type'
+    private static readonly JsonType = 'application/json; charset=utf-8'
+    private static readonly NotFoundBody = '{"error":"Not found"}'
+
+    public async Handle(_req: IncomingMessage, res: ServerResponse, _path: string, _session: TenantSession): Promise<boolean>
+    {
+        res.writeHead(PlaceholderTenantApi.StatusNotFound, { [PlaceholderTenantApi.ContentTypeHeader]: PlaceholderTenantApi.JsonType })
+        res.end(PlaceholderTenantApi.NotFoundBody)
+        return true
+    }
+}
 
 export class ControlPlaneServer
 {
@@ -63,6 +88,11 @@ export class ControlPlaneServer
     private static readonly IdentitySegment = 'identity'
     private static readonly TrueToken = 'true'
     private static readonly OneToken = '1'
+    private static readonly TenantHostsEnvVar = 'PRAGMATIC_TENANT_ADMIN_HOSTS'
+    private static readonly TenantCallbackEnvVar = 'PRAGMATIC_TENANT_ADMIN_CALLBACK_URL'
+    private static readonly TenantSessionsFile = 'tenant-sessions.json'
+    private static readonly TenantSessionTtlMs = 12 * 60 * 60 * 1000
+    private static readonly HostListSeparator = ','
 
     public static async Main(): Promise<void>
     {
@@ -98,7 +128,8 @@ export class ControlPlaneServer
         await Promise.all([manifests.Load(), gating.Load(), selections.Load(), reports.Load(), registrations.Load()])
         const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, reports, registrations, directory, orchestrators, registry, new EnvironmentPlacement(directory))
         const provisioning = new TenantProvisioningService(idpService, directory, conn => new IdpAdminClient(conn))
-        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, orchestrators, deployments, provisioning)
+        const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie)
+        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, orchestrators, deployments, provisioning, tenantPlane)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
         await host.Listen(port, ControlPlaneServer.BindHost)
         console.log(ControlPlaneServer.ListeningPrefix + String(port) + ControlPlaneServer.ListeningSuffix)
@@ -116,6 +147,51 @@ export class ControlPlaneServer
             initialPassword: password === undefined || password === '' ? undefined : password,
             secureCookie: secure === ControlPlaneServer.TrueToken || secure === ControlPlaneServer.OneToken,
         }
+    }
+
+    /**
+     * Composes the optional tenant plane from the environment. Both `PRAGMATIC_TENANT_ADMIN_HOSTS` (comma-separated
+     * hosts) and `PRAGMATIC_TENANT_ADMIN_CALLBACK_URL` must be present (and the host list non-empty); otherwise the
+     * plane is off and the host serves the operator surface exactly as before.
+     */
+    public static ComposeTenantPlane(
+        env: NodeJS.ProcessEnv,
+        dataRoot: string,
+        idpService: IdpService,
+        directory: PlatformDirectory,
+        secureCookie: boolean): TenantPlane | undefined
+    {
+        const rawHosts = env[ControlPlaneServer.TenantHostsEnvVar]
+        const callbackUrl = env[ControlPlaneServer.TenantCallbackEnvVar]
+        if (rawHosts === undefined || rawHosts === '' || callbackUrl === undefined || callbackUrl === '')
+        {
+            return undefined
+        }
+        const allowedHosts = ControlPlaneServer.ParseHosts(rawHosts)
+        if (allowedHosts.size === 0)
+        {
+            return undefined
+        }
+        const sessions = new TenantSessionStore(join(dataRoot, ControlPlaneServer.TenantSessionsFile), ControlPlaneServer.TenantSessionTtlMs)
+        const rp = new TenantOidcRelyingParty(idpService, directory, conn => new IdpAdminClient(conn), callbackUrl)
+        const endpoint = new TenantAuthEndpoint(rp, sessions, secureCookie)
+        const gate = new TenantAuthGate(sessions)
+        return { endpoint, gate, api: new PlaceholderTenantApi(), allowedHosts }
+    }
+
+    /** Parses a comma-separated host list into a set of trimmed, lowercased, non-empty hosts. */
+    private static ParseHosts(raw: string): ReadonlySet<string>
+    {
+        const hosts = new Set<string>()
+        for (const part of raw.split(ControlPlaneServer.HostListSeparator))
+        {
+            const host = part.trim().toLowerCase()
+            if (host.length > 0)
+            {
+                hosts.add(host)
+            }
+        }
+        return hosts
     }
 
     private static ResolvePort(raw: string | undefined): number
