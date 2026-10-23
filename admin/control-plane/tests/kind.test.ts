@@ -9,11 +9,16 @@ class FakeExecFile implements IExecFile
     public LastArgs: readonly string[] = []
     public Stdout = ''
     public FailStderr: string | undefined
+    public FailError: Error | undefined
 
     public async Run(file: string, args: readonly string[]): Promise<{ stdout: string; stderr: string }>
     {
         this.LastFile = file
         this.LastArgs = args
+        if (this.FailError !== undefined)
+        {
+            throw this.FailError
+        }
         if (this.FailStderr !== undefined)
         {
             throw Object.assign(new Error('exit 1'), { stderr: this.FailStderr })
@@ -68,6 +73,20 @@ test('a failed kind call throws KindError with redacted stderr', async () =>
     await assert.rejects(new KindCli(fake).CreateCluster('c1'), (e: unknown) =>
     {
         assert.ok(e instanceof KindError)
+        assert.ok(e.message.includes('[REDACTED]'))
+        assert.ok(!e.message.includes('abcdefghijklmnopqrstuvwxyz012345'))
+        return true
+    })
+})
+
+test('a failed kind call with no stderr falls back to the error message, still redacted', async () =>
+{
+    const fake = new FakeExecFile()
+    fake.FailError = new Error('boom token=abcdefghijklmnopqrstuvwxyz012345')
+    await assert.rejects(new KindCli(fake).CreateCluster('c1'), (e: unknown) =>
+    {
+        assert.ok(e instanceof KindError)
+        assert.ok(e.message.includes('boom'))
         assert.ok(e.message.includes('[REDACTED]'))
         assert.ok(!e.message.includes('abcdefghijklmnopqrstuvwxyz012345'))
         return true
