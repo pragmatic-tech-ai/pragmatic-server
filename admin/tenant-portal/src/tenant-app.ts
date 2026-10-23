@@ -1,4 +1,4 @@
-import { Orientation, StackPanel, TextBlock, TextBox } from '@pragmatic-tech-ai/mural/basic'
+import { Orientation, StackPanel, TextBlock } from '@pragmatic-tech-ai/mural/basic'
 import { EnvironmentDetailView } from './environment-detail-view.js'
 import { HiveDetailView } from './hive-detail-view.js'
 import { TenantApiClient } from './tenant-api-client.js'
@@ -7,43 +7,6 @@ import { TenantTreeViewModel } from './tenant-tree-view-model.js'
 import { TenantViewBase } from './tenant-view-base.js'
 import { TenantEventType } from './tenant-types.js'
 import type { EnvironmentDto, HiveDto, ITenantNavigator, ITenantView, SessionDto, TenantEvent } from './tenant-types.js'
-
-// Reads the page location and session storage; injected so tests need no browser.
-export interface ITenantEnvironment
-{
-    QueryTenant(): string | null
-    StoredTenant(): string | null
-    StoreTenant(id: string): void
-}
-
-export class BrowserTenantEnvironment implements ITenantEnvironment
-{
-    private static readonly TenantParam = 'tenant'
-    private static readonly StorageKey = 'pragmatic.tenant-portal.tenant'
-
-    public QueryTenant(): string | null
-    {
-        const loc = (globalThis as { location?: { search?: string } }).location
-        if (loc?.search === undefined)
-        {
-            return null
-        }
-        const value = new URLSearchParams(loc.search).get(BrowserTenantEnvironment.TenantParam)
-        return value !== null && value !== '' ? value : null
-    }
-
-    public StoredTenant(): string | null
-    {
-        const store = (globalThis as { sessionStorage?: Storage }).sessionStorage
-        return store?.getItem(BrowserTenantEnvironment.StorageKey) ?? null
-    }
-
-    public StoreTenant(id: string): void
-    {
-        const store = (globalThis as { sessionStorage?: Storage }).sessionStorage
-        store?.setItem(BrowserTenantEnvironment.StorageKey, id)
-    }
-}
 
 // Minimal detail view until the hive / environment detail views land.
 class DetailPlaceholderView extends TenantViewBase
@@ -66,12 +29,9 @@ export class TenantApp extends StackPanel implements ITenantNavigator
 {
     public static readonly TitleText = 'Pragmatic Tenant Admin'
     public static readonly LogoutLabel = 'Logout'
-    public static readonly ContinueLabel = 'Continue'
-    public static readonly PromptText = 'Enter your tenant'
     public static readonly EmptySelectionText = 'Select a hive or environment'
 
     private readonly client: TenantApiClient
-    private readonly environment: ITenantEnvironment
     private readonly topBar = new StackPanel()
     private readonly tenantName = new TextBlock()
     private readonly body = new StackPanel()
@@ -83,11 +43,10 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     private tree: TenantTreeView | undefined
     private eventUnsub: (() => void) | undefined
 
-    public constructor(client: TenantApiClient = new TenantApiClient(), environment: ITenantEnvironment = new BrowserTenantEnvironment())
+    public constructor(client: TenantApiClient = new TenantApiClient())
     {
         super()
         this.client = client
-        this.environment = environment
         const title = new TextBlock()
         title.Text = TenantApp.TitleText
         this.topBar.Orientation = Orientation.Horizontal
@@ -127,18 +86,7 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     public ShowLogin(): void
     {
         this.Teardown()
-        const fromQuery = this.environment.QueryTenant()
-        if (fromQuery !== null)
-        {
-            this.environment.StoreTenant(fromQuery)
-        }
-        const id = fromQuery ?? this.environment.StoredTenant()
-        if (id !== null)
-        {
-            this.client.BeginLogin(id)
-            return
-        }
-        this.ShowPrompt()
+        this.client.BeginLogin()
     }
 
     public ShowTree(): void
@@ -160,31 +108,6 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     {
         this.Show(new EnvironmentDetailView(this.client, env, env.hiveId))
         this.currentEnvName = env.name
-    }
-
-    private ShowPrompt(): void
-    {
-        const prompt = new StackPanel()
-        const label = new TextBlock()
-        label.Text = TenantApp.PromptText
-        const box = new TextBox()
-        prompt.AddChild(label)
-        prompt.AddChild(box)
-        prompt.AddChild(TenantViewBase.MakeButton(TenantApp.ContinueLabel, () => this.Continue(box.Text)))
-        this.Clear(this.treeHost)
-        this.Clear(this.detailHost)
-        this.detailHost.AddChild(prompt)
-    }
-
-    private Continue(raw: string): void
-    {
-        const id = raw.trim()
-        if (id === '')
-        {
-            return
-        }
-        this.environment.StoreTenant(id)
-        this.client.BeginLogin(id)
     }
 
     private async Logout(): Promise<void>

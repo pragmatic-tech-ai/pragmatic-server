@@ -1,9 +1,8 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { StackPanel, TextBox } from '@pragmatic-tech-ai/mural/basic'
+import { StackPanel } from '@pragmatic-tech-ai/mural/basic'
 import { Button } from '@pragmatic-tech-ai/mural/framework'
 import { TenantApp } from '../src/tenant-app.js'
-import type { ITenantEnvironment } from '../src/tenant-app.js'
 import { TenantApiError } from '../src/tenant-api-client.js'
 import type { TenantApiClient } from '../src/tenant-api-client.js'
 import { TenantEventType } from '../src/tenant-types.js'
@@ -28,9 +27,9 @@ class FakeClient
         return this.session
     }
 
-    public BeginLogin(tenantId: string): void
+    public BeginLogin(...args: unknown[]): void
     {
-        this.Calls.push('login:' + tenantId)
+        this.Calls.push('login:' + args.length)
     }
 
     public async Logout(): Promise<void>
@@ -54,31 +53,6 @@ class FakeClient
     public OpenLogStream(): () => void
     {
         return () => {}
-    }
-}
-
-class StubEnvironment implements ITenantEnvironment
-{
-    public Stored: string | null
-
-    public constructor(private readonly query: string | null, stored: string | null = null)
-    {
-        this.Stored = stored
-    }
-
-    public QueryTenant(): string | null
-    {
-        return this.query
-    }
-
-    public StoredTenant(): string | null
-    {
-        return this.Stored
-    }
-
-    public StoreTenant(id: string): void
-    {
-        this.Stored = id
     }
 }
 
@@ -146,10 +120,10 @@ class Fixtures
         for (const h of hs) h({})
     }
 
-    public static Make(session: SessionDto | null | TenantApiError, env: StubEnvironment): { app: TenantApp; client: FakeClient }
+    public static Make(session: SessionDto | null | TenantApiError): { app: TenantApp; client: FakeClient }
     {
         const client = new FakeClient(session)
-        return { app: new TenantApp(client as unknown as TenantApiClient, env), client }
+        return { app: new TenantApp(client as unknown as TenantApiClient), client }
     }
 }
 
@@ -159,7 +133,7 @@ describe('TenantApp', () =>
 {
     it('boot with a session subscribes once and shows the tenant name', async () =>
     {
-        const { app, client } = Fixtures.Make(Session, new StubEnvironment(null))
+        const { app, client } = Fixtures.Make(Session)
         await app.Boot()
         assert.equal(client.Calls.filter(c => c === 'onevent').length, 1)
         assert.ok(Fixtures.Texts(app).includes('me@x.io'))
@@ -169,7 +143,7 @@ describe('TenantApp', () =>
 
     it('swaps the detail pane back to the placeholder when the open environment is deleted', async () =>
     {
-        const { app, client } = Fixtures.Make(Session, new StubEnvironment(null))
+        const { app, client } = Fixtures.Make(Session)
         await app.Boot()
         const env: EnvironmentDto = { name: 'e1', template: 't', type: 'development', environmentId: 'e1', hiveId: 'h1', hostPort: 9000, status: 'running', createdAt: '', httpUrl: '', wsUrl: '' }
         app.ShowEnvironmentDetail(env)
@@ -185,49 +159,34 @@ describe('TenantApp', () =>
         assert.ok(Fixtures.Texts(app).includes(TenantApp.EmptySelectionText), 'placeholder restored after the open env was deleted')
     })
 
-    it('null session begins login with the query tenant and persists it', async () =>
+    it('null session begins login with no tenant argument', async () =>
     {
-        const env = new StubEnvironment('acme')
-        const { app, client } = Fixtures.Make(null, env)
+        const { app, client } = Fixtures.Make(null)
         await app.Boot()
-        assert.deepEqual(client.Calls, ['login:acme'])
-        assert.equal(env.Stored, 'acme')
+        assert.deepEqual(client.Calls, ['login:0'])
     })
 
-    it('a 401 from Session falls back to login using stored tenant', async () =>
+    it('a 401 from Session falls back to login', async () =>
     {
-        const { app, client } = Fixtures.Make(new TenantApiError(401, 'no'), new StubEnvironment(null, 'stored'))
+        const { app, client } = Fixtures.Make(new TenantApiError(401, 'no'))
         await app.Boot()
-        assert.deepEqual(client.Calls, ['login:stored'])
-    })
-
-    it('no tenant id anywhere renders the prompt, Continue begins login', async () =>
-    {
-        const { app, client } = Fixtures.Make(null, new StubEnvironment(null))
-        await app.Boot()
-        assert.ok(Fixtures.Texts(app).includes(TenantApp.PromptText))
-        assert.deepEqual(client.Calls, [])
-        const box = Fixtures.Find(app, TextBox)!
-        box.Text = 'zed'
-        const btn = Fixtures.Find(app, Button, b => Fixtures.Texts(b).includes(TenantApp.ContinueLabel))!
-        Fixtures.Click(btn)
-        assert.deepEqual(client.Calls, ['login:zed'])
+        assert.deepEqual(client.Calls, ['login:0'])
     })
 
     it('logout calls client.Logout, tears down the subscription, returns to login', async () =>
     {
-        const { app, client } = Fixtures.Make(Session, new StubEnvironment('acme'))
+        const { app, client } = Fixtures.Make(Session)
         await app.Boot()
         const btn = Fixtures.Find(app, Button, b => Fixtures.Texts(b).includes(TenantApp.LogoutLabel))!
         Fixtures.Click(btn)
         await new Promise(r => setTimeout(r, 0))
-        assert.deepEqual(client.Calls, ['onevent', 'logout', 'login:acme'])
+        assert.deepEqual(client.Calls, ['onevent', 'logout', 'login:0'])
         assert.equal(client.UnsubCalls, 1)
     })
 
     it('Show disposes the outgoing view exactly once; logout disposes the current view', async () =>
     {
-        const { app, client } = Fixtures.Make(Session, new StubEnvironment('acme'))
+        const { app, client } = Fixtures.Make(Session)
         await app.Boot()
         const a = new DisposableView()
         const b = new DisposableView()
@@ -245,7 +204,7 @@ describe('TenantApp', () =>
 
     it('a second Boot does not stack event subscriptions', async () =>
     {
-        const { app, client } = Fixtures.Make(Session, new StubEnvironment(null))
+        const { app, client } = Fixtures.Make(Session)
         await app.Boot()
         await app.Boot()
         assert.equal(client.UnsubCalls, 1)

@@ -175,11 +175,11 @@ describe('TenantApiClient fetch', () =>
 
 describe('TenantApiClient BeginLogin', () =>
 {
-    it('navigates to the begin route with the encoded tenant', () =>
+    it('navigates to the bare begin route', () =>
     {
         const c = new TestClient(new FakeWebSocketFactory())
-        c.BeginLogin('a b&c')
-        assert.equal(c.Navigated, '/tenant-auth/oidc/begin?tenant=a%20b%26c')
+        c.BeginLogin()
+        assert.equal(c.Navigated, '/tenant-auth/oidc/begin')
     })
 })
 
