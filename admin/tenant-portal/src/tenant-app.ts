@@ -1,4 +1,5 @@
 import { Orientation, StackPanel, TextBlock, TextBox } from '@pragmatic-tech-ai/mural/basic'
+import { EnvironmentDetailView } from './environment-detail-view.js'
 import { HiveDetailView } from './hive-detail-view.js'
 import { TenantApiClient } from './tenant-api-client.js'
 import { TenantTreeView } from './tenant-tree-view.js'
@@ -154,7 +155,7 @@ export class TenantApp extends StackPanel implements ITenantNavigator
 
     public ShowEnvironmentDetail(env: EnvironmentDto): void
     {
-        this.Show(new DetailPlaceholderView(env.name))
+        this.Show(new EnvironmentDetailView(this.client, env, env.hiveId))
     }
 
     private ShowPrompt(): void
