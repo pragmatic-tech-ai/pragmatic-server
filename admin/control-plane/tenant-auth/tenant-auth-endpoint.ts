@@ -18,7 +18,6 @@ export class TenantAuthEndpoint
     private static readonly RootPath = '/'
     private static readonly GetMethod = 'GET'
     private static readonly PostMethod = 'POST'
-    private static readonly TenantParam = 'tenant'
     private static readonly CodeParam = 'code'
     private static readonly StateParam = 'state'
     private static readonly CacheControlHeader = 'Cache-Control'
@@ -45,16 +44,20 @@ export class TenantAuthEndpoint
     {
     }
 
-    /** Handles the request iff `path` is a tenant-auth route; returns whether it did. */
-    public async Handle(req: IncomingMessage, res: ServerResponse, path: string): Promise<boolean>
+    /**
+     * Handles the request iff `path` is a tenant-auth route; returns whether it did. `tenantId` and `callbackUrl`
+     * are derived by `TenantPlaneHost` from the validated request host (never a `?tenant=` query), so `begin`/
+     * `callback` act for exactly the tenant whose subdomain the request arrived on.
+     */
+    public async Handle(req: IncomingMessage, res: ServerResponse, path: string, tenantId: string, callbackUrl: string): Promise<boolean>
     {
         switch (path)
         {
             case TenantAuthEndpoint.BeginPath:
-                await this.guard(req, res, TenantAuthEndpoint.GetMethod, () => this.begin(req, res))
+                await this.guard(req, res, TenantAuthEndpoint.GetMethod, () => this.begin(res, tenantId, callbackUrl))
                 return true
             case TenantAuthEndpoint.CallbackPath:
-                await this.guard(req, res, TenantAuthEndpoint.GetMethod, () => this.callback(req, res))
+                await this.guard(req, res, TenantAuthEndpoint.GetMethod, () => this.callback(req, res, tenantId, callbackUrl))
                 return true
             case TenantAuthEndpoint.SessionPath:
                 await this.guard(req, res, TenantAuthEndpoint.GetMethod, () => this.session(req, res))
@@ -77,17 +80,11 @@ export class TenantAuthEndpoint
         await run()
     }
 
-    private async begin(req: IncomingMessage, res: ServerResponse): Promise<void>
+    private async begin(res: ServerResponse, tenantId: string, callbackUrl: string): Promise<void>
     {
-        const tenantId = this.query(req).get(TenantAuthEndpoint.TenantParam)
-        if (!tenantId)
-        {
-            this.reply(res, TenantAuthEndpoint.StatusBadRequest, TenantAuthEndpoint.BadRequestBody)
-            return
-        }
         try
         {
-            const begun = await this.rp.Begin(tenantId)
+            const begun = await this.rp.Begin(tenantId, callbackUrl)
             res.writeHead(TenantAuthEndpoint.StatusFound, {
                 [TenantAuthEndpoint.LocationHeader]: begun.Url,
                 [TenantAuthEndpoint.CacheControlHeader]: TenantAuthEndpoint.NoStore,
@@ -104,20 +101,19 @@ export class TenantAuthEndpoint
         }
     }
 
-    private async callback(req: IncomingMessage, res: ServerResponse): Promise<void>
+    private async callback(req: IncomingMessage, res: ServerResponse, tenantId: string, callbackUrl: string): Promise<void>
     {
         const query = this.query(req)
-        const tenantId = query.get(TenantAuthEndpoint.TenantParam)
         const code = query.get(TenantAuthEndpoint.CodeParam)
         const state = query.get(TenantAuthEndpoint.StateParam)
-        if (!tenantId || !code || !state)
+        if (!code || !state)
         {
             this.reply(res, TenantAuthEndpoint.StatusBadRequest, TenantAuthEndpoint.BadRequestBody)
             return
         }
         try
         {
-            const who = await this.rp.Complete(tenantId, code, state)
+            const who = await this.rp.Complete(tenantId, code, state, callbackUrl)
             const session = await this.sessions.Issue(tenantId, who.principalId, who.email)
             res.writeHead(TenantAuthEndpoint.StatusFound, {
                 [TenantAuthEndpoint.LocationHeader]: TenantAuthEndpoint.RootPath,

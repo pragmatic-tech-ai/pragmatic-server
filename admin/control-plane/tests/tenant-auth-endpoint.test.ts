@@ -15,9 +15,13 @@ class FakeRelyingParty implements ITenantOidcRelyingParty
     public Fail = false
     public BeginFail = false
     public Crash: Error | undefined
+    public LastTenantId: string | undefined
+    public LastCallback: string | undefined
 
-    public async Begin(_tenantId: string): Promise<{ Url: string; State: string }>
+    public async Begin(tenantId: string, callbackUrl?: string): Promise<{ Url: string; State: string }>
     {
+        this.LastTenantId = tenantId
+        this.LastCallback = callbackUrl
         if (this.BeginFail)
         {
             throw new TenantLoginError()
@@ -25,8 +29,10 @@ class FakeRelyingParty implements ITenantOidcRelyingParty
         return { Url: FakeRelyingParty.AuthorizeUrl, State: 'abc' }
     }
 
-    public async Complete(_tenantId: string, _code: string, _state: string): Promise<{ principalId: string; email?: string }>
+    public async Complete(tenantId: string, _code: string, _state: string, callbackUrl?: string): Promise<{ principalId: string; email?: string }>
     {
+        this.LastTenantId = tenantId
+        this.LastCallback = callbackUrl
         if (this.Crash !== undefined)
         {
             throw this.Crash
@@ -60,7 +66,9 @@ class Recorder
 
 class Harness
 {
-    public static readonly Callback = '/tenant-auth/oidc/callback?tenant=t1&code=c&state=abc'
+    public static readonly TenantId = 't1'
+    public static readonly CallbackUrl = 'https://t1.admin.example.com/tenant-auth/oidc/callback'
+    public static readonly Callback = '/tenant-auth/oidc/callback?code=c&state=abc'
     public readonly Dir = mkdtempSync(join(tmpdir(), 'tenant-auth-'))
     public readonly Rp = new FakeRelyingParty()
     public readonly Sessions = new TenantSessionStore(join(this.Dir, 'sessions.json'), 3600000)
@@ -69,7 +77,7 @@ class Harness
     public async Call(method: string, url: string, cookie?: string): Promise<{ handled: boolean; res: Recorder }>
     {
         const res = new Recorder()
-        const handled = await this.Endpoint.Handle(this.Request(method, url, cookie), res as unknown as ServerResponse, new URL(url, 'http://localhost').pathname)
+        const handled = await this.Endpoint.Handle(this.Request(method, url, cookie), res as unknown as ServerResponse, new URL(url, 'http://localhost').pathname, Harness.TenantId, Harness.CallbackUrl)
         return { handled, res }
     }
 
@@ -118,19 +126,20 @@ describe('TenantAuthEndpoint', () =>
         assert.equal((await h.Call('GET', '/other')).handled, false)
     })
 
-    it('begin redirects to the IdP url, 400 without tenant', async () =>
+    it('begin redirects to the IdP url using the passed tenant and callback', async () =>
     {
-        const ok = await h.Call('GET', '/tenant-auth/oidc/begin?tenant=t1')
+        const ok = await h.Call('GET', '/tenant-auth/oidc/begin')
         assert.equal(ok.res.Status, 302)
         assert.equal(ok.res.Headers['Location'], FakeRelyingParty.AuthorizeUrl)
         assert.equal(ok.res.Headers['Cache-Control'], 'no-store')
-        assert.equal((await h.Call('GET', '/tenant-auth/oidc/begin')).res.Status, 400)
+        assert.equal(h.Rp.LastTenantId, Harness.TenantId)
+        assert.equal(h.Rp.LastCallback, Harness.CallbackUrl)
     })
 
     it('begin is 401 when Begin throws TenantLoginError', async () =>
     {
         h.Rp.BeginFail = true
-        const { res } = await h.Call('GET', '/tenant-auth/oidc/begin?tenant=t1')
+        const { res } = await h.Call('GET', '/tenant-auth/oidc/begin')
         assert.equal(res.Status, 401)
         assert.equal(res.Headers['Cache-Control'], 'no-store')
     })
@@ -142,16 +151,17 @@ describe('TenantAuthEndpoint', () =>
         assert.equal(res.Headers['Location'], '/')
         assert.equal(res.Headers['Cache-Control'], 'no-store')
         assert.equal(TenantSessionCookie.Read(h.CookieHeader(res))?.tenantId, 't1')
+        assert.equal(h.Rp.LastTenantId, Harness.TenantId)
+        assert.equal(h.Rp.LastCallback, Harness.CallbackUrl)
         const session = await h.Sessions.Validate(h.TokenOf(res))
         assert.equal(session?.principalId, 'sub-1')
         assert.equal(session?.tenantId, 't1')
     })
 
-    it('callback 400 on missing tenant, code or state', async () =>
+    it('callback 400 on missing code or state', async () =>
     {
-        assert.equal((await h.Call('GET', '/tenant-auth/oidc/callback?tenant=t1&code=c')).res.Status, 400)
-        assert.equal((await h.Call('GET', '/tenant-auth/oidc/callback?tenant=t1&state=abc')).res.Status, 400)
-        assert.equal((await h.Call('GET', '/tenant-auth/oidc/callback?code=c&state=abc')).res.Status, 400)
+        assert.equal((await h.Call('GET', '/tenant-auth/oidc/callback?code=c')).res.Status, 400)
+        assert.equal((await h.Call('GET', '/tenant-auth/oidc/callback?state=abc')).res.Status, 400)
     })
 
     it('callback failure is 401 with no cookie, a generic body, and no secret or token', async () =>
@@ -159,7 +169,7 @@ describe('TenantAuthEndpoint', () =>
         const good = await h.Call('GET', Harness.Callback)
         const token = h.TokenOf(good.res)
         h.Rp.Fail = true
-        const { res } = await h.Call('GET', '/tenant-auth/oidc/callback?tenant=t1&code=SECRETCODE&state=abc')
+        const { res } = await h.Call('GET', '/tenant-auth/oidc/callback?code=SECRETCODE&state=abc')
         assert.equal(res.Status, 401)
         assert.equal(res.Headers['Set-Cookie'], undefined)
         assert.equal(res.Headers['Cache-Control'], 'no-store')
@@ -173,7 +183,7 @@ describe('TenantAuthEndpoint', () =>
         h.Rp.Crash = new Error('db exploded SECRETCODE')
         const res = new Recorder()
         await assert.rejects(
-            h.Endpoint.Handle(h.Request('GET', Harness.Callback), res as unknown as ServerResponse, '/tenant-auth/oidc/callback'),
+            h.Endpoint.Handle(h.Request('GET', Harness.Callback), res as unknown as ServerResponse, '/tenant-auth/oidc/callback', Harness.TenantId, Harness.CallbackUrl),
             /db exploded/)
         assert.equal(res.Status, 0)
         assert.equal(res.Body, '')

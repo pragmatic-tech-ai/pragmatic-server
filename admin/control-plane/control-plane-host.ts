@@ -14,7 +14,7 @@ import {
     EnvironmentNotRuntimeError
 } from './environment-service.js'
 import { GraphExistsError, GraphNameInvalidError, GraphNotFoundError } from './graph-service.js'
-import { EnvType, Template, EnvironmentChangeKind, type EnvironmentChange, type EnvironmentRecord } from './environment-record.js'
+import { EnvType, Template, type EnvironmentChange, type EnvironmentRecord } from './environment-record.js'
 import { EnvironmentDtoMapper, type EnvironmentDto } from './environment-dto.js'
 import { HiveHealthProducer } from './hive-health-producer.js'
 import { InvalidTenantIdError } from './idp-service.js'
@@ -46,9 +46,6 @@ import { AgentUnauthorizedError, HiveNotRegisteredError, ManifestExistsError, Ma
 import type { ClientRecord, ClusterSpec, HiveRecord, RegistrySpec, TenantRecord } from './platform-records.js'
 import type { CreateAccountParams, GraphLoadedDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ILogProcess } from '../../environments/seed/docker.js'
-import type { TenantPlane } from './tenant-auth/tenant-plane.js'
-import { TenantEventType } from './tenant-api/tenant-events.js'
-import { TenantLogSocket } from './tenant-api/tenant-log-socket.js'
 
 export interface IEnvironmentService
 {
@@ -173,11 +170,6 @@ export class ControlPlaneHost
     private static readonly CloseEvent = 'close'
     private static readonly LogPrefix = '[control-plane] request failed:'
     private static readonly ApiPrefix = '/api/'
-    private static readonly TenantAuthPrefix = '/tenant-auth/'
-    private static readonly TenantApiPrefix = '/tenant-api/'
-    private static readonly TenantEventsPath = '/tenant-api/events'
-    private static readonly TenantLogsStreamPattern = new RegExp(
-        '^' + ControlPlaneHost.TenantApiPrefix + 'environments/([^/]+)/logs/stream$')
     private static readonly PingPath = '/api/ping'
     private static readonly TemplatesPath = '/api/templates'
     private static readonly EnvironmentsPath = '/api/environments'
@@ -328,11 +320,7 @@ export class ControlPlaneHost
     private httpServer: HttpServer | undefined
     private wsServer: WebSocketServer | undefined
     private readonly clients = new Set<WebSocket>()
-    /** Tenant ws sockets mapped to their teardown (events: unsubscribe; logs: kill the stream). Close() runs each. */
-    private readonly tenantClients = new Map<WebSocket, () => void>()
-    private tenantChangeSubscription: (() => void) | undefined
     private readonly staticRootAbs: string
-    private readonly tenantStaticRootAbs?: string
 
     public constructor(
         private readonly service: IEnvironmentService,
@@ -343,38 +331,9 @@ export class ControlPlaneHost
         private readonly directory: PlatformDirectory,
         private readonly orchestrators: HiveOrchestratorFactory,
         private readonly deployments: PlatformDeploymentRegistry,
-        private readonly provisioning: TenantProvisioningService,
-        private readonly tenantAuth?: TenantPlane)
+        private readonly provisioning: TenantProvisioningService)
     {
         this.staticRootAbs = resolve(staticRoot)
-        if (tenantAuth !== undefined)
-        {
-            this.tenantStaticRootAbs = resolve(tenantAuth.staticRoot)
-            // RULING 5: route every environment lifecycle change to the tenant bus, scoped by the env's owning tenant.
-            // An unbound env (no tenantId) has no tenant audience, so it is skipped.
-            this.tenantChangeSubscription = this.service.OnChanged(change =>
-            {
-                const rec = change.record
-                if (rec.tenantId !== undefined)
-                {
-                    tenantAuth.events.Emit(rec.tenantId, { type: ControlPlaneHost.TenantEventFor(change.kind), environmentName: rec.name })
-                }
-            })
-        }
-    }
-
-    /** Maps an environment lifecycle-change kind to the tenant event type fanned out over the tenant bus. */
-    private static TenantEventFor(kind: EnvironmentChangeKind): TenantEventType
-    {
-        switch (kind)
-        {
-            case EnvironmentChangeKind.Created:
-                return TenantEventType.EnvironmentCreated
-            case EnvironmentChangeKind.Deleted:
-                return TenantEventType.EnvironmentDeleted
-            default:
-                return TenantEventType.EnvironmentChanged
-        }
     }
 
     public Listen(port: number, host: string): Promise<void>
@@ -401,11 +360,7 @@ export class ControlPlaneHost
         })
     }
 
-    /**
-     * Dispatches a ws upgrade. The operator `/api/events` branch is unchanged (operator gate + operator host/origin).
-     * The two tenant branches are reached only when a tenant plane is mounted and are gated by the tenant host, the
-     * tenant origin, and a resolved `pts_session` principal; any failure destroys the socket.
-     */
+    /** Dispatches a ws upgrade. Only the operator `/api/events` branch exists; any other path destroys the socket. */
     private RouteUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, wss: WebSocketServer): void
     {
         const path = new URL(req.url ?? PlaneHttp.RootPath, ControlPlaneHost.BaseUrl).pathname
@@ -414,27 +369,10 @@ export class ControlPlaneHost
             this.UpgradeOperatorEvents(req, socket, head, wss)
             return
         }
-        const tenant = this.tenantAuth
-        if (tenant === undefined)
-        {
-            socket.destroy()
-            return
-        }
-        if (path === ControlPlaneHost.TenantEventsPath)
-        {
-            this.UpgradeTenantEvents(req, socket, head, wss, tenant)
-            return
-        }
-        const lm = ControlPlaneHost.TenantLogsStreamPattern.exec(path)
-        if (lm !== null)
-        {
-            this.UpgradeTenantLogs(req, socket, head, wss, tenant, lm)
-            return
-        }
         socket.destroy()
     }
 
-    /** The operator events ws: operator host + operator origin + operator session, then tracked in `clients`. Unchanged. */
+    /** The operator events ws: operator host + operator origin + operator session, then tracked in `clients`. */
     private UpgradeOperatorEvents(req: IncomingMessage, socket: Duplex, head: Buffer, wss: WebSocketServer): void
     {
         if (!ControlPlaneHost.HostAllowed(req) || !ControlPlaneHost.OriginAllowed(req))
@@ -458,107 +396,8 @@ export class ControlPlaneHost
         }, () => socket.destroy())
     }
 
-    /** The tenant events ws: on success subscribes the bus for the session's tenant and forwards each event as JSON. */
-    private UpgradeTenantEvents(req: IncomingMessage, socket: Duplex, head: Buffer, wss: WebSocketServer, tenant: TenantPlane): void
-    {
-        if (!ControlPlaneHost.TenantUpgradeAllowed(req, tenant))
-        {
-            socket.destroy()
-            return
-        }
-        void tenant.gate.Principal(req).then(session =>
-        {
-            if (session === null)
-            {
-                socket.destroy()
-                return
-            }
-            wss.handleUpgrade(req, socket, head, ws =>
-            {
-                const unsubscribe = tenant.events.On(session.tenantId, ev =>
-                {
-                    if (ws.readyState === WebSocket.OPEN)
-                    {
-                        ws.send(JSON.stringify(ev))
-                    }
-                })
-                this.TrackTenant(ws, unsubscribe)
-            })
-        }, () => socket.destroy())
-    }
-
-    /** The tenant log-stream ws: on success hands the socket to TenantLogSocket, which enforces env ownership and streams. */
-    private UpgradeTenantLogs(req: IncomingMessage, socket: Duplex, head: Buffer, wss: WebSocketServer, tenant: TenantPlane, m: RegExpExecArray): void
-    {
-        if (!ControlPlaneHost.TenantUpgradeAllowed(req, tenant))
-        {
-            socket.destroy()
-            return
-        }
-        const name = ControlPlaneHost.Decode(m[1] as string)
-        if (name === undefined)
-        {
-            socket.destroy()
-            return
-        }
-        void tenant.gate.Principal(req).then(session =>
-        {
-            if (session === null)
-            {
-                socket.destroy()
-                return
-            }
-            wss.handleUpgrade(req, socket, head, ws =>
-            {
-                const logSocket = new TenantLogSocket(session, name, this.service)
-                if (!logSocket.Attach(ws))
-                {
-                    // Not the session tenant's env (or unknown): the socket is already closed and no stream started.
-                    return
-                }
-                this.TrackTenant(ws, () => logSocket.Dispose())
-            })
-        }, () => socket.destroy())
-    }
-
-    /** Records a tenant socket with its teardown and wires close/error to run that teardown and drop the entry. */
-    private TrackTenant(ws: WebSocket, teardown: () => void): void
-    {
-        this.tenantClients.set(ws, teardown)
-        ws.on(ControlPlaneHost.CloseEvent, () => this.RemoveTenant(ws))
-        ws.on(ControlPlaneHost.ErrorEvent, () => this.RemoveTenant(ws))
-    }
-
-    private RemoveTenant(ws: WebSocket): void
-    {
-        const teardown = this.tenantClients.get(ws)
-        if (teardown === undefined)
-        {
-            return
-        }
-        this.tenantClients.delete(ws)
-        teardown()
-    }
-
-    /** Both tenant ws routes share this gate: the request host and (present) origin must be configured tenant hosts. */
-    private static TenantUpgradeAllowed(req: IncomingMessage, tenant: TenantPlane): boolean
-    {
-        return PlaneHttp.HostIn(req, tenant.allowedHosts) && PlaneHttp.OriginInHosts(req, tenant.allowedHosts)
-    }
-
     public async Close(): Promise<void>
     {
-        if (this.tenantChangeSubscription !== undefined)
-        {
-            this.tenantChangeSubscription()
-            this.tenantChangeSubscription = undefined
-        }
-        for (const [ws, teardown] of this.tenantClients)
-        {
-            teardown()
-            ws.terminate()
-        }
-        this.tenantClients.clear()
         for (const c of this.clients)
         {
             c.terminate()
@@ -593,7 +432,7 @@ export class ControlPlaneHost
     {
         try
         {
-            if (!this.HostAccepted(req))
+            if (!ControlPlaneHost.HostAllowed(req))
             {
                 PlaneHttp.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.ForbiddenHostMessage })
                 return
@@ -605,19 +444,8 @@ export class ControlPlaneHost
                 return
             }
             const path = new URL(req.url ?? PlaneHttp.RootPath, ControlPlaneHost.BaseUrl).pathname
-            if (this.tenantAuth !== undefined && await this.RouteTenant(req, res, path, this.tenantAuth))
-            {
-                return
-            }
             if (path.startsWith(ControlPlaneHost.ApiPrefix))
             {
-                // The operator surface is operator-hosts-only: a tenant origin accepted above cannot reach /api/*.
-                if (!ControlPlaneHost.HostAllowed(req))
-                {
-                    req.resume()
-                    PlaneHttp.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.ForbiddenHostMessage })
-                    return
-                }
                 if (PlaneHttp.IsMutating(req) && !ControlPlaneHost.OriginAllowed(req))
                 {
                     req.resume()
@@ -635,49 +463,13 @@ export class ControlPlaneHost
             const handled = await this.RouteApi(req, res, path)
             if (!handled)
             {
-                await PlaneHttp.ServeStatic(req, res, path, this.StaticRootFor(req))
+                await PlaneHttp.ServeStatic(req, res, path, this.staticRootAbs)
             }
         }
         catch (err)
         {
             this.WriteError(res, err)
         }
-    }
-
-    /**
-     * Dispatches the tenant plane and returns whether it answered. `/tenant-auth/*` is public (no operator gate,
-     * no tenant gate) and delegates to the auth endpoint. `/tenant-api/*` is gated: a mutating request's Origin is
-     * checked against the tenant hosts, then the gate must resolve a principal (else 401); the validated session is
-     * handed to the data API. Any other path is not ours (returns false, so the operator surface and static serving
-     * are reached unchanged).
-     */
-    private async RouteTenant(req: IncomingMessage, res: ServerResponse, path: string, tenant: TenantPlane): Promise<boolean>
-    {
-        const isAuth = path.startsWith(ControlPlaneHost.TenantAuthPrefix)
-        if (!isAuth && !path.startsWith(ControlPlaneHost.TenantApiPrefix))
-        {
-            return false
-        }
-        // CSRF: every mutating /tenant-* request's Origin must be a configured tenant host (mirrors the operator /api/* rule),
-        // checked once for the whole prefix so /tenant-auth mutating routes (e.g. the logout POST) are covered too.
-        if (PlaneHttp.IsMutating(req) && !PlaneHttp.OriginInHosts(req, tenant.allowedHosts))
-        {
-            req.resume()
-            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.BadOriginMessage })
-            return true
-        }
-        if (isAuth)
-        {
-            return await tenant.endpoint.Handle(req, res, path)
-        }
-        const session = await tenant.gate.Principal(req)
-        if (session === null)
-        {
-            req.resume()
-            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusUnauthorized, { error: ControlPlaneHost.UnauthenticatedMessage })
-            return true
-        }
-        return await tenant.api.Handle(req, res, path, session)
     }
 
     /** Returns false when the request does not match any API route (falls through to static). */
@@ -1714,16 +1506,6 @@ export class ControlPlaneHost
         })
     }
 
-    /** The bundle root for this request: the tenant portal on a tenant host, otherwise the operator portal. */
-    private StaticRootFor(req: IncomingMessage): string
-    {
-        if (this.tenantAuth !== undefined && this.tenantStaticRootAbs !== undefined && PlaneHttp.HostIn(req, this.tenantAuth.allowedHosts))
-        {
-            return this.tenantStaticRootAbs
-        }
-        return this.staticRootAbs
-    }
-
     private WriteError(res: ServerResponse, err: unknown): void
     {
         if (res.headersSent)
@@ -1812,14 +1594,6 @@ export class ControlPlaneHost
                 c.send(text)
             }
         }
-    }
-
-    /** Accepts a request whose host is an operator host OR (when a tenant plane is mounted) a configured tenant host.
-     *  With no tenant plane this is exactly HostAllowed, so the operator surface is unchanged. */
-    private HostAccepted(req: IncomingMessage): boolean
-    {
-        return ControlPlaneHost.HostAllowed(req)
-            || (this.tenantAuth !== undefined && PlaneHttp.HostIn(req, this.tenantAuth.allowedHosts))
     }
 
     private static HostAllowed(req: IncomingMessage): boolean
