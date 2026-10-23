@@ -17,6 +17,55 @@ class MainFixture
     public static readonly CaFile = 'ca.crt';
     public static readonly TlsDir = 'tls';
 
+    public static readonly AdminRef = 'admin-token';
+    public static readonly AdminToken = 'main-admin-token-xyz';
+    public static readonly SecretsDir = 'secrets';
+    public static readonly AdminRefEnv = 'PRAGMATIC_IDP_ADMIN_TOKEN_REF';
+    public static readonly AdminRealmPath = '/_admin/realms/tenant-1';
+    public static readonly DisplayBody = '{"displayName":"Tenant One"}';
+
+    public static Put(port: number, ca: string, urlPath: string, token: string): Promise<number>
+    {
+        return new Promise((resolve, reject) =>
+        {
+            const req = https.request({ host: MainFixture.Localhost, port, path: urlPath, ca, method: 'PUT', headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' } }, res =>
+            {
+                res.resume();
+                res.on('end', () => resolve(res.statusCode ?? 0));
+            });
+            req.on('error', reject);
+            req.end(MainFixture.DisplayBody);
+        });
+    }
+
+    /** Composes with optional admin ref (and optional token file), PUTs the admin realm path, returns the status. */
+    public static async AdminStatus(withRef: boolean, writeFile: boolean): Promise<number>
+    {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), MainFixture.DirPrefix));
+        const env: NodeJS.ProcessEnv = { PRAGMATIC_IDP_DATA: dir, PRAGMATIC_IDP_BASE_URL: MainFixture.BaseUrl, PRAGMATIC_IDP_TENANTS: MainFixture.TenantId };
+        if (writeFile)
+        {
+            fs.mkdirSync(path.join(dir, MainFixture.SecretsDir), { recursive: true });
+            fs.writeFileSync(path.join(dir, MainFixture.SecretsDir, MainFixture.AdminRef), MainFixture.AdminToken + '\n');
+        }
+        if (withRef)
+        {
+            env[MainFixture.AdminRefEnv] = MainFixture.AdminRef;
+        }
+        const host = await IdpMain.Compose(env);
+        try
+        {
+            await host.Listen(0, MainFixture.Loopback);
+            const ca = fs.readFileSync(path.join(dir, MainFixture.TlsDir, MainFixture.CaFile), MainFixture.Utf8);
+            return await MainFixture.Put(host.Address().port, ca, MainFixture.AdminRealmPath, MainFixture.AdminToken);
+        }
+        finally
+        {
+            await host.Close();
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    }
+
     public static Get(port: number, ca: string, urlPath: string): Promise<{ status: number; body: any }>
     {
         return new Promise((resolve, reject) =>
@@ -95,6 +144,40 @@ test('Compose persists master.key and signing-key.pem and reuses them', async ()
     }
     finally
     {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('Compose with an admin-token ref file present enables the _admin namespace', async () =>
+{
+    assert.equal(await MainFixture.AdminStatus(true, true), 200);
+});
+
+test('Compose without the admin-token ref keeps the _admin namespace at 404', async () =>
+{
+    assert.equal(await MainFixture.AdminStatus(false, true), 404);
+});
+
+test('Compose with the ref set but the secrets file missing starts with admin disabled (404, no throw)', async () =>
+{
+    assert.equal(await MainFixture.AdminStatus(true, false), 404);
+});
+
+test('Compose with an empty admin token file keeps admin disabled', async () =>
+{
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), MainFixture.DirPrefix));
+    fs.mkdirSync(path.join(dir, MainFixture.SecretsDir), { recursive: true });
+    fs.writeFileSync(path.join(dir, MainFixture.SecretsDir, MainFixture.AdminRef), '  \n');
+    const host = await IdpMain.Compose({ PRAGMATIC_IDP_DATA: dir, PRAGMATIC_IDP_BASE_URL: MainFixture.BaseUrl, PRAGMATIC_IDP_TENANTS: MainFixture.TenantId, PRAGMATIC_IDP_ADMIN_TOKEN_REF: MainFixture.AdminRef });
+    try
+    {
+        await host.Listen(0, MainFixture.Loopback);
+        const ca = fs.readFileSync(path.join(dir, MainFixture.TlsDir, MainFixture.CaFile), MainFixture.Utf8);
+        assert.equal(await MainFixture.Put(host.Address().port, ca, MainFixture.AdminRealmPath, ''), 404);
+    }
+    finally
+    {
+        await host.Close();
         fs.rmSync(dir, { recursive: true, force: true });
     }
 });

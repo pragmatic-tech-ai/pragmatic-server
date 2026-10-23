@@ -4,8 +4,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { InMemoryAuthorizationCodeStore } from './authorization-code-store.js';
 import { DevCa, IdpTlsMaterial } from './dev-ca.js';
+import { IdpAdminEndpoint } from './idp-admin-endpoint.js';
 import { IdpClientStore } from './idp-client-store.js';
-import { IdpHost, IdpRealmSet } from './idp-host.js';
+import { IdpHost, IdpRealmSet, type RealmFactory } from './idp-host.js';
 import { IdpRealm } from './idp-realm.js';
 import { IdpSigningKey } from './idp-signing-key.js';
 import { IdpSsoSessionStore } from './idp-sso-session.js';
@@ -19,6 +20,10 @@ export class IdpMain
     private static readonly DataEnvVar = 'PRAGMATIC_IDP_DATA';
     private static readonly SecureCookieEnvVar = 'PRAGMATIC_IDP_SECURE_COOKIE';
     private static readonly TenantsEnvVar = 'PRAGMATIC_IDP_TENANTS';
+    private static readonly AdminTokenRefEnvVar = 'PRAGMATIC_IDP_ADMIN_TOKEN_REF';
+    private static readonly SecretsDir = 'secrets';
+    private static readonly Utf8 = 'utf8';
+    private static readonly NotFoundCode = 'ENOENT';
     private static readonly DefaultPort = 7100;
     private static readonly MaxPort = 65535;
     private static readonly DefaultHost = '127.0.0.1';
@@ -63,16 +68,23 @@ export class IdpMain
         mkdirSync(data, { recursive: true });
         const signingKey = await IdpSigningKey.LoadOrCreate(join(data, IdpMain.SigningKeyFile));
         const masterKey = IdpMain.LoadOrCreateMasterKey(join(data, IdpMain.MasterKeyFile));
-        const realms = new IdpRealmSet();
+        const realmsDir = join(data, IdpMain.RealmsDir);
+        const adminToken = IdpMain.LoadAdminToken(data, env[IdpMain.AdminTokenRefEnvVar]);
+        const factory: RealmFactory | undefined = adminToken === undefined
+            ? undefined
+            : (tenantId, displayName) => IdpRealm.OpenFor(realmsDir, tenantId, displayName, masterKey);
+        const realms = new IdpRealmSet([], factory);
         for (const tenantId of IdpMain.ParseTenants(env[IdpMain.TenantsEnvVar]))
         {
-            realms.Add(tenantId, await IdpRealm.OpenFor(join(data, IdpMain.RealmsDir), tenantId, tenantId, masterKey));
+            realms.Add(tenantId, await IdpRealm.OpenFor(realmsDir, tenantId, tenantId, masterKey));
         }
+        const clients = new IdpClientStore();
+        const admin = adminToken === undefined ? undefined : new IdpAdminEndpoint(adminToken, realms, clients);
         const ca = DevCa.EnsureAt(join(data, IdpMain.TlsDir), new URL(baseUrl).hostname);
         const tls = IdpTlsMaterial.Load({ certFile: ca.certFile, keyFile: ca.keyFile });
         const secure = env[IdpMain.SecureCookieEnvVar];
         const secureCookie = secure !== IdpMain.ZeroToken && secure !== IdpMain.FalseToken;
-        return new IdpHost(baseUrl, signingKey, realms, new IdpClientStore(), new InMemoryAuthorizationCodeStore(), new IdpSsoSessionStore(), tls, secureCookie);
+        return new IdpHost(baseUrl, signingKey, realms, clients, new InMemoryAuthorizationCodeStore(), new IdpSsoSessionStore(), tls, secureCookie, admin);
     }
 
     /** Prints a concise startup failure (message only, no stack) and sets a non-zero exit code. */
@@ -80,6 +92,33 @@ export class IdpMain
     {
         console.error(IdpMain.FailPrefix + (err instanceof Error ? err.message : String(err)));
         process.exitCode = IdpMain.FailExitCode;
+    }
+
+    /**
+     * Reads the admin token from `<data>/secrets/<ref>` (trimmed). Fail-closed: an unset ref, a missing file, or an
+     * empty token all mean admin is disabled (undefined). The token is never logged or put in an error.
+     */
+    private static LoadAdminToken(data: string, ref: string | undefined): string | undefined
+    {
+        if (ref === undefined || ref === '')
+        {
+            return undefined;
+        }
+        let raw: string;
+        try
+        {
+            raw = readFileSync(join(data, IdpMain.SecretsDir, ref), IdpMain.Utf8);
+        }
+        catch (err)
+        {
+            if ((err as NodeJS.ErrnoException).code === IdpMain.NotFoundCode)
+            {
+                return undefined;
+            }
+            throw err;
+        }
+        const token = raw.trim();
+        return token === '' ? undefined : token;
     }
 
     private static RequireHttps(baseUrl: string): void
