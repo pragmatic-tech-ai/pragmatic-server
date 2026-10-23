@@ -189,7 +189,7 @@ export class TenantPlaneHost
         {
             return false
         }
-        if (PlaneHttp.IsMutating(req) && !PlaneHttp.OriginInHosts(req, new Set([PlaneHttp.HostName(host) as string])))
+        if (PlaneHttp.IsMutating(req) && !PlaneHttp.OriginIsHost(req, host))
         {
             req.resume()
             PlaneHttp.WriteJson(res, TenantPlaneHost.StatusForbidden, { error: TenantPlaneHost.BadOriginMessage })
@@ -200,7 +200,10 @@ export class TenantPlaneHost
             return await this.endpoint.Handle(req, res, path, tenantId, callbackUrl)
         }
         const session = await this.gate.Principal(req)
-        if (session === null)
+        // Defense in depth: the session's tenant must be the one this host resolves to. Host-only pts_session cookies
+        // already prevent carrying a cookie across tenant hosts; this makes the host↔session binding structural. A
+        // mismatch is answered with the same generic 401 as no session, so it is not an oracle for a valid-but-wrong cookie.
+        if (session === null || session.tenantId !== tenantId)
         {
             req.resume()
             PlaneHttp.WriteJson(res, TenantPlaneHost.StatusUnauthorized, { error: TenantPlaneHost.UnauthenticatedMessage })
@@ -241,7 +244,7 @@ export class TenantPlaneHost
         }
         void this.gate.Principal(req).then(session =>
         {
-            if (session === null)
+            if (session === null || session.tenantId !== this.TenantOf(req))
             {
                 socket.destroy()
                 return
@@ -276,7 +279,7 @@ export class TenantPlaneHost
         }
         void this.gate.Principal(req).then(session =>
         {
-            if (session === null)
+            if (session === null || session.tenantId !== this.TenantOf(req))
             {
                 socket.destroy()
                 return
@@ -302,7 +305,13 @@ export class TenantPlaneHost
         {
             return false
         }
-        return PlaneHttp.OriginInHosts(req, new Set([PlaneHttp.HostName(host) as string]))
+        return PlaneHttp.OriginIsHost(req, host)
+    }
+
+    /** The tenant id this request's host resolves to (undefined if the host is not an accepted tenant subdomain). */
+    private TenantOf(req: IncomingMessage): string | undefined
+    {
+        return this.resolver.TenantFor(req.headers[PlaneHttp.HostHeader] as string | undefined)
     }
 
     /** Records a tenant socket with its teardown and wires close/error to run that teardown and drop the entry. */

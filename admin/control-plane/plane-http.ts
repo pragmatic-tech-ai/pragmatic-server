@@ -65,6 +65,19 @@ export class PlaneHttp
         return host !== undefined && allowed.has(host)
     }
 
+    /** Self-origin check: an absent Origin is allowed; a present one's host must equal the request's own host. */
+    public static OriginIsHost(req: IncomingMessage, hostHeader: string | undefined): boolean
+    {
+        const origin = req.headers[PlaneHttp.OriginHeader]
+        if (origin === undefined)
+        {
+            return true
+        }
+        const originHost = PlaneHttp.OriginHost(origin)
+        const host = PlaneHttp.HostName(hostHeader)
+        return originHost !== undefined && host !== undefined && originHost === host
+    }
+
     /** The lowercased host (port stripped) of an Origin header, or undefined when it does not parse. */
     public static OriginHost(origin: string): string | undefined
     {

@@ -173,6 +173,7 @@ class Kit
     public static readonly ExpectedCallback = 'https://acme.admin.example.com/tenant-auth/oidc/callback'
     public static readonly AllowedOrigin = 'https://acme.admin.example.com'
     public static readonly ForeignOrigin = 'https://evil.example.com'
+    public static readonly CrossTenantOrigin = 'https://other.admin.example.com'
     public static readonly OperatorCookie = 'cp_session=operator-token'
     public static readonly HostHeader = 'host'
     public static readonly CookieHeader = 'cookie'
@@ -366,6 +367,28 @@ describe('TenantPlaneHost routing and isolation', () =>
         assert.equal(r.status, 204)
     })
 
+    it('rejects a mutating /tenant-api request whose Origin is another tenant host as 403', async () =>
+    {
+        const r = await Kit.Raw(host, HttpMethod.Post, Kit.TenantApiHivesPath, {
+            [Kit.HostHeader]: Kit.TenantHost,
+            [Kit.OriginHeader]: Kit.CrossTenantOrigin,
+        })
+        assert.equal(r.status, 403)
+        assert.equal(JSON.parse(r.body).error, 'Origin not allowed')
+        assert.equal(api.Calls, 0)
+    })
+
+    it('rejects a /tenant-api session whose tenant does not match the host tenant as 401', async () =>
+    {
+        const issued = await store.Issue('other', 'u1')
+        const r = await Kit.Raw(host, HttpMethod.Get, Kit.TenantApiHivesPath, {
+            [Kit.HostHeader]: Kit.TenantHost,
+            [Kit.CookieHeader]: Kit.PtsCookie('other', issued.id),
+        })
+        assert.equal(r.status, 401)
+        assert.equal(api.Calls, 0)
+    })
+
     it('serves the tenant bundle on a tenant host', async () =>
     {
         const r = await Kit.Raw(host, HttpMethod.Get, Kit.RootPath, { [Kit.HostHeader]: Kit.TenantHost })
@@ -534,18 +557,18 @@ describe('TenantPlaneHost streaming', () =>
         assert.equal(await Kit.Opened(ws), false)
     })
 
-    it('ignores OtherTenantHost cross-tenant events for an acme subscriber', async () =>
+    it('refuses an events socket whose session tenant does not match the host tenant', async () =>
     {
         const issued = await store.Issue(TenantA, 'u1')
+        // An acme session cookie presented on the 'other' tenant's host: host↔session mismatch, refused outright.
         const ws = new WebSocket(EventsUrl(), { headers: { [Kit.HostHeader]: OtherTenantHost, [Kit.CookieHeader]: Kit.PtsCookie(TenantA, issued.id) } })
-        // The cookie tenant (acme) does not match the session's resolved tenant audience; still, the session is acme,
-        // so the subscription is for acme. A change to the 'other' tenant env must not be delivered.
-        assert.equal(await Kit.Opened(ws), true)
-        const received: unknown[] = []
-        ws.on('message', d => received.push(JSON.parse(d.toString())))
-        service.FireChange(Kit.Record(EnvB, 'other'))
-        await Kit.Delay(80)
-        assert.equal(received.length, 0)
-        ws.close()
+        assert.equal(await Kit.Opened(ws), false)
+    })
+
+    it('destroys an operator-events ws upgrade on the tenant listener', async () =>
+    {
+        const issued = await store.Issue(TenantA, 'u1')
+        const ws = new WebSocket(`ws://127.0.0.1:${host.Address().port}/api/events`, { headers: { [Kit.HostHeader]: Kit.TenantHost, [Kit.CookieHeader]: Kit.PtsCookie(TenantA, issued.id) } })
+        assert.equal(await Kit.Opened(ws), false)
     })
 })
