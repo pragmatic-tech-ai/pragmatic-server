@@ -23,6 +23,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ClientRegistry } from './client-registry.js'
 import { ControlPlaneHost } from './control-plane-host.js'
+import type { TenantProvisioningService } from './tenant-provisioning-service.js'
 import type { IEnvironmentService, IGraphService } from './control-plane-host.js'
 import { EnvironmentPlacement } from './environment-placement.js'
 import { EnvironmentRegistry } from './environment-registry.js'
@@ -371,7 +372,7 @@ export class RolloutPullSmoke
         const S = RolloutPullSmoke
         const staticRoot = join(this.tempDir!, S.StaticDirName)
         await mkdir(staticRoot, { recursive: true })
-        const host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, staticRoot, new DenyAllOperator(), false, directory, factory, deployments)
+        const host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, staticRoot, new DenyAllOperator(), false, directory, factory, deployments, {} as TenantProvisioningService)
         await host.Listen(0, S.LoopbackAddress)
         this.host = host
         const proxy = new HostHeaderProxy(host.Address().port)

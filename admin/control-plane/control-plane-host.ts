@@ -16,6 +16,7 @@ import {
 import { GraphExistsError, GraphNameInvalidError, GraphNotFoundError } from './graph-service.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from './environment-record.js'
 import { PortUnavailableError } from './port-allocator.js'
+import type { TenantProvisioningService } from './tenant-provisioning-service.js'
 import { InvalidEnvironmentNameError, TemplateCatalog } from './template-catalog.js'
 import type { IOperatorIdentity } from './operator-identity.js'
 import { SessionCookie } from './session-cookie.js'
@@ -210,6 +211,9 @@ export class ControlPlaneHost
     private static readonly StatusNoContent = 204
     private static readonly IdRequiredMessage = 'id (non-empty string) is required'
     private static readonly DisplayNameRequiredMessage = 'displayName (string) is required'
+    private static readonly OwnerEmailRequiredMessage = 'ownerEmail (non-empty string) is required'
+    private static readonly ReservedIdMessage = "id must not start with '_' (reserved for the IdP namespace)"
+    private static readonly ReservedIdPrefix = '_'
     private static readonly ClientIdRequiredMessage = 'clientId (non-empty string) is required'
     private static readonly TenantIdRequiredMessage = 'tenantId (non-empty string) is required'
     private static readonly OptionalStringMessage = 'optional reference fields must be strings'
@@ -351,7 +355,8 @@ export class ControlPlaneHost
         private readonly secureCookie: boolean,
         private readonly directory: PlatformDirectory,
         private readonly orchestrators: HiveOrchestratorFactory,
-        private readonly deployments: PlatformDeploymentRegistry)
+        private readonly deployments: PlatformDeploymentRegistry,
+        private readonly provisioning: TenantProvisioningService)
     {
         this.staticRootAbs = resolve(staticRoot)
     }
@@ -976,7 +981,21 @@ export class ControlPlaneHost
                 this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ClientIdRequiredMessage })
                 return
             }
-            created = await this.directory.CreateTenant({ id, clientId: body.clientId as string, displayName })
+            if (!ControlPlaneHost.NonEmpty(body.ownerEmail))
+            {
+                this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.OwnerEmailRequiredMessage })
+                return
+            }
+            if (id.startsWith(ControlPlaneHost.ReservedIdPrefix))
+            {
+                this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ReservedIdMessage })
+                return
+            }
+            const { record, ownerPassword } = await this.provisioning.Provision({ id, clientId: body.clientId as string, displayName, ownerEmail: body.ownerEmail as string })
+            // The one-time Owner password is revealed exactly once here; never logged or stored.
+            res.setHeader(ControlPlaneHost.CacheControlHeader, ControlPlaneHost.NoStore)
+            this.WriteJson(res, ControlPlaneHost.StatusCreated, { ...record, owner: { email: record.ownerEmail, principalId: record.ownerPrincipalId, password: ownerPassword } })
+            return
         }
         else
         {

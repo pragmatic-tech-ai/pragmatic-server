@@ -4,6 +4,7 @@ import { request } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'node:test'
+import { FakeProvisioning } from './fake-provisioning.js'
 import { ControlPlaneHost, type IEnvironmentService, type IGraphService } from '../control-plane-host.js'
 import { RolloutFixture } from './rollout-fixture.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
@@ -13,7 +14,7 @@ import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
 import { PlatformDirectory } from '../platform-directory.js'
 
-type Reply = { status: number; body: string }
+type Reply = { status: number; body: string; cacheControl?: string }
 
 class FakeOperator implements IOperatorIdentity
 {
@@ -57,7 +58,7 @@ class Harness
             {
                 const chunks: Buffer[] = []
                 res.on('data', c => chunks.push(c as Buffer))
-                res.on('end', () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf8') }))
+                res.on('end', () => resolve({ status: res.statusCode ?? 0, cacheControl: res.headers['cache-control'], body: Buffer.concat(chunks).toString('utf8') }))
             })
             req.on('error', reject)
             req.end(text)
@@ -83,7 +84,7 @@ describe('ControlPlaneHost platform routes', () =>
             { List: () => [] })
         await directory.Load()
         const factory = new HiveOrchestratorFactory()
-        host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, factory, await RolloutFixture.Create(parent, directory, factory))
+        host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, factory, await RolloutFixture.Create(parent, directory, factory), new FakeProvisioning(directory).AsService())
         await host.Listen(0, '127.0.0.1')
     })
 
@@ -110,12 +111,31 @@ describe('ControlPlaneHost platform routes', () =>
         assert.equal((await Harness.Send(host, 'POST', '/api/clients', { id: 'acme', displayName: 'Dup' })).status, 409)
     })
 
+    it('provisions a tenant and reveals the one-time Owner password with no-store', async () =>
+    {
+        await Harness.Send(host, 'POST', '/api/clients', { id: 'acme', displayName: 'Acme' })
+        const r = await Harness.Send(host, 'POST', '/api/tenants', { id: 't1', clientId: 'acme', displayName: 'T', ownerEmail: 'o@x.test' })
+        assert.equal(r.status, 201)
+        assert.equal(r.cacheControl, 'no-store')
+        const body = JSON.parse(r.body)
+        assert.equal(body.id, 't1')
+        assert.deepEqual(body.owner, { email: 'o@x.test', principalId: 'owner', password: FakeProvisioning.Password })
+    })
+
+    it('rejects a tenant create without ownerEmail or with a reserved _ id', async () =>
+    {
+        await Harness.Send(host, 'POST', '/api/clients', { id: 'acme', displayName: 'Acme' })
+        assert.equal((await Harness.Send(host, 'POST', '/api/tenants', { id: 't1', clientId: 'acme', displayName: 'T' })).status, 400)
+        assert.equal((await Harness.Send(host, 'POST', '/api/tenants', { id: 't1', clientId: 'acme', displayName: 'T', ownerEmail: '' })).status, 400)
+        assert.equal((await Harness.Send(host, 'POST', '/api/tenants', { id: '_sys', clientId: 'acme', displayName: 'T', ownerEmail: 'o@x.test' })).status, 400)
+    })
+
     it('maps a cascade violation to 409 and an unknown parent to 404', async () =>
     {
         await Harness.Send(host, 'POST', '/api/clients', { id: 'acme', displayName: 'Acme' })
-        assert.equal((await Harness.Send(host, 'POST', '/api/tenants', { id: 't1', clientId: 'acme', displayName: 'T' })).status, 201)
+        assert.equal((await Harness.Send(host, 'POST', '/api/tenants', { id: 't1', clientId: 'acme', displayName: 'T', ownerEmail: 'o@x.test' })).status, 201)
         assert.equal((await Harness.Send(host, 'DELETE', '/api/clients/acme')).status, 409)
-        assert.equal((await Harness.Send(host, 'POST', '/api/tenants', { id: 't2', clientId: 'nope', displayName: 'T' })).status, 404)
+        assert.equal((await Harness.Send(host, 'POST', '/api/tenants', { id: 't2', clientId: 'nope', displayName: 'T', ownerEmail: 'o@x.test' })).status, 404)
         const hive = { id: 'h1', tenantId: 't1', displayName: 'H', cluster: { backend: 'local', mode: 'provision' }, registry: { mode: 'provision' } }
         assert.equal((await Harness.Send(host, 'POST', '/api/hives', hive)).status, 201)
         assert.equal((await Harness.Send(host, 'DELETE', '/api/tenants/t1')).status, 409)

@@ -23,12 +23,19 @@ import { EnvironmentService } from './environment-service.js'
 import { GraphService } from './graph-service.js'
 import { OperatorIdentity, type OperatorComposeOptions } from './operator-identity.js'
 import { NetPortProbe, PortAllocator } from './port-allocator.js'
+import { ExecFileDockerExec, IdpContainerEnv } from './idp-container-env.js'
+import { IdpRegistry } from './idp-registry.js'
+import { IdpService } from './idp-service.js'
+import { IdpAdminClient } from './idp-admin-client.js'
+import { TenantProvisioningService } from './tenant-provisioning-service.js'
 
 export class ControlPlaneServer
 {
     private static readonly PortEnvVar = 'PRAGMATIC_ADMIN_PORT'
     private static readonly DefaultPort = 7000
     private static readonly EnvPortFloor = 8100
+    private static readonly IdpPortFloor = 12100
+    private static readonly IdpsFile = 'idps.json'
     private static readonly MaxPort = 65535
     private static readonly BadPortPrefix = 'Invalid PRAGMATIC_ADMIN_PORT: '
     private static readonly BindHost = '127.0.0.1'
@@ -89,7 +96,9 @@ export class ControlPlaneServer
         const registrations = new RolloutRegistrationRegistry(join(dataRoot, ControlPlaneServer.RegistrationsFile))
         await Promise.all([manifests.Load(), gating.Load(), selections.Load(), reports.Load(), registrations.Load()])
         const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, reports, registrations, directory, orchestrators, registry, new EnvironmentPlacement(directory))
-        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, orchestrators, deployments)
+        const idpService = new IdpService(new PortAllocator(ControlPlaneServer.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), new IdpRegistry(join(dataRoot, ControlPlaneServer.IdpsFile)), dataRoot, DockerEnv.ImageName)
+        const provisioning = new TenantProvisioningService(idpService, directory, conn => new IdpAdminClient(conn))
+        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, orchestrators, deployments, provisioning)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
         await host.Listen(port, ControlPlaneServer.BindHost)
         console.log(ControlPlaneServer.ListeningPrefix + String(port) + ControlPlaneServer.ListeningSuffix)

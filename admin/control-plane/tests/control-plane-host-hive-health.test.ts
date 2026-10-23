@@ -4,6 +4,7 @@ import { request } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'node:test'
+import { FakeProvisioning } from './fake-provisioning.js'
 import { ControlPlaneHost, type IEnvironmentService, type IGraphService } from '../control-plane-host.js'
 import type { IOperatorIdentity, OperatorPrincipal, OperatorSession } from '../operator-identity.js'
 import { ClientRegistry } from '../client-registry.js'
@@ -138,7 +139,7 @@ describe('ControlPlaneHost hive health route', () =>
         await directory.CreateHive({ id: 'local1', tenantId: 't1', displayName: 'L', cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
         await directory.CreateHive({ id: 'cloud1', tenantId: 't1', displayName: 'C', cluster: { backend: HiveBackend.Aks, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
         const factory = new FakeFactory()
-        host = new ControlPlaneHost(new FakeService() as unknown as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, factory, await RolloutFixture.Create(parent, directory, factory))
+        host = new ControlPlaneHost(new FakeService() as unknown as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, factory, await RolloutFixture.Create(parent, directory, factory), new FakeProvisioning(directory).AsService())
         await host.Listen(0, '127.0.0.1')
     })
 

@@ -26,6 +26,7 @@ import { DockerEnv } from '../../environments/seed/docker.js'
 import { UserSeeder } from '../../environments/seed/users.js'
 import { AdminProxy, WsAdminConnector } from './admin-proxy.js'
 import { ControlPlaneHost } from './control-plane-host.js'
+import type { TenantProvisioningService } from './tenant-provisioning-service.js'
 import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import { ManifestRegistry } from './manifest-record.js'
 import { GatingRegistry } from './gating-record.js'
@@ -259,7 +260,7 @@ export class ControlPlaneSmoke
         const registrations = new RolloutRegistrationRegistry(join(dataRoot, ControlPlaneSmoke.RegistrationsFile))
         await Promise.all([manifests.Load(), gating.Load(), selections.Load(), reports.Load(), registrations.Load()])
         const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, reports, registrations, directory, orchestrators, registry, new EnvironmentPlacement(directory))
-        const host = new ControlPlaneHost(service, new GraphService(registry, proxy, name => service.AdminInfoFor(name)), staticRoot, operator, false, directory, orchestrators, deployments)
+        const host = new ControlPlaneHost(service, new GraphService(registry, proxy, name => service.AdminInfoFor(name)), staticRoot, operator, false, directory, orchestrators, deployments, {} as TenantProvisioningService)
         try
         {
             await host.Listen(0, ControlPlaneSmoke.LoopbackHost)
