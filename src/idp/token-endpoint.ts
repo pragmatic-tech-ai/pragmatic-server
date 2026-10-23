@@ -41,6 +41,8 @@ export class TokenEndpoint
     private static readonly NonceClaim = 'nonce';
     private static readonly IatClaim = 'iat';
     private static readonly ExpClaim = 'exp';
+    private static readonly EmailClaim = 'email';
+    private static readonly NameClaim = 'name';
 
     private readonly baseUrl: string;
 
@@ -87,7 +89,9 @@ export class TokenEndpoint
             [TokenEndpoint.SubClaim]: binding.Sub,
             [TokenEndpoint.NonceClaim]: binding.Nonce,
             [TokenEndpoint.IatClaim]: iat,
-            [TokenEndpoint.ExpClaim]: iat + TokenEndpoint.LifetimeSeconds
+            [TokenEndpoint.ExpClaim]: iat + TokenEndpoint.LifetimeSeconds,
+            [TokenEndpoint.EmailClaim]: binding.Email,
+            [TokenEndpoint.NameClaim]: binding.Name
         });
         return {
             status: TokenEndpoint.StatusOk,

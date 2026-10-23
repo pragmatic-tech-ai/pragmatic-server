@@ -22,6 +22,10 @@ class TokenFixture
     public static readonly Verifier = 'verifier-abcdefghijklmnopqrstuvwxyz0123456789';
     public static readonly Nonce = 'no-1';
     public static readonly Sub = 'p-1';
+    public static readonly Email = 'ada@example.com';
+    public static readonly Name = 'Ada Lovelace';
+    public static readonly EmailClaim = 'email';
+    public static readonly NameClaim = 'name';
     public static readonly KeyFile = 'key.pem';
     public static readonly TempPrefix = 'idp-token-';
     public static readonly GrantTypeField = 'grant_type';
@@ -69,7 +73,8 @@ class TokenFixture
     {
         const challenge = createHash(TokenFixture.HashAlgorithm).update(TokenFixture.Verifier).digest(TokenFixture.Base64Url);
         return this.codes.Issue(new AuthorizationCodeBinding(TokenFixture.Sub, TokenFixture.TenantId, TokenFixture.ClientId,
-            TokenFixture.RedirectUri, TokenFixture.Nonce, challenge, new Date(Date.now() + TokenFixture.CodeTtlMs)));
+            TokenFixture.RedirectUri, TokenFixture.Nonce, challenge, new Date(Date.now() + TokenFixture.CodeTtlMs),
+            TokenFixture.Email, TokenFixture.Name));
     }
 
     public static Form(code: string, overrides: Record<string, string> = {}): URLSearchParams
@@ -105,6 +110,23 @@ test('valid code + verifier + secret mints an id_token that verifies against JWK
         assert.equal(payload.nonce, TokenFixture.Nonce);
         assert.equal(typeof payload.iat, 'number');
         assert.equal(payload.exp, (payload.iat as number) + TokenFixture.LifetimeSeconds);
+    });
+});
+
+test('the id_token carries email and name claims', async () =>
+{
+    await TokenFixture.Run(async f =>
+    {
+        const r = await f.endpoint.Handle(TokenFixture.TenantId, TokenFixture.Form(await f.IssueCode()));
+        assert.equal(r.status, 200);
+        const body = r.body as { id_token: string };
+        const { payload } = await jwtVerify(body.id_token, createLocalJWKSet(f.key.PublicJwks()), {
+            issuer: `${TokenFixture.BaseUrl}/${TokenFixture.TenantId}`,
+            audience: TokenFixture.ClientId,
+            algorithms: [TokenFixture.Rs256]
+        });
+        assert.equal(payload[TokenFixture.EmailClaim], TokenFixture.Email);
+        assert.equal(payload[TokenFixture.NameClaim], TokenFixture.Name);
     });
 });
 
