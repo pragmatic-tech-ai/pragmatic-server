@@ -28,6 +28,10 @@ import { BundleBuilderAdapter, DockerEnvAdapter, UserSeederAdapter } from './doc
 import { EnvStatus, EnvType, Template } from './environment-record.js'
 import type { EnvironmentRecord } from './environment-record.js'
 import { EnvironmentRegistry } from './environment-registry.js'
+import { ClientRegistry } from './client-registry.js'
+import { TenantRegistry } from './tenant-registry.js'
+import { HiveRegistry } from './hive-registry.js'
+import { PlatformDirectory } from './platform-directory.js'
 import { EnvironmentNotFoundError, EnvironmentService } from './environment-service.js'
 import { GraphService } from './graph-service.js'
 import { NetPortProbe, PortAllocator } from './port-allocator.js'
@@ -201,6 +205,9 @@ export class LoopOrchestrator
 {
     private static readonly EnvPortFloor = 8100
     private static readonly RegistryFile = 'registry.json'
+    private static readonly ClientsFile = 'clients.json'
+    private static readonly TenantsFile = 'tenants.json'
+    private static readonly HivesFile = 'hives.json'
     private static readonly StaticDir = 'static'
     private static readonly DataRootFlag = '--data-root'
     private static readonly GraphFlag = '--graph'
@@ -310,9 +317,15 @@ export class LoopOrchestrator
         const registry = new EnvironmentRegistry(join(dataRoot, LoopOrchestrator.RegistryFile), docker)
         await registry.Load()
         await registry.Reconcile()
+        const directory = new PlatformDirectory(
+            new ClientRegistry(join(dataRoot, LoopOrchestrator.ClientsFile)),
+            new TenantRegistry(join(dataRoot, LoopOrchestrator.TenantsFile)),
+            new HiveRegistry(join(dataRoot, LoopOrchestrator.HivesFile)),
+            registry)
+        await directory.Load()
         const allocator = new PortAllocator(LoopOrchestrator.EnvPortFloor, new NetPortProbe())
         const proxy = new AdminProxy(new WsAdminConnector())
-        const service = new EnvironmentService(registry, allocator, docker, new BundleBuilderAdapter(), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy)
+        const service = new EnvironmentService(registry, allocator, docker, new BundleBuilderAdapter(), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy, directory)
         const graphs = new GraphService(registry, proxy, name => service.AdminInfoFor(name))
         return new LoopOrchestrator(service, graphs, new SeederLoopLogin(), logger, dataRoot, new PgLoopDatabase(service))
     }

@@ -24,6 +24,9 @@ export type EnvironmentRecord = {
     type: EnvType
     template: Template
     environmentId: string
+    /** Platform tenant (owning), from the hive. Distinct from environmentId (the data-plane scope). Unset while unbound. */
+    tenantId?: string
+    /** The hive this environment is placed on; unset while unbound. */
     hiveId?: string
     hostPort: number
     containerName: string

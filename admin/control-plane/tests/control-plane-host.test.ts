@@ -71,11 +71,12 @@ class FakeService implements IEnvironmentService
         status: EnvStatus.Running
     }
 
-    public async Create(name: string, template: Template, type: EnvType, hostPort?: number): Promise<EnvironmentRecord>
+    public async Create(name: string, template: Template, type: EnvType, hostPort?: number, hiveId?: string): Promise<EnvironmentRecord>
     {
-        this.Calls.push(`create:${name}:${template}:${type}:${String(hostPort)}`)
+        this.Calls.push(`create:${name}:${template}:${type}:${String(hostPort)}` + (hiveId === undefined ? '' : `:${hiveId}`))
         this.MaybeThrow()
-        return { ...this.Record, name, template, type }
+        const bound = hiveId === undefined ? {} : { hiveId, tenantId: 'plat-t1' }
+        return { ...this.Record, name, template, type, ...bound }
     }
 
     public async Start(name: string): Promise<EnvironmentRecord>
@@ -333,6 +334,19 @@ describe('ControlPlaneHost', () =>
         assert.deepEqual(Object.keys(arr[0]).sort(), Harness.DtoKeys)
         assert.equal(arr[0].httpUrl, 'http://localhost:8101')
         assert.equal(arr[0].wsUrl, 'ws://localhost:8101/?environment=dev')
+    })
+
+    it('create passes hiveId through and the DTO carries hiveId and platform tenantId', async () =>
+    {
+        const ok = await Harness.Send(host, 'POST', '/api/environments', JSON.stringify({ name: 'e1', template: 'dev-blank', type: 'development', hiveId: 'h1' }))
+        assert.equal(ok.status, 201)
+        assert.deepEqual(fake.Calls, ['create:e1:dev-blank:development:undefined:h1'])
+        const dto = JSON.parse(ok.body)
+        assert.equal(dto.hiveId, 'h1')
+        assert.equal(dto.tenantId, 'plat-t1')
+        assert.equal(dto.environmentId, 'dev')
+        const bad = await Harness.Send(host, 'POST', '/api/environments', JSON.stringify({ name: 'e2', template: 'dev-blank', type: 'development', hiveId: 5 }))
+        assert.equal(bad.status, 400)
     })
 
     it('creates, validates input', async () =>

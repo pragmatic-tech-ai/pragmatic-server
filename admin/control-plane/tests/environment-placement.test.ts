@@ -44,10 +44,10 @@ class PlacementFixture
         return f
     }
 
-    public static Env(environmentId: string, hiveId?: string): EnvironmentRecord
+    public static Env(tenantId: string, hiveId?: string): EnvironmentRecord
     {
         return {
-            name: 'e1', type: EnvType.Runtime, template: Template.RuntimePostgres, environmentId,
+            name: 'e1', type: EnvType.Runtime, template: Template.RuntimePostgres, environmentId: 'env-scope', tenantId,
             hostPort: 1, containerName: 'c', volumeName: 'v', bundleDir: 'b', createdAt: PlacementFixture.Now,
             status: EnvStatus.Running, hiveId
         }
@@ -93,6 +93,20 @@ test('WorkloadFor throws EnvironmentNotPlacedError when the record has no hive i
     try
     {
         assert.throws(() => f.placement.WorkloadFor(PlacementFixture.Env('t1')), EnvironmentNotPlacedError)
+    }
+    finally
+    {
+        await f.Dispose()
+    }
+})
+
+test('WorkloadFor skips tenant validation for an unbound-tenant record that has a hive id', async () =>
+{
+    const f = await PlacementFixture.Create()
+    try
+    {
+        const rec = { ...PlacementFixture.Env('t1', 'h1'), tenantId: undefined }
+        assert.equal(f.placement.WorkloadFor(rec).hiveId, 'h1')
     }
     finally
     {

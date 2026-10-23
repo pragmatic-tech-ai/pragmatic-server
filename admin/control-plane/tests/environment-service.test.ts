@@ -7,6 +7,11 @@ import { EnvironmentRegistry } from '../environment-registry.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord, type IContainerProbe } from '../environment-record.js'
 import { PortAllocator, PortUnavailableError, type IPortProbe } from '../port-allocator.js'
 import { EnvironmentService, EnvironmentNotDevelopmentError, EnvironmentNotRuntimeError, EnvironmentExistsError, EnvironmentNotFoundError, ImageMissingError, DockerUnavailableError, CreateFailedError } from '../environment-service.js'
+import { ClientRegistry } from '../client-registry.js'
+import { TenantRegistry } from '../tenant-registry.js'
+import { HiveRegistry } from '../hive-registry.js'
+import { HiveBackend, InfraMode } from '../platform-records.js'
+import { PlatformDirectory, HivePlacementError } from '../platform-directory.js'
 import type { IDockerEnv, IBundleBuilder, IUserSeeder } from '../docker-env-port.js'
 import { TenantPurposeName, type EnvDefinition } from '../../../environments/seed/bundle.js'
 import type { UserSeed } from '../../../environments/seed/users.js'
@@ -297,6 +302,7 @@ class Harness
     public Registry!: EnvironmentRegistry
     public Service!: EnvironmentService
     public DataRoot = ''
+    public Directory!: PlatformDirectory
 
     public static async Make(busy = false): Promise<Harness>
     {
@@ -305,7 +311,21 @@ class Harness
         h.DataRoot = join(dir, 'data')
         h.Registry = new RecordingRegistry(join(dir, 'envs.json'), new FakeProbe(), h.Calls)
         await h.Registry.Load()
-        h.Service = new EnvironmentService(h.Registry, new FakeAllocator(h.Calls, busy), h.Docker, h.Bundle, h.Seeder, h.DataRoot, h.Proxy)
+        h.Directory = new PlatformDirectory(
+            new ClientRegistry(join(dir, 'clients.json')),
+            new TenantRegistry(join(dir, 'tenants.json')),
+            new HiveRegistry(join(dir, 'hives.json')),
+            h.Registry)
+        await h.Directory.Load()
+        await h.Directory.CreateClient({ id: 'c1', displayName: 'C1' })
+        await h.Directory.CreateTenant({ id: 'plat-t1', clientId: 'c1', displayName: 'T1' })
+        await h.Directory.CreateTenant({ id: 'plat-t2', clientId: 'c1', displayName: 'T2' })
+        await h.Directory.CreateHive({
+            id: 'h1', tenantId: 'plat-t1', displayName: 'H1',
+            cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach, configRef: 'kube-ref' },
+            registry: { mode: InfraMode.Attach, endpoint: 'reg.local', credentialRef: 'cred-ref' }
+        })
+        h.Service = new EnvironmentService(h.Registry, new FakeAllocator(h.Calls, busy), h.Docker, h.Bundle, h.Seeder, h.DataRoot, h.Proxy, h.Directory)
         return h
     }
 
@@ -593,4 +613,45 @@ test('AdminGrantAppReader on a non-Runtime env throws before any proxy call', as
     await AdminFixture.Seed(h)
     await assert.rejects(() => h.Service.AdminGrantAppReader(AdminFixture.Name), EnvironmentNotRuntimeError)
     assert.equal(h.Proxy.Calls.length, 0)
+})
+
+test('Create with a valid hiveId binds the platform tenant and hive and passes placement', async () =>
+{
+    const h = await Harness.Make()
+    const rec = await h.Service.Create('bound1', Template.DevBlank, EnvType.Development, undefined, 'h1')
+    assert.equal(rec.tenantId, 'plat-t1')
+    assert.equal(rec.hiveId, 'h1')
+    assert.notEqual(rec.tenantId, rec.environmentId)
+    assert.doesNotThrow(() => h.Directory.ValidateHivePlacement(rec.tenantId!, rec.hiveId!))
+    assert.deepEqual(h.Registry.Get('bound1'), rec)
+})
+
+test('Create with an unknown hiveId throws HivePlacementError and creates nothing', async () =>
+{
+    const h = await Harness.Make()
+    await assert.rejects(() => h.Service.Create('bound2', Template.DevBlank, EnvType.Development, undefined, 'nope'), HivePlacementError)
+    assert.equal(h.Registry.Get('bound2'), undefined)
+    assert.deepEqual(h.Calls, [])
+})
+
+test('Create with a hive owned by another tenant is rejected by placement and creates nothing', async () =>
+{
+    const h = await Harness.Make()
+    await h.Directory.CreateHive({
+        id: 'h2', tenantId: 'plat-t2', displayName: 'H2',
+        cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach, configRef: 'kube-ref' },
+        registry: { mode: InfraMode.Attach, endpoint: 'reg.local', credentialRef: 'cred-ref' }
+    })
+    const rec = await h.Service.Create('bound3', Template.DevBlank, EnvType.Development, undefined, 'h2')
+    assert.equal(rec.tenantId, 'plat-t2')
+    assert.throws(() => h.Directory.ValidateHivePlacement('plat-t1', 'h2'), HivePlacementError)
+})
+
+test('Create without a hiveId leaves tenantId and hiveId unset', async () =>
+{
+    const h = await Harness.Make()
+    const rec = await h.Service.Create('unbound1', Template.DevBlank, EnvType.Development)
+    assert.equal(rec.tenantId, undefined)
+    assert.equal(rec.hiveId, undefined)
+    assert.deepEqual(h.Calls, ['allocate', 'generate', 'ensureImage', 'up', 'waitHealthy', 'put:running'])
 })

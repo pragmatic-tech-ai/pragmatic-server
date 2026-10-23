@@ -78,7 +78,7 @@ export class ControlPlaneServer
         const bundle = new BundleBuilderAdapter()
         const seeder = new UserSeederAdapter(new UserSeeder())
         const proxy = new AdminProxy(new WsAdminConnector())
-        const service = new EnvironmentService(registry, allocator, docker, bundle, seeder, dataRoot, proxy)
+        const service = new EnvironmentService(registry, allocator, docker, bundle, seeder, dataRoot, proxy, directory)
         const graphService = new GraphService(registry, proxy, name => service.AdminInfoFor(name))
         const staticRoot = join(here, ControlPlaneServer.ParentSegment, ControlPlaneServer.PortalSegment, ControlPlaneServer.DistSegment)
         const orchestrators = new HiveOrchestratorFactory()

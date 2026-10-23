@@ -244,7 +244,7 @@ export class ControlPlaneSmoke
         await directory.Load()
         const allocator = new PortAllocator(ControlPlaneSmoke.EnvPortFloor, new NetPortProbe())
         const proxy = new AdminProxy(new WsAdminConnector())
-        const service = new EnvironmentService(registry, allocator, docker, new BundleBuilderAdapter(), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy)
+        const service = new EnvironmentService(registry, allocator, docker, new BundleBuilderAdapter(), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy, directory)
         const operator = await OperatorIdentity.Compose({
             identityRoot: join(dataRoot, ControlPlaneSmoke.IdentityDir),
             masterKeyFile: join(dataRoot, ControlPlaneSmoke.MasterKeyFile),

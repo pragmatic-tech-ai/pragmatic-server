@@ -43,7 +43,7 @@ import type { CreateAccountParams, GraphLoadedDto, GrantMutationDto, IdentityCon
 
 export interface IEnvironmentService
 {
-    Create(name: string, template: Template, type: EnvType, hostPort?: number): Promise<EnvironmentRecord>
+    Create(name: string, template: Template, type: EnvType, hostPort?: number, hiveId?: string): Promise<EnvironmentRecord>
     Start(name: string): Promise<EnvironmentRecord>
     Stop(name: string): Promise<EnvironmentRecord>
     Delete(name: string): Promise<void>
@@ -79,6 +79,8 @@ export type EnvironmentDto = {
     template: Template
     type: EnvType
     environmentId: string
+    hiveId?: string
+    tenantId?: string
     hostPort: number
     status: EnvStatus
     createdAt: string
@@ -135,7 +137,7 @@ export type RolloutRegistrationDto = {
 export type ChangedEvent = { type: string }
 
 type ErrorCtor = abstract new (...args: never[]) => Error
-type CreateBody = { name?: unknown; template?: unknown; type?: unknown; hostPort?: unknown }
+type CreateBody = { name?: unknown; template?: unknown; type?: unknown; hostPort?: unknown; hiveId?: unknown }
 type LoginBody = { email?: unknown; password?: unknown }
 
 class BodyTooLargeError extends Error
@@ -144,6 +146,7 @@ class BodyTooLargeError extends Error
 
 export class ControlPlaneHost
 {
+    private static readonly HiveIdInvalidMessage = 'hiveId must be a non-empty string'
     private static readonly LocalName = 'localhost'
     private static readonly HttpScheme = 'http://'
     private static readonly WsScheme = 'ws://'
@@ -1431,7 +1434,12 @@ export class ControlPlaneHost
             }
             hostPort = body.hostPort
         }
-        const rec = await this.service.Create(body.name, body.template as Template, body.type as EnvType, hostPort)
+        if (body.hiveId !== undefined && (typeof body.hiveId !== 'string' || body.hiveId.length === 0))
+        {
+            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.HiveIdInvalidMessage })
+            return
+        }
+        const rec = await this.service.Create(body.name, body.template as Template, body.type as EnvType, hostPort, body.hiveId)
         this.WriteJson(res, ControlPlaneHost.StatusCreated, ControlPlaneHost.ToDto(rec))
         this.Broadcast(ControlPlaneHost.Changed())
     }
@@ -1659,6 +1667,8 @@ export class ControlPlaneHost
             template: r.template,
             type: r.type,
             environmentId: r.environmentId,
+            hiveId: r.hiveId,
+            tenantId: r.tenantId,
             hostPort: r.hostPort,
             status: r.status,
             createdAt: r.createdAt,

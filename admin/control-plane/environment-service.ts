@@ -10,6 +10,7 @@ import type { PortAllocator } from './port-allocator.js'
 import { TemplateCatalog } from './template-catalog.js'
 import type { AdminConnectInfo, AdminSnapshot, IAdminProxy } from './admin-proxy.js'
 import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { HivePlacementError, type PlatformDirectory } from './platform-directory.js'
 import type { IDockerEnv, IBundleBuilder, IUserSeeder } from './docker-env-port.js'
 
 export class EnvironmentExistsError extends Error
@@ -99,6 +100,7 @@ export class CreateFailedError extends Error
 /** Orchestrates environment lifecycle over the SP-ENV blocks via fakeable seams. */
 export class EnvironmentService
 {
+    private static readonly UnknownTenant = '(unknown)'
     private static readonly HttpPrefix = 'http://localhost:'
     private static readonly WsPrefix = 'ws://localhost:'
     private static readonly NoDatabasePrefix = 'environment has no provisioned database: '
@@ -127,13 +129,31 @@ export class EnvironmentService
         private readonly bundle: IBundleBuilder,
         private readonly seeder: IUserSeeder,
         private readonly dataRoot: string,
-        private readonly proxy: IAdminProxy)
+        private readonly proxy: IAdminProxy,
+        private readonly directory: PlatformDirectory)
     {
     }
 
-    public async Create(name: string, template: Template, type: EnvType, hostPort?: number): Promise<EnvironmentRecord>
+    /** Resolves the platform tenant that owns the hive and validates placement; undefined when unbound. Throws HivePlacementError before any side effect. */
+    private ResolveHiveTenant(hiveId: string | undefined): string | undefined
+    {
+        if (hiveId === undefined)
+        {
+            return undefined
+        }
+        const hive = this.directory.GetHive(hiveId)
+        if (hive === undefined)
+        {
+            throw new HivePlacementError(EnvironmentService.UnknownTenant, hiveId)
+        }
+        this.directory.ValidateHivePlacement(hive.tenantId, hiveId)
+        return hive.tenantId
+    }
+
+    public async Create(name: string, template: Template, type: EnvType, hostPort?: number, hiveId?: string): Promise<EnvironmentRecord>
     {
         const safe = TemplateCatalog.SanitizeName(name)
+        const platformTenantId = this.ResolveHiveTenant(hiveId)
         if (this.registry.Get(safe) !== undefined || this.inFlight.has(safe))
         {
             throw new EnvironmentExistsError(safe)
@@ -183,6 +203,11 @@ export class EnvironmentService
                 bundleDir,
                 createdAt: new Date().toISOString(),
                 status: EnvStatus.Running
+            }
+            if (hiveId !== undefined)
+            {
+                record.tenantId = platformTenantId
+                record.hiveId = hiveId
             }
             try
             {
