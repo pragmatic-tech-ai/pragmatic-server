@@ -8,7 +8,7 @@ class AuthorizationCodeStoreTestFixture
 
     public static Binding(expiresAt: Date): AuthorizationCodeBinding
     {
-        return new AuthorizationCodeBinding('sub-1', 'tenant-1', 'client-1', 'https://app/cb', 'nonce-1', 'challenge-1', expiresAt);
+        return new AuthorizationCodeBinding('sub-1', 'tenant-1', 'client-1', 'https://app/cb', 'nonce-1', 'challenge-1', expiresAt, 'user@example.com', 'Test User');
     }
 
     public static Store(): InMemoryAuthorizationCodeStore
@@ -49,4 +49,14 @@ test('codeBytes below the entropy minimum is rejected', () =>
 {
     assert.throws(() => new InMemoryAuthorizationCodeStore(() => AuthorizationCodeStoreTestFixture.Now, 8));
     assert.doesNotThrow(() => new InMemoryAuthorizationCodeStore());
+});
+
+test('a binding round-trips Email and Name through Issue/Take', async () =>
+{
+    const store = AuthorizationCodeStoreTestFixture.Store();
+    const binding = new AuthorizationCodeBinding('sub-2', 'tenant-1', 'client-1', 'https://app/cb', 'nonce-2', 'challenge-2', new Date(AuthorizationCodeStoreTestFixture.Now.getTime() + 60_000), 'ada@example.com', 'Ada Lovelace');
+    const code = await store.Issue(binding);
+    const taken = await store.Take(code);
+    assert.equal(taken?.Email, 'ada@example.com');
+    assert.equal(taken?.Name, 'Ada Lovelace');
 });

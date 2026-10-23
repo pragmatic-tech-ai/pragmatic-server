@@ -9,7 +9,9 @@ export class AuthorizationCodeBinding
         public readonly RedirectUri: string,
         public readonly Nonce: string,
         public readonly CodeChallenge: string,
-        public readonly ExpiresAt: Date)
+        public readonly ExpiresAt: Date,
+        public readonly Email: string,
+        public readonly Name: string)
     {
     }
 }
