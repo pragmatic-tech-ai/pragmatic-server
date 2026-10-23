@@ -29,7 +29,9 @@ import { IdpService } from './idp-service.js'
 import { IdpAdminClient } from './idp-admin-client.js'
 import { TenantProvisioningService } from './tenant-provisioning-service.js'
 import { TenantSessionStore } from './tenant-auth/tenant-session.js'
-import { TenantOidcRelyingParty } from './tenant-auth/tenant-oidc-relying-party.js'
+import { TenantOidcRelyingParty, type TenantAdminDurability } from './tenant-auth/tenant-oidc-relying-party.js'
+import { TenantAdminClientRegistry } from './tenant-auth/tenant-admin-client-record.js'
+import { MasterKeyFile } from './master-key-file.js'
 import { TenantAuthEndpoint } from './tenant-auth/tenant-auth-endpoint.js'
 import { TenantAuthGate } from './tenant-auth/tenant-auth-gate.js'
 import { TenantApiEndpoint } from './tenant-api/tenant-api-endpoint.js'
@@ -77,6 +79,12 @@ export class ControlPlaneServer
     private static readonly TenantSessionsFile = 'tenant-sessions.json'
     private static readonly TenantSessionTtlMs = 12 * 60 * 60 * 1000
     private static readonly HostListSeparator = ','
+    private static readonly SecretTtlEnvVar = 'PRAGMATIC_TENANT_ADMIN_SECRET_TTL_HOURS'
+    private static readonly DefaultSecretTtlHours = 168
+    private static readonly MsPerHour = 3600000
+    private static readonly TenantAdminClientsFile = 'tenant-admin-clients.json'
+    private static readonly TenantAdminOidcDir = 'tenant-admin-oidc'
+    private static readonly PositiveIntegerPattern = /^[0-9]+$/
 
     public static async Main(): Promise<void>
     {
@@ -85,6 +93,7 @@ export class ControlPlaneServer
         mkdirSync(dataRoot, { recursive: true })
         const opts = ControlPlaneServer.ReadOperatorOptions(process.env, dataRoot)
         const operator = await OperatorIdentity.Compose(opts)
+        const masterKey = MasterKeyFile.Load(opts.masterKeyFile)
         const docker = new DockerEnvAdapter(new DockerEnv())
         const registry = new EnvironmentRegistry(join(dataRoot, ControlPlaneServer.RegistryFile), docker)
         await registry.Load()
@@ -109,12 +118,14 @@ export class ControlPlaneServer
         const selections = new SelectionRegistry(join(dataRoot, ControlPlaneServer.SelectionsFile))
         const reports = new RolloutReportRegistry(join(dataRoot, ControlPlaneServer.ReportsFile))
         const registrations = new RolloutRegistrationRegistry(join(dataRoot, ControlPlaneServer.RegistrationsFile))
-        await Promise.all([manifests.Load(), gating.Load(), selections.Load(), reports.Load(), registrations.Load()])
+        const adminClientRegistry = new TenantAdminClientRegistry(join(dataRoot, ControlPlaneServer.TenantAdminClientsFile))
+        await Promise.all([manifests.Load(), gating.Load(), selections.Load(), reports.Load(), registrations.Load(), adminClientRegistry.Load()])
         const placement = new EnvironmentPlacement(directory)
         const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, reports, registrations, directory, orchestrators, registry, placement)
         const provisioning = new TenantProvisioningService(idpService, directory, conn => new IdpAdminClient(conn))
         const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie, service, deployments, orchestrators, placement,
-            join(here, ControlPlaneServer.ParentSegment, ControlPlaneServer.TenantPortalSegment, ControlPlaneServer.DistSegment))
+            join(here, ControlPlaneServer.ParentSegment, ControlPlaneServer.TenantPortalSegment, ControlPlaneServer.DistSegment),
+            masterKey, adminClientRegistry, ControlPlaneServer.ParseSecretTtlHours(process.env[ControlPlaneServer.SecretTtlEnvVar]))
         const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, orchestrators, deployments, provisioning, tenantPlane)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
         await host.Listen(port, ControlPlaneServer.BindHost)
@@ -150,7 +161,10 @@ export class ControlPlaneServer
         deployments: PlatformDeploymentRegistry,
         orchestrators: HiveOrchestratorFactory,
         placement: EnvironmentPlacement,
-        staticRoot: string): TenantPlane | undefined
+        staticRoot: string,
+        masterKey: Buffer,
+        adminClientRegistry: TenantAdminClientRegistry,
+        secretTtlHours: number): TenantPlane | undefined
     {
         const rawHosts = env[ControlPlaneServer.TenantHostsEnvVar]
         const callbackUrl = env[ControlPlaneServer.TenantCallbackEnvVar]
@@ -164,12 +178,29 @@ export class ControlPlaneServer
             return undefined
         }
         const sessions = new TenantSessionStore(join(dataRoot, ControlPlaneServer.TenantSessionsFile), ControlPlaneServer.TenantSessionTtlMs)
-        const rp = new TenantOidcRelyingParty(idpService, directory, conn => new IdpAdminClient(conn), callbackUrl)
+        const durability: TenantAdminDurability = {
+            storeRoot: join(dataRoot, ControlPlaneServer.TenantAdminOidcDir),
+            masterKey,
+            registry: adminClientRegistry,
+            secretTtlMs: secretTtlHours * ControlPlaneServer.MsPerHour,
+        }
+        const rp = new TenantOidcRelyingParty(idpService, directory, conn => new IdpAdminClient(conn), callbackUrl, undefined, undefined, durability)
         const endpoint = new TenantAuthEndpoint(rp, sessions, secureCookie)
         const gate = new TenantAuthGate(sessions)
         const api = new TenantApiEndpoint(service, directory, deployments, orchestrators, placement)
         const events = new TenantEventBus()
-        return { endpoint, gate, api, allowedHosts, events, staticRoot }
+        return { endpoint, gate, api, allowedHosts, events, staticRoot, isDurable: rp.IsDurable }
+    }
+
+    /** Pure: parses the tenant-admin secret TTL in hours; anything but a positive integer yields the default. */
+    public static ParseSecretTtlHours(raw: string | undefined): number
+    {
+        if (raw === undefined || !ControlPlaneServer.PositiveIntegerPattern.test(raw))
+        {
+            return ControlPlaneServer.DefaultSecretTtlHours
+        }
+        const hours = Number.parseInt(raw, 10)
+        return hours > 0 ? hours : ControlPlaneServer.DefaultSecretTtlHours
     }
 
     /** Parses a comma-separated host list into a set of trimmed, lowercased, non-empty hosts. */

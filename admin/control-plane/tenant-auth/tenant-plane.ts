@@ -28,4 +28,6 @@ export type TenantPlane =
     events: TenantEventBus
     /** Absolute directory of the built tenant portal bundle, served on the tenant hosts. */
     staticRoot: string
+    /** Whether the auth endpoint's relying-party was wired with the durable reuse/TTL secret path (production) vs the legacy path. */
+    isDurable?: boolean
 }
