@@ -137,3 +137,17 @@ test('Up propagates a docker failure with subcommand + stderr but not the argv',
     exec.FailWith = new Error('daemon down')
     await assert.rejects(new IdpContainerEnv(exec).Up(Fixture.Spec), /daemon down/)
 })
+
+test('SeedVolume runs a throwaway root container copying the host dir into the volume with open perms', async () =>
+{
+    const exec = new FakeExec()
+    await new IdpContainerEnv(exec).SeedVolume('idp-t1-data', '/host/idp/t1', 'img:1')
+    const args = exec.Calls[0]
+    assert.equal(args[0], 'run')
+    assert.ok(args.includes('--rm'))
+    assert.deepEqual(args.slice(args.indexOf('--user'), args.indexOf('--user') + 2), ['--user', '0'])
+    assert.ok(args.includes('idp-t1-data:/idp-data'))
+    assert.ok(args.includes('/host/idp/t1:/seed:ro'))
+    assert.ok(args.includes('img:1'))
+    assert.match(args[args.length - 1], /cp -a \/seed\/\. \/idp-data\/ && chmod -R a\+rwX \/idp-data/)
+})

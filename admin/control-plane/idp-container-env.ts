@@ -72,6 +72,14 @@ export class IdpContainerEnv
     private static readonly RmCmd = 'rm'
     private static readonly ForceFlag = '-f'
     private static readonly VolumeCmd = 'volume'
+    private static readonly RmFlag = '--rm'
+    private static readonly UserFlag = '--user'
+    private static readonly RootUser = '0'
+    private static readonly ShBinary = 'sh'
+    private static readonly ShCommandFlag = '-c'
+    private static readonly SeedMount = '/seed'
+    private static readonly ReadOnly = ':ro'
+    private static readonly DefaultSeedImage = 'pragmatic-server:dev'
 
     private static readonly EnvPort = 'PRAGMATIC_IDP_PORT'
     private static readonly EnvBaseUrl = 'PRAGMATIC_IDP_BASE_URL'
@@ -118,6 +126,30 @@ export class IdpContainerEnv
     public async Up(spec: IdpContainerSpec): Promise<void>
     {
         await this.exec.Run(IdpContainerEnv.RunArgs(spec))
+    }
+
+    /** Script run in the throwaway root container: copy the host dir into the volume, then open perms for the IdP's non-root uid. */
+    public static SeedScript(): string
+    {
+        return `cp -a ${IdpContainerEnv.SeedMount}/. ${IdpContainerEnv.DataMount}/ && chmod -R a+rwX ${IdpContainerEnv.DataMount}`
+    }
+
+    public static SeedArgs(volumeName: string, hostDir: string, image: string): string[]
+    {
+        return [
+            IdpContainerEnv.Run, IdpContainerEnv.RmFlag, IdpContainerEnv.UserFlag, IdpContainerEnv.RootUser,
+            IdpContainerEnv.VolumeFlag, `${volumeName}:${IdpContainerEnv.DataMount}`,
+            IdpContainerEnv.VolumeFlag, `${hostDir}:${IdpContainerEnv.SeedMount}${IdpContainerEnv.ReadOnly}`,
+            IdpContainerEnv.EntrypointFlag, IdpContainerEnv.ShBinary,
+            image,
+            IdpContainerEnv.ShCommandFlag, IdpContainerEnv.SeedScript()
+        ]
+    }
+
+    /** Seeds the named data volume from a host dir via a throwaway root container, leaving it writable by the IdP's uid. */
+    public async SeedVolume(volumeName: string, hostDir: string, image: string = IdpContainerEnv.DefaultSeedImage): Promise<void>
+    {
+        await this.exec.Run(IdpContainerEnv.SeedArgs(volumeName, hostDir, image))
     }
 
     /** Force-removes the container; absence is the desired end state. */
