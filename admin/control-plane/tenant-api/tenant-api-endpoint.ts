@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { IEnvironmentService } from '../control-plane-host.js'
 import { EnvironmentDtoMapper } from '../environment-dto.js'
+import { HiveDtoMapper } from './hive-dto.js'
 import { HiveHealthProducer } from '../hive-health-producer.js'
 import type { EnvironmentPlacement } from '../environment-placement.js'
 import type { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
@@ -31,6 +32,8 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         '^' + TenantApiEndpoint.Prefix + TenantApiEndpoint.HivesSegment + '/([^/]+)/(' +
         TenantApiEndpoint.RolloutSegment + '|' + TenantApiEndpoint.HealthSegment + ')$')
     private static readonly MethodGet = 'GET'
+    /** The fallback for an absent request method: an impossible method so only a real 'GET' matches a route (never mis-serve a methodless request as GET). */
+    private static readonly MethodNone = ''
     private static readonly ContentTypeHeader = 'Content-Type'
     private static readonly JsonType = 'application/json; charset=utf-8'
     private static readonly StatusOk = 200
@@ -52,12 +55,12 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
 
     public async Handle(req: IncomingMessage, res: ServerResponse, path: string, session: TenantSession): Promise<boolean>
     {
-        const method = req.method ?? TenantApiEndpoint.MethodGet
+        const method = req.method ?? TenantApiEndpoint.MethodNone
         if (method === TenantApiEndpoint.MethodGet)
         {
             if (path === TenantApiEndpoint.HivesPath)
             {
-                this.WriteJson(res, TenantApiEndpoint.StatusOk, this.directory.ListHives(session.tenantId))
+                this.WriteJson(res, TenantApiEndpoint.StatusOk, this.directory.ListHives(session.tenantId).map(h => HiveDtoMapper.ToDto(h)))
                 return true
             }
             if (path === TenantApiEndpoint.EnvironmentsPath)

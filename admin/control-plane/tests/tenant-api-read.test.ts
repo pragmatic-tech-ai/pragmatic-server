@@ -146,18 +146,21 @@ describe('TenantApiEndpoint read routes', () =>
     beforeEach(async () =>
     {
         parent = mkdtempSync(join(tmpdir(), 'tenant-api-read-'))
+        const hives = new HiveRegistry(join(parent, 'hives.json'))
         directory = new PlatformDirectory(
             new ClientRegistry(join(parent, 'clients.json')),
             new TenantRegistry(join(parent, 'tenants.json')),
-            new HiveRegistry(join(parent, 'hives.json')),
+            hives,
             { List: () => [] })
         await directory.Load()
         await directory.CreateClient({ id: 'acme-a', displayName: 'Acme A' })
         await directory.CreateClient({ id: 'acme-b', displayName: 'Acme B' })
         await directory.CreateTenant({ id: TenantA, clientId: 'acme-a', displayName: 'Tenant A' })
         await directory.CreateTenant({ id: TenantB, clientId: 'acme-b', displayName: 'Tenant B' })
-        await directory.CreateHive({ id: 'hive-a', tenantId: TenantA, displayName: 'Hive A', cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
+        await directory.CreateHive({ id: 'hive-a', tenantId: TenantA, displayName: 'Hive A', cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach, configRef: 'ctx-a' }, registry: { mode: InfraMode.Provision }, trustRootRef: 'trust-ref-a' })
         await directory.CreateHive({ id: 'hive-b', tenantId: TenantB, displayName: 'Hive B', cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
+        // Give hive-a a server-side agent-token ref too; the tenant surface must omit both it and trustRootRef.
+        await hives.Put({ ...directory.GetHive('hive-a')!, agentTokenRef: 'agent-ref-a' })
         const records = [
             Fixtures.Env('a-env', 'hive-a', TenantA),
             Fixtures.Env('b-env', 'hive-b', TenantB),
@@ -191,7 +194,23 @@ describe('TenantApiEndpoint read routes', () =>
     {
         const res = await Get('/tenant-api/hives', Fixtures.Session(TenantA))
         assert.equal(res.status, 200)
-        assert.deepEqual((res.Json() as HiveRecord[]).map(h => h.id), ['hive-a'])
+        assert.deepEqual((res.Json() as Array<{ id: string }>).map(h => h.id), ['hive-a'])
+    })
+
+    it('omits server-side token/trust refs from the tenant hives surface, keeping the coordinates a tenant needs', async () =>
+    {
+        const res = await Get('/tenant-api/hives', Fixtures.Session(TenantA))
+        assert.equal(res.status, 200)
+        const hive = (res.Json() as Array<Record<string, unknown>>)[0]!
+        // The tenant-facing projection drops both reference names...
+        assert.equal('agentTokenRef' in hive, false)
+        assert.equal('trustRootRef' in hive, false)
+        // ...but keeps everything a tenant admin needs.
+        assert.deepEqual(Object.keys(hive).sort(), ['cluster', 'createdAt', 'displayName', 'id', 'registry', 'tenantId'])
+        assert.equal(hive.id, 'hive-a')
+        assert.equal(hive.tenantId, TenantA)
+        assert.deepEqual(hive.cluster, { backend: HiveBackend.Local, mode: InfraMode.Attach, configRef: 'ctx-a' })
+        assert.doesNotMatch(res.body, /trust-ref-a|agent-ref-a/)
     })
 
     it('lists only the session tenant\'s environments, excluding other tenants and unbound envs', async () =>
