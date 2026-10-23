@@ -39,7 +39,7 @@ export class RedisWorkerRouter implements IWorkerRouter
         this.clientFactory = clientFactory ?? (() => createClient({ url: this.url }) as RedisClientType)
     }
 
-    public async RouteOrSpawn(tenantId: string): Promise<WorkerEndpoint>
+    public async RouteOrSpawn(environmentId: string): Promise<WorkerEndpoint>
     {
         const client = await this.Connected()
         const live = await client.zRangeByScore(ClusterKeys.Workers, this.now(), RedisWorkerRouter.PlusInf)
@@ -47,7 +47,7 @@ export class RedisWorkerRouter implements IWorkerRouter
         {
             throw new NoWorkersAvailableError()
         }
-        const key = ClusterKeys.RoutePrefix + tenantId
+        const key = ClusterKeys.RoutePrefix + environmentId
         const existing = await client.get(key)
         // The route value and live-set members are the SAME encoding (WorkerRegistration writes JSON.stringify(endpoint)), so a byte match means the claimed worker is still live.
         if (existing !== null && live.includes(existing))
@@ -55,7 +55,7 @@ export class RedisWorkerRouter implements IWorkerRouter
             await client.eval(RedisWorkerRouter.RenewScript, { keys: [key], arguments: [existing, String(RedisWorkerRouter.RouteTtlMs)] })
             return JSON.parse(existing) as WorkerEndpoint
         }
-        const pick = RedisWorkerRouter.Pick(tenantId, live)
+        const pick = RedisWorkerRouter.Pick(environmentId, live)
         if (existing === null)
         {
             const claimed = await client.set(key, pick, { NX: true, PX: RedisWorkerRouter.RouteTtlMs })
@@ -84,13 +84,13 @@ export class RedisWorkerRouter implements IWorkerRouter
     }
 
     /** Deterministic stable pick so every gateway indexes the same sorted live list (FNV-1a over the tenant id). */
-    private static Pick(tenantId: string, live: readonly string[]): string
+    private static Pick(environmentId: string, live: readonly string[]): string
     {
         const sorted = [...live].sort()
         let hash = 2166136261
-        for (let i = 0; i < tenantId.length; i++)
+        for (let i = 0; i < environmentId.length; i++)
         {
-            hash ^= tenantId.charCodeAt(i)
+            hash ^= environmentId.charCodeAt(i)
             hash = Math.imul(hash, 16777619)
         }
         const index = (hash >>> 0) % sorted.length

@@ -35,10 +35,10 @@ class RegistryFixture
         return { baseDir, fixture }
     }
 
-    public static SeedSolution(baseDir: string, tenantId: string, fixture: string): string
+    public static SeedSolution(baseDir: string, environmentId: string, fixture: string): string
     {
-        const solution = join(baseDir, tenantId, 'solution')
-        mkdirSync(join(baseDir, tenantId), { recursive: true })
+        const solution = join(baseDir, environmentId, 'solution')
+        mkdirSync(join(baseDir, environmentId), { recursive: true })
         cpSync(fixture, solution, { recursive: true })
         return solution
     }

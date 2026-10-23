@@ -10,7 +10,7 @@ class PurposeFixture
 {
     public static readonly KeyEnv = 'PS_C1_KEY'
     public static readonly BaseDir = 'base'
-    public static readonly TenantId = 't1'
+    public static readonly EnvironmentId = 't1'
     public static readonly Display = 'T'
 
     public static Registry(): TenantRegistry
@@ -21,14 +21,14 @@ class PurposeFixture
 
 test('OptionsFor threads Runtime purpose and the per-tenant applications root', () =>
 {
-    const options = PurposeFixture.Registry().OptionsFor(PurposeFixture.TenantId, { displayName: PurposeFixture.Display, purpose: TenantPurpose.Runtime })
+    const options = PurposeFixture.Registry().OptionsFor(PurposeFixture.EnvironmentId, { displayName: PurposeFixture.Display, purpose: TenantPurpose.Runtime })
     assert.equal(options.purpose, TenantPurpose.Runtime)
-    assert.ok(options.applicationsRoot!.endsWith(`${PurposeFixture.TenantId}${sep}applications`))
+    assert.ok(options.applicationsRoot!.endsWith(`${PurposeFixture.EnvironmentId}${sep}applications`))
 })
 
 test('absent purpose defaults to Development', () =>
 {
-    const options = PurposeFixture.Registry().OptionsFor(PurposeFixture.TenantId, { displayName: PurposeFixture.Display })
+    const options = PurposeFixture.Registry().OptionsFor(PurposeFixture.EnvironmentId, { displayName: PurposeFixture.Display })
     assert.equal(new PragmaticServer(options).Purpose(), TenantPurpose.Development)
 })
 

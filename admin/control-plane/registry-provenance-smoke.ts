@@ -278,7 +278,7 @@ export class RegistryProvenanceSmoke
             name,
             type: EnvType.Development,
             template: Template.DevBlank,
-            tenantId: name,
+            environmentId: name,
             hiveId: S.HiveId,
             hostPort: 0,
             containerName: name,

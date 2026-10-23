@@ -26,7 +26,7 @@ class RegistryFixture
             name,
             type: EnvType.Development,
             template: Template.DevBlank,
-            tenantId: `tenant-${name}`,
+            environmentId: `tenant-${name}`,
             hostPort: port,
             containerName: `c-${name}`,
             volumeName: `v-${name}`,

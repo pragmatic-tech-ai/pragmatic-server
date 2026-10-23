@@ -81,7 +81,7 @@ class FakeService
     public static Record(name: string, hiveId: string | undefined): EnvironmentRecord
     {
         return {
-            name, type: EnvType.Development, template: Template.DevBlank, tenantId: 't1', hiveId, hostPort: 8101,
+            name, type: EnvType.Development, template: Template.DevBlank, environmentId: 't1', hiveId, hostPort: 8101,
             containerName: 'c-' + name, volumeName: 'v-' + name, bundleDir: '/b/' + name, createdAt: '2026-01-01T00:00:00Z', status: EnvStatus.Running
         }
     }

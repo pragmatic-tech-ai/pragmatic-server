@@ -311,7 +311,7 @@ class Harness
 
     public static Record(name: string, status: EnvStatus): EnvironmentRecord
     {
-        return { name, template: Template.DevBlank, tenantId: name, hostPort: 9200, type: EnvType.Development, containerName: `pragmatic-env-${name}`, volumeName: `pragmatic-env-${name}-data`, bundleDir: `/b/${name}`, createdAt: '2026-10-16T00:00:00.000Z', status }
+        return { name, template: Template.DevBlank, environmentId: name, hostPort: 9200, type: EnvType.Development, containerName: `pragmatic-env-${name}`, volumeName: `pragmatic-env-${name}-data`, bundleDir: `/b/${name}`, createdAt: '2026-10-16T00:00:00.000Z', status }
     }
 }
 
@@ -330,7 +330,7 @@ test('Create demo runs the full ordered flow and persists a Running record', asy
     assert.equal(got?.hostPort, 9100)
     assert.equal(got?.containerName, 'pragmatic-env-demo1')
     assert.equal(got?.volumeName, 'pragmatic-env-demo1-data')
-    assert.equal(got?.tenantId, 'contoso')
+    assert.equal(got?.environmentId, 'contoso')
 })
 
 test('Create dev skips user seeding', async () =>

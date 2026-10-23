@@ -10,18 +10,18 @@ class RunArgsProbe
     public static readonly DevelopmentHostPort = 8080
     private static readonly RuntimeName = 'runtime'
     private static readonly DevelopmentName = 'dev'
-    private static readonly TenantId = 'contoso'
+    private static readonly EnvironmentId = 'contoso'
     private static readonly DevelopmentTenantId = 'dev'
     private static readonly OriginScheme = 'http://localhost:'
 
     public static RuntimeDef(hostPort: number): EnvDefinition
     {
-        return { name: RunArgsProbe.RuntimeName, kind: EnvKind.Demo, tenantId: RunArgsProbe.TenantId, purpose: TenantPurposeName.Runtime, hostPort }
+        return { name: RunArgsProbe.RuntimeName, kind: EnvKind.Demo, environmentId: RunArgsProbe.EnvironmentId, purpose: TenantPurposeName.Runtime, hostPort }
     }
 
     public static DevelopmentDef(hostPort: number): EnvDefinition
     {
-        return { name: RunArgsProbe.DevelopmentName, kind: EnvKind.Dev, tenantId: RunArgsProbe.DevelopmentTenantId, purpose: TenantPurposeName.Development, hostPort }
+        return { name: RunArgsProbe.DevelopmentName, kind: EnvKind.Dev, environmentId: RunArgsProbe.DevelopmentTenantId, purpose: TenantPurposeName.Development, hostPort }
     }
 
     public static DatabaseDef(): EnvDefinition

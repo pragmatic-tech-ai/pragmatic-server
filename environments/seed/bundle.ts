@@ -18,7 +18,7 @@ export enum TenantPurposeName
 }
 
 export type EnvDatabase = { connectionName: string; host: string; port: number; database: string; user: string; password: string; hostPort: number }
-export type EnvDefinition = { name: string; kind: EnvKind; tenantId: string; purpose: TenantPurposeName; hostPort: number; database?: EnvDatabase }
+export type EnvDefinition = { name: string; kind: EnvKind; environmentId: string; purpose: TenantPurposeName; hostPort: number; database?: EnvDatabase }
 
 /** Generates a pragmatic-server config bundle (master key, secrets, tenants, tenant config, demo app) for one environment. */
 export class BundleBuilder
@@ -61,7 +61,7 @@ export class BundleBuilder
         BundleBuilder.WriteMasterKey(bundleDir)
         BundleBuilder.WriteSecrets(def, bundleDir, seedDir)
         BundleBuilder.WriteTenants(def, bundleDir)
-        const tenantDir = join(bundleDir, BundleBuilder.DataDir, def.tenantId)
+        const tenantDir = join(bundleDir, BundleBuilder.DataDir, def.environmentId)
         BundleBuilder.WriteTenantConfig(def, tenantDir, seedDir)
         if (def.kind === EnvKind.Demo)
         {
@@ -86,7 +86,7 @@ export class BundleBuilder
             return
         }
         const secrets: Record<string, string> = {}
-        secrets[def.tenantId + BundleBuilder.AdminSecretSuffix] = BundleBuilder.RandomSecret()
+        secrets[def.environmentId + BundleBuilder.AdminSecretSuffix] = BundleBuilder.RandomSecret()
         for (const principalId of BundleBuilder.UserPrincipals(seedDir))
         {
             secrets[principalId + BundleBuilder.PrincipalSecretSuffix] = BundleBuilder.RandomSecret()
@@ -100,7 +100,7 @@ export class BundleBuilder
 
     public static DbSecretRef(def: EnvDefinition, db: EnvDatabase): string
     {
-        return def.tenantId + BundleBuilder.PathSep + db.connectionName + BundleBuilder.DbSecretSuffix
+        return def.environmentId + BundleBuilder.PathSep + db.connectionName + BundleBuilder.DbSecretSuffix
     }
 
     private static UserPrincipals(seedDir: string): string[]
@@ -125,12 +125,12 @@ export class BundleBuilder
     {
         const tenants: Record<string, unknown> = {}
         const tenant: Record<string, unknown> = {
-            displayName: def.tenantId,
+            displayName: def.environmentId,
             purpose: Number(def.purpose),
             bootstrap: {
-                adminEmail: BundleBuilder.AdminEmailPrefix + def.tenantId + BundleBuilder.AdminEmailSuffix,
+                adminEmail: BundleBuilder.AdminEmailPrefix + def.environmentId + BundleBuilder.AdminEmailSuffix,
                 adminPrincipalId: BundleBuilder.AdminPrincipalId,
-                adminPasswordRef: def.tenantId + BundleBuilder.AdminSecretSuffix,
+                adminPasswordRef: def.environmentId + BundleBuilder.AdminSecretSuffix,
                 ownerGrant: true,
             },
             connectorsPolicy: { adapterAllowlist: [], catalogOnly: true, allowProviderOverride: false, providerAllowlist: [] },
@@ -144,11 +144,11 @@ export class BundleBuilder
             connections[db.connectionName] = { settings: { host: db.host, port: String(db.port), database: db.database, user: db.user }, secretRef: BundleBuilder.DbSecretRef(def, db) }
             tenant.connections = connections
         }
-        tenants[def.tenantId] = tenant
+        tenants[def.environmentId] = tenant
         BundleBuilder.WriteJson(join(bundleDir, BundleBuilder.TenantsFile), { tenants })
     }
 
-    /** Matches FileTenantConfigStore: { configs: { <tenantId>: record } }, Map fields serialized as entry arrays. */
+    /** Matches FileTenantConfigStore: { configs: { <environmentId>: record } }, Map fields serialized as entry arrays. */
     private static WriteTenantConfig(def: EnvDefinition, tenantDir: string, seedDir: string): void
     {
         const identityDir = join(tenantDir, BundleBuilder.IdentityDir)
@@ -166,7 +166,7 @@ export class BundleBuilder
             record.securityModel = JSON.parse(readFileSync(modelPath, BundleBuilder.Utf8))
         }
         const configs: Record<string, unknown> = {}
-        configs[def.tenantId] = record
+        configs[def.environmentId] = record
         BundleBuilder.WriteJson(join(identityDir, BundleBuilder.TenantConfigFile), { configs })
     }
 

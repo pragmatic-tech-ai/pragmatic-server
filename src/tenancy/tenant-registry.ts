@@ -21,9 +21,9 @@ export class InMemoryTenantProvisioning implements ITenantProvisioning
         this.entries = entries
     }
 
-    public OptionsFor(tenantId: string): TenantProvisioning | null
+    public OptionsFor(environmentId: string): TenantProvisioning | null
     {
-        return this.entries.get(tenantId) ?? null
+        return this.entries.get(environmentId) ?? null
     }
 }
 
@@ -67,72 +67,72 @@ export class TenantRegistry
         this.ownership = ownership
         this.provisionedSecrets = provisionedSecrets
         this.identityRuntime = identityRuntime
-        this.ownership.OnLost(tenantId => void this.DisposeTenant(tenantId))
+        this.ownership.OnLost(environmentId => void this.DisposeTenant(environmentId))
     }
 
-    public async ServerFor(tenantId: string): Promise<PragmaticServer>
+    public async ServerFor(environmentId: string): Promise<PragmaticServer>
     {
-        const existing = this.servers.get(tenantId)
+        const existing = this.servers.get(environmentId)
         if (existing !== undefined)
         {
             return existing
         }
-        const inFlight = this.pending.get(tenantId)
+        const inFlight = this.pending.get(environmentId)
         if (inFlight !== undefined)
         {
             return inFlight
         }
-        const build = this.Build(tenantId)
-        this.pending.set(tenantId, build)
+        const build = this.Build(environmentId)
+        this.pending.set(environmentId, build)
         try
         {
             const server = await build
-            if (this.lostDuringBuild.delete(tenantId))
+            if (this.lostDuringBuild.delete(environmentId))
             {
                 await server.Dispose().catch(() => {})
                 throw new TenantOwnedElsewhereError()
             }
-            this.servers.set(tenantId, server)
-            this.coordinator.Note(tenantId)
+            this.servers.set(environmentId, server)
+            this.coordinator.Note(environmentId)
             return server
         }
         finally
         {
-            this.pending.delete(tenantId)
-            this.lostDuringBuild.delete(tenantId)
+            this.pending.delete(environmentId)
+            this.lostDuringBuild.delete(environmentId)
         }
     }
 
-    public Acquire(tenantId: string): void
+    public Acquire(environmentId: string): void
     {
-        this.coordinator.Acquire(tenantId)
+        this.coordinator.Acquire(environmentId)
     }
 
-    public Release(tenantId: string): void
+    public Release(environmentId: string): void
     {
-        this.coordinator.Release(tenantId)
+        this.coordinator.Release(environmentId)
     }
 
     public async EvictIdle(nowMs: number, idleTtlMs: number): Promise<void>
     {
-        for (const tenantId of this.coordinator.EvictCandidates(nowMs, idleTtlMs))
+        for (const environmentId of this.coordinator.EvictCandidates(nowMs, idleTtlMs))
         {
-            if (!this.coordinator.EvictCandidates(nowMs, idleTtlMs).includes(tenantId))
+            if (!this.coordinator.EvictCandidates(nowMs, idleTtlMs).includes(environmentId))
             {
                 continue
             }
-            const server = this.servers.get(tenantId)
+            const server = this.servers.get(environmentId)
             if (server === undefined)
             {
                 continue
             }
-            this.servers.delete(tenantId)
-            this.coordinator.Forget(tenantId)
+            this.servers.delete(environmentId)
+            this.coordinator.Forget(environmentId)
             const tracked = server.Dispose()
                 .catch(() => {})
-                .then(() => this.ownership.Release(tenantId).catch(() => {}))
-                .finally(() => this.disposing.delete(tenantId))
-            this.disposing.set(tenantId, tracked)
+                .then(() => this.ownership.Release(environmentId).catch(() => {}))
+                .finally(() => this.disposing.delete(environmentId))
+            this.disposing.set(environmentId, tracked)
             await tracked
         }
     }
@@ -159,53 +159,53 @@ export class TenantRegistry
     public SetOwnershipForTest(granted: boolean, healthy = true): void
     {
         this.ownership = new FixedOwnership(granted, healthy)
-        this.ownership.OnLost(tenantId => void this.DisposeTenant(tenantId))
+        this.ownership.OnLost(environmentId => void this.DisposeTenant(environmentId))
     }
 
     /** Fail-closed response to a lost lease: drop the local server so this replica stops writing the tenant.
      *  The ownership key is already gone, so no Release is issued. */
-    public async DisposeTenant(tenantId: string): Promise<void>
+    public async DisposeTenant(environmentId: string): Promise<void>
     {
-        const server = this.servers.get(tenantId)
+        const server = this.servers.get(environmentId)
         if (server === undefined)
         {
-            if (this.pending.has(tenantId))
+            if (this.pending.has(environmentId))
             {
-                this.lostDuringBuild.add(tenantId)
+                this.lostDuringBuild.add(environmentId)
             }
             return
         }
-        this.servers.delete(tenantId)
-        this.coordinator.Forget(tenantId)
+        this.servers.delete(environmentId)
+        this.coordinator.Forget(environmentId)
         const disposal = server.Dispose().catch(() => {})
-        const tracked = disposal.finally(() => this.disposing.delete(tenantId))
-        this.disposing.set(tenantId, tracked)
+        const tracked = disposal.finally(() => this.disposing.delete(environmentId))
+        this.disposing.set(environmentId, tracked)
         await tracked
     }
 
-    private async Build(tenantId: string): Promise<PragmaticServer>
+    private async Build(environmentId: string): Promise<PragmaticServer>
     {
-        if (tenantId === '' || tenantId === '.' || tenantId === TenantRegistry.ParentSegment || TenantRegistry.SeparatorPattern.test(tenantId))
+        if (environmentId === '' || environmentId === '.' || environmentId === TenantRegistry.ParentSegment || TenantRegistry.SeparatorPattern.test(environmentId))
         {
             throw new Error(TenantRegistry.InvalidTenantError)
         }
-        const provisioning = this.provisioning.OptionsFor(tenantId)
+        const provisioning = this.provisioning.OptionsFor(environmentId)
         if (provisioning === null)
         {
             throw new Error(TenantRegistry.UnprovisionedError)
         }
-        const disposing = this.disposing.get(tenantId)
+        const disposing = this.disposing.get(environmentId)
         if (disposing !== undefined)
         {
             await disposing
         }
-        if (!await this.ownership.Acquire(tenantId))
+        if (!await this.ownership.Acquire(environmentId))
         {
             throw new TenantOwnedElsewhereError()
         }
         try
         {
-            const server = new PragmaticServer(this.OptionsFor(tenantId, provisioning))
+            const server = new PragmaticServer(this.OptionsFor(environmentId, provisioning))
             try
             {
                 await server.Start()
@@ -219,28 +219,28 @@ export class TenantRegistry
         }
         catch (error)
         {
-            await this.ownership.Release(tenantId).catch(() => {})
+            await this.ownership.Release(environmentId).catch(() => {})
             throw error
         }
     }
 
     /** Package-visible for tests; Build validates the tenant id before calling (it is used verbatim in flow-state key prefixes). */
-    public OptionsFor(tenantId: string, provisioning: TenantProvisioning): PragmaticServerOptions
+    public OptionsFor(environmentId: string, provisioning: TenantProvisioning): PragmaticServerOptions
     {
         return {
-            packagesRoot: join(this.baseDir, tenantId, TenantRegistry.PackagesDir),
+            packagesRoot: join(this.baseDir, environmentId, TenantRegistry.PackagesDir),
             purpose: provisioning.purpose,
-            applicationsRoot: join(this.baseDir, tenantId, TenantRegistry.ApplicationsDir),
-            graphsRoot: join(this.baseDir, tenantId, TenantRegistry.GraphsDir),
+            applicationsRoot: join(this.baseDir, environmentId, TenantRegistry.ApplicationsDir),
+            graphsRoot: join(this.baseDir, environmentId, TenantRegistry.GraphsDir),
             platform: this.platform,
             deploymentMode: this.deploymentMode,
             connectorsPolicy: provisioning.connectorsPolicy,
             connectors: provisioning.connectors,
             adapterPacks: this.adapterPacks,
             identity: {
-                identityRoot: join(this.baseDir, tenantId, TenantRegistry.IdentityDir),
+                identityRoot: join(this.baseDir, environmentId, TenantRegistry.IdentityDir),
                 masterKey: this.masterKey,
-                tenant: { id: tenantId, displayName: provisioning.displayName },
+                tenant: { id: environmentId, displayName: provisioning.displayName },
                 bootstrap: provisioning.bootstrap,
                 oidc: provisioning.oidc,
                 provisionedSecrets: this.provisionedSecrets,
@@ -248,7 +248,7 @@ export class TenantRegistry
                 identityConfig: provisioning.identity,
                 machine: provisioning.machine,
                 httpClient: this.identityRuntime?.HttpClient,
-                flowStateStore: this.identityRuntime?.FlowStateFor(tenantId),
+                flowStateStore: this.identityRuntime?.FlowStateFor(environmentId),
             },
         }
     }

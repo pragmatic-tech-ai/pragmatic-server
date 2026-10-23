@@ -109,7 +109,7 @@ class FakeControlPlane
             name: FakeControlPlane.EnvName,
             template: FakeControlPlane.TemplateOneId,
             type: this.EnvType,
-            tenantId: FakeControlPlane.TenantId,
+            environmentId: FakeControlPlane.TenantId,
             hostPort: 4101,
             status: FakeControlPlane.EnvStatus,
             createdAt: '2026-01-01T00:00:00.000Z',

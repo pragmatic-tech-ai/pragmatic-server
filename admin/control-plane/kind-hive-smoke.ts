@@ -272,7 +272,7 @@ export class KindHiveSmoke
             name,
             type: EnvType.Development,
             template: Template.DevBlank,
-            tenantId: name,
+            environmentId: name,
             hiveId: hive.id,
             hostPort: 0,
             containerName: name,

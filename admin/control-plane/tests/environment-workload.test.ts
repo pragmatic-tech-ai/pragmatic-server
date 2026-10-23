@@ -26,7 +26,7 @@ class WorkloadFixture
     public static Env(template: Template, type: EnvType): EnvironmentRecord
     {
         return {
-            name: WorkloadFixture.EnvName, type, template, tenantId: 't1', hiveId: WorkloadFixture.HiveId, hostPort: 8081,
+            name: WorkloadFixture.EnvName, type, template, environmentId: 't1', hiveId: WorkloadFixture.HiveId, hostPort: 8081,
             containerName: 'c', volumeName: 'v', bundleDir: WorkloadFixture.PlantedValue, createdAt: '2026-10-22T00:00:00Z', status: EnvStatus.Running,
         }
     }

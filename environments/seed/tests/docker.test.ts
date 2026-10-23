@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DockerEnv, EnvKind, TenantPurposeName } from '../docker.js'
 
-const Demo = { name: 'demo', kind: EnvKind.Demo, tenantId: 'contoso', purpose: TenantPurposeName.Runtime, hostPort: 8081 }
+const Demo = { name: 'demo', kind: EnvKind.Demo, environmentId: 'contoso', purpose: TenantPurposeName.Runtime, hostPort: 8081 }
 
 test('RunArgs maps bundle + env + port into a correct docker run invocation', () =>
 {
@@ -18,7 +18,7 @@ test('RunArgs maps bundle + env + port into a correct docker run invocation', ()
 
 test('container and volume names are environment-scoped and distinct across envs', () =>
 {
-    const dev = { name: 'dev', kind: EnvKind.Dev, tenantId: 'dev', purpose: TenantPurposeName.Development, hostPort: 8080 }
+    const dev = { name: 'dev', kind: EnvKind.Dev, environmentId: 'dev', purpose: TenantPurposeName.Development, hostPort: 8080 }
     assert.notEqual(DockerEnv.ContainerName(Demo), DockerEnv.ContainerName(dev))
     assert.notEqual(DockerEnv.VolumeName(Demo), DockerEnv.VolumeName(dev))
 })

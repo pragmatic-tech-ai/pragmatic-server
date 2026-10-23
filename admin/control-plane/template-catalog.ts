@@ -95,13 +95,13 @@ export class TemplateCatalog
         if (template === Template.DemoContoso)
         {
             return {
-                def: { name: safe, kind: EnvKind.Demo, tenantId: TemplateCatalog.DemoTenantId, purpose, hostPort },
+                def: { name: safe, kind: EnvKind.Demo, environmentId: TemplateCatalog.DemoTenantId, purpose, hostPort },
                 seedDir: join(TemplateCatalog.HereDir, TemplateCatalog.ParentSegment, TemplateCatalog.ParentSegment, TemplateCatalog.EnvironmentsSegment, TemplateCatalog.DemoSegment, TemplateCatalog.SeedSegment),
             }
         }
         if (template === Template.RuntimePostgres)
         {
-            const def: EnvDefinition = { name: safe, kind: EnvKind.Dev, tenantId: safe, purpose, hostPort }
+            const def: EnvDefinition = { name: safe, kind: EnvKind.Dev, environmentId: safe, purpose, hostPort }
             def.database = {
                 connectionName: TemplateCatalog.DbConnectionName,
                 host: DockerEnv.DbContainerName(def),
@@ -114,7 +114,7 @@ export class TemplateCatalog
             return { def, seedDir: join(TemplateCatalog.HereDir, TemplateCatalog.TemplatesSegment, TemplateCatalog.DevBlankSegment) }
         }
         return {
-            def: { name: safe, kind: EnvKind.Dev, tenantId: safe, purpose, hostPort },
+            def: { name: safe, kind: EnvKind.Dev, environmentId: safe, purpose, hostPort },
             seedDir: join(TemplateCatalog.HereDir, TemplateCatalog.TemplatesSegment, TemplateCatalog.DevBlankSegment),
         }
     }

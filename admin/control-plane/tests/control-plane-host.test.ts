@@ -62,7 +62,7 @@ class FakeService implements IEnvironmentService
         name: 'x',
         template: Template.DevBlank,
         type: EnvType.Development,
-        tenantId: 'dev',
+        environmentId: 'dev',
         hostPort: 8101,
         containerName: 'ctr-secret-name',
         volumeName: 'vol-secret-name',
@@ -257,7 +257,7 @@ class FakeGraphService implements IGraphService
 
 class Harness
 {
-    public static readonly DtoKeys = ['createdAt', 'hostPort', 'httpUrl', 'name', 'status', 'template', 'tenantId', 'type', 'wsUrl']
+    public static readonly DtoKeys = ['createdAt', 'environmentId', 'hostPort', 'httpUrl', 'name', 'status', 'template', 'type', 'wsUrl']
     public static readonly GraphDtoKeys = ['createdAt', 'description', 'name', 'packageCount']
     public static readonly Forbidden = ['bundleDir', 'containerName', 'volumeName', 'master', 'secret', 'password', 'ctr-secret-name', 'vol-secret-name', '/secret/bundle']
 

@@ -14,16 +14,16 @@ class FakeRuntime implements IdentityRuntime
     public readonly Sentinel = { Sentinel: 'flow' } as unknown as IOidcFlowStateStore
     public readonly Calls: string[] = []
 
-    public FlowStateFor(tenantId: string): IOidcFlowStateStore
+    public FlowStateFor(environmentId: string): IOidcFlowStateStore
     {
-        this.Calls.push(tenantId)
+        this.Calls.push(environmentId)
         return this.Sentinel
     }
 }
 
 class Fixtures
 {
-    public static readonly TenantId = 't1'
+    public static readonly EnvironmentId = 't1'
     public static readonly Config = { Marker: 'config' } as unknown as IdentityConfig
     public static readonly Machine = { Marker: 'machine' } as unknown as MachinePrincipalMap
 
@@ -42,12 +42,12 @@ class Fixtures
 test('OptionsFor forwards identity config, machine map and the shared runtime pieces', () =>
 {
     const runtime = new FakeRuntime()
-    const options = Fixtures.Registry(runtime).OptionsFor(Fixtures.TenantId, Fixtures.Provisioning())
+    const options = Fixtures.Registry(runtime).OptionsFor(Fixtures.EnvironmentId, Fixtures.Provisioning())
     assert.equal(options.identity?.identityConfig, Fixtures.Config)
     assert.equal(options.identity?.machine, Fixtures.Machine)
     assert.equal(options.identity?.httpClient, runtime.HttpClient)
     assert.equal(options.identity?.flowStateStore, runtime.Sentinel)
-    assert.deepEqual(runtime.Calls, [Fixtures.TenantId])
+    assert.deepEqual(runtime.Calls, [Fixtures.EnvironmentId])
 })
 
 test('ServerFor rejects a tenant id containing a colon (flow-state key collision guard)', async () =>
@@ -57,7 +57,7 @@ test('ServerFor rejects a tenant id containing a colon (flow-state key collision
 
 test('OptionsFor without a runtime leaves the runtime pieces undefined', () =>
 {
-    const options = Fixtures.Registry().OptionsFor(Fixtures.TenantId, Fixtures.Provisioning())
+    const options = Fixtures.Registry().OptionsFor(Fixtures.EnvironmentId, Fixtures.Provisioning())
     assert.equal(options.identity?.httpClient, undefined)
     assert.equal(options.identity?.flowStateStore, undefined)
 })

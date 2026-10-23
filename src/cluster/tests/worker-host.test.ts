@@ -71,18 +71,18 @@ class WorkerFixture
         return { host: '127.0.0.1', port: 0, baseDir, masterKey: { base64Env: WorkerFixture.KeyEnv }, provisioning, tls: WorkerFixture.TlsRef() }
     }
 
-    public static async TokenFor(worker: WorkerHost, tenantId: string): Promise<string>
+    public static async TokenFor(worker: WorkerHost, environmentId: string): Promise<string>
     {
-        const server = await worker.RegistryForTest().ServerFor(tenantId)
+        const server = await worker.RegistryForTest().ServerFor(environmentId)
         const pack = await server.Pack()
-        await pack.Grants.Save(new Grant(tenantId, Role.Admin, new ResourceRef(ResourceKind.Tenant, tenantId, [])))
-        return (await pack.Tokens.Issue(server.Tenant(), tenantId, [], null)).Token
+        await pack.Grants.Save(new Grant(environmentId, Role.Admin, new ResourceRef(ResourceKind.Tenant, environmentId, [])))
+        return (await pack.Tokens.Issue(server.Tenant(), environmentId, [], null)).Token
     }
 
-    public static Dial(address: { host: string; port: number }, tenantId: string, bearer: string | null, withClientCert: boolean): WebSocket
+    public static Dial(address: { host: string; port: number }, environmentId: string, bearer: string | null, withClientCert: boolean): WebSocket
     {
         const client = withClientCert ? MachineTls.Client(WorkerFixture.ClientTls()) : undefined
-        const headers: Record<string, string> = { 'x-pragmatic-tenant': tenantId }
+        const headers: Record<string, string> = { 'x-pragmatic-tenant': environmentId }
         if (bearer !== null)
         {
             headers['authorization'] = `Bearer ${bearer}`

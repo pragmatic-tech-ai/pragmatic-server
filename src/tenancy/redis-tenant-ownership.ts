@@ -54,9 +54,9 @@ export class RedisTenantOwnership implements ITenantOwnership
         await this.Connected()
     }
 
-    public async Acquire(tenantId: string): Promise<boolean>
+    public async Acquire(environmentId: string): Promise<boolean>
     {
-        const key = RedisTenantOwnership.KeyPrefix + tenantId
+        const key = RedisTenantOwnership.KeyPrefix + environmentId
         if (this.held.has(key))
         {
             return true
@@ -83,9 +83,9 @@ export class RedisTenantOwnership implements ITenantOwnership
     }
 
     /** CAS-deletes the lease. If Redis is unreachable the delete is queued in pendingReleases and flushed on the next ready/renew that reaches Redis (instead of lingering for the full TTL). */
-    public async Release(tenantId: string): Promise<void>
+    public async Release(environmentId: string): Promise<void>
     {
-        const key = RedisTenantOwnership.KeyPrefix + tenantId
+        const key = RedisTenantOwnership.KeyPrefix + environmentId
         if (!this.held.delete(key))
         {
             return

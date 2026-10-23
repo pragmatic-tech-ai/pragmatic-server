@@ -36,7 +36,7 @@ export interface IWriteAuthorizerSource
 /** Drops a tenant's cached access evaluator so the next request re-reads its SecurityModel from the store (live reload, no restart). */
 export interface ISecurityModelReload
 {
-    Invalidate(tenantId: string): void
+    Invalidate(environmentId: string): void
 }
 
 class AccessDepthWriteAuthorizer implements IWriteAuthorizer
@@ -132,33 +132,33 @@ export class TenantReadAuthorization implements IReadFilterSource, IWriteAuthori
         return this.EvaluatorFor(context.Tenant.Id)
     }
 
-    public Invalidate(tenantId: string): void
+    public Invalidate(environmentId: string): void
     {
-        this.evaluators.delete(tenantId)
+        this.evaluators.delete(environmentId)
     }
 
-    private EvaluatorFor(tenantId: string): Promise<AccessDepthEvaluator>
+    private EvaluatorFor(environmentId: string): Promise<AccessDepthEvaluator>
     {
-        let built = this.evaluators.get(tenantId)
+        let built = this.evaluators.get(environmentId)
         if (built === undefined)
         {
-            built = this.Build(tenantId)
-            this.evaluators.set(tenantId, built)
+            built = this.Build(environmentId)
+            this.evaluators.set(environmentId, built)
             // Evict a failed build so a later call retries (concurrent callers share the in-flight promise).
             built.catch(() =>
             {
-                if (this.evaluators.get(tenantId) === built)
+                if (this.evaluators.get(environmentId) === built)
                 {
-                    this.evaluators.delete(tenantId)
+                    this.evaluators.delete(environmentId)
                 }
             })
         }
         return built
     }
 
-    private async Build(tenantId: string): Promise<AccessDepthEvaluator>
+    private async Build(environmentId: string): Promise<AccessDepthEvaluator>
     {
-        const config = await this.store.Get(tenantId)
+        const config = await this.store.Get(environmentId)
         const model: ISecurityModelConfig | null | undefined = config?.SecurityModel
         if (model === undefined || model === null)
         {

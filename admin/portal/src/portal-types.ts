@@ -10,7 +10,7 @@ export type EnvironmentDto =
     name: string
     template: string
     type: string
-    tenantId: string
+    environmentId: string
     hostPort: number
     status: string
     createdAt: string

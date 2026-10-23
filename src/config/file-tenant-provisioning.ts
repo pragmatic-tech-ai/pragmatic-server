@@ -107,9 +107,9 @@ export class FileTenantProvisioning implements ITenantProvisioning
         return new FileTenantProvisioning(entries)
     }
 
-    public OptionsFor(tenantId: string): TenantProvisioning | null
+    public OptionsFor(environmentId: string): TenantProvisioning | null
     {
-        return this.entries.get(tenantId) ?? null
+        return this.entries.get(environmentId) ?? null
     }
 
     public Count(): number

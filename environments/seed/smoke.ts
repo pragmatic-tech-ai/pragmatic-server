@@ -246,8 +246,8 @@ export class DemoSmoke
     private async ConnectAs(principalId: string): Promise<PragmaticClient>
     {
         const seeder = new UserSeeder()
-        const token = await seeder.Login(SeedCli.HttpUrl(this.def), this.def.tenantId, principalId + DemoSmoke.EmailDomain, this.secrets[principalId + DemoSmoke.PasswordSuffix])
-        const client = await PragmaticClient.ConnectAsync(SeedCli.WsUrl(this.def) + DemoSmoke.WsQuerySeparator + encodeURIComponent(this.def.tenantId), { bearerToken: token })
+        const token = await seeder.Login(SeedCli.HttpUrl(this.def), this.def.environmentId, principalId + DemoSmoke.EmailDomain, this.secrets[principalId + DemoSmoke.PasswordSuffix])
+        const client = await PragmaticClient.ConnectAsync(SeedCli.WsUrl(this.def) + DemoSmoke.WsQuerySeparator + encodeURIComponent(this.def.environmentId), { bearerToken: token })
         this.clients.push(client)
         await client.OpenApplication(NorthwindApp.AppName)
         return client

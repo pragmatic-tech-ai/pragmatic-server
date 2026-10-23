@@ -328,7 +328,7 @@ export class LoopOrchestrator
         return {
             dataRoot: this.dataRoot,
             devEnv: name,
-            devWsUrl: LoopOrchestrator.WsPrefix + String(rec.hostPort) + LoopOrchestrator.WsTenantQuery + rec.tenantId,
+            devWsUrl: LoopOrchestrator.WsPrefix + String(rec.hostPort) + LoopOrchestrator.WsTenantQuery + rec.environmentId,
             graphName,
             makerToken: minted.token
         }
@@ -342,7 +342,7 @@ export class LoopOrchestrator
         // AdminInfoFor reads the env's provisioned-secrets.json (`<tenant>-admin-pw`) into connect info.
         const info = await this.envs.AdminInfoFor(name)
         this.secrets.add(info.password)
-        const deployToken = await this.login.Login(info.httpUrl, rec.tenantId, info.email, info.password)
+        const deployToken = await this.login.Login(info.httpUrl, rec.environmentId, info.email, info.password)
         this.secrets.add(deployToken)
         this.logger.Log(LoopOrchestrator.MsgProvisioning)
         const reader = await this.Provision(name, LoopOrchestrator.ReaderPrincipal, LoopOrchestrator.ReaderEmail, true)
@@ -350,8 +350,8 @@ export class LoopOrchestrator
         const port = String(rec.hostPort)
         return {
             runtimeEnv: name,
-            tenant: rec.tenantId,
-            runtimeWsUrl: LoopOrchestrator.WsPrefix + port + LoopOrchestrator.WsTenantQuery + rec.tenantId,
+            tenant: rec.environmentId,
+            runtimeWsUrl: LoopOrchestrator.WsPrefix + port + LoopOrchestrator.WsTenantQuery + rec.environmentId,
             runtimeHostPort: rec.hostPort,
             appOriginBase: LoopOrchestrator.HttpPrefix + port,
             deployToken,

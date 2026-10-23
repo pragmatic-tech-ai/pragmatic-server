@@ -30,7 +30,7 @@ class FakeEnvs implements ILoopEnvironments
             name,
             type,
             template,
-            tenantId: type === EnvType.Runtime ? 'contoso' : name,
+            environmentId: type === EnvType.Runtime ? 'contoso' : name,
             hostPort: type === EnvType.Runtime ? 8102 : 8101,
             containerName: name,
             volumeName: name,

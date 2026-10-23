@@ -268,7 +268,7 @@ export class RolloutPushSmoke
             name: this.envName,
             type: EnvType.Development,
             template: Template.DevBlank,
-            tenantId: S.TenantId,
+            environmentId: S.TenantId,
             hiveId: S.HiveId,
             hostPort: 0,
             containerName: this.envName,

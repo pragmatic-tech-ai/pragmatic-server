@@ -75,7 +75,7 @@ class DirectoryFixture
     public static Env(hiveId: string): EnvironmentRecord
     {
         return {
-            name: 'e1', type: EnvType.Runtime, template: Template.RuntimePostgres, tenantId: 't1',
+            name: 'e1', type: EnvType.Runtime, template: Template.RuntimePostgres, environmentId: 't1',
             hostPort: 1, containerName: 'c', volumeName: 'v', bundleDir: 'b', createdAt: DirectoryFixture.Now,
             status: EnvStatus.Running, hiveId
         }

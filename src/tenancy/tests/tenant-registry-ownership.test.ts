@@ -19,15 +19,15 @@ class FakeOwnership implements ITenantOwnership
     {
     }
 
-    public async Acquire(tenantId: string): Promise<boolean>
+    public async Acquire(environmentId: string): Promise<boolean>
     {
-        this.acquired.push(tenantId)
+        this.acquired.push(environmentId)
         return this.granted
     }
 
-    public async Release(tenantId: string): Promise<void>
+    public async Release(environmentId: string): Promise<void>
     {
-        this.released.push(tenantId)
+        this.released.push(environmentId)
     }
 
     public async ReleaseAll(): Promise<void>

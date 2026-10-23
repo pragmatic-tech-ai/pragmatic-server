@@ -348,7 +348,7 @@ export class DockerEnv
 
     /**
      * Mechanism: throwaway-container copy. TenantRegistry.OptionsFor reads
-     * <PRAGMATIC_BASE_DIR>/<tenant>/{packages,applications,identity} (join(baseDir, tenantId, ...)),
+     * <PRAGMATIC_BASE_DIR>/<tenant>/{packages,applications,identity} (join(baseDir, environmentId, ...)),
      * so the pre-seeded tree must live inside the named volume mounted at /data; the read-only
      * /data-seed mount is not the server's base dir. A one-shot container copies the bundle data/
      * into the volume, guarded by a marker file so repeated Up calls never overwrite live state.

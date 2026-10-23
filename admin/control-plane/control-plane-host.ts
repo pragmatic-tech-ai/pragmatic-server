@@ -78,7 +78,7 @@ export type EnvironmentDto = {
     name: string
     template: Template
     type: EnvType
-    tenantId: string
+    environmentId: string
     hostPort: number
     status: EnvStatus
     createdAt: string
@@ -168,7 +168,7 @@ export class ControlPlaneHost
     private static readonly ErrorEvent = 'error'
     private static readonly CloseEvent = 'close'
     private static readonly LogPrefix = '[control-plane] request failed:'
-    private static readonly TenantQuery = '/?tenant='
+    private static readonly EnvironmentQuery = '/?tenant='
     private static readonly ApiPrefix = '/api/'
     private static readonly PingPath = '/api/ping'
     private static readonly TemplatesPath = '/api/templates'
@@ -1658,12 +1658,12 @@ export class ControlPlaneHost
             name: r.name,
             template: r.template,
             type: r.type,
-            tenantId: r.tenantId,
+            environmentId: r.environmentId,
             hostPort: r.hostPort,
             status: r.status,
             createdAt: r.createdAt,
             httpUrl: ControlPlaneHost.HttpScheme + ControlPlaneHost.LocalName + ControlPlaneHost.PortSeparator + String(r.hostPort),
-            wsUrl: ControlPlaneHost.WsScheme + ControlPlaneHost.LocalName + ControlPlaneHost.PortSeparator + String(r.hostPort) + ControlPlaneHost.TenantQuery + r.tenantId
+            wsUrl: ControlPlaneHost.WsScheme + ControlPlaneHost.LocalName + ControlPlaneHost.PortSeparator + String(r.hostPort) + ControlPlaneHost.EnvironmentQuery + r.environmentId
         }
     }
 }

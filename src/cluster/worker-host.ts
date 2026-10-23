@@ -482,15 +482,15 @@ export class WorkerHost
             this.RejectRetryable(socket)
             return
         }
-        const tenantId = this.TenantHint(req)
-        if (tenantId === null)
+        const environmentId = this.TenantHint(req)
+        if (environmentId === null)
         {
             socket.destroy()
             return
         }
         const limit = this.rateLimit.Check(
-            { scope: RateLimitScope.Tenant, tenant: tenantId, key: tenantId },
-            { surface: AuditSurface.Upgrade, tenant: tenantId, methodOrPath: RateLimitGuard.UpgradeMethodName() })
+            { scope: RateLimitScope.Tenant, tenant: environmentId, key: environmentId },
+            { surface: AuditSurface.Upgrade, tenant: environmentId, methodOrPath: RateLimitGuard.UpgradeMethodName() })
         if (!limit.Allowed)
         {
             this.RejectRateLimited(socket, limit.RetryAfterMs)
@@ -499,7 +499,7 @@ export class WorkerHost
         let server: PragmaticServer
         try
         {
-            server = await this.registry.ServerFor(tenantId)
+            server = await this.registry.ServerFor(environmentId)
         }
         catch (error)
         {
@@ -513,7 +513,7 @@ export class WorkerHost
             }
             return
         }
-        this.registry.Acquire(tenantId)
+        this.registry.Acquire(environmentId)
         // ws.handleUpgrade invokes its callback synchronously (no verifyClient configured), so `attached` is set before the finally runs — mirrors the 5A PragmaticServerHost lifecycle.
         let attached = false
         try
@@ -529,7 +529,7 @@ export class WorkerHost
             const manager = await server.Manager()
             const fieldMasks = await server.FieldReadMaskSource()
             const pack = await server.Pack()
-            const admin = new AdminService(pack.Grants, pack.Audit, await server.TenantConfigStore(), server.Tenant(), () => this.registry.DisposeTenant(tenantId), pack.Accounts, pack.Registrar, pack.Tokens, {
+            const admin = new AdminService(pack.Grants, pack.Audit, await server.TenantConfigStore(), server.Tenant(), () => this.registry.DisposeTenant(environmentId), pack.Accounts, pack.Registrar, pack.Tokens, {
                 Invalidate: name => server.InvalidateAdapterPack(name),
                 AllowScripts: name => server.AllowAdapterPackScripts(name),
                 DenyScripts: name => server.DenyAdapterPackScripts(name),
@@ -561,7 +561,7 @@ export class WorkerHost
                         }
                         handler.Dispose()
                         this.handlers.delete(handler)
-                        this.registry.Release(tenantId)
+                        this.registry.Release(environmentId)
                     })
                     attached = true
                 }
@@ -579,7 +579,7 @@ export class WorkerHost
         {
             if (!attached)
             {
-                this.registry.Release(tenantId)
+                this.registry.Release(environmentId)
             }
         }
     }
@@ -618,14 +618,14 @@ export class WorkerHost
                 await new AppServingEndpoint(this.registry).Handle(req, res)
                 return
             }
-            const tenantId = this.TenantHint(req)
-            if (tenantId === null)
+            const environmentId = this.TenantHint(req)
+            if (environmentId === null)
             {
                 res.writeHead(BrowserSessionAuth.IsSessionPath(path) ? WorkerHost.UnauthorizedStatus : WorkerHost.NotFoundStatus)
                 res.end()
                 return
             }
-            const server = await this.registry.ServerFor(tenantId)
+            const server = await this.registry.ServerFor(environmentId)
             const pack = await server.Pack()
             const endpoint = new AuthHttpEndpoint(pack, server.Tenant(), server.Oidc(), this.MachineContext(req, pack), this.instrumentation, this.audit, this.browserAuth)
             await endpoint.Handle(req, res)

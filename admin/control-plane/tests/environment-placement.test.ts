@@ -44,10 +44,10 @@ class PlacementFixture
         return f
     }
 
-    public static Env(tenantId: string, hiveId?: string): EnvironmentRecord
+    public static Env(environmentId: string, hiveId?: string): EnvironmentRecord
     {
         return {
-            name: 'e1', type: EnvType.Runtime, template: Template.RuntimePostgres, tenantId,
+            name: 'e1', type: EnvType.Runtime, template: Template.RuntimePostgres, environmentId,
             hostPort: 1, containerName: 'c', volumeName: 'v', bundleDir: 'b', createdAt: PlacementFixture.Now,
             status: EnvStatus.Running, hiveId
         }

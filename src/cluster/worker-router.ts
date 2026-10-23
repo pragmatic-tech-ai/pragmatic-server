@@ -8,7 +8,7 @@ export interface WorkerEndpoint
  *  distinct from the per-worker synchronous ITenantCoordinator (connection-refcount/idle-evict). */
 export interface IWorkerRouter
 {
-    RouteOrSpawn(tenantId: string): Promise<WorkerEndpoint>
+    RouteOrSpawn(environmentId: string): Promise<WorkerEndpoint>
     Drain(): Promise<void>
 }
 

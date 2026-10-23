@@ -5,7 +5,7 @@ import type { EnvDefinition } from '../bundle.js'
 import type { DockerEnv } from '../docker.js'
 import { SeedCli } from '../seed.js'
 
-const Demo: EnvDefinition = { name: 'demo', kind: EnvKind.Demo, tenantId: 'contoso', purpose: TenantPurposeName.Runtime, hostPort: 8081 }
+const Demo: EnvDefinition = { name: 'demo', kind: EnvKind.Demo, environmentId: 'contoso', purpose: TenantPurposeName.Runtime, hostPort: 8081 }
 
 type UpAccess = { Up(d: DockerEnv, def: EnvDefinition, dir: string): Promise<void> }
 
@@ -17,7 +17,7 @@ test('Up rejects (non-zero exit via entry-point catch) when the server image is 
 
 test('admin credentials derive from the public BundleBuilder constants', () =>
 {
-    assert.equal(SeedCli.AdminEmail(Demo), BundleBuilder.AdminEmailPrefix + Demo.tenantId + BundleBuilder.AdminEmailSuffix)
-    const secrets: Record<string, string> = { [Demo.tenantId + BundleBuilder.AdminSecretSuffix]: 'pw' }
+    assert.equal(SeedCli.AdminEmail(Demo), BundleBuilder.AdminEmailPrefix + Demo.environmentId + BundleBuilder.AdminEmailSuffix)
+    const secrets: Record<string, string> = { [Demo.environmentId + BundleBuilder.AdminSecretSuffix]: 'pw' }
     assert.equal(SeedCli.AdminPassword(Demo, secrets), 'pw')
 })

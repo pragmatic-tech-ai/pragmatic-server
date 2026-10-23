@@ -1,12 +1,12 @@
-export type TenantLostHandler = (tenantId: string) => void
+export type TenantLostHandler = (environmentId: string) => void
 
 /** Cross-replica single-writer ownership of a tenant. Async because the SaaS impl (Redis) does network I/O;
  *  distinct from the per-replica synchronous ITenantCoordinator (connection-refcount / idle-evict). */
 export interface ITenantOwnership
 {
     Start(): Promise<void>
-    Acquire(tenantId: string): Promise<boolean>
-    Release(tenantId: string): Promise<void>
+    Acquire(environmentId: string): Promise<boolean>
+    Release(environmentId: string): Promise<void>
     ReleaseAll(): Promise<void>
     Healthy(): boolean
     OnLost(handler: TenantLostHandler): void

@@ -169,9 +169,9 @@ export class Gateway
     }
 
     /** Builds the outbound worker-upgrade carrier: tenant, authorization, anti-spoof fingerprint stamp, and the inbound W3C trace context. */
-    public static OutboundHeaders(req: IncomingMessage, tenantId: string, authorization: string | null, clientTlsConfigured: boolean): Record<string, string>
+    public static OutboundHeaders(req: IncomingMessage, environmentId: string, authorization: string | null, clientTlsConfigured: boolean): Record<string, string>
     {
-        const headers: Record<string, string> = { [Gateway.TenantHeader]: tenantId }
+        const headers: Record<string, string> = { [Gateway.TenantHeader]: environmentId }
         if (authorization !== null)
         {
             headers[Gateway.AuthorizationHeader] = authorization
@@ -329,15 +329,15 @@ export class Gateway
         }
         try
         {
-            const tenantId = this.TenantHint(req)
-            if (tenantId === null)
+            const environmentId = this.TenantHint(req)
+            if (environmentId === null)
             {
                 this.Reject(socket)
                 return
             }
             const limit = this.rateLimit.Check(
-                { scope: RateLimitScope.Tenant, tenant: tenantId, key: tenantId },
-                { surface: AuditSurface.Upgrade, tenant: tenantId, methodOrPath: RateLimitGuard.UpgradeMethodName() })
+                { scope: RateLimitScope.Tenant, tenant: environmentId, key: environmentId },
+                { surface: AuditSurface.Upgrade, tenant: environmentId, methodOrPath: RateLimitGuard.UpgradeMethodName() })
             if (!limit.Allowed)
             {
                 this.RejectRateLimited(socket, limit.RetryAfterMs)
@@ -346,7 +346,7 @@ export class Gateway
             let endpoint: WorkerEndpoint
             try
             {
-                endpoint = await this.router.RouteOrSpawn(tenantId)
+                endpoint = await this.router.RouteOrSpawn(environmentId)
             }
             catch
             {
@@ -358,7 +358,7 @@ export class Gateway
                 this.RejectRetryable(socket)
                 return
             }
-            this.Dial(req, socket, head, tenantId, endpoint, this.AuthorizationOf(req))
+            this.Dial(req, socket, head, environmentId, endpoint, this.AuthorizationOf(req))
         }
         catch
         {
@@ -366,10 +366,10 @@ export class Gateway
         }
     }
 
-    private Dial(req: IncomingMessage, socket: Socket, head: Buffer, tenantId: string, endpoint: WorkerEndpoint, authorization: string | null): void
+    private Dial(req: IncomingMessage, socket: Socket, head: Buffer, environmentId: string, endpoint: WorkerEndpoint, authorization: string | null): void
     {
         const client = this.clientTls
-        const headers = Gateway.OutboundHeaders(req, tenantId, authorization, this.machineTlsConfigured)
+        const headers = Gateway.OutboundHeaders(req, environmentId, authorization, this.machineTlsConfigured)
         const wsOptions = { key: client.key, cert: client.cert, ca: client.ca, rejectUnauthorized: true, servername: this.serverName, headers }
         const workerWs = new WebSocket(`${Gateway.WsScheme}${endpoint.host}:${endpoint.port}/`, wsOptions)
         this.workerSockets.add(workerWs)
@@ -499,8 +499,8 @@ export class Gateway
                 res.end(health.body)
                 return
             }
-            const tenantId = this.TenantHint(req)
-            if (tenantId === null)
+            const environmentId = this.TenantHint(req)
+            if (environmentId === null)
             {
                 res.writeHead(Gateway.BadRequestStatus)
                 res.end()
@@ -509,7 +509,7 @@ export class Gateway
             let endpoint: WorkerEndpoint
             try
             {
-                endpoint = await this.router.RouteOrSpawn(tenantId)
+                endpoint = await this.router.RouteOrSpawn(environmentId)
             }
             catch
             {
@@ -518,7 +518,7 @@ export class Gateway
                 return
             }
             const client = this.clientTls
-            const headers: Record<string, string | string[] | undefined> = { ...req.headers, [Gateway.TenantHeader]: tenantId }
+            const headers: Record<string, string | string[] | undefined> = { ...req.headers, [Gateway.TenantHeader]: environmentId }
             Gateway.StampMachineFingerprint(headers, req.socket as TLSSocket, this.machineTlsConfigured)
             const proxied = httpsRequest(
                 { host: endpoint.host, port: endpoint.port, method: req.method, path: req.url, headers, key: client.key, cert: client.cert, ca: client.ca, rejectUnauthorized: true, servername: this.serverName },

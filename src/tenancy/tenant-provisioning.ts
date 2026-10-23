@@ -21,5 +21,5 @@ export interface TenantProvisioning
  *  TenantConfigStore; 5A uses an in-memory map. OptionsFor returns null for an unprovisioned tenant. */
 export interface ITenantProvisioning
 {
-    OptionsFor(tenantId: string): TenantProvisioning | null
+    OptionsFor(environmentId: string): TenantProvisioning | null
 }

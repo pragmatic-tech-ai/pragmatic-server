@@ -176,7 +176,7 @@ export class EnvironmentService
                 name: def.name,
                 template,
                 type,
-                tenantId: def.tenantId,
+                environmentId: def.environmentId,
                 hostPort: port,
                 containerName: DockerEnv.ContainerName(def),
                 volumeName: DockerEnv.VolumeName(def),
@@ -363,9 +363,9 @@ export class EnvironmentService
         return {
             httpUrl: EnvironmentService.HttpPrefix + String(rec.hostPort),
             wsUrl: EnvironmentService.WsPrefix + String(rec.hostPort),
-            tenant: rec.tenantId,
-            email: BundleBuilder.AdminEmailPrefix + rec.tenantId + BundleBuilder.AdminEmailSuffix,
-            password: EnvironmentService.Secret(secrets, rec.tenantId + BundleBuilder.AdminSecretSuffix)
+            tenant: rec.environmentId,
+            email: BundleBuilder.AdminEmailPrefix + rec.environmentId + BundleBuilder.AdminEmailSuffix,
+            password: EnvironmentService.Secret(secrets, rec.environmentId + BundleBuilder.AdminSecretSuffix)
         }
     }
 
@@ -418,10 +418,10 @@ export class EnvironmentService
         {
             user.password = EnvironmentService.Secret(secrets, user.passwordRef)
         }
-        const adminEmail = BundleBuilder.AdminEmailPrefix + def.tenantId + BundleBuilder.AdminEmailSuffix
-        const adminPw = EnvironmentService.Secret(secrets, def.tenantId + BundleBuilder.AdminSecretSuffix)
-        const token = await this.seeder.Login(EnvironmentService.HttpPrefix + port, def.tenantId, adminEmail, adminPw)
-        const conn = await this.seeder.Connect(EnvironmentService.WsPrefix + port, def.tenantId, token)
+        const adminEmail = BundleBuilder.AdminEmailPrefix + def.environmentId + BundleBuilder.AdminEmailSuffix
+        const adminPw = EnvironmentService.Secret(secrets, def.environmentId + BundleBuilder.AdminSecretSuffix)
+        const token = await this.seeder.Login(EnvironmentService.HttpPrefix + port, def.environmentId, adminEmail, adminPw)
+        const conn = await this.seeder.Connect(EnvironmentService.WsPrefix + port, def.environmentId, token)
         try
         {
             await this.seeder.SeedUsers(conn, users)

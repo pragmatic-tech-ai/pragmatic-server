@@ -15,7 +15,7 @@ class FakeClient
 
     public async ListEnvironments(): Promise<EnvironmentDto[]>
     {
-        return [{ name: 'e1', template: '', type: this.type, tenantId: '', hostPort: 0, status: 'running', createdAt: '', httpUrl: '', wsUrl: '' }]
+        return [{ name: 'e1', template: '', type: this.type, environmentId: '', hostPort: 0, status: 'running', createdAt: '', httpUrl: '', wsUrl: '' }]
     }
 
     public async Logs(): Promise<string>

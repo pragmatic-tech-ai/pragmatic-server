@@ -52,12 +52,12 @@ class ClusterFixture
         return { host: ClusterFixture.Host, port: 0, baseDir, masterKey: { base64Env: ClusterFixture.KeyEnv }, provisioning, tls: ClusterFixture.TlsRef() }
     }
 
-    public static async TokenFor(worker: WorkerHost, tenantId: string): Promise<string>
+    public static async TokenFor(worker: WorkerHost, environmentId: string): Promise<string>
     {
-        const server = await worker.RegistryForTest().ServerFor(tenantId)
+        const server = await worker.RegistryForTest().ServerFor(environmentId)
         const pack = await server.Pack()
-        await pack.Grants.Save(new Grant(tenantId, Role.Admin, new ResourceRef(ResourceKind.Tenant, tenantId, [])))
-        return (await pack.Tokens.Issue(server.Tenant(), tenantId, [], null)).Token
+        await pack.Grants.Save(new Grant(environmentId, Role.Admin, new ResourceRef(ResourceKind.Tenant, environmentId, [])))
+        return (await pack.Tokens.Issue(server.Tenant(), environmentId, [], null)).Token
     }
 
     public static Cleanup(baseDir: string): void

@@ -228,7 +228,7 @@ export class K8sHiveSmoke
             name: S.EnvName,
             type: EnvType.Development,
             template: Template.DevBlank,
-            tenantId: S.EnvName,
+            environmentId: S.EnvName,
             hiveId: S.HiveId,
             hostPort: 0,
             containerName: S.EnvName,

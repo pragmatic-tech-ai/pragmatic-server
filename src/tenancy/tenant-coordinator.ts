@@ -1,10 +1,10 @@
 export interface ITenantCoordinator
 {
-    Note(tenantId: string): void
-    Acquire(tenantId: string): void
-    Release(tenantId: string): void
+    Note(environmentId: string): void
+    Acquire(environmentId: string): void
+    Release(environmentId: string): void
     EvictCandidates(nowMs: number, idleTtlMs: number): readonly string[]
-    Forget(tenantId: string): void
+    Forget(environmentId: string): void
     Known(): readonly string[]
 }
 
@@ -26,21 +26,21 @@ export class InMemoryTenantCoordinator implements ITenantCoordinator
         this.now = now
     }
 
-    public Note(tenantId: string): void
+    public Note(environmentId: string): void
     {
-        this.Entry(tenantId).lastUseMs = this.now()
+        this.Entry(environmentId).lastUseMs = this.now()
     }
 
-    public Acquire(tenantId: string): void
+    public Acquire(environmentId: string): void
     {
-        const entry = this.Entry(tenantId)
+        const entry = this.Entry(environmentId)
         entry.connections += 1
         entry.lastUseMs = this.now()
     }
 
-    public Release(tenantId: string): void
+    public Release(environmentId: string): void
     {
-        const entry = this.tenants.get(tenantId)
+        const entry = this.tenants.get(environmentId)
         if (entry === undefined)
         {
             return
@@ -52,19 +52,19 @@ export class InMemoryTenantCoordinator implements ITenantCoordinator
     public EvictCandidates(nowMs: number, idleTtlMs: number): readonly string[]
     {
         const candidates: string[] = []
-        for (const [tenantId, entry] of this.tenants)
+        for (const [environmentId, entry] of this.tenants)
         {
             if (entry.connections === 0 && nowMs - entry.lastUseMs >= idleTtlMs)
             {
-                candidates.push(tenantId)
+                candidates.push(environmentId)
             }
         }
         return candidates
     }
 
-    public Forget(tenantId: string): void
+    public Forget(environmentId: string): void
     {
-        this.tenants.delete(tenantId)
+        this.tenants.delete(environmentId)
     }
 
     public Known(): readonly string[]
@@ -72,13 +72,13 @@ export class InMemoryTenantCoordinator implements ITenantCoordinator
         return [...this.tenants.keys()]
     }
 
-    private Entry(tenantId: string): TenantLiveness
+    private Entry(environmentId: string): TenantLiveness
     {
-        let entry = this.tenants.get(tenantId)
+        let entry = this.tenants.get(environmentId)
         if (entry === undefined)
         {
             entry = { connections: 0, lastUseMs: this.now() }
-            this.tenants.set(tenantId, entry)
+            this.tenants.set(environmentId, entry)
         }
         return entry
     }

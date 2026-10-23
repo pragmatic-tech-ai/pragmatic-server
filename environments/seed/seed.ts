@@ -66,8 +66,8 @@ export class SeedCli
     /** Loads environments/(env)/env.json; the JSON's numeric purpose (0/1) maps to the string enum. */
     public static LoadDefinition(env: string): EnvDefinition
     {
-        const json = JSON.parse(readFileSync(join(SeedCli.EnvDir(env), SeedCli.EnvFile), SeedCli.Utf8)) as { name: string; kind: EnvKind; tenantId: string; purpose: number; hostPort: number }
-        return { name: json.name, kind: json.kind, tenantId: json.tenantId, purpose: String(json.purpose) as TenantPurposeName, hostPort: json.hostPort }
+        const json = JSON.parse(readFileSync(join(SeedCli.EnvDir(env), SeedCli.EnvFile), SeedCli.Utf8)) as { name: string; kind: EnvKind; environmentId: string; purpose: number; hostPort: number }
+        return { name: json.name, kind: json.kind, environmentId: json.environmentId, purpose: String(json.purpose) as TenantPurposeName, hostPort: json.hostPort }
     }
 
     /** Reads the generated provisioned-secrets.json (secretRef to value) for an environment. */
@@ -88,13 +88,13 @@ export class SeedCli
 
     public static AdminEmail(def: EnvDefinition): string
     {
-        return BundleBuilder.AdminEmailPrefix + def.tenantId + BundleBuilder.AdminEmailSuffix
+        return BundleBuilder.AdminEmailPrefix + def.environmentId + BundleBuilder.AdminEmailSuffix
     }
 
     /** The admin password for the tenant, resolved from the generated secrets under (tenant)-admin-pw. */
     public static AdminPassword(def: EnvDefinition, secrets: Record<string, string>): string
     {
-        return SeedCli.Secret(secrets, def.tenantId + BundleBuilder.AdminSecretSuffix)
+        return SeedCli.Secret(secrets, def.environmentId + BundleBuilder.AdminSecretSuffix)
     }
 
     public static async Run(command: Command, env: string): Promise<void>
@@ -185,8 +185,8 @@ export class SeedCli
             user.password = SeedCli.Secret(secrets, user.passwordRef)
         }
         const seeder = new UserSeeder()
-        const token = await seeder.Login(SeedCli.HttpUrl(def), def.tenantId, SeedCli.AdminEmail(def), SeedCli.AdminPassword(def, secrets))
-        const conn = await seeder.Connect(SeedCli.WsUrl(def), def.tenantId, token)
+        const token = await seeder.Login(SeedCli.HttpUrl(def), def.environmentId, SeedCli.AdminEmail(def), SeedCli.AdminPassword(def, secrets))
+        const conn = await seeder.Connect(SeedCli.WsUrl(def), def.environmentId, token)
         try
         {
             await seeder.SeedUsers(conn, users)

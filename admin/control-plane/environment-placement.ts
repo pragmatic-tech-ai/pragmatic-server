@@ -29,7 +29,7 @@ export class EnvironmentPlacement
         {
             throw new EnvironmentNotPlacedError(record.name)
         }
-        this.directory.ValidateHivePlacement(record.tenantId, record.hiveId)
+        this.directory.ValidateHivePlacement(record.environmentId, record.hiveId)
         const hive = this.directory.GetHive(record.hiveId)!
         return EnvironmentWorkloadFactory.From(record, hive)
     }

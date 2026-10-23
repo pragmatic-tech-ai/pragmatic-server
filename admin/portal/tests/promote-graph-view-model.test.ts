@@ -28,7 +28,7 @@ class FakeSource implements IPromoteGraphSource
 
     private static Env(name: string, type: string): EnvironmentDto
     {
-        return { name, template: '', type, tenantId: '', hostPort: 0, status: '', createdAt: '', httpUrl: '', wsUrl: '' }
+        return { name, template: '', type, environmentId: '', hostPort: 0, status: '', createdAt: '', httpUrl: '', wsUrl: '' }
     }
 }
 

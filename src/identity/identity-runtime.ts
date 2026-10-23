@@ -4,5 +4,5 @@ import type { IHttpClient, IOidcFlowStateStore } from '@pragmatic-tech-ai/todl-i
 export interface IdentityRuntime
 {
     HttpClient: IHttpClient
-    FlowStateFor(tenantId: string): IOidcFlowStateStore
+    FlowStateFor(environmentId: string): IOidcFlowStateStore
 }

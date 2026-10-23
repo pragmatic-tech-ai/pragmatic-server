@@ -35,7 +35,7 @@ class Fixture
             name,
             type,
             template: Template.DevBlank,
-            tenantId: name,
+            environmentId: name,
             hostPort: 9100,
             containerName: name,
             volumeName: name,

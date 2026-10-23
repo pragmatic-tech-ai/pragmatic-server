@@ -8,7 +8,7 @@ import { BundleBuilder, EnvKind, TenantPurposeName } from '../bundle.js'
 test('demo bundle generates key, tenants.json, tenant-config.json, package, and application.json', async () =>
 {
     const dir = mkdtempSync(join(tmpdir(), 'bundle-'))
-    await BundleBuilder.Generate({ name: 'demo', kind: EnvKind.Demo, tenantId: 'contoso', purpose: TenantPurposeName.Runtime, hostPort: 8081 }, dir)
+    await BundleBuilder.Generate({ name: 'demo', kind: EnvKind.Demo, environmentId: 'contoso', purpose: TenantPurposeName.Runtime, hostPort: 8081 }, dir)
     assert.ok(existsSync(join(dir, 'master.key')))
     assert.ok(existsSync(join(dir, 'provisioned-secrets.json')))
     const tenants = JSON.parse(readFileSync(join(dir, 'tenants.json'), 'utf8'))
@@ -30,7 +30,7 @@ test('explicit seedDir overrides the name-derived seed path', async () =>
         const model = { businessUnits: [{ id: 'acme', name: 'Acme' }], teams: [], membership: { claimsMapping: [], overrides: [] }, ownershipRules: [] }
         writeFileSync(join(seedDir, 'security-model.json'), JSON.stringify(model))
         writeFileSync(join(seedDir, 'users.json'), JSON.stringify([{ principalId: 'u1', email: 'u1@x.test', passwordRef: 'u1-pw', coarseRole: 'Editor' }]))
-        await BundleBuilder.Generate({ name: 'custom-name', kind: EnvKind.Demo, tenantId: 'acme', purpose: TenantPurposeName.Runtime, hostPort: 8082 }, bundleDir, seedDir)
+        await BundleBuilder.Generate({ name: 'custom-name', kind: EnvKind.Demo, environmentId: 'acme', purpose: TenantPurposeName.Runtime, hostPort: 8082 }, bundleDir, seedDir)
         const config = JSON.parse(readFileSync(join(bundleDir, 'data', 'acme', 'identity', 'tenant-config.json'), 'utf8'))
         assert.deepEqual(config.configs.acme.securityModel, model)
         const secrets = JSON.parse(readFileSync(join(bundleDir, 'provisioned-secrets.json'), 'utf8'))
@@ -45,7 +45,7 @@ test('explicit seedDir overrides the name-derived seed path', async () =>
 test('omitted seedDir keeps the name-derived seed path', async () =>
 {
     const dir = mkdtempSync(join(tmpdir(), 'bundle-'))
-    await BundleBuilder.Generate({ name: 'demo', kind: EnvKind.Demo, tenantId: 'contoso', purpose: TenantPurposeName.Runtime, hostPort: 8081 }, dir)
+    await BundleBuilder.Generate({ name: 'demo', kind: EnvKind.Demo, environmentId: 'contoso', purpose: TenantPurposeName.Runtime, hostPort: 8081 }, dir)
     const config = JSON.parse(readFileSync(join(dir, 'data', 'contoso', 'identity', 'tenant-config.json'), 'utf8'))
     assert.ok(config.configs.contoso.securityModel.businessUnits.length > 0)
     const secrets = JSON.parse(readFileSync(join(dir, 'provisioned-secrets.json'), 'utf8'))
@@ -59,7 +59,7 @@ test('omitted seedDir keeps the name-derived seed path', async () =>
 test('generate is idempotent: a second run keeps the same master key', async () =>
 {
     const dir = mkdtempSync(join(tmpdir(), 'bundle-'))
-    const def = { name: 'dev', kind: EnvKind.Dev, tenantId: 'dev', purpose: TenantPurposeName.Development, hostPort: 8080 }
+    const def = { name: 'dev', kind: EnvKind.Dev, environmentId: 'dev', purpose: TenantPurposeName.Development, hostPort: 8080 }
     await BundleBuilder.Generate(def, dir)
     const key1 = readFileSync(join(dir, 'master.key'))
     await BundleBuilder.Generate(def, dir)
@@ -70,7 +70,7 @@ test('a RuntimePostgres tenant bundle declares the sql connection and allows sql
 {
     const dir = mkdtempSync(join(tmpdir(), 'bundle-'))
     const database = { connectionName: 'appdb', host: 'pragmatic-env-rt-db', port: 5432, database: 'appdb', user: 'appuser', password: 'pw-secret', hostPort: 55432 }
-    await BundleBuilder.Generate({ name: 'rt', kind: EnvKind.Dev, tenantId: 'rt', purpose: TenantPurposeName.Runtime, hostPort: 8083, database }, dir)
+    await BundleBuilder.Generate({ name: 'rt', kind: EnvKind.Dev, environmentId: 'rt', purpose: TenantPurposeName.Runtime, hostPort: 8083, database }, dir)
     const tenant = JSON.parse(readFileSync(join(dir, 'tenants.json'), 'utf8')).tenants.rt
     assert.ok(Object.values(tenant.connections.appdb.settings).every(v => typeof v === 'string'))
     assert.equal(tenant.connections.appdb.settings.port, '5432')
@@ -86,7 +86,7 @@ test('a RuntimePostgres tenant bundle declares the sql connection and allows sql
 test('a tenant without a database keeps deny-all and no connections', async () =>
 {
     const dir = mkdtempSync(join(tmpdir(), 'bundle-'))
-    await BundleBuilder.Generate({ name: 'dev', kind: EnvKind.Dev, tenantId: 'dev', purpose: TenantPurposeName.Development, hostPort: 8080 }, dir)
+    await BundleBuilder.Generate({ name: 'dev', kind: EnvKind.Dev, environmentId: 'dev', purpose: TenantPurposeName.Development, hostPort: 8080 }, dir)
     const tenant = JSON.parse(readFileSync(join(dir, 'tenants.json'), 'utf8')).tenants.dev
     assert.deepEqual(tenant.connectorsPolicy.adapterAllowlist, [])
     assert.equal(tenant.connections, undefined)
