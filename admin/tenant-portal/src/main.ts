@@ -1,7 +1,7 @@
 import { Application, ThemeManager, Density } from '@pragmatic-tech-ai/mural/runtime'
 import { HtmlTarget } from '@pragmatic-tech-ai/mural/visual-engine'
 import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pragmatic'
-import { PlaceholderRootView } from './placeholder-root-view.js'
+import { TenantApp } from './tenant-app.js'
 
 // Boots Mural into a plain browser tab: theme first, then the view tree,
 // then mount on an HtmlTarget bound to the root element.
@@ -22,7 +22,9 @@ export class TenantPortalMain
         app.initialize({ theme: Pragmatic, scheme: PragmaticLight })
         ThemeManager.Density = Density.Compact
         const target = new HtmlTarget(root)
-        target.Content = new PlaceholderRootView()
+        const shell = new TenantApp()
+        target.Content = shell
+        void shell.Boot()
     }
 }
 
