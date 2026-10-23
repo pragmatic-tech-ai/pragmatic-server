@@ -217,6 +217,7 @@ describe('ControlPlaneHost tenant streaming', () =>
             api: new StubTenantApi(),
             allowedHosts: new Set([Fixture.TenantHost]),
             events: bus,
+            staticRoot: join(parent, 'tenant-static'),
         }
         host = new ControlPlaneHost(
             service as unknown as IEnvironmentService,

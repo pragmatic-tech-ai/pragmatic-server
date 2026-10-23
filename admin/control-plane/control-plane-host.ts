@@ -356,6 +356,7 @@ export class ControlPlaneHost
     private readonly tenantClients = new Map<WebSocket, () => void>()
     private tenantChangeSubscription: (() => void) | undefined
     private readonly staticRootAbs: string
+    private readonly tenantStaticRootAbs?: string
 
     public constructor(
         private readonly service: IEnvironmentService,
@@ -372,6 +373,7 @@ export class ControlPlaneHost
         this.staticRootAbs = resolve(staticRoot)
         if (tenantAuth !== undefined)
         {
+            this.tenantStaticRootAbs = resolve(tenantAuth.staticRoot)
             // RULING 5: route every environment lifecycle change to the tenant bus, scoped by the env's owning tenant.
             // An unbound env (no tenantId) has no tenant audience, so it is skipped.
             this.tenantChangeSubscription = this.service.OnChanged(rec =>
@@ -1702,6 +1704,16 @@ export class ControlPlaneHost
         })
     }
 
+    /** The bundle root for this request: the tenant portal on a tenant host, otherwise the operator portal. */
+    private StaticRootFor(req: IncomingMessage): string
+    {
+        if (this.tenantAuth !== undefined && this.tenantStaticRootAbs !== undefined && ControlPlaneHost.HostIn(req, this.tenantAuth.allowedHosts))
+        {
+            return this.tenantStaticRootAbs
+        }
+        return this.staticRootAbs
+    }
+
     private async ServeStatic(req: IncomingMessage, res: ServerResponse, path: string): Promise<void>
     {
         if (req.method !== ControlPlaneHost.MethodGet)
@@ -1723,8 +1735,9 @@ export class ControlPlaneHost
         {
             rel = ControlPlaneHost.RootPath + ControlPlaneHost.IndexFile
         }
-        const abs = resolve(this.staticRootAbs, '.' + rel)
-        if (!abs.startsWith(this.staticRootAbs + sep))
+        const rootAbs = this.StaticRootFor(req)
+        const abs = resolve(rootAbs, '.' + rel)
+        if (!abs.startsWith(rootAbs + sep))
         {
             this.WriteNotFound(res)
             return
