@@ -26,12 +26,30 @@ export class ChildProcessSpawn implements IProcessSpawn
     private static readonly Utf8 = 'utf8'
     private static readonly CloseEvent = 'close'
     private static readonly DataEvent = 'data'
+    private static readonly ErrorEvent = 'error'
 
     public Spawn(command: string, args: string[]): ILogProcess
     {
         const child = spawn(command, args)
         child.stdout.setEncoding(ChildProcessSpawn.Utf8)
         child.stderr.setEncoding(ChildProcessSpawn.Utf8)
+        const closeCallbacks: Array<() => void> = []
+        let closed = false
+        // 'error' (e.g. docker missing from PATH) and 'close' may both fire; a child that errored is treated as closed, once.
+        const notifyClosed = (): void =>
+        {
+            if (closed)
+            {
+                return
+            }
+            closed = true
+            for (const cb of closeCallbacks)
+            {
+                cb()
+            }
+        }
+        child.on(ChildProcessSpawn.CloseEvent, notifyClosed)
+        child.on(ChildProcessSpawn.ErrorEvent, notifyClosed)
         return {
             OnData: cb =>
             {
@@ -40,7 +58,7 @@ export class ChildProcessSpawn implements IProcessSpawn
             },
             OnClose: cb =>
             {
-                child.on(ChildProcessSpawn.CloseEvent, () => cb())
+                closeCallbacks.push(cb)
             },
             Kill: () =>
             {

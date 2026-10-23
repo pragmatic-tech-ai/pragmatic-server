@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DockerEnv, EnvKind, TenantPurposeName, type ILogProcess, type IProcessSpawn } from '../docker.js'
+import { ChildProcessSpawn, DockerEnv, EnvKind, TenantPurposeName, type ILogProcess, type IProcessSpawn } from '../docker.js'
 
 const Demo = { name: 'demo', kind: EnvKind.Demo, environmentId: 'contoso', purpose: TenantPurposeName.Runtime, hostPort: 8081 }
 
@@ -69,4 +69,27 @@ test('LogStream spawns docker logs -f --tail N <container>, forwards chunks, and
     assert.equal(proc, spawn.Process)
     proc.Kill()
     assert.equal(spawn.Process.Killed, true)
+})
+
+test('ChildProcessSpawn forwards stdout and stderr and fires OnClose', async () =>
+{
+    const proc = new ChildProcessSpawn().Spawn(process.execPath, ['-e', "process.stdout.write('a');process.stderr.write('b')"])
+    const chunks: string[] = []
+    proc.OnData(c => chunks.push(c))
+    await new Promise<void>(resolve => proc.OnClose(resolve))
+    assert.deepEqual([...chunks].sort(), ['a', 'b'])
+})
+
+test('ChildProcessSpawn Kill terminates a long-lived process', async () =>
+{
+    const proc = new ChildProcessSpawn().Spawn(process.execPath, ['-e', 'setTimeout(()=>{}, 100000)'])
+    const closed = new Promise<void>(resolve => proc.OnClose(resolve))
+    proc.Kill()
+    await closed
+})
+
+test('ChildProcessSpawn spawn error fires OnClose without throwing', async () =>
+{
+    const proc = new ChildProcessSpawn().Spawn('definitely-not-a-real-binary-xyz', [])
+    await new Promise<void>(resolve => proc.OnClose(resolve))
 })
