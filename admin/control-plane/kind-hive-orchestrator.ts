@@ -7,6 +7,8 @@ export class KindHiveOrchestrator implements IHiveOrchestrator
 {
     private static readonly NotProvisionedDetail = 'cluster not provisioned'
 
+    private ensuring: Promise<void> | undefined
+
     public constructor(
         private readonly kind: IKind,
         private readonly clusterName: string,
@@ -33,7 +35,7 @@ export class KindHiveOrchestrator implements IHiveOrchestrator
 
     public async Health(w: EnvironmentWorkload): Promise<WorkloadHealth>
     {
-        if (!(await this.kind.ListClusters()).includes(this.clusterName))
+        if (!(await this.ClusterExists()))
         {
             return { ready: false, runningImage: undefined, detail: KindHiveOrchestrator.NotProvisionedDetail }
         }
@@ -57,11 +59,33 @@ export class KindHiveOrchestrator implements IHiveOrchestrator
         await this.kind.DeleteCluster(this.clusterName)
     }
 
+    private async ClusterExists(): Promise<boolean>
+    {
+        return (await this.kind.ListClusters()).includes(this.clusterName)
+    }
+
+    /** Single in-flight guard: concurrent callers share one create; a failure is not cached. */
     private async EnsureCluster(): Promise<void>
     {
-        if (!(await this.kind.ListClusters()).includes(this.clusterName))
+        if (this.ensuring)
         {
-            await this.kind.CreateCluster(this.clusterName)
+            return this.ensuring
+        }
+        const p = (async () =>
+        {
+            if (!(await this.ClusterExists()))
+            {
+                await this.kind.CreateCluster(this.clusterName)
+            }
+        })()
+        this.ensuring = p
+        try
+        {
+            await p
+        }
+        finally
+        {
+            this.ensuring = undefined
         }
     }
 }

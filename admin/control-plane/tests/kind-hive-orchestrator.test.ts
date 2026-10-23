@@ -105,6 +105,7 @@ test('Health returns not-ready without calling inner when the cluster is absent'
     const h = await f.sut.Health(Fixture.Workload)
     assert.equal(h.ready, false)
     assert.equal(h.runningImage, undefined)
+    assert.equal(h.detail, 'cluster not provisioned')
     assert.ok(!f.inner.calls.includes('Health'))
 })
 
@@ -144,4 +145,11 @@ test('Roll and WaitHealthy delegate to inner', async () =>
 test('ClusterName exposes the constructed name', () =>
 {
     assert.equal(new Fixture().sut.ClusterName, Fixture.Cluster)
+})
+
+test('concurrent Apply on a fresh cluster creates it once', async () =>
+{
+    const f = new Fixture()
+    await Promise.all([f.sut.Apply(Fixture.Workload), f.sut.Apply(Fixture.Workload)])
+    assert.deepEqual(f.kind.created, [Fixture.Cluster])
 })
