@@ -40,8 +40,13 @@ export class TenantTreeView extends TenantViewBase
     // Forwarded tenant event: let the VM re-pull, then redraw the tree.
     public ApplyEvent(ev: TenantEvent): void
     {
-        this.vm.ApplyEvent(ev)
-        void this.vm.Settled().then(() => this.Rebuild())
+        void this.vm.ApplyEvent(ev).then(reloaded =>
+        {
+            if (reloaded)
+            {
+                this.Rebuild()
+            }
+        })
     }
 
     public Rebuild(): void

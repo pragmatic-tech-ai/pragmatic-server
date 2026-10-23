@@ -70,8 +70,7 @@ describe('TenantTreeViewModel', () =>
         const vm = new TenantTreeViewModel(src)
         await vm.Load()
         src.Envs = [Make.Env('a', 'h1', 'stopped')]
-        vm.ApplyEvent({ type: TenantEventType.EnvironmentChanged, environmentName: 'a' })
-        await vm.Settled()
+        assert.equal(await vm.ApplyEvent({ type: TenantEventType.EnvironmentChanged, environmentName: 'a' }), true)
         assert.equal(src.EnvCalls, 2)
         assert.equal(vm.Nodes[0]!.environments[0]!.status, 'stopped')
     })
@@ -83,9 +82,8 @@ describe('TenantTreeViewModel', () =>
         src.Envs = [Make.Env('a', 'h1')]
         const vm = new TenantTreeViewModel(src)
         await vm.Load()
-        vm.ApplyEvent({ type: TenantEventType.EnvironmentChanged, environmentName: 'zzz' })
-        vm.ApplyEvent({ type: TenantEventType.HealthChanged, environmentName: 'a' })
-        await vm.Settled()
+        assert.equal(await vm.ApplyEvent({ type: TenantEventType.EnvironmentChanged, environmentName: 'zzz' }), false)
+        assert.equal(await vm.ApplyEvent({ type: TenantEventType.HealthChanged, environmentName: 'a' }), false)
         assert.equal(src.EnvCalls, 1)
     })
 
@@ -99,5 +97,30 @@ describe('TenantTreeViewModel', () =>
         vm.Select({ kind: SelectionKind.Hive, hive })
         assert.equal(raised, 1)
         assert.deepEqual(vm.Selected, { kind: SelectionKind.Hive, hive })
+    })
+
+    it('discards a stale Load that resolves after a newer one', async () =>
+    {
+        const releases: Array<() => void> = []
+        const calls: EnvironmentDto[][] = [[Make.Env('a', 'h1', 'stale')], [Make.Env('a', 'h1', 'fresh')]]
+        let n = 0
+        const src: ITreeSource = {
+            ListHives: async () => [Make.Hive('h1')],
+            ListEnvironments: () =>
+            {
+                const result = calls[n++]!
+                return new Promise<EnvironmentDto[]>(resolve => { releases.push(() => resolve(result)) })
+            },
+        }
+        const vm = new TenantTreeViewModel(src)
+        const first = vm.Load()
+        const second = vm.Load()
+        await Promise.resolve()
+        await Promise.resolve()
+        releases[1]!()
+        await second
+        releases[0]!()
+        await first
+        assert.equal(vm.Nodes[0]!.environments[0]!.status, 'fresh')
     })
 })

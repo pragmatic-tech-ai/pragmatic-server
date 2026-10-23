@@ -66,7 +66,6 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     public static readonly ContinueLabel = 'Continue'
     public static readonly PromptText = 'Enter your tenant'
     public static readonly EmptySelectionText = 'Select a hive or environment'
-    public static readonly TreePlaceholderText = 'Tree'
 
     private readonly client: TenantApiClient
     private readonly environment: ITenantEnvironment
