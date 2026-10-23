@@ -42,6 +42,10 @@ class BrowserResponse
 class Browser
 {
     private static readonly FormContentType = 'application/x-www-form-urlencoded'
+    private static readonly ContentTypeHeader = 'Content-Type'
+    private static readonly ContentLengthHeader = 'Content-Length'
+    private static readonly GetMethod = 'GET'
+    private static readonly PostMethod = 'POST'
 
     public constructor(private readonly ca: Buffer)
     {
@@ -49,12 +53,12 @@ class Browser
 
     public Get(url: string): Promise<BrowserResponse>
     {
-        return this.send('GET', url, undefined)
+        return this.send(Browser.GetMethod, url, undefined)
     }
 
     public PostForm(url: string, fields: ReadonlyMap<string, string>): Promise<BrowserResponse>
     {
-        return this.send('POST', url, new URLSearchParams([...fields]).toString())
+        return this.send(Browser.PostMethod, url, new URLSearchParams([...fields]).toString())
     }
 
     private send(method: string, url: string, body: string | undefined): Promise<BrowserResponse>
@@ -62,8 +66,8 @@ class Browser
         const headers: Record<string, string> = {}
         if (body !== undefined)
         {
-            headers['Content-Type'] = Browser.FormContentType
-            headers['Content-Length'] = String(Buffer.byteLength(body))
+            headers[Browser.ContentTypeHeader] = Browser.FormContentType
+            headers[Browser.ContentLengthHeader] = String(Buffer.byteLength(body))
         }
         return new Promise<BrowserResponse>((resolve, reject) =>
         {
