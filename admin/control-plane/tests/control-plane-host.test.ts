@@ -123,6 +123,11 @@ class FakeService implements IEnvironmentService
         return { OnData() {}, OnClose() {}, Kill() {} }
     }
 
+    public OnChanged(): () => void
+    {
+        return () => {}
+    }
+
     public async Logs(name: string): Promise<string>
     {
         this.Calls.push(`logs:${name}`)

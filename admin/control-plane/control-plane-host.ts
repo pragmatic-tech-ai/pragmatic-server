@@ -1,6 +1,7 @@
 import { createServer } from 'node:http'
 import type { IncomingMessage, Server as HttpServer, ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import type { Duplex } from 'node:stream'
 import { readFile } from 'node:fs/promises'
 import { extname, resolve, sep } from 'node:path'
 import { WebSocketServer, WebSocket } from 'ws'
@@ -46,6 +47,8 @@ import type { ClientRecord, ClusterSpec, HiveRecord, RegistrySpec, TenantRecord 
 import type { CreateAccountParams, GraphLoadedDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ILogProcess } from '../../environments/seed/docker.js'
 import type { TenantPlane } from './tenant-auth/tenant-plane.js'
+import { TenantEventType } from './tenant-api/tenant-events.js'
+import { TenantLogSocket } from './tenant-api/tenant-log-socket.js'
 
 export interface IEnvironmentService
 {
@@ -58,6 +61,8 @@ export interface IEnvironmentService
     ListReconciled(): Promise<readonly EnvironmentRecord[]>
     Logs(name: string): Promise<string>
     LogStream(name: string, onData: (chunk: string) => void): ILogProcess
+    /** Additive lifecycle-change subscription (RULING 5): fires on every status change; returns an unsubscribe. */
+    OnChanged(cb: (rec: EnvironmentRecord) => void): () => void
     AdminSnapshot(name: string): Promise<AdminSnapshot>
     AdminCreateAccount(name: string, params: CreateAccountParams): Promise<void>
     AdminDisableAccount(name: string, principalId: string): Promise<void>
@@ -172,6 +177,9 @@ export class ControlPlaneHost
     private static readonly ApiPrefix = '/api/'
     private static readonly TenantAuthPrefix = '/tenant-auth/'
     private static readonly TenantApiPrefix = '/tenant-api/'
+    private static readonly TenantEventsPath = '/tenant-api/events'
+    private static readonly TenantLogsStreamPattern = new RegExp(
+        '^' + ControlPlaneHost.TenantApiPrefix + 'environments/([^/]+)/logs/stream$')
     private static readonly PingPath = '/api/ping'
     private static readonly TemplatesPath = '/api/templates'
     private static readonly EnvironmentsPath = '/api/environments'
@@ -344,6 +352,9 @@ export class ControlPlaneHost
     private httpServer: HttpServer | undefined
     private wsServer: WebSocketServer | undefined
     private readonly clients = new Set<WebSocket>()
+    /** Tenant ws sockets mapped to their teardown (events: unsubscribe; logs: kill the stream). Close() runs each. */
+    private readonly tenantClients = new Map<WebSocket, () => void>()
+    private tenantChangeSubscription: (() => void) | undefined
     private readonly staticRootAbs: string
 
     public constructor(
@@ -359,6 +370,18 @@ export class ControlPlaneHost
         private readonly tenantAuth?: TenantPlane)
     {
         this.staticRootAbs = resolve(staticRoot)
+        if (tenantAuth !== undefined)
+        {
+            // RULING 5: route every environment lifecycle change to the tenant bus, scoped by the env's owning tenant.
+            // An unbound env (no tenantId) has no tenant audience, so it is skipped.
+            this.tenantChangeSubscription = this.service.OnChanged(rec =>
+            {
+                if (rec.tenantId !== undefined)
+                {
+                    tenantAuth.events.Emit(rec.tenantId, { type: TenantEventType.EnvironmentChanged, environmentName: rec.name })
+                }
+            })
+        }
     }
 
     public Listen(port: number, host: string): Promise<void>
@@ -370,26 +393,7 @@ export class ControlPlaneHost
         })
         server.on('upgrade', (req, socket, head) =>
         {
-            const path = new URL(req.url ?? ControlPlaneHost.RootPath, ControlPlaneHost.BaseUrl).pathname
-            if (path !== ControlPlaneHost.EventsPath || !ControlPlaneHost.HostAllowed(req) || !ControlPlaneHost.OriginAllowed(req))
-            {
-                socket.destroy()
-                return
-            }
-            void this.Authenticated(req).then(ok =>
-            {
-                if (!ok)
-                {
-                    socket.destroy()
-                    return
-                }
-                wss.handleUpgrade(req, socket, head, ws =>
-                {
-                    this.clients.add(ws)
-                    ws.on(ControlPlaneHost.CloseEvent, () => this.clients.delete(ws))
-                    ws.on(ControlPlaneHost.ErrorEvent, () => this.clients.delete(ws))
-                })
-            }, () => socket.destroy())
+            this.RouteUpgrade(req, socket, head, wss)
         })
         this.httpServer = server
         this.wsServer = wss
@@ -404,8 +408,164 @@ export class ControlPlaneHost
         })
     }
 
+    /**
+     * Dispatches a ws upgrade. The operator `/api/events` branch is unchanged (operator gate + operator host/origin).
+     * The two tenant branches are reached only when a tenant plane is mounted and are gated by the tenant host, the
+     * tenant origin, and a resolved `pts_session` principal; any failure destroys the socket.
+     */
+    private RouteUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, wss: WebSocketServer): void
+    {
+        const path = new URL(req.url ?? ControlPlaneHost.RootPath, ControlPlaneHost.BaseUrl).pathname
+        if (path === ControlPlaneHost.EventsPath)
+        {
+            this.UpgradeOperatorEvents(req, socket, head, wss)
+            return
+        }
+        const tenant = this.tenantAuth
+        if (tenant === undefined)
+        {
+            socket.destroy()
+            return
+        }
+        if (path === ControlPlaneHost.TenantEventsPath)
+        {
+            this.UpgradeTenantEvents(req, socket, head, wss, tenant)
+            return
+        }
+        const lm = ControlPlaneHost.TenantLogsStreamPattern.exec(path)
+        if (lm !== null)
+        {
+            this.UpgradeTenantLogs(req, socket, head, wss, tenant, lm)
+            return
+        }
+        socket.destroy()
+    }
+
+    /** The operator events ws: operator host + operator origin + operator session, then tracked in `clients`. Unchanged. */
+    private UpgradeOperatorEvents(req: IncomingMessage, socket: Duplex, head: Buffer, wss: WebSocketServer): void
+    {
+        if (!ControlPlaneHost.HostAllowed(req) || !ControlPlaneHost.OriginAllowed(req))
+        {
+            socket.destroy()
+            return
+        }
+        void this.Authenticated(req).then(ok =>
+        {
+            if (!ok)
+            {
+                socket.destroy()
+                return
+            }
+            wss.handleUpgrade(req, socket, head, ws =>
+            {
+                this.clients.add(ws)
+                ws.on(ControlPlaneHost.CloseEvent, () => this.clients.delete(ws))
+                ws.on(ControlPlaneHost.ErrorEvent, () => this.clients.delete(ws))
+            })
+        }, () => socket.destroy())
+    }
+
+    /** The tenant events ws: on success subscribes the bus for the session's tenant and forwards each event as JSON. */
+    private UpgradeTenantEvents(req: IncomingMessage, socket: Duplex, head: Buffer, wss: WebSocketServer, tenant: TenantPlane): void
+    {
+        if (!ControlPlaneHost.TenantUpgradeAllowed(req, tenant))
+        {
+            socket.destroy()
+            return
+        }
+        void tenant.gate.Principal(req).then(session =>
+        {
+            if (session === null)
+            {
+                socket.destroy()
+                return
+            }
+            wss.handleUpgrade(req, socket, head, ws =>
+            {
+                const unsubscribe = tenant.events.On(session.tenantId, ev =>
+                {
+                    if (ws.readyState === WebSocket.OPEN)
+                    {
+                        ws.send(JSON.stringify(ev))
+                    }
+                })
+                this.TrackTenant(ws, unsubscribe)
+            })
+        }, () => socket.destroy())
+    }
+
+    /** The tenant log-stream ws: on success hands the socket to TenantLogSocket, which enforces env ownership and streams. */
+    private UpgradeTenantLogs(req: IncomingMessage, socket: Duplex, head: Buffer, wss: WebSocketServer, tenant: TenantPlane, m: RegExpExecArray): void
+    {
+        if (!ControlPlaneHost.TenantUpgradeAllowed(req, tenant))
+        {
+            socket.destroy()
+            return
+        }
+        const name = ControlPlaneHost.Decode(m[1] as string)
+        if (name === undefined)
+        {
+            socket.destroy()
+            return
+        }
+        void tenant.gate.Principal(req).then(session =>
+        {
+            if (session === null)
+            {
+                socket.destroy()
+                return
+            }
+            wss.handleUpgrade(req, socket, head, ws =>
+            {
+                const logSocket = new TenantLogSocket(session, name, this.service)
+                if (!logSocket.Attach(ws))
+                {
+                    // Not the session tenant's env (or unknown): the socket is already closed and no stream started.
+                    return
+                }
+                this.TrackTenant(ws, () => logSocket.Dispose())
+            })
+        }, () => socket.destroy())
+    }
+
+    /** Records a tenant socket with its teardown and wires close/error to run that teardown and drop the entry. */
+    private TrackTenant(ws: WebSocket, teardown: () => void): void
+    {
+        this.tenantClients.set(ws, teardown)
+        ws.on(ControlPlaneHost.CloseEvent, () => this.RemoveTenant(ws))
+        ws.on(ControlPlaneHost.ErrorEvent, () => this.RemoveTenant(ws))
+    }
+
+    private RemoveTenant(ws: WebSocket): void
+    {
+        const teardown = this.tenantClients.get(ws)
+        if (teardown === undefined)
+        {
+            return
+        }
+        this.tenantClients.delete(ws)
+        teardown()
+    }
+
+    /** Both tenant ws routes share this gate: the request host and (present) origin must be configured tenant hosts. */
+    private static TenantUpgradeAllowed(req: IncomingMessage, tenant: TenantPlane): boolean
+    {
+        return ControlPlaneHost.HostIn(req, tenant.allowedHosts) && ControlPlaneHost.OriginInHosts(req, tenant.allowedHosts)
+    }
+
     public async Close(): Promise<void>
     {
+        if (this.tenantChangeSubscription !== undefined)
+        {
+            this.tenantChangeSubscription()
+            this.tenantChangeSubscription = undefined
+        }
+        for (const [ws, teardown] of this.tenantClients)
+        {
+            teardown()
+            ws.terminate()
+        }
+        this.tenantClients.clear()
         for (const c of this.clients)
         {
             c.terminate()

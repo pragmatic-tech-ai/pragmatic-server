@@ -20,6 +20,7 @@ import { TenantAuthEndpoint } from '../tenant-auth/tenant-auth-endpoint.js'
 import { TenantAuthGate } from '../tenant-auth/tenant-auth-gate.js'
 import type { ITenantOidcRelyingParty } from '../tenant-auth/tenant-oidc-relying-party.js'
 import type { ITenantApiEndpoint, TenantPlane } from '../tenant-auth/tenant-plane.js'
+import { TenantEventBus } from '../tenant-api/tenant-events.js'
 
 type Reply = { status: number; body: string }
 
@@ -58,6 +59,11 @@ class StubEnvironments
     public async ListReconciled(): Promise<readonly never[]>
     {
         return []
+    }
+
+    public OnChanged(): () => void
+    {
+        return () => {}
     }
 }
 
@@ -164,6 +170,7 @@ describe('ControlPlaneHost tenant plane', () =>
             gate: new TenantAuthGate(store),
             api,
             allowedHosts: new Set([TenantHarness.TenantHost]),
+            events: new TenantEventBus(),
         }
         host = new ControlPlaneHost(
             new StubEnvironments() as unknown as IEnvironmentService,

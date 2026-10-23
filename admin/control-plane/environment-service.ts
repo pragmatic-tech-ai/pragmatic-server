@@ -137,6 +137,9 @@ export class EnvironmentService
     /** Safe names with a Create currently running; closes the race between the existence check and the final registry Put. */
     private readonly inFlight = new Set<string>()
 
+    /** Lifecycle-change subscribers (RULING 5): additive, signal-only; the operator broadcast is a separate channel. */
+    private readonly changeCallbacks = new Set<(rec: EnvironmentRecord) => void>()
+
     public constructor(
         private readonly registry: EnvironmentRegistry,
         private readonly allocator: PortAllocator,
@@ -506,7 +509,28 @@ export class EnvironmentService
     {
         const updated = { ...rec, status }
         await this.registry.Put(updated)
+        this.NotifyChanged(updated)
         return updated
+    }
+
+    /**
+     * Registers a lifecycle-change subscriber and returns an unsubscribe closure. Every Start/Stop/Restart funnels
+     * through SetStatus, so this single seam covers each status change. It is additive and consumed only by the
+     * tenant event bus; the operator broadcast remains unchanged.
+     */
+    public OnChanged(cb: (rec: EnvironmentRecord) => void): () => void
+    {
+        this.changeCallbacks.add(cb)
+        return () => this.changeCallbacks.delete(cb)
+    }
+
+    /** Fans a changed record out to the lifecycle subscribers (a snapshot, so a callback may unsubscribe mid-notify). */
+    private NotifyChanged(rec: EnvironmentRecord): void
+    {
+        for (const cb of [...this.changeCallbacks])
+        {
+            cb(rec)
+        }
     }
 
     /** Re-derives the definition from the stored type, falling back to the template default (DefaultTypeFor) for legacy records with no type. */

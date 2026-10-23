@@ -33,6 +33,7 @@ import { TenantOidcRelyingParty } from './tenant-auth/tenant-oidc-relying-party.
 import { TenantAuthEndpoint } from './tenant-auth/tenant-auth-endpoint.js'
 import { TenantAuthGate } from './tenant-auth/tenant-auth-gate.js'
 import { TenantApiEndpoint } from './tenant-api/tenant-api-endpoint.js'
+import { TenantEventBus } from './tenant-api/tenant-events.js'
 import type { TenantPlane } from './tenant-auth/tenant-plane.js'
 import type { IEnvironmentService } from './control-plane-host.js'
 
@@ -164,7 +165,8 @@ export class ControlPlaneServer
         const endpoint = new TenantAuthEndpoint(rp, sessions, secureCookie)
         const gate = new TenantAuthGate(sessions)
         const api = new TenantApiEndpoint(service, directory, deployments, orchestrators, placement)
-        return { endpoint, gate, api, allowedHosts }
+        const events = new TenantEventBus()
+        return { endpoint, gate, api, allowedHosts, events }
     }
 
     /** Parses a comma-separated host list into a set of trimmed, lowercased, non-empty hosts. */

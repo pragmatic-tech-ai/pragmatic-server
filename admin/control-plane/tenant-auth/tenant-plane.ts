@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { TenantSession } from './tenant-session.js'
 import type { TenantAuthEndpoint } from './tenant-auth-endpoint.js'
 import type { TenantAuthGate } from './tenant-auth-gate.js'
+import type { TenantEventBus } from '../tenant-api/tenant-events.js'
 
 /**
  * The tenant-plane data API seam (`/tenant-api/*`). The host depends on this interface, not the concrete
@@ -24,4 +25,5 @@ export type TenantPlane =
     gate: TenantAuthGate
     api: ITenantApiEndpoint
     allowedHosts: ReadonlySet<string>
+    events: TenantEventBus
 }
