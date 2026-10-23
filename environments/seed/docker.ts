@@ -1,4 +1,5 @@
 import { execFile, spawn } from 'node:child_process'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { get } from 'node:http'
 import { TenantPurposeName } from './bundle.js'
 import type { EnvDefinition, EnvDatabase } from './bundle.js'
@@ -20,51 +21,62 @@ export interface IProcessSpawn
     Spawn(command: string, args: string[]): ILogProcess
 }
 
-/** Real spawn seam over node:child_process. */
-export class ChildProcessSpawn implements IProcessSpawn
+/** An ILogProcess over a real node child process; 'error' and 'close' collapse into a single close notification. */
+export class ChildLogProcess implements ILogProcess
 {
     private static readonly Utf8 = 'utf8'
     private static readonly CloseEvent = 'close'
     private static readonly DataEvent = 'data'
     private static readonly ErrorEvent = 'error'
 
+    private readonly closeCallbacks: Array<() => void> = []
+    private closed = false
+
+    public constructor(private readonly child: ChildProcessWithoutNullStreams)
+    {
+        child.stdout.setEncoding(ChildLogProcess.Utf8)
+        child.stderr.setEncoding(ChildLogProcess.Utf8)
+        // 'error' (e.g. docker missing from PATH) and 'close' may both fire; a child that errored is treated as closed, once.
+        child.on(ChildLogProcess.CloseEvent, () => this.NotifyClosed())
+        child.on(ChildLogProcess.ErrorEvent, () => this.NotifyClosed())
+    }
+
+    public OnData(cb: (chunk: string) => void): void
+    {
+        this.child.stdout.on(ChildLogProcess.DataEvent, cb)
+        this.child.stderr.on(ChildLogProcess.DataEvent, cb)
+    }
+
+    public OnClose(cb: () => void): void
+    {
+        this.closeCallbacks.push(cb)
+    }
+
+    public Kill(): void
+    {
+        this.child.kill()
+    }
+
+    private NotifyClosed(): void
+    {
+        if (this.closed)
+        {
+            return
+        }
+        this.closed = true
+        for (const cb of this.closeCallbacks)
+        {
+            cb()
+        }
+    }
+}
+
+/** Real spawn seam over node:child_process. */
+export class ChildProcessSpawn implements IProcessSpawn
+{
     public Spawn(command: string, args: string[]): ILogProcess
     {
-        const child = spawn(command, args)
-        child.stdout.setEncoding(ChildProcessSpawn.Utf8)
-        child.stderr.setEncoding(ChildProcessSpawn.Utf8)
-        const closeCallbacks: Array<() => void> = []
-        let closed = false
-        // 'error' (e.g. docker missing from PATH) and 'close' may both fire; a child that errored is treated as closed, once.
-        const notifyClosed = (): void =>
-        {
-            if (closed)
-            {
-                return
-            }
-            closed = true
-            for (const cb of closeCallbacks)
-            {
-                cb()
-            }
-        }
-        child.on(ChildProcessSpawn.CloseEvent, notifyClosed)
-        child.on(ChildProcessSpawn.ErrorEvent, notifyClosed)
-        return {
-            OnData: cb =>
-            {
-                child.stdout.on(ChildProcessSpawn.DataEvent, cb)
-                child.stderr.on(ChildProcessSpawn.DataEvent, cb)
-            },
-            OnClose: cb =>
-            {
-                closeCallbacks.push(cb)
-            },
-            Kill: () =>
-            {
-                child.kill()
-            }
-        }
+        return new ChildLogProcess(spawn(command, args))
     }
 }
 

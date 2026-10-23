@@ -529,7 +529,15 @@ export class EnvironmentService
     {
         for (const cb of [...this.changeCallbacks])
         {
-            cb(rec)
+            // Isolate the emitter from its listeners: a failing subscriber must neither fail the (already persisted) lifecycle action nor starve later subscribers.
+            try
+            {
+                cb(rec)
+            }
+            catch
+            {
+                // swallowed deliberately; nothing is logged so no record/secret material can leak
+            }
         }
     }
 

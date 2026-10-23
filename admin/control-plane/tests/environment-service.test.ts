@@ -514,6 +514,22 @@ test('Start unknown throws; Start known brings it up Running', async () =>
     assert.equal(h.Registry.Get('s1')?.status, EnvStatus.Running)
 })
 
+test('a throwing OnChanged subscriber neither fails Start nor blocks later subscribers', async () =>
+{
+    const h = await Harness.Make()
+    await h.Registry.Put(Harness.Record('s1', EnvStatus.Stopped))
+    const received: EnvironmentRecord[] = []
+    h.Service.OnChanged(() =>
+    {
+        throw new Error('subscriber boom')
+    })
+    h.Service.OnChanged(rec => received.push(rec))
+    const rec = await h.Service.Start('s1')
+    assert.equal(rec.status, EnvStatus.Running)
+    assert.equal(received.length, 1)
+    assert.equal(received[0].status, EnvStatus.Running)
+})
+
 test('LogStream resolves the record and delegates to docker.LogStream, forwarding chunks', async () =>
 {
     const h = await Harness.Make()
