@@ -9,6 +9,7 @@ class ClientStoreFixture
     public static readonly ClientId = 'client-1';
     public static readonly Secret = 'client-secret-correct-horse';
     public static readonly WrongSecret = 'nope';
+    public static readonly HashPrefix = '$argon2';
     public static readonly Redirect = 'https://e/cb';
     public static readonly BadRedirects: readonly string[] = ['https://e/cb/../evil', 'https://e/cb?x=1', 'https://evil/cb', 'https://e/cb/', 'https://e/c', 'HTTPS://e/cb'];
 
@@ -58,5 +59,23 @@ test('the stored client secret is a hash, not the secret', async () =>
     const client = store.Find(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId);
     assert.ok(client);
     assert.notEqual(client.SecretHash, ClientStoreFixture.Secret);
+    assert.ok(client.SecretHash.startsWith(ClientStoreFixture.HashPrefix));
     assert.ok(!JSON.stringify(client).includes(ClientStoreFixture.Secret));
+});
+
+test('the same clientId under two tenants stays distinct', async () =>
+{
+    const store = new IdpClientStore();
+    const redirectA = 'https://a/cb';
+    const redirectB = 'https://b/cb';
+    await store.Register(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId, [redirectA], 'secret-a');
+    await store.Register(ClientStoreFixture.OtherTenantId, ClientStoreFixture.ClientId, [redirectB], 'secret-b');
+    assert.equal(await store.VerifySecret(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId, 'secret-a'), true);
+    assert.equal(await store.VerifySecret(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId, 'secret-b'), false);
+    assert.equal(await store.VerifySecret(ClientStoreFixture.OtherTenantId, ClientStoreFixture.ClientId, 'secret-b'), true);
+    assert.equal(await store.VerifySecret(ClientStoreFixture.OtherTenantId, ClientStoreFixture.ClientId, 'secret-a'), false);
+    assert.equal(store.RedirectAllowed(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId, redirectA), true);
+    assert.equal(store.RedirectAllowed(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId, redirectB), false);
+    assert.equal(store.RedirectAllowed(ClientStoreFixture.OtherTenantId, ClientStoreFixture.ClientId, redirectB), true);
+    assert.equal(store.RedirectAllowed(ClientStoreFixture.OtherTenantId, ClientStoreFixture.ClientId, redirectA), false);
 });

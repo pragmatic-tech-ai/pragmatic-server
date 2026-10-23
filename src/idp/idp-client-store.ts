@@ -23,7 +23,7 @@ export class IdpClientStore
 
     private readonly hasher = new Argon2PasswordHasher();
     private readonly clients = new Map<string, OidcClient>();
-    private dummyHash: Promise<string> | undefined;
+    private readonly dummyHash: Promise<string> = this.hasher.Hash(IdpClientStore.DummySecret);
 
     public async Register(tenantId: string, clientId: string, redirectUris: readonly string[], secret: string): Promise<void>
     {
@@ -42,7 +42,7 @@ export class IdpClientStore
         const client = this.Find(tenantId, clientId);
         if (client === undefined)
         {
-            await this.hasher.Verify(presented, await this.DummyHash());
+            await this.hasher.Verify(presented, await this.dummyHash);
             return false;
         }
         return this.hasher.Verify(presented, client.SecretHash);
@@ -55,14 +55,8 @@ export class IdpClientStore
         return client !== undefined && client.RedirectUris.includes(redirectUri);
     }
 
-    private DummyHash(): Promise<string>
-    {
-        this.dummyHash ??= this.hasher.Hash(IdpClientStore.DummySecret);
-        return this.dummyHash;
-    }
-
     private static KeyFor(tenantId: string, clientId: string): string
     {
-        return tenantId + IdpClientStore.KeySeparator + clientId;
+        return JSON.stringify([tenantId, clientId]);
     }
 }
