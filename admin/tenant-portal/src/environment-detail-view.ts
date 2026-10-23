@@ -32,11 +32,13 @@ export class EnvironmentDetailView extends TenantViewBase
 
     private readonly vm: EnvironmentDetailViewModel
     private readonly logs = new TextBlock()
+    private readonly logScroller = new ScrollViewer()
     private confirming = false
 
     public constructor(source: IEnvDetailSource, private readonly env: EnvironmentDto, hiveId: string | undefined)
     {
         super()
+        this.logScroller.Content = this.logs
         this.vm = new EnvironmentDetailViewModel(source, env, hiveId)
         this.vm.PropertyChanged(EnvironmentDetailViewModel.StatusProperty).subscribe(() => this.Render())
         this.vm.PropertyChanged(EnvironmentDetailViewModel.HealthProperty).subscribe(() => this.Render())
@@ -81,9 +83,7 @@ export class EnvironmentDetailView extends TenantViewBase
         this.AddChild(this.Text(this.DescribeHealth()))
         this.AddChild(this.Text(EnvironmentDetailView.LogsHeading))
         this.AddChild(this.MakeButton(vm.Paused ? EnvironmentDetailView.ResumeLabel : EnvironmentDetailView.PauseLabel, () => vm.TogglePause()))
-        const scroller = new ScrollViewer()
-        scroller.Content = this.logs
-        this.AddChild(scroller)
+        this.AddChild(this.logScroller)
         this.UpdateLogs()
     }
 

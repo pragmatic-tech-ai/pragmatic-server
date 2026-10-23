@@ -2,7 +2,6 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { EnvironmentDetailViewModel } from '../src/environment-detail-view-model.js'
 import type { IEnvDetailSource } from '../src/environment-detail-view-model.js'
-import { TenantEventType } from '../src/tenant-types.js'
 import type { EnvironmentDto, HiveHealthDto } from '../src/tenant-types.js'
 
 class Make
@@ -121,6 +120,32 @@ describe('EnvironmentDetailViewModel', () =>
         assert.ok(!vm.LogBuffer.includes('x'))
     })
 
+    it('StartLogs after StopLogs stays closed, even when StopLogs came first', () =>
+    {
+        const src = new FakeEnvDetailSource()
+        const early = new EnvironmentDetailViewModel(src, Make.Env('running'), 'h1')
+        early.StopLogs()
+        early.StartLogs()
+        assert.equal(src.Opened, 0)
+        const used = new EnvironmentDetailViewModel(src, Make.Env('running'), 'h1')
+        used.StartLogs()
+        used.StopLogs()
+        used.StartLogs()
+        assert.equal(src.Opened, 1)
+        assert.equal(src.DisposeCalls, 1)
+    })
+
+    it('LoadHealth clears RunningVersion when the row disappears', async () =>
+    {
+        const src = new FakeEnvDetailSource()
+        const vm = new EnvironmentDetailViewModel(src, Make.Env('running'), 'h1')
+        await vm.LoadHealth()
+        assert.equal(vm.RunningVersion, 'img:v1')
+        src.Health = []
+        await vm.LoadHealth()
+        assert.equal(vm.RunningVersion, '')
+    })
+
     it('StopLogs closes the stream once and ignores later chunks', () =>
     {
         const src = new FakeEnvDetailSource()
@@ -134,14 +159,4 @@ describe('EnvironmentDetailViewModel', () =>
         assert.equal(vm.LogBuffer, 'a')
     })
 
-    it('ApplyEvent refreshes health for this env only', async () =>
-    {
-        const src = new FakeEnvDetailSource()
-        const vm = new EnvironmentDetailViewModel(src, Make.Env('running'), 'h1')
-        assert.equal(await vm.ApplyEvent({ type: TenantEventType.HealthChanged, environmentName: 'zzz' }), false)
-        assert.equal(src.HealthCalls, 0)
-        assert.equal(await vm.ApplyEvent({ type: TenantEventType.HealthChanged, environmentName: 'e1' }), true)
-        assert.equal(src.HealthCalls, 1)
-        assert.equal(vm.Health?.ready, true)
-    })
 })

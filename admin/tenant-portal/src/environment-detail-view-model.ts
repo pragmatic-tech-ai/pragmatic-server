@@ -1,5 +1,5 @@
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
-import type { EnvironmentDto, HiveHealthDto, TenantEvent } from './tenant-types.js'
+import type { EnvironmentDto, HiveHealthDto } from './tenant-types.js'
 
 // The slice of TenantApiClient the environment detail needs.
 export interface IEnvDetailSource
@@ -27,6 +27,7 @@ export class EnvironmentDetailViewModel extends Observable
     private logBuffer = ''
     private paused = false
     private disposeLogs: (() => void) | undefined
+    private disposed = false
 
     public constructor(private readonly source: IEnvDetailSource, private readonly env: EnvironmentDto, private readonly hiveId: string | undefined)
     {
@@ -90,16 +91,13 @@ export class EnvironmentDetailViewModel extends Observable
         const rows = await this.source.GetHealth(this.hiveId)
         const old = this.health
         this.health = rows.find(r => r.environmentName === this.env.name)
-        if (this.health?.runningImage !== undefined)
-        {
-            this.runningVersion = this.health.runningImage
-        }
+        this.runningVersion = this.health?.runningImage ?? ''
         this.RaisePropertyChanged(EnvironmentDetailViewModel.HealthProperty, old, this.health)
     }
 
     public StartLogs(): void
     {
-        if (this.disposeLogs !== undefined)
+        if (this.disposed || this.disposeLogs !== undefined)
         {
             return
         }
@@ -114,22 +112,13 @@ export class EnvironmentDetailViewModel extends Observable
         this.RaisePropertyChanged(EnvironmentDetailViewModel.PausedProperty, old, this.paused)
     }
 
+    // Latches disposed: a StartLogs racing in after teardown must not open a socket nothing closes.
     public StopLogs(): void
     {
+        this.disposed = true
         const dispose = this.disposeLogs
         this.disposeLogs = undefined
         dispose?.()
-    }
-
-    public async ApplyEvent(ev: TenantEvent): Promise<boolean>
-    {
-        if (ev.environmentName !== this.env.name)
-        {
-            return false
-        }
-        // A failed live refresh is intentionally ignored: the next event or Refresh recovers.
-        await this.LoadHealth().catch(() => undefined)
-        return true
     }
 
     private AppendLog(chunk: string): void
