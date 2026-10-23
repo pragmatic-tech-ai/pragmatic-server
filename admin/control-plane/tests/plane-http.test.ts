@@ -25,6 +25,8 @@ class FakeRes
 
 class PlaneHttpTestKit
 {
+    public static readonly Allowed: ReadonlySet<string> = new Set(['localhost', '[::1]'])
+
     public static Req(method: string, headers: Record<string, string> = {}): IncomingMessage
     {
         return { method, headers } as unknown as IncomingMessage
@@ -37,7 +39,7 @@ class PlaneHttpTestKit
     }
 }
 
-const Allowed: ReadonlySet<string> = new Set(['localhost', '[::1]'])
+const Allowed = PlaneHttpTestKit.Allowed
 
 test('HostIn matches an allowed host, strips the port, rejects others and malformed headers', () =>
 {
@@ -74,15 +76,20 @@ test('ServeStatic serves files with MIME, 404s missing, and refuses traversal', 
         mkdirSync(root)
         writeFileSync(join(root, 'index.html'), '<p>hi</p>')
         writeFileSync(join(root, 'app.js'), 'x')
+        writeFileSync(join(root, 'data.bin'), 'x')
         writeFileSync(join(base, 'secret.txt'), 'SECRET')
 
         const idx = await PlaneHttpTestKit.Serve(root, '/')
         assert.equal(idx.status, 200)
-        assert.equal(idx.headers['Content-Type'], 'text/html; charset=utf-8')
+        assert.equal(idx.headers[PlaneHttp.ContentType], 'text/html; charset=utf-8')
         assert.equal(idx.body, '<p>hi</p>')
 
         const js = await PlaneHttpTestKit.Serve(root, '/app.js')
-        assert.equal(js.headers['Content-Type'], 'text/javascript; charset=utf-8')
+        assert.equal(js.headers[PlaneHttp.ContentType], 'text/javascript; charset=utf-8')
+
+        // An unknown extension falls back to the default octet-stream type.
+        const bin = await PlaneHttpTestKit.Serve(root, '/data.bin')
+        assert.equal(bin.headers[PlaneHttp.ContentType], PlaneHttp.DefaultType)
 
         assert.equal((await PlaneHttpTestKit.Serve(root, '/missing.js')).status, 404)
         assert.equal((await PlaneHttpTestKit.Serve(root, '/app.js', 'POST')).status, 404)
