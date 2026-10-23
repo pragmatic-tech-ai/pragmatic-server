@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
-import { dirname, join, parse } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { InMemoryAuthorizationCodeStore } from './authorization-code-store.js';
 import { DevCa, IdpTlsMaterial } from './dev-ca.js';
@@ -22,7 +22,6 @@ export class IdpMain
     private static readonly DefaultPort = 7100;
     private static readonly MaxPort = 65535;
     private static readonly DefaultHost = '127.0.0.1';
-    private static readonly BinName = 'pragmatic-idpd';
     private static readonly DataDir = 'data';
     private static readonly SigningKeyFile = 'signing-key.pem';
     private static readonly MasterKeyFile = 'master.key';
@@ -34,6 +33,10 @@ export class IdpMain
     private static readonly FalseToken = 'false';
     private static readonly ZeroToken = '0';
     private static readonly MissingBaseUrlMessage = 'PRAGMATIC_IDP_BASE_URL is required (an https origin)';
+    private static readonly BadBaseUrlMessage = 'PRAGMATIC_IDP_BASE_URL must be a valid https URL';
+    private static readonly HttpsProtocol = 'https:';
+    private static readonly FailPrefix = 'pragmatic-idp failed to start: ';
+    private static readonly FailExitCode = 1;
     private static readonly BadPortPrefix = 'Invalid PRAGMATIC_IDP_PORT: ';
     private static readonly BadMasterKeyMessage = 'IdP master key file must be exactly 32 bytes';
     private static readonly ListeningPrefix = 'pragmatic-idp listening on ';
@@ -55,6 +58,7 @@ export class IdpMain
         {
             throw new Error(IdpMain.MissingBaseUrlMessage);
         }
+        IdpMain.RequireHttps(baseUrl);
         const data = env[IdpMain.DataEnvVar] ?? join(dirname(fileURLToPath(import.meta.url)), IdpMain.DataDir);
         mkdirSync(data, { recursive: true });
         const signingKey = await IdpSigningKey.LoadOrCreate(join(data, IdpMain.SigningKeyFile));
@@ -71,14 +75,35 @@ export class IdpMain
         return new IdpHost(baseUrl, signingKey, realms, new IdpClientStore(), new InMemoryAuthorizationCodeStore(), new IdpSsoSessionStore(), tls, secureCookie);
     }
 
-    /** True when this module is the process entry point (or the pragmatic-idpd bin that imports it), not when imported by tests. */
+    /** Prints a concise startup failure (message only, no stack) and sets a non-zero exit code. */
+    public static Fail(err: unknown): void
+    {
+        console.error(IdpMain.FailPrefix + (err instanceof Error ? err.message : String(err)));
+        process.exitCode = IdpMain.FailExitCode;
+    }
+
+    private static RequireHttps(baseUrl: string): void
+    {
+        let protocol: string | undefined;
+        try
+        {
+            protocol = new URL(baseUrl).protocol;
+        }
+        catch
+        {
+            protocol = undefined;
+        }
+        if (protocol !== IdpMain.HttpsProtocol)
+        {
+            throw new Error(IdpMain.BadBaseUrlMessage);
+        }
+    }
+
+    /** True when this module is the process entry point (not when imported by tests); the bin starts Run directly. */
     public static IsEntryPoint(): boolean
     {
-        const entry = process.argv[1];
-        if (entry === undefined)
-        {
-            return false;
-        }
+        return process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1];
+    }
         return fileURLToPath(import.meta.url) === entry || parse(entry).name === IdpMain.BinName;
     }
 
@@ -120,9 +145,4 @@ export class IdpMain
         writeFileSync(file, key, { mode: IdpMain.KeyFileMode });
         return key;
     }
-}
-
-if (IdpMain.IsEntryPoint())
-{
-    await IdpMain.Run();
 }

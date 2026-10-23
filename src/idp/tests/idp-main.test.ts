@@ -65,3 +65,36 @@ test('Compose binds HTTPS and serves discovery for a configured tenant', async (
         fs.rmSync(dir, { recursive: true, force: true });
     }
 });
+
+test('Compose rejects a garbage or http base url with a clear message', async () =>
+{
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), MainFixture.DirPrefix));
+    try
+    {
+        await assert.rejects(IdpMain.Compose({ PRAGMATIC_IDP_DATA: dir, PRAGMATIC_IDP_BASE_URL: 'not a url' }), /PRAGMATIC_IDP_BASE_URL.*https/);
+        await assert.rejects(IdpMain.Compose({ PRAGMATIC_IDP_DATA: dir, PRAGMATIC_IDP_BASE_URL: 'http://localhost' }), /PRAGMATIC_IDP_BASE_URL.*https/);
+    }
+    finally
+    {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('Compose persists master.key and signing-key.pem and reuses them', async () =>
+{
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), MainFixture.DirPrefix));
+    const env = { PRAGMATIC_IDP_DATA: dir, PRAGMATIC_IDP_BASE_URL: MainFixture.BaseUrl };
+    try
+    {
+        await IdpMain.Compose(env);
+        const master = fs.readFileSync(path.join(dir, 'master.key'));
+        const signing = fs.readFileSync(path.join(dir, 'signing-key.pem'));
+        await IdpMain.Compose(env);
+        assert.deepEqual(fs.readFileSync(path.join(dir, 'master.key')), master);
+        assert.deepEqual(fs.readFileSync(path.join(dir, 'signing-key.pem')), signing);
+    }
+    finally
+    {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
