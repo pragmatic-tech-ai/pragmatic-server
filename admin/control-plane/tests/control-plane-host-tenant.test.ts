@@ -23,6 +23,12 @@ import type { ITenantApiEndpoint, TenantPlane } from '../tenant-auth/tenant-plan
 
 type Reply = { status: number; body: string }
 
+enum HttpMethod
+{
+    Get = 'GET',
+    Post = 'POST',
+}
+
 class FakeOperator implements IOperatorIdentity
 {
     public static readonly Email = 'op@example.com'
@@ -91,6 +97,17 @@ class TenantHarness
     public static readonly TenantHost = 'tenant.local'
     public static readonly TenantId = 'acme'
     public static readonly OperatorCookie = 'cp_session=' + FakeOperator.Token
+    public static readonly LocalHost = 'localhost'
+    public static readonly TenantApiHivesPath = '/tenant-api/hives'
+    public static readonly ApiHivesPath = '/api/hives'
+    public static readonly ApiEnvironmentsPath = '/api/environments'
+    public static readonly TenantAuthSessionPath = '/tenant-auth/session'
+    public static readonly TenantAuthLogoutPath = '/tenant-auth/logout'
+    public static readonly HostHeader = 'host'
+    public static readonly CookieHeader = 'cookie'
+    public static readonly OriginHeader = 'origin'
+    public static readonly DisallowedOrigin = 'http://evil.example'
+    public static readonly AllowedOrigin = 'http://tenant.local'
     private static readonly PairSeparator = '='
     private static readonly TenantTokenSeparator = '.'
 
@@ -170,7 +187,7 @@ describe('ControlPlaneHost tenant plane', () =>
 
     it('rejects /tenant-api with no tenant cookie as 401', async () =>
     {
-        const r = await TenantHarness.Raw(host, 'GET', '/tenant-api/hives', { host: TenantHarness.TenantHost })
+        const r = await TenantHarness.Raw(host, HttpMethod.Get, TenantHarness.TenantApiHivesPath, { [TenantHarness.HostHeader]: TenantHarness.TenantHost })
         assert.equal(r.status, 401)
         assert.equal(JSON.parse(r.body).error, 'Authentication required')
         assert.equal(api.Calls, 0)
@@ -178,14 +195,14 @@ describe('ControlPlaneHost tenant plane', () =>
 
     it('rejects /tenant-api when only an operator cookie is present as 401', async () =>
     {
-        const r = await TenantHarness.Raw(host, 'GET', '/tenant-api/hives', { host: TenantHarness.TenantHost, cookie: TenantHarness.OperatorCookie })
+        const r = await TenantHarness.Raw(host, HttpMethod.Get, TenantHarness.TenantApiHivesPath, { [TenantHarness.HostHeader]: TenantHarness.TenantHost, [TenantHarness.CookieHeader]: TenantHarness.OperatorCookie })
         assert.equal(r.status, 401)
         assert.equal(api.Calls, 0)
     })
 
     it('reaches the /tenant-auth endpoint without any gate', async () =>
     {
-        const r = await TenantHarness.Raw(host, 'GET', '/tenant-auth/session', { host: TenantHarness.TenantHost })
+        const r = await TenantHarness.Raw(host, HttpMethod.Get, TenantHarness.TenantAuthSessionPath, { [TenantHarness.HostHeader]: TenantHarness.TenantHost })
         // The endpoint (not the gate, not static) answered: its own unauthorized body, distinct from the gate's message.
         assert.equal(r.status, 401)
         assert.equal(JSON.parse(r.body).error, 'unauthorized')
@@ -193,27 +210,53 @@ describe('ControlPlaneHost tenant plane', () =>
 
     it('forbids a tenant host from reaching an operator /api route', async () =>
     {
-        const r = await TenantHarness.Raw(host, 'GET', '/api/hives', { host: TenantHarness.TenantHost })
+        const r = await TenantHarness.Raw(host, HttpMethod.Get, TenantHarness.ApiHivesPath, { [TenantHarness.HostHeader]: TenantHarness.TenantHost })
         assert.equal(r.status, 403)
         assert.equal(JSON.parse(r.body).error, 'Host not allowed')
     })
 
     it('still requires the operator cookie on /api from an operator host', async () =>
     {
-        const r = await TenantHarness.Raw(host, 'GET', '/api/hives', { host: 'localhost' })
+        const r = await TenantHarness.Raw(host, HttpMethod.Get, TenantHarness.ApiHivesPath, { [TenantHarness.HostHeader]: TenantHarness.LocalHost })
         assert.equal(r.status, 401)
     })
 
     it('passes a valid /tenant-api request through the gate to the api', async () =>
     {
         const issued = await store.Issue(TenantHarness.TenantId, 'u1')
-        const r = await TenantHarness.Raw(host, 'GET', '/tenant-api/hives', {
-            host: TenantHarness.TenantHost,
-            cookie: TenantHarness.PtsCookie(TenantHarness.TenantId, issued.id),
+        const r = await TenantHarness.Raw(host, HttpMethod.Get, TenantHarness.TenantApiHivesPath, {
+            [TenantHarness.HostHeader]: TenantHarness.TenantHost,
+            [TenantHarness.CookieHeader]: TenantHarness.PtsCookie(TenantHarness.TenantId, issued.id),
         })
         assert.equal(r.status, 200)
         assert.equal(api.Calls, 1)
         assert.equal(JSON.parse(r.body).tenantId, TenantHarness.TenantId)
+    })
+
+    it('rejects a mutating /tenant-auth request with a disallowed Origin as 403', async () =>
+    {
+        const r = await TenantHarness.Raw(host, HttpMethod.Post, TenantHarness.TenantAuthLogoutPath, {
+            [TenantHarness.HostHeader]: TenantHarness.TenantHost,
+            [TenantHarness.OriginHeader]: TenantHarness.DisallowedOrigin,
+        })
+        assert.equal(r.status, 403)
+        assert.equal(JSON.parse(r.body).error, 'Origin not allowed')
+    })
+
+    it('allows a mutating /tenant-auth request with an allowed Origin', async () =>
+    {
+        const r = await TenantHarness.Raw(host, HttpMethod.Post, TenantHarness.TenantAuthLogoutPath, {
+            [TenantHarness.HostHeader]: TenantHarness.TenantHost,
+            [TenantHarness.OriginHeader]: TenantHarness.AllowedOrigin,
+        })
+        // The logout endpoint cleared the (absent) session: 204, i.e. it passed the CSRF gate and reached the endpoint.
+        assert.equal(r.status, 204)
+    })
+
+    it('allows a mutating /tenant-auth request with no Origin', async () =>
+    {
+        const r = await TenantHarness.Raw(host, HttpMethod.Post, TenantHarness.TenantAuthLogoutPath, { [TenantHarness.HostHeader]: TenantHarness.TenantHost })
+        assert.equal(r.status, 204)
     })
 })
 
@@ -248,15 +291,15 @@ describe('ControlPlaneHost without a tenant plane', () =>
 
     it('answers an operator route 401 without a cookie and 200 with one', async () =>
     {
-        const anon = await TenantHarness.Raw(host, 'GET', '/api/environments', { host: 'localhost' })
+        const anon = await TenantHarness.Raw(host, HttpMethod.Get, TenantHarness.ApiEnvironmentsPath, { [TenantHarness.HostHeader]: TenantHarness.LocalHost })
         assert.equal(anon.status, 401)
-        const authed = await TenantHarness.Raw(host, 'GET', '/api/environments', { host: 'localhost', cookie: TenantHarness.OperatorCookie })
+        const authed = await TenantHarness.Raw(host, HttpMethod.Get, TenantHarness.ApiEnvironmentsPath, { [TenantHarness.HostHeader]: TenantHarness.LocalHost, [TenantHarness.CookieHeader]: TenantHarness.OperatorCookie })
         assert.equal(authed.status, 200)
     })
 
     it('does not route /tenant-api when no tenant plane is configured', async () =>
     {
-        const r = await TenantHarness.Raw(host, 'GET', '/tenant-api/hives', { host: 'localhost' })
+        const r = await TenantHarness.Raw(host, HttpMethod.Get, TenantHarness.TenantApiHivesPath, { [TenantHarness.HostHeader]: TenantHarness.LocalHost })
         assert.equal(r.status, 404)
     })
 })

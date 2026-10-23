@@ -516,19 +516,22 @@ export class ControlPlaneHost
      */
     private async RouteTenant(req: IncomingMessage, res: ServerResponse, path: string, tenant: TenantPlane): Promise<boolean>
     {
-        if (path.startsWith(ControlPlaneHost.TenantAuthPrefix))
-        {
-            return await tenant.endpoint.Handle(req, res, path)
-        }
-        if (!path.startsWith(ControlPlaneHost.TenantApiPrefix))
+        const isAuth = path.startsWith(ControlPlaneHost.TenantAuthPrefix)
+        if (!isAuth && !path.startsWith(ControlPlaneHost.TenantApiPrefix))
         {
             return false
         }
+        // CSRF: every mutating /tenant-* request's Origin must be a configured tenant host (mirrors the operator /api/* rule),
+        // checked once for the whole prefix so /tenant-auth mutating routes (e.g. the logout POST) are covered too.
         if (ControlPlaneHost.IsMutating(req) && !ControlPlaneHost.OriginInHosts(req, tenant.allowedHosts))
         {
             req.resume()
             this.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.BadOriginMessage })
             return true
+        }
+        if (isAuth)
+        {
+            return await tenant.endpoint.Handle(req, res, path)
         }
         const session = await tenant.gate.Principal(req)
         if (session === null)
