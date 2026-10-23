@@ -8,8 +8,9 @@
  * the real IdpHost over HTTPS, provisions (via the admin API + IdpAdminClient) one tenant account and two confidential clients with distinct
  * redirect URIs, then proves SINGLE SIGN-ON across the two "environments" using the REAL relying-party
  * verifier (`OidcAuthenticator`): env A performs an interactive login, env B rides the IdP's SSO cookie
- * straight to a code with NO login page. Four negative gates (off-allowlist redirect, code replay, bad
- * PKCE verifier, tampered id_token) assert the issuer fails closed. The dev CA is handed to every HTTPS
+ * straight to a code with NO login page. Five negative gates (off-allowlist redirect, code replay, bad
+ * PKCE verifier, tampered id_token, and an _admin PUT against an IdP built with no admin endpoint -> 404)
+ * assert the issuer fails closed. The dev CA is handed to every HTTPS
  * client in-process (node:https `{ ca }`); NODE_EXTRA_CA_CERTS is deliberately NOT used.
  */
 import { randomBytes } from 'node:crypto'
