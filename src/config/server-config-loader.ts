@@ -128,8 +128,8 @@ export class ServerConfigLoader
     private static readonly PositiveIntPattern = /^[1-9][0-9]*$/
     private static readonly EnvAuditSink = 'PRAGMATIC_AUDIT_SINK'
     private static readonly EnvAuditFile = 'PRAGMATIC_AUDIT_FILE'
-    private static readonly EnvTenantRps = 'PRAGMATIC_RATELIMIT_ENVIRONMENT_RPS'
-    private static readonly EnvTenantBurst = 'PRAGMATIC_RATELIMIT_ENVIRONMENT_BURST'
+    private static readonly EnvEnvironmentRps = 'PRAGMATIC_RATELIMIT_ENVIRONMENT_RPS'
+    private static readonly EnvEnvironmentBurst = 'PRAGMATIC_RATELIMIT_ENVIRONMENT_BURST'
     private static readonly EnvPrincipalRps = 'PRAGMATIC_RATELIMIT_PRINCIPAL_RPS'
     private static readonly EnvPrincipalBurst = 'PRAGMATIC_RATELIMIT_PRINCIPAL_BURST'
 
@@ -300,7 +300,7 @@ export class ServerConfigLoader
 
     private static RateLimitOf(env: Record<string, string | undefined>): RateLimitConfig | undefined
     {
-        const perTenant = ServerConfigLoader.SettingsOf(env[ServerConfigLoader.EnvTenantRps], env[ServerConfigLoader.EnvTenantBurst])
+        const perTenant = ServerConfigLoader.SettingsOf(env[ServerConfigLoader.EnvEnvironmentRps], env[ServerConfigLoader.EnvEnvironmentBurst])
         const perPrincipal = ServerConfigLoader.SettingsOf(env[ServerConfigLoader.EnvPrincipalRps], env[ServerConfigLoader.EnvPrincipalBurst])
         if (perTenant === undefined && perPrincipal === undefined)
         {

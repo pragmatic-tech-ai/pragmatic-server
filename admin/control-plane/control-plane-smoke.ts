@@ -155,7 +155,7 @@ export class ControlPlaneSmoke
     private static readonly EnvReaderEmail = 'env-reader@contoso.test'
     private static readonly EnvReaderPassword = 'env-reader-test-password'
     private static readonly AckOkWord = 'ok='
-    private static readonly WsTenantQuery = '/?environment='
+    private static readonly WsEnvironmentQuery = '/?environment='
     private static readonly GraphsSegment = '/graphs'
     private static readonly PromoteSegment = '/promote'
     private static readonly MakerTokenAction = '/maker-token'
@@ -426,7 +426,7 @@ export class ControlPlaneSmoke
         const L = S.Labels
         const seeder = new UserSeeder()
         const http = S.HttpPrefix + String(rtPort)
-        const wsUrl = S.WsPrefix + String(rtPort) + S.WsTenantQuery + S.DemoTenant
+        const wsUrl = S.WsPrefix + String(rtPort) + S.WsEnvironmentQuery + S.DemoTenant
         let step = L.EnvAppAdminLogin
         let envApp: BuiltHelloApp | undefined
         let bundledApp: BuiltHelloApp | undefined

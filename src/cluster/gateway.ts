@@ -54,8 +54,8 @@ export class Gateway
     private static readonly ErrorEvent = 'error'
     private static readonly ListeningEvent = 'listening'
     private static readonly AuthorizationHeader = 'authorization'
-    private static readonly TenantHeader = 'x-pragmatic-environment'
-    private static readonly TenantParam = 'environment'
+    private static readonly EnvironmentHeader = 'x-pragmatic-environment'
+    private static readonly EnvironmentParam = 'environment'
     private static readonly BaseUrl = 'http://localhost'
     private static readonly DefaultServerName = '127.0.0.1'
     private static readonly ContentTypeHeader = 'content-type'
@@ -171,7 +171,7 @@ export class Gateway
     /** Builds the outbound worker-upgrade carrier: tenant, authorization, anti-spoof fingerprint stamp, and the inbound W3C trace context. */
     public static OutboundHeaders(req: IncomingMessage, environmentId: string, authorization: string | null, clientTlsConfigured: boolean): Record<string, string>
     {
-        const headers: Record<string, string> = { [Gateway.TenantHeader]: environmentId }
+        const headers: Record<string, string> = { [Gateway.EnvironmentHeader]: environmentId }
         if (authorization !== null)
         {
             headers[Gateway.AuthorizationHeader] = authorization
@@ -518,7 +518,7 @@ export class Gateway
                 return
             }
             const client = this.clientTls
-            const headers: Record<string, string | string[] | undefined> = { ...req.headers, [Gateway.TenantHeader]: environmentId }
+            const headers: Record<string, string | string[] | undefined> = { ...req.headers, [Gateway.EnvironmentHeader]: environmentId }
             Gateway.StampMachineFingerprint(headers, req.socket as TLSSocket, this.machineTlsConfigured)
             const proxied = httpsRequest(
                 { host: endpoint.host, port: endpoint.port, method: req.method, path: req.url, headers, key: client.key, cert: client.cert, ca: client.ca, rejectUnauthorized: true, servername: this.serverName },
@@ -574,7 +574,7 @@ export class Gateway
         try
         {
             const url = new URL(req.url ?? '/', Gateway.BaseUrl)
-            tenant = url.searchParams.get(Gateway.TenantParam)
+            tenant = url.searchParams.get(Gateway.EnvironmentParam)
         }
         catch
         {

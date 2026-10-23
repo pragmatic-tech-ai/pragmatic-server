@@ -219,7 +219,7 @@ export class LoopOrchestrator
     private static readonly GraphDescription = 'live-loop e2e graph'
     private static readonly WsPrefix = 'ws://localhost:'
     private static readonly HttpPrefix = 'http://localhost:'
-    private static readonly WsTenantQuery = '/?environment='
+    private static readonly WsEnvironmentQuery = '/?environment='
     private static readonly ViewerRole = 'Viewer'
     private static readonly TenantKind = 'Tenant'
     private static readonly ReaderPrincipal = 'loop-reader'
@@ -341,7 +341,7 @@ export class LoopOrchestrator
         return {
             dataRoot: this.dataRoot,
             devEnv: name,
-            devWsUrl: LoopOrchestrator.WsPrefix + String(rec.hostPort) + LoopOrchestrator.WsTenantQuery + rec.environmentId,
+            devWsUrl: LoopOrchestrator.WsPrefix + String(rec.hostPort) + LoopOrchestrator.WsEnvironmentQuery + rec.environmentId,
             graphName,
             makerToken: minted.token
         }
@@ -364,7 +364,7 @@ export class LoopOrchestrator
         return {
             runtimeEnv: name,
             tenant: rec.environmentId,
-            runtimeWsUrl: LoopOrchestrator.WsPrefix + port + LoopOrchestrator.WsTenantQuery + rec.environmentId,
+            runtimeWsUrl: LoopOrchestrator.WsPrefix + port + LoopOrchestrator.WsEnvironmentQuery + rec.environmentId,
             runtimeHostPort: rec.hostPort,
             appOriginBase: LoopOrchestrator.HttpPrefix + port,
             deployToken,

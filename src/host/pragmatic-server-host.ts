@@ -101,7 +101,7 @@ export class PragmaticServerHost
     private static readonly ErrorEvent = 'error'
     private static readonly AuthorizationHeader = 'authorization'
     private static readonly BearerPrefix = 'Bearer '
-    private static readonly TenantParam = 'environment'
+    private static readonly EnvironmentParam = 'environment'
     private static readonly BaseUrl = 'http://localhost'
     private static readonly UnauthorizedResponse = 'HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'
     private static readonly ServiceUnavailableResponse = 'HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nConnection: close\r\n\r\n'
@@ -622,7 +622,7 @@ export class PragmaticServerHost
     private TenantHint(req: IncomingMessage): string | null
     {
         const url = new URL(req.url ?? '/', PragmaticServerHost.BaseUrl)
-        const tenant = url.searchParams.get(PragmaticServerHost.TenantParam)
+        const tenant = url.searchParams.get(PragmaticServerHost.EnvironmentParam)
         return tenant !== null && tenant.length > 0 ? tenant : this.browserAuth.CookieTenant(req.headers)
     }
 

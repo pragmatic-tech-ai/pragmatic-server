@@ -95,7 +95,7 @@ export class WorkerHost
     private static readonly ListeningEvent = 'listening'
     private static readonly ErrorEvent = 'error'
     private static readonly AuthorizationHeader = 'authorization'
-    private static readonly TenantHeader = 'x-pragmatic-environment'
+    private static readonly EnvironmentHeader = 'x-pragmatic-environment'
     private static readonly BearerPrefix = 'Bearer '
     private static readonly ServiceUnavailableResponse = 'HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nConnection: close\r\n\r\n'
     private static readonly BaseUrl = 'http://localhost'
@@ -670,7 +670,7 @@ export class WorkerHost
     // and `Origin` headers on the forwarded leg; the full cluster-cookie story is out of SP0 scope.
     private TenantHint(req: IncomingMessage): string | null
     {
-        const header = req.headers[WorkerHost.TenantHeader]
+        const header = req.headers[WorkerHost.EnvironmentHeader]
         return typeof header === 'string' && header.length > 0 ? header : this.browserAuth.CookieTenant(req.headers)
     }
 }
