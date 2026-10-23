@@ -51,6 +51,7 @@
     "@pragmatic-tech-ai/todl-platform-gcp": "file:../todl-platform-gcp",
     "@pragmatic-tech-ai/todl-platform-node": "file:../todl-platform-node",
     "@pragmatic-tech-ai/todl-runtime": "file:../todl-runtime",
+    "jose": "^6.0.0",
     "pg": "^8.13.0",
     "redis": "^4",
     "ws": "^8.18.0"
