@@ -1,6 +1,6 @@
 import type { MessageConnection } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { BundleBuilder, type EnvDefinition, type EnvOidc } from '../../environments/seed/bundle.js'
-import { DockerEnv } from '../../environments/seed/docker.js'
+import { DockerEnv, type ILogProcess } from '../../environments/seed/docker.js'
 import { UserSeeder, type UserSeed } from '../../environments/seed/users.js'
 import type { IContainerProbe } from './environment-record.js'
 
@@ -11,6 +11,7 @@ export interface IDockerEnv
     Up(def: EnvDefinition, bundleDir: string, caHostPath?: string): Promise<void>
     Down(def: EnvDefinition, removeData?: boolean): Promise<void>
     Logs(def: EnvDefinition): Promise<string>
+    LogStream(def: EnvDefinition, onData: (chunk: string) => void): ILogProcess
     WaitHealthy(port: number, def: EnvDefinition): Promise<void>
     Running(containerName: string): Promise<boolean>
     RemoveVolume(def: EnvDefinition): Promise<void>
@@ -55,6 +56,11 @@ export class DockerEnvAdapter implements IDockerEnv, IContainerProbe
     public Logs(def: EnvDefinition): Promise<string>
     {
         return this.docker.Logs(def)
+    }
+
+    public LogStream(def: EnvDefinition, onData: (chunk: string) => void): ILogProcess
+    {
+        return this.docker.LogStream(def, onData)
     }
 
     public WaitHealthy(port: number, def: EnvDefinition): Promise<void>

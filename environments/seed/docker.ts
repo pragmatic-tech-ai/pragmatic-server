@@ -1,10 +1,54 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { get } from 'node:http'
 import { TenantPurposeName } from './bundle.js'
 import type { EnvDefinition, EnvDatabase } from './bundle.js'
 
 export { EnvKind, TenantPurposeName } from './bundle.js'
 export type { EnvDefinition } from './bundle.js'
+
+/** A long-lived child process whose combined stdout+stderr is streamed as utf8 text. */
+export interface ILogProcess
+{
+    OnData(cb: (chunk: string) => void): void
+    OnClose(cb: () => void): void
+    Kill(): void
+}
+
+/** Spawn seam so log-follow streaming is testable without a real docker process. */
+export interface IProcessSpawn
+{
+    Spawn(command: string, args: string[]): ILogProcess
+}
+
+/** Real spawn seam over node:child_process. */
+export class ChildProcessSpawn implements IProcessSpawn
+{
+    private static readonly Utf8 = 'utf8'
+    private static readonly CloseEvent = 'close'
+    private static readonly DataEvent = 'data'
+
+    public Spawn(command: string, args: string[]): ILogProcess
+    {
+        const child = spawn(command, args)
+        child.stdout.setEncoding(ChildProcessSpawn.Utf8)
+        child.stderr.setEncoding(ChildProcessSpawn.Utf8)
+        return {
+            OnData: cb =>
+            {
+                child.stdout.on(ChildProcessSpawn.DataEvent, cb)
+                child.stderr.on(ChildProcessSpawn.DataEvent, cb)
+            },
+            OnClose: cb =>
+            {
+                child.on(ChildProcessSpawn.CloseEvent, () => cb())
+            },
+            Kill: () =>
+            {
+                child.kill()
+            }
+        }
+    }
+}
 
 /**
  * Docker container lifecycle for a local environment, via the `docker` CLI only.
@@ -78,6 +122,8 @@ export class DockerEnv
     private static readonly RunningFormat = '{{.State.Running}}'
     private static readonly RunningTrue = 'true'
     private static readonly LogsCommand = 'logs'
+    private static readonly TailFlag = '--tail'
+    private static readonly LogTailLines = '200'
     private static readonly HealthTimeoutMessage = 'Server did not become healthy in time on port '
     private static readonly ContainerExitedMessage = 'Container exited before becoming healthy: '
 
@@ -108,6 +154,10 @@ export class DockerEnv
     private static readonly FailedSuffix = ' failed'
     private static readonly NoDatabaseMessage = 'Environment has no database descriptor'
     private static readonly DbTimeoutMessage = 'Postgres did not become ready in time: '
+
+    public constructor(private readonly spawner: IProcessSpawn = new ChildProcessSpawn())
+    {
+    }
 
     private static SeedScript(): string
     {
@@ -336,6 +386,16 @@ export class DockerEnv
     public async Logs(def: EnvDefinition): Promise<string>
     {
         return this.Exec([DockerEnv.LogsCommand, DockerEnv.ContainerName(def)])
+    }
+
+    /** Follows the container's logs (`docker logs -f --tail N`); the caller Kill()s the returned process to stop. */
+    public LogStream(def: EnvDefinition, onData: (chunk: string) => void): ILogProcess
+    {
+        const proc = this.spawner.Spawn(DockerEnv.Docker, [
+            DockerEnv.LogsCommand, DockerEnv.ForceFlag, DockerEnv.TailFlag, DockerEnv.LogTailLines, DockerEnv.ContainerName(def)
+        ])
+        proc.OnData(onData)
+        return proc
     }
 
     /** Polls the unauthenticated liveness endpoint until HTTP 200 or the timeout elapses. */

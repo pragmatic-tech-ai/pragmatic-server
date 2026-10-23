@@ -1,3 +1,4 @@
+import type { ILogProcess } from '../../../environments/seed/docker.js'
 import { strict as assert } from 'node:assert'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { request } from 'node:http'
@@ -115,6 +116,11 @@ class FakeService implements IEnvironmentService
     public async ListReconciled(): Promise<readonly EnvironmentRecord[]>
     {
         return this.List()
+    }
+
+    public LogStream(): ILogProcess
+    {
+        return { OnData() {}, OnClose() {}, Kill() {} }
     }
 
     public async Logs(name: string): Promise<string>

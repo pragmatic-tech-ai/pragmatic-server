@@ -25,6 +25,7 @@ import { IdpAdminClient } from '../idp-admin-client.js'
 import type { IdpConnection, IIdpService } from '../idp-service.js'
 import { PlatformDirectory, HivePlacementError } from '../platform-directory.js'
 import { UnknownHiveError } from '../rollout-errors.js'
+import type { ILogProcess } from '../../../environments/seed/docker.js'
 import type { IDockerEnv, IBundleBuilder, IUserSeeder } from '../docker-env-port.js'
 import { TenantPurposeName, type EnvDefinition, type EnvOidc } from '../../../environments/seed/bundle.js'
 import type { UserSeed } from '../../../environments/seed/users.js'
@@ -121,6 +122,18 @@ class FakeDocker implements IDockerEnv
     {
         this.calls.push('logs')
         return 'log-text'
+    }
+
+    public LogDef: EnvDefinition | undefined
+    public LogSink: ((chunk: string) => void) | undefined
+    public readonly Process: ILogProcess = { OnData() {}, OnClose() {}, Kill() {} }
+
+    public LogStream(def: EnvDefinition, onData: (chunk: string) => void): ILogProcess
+    {
+        this.calls.push('logStream')
+        this.LogDef = def
+        this.LogSink = onData
+        return this.Process
     }
 
     public async WaitHealthy(): Promise<void>
@@ -499,6 +512,24 @@ test('Start unknown throws; Start known brings it up Running', async () =>
     assert.ok(h.Calls.includes('up') && h.Calls.includes('waitHealthy'))
     assert.equal(rec.status, EnvStatus.Running)
     assert.equal(h.Registry.Get('s1')?.status, EnvStatus.Running)
+})
+
+test('LogStream resolves the record and delegates to docker.LogStream, forwarding chunks', async () =>
+{
+    const h = await Harness.Make()
+    h.Registry.Put(Harness.Record('s1', EnvStatus.Running))
+    const got: string[] = []
+    const proc = h.Service.LogStream('s1', c => got.push(c))
+    assert.equal(proc, h.Docker.Process)
+    assert.equal(h.Docker.LogDef?.name, 's1')
+    h.Docker.LogSink?.('hello')
+    assert.deepEqual(got, ['hello'])
+})
+
+test('LogStream on unknown env throws EnvironmentNotFoundError', async () =>
+{
+    const h = await Harness.Make()
+    assert.throws(() => h.Service.LogStream('nope', () => {}), EnvironmentNotFoundError)
 })
 
 test('Stop calls Down and marks Stopped', async () =>

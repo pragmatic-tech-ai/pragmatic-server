@@ -15,6 +15,7 @@ import type { PlatformDirectory } from './platform-directory.js'
 import { UnknownHiveError } from './rollout-errors.js'
 import type { IIdpService, IdpConnection } from './idp-service.js'
 import type { IdpAdminClient } from './idp-admin-client.js'
+import type { ILogProcess } from '../../environments/seed/docker.js'
 import type { IDockerEnv, IBundleBuilder, IUserSeeder } from './docker-env-port.js'
 
 export class EnvironmentExistsError extends Error
@@ -373,6 +374,12 @@ export class EnvironmentService
     {
         const rec = this.Require(name)
         return this.docker.Logs(EnvironmentService.DefOf(rec))
+    }
+
+    public LogStream(name: string, onData: (chunk: string) => void): ILogProcess
+    {
+        const rec = this.Require(name)
+        return this.docker.LogStream(EnvironmentService.DefOf(rec), onData)
     }
 
     public async AdminSnapshot(name: string): Promise<AdminSnapshot>

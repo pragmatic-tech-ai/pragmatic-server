@@ -44,6 +44,7 @@ import type { ManifestRecord } from './manifest-record.js'
 import { AgentUnauthorizedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, UnknownHiveError, UnknownManifestError } from './rollout-errors.js'
 import type { ClientRecord, ClusterSpec, HiveRecord, RegistrySpec, TenantRecord } from './platform-records.js'
 import type { CreateAccountParams, GraphLoadedDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { ILogProcess } from '../../environments/seed/docker.js'
 import type { TenantPlane } from './tenant-auth/tenant-plane.js'
 
 export interface IEnvironmentService
@@ -56,6 +57,7 @@ export interface IEnvironmentService
     List(): readonly EnvironmentRecord[]
     ListReconciled(): Promise<readonly EnvironmentRecord[]>
     Logs(name: string): Promise<string>
+    LogStream(name: string, onData: (chunk: string) => void): ILogProcess
     AdminSnapshot(name: string): Promise<AdminSnapshot>
     AdminCreateAccount(name: string, params: CreateAccountParams): Promise<void>
     AdminDisableAccount(name: string, principalId: string): Promise<void>
