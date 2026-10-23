@@ -181,3 +181,22 @@ test('Compose with an empty admin token file keeps admin disabled', async () =>
         fs.rmSync(dir, { recursive: true, force: true });
     }
 });
+
+test('Compose with a traversal admin-token ref keeps admin disabled (404)', async () =>
+{
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), MainFixture.DirPrefix));
+    fs.mkdirSync(path.join(dir, MainFixture.SecretsDir), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'something'), MainFixture.AdminToken);
+    const host = await IdpMain.Compose({ PRAGMATIC_IDP_DATA: dir, PRAGMATIC_IDP_BASE_URL: MainFixture.BaseUrl, PRAGMATIC_IDP_TENANTS: MainFixture.TenantId, PRAGMATIC_IDP_ADMIN_TOKEN_REF: '../something' });
+    try
+    {
+        await host.Listen(0, MainFixture.Loopback);
+        const ca = fs.readFileSync(path.join(dir, MainFixture.TlsDir, MainFixture.CaFile), MainFixture.Utf8);
+        assert.equal(await MainFixture.Put(host.Address().port, ca, MainFixture.AdminRealmPath, MainFixture.AdminToken), 404);
+    }
+    finally
+    {
+        await host.Close();
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});

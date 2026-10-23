@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { InMemoryAuthorizationCodeStore } from './authorization-code-store.js';
 import { DevCa, IdpTlsMaterial } from './dev-ca.js';
@@ -22,6 +22,8 @@ export class IdpMain
     private static readonly TenantsEnvVar = 'PRAGMATIC_IDP_TENANTS';
     private static readonly AdminTokenRefEnvVar = 'PRAGMATIC_IDP_ADMIN_TOKEN_REF';
     private static readonly SecretsDir = 'secrets';
+    private static readonly CurrentDir = '.';
+    private static readonly ParentDir = '..';
     private static readonly Utf8 = 'utf8';
     private static readonly NotFoundCode = 'ENOENT';
     private static readonly DefaultPort = 7100;
@@ -101,6 +103,10 @@ export class IdpMain
     private static LoadAdminToken(data: string, ref: string | undefined): string | undefined
     {
         if (ref === undefined || ref === '')
+        {
+            return undefined;
+        }
+        if (basename(ref) !== ref || ref === IdpMain.CurrentDir || ref === IdpMain.ParentDir)
         {
             return undefined;
         }
