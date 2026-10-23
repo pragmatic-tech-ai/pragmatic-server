@@ -6,7 +6,7 @@
 
 **Architecture:** A new `pragmatic-server` service, `pragmatic-idp` (its own `bin`, HTTPS host mirroring `ControlPlaneHost`), serves a standards OIDC issuer per tenant: discovery, JWKS, `/authorize` (login form + IdP SSO cookie + single-use PKCE-bound authorization code), `/token` (code→RS256 id_token). It owns a tenant realm (the reused `FileIdentityStores` account/secret stores, keyed by the real `TenantRecord.id`, under its **own** master key) and verifies logins with the reused `LocalPasswordAuthenticator`. The relying-party half already exists in `AuthHttpEndpoint`→`OidcAuthenticator` and is **not modified** — the proof drives it against the new issuer. The dogfood client and seed account are fixture-wired by the e2e (provisioning integration is SP-HIVE-6b).
 
-**Tech Stack:** TypeScript (ESM, `.js` import extensions), `node:http`/`node:https`, `jose ^6` (RS256 sign — already the signing lib in `todl-identity-cloud`), reused `@pragmatic-tech-ai/todl-identity*` store/authenticator primitives, `node:test` + `tsx`, `selfsigned` (new dependency, pure-JS dev-CA minting). OOP + Allman braces + PascalCase public members + no inline string literals (hoist to `private static readonly`).
+**Tech Stack:** TypeScript (ESM, `.js` import extensions), `node:http`/`node:https`, `jose ^6` (RS256 sign — already the signing lib in `todl-identity-cloud`), reused `@pragmatic-tech-ai/todl-identity*` store/authenticator primitives, `node:test` + `tsx`, `openssl` shelled out through an exec seam for dev-CA minting (no new npm dependency — `selfsigned` is not installed and `npm install` would break the workspace symlinks; openssl 3.5.5 is present, and CLI shell-out behind a seam matches the repo's existing `kubectl`/`docker` idiom). OOP + Allman braces + PascalCase public members + no inline string literals (hoist to `private static readonly`).
 
 **Spec:** `docs/superpowers/specs/2026-10-23-sp-hive-6-tenant-identity-realm-spec.md` (SP-HIVE-6a is §11's first slice; §§1–10 are the authority).
 
@@ -133,20 +133,20 @@ Inputs the spec implies but that are the most likely to bite, each pinned to the
 
 **Files:**
 - Create: `src/idp/dev-ca.ts`
-- Modify: `package.json` (add `selfsigned` dependency)
 - Test: `src/idp/tests/dev-ca.test.ts`
 
 **Interfaces:**
-- Consumes: `selfsigned` (pure-JS X.509 self-signing, Windows-safe — no openssl/native dep).
-- Produces: `class DevCa` — `public static EnsureAt(dir: string, host: string): { certFile: string; keyFile: string; caFile: string }` (mint a CA + a server cert with `subjectAltName` DNS=`host` and `IP=127.0.0.1` into `dir` if absent, mode `0o600`; idempotent reuse if present); `class IdpTlsMaterial` — `public static Load(ref: { certFile: string; keyFile: string }): { key: Buffer; cert: Buffer }` (mirrors `MachineTls` file-ref loading, **server cert only — no `requestCert`**, since the IdP does not do client-cert auth). The `caFile` path is what environments/tests add to `NODE_EXTRA_CA_CERTS`.
+- Consumes: `openssl` via `node:child_process` `execFileSync` (openssl is present at 3.5.5). No new npm dependency. (`selfsigned` is deliberately NOT used — not installed, and `npm install` would break the workspace symlinks.)
+- Produces: `class DevCa` — `public static EnsureAt(dir: string, host: string): { certFile: string; keyFile: string; caFile: string }` (mint a CA key+cert and a server key+cert signed by that CA, with `subjectAltName` DNS=`host` and `IP:127.0.0.1`, into `dir` if absent, key files mode `0o600`; idempotent — reuse existing files without regenerating). `certFile`/`keyFile` are the SERVER cert+key; `caFile` is the CA cert that environments/tests add to `NODE_EXTRA_CA_CERTS`. If openssl is unavailable it throws a clear error naming the missing tool (do not silently produce an unusable cert). `class IdpTlsMaterial` — `public static Load(ref: { certFile: string; keyFile: string }): { key: Buffer; cert: Buffer }` (mirrors `MachineTls` file-ref loading, **server cert only — no `requestCert`**, since the IdP does not do client-cert auth).
+- Implementation note: mint with openssl — (1) CA: `openssl req -x509 -newkey rsa -nodes -keyout ca.key -out ca.crt -subj /CN=... -days ...`; (2) server key + CSR; (3) sign the CSR with the CA using an extfile carrying `subjectAltName=DNS:<host>,IP:127.0.0.1`. Hoist every openssl subcommand token and the filenames to `private static readonly` constants. Wrap openssl calls so a missing binary surfaces as the clear error above.
 
 - [ ] **Step 1: Write the failing test**:
-  - `test('mints a CA and server cert, idempotently')`: `EnsureAt` in a temp dir creates the three files; a second call returns the same paths without regenerating (same bytes).
-  - `test('the server cert validates against the minted CA')`: load cert + CA, assert `tls.checkServerIdentity`/a `TLSSocket` handshake using the CA as trust root accepts the host (or assert the cert chain verifies via `crypto.X509Certificate.verify(caPublicKey)`).
+  - `test('mints a CA, server cert and key, idempotently')`: `EnsureAt` in a temp dir creates the three files; a second call returns the same paths without regenerating (same bytes).
+  - `test('the server cert carries the host SAN and chains to the minted CA')`: parse the server cert with `new crypto.X509Certificate(certPem)`, assert its `subjectAltName` includes the host and `127.0.0.1`, and assert `serverCert.verify(new crypto.X509Certificate(caPem).publicKey)` is true (chains to the CA).
 - [ ] **Step 2: Run to verify it fails.**
-- [ ] **Step 3: Implement `DevCa`/`IdpTlsMaterial`** with `selfsigned`; SAN includes the IdP host and `127.0.0.1`.
+- [ ] **Step 3: Implement `DevCa`/`IdpTlsMaterial`** shelling out to openssl; SAN includes the IdP host and `127.0.0.1`; clear error if openssl is missing.
 - [ ] **Step 4: Run to verify it passes.**
-- [ ] **Step 5: Commit** — `feat(idp): dev CA + TLS material loader`.
+- [ ] **Step 5: Commit** — `feat(idp): dev CA + TLS material loader (openssl)`.
 
 ### Task 7: IdP host — discovery + JWKS over HTTPS
 
