@@ -1,7 +1,8 @@
+import { randomBytes } from 'node:crypto'
 import { rmSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { BundleBuilder, EnvKind, type EnvDatabase, type EnvDefinition } from '../../environments/seed/bundle.js'
+import { BundleBuilder, EnvKind, type EnvDatabase, type EnvDefinition, type EnvOidc } from '../../environments/seed/bundle.js'
 import { DockerEnv } from '../../environments/seed/docker.js'
 import type { UserSeed } from '../../environments/seed/users.js'
 import { EnvStatus, EnvType, type Template, type EnvironmentRecord } from './environment-record.js'
@@ -12,6 +13,8 @@ import type { AdminConnectInfo, AdminSnapshot, IAdminProxy } from './admin-proxy
 import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { PlatformDirectory } from './platform-directory.js'
 import { UnknownHiveError } from './rollout-errors.js'
+import type { IIdpService, IdpConnection } from './idp-service.js'
+import type { IdpAdminClient } from './idp-admin-client.js'
 import type { IDockerEnv, IBundleBuilder, IUserSeeder } from './docker-env-port.js'
 
 export class EnvironmentExistsError extends Error
@@ -108,6 +111,17 @@ export class EnvironmentService
     private static readonly UsersFile = 'users.json'
     private static readonly Utf8 = 'utf8'
     private static readonly MissingSecretPrefix = 'no provisioned secret for '
+    /** Must byte-match AuthHttpEndpoint.OidcCallbackPath in the served runtime. */
+    private static readonly OidcCallbackPath = '/auth/oidc/callback'
+    /** The callback carries its own environment hint: the IdP redirect lands with no SPA to add `?environment=`, and the host routes by that hint. The key must byte-match PragmaticServerHost.EnvironmentParam. */
+    private static readonly EnvironmentQueryPrefix = '?environment='
+    private static readonly OidcSecretRefSuffix = '-oidc-secret'
+    private static readonly IssuerSeparator = '/'
+    private static readonly DiscoverySuffix = '/.well-known/openid-configuration'
+    private static readonly CaFileName = 'ca.crt'
+    private static readonly OidcSecretBytes = 24
+    private static readonly OidcSecretEncoding = 'base64url'
+    private static readonly Redacted = '[redacted]'
     private static readonly MakerPrincipalId = 'maker'
     private static readonly MakerRoleName = 'Maker'
     private static readonly TenantKindName = 'Tenant'
@@ -130,7 +144,9 @@ export class EnvironmentService
         private readonly seeder: IUserSeeder,
         private readonly dataRoot: string,
         private readonly proxy: IAdminProxy,
-        private readonly directory: PlatformDirectory)
+        private readonly directory: PlatformDirectory,
+        private readonly idp: IIdpService,
+        private readonly adminClientFactory: (conn: IdpConnection) => IdpAdminClient)
     {
     }
 
@@ -147,6 +163,41 @@ export class EnvironmentService
             throw new UnknownHiveError(hiveId)
         }
         return hive.tenantId
+    }
+
+    /** Registers a per-environment OIDC client at the tenant's IdP and returns the config the served app is bundled with. The secret is never logged or put in an error. */
+    private async Federate(platformTenantId: string, def: EnvDefinition, port: number): Promise<{ oidc: EnvOidc; caHostPath: string }>
+    {
+        const displayName = this.directory.GetTenant(platformTenantId)?.displayName ?? platformTenantId
+        let secret = ''
+        try
+        {
+            const conn = await this.idp.EnsureForTenant(platformTenantId, displayName)
+            secret = randomBytes(EnvironmentService.OidcSecretBytes).toString(EnvironmentService.OidcSecretEncoding)
+            const clientId = def.environmentId
+            const redirectUri = EnvironmentService.HttpPrefix + String(port) + EnvironmentService.OidcCallbackPath + EnvironmentService.EnvironmentQueryPrefix + encodeURIComponent(def.environmentId)
+            await this.adminClientFactory(conn).RegisterClient(platformTenantId, { clientId, redirectUris: [redirectUri], secret })
+            const issuer = conn.baseUrl + EnvironmentService.IssuerSeparator + encodeURIComponent(platformTenantId)
+            const oidc: EnvOidc = {
+                issuer,
+                discoveryUrl: issuer + EnvironmentService.DiscoverySuffix,
+                clientId,
+                redirectUri,
+                secretRef: def.environmentId + EnvironmentService.OidcSecretRefSuffix,
+                secret
+            }
+            return { oidc, caHostPath: join(conn.caDir, EnvironmentService.CaFileName) }
+        }
+        catch (err)
+        {
+            throw new CreateFailedError(EnvironmentService.Redact(err, secret))
+        }
+    }
+
+    private static Redact(err: unknown, secret: string | undefined): string
+    {
+        const message = err instanceof Error ? err.message : String(err)
+        return secret === undefined || secret === '' ? message : message.split(secret).join(EnvironmentService.Redacted)
     }
 
     public async Create(name: string, template: Template, type: EnvType, hostPort?: number, hiveId?: string): Promise<EnvironmentRecord>
@@ -173,7 +224,23 @@ export class EnvironmentService
             }
             const { def, seedDir } = TemplateCatalog.Resolve(template, safe, port, type)
             const bundleDir = join(this.dataRoot, def.name)
-            await this.bundle.Generate(def, bundleDir, seedDir)
+            let oidc: EnvOidc | undefined
+            let caHostPath: string | undefined
+            if (platformTenantId !== undefined)
+            {
+                const federation = await this.Federate(platformTenantId, def, port)
+                oidc = federation.oidc
+                caHostPath = federation.caHostPath
+            }
+            try
+            {
+                await this.bundle.Generate(def, bundleDir, seedDir, oidc)
+            }
+            catch (err)
+            {
+                EnvironmentService.RemoveBundleDir(bundleDir)
+                throw oidc === undefined ? err : new CreateFailedError(EnvironmentService.Redact(err, oidc.secret))
+            }
 
             let imageOk: boolean
             try
@@ -210,7 +277,7 @@ export class EnvironmentService
             }
             try
             {
-                await this.docker.Up(def, bundleDir)
+                await this.docker.Up(def, bundleDir, caHostPath)
                 await this.docker.WaitHealthy(port, def)
                 if (def.kind === EnvKind.Demo)
                 {
@@ -236,7 +303,7 @@ export class EnvironmentService
                     // volume removal is best-effort too
                 }
                 await this.registry.Put({ ...record, status: EnvStatus.Failed })
-                throw new CreateFailedError(err instanceof Error ? err.message : String(err))
+                throw new CreateFailedError(EnvironmentService.Redact(err, oidc?.secret))
             }
             await this.registry.Put(record)
             return record

@@ -152,6 +152,9 @@ export class IdpHost
     private static readonly StatusBadRequest = 400;
     private static readonly InvalidJsonMessage = 'invalid_json';
     private static readonly InternalErrorCode = 'internal_error';
+    private static readonly HealthPath = '/healthz';
+    private static readonly HealthStatusField = 'status';
+    private static readonly HealthOkValue = 'ok';
 
     private httpsServer: Server | undefined;
     private readonly baseUrl: string;
@@ -262,6 +265,11 @@ export class IdpHost
                 return false;
             }
             await this.RouteAdmin(req, res, this.admin, method, decoded);
+            return true;
+        }
+        if (method === IdpHost.MethodGet && path === IdpHost.HealthPath)
+        {
+            this.WriteJson(res, IdpHost.StatusOk, { [IdpHost.HealthStatusField]: IdpHost.HealthOkValue });
             return true;
         }
         if (segments.length < 2)

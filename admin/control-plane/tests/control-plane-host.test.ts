@@ -4,6 +4,7 @@ import { request } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'node:test'
+import { FakeProvisioning } from './fake-provisioning.js'
 import { ControlPlaneHost, type GraphDto, type IEnvironmentService, type IGraphService, type PromotionResultDto } from '../control-plane-host.js'
 import { RolloutFixture } from './rollout-fixture.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
@@ -315,7 +316,7 @@ describe('ControlPlaneHost', () =>
         operator = new FakeOperator()
         const directory = new PlatformDirectory(new ClientRegistry(join(parent, 'clients.json')), new TenantRegistry(join(parent, 'tenants.json')), new HiveRegistry(join(parent, 'hives.json')), { List: () => [] })
         const factory = new HiveOrchestratorFactory()
-        host = new ControlPlaneHost(fake, fakeGraph, root, operator, false, directory, factory, await RolloutFixture.Create(parent, directory, factory))
+        host = new ControlPlaneHost(fake, fakeGraph, root, operator, false, directory, factory, await RolloutFixture.Create(parent, directory, factory), new FakeProvisioning(directory).AsService())
         await host.Listen(0, '127.0.0.1')
     })
 

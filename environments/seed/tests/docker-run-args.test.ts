@@ -89,3 +89,27 @@ test('FailureMessage never contains secret-bearing args but keeps stderr', () =>
     assert.ok(message.includes('boom: no such image'))
     assert.ok(message.startsWith('docker run'))
 })
+
+class CaProbe
+{
+    public static readonly CaHostPath = '/abs/idp/ca.crt'
+    public static readonly CaMount = '/run/secrets/idp-ca.crt'
+    public static readonly AddHostValue = 'host.docker.internal:host-gateway'
+}
+
+test('RunArgs always adds host.docker.internal host-gateway but no CA wiring without caHostPath', () =>
+{
+    const args = DockerEnv.RunArgs(RunArgsProbe.RuntimeDef(RunArgsProbe.RuntimeHostPort), RunArgsProbe.BundleDir)
+    assert.ok(RunArgsProbe.HasAdjacentPair(args, '--add-host', CaProbe.AddHostValue))
+    assert.equal(args.some(arg => arg.includes('NODE_EXTRA_CA_CERTS')), false)
+    assert.equal(args.some(arg => arg.includes('idp-ca.crt')), false)
+})
+
+test('RunArgs mounts the tenant IdP CA read-only and sets NODE_EXTRA_CA_CERTS when caHostPath is given', () =>
+{
+    const args = DockerEnv.RunArgs(RunArgsProbe.RuntimeDef(RunArgsProbe.RuntimeHostPort), RunArgsProbe.BundleDir, CaProbe.CaHostPath)
+    assert.ok(RunArgsProbe.HasAdjacentPair(args, '-v', `${CaProbe.CaHostPath}:${CaProbe.CaMount}:ro`))
+    assert.ok(RunArgsProbe.HasAdjacentPair(args, DockerEnv.EnvFlag, `NODE_EXTRA_CA_CERTS=${CaProbe.CaMount}`))
+    assert.ok(RunArgsProbe.HasAdjacentPair(args, '--add-host', CaProbe.AddHostValue))
+    assert.equal(args[args.length - 1], DockerEnv.ImageName)
+})

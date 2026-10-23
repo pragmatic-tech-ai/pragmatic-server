@@ -47,6 +47,10 @@ export class DockerEnv
     private static readonly MasterKeyFile = 'master.key'
     private static readonly DataSubdir = 'data'
     private static readonly ReadOnly = ':ro'
+    private static readonly IdpCaMount = '/run/secrets/idp-ca.crt'
+    private static readonly EnvNodeExtraCaCerts = 'NODE_EXTRA_CA_CERTS'
+    private static readonly AddHostFlag = '--add-host'
+    private static readonly HostGatewayEntry = 'host.docker.internal:host-gateway'
 
     private static readonly EnvBaseDir = 'PRAGMATIC_BASE_DIR'
     private static readonly EnvTenantsFile = 'PRAGMATIC_TENANTS_FILE'
@@ -156,7 +160,7 @@ export class DockerEnv
         ]
     }
 
-    public static RunArgs(def: EnvDefinition, bundleDir: string): string[]
+    public static RunArgs(def: EnvDefinition, bundleDir: string, caHostPath?: string): string[]
     {
         const args = [
             DockerEnv.Run, DockerEnv.Detach, DockerEnv.NameFlag, DockerEnv.ContainerName(def),
@@ -171,8 +175,15 @@ export class DockerEnv
             DockerEnv.EnvFlag, `${DockerEnv.EnvMasterKeyFile}=${DockerEnv.MasterKeyMount}`,
             DockerEnv.EnvFlag, `${DockerEnv.EnvSecretsFile}=${DockerEnv.SecretsMount}`,
             DockerEnv.EnvFlag, `${DockerEnv.EnvPort}=${DockerEnv.InternalPort}`,
-            DockerEnv.EnvFlag, `${DockerEnv.EnvDeploymentMode}=${DockerEnv.DeploymentModeLocal}`
+            DockerEnv.EnvFlag, `${DockerEnv.EnvDeploymentMode}=${DockerEnv.DeploymentModeLocal}`,
+            DockerEnv.AddHostFlag, DockerEnv.HostGatewayEntry
         ]
+        if (caHostPath !== undefined)
+        {
+            args.push(
+                DockerEnv.VolumeFlag, `${caHostPath}:${DockerEnv.IdpCaMount}${DockerEnv.ReadOnly}`,
+                DockerEnv.EnvFlag, `${DockerEnv.EnvNodeExtraCaCerts}=${DockerEnv.IdpCaMount}`)
+        }
         if (def.database !== undefined)
         {
             args.push(DockerEnv.NetworkFlag, DockerEnv.NetworkName(def))
@@ -247,7 +258,7 @@ export class DockerEnv
     }
 
     /** Seeds the data volume (idempotent) then starts the server container detached. */
-    public async Up(def: EnvDefinition, bundleDir: string): Promise<void>
+    public async Up(def: EnvDefinition, bundleDir: string, caHostPath?: string): Promise<void>
     {
         await this.SeedVolume(def, bundleDir)
         await this.Down(def)
@@ -258,7 +269,7 @@ export class DockerEnv
             await this.Exec(DockerEnv.PostgresRunArgs(def))
             await this.WaitDbReady(def, def.database)
         }
-        await this.Exec(DockerEnv.RunArgs(def, bundleDir))
+        await this.Exec(DockerEnv.RunArgs(def, bundleDir, caHostPath))
     }
 
     /** Polls pg_isready inside the sidecar until it accepts connections or the timeout elapses. */

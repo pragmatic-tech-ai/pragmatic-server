@@ -15,7 +15,9 @@ import {
 } from './environment-service.js'
 import { GraphExistsError, GraphNameInvalidError, GraphNotFoundError } from './graph-service.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from './environment-record.js'
+import { InvalidTenantIdError } from './idp-service.js'
 import { PortUnavailableError } from './port-allocator.js'
+import type { TenantProvisioningService } from './tenant-provisioning-service.js'
 import { InvalidEnvironmentNameError, TemplateCatalog } from './template-catalog.js'
 import type { IOperatorIdentity } from './operator-identity.js'
 import { SessionCookie } from './session-cookie.js'
@@ -112,7 +114,17 @@ export type PromotionResultDto = {
 
 /** Platform record DTOs mirror the stored records 1:1. */
 export type ClientDto = ClientRecord
-export type TenantDto = TenantRecord
+/** The tenant shape exposed over HTTP: public coordinates only. The record's internal IdP refs
+ *  (idpBaseUrl, idpCaRef — a host filesystem path — and idpAdminTokenRef) are deliberately omitted. */
+export type TenantDto =
+{
+    id: string
+    clientId: string
+    displayName: string
+    createdAt: string
+    ownerEmail?: string
+    ownerPrincipalId?: string
+}
 export type HiveDto = HiveRecord
 
 /** One environment's live workload health on its hive: no secrets, no internals. */
@@ -210,6 +222,9 @@ export class ControlPlaneHost
     private static readonly StatusNoContent = 204
     private static readonly IdRequiredMessage = 'id (non-empty string) is required'
     private static readonly DisplayNameRequiredMessage = 'displayName (string) is required'
+    private static readonly OwnerEmailRequiredMessage = 'ownerEmail (non-empty string) is required'
+    private static readonly ReservedIdMessage = "id must not start with '_' (reserved for the IdP namespace)"
+    private static readonly ReservedIdPrefix = '_'
     private static readonly ClientIdRequiredMessage = 'clientId (non-empty string) is required'
     private static readonly TenantIdRequiredMessage = 'tenantId (non-empty string) is required'
     private static readonly OptionalStringMessage = 'optional reference fields must be strings'
@@ -320,6 +335,7 @@ export class ControlPlaneHost
         [EnvironmentNotDevelopmentError, ControlPlaneHost.StatusBadRequest],
         [EnvironmentNotRuntimeError, ControlPlaneHost.StatusBadRequest],
         [InvalidRecordIdError, ControlPlaneHost.StatusBadRequest],
+        [InvalidTenantIdError, ControlPlaneHost.StatusBadRequest],
         [RecordExistsError, ControlPlaneHost.StatusConflict],
         [UnknownClientError, ControlPlaneHost.StatusNotFound],
         [UnknownTenantError, ControlPlaneHost.StatusNotFound],
@@ -351,7 +367,8 @@ export class ControlPlaneHost
         private readonly secureCookie: boolean,
         private readonly directory: PlatformDirectory,
         private readonly orchestrators: HiveOrchestratorFactory,
-        private readonly deployments: PlatformDeploymentRegistry)
+        private readonly deployments: PlatformDeploymentRegistry,
+        private readonly provisioning: TenantProvisioningService)
     {
         this.staticRootAbs = resolve(staticRoot)
     }
@@ -905,10 +922,16 @@ export class ControlPlaneHost
             case ControlPlaneHost.ClientsSegment:
                 return this.directory.ListClients()
             case ControlPlaneHost.TenantsSegment:
-                return this.directory.ListTenants()
+                return this.directory.ListTenants().map(t => ControlPlaneHost.ToTenantDto(t))
             default:
                 return this.directory.ListHives()
         }
+    }
+
+    /** Projects a stored tenant to its HTTP shape, dropping the internal IdP refs (base URL, CA path, admin-token ref). */
+    private static ToTenantDto(record: TenantRecord): TenantDto
+    {
+        return { id: record.id, clientId: record.clientId, displayName: record.displayName, createdAt: record.createdAt, ownerEmail: record.ownerEmail, ownerPrincipalId: record.ownerPrincipalId }
     }
 
     private GetPlatform(resource: string, id: string): ClientDto | TenantDto | HiveDto | undefined
@@ -918,7 +941,10 @@ export class ControlPlaneHost
             case ControlPlaneHost.ClientsSegment:
                 return this.directory.GetClient(id)
             case ControlPlaneHost.TenantsSegment:
-                return this.directory.GetTenant(id)
+            {
+                const tenant = this.directory.GetTenant(id)
+                return tenant === undefined ? undefined : ControlPlaneHost.ToTenantDto(tenant)
+            }
             default:
                 return this.directory.GetHive(id)
         }
@@ -976,7 +1002,21 @@ export class ControlPlaneHost
                 this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ClientIdRequiredMessage })
                 return
             }
-            created = await this.directory.CreateTenant({ id, clientId: body.clientId as string, displayName })
+            if (!ControlPlaneHost.NonEmpty(body.ownerEmail))
+            {
+                this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.OwnerEmailRequiredMessage })
+                return
+            }
+            if (id.startsWith(ControlPlaneHost.ReservedIdPrefix))
+            {
+                this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ReservedIdMessage })
+                return
+            }
+            const { record, ownerPassword } = await this.provisioning.Provision({ id, clientId: body.clientId as string, displayName, ownerEmail: body.ownerEmail as string })
+            // The one-time Owner password is revealed exactly once here; never logged or stored.
+            res.setHeader(ControlPlaneHost.CacheControlHeader, ControlPlaneHost.NoStore)
+            this.WriteJson(res, ControlPlaneHost.StatusCreated, { ...ControlPlaneHost.ToTenantDto(record), owner: { email: record.ownerEmail, principalId: record.ownerPrincipalId, password: ownerPassword } })
+            return
         }
         else
         {

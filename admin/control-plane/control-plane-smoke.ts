@@ -26,6 +26,7 @@ import { DockerEnv } from '../../environments/seed/docker.js'
 import { UserSeeder } from '../../environments/seed/users.js'
 import { AdminProxy, WsAdminConnector } from './admin-proxy.js'
 import { ControlPlaneHost } from './control-plane-host.js'
+import type { TenantProvisioningService } from './tenant-provisioning-service.js'
 import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import { ManifestRegistry } from './manifest-record.js'
 import { GatingRegistry } from './gating-record.js'
@@ -43,6 +44,10 @@ import { PlatformDirectory } from './platform-directory.js'
 import { TenantRegistry } from './tenant-registry.js'
 import { EnvironmentRegistry } from './environment-registry.js'
 import { EnvironmentService } from './environment-service.js'
+import { ExecFileDockerExec, IdpContainerEnv } from './idp-container-env.js'
+import { IdpRegistry } from './idp-registry.js'
+import { IdpService } from './idp-service.js'
+import { IdpAdminClient } from './idp-admin-client.js'
 import { GraphService } from './graph-service.js'
 import { OperatorIdentity } from './operator-identity.js'
 import { NetPortProbe, PortAllocator } from './port-allocator.js'
@@ -58,6 +63,8 @@ export class ControlPlaneSmoke
 {
     private static readonly LoopbackHost = '127.0.0.1'
     private static readonly EnvPortFloor = 8100
+    private static readonly IdpPortFloor = 12100
+    private static readonly IdpsFile = 'idps.json'
     private static readonly TempPrefix = 'cp-smoke-'
     private static readonly ManifestsFile = 'manifests.json'
     private static readonly GatingFile = 'gating.json'
@@ -244,7 +251,8 @@ export class ControlPlaneSmoke
         await directory.Load()
         const allocator = new PortAllocator(ControlPlaneSmoke.EnvPortFloor, new NetPortProbe())
         const proxy = new AdminProxy(new WsAdminConnector())
-        const service = new EnvironmentService(registry, allocator, docker, new BundleBuilderAdapter(), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy, directory)
+        const idpService = new IdpService(new PortAllocator(ControlPlaneSmoke.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), new IdpRegistry(join(dataRoot, ControlPlaneSmoke.IdpsFile)), dataRoot, DockerEnv.ImageName)
+        const service = new EnvironmentService(registry, allocator, docker, new BundleBuilderAdapter(), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn))
         const operator = await OperatorIdentity.Compose({
             identityRoot: join(dataRoot, ControlPlaneSmoke.IdentityDir),
             masterKeyFile: join(dataRoot, ControlPlaneSmoke.MasterKeyFile),
@@ -259,7 +267,7 @@ export class ControlPlaneSmoke
         const registrations = new RolloutRegistrationRegistry(join(dataRoot, ControlPlaneSmoke.RegistrationsFile))
         await Promise.all([manifests.Load(), gating.Load(), selections.Load(), reports.Load(), registrations.Load()])
         const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, reports, registrations, directory, orchestrators, registry, new EnvironmentPlacement(directory))
-        const host = new ControlPlaneHost(service, new GraphService(registry, proxy, name => service.AdminInfoFor(name)), staticRoot, operator, false, directory, orchestrators, deployments)
+        const host = new ControlPlaneHost(service, new GraphService(registry, proxy, name => service.AdminInfoFor(name)), staticRoot, operator, false, directory, orchestrators, deployments, {} as TenantProvisioningService)
         try
         {
             await host.Listen(0, ControlPlaneSmoke.LoopbackHost)

@@ -1,4 +1,6 @@
 import { test } from 'node:test'
+import { randomBytes } from 'node:crypto'
+import { readFileSync, rmSync } from 'node:fs'
 import assert from 'node:assert/strict'
 import { mkdtemp, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -11,10 +13,20 @@ import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
+import { DevCa, IdpTlsMaterial } from '../../../src/idp/dev-ca.js'
+import { IdpAdminEndpoint } from '../../../src/idp/idp-admin-endpoint.js'
+import { IdpClientStore } from '../../../src/idp/idp-client-store.js'
+import { IdpHost, IdpRealmSet } from '../../../src/idp/idp-host.js'
+import { IdpRealm } from '../../../src/idp/idp-realm.js'
+import { IdpSigningKey } from '../../../src/idp/idp-signing-key.js'
+import { IdpSsoSessionStore } from '../../../src/idp/idp-sso-session.js'
+import { InMemoryAuthorizationCodeStore } from '../../../src/idp/authorization-code-store.js'
+import { IdpAdminClient } from '../idp-admin-client.js'
+import type { IdpConnection, IIdpService } from '../idp-service.js'
 import { PlatformDirectory, HivePlacementError } from '../platform-directory.js'
 import { UnknownHiveError } from '../rollout-errors.js'
 import type { IDockerEnv, IBundleBuilder, IUserSeeder } from '../docker-env-port.js'
-import { TenantPurposeName, type EnvDefinition } from '../../../environments/seed/bundle.js'
+import { TenantPurposeName, type EnvDefinition, type EnvOidc } from '../../../environments/seed/bundle.js'
 import type { UserSeed } from '../../../environments/seed/users.js'
 import type { IAdminProxy, AdminConnectInfo, AdminSnapshot } from '../admin-proxy.js'
 import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, IssueTokenParams, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -84,9 +96,12 @@ class FakeDocker implements IDockerEnv
         return this.ImageOk
     }
 
-    public async Up(): Promise<void>
+    public CaHostPath: string | undefined
+
+    public async Up(_def?: EnvDefinition, _bundleDir?: string, caHostPath?: string): Promise<void>
     {
         this.calls.push('up')
+        this.CaHostPath = caHostPath
         if (this.FailUp)
         {
             throw new Error('boom')
@@ -132,14 +147,16 @@ class FakeDocker implements IDockerEnv
 class FakeBundle implements IBundleBuilder
 {
     public Args: { def: EnvDefinition; bundleDir: string; seedDir?: string } | undefined
+    public Oidc: EnvOidc | undefined
 
     public constructor(private readonly calls: string[])
     {
     }
 
-    public async Generate(def: EnvDefinition, bundleDir: string, seedDir?: string): Promise<void>
+    public async Generate(def: EnvDefinition, bundleDir: string, seedDir?: string, oidc?: EnvOidc): Promise<void>
     {
         this.calls.push('generate')
+        this.Oidc = oidc
         this.Args = { def, bundleDir, seedDir }
         await mkdir(bundleDir, { recursive: true })
         const secrets: Record<string, string> = {}
@@ -293,6 +310,66 @@ class FakeAdminProxy implements IAdminProxy
     }
 }
 
+class FakeIdp implements IIdpService
+{
+    public Calls: Array<{ tenantId: string; displayName: string }> = []
+
+    public constructor(private readonly conn: IdpConnection | Error)
+    {
+    }
+
+    public async EnsureForTenant(tenantId: string, displayName: string): Promise<IdpConnection>
+    {
+        this.Calls.push({ tenantId, displayName })
+        if (this.conn instanceof Error)
+        {
+            throw this.conn
+        }
+        return this.conn
+    }
+}
+
+class IdpFixture
+{
+    public static readonly Token = 'admin-token-for-env-tests'
+
+    /** Runs body against an in-process IdP (host + admin endpoint + dev CA) that already has the realm for tenantId. */
+    public static async With(tenantId: string, body: (conn: IdpConnection, clients: IdpClientStore) => Promise<void>): Promise<void>
+    {
+        const dir = await mkdtemp(join(tmpdir(), 'envsvc-idp-'))
+        let host: IdpHost | undefined
+        try
+        {
+            const key = await IdpSigningKey.LoadOrCreate(join(dir, 'idp-signing.pem'))
+            const ca = DevCa.EnsureAt(join(dir, 'ca'), 'localhost')
+            const tls = IdpTlsMaterial.Load({ certFile: ca.certFile, keyFile: ca.keyFile })
+            const realmsDir = join(dir, 'realms')
+            const realms = new IdpRealmSet([], (id, name) => IdpRealm.OpenFor(realmsDir, id, name, randomBytes(32)))
+            const clients = new IdpClientStore()
+            const admin = new IdpAdminEndpoint(IdpFixture.Token, realms, clients)
+            host = new IdpHost('https://localhost', key, realms, clients, new InMemoryAuthorizationCodeStore(), new IdpSsoSessionStore(), tls, true, admin)
+            await host.Listen(0, '127.0.0.1')
+            const conn: IdpConnection = {
+                baseUrl: 'https://localhost:' + host.Address().port,
+                ca: readFileSync(ca.caFile),
+                adminToken: IdpFixture.Token,
+                adminTokenRef: 'admin-token',
+                caDir: '/data/idp/' + tenantId + '/tls'
+            }
+            await new IdpAdminClient(conn).EnsureRealm(tenantId, 'T')
+            await body(conn, clients)
+        }
+        finally
+        {
+            if (host !== undefined)
+            {
+                await host.Close()
+            }
+            rmSync(dir, { recursive: true, force: true })
+        }
+    }
+}
+
 class Harness
 {
     public readonly Proxy = new FakeAdminProxy()
@@ -304,6 +381,7 @@ class Harness
     public Service!: EnvironmentService
     public DataRoot = ''
     public Directory!: PlatformDirectory
+    public Idp: IIdpService = new FakeIdp(new Error('no idp in this test'))
 
     public static async Make(busy = false): Promise<Harness>
     {
@@ -326,8 +404,15 @@ class Harness
             cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach, configRef: 'kube-ref' },
             registry: { mode: InfraMode.Attach, endpoint: 'reg.local', credentialRef: 'cred-ref' }
         })
-        h.Service = new EnvironmentService(h.Registry, new FakeAllocator(h.Calls, busy), h.Docker, h.Bundle, h.Seeder, h.DataRoot, h.Proxy, h.Directory)
+        h.Service = new EnvironmentService(h.Registry, new FakeAllocator(h.Calls, busy), h.Docker, h.Bundle, h.Seeder, h.DataRoot, h.Proxy, h.Directory, h.Idp, c => new IdpAdminClient(c))
         return h
+    }
+
+    /** Rebuilds the service over a different IdP seam (shares registry, docker, bundle, directory). */
+    public UseIdp(idp: IIdpService): void
+    {
+        this.Idp = idp
+        this.Service = new EnvironmentService(this.Registry, new FakeAllocator(this.Calls, false), this.Docker, this.Bundle, this.Seeder, this.DataRoot, this.Proxy, this.Directory, idp, c => new IdpAdminClient(c))
     }
 
     public static Record(name: string, status: EnvStatus): EnvironmentRecord
@@ -618,13 +703,17 @@ test('AdminGrantAppReader on a non-Runtime env throws before any proxy call', as
 
 test('Create with a valid hiveId binds the platform tenant and hive and passes placement', async () =>
 {
-    const h = await Harness.Make()
-    const rec = await h.Service.Create('bound1', Template.DevBlank, EnvType.Development, undefined, 'h1')
-    assert.equal(rec.tenantId, 'plat-t1')
-    assert.equal(rec.hiveId, 'h1')
-    assert.notEqual(rec.tenantId, rec.environmentId)
-    assert.doesNotThrow(() => h.Directory.ValidateHivePlacement(rec.tenantId!, rec.hiveId!))
-    assert.deepEqual(h.Registry.Get('bound1'), rec)
+    await IdpFixture.With('plat-t1', async (conn) =>
+    {
+        const h = await Harness.Make()
+        h.UseIdp(new FakeIdp(conn))
+        const rec = await h.Service.Create('bound1', Template.DevBlank, EnvType.Development, undefined, 'h1')
+        assert.equal(rec.tenantId, 'plat-t1')
+        assert.equal(rec.hiveId, 'h1')
+        assert.notEqual(rec.tenantId, rec.environmentId)
+        assert.doesNotThrow(() => h.Directory.ValidateHivePlacement(rec.tenantId!, rec.hiveId!))
+        assert.deepEqual(h.Registry.Get('bound1'), rec)
+    })
 })
 
 test('Create with an unknown hiveId throws UnknownHiveError and creates nothing', async () =>
@@ -637,15 +726,19 @@ test('Create with an unknown hiveId throws UnknownHiveError and creates nothing'
 
 test('Create binds the hive owner tenant, and ValidateHivePlacement rejects a different tenant', async () =>
 {
-    const h = await Harness.Make()
-    await h.Directory.CreateHive({
-        id: 'h2', tenantId: 'plat-t2', displayName: 'H2',
-        cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach, configRef: 'kube-ref' },
-        registry: { mode: InfraMode.Attach, endpoint: 'reg.local', credentialRef: 'cred-ref' }
+    await IdpFixture.With('plat-t2', async (conn) =>
+    {
+        const h = await Harness.Make()
+        h.UseIdp(new FakeIdp(conn))
+        await h.Directory.CreateHive({
+            id: 'h2', tenantId: 'plat-t2', displayName: 'H2',
+            cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach, configRef: 'kube-ref' },
+            registry: { mode: InfraMode.Attach, endpoint: 'reg.local', credentialRef: 'cred-ref' }
+        })
+        const rec = await h.Service.Create('bound3', Template.DevBlank, EnvType.Development, undefined, 'h2')
+        assert.equal(rec.tenantId, 'plat-t2')
+        assert.throws(() => h.Directory.ValidateHivePlacement('plat-t1', 'h2'), HivePlacementError)
     })
-    const rec = await h.Service.Create('bound3', Template.DevBlank, EnvType.Development, undefined, 'h2')
-    assert.equal(rec.tenantId, 'plat-t2')
-    assert.throws(() => h.Directory.ValidateHivePlacement('plat-t1', 'h2'), HivePlacementError)
 })
 
 test('Create without a hiveId leaves tenantId and hiveId unset', async () =>
@@ -655,4 +748,94 @@ test('Create without a hiveId leaves tenantId and hiveId unset', async () =>
     assert.equal(rec.tenantId, undefined)
     assert.equal(rec.hiveId, undefined)
     assert.deepEqual(h.Calls, ['allocate', 'generate', 'ensureImage', 'up', 'waitHealthy', 'put:running'])
+})
+
+test('BOUND Create registers an OIDC client at the tenant IdP and federates the bundle and container', async () =>
+{
+    await IdpFixture.With('plat-t1', async (conn, clients) =>
+    {
+        const h = await Harness.Make()
+        const idp = new FakeIdp(conn)
+        h.UseIdp(idp)
+        const rec = await h.Service.Create('fed1', Template.DevBlank, EnvType.Development, undefined, 'h1')
+        assert.deepEqual(idp.Calls, [{ tenantId: 'plat-t1', displayName: 'T1' }])
+        assert.deepEqual(h.Calls.slice(0, 3), ['allocate', 'generate', 'ensureImage'])
+        const oidc = h.Bundle.Oidc
+        assert.ok(oidc)
+        assert.equal(oidc.issuer, conn.baseUrl + '/' + encodeURIComponent('plat-t1'))
+        assert.equal(oidc.discoveryUrl, conn.baseUrl + '/plat-t1/.well-known/openid-configuration')
+        assert.equal(oidc.clientId, rec.environmentId)
+        assert.equal(oidc.redirectUri, 'http://localhost:9100/auth/oidc/callback?environment=' + rec.environmentId)
+        assert.equal(oidc.secretRef, rec.environmentId + '-oidc-secret')
+        assert.ok(oidc.secret.length >= 24)
+        assert.equal(await clients.VerifySecret('plat-t1', oidc.clientId, oidc.secret), true)
+        assert.equal(await clients.VerifySecret('plat-t1', oidc.clientId, oidc.secret + 'x'), false)
+        // The IdP allow-lists the exact redirect_uri (environment hint included) the env server will present; the callback cannot route without it.
+        assert.equal(clients.RedirectAllowed('plat-t1', oidc.clientId, oidc.redirectUri), true)
+        assert.equal(clients.RedirectAllowed('plat-t1', oidc.clientId, 'http://localhost:9100/auth/oidc/callback'), false)
+        assert.equal(h.Docker.CaHostPath, join(conn.caDir, 'ca.crt'))
+    })
+})
+
+test('UNBOUND Create does not touch the IdP and passes no oidc or caHostPath', async () =>
+{
+    const h = await Harness.Make()
+    const idp = new FakeIdp(new Error('must not be called'))
+    h.UseIdp(idp)
+    await h.Service.Create('local1', Template.DevBlank, EnvType.Development)
+    assert.deepEqual(idp.Calls, [])
+    assert.equal(h.Bundle.Oidc, undefined)
+    assert.equal(h.Docker.CaHostPath, undefined)
+})
+
+test('BOUND Create with a failing IdP stops before generate and throws CreateFailedError', async () =>
+{
+    await IdpFixture.With('plat-t1', async (conn) =>
+    {
+        const h = await Harness.Make()
+        h.UseIdp(new FakeIdp({ ...conn, adminToken: 'wrong-token' }))
+        await assert.rejects(() => h.Service.Create('fedbad', Template.DevBlank, EnvType.Development, undefined, 'h1'), CreateFailedError)
+        assert.equal(h.Bundle.Oidc, undefined)
+        assert.ok(!h.Calls.includes('generate'))
+    })
+})
+
+test('BOUND Create failure after the secret exists never leaks it in the error, logs or record', async () =>
+{
+    await IdpFixture.With('plat-t1', async (conn) =>
+    {
+        const h = await Harness.Make()
+        h.UseIdp(new FakeIdp(conn))
+        const original = h.Docker.Up.bind(h.Docker)
+        h.Docker.Up = async (def?: EnvDefinition, dir?: string, ca?: string) =>
+        {
+            await original(def, dir, ca)
+            throw new Error('boom ' + h.Bundle.Oidc!.secret)
+        }
+        const logged: string[] = []
+        const origLog = console.log
+        const origErr = console.error
+        console.log = (...a: unknown[]) => { logged.push(a.join(' ')) }
+        console.error = (...a: unknown[]) => { logged.push(a.join(' ')) }
+        let thrown: unknown
+        try
+        {
+            await h.Service.Create('fedbad2', Template.DevBlank, EnvType.Development, undefined, 'h1')
+        }
+        catch (e)
+        {
+            thrown = e
+        }
+        finally
+        {
+            console.log = origLog
+            console.error = origErr
+        }
+        const secret = h.Bundle.Oidc!.secret
+        assert.ok(thrown instanceof CreateFailedError)
+        assert.ok(!(String(thrown) + thrown.message + (thrown.stack ?? '')).includes(secret))
+        assert.ok(!logged.join('\n').includes(secret))
+        assert.equal(h.Registry.Get('fedbad2')?.status, EnvStatus.Failed)
+        assert.ok(!JSON.stringify(h.Registry.Get('fedbad2')).includes(secret))
+    })
 })
