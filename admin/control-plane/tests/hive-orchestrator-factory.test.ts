@@ -22,9 +22,14 @@ class FactoryFixture
     }
 
     public static readonly Unsupported: ReadonlyArray<readonly [HiveBackend, InfraMode]> = [
+        [HiveBackend.Aks, InfraMode.Provision],
         [HiveBackend.Aks, InfraMode.Attach],
-        [HiveBackend.Private, InfraMode.Attach],
         [HiveBackend.Eks, InfraMode.Provision],
+        [HiveBackend.Eks, InfraMode.Attach],
+        [HiveBackend.Gke, InfraMode.Provision],
+        [HiveBackend.Gke, InfraMode.Attach],
+        [HiveBackend.Private, InfraMode.Provision],
+        [HiveBackend.Private, InfraMode.Attach],
     ]
 }
 
