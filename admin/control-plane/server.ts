@@ -1,5 +1,4 @@
 import { mkdirSync } from 'node:fs'
-import type { IncomingMessage, ServerResponse } from 'node:http'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DockerEnv } from '../../environments/seed/docker.js'
@@ -29,30 +28,13 @@ import { IdpRegistry } from './idp-registry.js'
 import { IdpService } from './idp-service.js'
 import { IdpAdminClient } from './idp-admin-client.js'
 import { TenantProvisioningService } from './tenant-provisioning-service.js'
-import { TenantSessionStore, type TenantSession } from './tenant-auth/tenant-session.js'
+import { TenantSessionStore } from './tenant-auth/tenant-session.js'
 import { TenantOidcRelyingParty } from './tenant-auth/tenant-oidc-relying-party.js'
 import { TenantAuthEndpoint } from './tenant-auth/tenant-auth-endpoint.js'
 import { TenantAuthGate } from './tenant-auth/tenant-auth-gate.js'
-import type { ITenantApiEndpoint, TenantPlane } from './tenant-auth/tenant-plane.js'
-
-/**
- * The placeholder tenant data API used until Task 5's `TenantApiEndpoint` lands: every gated `/tenant-api/*`
- * request is answered 404. The gate, cookie, host and origin wiring are real; only the data surface is stubbed.
- */
-class PlaceholderTenantApi implements ITenantApiEndpoint
-{
-    private static readonly StatusNotFound = 404
-    private static readonly ContentTypeHeader = 'Content-Type'
-    private static readonly JsonType = 'application/json; charset=utf-8'
-    private static readonly NotFoundBody = '{"error":"Not found"}'
-
-    public async Handle(_req: IncomingMessage, res: ServerResponse, _path: string, _session: TenantSession): Promise<boolean>
-    {
-        res.writeHead(PlaceholderTenantApi.StatusNotFound, { [PlaceholderTenantApi.ContentTypeHeader]: PlaceholderTenantApi.JsonType })
-        res.end(PlaceholderTenantApi.NotFoundBody)
-        return true
-    }
-}
+import { TenantApiEndpoint } from './tenant-api/tenant-api-endpoint.js'
+import type { TenantPlane } from './tenant-auth/tenant-plane.js'
+import type { IEnvironmentService } from './control-plane-host.js'
 
 export class ControlPlaneServer
 {
@@ -126,9 +108,10 @@ export class ControlPlaneServer
         const reports = new RolloutReportRegistry(join(dataRoot, ControlPlaneServer.ReportsFile))
         const registrations = new RolloutRegistrationRegistry(join(dataRoot, ControlPlaneServer.RegistrationsFile))
         await Promise.all([manifests.Load(), gating.Load(), selections.Load(), reports.Load(), registrations.Load()])
-        const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, reports, registrations, directory, orchestrators, registry, new EnvironmentPlacement(directory))
+        const placement = new EnvironmentPlacement(directory)
+        const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, reports, registrations, directory, orchestrators, registry, placement)
         const provisioning = new TenantProvisioningService(idpService, directory, conn => new IdpAdminClient(conn))
-        const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie)
+        const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie, service, deployments, orchestrators, placement)
         const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, orchestrators, deployments, provisioning, tenantPlane)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
         await host.Listen(port, ControlPlaneServer.BindHost)
@@ -159,7 +142,11 @@ export class ControlPlaneServer
         dataRoot: string,
         idpService: IdpService,
         directory: PlatformDirectory,
-        secureCookie: boolean): TenantPlane | undefined
+        secureCookie: boolean,
+        service: IEnvironmentService,
+        deployments: PlatformDeploymentRegistry,
+        orchestrators: HiveOrchestratorFactory,
+        placement: EnvironmentPlacement): TenantPlane | undefined
     {
         const rawHosts = env[ControlPlaneServer.TenantHostsEnvVar]
         const callbackUrl = env[ControlPlaneServer.TenantCallbackEnvVar]
@@ -176,7 +163,8 @@ export class ControlPlaneServer
         const rp = new TenantOidcRelyingParty(idpService, directory, conn => new IdpAdminClient(conn), callbackUrl)
         const endpoint = new TenantAuthEndpoint(rp, sessions, secureCookie)
         const gate = new TenantAuthGate(sessions)
-        return { endpoint, gate, api: new PlaceholderTenantApi(), allowedHosts }
+        const api = new TenantApiEndpoint(service, directory, deployments, orchestrators, placement)
+        return { endpoint, gate, api, allowedHosts }
     }
 
     /** Parses a comma-separated host list into a set of trimmed, lowercased, non-empty hosts. */

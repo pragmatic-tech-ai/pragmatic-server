@@ -14,7 +14,9 @@ import {
     EnvironmentNotRuntimeError
 } from './environment-service.js'
 import { GraphExistsError, GraphNameInvalidError, GraphNotFoundError } from './graph-service.js'
-import { EnvStatus, EnvType, Template, type EnvironmentRecord } from './environment-record.js'
+import { EnvType, Template, type EnvironmentRecord } from './environment-record.js'
+import { EnvironmentDtoMapper, type EnvironmentDto } from './environment-dto.js'
+import { HiveHealthProducer } from './hive-health-producer.js'
 import { InvalidTenantIdError } from './idp-service.js'
 import { PortUnavailableError } from './port-allocator.js'
 import type { TenantProvisioningService } from './tenant-provisioning-service.js'
@@ -76,20 +78,7 @@ export interface IGraphService
     GetLoaded(runtimeEnv: string): Promise<GraphLoadedDto | null>
 }
 
-/** The only shape ever sent to a client: connect info, no internals or secrets. */
-export type EnvironmentDto = {
-    name: string
-    template: Template
-    type: EnvType
-    environmentId: string
-    hiveId?: string
-    tenantId?: string
-    hostPort: number
-    status: EnvStatus
-    createdAt: string
-    httpUrl: string
-    wsUrl: string
-}
+export type { EnvironmentDto }
 
 /** The only fields of an issued maker token revealed to the operator. */
 export interface MakerTokenDto
@@ -128,13 +117,7 @@ export type TenantDto =
 }
 export type HiveDto = HiveRecord
 
-/** One environment's live workload health on its hive: no secrets, no internals. */
-export type HiveHealthDto = {
-    environmentName: string
-    ready: boolean
-    runningImage: string | undefined
-    detail: string
-}
+export type { HiveHealthDto } from './hive-health-producer.js'
 
 /** A published manifest as shown to the operator: version id, image reference, notes; no secrets. */
 export type ManifestDto = ManifestRecord
@@ -162,7 +145,6 @@ export class ControlPlaneHost
     private static readonly HiveIdInvalidMessage = 'hiveId must be a non-empty string'
     private static readonly LocalName = 'localhost'
     private static readonly HttpScheme = 'http://'
-    private static readonly WsScheme = 'ws://'
     private static readonly BaseUrl = ControlPlaneHost.HttpScheme + ControlPlaneHost.LocalName
     private static readonly PortSeparator = ':'
     private static readonly AllowedHosts: ReadonlySet<string> = new Set([ControlPlaneHost.LocalName, '127.0.0.1', '[::1]'])
@@ -184,7 +166,6 @@ export class ControlPlaneHost
     private static readonly ErrorEvent = 'error'
     private static readonly CloseEvent = 'close'
     private static readonly LogPrefix = '[control-plane] request failed:'
-    private static readonly EnvironmentQuery = '/?environment='
     private static readonly ApiPrefix = '/api/'
     private static readonly TenantAuthPrefix = '/tenant-auth/'
     private static readonly TenantApiPrefix = '/tenant-api/'
@@ -761,15 +742,8 @@ export class ControlPlaneHost
             this.WriteNotFound(res)
             return true
         }
-        const orchestrator = this.orchestrators.For(hive)
-        const placement = new EnvironmentPlacement(this.directory)
-        const dtos: HiveHealthDto[] = []
-        for (const env of this.service.List().filter(e => e.hiveId === id))
-        {
-            const health = await orchestrator.Health(placement.WorkloadFor(env))
-            dtos.push({ environmentName: env.name, ready: health.ready, runningImage: health.runningImage, detail: health.detail })
-        }
-        this.WriteJson(res, ControlPlaneHost.StatusOk, dtos)
+        const producer = new HiveHealthProducer(this.service, this.orchestrators, new EnvironmentPlacement(this.directory))
+        this.WriteJson(res, ControlPlaneHost.StatusOk, await producer.Produce(hive))
         return true
     }
 
@@ -1792,18 +1766,6 @@ export class ControlPlaneHost
 
     private static ToDto(r: EnvironmentRecord): EnvironmentDto
     {
-        return {
-            name: r.name,
-            template: r.template,
-            type: r.type,
-            environmentId: r.environmentId,
-            hiveId: r.hiveId,
-            tenantId: r.tenantId,
-            hostPort: r.hostPort,
-            status: r.status,
-            createdAt: r.createdAt,
-            httpUrl: ControlPlaneHost.HttpScheme + ControlPlaneHost.LocalName + ControlPlaneHost.PortSeparator + String(r.hostPort),
-            wsUrl: ControlPlaneHost.WsScheme + ControlPlaneHost.LocalName + ControlPlaneHost.PortSeparator + String(r.hostPort) + ControlPlaneHost.EnvironmentQuery + r.environmentId
-        }
+        return EnvironmentDtoMapper.ToDto(r)
     }
 }
