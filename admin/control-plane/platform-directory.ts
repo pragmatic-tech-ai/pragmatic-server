@@ -82,18 +82,6 @@ export class HiveHasEnvironmentsError extends Error
     }
 }
 
-export class UnknownHiveError extends Error
-{
-    private static readonly ErrorName = 'UnknownHiveError'
-    private static readonly MessagePrefix = 'Unknown hive: '
-
-    public constructor(hiveId: string)
-    {
-        super(UnknownHiveError.MessagePrefix + hiveId)
-        this.name = UnknownHiveError.ErrorName
-    }
-}
-
 export class HivePlacementError extends Error
 {
     private static readonly ErrorName = 'HivePlacementError'

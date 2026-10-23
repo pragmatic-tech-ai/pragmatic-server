@@ -10,7 +10,8 @@ import type { PortAllocator } from './port-allocator.js'
 import { TemplateCatalog } from './template-catalog.js'
 import type { AdminConnectInfo, AdminSnapshot, IAdminProxy } from './admin-proxy.js'
 import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { UnknownHiveError, type PlatformDirectory } from './platform-directory.js'
+import type { PlatformDirectory } from './platform-directory.js'
+import { UnknownHiveError } from './rollout-errors.js'
 import type { IDockerEnv, IBundleBuilder, IUserSeeder } from './docker-env-port.js'
 
 export class EnvironmentExistsError extends Error
