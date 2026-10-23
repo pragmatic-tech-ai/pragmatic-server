@@ -1,4 +1,4 @@
-import { afterEach, describe, it } from 'node:test'
+import { afterEach, describe, it, mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { TenantApiClient, TenantApiError } from '../src/tenant-api-client.js'
 import { TenantEventType } from '../src/tenant-types.js'
@@ -208,6 +208,56 @@ describe('TenantApiClient sockets', () =>
         c.OnEvent(() => {})
         c.OnEvent(() => {})
         assert.equal(sockets.Sockets.length, 1)
+    })
+
+    it('OnEvent drops frames with a bogus type or missing environmentName', () =>
+    {
+        const sockets = new FakeWebSocketFactory()
+        const got: TenantEvent[] = []
+        new TestClient(sockets).OnEvent(ev => { got.push(ev) })
+        sockets.Sockets[0]!.Push(JSON.stringify({ type: 'bogus', environmentName: 'e1' }))
+        sockets.Sockets[0]!.Push(JSON.stringify({ type: TenantEventType.HealthChanged }))
+        sockets.Sockets[0]!.Push(JSON.stringify({ type: TenantEventType.HealthChanged, environmentName: '' }))
+        assert.equal(got.length, 0)
+        sockets.Sockets[0]!.Push(JSON.stringify({ type: TenantEventType.HealthChanged, environmentName: 'e1' }))
+        assert.equal(got.length, 1)
+    })
+
+    it('OnEvent reconnects after close once the delay elapses', () =>
+    {
+        mock.timers.enable({ apis: ['setTimeout'] })
+        try
+        {
+            const sockets = new FakeWebSocketFactory()
+            new TestClient(sockets).OnEvent(() => {})
+            sockets.Sockets[0]!.FireClose()
+            assert.equal(sockets.Sockets.length, 1)
+            mock.timers.tick(2000)
+            assert.equal(sockets.Sockets.length, 2)
+            assert.ok(sockets.Urls[1]!.endsWith('/tenant-api/events'))
+        }
+        finally
+        {
+            mock.timers.reset()
+        }
+    })
+
+    it('OnEvent does not reconnect when all handlers unsubscribed', () =>
+    {
+        mock.timers.enable({ apis: ['setTimeout'] })
+        try
+        {
+            const sockets = new FakeWebSocketFactory()
+            const off = new TestClient(sockets).OnEvent(() => {})
+            sockets.Sockets[0]!.FireClose()
+            off()
+            mock.timers.tick(2000)
+            assert.equal(sockets.Sockets.length, 1)
+        }
+        finally
+        {
+            mock.timers.reset()
+        }
     })
 
     it('OpenLogStream forwards raw chunks and dispose closes the socket', () =>

@@ -1,3 +1,4 @@
+import { TenantEventType } from './tenant-types.js'
 import type { EnvironmentDto, HiveDto, HiveHealthDto, HiveRolloutDto, IWebSocketFactory, IWebSocketLike, ManifestDto, SessionDto, TenantEvent } from './tenant-types.js'
 
 // Thrown for non-2xx tenant-surface responses; Message carries the server's error text.
@@ -236,12 +237,16 @@ export class TenantApiClient
 
     private Deliver(text: string): void
     {
-        let parsed: TenantEvent
+        let parsed: unknown
         try
         {
-            parsed = JSON.parse(text) as TenantEvent
+            parsed = JSON.parse(text)
         }
         catch
+        {
+            return
+        }
+        if (!TenantApiClient.IsTenantEvent(parsed))
         {
             return
         }
@@ -249,6 +254,17 @@ export class TenantApiClient
         {
             h(parsed)
         }
+    }
+
+    private static IsTenantEvent(value: unknown): value is TenantEvent
+    {
+        if (typeof value !== 'object' || value === null)
+        {
+            return false
+        }
+        const candidate = value as { type?: unknown; environmentName?: unknown }
+        return Object.values(TenantEventType).includes(candidate.type as TenantEventType)
+            && typeof candidate.environmentName === 'string' && candidate.environmentName.length > 0
     }
 
     private HiveRoute(hiveId: string, leaf: string): string
