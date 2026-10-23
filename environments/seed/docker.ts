@@ -1,10 +1,84 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { get } from 'node:http'
 import { TenantPurposeName } from './bundle.js'
 import type { EnvDefinition, EnvDatabase } from './bundle.js'
 
 export { EnvKind, TenantPurposeName } from './bundle.js'
 export type { EnvDefinition } from './bundle.js'
+
+/** A long-lived child process whose combined stdout+stderr is streamed as utf8 text. */
+export interface ILogProcess
+{
+    OnData(cb: (chunk: string) => void): void
+    OnClose(cb: () => void): void
+    Kill(): void
+}
+
+/** Spawn seam so log-follow streaming is testable without a real docker process. */
+export interface IProcessSpawn
+{
+    Spawn(command: string, args: string[]): ILogProcess
+}
+
+/** An ILogProcess over a real node child process; 'error' and 'close' collapse into a single close notification. */
+export class ChildLogProcess implements ILogProcess
+{
+    private static readonly Utf8 = 'utf8'
+    private static readonly CloseEvent = 'close'
+    private static readonly DataEvent = 'data'
+    private static readonly ErrorEvent = 'error'
+
+    private readonly closeCallbacks: Array<() => void> = []
+    private closed = false
+
+    public constructor(private readonly child: ChildProcessWithoutNullStreams)
+    {
+        child.stdout.setEncoding(ChildLogProcess.Utf8)
+        child.stderr.setEncoding(ChildLogProcess.Utf8)
+        // 'error' (e.g. docker missing from PATH) and 'close' may both fire; a child that errored is treated as closed, once.
+        child.on(ChildLogProcess.CloseEvent, () => this.NotifyClosed())
+        child.on(ChildLogProcess.ErrorEvent, () => this.NotifyClosed())
+    }
+
+    public OnData(cb: (chunk: string) => void): void
+    {
+        this.child.stdout.on(ChildLogProcess.DataEvent, cb)
+        this.child.stderr.on(ChildLogProcess.DataEvent, cb)
+    }
+
+    public OnClose(cb: () => void): void
+    {
+        this.closeCallbacks.push(cb)
+    }
+
+    public Kill(): void
+    {
+        this.child.kill()
+    }
+
+    private NotifyClosed(): void
+    {
+        if (this.closed)
+        {
+            return
+        }
+        this.closed = true
+        for (const cb of this.closeCallbacks)
+        {
+            cb()
+        }
+    }
+}
+
+/** Real spawn seam over node:child_process. */
+export class ChildProcessSpawn implements IProcessSpawn
+{
+    public Spawn(command: string, args: string[]): ILogProcess
+    {
+        return new ChildLogProcess(spawn(command, args))
+    }
+}
 
 /**
  * Docker container lifecycle for a local environment, via the `docker` CLI only.
@@ -78,6 +152,8 @@ export class DockerEnv
     private static readonly RunningFormat = '{{.State.Running}}'
     private static readonly RunningTrue = 'true'
     private static readonly LogsCommand = 'logs'
+    private static readonly TailFlag = '--tail'
+    private static readonly LogTailLines = '200'
     private static readonly HealthTimeoutMessage = 'Server did not become healthy in time on port '
     private static readonly ContainerExitedMessage = 'Container exited before becoming healthy: '
 
@@ -108,6 +184,10 @@ export class DockerEnv
     private static readonly FailedSuffix = ' failed'
     private static readonly NoDatabaseMessage = 'Environment has no database descriptor'
     private static readonly DbTimeoutMessage = 'Postgres did not become ready in time: '
+
+    public constructor(private readonly spawner: IProcessSpawn = new ChildProcessSpawn())
+    {
+    }
 
     private static SeedScript(): string
     {
@@ -336,6 +416,16 @@ export class DockerEnv
     public async Logs(def: EnvDefinition): Promise<string>
     {
         return this.Exec([DockerEnv.LogsCommand, DockerEnv.ContainerName(def)])
+    }
+
+    /** Follows the container's logs (`docker logs -f --tail N`); the caller Kill()s the returned process to stop. */
+    public LogStream(def: EnvDefinition, onData: (chunk: string) => void): ILogProcess
+    {
+        const proc = this.spawner.Spawn(DockerEnv.Docker, [
+            DockerEnv.LogsCommand, DockerEnv.ForceFlag, DockerEnv.TailFlag, DockerEnv.LogTailLines, DockerEnv.ContainerName(def)
+        ])
+        proc.OnData(onData)
+        return proc
     }
 
     /** Polls the unauthenticated liveness endpoint until HTTP 200 or the timeout elapses. */

@@ -1,6 +1,7 @@
 import { createServer } from 'node:http'
 import type { IncomingMessage, Server as HttpServer, ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import type { Duplex } from 'node:stream'
 import { readFile } from 'node:fs/promises'
 import { extname, resolve, sep } from 'node:path'
 import { WebSocketServer, WebSocket } from 'ws'
@@ -14,7 +15,9 @@ import {
     EnvironmentNotRuntimeError
 } from './environment-service.js'
 import { GraphExistsError, GraphNameInvalidError, GraphNotFoundError } from './graph-service.js'
-import { EnvStatus, EnvType, Template, type EnvironmentRecord } from './environment-record.js'
+import { EnvType, Template, type EnvironmentRecord } from './environment-record.js'
+import { EnvironmentDtoMapper, type EnvironmentDto } from './environment-dto.js'
+import { HiveHealthProducer } from './hive-health-producer.js'
 import { InvalidTenantIdError } from './idp-service.js'
 import { PortUnavailableError } from './port-allocator.js'
 import type { TenantProvisioningService } from './tenant-provisioning-service.js'
@@ -42,16 +45,24 @@ import type { ManifestRecord } from './manifest-record.js'
 import { AgentUnauthorizedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, UnknownHiveError, UnknownManifestError } from './rollout-errors.js'
 import type { ClientRecord, ClusterSpec, HiveRecord, RegistrySpec, TenantRecord } from './platform-records.js'
 import type { CreateAccountParams, GraphLoadedDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { ILogProcess } from '../../environments/seed/docker.js'
+import type { TenantPlane } from './tenant-auth/tenant-plane.js'
+import { TenantEventType } from './tenant-api/tenant-events.js'
+import { TenantLogSocket } from './tenant-api/tenant-log-socket.js'
 
 export interface IEnvironmentService
 {
     Create(name: string, template: Template, type: EnvType, hostPort?: number, hiveId?: string): Promise<EnvironmentRecord>
     Start(name: string): Promise<EnvironmentRecord>
     Stop(name: string): Promise<EnvironmentRecord>
+    Restart(name: string): Promise<EnvironmentRecord>
     Delete(name: string): Promise<void>
     List(): readonly EnvironmentRecord[]
     ListReconciled(): Promise<readonly EnvironmentRecord[]>
     Logs(name: string): Promise<string>
+    LogStream(name: string, onData: (chunk: string) => void): ILogProcess
+    /** Additive lifecycle-change subscription (RULING 5): fires on every status change; returns an unsubscribe. */
+    OnChanged(cb: (rec: EnvironmentRecord) => void): () => void
     AdminSnapshot(name: string): Promise<AdminSnapshot>
     AdminCreateAccount(name: string, params: CreateAccountParams): Promise<void>
     AdminDisableAccount(name: string, principalId: string): Promise<void>
@@ -75,20 +86,7 @@ export interface IGraphService
     GetLoaded(runtimeEnv: string): Promise<GraphLoadedDto | null>
 }
 
-/** The only shape ever sent to a client: connect info, no internals or secrets. */
-export type EnvironmentDto = {
-    name: string
-    template: Template
-    type: EnvType
-    environmentId: string
-    hiveId?: string
-    tenantId?: string
-    hostPort: number
-    status: EnvStatus
-    createdAt: string
-    httpUrl: string
-    wsUrl: string
-}
+export type { EnvironmentDto }
 
 /** The only fields of an issued maker token revealed to the operator. */
 export interface MakerTokenDto
@@ -127,13 +125,7 @@ export type TenantDto =
 }
 export type HiveDto = HiveRecord
 
-/** One environment's live workload health on its hive: no secrets, no internals. */
-export type HiveHealthDto = {
-    environmentName: string
-    ready: boolean
-    runningImage: string | undefined
-    detail: string
-}
+export type { HiveHealthDto } from './hive-health-producer.js'
 
 /** A published manifest as shown to the operator: version id, image reference, notes; no secrets. */
 export type ManifestDto = ManifestRecord
@@ -161,7 +153,6 @@ export class ControlPlaneHost
     private static readonly HiveIdInvalidMessage = 'hiveId must be a non-empty string'
     private static readonly LocalName = 'localhost'
     private static readonly HttpScheme = 'http://'
-    private static readonly WsScheme = 'ws://'
     private static readonly BaseUrl = ControlPlaneHost.HttpScheme + ControlPlaneHost.LocalName
     private static readonly PortSeparator = ':'
     private static readonly AllowedHosts: ReadonlySet<string> = new Set([ControlPlaneHost.LocalName, '127.0.0.1', '[::1]'])
@@ -183,8 +174,12 @@ export class ControlPlaneHost
     private static readonly ErrorEvent = 'error'
     private static readonly CloseEvent = 'close'
     private static readonly LogPrefix = '[control-plane] request failed:'
-    private static readonly EnvironmentQuery = '/?environment='
     private static readonly ApiPrefix = '/api/'
+    private static readonly TenantAuthPrefix = '/tenant-auth/'
+    private static readonly TenantApiPrefix = '/tenant-api/'
+    private static readonly TenantEventsPath = '/tenant-api/events'
+    private static readonly TenantLogsStreamPattern = new RegExp(
+        '^' + ControlPlaneHost.TenantApiPrefix + 'environments/([^/]+)/logs/stream$')
     private static readonly PingPath = '/api/ping'
     private static readonly TemplatesPath = '/api/templates'
     private static readonly EnvironmentsPath = '/api/environments'
@@ -357,6 +352,9 @@ export class ControlPlaneHost
     private httpServer: HttpServer | undefined
     private wsServer: WebSocketServer | undefined
     private readonly clients = new Set<WebSocket>()
+    /** Tenant ws sockets mapped to their teardown (events: unsubscribe; logs: kill the stream). Close() runs each. */
+    private readonly tenantClients = new Map<WebSocket, () => void>()
+    private tenantChangeSubscription: (() => void) | undefined
     private readonly staticRootAbs: string
 
     public constructor(
@@ -368,9 +366,22 @@ export class ControlPlaneHost
         private readonly directory: PlatformDirectory,
         private readonly orchestrators: HiveOrchestratorFactory,
         private readonly deployments: PlatformDeploymentRegistry,
-        private readonly provisioning: TenantProvisioningService)
+        private readonly provisioning: TenantProvisioningService,
+        private readonly tenantAuth?: TenantPlane)
     {
         this.staticRootAbs = resolve(staticRoot)
+        if (tenantAuth !== undefined)
+        {
+            // RULING 5: route every environment lifecycle change to the tenant bus, scoped by the env's owning tenant.
+            // An unbound env (no tenantId) has no tenant audience, so it is skipped.
+            this.tenantChangeSubscription = this.service.OnChanged(rec =>
+            {
+                if (rec.tenantId !== undefined)
+                {
+                    tenantAuth.events.Emit(rec.tenantId, { type: TenantEventType.EnvironmentChanged, environmentName: rec.name })
+                }
+            })
+        }
     }
 
     public Listen(port: number, host: string): Promise<void>
@@ -382,26 +393,7 @@ export class ControlPlaneHost
         })
         server.on('upgrade', (req, socket, head) =>
         {
-            const path = new URL(req.url ?? ControlPlaneHost.RootPath, ControlPlaneHost.BaseUrl).pathname
-            if (path !== ControlPlaneHost.EventsPath || !ControlPlaneHost.HostAllowed(req) || !ControlPlaneHost.OriginAllowed(req))
-            {
-                socket.destroy()
-                return
-            }
-            void this.Authenticated(req).then(ok =>
-            {
-                if (!ok)
-                {
-                    socket.destroy()
-                    return
-                }
-                wss.handleUpgrade(req, socket, head, ws =>
-                {
-                    this.clients.add(ws)
-                    ws.on(ControlPlaneHost.CloseEvent, () => this.clients.delete(ws))
-                    ws.on(ControlPlaneHost.ErrorEvent, () => this.clients.delete(ws))
-                })
-            }, () => socket.destroy())
+            this.RouteUpgrade(req, socket, head, wss)
         })
         this.httpServer = server
         this.wsServer = wss
@@ -416,8 +408,164 @@ export class ControlPlaneHost
         })
     }
 
+    /**
+     * Dispatches a ws upgrade. The operator `/api/events` branch is unchanged (operator gate + operator host/origin).
+     * The two tenant branches are reached only when a tenant plane is mounted and are gated by the tenant host, the
+     * tenant origin, and a resolved `pts_session` principal; any failure destroys the socket.
+     */
+    private RouteUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, wss: WebSocketServer): void
+    {
+        const path = new URL(req.url ?? ControlPlaneHost.RootPath, ControlPlaneHost.BaseUrl).pathname
+        if (path === ControlPlaneHost.EventsPath)
+        {
+            this.UpgradeOperatorEvents(req, socket, head, wss)
+            return
+        }
+        const tenant = this.tenantAuth
+        if (tenant === undefined)
+        {
+            socket.destroy()
+            return
+        }
+        if (path === ControlPlaneHost.TenantEventsPath)
+        {
+            this.UpgradeTenantEvents(req, socket, head, wss, tenant)
+            return
+        }
+        const lm = ControlPlaneHost.TenantLogsStreamPattern.exec(path)
+        if (lm !== null)
+        {
+            this.UpgradeTenantLogs(req, socket, head, wss, tenant, lm)
+            return
+        }
+        socket.destroy()
+    }
+
+    /** The operator events ws: operator host + operator origin + operator session, then tracked in `clients`. Unchanged. */
+    private UpgradeOperatorEvents(req: IncomingMessage, socket: Duplex, head: Buffer, wss: WebSocketServer): void
+    {
+        if (!ControlPlaneHost.HostAllowed(req) || !ControlPlaneHost.OriginAllowed(req))
+        {
+            socket.destroy()
+            return
+        }
+        void this.Authenticated(req).then(ok =>
+        {
+            if (!ok)
+            {
+                socket.destroy()
+                return
+            }
+            wss.handleUpgrade(req, socket, head, ws =>
+            {
+                this.clients.add(ws)
+                ws.on(ControlPlaneHost.CloseEvent, () => this.clients.delete(ws))
+                ws.on(ControlPlaneHost.ErrorEvent, () => this.clients.delete(ws))
+            })
+        }, () => socket.destroy())
+    }
+
+    /** The tenant events ws: on success subscribes the bus for the session's tenant and forwards each event as JSON. */
+    private UpgradeTenantEvents(req: IncomingMessage, socket: Duplex, head: Buffer, wss: WebSocketServer, tenant: TenantPlane): void
+    {
+        if (!ControlPlaneHost.TenantUpgradeAllowed(req, tenant))
+        {
+            socket.destroy()
+            return
+        }
+        void tenant.gate.Principal(req).then(session =>
+        {
+            if (session === null)
+            {
+                socket.destroy()
+                return
+            }
+            wss.handleUpgrade(req, socket, head, ws =>
+            {
+                const unsubscribe = tenant.events.On(session.tenantId, ev =>
+                {
+                    if (ws.readyState === WebSocket.OPEN)
+                    {
+                        ws.send(JSON.stringify(ev))
+                    }
+                })
+                this.TrackTenant(ws, unsubscribe)
+            })
+        }, () => socket.destroy())
+    }
+
+    /** The tenant log-stream ws: on success hands the socket to TenantLogSocket, which enforces env ownership and streams. */
+    private UpgradeTenantLogs(req: IncomingMessage, socket: Duplex, head: Buffer, wss: WebSocketServer, tenant: TenantPlane, m: RegExpExecArray): void
+    {
+        if (!ControlPlaneHost.TenantUpgradeAllowed(req, tenant))
+        {
+            socket.destroy()
+            return
+        }
+        const name = ControlPlaneHost.Decode(m[1] as string)
+        if (name === undefined)
+        {
+            socket.destroy()
+            return
+        }
+        void tenant.gate.Principal(req).then(session =>
+        {
+            if (session === null)
+            {
+                socket.destroy()
+                return
+            }
+            wss.handleUpgrade(req, socket, head, ws =>
+            {
+                const logSocket = new TenantLogSocket(session, name, this.service)
+                if (!logSocket.Attach(ws))
+                {
+                    // Not the session tenant's env (or unknown): the socket is already closed and no stream started.
+                    return
+                }
+                this.TrackTenant(ws, () => logSocket.Dispose())
+            })
+        }, () => socket.destroy())
+    }
+
+    /** Records a tenant socket with its teardown and wires close/error to run that teardown and drop the entry. */
+    private TrackTenant(ws: WebSocket, teardown: () => void): void
+    {
+        this.tenantClients.set(ws, teardown)
+        ws.on(ControlPlaneHost.CloseEvent, () => this.RemoveTenant(ws))
+        ws.on(ControlPlaneHost.ErrorEvent, () => this.RemoveTenant(ws))
+    }
+
+    private RemoveTenant(ws: WebSocket): void
+    {
+        const teardown = this.tenantClients.get(ws)
+        if (teardown === undefined)
+        {
+            return
+        }
+        this.tenantClients.delete(ws)
+        teardown()
+    }
+
+    /** Both tenant ws routes share this gate: the request host and (present) origin must be configured tenant hosts. */
+    private static TenantUpgradeAllowed(req: IncomingMessage, tenant: TenantPlane): boolean
+    {
+        return ControlPlaneHost.HostIn(req, tenant.allowedHosts) && ControlPlaneHost.OriginInHosts(req, tenant.allowedHosts)
+    }
+
     public async Close(): Promise<void>
     {
+        if (this.tenantChangeSubscription !== undefined)
+        {
+            this.tenantChangeSubscription()
+            this.tenantChangeSubscription = undefined
+        }
+        for (const [ws, teardown] of this.tenantClients)
+        {
+            teardown()
+            ws.terminate()
+        }
+        this.tenantClients.clear()
         for (const c of this.clients)
         {
             c.terminate()
@@ -452,7 +600,7 @@ export class ControlPlaneHost
     {
         try
         {
-            if (!ControlPlaneHost.HostAllowed(req))
+            if (!this.HostAccepted(req))
             {
                 this.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.ForbiddenHostMessage })
                 return
@@ -464,8 +612,19 @@ export class ControlPlaneHost
                 return
             }
             const path = new URL(req.url ?? ControlPlaneHost.RootPath, ControlPlaneHost.BaseUrl).pathname
+            if (this.tenantAuth !== undefined && await this.RouteTenant(req, res, path, this.tenantAuth))
+            {
+                return
+            }
             if (path.startsWith(ControlPlaneHost.ApiPrefix))
             {
+                // The operator surface is operator-hosts-only: a tenant origin accepted above cannot reach /api/*.
+                if (!ControlPlaneHost.HostAllowed(req))
+                {
+                    req.resume()
+                    this.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.ForbiddenHostMessage })
+                    return
+                }
                 if (ControlPlaneHost.IsMutating(req) && !ControlPlaneHost.OriginAllowed(req))
                 {
                     req.resume()
@@ -490,6 +649,42 @@ export class ControlPlaneHost
         {
             this.WriteError(res, err)
         }
+    }
+
+    /**
+     * Dispatches the tenant plane and returns whether it answered. `/tenant-auth/*` is public (no operator gate,
+     * no tenant gate) and delegates to the auth endpoint. `/tenant-api/*` is gated: a mutating request's Origin is
+     * checked against the tenant hosts, then the gate must resolve a principal (else 401); the validated session is
+     * handed to the data API. Any other path is not ours (returns false, so the operator surface and static serving
+     * are reached unchanged).
+     */
+    private async RouteTenant(req: IncomingMessage, res: ServerResponse, path: string, tenant: TenantPlane): Promise<boolean>
+    {
+        const isAuth = path.startsWith(ControlPlaneHost.TenantAuthPrefix)
+        if (!isAuth && !path.startsWith(ControlPlaneHost.TenantApiPrefix))
+        {
+            return false
+        }
+        // CSRF: every mutating /tenant-* request's Origin must be a configured tenant host (mirrors the operator /api/* rule),
+        // checked once for the whole prefix so /tenant-auth mutating routes (e.g. the logout POST) are covered too.
+        if (ControlPlaneHost.IsMutating(req) && !ControlPlaneHost.OriginInHosts(req, tenant.allowedHosts))
+        {
+            req.resume()
+            this.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.BadOriginMessage })
+            return true
+        }
+        if (isAuth)
+        {
+            return await tenant.endpoint.Handle(req, res, path)
+        }
+        const session = await tenant.gate.Principal(req)
+        if (session === null)
+        {
+            req.resume()
+            this.WriteJson(res, ControlPlaneHost.StatusUnauthorized, { error: ControlPlaneHost.UnauthenticatedMessage })
+            return true
+        }
+        return await tenant.api.Handle(req, res, path, session)
     }
 
     /** Returns false when the request does not match any API route (falls through to static). */
@@ -710,15 +905,8 @@ export class ControlPlaneHost
             this.WriteNotFound(res)
             return true
         }
-        const orchestrator = this.orchestrators.For(hive)
-        const placement = new EnvironmentPlacement(this.directory)
-        const dtos: HiveHealthDto[] = []
-        for (const env of this.service.List().filter(e => e.hiveId === id))
-        {
-            const health = await orchestrator.Health(placement.WorkloadFor(env))
-            dtos.push({ environmentName: env.name, ready: health.ready, runningImage: health.runningImage, detail: health.detail })
-        }
-        this.WriteJson(res, ControlPlaneHost.StatusOk, dtos)
+        const producer = new HiveHealthProducer(this.service, this.orchestrators, new EnvironmentPlacement(this.directory))
+        this.WriteJson(res, ControlPlaneHost.StatusOk, await producer.Produce(hive))
         return true
     }
 
@@ -1655,11 +1843,25 @@ export class ControlPlaneHost
         }
     }
 
+    /** Accepts a request whose host is an operator host OR (when a tenant plane is mounted) a configured tenant host.
+     *  With no tenant plane this is exactly HostAllowed, so the operator surface is unchanged. */
+    private HostAccepted(req: IncomingMessage): boolean
+    {
+        return ControlPlaneHost.HostAllowed(req)
+            || (this.tenantAuth !== undefined && ControlPlaneHost.HostIn(req, this.tenantAuth.allowedHosts))
+    }
+
     private static HostAllowed(req: IncomingMessage): boolean
+    {
+        return ControlPlaneHost.HostIn(req, ControlPlaneHost.AllowedHosts)
+    }
+
+    /** True when the request's Host header (port stripped, lowercased) is in the given set. */
+    private static HostIn(req: IncomingMessage, allowed: ReadonlySet<string>): boolean
     {
         const header = req.headers[ControlPlaneHost.HostHeader]
         const m = header === undefined ? null : ControlPlaneHost.HostHeaderPattern.exec(header)
-        return m !== null && ControlPlaneHost.AllowedHosts.has((m[1] as string).toLowerCase())
+        return m !== null && allowed.has((m[1] as string).toLowerCase())
     }
 
     private static IsPublicApi(path: string): boolean
@@ -1677,6 +1879,31 @@ export class ControlPlaneHost
     {
         const origin = req.headers[ControlPlaneHost.OriginHeader]
         return origin === undefined || origin === ControlPlaneHost.HttpScheme + req.headers[ControlPlaneHost.HostHeader]
+    }
+
+    /** The tenant-plane mirror of OriginAllowed: absent Origin allowed; a present one's host must be a configured tenant host. */
+    private static OriginInHosts(req: IncomingMessage, allowed: ReadonlySet<string>): boolean
+    {
+        const origin = req.headers[ControlPlaneHost.OriginHeader]
+        if (origin === undefined)
+        {
+            return true
+        }
+        const host = ControlPlaneHost.OriginHost(origin)
+        return host !== undefined && allowed.has(host)
+    }
+
+    /** The lowercased host (port stripped) of an Origin header, or undefined when it does not parse. */
+    private static OriginHost(origin: string): string | undefined
+    {
+        try
+        {
+            return new URL(origin).hostname.toLowerCase()
+        }
+        catch
+        {
+            return undefined
+        }
     }
 
     private static HasBody(req: IncomingMessage): boolean
@@ -1702,18 +1929,6 @@ export class ControlPlaneHost
 
     private static ToDto(r: EnvironmentRecord): EnvironmentDto
     {
-        return {
-            name: r.name,
-            template: r.template,
-            type: r.type,
-            environmentId: r.environmentId,
-            hiveId: r.hiveId,
-            tenantId: r.tenantId,
-            hostPort: r.hostPort,
-            status: r.status,
-            createdAt: r.createdAt,
-            httpUrl: ControlPlaneHost.HttpScheme + ControlPlaneHost.LocalName + ControlPlaneHost.PortSeparator + String(r.hostPort),
-            wsUrl: ControlPlaneHost.WsScheme + ControlPlaneHost.LocalName + ControlPlaneHost.PortSeparator + String(r.hostPort) + ControlPlaneHost.EnvironmentQuery + r.environmentId
-        }
+        return EnvironmentDtoMapper.ToDto(r)
     }
 }

@@ -25,6 +25,7 @@ import { IdpAdminClient } from '../idp-admin-client.js'
 import type { IdpConnection, IIdpService } from '../idp-service.js'
 import { PlatformDirectory, HivePlacementError } from '../platform-directory.js'
 import { UnknownHiveError } from '../rollout-errors.js'
+import type { ILogProcess } from '../../../environments/seed/docker.js'
 import type { IDockerEnv, IBundleBuilder, IUserSeeder } from '../docker-env-port.js'
 import { TenantPurposeName, type EnvDefinition, type EnvOidc } from '../../../environments/seed/bundle.js'
 import type { UserSeed } from '../../../environments/seed/users.js'
@@ -121,6 +122,18 @@ class FakeDocker implements IDockerEnv
     {
         this.calls.push('logs')
         return 'log-text'
+    }
+
+    public LogDef: EnvDefinition | undefined
+    public LogSink: ((chunk: string) => void) | undefined
+    public readonly Process: ILogProcess = { OnData() {}, OnClose() {}, Kill() {} }
+
+    public LogStream(def: EnvDefinition, onData: (chunk: string) => void): ILogProcess
+    {
+        this.calls.push('logStream')
+        this.LogDef = def
+        this.LogSink = onData
+        return this.Process
     }
 
     public async WaitHealthy(): Promise<void>
@@ -501,6 +514,40 @@ test('Start unknown throws; Start known brings it up Running', async () =>
     assert.equal(h.Registry.Get('s1')?.status, EnvStatus.Running)
 })
 
+test('a throwing OnChanged subscriber neither fails Start nor blocks later subscribers', async () =>
+{
+    const h = await Harness.Make()
+    await h.Registry.Put(Harness.Record('s1', EnvStatus.Stopped))
+    const received: EnvironmentRecord[] = []
+    h.Service.OnChanged(() =>
+    {
+        throw new Error('subscriber boom')
+    })
+    h.Service.OnChanged(rec => received.push(rec))
+    const rec = await h.Service.Start('s1')
+    assert.equal(rec.status, EnvStatus.Running)
+    assert.equal(received.length, 1)
+    assert.equal(received[0].status, EnvStatus.Running)
+})
+
+test('LogStream resolves the record and delegates to docker.LogStream, forwarding chunks', async () =>
+{
+    const h = await Harness.Make()
+    h.Registry.Put(Harness.Record('s1', EnvStatus.Running))
+    const got: string[] = []
+    const proc = h.Service.LogStream('s1', c => got.push(c))
+    assert.equal(proc, h.Docker.Process)
+    assert.equal(h.Docker.LogDef?.name, 's1')
+    h.Docker.LogSink?.('hello')
+    assert.deepEqual(got, ['hello'])
+})
+
+test('LogStream on unknown env throws EnvironmentNotFoundError', async () =>
+{
+    const h = await Harness.Make()
+    assert.throws(() => h.Service.LogStream('nope', () => {}), EnvironmentNotFoundError)
+})
+
 test('Stop calls Down and marks Stopped', async () =>
 {
     const h = await Harness.Make()
@@ -510,6 +557,17 @@ test('Stop calls Down and marks Stopped', async () =>
     assert.deepEqual(h.Calls, ['down', 'put:stopped'])
     assert.equal(rec.status, EnvStatus.Stopped)
     assert.equal(h.Registry.Get('s1')?.status, EnvStatus.Stopped)
+})
+
+test('Restart stops then starts (ordered) and returns a Running record', async () =>
+{
+    const h = await Harness.Make()
+    await h.Registry.Put(Harness.Record('s1', EnvStatus.Running))
+    h.Calls.length = 0
+    const rec = await h.Service.Restart('s1')
+    assert.deepEqual(h.Calls, ['down', 'put:stopped', 'up', 'waitHealthy', 'put:running'])
+    assert.equal(rec.status, EnvStatus.Running)
+    assert.equal(h.Registry.Get('s1')?.status, EnvStatus.Running)
 })
 
 test('Delete downs, removes volume, and unregisters', async () =>

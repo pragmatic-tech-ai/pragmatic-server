@@ -1,3 +1,4 @@
+import type { ILogProcess } from '../../../environments/seed/docker.js'
 import { strict as assert } from 'node:assert'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { request } from 'node:http'
@@ -94,6 +95,13 @@ class FakeService implements IEnvironmentService
         return { ...this.Record, name, status: EnvStatus.Stopped }
     }
 
+    public async Restart(name: string): Promise<EnvironmentRecord>
+    {
+        this.Calls.push(`restart:${name}`)
+        this.MaybeThrow()
+        return { ...this.Record, name }
+    }
+
     public async Delete(name: string): Promise<void>
     {
         this.Calls.push(`delete:${name}`)
@@ -108,6 +116,16 @@ class FakeService implements IEnvironmentService
     public async ListReconciled(): Promise<readonly EnvironmentRecord[]>
     {
         return this.List()
+    }
+
+    public LogStream(): ILogProcess
+    {
+        return { OnData() {}, OnClose() {}, Kill() {} }
+    }
+
+    public OnChanged(): () => void
+    {
+        return () => {}
     }
 
     public async Logs(name: string): Promise<string>

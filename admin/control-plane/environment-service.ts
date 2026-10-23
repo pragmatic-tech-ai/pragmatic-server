@@ -15,6 +15,7 @@ import type { PlatformDirectory } from './platform-directory.js'
 import { UnknownHiveError } from './rollout-errors.js'
 import type { IIdpService, IdpConnection } from './idp-service.js'
 import type { IdpAdminClient } from './idp-admin-client.js'
+import type { ILogProcess } from '../../environments/seed/docker.js'
 import type { IDockerEnv, IBundleBuilder, IUserSeeder } from './docker-env-port.js'
 
 export class EnvironmentExistsError extends Error
@@ -135,6 +136,9 @@ export class EnvironmentService
 
     /** Safe names with a Create currently running; closes the race between the existence check and the final registry Put. */
     private readonly inFlight = new Set<string>()
+
+    /** Lifecycle-change subscribers (RULING 5): additive, signal-only; the operator broadcast is a separate channel. */
+    private readonly changeCallbacks = new Set<(rec: EnvironmentRecord) => void>()
 
     public constructor(
         private readonly registry: EnvironmentRegistry,
@@ -330,6 +334,13 @@ export class EnvironmentService
         return this.SetStatus(rec, EnvStatus.Stopped)
     }
 
+    /** Stops then starts the environment, sequentially, reusing the single-step methods; returns the final Running record. */
+    public async Restart(name: string): Promise<EnvironmentRecord>
+    {
+        await this.Stop(name)
+        return await this.Start(name)
+    }
+
     public async Delete(name: string): Promise<void>
     {
         const rec = this.Require(name)
@@ -366,6 +377,12 @@ export class EnvironmentService
     {
         const rec = this.Require(name)
         return this.docker.Logs(EnvironmentService.DefOf(rec))
+    }
+
+    public LogStream(name: string, onData: (chunk: string) => void): ILogProcess
+    {
+        const rec = this.Require(name)
+        return this.docker.LogStream(EnvironmentService.DefOf(rec), onData)
     }
 
     public async AdminSnapshot(name: string): Promise<AdminSnapshot>
@@ -492,7 +509,36 @@ export class EnvironmentService
     {
         const updated = { ...rec, status }
         await this.registry.Put(updated)
+        this.NotifyChanged(updated)
         return updated
+    }
+
+    /**
+     * Registers a lifecycle-change subscriber and returns an unsubscribe closure. Every Start/Stop/Restart funnels
+     * through SetStatus, so this single seam covers each status change. It is additive and consumed only by the
+     * tenant event bus; the operator broadcast remains unchanged.
+     */
+    public OnChanged(cb: (rec: EnvironmentRecord) => void): () => void
+    {
+        this.changeCallbacks.add(cb)
+        return () => this.changeCallbacks.delete(cb)
+    }
+
+    /** Fans a changed record out to the lifecycle subscribers (a snapshot, so a callback may unsubscribe mid-notify). */
+    private NotifyChanged(rec: EnvironmentRecord): void
+    {
+        for (const cb of [...this.changeCallbacks])
+        {
+            // Isolate the emitter from its listeners: a failing subscriber must neither fail the (already persisted) lifecycle action nor starve later subscribers.
+            try
+            {
+                cb(rec)
+            }
+            catch
+            {
+                // swallowed deliberately; nothing is logged so no record/secret material can leak
+            }
+        }
     }
 
     /** Re-derives the definition from the stored type, falling back to the template default (DefaultTypeFor) for legacy records with no type. */

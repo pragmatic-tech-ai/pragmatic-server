@@ -28,6 +28,14 @@ import { IdpRegistry } from './idp-registry.js'
 import { IdpService } from './idp-service.js'
 import { IdpAdminClient } from './idp-admin-client.js'
 import { TenantProvisioningService } from './tenant-provisioning-service.js'
+import { TenantSessionStore } from './tenant-auth/tenant-session.js'
+import { TenantOidcRelyingParty } from './tenant-auth/tenant-oidc-relying-party.js'
+import { TenantAuthEndpoint } from './tenant-auth/tenant-auth-endpoint.js'
+import { TenantAuthGate } from './tenant-auth/tenant-auth-gate.js'
+import { TenantApiEndpoint } from './tenant-api/tenant-api-endpoint.js'
+import { TenantEventBus } from './tenant-api/tenant-events.js'
+import type { TenantPlane } from './tenant-auth/tenant-plane.js'
+import type { IEnvironmentService } from './control-plane-host.js'
 
 export class ControlPlaneServer
 {
@@ -63,6 +71,11 @@ export class ControlPlaneServer
     private static readonly IdentitySegment = 'identity'
     private static readonly TrueToken = 'true'
     private static readonly OneToken = '1'
+    private static readonly TenantHostsEnvVar = 'PRAGMATIC_TENANT_ADMIN_HOSTS'
+    private static readonly TenantCallbackEnvVar = 'PRAGMATIC_TENANT_ADMIN_CALLBACK_URL'
+    private static readonly TenantSessionsFile = 'tenant-sessions.json'
+    private static readonly TenantSessionTtlMs = 12 * 60 * 60 * 1000
+    private static readonly HostListSeparator = ','
 
     public static async Main(): Promise<void>
     {
@@ -96,9 +109,11 @@ export class ControlPlaneServer
         const reports = new RolloutReportRegistry(join(dataRoot, ControlPlaneServer.ReportsFile))
         const registrations = new RolloutRegistrationRegistry(join(dataRoot, ControlPlaneServer.RegistrationsFile))
         await Promise.all([manifests.Load(), gating.Load(), selections.Load(), reports.Load(), registrations.Load()])
-        const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, reports, registrations, directory, orchestrators, registry, new EnvironmentPlacement(directory))
+        const placement = new EnvironmentPlacement(directory)
+        const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, reports, registrations, directory, orchestrators, registry, placement)
         const provisioning = new TenantProvisioningService(idpService, directory, conn => new IdpAdminClient(conn))
-        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, orchestrators, deployments, provisioning)
+        const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie, service, deployments, orchestrators, placement)
+        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, orchestrators, deployments, provisioning, tenantPlane)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
         await host.Listen(port, ControlPlaneServer.BindHost)
         console.log(ControlPlaneServer.ListeningPrefix + String(port) + ControlPlaneServer.ListeningSuffix)
@@ -116,6 +131,57 @@ export class ControlPlaneServer
             initialPassword: password === undefined || password === '' ? undefined : password,
             secureCookie: secure === ControlPlaneServer.TrueToken || secure === ControlPlaneServer.OneToken,
         }
+    }
+
+    /**
+     * Composes the optional tenant plane from the environment. Both `PRAGMATIC_TENANT_ADMIN_HOSTS` (comma-separated
+     * hosts) and `PRAGMATIC_TENANT_ADMIN_CALLBACK_URL` must be present (and the host list non-empty); otherwise the
+     * plane is off and the host serves the operator surface exactly as before.
+     */
+    public static ComposeTenantPlane(
+        env: NodeJS.ProcessEnv,
+        dataRoot: string,
+        idpService: IdpService,
+        directory: PlatformDirectory,
+        secureCookie: boolean,
+        service: IEnvironmentService,
+        deployments: PlatformDeploymentRegistry,
+        orchestrators: HiveOrchestratorFactory,
+        placement: EnvironmentPlacement): TenantPlane | undefined
+    {
+        const rawHosts = env[ControlPlaneServer.TenantHostsEnvVar]
+        const callbackUrl = env[ControlPlaneServer.TenantCallbackEnvVar]
+        if (rawHosts === undefined || rawHosts === '' || callbackUrl === undefined || callbackUrl === '')
+        {
+            return undefined
+        }
+        const allowedHosts = ControlPlaneServer.ParseHosts(rawHosts)
+        if (allowedHosts.size === 0)
+        {
+            return undefined
+        }
+        const sessions = new TenantSessionStore(join(dataRoot, ControlPlaneServer.TenantSessionsFile), ControlPlaneServer.TenantSessionTtlMs)
+        const rp = new TenantOidcRelyingParty(idpService, directory, conn => new IdpAdminClient(conn), callbackUrl)
+        const endpoint = new TenantAuthEndpoint(rp, sessions, secureCookie)
+        const gate = new TenantAuthGate(sessions)
+        const api = new TenantApiEndpoint(service, directory, deployments, orchestrators, placement)
+        const events = new TenantEventBus()
+        return { endpoint, gate, api, allowedHosts, events }
+    }
+
+    /** Parses a comma-separated host list into a set of trimmed, lowercased, non-empty hosts. */
+    private static ParseHosts(raw: string): ReadonlySet<string>
+    {
+        const hosts = new Set<string>()
+        for (const part of raw.split(ControlPlaneServer.HostListSeparator))
+        {
+            const host = part.trim().toLowerCase()
+            if (host.length > 0)
+            {
+                hosts.add(host)
+            }
+        }
+        return hosts
     }
 
     private static ResolvePort(raw: string | undefined): number
