@@ -88,6 +88,12 @@ export class BundleBuilder
         const path = join(bundleDir, BundleBuilder.SecretsFile)
         if (existsSync(path))
         {
+            if (oidc)
+            {
+                const existing = JSON.parse(readFileSync(path, BundleBuilder.Utf8)) as Record<string, string>
+                existing[oidc.secretRef] = oidc.secret
+                BundleBuilder.WriteJson(path, existing)
+            }
             return
         }
         const secrets: Record<string, string> = {}

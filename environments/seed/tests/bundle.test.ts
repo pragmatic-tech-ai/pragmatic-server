@@ -122,3 +122,16 @@ test('a non-federated bundle keeps the local pack with empty providerSettings', 
     assert.equal(record.delegationDepth, DelegationDepth.FullAuthz)
     assert.deepEqual(record.providerSettings, [])
 })
+
+test('a federated re-generate merges the OIDC secret into an existing provisioned-secrets.json', async () =>
+{
+    const dir = mkdtempSync(join(tmpdir(), 'bundle-'))
+    const def = { name: 'dev', kind: EnvKind.Dev, environmentId: 'dev', purpose: TenantPurposeName.Development, hostPort: 8080 }
+    await BundleBuilder.Generate(def, dir)
+    const before = JSON.parse(readFileSync(join(dir, 'provisioned-secrets.json'), 'utf8'))
+    const oidc = { issuer: 'https://idp.test', discoveryUrl: 'https://idp.test/d', clientId: 'cid', redirectUri: 'https://app.test/cb', secretRef: 'dev/oidc/client-secret', secret: 's3cret' }
+    await BundleBuilder.Generate(def, dir, undefined, oidc)
+    const after = JSON.parse(readFileSync(join(dir, 'provisioned-secrets.json'), 'utf8'))
+    assert.equal(after['dev/oidc/client-secret'], 's3cret')
+    assert.deepEqual({ ...after, 'dev/oidc/client-secret': undefined }, { ...before, 'dev/oidc/client-secret': undefined })
+})
