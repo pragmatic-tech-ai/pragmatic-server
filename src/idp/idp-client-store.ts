@@ -18,7 +18,6 @@ export class OidcClient
  */
 export class IdpClientStore
 {
-    private static readonly KeySeparator = '\u0000';
     private static readonly DummySecret = 'idp-client-store-dummy-secret';
 
     private readonly hasher = new Argon2PasswordHasher();
