@@ -19,6 +19,7 @@ class AuthorizeFixture
     public static readonly RedirectUri = 'https://app.example/cb';
     public static readonly Email = 'a@t';
     public static readonly PrincipalId = 'p-1';
+    public static readonly DisplayName = 'Alice Example';
     public static readonly Password = 'pw-correct-horse';
     public static readonly Challenge = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
     public static readonly State = 'st-1';
@@ -34,7 +35,7 @@ class AuthorizeFixture
         try
         {
             const realm = await IdpRealm.OpenFor(dir, AuthorizeFixture.TenantId, 'T', randomBytes(32));
-            await realm.SeedAccount(AuthorizeFixture.Email, AuthorizeFixture.PrincipalId, AuthorizeFixture.Password);
+            await realm.SeedAccount(AuthorizeFixture.Email, AuthorizeFixture.PrincipalId, AuthorizeFixture.Password, AuthorizeFixture.DisplayName);
             const clients = new IdpClientStore();
             await clients.Register(AuthorizeFixture.TenantId, AuthorizeFixture.ClientId, [AuthorizeFixture.RedirectUri], 'secret');
             const f = new AuthorizeFixture();
@@ -155,4 +156,23 @@ test('bad credentials return the login page with a uniform error, no code issued
     assert.equal(ghost.kind, 'loginPage');
     assert.equal((wrong as { html: string }).html, (ghost as { html: string }).html);
     assert.match((wrong as { html: string }).html, /Invalid email or password/);
+}));
+
+test('a fresh login issues a code whose binding carries email and name', () => AuthorizeFixture.Run(async f =>
+{
+    const r = AuthorizeFixture.Redirect(await f.endpoint.HandlePost(
+        AuthorizeFixture.TenantId, AuthorizeFixture.Query(), undefined, AuthorizeFixture.Form(AuthorizeFixture.Password)));
+    const binding = await f.codes.Take(new URL(r.location).searchParams.get('code')!);
+    assert.equal(binding?.Email, AuthorizeFixture.Email);
+    assert.equal(binding?.Name, AuthorizeFixture.DisplayName);
+}));
+
+test('an SSO-cookie authorize issues a code whose binding carries email and name', () => AuthorizeFixture.Run(async f =>
+{
+    const issued = f.sso.Issue(AuthorizeFixture.PrincipalId, AuthorizeFixture.TenantId);
+    const r = AuthorizeFixture.Redirect(await f.endpoint.HandleGet(
+        AuthorizeFixture.TenantId, AuthorizeFixture.Query(), `${IdpSsoCookie.Name}=${issued.Id}`));
+    const binding = await f.codes.Take(new URL(r.location).searchParams.get('code')!);
+    assert.equal(binding?.Email, AuthorizeFixture.Email);
+    assert.equal(binding?.Name, AuthorizeFixture.DisplayName);
 }));

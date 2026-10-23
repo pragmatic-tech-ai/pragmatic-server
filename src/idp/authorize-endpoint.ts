@@ -153,8 +153,10 @@ export class AuthorizeEndpoint
     private async RedirectWithCode(tenantId: string, request: AuthorizeRequest, sub: string, setCookie: string | undefined): Promise<AuthorizeResult>
     {
         const expiresAt = new Date(this.now().getTime() + AuthorizeEndpoint.CodeTtlMs);
+        const profile = await this.realms.For(tenantId)?.LookupProfile(sub);
         const code = await this.codes.Issue(new AuthorizationCodeBinding(
-            sub, tenantId, request.ClientId, request.RedirectUri, request.Nonce, request.CodeChallenge, expiresAt));
+            sub, tenantId, request.ClientId, request.RedirectUri, request.Nonce, request.CodeChallenge, expiresAt,
+            profile?.email ?? AuthorizeEndpoint.EmptyText, profile?.name ?? AuthorizeEndpoint.EmptyText));
         const target = new URL(request.RedirectUri);
         target.searchParams.set(AuthorizeEndpoint.CodeParam, code);
         target.searchParams.set(AuthorizeEndpoint.StateParam, request.State);
