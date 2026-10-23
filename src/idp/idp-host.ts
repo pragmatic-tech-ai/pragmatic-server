@@ -3,6 +3,8 @@ import type { Server } from 'node:https';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { IAuthorizationCodeStore } from './authorization-code-store.js';
+import { AuthorizeEndpoint } from './authorize-endpoint.js';
+import type { AuthorizeResult } from './authorize-endpoint.js';
 import type { IdpClientStore } from './idp-client-store.js';
 import type { IdpRealm } from './idp-realm.js';
 import type { IdpSigningKey } from './idp-signing-key.js';
@@ -41,6 +43,16 @@ export class IdpHost
     private static readonly ContentType = 'Content-Type';
     private static readonly JsonType = 'application/json; charset=utf-8';
     private static readonly MethodGet = 'GET';
+    private static readonly MethodPost = 'POST';
+    private static readonly HtmlType = 'text/html; charset=utf-8';
+    private static readonly LocationHeader = 'Location';
+    private static readonly SetCookieHeader = 'Set-Cookie';
+    private static readonly CacheControlHeader = 'Cache-Control';
+    private static readonly NoStore = 'no-store';
+    private static readonly StatusFound = 302;
+    private static readonly StatusPayloadTooLarge = 413;
+    private static readonly MaxFormBytes = 16 * 1024;
+    private static readonly PayloadTooLargeMessage = 'payload too large';
     private static readonly RootUrl = 'https://idp.invalid';
     private static readonly PathSeparator = '/';
     private static readonly StatusOk = 200;
@@ -60,22 +72,24 @@ export class IdpHost
 
     private httpsServer: Server | undefined;
     private readonly baseUrl: string;
+    private readonly authorize: AuthorizeEndpoint;
 
     public constructor(
         baseUrl: string,
         private readonly signingKey: IdpSigningKey,
         private readonly realms: IdpRealmSet,
-        protected readonly clients: IdpClientStore,
-        protected readonly codes: IAuthorizationCodeStore,
-        protected readonly sso: IdpSsoSessionStore,
+        private readonly clients: IdpClientStore,
+        private readonly codes: IAuthorizationCodeStore,
+        private readonly sso: IdpSsoSessionStore,
         private readonly tls: { key: Buffer; cert: Buffer },
-        protected readonly secureCookie: boolean)
+        private readonly secureCookie: boolean)
     {
         if (new URL(baseUrl).protocol !== IdpHost.HttpsProtocol)
         {
             throw new Error(IdpHost.NotHttpsMessage);
         }
         this.baseUrl = baseUrl.replace(/\/+$/, '');
+        this.authorize = new AuthorizeEndpoint(realms, clients, codes, sso, secureCookie);
     }
 
     public Listen(port: number, host: string): Promise<void>
@@ -174,7 +188,75 @@ export class IdpHost
             this.WriteJson(res, IdpHost.StatusOk, this.signingKey.PublicJwks());
             return true;
         }
+        if (rest === IdpHost.AuthorizeRest && (method === IdpHost.MethodGet || method === IdpHost.MethodPost))
+        {
+            await this.RouteAuthorize(req, res, tenantId, method);
+            return true;
+        }
         return false;
+    }
+
+    private async RouteAuthorize(req: IncomingMessage, res: ServerResponse, tenantId: string, method: string): Promise<void>
+    {
+        const query = new URL(req.url ?? IdpHost.PathSeparator, IdpHost.RootUrl).searchParams;
+        const cookieHeader = req.headers.cookie;
+        let result: AuthorizeResult;
+        if (method === IdpHost.MethodPost)
+        {
+            const body = await this.ReadBody(req);
+            if (body === undefined)
+            {
+                this.WriteJson(res, IdpHost.StatusPayloadTooLarge, { [IdpHost.ErrorField]: IdpHost.PayloadTooLargeMessage });
+                return;
+            }
+            result = await this.authorize.HandlePost(tenantId, query, cookieHeader, new URLSearchParams(body));
+        }
+        else
+        {
+            result = await this.authorize.HandleGet(tenantId, query, cookieHeader);
+        }
+        this.WriteAuthorize(res, result);
+    }
+
+    /** Reads a bounded request body; undefined when it exceeds the limit. */
+    private async ReadBody(req: IncomingMessage): Promise<string | undefined>
+    {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        for await (const chunk of req)
+        {
+            const buf = chunk as Buffer;
+            size += buf.length;
+            if (size > IdpHost.MaxFormBytes)
+            {
+                return undefined;
+            }
+            chunks.push(buf);
+        }
+        return Buffer.concat(chunks).toString('utf8');
+    }
+
+    private WriteAuthorize(res: ServerResponse, result: AuthorizeResult): void
+    {
+        if (result.kind === 'redirect')
+        {
+            const headers: Record<string, string> = { [IdpHost.LocationHeader]: result.location, [IdpHost.CacheControlHeader]: IdpHost.NoStore };
+            if (result.setCookie !== undefined)
+            {
+                headers[IdpHost.SetCookieHeader] = result.setCookie;
+            }
+            res.writeHead(IdpHost.StatusFound, headers);
+            res.end();
+        }
+        else if (result.kind === 'loginPage')
+        {
+            res.writeHead(IdpHost.StatusOk, { [IdpHost.ContentType]: IdpHost.HtmlType, [IdpHost.CacheControlHeader]: IdpHost.NoStore });
+            res.end(result.html);
+        }
+        else
+        {
+            this.WriteJson(res, result.status, result.body);
+        }
     }
 
     private Discovery(tenantId: string): Record<string, string>
