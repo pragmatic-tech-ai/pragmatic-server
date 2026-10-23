@@ -90,6 +90,8 @@ test('discovery returns exactly the four https fields for the tenant', async () 
             assert.ok(v.includes(`/${HostFixture.TenantId}`));
         }
         assert.equal(r.body.issuer, `${HostFixture.BaseUrl}/${HostFixture.TenantId}`);
+        assert.equal(r.body.authorization_endpoint, `${r.body.issuer}/authorize`);
+        assert.equal(r.body.token_endpoint, `${r.body.issuer}/token`);
         assert.equal(r.body.jwks_uri, `${r.body.issuer}/jwks`);
     });
 });
