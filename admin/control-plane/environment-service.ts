@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { BundleBuilder, EnvKind, type EnvDatabase, type EnvDefinition, type EnvOidc } from '../../environments/seed/bundle.js'
 import { DockerEnv } from '../../environments/seed/docker.js'
 import type { UserSeed } from '../../environments/seed/users.js'
-import { EnvStatus, EnvType, type Template, type EnvironmentRecord } from './environment-record.js'
+import { EnvStatus, EnvType, EnvironmentChangeKind, type Template, type EnvironmentChange, type EnvironmentRecord } from './environment-record.js'
 import type { EnvironmentRegistry } from './environment-registry.js'
 import type { PortAllocator } from './port-allocator.js'
 import { TemplateCatalog } from './template-catalog.js'
@@ -138,7 +138,7 @@ export class EnvironmentService
     private readonly inFlight = new Set<string>()
 
     /** Lifecycle-change subscribers (RULING 5): additive, signal-only; the operator broadcast is a separate channel. */
-    private readonly changeCallbacks = new Set<(rec: EnvironmentRecord) => void>()
+    private readonly changeCallbacks = new Set<(change: EnvironmentChange) => void>()
 
     public constructor(
         private readonly registry: EnvironmentRegistry,
@@ -306,10 +306,13 @@ export class EnvironmentService
                 {
                     // volume removal is best-effort too
                 }
-                await this.registry.Put({ ...record, status: EnvStatus.Failed })
+                const failed = { ...record, status: EnvStatus.Failed }
+                await this.registry.Put(failed)
+                this.NotifyChanged(EnvironmentChangeKind.Created, failed)
                 throw new CreateFailedError(EnvironmentService.Redact(err, oidc?.secret))
             }
             await this.registry.Put(record)
+            this.NotifyChanged(EnvironmentChangeKind.Created, record)
             return record
         }
         finally
@@ -348,6 +351,7 @@ export class EnvironmentService
         await this.docker.Down(def, true)
         await this.docker.RemoveVolume(def)
         await this.registry.Remove(name)
+        this.NotifyChanged(EnvironmentChangeKind.Deleted, rec)
     }
 
     public List(): readonly EnvironmentRecord[]
@@ -509,7 +513,7 @@ export class EnvironmentService
     {
         const updated = { ...rec, status }
         await this.registry.Put(updated)
-        this.NotifyChanged(updated)
+        this.NotifyChanged(EnvironmentChangeKind.Changed, updated)
         return updated
     }
 
@@ -518,21 +522,22 @@ export class EnvironmentService
      * through SetStatus, so this single seam covers each status change. It is additive and consumed only by the
      * tenant event bus; the operator broadcast remains unchanged.
      */
-    public OnChanged(cb: (rec: EnvironmentRecord) => void): () => void
+    public OnChanged(cb: (change: EnvironmentChange) => void): () => void
     {
         this.changeCallbacks.add(cb)
         return () => this.changeCallbacks.delete(cb)
     }
 
-    /** Fans a changed record out to the lifecycle subscribers (a snapshot, so a callback may unsubscribe mid-notify). */
-    private NotifyChanged(rec: EnvironmentRecord): void
+    /** Fans a lifecycle change out to the subscribers (a snapshot, so a callback may unsubscribe mid-notify). */
+    private NotifyChanged(kind: EnvironmentChangeKind, record: EnvironmentRecord): void
     {
+        const change: EnvironmentChange = { kind, record }
         for (const cb of [...this.changeCallbacks])
         {
             // Isolate the emitter from its listeners: a failing subscriber must neither fail the (already persisted) lifecycle action nor starve later subscribers.
             try
             {
-                cb(rec)
+                cb(change)
             }
             catch
             {

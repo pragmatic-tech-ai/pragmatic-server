@@ -112,6 +112,25 @@ describe('ControlPlaneHost rollout routes', () =>
         assert.deepEqual(JSON.parse((await Harness.Send(host, 'GET', '/api/tenants/t1/manifests')).body), [])
     })
 
+    it('withdraws and restores a published version through the operator route, surfacing on the tenant listing', async () =>
+    {
+        await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        await Harness.Send(host, 'POST', '/api/tenants/t1/gating', { version: '1.0.0' })
+        const withdrawn = await Harness.Send(host, 'POST', '/api/manifests/1.0.0/withdrawn')
+        assert.equal(withdrawn.status, 200)
+        assert.equal((JSON.parse(withdrawn.body) as { withdrawn: boolean }).withdrawn, true)
+        const listed = JSON.parse((await Harness.Send(host, 'GET', '/api/tenants/t1/manifests')).body) as { id: string; withdrawn?: boolean }[]
+        assert.equal(listed[0]!.withdrawn, true)
+        const restored = await Harness.Send(host, 'DELETE', '/api/manifests/1.0.0/withdrawn')
+        assert.equal(restored.status, 200)
+        assert.equal((JSON.parse(restored.body) as { withdrawn: boolean }).withdrawn, false)
+    })
+
+    it('answers a withdrawn toggle for an unknown version with 404', async () =>
+    {
+        assert.equal((await Harness.Send(host, 'POST', '/api/manifests/9.9.9/withdrawn')).status, 404)
+    })
+
     it('records the selected target and reports the rollout status', async () =>
     {
         await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
@@ -148,6 +167,8 @@ describe('ControlPlaneHost rollout routes', () =>
     {
         const calls: [string, string, unknown][] = [
             ['POST', '/api/manifests', { version: 'v', image: 'i' }],
+            ['POST', '/api/manifests/v/withdrawn', undefined],
+            ['DELETE', '/api/manifests/v/withdrawn', undefined],
             ['GET', '/api/tenants/t1/manifests', undefined],
             ['POST', '/api/tenants/t1/gating', { version: 'v' }],
             ['DELETE', '/api/tenants/t1/gating/v', undefined],

@@ -36,6 +36,21 @@ export type EnvironmentRecord = {
     status: EnvStatus
 }
 
+/** The kind of lifecycle change fanned out over the environment OnChanged seam. */
+export enum EnvironmentChangeKind
+{
+    Created = 'created',
+    Changed = 'changed',
+    Deleted = 'deleted'
+}
+
+/** A lifecycle change: the kind that occurred, and the record it occurred to. */
+export type EnvironmentChange =
+{
+    kind: EnvironmentChangeKind
+    record: EnvironmentRecord
+}
+
 export interface IContainerProbe
 {
     Running(containerName: string): Promise<boolean>

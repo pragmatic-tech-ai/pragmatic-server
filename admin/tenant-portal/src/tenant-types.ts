@@ -25,7 +25,7 @@ export type EnvironmentDto = {
     wsUrl: string
 }
 
-export type ManifestDto = { id: string; image: string; notes?: string; publishedAt: string }
+export type ManifestDto = { id: string; image: string; notes?: string; publishedAt: string; withdrawn?: boolean }
 
 export type RolloutEnvDto = { environmentName: string; runningImage: string | undefined; obsolete: boolean; ready: boolean }
 
@@ -35,7 +35,9 @@ export type HiveHealthDto = { environmentName: string; ready: boolean; runningIm
 
 export enum TenantEventType
 {
+    EnvironmentCreated = 'environment-created',
     EnvironmentChanged = 'environment-changed',
+    EnvironmentDeleted = 'environment-deleted',
     HealthChanged = 'health-changed',
 }
 
@@ -46,6 +48,7 @@ export enum VersionBadge
     Current,
     Previous,
     Available,
+    Withdrawn,
 }
 
 // Navigation seam the views call; TenantApp implements it.

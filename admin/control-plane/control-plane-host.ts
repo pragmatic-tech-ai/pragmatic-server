@@ -15,7 +15,7 @@ import {
     EnvironmentNotRuntimeError
 } from './environment-service.js'
 import { GraphExistsError, GraphNameInvalidError, GraphNotFoundError } from './graph-service.js'
-import { EnvType, Template, type EnvironmentRecord } from './environment-record.js'
+import { EnvType, Template, EnvironmentChangeKind, type EnvironmentChange, type EnvironmentRecord } from './environment-record.js'
 import { EnvironmentDtoMapper, type EnvironmentDto } from './environment-dto.js'
 import { HiveHealthProducer } from './hive-health-producer.js'
 import { InvalidTenantIdError } from './idp-service.js'
@@ -61,8 +61,8 @@ export interface IEnvironmentService
     ListReconciled(): Promise<readonly EnvironmentRecord[]>
     Logs(name: string): Promise<string>
     LogStream(name: string, onData: (chunk: string) => void): ILogProcess
-    /** Additive lifecycle-change subscription (RULING 5): fires on every status change; returns an unsubscribe. */
-    OnChanged(cb: (rec: EnvironmentRecord) => void): () => void
+    /** Additive lifecycle-change subscription (RULING 5): fires on create, every status change, and delete; returns an unsubscribe. */
+    OnChanged(cb: (change: EnvironmentChange) => void): () => void
     AdminSnapshot(name: string): Promise<AdminSnapshot>
     AdminCreateAccount(name: string, params: CreateAccountParams): Promise<void>
     AdminDisableAccount(name: string, principalId: string): Promise<void>
@@ -195,6 +195,9 @@ export class ControlPlaneHost
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/([^/]+)/' + ControlPlaneHost.HealthSegment + '$')
     private static readonly ManifestsSegment = 'manifests'
     private static readonly ManifestsPath = ControlPlaneHost.ApiPrefix + ControlPlaneHost.ManifestsSegment
+    private static readonly WithdrawnSegment = 'withdrawn'
+    private static readonly ManifestWithdrawnPathPattern = new RegExp(
+        '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.ManifestsSegment + '/([^/]+)/' + ControlPlaneHost.WithdrawnSegment + '$')
     private static readonly GatingSegment = 'gating'
     private static readonly TargetSegment = 'target'
     private static readonly RolloutSegment = 'rollout'
@@ -376,13 +379,28 @@ export class ControlPlaneHost
             this.tenantStaticRootAbs = resolve(tenantAuth.staticRoot)
             // RULING 5: route every environment lifecycle change to the tenant bus, scoped by the env's owning tenant.
             // An unbound env (no tenantId) has no tenant audience, so it is skipped.
-            this.tenantChangeSubscription = this.service.OnChanged(rec =>
+            this.tenantChangeSubscription = this.service.OnChanged(change =>
             {
+                const rec = change.record
                 if (rec.tenantId !== undefined)
                 {
-                    tenantAuth.events.Emit(rec.tenantId, { type: TenantEventType.EnvironmentChanged, environmentName: rec.name })
+                    tenantAuth.events.Emit(rec.tenantId, { type: ControlPlaneHost.TenantEventFor(change.kind), environmentName: rec.name })
                 }
             })
+        }
+    }
+
+    /** Maps an environment lifecycle-change kind to the tenant event type fanned out over the tenant bus. */
+    private static TenantEventFor(kind: EnvironmentChangeKind): TenantEventType
+    {
+        switch (kind)
+        {
+            case EnvironmentChangeKind.Created:
+                return TenantEventType.EnvironmentCreated
+            case EnvironmentChangeKind.Deleted:
+                return TenantEventType.EnvironmentDeleted
+            default:
+                return TenantEventType.EnvironmentChanged
         }
     }
 
@@ -736,6 +754,11 @@ export class ControlPlaneHost
         {
             return await this.RoutePublishManifest(req, res, method)
         }
+        const mwm = ControlPlaneHost.ManifestWithdrawnPathPattern.exec(path)
+        if (mwm !== null)
+        {
+            return await this.RouteManifestWithdrawn(req, res, method, mwm)
+        }
         const agm = ControlPlaneHost.AgentPathPattern.exec(path)
         if (agm !== null)
         {
@@ -941,6 +964,20 @@ export class ControlPlaneHost
         }
         const manifest: ManifestDto = await this.deployments.Publish(body.version as string, body.image as string, body.notes as string | undefined)
         this.WriteJson(res, ControlPlaneHost.StatusCreated, manifest)
+        return true
+    }
+
+    /** Serves POST /api/manifests/:version/withdrawn (withdraw) and DELETE (restore); 404 for an unknown version, false for any other method. */
+    private async RouteManifestWithdrawn(req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
+    {
+        const withdraw = method === ControlPlaneHost.MethodPost
+        if (!withdraw && method !== ControlPlaneHost.MethodDelete)
+        {
+            return false
+        }
+        const version = decodeURIComponent(m[1] as string)
+        const manifest: ManifestDto = await this.deployments.SetWithdrawn(version, withdraw)
+        this.WriteJson(res, ControlPlaneHost.StatusOk, manifest)
         return true
     }
 

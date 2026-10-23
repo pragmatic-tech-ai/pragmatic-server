@@ -6,7 +6,8 @@ import { TenantApp } from '../src/tenant-app.js'
 import type { ITenantEnvironment } from '../src/tenant-app.js'
 import { TenantApiError } from '../src/tenant-api-client.js'
 import type { TenantApiClient } from '../src/tenant-api-client.js'
-import type { EnvironmentDto, HiveDto, ITenantNavigator, ITenantView, SessionDto, TenantEvent } from '../src/tenant-types.js'
+import { TenantEventType } from '../src/tenant-types.js'
+import type { EnvironmentDto, HiveDto, HiveHealthDto, ITenantNavigator, ITenantView, SessionDto, TenantEvent } from '../src/tenant-types.js'
 
 class FakeClient
 {
@@ -42,6 +43,17 @@ class FakeClient
         this.Calls.push('onevent')
         this.Handler = h
         return () => { this.UnsubCalls++ }
+    }
+
+    // Minimal surface so a real EnvironmentDetailView mounts without a backend.
+    public async GetHealth(): Promise<HiveHealthDto[]>
+    {
+        return []
+    }
+
+    public OpenLogStream(): () => void
+    {
+        return () => {}
     }
 }
 
@@ -153,6 +165,24 @@ describe('TenantApp', () =>
         assert.ok(Fixtures.Texts(app).includes('me@x.io'))
         assert.ok(Fixtures.Texts(app).includes(TenantApp.EmptySelectionText))
         assert.ok(!client.Calls.some(c => c.startsWith('login')))
+    })
+
+    it('swaps the detail pane back to the placeholder when the open environment is deleted', async () =>
+    {
+        const { app, client } = Fixtures.Make(Session, new StubEnvironment(null))
+        await app.Boot()
+        const env: EnvironmentDto = { name: 'e1', template: 't', type: 'development', environmentId: 'e1', hiveId: 'h1', hostPort: 9000, status: 'running', createdAt: '', httpUrl: '', wsUrl: '' }
+        app.ShowEnvironmentDetail(env)
+        await new Promise(r => setTimeout(r, 0))
+        assert.ok(!Fixtures.Texts(app).includes(TenantApp.EmptySelectionText), 'detail pane replaced the placeholder')
+        // A delete of a different env does not swap the pane.
+        client.Handler!({ type: TenantEventType.EnvironmentDeleted, environmentName: 'other' })
+        await new Promise(r => setTimeout(r, 0))
+        assert.ok(!Fixtures.Texts(app).includes(TenantApp.EmptySelectionText), 'unrelated delete left the pane')
+        // A delete of the open env swaps back to the placeholder.
+        client.Handler!({ type: TenantEventType.EnvironmentDeleted, environmentName: 'e1' })
+        await new Promise(r => setTimeout(r, 0))
+        assert.ok(Fixtures.Texts(app).includes(TenantApp.EmptySelectionText), 'placeholder restored after the open env was deleted')
     })
 
     it('null session begins login with the query tenant and persists it', async () =>

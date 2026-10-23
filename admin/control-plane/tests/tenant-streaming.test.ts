@@ -13,7 +13,7 @@ import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
 import { PlatformDirectory } from '../platform-directory.js'
 import type { IOperatorIdentity, OperatorPrincipal, OperatorSession } from '../operator-identity.js'
-import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
+import { EnvStatus, EnvType, EnvironmentChangeKind, Template, type EnvironmentChange, type EnvironmentRecord } from '../environment-record.js'
 import type { ILogProcess } from '../../../environments/seed/docker.js'
 import { TenantSessionStore } from '../tenant-auth/tenant-session.js'
 import { TenantSessionCookie } from '../tenant-auth/tenant-session-cookie.js'
@@ -82,7 +82,7 @@ class FakeStreamingService
 {
     public readonly LogStreamNames: string[] = []
     public LastLogProcess: FakeLogProcess | undefined
-    private readonly changeCallbacks = new Set<(rec: EnvironmentRecord) => void>()
+    private readonly changeCallbacks = new Set<(change: EnvironmentChange) => void>()
     private readonly records: EnvironmentRecord[]
 
     public constructor(records: EnvironmentRecord[])
@@ -90,17 +90,17 @@ class FakeStreamingService
         this.records = records
     }
 
-    public OnChanged(cb: (rec: EnvironmentRecord) => void): () => void
+    public OnChanged(cb: (change: EnvironmentChange) => void): () => void
     {
         this.changeCallbacks.add(cb)
         return () => this.changeCallbacks.delete(cb)
     }
 
-    public FireChange(rec: EnvironmentRecord): void
+    public FireChange(rec: EnvironmentRecord, kind: EnvironmentChangeKind = EnvironmentChangeKind.Changed): void
     {
         for (const cb of [...this.changeCallbacks])
         {
-            cb(rec)
+            cb({ kind, record: rec })
         }
     }
 
@@ -151,6 +151,8 @@ class Fixture
     public static readonly HostHeader = 'Host'
     public static readonly CookieHeader = 'Cookie'
     public static readonly EventType = 'environment-changed'
+    public static readonly CreatedEventType = 'environment-created'
+    public static readonly DeletedEventType = 'environment-deleted'
     public static readonly OperatorCookie = 'cp_session=' + FakeOperator.Token
 
     public static Record(name: string, tenantId: string): EnvironmentRecord
@@ -266,6 +268,26 @@ describe('ControlPlaneHost tenant streaming', () =>
         await Fixture.Delay(50)
         assert.equal(received.length, 1)
         assert.deepEqual(received[0], { type: Fixture.EventType, environmentName: Fixture.EnvA })
+        ws.close()
+    })
+
+    it('maps create and delete lifecycle changes to their own event types', async () =>
+    {
+        const issued = await store.Issue(Fixture.TenantA, 'u1')
+        const ws = new WebSocket(EventsUrl(), { headers: { [Fixture.HostHeader]: Fixture.TenantHost, [Fixture.CookieHeader]: Fixture.PtsCookie(Fixture.TenantA, issued.id) } })
+        assert.equal(await Fixture.Opened(ws), true)
+        const received: Array<{ type: string; environmentName: string }> = []
+        ws.on('message', d => received.push(JSON.parse(d.toString())))
+        service.FireChange(Fixture.Record(Fixture.EnvA, Fixture.TenantA), EnvironmentChangeKind.Created)
+        service.FireChange(Fixture.Record(Fixture.EnvA, Fixture.TenantA), EnvironmentChangeKind.Deleted)
+        for (let i = 0; i < 50 && received.length < 2; i++)
+        {
+            await Fixture.Delay(10)
+        }
+        await Fixture.Delay(50)
+        assert.equal(received.length, 2)
+        assert.deepEqual(received[0], { type: Fixture.CreatedEventType, environmentName: Fixture.EnvA })
+        assert.deepEqual(received[1], { type: Fixture.DeletedEventType, environmentName: Fixture.EnvA })
         ws.close()
     })
 

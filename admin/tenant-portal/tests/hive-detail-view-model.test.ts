@@ -84,6 +84,36 @@ describe('HiveDetailViewModel', () =>
         assert.deepEqual(vm.Versions.map(v => v.badge), [VersionBadge.Available, VersionBadge.Current, VersionBadge.Previous])
     })
 
+    it('badges a withdrawn non-current version Withdrawn and flags the row; a withdrawn current keeps Current', async () =>
+    {
+        const src = new FakeHiveDetailSource()
+        src.Manifests = [
+            { id: 'v1', image: 'img:v1', publishedAt: '2026-01-01' },
+            { id: 'v2', image: 'img:v2', publishedAt: '2026-02-01', withdrawn: true },
+            { id: 'v3', image: 'img:v3', publishedAt: '2026-03-01', withdrawn: true },
+        ]
+        // target is v3 (current): v3 stays Current despite withdrawn; v2 (would be Previous) becomes Withdrawn.
+        const vm = new HiveDetailViewModel(src, Make.Hive())
+        await vm.Load()
+        assert.deepEqual(vm.Versions.map(v => v.manifest.id), ['v3', 'v2', 'v1'])
+        assert.deepEqual(vm.Versions.map(v => v.badge), [VersionBadge.Current, VersionBadge.Withdrawn, VersionBadge.Available])
+        assert.deepEqual(vm.Versions.map(v => v.withdrawn), [true, true, false])
+    })
+
+    it('BeginTarget refuses a withdrawn version and sets no Pending', async () =>
+    {
+        const src = new FakeHiveDetailSource()
+        src.Manifests = [
+            { id: 'v1', image: 'img:v1', publishedAt: '2026-01-01' },
+            { id: 'v2', image: 'img:v2', publishedAt: '2026-02-01', withdrawn: true },
+            { id: 'v3', image: 'img:v3', publishedAt: '2026-03-01' },
+        ]
+        const vm = new HiveDetailViewModel(src, Make.Hive())
+        await vm.Load()
+        vm.BeginTarget('v2')
+        assert.equal(vm.Pending, undefined)
+    })
+
     it('falls back to the agreed running image when no target is set', async () =>
     {
         const src = new FakeHiveDetailSource()
@@ -184,6 +214,17 @@ describe('HiveDetailViewModel', () =>
         assert.equal(await vm.ApplyEvent({ type: TenantEventType.EnvironmentChanged, environmentName: 'other' }), false)
         assert.equal(await vm.ApplyEvent({ type: TenantEventType.HealthChanged, environmentName: 'e1' }), false)
         assert.equal(src.RolloutCalls, calls + 1)
+    })
+
+    it('ApplyEvent reloads on EnvironmentDeleted for one of this hive envs', async () =>
+    {
+        const src = new FakeHiveDetailSource()
+        const vm = new HiveDetailViewModel(src, Make.Hive())
+        await vm.Load()
+        const calls = src.RolloutCalls
+        assert.equal(await vm.ApplyEvent({ type: TenantEventType.EnvironmentDeleted, environmentName: 'e2' }), true)
+        assert.equal(src.RolloutCalls, calls + 1)
+        assert.equal(await vm.ApplyEvent({ type: TenantEventType.EnvironmentDeleted, environmentName: 'other' }), false)
     })
 
     it('discards a stale Load that resolves after a newer one', async () =>

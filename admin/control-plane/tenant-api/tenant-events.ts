@@ -1,7 +1,9 @@
 /** The kinds of tenant-scoped event the control plane fans out over the tenant events websocket. */
 export enum TenantEventType
 {
+    EnvironmentCreated = 'environment-created',
     EnvironmentChanged = 'environment-changed',
+    EnvironmentDeleted = 'environment-deleted',
     HealthChanged = 'health-changed'
 }
 

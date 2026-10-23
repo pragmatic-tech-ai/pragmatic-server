@@ -97,6 +97,30 @@ test('Publish then ManifestsFor only after Gate; Ungate removes; duplicate rejec
     })
 })
 
+test('SetWithdrawn flags and restores a published version, surfacing on the gated tenant listing', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        await reg.Publish(Fx.V1, Fx.Image(Fx.V1))
+        await reg.Gate(Fx.TenantA, Fx.V1)
+        assert.equal(reg.ManifestsFor(Fx.TenantA)[0]!.withdrawn, undefined)
+        const withdrawn = await reg.SetWithdrawn(Fx.V1, true)
+        assert.equal(withdrawn.withdrawn, true)
+        assert.equal(reg.ManifestsFor(Fx.TenantA)[0]!.withdrawn, true)
+        const restored = await reg.SetWithdrawn(Fx.V1, false)
+        assert.equal(restored.withdrawn, false)
+        assert.equal(reg.ManifestsFor(Fx.TenantA)[0]!.withdrawn, false)
+    })
+})
+
+test('SetWithdrawn on an unknown version throws UnknownManifestError', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        await assert.rejects(reg.SetWithdrawn(Fx.V1, true), UnknownManifestError)
+    })
+})
+
 test('SelectTarget validates published and gated for the hive tenant', async () =>
 {
     await Fx.Run(async reg =>
