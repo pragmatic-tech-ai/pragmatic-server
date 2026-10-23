@@ -6,7 +6,7 @@ import type { Server } from 'node:https'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { IdpContainerEnv } from '../idp-container-env.js'
+import { ExecFileDockerExec, IdpContainerEnv } from '../idp-container-env.js'
 import type { IDockerExec, IdpContainerSpec } from '../idp-container-env.js'
 import { DevCa, IdpTlsMaterial } from '../../../src/idp/dev-ca.js'
 
@@ -26,7 +26,10 @@ class FakeExec implements IDockerExec
     }
 }
 
-const spec: IdpContainerSpec = { tenantId: 't1', port: 9443, volumeName: 'idp-t1-data', adminTokenRef: 'admin.token', image: 'pragmatic-server:dev' }
+class Fixture
+{
+    public static readonly Spec: IdpContainerSpec = { tenantId: 't1', port: 9443, volumeName: 'idp-t1-data', adminTokenRef: 'admin.token', image: 'pragmatic-server:dev' }
+}
 
 class TlsFixture
 {
@@ -63,7 +66,7 @@ class TlsFixture
 
 test('RunArgs builds the exact docker run argv', () =>
 {
-    assert.deepEqual(IdpContainerEnv.RunArgs(spec), [
+    assert.deepEqual(IdpContainerEnv.RunArgs(Fixture.Spec), [
         'run', '-d', '--name', 'pragmatic-idp-t1', '--entrypoint', 'node',
         '-p', '9443:9443', '--no-healthcheck',
         '--add-host', 'host.docker.internal:host-gateway',
@@ -81,8 +84,8 @@ test('Up runs the container; Down and RemoveVolume tolerate absence', async () =
 {
     const exec = new FakeExec()
     const env = new IdpContainerEnv(exec)
-    await env.Up(spec)
-    assert.deepEqual(exec.Calls[0], IdpContainerEnv.RunArgs(spec))
+    await env.Up(Fixture.Spec)
+    assert.deepEqual(exec.Calls[0], IdpContainerEnv.RunArgs(Fixture.Spec))
     await env.Down('pragmatic-idp-t1')
     await env.RemoveVolume('idp-t1-data')
     assert.deepEqual(exec.Calls[1], ['rm', '-f', 'pragmatic-idp-t1'])
@@ -118,4 +121,19 @@ test('WaitHealthy rejects after the attempt budget on 503', async () =>
     {
         await fx.Stop()
     }
+})
+
+test('Up propagates a docker failure with subcommand + stderr but not the argv', async () =>
+{
+    const failing = new IdpContainerEnv(new ExecFileDockerExec(process.execPath))
+    await assert.rejects(failing.Up(Fixture.Spec), (e: Error) =>
+    {
+        assert.match(e.message, /run failed/)
+        assert.ok(!e.message.includes(Fixture.Spec.adminTokenRef))
+        assert.ok(!e.message.includes(Fixture.Spec.image))
+        return true
+    })
+    const exec = new FakeExec()
+    exec.FailWith = new Error('daemon down')
+    await assert.rejects(new IdpContainerEnv(exec).Up(Fixture.Spec), /daemon down/)
 })

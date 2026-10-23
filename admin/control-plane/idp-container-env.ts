@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import { get } from 'node:https'
+import { DockerEnv } from '../../environments/seed/docker.js'
 
 export interface IdpContainerSpec
 {
@@ -16,22 +17,25 @@ export interface IDockerExec
     Run(args: string[]): Promise<string>
 }
 
-/** Default seam: the real `docker` CLI through execFile (stderr only on failure, never the argv). */
+/** Default seam: the real `docker` CLI through execFile. Failures use DockerEnv.FailureMessage (subcommand + stderr, never the argv). */
 export class ExecFileDockerExec implements IDockerExec
 {
     private static readonly Docker = 'docker'
     private static readonly MaxBuffer = 16 * 1024 * 1024
-    private static readonly FailedSuffix = ' failed\n'
+
+    public constructor(private readonly binary: string = ExecFileDockerExec.Docker)
+    {
+    }
 
     public Run(args: string[]): Promise<string>
     {
         return new Promise<string>((resolve, reject) =>
         {
-            execFile(ExecFileDockerExec.Docker, args, { maxBuffer: ExecFileDockerExec.MaxBuffer }, (err, stdout, stderr) =>
+            execFile(this.binary, args, { maxBuffer: ExecFileDockerExec.MaxBuffer }, (err, stdout, stderr) =>
             {
                 if (err)
                 {
-                    reject(new Error(`${ExecFileDockerExec.Docker} ${args[0] ?? ''}${ExecFileDockerExec.FailedSuffix}${stderr}`))
+                    reject(new Error(DockerEnv.FailureMessage(args, stderr)))
                     return
                 }
                 resolve(stdout)
@@ -145,6 +149,10 @@ export class IdpContainerEnv
         throw new Error(`${IdpContainerEnv.HealthTimeoutMessage}${port}${IdpContainerEnv.AttemptsSuffix}${attempts}`)
     }
 
+    /**
+     * Deliberately best-effort: Down/RemoveVolume are cleanup used in rollback paths and must never throw,
+     * so every failure (including "no such container/volume") is swallowed.
+     */
     private async Tolerate(args: string[]): Promise<void>
     {
         try
