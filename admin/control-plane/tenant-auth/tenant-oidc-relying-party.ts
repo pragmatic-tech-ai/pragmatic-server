@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto'
+import { mkdirSync } from 'node:fs'
 import * as https from 'node:https'
 import { AuthMethod, AuthenticatedResult, Credential, DelegationDepth, IdentityConfig, PresentedSecret, Tenant, TenantKind } from '@pragmatic-tech-ai/todl-identity'
 import type { IdentityStoreSet } from '@pragmatic-tech-ai/todl-identity'
@@ -6,10 +7,26 @@ import { InMemoryOidcFlowStateStore, OidcSettingKeys } from '@pragmatic-tech-ai/
 import type { IHttpClient, IOidcFlowStateStore } from '@pragmatic-tech-ai/todl-identity-cloud'
 import { FileIdentityStores } from '@pragmatic-tech-ai/todl-identity-node'
 import { FakeStorage } from '@pragmatic-tech-ai/todl-runtime'
+import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
 import { IdentityPackResolver } from '../../../src/identity/identity-pack-resolver.js'
 import type { IIdpService, IdpConnection } from '../idp-service.js'
 import type { IdpAdminClient } from '../idp-admin-client.js'
 import type { PlatformDirectory } from '../platform-directory.js'
+import type { TenantAdminClientRegistry } from './tenant-admin-client-record.js'
+
+/**
+ * The optional durable dependency that turns on persistent-secret + TTL-rotation behaviour. When absent the
+ * relying-party behaves exactly as before (in-memory store, random per-instance key, a fresh secret every
+ * `Begin`). The registry holds only a `secretRef` name + a `rotatedAt` timestamp — never the secret itself.
+ */
+export type TenantAdminDurability =
+{
+    storeRoot: string
+    masterKey: Buffer
+    registry: TenantAdminClientRegistry
+    secretTtlMs: number
+    now?: () => number
+}
 
 /** The outcome of a completed tenant-admin login: the IdP subject (principal) and, when mapped, its email. */
 export interface ITenantOidcRelyingParty
@@ -163,8 +180,10 @@ export class TenantOidcRelyingParty implements ITenantOidcRelyingParty
     private static readonly WellKnownSuffix = '/.well-known/openid-configuration'
     private static readonly EmailClaim = 'email'
     private static readonly MasterKeyBytes = 32
+    private static readonly SecretDirMode = 0o700
 
     private readonly flowStates: IOidcFlowStateStore
+    private readonly inFlight = new Map<string, Promise<string>>()
     private storesPromise: Promise<IdentityStoreSet> | undefined
 
     public constructor(
@@ -173,7 +192,8 @@ export class TenantOidcRelyingParty implements ITenantOidcRelyingParty
         private readonly adminClientFactory: (conn: IdpConnection) => IdpAdminClient,
         private readonly callbackUrl: string,
         private readonly resolverOverride?: IdentityPackResolver,
-        flowStates?: IOidcFlowStateStore)
+        flowStates?: IOidcFlowStateStore,
+        private readonly durability?: TenantAdminDurability)
     {
         this.flowStates = flowStates ?? new InMemoryOidcFlowStateStore()
     }
@@ -183,11 +203,12 @@ export class TenantOidcRelyingParty implements ITenantOidcRelyingParty
         try
         {
             const conn = await this.idp.EnsureForTenant(tenantId, this.displayNameFor(tenantId))
-            const secret = randomBytes(TenantOidcRelyingParty.SecretBytes).toString(TenantOidcRelyingParty.SecretEncoding)
-            await this.adminClientFactory(conn).RegisterClient(tenantId, { clientId: TenantOidcRelyingParty.AdminClientId, redirectUris: [this.callbackUrl], secret })
             const secretRef = TenantOidcRelyingParty.SecretRefPrefix + tenantId
+            const secret = this.durability === undefined
+                ? await this.FreshSecretForLogin(secretRef)
+                : await this.SecretForLogin(tenantId, secretRef)
+            await this.adminClientFactory(conn).RegisterClient(tenantId, { clientId: TenantOidcRelyingParty.AdminClientId, redirectUris: [this.callbackUrl], secret })
             const stores = await this.stores()
-            await stores.Secrets.Put(secretRef, secret)
             const tenant = this.tenantFor(tenantId)
             const resolved = this.resolverFor(conn).Resolve(tenant, this.configFor(conn, tenantId, secretRef), stores)
             if (resolved.Oidc === undefined)
@@ -200,6 +221,46 @@ export class TenantOidcRelyingParty implements ITenantOidcRelyingParty
         {
             throw TenantLoginError.From(err)
         }
+    }
+
+    /** Non-durable path: a brand-new secret, seeded into the in-memory store, on every login (legacy behaviour). */
+    private async FreshSecretForLogin(secretRef: string): Promise<string>
+    {
+        const stores = await this.stores()
+        const secret = randomBytes(TenantOidcRelyingParty.SecretBytes).toString(TenantOidcRelyingParty.SecretEncoding)
+        await stores.Secrets.Put(secretRef, secret)
+        return secret
+    }
+
+    /** Durable path: reuse the stored secret until it ages past the TTL, coalescing concurrent calls per tenant. */
+    private SecretForLogin(tenantId: string, secretRef: string): Promise<string>
+    {
+        const pending = this.inFlight.get(tenantId)
+        if (pending !== undefined)
+        {
+            return pending
+        }
+        const minted = this.MintOrReuse(tenantId, secretRef).finally(() => this.inFlight.delete(tenantId))
+        this.inFlight.set(tenantId, minted)
+        return minted
+    }
+
+    private async MintOrReuse(tenantId: string, secretRef: string): Promise<string>
+    {
+        const durability = this.durability!
+        const now = durability.now ?? (() => Date.now())
+        const stores = await this.stores()
+        const record = durability.registry.Get(tenantId)
+        const existing = await stores.Secrets.Get(secretRef)
+        const aged = record !== undefined && (now() - Date.parse(record.rotatedAt)) > durability.secretTtlMs
+        if (record === undefined || existing === null || aged)
+        {
+            const secret = randomBytes(TenantOidcRelyingParty.SecretBytes).toString(TenantOidcRelyingParty.SecretEncoding)
+            await stores.Secrets.Put(secretRef, secret)
+            await durability.registry.Put({ id: tenantId, tenantId, clientId: TenantOidcRelyingParty.AdminClientId, secretRef, rotatedAt: new Date(now()).toISOString() })
+            return secret
+        }
+        return existing
     }
 
     public async Complete(tenantId: string, code: string, state: string): Promise<{ principalId: string; email?: string }>
@@ -268,7 +329,15 @@ export class TenantOidcRelyingParty implements ITenantOidcRelyingParty
     {
         if (this.storesPromise === undefined)
         {
-            this.storesPromise = FileIdentityStores.Open(new FakeStorage(), randomBytes(TenantOidcRelyingParty.MasterKeyBytes))
+            if (this.durability !== undefined)
+            {
+                mkdirSync(this.durability.storeRoot, { recursive: true, mode: TenantOidcRelyingParty.SecretDirMode })
+                this.storesPromise = FileIdentityStores.Open(new NodeFsStorage(this.durability.storeRoot), this.durability.masterKey)
+            }
+            else
+            {
+                this.storesPromise = FileIdentityStores.Open(new FakeStorage(), randomBytes(TenantOidcRelyingParty.MasterKeyBytes))
+            }
         }
         return this.storesPromise
     }

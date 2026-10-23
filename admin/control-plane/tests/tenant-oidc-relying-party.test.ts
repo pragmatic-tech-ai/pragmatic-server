@@ -17,7 +17,10 @@ import { IdpRealm } from '../../../src/idp/idp-realm.js'
 import { IdpSigningKey } from '../../../src/idp/idp-signing-key.js'
 import { IdpSsoSessionStore } from '../../../src/idp/idp-sso-session.js'
 import { InMemoryAuthorizationCodeStore } from '../../../src/idp/authorization-code-store.js'
+import { FileIdentityStores } from '@pragmatic-tech-ai/todl-identity-node'
+import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
 import { IdpAdminClient } from '../idp-admin-client.js'
+import type { IdpAdminClientOptions, IdpAdminClientRegistration } from '../idp-admin-client.js'
 import type { IdpConnection, IIdpService } from '../idp-service.js'
 import { PlatformDirectory } from '../platform-directory.js'
 import { ClientRegistry } from '../client-registry.js'
@@ -25,7 +28,9 @@ import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
 import type { EnvironmentRecord } from '../environment-record.js'
 import type { IEnvironmentLookup } from '../platform-directory.js'
+import { TenantAdminClientRegistry } from '../tenant-auth/tenant-admin-client-record.js'
 import { TenantLoginError, TenantOidcRelyingParty } from '../tenant-auth/tenant-oidc-relying-party.js'
+import type { TenantAdminDurability } from '../tenant-auth/tenant-oidc-relying-party.js'
 
 /** A raw user-agent exchange result; redirects are read, never followed. */
 class BrowserResponse
@@ -231,6 +236,299 @@ test('Complete drives the real IdP login to a code and returns the seeded owner 
         const result = await rp.Complete(IdpFixture.TenantId, code, begin.State)
         assert.equal(result.principalId, IdpFixture.OwnerPrincipalId)
         assert.equal(result.email, IdpFixture.OwnerEmail)
+    })
+})
+
+/** An injectable, movable clock whose Now() closes over its mutable current value. */
+class Clock
+{
+    public constructor(private current: number)
+    {
+    }
+
+    public readonly Now = (): number => this.current
+
+    public Advance(ms: number): void
+    {
+        this.current += ms
+    }
+}
+
+/** A real IdpAdminClient that records the secret of every RegisterClient call before delegating upstream. */
+class RecordingAdminClient extends IdpAdminClient
+{
+    public constructor(options: IdpAdminClientOptions, private readonly sink: string[])
+    {
+        super(options)
+    }
+
+    public override async RegisterClient(tenantId: string, client: IdpAdminClientRegistration): Promise<void>
+    {
+        this.sink.push(client.secret)
+        await super.RegisterClient(tenantId, client)
+    }
+}
+
+/** A RegisterClient that always rejects, to prove no secret leaks when IdP registration fails. */
+class ThrowingAdminClient extends IdpAdminClient
+{
+    private static readonly FailureMessage = 'idp register rejected'
+
+    public override RegisterClient(): Promise<void>
+    {
+        return Promise.reject(new Error(ThrowingAdminClient.FailureMessage))
+    }
+}
+
+/** Builds a durable `TenantAdminDurability` over a throwaway temp store + registry, and reads secrets back. */
+class DurableFixture
+{
+    public static readonly GenericLoginMessage = 'Tenant administrator login failed'
+
+    private static readonly TempPrefix = 'tenant-oidc-durable-'
+    private static readonly StoreDirName = 'oidc-secrets'
+    private static readonly RegistryFileName = 'tenant-admin-clients.json'
+    private static readonly SecretRefPrefix = 'tenant-admin-oidc/'
+    private static readonly MasterKeyBytes = 32
+    private static readonly DummyBaseUrl = 'https://idp.invalid'
+    private static readonly DummyAdminToken = 'dummy-admin-token'
+    private static readonly DummyAdminTokenRef = 'dummy-admin-token-ref'
+    private static readonly DummyCaDir = 'dummy-ca-dir'
+
+    private constructor(
+        public readonly storeRoot: string,
+        public readonly masterKey: Buffer,
+        public readonly registry: TenantAdminClientRegistry,
+        private readonly registryFile: string)
+    {
+    }
+
+    public static async Create(): Promise<DurableFixture>
+    {
+        const dir = await mkdtemp(join(tmpdir(), DurableFixture.TempPrefix))
+        const registryFile = join(dir, DurableFixture.RegistryFileName)
+        const registry = new TenantAdminClientRegistry(registryFile)
+        await registry.Load()
+        return new DurableFixture(join(dir, DurableFixture.StoreDirName), randomBytes(DurableFixture.MasterKeyBytes), registry, registryFile)
+    }
+
+    public static get DummyConn(): IdpConnection
+    {
+        return {
+            baseUrl: DurableFixture.DummyBaseUrl,
+            ca: Buffer.alloc(0),
+            adminToken: DurableFixture.DummyAdminToken,
+            adminTokenRef: DurableFixture.DummyAdminTokenRef,
+            caDir: DurableFixture.DummyCaDir
+        }
+    }
+
+    public static ThrowingFactory(): (conn: IdpConnection) => IdpAdminClient
+    {
+        return (conn: IdpConnection): IdpAdminClient => new ThrowingAdminClient({ baseUrl: conn.baseUrl, adminToken: conn.adminToken, ca: conn.ca })
+    }
+
+    public static RecordingFactory(sink: string[]): (conn: IdpConnection) => IdpAdminClient
+    {
+        return (conn: IdpConnection): IdpAdminClient => new RecordingAdminClient({ baseUrl: conn.baseUrl, adminToken: conn.adminToken, ca: conn.ca }, sink)
+    }
+
+    public Durability(now: () => number, ttlMs: number): TenantAdminDurability
+    {
+        return this.DurabilityWith(this.registry, now, ttlMs)
+    }
+
+    public DurabilityWith(registry: TenantAdminClientRegistry, now: () => number, ttlMs: number): TenantAdminDurability
+    {
+        return { storeRoot: this.storeRoot, masterKey: this.masterKey, registry, secretTtlMs: ttlMs, now }
+    }
+
+    public SecretRef(tenantId: string): string
+    {
+        return DurableFixture.SecretRefPrefix + tenantId
+    }
+
+    public async StoredSecret(tenantId: string): Promise<string | null>
+    {
+        const stores = await FileIdentityStores.Open(new NodeFsStorage(this.storeRoot), this.masterKey)
+        return stores.Secrets.Get(this.SecretRef(tenantId))
+    }
+
+    public async FreshRegistry(): Promise<TenantAdminClientRegistry>
+    {
+        const registry = new TenantAdminClientRegistry(this.registryFile)
+        await registry.Load()
+        return registry
+    }
+}
+
+/** Fixed TTL anchor + window used by the durable tests; the clock is driven relative to Start. */
+class DurableTimes
+{
+    public static readonly Start = Date.parse('2026-01-01T00:00:00.000Z')
+    public static readonly TtlMs = 168 * 60 * 60 * 1000
+}
+
+test('durable Begin reuses the secret within the TTL: one mint, RegisterClient on both, Complete works', async () =>
+{
+    await IdpFixture.With(async (conn, browser) =>
+    {
+        const fixture = await DurableFixture.Create()
+        const clock = new Clock(DurableTimes.Start)
+        const secrets: string[] = []
+        const rp = new TenantOidcRelyingParty(
+            new StubIdp(conn), await IdpFixture.Directory(), DurableFixture.RecordingFactory(secrets), IdpFixture.CallbackUrl,
+            undefined, undefined, fixture.Durability(clock.Now, DurableTimes.TtlMs))
+
+        const begin = await rp.Begin(IdpFixture.TenantId)
+        const firstSecret = await fixture.StoredSecret(IdpFixture.TenantId)
+        const firstRotatedAt = fixture.registry.Get(IdpFixture.TenantId)!.rotatedAt
+
+        await rp.Begin(IdpFixture.TenantId)
+        assert.equal(await fixture.StoredSecret(IdpFixture.TenantId), firstSecret)
+        assert.equal(fixture.registry.Get(IdpFixture.TenantId)!.rotatedAt, firstRotatedAt)
+        assert.equal(secrets.length, 2)
+        assert.equal(secrets[0], secrets[1])
+
+        await browser.Get(begin.Url)
+        const redirect = await browser.PostForm(begin.Url, new Map([['email', IdpFixture.OwnerEmail], ['password', IdpFixture.OwnerPassword]]))
+        const code = new URL(redirect.Location!).searchParams.get('code') ?? ''
+        const result = await rp.Complete(IdpFixture.TenantId, code, begin.State)
+        assert.equal(result.principalId, IdpFixture.OwnerPrincipalId)
+    })
+})
+
+test('durable Begin rotates the secret after the TTL: new secret, rotatedAt advances', async () =>
+{
+    await IdpFixture.With(async (conn, _browser) =>
+    {
+        const fixture = await DurableFixture.Create()
+        const clock = new Clock(DurableTimes.Start)
+        const secrets: string[] = []
+        const rp = new TenantOidcRelyingParty(
+            new StubIdp(conn), await IdpFixture.Directory(), DurableFixture.RecordingFactory(secrets), IdpFixture.CallbackUrl,
+            undefined, undefined, fixture.Durability(clock.Now, DurableTimes.TtlMs))
+
+        await rp.Begin(IdpFixture.TenantId)
+        const firstSecret = await fixture.StoredSecret(IdpFixture.TenantId)
+        const firstRotatedAt = fixture.registry.Get(IdpFixture.TenantId)!.rotatedAt
+
+        clock.Advance(DurableTimes.TtlMs + 1)
+        await rp.Begin(IdpFixture.TenantId)
+        const rotatedSecret = await fixture.StoredSecret(IdpFixture.TenantId)
+        assert.notEqual(rotatedSecret, firstSecret)
+        assert.notEqual(fixture.registry.Get(IdpFixture.TenantId)!.rotatedAt, firstRotatedAt)
+    })
+})
+
+test('durable secret persists across a fresh relying-party over the same store, key and registry', async () =>
+{
+    await IdpFixture.With(async (conn, _browser) =>
+    {
+        const fixture = await DurableFixture.Create()
+        const clock = new Clock(DurableTimes.Start)
+        const first = new TenantOidcRelyingParty(
+            new StubIdp(conn), await IdpFixture.Directory(), DurableFixture.RecordingFactory([]), IdpFixture.CallbackUrl,
+            undefined, undefined, fixture.Durability(clock.Now, DurableTimes.TtlMs))
+        await first.Begin(IdpFixture.TenantId)
+        const persisted = await fixture.StoredSecret(IdpFixture.TenantId)
+
+        const reloaded = await fixture.FreshRegistry()
+        const secondSecrets: string[] = []
+        const second = new TenantOidcRelyingParty(
+            new StubIdp(conn), await IdpFixture.Directory(), DurableFixture.RecordingFactory(secondSecrets), IdpFixture.CallbackUrl,
+            undefined, undefined, fixture.DurabilityWith(reloaded, clock.Now, DurableTimes.TtlMs))
+        await second.Begin(IdpFixture.TenantId)
+
+        assert.equal(await fixture.StoredSecret(IdpFixture.TenantId), persisted)
+        assert.equal(secondSecrets[0], persisted)
+    })
+})
+
+test('durable Begin re-mints when a record exists but the stored secret is absent, never passing null to RegisterClient', async () =>
+{
+    await IdpFixture.With(async (conn, _browser) =>
+    {
+        const fixture = await DurableFixture.Create()
+        const clock = new Clock(DurableTimes.Start)
+        // A record is present but no secret was ever stored (e.g. the secret file was lost).
+        await fixture.registry.Put({
+            id: IdpFixture.TenantId,
+            tenantId: IdpFixture.TenantId,
+            clientId: TenantOidcRelyingParty.AdminClientId,
+            secretRef: fixture.SecretRef(IdpFixture.TenantId),
+            rotatedAt: new Date(DurableTimes.Start).toISOString()
+        })
+        assert.equal(await fixture.StoredSecret(IdpFixture.TenantId), null)
+
+        const secrets: string[] = []
+        const rp = new TenantOidcRelyingParty(
+            new StubIdp(conn), await IdpFixture.Directory(), DurableFixture.RecordingFactory(secrets), IdpFixture.CallbackUrl,
+            undefined, undefined, fixture.Durability(clock.Now, DurableTimes.TtlMs))
+        await rp.Begin(IdpFixture.TenantId)
+
+        const minted = await fixture.StoredSecret(IdpFixture.TenantId)
+        assert.notEqual(minted, null)
+        assert.equal(secrets.length, 1)
+        assert.equal(secrets[0], minted)
+    })
+})
+
+test('durable Begin that fails at RegisterClient throws TenantLoginError and leaks no secret', async () =>
+{
+    const fixture = await DurableFixture.Create()
+    const clock = new Clock(DurableTimes.Start)
+    const rp = new TenantOidcRelyingParty(
+        new StubIdp(DurableFixture.DummyConn), await IdpFixture.Directory(), DurableFixture.ThrowingFactory(), IdpFixture.CallbackUrl,
+        undefined, undefined, fixture.Durability(clock.Now, DurableTimes.TtlMs))
+
+    await assert.rejects(
+        () => rp.Begin(IdpFixture.TenantId),
+        (err: unknown) =>
+        {
+            assert.ok(err instanceof TenantLoginError)
+            assert.equal(err.message, DurableFixture.GenericLoginMessage)
+            assert.ok(!/secret/i.test(err.message))
+            return true
+        })
+
+    // The secret was minted (and persisted) before registration failed; it must leak into no record field.
+    const minted = await fixture.StoredSecret(IdpFixture.TenantId)
+    assert.notEqual(minted, null)
+    const record = fixture.registry.Get(IdpFixture.TenantId)
+    assert.ok(record !== undefined)
+    assert.ok(!JSON.stringify(record).includes(minted!))
+})
+
+test('two concurrent first Begins for a fresh tenant mint and register exactly one secret', async () =>
+{
+    await IdpFixture.With(async (conn, _browser) =>
+    {
+        const fixture = await DurableFixture.Create()
+        const clock = new Clock(DurableTimes.Start)
+        const secrets: string[] = []
+        const rp = new TenantOidcRelyingParty(
+            new StubIdp(conn), await IdpFixture.Directory(), DurableFixture.RecordingFactory(secrets), IdpFixture.CallbackUrl,
+            undefined, undefined, fixture.Durability(clock.Now, DurableTimes.TtlMs))
+
+        await Promise.all([rp.Begin(IdpFixture.TenantId), rp.Begin(IdpFixture.TenantId)])
+        assert.equal(secrets.length, 2)
+        assert.equal(secrets[0], secrets[1])
+        assert.equal(fixture.registry.List().length, 1)
+        assert.equal(await fixture.StoredSecret(IdpFixture.TenantId), secrets[0])
+    })
+})
+
+test('without durability each Begin mints a fresh secret (unchanged legacy behaviour)', async () =>
+{
+    await IdpFixture.With(async (conn, _browser) =>
+    {
+        const secrets: string[] = []
+        const rp = new TenantOidcRelyingParty(new StubIdp(conn), await IdpFixture.Directory(), DurableFixture.RecordingFactory(secrets), IdpFixture.CallbackUrl)
+        await rp.Begin(IdpFixture.TenantId)
+        await rp.Begin(IdpFixture.TenantId)
+        assert.equal(secrets.length, 2)
+        assert.notEqual(secrets[0], secrets[1])
     })
 })
 
