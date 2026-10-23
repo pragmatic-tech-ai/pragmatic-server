@@ -15,9 +15,12 @@ export class TenantSessionStore
     private static readonly RootKey = 'sessions'
     private static readonly TokenBytes = 32
     private static readonly TokenEncoding = 'base64url'
+    private static readonly FileMode = 0o600
+    private static readonly CorruptMessage = 'Tenant session store file is corrupt'
 
     private readonly sessions = new Map<string, TenantSession>()
-    private loaded = false
+    private loading: Promise<void> | null = null
+    private persistChain: Promise<void> = Promise.resolve()
 
     public constructor(
         private readonly filePath: string,
@@ -39,6 +42,7 @@ export class TenantSessionStore
         {
             session.email = email
         }
+        this.pruneExpired()
         this.sessions.set(session.id, session)
         await this.persist()
         return { ...session }
@@ -64,12 +68,33 @@ export class TenantSessionStore
         }
     }
 
-    private async ensureLoaded(): Promise<void>
+    private pruneExpired(): void
     {
-        if (this.loaded)
+        const nowMs = this.now().getTime()
+        for (const [id, session] of this.sessions)
         {
-            return
+            if (new Date(session.expiresAt).getTime() <= nowMs)
+            {
+                this.sessions.delete(id)
+            }
         }
+    }
+
+    private ensureLoaded(): Promise<void>
+    {
+        if (this.loading === null)
+        {
+            this.loading = this.load().catch(err =>
+            {
+                this.loading = null
+                throw err
+            })
+        }
+        return this.loading
+    }
+
+    private async load(): Promise<void>
+    {
         let text: string
         try
         {
@@ -79,25 +104,38 @@ export class TenantSessionStore
         {
             if ((err as NodeJS.ErrnoException).code === TenantSessionStore.NotFoundCode)
             {
-                this.loaded = true
                 return
             }
             throw err
         }
-        const parsed = JSON.parse(text) as Record<string, Record<string, TenantSession> | undefined>
+        let parsed: Record<string, Record<string, TenantSession> | undefined>
+        try
+        {
+            parsed = JSON.parse(text) as Record<string, Record<string, TenantSession> | undefined>
+        }
+        catch
+        {
+            throw new Error(TenantSessionStore.CorruptMessage)
+        }
         for (const [id, session] of Object.entries(parsed[TenantSessionStore.RootKey] ?? {}))
         {
             this.sessions.set(id, session)
         }
-        this.loaded = true
     }
 
-    private async persist(): Promise<void>
+    private persist(): Promise<void>
+    {
+        const run = this.persistChain.then(() => this.write())
+        this.persistChain = run.catch(() => undefined)
+        return run
+    }
+
+    private async write(): Promise<void>
     {
         await mkdir(dirname(this.filePath), { recursive: true })
         const body = { [TenantSessionStore.RootKey]: Object.fromEntries(this.sessions) }
         const temp = `${this.filePath}.${randomUUID()}${TenantSessionStore.TempSuffix}`
-        await writeFile(temp, JSON.stringify(body, null, TenantSessionStore.JsonIndent), TenantSessionStore.Encoding)
+        await writeFile(temp, JSON.stringify(body, null, TenantSessionStore.JsonIndent), { encoding: TenantSessionStore.Encoding, mode: TenantSessionStore.FileMode })
         try
         {
             await rename(temp, this.filePath)

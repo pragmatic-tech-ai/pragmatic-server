@@ -44,3 +44,20 @@ test('BuildClearing sets Max-Age=0', () =>
 {
     assert.ok(TenantSessionCookie.BuildClearing(false).includes('Max-Age=0'))
 })
+
+test('A tenant containing a dot round-trips', () =>
+{
+    const header = TenantSessionCookie.Build('a.b.c', CookieFixture.Token, CookieFixture.Expiry, false).split(';')[0]
+    assert.deepEqual(TenantSessionCookie.Read(header), { tenantId: 'a.b.c', token: CookieFixture.Token })
+})
+
+test('A malformed percent-escape in the tenant is null', () =>
+{
+    assert.equal(TenantSessionCookie.Read('pts_session=%E0.' + CookieFixture.Token), null)
+})
+
+test('A past expiry clamps Max-Age to 0', () =>
+{
+    const cookie = TenantSessionCookie.Build(CookieFixture.Tenant, CookieFixture.Token, new Date(Date.now() - 100000), false)
+    assert.ok(cookie.includes('Max-Age=0'))
+})
