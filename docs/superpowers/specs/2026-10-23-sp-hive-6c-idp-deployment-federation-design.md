@@ -56,3 +56,17 @@ Every item below rests on a real deployment/topology decision; that is why 6b st
 
 ## 5. What to decide first
 D1 (where the IdP runs) and D5 (realm = `hive.tenantId`) unlock everything else; D2/D3/D4 are the dev-topology mechanics; D6 is mechanical once D1–D5 are fixed; D7 can proceed independently (recommend option (b) to start). Bring D1, D5, and the D7 scope to the table; the rest have safe defaults above.
+
+---
+
+## DECISIONS RESOLVED (2026-10-23, with the user)
+
+- **D1 = Per-tenant IdP.** One `pragmatic-idp` per tenant (own issuer, keys, admin token, data). Hosting default (user may override): the control-plane **launches a per-tenant IdP at tenant-create** — a port-allocated host process in dev (as it spawns environments), a per-tenant Deployment+Service in a hive. Supersedes the doc's platform-level recommendation.
+- **D2 = default accepted** — per-environment in-container issuer/discovery URL injected at container launch (`host.docker.internal` dev / Service DNS in-hive); `iss` == discovery origin.
+- **D3 = default accepted** — served-app CA trust via `NODE_EXTRA_CA_CERTS` mounted at container launch (dev); real certs in prod.
+- **D4 = per-tenant admin token**, control-plane-generated and written to that tenant's IdP secrets ref at IdP launch (held by ref in control-plane config).
+- **D5 = realm keyed by the platform tenant (`hive.tenantId`)** — one shared login across all environments under all of a tenant's hives; env→tenant resolved via the hive.
+- **D6 = default accepted** — `CreateTenant` ensures realm + seeds Owner (one-time password reveal, `Cache-Control: no-store`, non-secret owner metadata on `TenantRecord`); `EnvironmentService.Create` generates the client secret, `IdpAdminClient.RegisterClient`, injects `generic-oidc` providerSettings + secret-by-ref into the bundle; enforce the `_`-reserved realm namespace at `CreateTenant`; idempotent-retry (not rollback) on partial provisioning failure.
+- **D7 = FULL rename + migration NOW**, carved into ITS OWN plan/SDD (SP-HIVE-6c-rename): rename the environment-scope `tenantId`→`environmentId` across ~465 sites incl. on-disk layout (`data/<id>/…`), JSON keys, secret refs, env vars (`PRAGMATIC_TENANT_*`), the id_token issuer URL, Redis prefixes, + a data migrator. Chosen pre-production so there is no live data/contract to break. Sequence the rename as its own sub-project; 6c's provisioning wiring consumes the renamed symbols.
+
+**Build sequencing (proposed):** (1) SP-HIVE-6c-rename (the full rename + migrator) → (2) SP-HIVE-6c proper (per-tenant IdP launch + control-plane provisioning wiring + container federation). Both now have resolved decisions and can go to plan/SDD.
