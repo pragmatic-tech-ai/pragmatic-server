@@ -5,6 +5,7 @@ import type { AddressInfo } from 'node:net';
 import type { IAuthorizationCodeStore } from './authorization-code-store.js';
 import { AuthorizeEndpoint } from './authorize-endpoint.js';
 import type { AuthorizeResult } from './authorize-endpoint.js';
+import { TokenEndpoint } from './token-endpoint.js';
 import type { IdpClientStore } from './idp-client-store.js';
 import type { IdpRealm } from './idp-realm.js';
 import type { IdpSigningKey } from './idp-signing-key.js';
@@ -49,6 +50,8 @@ export class IdpHost
     private static readonly SetCookieHeader = 'Set-Cookie';
     private static readonly CacheControlHeader = 'Cache-Control';
     private static readonly NoStore = 'no-store';
+    private static readonly PragmaHeader = 'Pragma';
+    private static readonly NoCache = 'no-cache';
     private static readonly StatusFound = 302;
     private static readonly StatusPayloadTooLarge = 413;
     private static readonly MaxFormBytes = 16 * 1024;
@@ -73,6 +76,7 @@ export class IdpHost
     private httpsServer: Server | undefined;
     private readonly baseUrl: string;
     private readonly authorize: AuthorizeEndpoint;
+    private readonly token: TokenEndpoint;
 
     public constructor(
         baseUrl: string,
@@ -90,6 +94,7 @@ export class IdpHost
         }
         this.baseUrl = baseUrl.replace(/\/+$/, '');
         this.authorize = new AuthorizeEndpoint(realms, clients, codes, sso, secureCookie);
+        this.token = new TokenEndpoint(this.baseUrl, signingKey, codes, clients);
     }
 
     public Listen(port: number, host: string): Promise<void>
@@ -193,7 +198,29 @@ export class IdpHost
             await this.RouteAuthorize(req, res, tenantId, method);
             return true;
         }
+        if (rest === IdpHost.TokenRest && method === IdpHost.MethodPost)
+        {
+            await this.RouteToken(req, res, tenantId);
+            return true;
+        }
         return false;
+    }
+
+    private async RouteToken(req: IncomingMessage, res: ServerResponse, tenantId: string): Promise<void>
+    {
+        const body = await this.ReadBody(req);
+        if (body === undefined)
+        {
+            this.WriteJson(res, IdpHost.StatusPayloadTooLarge, { [IdpHost.ErrorField]: IdpHost.PayloadTooLargeMessage });
+            return;
+        }
+        const result = await this.token.Handle(tenantId, new URLSearchParams(body));
+        res.writeHead(result.status, {
+            [IdpHost.ContentType]: IdpHost.JsonType,
+            [IdpHost.CacheControlHeader]: IdpHost.NoStore,
+            [IdpHost.PragmaHeader]: IdpHost.NoCache
+        });
+        res.end(JSON.stringify(result.body));
     }
 
     private async RouteAuthorize(req: IncomingMessage, res: ServerResponse, tenantId: string, method: string): Promise<void>
