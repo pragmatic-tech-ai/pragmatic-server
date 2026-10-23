@@ -11,12 +11,33 @@ import type { IdpRealm } from './idp-realm.js';
 import type { IdpSigningKey } from './idp-signing-key.js';
 import type { IdpSsoSessionStore } from './idp-sso-session.js';
 
+/** Creates (and persists) a realm for a tenant on demand. */
+export type RealmFactory = (tenantId: string, displayName: string) => Promise<IdpRealm>;
+
+/** Thrown when a realm key is reserved or malformed (empty, leading underscore, path-like). */
+export class ReservedRealmError extends Error
+{
+    private static readonly MessagePrefix = 'Reserved or invalid realm key: ';
+
+    public constructor(key: string)
+    {
+        super(ReservedRealmError.MessagePrefix + key);
+        this.name = 'ReservedRealmError';
+    }
+}
+
 /** Tenant id -> realm lookup for the IdP host. Keyed by the real platform tenant id. */
 export class IdpRealmSet
 {
+    private static readonly ReservedPrefix = '_';
+    private static readonly ForbiddenFragments = ['/', '\\', '..'];
+    private static readonly NoFactoryMessage = 'IdpRealmSet: realm creation unsupported (no factory configured)';
+
     private readonly realms = new Map<string, IdpRealm>();
 
-    public constructor(entries: Iterable<readonly [string, IdpRealm]> = [])
+    public constructor(
+        entries: Iterable<readonly [string, IdpRealm]> = [],
+        private readonly factory?: RealmFactory)
     {
         for (const [tenantId, realm] of entries)
         {
@@ -32,6 +53,36 @@ export class IdpRealmSet
     public For(tenantId: string): IdpRealm | undefined
     {
         return this.realms.get(tenantId);
+    }
+
+    /** Returns the tenant's realm, creating it via the factory when absent. Idempotent. */
+    public async EnsureRealm(tenantId: string, displayName: string): Promise<IdpRealm>
+    {
+        if (!IdpRealmSet.ValidKey(tenantId))
+        {
+            throw new ReservedRealmError(tenantId);
+        }
+        const existing = this.For(tenantId);
+        if (existing !== undefined)
+        {
+            return existing;
+        }
+        if (this.factory === undefined)
+        {
+            throw new Error(IdpRealmSet.NoFactoryMessage);
+        }
+        const realm = await this.factory(tenantId, displayName);
+        this.realms.set(tenantId, realm);
+        return realm;
+    }
+
+    private static ValidKey(key: string): boolean
+    {
+        if (key.length === 0 || key.startsWith(IdpRealmSet.ReservedPrefix))
+        {
+            return false;
+        }
+        return !IdpRealmSet.ForbiddenFragments.some(f => key.includes(f));
     }
 }
 
