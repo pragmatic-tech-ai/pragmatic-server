@@ -36,6 +36,8 @@ class ClientFixture
     public static readonly Redirect = 'https://app.example.test/cb';
     public static readonly HttpsScheme = 'https://';
     public static readonly Colon = ':';
+    public static readonly Unauthorized = 401;
+    public static readonly Ann = 'Ann';
 
     public static async WithHost(body: (host: IdpHost, realms: IdpRealmSet, clients: IdpClientStore, caPem: string) => Promise<void>): Promise<void>
     {
@@ -76,7 +78,7 @@ test('EnsureRealm, SeedAccount, RegisterClient round-trip over https', async () 
     {
         const client = new IdpAdminClient({ baseUrl: ClientFixture.UrlOf(host), adminToken: ClientFixture.Token, ca });
         await client.EnsureRealm(ClientFixture.TenantId, ClientFixture.DisplayName);
-        await client.SeedAccount(ClientFixture.TenantId, { email: ClientFixture.Email, principalId: ClientFixture.PrincipalId, displayName: 'Ann', password: ClientFixture.Password });
+        await client.SeedAccount(ClientFixture.TenantId, { email: ClientFixture.Email, principalId: ClientFixture.PrincipalId, displayName: ClientFixture.Ann, password: ClientFixture.Password });
         await client.RegisterClient(ClientFixture.TenantId, { clientId: ClientFixture.ClientId, redirectUris: [ClientFixture.Redirect], secret: ClientFixture.Secret });
 
         const realm = realms.For(ClientFixture.TenantId);
@@ -89,12 +91,12 @@ test('EnsureRealm, SeedAccount, RegisterClient round-trip over https', async () 
 
 test('a wrong admin token throws IdpAdminError with status 401 and no secret in the message', async () =>
 {
-    await ClientFixture.WithHost(async (host, _realms, _clients, ca) =>
+    await ClientFixture.WithHost(async (host, realms, _clients, ca) =>
     {
         const client = new IdpAdminClient({ baseUrl: ClientFixture.UrlOf(host), adminToken: ClientFixture.BadToken, ca });
         const calls = [
             () => client.EnsureRealm(ClientFixture.TenantId, ClientFixture.DisplayName),
-            () => client.SeedAccount(ClientFixture.TenantId, { email: ClientFixture.Email, principalId: ClientFixture.PrincipalId, displayName: 'Ann', password: ClientFixture.Password }),
+            () => client.SeedAccount(ClientFixture.TenantId, { email: ClientFixture.Email, principalId: ClientFixture.PrincipalId, displayName: ClientFixture.Ann, password: ClientFixture.Password }),
             () => client.RegisterClient(ClientFixture.TenantId, { clientId: ClientFixture.ClientId, redirectUris: [ClientFixture.Redirect], secret: ClientFixture.Secret })
         ];
         for (const call of calls)
@@ -102,7 +104,7 @@ test('a wrong admin token throws IdpAdminError with status 401 and no secret in 
             await assert.rejects(call, (err: unknown) =>
             {
                 assert.ok(err instanceof IdpAdminError);
-                assert.equal(err.Status, 401);
+                assert.equal(err.Status, ClientFixture.Unauthorized);
                 const text = String(err) + err.message;
                 assert.ok(!text.includes(ClientFixture.Password));
                 assert.ok(!text.includes(ClientFixture.Secret));
@@ -110,5 +112,6 @@ test('a wrong admin token throws IdpAdminError with status 401 and no secret in 
                 return true;
             });
         }
+        assert.equal(realms.For(ClientFixture.TenantId), undefined);
     });
 });

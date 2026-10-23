@@ -4,13 +4,56 @@ import * as https from 'node:https';
 export class IdpAdminError extends Error
 {
     private static readonly Prefix = 'IdP admin request failed with status ';
+    private static readonly ErrorName = 'IdpAdminError';
+    private static readonly SafeCode = /^[\w.-]+$/;
     private static readonly CodeSeparator = ': ';
+
+    public static IsSafe(code: string): boolean
+    {
+        return IdpAdminError.SafeCode.test(code);
+    }
 
     public constructor(public readonly Status: number, public readonly Code?: string)
     {
         super(IdpAdminError.Prefix + Status + (Code === undefined ? '' : IdpAdminError.CodeSeparator + Code));
-        this.name = 'IdpAdminError';
+        this.name = IdpAdminError.ErrorName;
     }
+}
+
+/** Network-level failure (refused, timeout, reset). Carries only a fixed label and the Node error code. */
+export class IdpAdminTransportError extends Error
+{
+    private static readonly Label = 'IdP admin transport failure';
+    private static readonly ErrorName = 'IdpAdminTransportError';
+    private static readonly Separator = ': ';
+    private static readonly UnknownCode = 'UNKNOWN';
+
+    public constructor(public readonly Code: string)
+    {
+        super(IdpAdminTransportError.Label + IdpAdminTransportError.Separator + Code);
+        this.name = IdpAdminTransportError.ErrorName;
+    }
+
+    public static From(err: unknown): IdpAdminTransportError
+    {
+        const code = (err as { code?: unknown } | null)?.code;
+        return new IdpAdminTransportError(typeof code === 'string' && /^[\w]+$/.test(code) ? code : IdpAdminTransportError.UnknownCode);
+    }
+}
+
+export interface IdpAdminAccount
+{
+    email: string;
+    principalId: string;
+    displayName: string;
+    password: string;
+}
+
+export interface IdpAdminClientRegistration
+{
+    clientId: string;
+    redirectUris: readonly string[];
+    secret: string;
 }
 
 export interface IdpAdminClientOptions
@@ -37,6 +80,9 @@ export class IdpAdminClient
     private static readonly ErrorField = 'error';
     private static readonly OkMin = 200;
     private static readonly OkMax = 300;
+    private static readonly DefaultPort = 443;
+    private static readonly TimeoutMs = 10000;
+    private static readonly TimeoutCode = 'ETIMEDOUT';
 
     private readonly agent: https.Agent;
     private readonly base: URL;
@@ -52,13 +98,13 @@ export class IdpAdminClient
         await this.Request(IdpAdminClient.PutMethod, this.RealmPath(tenantId), { displayName });
     }
 
-    public async SeedAccount(tenantId: string, account: { email: string; principalId: string; displayName: string; password: string }): Promise<void>
+    public async SeedAccount(tenantId: string, account: IdpAdminAccount): Promise<void>
     {
         await this.Request(IdpAdminClient.PostMethod, this.RealmPath(tenantId) + IdpAdminClient.AccountsSuffix,
             { email: account.email, principalId: account.principalId, displayName: account.displayName, password: account.password });
     }
 
-    public async RegisterClient(tenantId: string, client: { clientId: string; redirectUris: readonly string[]; secret: string }): Promise<void>
+    public async RegisterClient(tenantId: string, client: IdpAdminClientRegistration): Promise<void>
     {
         await this.Request(IdpAdminClient.PostMethod, this.RealmPath(tenantId) + IdpAdminClient.ClientsSuffix,
             { clientId: client.clientId, redirectUris: client.redirectUris, secret: client.secret });
@@ -77,7 +123,7 @@ export class IdpAdminClient
             const req = https.request({
                 agent: this.agent,
                 host: this.base.hostname,
-                port: this.base.port,
+                port: Number(this.base.port) || IdpAdminClient.DefaultPort,
                 path: urlPath,
                 method,
                 headers: {
@@ -99,9 +145,14 @@ export class IdpAdminClient
                     }
                     reject(new IdpAdminError(status, IdpAdminClient.ParseCode(Buffer.concat(chunks).toString(IdpAdminClient.Utf8))));
                 });
-                res.on('error', reject);
+                res.on('error', err => reject(IdpAdminTransportError.From(err)));
             });
-            req.on('error', reject);
+            req.setTimeout(IdpAdminClient.TimeoutMs, () =>
+            {
+                req.destroy();
+                reject(new IdpAdminTransportError(IdpAdminClient.TimeoutCode));
+            });
+            req.on('error', err => reject(IdpAdminTransportError.From(err)));
             req.end(payload);
         });
     }
@@ -114,7 +165,7 @@ export class IdpAdminClient
             if (typeof parsed === 'object' && parsed !== null)
             {
                 const code = (parsed as Record<string, unknown>)[IdpAdminClient.ErrorField];
-                return typeof code === 'string' ? code : undefined;
+                return typeof code === 'string' && IdpAdminError.IsSafe(code) ? code : undefined;
             }
         }
         catch
