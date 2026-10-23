@@ -78,12 +78,19 @@ export class TenantTreeViewModel extends Observable
         this.RaisePropertyChanged(TenantTreeViewModel.NodesProperty, old, this.nodes)
     }
 
-    // Re-pulls the tree when a known environment changed; resolves true when it
-    // reloaded, false when the event was ignored. Load failures are swallowed
-    // (the next event or Refresh retries) and still resolve true.
+    // Re-pulls the tree on a lifecycle event: a create always reloads (the new
+    // environment is not yet in the tree), while a change or delete reloads only
+    // when the environment is one we already show. Resolves true when it reloaded,
+    // false when the event was ignored. Load failures are swallowed (the next event
+    // or Refresh retries) and still resolve true.
     public async ApplyEvent(ev: TenantEvent): Promise<boolean>
     {
-        if (ev.type !== TenantEventType.EnvironmentChanged)
+        if (ev.type === TenantEventType.EnvironmentCreated)
+        {
+            await this.Load().catch(() => undefined)
+            return true
+        }
+        if (ev.type !== TenantEventType.EnvironmentChanged && ev.type !== TenantEventType.EnvironmentDeleted)
         {
             return false
         }

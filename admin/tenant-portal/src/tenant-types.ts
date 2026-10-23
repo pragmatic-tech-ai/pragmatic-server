@@ -35,7 +35,9 @@ export type HiveHealthDto = { environmentName: string; ready: boolean; runningIm
 
 export enum TenantEventType
 {
+    EnvironmentCreated = 'environment-created',
     EnvironmentChanged = 'environment-changed',
+    EnvironmentDeleted = 'environment-deleted',
     HealthChanged = 'health-changed',
 }
 

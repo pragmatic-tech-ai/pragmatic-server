@@ -15,7 +15,7 @@ import {
     EnvironmentNotRuntimeError
 } from './environment-service.js'
 import { GraphExistsError, GraphNameInvalidError, GraphNotFoundError } from './graph-service.js'
-import { EnvType, Template, type EnvironmentRecord } from './environment-record.js'
+import { EnvType, Template, EnvironmentChangeKind, type EnvironmentChange, type EnvironmentRecord } from './environment-record.js'
 import { EnvironmentDtoMapper, type EnvironmentDto } from './environment-dto.js'
 import { HiveHealthProducer } from './hive-health-producer.js'
 import { InvalidTenantIdError } from './idp-service.js'
@@ -61,8 +61,8 @@ export interface IEnvironmentService
     ListReconciled(): Promise<readonly EnvironmentRecord[]>
     Logs(name: string): Promise<string>
     LogStream(name: string, onData: (chunk: string) => void): ILogProcess
-    /** Additive lifecycle-change subscription (RULING 5): fires on every status change; returns an unsubscribe. */
-    OnChanged(cb: (rec: EnvironmentRecord) => void): () => void
+    /** Additive lifecycle-change subscription (RULING 5): fires on create, every status change, and delete; returns an unsubscribe. */
+    OnChanged(cb: (change: EnvironmentChange) => void): () => void
     AdminSnapshot(name: string): Promise<AdminSnapshot>
     AdminCreateAccount(name: string, params: CreateAccountParams): Promise<void>
     AdminDisableAccount(name: string, principalId: string): Promise<void>
@@ -376,13 +376,28 @@ export class ControlPlaneHost
             this.tenantStaticRootAbs = resolve(tenantAuth.staticRoot)
             // RULING 5: route every environment lifecycle change to the tenant bus, scoped by the env's owning tenant.
             // An unbound env (no tenantId) has no tenant audience, so it is skipped.
-            this.tenantChangeSubscription = this.service.OnChanged(rec =>
+            this.tenantChangeSubscription = this.service.OnChanged(change =>
             {
+                const rec = change.record
                 if (rec.tenantId !== undefined)
                 {
-                    tenantAuth.events.Emit(rec.tenantId, { type: TenantEventType.EnvironmentChanged, environmentName: rec.name })
+                    tenantAuth.events.Emit(rec.tenantId, { type: ControlPlaneHost.TenantEventFor(change.kind), environmentName: rec.name })
                 }
             })
+        }
+    }
+
+    /** Maps an environment lifecycle-change kind to the tenant event type fanned out over the tenant bus. */
+    private static TenantEventFor(kind: EnvironmentChangeKind): TenantEventType
+    {
+        switch (kind)
+        {
+            case EnvironmentChangeKind.Created:
+                return TenantEventType.EnvironmentCreated
+            case EnvironmentChangeKind.Deleted:
+                return TenantEventType.EnvironmentDeleted
+            default:
+                return TenantEventType.EnvironmentChanged
         }
     }
 

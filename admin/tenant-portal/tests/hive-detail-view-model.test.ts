@@ -186,6 +186,17 @@ describe('HiveDetailViewModel', () =>
         assert.equal(src.RolloutCalls, calls + 1)
     })
 
+    it('ApplyEvent reloads on EnvironmentDeleted for one of this hive envs', async () =>
+    {
+        const src = new FakeHiveDetailSource()
+        const vm = new HiveDetailViewModel(src, Make.Hive())
+        await vm.Load()
+        const calls = src.RolloutCalls
+        assert.equal(await vm.ApplyEvent({ type: TenantEventType.EnvironmentDeleted, environmentName: 'e2' }), true)
+        assert.equal(src.RolloutCalls, calls + 1)
+        assert.equal(await vm.ApplyEvent({ type: TenantEventType.EnvironmentDeleted, environmentName: 'other' }), false)
+    })
+
     it('discards a stale Load that resolves after a newer one', async () =>
     {
         const releases: Array<() => void> = []

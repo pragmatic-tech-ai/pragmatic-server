@@ -75,7 +75,33 @@ describe('TenantTreeViewModel', () =>
         assert.equal(vm.Nodes[0]!.environments[0]!.status, 'stopped')
     })
 
-    it('ignores events for unknown environments and other event types', async () =>
+    it('re-pulls on EnvironmentCreated to surface a newly created env not yet in the tree', async () =>
+    {
+        const src = new FakeTreeSource()
+        src.Hives = [Make.Hive('h1')]
+        src.Envs = [Make.Env('a', 'h1')]
+        const vm = new TenantTreeViewModel(src)
+        await vm.Load()
+        src.Envs = [Make.Env('a', 'h1'), Make.Env('b', 'h1')]
+        assert.equal(await vm.ApplyEvent({ type: TenantEventType.EnvironmentCreated, environmentName: 'b' }), true)
+        assert.equal(src.EnvCalls, 2)
+        assert.deepEqual(vm.Nodes[0]!.environments.map(e => e.name), ['a', 'b'])
+    })
+
+    it('re-pulls on EnvironmentDeleted for a known env and drops it', async () =>
+    {
+        const src = new FakeTreeSource()
+        src.Hives = [Make.Hive('h1')]
+        src.Envs = [Make.Env('a', 'h1'), Make.Env('b', 'h1')]
+        const vm = new TenantTreeViewModel(src)
+        await vm.Load()
+        src.Envs = [Make.Env('a', 'h1')]
+        assert.equal(await vm.ApplyEvent({ type: TenantEventType.EnvironmentDeleted, environmentName: 'b' }), true)
+        assert.equal(src.EnvCalls, 2)
+        assert.deepEqual(vm.Nodes[0]!.environments.map(e => e.name), ['a'])
+    })
+
+    it('ignores change/delete for unknown environments and other event types', async () =>
     {
         const src = new FakeTreeSource()
         src.Hives = [Make.Hive('h1')]
@@ -83,6 +109,7 @@ describe('TenantTreeViewModel', () =>
         const vm = new TenantTreeViewModel(src)
         await vm.Load()
         assert.equal(await vm.ApplyEvent({ type: TenantEventType.EnvironmentChanged, environmentName: 'zzz' }), false)
+        assert.equal(await vm.ApplyEvent({ type: TenantEventType.EnvironmentDeleted, environmentName: 'zzz' }), false)
         assert.equal(await vm.ApplyEvent({ type: TenantEventType.HealthChanged, environmentName: 'a' }), false)
         assert.equal(src.EnvCalls, 1)
     })

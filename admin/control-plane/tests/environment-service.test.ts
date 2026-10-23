@@ -6,7 +6,7 @@ import { mkdtemp, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EnvironmentRegistry } from '../environment-registry.js'
-import { EnvStatus, EnvType, Template, type EnvironmentRecord, type IContainerProbe } from '../environment-record.js'
+import { EnvStatus, EnvType, EnvironmentChangeKind, Template, type EnvironmentChange, type EnvironmentRecord, type IContainerProbe } from '../environment-record.js'
 import { PortAllocator, PortUnavailableError, type IPortProbe } from '../port-allocator.js'
 import { EnvironmentService, EnvironmentNotDevelopmentError, EnvironmentNotRuntimeError, EnvironmentExistsError, EnvironmentNotFoundError, ImageMissingError, DockerUnavailableError, CreateFailedError } from '../environment-service.js'
 import { ClientRegistry } from '../client-registry.js'
@@ -518,16 +518,53 @@ test('a throwing OnChanged subscriber neither fails Start nor blocks later subsc
 {
     const h = await Harness.Make()
     await h.Registry.Put(Harness.Record('s1', EnvStatus.Stopped))
-    const received: EnvironmentRecord[] = []
+    const received: EnvironmentChange[] = []
     h.Service.OnChanged(() =>
     {
         throw new Error('subscriber boom')
     })
-    h.Service.OnChanged(rec => received.push(rec))
+    h.Service.OnChanged(change => received.push(change))
     const rec = await h.Service.Start('s1')
     assert.equal(rec.status, EnvStatus.Running)
     assert.equal(received.length, 1)
-    assert.equal(received[0].status, EnvStatus.Running)
+    assert.equal(received[0].kind, EnvironmentChangeKind.Changed)
+    assert.equal(received[0].record.status, EnvStatus.Running)
+})
+
+test('Create fires a Created change carrying the new record', async () =>
+{
+    const h = await Harness.Make()
+    const received: EnvironmentChange[] = []
+    h.Service.OnChanged(change => received.push(change))
+    const rec = await h.Service.Create('dev1', Template.DevBlank, EnvType.Development)
+    assert.equal(received.length, 1)
+    assert.equal(received[0].kind, EnvironmentChangeKind.Created)
+    assert.equal(received[0].record.name, rec.name)
+    assert.equal(received[0].record.status, EnvStatus.Running)
+})
+
+test('a failed Create fires a Created change carrying the Failed record', async () =>
+{
+    const h = await Harness.Make()
+    h.Docker.FailUp = true
+    const received: EnvironmentChange[] = []
+    h.Service.OnChanged(change => received.push(change))
+    await assert.rejects(() => h.Service.Create('a', Template.DevBlank, EnvType.Development), CreateFailedError)
+    assert.equal(received.length, 1)
+    assert.equal(received[0].kind, EnvironmentChangeKind.Created)
+    assert.equal(received[0].record.status, EnvStatus.Failed)
+})
+
+test('Delete fires a Deleted change carrying the removed record', async () =>
+{
+    const h = await Harness.Make()
+    await h.Registry.Put(Harness.Record('s1', EnvStatus.Running))
+    const received: EnvironmentChange[] = []
+    h.Service.OnChanged(change => received.push(change))
+    await h.Service.Delete('s1')
+    assert.equal(received.length, 1)
+    assert.equal(received[0].kind, EnvironmentChangeKind.Deleted)
+    assert.equal(received[0].record.name, 's1')
 })
 
 test('LogStream resolves the record and delegates to docker.LogStream, forwarding chunks', async () =>

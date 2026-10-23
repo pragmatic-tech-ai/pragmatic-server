@@ -135,10 +135,12 @@ export class HiveDetailViewModel extends Observable
         await this.Load()
     }
 
-    // Reloads when the event is for one of this hive's environments; resolves true when it did.
+    // Reloads when a change or delete is for one of this hive's environments; resolves true when it did.
+    // A create carries no hive attribution, so the hive detail leaves it to TenantApp's pane refresh.
     public async ApplyEvent(ev: TenantEvent): Promise<boolean>
     {
-        if (ev.type !== TenantEventType.EnvironmentChanged || !this.envNames.includes(ev.environmentName))
+        const lifecycle = ev.type === TenantEventType.EnvironmentChanged || ev.type === TenantEventType.EnvironmentDeleted
+        if (!lifecycle || !this.envNames.includes(ev.environmentName))
         {
             return false
         }
