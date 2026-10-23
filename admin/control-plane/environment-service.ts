@@ -330,6 +330,13 @@ export class EnvironmentService
         return this.SetStatus(rec, EnvStatus.Stopped)
     }
 
+    /** Stops then starts the environment, sequentially, reusing the single-step methods; returns the final Running record. */
+    public async Restart(name: string): Promise<EnvironmentRecord>
+    {
+        await this.Stop(name)
+        return await this.Start(name)
+    }
+
     public async Delete(name: string): Promise<void>
     {
         const rec = this.Require(name)

@@ -94,6 +94,13 @@ class FakeService implements IEnvironmentService
         return { ...this.Record, name, status: EnvStatus.Stopped }
     }
 
+    public async Restart(name: string): Promise<EnvironmentRecord>
+    {
+        this.Calls.push(`restart:${name}`)
+        this.MaybeThrow()
+        return { ...this.Record, name }
+    }
+
     public async Delete(name: string): Promise<void>
     {
         this.Calls.push(`delete:${name}`)

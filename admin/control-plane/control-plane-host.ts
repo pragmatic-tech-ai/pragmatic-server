@@ -51,6 +51,7 @@ export interface IEnvironmentService
     Create(name: string, template: Template, type: EnvType, hostPort?: number, hiveId?: string): Promise<EnvironmentRecord>
     Start(name: string): Promise<EnvironmentRecord>
     Stop(name: string): Promise<EnvironmentRecord>
+    Restart(name: string): Promise<EnvironmentRecord>
     Delete(name: string): Promise<void>
     List(): readonly EnvironmentRecord[]
     ListReconciled(): Promise<readonly EnvironmentRecord[]>

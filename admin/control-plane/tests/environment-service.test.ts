@@ -512,6 +512,17 @@ test('Stop calls Down and marks Stopped', async () =>
     assert.equal(h.Registry.Get('s1')?.status, EnvStatus.Stopped)
 })
 
+test('Restart stops then starts (ordered) and returns a Running record', async () =>
+{
+    const h = await Harness.Make()
+    await h.Registry.Put(Harness.Record('s1', EnvStatus.Running))
+    h.Calls.length = 0
+    const rec = await h.Service.Restart('s1')
+    assert.deepEqual(h.Calls, ['down', 'put:stopped', 'up', 'waitHealthy', 'put:running'])
+    assert.equal(rec.status, EnvStatus.Running)
+    assert.equal(h.Registry.Get('s1')?.status, EnvStatus.Running)
+})
+
 test('Delete downs, removes volume, and unregisters', async () =>
 {
     const h = await Harness.Make()
