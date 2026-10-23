@@ -16,6 +16,7 @@ Before the first start. This emits admin/portal/dist/, which the control plane s
 
 ```
 npm --prefix admin/portal install && npm --prefix admin/portal run build
+npm --prefix admin/tenant-portal install && npm --prefix admin/tenant-portal run build
 ```
 
 ## Start the control plane
