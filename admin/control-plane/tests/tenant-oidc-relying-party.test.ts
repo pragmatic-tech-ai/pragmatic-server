@@ -421,6 +421,28 @@ test('durable Begin rotates the secret after the TTL: new secret, rotatedAt adva
     })
 })
 
+test('durable Begin rotates when rotatedAt is corrupted/unparseable, rather than freezing the secret', async () =>
+{
+    await IdpFixture.With(async (conn, _browser) =>
+    {
+        const fixture = await DurableFixture.Create()
+        const clock = new Clock(DurableTimes.Start)
+        const secrets: string[] = []
+        const rp = new TenantOidcRelyingParty(
+            new StubIdp(conn), await IdpFixture.Directory(), DurableFixture.RecordingFactory(secrets), IdpFixture.CallbackUrl,
+            undefined, undefined, fixture.Durability(clock.Now, DurableTimes.TtlMs))
+
+        await rp.Begin(IdpFixture.TenantId)
+        const firstSecret = await fixture.StoredSecret(IdpFixture.TenantId)
+        const record = fixture.registry.Get(IdpFixture.TenantId)!
+        await fixture.registry.Put({ ...record, rotatedAt: 'not-a-date' })
+
+        // The clock has NOT advanced past the TTL, so only the unparseable rotatedAt can force this rotation.
+        await rp.Begin(IdpFixture.TenantId)
+        assert.notEqual(await fixture.StoredSecret(IdpFixture.TenantId), firstSecret)
+    })
+})
+
 test('durable secret persists across a fresh relying-party over the same store, key and registry', async () =>
 {
     await IdpFixture.With(async (conn, _browser) =>

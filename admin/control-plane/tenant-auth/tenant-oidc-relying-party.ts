@@ -223,11 +223,17 @@ export class TenantOidcRelyingParty implements ITenantOidcRelyingParty
         }
     }
 
+    /** A fresh random confidential-client secret. */
+    private MintSecret(): string
+    {
+        return randomBytes(TenantOidcRelyingParty.SecretBytes).toString(TenantOidcRelyingParty.SecretEncoding)
+    }
+
     /** Non-durable path: a brand-new secret, seeded into the in-memory store, on every login (legacy behaviour). */
     private async FreshSecretForLogin(secretRef: string): Promise<string>
     {
         const stores = await this.stores()
-        const secret = randomBytes(TenantOidcRelyingParty.SecretBytes).toString(TenantOidcRelyingParty.SecretEncoding)
+        const secret = this.MintSecret()
         await stores.Secrets.Put(secretRef, secret)
         return secret
     }
@@ -252,10 +258,12 @@ export class TenantOidcRelyingParty implements ITenantOidcRelyingParty
         const stores = await this.stores()
         const record = durability.registry.Get(tenantId)
         const existing = await stores.Secrets.Get(secretRef)
-        const aged = record !== undefined && (now() - Date.parse(record.rotatedAt)) > durability.secretTtlMs
+        // A corrupted/unparseable rotatedAt counts as aged, so a bad row forces a rotation rather than freezing the secret forever.
+        const parsed = record === undefined ? Number.NaN : Date.parse(record.rotatedAt)
+        const aged = record !== undefined && (Number.isNaN(parsed) || (now() - parsed) > durability.secretTtlMs)
         if (record === undefined || existing === null || aged)
         {
-            const secret = randomBytes(TenantOidcRelyingParty.SecretBytes).toString(TenantOidcRelyingParty.SecretEncoding)
+            const secret = this.MintSecret()
             await stores.Secrets.Put(secretRef, secret)
             await durability.registry.Put({ id: tenantId, tenantId, clientId: TenantOidcRelyingParty.AdminClientId, secretRef, rotatedAt: new Date(now()).toISOString() })
             return secret
