@@ -104,8 +104,6 @@ export class IdpMain
     {
         return process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1];
     }
-        return fileURLToPath(import.meta.url) === entry || parse(entry).name === IdpMain.BinName;
-    }
 
     private static ParseTenants(raw: string | undefined): string[]
     {
