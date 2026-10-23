@@ -1,5 +1,7 @@
 import { Orientation, StackPanel, TextBlock, TextBox } from '@pragmatic-tech-ai/mural/basic'
 import { TenantApiClient } from './tenant-api-client.js'
+import { TenantTreeView } from './tenant-tree-view.js'
+import { TenantTreeViewModel } from './tenant-tree-view-model.js'
 import { TenantViewBase } from './tenant-view-base.js'
 import type { EnvironmentDto, HiveDto, ITenantNavigator, ITenantView, SessionDto, TenantEvent } from './tenant-types.js'
 
@@ -74,6 +76,7 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     private readonly treeHost = new StackPanel()
     private readonly detailHost = new StackPanel()
     private current: ITenantView | undefined
+    private tree: TenantTreeView | undefined
     private eventUnsub: (() => void) | undefined
 
     public constructor(client: TenantApiClient = new TenantApiClient(), environment: ITenantEnvironment = new BrowserTenantEnvironment())
@@ -137,9 +140,10 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     public ShowTree(): void
     {
         this.Clear(this.treeHost)
-        const t = new TextBlock()
-        t.Text = TenantApp.TreePlaceholderText
-        this.treeHost.AddChild(t)
+        this.tree = new TenantTreeView(new TenantTreeViewModel(this.client))
+        this.tree.AttachNavigator(this)
+        this.treeHost.AddChild(this.tree)
+        void this.tree.Refresh()
         this.Show(new DetailPlaceholderView(TenantApp.EmptySelectionText))
     }
 
@@ -196,13 +200,15 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     {
         this.current?.Dispose?.()
         this.current = undefined
+        this.tree = undefined
         this.eventUnsub?.()
         this.eventUnsub = undefined
         this.tenantName.Text = ''
     }
 
-    private OnTenantEvent(_ev: TenantEvent): void
+    private OnTenantEvent(ev: TenantEvent): void
     {
+        this.tree?.ApplyEvent(ev)
         void this.current?.Refresh()
     }
 
