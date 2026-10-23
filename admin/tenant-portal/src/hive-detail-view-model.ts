@@ -11,7 +11,7 @@ export interface IHiveDetailSource
     SelectTarget(hiveId: string, version: string): Promise<void>
 }
 
-export type VersionRow = { manifest: ManifestDto; badge: VersionBadge; isTarget: boolean }
+export type VersionRow = { manifest: ManifestDto; badge: VersionBadge; isTarget: boolean; withdrawn: boolean }
 export type PendingTarget = { version: string; impact: string }
 export type FailedRoll = { message: string; stayedOn: string }
 
@@ -89,8 +89,15 @@ export class HiveDetailViewModel extends Observable
         const old = this.versions
         this.versions = sorted.map((manifest, i) => ({
             manifest,
-            badge: i === currentIndex ? VersionBadge.Current : currentIndex >= 0 && i === currentIndex + 1 ? VersionBadge.Previous : VersionBadge.Available,
+            // The current (running) version keeps its Current badge even if withdrawn; any other withdrawn version is
+            // badged Withdrawn, overriding the positional Previous/Available meaning.
+            badge: i === currentIndex
+                ? VersionBadge.Current
+                : manifest.withdrawn === true
+                    ? VersionBadge.Withdrawn
+                    : currentIndex >= 0 && i === currentIndex + 1 ? VersionBadge.Previous : VersionBadge.Available,
             isTarget: i === currentIndex,
+            withdrawn: manifest.withdrawn === true,
         }))
         this.running = currentIndex >= 0 ? sorted[currentIndex]!.id : undefined
         this.health = health
@@ -100,6 +107,11 @@ export class HiveDetailViewModel extends Observable
 
     public BeginTarget(version: string): void
     {
+        // A withdrawn version is never a valid roll target; the view hides its button, and this guards a direct call.
+        if (this.versions.find(r => r.manifest.id === version)?.withdrawn === true)
+        {
+            return
+        }
         const names = this.envNames.join(HiveDetailViewModel.NameSeparator)
         const impact = names === ''
             ? HiveDetailViewModel.ImpactPrefix + version + HiveDetailViewModel.ImpactNoEnvironments

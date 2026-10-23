@@ -195,6 +195,9 @@ export class ControlPlaneHost
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/([^/]+)/' + ControlPlaneHost.HealthSegment + '$')
     private static readonly ManifestsSegment = 'manifests'
     private static readonly ManifestsPath = ControlPlaneHost.ApiPrefix + ControlPlaneHost.ManifestsSegment
+    private static readonly WithdrawnSegment = 'withdrawn'
+    private static readonly ManifestWithdrawnPathPattern = new RegExp(
+        '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.ManifestsSegment + '/([^/]+)/' + ControlPlaneHost.WithdrawnSegment + '$')
     private static readonly GatingSegment = 'gating'
     private static readonly TargetSegment = 'target'
     private static readonly RolloutSegment = 'rollout'
@@ -751,6 +754,11 @@ export class ControlPlaneHost
         {
             return await this.RoutePublishManifest(req, res, method)
         }
+        const mwm = ControlPlaneHost.ManifestWithdrawnPathPattern.exec(path)
+        if (mwm !== null)
+        {
+            return await this.RouteManifestWithdrawn(req, res, method, mwm)
+        }
         const agm = ControlPlaneHost.AgentPathPattern.exec(path)
         if (agm !== null)
         {
@@ -956,6 +964,20 @@ export class ControlPlaneHost
         }
         const manifest: ManifestDto = await this.deployments.Publish(body.version as string, body.image as string, body.notes as string | undefined)
         this.WriteJson(res, ControlPlaneHost.StatusCreated, manifest)
+        return true
+    }
+
+    /** Serves POST /api/manifests/:version/withdrawn (withdraw) and DELETE (restore); 404 for an unknown version, false for any other method. */
+    private async RouteManifestWithdrawn(req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
+    {
+        const withdraw = method === ControlPlaneHost.MethodPost
+        if (!withdraw && method !== ControlPlaneHost.MethodDelete)
+        {
+            return false
+        }
+        const version = decodeURIComponent(m[1] as string)
+        const manifest: ManifestDto = await this.deployments.SetWithdrawn(version, withdraw)
+        this.WriteJson(res, ControlPlaneHost.StatusOk, manifest)
         return true
     }
 

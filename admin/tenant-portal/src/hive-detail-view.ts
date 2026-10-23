@@ -1,4 +1,5 @@
 import { Orientation, StackPanel, TextBlock } from '@pragmatic-tech-ai/mural/basic'
+import { TextDecorations } from '@pragmatic-tech-ai/mural/visual-engine'
 import { HiveDetailViewModel } from './hive-detail-view-model.js'
 import type { IHiveDetailSource, VersionRow } from './hive-detail-view-model.js'
 import { TenantViewBase } from './tenant-view-base.js'
@@ -24,6 +25,7 @@ export class HiveDetailView extends TenantViewBase
         [VersionBadge.Current]: 'Current',
         [VersionBadge.Previous]: 'Previous',
         [VersionBadge.Available]: 'Available',
+        [VersionBadge.Withdrawn]: 'Withdrawn',
     }
 
     private static readonly PillSeparator = '  '
@@ -94,11 +96,17 @@ export class HiveDetailView extends TenantViewBase
     {
         const panel = new StackPanel()
         panel.Orientation = Orientation.Horizontal
-        panel.AddChild(this.Text(row.manifest.id + HiveDetailView.PillSeparator + HiveDetailView.BadgeLabels[row.badge]))
-        if (row.badge !== VersionBadge.Current)
+        const label = this.Text(row.manifest.id + HiveDetailView.PillSeparator + HiveDetailView.BadgeLabels[row.badge])
+        if (row.withdrawn)
         {
-            const label = row.badge === VersionBadge.Previous ? HiveDetailView.RollBackLabel : HiveDetailView.SetTargetLabel
-            panel.AddChild(this.MakeButton(label, () => this.vm.BeginTarget(row.manifest.id)))
+            // Struck through to mark the version withdrawn/obsolete; no roll button, as it is not a valid target.
+            label.TextDecorations = TextDecorations.Strikethrough
+        }
+        panel.AddChild(label)
+        if (row.badge !== VersionBadge.Current && !row.withdrawn)
+        {
+            const buttonLabel = row.badge === VersionBadge.Previous ? HiveDetailView.RollBackLabel : HiveDetailView.SetTargetLabel
+            panel.AddChild(this.MakeButton(buttonLabel, () => this.vm.BeginTarget(row.manifest.id)))
         }
         return panel
     }

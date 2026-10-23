@@ -64,6 +64,19 @@ export class PlatformDeploymentRegistry
         return record
     }
 
+    /** Marks a published version withdrawn (or restores it). A withdrawn version stays published and gated but is flagged for the UI. */
+    public async SetWithdrawn(version: string, withdrawn: boolean): Promise<ManifestRecord>
+    {
+        const manifest = this.manifests.Get(version)
+        if (manifest === undefined)
+        {
+            throw new UnknownManifestError(version)
+        }
+        const updated: ManifestRecord = { ...manifest, withdrawn }
+        await this.manifests.Put(updated)
+        return updated
+    }
+
     public ManifestsFor(tenantId: string): readonly ManifestRecord[]
     {
         const result: ManifestRecord[] = []

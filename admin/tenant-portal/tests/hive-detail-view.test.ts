@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { Button } from '@pragmatic-tech-ai/mural/framework'
+import { TextDecorations } from '@pragmatic-tech-ai/mural/visual-engine'
 import { HiveDetailView } from '../src/hive-detail-view.js'
 import type { IHiveDetailSource } from '../src/hive-detail-view-model.js'
 import type { HiveDto, HiveHealthDto, HiveRolloutDto, ManifestDto } from '../src/tenant-types.js'
@@ -61,17 +62,44 @@ class Fixtures
     {
         await new Promise(r => setTimeout(r, 0))
     }
+
+    // Finds the first text node whose Text includes `needle` and returns its TextDecorations.
+    public static DecorationsOf(node: unknown, needle: string): TextDecorations | undefined
+    {
+        const n = node as { Text?: unknown; TextDecorations?: TextDecorations; Children?: Iterable<unknown> }
+        if (typeof n.Text === 'string' && n.Text.includes(needle))
+        {
+            return n.TextDecorations
+        }
+        if (n.Children !== undefined)
+        {
+            for (const c of n.Children)
+            {
+                const found = Fixtures.DecorationsOf(c, needle)
+                if (found !== undefined)
+                {
+                    return found
+                }
+            }
+        }
+        return undefined
+    }
 }
 
 class FakeSource implements IHiveDetailSource
 {
     public Target = 'v2'
     public Fail: Error | undefined
-    private readonly manifests: ManifestDto[] = [
+    private manifests: ManifestDto[] = [
         { id: 'v1', image: 'img:v1', publishedAt: '2026-01-01' },
         { id: 'v2', image: 'img:v2', publishedAt: '2026-02-01' },
         { id: 'v3', image: 'img:v3', publishedAt: '2026-03-01' },
     ]
+
+    public SetManifests(manifests: ManifestDto[]): void
+    {
+        this.manifests = manifests
+    }
 
     public async ListManifests(): Promise<ManifestDto[]>
     {
@@ -114,6 +142,25 @@ describe('HiveDetailView', () =>
         assert.ok(texts.includes('v3  ' + HiveDetailView.BadgeLabels[2]))
         assert.ok(texts.includes(HiveDetailView.RollBackLabel))
         assert.ok(texts.includes(HiveDetailView.SetTargetLabel))
+    })
+
+    it('renders a withdrawn version struck through with no roll button', async () =>
+    {
+        const src = new FakeSource()
+        src.Target = 'v3'
+        src.SetManifests([
+            { id: 'v1', image: 'img:v1', publishedAt: '2026-01-01', withdrawn: true },
+            { id: 'v2', image: 'img:v2', publishedAt: '2026-02-01' },
+            { id: 'v3', image: 'img:v3', publishedAt: '2026-03-01' },
+        ])
+        const view = new HiveDetailView(src, Hive)
+        await view.Refresh()
+        const texts = Fixtures.Texts(view)
+        // v3 Current (no button), v2 Previous (RollBack), v1 Withdrawn (struck through, no button).
+        assert.ok(texts.includes('v1  ' + HiveDetailView.BadgeLabels[3]))
+        assert.equal(Fixtures.DecorationsOf(view, 'v1  ' + HiveDetailView.BadgeLabels[3]), TextDecorations.Strikethrough)
+        assert.ok(texts.includes(HiveDetailView.RollBackLabel))
+        assert.ok(!texts.includes(HiveDetailView.SetTargetLabel))
     })
 
     it('shows the failure message and stayed-on version after a failed roll', async () =>
