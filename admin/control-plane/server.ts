@@ -189,7 +189,7 @@ export class ControlPlaneServer
         const gate = new TenantAuthGate(sessions)
         const api = new TenantApiEndpoint(service, directory, deployments, orchestrators, placement)
         const events = new TenantEventBus()
-        return { endpoint, gate, api, allowedHosts, events, staticRoot }
+        return { endpoint, gate, api, allowedHosts, events, staticRoot, isDurable: rp.IsDurable }
     }
 
     /** Pure: parses the tenant-admin secret TTL in hours; anything but a positive integer yields the default. */

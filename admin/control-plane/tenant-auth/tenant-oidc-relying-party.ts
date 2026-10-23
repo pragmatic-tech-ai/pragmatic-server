@@ -198,6 +198,12 @@ export class TenantOidcRelyingParty implements ITenantOidcRelyingParty
         this.flowStates = flowStates ?? new InMemoryOidcFlowStateStore()
     }
 
+    /** True when the durable reuse/TTL path is wired (production); false means the legacy fresh-secret-each-login path. */
+    public get IsDurable(): boolean
+    {
+        return this.durability !== undefined
+    }
+
     public async Begin(tenantId: string): Promise<{ Url: string; State: string }>
     {
         try
