@@ -34,12 +34,18 @@ export class PlaneHttp
         ['.txt', 'text/plain; charset=utf-8']
     ])
 
+    /** The lowercased, port-stripped host of a Host header, or undefined when absent or unparseable. */
+    public static HostName(hostHeader: string | undefined): string | undefined
+    {
+        const m = hostHeader === undefined ? null : PlaneHttp.HostHeaderPattern.exec(hostHeader)
+        return m === null ? undefined : (m[1] as string).toLowerCase()
+    }
+
     /** True when the request's Host header (port stripped, lowercased) is in the given set. */
     public static HostIn(req: IncomingMessage, allowed: ReadonlySet<string>): boolean
     {
-        const header = req.headers[PlaneHttp.HostHeader]
-        const m = header === undefined ? null : PlaneHttp.HostHeaderPattern.exec(header)
-        return m !== null && allowed.has((m[1] as string).toLowerCase())
+        const h = PlaneHttp.HostName(req.headers[PlaneHttp.HostHeader] as string | undefined)
+        return h !== undefined && allowed.has(h)
     }
 
     public static IsMutating(req: IncomingMessage): boolean

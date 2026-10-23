@@ -106,3 +106,11 @@ test('ServeStatic serves files with MIME, 404s missing, and refuses traversal', 
         rmSync(base, { recursive: true, force: true })
     }
 })
+
+test('HostName lowercases, strips the port, and is undefined for absent or malformed headers', () =>
+{
+    assert.equal(PlaneHttp.HostName('LocalHost:8080'), 'localhost')
+    assert.equal(PlaneHttp.HostName('[::1]:3000'), '[::1]')
+    assert.equal(PlaneHttp.HostName('a:b:c'), undefined)
+    assert.equal(PlaneHttp.HostName(undefined), undefined)
+})
