@@ -162,6 +162,25 @@ export class PlatformDirectory
         return record
     }
 
+    public async RecordTenantProvisioning(id: string, fields: { ownerEmail: string; ownerPrincipalId: string; idpBaseUrl: string; idpCaRef?: string; idpAdminTokenRef?: string }): Promise<TenantRecord>
+    {
+        const existing = this.tenants.Get(id)
+        if (existing === undefined)
+        {
+            throw new UnknownTenantError(id)
+        }
+        const record: TenantRecord = {
+            ...existing,
+            ownerEmail: fields.ownerEmail,
+            ownerPrincipalId: fields.ownerPrincipalId,
+            idpBaseUrl: fields.idpBaseUrl,
+            idpCaRef: fields.idpCaRef,
+            idpAdminTokenRef: fields.idpAdminTokenRef
+        }
+        await this.tenants.Put(record)
+        return record
+    }
+
     public async DeleteTenant(id: string): Promise<void>
     {
         if (this.hives.List().some(h => h.tenantId === id))
