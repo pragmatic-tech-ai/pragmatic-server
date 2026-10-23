@@ -134,11 +134,11 @@ export class ControlPlaneServer
         const provisioning = new TenantProvisioningService(idpService, directory, conn => new IdpAdminClient(conn))
         const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, orchestrators, deployments, provisioning)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
-        // The operator listener is structurally loopback-only: no tenant route is mounted on it.
-        await host.Listen(port, ControlPlaneServer.BindHost)
-        console.log(ControlPlaneServer.ListeningPrefix + String(port) + ControlPlaneServer.ListeningSuffix)
         const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie, service, deployments, orchestrators, placement,
             masterKey, adminClientRegistry, ControlPlaneServer.ParseSecretTtlHours(process.env[ControlPlaneServer.SecretTtlEnvVar]))
+        // Resolve (and validate) the tenant port + bind BEFORE binding the operator listener, so a misconfigured
+        // tenant port fails fast at startup rather than after the operator socket is already live.
+        let tenantStart: { host: TenantPlaneHost; port: number; bind: string; scheme: string; baseDomain: string } | undefined
         if (tenantPlane !== undefined)
         {
             const baseDomain = process.env[ControlPlaneServer.TenantBaseDomainEnvVar] as string
@@ -148,8 +148,15 @@ export class ControlPlaneServer
             const tenantHost = new TenantPlaneHost(tenantPlane, resolver, tenantStaticRoot, service)
             const tenantPort = ControlPlaneServer.ResolveTenantPort(process.env[ControlPlaneServer.TenantPortEnvVar])
             const tenantBind = ControlPlaneServer.TenantBind(process.env[ControlPlaneServer.TenantBindEnvVar])
-            await tenantHost.Listen(tenantPort, tenantBind)
-            console.log(ControlPlaneServer.TenantListeningPrefix + scheme + ControlPlaneServer.SchemeHostSeparator + baseDomain + ControlPlaneServer.HostPortSeparator + String(tenantPort) + ControlPlaneServer.ListeningSuffix)
+            tenantStart = { host: tenantHost, port: tenantPort, bind: tenantBind, scheme, baseDomain }
+        }
+        // The operator listener is structurally loopback-only: no tenant route is mounted on it.
+        await host.Listen(port, ControlPlaneServer.BindHost)
+        console.log(ControlPlaneServer.ListeningPrefix + String(port) + ControlPlaneServer.ListeningSuffix)
+        if (tenantStart !== undefined)
+        {
+            await tenantStart.host.Listen(tenantStart.port, tenantStart.bind)
+            console.log(ControlPlaneServer.TenantListeningPrefix + tenantStart.scheme + ControlPlaneServer.SchemeHostSeparator + tenantStart.baseDomain + ControlPlaneServer.HostPortSeparator + String(tenantStart.port) + ControlPlaneServer.ListeningSuffix)
         }
     }
 
