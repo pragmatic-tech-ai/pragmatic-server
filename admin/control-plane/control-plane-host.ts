@@ -2,8 +2,7 @@ import { createServer } from 'node:http'
 import type { IncomingMessage, Server as HttpServer, ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import type { Duplex } from 'node:stream'
-import { readFile } from 'node:fs/promises'
-import { extname, resolve, sep } from 'node:path'
+import { resolve } from 'node:path'
 import { WebSocketServer, WebSocket } from 'ws'
 import {
     CreateFailedError,
@@ -36,6 +35,7 @@ import {
     type PlatformDirectory
 } from './platform-directory.js'
 import { HiveBackend, InfraMode, InvalidRecordIdError } from './platform-records.js'
+import { PlaneHttp } from './plane-http.js'
 import { UnsupportedBackendError } from './hive-orchestrator.js'
 import type { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import { EnvironmentPlacement } from './environment-placement.js'
@@ -156,8 +156,6 @@ export class ControlPlaneHost
     private static readonly BaseUrl = ControlPlaneHost.HttpScheme + ControlPlaneHost.LocalName
     private static readonly PortSeparator = ':'
     private static readonly AllowedHosts: ReadonlySet<string> = new Set([ControlPlaneHost.LocalName, '127.0.0.1', '[::1]'])
-    private static readonly HostHeaderPattern = /^(\[[^\]]+\]|[^:]+)(?::\d+)?$/
-    private static readonly HostHeader = 'host'
     private static readonly ContentTypeHeader = 'content-type'
     private static readonly CacheControlHeader = 'Cache-Control'
     private static readonly NoStore = 'no-store'
@@ -232,7 +230,6 @@ export class ControlPlaneHost
     private static readonly SessionPath = '/api/session'
     private static readonly LogoutPath = '/api/logout'
     private static readonly SetCookieHeader = 'set-cookie'
-    private static readonly OriginHeader = 'origin'
     private static readonly CookieHeader = 'cookie'
     private static readonly StatusUnauthorized = 401
     private static readonly InvalidCredentialsMessage = 'Invalid email or password'
@@ -254,7 +251,6 @@ export class ControlPlaneHost
     private static readonly AdminPathPattern = new RegExp(
         '^' + ControlPlaneHost.EnvironmentsPath + '/([^/]+)/' + ControlPlaneHost.AdminSegment + '/(' +
         [ControlPlaneHost.SnapshotPath, ControlPlaneHost.AccountsPath, ControlPlaneHost.GrantsPath, ControlPlaneHost.ConfigPath, ControlPlaneHost.SecurityModelPath].join('|') + ')(?:/([^/]+))?$')
-    private static readonly MethodPut = 'PUT'
     private static readonly GraphsSegment = 'graphs'
     private static readonly GraphPathPattern = new RegExp(
         '^' + ControlPlaneHost.EnvironmentsPath + '/([^/]+)/' + ControlPlaneHost.GraphsSegment + '(?:/([^/]+))?$')
@@ -278,28 +274,17 @@ export class ControlPlaneHost
     private static readonly SecurityModelFieldMessage = 'securityModel (object) is required'
     private static readonly BodyObjectMessage = 'Request body must be a JSON object'
     private static readonly ConnectUnavailableMessage = 'Environment is not reachable'
-    private static readonly MethodGet = 'GET'
-    private static readonly MethodPost = 'POST'
-    private static readonly MethodDelete = 'DELETE'
-    private static readonly IndexFile = 'index.html'
-    private static readonly RootPath = '/'
     private static readonly Utf8 = 'utf8'
-    private static readonly ContentType = 'Content-Type'
-    private static readonly JsonType = 'application/json; charset=utf-8'
-    private static readonly DefaultType = 'application/octet-stream'
     private static readonly ChangedType = 'environments-changed'
     private static readonly MaxBodyBytes = 4096
-    private static readonly StatusOk = 200
     private static readonly StatusCreated = 201
     private static readonly StatusBadRequest = 400
-    private static readonly StatusNotFound = 404
     private static readonly StatusConflict = 409
     private static readonly StatusTooLarge = 413
     private static readonly StatusInternal = 500
     private static readonly StatusBadGateway = 502
     private static readonly StatusUnavailable = 503
     private static readonly GenericError = 'Internal server error'
-    private static readonly NotFoundMessage = 'Not found'
     private static readonly TooLargeMessage = 'Request body too large'
     private static readonly BadJsonMessage = 'Request body must be valid JSON'
     private static readonly NameRequiredMessage = 'name (string) is required'
@@ -307,36 +292,24 @@ export class ControlPlaneHost
     private static readonly TypeInvalidMessage = 'type must be one of: '
     private static readonly HostPortInvalidMessage = 'hostPort must be an integer between 1 and 65535'
     private static readonly MaxPort = 65535
-    private static readonly MimeTypes: ReadonlyMap<string, string> = new Map([
-        ['.html', 'text/html; charset=utf-8'],
-        ['.js', 'text/javascript; charset=utf-8'],
-        ['.mjs', 'text/javascript; charset=utf-8'],
-        ['.css', 'text/css; charset=utf-8'],
-        ['.json', 'application/json; charset=utf-8'],
-        ['.svg', 'image/svg+xml'],
-        ['.png', 'image/png'],
-        ['.ico', 'image/x-icon'],
-        ['.map', 'application/json; charset=utf-8'],
-        ['.txt', 'text/plain; charset=utf-8']
-    ])
     private static readonly ErrorStatuses: ReadonlyMap<ErrorCtor, number> = new Map<ErrorCtor, number>([
         [InvalidEnvironmentNameError, ControlPlaneHost.StatusBadRequest],
-        [EnvironmentNotFoundError, ControlPlaneHost.StatusNotFound],
+        [EnvironmentNotFoundError, PlaneHttp.StatusNotFound],
         [EnvironmentExistsError, ControlPlaneHost.StatusConflict],
         [PortUnavailableError, ControlPlaneHost.StatusConflict],
         [ImageMissingError, ControlPlaneHost.StatusConflict],
         [DockerUnavailableError, ControlPlaneHost.StatusUnavailable],
         [CreateFailedError, ControlPlaneHost.StatusInternal],
         [GraphExistsError, ControlPlaneHost.StatusConflict],
-        [GraphNotFoundError, ControlPlaneHost.StatusNotFound],
+        [GraphNotFoundError, PlaneHttp.StatusNotFound],
         [GraphNameInvalidError, ControlPlaneHost.StatusBadRequest],
         [EnvironmentNotDevelopmentError, ControlPlaneHost.StatusBadRequest],
         [EnvironmentNotRuntimeError, ControlPlaneHost.StatusBadRequest],
         [InvalidRecordIdError, ControlPlaneHost.StatusBadRequest],
         [InvalidTenantIdError, ControlPlaneHost.StatusBadRequest],
         [RecordExistsError, ControlPlaneHost.StatusConflict],
-        [UnknownClientError, ControlPlaneHost.StatusNotFound],
-        [UnknownTenantError, ControlPlaneHost.StatusNotFound],
+        [UnknownClientError, PlaneHttp.StatusNotFound],
+        [UnknownTenantError, PlaneHttp.StatusNotFound],
         [ClientHasTenantsError, ControlPlaneHost.StatusConflict],
         [TenantHasHivesError, ControlPlaneHost.StatusConflict],
         [HiveHasEnvironmentsError, ControlPlaneHost.StatusConflict],
@@ -345,10 +318,10 @@ export class ControlPlaneHost
         [KubectlError, ControlPlaneHost.StatusBadGateway],
         // The tenant is not authorized to that version (it was never gated to it): forbidden, not missing.
         [ManifestNotGatedError, ControlPlaneHost.StatusForbidden],
-        [UnknownManifestError, ControlPlaneHost.StatusNotFound],
+        [UnknownManifestError, PlaneHttp.StatusNotFound],
         [ManifestExistsError, ControlPlaneHost.StatusConflict],
-        [HiveNotRegisteredError, ControlPlaneHost.StatusNotFound],
-        [UnknownHiveError, ControlPlaneHost.StatusNotFound],
+        [HiveNotRegisteredError, PlaneHttp.StatusNotFound],
+        [UnknownHiveError, PlaneHttp.StatusNotFound],
         [AgentUnauthorizedError, ControlPlaneHost.StatusUnauthorized]
     ])
 
@@ -435,7 +408,7 @@ export class ControlPlaneHost
      */
     private RouteUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, wss: WebSocketServer): void
     {
-        const path = new URL(req.url ?? ControlPlaneHost.RootPath, ControlPlaneHost.BaseUrl).pathname
+        const path = new URL(req.url ?? PlaneHttp.RootPath, ControlPlaneHost.BaseUrl).pathname
         if (path === ControlPlaneHost.EventsPath)
         {
             this.UpgradeOperatorEvents(req, socket, head, wss)
@@ -570,7 +543,7 @@ export class ControlPlaneHost
     /** Both tenant ws routes share this gate: the request host and (present) origin must be configured tenant hosts. */
     private static TenantUpgradeAllowed(req: IncomingMessage, tenant: TenantPlane): boolean
     {
-        return ControlPlaneHost.HostIn(req, tenant.allowedHosts) && ControlPlaneHost.OriginInHosts(req, tenant.allowedHosts)
+        return PlaneHttp.HostIn(req, tenant.allowedHosts) && PlaneHttp.OriginInHosts(req, tenant.allowedHosts)
     }
 
     public async Close(): Promise<void>
@@ -622,16 +595,16 @@ export class ControlPlaneHost
         {
             if (!this.HostAccepted(req))
             {
-                this.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.ForbiddenHostMessage })
+                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.ForbiddenHostMessage })
                 return
             }
             if (ControlPlaneHost.HasBody(req) && !ControlPlaneHost.IsJson(req))
             {
                 req.resume()
-                this.WriteJson(res, ControlPlaneHost.StatusUnsupported, { error: ControlPlaneHost.UnsupportedMediaMessage })
+                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusUnsupported, { error: ControlPlaneHost.UnsupportedMediaMessage })
                 return
             }
-            const path = new URL(req.url ?? ControlPlaneHost.RootPath, ControlPlaneHost.BaseUrl).pathname
+            const path = new URL(req.url ?? PlaneHttp.RootPath, ControlPlaneHost.BaseUrl).pathname
             if (this.tenantAuth !== undefined && await this.RouteTenant(req, res, path, this.tenantAuth))
             {
                 return
@@ -642,27 +615,27 @@ export class ControlPlaneHost
                 if (!ControlPlaneHost.HostAllowed(req))
                 {
                     req.resume()
-                    this.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.ForbiddenHostMessage })
+                    PlaneHttp.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.ForbiddenHostMessage })
                     return
                 }
-                if (ControlPlaneHost.IsMutating(req) && !ControlPlaneHost.OriginAllowed(req))
+                if (PlaneHttp.IsMutating(req) && !ControlPlaneHost.OriginAllowed(req))
                 {
                     req.resume()
-                    this.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.BadOriginMessage })
+                    PlaneHttp.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.BadOriginMessage })
                     return
                 }
                 // Agent routes skip the operator-session gate; RouteAgent demands the per-hive bearer instead.
                 if (!ControlPlaneHost.IsPublicApi(path) && !ControlPlaneHost.IsAgentApi(path) && !(await this.Authenticated(req)))
                 {
                     req.resume()
-                    this.WriteJson(res, ControlPlaneHost.StatusUnauthorized, { error: ControlPlaneHost.UnauthenticatedMessage })
+                    PlaneHttp.WriteJson(res, ControlPlaneHost.StatusUnauthorized, { error: ControlPlaneHost.UnauthenticatedMessage })
                     return
                 }
             }
             const handled = await this.RouteApi(req, res, path)
             if (!handled)
             {
-                await this.ServeStatic(req, res, path)
+                await PlaneHttp.ServeStatic(req, res, path, this.StaticRootFor(req))
             }
         }
         catch (err)
@@ -687,10 +660,10 @@ export class ControlPlaneHost
         }
         // CSRF: every mutating /tenant-* request's Origin must be a configured tenant host (mirrors the operator /api/* rule),
         // checked once for the whole prefix so /tenant-auth mutating routes (e.g. the logout POST) are covered too.
-        if (ControlPlaneHost.IsMutating(req) && !ControlPlaneHost.OriginInHosts(req, tenant.allowedHosts))
+        if (PlaneHttp.IsMutating(req) && !PlaneHttp.OriginInHosts(req, tenant.allowedHosts))
         {
             req.resume()
-            this.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.BadOriginMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.BadOriginMessage })
             return true
         }
         if (isAuth)
@@ -701,7 +674,7 @@ export class ControlPlaneHost
         if (session === null)
         {
             req.resume()
-            this.WriteJson(res, ControlPlaneHost.StatusUnauthorized, { error: ControlPlaneHost.UnauthenticatedMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusUnauthorized, { error: ControlPlaneHost.UnauthenticatedMessage })
             return true
         }
         return await tenant.api.Handle(req, res, path, session)
@@ -710,31 +683,31 @@ export class ControlPlaneHost
     /** Returns false when the request does not match any API route (falls through to static). */
     private async RouteApi(req: IncomingMessage, res: ServerResponse, path: string): Promise<boolean>
     {
-        const method = req.method ?? ControlPlaneHost.MethodGet
-        if (path === ControlPlaneHost.PingPath && method === ControlPlaneHost.MethodGet)
+        const method = req.method ?? PlaneHttp.MethodGet
+        if (path === ControlPlaneHost.PingPath && method === PlaneHttp.MethodGet)
         {
-            this.WriteJson(res, ControlPlaneHost.StatusOk, { ok: true })
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ok: true })
             return true
         }
-        if (path === ControlPlaneHost.LoginPath && method === ControlPlaneHost.MethodPost)
+        if (path === ControlPlaneHost.LoginPath && method === PlaneHttp.MethodPost)
         {
             await this.HandleLogin(req, res)
             return true
         }
-        if (path === ControlPlaneHost.SessionPath && method === ControlPlaneHost.MethodGet)
+        if (path === ControlPlaneHost.SessionPath && method === PlaneHttp.MethodGet)
         {
             const who = await this.Principal(req)
             if (who === null)
             {
-                this.WriteJson(res, ControlPlaneHost.StatusUnauthorized, { error: ControlPlaneHost.UnauthenticatedMessage })
+                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusUnauthorized, { error: ControlPlaneHost.UnauthenticatedMessage })
             }
             else
             {
-                this.WriteJson(res, ControlPlaneHost.StatusOk, { email: who.email })
+                PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { email: who.email })
             }
             return true
         }
-        if (path === ControlPlaneHost.LogoutPath && method === ControlPlaneHost.MethodPost)
+        if (path === ControlPlaneHost.LogoutPath && method === PlaneHttp.MethodPost)
         {
             const token = SessionCookie.Read(req.headers[ControlPlaneHost.CookieHeader])
             if (token !== undefined)
@@ -742,12 +715,12 @@ export class ControlPlaneHost
                 await this.operator.Revoke(token)
             }
             res.setHeader(ControlPlaneHost.SetCookieHeader, SessionCookie.BuildClearing(this.secureCookie))
-            this.WriteJson(res, ControlPlaneHost.StatusOk, { ok: true })
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ok: true })
             return true
         }
-        if (path === ControlPlaneHost.TemplatesPath && method === ControlPlaneHost.MethodGet)
+        if (path === ControlPlaneHost.TemplatesPath && method === PlaneHttp.MethodGet)
         {
-            this.WriteJson(res, ControlPlaneHost.StatusOk, TemplateCatalog.All())
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, TemplateCatalog.All())
             return true
         }
         if (path === ControlPlaneHost.ManifestsPath)
@@ -781,12 +754,12 @@ export class ControlPlaneHost
         }
         if (path === ControlPlaneHost.EnvironmentsPath)
         {
-            if (method === ControlPlaneHost.MethodGet)
+            if (method === PlaneHttp.MethodGet)
             {
-                this.WriteJson(res, ControlPlaneHost.StatusOk, (await this.service.ListReconciled()).map(r => ControlPlaneHost.ToDto(r)))
+                PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, (await this.service.ListReconciled()).map(r => ControlPlaneHost.ToDto(r)))
                 return true
             }
-            if (method === ControlPlaneHost.MethodPost)
+            if (method === PlaneHttp.MethodPost)
             {
                 await this.HandleCreate(req, res)
                 return true
@@ -831,34 +804,34 @@ export class ControlPlaneHost
         const name = ControlPlaneHost.Decode(m[1] as string)
         if (name === undefined)
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
             return true
         }
         const action = m[2]
-        if (action === ControlPlaneHost.StartAction && method === ControlPlaneHost.MethodPost)
+        if (action === ControlPlaneHost.StartAction && method === PlaneHttp.MethodPost)
         {
             const rec = await this.service.Start(name)
-            this.WriteJson(res, ControlPlaneHost.StatusOk, ControlPlaneHost.ToDto(rec))
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, ControlPlaneHost.ToDto(rec))
             this.Broadcast(ControlPlaneHost.Changed())
             return true
         }
-        if (action === ControlPlaneHost.StopAction && method === ControlPlaneHost.MethodPost)
+        if (action === ControlPlaneHost.StopAction && method === PlaneHttp.MethodPost)
         {
             const rec = await this.service.Stop(name)
-            this.WriteJson(res, ControlPlaneHost.StatusOk, ControlPlaneHost.ToDto(rec))
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, ControlPlaneHost.ToDto(rec))
             this.Broadcast(ControlPlaneHost.Changed())
             return true
         }
-        if (action === ControlPlaneHost.LogsAction && method === ControlPlaneHost.MethodGet)
+        if (action === ControlPlaneHost.LogsAction && method === PlaneHttp.MethodGet)
         {
             const logs = await this.service.Logs(name)
-            this.WriteJson(res, ControlPlaneHost.StatusOk, { logs })
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { logs })
             return true
         }
-        if (action === undefined && method === ControlPlaneHost.MethodDelete)
+        if (action === undefined && method === PlaneHttp.MethodDelete)
         {
             await this.service.Delete(name)
-            this.WriteJson(res, ControlPlaneHost.StatusOk, { ok: true })
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ok: true })
             this.Broadcast(ControlPlaneHost.Changed())
             return true
         }
@@ -871,12 +844,12 @@ export class ControlPlaneHost
         const resource = m[1] as string
         if (m[2] === undefined)
         {
-            if (method === ControlPlaneHost.MethodGet)
+            if (method === PlaneHttp.MethodGet)
             {
-                this.WriteJson(res, ControlPlaneHost.StatusOk, this.ListPlatform(resource))
+                PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, this.ListPlatform(resource))
                 return true
             }
-            if (method === ControlPlaneHost.MethodPost)
+            if (method === PlaneHttp.MethodPost)
             {
                 await this.HandleCreatePlatform(resource, req, res)
                 return true
@@ -886,26 +859,26 @@ export class ControlPlaneHost
         const id = ControlPlaneHost.Decode(m[2])
         if (id === undefined)
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
             return true
         }
-        if (method === ControlPlaneHost.MethodGet)
+        if (method === PlaneHttp.MethodGet)
         {
             const record = this.GetPlatform(resource, id)
             if (record === undefined)
             {
-                this.WriteNotFound(res)
+                PlaneHttp.WriteNotFound(res)
             }
             else
             {
-                this.WriteJson(res, ControlPlaneHost.StatusOk, record)
+                PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, record)
             }
             return true
         }
-        if (method === ControlPlaneHost.MethodDelete)
+        if (method === PlaneHttp.MethodDelete)
         {
             await this.DeletePlatform(resource, id)
-            this.WriteJson(res, ControlPlaneHost.StatusOk, { ok: true })
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ok: true })
             return true
         }
         return false
@@ -914,31 +887,31 @@ export class ControlPlaneHost
     /** Serves GET /api/hives/ID/health: live workload health for each environment bound to the hive; false for any other method. */
     private async RouteHiveHealth(res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
     {
-        if (method !== ControlPlaneHost.MethodGet)
+        if (method !== PlaneHttp.MethodGet)
         {
             return false
         }
         const id = ControlPlaneHost.Decode(m[1] as string)
         if (id === undefined)
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
             return true
         }
         const hive = this.directory.GetHive(id)
         if (hive === undefined)
         {
-            this.WriteNotFound(res)
+            PlaneHttp.WriteNotFound(res)
             return true
         }
         const producer = new HiveHealthProducer(this.service, this.orchestrators, new EnvironmentPlacement(this.directory))
-        this.WriteJson(res, ControlPlaneHost.StatusOk, await producer.Produce(hive))
+        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, await producer.Produce(hive))
         return true
     }
 
     /** Serves POST /api/manifests: publishes a version/image pair; false for any other method. */
     private async RoutePublishManifest(req: IncomingMessage, res: ServerResponse, method: string): Promise<boolean>
     {
-        if (method !== ControlPlaneHost.MethodPost)
+        if (method !== PlaneHttp.MethodPost)
         {
             return false
         }
@@ -949,35 +922,35 @@ export class ControlPlaneHost
         }
         if (!ControlPlaneHost.NonEmpty(body.version))
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.VersionRequiredMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.VersionRequiredMessage })
             return true
         }
         if (!ControlPlaneHost.NonEmpty(body.image))
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ImageRequiredMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ImageRequiredMessage })
             return true
         }
         if (!ControlPlaneHost.OptionalString(body.notes))
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.NotesInvalidMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.NotesInvalidMessage })
             return true
         }
         const manifest: ManifestDto = await this.deployments.Publish(body.version as string, body.image as string, body.notes as string | undefined)
-        this.WriteJson(res, ControlPlaneHost.StatusCreated, manifest)
+        PlaneHttp.WriteJson(res, ControlPlaneHost.StatusCreated, manifest)
         return true
     }
 
     /** Serves POST /api/manifests/:version/withdrawn (withdraw) and DELETE (restore); 404 for an unknown version, false for any other method. */
     private async RouteManifestWithdrawn(req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
     {
-        const withdraw = method === ControlPlaneHost.MethodPost
-        if (!withdraw && method !== ControlPlaneHost.MethodDelete)
+        const withdraw = method === PlaneHttp.MethodPost
+        if (!withdraw && method !== PlaneHttp.MethodDelete)
         {
             return false
         }
         const version = decodeURIComponent(m[1] as string)
         const manifest: ManifestDto = await this.deployments.SetWithdrawn(version, withdraw)
-        this.WriteJson(res, ControlPlaneHost.StatusOk, manifest)
+        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, manifest)
         return true
     }
 
@@ -998,16 +971,16 @@ export class ControlPlaneHost
         const version = tail === undefined ? undefined : ControlPlaneHost.Decode(tail)
         if (id === undefined || (tail !== undefined && version === undefined))
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
             return true
         }
-        if (sub === ControlPlaneHost.ManifestsSegment && method === ControlPlaneHost.MethodGet)
+        if (sub === ControlPlaneHost.ManifestsSegment && method === PlaneHttp.MethodGet)
         {
             const manifests: ManifestDto[] = [...this.deployments.ManifestsFor(id)]
-            this.WriteJson(res, ControlPlaneHost.StatusOk, manifests)
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, manifests)
             return true
         }
-        if (sub === ControlPlaneHost.GatingSegment && tail === undefined && method === ControlPlaneHost.MethodPost)
+        if (sub === ControlPlaneHost.GatingSegment && tail === undefined && method === PlaneHttp.MethodPost)
         {
             const requested = await this.ReadVersion(req, res)
             if (requested === undefined)
@@ -1019,14 +992,14 @@ export class ControlPlaneHost
             res.end()
             return true
         }
-        if (sub === ControlPlaneHost.GatingSegment && version !== undefined && method === ControlPlaneHost.MethodDelete)
+        if (sub === ControlPlaneHost.GatingSegment && version !== undefined && method === PlaneHttp.MethodDelete)
         {
             await this.deployments.Ungate(id, version)
             res.writeHead(ControlPlaneHost.StatusNoContent)
             res.end()
             return true
         }
-        if (sub === ControlPlaneHost.TargetSegment && method === ControlPlaneHost.MethodPost)
+        if (sub === ControlPlaneHost.TargetSegment && method === PlaneHttp.MethodPost)
         {
             const requested = await this.ReadVersion(req, res)
             if (requested === undefined)
@@ -1039,23 +1012,23 @@ export class ControlPlaneHost
             res.end()
             return true
         }
-        if (sub === ControlPlaneHost.RolloutSegment && method === ControlPlaneHost.MethodGet)
+        if (sub === ControlPlaneHost.RolloutSegment && method === PlaneHttp.MethodGet)
         {
             const status: HiveRolloutDto = this.deployments.StatusFor(id)
-            this.WriteJson(res, ControlPlaneHost.StatusOk, status)
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, status)
             return true
         }
-        if (sub === ControlPlaneHost.RolloutRegistrationSegment && method === ControlPlaneHost.MethodPost)
+        if (sub === ControlPlaneHost.RolloutRegistrationSegment && method === PlaneHttp.MethodPost)
         {
             if (this.directory.GetHive(id) === undefined)
             {
-                this.WriteNotFound(res)
+                PlaneHttp.WriteNotFound(res)
                 return true
             }
             // The one-time reveal: the raw agent token appears in this response body only; the registry stores just its hash.
             const dto: RolloutRegistrationDto = { token: await this.deployments.RegisterHive(id) }
             res.setHeader(ControlPlaneHost.CacheControlHeader, ControlPlaneHost.NoStore)
-            this.WriteJson(res, ControlPlaneHost.StatusCreated, dto)
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusCreated, dto)
             return true
         }
         return false
@@ -1065,8 +1038,8 @@ export class ControlPlaneHost
     private async RouteAgent(req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
     {
         const sub = m[2] as string
-        const isTarget = sub === ControlPlaneHost.TargetSegment && method === ControlPlaneHost.MethodGet
-        const isReport = sub === ControlPlaneHost.ReportSegment && method === ControlPlaneHost.MethodPost
+        const isTarget = sub === ControlPlaneHost.TargetSegment && method === PlaneHttp.MethodGet
+        const isReport = sub === ControlPlaneHost.ReportSegment && method === PlaneHttp.MethodPost
         if (!isTarget && !isReport)
         {
             // A matched agent path skipped the session gate, so a wrong method is answered here (401), never left to fall through to static serving.
@@ -1076,7 +1049,7 @@ export class ControlPlaneHost
         const id = ControlPlaneHost.Decode(m[1] as string)
         if (id === undefined)
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
             return true
         }
         const bearer = ControlPlaneHost.BearerToken(req)
@@ -1091,10 +1064,10 @@ export class ControlPlaneHost
             const target = this.deployments.TargetFor(id)
             if (target === undefined)
             {
-                this.WriteNotFound(res)
+                PlaneHttp.WriteNotFound(res)
                 return true
             }
-            this.WriteJson(res, ControlPlaneHost.StatusOk, { version: target.version, image: target.image })
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { version: target.version, image: target.image })
             return true
         }
         const body = await this.ReadJsonObject(req, res)
@@ -1104,7 +1077,7 @@ export class ControlPlaneHost
         }
         if (typeof body.environmentName !== 'string' || body.environmentName.length === 0 || typeof body.runningImage !== 'string' || typeof body.ready !== 'boolean')
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ReportInvalidMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ReportInvalidMessage })
             return true
         }
         await this.deployments.Report(id, body.environmentName, body.runningImage, body.ready)
@@ -1136,7 +1109,7 @@ export class ControlPlaneHost
         }
         if (!ControlPlaneHost.NonEmpty(body.version))
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.VersionRequiredMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.VersionRequiredMessage })
             return undefined
         }
         return body.version as string
@@ -1202,12 +1175,12 @@ export class ControlPlaneHost
         }
         if (!ControlPlaneHost.NonEmpty(body.id))
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.IdRequiredMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.IdRequiredMessage })
             return
         }
         if (typeof body.displayName !== 'string')
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.DisplayNameRequiredMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.DisplayNameRequiredMessage })
             return
         }
         const id = body.id as string
@@ -1217,7 +1190,7 @@ export class ControlPlaneHost
         {
             if (!ControlPlaneHost.OptionalString(body.subscriptionRef))
             {
-                this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.OptionalStringMessage })
+                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.OptionalStringMessage })
                 return
             }
             created = await this.directory.CreateClient({ id, displayName, subscriptionRef: body.subscriptionRef as string | undefined })
@@ -1226,47 +1199,47 @@ export class ControlPlaneHost
         {
             if (!ControlPlaneHost.NonEmpty(body.clientId))
             {
-                this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ClientIdRequiredMessage })
+                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ClientIdRequiredMessage })
                 return
             }
             if (!ControlPlaneHost.NonEmpty(body.ownerEmail))
             {
-                this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.OwnerEmailRequiredMessage })
+                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.OwnerEmailRequiredMessage })
                 return
             }
             if (id.startsWith(ControlPlaneHost.ReservedIdPrefix))
             {
-                this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ReservedIdMessage })
+                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ReservedIdMessage })
                 return
             }
             const { record, ownerPassword } = await this.provisioning.Provision({ id, clientId: body.clientId as string, displayName, ownerEmail: body.ownerEmail as string })
             // The one-time Owner password is revealed exactly once here; never logged or stored.
             res.setHeader(ControlPlaneHost.CacheControlHeader, ControlPlaneHost.NoStore)
-            this.WriteJson(res, ControlPlaneHost.StatusCreated, { ...ControlPlaneHost.ToTenantDto(record), owner: { email: record.ownerEmail, principalId: record.ownerPrincipalId, password: ownerPassword } })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusCreated, { ...ControlPlaneHost.ToTenantDto(record), owner: { email: record.ownerEmail, principalId: record.ownerPrincipalId, password: ownerPassword } })
             return
         }
         else
         {
             if (!ControlPlaneHost.NonEmpty(body.tenantId))
             {
-                this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.TenantIdRequiredMessage })
+                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.TenantIdRequiredMessage })
                 return
             }
             const cluster = ControlPlaneHost.ParseCluster(body.cluster)
             if (cluster === undefined)
             {
-                this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ClusterInvalidMessage + Object.values(HiveBackend).join(', ') })
+                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ClusterInvalidMessage + Object.values(HiveBackend).join(', ') })
                 return
             }
             const registry = ControlPlaneHost.ParseRegistry(body.registry)
             if (registry === undefined)
             {
-                this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.RegistryInvalidMessage + Object.values(InfraMode).join(', ') })
+                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.RegistryInvalidMessage + Object.values(InfraMode).join(', ') })
                 return
             }
             if (!ControlPlaneHost.OptionalString(body.trustRootRef))
             {
-                this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.OptionalStringMessage })
+                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.OptionalStringMessage })
                 return
             }
             created = await this.directory.CreateHive({
@@ -1278,7 +1251,7 @@ export class ControlPlaneHost
                 trustRootRef: body.trustRootRef as string | undefined
             })
         }
-        this.WriteJson(res, ControlPlaneHost.StatusCreated, created)
+        PlaneHttp.WriteJson(res, ControlPlaneHost.StatusCreated, created)
     }
 
     private static OptionalString(v: unknown): boolean
@@ -1317,14 +1290,14 @@ export class ControlPlaneHost
     /** Dispatches POST /api/environments/NAME/maker-token; false (unknown route) for any other method. */
     private async RouteMakerToken(_req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
     {
-        if (method !== ControlPlaneHost.MethodPost)
+        if (method !== PlaneHttp.MethodPost)
         {
             return false
         }
         const name = ControlPlaneHost.Decode(m[1] as string)
         if (name === undefined)
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
             return true
         }
         await this.HandleIssueMakerToken(res, name)
@@ -1336,32 +1309,32 @@ export class ControlPlaneHost
     {
         const issued = await this.service.AdminIssueMakerToken(name)
         const dto: MakerTokenDto = { token: issued.token, principalId: issued.principalId, expiresAt: issued.expiresAt }
-        this.WriteJson(res, ControlPlaneHost.StatusCreated, dto)
+        PlaneHttp.WriteJson(res, ControlPlaneHost.StatusCreated, dto)
     }
 
     /** Dispatches POST /api/environments/NAME/app-reader-grant; false (unknown route) for any other method. */
     private async RouteAppReaderGrant(res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
     {
-        if (method !== ControlPlaneHost.MethodPost)
+        if (method !== PlaneHttp.MethodPost)
         {
             return false
         }
         const name = ControlPlaneHost.Decode(m[1] as string)
         if (name === undefined)
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
             return true
         }
         // Grants the well-known app-reader principal a read role on the runtime; no token or secret is minted or returned.
         await this.service.AdminGrantAppReader(name)
-        this.WriteJson(res, ControlPlaneHost.StatusOk, { ok: true })
+        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ok: true })
         return true
     }
 
     /** Relays POST /api/environments/SOURCE/graphs/GRAPH/promote into the runtime target; false for any other method. */
     private async RoutePromote(req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
     {
-        if (method !== ControlPlaneHost.MethodPost)
+        if (method !== PlaneHttp.MethodPost)
         {
             return false
         }
@@ -1369,7 +1342,7 @@ export class ControlPlaneHost
         const graph = ControlPlaneHost.Decode(m[2] as string)
         if (env === undefined || graph === undefined)
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
             return true
         }
         const body = await this.ReadJsonObject(req, res)
@@ -1379,28 +1352,28 @@ export class ControlPlaneHost
         }
         if (!ControlPlaneHost.NonEmpty(body.targetEnv))
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.TargetEnvRequiredMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.TargetEnvRequiredMessage })
             return true
         }
         const dto = await this.graphService.Promote(env, graph, body.targetEnv as string)
-        this.WriteJson(res, ControlPlaneHost.StatusOk, dto)
+        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, dto)
         return true
     }
 
     /** Serves GET /api/environments/RUNTIME/loaded-graph (the promoted-graph manifest, or JSON null); false for any other method. */
     private async RouteLoadedGraph(res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
     {
-        if (method !== ControlPlaneHost.MethodGet)
+        if (method !== PlaneHttp.MethodGet)
         {
             return false
         }
         const env = ControlPlaneHost.Decode(m[1] as string)
         if (env === undefined)
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
             return true
         }
-        this.WriteJson(res, ControlPlaneHost.StatusOk, await this.graphService.GetLoaded(env))
+        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, await this.graphService.GetLoaded(env))
         return true
     }
 
@@ -1410,17 +1383,17 @@ export class ControlPlaneHost
         const env = ControlPlaneHost.Decode(m[1] as string)
         if (env === undefined)
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
             return true
         }
         if (m[2] === undefined)
         {
-            if (method === ControlPlaneHost.MethodGet)
+            if (method === PlaneHttp.MethodGet)
             {
-                this.WriteJson(res, ControlPlaneHost.StatusOk, await this.graphService.List(env))
+                PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, await this.graphService.List(env))
                 return true
             }
-            if (method === ControlPlaneHost.MethodPost)
+            if (method === PlaneHttp.MethodPost)
             {
                 await this.HandleCreateGraph(env, req, res)
                 return true
@@ -1430,18 +1403,18 @@ export class ControlPlaneHost
         const graph = ControlPlaneHost.Decode(m[2])
         if (graph === undefined)
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
             return true
         }
-        if (method === ControlPlaneHost.MethodGet)
+        if (method === PlaneHttp.MethodGet)
         {
-            this.WriteJson(res, ControlPlaneHost.StatusOk, await this.graphService.Get(env, graph))
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, await this.graphService.Get(env, graph))
             return true
         }
-        if (method === ControlPlaneHost.MethodDelete)
+        if (method === PlaneHttp.MethodDelete)
         {
             await this.graphService.Delete(env, graph)
-            this.WriteJson(res, ControlPlaneHost.StatusOk, { ok: true })
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ok: true })
             return true
         }
         return false
@@ -1456,16 +1429,16 @@ export class ControlPlaneHost
         }
         if (!ControlPlaneHost.NonEmpty(body.name))
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.NameRequiredMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.NameRequiredMessage })
             return
         }
         if (!ControlPlaneHost.NonEmpty(body.description))
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.DescriptionRequiredMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.DescriptionRequiredMessage })
             return
         }
         const rec = await this.graphService.Create(env, body.name as string, body.description as string)
-        this.WriteJson(res, ControlPlaneHost.StatusCreated, rec)
+        PlaneHttp.WriteJson(res, ControlPlaneHost.StatusCreated, rec)
     }
 
     /** Dispatches /api/environments/NAME/admin/SUB[/TAIL]; false when the (sub, method, tail) combination is unknown. */
@@ -1474,44 +1447,44 @@ export class ControlPlaneHost
         const name = ControlPlaneHost.Decode(m[1] as string)
         if (name === undefined)
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
             return true
         }
         const sub = m[2]
         const tail = m[3]
-        if (sub === ControlPlaneHost.SnapshotPath && tail === undefined && method === ControlPlaneHost.MethodGet)
+        if (sub === ControlPlaneHost.SnapshotPath && tail === undefined && method === PlaneHttp.MethodGet)
         {
-            this.WriteJson(res, ControlPlaneHost.StatusOk, await this.service.AdminSnapshot(name))
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, await this.service.AdminSnapshot(name))
             return true
         }
-        if (sub === ControlPlaneHost.ConfigPath && tail === undefined && method === ControlPlaneHost.MethodGet)
+        if (sub === ControlPlaneHost.ConfigPath && tail === undefined && method === PlaneHttp.MethodGet)
         {
-            this.WriteJson(res, ControlPlaneHost.StatusOk, await this.service.AdminGetConfig(name))
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, await this.service.AdminGetConfig(name))
             return true
         }
-        if (sub === ControlPlaneHost.SecurityModelPath && tail === undefined && method === ControlPlaneHost.MethodGet)
+        if (sub === ControlPlaneHost.SecurityModelPath && tail === undefined && method === PlaneHttp.MethodGet)
         {
             // JSON null (not undefined) so the body is always valid JSON when no model is stored.
-            this.WriteJson(res, ControlPlaneHost.StatusOk, await this.service.AdminGetSecurityModel(name) ?? null)
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, await this.service.AdminGetSecurityModel(name) ?? null)
             return true
         }
-        if (sub === ControlPlaneHost.AccountsPath && tail !== undefined && method === ControlPlaneHost.MethodDelete)
+        if (sub === ControlPlaneHost.AccountsPath && tail !== undefined && method === PlaneHttp.MethodDelete)
         {
             const principalId = ControlPlaneHost.Decode(tail)
             if (principalId === undefined)
             {
-                this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
                 return true
             }
             await this.service.AdminDisableAccount(name, principalId)
-            this.WriteJson(res, ControlPlaneHost.StatusOk, { ok: true })
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ok: true })
             return true
         }
         if (tail !== undefined)
         {
             return false
         }
-        if (sub === ControlPlaneHost.AccountsPath && method === ControlPlaneHost.MethodPost)
+        if (sub === ControlPlaneHost.AccountsPath && method === PlaneHttp.MethodPost)
         {
             const body = await this.ReadJsonObject(req, res)
             if (body === undefined)
@@ -1520,15 +1493,15 @@ export class ControlPlaneHost
             }
             if (!ControlPlaneHost.NonEmpty(body.email) || !ControlPlaneHost.NonEmpty(body.principalId) || !ControlPlaneHost.NonEmpty(body.password))
             {
-                this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.AccountFieldsMessage })
+                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.AccountFieldsMessage })
                 return true
             }
             const account = { email: body.email, principalId: body.principalId, password: body.password } as unknown as CreateAccountParams
             await this.service.AdminCreateAccount(name, account)
-            this.WriteJson(res, ControlPlaneHost.StatusCreated, { ok: true })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusCreated, { ok: true })
             return true
         }
-        if (sub === ControlPlaneHost.GrantsPath && (method === ControlPlaneHost.MethodPost || method === ControlPlaneHost.MethodDelete))
+        if (sub === ControlPlaneHost.GrantsPath && (method === PlaneHttp.MethodPost || method === PlaneHttp.MethodDelete))
         {
             const body = await this.ReadJsonObject(req, res)
             if (body === undefined)
@@ -1537,7 +1510,7 @@ export class ControlPlaneHost
             }
             if (typeof body.subject !== 'string' || typeof body.role !== 'string')
             {
-                this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.GrantFieldsMessage })
+                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.GrantFieldsMessage })
                 return true
             }
             const mutation = {
@@ -1546,7 +1519,7 @@ export class ControlPlaneHost
                 resourceKind: body.resourceKind,
                 resourcePath: body.resourcePath
             } as unknown as GrantMutationDto
-            if (method === ControlPlaneHost.MethodPost)
+            if (method === PlaneHttp.MethodPost)
             {
                 await this.service.AdminGrantRole(name, mutation)
             }
@@ -1554,10 +1527,10 @@ export class ControlPlaneHost
             {
                 await this.service.AdminRevokeRole(name, mutation)
             }
-            this.WriteJson(res, ControlPlaneHost.StatusOk, { ok: true })
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ok: true })
             return true
         }
-        if (sub === ControlPlaneHost.SecurityModelPath && method === ControlPlaneHost.MethodPut)
+        if (sub === ControlPlaneHost.SecurityModelPath && method === PlaneHttp.MethodPut)
         {
             const body = await this.ReadJsonObject(req, res)
             if (body === undefined)
@@ -1566,14 +1539,14 @@ export class ControlPlaneHost
             }
             if (typeof body.securityModel !== 'object' || body.securityModel === null)
             {
-                this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.SecurityModelFieldMessage })
+                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.SecurityModelFieldMessage })
                 return true
             }
             await this.service.AdminSetSecurityModel(name, body.securityModel as SecurityModelDto)
-            this.WriteJson(res, ControlPlaneHost.StatusOk, { ok: true })
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ok: true })
             return true
         }
-        if (sub === ControlPlaneHost.ConfigPath && method === ControlPlaneHost.MethodPut)
+        if (sub === ControlPlaneHost.ConfigPath && method === PlaneHttp.MethodPut)
         {
             const body = await this.ReadJsonObject(req, res)
             if (body === undefined)
@@ -1582,7 +1555,7 @@ export class ControlPlaneHost
             }
             if (typeof body.packId !== 'string' || typeof body.delegationDepth !== 'string')
             {
-                this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ConfigFieldsMessage })
+                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ConfigFieldsMessage })
                 return true
             }
             const config = {
@@ -1594,7 +1567,7 @@ export class ControlPlaneHost
                 securityModel: body.securityModel
             } as unknown as IdentityConfigDto
             await this.service.AdminSetConfig(name, config)
-            this.WriteJson(res, ControlPlaneHost.StatusOk, { ok: true })
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ok: true })
             return true
         }
         return false
@@ -1611,12 +1584,12 @@ export class ControlPlaneHost
         }
         catch
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadJsonMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadJsonMessage })
             return undefined
         }
         if (body === null || typeof body !== 'object' || Array.isArray(body))
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BodyObjectMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BodyObjectMessage })
             return undefined
         }
         return body as Record<string, unknown>
@@ -1632,22 +1605,22 @@ export class ControlPlaneHost
         }
         catch
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadJsonMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadJsonMessage })
             return
         }
         if (body === null || typeof body !== 'object' || typeof body.email !== 'string' || typeof body.password !== 'string')
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.CredentialsRequiredMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.CredentialsRequiredMessage })
             return
         }
         const session = await this.operator.Authenticate(body.email, body.password)
         if (session === null)
         {
-            this.WriteJson(res, ControlPlaneHost.StatusUnauthorized, { error: ControlPlaneHost.InvalidCredentialsMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusUnauthorized, { error: ControlPlaneHost.InvalidCredentialsMessage })
             return
         }
         res.setHeader(ControlPlaneHost.SetCookieHeader, SessionCookie.Build(session.token, session.expiresAt, this.secureCookie))
-        this.WriteJson(res, ControlPlaneHost.StatusOk, { email: body.email })
+        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { email: body.email })
     }
 
     private async Principal(req: IncomingMessage): Promise<{ email: string } | null>
@@ -1671,24 +1644,24 @@ export class ControlPlaneHost
         }
         catch
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadJsonMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadJsonMessage })
             return
         }
         const valid = Object.values(Template) as string[]
         if (body === null || typeof body !== 'object' || typeof body.name !== 'string' || body.name.length === 0)
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.NameRequiredMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.NameRequiredMessage })
             return
         }
         if (typeof body.template !== 'string' || !valid.includes(body.template))
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.TemplateInvalidMessage + valid.join(', ') })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.TemplateInvalidMessage + valid.join(', ') })
             return
         }
         const validTypes = Object.values(EnvType) as string[]
         if (typeof body.type !== 'string' || !validTypes.includes(body.type))
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.TypeInvalidMessage + validTypes.join(', ') })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.TypeInvalidMessage + validTypes.join(', ') })
             return
         }
         let hostPort: number | undefined
@@ -1696,18 +1669,18 @@ export class ControlPlaneHost
         {
             if (typeof body.hostPort !== 'number' || !Number.isInteger(body.hostPort) || body.hostPort < 1 || body.hostPort > ControlPlaneHost.MaxPort)
             {
-                this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.HostPortInvalidMessage })
+                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.HostPortInvalidMessage })
                 return
             }
             hostPort = body.hostPort
         }
         if (body.hiveId !== undefined && (typeof body.hiveId !== 'string' || body.hiveId.length === 0))
         {
-            this.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.HiveIdInvalidMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.HiveIdInvalidMessage })
             return
         }
         const rec = await this.service.Create(body.name, body.template as Template, body.type as EnvType, hostPort, body.hiveId)
-        this.WriteJson(res, ControlPlaneHost.StatusCreated, ControlPlaneHost.ToDto(rec))
+        PlaneHttp.WriteJson(res, ControlPlaneHost.StatusCreated, ControlPlaneHost.ToDto(rec))
         this.Broadcast(ControlPlaneHost.Changed())
     }
 
@@ -1744,57 +1717,11 @@ export class ControlPlaneHost
     /** The bundle root for this request: the tenant portal on a tenant host, otherwise the operator portal. */
     private StaticRootFor(req: IncomingMessage): string
     {
-        if (this.tenantAuth !== undefined && this.tenantStaticRootAbs !== undefined && ControlPlaneHost.HostIn(req, this.tenantAuth.allowedHosts))
+        if (this.tenantAuth !== undefined && this.tenantStaticRootAbs !== undefined && PlaneHttp.HostIn(req, this.tenantAuth.allowedHosts))
         {
             return this.tenantStaticRootAbs
         }
         return this.staticRootAbs
-    }
-
-    private async ServeStatic(req: IncomingMessage, res: ServerResponse, path: string): Promise<void>
-    {
-        if (req.method !== ControlPlaneHost.MethodGet)
-        {
-            this.WriteNotFound(res)
-            return
-        }
-        let rel: string
-        try
-        {
-            rel = decodeURIComponent(path)
-        }
-        catch
-        {
-            this.WriteNotFound(res)
-            return
-        }
-        if (rel === ControlPlaneHost.RootPath)
-        {
-            rel = ControlPlaneHost.RootPath + ControlPlaneHost.IndexFile
-        }
-        const rootAbs = this.StaticRootFor(req)
-        const abs = resolve(rootAbs, '.' + rel)
-        if (!abs.startsWith(rootAbs + sep))
-        {
-            this.WriteNotFound(res)
-            return
-        }
-        try
-        {
-            const data = await readFile(abs)
-            const type = ControlPlaneHost.MimeTypes.get(extname(abs).toLowerCase()) ?? ControlPlaneHost.DefaultType
-            res.writeHead(ControlPlaneHost.StatusOk, { [ControlPlaneHost.ContentType]: type })
-            res.end(data)
-        }
-        catch
-        {
-            this.WriteNotFound(res)
-        }
-    }
-
-    private WriteNotFound(res: ServerResponse): void
-    {
-        this.WriteJson(res, ControlPlaneHost.StatusNotFound, { error: ControlPlaneHost.NotFoundMessage })
     }
 
     private WriteError(res: ServerResponse, err: unknown): void
@@ -1806,28 +1733,28 @@ export class ControlPlaneHost
         }
         if (err instanceof BodyTooLargeError)
         {
-            this.WriteJson(res, ControlPlaneHost.StatusTooLarge, { error: ControlPlaneHost.TooLargeMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusTooLarge, { error: ControlPlaneHost.TooLargeMessage })
             return
         }
         const status = this.StatusFor(err)
         if (status === undefined || status >= ControlPlaneHost.StatusInternal && status !== ControlPlaneHost.StatusUnavailable)
         {
             console.error(ControlPlaneHost.LogPrefix, err)
-            this.WriteJson(res, ControlPlaneHost.StatusInternal, { error: ControlPlaneHost.OperationFailedMessage })
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusInternal, { error: ControlPlaneHost.OperationFailedMessage })
             return
         }
         if (err instanceof AdminProxyError && err.Kind === AdminProxyErrorKind.Connect)
         {
             console.error(ControlPlaneHost.LogPrefix, err)
-            this.WriteJson(res, status, { error: ControlPlaneHost.ConnectUnavailableMessage })
+            PlaneHttp.WriteJson(res, status, { error: ControlPlaneHost.ConnectUnavailableMessage })
             return
         }
         if (err instanceof ImageMissingError)
         {
-            this.WriteJson(res, status, { error: err.message, buildCommand: err.buildCommand })
+            PlaneHttp.WriteJson(res, status, { error: err.message, buildCommand: err.buildCommand })
             return
         }
-        this.WriteJson(res, status, { error: (err as Error).message })
+        PlaneHttp.WriteJson(res, status, { error: (err as Error).message })
     }
 
     private StatusFor(err: unknown): number | undefined
@@ -1875,12 +1802,6 @@ export class ControlPlaneHost
         return typeof v === 'string' && v.length > 0
     }
 
-    private WriteJson(res: ServerResponse, status: number, body: unknown): void
-    {
-        res.writeHead(status, { [ControlPlaneHost.ContentType]: ControlPlaneHost.JsonType })
-        res.end(JSON.stringify(body))
-    }
-
     private Broadcast(event: ChangedEvent): void
     {
         const text = JSON.stringify(event)
@@ -1898,20 +1819,12 @@ export class ControlPlaneHost
     private HostAccepted(req: IncomingMessage): boolean
     {
         return ControlPlaneHost.HostAllowed(req)
-            || (this.tenantAuth !== undefined && ControlPlaneHost.HostIn(req, this.tenantAuth.allowedHosts))
+            || (this.tenantAuth !== undefined && PlaneHttp.HostIn(req, this.tenantAuth.allowedHosts))
     }
 
     private static HostAllowed(req: IncomingMessage): boolean
     {
-        return ControlPlaneHost.HostIn(req, ControlPlaneHost.AllowedHosts)
-    }
-
-    /** True when the request's Host header (port stripped, lowercased) is in the given set. */
-    private static HostIn(req: IncomingMessage, allowed: ReadonlySet<string>): boolean
-    {
-        const header = req.headers[ControlPlaneHost.HostHeader]
-        const m = header === undefined ? null : ControlPlaneHost.HostHeaderPattern.exec(header)
-        return m !== null && allowed.has((m[1] as string).toLowerCase())
+        return PlaneHttp.HostIn(req, ControlPlaneHost.AllowedHosts)
     }
 
     private static IsPublicApi(path: string): boolean
@@ -1919,46 +1832,16 @@ export class ControlPlaneHost
         return path === ControlPlaneHost.PingPath || path === ControlPlaneHost.LoginPath || path === ControlPlaneHost.SessionPath
     }
 
-    private static IsMutating(req: IncomingMessage): boolean
-    {
-        return req.method === ControlPlaneHost.MethodPost || req.method === ControlPlaneHost.MethodDelete || req.method === ControlPlaneHost.MethodPut
-    }
-
     /** Absent Origin is allowed (non-browser / same-origin navigation); a present one must equal our own origin. */
     private static OriginAllowed(req: IncomingMessage): boolean
     {
-        const origin = req.headers[ControlPlaneHost.OriginHeader]
-        return origin === undefined || origin === ControlPlaneHost.HttpScheme + req.headers[ControlPlaneHost.HostHeader]
-    }
-
-    /** The tenant-plane mirror of OriginAllowed: absent Origin allowed; a present one's host must be a configured tenant host. */
-    private static OriginInHosts(req: IncomingMessage, allowed: ReadonlySet<string>): boolean
-    {
-        const origin = req.headers[ControlPlaneHost.OriginHeader]
-        if (origin === undefined)
-        {
-            return true
-        }
-        const host = ControlPlaneHost.OriginHost(origin)
-        return host !== undefined && allowed.has(host)
-    }
-
-    /** The lowercased host (port stripped) of an Origin header, or undefined when it does not parse. */
-    private static OriginHost(origin: string): string | undefined
-    {
-        try
-        {
-            return new URL(origin).hostname.toLowerCase()
-        }
-        catch
-        {
-            return undefined
-        }
+        const origin = req.headers[PlaneHttp.OriginHeader]
+        return origin === undefined || origin === ControlPlaneHost.HttpScheme + req.headers[PlaneHttp.HostHeader]
     }
 
     private static HasBody(req: IncomingMessage): boolean
     {
-        if (req.method !== ControlPlaneHost.MethodPost && req.method !== ControlPlaneHost.MethodPut && req.method !== ControlPlaneHost.MethodDelete)
+        if (req.method !== PlaneHttp.MethodPost && req.method !== PlaneHttp.MethodPut && req.method !== PlaneHttp.MethodDelete)
         {
             return false
         }
