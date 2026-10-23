@@ -25,6 +25,8 @@ export class FakeTenantControlPlane
     public static readonly RunningStatus = 'running'
     public static readonly StoppedStatus = 'stopped'
     public static readonly StartAction = 'start'
+    public static readonly CurrentImage = 'app:2'
+    public static readonly ChangedStatus = 'degraded'
 
     private static readonly SessionPath = '/tenant-auth/session'
     private static readonly HivesPath = '/tenant-api/hives'
@@ -66,6 +68,9 @@ export class FakeTenantControlPlane
     }
 
     public readonly TargetCalls: Array<{ subject: string; version: string }> = []
+    public EnvironmentsRequests = 0
+    // When set, the next environments list reports alpha-env with this status.
+    public AlphaStatusOverride: string | undefined
     public readonly LifecycleCalls: Array<{ subject: string; action: string }> = []
     private readonly root = fileURLToPath(new URL('../dist/', import.meta.url))
     private readonly eventSockets = new Set<WebSocket>()
@@ -97,6 +102,8 @@ export class FakeTenantControlPlane
                 s.terminate()
             }
         }
+        this.eventServer.close()
+        this.logServer.close()
         this.server?.closeAllConnections()
         await new Promise<void>(resolve => this.server?.close(() => resolve()))
     }
@@ -209,7 +216,7 @@ export class FakeTenantControlPlane
     private Environments(): EnvironmentDto[]
     {
         return [
-            this.Env(FakeTenantControlPlane.EnvOneName, FakeTenantControlPlane.HiveOneId, FakeTenantControlPlane.RunningStatus),
+            this.Env(FakeTenantControlPlane.EnvOneName, FakeTenantControlPlane.HiveOneId, this.AlphaStatusOverride ?? FakeTenantControlPlane.RunningStatus),
             this.Env(FakeTenantControlPlane.EnvTwoName, FakeTenantControlPlane.HiveTwoId, FakeTenantControlPlane.StoppedStatus),
         ]
     }
@@ -219,7 +226,7 @@ export class FakeTenantControlPlane
     {
         return [
             { id: FakeTenantControlPlane.OlderVersion, image: 'app:1', publishedAt: '2026-01-01T00:00:00.000Z' },
-            { id: FakeTenantControlPlane.CurrentVersion, image: 'app:2', publishedAt: '2026-02-01T00:00:00.000Z' },
+            { id: FakeTenantControlPlane.CurrentVersion, image: FakeTenantControlPlane.CurrentImage, publishedAt: '2026-02-01T00:00:00.000Z' },
             { id: FakeTenantControlPlane.NewerVersion, image: 'app:3', publishedAt: '2026-03-01T00:00:00.000Z' },
         ]
     }
@@ -229,14 +236,14 @@ export class FakeTenantControlPlane
         const envs = this.Environments().filter(e => e.hiveId === hiveId)
         return {
             targetVersion: FakeTenantControlPlane.CurrentVersion,
-            environments: envs.map(e => ({ environmentName: e.name, runningImage: 'app:2', obsolete: false, ready: true })),
+            environments: envs.map(e => ({ environmentName: e.name, runningImage: FakeTenantControlPlane.CurrentImage, obsolete: false, ready: true })),
         }
     }
 
     private Health(hiveId: string): HiveHealthDto[]
     {
         return this.Environments().filter(e => e.hiveId === hiveId)
-            .map(e => ({ environmentName: e.name, ready: true, runningImage: 'app:2', detail: FakeTenantControlPlane.Empty }))
+            .map(e => ({ environmentName: e.name, ready: true, runningImage: FakeTenantControlPlane.CurrentImage, detail: FakeTenantControlPlane.Empty }))
     }
 
     private static ReadBody(req: IncomingMessage): Promise<string>
@@ -272,6 +279,7 @@ export class FakeTenantControlPlane
         }
         if (path === FakeTenantControlPlane.EnvironmentsPath)
         {
+            this.EnvironmentsRequests++
             FakeTenantControlPlane.Json(res, 200, this.Environments())
             return
         }

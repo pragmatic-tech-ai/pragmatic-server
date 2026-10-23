@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { HiveDetailView } from '../src/hive-detail-view.js'
 import { EnvironmentDetailView } from '../src/environment-detail-view.js'
+import { TenantEventType } from '../src/tenant-types.js'
 import { TenantTreeView } from '../src/tenant-tree-view.js'
 import { FakeTenantControlPlane } from './fake-tenant-control-plane.js'
 
@@ -58,5 +59,24 @@ test.describe('tenant portal', () =>
         await expect.poll(() => fake.LogSocketCount(FakeTenantControlPlane.EnvOneName)).toBeGreaterThan(0)
         fake.PushLog(FakeTenantControlPlane.EnvOneName, TenantPortalSteps.LogChunk)
         await expect(page.getByText(TenantPortalSteps.LogChunkText)).toBeVisible()
+    })
+
+    test('a pushed environment-changed event re-fetches and the tree shows the new status', async ({ page }) =>
+    {
+        await page.goto(base)
+        await expect(page.getByText(TenantPortalSteps.EnvTreeLabel(FakeTenantControlPlane.EnvOneName, FakeTenantControlPlane.RunningStatus), { exact: true })).toBeVisible()
+        await expect.poll(() => fake.EventSocketCount()).toBeGreaterThan(0)
+        const before = fake.EnvironmentsRequests
+        fake.AlphaStatusOverride = FakeTenantControlPlane.ChangedStatus
+        try
+        {
+            fake.PushEvent({ type: TenantEventType.EnvironmentChanged, environmentName: FakeTenantControlPlane.EnvOneName })
+            await expect.poll(() => fake.EnvironmentsRequests).toBeGreaterThan(before)
+            await expect(page.getByText(TenantPortalSteps.EnvTreeLabel(FakeTenantControlPlane.EnvOneName, FakeTenantControlPlane.ChangedStatus), { exact: true })).toBeVisible()
+        }
+        finally
+        {
+            fake.AlphaStatusOverride = undefined
+        }
     })
 })
