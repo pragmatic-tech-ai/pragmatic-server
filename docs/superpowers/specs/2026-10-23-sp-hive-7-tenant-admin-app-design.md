@@ -43,14 +43,16 @@ D1 (information architecture) and D2 (version-selection interaction) are the pro
 
 ## DECISIONS RESOLVED (2026-10-23, with the user)
 
-- **S1 (client login) = determined by 6c** — browser redirect to the tenant's own per-tenant IdP `/authorize`, riding the runtime host's `/auth/oidc/begin`→`/auth/oidc/callback`→`/auth/session` cookie flow. Depends on SP-HIVE-6c (reachable per-tenant IdP).
-- **S2 = Separate tenant façade.** A distinct tenant-facing API surface (e.g. `/tenant-api/…`) that only ever exposes the caller's own tenant's hives/environments/manifests; the operator `/api` routes stay untouched.
+- **S1 (client login) = the CONTROL-PLANE gains its own tenant OIDC relying-party** (decided 2026-10-23, see §9). The control-plane serves the tenant-admin app on a tenant-facing listener/origin, runs an OIDC relying-party against the tenant's per-tenant IdP (SP-HIVE-6c), handles the callback, and mints a **tenant-scoped session** of its own. Auth sits with the data rather than being delegated cross-process to the runtime host. Depends on SP-HIVE-6c (reachable per-tenant IdP), now built.
+- **S2 = Separate tenant façade.** A distinct tenant-facing API surface (`/tenant-api/…`) that authorizes on the §9 tenant session and only ever exposes the caller's own tenant's hives/environments/manifests/rollout/health; the operator `/api` routes stay untouched.
 - **D1/D2 (information architecture + version-selection interaction) = PINNED via a mockup session (2026-10-23, user present).** See §8 below for the agreed UX; mockups saved under `.superpowers/brainstorm/9086-1792757898/content/` (`d1-information-architecture.html`, `d2-version-selection.html`, `d4-environment-detail.html`).
 - **D3 = Mural framework shell (editor/viewer-shell + hierarchy nav) + Observable view-models** (per the standing workspace VM rule).
 - **D4 = v1 scope includes environment lifecycle:** OIDC login to the tenant realm, tenant-scoped nav over hives/environments, the SP-HIVE-4 self-service version catalog (list gated versions, per-hive target + health, select/roll, rollback), AND environment start/stop/logs/live-health.
 - **D5 (served origin) = default (confirm):** served by the control-plane as a tenant-facing static root (like `admin/portal`), at a tenant origin consistent with the S1 OIDC callback and 6c topology.
 
-**Status:** all decisions resolved, including the D1/D2 UX (pinned via the 2026-10-23 mockup session — see §8). SP-HIVE-6c (per-tenant IdP + federation) is now BUILT and merged, so the login dependency is satisfied. Pending final user approval of §8, then → plan (superpowers:writing-plans) → SDD.
+**Status:** ALL decisions resolved — the D1/D2/env UX (§8, pinned via the 2026-10-23 mockup session) and the serving/auth topology + live-surface scope (§9, resolved with the user the same day). SP-HIVE-6c (per-tenant IdP + federation) is BUILT and merged, so the login dependency is satisfied. Pending final user sign-off on this doc, then → plan (superpowers:writing-plans) → subagent-driven SDD.
+
+**v1 build surface (summary):** (1) control-plane tenant-facing auth plane — non-loopback/gateway reach, OIDC relying-party to the per-tenant IdP, tenant-scoped session, Origin/CSRF/secure-cookie hardening; (2) `/tenant-api/…` façade authorizing on that session, tenant-scoped over hives/environments/manifests/rollout/health/target; (3) streaming — tenant-scoped events websocket (per-env health) + a log-follow seam; (4) the mural tenant-admin app — tree+detail nav, inline version selection with confirm, environment lifecycle (start/stop/restart/live-health/live-logs), Observable VMs, control-plane-served static root.
 
 ---
 
@@ -64,4 +66,16 @@ The app is a mural root app (framework shell: editor/viewer-shell + `hierarchy/`
 
 - **Environment detail (D4 lifecycle) = approved default.** Selecting an environment fills the detail pane with: a **header** (env name · status dot · running version · env type) and **Start / Stop / Restart** actions; a **live Health strip** (status, uptime, last-check) updated via the `/api/events` websocket so it changes without a reload; and a **live-tailing Logs panel** with a Pause control. Same detail-pane frame as the hive view for a consistent tree experience.
 
-- **Login (S1)** is not a screen this app designs: it redirects to the tenant's own IdP login page (SP-HIVE-6), riding `/auth/oidc/begin → callback → session`, then lands back in the app.
+- **Login (S1)** is not a screen this app designs: it redirects to the tenant's own IdP login page (SP-HIVE-6), then lands back in the app with a tenant session minted by the control-plane's own relying-party (§9).
+
+## 9. Serving & auth topology — resolved (2026-10-23, user present)
+
+- **The control-plane gains a tenant-facing auth plane (chosen over delegating to the runtime host or cross-process session trust).** The control-plane serves the tenant-admin static root on a **tenant-facing listener/origin** (distinct from today's loopback operator surface), runs an **OIDC relying-party** against the caller's per-tenant IdP, handles `begin → IdP → callback`, and issues its own **tenant-scoped session** cookie. `/tenant-api/…` authorizes on that session. This puts authentication where the data and the façade already live.
+- **Consequences to build (beyond the UI):** the control-plane must become **network-reachable** for the tenant origin — today it binds loopback and hard-rejects any non-`localhost` `Host` (`AllowedHosts`) — via a non-loopback bind and/or a gateway in front, with the matching **Origin allow-list, CSRF, and Secure/HttpOnly/SameSite cookie** handling for the tenant session. The operator loopback surface and its `AllowedHosts` gate stay unchanged.
+- **Live surfaces = true streaming (chosen over near-live polling).** v1 adds a **tenant-scoped events websocket** on the façade (the existing `/api/events` is operator-scoped and cross-tenant — not reused directly) carrying per-environment health transitions, and a **log-follow streaming seam** (today `EnvironmentService.Logs`/`docker.Logs` return a one-shot `string` — v1 adds a follow/stream path) surfaced by the live-tailing logs panel's Pause control.
+
+### Builder's calls (minor — settled by me, flag if wrong)
+- **Restart** = compose stop-then-start (no net-new lifecycle primitive); Start/Stop already exist.
+- **Tenant scoping basis:** the façade filters by the environment's platform `tenantId` (populated from its hive since SP-HIVE-6c-rename); a tenant admin maps to exactly one tenant via the OIDC principal; hives are not shared across tenants. "My Hives" = hives whose `tenantId` equals the session's tenant.
+- **No top-level "Versions" browse node** in v1 — version selection is always reached through its hive; a read-only catalog browse is a later addition.
+- **Failed roll / empty states:** a failed `target` roll surfaces inline on the confirm strip (error + the version the hive stayed on); the version list shows an explicit empty state when the tenant has no published versions yet.
