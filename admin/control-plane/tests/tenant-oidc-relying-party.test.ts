@@ -125,6 +125,10 @@ class IdpFixture
     public static readonly OwnerPassword = 'correct-horse-battery-staple'
     public static readonly OwnerDisplayName = 'Acme Owner'
     public static readonly CallbackUrl = 'https://admin.acme.test/tenant-auth/oidc/callback'
+    public static readonly OverrideCallbackUrl = 'https://acme.admin.example.com/tenant-auth/oidc/callback'
+    public static readonly SecondTenantId = 'beta'
+    public static readonly SecondTenantName = 'Beta'
+    public static readonly SecondCallbackUrl = 'https://beta.admin.example.com/tenant-auth/oidc/callback'
     private static readonly Host = '127.0.0.1'
 
     /** Builds the confidential-admin IdpAdminClient the relying-party asks for, over the tenant's own CA. */
@@ -269,6 +273,21 @@ class RecordingAdminClient extends IdpAdminClient
     }
 }
 
+/** A real IdpAdminClient that records the full registration of every RegisterClient call before delegating upstream. */
+class RegistrationRecordingAdminClient extends IdpAdminClient
+{
+    public constructor(options: IdpAdminClientOptions, private readonly sink: IdpAdminClientRegistration[])
+    {
+        super(options)
+    }
+
+    public override async RegisterClient(tenantId: string, client: IdpAdminClientRegistration): Promise<void>
+    {
+        this.sink.push(client)
+        await super.RegisterClient(tenantId, client)
+    }
+}
+
 /** A RegisterClient that always rejects, to prove no secret leaks when IdP registration fails. */
 class ThrowingAdminClient extends IdpAdminClient
 {
@@ -331,6 +350,11 @@ class DurableFixture
     public static RecordingFactory(sink: string[]): (conn: IdpConnection) => IdpAdminClient
     {
         return (conn: IdpConnection): IdpAdminClient => new RecordingAdminClient({ baseUrl: conn.baseUrl, adminToken: conn.adminToken, ca: conn.ca }, sink)
+    }
+
+    public static RegistrationRecordingFactory(sink: IdpAdminClientRegistration[]): (conn: IdpConnection) => IdpAdminClient
+    {
+        return (conn: IdpConnection): IdpAdminClient => new RegistrationRecordingAdminClient({ baseUrl: conn.baseUrl, adminToken: conn.adminToken, ca: conn.ca }, sink)
     }
 
     public Durability(now: () => number, ttlMs: number): TenantAdminDurability
@@ -551,6 +575,47 @@ test('without durability each Begin mints a fresh secret (unchanged legacy behav
         await rp.Begin(IdpFixture.TenantId)
         assert.equal(secrets.length, 2)
         assert.notEqual(secrets[0], secrets[1])
+    })
+})
+
+test('Begin honours a per-call callback override and records a distinct redirect URI per tenant', async () =>
+{
+    await IdpFixture.With(async (conn, _browser) =>
+    {
+        const fixture = await DurableFixture.Create()
+        const clock = new Clock(DurableTimes.Start)
+        const registrations: IdpAdminClientRegistration[] = []
+        const rp = new TenantOidcRelyingParty(
+            new StubIdp(conn), await IdpFixture.Directory(), DurableFixture.RegistrationRecordingFactory(registrations), IdpFixture.CallbackUrl,
+            undefined, undefined, fixture.Durability(clock.Now, DurableTimes.TtlMs))
+
+        // A second realm so the per-tenant discovery/authorize round-trip resolves for the second tenant.
+        const admin = new IdpAdminClient({ baseUrl: conn.baseUrl, adminToken: conn.adminToken, ca: conn.ca })
+        await admin.EnsureRealm(IdpFixture.SecondTenantId, IdpFixture.SecondTenantName)
+
+        await rp.Begin(IdpFixture.TenantId, IdpFixture.OverrideCallbackUrl)
+        await rp.Begin(IdpFixture.SecondTenantId, IdpFixture.SecondCallbackUrl)
+
+        assert.deepEqual(registrations[0].redirectUris, [IdpFixture.OverrideCallbackUrl])
+        assert.deepEqual(registrations[1].redirectUris, [IdpFixture.SecondCallbackUrl])
+        assert.notEqual(registrations[0].redirectUris[0], registrations[1].redirectUris[0])
+    })
+})
+
+test('Begin without a per-call callback falls back to the ctor callback URL (backward compatible)', async () =>
+{
+    await IdpFixture.With(async (conn, _browser) =>
+    {
+        const fixture = await DurableFixture.Create()
+        const clock = new Clock(DurableTimes.Start)
+        const registrations: IdpAdminClientRegistration[] = []
+        const rp = new TenantOidcRelyingParty(
+            new StubIdp(conn), await IdpFixture.Directory(), DurableFixture.RegistrationRecordingFactory(registrations), IdpFixture.CallbackUrl,
+            undefined, undefined, fixture.Durability(clock.Now, DurableTimes.TtlMs))
+
+        await rp.Begin(IdpFixture.TenantId)
+
+        assert.deepEqual(registrations[0].redirectUris, [IdpFixture.CallbackUrl])
     })
 })
 
