@@ -16,7 +16,6 @@ export type TenantProvisionResult = { record: TenantRecord; ownerPassword: strin
 export class TenantProvisioningService
 {
     private static readonly OwnerPrincipalId = 'owner';
-    private static readonly AdminTokenRef = 'admin-token';
     private static readonly PasswordBytes = 24;
     private static readonly PasswordEncoding = 'base64url';
 
@@ -29,6 +28,8 @@ export class TenantProvisioningService
 
     public async Provision(input: TenantProvisionInput): Promise<TenantProvisionResult>
     {
+        // Fail fast before any IdP mutation so a duplicate or bad-client request never orphans a realm + Owner.
+        this.directory.AssertCanCreateTenant(input.id, input.clientId);
         const conn = await this.idp.EnsureForTenant(input.id, input.displayName);
         const client = this.adminClientFactory(conn);
         await client.EnsureRealm(input.id, input.displayName);
@@ -39,12 +40,16 @@ export class TenantProvisioningService
             displayName: input.displayName,
             password: ownerPassword
         });
-        await this.directory.CreateTenant({ id: input.id, clientId: input.clientId, displayName: input.displayName });
-        const record = await this.directory.RecordTenantProvisioning(input.id, {
+        // Single atomic record write as the last step, so the one-time password is never lost mid-write.
+        const record = await this.directory.CreateProvisionedTenant({
+            id: input.id,
+            clientId: input.clientId,
+            displayName: input.displayName,
             ownerEmail: input.ownerEmail,
             ownerPrincipalId: TenantProvisioningService.OwnerPrincipalId,
             idpBaseUrl: conn.baseUrl,
-            idpAdminTokenRef: TenantProvisioningService.AdminTokenRef
+            idpCaRef: conn.caDir,
+            idpAdminTokenRef: conn.adminTokenRef
         });
         return { record, ownerPassword };
     }

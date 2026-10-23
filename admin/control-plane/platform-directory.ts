@@ -162,23 +162,32 @@ export class PlatformDirectory
         return record
     }
 
-    public async RecordTenantProvisioning(id: string, fields: { ownerEmail: string; ownerPrincipalId: string; idpBaseUrl: string; idpCaRef?: string; idpAdminTokenRef?: string }): Promise<TenantRecord>
+    public async CreateProvisionedTenant(input: { id: string; clientId: string; displayName: string; ownerEmail: string; ownerPrincipalId: string; idpBaseUrl: string; idpCaRef?: string; idpAdminTokenRef?: string }): Promise<TenantRecord>
     {
-        const existing = this.tenants.Get(id)
-        if (existing === undefined)
-        {
-            throw new UnknownTenantError(id)
-        }
+        this.AssertCanCreateTenant(input.id, input.clientId)
         const record: TenantRecord = {
-            ...existing,
-            ownerEmail: fields.ownerEmail,
-            ownerPrincipalId: fields.ownerPrincipalId,
-            idpBaseUrl: fields.idpBaseUrl,
-            idpCaRef: fields.idpCaRef,
-            idpAdminTokenRef: fields.idpAdminTokenRef
+            id: input.id,
+            clientId: input.clientId,
+            displayName: input.displayName,
+            createdAt: this.Stamp(),
+            ownerEmail: input.ownerEmail,
+            ownerPrincipalId: input.ownerPrincipalId,
+            idpBaseUrl: input.idpBaseUrl,
+            idpCaRef: input.idpCaRef,
+            idpAdminTokenRef: input.idpAdminTokenRef
         }
         await this.tenants.Put(record)
         return record
+    }
+
+    /** Read-only pre-flight: throws RecordExistsError for a duplicate id and UnknownClientError for a missing parent client. */
+    public AssertCanCreateTenant(id: string, clientId: string): void
+    {
+        this.AssertNew(id, this.tenants.Get(id))
+        if (this.clients.Get(clientId) === undefined)
+        {
+            throw new UnknownClientError(clientId)
+        }
     }
 
     public async DeleteTenant(id: string): Promise<void>

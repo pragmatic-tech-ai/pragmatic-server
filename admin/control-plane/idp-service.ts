@@ -13,6 +13,8 @@ export interface IdpConnection
     baseUrl: string
     ca: Buffer
     adminToken: string
+    adminTokenRef: string
+    caDir: string
 }
 
 export interface IIdpService
@@ -128,7 +130,7 @@ export class IdpService implements IIdpService
         {
             return undefined
         }
-        return { baseUrl: record.baseUrl, ca, adminToken }
+        return { baseUrl: record.baseUrl, ca, adminToken, adminTokenRef: record.adminTokenRef, caDir: record.caDir }
     }
 
     private async Launch(tenantId: string): Promise<IdpConnection>
@@ -157,7 +159,7 @@ export class IdpService implements IIdpService
                 tenantId, port, baseUrl, containerName, volumeName, caDir: tlsDir,
                 adminTokenRef: IdpService.AdminTokenRef, createdAt: new Date().toISOString(), status: IdpStatus.Running
             })
-            return { baseUrl, ca, adminToken }
+            return { baseUrl, ca, adminToken, adminTokenRef: IdpService.AdminTokenRef, caDir: tlsDir }
         }
         catch (err)
         {

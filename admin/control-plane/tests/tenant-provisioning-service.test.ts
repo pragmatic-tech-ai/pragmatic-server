@@ -17,7 +17,7 @@ import type { IdpConnection, IIdpService } from '../idp-service.js';
 import { ClientRegistry } from '../client-registry.js';
 import { TenantRegistry } from '../tenant-registry.js';
 import { HiveRegistry } from '../hive-registry.js';
-import { PlatformDirectory, RecordExistsError, UnknownTenantError } from '../platform-directory.js';
+import { PlatformDirectory, RecordExistsError, UnknownClientError } from '../platform-directory.js';
 import { TenantProvisioningService } from '../tenant-provisioning-service.js';
 
 class FakeIdp implements IIdpService
@@ -36,6 +36,25 @@ class FakeIdp implements IIdpService
     }
 }
 
+class SpyAdminClient extends IdpAdminClient
+{
+    public constructor(conn: IdpConnection, private readonly seen: string[])
+    {
+        super(conn);
+    }
+
+    // Skips the realm call so a bad token fails at SeedAccount, the step that carries the password.
+    public override async EnsureRealm(_tenantId: string, _displayName: string): Promise<void>
+    {
+    }
+
+    public override async SeedAccount(tenantId: string, account: Parameters<IdpAdminClient['SeedAccount']>[1]): Promise<void>
+    {
+        this.seen.push(account.password);
+        return super.SeedAccount(tenantId, account);
+    }
+}
+
 class ProvFixture
 {
     public static readonly DirPrefix = 'tenant-prov-';
@@ -50,6 +69,9 @@ class ProvFixture
     public static readonly BaseUrl = 'https://localhost';
     public static readonly Utf8 = 'utf8';
     public static readonly Token = 'admin-token-for-prov-tests';
+    public static readonly TokenRef = 'admin-token';
+    public static readonly CaRef = '/data/idp/tenant-1/tls';
+    public static readonly BadClientId = 'no-such-client';
     public static readonly BadToken = 'wrong-prov-token';
     public static readonly TenantId = 'tenant-1';
     public static readonly ClientId = 'client-1';
@@ -83,7 +105,9 @@ class ProvFixture
             const conn: IdpConnection = {
                 baseUrl: ProvFixture.HttpsScheme + ProvFixture.Localhost + ProvFixture.Colon + host.Address().port,
                 ca: fs.readFileSync(ca.caFile),
-                adminToken: ProvFixture.Token
+                adminToken: ProvFixture.Token,
+                adminTokenRef: ProvFixture.TokenRef,
+                caDir: ProvFixture.CaRef
             };
             const directory = new PlatformDirectory(
                 new ClientRegistry(path.join(dir, ProvFixture.ClientsFile)),
@@ -128,6 +152,8 @@ test('Provision ensures the realm, seeds an Owner who can authenticate, and pers
         assert.equal(record.ownerEmail, ProvFixture.OwnerEmail);
         assert.equal(record.ownerPrincipalId, ProvFixture.OwnerPrincipal);
         assert.equal(record.idpBaseUrl, conn.baseUrl);
+        assert.equal(record.idpAdminTokenRef, ProvFixture.TokenRef);
+        assert.equal(record.idpCaRef, ProvFixture.CaRef);
         assert.deepEqual(directory.GetTenant(ProvFixture.TenantId), record);
     });
 });
@@ -149,11 +175,18 @@ test('failures do not leak secrets and leave no tenant record behind', async () 
     await ProvFixture.WithHost(async (conn, _realms, directory) =>
     {
         const bad: IdpConnection = { ...conn, adminToken: ProvFixture.BadToken };
-        await assert.rejects(ProvFixture.Service(bad, directory).Provision(ProvFixture.Input()), (err: unknown) =>
+        const seen: string[] = [];
+        const spying = new TenantProvisioningService(new FakeIdp(bad), directory, c => new SpyAdminClient(c, seen));
+        await assert.rejects(spying.Provision(ProvFixture.Input()), (err: unknown) =>
         {
             const text = String(err) + (err as Error).message + ((err as Error).stack ?? '');
             assert.ok(!text.includes(ProvFixture.BadToken));
             assert.ok(!text.includes(ProvFixture.Token));
+            assert.ok(seen.length > 0);
+            for (const pw of seen)
+            {
+                assert.ok(!text.includes(pw));
+            }
             return true;
         });
         assert.equal(directory.GetTenant(ProvFixture.TenantId), undefined);
@@ -164,13 +197,16 @@ test('failures do not leak secrets and leave no tenant record behind', async () 
     });
 });
 
-test('RecordTenantProvisioning throws UnknownTenantError for an absent tenant', async () =>
+test('Provision fails fast, before any IdP mutation, for an unknown client or a duplicate tenant', async () =>
 {
-    await ProvFixture.WithHost(async (_conn, _realms, directory) =>
+    await ProvFixture.WithHost(async (conn, realms, directory) =>
     {
-        await assert.rejects(
-            directory.RecordTenantProvisioning(ProvFixture.UnknownId, { ownerEmail: ProvFixture.OwnerEmail, ownerPrincipalId: ProvFixture.OwnerPrincipal, idpBaseUrl: ProvFixture.BaseUrl }),
-            UnknownTenantError);
+        const service = ProvFixture.Service(conn, directory);
+        await assert.rejects(service.Provision({ ...ProvFixture.Input(), clientId: ProvFixture.BadClientId }), UnknownClientError);
+        assert.equal(realms.For(ProvFixture.TenantId), undefined);
+        await directory.CreateTenant({ id: ProvFixture.TenantId, clientId: ProvFixture.ClientId, displayName: ProvFixture.DisplayName });
+        await assert.rejects(service.Provision(ProvFixture.Input()), RecordExistsError);
+        assert.equal(realms.For(ProvFixture.TenantId), undefined);
     });
 });
 
