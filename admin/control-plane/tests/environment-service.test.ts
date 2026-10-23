@@ -762,7 +762,7 @@ test('BOUND Create registers an OIDC client at the tenant IdP and federates the 
         assert.deepEqual(h.Calls.slice(0, 3), ['allocate', 'generate', 'ensureImage'])
         const oidc = h.Bundle.Oidc
         assert.ok(oidc)
-        assert.equal(oidc.issuer, conn.baseUrl + '/plat-t1')
+        assert.equal(oidc.issuer, conn.baseUrl + '/' + encodeURIComponent('plat-t1'))
         assert.equal(oidc.discoveryUrl, conn.baseUrl + '/plat-t1/.well-known/openid-configuration')
         assert.equal(oidc.clientId, rec.environmentId)
         assert.equal(oidc.redirectUri, 'http://localhost:9100/auth/oidc/callback')

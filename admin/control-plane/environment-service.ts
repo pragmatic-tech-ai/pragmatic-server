@@ -175,7 +175,7 @@ export class EnvironmentService
             const clientId = def.environmentId
             const redirectUri = EnvironmentService.HttpPrefix + String(port) + EnvironmentService.OidcCallbackPath
             await this.adminClientFactory(conn).RegisterClient(platformTenantId, { clientId, redirectUris: [redirectUri], secret })
-            const issuer = conn.baseUrl + EnvironmentService.IssuerSeparator + platformTenantId
+            const issuer = conn.baseUrl + EnvironmentService.IssuerSeparator + encodeURIComponent(platformTenantId)
             const oidc: EnvOidc = {
                 issuer,
                 discoveryUrl: issuer + EnvironmentService.DiscoverySuffix,
@@ -237,7 +237,7 @@ export class EnvironmentService
             catch (err)
             {
                 EnvironmentService.RemoveBundleDir(bundleDir)
-                throw oidc === undefined ? err : new Error(EnvironmentService.Redact(err, oidc.secret))
+                throw oidc === undefined ? err : new CreateFailedError(EnvironmentService.Redact(err, oidc.secret))
             }
 
             let imageOk: boolean
