@@ -241,7 +241,7 @@ export class IdpHost
         }
     }
 
-    /** Returns false when the request matches no route (caller answers 404). Tasks 8/9 add authorize/token here. */
+    /** Returns false when the request matches no route (caller answers 404). */
     private async RouteApi(req: IncomingMessage, res: ServerResponse, path: string): Promise<boolean>
     {
         const method = req.method ?? IdpHost.MethodGet;

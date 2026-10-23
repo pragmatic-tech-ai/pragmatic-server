@@ -206,6 +206,13 @@ test('empty or non-array redirectUris is 400', async () =>
     assert.equal((await f.PostClient({ ...f.ClientBody(), redirectUris: [1] })).Status, AdminFixture.BadRequest);
 });
 
+test('register-client with a malformed redirectUri is 400', async () =>
+{
+    const f = await AdminFixture.Create();
+    await f.PutRealm();
+    assert.equal((await f.PostClient({ ...f.ClientBody(), redirectUris: ['not-a-uri'] })).Status, AdminFixture.BadRequest);
+});
+
 test('unknown path or method after auth is 404', async () =>
 {
     const f = await AdminFixture.Create();

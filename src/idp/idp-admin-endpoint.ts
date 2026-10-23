@@ -156,7 +156,7 @@ export class IdpAdminEndpoint
         }
         const clientId = IdpAdminEndpoint.NonEmptyString(fields[IdpAdminEndpoint.ClientIdField]);
         const secret = IdpAdminEndpoint.NonEmptyString(fields[IdpAdminEndpoint.SecretField]);
-        const redirectUris = IdpAdminEndpoint.StringList(fields[IdpAdminEndpoint.RedirectUrisField]);
+        const redirectUris = IdpAdminEndpoint.AbsoluteUrlList(fields[IdpAdminEndpoint.RedirectUrisField]);
         if (clientId === undefined || secret === undefined || redirectUris === undefined)
         {
             return IdpAdminEndpoint.InvalidBody();
@@ -186,6 +186,27 @@ export class IdpAdminEndpoint
     private static NonEmptyString(value: unknown): string | undefined
     {
         return typeof value === 'string' && value.length > 0 ? value : undefined;
+    }
+
+    private static AbsoluteUrlList(value: unknown): string[] | undefined
+    {
+        const list = IdpAdminEndpoint.StringList(value);
+        if (list === undefined)
+        {
+            return undefined;
+        }
+        for (const entry of list)
+        {
+            try
+            {
+                new URL(entry);
+            }
+            catch
+            {
+                return undefined;
+            }
+        }
+        return list;
     }
 
     private static StringList(value: unknown): string[] | undefined
