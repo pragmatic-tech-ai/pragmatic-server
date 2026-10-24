@@ -30,6 +30,7 @@ import { HiveRegistry } from './hive-registry.js'
 import { DockerImageDigest } from './image-digest.js'
 import { ImageSigner } from './image-signer.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
+import { KindImageLoader } from './kind-image-loader.js'
 import { FileKeyStore } from './key-store.js'
 import { KubectlCli, KubectlError, NodeExecFile } from './kubectl.js'
 import { ManifestRegistry } from './manifest-record.js'
@@ -222,13 +223,19 @@ export class RolloutPushSmoke
         return new PlatformDeploymentRegistry(manifests, gating, selections, reports, registrations, directory, factory, environments, new EnvironmentPlacement(directory))
     }
 
-    /** Two refs of the same underlying image: the roll is observable through the ref the Deployment runs. */
+    /**
+     * Two refs of the same underlying image: the roll is observable through the ref the Deployment runs. The refs are
+     * then loaded into the kind node's containerd (see KindImageLoader): Docker Desktop's k8s node has its own image
+     * store, so a bare host `docker tag` is invisible to it and, with IfNotPresent and no registry, a stale node copy
+     * of the tag would otherwise shadow the freshly built bits.
+     */
     private async TagImages(): Promise<void>
     {
         const S = RolloutPushSmoke
         this.tagged = true
         await this.exec.Run(S.Docker, [S.TagVerb, S.BaseImage, S.ImageV1])
         await this.exec.Run(S.Docker, [S.TagVerb, S.BaseImage, S.ImageV2])
+        await new KindImageLoader().Load(S.ImageV1, S.ImageV2)
     }
 
     /** Signs both bare refs (the hive has no registry endpoint, so the effective ref is unchanged) into the factory dataRoot stores. */
