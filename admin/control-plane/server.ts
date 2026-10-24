@@ -95,6 +95,8 @@ export class ControlPlaneServer
     private static readonly MsPerHour = 3600000
     private static readonly HealthProbeMsEnvVar = 'PRAGMATIC_TENANT_ADMIN_HEALTH_PROBE_MS'
     private static readonly DefaultHealthProbeMs = 30000
+    private static readonly MinHealthProbeMs = 1000
+    private static readonly MaxHealthProbeMs = 2147483647
     private static readonly TenantAdminClientsFile = 'tenant-admin-clients.json'
     private static readonly TenantAdminOidcDir = 'tenant-admin-oidc'
     private static readonly PositiveIntegerPattern = /^[0-9]+$/
@@ -257,14 +259,23 @@ export class ControlPlaneServer
         return hours > 0 ? hours : ControlPlaneServer.DefaultSecretTtlHours
     }
 
-    /** Pure: parses the tenant health probe interval in ms; a non-negative integer is honoured (0 disables), anything else yields the default. */
+    /** Pure: parses the tenant health probe interval in ms; 0 disables, a positive integer within [Min, Max] is honoured, anything else (including out-of-range) yields the default. */
     public static ParseHealthProbeMs(raw: string | undefined): number
     {
         if (raw === undefined || !ControlPlaneServer.PositiveIntegerPattern.test(raw))
         {
             return ControlPlaneServer.DefaultHealthProbeMs
         }
-        return Number.parseInt(raw, 10)
+        const ms = Number.parseInt(raw, 10)
+        if (ms === 0)
+        {
+            return 0
+        }
+        if (ms < ControlPlaneServer.MinHealthProbeMs || ms > ControlPlaneServer.MaxHealthProbeMs)
+        {
+            return ControlPlaneServer.DefaultHealthProbeMs
+        }
+        return ms
     }
 
     private static ResolvePort(raw: string | undefined): number

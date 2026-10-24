@@ -28,15 +28,20 @@ describe('ControlPlaneServer.ParseSecretTtlHours', () =>
 
 describe('ControlPlaneServer.ParseHealthProbeMs', () =>
 {
-    const defaultMs = 30000
+    const DefaultMs = 30000
     const DisabledRaw = '0'
     const ValidRaw = '5000'
+    const ValidMs = 5000
+    const MinBoundaryRaw = '1000'
+    const MinBoundaryMs = 1000
+    const TooLargeRaw = '99999999999'
+    const BelowMinRaw = '007'
 
-    for (const raw of [undefined, '', '-5', 'abc', '1.5'])
+    for (const raw of [undefined, '', '-5', 'abc', '1.5', TooLargeRaw, BelowMinRaw])
     {
         it(`falls back to the default for ${JSON.stringify(raw)}`, () =>
         {
-            assert.equal(ControlPlaneServer.ParseHealthProbeMs(raw), defaultMs)
+            assert.equal(ControlPlaneServer.ParseHealthProbeMs(raw), DefaultMs)
         })
     }
 
@@ -45,9 +50,14 @@ describe('ControlPlaneServer.ParseHealthProbeMs', () =>
         assert.equal(ControlPlaneServer.ParseHealthProbeMs(DisabledRaw), 0)
     })
 
-    it('returns the integer for a valid non-negative value', () =>
+    it('returns the integer for a valid in-range value', () =>
     {
-        assert.equal(ControlPlaneServer.ParseHealthProbeMs(ValidRaw), 5000)
+        assert.equal(ControlPlaneServer.ParseHealthProbeMs(ValidRaw), ValidMs)
+    })
+
+    it('accepts the minimum boundary', () =>
+    {
+        assert.equal(ControlPlaneServer.ParseHealthProbeMs(MinBoundaryRaw), MinBoundaryMs)
     })
 })
 
