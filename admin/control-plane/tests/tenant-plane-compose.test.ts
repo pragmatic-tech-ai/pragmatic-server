@@ -26,6 +26,31 @@ describe('ControlPlaneServer.ParseSecretTtlHours', () =>
     })
 })
 
+describe('ControlPlaneServer.ParseHealthProbeMs', () =>
+{
+    const defaultMs = 30000
+    const DisabledRaw = '0'
+    const ValidRaw = '5000'
+
+    for (const raw of [undefined, '', '-5', 'abc', '1.5'])
+    {
+        it(`falls back to the default for ${JSON.stringify(raw)}`, () =>
+        {
+            assert.equal(ControlPlaneServer.ParseHealthProbeMs(raw), defaultMs)
+        })
+    }
+
+    it('returns 0 (disabled) for zero', () =>
+    {
+        assert.equal(ControlPlaneServer.ParseHealthProbeMs(DisabledRaw), 0)
+    })
+
+    it('returns the integer for a valid non-negative value', () =>
+    {
+        assert.equal(ControlPlaneServer.ParseHealthProbeMs(ValidRaw), 5000)
+    })
+})
+
 describe('ControlPlaneServer.ComposeTenantPlane', () =>
 {
     const BaseDomain = 'admin.example.com'
