@@ -97,6 +97,9 @@ export class ControlPlaneServer
     private static readonly DefaultHealthProbeMs = 30000
     private static readonly MinHealthProbeMs = 1000
     private static readonly MaxHealthProbeMs = 2147483647
+    private static readonly HealthProbeTimeoutMsEnvVar = 'PRAGMATIC_TENANT_ADMIN_HEALTH_PROBE_TIMEOUT_MS'
+    // Above the default probe interval (30s) so a legitimately slow-but-healthy probe is not treated as wedged.
+    private static readonly DefaultHealthProbeTimeoutMs = 60000
     private static readonly TenantAdminClientsFile = 'tenant-admin-clients.json'
     private static readonly TenantAdminOidcDir = 'tenant-admin-oidc'
     private static readonly PositiveIntegerPattern = /^[0-9]+$/
@@ -152,8 +155,9 @@ export class ControlPlaneServer
             const resolver = new TenantHostResolver(baseDomain, scheme, directory)
             const tenantStaticRoot = join(here, ControlPlaneServer.ParentSegment, ControlPlaneServer.TenantPortalSegment, ControlPlaneServer.DistSegment)
             const probeMs = ControlPlaneServer.ParseHealthProbeMs(process.env[ControlPlaneServer.HealthProbeMsEnvVar])
+            const probeTimeoutMs = ControlPlaneServer.ParseHealthProbeTimeoutMs(process.env[ControlPlaneServer.HealthProbeTimeoutMsEnvVar])
             const monitor = probeMs > 0
-                ? new TenantHealthMonitor(directory, new HiveHealthProducer(service, orchestrators, placement), tenantPlane.events, probeMs)
+                ? new TenantHealthMonitor(directory, new HiveHealthProducer(service, orchestrators, placement), tenantPlane.events, probeMs, probeTimeoutMs)
                 : undefined
             const tenantHost = new TenantPlaneHost(tenantPlane, resolver, tenantStaticRoot, service, monitor)
             const tenantPort = ControlPlaneServer.ResolveTenantPort(process.env[ControlPlaneServer.TenantPortEnvVar])
@@ -274,6 +278,25 @@ export class ControlPlaneServer
         if (ms < ControlPlaneServer.MinHealthProbeMs || ms > ControlPlaneServer.MaxHealthProbeMs)
         {
             return ControlPlaneServer.DefaultHealthProbeMs
+        }
+        return ms
+    }
+
+    /** Pure: parses the per-probe timeout in ms; 0 disables the deadline, a positive integer within [Min, Max] is honoured, anything else yields the default. */
+    public static ParseHealthProbeTimeoutMs(raw: string | undefined): number
+    {
+        if (raw === undefined || !ControlPlaneServer.PositiveIntegerPattern.test(raw))
+        {
+            return ControlPlaneServer.DefaultHealthProbeTimeoutMs
+        }
+        const ms = Number.parseInt(raw, 10)
+        if (ms === 0)
+        {
+            return 0
+        }
+        if (ms < ControlPlaneServer.MinHealthProbeMs || ms > ControlPlaneServer.MaxHealthProbeMs)
+        {
+            return ControlPlaneServer.DefaultHealthProbeTimeoutMs
         }
         return ms
     }

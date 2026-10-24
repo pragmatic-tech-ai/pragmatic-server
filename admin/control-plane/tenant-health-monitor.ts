@@ -15,11 +15,21 @@ type HealthSnapshot = { ready: boolean; detail: string }
  * the baseline silently; unbound hives (no `tenantId`) have no audience and are skipped; a hive whose probe throws is
  * skipped for that tick without aborting the loop or logging anything that could carry a secret.
  *
+ * Each probe races against `probeTimeoutMs`: a producer call that never settles (a wedged orchestrator) would otherwise
+ * hold the `running` guard forever and silence every future tick for all tenants, so a timed-out probe is skipped for
+ * that tick exactly like a thrown one. A `probeTimeoutMs` of `0` disables the timeout.
+ *
  * Layering: the monitor only reads the directory/producer and raises `HealthChanged` upward through the event bus; it
  * carries no UX type and the event payload stays `{ type, environmentName }` — no detail text, no cross-tenant data.
  */
 export class TenantHealthMonitor
 {
+    /**
+     * Default per-probe deadline when none is wired: a producer call slower than this is treated as wedged. Set
+     * comfortably above the default probe interval (30s) so a legitimately slow-but-healthy probe is never cut.
+     */
+    private static readonly DefaultProbeTimeoutMs = 60000
+    private static readonly ProbeTimedOut = 'health probe timed out'
     private readonly snapshots = new Map<string, Map<string, HealthSnapshot>>()
     private timer: ReturnType<typeof setTimeout> | undefined = undefined
     private started = false
@@ -32,7 +42,8 @@ export class TenantHealthMonitor
         private readonly directory: PlatformDirectory,
         private readonly producer: HiveHealthProducer,
         private readonly events: TenantEventBus,
-        private readonly intervalMs: number)
+        private readonly intervalMs: number,
+        private readonly probeTimeoutMs: number = TenantHealthMonitor.DefaultProbeTimeoutMs)
     {
     }
 
@@ -124,7 +135,7 @@ export class TenantHealthMonitor
         let dtos: HiveHealthDto[]
         try
         {
-            dtos = await this.producer.Produce(hive)
+            dtos = await this.WithProbeTimeout(this.producer.Produce(hive))
         }
         catch
         {
@@ -147,5 +158,33 @@ export class TenantHealthMonitor
     private HasChanged(before: HealthSnapshot | undefined, after: HealthSnapshot): boolean
     {
         return before === undefined || before.ready !== after.ready || before.detail !== after.detail
+    }
+
+    /**
+     * Resolves with the probe result, or rejects once `probeTimeoutMs` elapses so a never-settling producer call
+     * cannot hold the tick open. A non-positive timeout disables the deadline. The timer is cleared the moment the
+     * work settles; a rejection handler stays attached to the original work so a late failure never goes unhandled.
+     */
+    private WithProbeTimeout(work: Promise<HiveHealthDto[]>): Promise<HiveHealthDto[]>
+    {
+        if (this.probeTimeoutMs <= 0)
+        {
+            return work
+        }
+        return new Promise<HiveHealthDto[]>((resolve, reject) =>
+        {
+            const timer = setTimeout(() => reject(new Error(TenantHealthMonitor.ProbeTimedOut)), this.probeTimeoutMs)
+            work.then(
+                dtos =>
+                {
+                    clearTimeout(timer)
+                    resolve(dtos)
+                },
+                error =>
+                {
+                    clearTimeout(timer)
+                    reject(error instanceof Error ? error : new Error(String(error)))
+                })
+        })
     }
 }
