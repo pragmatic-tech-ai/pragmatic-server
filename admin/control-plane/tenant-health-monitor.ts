@@ -1,5 +1,5 @@
 import type { PlatformDirectory } from './platform-directory.js'
-import type { HiveHealthProducer } from './hive-health-producer.js'
+import type { HiveHealthDto, HiveHealthProducer } from './hive-health-producer.js'
 import type { HiveRecord } from './platform-records.js'
 import { TenantEventType, type TenantEventBus } from './tenant-api/tenant-events.js'
 
@@ -25,6 +25,9 @@ export class TenantHealthMonitor
     private started = false
     private stopped = true
     private running = false
+    // Bumped on every Start/Stop so an in-flight tick scheduled by an earlier run cannot reschedule after a
+    // Stop (or a Stop→Start restart): a tick reschedules only while its captured generation is still current.
+    private generation = 0
 
     public constructor(
         private readonly directory: PlatformDirectory,
@@ -43,7 +46,8 @@ export class TenantHealthMonitor
         }
         this.started = true
         this.stopped = false
-        this.Schedule()
+        this.generation++
+        this.Schedule(this.generation)
     }
 
     /** Stops the loop and clears any pending timer; safe to call repeatedly. An in-flight tick will not reschedule. */
@@ -51,6 +55,7 @@ export class TenantHealthMonitor
     {
         this.started = false
         this.stopped = true
+        this.generation++
         if (this.timer !== undefined)
         {
             clearTimeout(this.timer)
@@ -58,18 +63,23 @@ export class TenantHealthMonitor
         }
     }
 
-    private Schedule(): void
+    private Schedule(generation: number): void
     {
-        this.timer = setTimeout(() => { void this.RunAndReschedule() }, this.intervalMs)
+        this.timer = setTimeout(() => { void this.RunAndReschedule(generation) }, this.intervalMs)
     }
 
-    private async RunAndReschedule(): Promise<void>
+    private async RunAndReschedule(generation: number): Promise<void>
     {
+        // A timer that fired after a Stop (its callback already queued when Stop ran) belongs to a past generation: drop it.
+        if (generation !== this.generation)
+        {
+            return
+        }
         this.timer = undefined
         await this.Tick()
-        if (!this.stopped)
+        if (generation === this.generation && !this.stopped)
         {
-            this.Schedule()
+            this.Schedule(generation)
         }
     }
 
@@ -83,13 +93,25 @@ export class TenantHealthMonitor
         this.running = true
         try
         {
+            const seen = new Set<string>()
             for (const hive of this.directory.ListHives())
             {
-                if (hive.tenantId === undefined)
+                // Guards a malformed persisted record: HiveRecord.tenantId is typed non-optional, but records are
+                // JSON and not runtime-validated. An unbound hive has no tenant audience, so skip it (and an empty id).
+                if (!hive.tenantId)
                 {
                     continue
                 }
+                seen.add(hive.id)
                 await this.Probe(hive)
+            }
+            // Prune snapshots for hives no longer listed (deleted or now unbound) so the map cannot grow unbounded.
+            for (const id of [...this.snapshots.keys()])
+            {
+                if (!seen.has(id))
+                {
+                    this.snapshots.delete(id)
+                }
             }
         }
         finally
@@ -100,7 +122,7 @@ export class TenantHealthMonitor
 
     private async Probe(hive: HiveRecord): Promise<void>
     {
-        let dtos
+        let dtos: HiveHealthDto[]
         try
         {
             dtos = await this.producer.Produce(hive)

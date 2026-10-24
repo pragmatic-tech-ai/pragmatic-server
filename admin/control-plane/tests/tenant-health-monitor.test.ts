@@ -312,6 +312,57 @@ describe('TenantHealthMonitor', () =>
         assert.equal(recorder.For('t1')[0].environmentName, 'test')
     })
 
+    it('prunes a removed hive so its snapshot cannot leak, and a reappearance reseeds silently', async () =>
+    {
+        const directory = new FakeDirectory()
+        const producer = new FakeProducer()
+        const bus = new TenantEventBus()
+        const recorder = new Recorder()
+        recorder.Watch(bus, 't1')
+        directory.Hives = [Hives.Bound('h1', 't1')]
+        producer.Script('h1', [Health.Dto('dev', true, 'ok')])
+        const monitor = new TenantHealthMonitor(directory.AsDirectory(), producer.AsProducer(), bus, Interval)
+
+        await Driver.Tick(monitor)
+        // The hive leaves the listing (deleted / unbound); its snapshot must be pruned, not retained forever.
+        directory.Hives = []
+        await Driver.Tick(monitor)
+
+        // It reappears with a different health. A leaked snapshot would diff against the stale 'ready' and emit;
+        // a correctly pruned snapshot treats this as a first observation and stays silent.
+        directory.Hives = [Hives.Bound('h1', 't1')]
+        producer.Script('h1', [Health.Dto('dev', false, 'crash-looping')])
+        await Driver.Tick(monitor)
+
+        assert.equal(recorder.Total(), 0)
+    })
+
+    it('seeds a hive first seen on a later tick silently, then emits on its next change', async () =>
+    {
+        const directory = new FakeDirectory()
+        const producer = new FakeProducer()
+        const bus = new TenantEventBus()
+        const recorder = new Recorder()
+        recorder.Watch(bus, 't1')
+        recorder.Watch(bus, 't2')
+        directory.Hives = [Hives.Bound('h1', 't1')]
+        producer.Script('h1', [Health.Dto('dev', true, 'ok')])
+        const monitor = new TenantHealthMonitor(directory.AsDirectory(), producer.AsProducer(), bus, Interval)
+
+        await Driver.Tick(monitor)
+        // A second hive joins the platform after the baseline tick: its first observation must emit nothing.
+        directory.Hives = [Hives.Bound('h1', 't1'), Hives.Bound('h2', 't2')]
+        producer.Script('h2', [Health.Dto('prod', true, 'ok')])
+        await Driver.Tick(monitor)
+        assert.equal(recorder.Total(), 0)
+
+        producer.Script('h2', [Health.Dto('prod', false, 'down')])
+        await Driver.Tick(monitor)
+        assert.equal(recorder.For('t2').length, 1)
+        assert.equal(recorder.For('t2')[0].environmentName, 'prod')
+        assert.equal(recorder.For('t1').length, 0)
+    })
+
     it('does not overlap: a second entry while a tick is in flight is a no-op', async () =>
     {
         const directory = new FakeDirectory()
@@ -351,6 +402,53 @@ describe('TenantHealthMonitor', () =>
         mock.timers.tick(Interval * 5)
         await new Promise<void>(resolve => setImmediate(resolve))
         assert.equal(producer.Calls.length, 1)
+    })
+
+    it('a Stop then Start during an in-flight tick runs one chain, not two', async () =>
+    {
+        mock.timers.enable({ apis: ['setTimeout'] })
+        const directory = new FakeDirectory()
+        const producer = new DeferredProducer()
+        const bus = new TenantEventBus()
+        directory.Hives = [Hives.Bound('h1', 't1')]
+        const monitor = new TenantHealthMonitor(directory.AsDirectory(), producer.AsProducer(), bus, Interval)
+
+        monitor.Start()
+        mock.timers.tick(Interval) // first probe is now in flight (deferred)
+        assert.equal(producer.Calls.length, 1)
+
+        // Restart while the first probe is still awaiting: the stale in-flight tick must not reschedule a second chain.
+        monitor.Stop()
+        monitor.Start()
+        producer.ResolveAll()
+        await new Promise<void>(resolve => setImmediate(resolve))
+
+        // Exactly one live chain remains: each interval advances the probe count by one, never two.
+        mock.timers.tick(Interval)
+        await new Promise<void>(resolve => setImmediate(resolve))
+        assert.equal(producer.Calls.length, 2)
+        producer.ResolveAll()
+        await new Promise<void>(resolve => setImmediate(resolve))
+        mock.timers.tick(Interval)
+        await new Promise<void>(resolve => setImmediate(resolve))
+        assert.equal(producer.Calls.length, 3)
+    })
+
+    it('Stop before the first timer fires cancels the pending probe entirely', async () =>
+    {
+        mock.timers.enable({ apis: ['setTimeout'] })
+        const directory = new FakeDirectory()
+        const producer = new FakeProducer()
+        const bus = new TenantEventBus()
+        directory.Hives = [Hives.Bound('h1', 't1')]
+        producer.Script('h1', [Health.Dto('dev', true, 'ok')])
+        const monitor = new TenantHealthMonitor(directory.AsDirectory(), producer.AsProducer(), bus, Interval)
+
+        monitor.Start()
+        monitor.Stop()
+        mock.timers.tick(Interval * 5)
+        await new Promise<void>(resolve => setImmediate(resolve))
+        assert.equal(producer.Calls.length, 0)
     })
 
     it('Stop is safe to call repeatedly and before Start', () =>
