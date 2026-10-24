@@ -85,6 +85,39 @@ class DeferredProducer
     }
 }
 
+/** A producer that never resolves for chosen hives (a wedged orchestrator) and returns scripted DTOs for the rest. */
+class HangingProducer
+{
+    private readonly hung = new Set<string>()
+    private readonly scripts = new Map<string, HiveHealthDto[]>()
+    public readonly Calls: string[] = []
+
+    public Hang(hiveId: string): void
+    {
+        this.hung.add(hiveId)
+    }
+
+    public Script(hiveId: string, dtos: HiveHealthDto[]): void
+    {
+        this.scripts.set(hiveId, dtos)
+    }
+
+    public Produce(hive: HiveRecord): Promise<HiveHealthDto[]>
+    {
+        this.Calls.push(hive.id)
+        if (this.hung.has(hive.id))
+        {
+            return new Promise<HiveHealthDto[]>(() => undefined)
+        }
+        return Promise.resolve(this.scripts.get(hive.id) ?? [])
+    }
+
+    public AsProducer(): HiveHealthProducer
+    {
+        return this as unknown as HiveHealthProducer
+    }
+}
+
 class Recorder
 {
     public readonly Events = new Map<string, TenantEvent[]>()
@@ -449,6 +482,57 @@ describe('TenantHealthMonitor', () =>
         mock.timers.tick(Interval * 5)
         await new Promise<void>(resolve => setImmediate(resolve))
         assert.equal(producer.Calls.length, 0)
+    })
+
+    it('times out a hung probe so the loop is not wedged and a sibling still emits', async () =>
+    {
+        mock.timers.enable({ apis: ['setTimeout'] })
+        const directory = new FakeDirectory()
+        const producer = new HangingProducer()
+        const bus = new TenantEventBus()
+        const recorder = new Recorder()
+        recorder.Watch(bus, 't1')
+        recorder.Watch(bus, 't2')
+        directory.Hives = [Hives.Bound('bad', 't1'), Hives.Bound('good', 't2')]
+        producer.Hang('bad')
+        producer.Script('good', [Health.Dto('prod', true, 'ok')])
+        const ProbeTimeout = 5000
+        const monitor = new TenantHealthMonitor(directory.AsDirectory(), producer.AsProducer(), bus, Interval, ProbeTimeout)
+
+        // First tick: the hung hive must not hold the tick open — its probe times out and the good hive still runs (baseline).
+        const first = Driver.Tick(monitor)
+        await new Promise<void>(resolve => setImmediate(resolve))
+        mock.timers.tick(ProbeTimeout)
+        await first
+        assert.equal(recorder.Total(), 0)
+
+        // Second tick proves the loop was released (not wedged on the hung probe): the good env flips and emits.
+        producer.Script('good', [Health.Dto('prod', false, 'down')])
+        const second = Driver.Tick(monitor)
+        await new Promise<void>(resolve => setImmediate(resolve))
+        mock.timers.tick(ProbeTimeout)
+        await second
+        assert.equal(producer.Calls.filter(c => c === 'good').length, 2)
+        assert.equal(recorder.For('t2').length, 1)
+        assert.equal(recorder.For('t2')[0].environmentName, 'prod')
+        assert.equal(recorder.For('t1').length, 0)
+    })
+
+    it('with the timeout disabled (0) a slow probe is awaited to completion', async () =>
+    {
+        const directory = new FakeDirectory()
+        const producer = new DeferredProducer()
+        const bus = new TenantEventBus()
+        const recorder = new Recorder()
+        recorder.Watch(bus, 't1')
+        directory.Hives = [Hives.Bound('h1', 't1')]
+        const monitor = new TenantHealthMonitor(directory.AsDirectory(), producer.AsProducer(), bus, Interval, 0)
+
+        const tick = Driver.Tick(monitor)
+        assert.equal(producer.Calls.length, 1)
+        producer.ResolveAll()
+        await tick
+        assert.equal(recorder.Total(), 0)
     })
 
     it('Stop is safe to call repeatedly and before Start', () =>
