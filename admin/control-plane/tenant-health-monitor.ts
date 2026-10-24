@@ -24,8 +24,11 @@ type HealthSnapshot = { ready: boolean; detail: string }
  */
 export class TenantHealthMonitor
 {
-    /** Default per-probe deadline when none is wired: a producer call slower than this is treated as wedged. */
-    private static readonly DefaultProbeTimeoutMs = 30000
+    /**
+     * Default per-probe deadline when none is wired: a producer call slower than this is treated as wedged. Set
+     * comfortably above the default probe interval (30s) so a legitimately slow-but-healthy probe is never cut.
+     */
+    private static readonly DefaultProbeTimeoutMs = 60000
     private static readonly ProbeTimedOut = 'health probe timed out'
     private readonly snapshots = new Map<string, Map<string, HealthSnapshot>>()
     private timer: ReturnType<typeof setTimeout> | undefined = undefined

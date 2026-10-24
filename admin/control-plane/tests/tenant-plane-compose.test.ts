@@ -63,7 +63,7 @@ describe('ControlPlaneServer.ParseHealthProbeMs', () =>
 
 describe('ControlPlaneServer.ParseHealthProbeTimeoutMs', () =>
 {
-    const DefaultMs = 30000
+    const DefaultMs = 60000
     const DisabledRaw = '0'
     const ValidRaw = '5000'
     const ValidMs = 5000

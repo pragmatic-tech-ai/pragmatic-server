@@ -98,7 +98,8 @@ export class ControlPlaneServer
     private static readonly MinHealthProbeMs = 1000
     private static readonly MaxHealthProbeMs = 2147483647
     private static readonly HealthProbeTimeoutMsEnvVar = 'PRAGMATIC_TENANT_ADMIN_HEALTH_PROBE_TIMEOUT_MS'
-    private static readonly DefaultHealthProbeTimeoutMs = 30000
+    // Above the default probe interval (30s) so a legitimately slow-but-healthy probe is not treated as wedged.
+    private static readonly DefaultHealthProbeTimeoutMs = 60000
     private static readonly TenantAdminClientsFile = 'tenant-admin-clients.json'
     private static readonly TenantAdminOidcDir = 'tenant-admin-oidc'
     private static readonly PositiveIntegerPattern = /^[0-9]+$/

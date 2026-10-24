@@ -90,6 +90,7 @@ class HangingProducer
 {
     private readonly hung = new Set<string>()
     private readonly scripts = new Map<string, HiveHealthDto[]>()
+    private readonly resolvers = new Map<string, (dtos: HiveHealthDto[]) => void>()
     public readonly Calls: string[] = []
 
     public Hang(hiveId: string): void
@@ -97,9 +98,20 @@ class HangingProducer
         this.hung.add(hiveId)
     }
 
+    public Unhang(hiveId: string): void
+    {
+        this.hung.delete(hiveId)
+    }
+
     public Script(hiveId: string, dtos: HiveHealthDto[]): void
     {
         this.scripts.set(hiveId, dtos)
+    }
+
+    /** Settles a previously-hung probe's pending promise late, to prove a resolution after its timeout is harmless. */
+    public Release(hiveId: string, dtos: HiveHealthDto[]): void
+    {
+        this.resolvers.get(hiveId)?.(dtos)
     }
 
     public Produce(hive: HiveRecord): Promise<HiveHealthDto[]>
@@ -107,7 +119,7 @@ class HangingProducer
         this.Calls.push(hive.id)
         if (this.hung.has(hive.id))
         {
-            return new Promise<HiveHealthDto[]>(() => undefined)
+            return new Promise<HiveHealthDto[]>(resolve => this.resolvers.set(hive.id, resolve))
         }
         return Promise.resolve(this.scripts.get(hive.id) ?? [])
     }
@@ -516,6 +528,37 @@ describe('TenantHealthMonitor', () =>
         assert.equal(recorder.For('t2').length, 1)
         assert.equal(recorder.For('t2')[0].environmentName, 'prod')
         assert.equal(recorder.For('t1').length, 0)
+    })
+
+    it('a hung probe that settles after its timeout neither emits nor seeds a baseline', async () =>
+    {
+        mock.timers.enable({ apis: ['setTimeout'] })
+        const directory = new FakeDirectory()
+        const producer = new HangingProducer()
+        const bus = new TenantEventBus()
+        const recorder = new Recorder()
+        recorder.Watch(bus, 't1')
+        directory.Hives = [Hives.Bound('h1', 't1')]
+        producer.Hang('h1')
+        const ProbeTimeout = 5000
+        const monitor = new TenantHealthMonitor(directory.AsDirectory(), producer.AsProducer(), bus, Interval, ProbeTimeout)
+
+        const first = Driver.Tick(monitor)
+        await new Promise<void>(resolve => setImmediate(resolve))
+        mock.timers.tick(ProbeTimeout) // the probe times out and is skipped, so no snapshot is seeded for h1
+        await first
+
+        // The wedged producer returns LATE (ready=true); the already-rejected tick must discard it — no emit, no snapshot.
+        producer.Release('h1', [Health.Dto('dev', true, 'ok')])
+        await new Promise<void>(resolve => setImmediate(resolve))
+        assert.equal(recorder.Total(), 0)
+
+        // A fresh tick now makes the FIRST real observation (ready=false). If the late settle had wrongly seeded
+        // (true,'ok') as the baseline, this would diff and emit; a correct skip means this is baseline -> silent.
+        producer.Unhang('h1')
+        producer.Script('h1', [Health.Dto('dev', false, 'down')])
+        await Driver.Tick(monitor)
+        assert.equal(recorder.Total(), 0)
     })
 
     it('with the timeout disabled (0) a slow probe is awaited to completion', async () =>
