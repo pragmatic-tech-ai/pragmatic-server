@@ -79,7 +79,11 @@ import { ControlPlaneServer } from './server.js'
  */
 class PortedTenantHostResolver extends TenantHostResolver
 {
+    // Pinned to production's TenantHostResolver.CallbackPath (a private static there, so it cannot be imported); keep in
+    // lockstep if that path ever changes so the callback does not silently diverge only here.
     private static readonly PortedCallbackPath = '/tenant-auth/oidc/callback'
+    // Each class owns its scheme-separator constant (as production's TenantHostResolver does); the private static there
+    // is not importable across the class boundary.
     private static readonly PortedSchemeSeparator = '://'
 
     public constructor(
@@ -131,6 +135,7 @@ export class TenantLoginE2eSmoke
     private static readonly IdpPortFloor = 12100
     private static readonly SecretTtlHours = 168
     private static readonly MasterKeyBytes = 32
+    // Smoke-only: the plane is served over loopback http, so the browser must send a non-Secure pts_session cookie.
     private static readonly SecureCookie = false
 
     private static readonly TenantId = 'acme'
@@ -190,6 +195,7 @@ export class TenantLoginE2eSmoke
     private static readonly SubmitSelector = 'button[type=submit]'
     private static readonly FormSelector = 'form'
     private static readonly SessionCookieName = 'pts_session'
+    private static readonly RootPath = '/'
 
     // Portal text the browser drives. Mirrors the portal's own constants (TenantTreeView.RootLabel,
     // HiveDetailView.SetTargetLabel / ConfirmLabel); hoisted here so the smoke owns its literals without a
@@ -222,6 +228,19 @@ export class TenantLoginE2eSmoke
     private static readonly VersionSep = ', '
     private static readonly PlaneUndefined = 'ComposeTenantPlane returned undefined'
 
+    private static readonly HostSep = '.'
+    private static readonly PortSep = ':'
+    private static readonly SchemeSeparator = '://'
+    private static readonly PortDetail = 'port='
+    private static readonly UrlDetail = 'url='
+    private static readonly SessionDetail = 'session='
+    private static readonly HostDetail = ' host='
+    private static readonly StatusDetail = 'status='
+    private static readonly TargetDetail = 'target='
+    private static readonly LoginFormStillPresent = 'login form still present'
+    private static readonly IdpRecordNotFound = 'idp record not found after Provision'
+    private static readonly EnvRecordNotFound = 'environment record not found after Put'
+
     private static readonly M_IdpHealthy = 'idp healthy: the per-tenant pragmatic-idp container is up over TLS'
     private static readonly M_EnvHealthy = 'env healthy: the hive-bound environment is up on the cluster running v1'
     private static readonly M_ListenerUp = 'listener up: the tenant plane is serving on an ephemeral loopback port'
@@ -231,11 +250,13 @@ export class TenantLoginE2eSmoke
     private static readonly M_RollPosted = 'roll posted: the set-target -> confirm UI POSTed the roll and the tenant plane answered 204'
     private static readonly M_RollRecorded = 'roll recorded: live control-plane TargetFor(hive) is v2 after the browser roll'
 
+    private static readonly EnvNameSuffix = '-env'
+
     private failed = false
-    private dataRoot = ''
+    private dataRoot = TenantLoginE2eSmoke.EmptyString
     private tagged = false
     private readonly exec = new NodeExecFile()
-    private readonly envName = TenantLoginE2eSmoke.HiveId + '-env'
+    private readonly envName = TenantLoginE2eSmoke.HiveId + TenantLoginE2eSmoke.EnvNameSuffix
     private idpContainers: IdpContainerEnv | undefined
     private idpRegistry: IdpRegistry | undefined
 
@@ -250,10 +271,11 @@ export class TenantLoginE2eSmoke
     public async Run(): Promise<boolean>
     {
         const S = TenantLoginE2eSmoke
-        this.dataRoot = mkdtempSync(join(tmpdir(), S.TempPrefix))
-        mkdirSync(join(this.dataRoot, S.StaticDir), { recursive: true })
         try
         {
+            // Inside the try so the finally's Cleanup reclaims the temp dir even if the static-subdir mkdir throws.
+            this.dataRoot = mkdtempSync(join(tmpdir(), S.TempPrefix))
+            mkdirSync(join(this.dataRoot, S.StaticDir), { recursive: true })
             await this.Scenario()
         }
         catch (err)
@@ -301,6 +323,10 @@ export class TenantLoginE2eSmoke
         // Bring one hive-bound environment up on the cluster on v1, then record v1 as the hive's current target so the
         // portal shows v1 as Current and v2 as the single available roll target.
         const orchestrator = await this.BringUpEnvironment(plane, hive)
+        if (orchestrator === undefined)
+        {
+            return
+        }
         await plane.deployments.SelectTarget(S.HiveId, S.VersionV1)
 
         const host = await this.Listen(plane)
@@ -320,11 +346,16 @@ export class TenantLoginE2eSmoke
     }
 
     /** Puts a hive-bound environment record, applies it on the hive cluster on v1, and gates its health. [env healthy] */
-    private async BringUpEnvironment(plane: ComposedPlane, hive: HiveRecord): Promise<IHiveOrchestrator>
+    private async BringUpEnvironment(plane: ComposedPlane, hive: HiveRecord): Promise<IHiveOrchestrator | undefined>
     {
         const S = TenantLoginE2eSmoke
         await plane.environments.Put(this.NewRecord())
-        const record = plane.service.List().find(r => r.name === this.envName)!
+        const record = this.FindEnv(plane)
+        if (record === undefined)
+        {
+            this.Check(S.M_EnvHealthy, false, S.EnvRecordNotFound)
+            return undefined
+        }
         const workload = this.BootWorkload(plane.placement.WorkloadFor(record))
         const orchestrator = plane.orchestrators.For(hive)
         await orchestrator.Apply({ ...workload, image: S.ImageV1 })
@@ -332,6 +363,11 @@ export class TenantLoginE2eSmoke
         const health = await orchestrator.Health(workload)
         this.Check(S.M_EnvHealthy, health.ready && health.runningImage === S.ImageV1, health.detail)
         return orchestrator
+    }
+
+    private FindEnv(plane: ComposedPlane): EnvironmentRecord | undefined
+    {
+        return plane.service.List().find(r => r.name === this.envName)
     }
 
     /** Composes the real tenant plane and starts its host on an ephemeral loopback port. [listener up] */
@@ -353,15 +389,15 @@ export class TenantLoginE2eSmoke
         const host = new TenantPlaneHost(tenantPlane, resolver, join(here, S.TenantPortalRel), plane.service)
         await host.Listen(0, S.BindHost)
         const port = host.Address().port
-        this.Check(S.M_ListenerUp, Number.isInteger(port) && port > 0, 'port=' + String(port))
+        this.Check(S.M_ListenerUp, Number.isInteger(port) && port > 0, S.PortDetail + String(port))
         return host
     }
 
     private async DriveBrowser(port: number, ownerPassword: string): Promise<void>
     {
         const S = TenantLoginE2eSmoke
-        const tenantHost = S.TenantId + '.' + S.BaseDomain + ':' + String(port)
-        const origin = S.ExternalScheme + '://' + tenantHost
+        const tenantHost = S.TenantId + S.HostSep + S.BaseDomain + S.PortSep + String(port)
+        const origin = S.ExternalScheme + S.SchemeSeparator + tenantHost
         const browser = await chromium.launch({ args: [S.HostResolverRules] })
         try
         {
@@ -369,9 +405,9 @@ export class TenantLoginE2eSmoke
             const page = await context.newPage()
 
             // The portal boots, finds no session, and AUTO-redirects to /tenant-auth/oidc/begin -> the IdP login page.
-            await page.goto(origin + '/')
+            await page.goto(origin + S.RootPath)
             await page.waitForSelector(S.EmailSelector, { timeout: S.FormWaitMs })
-            this.Check(S.M_LoginForm, new URL(page.url()).host !== tenantHost, 'url=' + page.url())
+            this.Check(S.M_LoginForm, new URL(page.url()).host !== tenantHost, S.UrlDetail + page.url())
 
             // Submit the owner credentials; the IdP 302s to the callback which sets pts_session and returns to the portal.
             await page.fill(S.EmailSelector, S.OwnerEmail)
@@ -380,12 +416,12 @@ export class TenantLoginE2eSmoke
 
             await page.waitForURL(url => url.host === tenantHost, { timeout: S.PortalWaitMs })
             const cookies = await context.cookies()
-            const hasSession = cookies.some(c => c.name === S.SessionCookieName && c.value !== '')
+            const hasSession = cookies.some(c => c.name === S.SessionCookieName && c.value !== S.EmptyString)
             const backOnTenant = new URL(page.url()).host === tenantHost
-            this.Check(S.M_LandedSession, hasSession && backOnTenant, 'session=' + String(hasSession) + ' host=' + new URL(page.url()).host)
+            this.Check(S.M_LandedSession, hasSession && backOnTenant, S.SessionDetail + String(hasSession) + S.HostDetail + new URL(page.url()).host)
 
             await page.waitForFunction(label => document.body.innerText.includes(label), S.RootLabel, { timeout: S.PortalWaitMs })
-            this.Check(S.M_PortalBooted, await page.$(S.FormSelector) === null, 'login form still present')
+            this.Check(S.M_PortalBooted, await page.$(S.FormSelector) === null, S.LoginFormStillPresent)
 
             await this.DriveRoll(page)
         }
@@ -399,6 +435,8 @@ export class TenantLoginE2eSmoke
     private async DriveRoll(page: import('playwright').Page): Promise<void>
     {
         const S = TenantLoginE2eSmoke
+        // The portal tree renders the hive node directly under the root (no manual expand needed), so clicking the
+        // display name opens the hive detail.
         await page.getByText(S.HiveDisplayName, { exact: true }).click()
         await page.getByText(S.SetTargetLabel, { exact: true }).click()
         const posted = page.waitForResponse(
@@ -408,7 +446,7 @@ export class TenantLoginE2eSmoke
             { timeout: S.RollWaitMs })
         await page.getByText(S.ConfirmLabel, { exact: true }).click()
         const response = await posted
-        this.Check(S.M_RollPosted, response.status() === S.StatusNoContent, 'status=' + String(response.status()))
+        this.Check(S.M_RollPosted, response.status() === S.StatusNoContent, S.StatusDetail + String(response.status()))
     }
 
     /** Asserts the roll took effect against LIVE control-plane state, never a fake recorder. [roll recorded] */
@@ -416,10 +454,15 @@ export class TenantLoginE2eSmoke
     {
         const S = TenantLoginE2eSmoke
         const target = plane.deployments.TargetFor(S.HiveId)
-        this.Check(S.M_RollRecorded, target?.version === S.VersionV2, 'target=' + String(target?.version))
+        this.Check(S.M_RollRecorded, target?.version === S.VersionV2, S.TargetDetail + String(target?.version))
+        const record = this.FindEnv(plane)
+        if (record === undefined)
+        {
+            console.log(S.InfoTag + S.InfoRunningImage + S.EnvRecordNotFound)
+            return
+        }
         try
         {
-            const record = plane.service.List().find(r => r.name === this.envName)!
             const health = await orchestrator.Health(this.BootWorkload(plane.placement.WorkloadFor(record)))
             console.log(S.InfoTag + S.InfoRunningImage + String(health.runningImage))
         }
@@ -528,7 +571,7 @@ export class TenantLoginE2eSmoke
             const record = this.idpRegistry?.Get(S.TenantId)
             if (record === undefined || this.idpContainers === undefined)
             {
-                throw new Error('idp record not found after Provision')
+                throw new Error(S.IdpRecordNotFound)
             }
             await this.idpContainers.WaitHealthy(record.port, conn.ca)
             this.Check(S.M_IdpHealthy, true)
@@ -539,14 +582,14 @@ export class TenantLoginE2eSmoke
         }
     }
 
-    private Check(label: string, ok: boolean, detail = ''): void
+    private Check(label: string, ok: boolean, detail = TenantLoginE2eSmoke.EmptyString): void
     {
         const S = TenantLoginE2eSmoke
         if (!ok)
         {
             this.failed = true
         }
-        const suffix = ok || detail === '' ? '' : S.DetailSep + KubectlError.Redact(detail)
+        const suffix = ok || detail === S.EmptyString ? S.EmptyString : S.DetailSep + KubectlError.Redact(detail)
         console.log((ok ? S.PassTag : S.FailTag) + label + suffix)
     }
 
