@@ -23,7 +23,6 @@ export class TenantHealthMonitor
     private readonly snapshots = new Map<string, Map<string, HealthSnapshot>>()
     private timer: ReturnType<typeof setTimeout> | undefined = undefined
     private started = false
-    private stopped = true
     private running = false
     // Bumped on every Start/Stop so an in-flight tick scheduled by an earlier run cannot reschedule after a
     // Stop (or a Stop→Start restart): a tick reschedules only while its captured generation is still current.
@@ -45,7 +44,6 @@ export class TenantHealthMonitor
             return
         }
         this.started = true
-        this.stopped = false
         this.generation++
         this.Schedule(this.generation)
     }
@@ -54,7 +52,6 @@ export class TenantHealthMonitor
     public Stop(): void
     {
         this.started = false
-        this.stopped = true
         this.generation++
         if (this.timer !== undefined)
         {
@@ -77,7 +74,9 @@ export class TenantHealthMonitor
         }
         this.timer = undefined
         await this.Tick()
-        if (generation === this.generation && !this.stopped)
+        // Reschedule only while this tick's generation is still current: any Stop (or Stop→Start restart) during
+        // the await bumped the generation, which both halts a plain Stop and hands the next run to the live chain.
+        if (generation === this.generation)
         {
             this.Schedule(generation)
         }
