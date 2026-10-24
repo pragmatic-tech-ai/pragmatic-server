@@ -61,6 +61,7 @@ import { EnvironmentPlacement } from './environment-placement.js'
 import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import type { IHiveOrchestrator } from './hive-orchestrator.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
+import { KindImageLoader } from './kind-image-loader.js'
 import { KubectlCli, KubectlError, NodeExecFile } from './kubectl.js'
 import { DockerImageDigest } from './image-digest.js'
 import { ImageSigner } from './image-signer.js'
@@ -178,9 +179,6 @@ export class TenantLoginE2eSmoke
     private static readonly BootBaseDirKey = 'PRAGMATIC_BASE_DIR'
     private static readonly BootBaseDir = '/tmp/pragmatic-data'
     private static readonly BootTenantKey = 'PRAGMATIC_ENVIRONMENT_ID'
-    // The served-server role reads its single-tenant id from PRAGMATIC_TENANT_ID; set alongside the environment id so
-    // the workload boots as a self-standing tenant without a tenants file.
-    private static readonly BootTenantIdKey = 'PRAGMATIC_TENANT_ID'
     private static readonly BootMasterKeyEnvKey = 'PRAGMATIC_MASTER_KEY_B64_ENV'
     private static readonly BootMasterKeyVar = 'SMOKE_MASTER_KEY_B64'
 
@@ -505,13 +503,19 @@ export class TenantLoginE2eSmoke
         return { directory, idpService, service, environments, deployments, orchestrators, placement, adminClientRegistry }
     }
 
-    /** Two refs of the same dev image bits: the roll is observable through the ref the Deployment runs. */
+    /**
+     * Two refs of the same dev image bits: the roll is observable through the ref the Deployment runs. The refs are
+     * then loaded into the kind node's containerd (see KindImageLoader): Docker Desktop's k8s node has its own image
+     * store, so a bare host `docker tag` is invisible to it and, with IfNotPresent and no registry, a stale node copy
+     * of the tag would otherwise shadow the freshly built bits and boot old code.
+     */
     private async TagImages(): Promise<void>
     {
         const S = TenantLoginE2eSmoke
         this.tagged = true
         await this.exec.Run(S.Docker, [S.TagVerb, S.BaseImage, S.ImageV1])
         await this.exec.Run(S.Docker, [S.TagVerb, S.BaseImage, S.ImageV2])
+        await new KindImageLoader().Load(S.ImageV1, S.ImageV2)
     }
 
     /** Signs both bare image refs with a throwaway dev key into the orchestrator dataRoot stores; the private PEM is never logged. */
@@ -555,7 +559,6 @@ export class TenantLoginE2eSmoke
         const boot = {
             [S.BootBaseDirKey]: S.BootBaseDir,
             [S.BootTenantKey]: this.envName,
-            [S.BootTenantIdKey]: this.envName,
             [S.BootMasterKeyEnvKey]: S.BootMasterKeyVar,
             [S.BootMasterKeyVar]: randomBytes(S.MasterKeyBytes).toString(S.Base64),
         }
