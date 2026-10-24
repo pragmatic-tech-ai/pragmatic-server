@@ -13,6 +13,7 @@ import type { ITenantApiEndpoint, TenantPlane } from './tenant-auth/tenant-plane
 import type { TenantHostResolver } from './tenant-auth/tenant-host-resolver.js'
 import { TenantEventType, type TenantEventBus } from './tenant-api/tenant-events.js'
 import { TenantLogSocket } from './tenant-api/tenant-log-socket.js'
+import type { TenantHealthMonitor } from './tenant-health-monitor.js'
 
 /**
  * The dedicated tenant-admin listener: its own `http.Server` + `WebSocketServer`, serving ONLY the tenant surface
@@ -57,7 +58,8 @@ export class TenantPlaneHost
         plane: TenantPlane,
         private readonly resolver: TenantHostResolver,
         tenantStaticRoot: string,
-        private readonly service: IEnvironmentService)
+        private readonly service: IEnvironmentService,
+        private readonly monitor?: TenantHealthMonitor)
     {
         this.endpoint = plane.endpoint
         this.gate = plane.gate
@@ -109,6 +111,7 @@ export class TenantPlaneHost
             server.listen(port, host, () =>
             {
                 server.off('error', rej)
+                this.monitor?.Start()
                 res()
             })
         })
@@ -116,6 +119,7 @@ export class TenantPlaneHost
 
     public async Close(): Promise<void>
     {
+        this.monitor?.Stop()
         this.changeSubscription()
         for (const [ws, teardown] of this.clients)
         {

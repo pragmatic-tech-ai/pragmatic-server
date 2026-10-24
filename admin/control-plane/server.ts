@@ -38,6 +38,8 @@ import { TenantHostResolver } from './tenant-auth/tenant-host-resolver.js'
 import { TenantApiEndpoint } from './tenant-api/tenant-api-endpoint.js'
 import { TenantEventBus } from './tenant-api/tenant-events.js'
 import { TenantPlaneHost } from './tenant-plane-host.js'
+import { TenantHealthMonitor } from './tenant-health-monitor.js'
+import { HiveHealthProducer } from './hive-health-producer.js'
 import type { TenantPlane } from './tenant-auth/tenant-plane.js'
 import type { IEnvironmentService } from './control-plane-host.js'
 
@@ -91,6 +93,10 @@ export class ControlPlaneServer
     private static readonly SecretTtlEnvVar = 'PRAGMATIC_TENANT_ADMIN_SECRET_TTL_HOURS'
     private static readonly DefaultSecretTtlHours = 168
     private static readonly MsPerHour = 3600000
+    private static readonly HealthProbeMsEnvVar = 'PRAGMATIC_TENANT_ADMIN_HEALTH_PROBE_MS'
+    private static readonly DefaultHealthProbeMs = 30000
+    private static readonly MinHealthProbeMs = 1000
+    private static readonly MaxHealthProbeMs = 2147483647
     private static readonly TenantAdminClientsFile = 'tenant-admin-clients.json'
     private static readonly TenantAdminOidcDir = 'tenant-admin-oidc'
     private static readonly PositiveIntegerPattern = /^[0-9]+$/
@@ -145,7 +151,11 @@ export class ControlPlaneServer
             const scheme = ControlPlaneServer.TenantScheme(process.env[ControlPlaneServer.TenantSchemeEnvVar])
             const resolver = new TenantHostResolver(baseDomain, scheme, directory)
             const tenantStaticRoot = join(here, ControlPlaneServer.ParentSegment, ControlPlaneServer.TenantPortalSegment, ControlPlaneServer.DistSegment)
-            const tenantHost = new TenantPlaneHost(tenantPlane, resolver, tenantStaticRoot, service)
+            const probeMs = ControlPlaneServer.ParseHealthProbeMs(process.env[ControlPlaneServer.HealthProbeMsEnvVar])
+            const monitor = probeMs > 0
+                ? new TenantHealthMonitor(directory, new HiveHealthProducer(service, orchestrators, placement), tenantPlane.events, probeMs)
+                : undefined
+            const tenantHost = new TenantPlaneHost(tenantPlane, resolver, tenantStaticRoot, service, monitor)
             const tenantPort = ControlPlaneServer.ResolveTenantPort(process.env[ControlPlaneServer.TenantPortEnvVar])
             const tenantBind = ControlPlaneServer.TenantBind(process.env[ControlPlaneServer.TenantBindEnvVar])
             tenantStart = { host: tenantHost, port: tenantPort, bind: tenantBind, scheme, baseDomain }
@@ -247,6 +257,25 @@ export class ControlPlaneServer
         }
         const hours = Number.parseInt(raw, 10)
         return hours > 0 ? hours : ControlPlaneServer.DefaultSecretTtlHours
+    }
+
+    /** Pure: parses the tenant health probe interval in ms; 0 disables, a positive integer within [Min, Max] is honoured, anything else (including out-of-range) yields the default. */
+    public static ParseHealthProbeMs(raw: string | undefined): number
+    {
+        if (raw === undefined || !ControlPlaneServer.PositiveIntegerPattern.test(raw))
+        {
+            return ControlPlaneServer.DefaultHealthProbeMs
+        }
+        const ms = Number.parseInt(raw, 10)
+        if (ms === 0)
+        {
+            return 0
+        }
+        if (ms < ControlPlaneServer.MinHealthProbeMs || ms > ControlPlaneServer.MaxHealthProbeMs)
+        {
+            return ControlPlaneServer.DefaultHealthProbeMs
+        }
+        return ms
     }
 
     private static ResolvePort(raw: string | undefined): number

@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import { WebSocket } from 'ws'
 import { TenantPlaneHost } from '../tenant-plane-host.js'
+import type { TenantHealthMonitor } from '../tenant-health-monitor.js'
 import type { IEnvironmentService } from '../control-plane-host.js'
 import { EnvStatus, EnvType, EnvironmentChangeKind, Template, type EnvironmentChange, type EnvironmentRecord } from '../environment-record.js'
 import type { ILogProcess } from '../../../environments/seed/docker.js'
@@ -570,5 +571,50 @@ describe('TenantPlaneHost streaming', () =>
         const issued = await store.Issue(TenantA, 'u1')
         const ws = new WebSocket(`ws://127.0.0.1:${host.Address().port}/api/events`, { headers: { [Kit.HostHeader]: Kit.TenantHost, [Kit.CookieHeader]: Kit.PtsCookie(TenantA, issued.id) } })
         assert.equal(await Kit.Opened(ws), false)
+    })
+})
+
+class CountingMonitor
+{
+    public Starts = 0
+    public Stops = 0
+
+    public Start(): void
+    {
+        this.Starts++
+    }
+
+    public Stop(): void
+    {
+        this.Stops++
+    }
+}
+
+describe('TenantPlaneHost health monitor lifecycle', () =>
+{
+    it('starts the monitor once on Listen and stops it once on Close', async () =>
+    {
+        const parent = mkdtempSync(join(tmpdir(), 'tph-mon-'))
+        try
+        {
+            const store = new TenantSessionStore(join(parent, 'tenant-sessions.json'), 3600000)
+            const plane: TenantPlane = {
+                endpoint: new TenantAuthEndpoint(new CapturingRelyingParty(), store, false),
+                gate: new TenantAuthGate(store),
+                api: new StubTenantApi(),
+                events: new TenantEventBus(),
+            }
+            const monitor = new CountingMonitor()
+            const host = new TenantPlaneHost(plane, Kit.Resolver(), parent, new FakeStreamingService([]) as unknown as IEnvironmentService, monitor as unknown as TenantHealthMonitor)
+            await host.Listen(0, '127.0.0.1')
+            assert.equal(monitor.Starts, 1)
+            assert.equal(monitor.Stops, 0)
+            await host.Close()
+            assert.equal(monitor.Stops, 1)
+        }
+        finally
+        {
+            rmSync(parent, { recursive: true, force: true })
+        }
     })
 })
