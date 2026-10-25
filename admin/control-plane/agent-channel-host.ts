@@ -3,19 +3,30 @@ import type { AddressInfo } from 'node:net'
 import { PlaneHttp } from './plane-http.js'
 import type { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
 import type { HiveHealthDto } from './hive-health-producer.js'
-import { AgentUnauthorizedError, BodyTooLargeError, HiveNotRegisteredError, UnknownHiveError } from './rollout-errors.js'
+import { AgentUnauthorizedError, BodyTooLargeError, HiveNotRegisteredError, ManifestNotGatedError, UnknownHiveError, UnknownManifestError } from './rollout-errors.js'
 
-/** The dedicated public listener for the hive agent channel: two bearer-authenticated routes, nothing else. */
+/** The dedicated public listener for the hive agent channel: five bearer-authenticated routes (target, snapshot, adoptable, status, adopt), nothing else. */
 export class AgentChannelHost
 {
     private static readonly AuthorizationHeader = 'authorization'
     private static readonly BearerPattern = /^Bearer (\S+)$/
-    private static readonly RoutePattern = /^\/agent\/hives\/([^/]+)\/(target|snapshot)$/
+    private static readonly RoutePattern = /^\/agent\/hives\/([^/]+)\/(target|snapshot|adoptable|status|adopt)$/
     private static readonly TargetSegment = 'target'
     private static readonly SnapshotSegment = 'snapshot'
+    private static readonly AdoptableSegment = 'adoptable'
+    private static readonly StatusSegment = 'status'
+    private static readonly AdoptSegment = 'adopt'
+    private static readonly SegmentMethods: ReadonlyMap<string, string> = new Map([
+        [AgentChannelHost.TargetSegment, PlaneHttp.MethodGet],
+        [AgentChannelHost.SnapshotSegment, PlaneHttp.MethodPost],
+        [AgentChannelHost.AdoptableSegment, PlaneHttp.MethodGet],
+        [AgentChannelHost.StatusSegment, PlaneHttp.MethodGet],
+        [AgentChannelHost.AdoptSegment, PlaneHttp.MethodPost]
+    ])
     private static readonly StatusNoContent = 204
     private static readonly StatusBadRequest = 400
     private static readonly StatusUnauthorized = 401
+    private static readonly StatusForbidden = 403
     private static readonly StatusTooLarge = 413
     private static readonly StatusInternal = 500
     private static readonly MaxBodyBytes = 1048576
@@ -23,6 +34,8 @@ export class AgentChannelHost
     private static readonly NotListeningMessage = 'AgentChannelHost is not listening'
     private static readonly UnauthorizedMessage = 'Unauthorized'
     private static readonly BadRequestMessage = 'Request body must be { environments: HiveHealth[] }'
+    private static readonly AdoptBadRequestMessage = 'Request body must be { version: string }'
+    private static readonly AdoptRefusedMessage = 'Version is not adoptable for this hive'
     private static readonly BadNameMessage = 'Invalid hive id in path'
     private static readonly TooLargeMessage = 'Request body too large'
     private static readonly InternalMessage = 'Internal error'
@@ -92,14 +105,13 @@ export class AgentChannelHost
     {
         const path = (req.url ?? '').split('?')[0] as string
         const m = AgentChannelHost.RoutePattern.exec(path)
-        const isTarget = m !== null && m[2] === AgentChannelHost.TargetSegment && req.method === PlaneHttp.MethodGet
-        const isSnapshot = m !== null && m[2] === AgentChannelHost.SnapshotSegment && req.method === PlaneHttp.MethodPost
-        if (m === null || (!isTarget && !isSnapshot))
+        if (m === null || AgentChannelHost.SegmentMethods.get(m[2] as string) !== req.method)
         {
             req.resume()
             PlaneHttp.WriteNotFound(res)
             return
         }
+        const segment = m[2] as string
         const id = AgentChannelHost.Decode(m[1] as string)
         if (id === undefined)
         {
@@ -114,12 +126,23 @@ export class AgentChannelHost
             throw new AgentUnauthorizedError(id)
         }
         await this.deployments.VerifyAgentToken(id, bearer)
-        if (isTarget)
+        switch (segment)
         {
-            this.ServeTarget(res, id)
-            return
+            case AgentChannelHost.TargetSegment:
+                this.ServeTarget(res, id)
+                return
+            case AgentChannelHost.AdoptableSegment:
+                PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, this.deployments.AdoptableFor(id))
+                return
+            case AgentChannelHost.StatusSegment:
+                PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, this.deployments.StatusFor(id))
+                return
+            case AgentChannelHost.AdoptSegment:
+                await this.ReceiveAdoption(req, res, id)
+                return
+            default:
+                await this.ReceiveSnapshot(req, res, id)
         }
-        await this.ReceiveSnapshot(req, res, id)
     }
 
     private ServeTarget(res: ServerResponse, id: string): void
@@ -144,6 +167,39 @@ export class AgentChannelHost
         await this.deployments.ReportSnapshot(id, environments)
         res.writeHead(AgentChannelHost.StatusNoContent)
         res.end()
+    }
+
+    private async ReceiveAdoption(req: IncomingMessage, res: ServerResponse, id: string): Promise<void>
+    {
+        const version = AgentChannelHost.ParseAdoption(await this.ReadBody(req))
+        if (version === undefined)
+        {
+            PlaneHttp.WriteJson(res, AgentChannelHost.StatusBadRequest, { error: AgentChannelHost.AdoptBadRequestMessage })
+            return
+        }
+        await this.deployments.RecordAdoption(id, version)
+        res.writeHead(AgentChannelHost.StatusNoContent)
+        res.end()
+    }
+
+    /** The version of a { version: non-empty string } body, or undefined when it is anything else. */
+    private static ParseAdoption(raw: string): string | undefined
+    {
+        let body: unknown
+        try
+        {
+            body = JSON.parse(raw)
+        }
+        catch
+        {
+            return undefined
+        }
+        if (body === null || typeof body !== 'object' || Array.isArray(body))
+        {
+            return undefined
+        }
+        const version = (body as { version?: unknown }).version
+        return typeof version === 'string' && version.length > 0 ? version : undefined
     }
 
     /** The validated environments of a { environments: HiveHealthDto[] } body, or undefined when it is anything else. */
@@ -256,6 +312,11 @@ export class AgentChannelHost
         if (err instanceof AgentUnauthorizedError || err instanceof HiveNotRegisteredError || err instanceof UnknownHiveError)
         {
             PlaneHttp.WriteJson(res, AgentChannelHost.StatusUnauthorized, { error: AgentChannelHost.UnauthorizedMessage })
+            return
+        }
+        if (err instanceof ManifestNotGatedError || err instanceof UnknownManifestError)
+        {
+            PlaneHttp.WriteJson(res, AgentChannelHost.StatusForbidden, { error: AgentChannelHost.AdoptRefusedMessage })
             return
         }
         console.error(AgentChannelHost.LogPrefix, err instanceof Error ? err.name : AgentChannelHost.FallbackErrorName)

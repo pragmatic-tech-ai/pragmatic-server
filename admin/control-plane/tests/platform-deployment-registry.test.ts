@@ -271,3 +271,41 @@ test('SelectTarget on an unreachable backend records the selection and does not 
         assert.equal(rolls.length, 0)
     }, true)
 })
+
+test('RecordAdoption records a gated version and does not push', async () =>
+{
+    await Fx.Run(async (reg, _registrations, rolls) =>
+    {
+        await Fx.PublishGated(reg, [Fx.V2])
+        await reg.RecordAdoption(Fx.HiveA, Fx.V2)
+        assert.deepEqual(reg.TargetFor(Fx.HiveA), { version: Fx.V2, image: Fx.Image(Fx.V2) })
+        assert.equal(reg.StatusFor(Fx.HiveA).targetVersion, Fx.V2)
+        assert.equal(rolls.length, 0)
+    })
+})
+
+test('RecordAdoption applies the same gating as SelectTarget and writes nothing on refusal', async () =>
+{
+    await Fx.Run(async (reg, _registrations, rolls) =>
+    {
+        await assert.rejects(reg.RecordAdoption(Fx.HiveA, Fx.V1), UnknownManifestError)
+        await reg.Publish(Fx.V1, Fx.Image(Fx.V1))
+        await reg.Gate(Fx.TenantB, Fx.V1)
+        await assert.rejects(reg.RecordAdoption(Fx.HiveA, Fx.V1), ManifestNotGatedError)
+        await assert.rejects(reg.RecordAdoption(Fx.NoHive, Fx.V1), UnknownHiveError)
+        assert.equal(reg.TargetFor(Fx.HiveA), undefined)
+        assert.equal(rolls.length, 0)
+    })
+})
+
+test('AdoptableFor lists the versions gated for the hive tenant and rejects an unknown hive', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        await Fx.PublishGated(reg, [Fx.V1, Fx.V2])
+        await reg.Publish('3.0.0', Fx.Image('3.0.0'))
+        await reg.Gate(Fx.TenantB, '3.0.0')
+        assert.deepEqual(reg.AdoptableFor(Fx.HiveA).map(m => m.id), [Fx.V1, Fx.V2])
+        assert.throws(() => reg.AdoptableFor(Fx.NoHive), UnknownHiveError)
+    })
+})

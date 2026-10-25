@@ -9,14 +9,14 @@ export class InProcessRolloutClient implements IRolloutClient
     {
     }
 
-    public ManifestsFor(tenantId: string): readonly ManifestRecord[]
+    public ManifestsFor(tenantId: string): Promise<readonly ManifestRecord[]>
     {
-        return this.deployments.ManifestsFor(tenantId)
+        return Promise.resolve(this.deployments.ManifestsFor(tenantId))
     }
 
-    public StatusFor(hiveId: string): HiveRolloutStatus
+    public StatusFor(hiveId: string): Promise<HiveRolloutStatus>
     {
-        return this.deployments.StatusFor(hiveId)
+        return Promise.resolve(this.deployments.StatusFor(hiveId))
     }
 
     public AdoptTarget(hiveId: string, version: string): Promise<void>

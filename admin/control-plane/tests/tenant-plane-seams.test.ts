@@ -45,12 +45,12 @@ class FakeRolloutClient implements IRolloutClient
 {
     public readonly Adopted: Array<{ hiveId: string; version: string }> = []
 
-    public ManifestsFor(_tenantId: string): readonly ManifestRecord[]
+    public async ManifestsFor(_tenantId: string): Promise<readonly ManifestRecord[]>
     {
         return []
     }
 
-    public StatusFor(_hiveId: string): HiveRolloutStatus
+    public async StatusFor(_hiveId: string): Promise<HiveRolloutStatus>
     {
         return { targetVersion: undefined, environments: [] }
     }

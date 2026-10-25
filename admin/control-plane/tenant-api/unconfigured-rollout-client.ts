@@ -10,14 +10,14 @@ export class UnconfiguredRolloutClient implements IRolloutClient
 {
     private static readonly Message = 'No rollout client is configured for this tenant-admin process'
 
-    public ManifestsFor(_tenantId: string): readonly ManifestRecord[]
+    public ManifestsFor(_tenantId: string): Promise<readonly ManifestRecord[]>
     {
-        throw new RolloutUnavailableError(UnconfiguredRolloutClient.Message)
+        return Promise.reject(new RolloutUnavailableError(UnconfiguredRolloutClient.Message))
     }
 
-    public StatusFor(_hiveId: string): HiveRolloutStatus
+    public StatusFor(_hiveId: string): Promise<HiveRolloutStatus>
     {
-        throw new RolloutUnavailableError(UnconfiguredRolloutClient.Message)
+        return Promise.reject(new RolloutUnavailableError(UnconfiguredRolloutClient.Message))
     }
 
     public AdoptTarget(_hiveId: string, _version: string): Promise<void>

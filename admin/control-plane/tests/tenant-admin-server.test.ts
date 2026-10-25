@@ -17,12 +17,12 @@ import type { TenantSession } from '../tenant-auth/tenant-session.js'
 
 class FakeRolloutClient implements IRolloutClient
 {
-    public ManifestsFor(): never[]
+    public async ManifestsFor(): Promise<never[]>
     {
         return []
     }
 
-    public StatusFor(): never
+    public async StatusFor(): Promise<never>
     {
         throw new Error(Names.Unused)
     }
@@ -187,8 +187,8 @@ describe('UnconfiguredRolloutClient', () =>
     it('fails closed on every method', async () =>
     {
         const client = new UnconfiguredRolloutClient()
-        assert.throws(() => client.ManifestsFor(Names.TenantId), RolloutUnavailableError)
-        assert.throws(() => client.StatusFor(Names.HiveId), RolloutUnavailableError)
+        await assert.rejects(() => client.ManifestsFor(Names.TenantId), RolloutUnavailableError)
+        await assert.rejects(() => client.StatusFor(Names.HiveId), RolloutUnavailableError)
         await assert.rejects(() => client.AdoptTarget(Names.HiveId, Names.Unused), RolloutUnavailableError)
     })
 

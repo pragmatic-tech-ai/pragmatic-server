@@ -110,7 +110,7 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
             {
                 try
                 {
-                    this.WriteJson(res, TenantApiEndpoint.StatusOk, [...this.rolloutClient.ManifestsFor(session.tenantId)])
+                    this.WriteJson(res, TenantApiEndpoint.StatusOk, [...await this.rolloutClient.ManifestsFor(session.tenantId)])
                 }
                 catch (err)
                 {
@@ -157,7 +157,7 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         {
             try
             {
-                this.WriteJson(res, TenantApiEndpoint.StatusOk, this.rolloutClient.StatusFor(hive.id))
+                this.WriteJson(res, TenantApiEndpoint.StatusOk, await this.rolloutClient.StatusFor(hive.id))
             }
             catch (err)
             {
