@@ -4,16 +4,37 @@ export interface IRolloutTarget
     image: string
 }
 
+export interface IEnvironmentState
+{
+    environmentName: string
+    namespace: string
+    deployment: string
+    container: string
+    runningImage: string | undefined
+    ready: boolean
+}
+
+export interface ISnapshotEnvironment
+{
+    environmentName: string
+    ready: boolean
+    runningImage: string | undefined
+    detail: string
+}
+
 export interface IRolloutAgentDeps
 {
     fetchTarget(): Promise<IRolloutTarget | undefined>
-    readRunningImage(): Promise<string | undefined>
-    patchImage(image: string): Promise<void>
-    report(runningImage: string, ready: boolean): Promise<void>
+    listEnvironments(): Promise<ReadonlyArray<IEnvironmentState>>
+    patchImage(namespace: string, deployment: string, container: string, image: string): Promise<void>
+    reportSnapshot(environments: ReadonlyArray<ISnapshotEnvironment>): Promise<void>
 }
 
 export class RolloutAgent
 {
+    private static readonly DetailReady = 'ready'
+    private static readonly DetailNotReady = 'not ready'
+
     public constructor(private readonly deps: IRolloutAgentDeps)
     {
     }
@@ -25,11 +46,25 @@ export class RolloutAgent
         {
             return
         }
-        const running = await this.deps.readRunningImage()
-        if (running !== target.image)
+        const envs = await this.deps.listEnvironments()
+        for (const env of envs)
         {
-            await this.deps.patchImage(target.image)
+            if (env.runningImage !== target.image)
+            {
+                await this.deps.patchImage(env.namespace, env.deployment, env.container, target.image)
+            }
         }
-        await this.deps.report(target.image, true)
+        const snapshot = envs.map(env => this.ToSnapshot(env))
+        await this.deps.reportSnapshot(snapshot)
+    }
+
+    private ToSnapshot(env: IEnvironmentState): ISnapshotEnvironment
+    {
+        return {
+            environmentName: env.environmentName,
+            ready: env.ready,
+            runningImage: env.runningImage,
+            detail: env.ready ? RolloutAgent.DetailReady : RolloutAgent.DetailNotReady,
+        }
     }
 }

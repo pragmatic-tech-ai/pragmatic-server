@@ -1,70 +1,73 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { RolloutAgent } from '../rollout-agent.js'
+import type { IEnvironmentState, IRolloutAgentDeps, IRolloutTarget, ISnapshotEnvironment } from '../rollout-agent.js'
 
 class FakeDeps
 {
-    public readonly Calls: string[] = []
-    public Target: { version: string; image: string } | undefined = { version: '2', image: 'img:2' }
-    public Running: string | undefined = 'img:1'
-    public PatchError: Error | undefined
+    public Target: IRolloutTarget | undefined = { version: '2', image: 'img:2' }
+    public Envs: IEnvironmentState[] = []
+    public ListCalls = 0
+    public readonly Patches: string[][] = []
+    public readonly Snapshots: ReadonlyArray<ISnapshotEnvironment>[] = []
 
-    public Build(): ConstructorParameters<typeof RolloutAgent>[0]
+    public Build(): IRolloutAgentDeps
     {
         return {
-            fetchTarget: async () =>
+            fetchTarget: async () => this.Target,
+            listEnvironments: async () =>
             {
-                this.Calls.push('fetch')
-                return this.Target
+                this.ListCalls++
+                return this.Envs
             },
-            readRunningImage: async () =>
+            patchImage: async (namespace: string, deployment: string, container: string, image: string) =>
             {
-                this.Calls.push('read')
-                return this.Running
+                this.Patches.push([namespace, deployment, container, image])
             },
-            patchImage: async (image: string) =>
+            reportSnapshot: async (environments: ReadonlyArray<ISnapshotEnvironment>) =>
             {
-                this.Calls.push('patch:' + image)
-                if (this.PatchError !== undefined)
-                {
-                    throw this.PatchError
-                }
-            },
-            report: async (image: string, ready: boolean) =>
-            {
-                this.Calls.push('report:' + image + ':' + ready)
+                this.Snapshots.push(environments)
             },
         }
     }
 }
 
-test('Tick patches then reports when target differs from running', async () =>
+test('Tick patches only off-target envs and reports one snapshot of all envs', async () =>
+{
+    const fake = new FakeDeps()
+    fake.Envs = [
+        { environmentName: 'dev', namespace: 'ns-dev', deployment: 'srv', container: 'app', runningImage: 'img:2', ready: true },
+        { environmentName: 'prod', namespace: 'ns-prod', deployment: 'srv', container: 'app', runningImage: 'img:1', ready: false },
+    ]
+    await new RolloutAgent(fake.Build()).Tick()
+    assert.deepEqual(fake.Patches, [['ns-prod', 'srv', 'app', 'img:2']])
+    assert.equal(fake.Snapshots.length, 1)
+    const snap = fake.Snapshots[0]
+    assert.equal(snap.length, 2)
+    assert.equal(snap[0].environmentName, 'dev')
+    assert.equal(snap[0].ready, true)
+    assert.equal(snap[0].runningImage, 'img:2')
+    assert.equal(snap[1].environmentName, 'prod')
+    assert.equal(snap[1].ready, false)
+    assert.equal(snap[1].runningImage, 'img:1')
+    assert.notEqual(snap[0].detail, snap[1].detail)
+    assert.ok(snap[0].detail.length > 0)
+})
+
+test('Tick with an empty hive patches nothing and reports an empty snapshot', async () =>
 {
     const fake = new FakeDeps()
     await new RolloutAgent(fake.Build()).Tick()
-    assert.deepEqual(fake.Calls, ['fetch', 'read', 'patch:img:2', 'report:img:2:true'])
+    assert.deepEqual(fake.Patches, [])
+    assert.deepEqual(fake.Snapshots, [[]])
 })
 
-test('Tick does not patch when already running the target, still reports', async () =>
-{
-    const fake = new FakeDeps()
-    fake.Running = 'img:2'
-    await new RolloutAgent(fake.Build()).Tick()
-    assert.deepEqual(fake.Calls, ['fetch', 'read', 'report:img:2:true'])
-})
-
-test('Tick with no target neither patches nor reports', async () =>
+test('Tick with no target neither lists, patches nor reports', async () =>
 {
     const fake = new FakeDeps()
     fake.Target = undefined
     await new RolloutAgent(fake.Build()).Tick()
-    assert.deepEqual(fake.Calls, ['fetch'])
-})
-
-test('Tick rejects when patchImage rejects, without reporting', async () =>
-{
-    const fake = new FakeDeps()
-    fake.PatchError = new Error('boom')
-    await assert.rejects(new RolloutAgent(fake.Build()).Tick(), /boom/)
-    assert.ok(!fake.Calls.some(c => c.startsWith('report')))
+    assert.equal(fake.ListCalls, 0)
+    assert.deepEqual(fake.Patches, [])
+    assert.deepEqual(fake.Snapshots, [])
 })
