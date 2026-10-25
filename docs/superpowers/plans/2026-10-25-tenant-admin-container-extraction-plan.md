@@ -104,15 +104,17 @@
 
 - [ ] Steps: write a guard test asserting the tenant admin's health monitor emits to the event bus and does NOT call any rollout/channel client to post a snapshot (construct `TenantHealthMonitor` with a fake and assert no snapshot POST). Run → confirm it already holds (or adjust wiring if an up-report leaked in) → suite + `tsc` green → Commit (`test: tenant health stays local; agent is sole up-reporter`).
 
-### Task 7: Sever operator-side tenant mutations
+### Task 7: Sever operator-side tenant mutations (the cleanly-removable set)
 
-**Files:** Modify `control-plane-host.ts` (remove env create/start/stop/logs/delete, the per-env identity admin-proxy routes, and the tenant `SelectTarget` route; keep directory CRUD, manifest publish/withdraw, gate/ungate, rollout status read + hive registration); modify `server.ts` to stop constructing `EnvironmentService`/`IdpService` for the operator; split `TenantProvisioningService` into platform bootstrap-generation vs in-hive seeding; update `admin/portal`. Tests: update the affected control-plane-host tests.
+> **Scope ruling (controller):** the tenant plane already serves env lifecycle + target, so those are cleanly removable from the operator. The per-env IDENTITY-ADMIN routes exist ONLY on the operator (no tenant-plane equivalent yet), so removing them would lose the capability — relocating them to the tenant plane is a follow-up Feature, NOT this task. The provisioning bootstrap-split moves to Task 8. `GraphService` + its `service` dependency stay (out of scope).
+
+**Files:** Modify `control-plane-host.ts` — remove the env lifecycle routes (`POST /api/environments` create, and env `start`/`stop`/`logs`/`delete`) and the tenant `SelectTarget` route (`POST /api/hives/:id/target`); KEEP directory CRUD, manifest publish/withdraw, gate/ungate, rollout-status read, hive registration, provisioning `POST /api/tenants`, the per-env identity-admin routes (deferred), and `GraphService`/`service`. Update `admin/portal` to drop calls/screens for the removed routes (report if that balloons). Tests: update/remove the affected control-plane-host route tests.
 
 **Interfaces:**
-- Produces: an operator API with NO tenant-owned mutation surface. Provisioning becomes `GenerateBootstrap(tenantId, hiveId, …)` on the platform (mints agent token + per-tenant master key + pull cred ref + emits the directory read-models + IdP secret refs); the owner-account/realm seeding moves into the in-hive path.
-- Review focus: confirm no orphaned operator route still mutates tenant data; the operator cannot reach into a tenant.
+- Produces: the operator API no longer creates/manages a tenant's environments or selects its rollout target (those live only on the tenant plane now). Identity-admin + provisioning remain operator-side pending their own slices.
+- Review focus: no orphaned caller of the removed routes (backend or operator portal); the removed capabilities are fully present on the tenant plane; nothing else regressed.
 
-- [ ] Steps: failing tests (old operator tenant-mutation routes gone; bootstrap-generation returns the seed payload) → run fail → implement → suite + `tsc` green → Commit (`feat: sever operator-side tenant mutations; bootstrap generation`).
+- [ ] Steps: failing tests (the removed operator routes no longer resolve) → run fail → remove routes + update portal + tests → suite + `tsc` green → Commit (`feat: remove operator env-lifecycle + target-select routes (tenant plane owns them)`).
 
 ### Task 8: Package the tenant-admin container + bootstrap artifact; live smoke
 
