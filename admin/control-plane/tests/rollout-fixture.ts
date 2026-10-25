@@ -2,6 +2,7 @@ import { join } from 'node:path'
 import { ManifestRegistry } from '../manifest-record.js'
 import { GatingRegistry } from '../gating-record.js'
 import { SelectionRegistry } from '../selection-record.js'
+import { HiveObservationRegistry } from '../hive-observation-record.js'
 import { RolloutReportRegistry } from '../rollout-report-record.js'
 import { RolloutRegistrationRegistry } from '../rollout-registration-record.js'
 import { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
@@ -17,6 +18,13 @@ export class RolloutFixture
     private static readonly SelectionsFile = 'selections.json'
     private static readonly ReportsFile = 'rollout-reports.json'
     private static readonly RegistrationsFile = 'rollout-registrations.json'
+    private static readonly ObservationsFile = 'hive-observations.json'
+
+    /** A HiveObservationRegistry under the caller's temp dir, for hosts whose test never reads observations. */
+    public static Observations(dir: string): HiveObservationRegistry
+    {
+        return new HiveObservationRegistry(join(dir, RolloutFixture.ObservationsFile))
+    }
 
     public static async Create(dir: string, directory: PlatformDirectory, orchestrators: HiveOrchestratorFactory): Promise<PlatformDeploymentRegistry>
     {

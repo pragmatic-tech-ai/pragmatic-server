@@ -4,7 +4,6 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { request } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { HiveObservationRegistry } from '../hive-observation-record.js'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import { FakeProvisioning } from './fake-provisioning.js'
 import { ControlPlaneHost, type GraphDto, type IEnvironmentService, type IGraphService, type PromotionResultDto } from '../control-plane-host.js'
@@ -335,7 +334,7 @@ describe('ControlPlaneHost', () =>
         operator = new FakeOperator()
         const directory = new PlatformDirectory(new ClientRegistry(join(parent, 'clients.json')), new TenantRegistry(join(parent, 'tenants.json')), new HiveRegistry(join(parent, 'hives.json')), { List: () => [] })
         const factory = new HiveOrchestratorFactory()
-        host = new ControlPlaneHost(fake, fakeGraph, root, operator, false, directory, factory, await RolloutFixture.Create(parent, directory, factory), new FakeProvisioning(directory).AsService(), new HiveObservationRegistry(join(tmpdir(), 'unused-observations.json')))
+        host = new ControlPlaneHost(fake, fakeGraph, root, operator, false, directory, await RolloutFixture.Create(parent, directory, factory), new FakeProvisioning(directory).AsService(), RolloutFixture.Observations(parent))
         await host.Listen(0, '127.0.0.1')
     })
 

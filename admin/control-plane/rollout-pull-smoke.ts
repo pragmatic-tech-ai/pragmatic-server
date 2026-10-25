@@ -20,7 +20,6 @@ import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { HiveObservationRegistry } from './hive-observation-record.js'
 import { fileURLToPath } from 'node:url'
 import { ClientRegistry } from './client-registry.js'
 import { ControlPlaneHost } from './control-plane-host.js'
@@ -49,6 +48,7 @@ import { HiveBackend, InfraMode } from './platform-records.js'
 import type { HiveRecord } from './platform-records.js'
 import { RolloutRegistrationRegistry } from './rollout-registration-record.js'
 import { RolloutReportRegistry } from './rollout-report-record.js'
+import { HiveObservationRegistry } from './hive-observation-record.js'
 import { SelectionRegistry } from './selection-record.js'
 import { FileSignatureStore } from './signature-store.js'
 import { TenantRegistry } from './tenant-registry.js'
@@ -183,6 +183,7 @@ export class RolloutPullSmoke
     private static readonly KeysDirName = 'keys'
     private static readonly SignaturesFileName = 'signatures.json'
     private static readonly ManifestsFileName = 'manifests.json'
+    private static readonly UnusedObservationsFile = 'unused-observations.json'
     private static readonly GatingFileName = 'gating.json'
     private static readonly SelectionsFileName = 'selections.json'
     private static readonly ReportsFileName = 'reports.json'
@@ -373,7 +374,7 @@ export class RolloutPullSmoke
         const S = RolloutPullSmoke
         const staticRoot = join(this.tempDir!, S.StaticDirName)
         await mkdir(staticRoot, { recursive: true })
-        const host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, staticRoot, new DenyAllOperator(), false, directory, factory, deployments, {} as TenantProvisioningService, new HiveObservationRegistry(join(tmpdir(), 'unused-observations.json')))
+        const host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, staticRoot, new DenyAllOperator(), false, directory, deployments, {} as TenantProvisioningService, new HiveObservationRegistry(join(this.tempDir!, RolloutPullSmoke.UnusedObservationsFile)))
         await host.Listen(0, S.LoopbackAddress)
         this.host = host
         const proxy = new HostHeaderProxy(host.Address().port)

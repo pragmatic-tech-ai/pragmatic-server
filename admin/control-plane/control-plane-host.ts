@@ -37,7 +37,6 @@ import {
 import { HiveBackend, InfraMode, InvalidRecordIdError } from './platform-records.js'
 import { PlaneHttp } from './plane-http.js'
 import { UnsupportedBackendError } from './hive-orchestrator.js'
-import type { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import { KubectlError } from './kubectl.js'
 import type { HiveRolloutStatus, PlatformDeploymentRegistry } from './platform-deployment-registry.js'
 import type { ManifestRecord } from './manifest-record.js'
@@ -328,7 +327,6 @@ export class ControlPlaneHost
         private readonly operator: IOperatorIdentity,
         private readonly secureCookie: boolean,
         private readonly directory: PlatformDirectory,
-        private readonly orchestrators: HiveOrchestratorFactory,
         private readonly deployments: PlatformDeploymentRegistry,
         private readonly provisioning: TenantProvisioningService,
         private readonly observations: HiveObservationRegistry)

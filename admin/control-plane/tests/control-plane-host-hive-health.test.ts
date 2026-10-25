@@ -3,7 +3,6 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { request } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { HiveObservationRegistry } from '../hive-observation-record.js'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import { FakeProvisioning } from './fake-provisioning.js'
 import { ControlPlaneHost, type IEnvironmentService, type IGraphService } from '../control-plane-host.js'
@@ -13,6 +12,7 @@ import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
 import { PlatformDirectory } from '../platform-directory.js'
 import { RolloutFixture } from './rollout-fixture.js'
+import { HiveObservationRegistry } from '../hive-observation-record.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import { UnsupportedBackendError } from '../hive-orchestrator.js'
 import type { IHiveOrchestrator, WorkloadHealth } from '../hive-orchestrator.js'
@@ -143,7 +143,7 @@ describe('ControlPlaneHost hive health route', () =>
         observations = new HiveObservationRegistry(join(parent, 'observations.json'))
         await observations.Load()
         const factory = new FakeFactory()
-        host = new ControlPlaneHost(new FakeService() as unknown as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, factory, await RolloutFixture.Create(parent, directory, factory), new FakeProvisioning(directory).AsService(), observations)
+        host = new ControlPlaneHost(new FakeService() as unknown as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, await RolloutFixture.Create(parent, directory, factory), new FakeProvisioning(directory).AsService(), observations)
         await host.Listen(0, '127.0.0.1')
     })
 
