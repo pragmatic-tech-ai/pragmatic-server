@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url'
 import { DockerEnv } from '../../environments/seed/docker.js'
 import { UserSeeder } from '../../environments/seed/users.js'
 import { BundleBuilderAdapter, DockerEnvAdapter, UserSeederAdapter } from './docker-env-port.js'
+import { DockerEnvironmentRuntime } from './environment-runtime.js'
 import { EnvType, Template } from './environment-record.js'
 import { EnvironmentRegistry } from './environment-registry.js'
 import { EnvironmentService } from './environment-service.js'
@@ -355,7 +356,7 @@ export class IdpFederationSmoke
         this.idpRegistry = new IdpRegistry(join(this.dataRoot, S.IdpsFile))
         this.idpService = new IdpService(this.idpRegistry, new DockerIdpDriver(new PortAllocator(S.IdpPortFloor, new NetPortProbe()), this.idpContainers, this.dataRoot, DockerEnv.ImageName))
         this.service = new EnvironmentService(
-            registry, new PortAllocator(S.EnvPortFloor, new NetPortProbe()), docker, new BundleBuilderAdapter(), new UserSeederAdapter(new UserSeeder()),
+            registry, new PortAllocator(S.EnvPortFloor, new NetPortProbe()), new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new UserSeederAdapter(new UserSeeder()),
             this.dataRoot, new AdminProxy(new WsAdminConnector()), directory, this.idpService, conn => new IdpAdminClient(conn))
         return directory
     }
@@ -398,9 +399,9 @@ export class IdpFederationSmoke
         {
             const record = await this.Envs().Create(name, Template.DevBlank, EnvType.Development, undefined, S.HiveId)
             this.createdEnvs.push(record.name)
-            const ok = await this.WaitEnvHealthy(record.hostPort)
+            const ok = await this.WaitEnvHealthy(record.hostPort as number)
             this.Check(label, ok)
-            return ok ? { name: record.name, port: record.hostPort } : undefined
+            return ok ? { name: record.name, port: record.hostPort as number } : undefined
         }
         catch (e)
         {

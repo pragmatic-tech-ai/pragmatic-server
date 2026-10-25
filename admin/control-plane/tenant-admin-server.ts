@@ -5,6 +5,7 @@ import { DockerEnv } from '../../environments/seed/docker.js'
 import { UserSeeder } from '../../environments/seed/users.js'
 import { AdminProxy, WsAdminConnector } from './admin-proxy.js'
 import { BundleBuilderAdapter, DockerEnvAdapter, UserSeederAdapter } from './docker-env-port.js'
+import { DockerEnvironmentRuntime } from './environment-runtime.js'
 import { EnvironmentPlacement } from './environment-placement.js'
 import { EnvironmentRegistry } from './environment-registry.js'
 import { EnvironmentService } from './environment-service.js'
@@ -168,7 +169,7 @@ export class TenantAdminServer
         const adminClients = new TenantAdminClientRegistry(join(dataRoot, ControlPlaneServer.TenantAdminClientsFile))
         await adminClients.Load()
         const idpService = new IdpService(new IdpRegistry(join(dataRoot, ControlPlaneServer.IdpsFile)), new DockerIdpDriver(new PortAllocator(ControlPlaneServer.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), dataRoot, DockerEnv.ImageName))
-        const service = new EnvironmentService(registry, new PortAllocator(ControlPlaneServer.EnvPortFloor, new NetPortProbe()), docker, new BundleBuilderAdapter(), new UserSeederAdapter(new UserSeeder()), dataRoot, new AdminProxy(new WsAdminConnector()), directory, idpService, conn => new IdpAdminClient(conn))
+        const service = new EnvironmentService(registry, new PortAllocator(ControlPlaneServer.EnvPortFloor, new NetPortProbe()), new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new UserSeederAdapter(new UserSeeder()), dataRoot, new AdminProxy(new WsAdminConnector()), directory, idpService, conn => new IdpAdminClient(conn))
         const orchestrators = new HiveOrchestratorFactory()
         const placement = new EnvironmentPlacement(directory)
         const plane = ControlPlaneServer.BuildTenantPlane(

@@ -39,6 +39,7 @@ import { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
 import { EnvironmentPlacement } from './environment-placement.js'
 import type { EnvironmentDto, PromotionResultDto } from './control-plane-host.js'
 import { BundleBuilderAdapter, DockerEnvAdapter, UserSeederAdapter } from './docker-env-port.js'
+import { DockerEnvironmentRuntime } from './environment-runtime.js'
 import { EnvStatus, EnvType, Template } from './environment-record.js'
 import { ClientRegistry } from './client-registry.js'
 import { HiveRegistry } from './hive-registry.js'
@@ -234,7 +235,7 @@ export class ControlPlaneSmoke
         const allocator = new PortAllocator(ControlPlaneSmoke.EnvPortFloor, new NetPortProbe())
         const proxy = new AdminProxy(new WsAdminConnector())
         const idpService = new IdpService(new IdpRegistry(join(dataRoot, ControlPlaneSmoke.IdpsFile)), new DockerIdpDriver(new PortAllocator(ControlPlaneSmoke.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), dataRoot, DockerEnv.ImageName))
-        const service = new EnvironmentService(registry, allocator, docker, new BundleBuilderAdapter(), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn))
+        const service = new EnvironmentService(registry, allocator, new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn))
         const operator = await OperatorIdentity.Compose({
             identityRoot: join(dataRoot, ControlPlaneSmoke.IdentityDir),
             masterKeyFile: join(dataRoot, ControlPlaneSmoke.MasterKeyFile),
@@ -321,7 +322,7 @@ export class ControlPlaneSmoke
         {
             return
         }
-        await this.CheckHealth(L.HealthDev, running.hostPort)
+        await this.CheckHealth(L.HealthDev, running.hostPort as number)
         this.CheckPurpose(L.PurposeDev, dataRoot, name, name, ControlPlaneSmoke.DevPurpose)
         const stop = await this.Try(() => this.Svc().Stop(name))
         this.Expect(L.StopDev, stop.ok, stop.detail)
@@ -346,9 +347,9 @@ export class ControlPlaneSmoke
         {
             return
         }
-        await this.CheckHealth(L.HealthDemo, running.hostPort)
+        await this.CheckHealth(L.HealthDemo, running.hostPort as number)
         this.CheckPurpose(L.PurposeDemo, dataRoot, name, ControlPlaneSmoke.DemoTenant, ControlPlaneSmoke.DemoPurpose)
-        await this.CheckSeeded(dataRoot, running.hostPort)
+        await this.CheckSeeded(dataRoot, running.hostPort as number)
         const del = await this.Try(() => this.Svc().Delete(name))
         this.Expect(L.DeleteDemo, del.ok, del.detail)
         this.Expect(L.GoneDemo, (await this.Find(name)) === undefined)
@@ -378,7 +379,7 @@ export class ControlPlaneSmoke
         {
             return
         }
-        await this.ContributeAs(devRunning.hostPort, dev, makerToken, S.PromoteSolutionId, S.FixturePackage(), S.PromotedPackageCount)
+        await this.ContributeAs(devRunning.hostPort as number, dev, makerToken, S.PromoteSolutionId, S.FixturePackage(), S.PromotedPackageCount)
 
         const rtCreated = await this.Try(() => this.Svc().Create(runtime, Template.DemoContoso, EnvType.Runtime))
         const rtRunning = rtCreated.ok ? await this.WaitFor(runtime, EnvStatus.Running) : undefined
@@ -396,8 +397,8 @@ export class ControlPlaneSmoke
         const loaded = loadedRes.json as GraphLoadedDto | null | undefined
         const loadedOk = loadedRes.status === S.StatusOk && loaded?.name === graph && loaded.packages.length === S.PromotedPackageCount && (loaded.promotedAt ?? S.EmptyString) !== S.EmptyString
         this.Expect(L.PromoteLoaded, loadedOk, S.StatusWord + String(loadedRes.status))
-        await this.CheckRuntimeGraphRead(dataRoot, rtRunning.hostPort)
-        await this.RemoteEnvAppRoundTrip(dataRoot, devRunning.hostPort, rtRunning.hostPort, makerToken)
+        await this.CheckRuntimeGraphRead(dataRoot, rtRunning.hostPort as number)
+        await this.RemoteEnvAppRoundTrip(dataRoot, devRunning.hostPort as number, rtRunning.hostPort as number, makerToken)
 
         const delDev = await this.Try(() => this.Svc().Delete(dev))
         this.Expect(L.PromoteDeleteDev, delDev.ok, delDev.detail)

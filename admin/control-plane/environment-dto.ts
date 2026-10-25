@@ -8,7 +8,7 @@ export type EnvironmentDto = {
     environmentId: string
     hiveId?: string
     tenantId?: string
-    hostPort: number
+    hostPort?: number
     status: EnvStatus
     createdAt: string
     httpUrl: string
@@ -30,6 +30,7 @@ export class EnvironmentDtoMapper
 
     public static ToDto(r: EnvironmentRecord): EnvironmentDto
     {
+        const stored = r.endpoint
         return {
             name: r.name,
             template: r.template,
@@ -40,8 +41,8 @@ export class EnvironmentDtoMapper
             hostPort: r.hostPort,
             status: r.status,
             createdAt: r.createdAt,
-            httpUrl: EnvironmentDtoMapper.HttpScheme + EnvironmentDtoMapper.LocalName + EnvironmentDtoMapper.PortSeparator + String(r.hostPort),
-            wsUrl: EnvironmentDtoMapper.WsScheme + EnvironmentDtoMapper.LocalName + EnvironmentDtoMapper.PortSeparator + String(r.hostPort) + EnvironmentDtoMapper.EnvironmentQuery + r.environmentId
+            httpUrl: stored?.httpUrl ?? EnvironmentDtoMapper.HttpScheme + EnvironmentDtoMapper.LocalName + EnvironmentDtoMapper.PortSeparator + String(r.hostPort),
+            wsUrl: stored?.wsUrl ?? EnvironmentDtoMapper.WsScheme + EnvironmentDtoMapper.LocalName + EnvironmentDtoMapper.PortSeparator + String(r.hostPort) + EnvironmentDtoMapper.EnvironmentQuery + r.environmentId
         }
     }
 }

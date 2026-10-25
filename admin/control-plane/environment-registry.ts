@@ -73,7 +73,7 @@ export class EnvironmentRegistry
             {
                 continue
             }
-            const running = await this.probe.Running(record.containerName)
+            const running = await this.probe.Running(record.containerName ?? '')
             this.records.set(record.name, { ...record, status: running ? EnvStatus.Running : EnvStatus.Stopped })
         }
         await this.persist()

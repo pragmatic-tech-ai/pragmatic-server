@@ -25,6 +25,7 @@ import { AdminProxy, WsAdminConnector } from './admin-proxy.js'
 import type { AdminConnectInfo } from './admin-proxy.js'
 import type { GraphDto, PromotionResultDto } from './control-plane-host.js'
 import { BundleBuilderAdapter, DockerEnvAdapter, UserSeederAdapter } from './docker-env-port.js'
+import { DockerEnvironmentRuntime } from './environment-runtime.js'
 import { EnvStatus, EnvType, Template } from './environment-record.js'
 import type { EnvironmentRecord } from './environment-record.js'
 import { EnvironmentRegistry } from './environment-registry.js'
@@ -333,7 +334,7 @@ export class LoopOrchestrator
         const allocator = new PortAllocator(LoopOrchestrator.EnvPortFloor, new NetPortProbe())
         const proxy = new AdminProxy(new WsAdminConnector())
         const idpService = new IdpService(new IdpRegistry(join(dataRoot, LoopOrchestrator.IdpsFile)), new DockerIdpDriver(new PortAllocator(LoopOrchestrator.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), dataRoot, DockerEnv.ImageName))
-        const service = new EnvironmentService(registry, allocator, docker, new BundleBuilderAdapter(), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn))
+        const service = new EnvironmentService(registry, allocator, new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn))
         const graphs = new GraphService(registry, proxy, name => service.AdminInfoFor(name))
         return new LoopOrchestrator(service, graphs, new SeederLoopLogin(), logger, dataRoot, new PgLoopDatabase(service))
     }
@@ -373,7 +374,7 @@ export class LoopOrchestrator
             runtimeEnv: name,
             tenant: rec.environmentId,
             runtimeWsUrl: LoopOrchestrator.WsPrefix + port + LoopOrchestrator.WsEnvironmentQuery + rec.environmentId,
-            runtimeHostPort: rec.hostPort,
+            runtimeHostPort: rec.hostPort as number,
             appOriginBase: LoopOrchestrator.HttpPrefix + port,
             deployToken,
             reader,

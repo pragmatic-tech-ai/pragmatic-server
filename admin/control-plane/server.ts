@@ -15,6 +15,7 @@ import { RolloutRegistrationRegistry } from './rollout-registration-record.js'
 import { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
 import { EnvironmentPlacement } from './environment-placement.js'
 import { BundleBuilderAdapter, DockerEnvAdapter, UserSeederAdapter } from './docker-env-port.js'
+import { DockerEnvironmentRuntime } from './environment-runtime.js'
 import { ClientRegistry } from './client-registry.js'
 import { HiveRegistry } from './hive-registry.js'
 import { PlatformDirectory } from './platform-directory.js'
@@ -139,7 +140,7 @@ export class ControlPlaneServer
         const seeder = new UserSeederAdapter(new UserSeeder())
         const proxy = new AdminProxy(new WsAdminConnector())
         const idpService = new IdpService(new IdpRegistry(join(dataRoot, ControlPlaneServer.IdpsFile)), new DockerIdpDriver(new PortAllocator(ControlPlaneServer.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), dataRoot, DockerEnv.ImageName))
-        const service = new EnvironmentService(registry, allocator, docker, bundle, seeder, dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn))
+        const service = new EnvironmentService(registry, allocator, new DockerEnvironmentRuntime(docker, bundle), seeder, dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn))
         const graphService = new GraphService(registry, proxy, name => service.AdminInfoFor(name))
         const staticRoot = join(here, ControlPlaneServer.ParentSegment, ControlPlaneServer.PortalSegment, ControlPlaneServer.DistSegment)
         const orchestrators = new HiveOrchestratorFactory()

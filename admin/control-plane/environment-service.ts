@@ -16,7 +16,8 @@ import { UnknownHiveError } from './rollout-errors.js'
 import type { IIdpService, IdpConnection } from './idp-service.js'
 import type { IdpAdminClient } from './idp-admin-client.js'
 import type { ILogProcess } from '../../environments/seed/docker.js'
-import type { IDockerEnv, IBundleBuilder, IUserSeeder } from './docker-env-port.js'
+import type { IUserSeeder } from './docker-env-port.js'
+import type { EnvEndpoint, EnvRuntimeContext, IEnvironmentRuntime } from './environment-runtime.js'
 
 export class EnvironmentExistsError extends Error
 {
@@ -143,8 +144,7 @@ export class EnvironmentService
     public constructor(
         private readonly registry: EnvironmentRegistry,
         private readonly allocator: PortAllocator,
-        private readonly docker: IDockerEnv,
-        private readonly bundle: IBundleBuilder,
+        private readonly runtime: IEnvironmentRuntime,
         private readonly seeder: IUserSeeder,
         private readonly dataRoot: string,
         private readonly proxy: IAdminProxy,
@@ -215,7 +215,7 @@ export class EnvironmentService
         this.inFlight.add(safe)
         try
         {
-            const taken = this.registry.List().map(r => r.hostPort)
+            const taken = this.registry.List().map(r => r.hostPort).filter((p): p is number => p !== undefined)
             let port: number
             if (hostPort !== undefined)
             {
@@ -236,32 +236,6 @@ export class EnvironmentService
                 oidc = federation.oidc
                 caHostPath = federation.caHostPath
             }
-            try
-            {
-                await this.bundle.Generate(def, bundleDir, seedDir, oidc)
-            }
-            catch (err)
-            {
-                EnvironmentService.RemoveBundleDir(bundleDir)
-                throw oidc === undefined ? err : new CreateFailedError(EnvironmentService.Redact(err, oidc.secret))
-            }
-
-            let imageOk: boolean
-            try
-            {
-                imageOk = await this.docker.EnsureImage()
-            }
-            catch
-            {
-                EnvironmentService.RemoveBundleDir(bundleDir)
-                throw new DockerUnavailableError()
-            }
-            if (!imageOk)
-            {
-                EnvironmentService.RemoveBundleDir(bundleDir)
-                throw new ImageMissingError(this.docker.BuildCommand())
-            }
-
             const record: EnvironmentRecord = {
                 name: def.name,
                 template,
@@ -279,10 +253,38 @@ export class EnvironmentService
                 record.tenantId = platformTenantId
                 record.hiveId = hiveId
             }
+            const ctx: EnvRuntimeContext = { def, record, bundleDir, seedDir, oidc, caHostPath }
             try
             {
-                await this.docker.Up(def, bundleDir, caHostPath)
-                await this.docker.WaitHealthy(port, def)
+                await this.runtime.Prepare(ctx)
+            }
+            catch (err)
+            {
+                EnvironmentService.RemoveBundleDir(bundleDir)
+                throw oidc === undefined ? err : new CreateFailedError(EnvironmentService.Redact(err, oidc.secret))
+            }
+
+            let imageOk: boolean
+            try
+            {
+                imageOk = await this.runtime.EnsureImage(def)
+            }
+            catch
+            {
+                EnvironmentService.RemoveBundleDir(bundleDir)
+                throw new DockerUnavailableError()
+            }
+            if (!imageOk)
+            {
+                EnvironmentService.RemoveBundleDir(bundleDir)
+                throw new ImageMissingError(this.runtime.BuildCommand())
+            }
+
+            try
+            {
+                const endpoint = await this.runtime.BringUp(ctx)
+                record.endpoint = EnvironmentService.StoredEndpoint(endpoint)
+                await this.runtime.WaitHealthy(ctx)
                 if (def.kind === EnvKind.Demo)
                 {
                     await this.SeedDemoUsers(def, bundleDir, seedDir, port)
@@ -292,7 +294,7 @@ export class EnvironmentService
             {
                 try
                 {
-                    await this.docker.Down(def, true)
+                    await this.runtime.Teardown(ctx, true)
                 }
                 catch
                 {
@@ -300,7 +302,7 @@ export class EnvironmentService
                 }
                 try
                 {
-                    await this.docker.RemoveVolume(def)
+                    await this.runtime.RemoveVolume(ctx)
                 }
                 catch
                 {
@@ -324,16 +326,14 @@ export class EnvironmentService
     public async Start(name: string): Promise<EnvironmentRecord>
     {
         const rec = this.Require(name)
-        const def = EnvironmentService.DefOf(rec)
-        await this.docker.Up(def, rec.bundleDir)
-        await this.docker.WaitHealthy(rec.hostPort, def)
-        return this.SetStatus(rec, EnvStatus.Running)
+        const endpoint = await this.runtime.Start(this.CtxOf(rec))
+        return this.SetStatus({ ...rec, endpoint: EnvironmentService.StoredEndpoint(endpoint) }, EnvStatus.Running)
     }
 
     public async Stop(name: string): Promise<EnvironmentRecord>
     {
         const rec = this.Require(name)
-        await this.docker.Down(EnvironmentService.DefOf(rec))
+        await this.runtime.Stop(this.CtxOf(rec))
         return this.SetStatus(rec, EnvStatus.Stopped)
     }
 
@@ -347,9 +347,9 @@ export class EnvironmentService
     public async Delete(name: string): Promise<void>
     {
         const rec = this.Require(name)
-        const def = EnvironmentService.DefOf(rec)
-        await this.docker.Down(def, true)
-        await this.docker.RemoveVolume(def)
+        const ctx = this.CtxOf(rec)
+        await this.runtime.Teardown(ctx, true)
+        await this.runtime.RemoveVolume(ctx)
         await this.registry.Remove(name)
         this.NotifyChanged(EnvironmentChangeKind.Deleted, rec)
     }
@@ -380,13 +380,13 @@ export class EnvironmentService
     public async Logs(name: string): Promise<string>
     {
         const rec = this.Require(name)
-        return this.docker.Logs(EnvironmentService.DefOf(rec))
+        return this.runtime.Logs(this.CtxOf(rec))
     }
 
     public LogStream(name: string, onData: (chunk: string) => void): ILogProcess
     {
         const rec = this.Require(name)
-        return this.docker.LogStream(EnvironmentService.DefOf(rec), onData)
+        return this.runtime.LogStream(this.CtxOf(rec), onData)
     }
 
     public async AdminSnapshot(name: string): Promise<AdminSnapshot>
@@ -494,9 +494,19 @@ export class EnvironmentService
         return { ...db, password: EnvironmentService.Secret(secrets, BundleBuilder.DbSecretRef(EnvironmentService.DefOf(rec), db)) }
     }
 
-    private static async ReadSecrets(bundleDir: string): Promise<Record<string, string>>
+    private CtxOf(rec: EnvironmentRecord): EnvRuntimeContext
     {
-        return JSON.parse(await readFile(join(bundleDir, EnvironmentService.SecretsFile), EnvironmentService.Utf8)) as Record<string, string>
+        return { def: EnvironmentService.DefOf(rec), record: rec, bundleDir: rec.bundleDir }
+    }
+
+    private static StoredEndpoint(endpoint: EnvEndpoint): { httpUrl: string; wsUrl: string }
+    {
+        return { httpUrl: endpoint.httpUrl, wsUrl: endpoint.wsUrl }
+    }
+
+    private static async ReadSecrets(bundleDir: string | undefined): Promise<Record<string, string>>
+    {
+        return JSON.parse(await readFile(join(bundleDir as string, EnvironmentService.SecretsFile), EnvironmentService.Utf8)) as Record<string, string>
     }
 
     private Require(name: string): EnvironmentRecord
@@ -549,7 +559,7 @@ export class EnvironmentService
     /** Re-derives the definition from the stored type, falling back to the template default (DefaultTypeFor) for legacy records with no type. */
     private static DefOf(rec: EnvironmentRecord): EnvDefinition
     {
-        return TemplateCatalog.Resolve(rec.template, rec.name, rec.hostPort, rec.type ?? TemplateCatalog.DefaultTypeFor(rec.template)).def
+        return TemplateCatalog.Resolve(rec.template, rec.name, rec.hostPort as number, rec.type ?? TemplateCatalog.DefaultTypeFor(rec.template)).def
     }
 
     private async SeedDemoUsers(def: EnvDefinition, bundleDir: string, seedDir: string, port: number): Promise<void>
