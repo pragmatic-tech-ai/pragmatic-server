@@ -7,7 +7,6 @@ import { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
 import { ManifestRegistry } from '../manifest-record.js'
 import { GatingRegistry } from '../gating-record.js'
 import { SelectionRegistry } from '../selection-record.js'
-import { RolloutReportRegistry } from '../rollout-report-record.js'
 import { RolloutRegistrationRegistry } from '../rollout-registration-record.js'
 import { AgentUnauthorizedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, UnknownHiveError, UnknownManifestError } from '../rollout-errors.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
@@ -71,7 +70,7 @@ class Fx
             const orchestrator: IHiveOrchestrator = { Roll: async (w: EnvironmentWorkload, image: string) => { rolls.push((w as unknown as { name: string }).name + '@' + image) } } as unknown as IHiveOrchestrator
             const factory = { For: () => { if (unreachable) { throw new UnsupportedBackendError(HiveBackend.Aks, InfraMode.Attach) } return orchestrator } } as unknown as HiveOrchestratorFactory
             const envs = [Fx.EnvRecord(Fx.EnvNames[0], Fx.HiveA), Fx.EnvRecord(Fx.EnvNames[1], Fx.HiveA), Fx.EnvRecord(Fx.EnvNames[2], Fx.HiveB)]
-            const reg = new PlatformDeploymentRegistry(new ManifestRegistry(join(dir, 'm.json')), new GatingRegistry(join(dir, 'g.json')), new SelectionRegistry(join(dir, 's.json')), new RolloutReportRegistry(join(dir, 'r.json')), registrations, { GetHive: id => hives.get(id) }, factory, { List: () => envs }, { WorkloadFor: e => e as unknown as EnvironmentWorkload }, RolloutFixture.Observations(dir))
+            const reg = new PlatformDeploymentRegistry(new ManifestRegistry(join(dir, 'm.json')), new GatingRegistry(join(dir, 'g.json')), new SelectionRegistry(join(dir, 's.json')), registrations, { GetHive: id => hives.get(id) }, factory, { List: () => envs }, { WorkloadFor: e => e as unknown as EnvironmentWorkload }, RolloutFixture.Observations(dir))
             await body(reg, registrations, rolls)
         }
         finally

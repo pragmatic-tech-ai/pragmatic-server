@@ -441,6 +441,14 @@ describe('ControlPlaneHost', () =>
         assert.equal(JSON.parse(list.body)[0].type, 'development')
     })
 
+    it('no longer recognises the retired hive agent routes (session gate applies, then 404)', async () =>
+    {
+        const target = '/api/hives/h1/agent/target'
+        assert.equal((await Harness.Anon(host, 'GET', target, undefined, { authorization: 'Bearer anything' })).status, 401)
+        assert.equal((await Harness.Send(host, 'GET', target)).status, 404)
+        assert.equal((await Harness.Send(host, 'POST', '/api/hives/h1/agent/report', JSON.stringify({ ready: true }))).status, 404)
+    })
+
     it('unauthenticated create is 401 before validation', async () =>
     {
         const r = await Harness.Anon(host, 'POST', '/api/environments', JSON.stringify({ name: 'e', template: 'dev-blank', type: 'bogus' }))

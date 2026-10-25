@@ -5,7 +5,6 @@ import type { GatingRegistry } from './gating-record.js'
 import type { SelectionRegistry } from './selection-record.js'
 import type { HiveObservationRegistry } from './hive-observation-record.js'
 import type { HiveHealthDto } from './hive-health-producer.js'
-import type { RolloutReportRegistry } from './rollout-report-record.js'
 import type { RolloutRegistrationRegistry } from './rollout-registration-record.js'
 import type { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import { UnsupportedBackendError } from './hive-orchestrator.js'
@@ -42,7 +41,6 @@ export class PlatformDeploymentRegistry
         private readonly manifests: ManifestRegistry,
         private readonly gating: GatingRegistry,
         private readonly selections: SelectionRegistry,
-        private readonly reports: RolloutReportRegistry,
         private readonly registrations: RolloutRegistrationRegistry,
         private readonly hives: IHiveLookup,
         private readonly orchestrators: HiveOrchestratorFactory,
@@ -169,11 +167,6 @@ export class PlatformDeploymentRegistry
         return manifest === undefined ? undefined : { version: manifest.id, image: manifest.image }
     }
 
-    public async Report(hiveId: string, environmentName: string, runningImage: string, ready: boolean): Promise<void>
-    {
-        await this.reports.Put({ id: this.ReportId(hiveId, environmentName), hiveId, environmentName, runningImage, ready, reportedAt: new Date().toISOString() })
-    }
-
     /** The single whole-hive snapshot up-feed; replaces the hive's prior observation. The caller has already verified the bearer. */
     public async ReportSnapshot(hiveId: string, environments: HiveHealthDto[]): Promise<void>
     {
@@ -223,10 +216,5 @@ export class PlatformDeploymentRegistry
     private GateId(tenantId: string, version: string): string
     {
         return tenantId + PlatformDeploymentRegistry.KeySeparator + version
-    }
-
-    private ReportId(hiveId: string, environmentName: string): string
-    {
-        return hiveId + PlatformDeploymentRegistry.KeySeparator + environmentName
     }
 }
