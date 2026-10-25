@@ -1,7 +1,13 @@
-import type { PlatformDirectory } from './platform-directory.js'
+
 import type { HiveHealthDto, HiveHealthProducer } from './hive-health-producer.js'
 import type { HiveRecord } from './platform-records.js'
 import { TenantEventType, type TenantEventBus } from './tenant-api/tenant-events.js'
+
+/** The narrow read the monitor needs: every hive the directory knows. PlatformDirectory and SeededTenantDirectory both satisfy it. */
+export interface IHiveLister
+{
+    ListHives(): readonly HiveRecord[]
+}
 
 /** One environment's last-observed health on a hive: only the fields the diff compares, never a secret. */
 type HealthSnapshot = { ready: boolean; detail: string }
@@ -39,7 +45,7 @@ export class TenantHealthMonitor
     private generation = 0
 
     public constructor(
-        private readonly directory: PlatformDirectory,
+        private readonly directory: IHiveLister,
         private readonly producer: HiveHealthProducer,
         private readonly events: TenantEventBus,
         private readonly intervalMs: number,

@@ -31,8 +31,8 @@ export class SeededTenantDirectory implements ITenantDirectory
         return this.hives.find(h => h.id === id)
     }
 
-    public ListHives(tenantId: string): readonly HiveRecord[]
+    public ListHives(tenantId?: string): readonly HiveRecord[]
     {
-        return this.hives.filter(h => h.tenantId === tenantId)
+        return tenantId === undefined ? this.hives : this.hives.filter(h => h.tenantId === tenantId)
     }
 }

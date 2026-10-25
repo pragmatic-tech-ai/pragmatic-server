@@ -44,6 +44,8 @@ import { TenantHealthMonitor } from './tenant-health-monitor.js'
 import { HiveHealthProducer } from './hive-health-producer.js'
 import type { TenantPlane } from './tenant-auth/tenant-plane.js'
 import type { IEnvironmentService } from './control-plane-host.js'
+import type { ITenantDirectory } from './tenant-api/tenant-directory.js'
+import type { IRolloutClient } from './tenant-api/rollout-client.js'
 
 export class ControlPlaneServer
 {
@@ -152,7 +154,7 @@ export class ControlPlaneServer
         const provisioning = new TenantProvisioningService(idpService, directory, conn => new IdpAdminClient(conn))
         const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
-        const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie, service, deployments, orchestrators, placement,
+        const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie, service, new InProcessRolloutClient(deployments), orchestrators, placement,
             masterKey, adminClientRegistry, ControlPlaneServer.ParseSecretTtlHours(process.env[ControlPlaneServer.SecretTtlEnvVar]))
         // Resolve (and validate) the tenant port + bind BEFORE binding the operator listener, so a misconfigured
         // tenant port fails fast at startup rather than after the operator socket is already live.
@@ -219,10 +221,10 @@ export class ControlPlaneServer
         env: NodeJS.ProcessEnv,
         dataRoot: string,
         idpService: IdpService,
-        directory: PlatformDirectory,
+        directory: ITenantDirectory,
         secureCookie: boolean,
         service: IEnvironmentService,
-        deployments: PlatformDeploymentRegistry,
+        rollout: IRolloutClient,
         orchestrators: HiveOrchestratorFactory,
         placement: EnvironmentPlacement,
         masterKey: Buffer,
@@ -245,19 +247,19 @@ export class ControlPlaneServer
         const rp = new TenantOidcRelyingParty(idpService, directory, conn => new IdpAdminClient(conn), undefined, undefined, durability)
         const endpoint = new TenantAuthEndpoint(rp, sessions, secureCookie)
         const gate = new TenantAuthGate(sessions)
-        const api = new TenantApiEndpoint(service, directory, new InProcessRolloutClient(deployments), orchestrators, placement)
+        const api = new TenantApiEndpoint(service, directory, rollout, orchestrators, placement)
         const events = new TenantEventBus()
         return { endpoint, gate, api, events, isDurable: rp.IsDurable }
     }
 
     /** The externally-visible tenant origin scheme; defaults to https when unset or blank. */
-    private static TenantScheme(raw: string | undefined): string
+    public static TenantScheme(raw: string | undefined): string
     {
         return raw === undefined || raw === '' ? ControlPlaneServer.DefaultExternalScheme : raw
     }
 
     /** The tenant listener bind address; defaults to loopback (proxy-fronted) when unset or blank. */
-    private static TenantBind(raw: string | undefined): string
+    public static TenantBind(raw: string | undefined): string
     {
         return raw === undefined || raw === '' ? ControlPlaneServer.DefaultTenantBind : raw
     }
@@ -280,7 +282,7 @@ export class ControlPlaneServer
     }
 
     /** The dedicated tenant listener port; required (the plane only activates when it is set). */
-    private static ResolveTenantPort(raw: string | undefined): number
+    public static ResolveTenantPort(raw: string | undefined): number
     {
         const port = Number(raw)
         if (raw === undefined || raw === '' || !Number.isInteger(port) || port < 1 || port > ControlPlaneServer.MaxPort)

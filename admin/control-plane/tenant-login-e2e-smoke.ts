@@ -71,6 +71,7 @@ import { TenantAdminClientRegistry } from './tenant-auth/tenant-admin-client-rec
 import { TenantHostResolver } from './tenant-auth/tenant-host-resolver.js'
 import { TenantPlaneHost } from './tenant-plane-host.js'
 import { ControlPlaneServer } from './server.js'
+import { InProcessRolloutClient } from './tenant-api/in-process-rollout-client.js'
 
 /**
  * A resolver whose callback KEEPS the request host's port. The production `TenantHostResolver` strips the port (the
@@ -375,7 +376,7 @@ export class TenantLoginE2eSmoke
         const env: NodeJS.ProcessEnv = { [S.TenantPortEnvKey]: S.TenantPortEnvValue, [S.TenantBaseDomainEnvKey]: S.BaseDomain }
         const masterKey = randomBytes(S.MasterKeyBytes)
         const tenantPlane = ControlPlaneServer.ComposeTenantPlane(
-            env, this.dataRoot, plane.idpService, plane.directory, S.SecureCookie, plane.service, plane.deployments,
+            env, this.dataRoot, plane.idpService, plane.directory, S.SecureCookie, plane.service, new InProcessRolloutClient(plane.deployments),
             plane.orchestrators, plane.placement, masterKey, plane.adminClientRegistry, S.SecretTtlHours)
         if (tenantPlane === undefined)
         {
