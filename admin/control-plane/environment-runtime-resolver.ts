@@ -37,6 +37,9 @@ export class EnvironmentRuntimeResolver
             // Pure backend lookup, discarded: it throws UnsupportedBackendError for a hive whose backend has no driver.
             this.orchestrators.For(hive)
         }
+        // An undefined hive cannot reach here from Create: ResolveHiveTenant already threw UnknownHiveError for an
+        // unknown hiveId before any runtime is selected. For a lifecycle verb on a persisted bound record it is the
+        // in-cluster runtime that owns this binding, so return it and let it raise its own missing-hive error on use.
         return this.inCluster
     }
 }

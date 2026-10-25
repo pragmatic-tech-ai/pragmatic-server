@@ -293,6 +293,7 @@ export class EnvironmentService
                 await runtime.WaitHealthy(ctx)
                 if (def.kind === EnvKind.Demo)
                 {
+                    // A Demo template is always host-port-backed (Docker), so bundleDir/port are set here; in-cluster never seeds.
                     await this.SeedDemoUsers(def, bundleDir as string, seedDir, port as number)
                 }
             }

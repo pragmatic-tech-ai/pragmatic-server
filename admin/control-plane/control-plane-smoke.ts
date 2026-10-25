@@ -237,21 +237,22 @@ export class ControlPlaneSmoke
         const allocator = new PortAllocator(ControlPlaneSmoke.EnvPortFloor, new NetPortProbe())
         const proxy = new AdminProxy(new WsAdminConnector())
         const idpService = new IdpService(new IdpRegistry(join(dataRoot, ControlPlaneSmoke.IdpsFile)), new DockerIdpDriver(new PortAllocator(ControlPlaneSmoke.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), dataRoot, DockerEnv.ImageName))
-        const service = new EnvironmentService(registry, allocator, new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(new HiveOrchestratorFactory(), new EnvironmentPlacement(directory), directory), directory, new HiveOrchestratorFactory()), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn))
+        const orchestrators = new HiveOrchestratorFactory()
+        const placement = new EnvironmentPlacement(directory)
+        const service = new EnvironmentService(registry, allocator, new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(orchestrators, placement, directory), directory, orchestrators), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn))
         const operator = await OperatorIdentity.Compose({
             identityRoot: join(dataRoot, ControlPlaneSmoke.IdentityDir),
             masterKeyFile: join(dataRoot, ControlPlaneSmoke.MasterKeyFile),
             operatorEmail: ControlPlaneSmoke.OperatorEmail,
             initialPassword: ControlPlaneSmoke.OperatorPassword
         })
-        const orchestrators = new HiveOrchestratorFactory()
         const manifests = new ManifestRegistry(join(dataRoot, ControlPlaneSmoke.ManifestsFile))
         const gating = new GatingRegistry(join(dataRoot, ControlPlaneSmoke.GatingFile))
         const selections = new SelectionRegistry(join(dataRoot, ControlPlaneSmoke.SelectionsFile))
         const registrations = new RolloutRegistrationRegistry(join(dataRoot, ControlPlaneSmoke.RegistrationsFile))
         const observations = new HiveObservationRegistry(join(dataRoot, ControlPlaneSmoke.ObservationsFile))
         await Promise.all([manifests.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load()])
-        const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, new EnvironmentPlacement(directory), observations)
+        const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, placement, observations)
         this.service = service
         const host = new ControlPlaneHost(service, new GraphService(registry, proxy, name => service.AdminInfoFor(name)), staticRoot, operator, false, directory, deployments, {} as TenantProvisioningService, observations)
         try

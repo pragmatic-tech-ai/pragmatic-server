@@ -492,17 +492,17 @@ export class TenantLoginE2eSmoke
         this.idpContainers = new IdpContainerEnv(new ExecFileDockerExec())
         this.idpRegistry = new IdpRegistry(join(this.dataRoot, S.IdpsFile))
         const idpService = new IdpService(this.idpRegistry, new DockerIdpDriver(new PortAllocator(S.IdpPortFloor, new NetPortProbe()), this.idpContainers, this.dataRoot, DockerEnv.ImageName))
-        const service = new EnvironmentService(
-            environments, new PortAllocator(S.EnvPortFloor, new NetPortProbe()), new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(new HiveOrchestratorFactory(), new EnvironmentPlacement(directory), directory), directory, new HiveOrchestratorFactory()), new UserSeederAdapter(new UserSeeder()),
-            this.dataRoot, new AdminProxy(new WsAdminConnector()), directory, idpService, conn => new IdpAdminClient(conn))
         const orchestrators = new HiveOrchestratorFactory(S.K8sContext, join(this.dataRoot, S.OrchestratorDir))
+        const placement = new EnvironmentPlacement(directory)
+        const service = new EnvironmentService(
+            environments, new PortAllocator(S.EnvPortFloor, new NetPortProbe()), new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(orchestrators, placement, directory), directory, orchestrators), new UserSeederAdapter(new UserSeeder()),
+            this.dataRoot, new AdminProxy(new WsAdminConnector()), directory, idpService, conn => new IdpAdminClient(conn))
         const manifests = new ManifestRegistry(join(this.dataRoot, S.ManifestsFile))
         const gating = new GatingRegistry(join(this.dataRoot, S.GatingFile))
         const selections = new SelectionRegistry(join(this.dataRoot, S.SelectionsFile))
         const registrations = new RolloutRegistrationRegistry(join(this.dataRoot, S.RegistrationsFile))
         const adminClientRegistry = new TenantAdminClientRegistry(join(this.dataRoot, S.TenantAdminClientsFile))
         await Promise.all([manifests.Load(), gating.Load(), selections.Load(), registrations.Load(), adminClientRegistry.Load()])
-        const placement = new EnvironmentPlacement(directory)
         const observations = new HiveObservationRegistry(join(this.dataRoot, S.ObservationsFile))
         await observations.Load()
         const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, environments, placement, observations)
