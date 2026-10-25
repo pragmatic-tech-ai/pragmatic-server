@@ -39,3 +39,9 @@ test('Required throws the fixed message for a missing env var', () =>
     delete process.env[MissingKey]
     assert.throws(() => AgentWiring.Required(MissingKey), new Error(MissingMessage))
 })
+
+test('environment name edge cases: bare prefix yields empty, unprefixed is unchanged', () =>
+{
+    assert.equal(AgentWiring.EnvironmentName('pragmatic-env-'), '')
+    assert.equal(AgentWiring.EnvironmentName('kube-system'), 'kube-system')
+})

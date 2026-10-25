@@ -63,7 +63,7 @@ class AgentMain
             reportSnapshot: environments => AgentMain.ReportSnapshot(snapshotUrl, token, environments),
         })
         logger.Info(AgentMain.StartedLine, { [AgentMain.EventKey]: AgentMain.StartupEvent, [AgentMain.HiveKey]: hiveId })
-        void AgentMain.Loop(agent, logger, pollMs, maxBackoffMs)
+        void AgentMain.Loop(agent, logger, hiveId, pollMs, maxBackoffMs)
     }
 
     public static Fail(error: unknown): void
@@ -72,7 +72,7 @@ class AgentMain
         process.exit(1)
     }
 
-    private static async Loop(agent: RolloutAgent, logger: ILogger, pollMs: number, maxBackoffMs: number): Promise<void>
+    private static async Loop(agent: RolloutAgent, logger: ILogger, hiveId: string, pollMs: number, maxBackoffMs: number): Promise<void>
     {
         let delay = pollMs
         for (;;)
@@ -86,7 +86,7 @@ class AgentMain
             {
                 // message only: never the token, headers or request bodies
                 delay = Math.min(delay * AgentMain.BackoffFactor, maxBackoffMs)
-                logger.Error(AgentMain.TickFailedPrefix + (error instanceof Error ? error.message : AgentMain.UnknownError), { [AgentMain.EventKey]: AgentMain.TickFailedEvent, [AgentMain.BackoffKey]: delay })
+                logger.Error(AgentMain.TickFailedPrefix + (error instanceof Error ? error.message : AgentMain.UnknownError), { [AgentMain.EventKey]: AgentMain.TickFailedEvent, [AgentMain.HiveKey]: hiveId, [AgentMain.BackoffKey]: delay })
             }
             await new Promise<void>(resolve => setTimeout(resolve, delay))
         }
