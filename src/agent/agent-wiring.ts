@@ -5,6 +5,8 @@ import type { IEnvironmentState } from './rollout-agent.js'
 export class AgentWiring
 {
     private static readonly HiveLabel = 'pragmatic/hive'
+    private static readonly EnvironmentLabel = 'pragmatic/environment'
+    private static readonly SelectorSeparator = ','
     private static readonly SelectorOperator = '='
     private static readonly NamespacePrefix = 'pragmatic-env-'
     private static readonly TargetPathTemplate = '/agent/hives/{hive}/target'
@@ -19,7 +21,7 @@ export class AgentWiring
 
     public static LabelSelector(hiveId: string): string
     {
-        return AgentWiring.HiveLabel + AgentWiring.SelectorOperator + hiveId
+        return AgentWiring.HiveLabel + AgentWiring.SelectorOperator + hiveId + AgentWiring.SelectorSeparator + AgentWiring.EnvironmentLabel
     }
 
     public static TargetUrl(baseUrl: string, hiveId: string): string

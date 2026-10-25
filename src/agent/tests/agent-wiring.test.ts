@@ -6,9 +6,9 @@ const Base = 'https://platform.example.com'
 const MissingKey = 'PRAGMATIC_AGENT_TEST_MISSING_KEY'
 const MissingMessage = 'missing required environment variable PRAGMATIC_AGENT_TEST_MISSING_KEY'
 
-test('label selector is pragmatic/hive=<hiveId>', () =>
+test('label selector is hive equality AND environment-label presence', () =>
 {
-    assert.equal(AgentWiring.LabelSelector('h-1'), 'pragmatic/hive=h-1')
+    assert.equal(AgentWiring.LabelSelector('h-1'), 'pragmatic/hive=h-1,pragmatic/environment')
 })
 
 test('target and snapshot URLs use the agent channel paths', () =>

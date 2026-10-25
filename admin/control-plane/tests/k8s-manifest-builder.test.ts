@@ -131,6 +131,7 @@ describe('K8sManifestBuilder.RenderHiveAgent', () =>
         for (const i of items.slice(1))
         {
             assert.equal(i.metadata.labels['pragmatic/hive'], HiveId)
+            assert.equal(i.metadata.labels['pragmatic/environment'], undefined)
         }
         assert.equal(HiveFixture.Of('ClusterRole').metadata.namespace, undefined)
         assert.equal(HiveFixture.Of('ClusterRoleBinding').metadata.namespace, undefined)
@@ -170,9 +171,10 @@ describe('K8sManifestBuilder.RenderHiveAgent', () =>
         assert.equal(token.valueFrom.secretKeyRef.name, TokenSecret)
     })
 
-    it('env server deployment carries the hive label on its metadata', () =>
+    it('env server deployment carries the hive and environment labels on its metadata', () =>
     {
         const dep = Fixture.Items(false)[1]!
         assert.equal(dep.metadata.labels!['pragmatic/hive'], HiveId)
+        assert.equal(dep.metadata.labels!['pragmatic/environment'], 'dev1')
     })
 })

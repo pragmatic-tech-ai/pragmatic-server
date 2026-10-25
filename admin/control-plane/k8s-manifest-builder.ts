@@ -182,6 +182,15 @@ export class K8sManifestBuilder
         return { [K8sManifestBuilder.HiveLabel]: hiveId }
     }
 
+    /** Labels on an environment server deployment: the hive plus the environment marker the in-cluster agent's selector requires (agent objects deliberately lack it). */
+    private EnvironmentDeploymentLabels(workload: EnvironmentWorkload): Record<string, string>
+    {
+        return {
+            [K8sManifestBuilder.EnvironmentLabel]: workload.environmentName,
+            [K8sManifestBuilder.HiveLabel]: workload.hiveId,
+        }
+    }
+
     private HiveAgentNamespacedMeta(hiveId: string, name: string): K8sObject
     {
         return {
@@ -333,7 +342,7 @@ export class K8sManifestBuilder
             [K8sManifestBuilder.KindKey]: K8sManifestBuilder.DeploymentKind,
             [K8sManifestBuilder.MetadataKey]: {
                 ...this.Meta(workload, name),
-                [K8sManifestBuilder.LabelsKey]: this.HiveLabels(workload.hiveId),
+                [K8sManifestBuilder.LabelsKey]: this.EnvironmentDeploymentLabels(workload),
             },
             [K8sManifestBuilder.SpecKey]: {
                 [K8sManifestBuilder.ReplicasKey]: K8sManifestBuilder.SingleReplica,
