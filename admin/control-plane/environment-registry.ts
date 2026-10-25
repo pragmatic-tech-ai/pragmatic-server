@@ -12,6 +12,7 @@ export class EnvironmentRegistry
     private static readonly RootKey = 'environments'
     private static readonly NotFoundCode = 'ENOENT'
     private static readonly JsonIndent = 2
+    private static readonly NoContainerName = ''
 
     private readonly records = new Map<string, EnvironmentRecord>()
 
@@ -73,7 +74,7 @@ export class EnvironmentRegistry
             {
                 continue
             }
-            const running = await this.probe.Running(record.containerName ?? '')
+            const running = await this.probe.Running(record.containerName ?? EnvironmentRegistry.NoContainerName)
             this.records.set(record.name, { ...record, status: running ? EnvStatus.Running : EnvStatus.Stopped })
         }
         await this.persist()

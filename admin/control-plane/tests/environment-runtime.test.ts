@@ -85,6 +85,13 @@ test('Start ups without a CA path, waits healthy, returns the endpoint', async (
     assert.deepEqual(h.Docker.Calls, [{ m: 'Up', a: [Fx.Def, '/b', undefined] }, { m: 'WaitHealthy', a: [Fx.Port, Fx.Def] }])
 })
 
+test('Start forwards the record bundleDir, not the context one', async () =>
+{
+    const h = new Harness()
+    await h.Runtime.Start({ ...h.Ctx, bundleDir: '/ctx-other' })
+    assert.deepEqual(h.Docker.Calls[0], { m: 'Up', a: [Fx.Def, '/b', undefined] })
+})
+
 test('Stop, Teardown and RemoveVolume forward to docker', async () =>
 {
     const h = new Harness()

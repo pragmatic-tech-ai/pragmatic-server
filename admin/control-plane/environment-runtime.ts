@@ -27,12 +27,28 @@ export interface IEnvironmentRuntime
     Probe(ctx: EnvRuntimeContext): Promise<boolean>
 }
 
-/** The Docker backend: forwards each operation to the existing IDockerEnv / IBundleBuilder exactly as EnvironmentService did before the seam. */
-export class DockerEnvironmentRuntime implements IEnvironmentRuntime
+/** The one home for the localhost connect URLs of a host-port-published environment; shared by the Docker runtime and the DTO mapper. */
+export class LocalhostUrls
 {
     private static readonly HttpPrefix = 'http://localhost:'
     private static readonly WsPrefix = 'ws://localhost:'
     private static readonly EnvironmentQuery = '/?environment='
+
+    public static Http(port: number): string
+    {
+        return LocalhostUrls.HttpPrefix + String(port)
+    }
+
+    public static Ws(port: number, environmentId: string): string
+    {
+        return LocalhostUrls.WsPrefix + String(port) + LocalhostUrls.EnvironmentQuery + environmentId
+    }
+}
+
+/** The Docker backend: forwards each operation to the existing IDockerEnv / IBundleBuilder exactly as EnvironmentService did before the seam. */
+export class DockerEnvironmentRuntime implements IEnvironmentRuntime
+{
+    private static readonly NoContainerName = ''
     private static readonly NoHostPort = 'docker environment has no host port: '
 
     public constructor(
@@ -69,7 +85,7 @@ export class DockerEnvironmentRuntime implements IEnvironmentRuntime
 
     public async Start(ctx: EnvRuntimeContext): Promise<EnvEndpoint>
     {
-        await this.docker.Up(ctx.def, ctx.bundleDir ?? (ctx.record.bundleDir as string))
+        await this.docker.Up(ctx.def, ctx.record.bundleDir as string)
         await this.WaitHealthy(ctx)
         return DockerEnvironmentRuntime.EndpointOf(ctx)
     }
@@ -101,7 +117,7 @@ export class DockerEnvironmentRuntime implements IEnvironmentRuntime
 
     public Probe(ctx: EnvRuntimeContext): Promise<boolean>
     {
-        return this.docker.Running(ctx.record.containerName ?? '')
+        return this.docker.Running(ctx.record.containerName ?? DockerEnvironmentRuntime.NoContainerName)
     }
 
     private static BundleDirOf(ctx: EnvRuntimeContext): string
@@ -123,8 +139,8 @@ export class DockerEnvironmentRuntime implements IEnvironmentRuntime
     {
         const port = DockerEnvironmentRuntime.PortOf(ctx)
         return {
-            httpUrl: DockerEnvironmentRuntime.HttpPrefix + String(port),
-            wsUrl: DockerEnvironmentRuntime.WsPrefix + String(port) + DockerEnvironmentRuntime.EnvironmentQuery + ctx.def.environmentId,
+            httpUrl: LocalhostUrls.Http(port),
+            wsUrl: LocalhostUrls.Ws(port, ctx.def.environmentId),
             hostPort: port
         }
     }

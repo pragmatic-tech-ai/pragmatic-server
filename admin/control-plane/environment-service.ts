@@ -282,6 +282,7 @@ export class EnvironmentService
 
             try
             {
+                record.createdAt = new Date().toISOString()
                 const endpoint = await this.runtime.BringUp(ctx)
                 record.endpoint = EnvironmentService.StoredEndpoint(endpoint)
                 await this.runtime.WaitHealthy(ctx)

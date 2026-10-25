@@ -1,4 +1,5 @@
 import type { EnvStatus, EnvType, Template, EnvironmentRecord } from './environment-record.js'
+import { LocalhostUrls } from './environment-runtime.js'
 
 /** The only shape ever sent to a client: connect info, no internals or secrets. */
 export type EnvironmentDto = {
@@ -22,12 +23,6 @@ export type EnvironmentDto = {
  */
 export class EnvironmentDtoMapper
 {
-    private static readonly HttpScheme = 'http://'
-    private static readonly WsScheme = 'ws://'
-    private static readonly LocalName = 'localhost'
-    private static readonly PortSeparator = ':'
-    private static readonly EnvironmentQuery = '/?environment='
-
     public static ToDto(r: EnvironmentRecord): EnvironmentDto
     {
         const stored = r.endpoint
@@ -41,8 +36,8 @@ export class EnvironmentDtoMapper
             hostPort: r.hostPort,
             status: r.status,
             createdAt: r.createdAt,
-            httpUrl: stored?.httpUrl ?? EnvironmentDtoMapper.HttpScheme + EnvironmentDtoMapper.LocalName + EnvironmentDtoMapper.PortSeparator + String(r.hostPort),
-            wsUrl: stored?.wsUrl ?? EnvironmentDtoMapper.WsScheme + EnvironmentDtoMapper.LocalName + EnvironmentDtoMapper.PortSeparator + String(r.hostPort) + EnvironmentDtoMapper.EnvironmentQuery + r.environmentId
+            httpUrl: stored?.httpUrl ?? LocalhostUrls.Http(r.hostPort as number),
+            wsUrl: stored?.wsUrl ?? LocalhostUrls.Ws(r.hostPort as number, r.environmentId)
         }
     }
 }
