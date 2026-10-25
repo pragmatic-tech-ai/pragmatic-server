@@ -29,6 +29,17 @@ import { UnknownHiveError } from '../rollout-errors.js'
 import type { ILogProcess } from '../../../environments/seed/docker.js'
 import type { IDockerEnv, IBundleBuilder, IUserSeeder } from '../docker-env-port.js'
 import { DockerEnvironmentRuntime } from '../environment-runtime.js'
+import type { IEnvironmentRuntime } from '../environment-runtime.js'
+import { EnvironmentRuntimeResolver } from '../environment-runtime-resolver.js'
+
+/** Routes every record (bound or not) to the one Docker fake, preserving the pre-resolver service tests. */
+class SingleBackendResolver
+{
+    public static Of(runtime: IEnvironmentRuntime): EnvironmentRuntimeResolver
+    {
+        return new EnvironmentRuntimeResolver(runtime, runtime)
+    }
+}
 import { TenantPurposeName, type EnvDefinition, type EnvOidc } from '../../../environments/seed/bundle.js'
 import type { UserSeed } from '../../../environments/seed/users.js'
 import type { IAdminProxy, AdminConnectInfo, AdminSnapshot } from '../admin-proxy.js'
@@ -419,7 +430,7 @@ class Harness
             cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach, configRef: 'kube-ref' },
             registry: { mode: InfraMode.Attach, endpoint: 'reg.local', credentialRef: 'cred-ref' }
         })
-        h.Service = new EnvironmentService(h.Registry, new FakeAllocator(h.Calls, busy), new DockerEnvironmentRuntime(h.Docker, h.Bundle), h.Seeder, h.DataRoot, h.Proxy, h.Directory, h.Idp, c => new IdpAdminClient(c))
+        h.Service = new EnvironmentService(h.Registry, new FakeAllocator(h.Calls, busy), SingleBackendResolver.Of(new DockerEnvironmentRuntime(h.Docker, h.Bundle)), h.Seeder, h.DataRoot, h.Proxy, h.Directory, h.Idp, c => new IdpAdminClient(c))
         return h
     }
 
@@ -427,7 +438,7 @@ class Harness
     public UseIdp(idp: IIdpService): void
     {
         this.Idp = idp
-        this.Service = new EnvironmentService(this.Registry, new FakeAllocator(this.Calls, false), new DockerEnvironmentRuntime(this.Docker, this.Bundle), this.Seeder, this.DataRoot, this.Proxy, this.Directory, idp, c => new IdpAdminClient(c))
+        this.Service = new EnvironmentService(this.Registry, new FakeAllocator(this.Calls, false), SingleBackendResolver.Of(new DockerEnvironmentRuntime(this.Docker, this.Bundle)), this.Seeder, this.DataRoot, this.Proxy, this.Directory, idp, c => new IdpAdminClient(c))
     }
 
     public static Record(name: string, status: EnvStatus): EnvironmentRecord

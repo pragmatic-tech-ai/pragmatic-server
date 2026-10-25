@@ -16,6 +16,8 @@ import { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
 import { EnvironmentPlacement } from './environment-placement.js'
 import { BundleBuilderAdapter, DockerEnvAdapter, UserSeederAdapter } from './docker-env-port.js'
 import { DockerEnvironmentRuntime } from './environment-runtime.js'
+import { EnvironmentRuntimeResolver } from './environment-runtime-resolver.js'
+import { InClusterEnvironmentRuntime } from './in-cluster-environment-runtime.js'
 import { ClientRegistry } from './client-registry.js'
 import { HiveRegistry } from './hive-registry.js'
 import { PlatformDirectory } from './platform-directory.js'
@@ -140,10 +142,11 @@ export class ControlPlaneServer
         const seeder = new UserSeederAdapter(new UserSeeder())
         const proxy = new AdminProxy(new WsAdminConnector())
         const idpService = new IdpService(new IdpRegistry(join(dataRoot, ControlPlaneServer.IdpsFile)), new DockerIdpDriver(new PortAllocator(ControlPlaneServer.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), dataRoot, DockerEnv.ImageName))
-        const service = new EnvironmentService(registry, allocator, new DockerEnvironmentRuntime(docker, bundle), seeder, dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn))
+        const orchestrators = new HiveOrchestratorFactory()
+        const placement = new EnvironmentPlacement(directory)
+        const service = new EnvironmentService(registry, allocator, new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, bundle), new InClusterEnvironmentRuntime(orchestrators, placement, directory)), seeder, dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn))
         const graphService = new GraphService(registry, proxy, name => service.AdminInfoFor(name))
         const staticRoot = join(here, ControlPlaneServer.ParentSegment, ControlPlaneServer.PortalSegment, ControlPlaneServer.DistSegment)
-        const orchestrators = new HiveOrchestratorFactory()
         const manifests = new ManifestRegistry(join(dataRoot, ControlPlaneServer.ManifestsFile))
         const gating = new GatingRegistry(join(dataRoot, ControlPlaneServer.GatingFile))
         const selections = new SelectionRegistry(join(dataRoot, ControlPlaneServer.SelectionsFile))
@@ -151,7 +154,6 @@ export class ControlPlaneServer
         const registrations = new RolloutRegistrationRegistry(join(dataRoot, ControlPlaneServer.RegistrationsFile))
         const adminClientRegistry = new TenantAdminClientRegistry(join(dataRoot, ControlPlaneServer.TenantAdminClientsFile))
         await Promise.all([manifests.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load(), adminClientRegistry.Load()])
-        const placement = new EnvironmentPlacement(directory)
         const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, placement, observations)
         const provisioning = new TenantProvisioningService(idpService, directory, conn => new IdpAdminClient(conn))
         const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations)

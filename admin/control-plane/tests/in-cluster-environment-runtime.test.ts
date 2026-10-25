@@ -1,0 +1,138 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import type { EnvDefinition } from '../../../environments/seed/bundle.js'
+import type { EnvRuntimeContext } from '../environment-runtime.js'
+import type { EnvironmentPlacement } from '../environment-placement.js'
+import type { EnvironmentWorkload } from '../environment-workload.js'
+import type { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
+import type { IHiveOrchestrator, WorkloadHealth } from '../hive-orchestrator.js'
+import type { HiveRecord } from '../platform-records.js'
+import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
+import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
+import { EnvLogsUnavailableInClusterError, EnvStopUnavailableInClusterError, InClusterEnvironmentRuntime, InClusterHiveMissingError, InClusterOperationFailedError } from '../in-cluster-environment-runtime.js'
+
+class Fx
+{
+    public static readonly Secret = 'kubectl stderr SECRET-VALUE'
+    public static readonly Workload = { environmentName: 'e1', hiveId: 'h1', serverPort: 8080 } as unknown as EnvironmentWorkload
+    public static readonly Hive = { id: 'h1' } as unknown as HiveRecord
+    public static readonly Def = { name: 'e1', environmentId: 'env-1' } as unknown as EnvDefinition
+}
+
+class FakeOrchestrator implements IHiveOrchestrator
+{
+    public readonly Calls: { m: string; w: EnvironmentWorkload }[] = []
+    public FailWith: Error | undefined
+    public Ready = true
+
+    private Rec(m: string, w: EnvironmentWorkload): void
+    {
+        this.Calls.push({ m, w })
+        if (this.FailWith)
+        {
+            throw this.FailWith
+        }
+    }
+
+    public async Apply(w: EnvironmentWorkload): Promise<void> { this.Rec('Apply', w) }
+    public async WaitHealthy(w: EnvironmentWorkload): Promise<void> { this.Rec('WaitHealthy', w) }
+    public async Health(w: EnvironmentWorkload): Promise<WorkloadHealth> { this.Rec('Health', w); return { ready: this.Ready, runningImage: undefined, detail: '' } }
+    public async Roll(w: EnvironmentWorkload, _image: string): Promise<void> { this.Rec('Roll', w) }
+    public async Teardown(w: EnvironmentWorkload): Promise<void> { this.Rec('Teardown', w) }
+}
+
+class Harness
+{
+    public readonly Orchestrator = new FakeOrchestrator()
+    public readonly Runtime: InClusterEnvironmentRuntime
+    public readonly Record: EnvironmentRecord = { name: 'e1', type: EnvType.Runtime, template: Template.DevBlank, environmentId: 'env-1', hiveId: 'h1', createdAt: 'now', status: EnvStatus.Running }
+    public readonly Ctx: EnvRuntimeContext = { def: Fx.Def, record: this.Record }
+
+    public constructor(hiveKnown: boolean = true)
+    {
+        const orchestrator = this.Orchestrator
+        const factory = { For: (_h: HiveRecord) => orchestrator } as unknown as HiveOrchestratorFactory
+        const placement = { WorkloadFor: (_r: EnvironmentRecord) => Fx.Workload } as unknown as EnvironmentPlacement
+        const directory: ITenantDirectory = {
+            GetTenant: () => undefined,
+            GetHive: () => hiveKnown ? Fx.Hive : undefined,
+            ListHives: () => []
+        }
+        this.Runtime = new InClusterEnvironmentRuntime(factory, placement, directory)
+    }
+}
+
+test('BringUp applies the placement workload and returns a DNS endpoint with no hostPort', async () =>
+{
+    const h = new Harness()
+    const ep = await h.Runtime.BringUp(h.Ctx)
+    assert.deepEqual(h.Orchestrator.Calls, [{ m: 'Apply', w: Fx.Workload }])
+    assert.equal(ep.hostPort, undefined)
+    assert.match(ep.httpUrl, /^http:\/\/.+\.svc\.cluster\.local:8080$/)
+    assert.match(ep.wsUrl, /^ws:\/\/.+\.svc\.cluster\.local:8080\/\?environment=env-1$/)
+})
+
+test('Start applies then waits healthy', async () =>
+{
+    const h = new Harness()
+    await h.Runtime.Start(h.Ctx)
+    assert.deepEqual(h.Orchestrator.Calls.map(c => c.m), ['Apply', 'WaitHealthy'])
+})
+
+test('Teardown calls orchestrator Teardown; RemoveVolume is a no-op', async () =>
+{
+    const h = new Harness()
+    await h.Runtime.Teardown(h.Ctx, true)
+    await h.Runtime.RemoveVolume(h.Ctx)
+    assert.deepEqual(h.Orchestrator.Calls, [{ m: 'Teardown', w: Fx.Workload }])
+})
+
+test('a thrown Apply surfaces the fixed generic error without stderr text', async () =>
+{
+    const h = new Harness()
+    h.Orchestrator.FailWith = new Error(Fx.Secret)
+    await assert.rejects(() => h.Runtime.BringUp(h.Ctx), (e: Error) => e instanceof InClusterOperationFailedError && !e.message.includes('SECRET'))
+})
+
+test('WaitHealthy and Teardown failures are also mapped to the generic error', async () =>
+{
+    const h = new Harness()
+    h.Orchestrator.FailWith = new Error(Fx.Secret)
+    await assert.rejects(() => h.Runtime.WaitHealthy(h.Ctx), InClusterOperationFailedError)
+    await assert.rejects(() => h.Runtime.Teardown(h.Ctx, true), InClusterOperationFailedError)
+})
+
+test('Logs and LogStream throw the named unavailable error', async () =>
+{
+    const h = new Harness()
+    await assert.rejects(() => h.Runtime.Logs(h.Ctx), EnvLogsUnavailableInClusterError)
+    assert.throws(() => h.Runtime.LogStream(h.Ctx, () => {}), EnvLogsUnavailableInClusterError)
+})
+
+test('Stop throws the named unavailable error', async () =>
+{
+    const h = new Harness()
+    await assert.rejects(() => h.Runtime.Stop(h.Ctx), EnvStopUnavailableInClusterError)
+})
+
+test('Probe returns Health().ready', async () =>
+{
+    const h = new Harness()
+    assert.equal(await h.Runtime.Probe(h.Ctx), true)
+    h.Orchestrator.Ready = false
+    assert.equal(await h.Runtime.Probe(h.Ctx), false)
+})
+
+test('EnsureImage is true and Prepare is a no-op', async () =>
+{
+    const h = new Harness()
+    assert.equal(await h.Runtime.EnsureImage(Fx.Def), true)
+    await h.Runtime.Prepare(h.Ctx)
+    assert.equal(h.Orchestrator.Calls.length, 0)
+})
+
+test('a missing hive throws the fixed hive-missing error', async () =>
+{
+    const h = new Harness(false)
+    await assert.rejects(() => h.Runtime.BringUp(h.Ctx), InClusterHiveMissingError)
+})

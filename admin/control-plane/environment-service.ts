@@ -17,7 +17,8 @@ import type { IIdpService, IdpConnection } from './idp-service.js'
 import type { IdpAdminClient } from './idp-admin-client.js'
 import type { ILogProcess } from '../../environments/seed/docker.js'
 import type { IUserSeeder } from './docker-env-port.js'
-import type { EnvEndpoint, EnvRuntimeContext, IEnvironmentRuntime } from './environment-runtime.js'
+import type { EnvEndpoint, EnvRuntimeContext } from './environment-runtime.js'
+import type { EnvironmentRuntimeResolver } from './environment-runtime-resolver.js'
 
 export class EnvironmentExistsError extends Error
 {
@@ -144,7 +145,7 @@ export class EnvironmentService
     public constructor(
         private readonly registry: EnvironmentRegistry,
         private readonly allocator: PortAllocator,
-        private readonly runtime: IEnvironmentRuntime,
+        private readonly runtimes: EnvironmentRuntimeResolver,
         private readonly seeder: IUserSeeder,
         private readonly dataRoot: string,
         private readonly proxy: IAdminProxy,
@@ -254,9 +255,10 @@ export class EnvironmentService
                 record.hiveId = hiveId
             }
             const ctx: EnvRuntimeContext = { def, record, bundleDir, seedDir, oidc, caHostPath }
+            const runtime = this.runtimes.For(record)
             try
             {
-                await this.runtime.Prepare(ctx)
+                await runtime.Prepare(ctx)
             }
             catch (err)
             {
@@ -267,7 +269,7 @@ export class EnvironmentService
             let imageOk: boolean
             try
             {
-                imageOk = await this.runtime.EnsureImage(def)
+                imageOk = await runtime.EnsureImage(def)
             }
             catch
             {
@@ -277,15 +279,15 @@ export class EnvironmentService
             if (!imageOk)
             {
                 EnvironmentService.RemoveBundleDir(bundleDir)
-                throw new ImageMissingError(this.runtime.BuildCommand())
+                throw new ImageMissingError(runtime.BuildCommand())
             }
 
             try
             {
                 record.createdAt = new Date().toISOString()
-                const endpoint = await this.runtime.BringUp(ctx)
+                const endpoint = await runtime.BringUp(ctx)
                 record.endpoint = EnvironmentService.StoredEndpoint(endpoint)
-                await this.runtime.WaitHealthy(ctx)
+                await runtime.WaitHealthy(ctx)
                 if (def.kind === EnvKind.Demo)
                 {
                     await this.SeedDemoUsers(def, bundleDir, seedDir, port)
@@ -295,7 +297,7 @@ export class EnvironmentService
             {
                 try
                 {
-                    await this.runtime.Teardown(ctx, true)
+                    await runtime.Teardown(ctx, true)
                 }
                 catch
                 {
@@ -303,7 +305,7 @@ export class EnvironmentService
                 }
                 try
                 {
-                    await this.runtime.RemoveVolume(ctx)
+                    await runtime.RemoveVolume(ctx)
                 }
                 catch
                 {
@@ -327,14 +329,14 @@ export class EnvironmentService
     public async Start(name: string): Promise<EnvironmentRecord>
     {
         const rec = this.Require(name)
-        const endpoint = await this.runtime.Start(this.CtxOf(rec))
+        const endpoint = await this.runtimes.For(rec).Start(this.CtxOf(rec))
         return this.SetStatus({ ...rec, endpoint: EnvironmentService.StoredEndpoint(endpoint) }, EnvStatus.Running)
     }
 
     public async Stop(name: string): Promise<EnvironmentRecord>
     {
         const rec = this.Require(name)
-        await this.runtime.Stop(this.CtxOf(rec))
+        await this.runtimes.For(rec).Stop(this.CtxOf(rec))
         return this.SetStatus(rec, EnvStatus.Stopped)
     }
 
@@ -349,8 +351,9 @@ export class EnvironmentService
     {
         const rec = this.Require(name)
         const ctx = this.CtxOf(rec)
-        await this.runtime.Teardown(ctx, true)
-        await this.runtime.RemoveVolume(ctx)
+        const runtime = this.runtimes.For(rec)
+        await runtime.Teardown(ctx, true)
+        await runtime.RemoveVolume(ctx)
         await this.registry.Remove(name)
         this.NotifyChanged(EnvironmentChangeKind.Deleted, rec)
     }
@@ -381,13 +384,13 @@ export class EnvironmentService
     public async Logs(name: string): Promise<string>
     {
         const rec = this.Require(name)
-        return this.runtime.Logs(this.CtxOf(rec))
+        return this.runtimes.For(rec).Logs(this.CtxOf(rec))
     }
 
     public LogStream(name: string, onData: (chunk: string) => void): ILogProcess
     {
         const rec = this.Require(name)
-        return this.runtime.LogStream(this.CtxOf(rec), onData)
+        return this.runtimes.For(rec).LogStream(this.CtxOf(rec), onData)
     }
 
     public async AdminSnapshot(name: string): Promise<AdminSnapshot>
