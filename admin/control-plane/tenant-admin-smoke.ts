@@ -68,7 +68,7 @@ class NoContainerProbe implements IContainerProbe
 type SessionDto = { principalId?: string }
 type HiveDto = { id?: string }
 type EnvironmentDto = { name?: string }
-type ManifestDto = { version?: string }
+type ManifestDto = { id?: string }
 
 type HttpResult = { status: number; headers: Record<string, string | string[] | undefined>; text: string; json: unknown }
 
@@ -453,7 +453,7 @@ export class TenantAdminSmoke
         const envList = TenantAdminSmoke.AsList<EnvironmentDto>(envs.json)
         this.Expect(S.Labels.Environments, envs.status === S.StatusOk && envList.some(e => e.name === S.SeedEnvName), S.StatusWord + String(envs.status) + S.DetailSep + envs.text.slice(0, 200))
         const manifests = await this.Http(port, S.MethodGet, S.ManifestsPath, undefined, true)
-        const versions = TenantAdminSmoke.AsList<ManifestDto>(manifests.json).map(m => m.version)
+        const versions = TenantAdminSmoke.AsList<ManifestDto>(manifests.json).map(m => m.id)
         this.Expect(S.Labels.Manifests, manifests.status === S.StatusOk && versions.includes(S.VersionV1) && versions.includes(S.VersionV2), S.StatusWord + String(manifests.status) + S.DetailSep + manifests.text.slice(0, 200))
         const adopt = await this.Http(port, S.MethodPost, S.HivesPrefix + S.HiveId + S.TargetSuffix, JSON.stringify({ [S.VersionKey]: S.VersionV2 }), true)
         this.Expect(S.Labels.Adopt, adopt.status === S.StatusNoContent, S.StatusWord + String(adopt.status) + S.DetailSep + adopt.text.slice(0, 200))
