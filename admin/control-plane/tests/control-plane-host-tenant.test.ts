@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { request } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { HiveObservationRegistry } from '../hive-observation-record.js'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import { FakeProvisioning } from './fake-provisioning.js'
 import { RolloutFixture } from './rollout-fixture.js'
@@ -97,7 +98,7 @@ class Harness
             directory,
             factory,
             await RolloutFixture.Create(parent, directory, factory),
-            new FakeProvisioning(directory).AsService())
+            new FakeProvisioning(directory).AsService(), new HiveObservationRegistry(join(tmpdir(), 'unused-observations.json')))
         await host.Listen(0, '127.0.0.1')
         return host
     }

@@ -16,7 +16,7 @@ import {
 import { GraphExistsError, GraphNameInvalidError, GraphNotFoundError } from './graph-service.js'
 import { EnvType, Template, type EnvironmentChange, type EnvironmentRecord } from './environment-record.js'
 import { EnvironmentDtoMapper, type EnvironmentDto } from './environment-dto.js'
-import { HiveHealthProducer } from './hive-health-producer.js'
+import type { HiveObservationRegistry } from './hive-observation-record.js'
 import { InvalidTenantIdError } from './idp-service.js'
 import { PortUnavailableError } from './port-allocator.js'
 import type { TenantProvisioningService } from './tenant-provisioning-service.js'
@@ -38,7 +38,6 @@ import { HiveBackend, InfraMode, InvalidRecordIdError } from './platform-records
 import { PlaneHttp } from './plane-http.js'
 import { UnsupportedBackendError } from './hive-orchestrator.js'
 import type { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
-import { EnvironmentPlacement } from './environment-placement.js'
 import { KubectlError } from './kubectl.js'
 import type { HiveRolloutStatus, PlatformDeploymentRegistry } from './platform-deployment-registry.js'
 import type { ManifestRecord } from './manifest-record.js'
@@ -331,7 +330,8 @@ export class ControlPlaneHost
         private readonly directory: PlatformDirectory,
         private readonly orchestrators: HiveOrchestratorFactory,
         private readonly deployments: PlatformDeploymentRegistry,
-        private readonly provisioning: TenantProvisioningService)
+        private readonly provisioning: TenantProvisioningService,
+        private readonly observations: HiveObservationRegistry)
     {
         this.staticRootAbs = resolve(staticRoot)
     }
@@ -695,8 +695,7 @@ export class ControlPlaneHost
             PlaneHttp.WriteNotFound(res)
             return true
         }
-        const producer = new HiveHealthProducer(this.service, this.orchestrators, new EnvironmentPlacement(this.directory))
-        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, await producer.Produce(hive))
+        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, this.observations.LatestFor(id))
         return true
     }
 

@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync, rmSyn
 import { request } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { HiveObservationRegistry } from '../hive-observation-record.js'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import { FakeProvisioning } from './fake-provisioning.js'
 import { ControlPlaneHost, type IEnvironmentService, type IGraphService } from '../control-plane-host.js'
@@ -84,7 +85,7 @@ describe('ControlPlaneHost rollout routes', () =>
         await directory.CreateHive({ id: 'local1', tenantId: 't1', displayName: 'L', cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
         const factory = new HiveOrchestratorFactory()
         deployments = await RolloutFixture.Create(parent, directory, factory)
-        host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, factory, deployments, new FakeProvisioning(directory).AsService())
+        host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, factory, deployments, new FakeProvisioning(directory).AsService(), new HiveObservationRegistry(join(tmpdir(), 'unused-observations.json')))
         await host.Listen(0, '127.0.0.1')
     })
 

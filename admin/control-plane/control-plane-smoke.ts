@@ -14,6 +14,7 @@ import { request } from 'node:http'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { HiveObservationRegistry } from './hive-observation-record.js'
 import { fileURLToPath } from 'node:url'
 import { Repository, toJSON } from '@pragmatic-tech-ai/todl'
 import type { PackageDocument } from '@pragmatic-tech-ai/todl'
@@ -267,7 +268,7 @@ export class ControlPlaneSmoke
         const registrations = new RolloutRegistrationRegistry(join(dataRoot, ControlPlaneSmoke.RegistrationsFile))
         await Promise.all([manifests.Load(), gating.Load(), selections.Load(), reports.Load(), registrations.Load()])
         const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, reports, registrations, directory, orchestrators, registry, new EnvironmentPlacement(directory))
-        const host = new ControlPlaneHost(service, new GraphService(registry, proxy, name => service.AdminInfoFor(name)), staticRoot, operator, false, directory, orchestrators, deployments, {} as TenantProvisioningService)
+        const host = new ControlPlaneHost(service, new GraphService(registry, proxy, name => service.AdminInfoFor(name)), staticRoot, operator, false, directory, orchestrators, deployments, {} as TenantProvisioningService, new HiveObservationRegistry(join(tmpdir(), 'unused-observations.json')))
         try
         {
             await host.Listen(0, ControlPlaneSmoke.LoopbackHost)

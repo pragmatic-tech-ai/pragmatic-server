@@ -20,6 +20,7 @@ import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { HiveObservationRegistry } from './hive-observation-record.js'
 import { fileURLToPath } from 'node:url'
 import { ClientRegistry } from './client-registry.js'
 import { ControlPlaneHost } from './control-plane-host.js'
@@ -372,7 +373,7 @@ export class RolloutPullSmoke
         const S = RolloutPullSmoke
         const staticRoot = join(this.tempDir!, S.StaticDirName)
         await mkdir(staticRoot, { recursive: true })
-        const host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, staticRoot, new DenyAllOperator(), false, directory, factory, deployments, {} as TenantProvisioningService)
+        const host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, staticRoot, new DenyAllOperator(), false, directory, factory, deployments, {} as TenantProvisioningService, new HiveObservationRegistry(join(tmpdir(), 'unused-observations.json')))
         await host.Listen(0, S.LoopbackAddress)
         this.host = host
         const proxy = new HostHeaderProxy(host.Address().port)

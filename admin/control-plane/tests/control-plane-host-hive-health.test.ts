@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { request } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { HiveObservationRegistry } from '../hive-observation-record.js'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import { FakeProvisioning } from './fake-provisioning.js'
 import { ControlPlaneHost, type IEnvironmentService, type IGraphService } from '../control-plane-host.js'
@@ -120,6 +121,7 @@ class Harness
 describe('ControlPlaneHost hive health route', () =>
 {
     let host: ControlPlaneHost
+    let observations: HiveObservationRegistry
     let parent: string
 
     beforeEach(async () =>
@@ -138,8 +140,10 @@ describe('ControlPlaneHost hive health route', () =>
         await directory.CreateTenant({ id: 't1', clientId: 'acme', displayName: 'T' })
         await directory.CreateHive({ id: 'local1', tenantId: 't1', displayName: 'L', cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
         await directory.CreateHive({ id: 'cloud1', tenantId: 't1', displayName: 'C', cluster: { backend: HiveBackend.Aks, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
+        observations = new HiveObservationRegistry(join(parent, 'observations.json'))
+        await observations.Load()
         const factory = new FakeFactory()
-        host = new ControlPlaneHost(new FakeService() as unknown as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, factory, await RolloutFixture.Create(parent, directory, factory), new FakeProvisioning(directory).AsService())
+        host = new ControlPlaneHost(new FakeService() as unknown as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, factory, await RolloutFixture.Create(parent, directory, factory), new FakeProvisioning(directory).AsService(), observations)
         await host.Listen(0, '127.0.0.1')
     })
 
@@ -149,22 +153,33 @@ describe('ControlPlaneHost hive health route', () =>
         rmSync(parent, { recursive: true, force: true })
     })
 
-    it('returns one health entry per environment bound to the hive, with no secret fields', async () =>
+    it('returns the stored observation for a hive that reported, with no secret fields', async () =>
     {
+        const reported = [
+            { environmentName: 'dev-x', ready: true, runningImage: 'img:x', detail: 'reported' },
+            { environmentName: 'dev-y', ready: false, runningImage: 'img:y', detail: 'down' }
+        ]
+        await observations.RecordSnapshot('local1', reported)
         const r = await Harness.Get(host, '/api/hives/local1/health')
         assert.equal(r.status, 200)
         const arr = JSON.parse(r.body)
-        assert.deepEqual(arr.map((e: { environmentName: string }) => e.environmentName), ['dev-a', 'dev-b'])
+        assert.deepEqual(arr, reported)
         assert.deepEqual(Object.keys(arr[0]).sort(), ['detail', 'environmentName', 'ready', 'runningImage'])
-        assert.equal(arr[0].ready, true)
-        assert.equal(arr[1].ready, false)
-        assert.equal(arr[0].runningImage, 'img:dev-a')
         assert.doesNotMatch(r.body, /secret|password|token/i)
     })
 
-    it('maps an unsupported backend to 400', async () =>
+    it('returns an empty list with 200 for a known hive that never reported', async () =>
     {
-        assert.equal((await Harness.Get(host, '/api/hives/cloud1/health')).status, 400)
+        const r = await Harness.Get(host, '/api/hives/local1/health')
+        assert.equal(r.status, 200)
+        assert.deepEqual(JSON.parse(r.body), [])
+    })
+
+    it('does not poll the orchestrator: an unsupported-backend hive with no report is 200 []', async () =>
+    {
+        const r = await Harness.Get(host, '/api/hives/cloud1/health')
+        assert.equal(r.status, 200)
+        assert.deepEqual(JSON.parse(r.body), [])
     })
 
     it('returns 404 for an unknown hive', async () =>
