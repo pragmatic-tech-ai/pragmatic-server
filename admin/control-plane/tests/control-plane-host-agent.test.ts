@@ -13,6 +13,7 @@ import { HiveRegistry } from '../hive-registry.js'
 import { PlatformDirectory } from '../platform-directory.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
+import { RolloutReportRegistry } from '../rollout-report-record.js'
 import { RolloutFixture } from './rollout-fixture.js'
 
 type Reply = { status: number; body: string; cacheControl?: string | string[] }
@@ -70,6 +71,7 @@ describe('ControlPlaneHost agent routes (machine credential)', () =>
     const TargetPath = '/api/hives/local1/agent/target'
     const ReportPath = '/api/hives/local1/agent/report'
     const RolloutPath = '/api/hives/local1/rollout'
+    const ReportsFileName = 'rollout-reports.json'
     const Report = { environmentName: 'prod', runningImage: 'img:1', ready: true }
     let host: ControlPlaneHost
     let parent: string
@@ -164,12 +166,15 @@ describe('ControlPlaneHost agent routes (machine credential)', () =>
         assert.ok(!reply.body.includes(token))
     })
 
-    it('records a report for a correct bearer, visible via the operator rollout route', async () =>
+    // Task 5 retires this legacy per-env report path and will remove or rewrite this case.
+    it('accepts a legacy per-env report (204) and stores it, but it does not feed operator rollout status', async () =>
     {
         await Harness.Send(host, 'POST', '/api/hives/local1/target', { cookie: true, body: { version: '1.0.0' } })
         const reply = await Harness.Send(host, 'POST', ReportPath, { authorization: 'Bearer ' + token, body: Report })
         assert.equal(reply.status, 204)
-        // The operator rollout view now derives from snapshot observations (the legacy per-env report path is retired in a later task).
+        const stored = new RolloutReportRegistry(join(parent, ReportsFileName))
+        await stored.Load()
+        assert.deepEqual(stored.List().map(r => [r.hiveId, r.environmentName, r.runningImage, r.ready]), [['local1', Report.environmentName, Report.runningImage, Report.ready]])
         const status = JSON.parse((await Harness.Send(host, 'GET', RolloutPath, { cookie: true })).body) as { environments: unknown[] }
         assert.deepEqual(status.environments, [])
     })

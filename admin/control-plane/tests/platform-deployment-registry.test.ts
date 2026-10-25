@@ -43,10 +43,11 @@ class Fx
 
     public static Health(name: string, image: string | undefined, ready: boolean): HiveHealthDto
     {
-        return { environmentName: name, ready, runningImage: image, detail: '' }
+        return { environmentName: name, ready, runningImage: image, detail: Fx.NoDetail }
     }
 
     public static readonly HiveB = 'hive-b'
+    public static readonly NoDetail = ''
     public static readonly EnvNames = ['e1', 'e2', 'e3']
 
     public static EnvRecord(name: string, hiveId: string): EnvironmentRecord
@@ -169,11 +170,22 @@ test('ReportSnapshot is reflected by StatusFor, obsolete computed against the ta
     {
         await Fx.PublishGated(reg, [Fx.V2])
         await reg.SelectTarget(Fx.HiveA, Fx.V2)
-        await reg.ReportSnapshot(Fx.HiveA, [Fx.Health('e1', Fx.Image(Fx.V2), true), Fx.Health('e2', undefined, false)])
+        await reg.ReportSnapshot(Fx.HiveA, [Fx.Health(Fx.EnvNames[0], Fx.Image(Fx.V2), true), Fx.Health(Fx.EnvNames[1], undefined, false)])
         assert.deepEqual(reg.StatusFor(Fx.HiveA).environments, [
-            { environmentName: 'e1', runningImage: Fx.Image(Fx.V2), obsolete: false, ready: true },
-            { environmentName: 'e2', runningImage: undefined, obsolete: true, ready: false }
+            { environmentName: Fx.EnvNames[0], runningImage: Fx.Image(Fx.V2), obsolete: false, ready: true },
+            { environmentName: Fx.EnvNames[1], runningImage: undefined, obsolete: true, ready: false }
         ])
+    })
+})
+
+test('StatusFor reports obsolete=false for a reported environment when no target is set', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        await reg.ReportSnapshot(Fx.HiveA, [Fx.Health(Fx.EnvNames[0], Fx.Image(Fx.V1), true)])
+        const status = reg.StatusFor(Fx.HiveA)
+        assert.equal(status.targetVersion, undefined)
+        assert.deepEqual(status.environments, [{ environmentName: Fx.EnvNames[0], runningImage: Fx.Image(Fx.V1), obsolete: false, ready: true }])
     })
 })
 
@@ -181,10 +193,10 @@ test('replacing the snapshot with a shorter list drops the removed environment f
 {
     await Fx.Run(async reg =>
     {
-        await reg.ReportSnapshot(Fx.HiveA, [Fx.Health('e1', Fx.Image(Fx.V1), true), Fx.Health('e2', Fx.Image(Fx.V1), true)])
-        assert.deepEqual(reg.StatusFor(Fx.HiveA).environments.map(e => e.environmentName), ['e1', 'e2'])
-        await reg.ReportSnapshot(Fx.HiveA, [Fx.Health('e1', Fx.Image(Fx.V1), true)])
-        assert.deepEqual(reg.StatusFor(Fx.HiveA).environments.map(e => e.environmentName), ['e1'])
+        await reg.ReportSnapshot(Fx.HiveA, [Fx.Health(Fx.EnvNames[0], Fx.Image(Fx.V1), true), Fx.Health(Fx.EnvNames[1], Fx.Image(Fx.V1), true)])
+        assert.deepEqual(reg.StatusFor(Fx.HiveA).environments.map(e => e.environmentName), [Fx.EnvNames[0], Fx.EnvNames[1]])
+        await reg.ReportSnapshot(Fx.HiveA, [Fx.Health(Fx.EnvNames[0], Fx.Image(Fx.V1), true)])
+        assert.deepEqual(reg.StatusFor(Fx.HiveA).environments.map(e => e.environmentName), [Fx.EnvNames[0]])
     })
 })
 

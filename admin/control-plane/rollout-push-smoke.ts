@@ -24,6 +24,7 @@ import { EnvStatus, EnvType, Template } from './environment-record.js'
 import type { EnvironmentRecord, IContainerProbe } from './environment-record.js'
 import type { EnvironmentWorkload } from './environment-workload.js'
 import { GatingRegistry } from './gating-record.js'
+import { HiveObservationRegistry } from './hive-observation-record.js'
 import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import type { IHiveOrchestrator } from './hive-orchestrator.js'
 import { HiveRegistry } from './hive-registry.js'
@@ -38,7 +39,6 @@ import { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
 import { PlatformDirectory } from './platform-directory.js'
 import { HiveBackend, InfraMode } from './platform-records.js'
 import { RolloutRegistrationRegistry } from './rollout-registration-record.js'
-import { HiveObservationRegistry } from './hive-observation-record.js'
 import { RolloutReportRegistry } from './rollout-report-record.js'
 import { SelectionRegistry } from './selection-record.js'
 import { FileSignatureStore } from './signature-store.js'
@@ -223,7 +223,7 @@ export class RolloutPushSmoke
         {
             await store.Load()
         }
-        return new PlatformDeploymentRegistry(manifests, gating, selections, reports, registrations, directory, factory, environments, new EnvironmentPlacement(directory), new HiveObservationRegistry(this.TempFile(S.ObservationsFileName)))
+        return new PlatformDeploymentRegistry(manifests, gating, selections, reports, registrations, directory, factory, environments, new EnvironmentPlacement(directory), observations)
     }
 
     /**

@@ -31,6 +31,7 @@ import { EnvStatus, EnvType, Template } from './environment-record.js'
 import type { EnvironmentRecord, IContainerProbe } from './environment-record.js'
 import type { EnvironmentWorkload } from './environment-workload.js'
 import { GatingRegistry } from './gating-record.js'
+import { HiveObservationRegistry } from './hive-observation-record.js'
 import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import { UnsupportedBackendError } from './hive-orchestrator.js'
 import type { IHiveOrchestrator } from './hive-orchestrator.js'
@@ -48,7 +49,6 @@ import { HiveBackend, InfraMode } from './platform-records.js'
 import type { HiveRecord } from './platform-records.js'
 import { RolloutRegistrationRegistry } from './rollout-registration-record.js'
 import { RolloutReportRegistry } from './rollout-report-record.js'
-import { HiveObservationRegistry } from './hive-observation-record.js'
 import { SelectionRegistry } from './selection-record.js'
 import { FileSignatureStore } from './signature-store.js'
 import { TenantRegistry } from './tenant-registry.js'
@@ -183,7 +183,6 @@ export class RolloutPullSmoke
     private static readonly KeysDirName = 'keys'
     private static readonly SignaturesFileName = 'signatures.json'
     private static readonly ManifestsFileName = 'manifests.json'
-    private static readonly UnusedObservationsFile = 'unused-observations.json'
     private static readonly GatingFileName = 'gating.json'
     private static readonly SelectionsFileName = 'selections.json'
     private static readonly ReportsFileName = 'reports.json'
@@ -314,7 +313,7 @@ export class RolloutPullSmoke
             await registry.Gate(S.TenantId, S.VersionV2)
             console.log(S.InfoTag + S.InfoPublished + S.VersionV1 + S.VersionSep + S.VersionV2)
 
-            const registryUrl = await this.Serve(directory, factory, registry)
+            const registryUrl = await this.Serve(directory, factory, registry, stores.observations)
             const machineToken = await registry.RegisterHive(S.HiveId)
 
             const record = this.NewRecord()
@@ -371,12 +370,12 @@ export class RolloutPullSmoke
     }
 
     /** Serves the real ControlPlaneHost on loopback behind the Host-rewriting proxy; returns the URL a pod uses. */
-    private async Serve(directory: PlatformDirectory, factory: HiveOrchestratorFactory, deployments: PlatformDeploymentRegistry): Promise<string>
+    private async Serve(directory: PlatformDirectory, factory: HiveOrchestratorFactory, deployments: PlatformDeploymentRegistry, observations: HiveObservationRegistry): Promise<string>
     {
         const S = RolloutPullSmoke
         const staticRoot = join(this.tempDir!, S.StaticDirName)
         await mkdir(staticRoot, { recursive: true })
-        const host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, staticRoot, new DenyAllOperator(), false, directory, deployments, {} as TenantProvisioningService, new HiveObservationRegistry(join(this.tempDir!, RolloutPullSmoke.UnusedObservationsFile)))
+        const host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, staticRoot, new DenyAllOperator(), false, directory, deployments, {} as TenantProvisioningService, observations)
         await host.Listen(0, S.LoopbackAddress)
         this.host = host
         const proxy = new HostHeaderProxy(host.Address().port)
@@ -426,6 +425,8 @@ export class RolloutPullSmoke
         this.Expect(S.Labels.AgentPatched, image === S.ImageV2, detail)
     }
 
+    // EXPECTED-RED: StatusFor now reads snapshot observations, but the pod agent still reports via the legacy per-env route;
+    // this poll stays red until a later plan moves the agent to snapshot reporting.
     private async AwaitReport(registry: PlatformDeploymentRegistry): Promise<void>
     {
         const S = RolloutPullSmoke
