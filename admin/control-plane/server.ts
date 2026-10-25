@@ -37,6 +37,7 @@ import { TenantAuthEndpoint } from './tenant-auth/tenant-auth-endpoint.js'
 import { TenantAuthGate } from './tenant-auth/tenant-auth-gate.js'
 import { TenantHostResolver } from './tenant-auth/tenant-host-resolver.js'
 import { TenantApiEndpoint } from './tenant-api/tenant-api-endpoint.js'
+import { InProcessRolloutClient } from './tenant-api/in-process-rollout-client.js'
 import { TenantEventBus } from './tenant-api/tenant-events.js'
 import { TenantPlaneHost } from './tenant-plane-host.js'
 import { TenantHealthMonitor } from './tenant-health-monitor.js'
@@ -244,7 +245,7 @@ export class ControlPlaneServer
         const rp = new TenantOidcRelyingParty(idpService, directory, conn => new IdpAdminClient(conn), undefined, undefined, durability)
         const endpoint = new TenantAuthEndpoint(rp, sessions, secureCookie)
         const gate = new TenantAuthGate(sessions)
-        const api = new TenantApiEndpoint(service, directory, deployments, orchestrators, placement)
+        const api = new TenantApiEndpoint(service, directory, new InProcessRolloutClient(deployments), orchestrators, placement)
         const events = new TenantEventBus()
         return { endpoint, gate, api, events, isDurable: rp.IsDurable }
     }

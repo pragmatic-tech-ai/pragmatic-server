@@ -5,8 +5,8 @@ import { HiveDtoMapper } from './hive-dto.js'
 import { HiveHealthProducer } from '../hive-health-producer.js'
 import type { EnvironmentPlacement } from '../environment-placement.js'
 import type { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
-import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
-import type { PlatformDirectory } from '../platform-directory.js'
+import type { IRolloutClient } from './rollout-client.js'
+import type { ITenantDirectory } from './tenant-directory.js'
 import type { EnvironmentRecord } from '../environment-record.js'
 import { ManifestNotGatedError, UnknownHiveError, UnknownManifestError } from '../rollout-errors.js'
 import type { ITenantApiEndpoint } from '../tenant-auth/tenant-plane.js'
@@ -79,8 +79,8 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
 
     public constructor(
         private readonly service: IEnvironmentService,
-        private readonly directory: PlatformDirectory,
-        private readonly deployments: PlatformDeploymentRegistry,
+        private readonly directory: ITenantDirectory,
+        private readonly rolloutClient: IRolloutClient,
         orchestrators: HiveOrchestratorFactory,
         placement: EnvironmentPlacement)
     {
@@ -107,7 +107,7 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
             }
             if (path === TenantApiEndpoint.ManifestsPath)
             {
-                this.WriteJson(res, TenantApiEndpoint.StatusOk, [...this.deployments.ManifestsFor(session.tenantId)])
+                this.WriteJson(res, TenantApiEndpoint.StatusOk, [...this.rolloutClient.ManifestsFor(session.tenantId)])
                 return true
             }
             const m = TenantApiEndpoint.HiveSubPathPattern.exec(path)
@@ -147,7 +147,7 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         }
         if (sub === TenantApiEndpoint.RolloutSegment)
         {
-            this.WriteJson(res, TenantApiEndpoint.StatusOk, this.deployments.StatusFor(hive.id))
+            this.WriteJson(res, TenantApiEndpoint.StatusOk, this.rolloutClient.StatusFor(hive.id))
             return true
         }
         this.WriteJson(res, TenantApiEndpoint.StatusOk, await this.health.Produce(hive))
@@ -176,7 +176,7 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         }
         try
         {
-            await this.deployments.SelectTarget(hive.id, version)
+            await this.rolloutClient.AdoptTarget(hive.id, version)
         }
         catch (err)
         {

@@ -18,6 +18,7 @@ import { HiveBackend, InfraMode, type HiveRecord } from '../platform-records.js'
 import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
 import { RolloutFixture } from './rollout-fixture.js'
 import { TenantApiEndpoint } from '../tenant-api/tenant-api-endpoint.js'
+import { InProcessRolloutClient } from '../tenant-api/in-process-rollout-client.js'
 import type { IEnvironmentService } from '../control-plane-host.js'
 import type { TenantSession } from '../tenant-auth/tenant-session.js'
 
@@ -178,7 +179,7 @@ describe('TenantApiEndpoint read routes', () =>
         await deployments.Gate(TenantA, 'v1')
         await deployments.Gate(TenantB, 'v2')
         await deployments.ReportSnapshot(SeedHive, [{ environmentName: SeedEnv, ready: true, runningImage: SeedImage, detail: NoDetail }])
-        endpoint = new TenantApiEndpoint(service, directory, deployments, orchestrators, new EnvironmentPlacement(directory))
+        endpoint = new TenantApiEndpoint(service, directory, new InProcessRolloutClient(deployments), orchestrators, new EnvironmentPlacement(directory))
     })
 
     afterEach(() =>

@@ -16,7 +16,7 @@ import type { IHiveOrchestrator, WorkloadHealth } from '../hive-orchestrator.js'
 import type { EnvironmentWorkload } from '../environment-workload.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import { HiveBackend, InfraMode, type HiveRecord } from '../platform-records.js'
-import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
+import { InProcessRolloutClient } from '../tenant-api/in-process-rollout-client.js'
 import { RolloutFixture } from './rollout-fixture.js'
 import { TenantApiEndpoint, TenantEnvAction } from '../tenant-api/tenant-api-endpoint.js'
 import type { IEnvironmentService } from '../control-plane-host.js'
@@ -104,18 +104,14 @@ class FakeService
 }
 
 /** Records every SelectTarget call then delegates to the real registry, so a test can assert the exact arguments (or that it was never reached). */
-class RecordingDeployments
+class RecordingDeployments extends InProcessRolloutClient
 {
     public readonly Targets: Array<{ hiveId: string; version: string }> = []
 
-    public constructor(private readonly inner: PlatformDeploymentRegistry)
-    {
-    }
-
-    public async SelectTarget(hiveId: string, version: string): Promise<void>
+    public override async AdoptTarget(hiveId: string, version: string): Promise<void>
     {
         this.Targets.push({ hiveId, version })
-        await this.inner.SelectTarget(hiveId, version)
+        await super.AdoptTarget(hiveId, version)
     }
 }
 
@@ -227,7 +223,7 @@ describe('TenantApiEndpoint mutation routes', () =>
         endpoint = new TenantApiEndpoint(
             service as unknown as IEnvironmentService,
             directory,
-            deployments as unknown as PlatformDeploymentRegistry,
+            deployments,
             orchestrators,
             new EnvironmentPlacement(directory))
     })
