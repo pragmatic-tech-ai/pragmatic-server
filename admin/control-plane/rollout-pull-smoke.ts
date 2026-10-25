@@ -86,6 +86,10 @@ export class RolloutPullSmoke
     private static readonly NamespaceFlag = '-n'
     private static readonly GetVerb = 'get'
     private static readonly DeleteVerb = 'delete'
+    private static readonly KindSep = '/'
+    private static readonly DeploymentKind = 'deployment'
+    private static readonly ServiceAccountKind = 'serviceaccount'
+    private static readonly SecretResource = 'secret'
     private static readonly ClusterRoleKind = 'clusterrole'
     private static readonly ClusterRoleBindingKind = 'clusterrolebinding'
     private static readonly IgnoreNotFoundFlag = '--ignore-not-found'
@@ -107,7 +111,6 @@ export class RolloutPullSmoke
     private static readonly HivesFileName = 'hives.json'
     private static readonly EnvironmentsFileName = 'environments.json'
     private static readonly DataRootDirName = 'data'
-    private static readonly StaticDirName = 'static'
     private static readonly TempDirPrefix = 'pull-smoke-'
     private static readonly SigningKeyRef = 'dev-signing'
     private static readonly Ed25519 = 'ed25519'
@@ -176,6 +179,7 @@ export class RolloutPullSmoke
     private tagged = false
     private channel: AgentChannelHost | undefined
     private applied = false
+    private systemNamespacePreExisted = true
     private readonly exec = new NodeExecFile()
     private readonly envName = RolloutPullSmoke.EnvPrefix + randomBytes(RolloutPullSmoke.SuffixBytes).toString(RolloutPullSmoke.Hex)
 
@@ -304,6 +308,8 @@ export class RolloutPullSmoke
     {
         const S = RolloutPullSmoke
         const kubectl = new KubectlCli(S.Context)
+        // Remember whether the shared namespace was already there: cleanup deletes it only if this smoke created it.
+        this.systemNamespacePreExisted = await this.NamespaceExists(S.SystemNamespace)
         this.applied = true
         await kubectl.Apply(new K8sManifestBuilder().RenderHiveAgent(S.HiveId, channelUrl, S.TokenSecretName))
         await kubectl.Apply(JSON.stringify({
@@ -500,7 +506,10 @@ export class RolloutPullSmoke
         }
     }
 
-    /** The hive agent's ClusterRole/Binding are cluster-scoped and its namespace is shared; remove what this smoke created. */
+    /**
+     * Removes the smoke's own hive-agent objects (each delete independent, so a failure never leaks cluster RBAC). The shared
+     * pragmatic-system namespace itself is deleted only when this smoke created it.
+     */
     private async DeleteHiveAgent(): Promise<void>
     {
         const S = RolloutPullSmoke
@@ -509,9 +518,25 @@ export class RolloutPullSmoke
             return
         }
         const name = K8sManifestBuilder.HiveAgentNameOf(S.HiveId)
-        await new KubectlCli(S.Context).DeleteNamespace(S.SystemNamespace)
-        await this.exec.Run(S.Kubectl, [S.ContextFlag, S.Context, S.DeleteVerb, S.ClusterRoleBindingKind, name, S.IgnoreNotFoundFlag])
-        await this.exec.Run(S.Kubectl, [S.ContextFlag, S.Context, S.DeleteVerb, S.ClusterRoleKind, name, S.IgnoreNotFoundFlag])
+        const scoped = [S.NamespaceFlag, S.SystemNamespace]
+        const targets: Array<[string, string, readonly string[]]> = [
+            [S.DeploymentKind, name, scoped],
+            [S.ServiceAccountKind, name, scoped],
+            [S.SecretResource, S.TokenSecretName, scoped],
+            [S.ClusterRoleBindingKind, name, []],
+            [S.ClusterRoleKind, name, []],
+        ]
+        for (const [kind, resource, extra] of targets)
+        {
+            await this.BestEffort(kind + S.KindSep + resource, async () =>
+            {
+                await this.exec.Run(S.Kubectl, [S.ContextFlag, S.Context, S.DeleteVerb, kind, resource, ...extra, S.IgnoreNotFoundFlag])
+            })
+        }
+        if (!this.systemNamespacePreExisted)
+        {
+            await this.BestEffort(S.SystemNamespace, async () => { await new KubectlCli(S.Context).DeleteNamespace(S.SystemNamespace) })
+        }
     }
 
     private async BestEffort(what: string, action: () => Promise<unknown>): Promise<void>
