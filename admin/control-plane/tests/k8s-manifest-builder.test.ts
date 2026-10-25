@@ -99,95 +99,82 @@ describe('K8sManifestBuilder', () =>
     })
 })
 
-describe('K8sManifestBuilder.RenderAgent', () =>
+describe('K8sManifestBuilder.RenderHiveAgent', () =>
 {
     const Registry = 'http://host.docker.internal:7000'
     const TokenSecret = 'agent-token-secret'
+    const HiveId = 'hive-a'
 
-    class AgentFixture
+    class HiveFixture
     {
-        public static Text(): string
+        public static Items(): any[]
         {
-            return new K8sManifestBuilder().RenderAgent(Fixture.Workload(false), Registry, TokenSecret)
-        }
-
-        public static Items(): K8sObject[]
-        {
-            const doc = JSON.parse(AgentFixture.Text())
+            const doc = JSON.parse(new K8sManifestBuilder().RenderHiveAgent(HiveId, Registry, TokenSecret))
             assert.equal(doc.apiVersion, 'v1')
             assert.equal(doc.kind, 'List')
             return doc.items
         }
 
-        public static Of(kind: string): K8sObject
+        public static Of(kind: string): any
         {
-            return AgentFixture.Items().find(i => i.kind === kind)!
+            const found = HiveFixture.Items().filter(i => i.kind === kind)
+            assert.equal(found.length, 1)
+            return found[0]
         }
     }
 
-    it('emits the four agent objects in the env namespace', () =>
+    it('emits Namespace, SA, ClusterRole, ClusterRoleBinding and Deployment; all but the shared Namespace hive-labeled', () =>
     {
-        const items = AgentFixture.Items()
-        assert.deepEqual(items.map(i => i.kind), ['ServiceAccount', 'Role', 'RoleBinding', 'Deployment'])
-        for (const i of items)
+        const items = HiveFixture.Items()
+        assert.deepEqual(items.map(i => i.kind), ['Namespace', 'ServiceAccount', 'ClusterRole', 'ClusterRoleBinding', 'Deployment'])
+        assert.equal(items[0].metadata.labels, undefined)
+        for (const i of items.slice(1))
         {
-            assert.equal(i.metadata.namespace, K8sManifestBuilder.NamespaceOf('dev1'))
+            assert.equal(i.metadata.labels['pragmatic/hive'], HiveId)
+            assert.equal(i.metadata.labels['pragmatic/environment'], undefined)
         }
+        assert.equal(HiveFixture.Of('ClusterRole').metadata.namespace, undefined)
+        assert.equal(HiveFixture.Of('ClusterRoleBinding').metadata.namespace, undefined)
     })
 
-    it('name helpers match rendered names', () =>
+    it('ClusterRole allows only get/list/patch on apps/deployments', () =>
     {
-        assert.equal(AgentFixture.Of('ServiceAccount').metadata.name, K8sManifestBuilder.AgentServiceAccountOf('dev1'))
-        assert.equal(AgentFixture.Of('Role').metadata.name, K8sManifestBuilder.AgentRoleOf('dev1'))
-        assert.equal(AgentFixture.Of('RoleBinding').metadata.name, K8sManifestBuilder.AgentRoleBindingOf('dev1'))
-        assert.equal(AgentFixture.Of('Deployment').metadata.name, K8sManifestBuilder.AgentDeploymentOf('dev1'))
-    })
-
-    it('Role is least-privilege: get/patch on the one server deployment', () =>
-    {
-        const role = AgentFixture.Of('Role') as any
-        assert.equal(role.apiVersion, 'rbac.authorization.k8s.io/v1')
+        const role = HiveFixture.Of('ClusterRole')
         assert.equal(role.rules.length, 1)
-        const rule = role.rules[0]
-        assert.deepEqual(rule.apiGroups, ['apps'])
-        assert.deepEqual(rule.resources, ['deployments'])
-        assert.deepEqual(rule.verbs, ['get', 'patch'])
-        assert.deepEqual(rule.resourceNames, [K8sManifestBuilder.ServerDeploymentOf('dev1')])
-        assert.ok(!JSON.stringify(role).includes('*'))
-        assert.notEqual(role.kind, 'ClusterRole')
+        assert.deepEqual(role.rules[0], { apiGroups: ['apps'], resources: ['deployments'], verbs: ['get', 'list', 'patch'] })
     })
 
-    it('RoleBinding binds the service account to the role', () =>
+    it('ClusterRoleBinding binds the ClusterRole to the service account', () =>
     {
-        const rb = AgentFixture.Of('RoleBinding') as any
-        assert.equal(rb.apiVersion, 'rbac.authorization.k8s.io/v1')
-        assert.deepEqual(rb.roleRef, { apiGroup: 'rbac.authorization.k8s.io', kind: 'Role', name: K8sManifestBuilder.AgentRoleOf('dev1') })
-        assert.deepEqual(rb.subjects, [{ kind: 'ServiceAccount', name: K8sManifestBuilder.AgentServiceAccountOf('dev1'), namespace: K8sManifestBuilder.NamespaceOf('dev1') }])
+        const crb = HiveFixture.Of('ClusterRoleBinding')
+        const sa = HiveFixture.Of('ServiceAccount')
+        const role = HiveFixture.Of('ClusterRole')
+        assert.deepEqual(crb.roleRef, { apiGroup: 'rbac.authorization.k8s.io', kind: 'ClusterRole', name: role.metadata.name })
+        assert.deepEqual(crb.subjects, [{ kind: 'ServiceAccount', name: sa.metadata.name, namespace: sa.metadata.namespace }])
+        assert.equal(sa.metadata.name, K8sManifestBuilder.HiveAgentNameOf(HiveId))
+        assert.equal(role.metadata.name, K8sManifestBuilder.HiveAgentNameOf(HiveId))
     })
 
-    it('agent deployment runs pragmatic-agentd and references the token by secretKeyRef only', () =>
+    it('deployment env has hive id, registry url, secret token and no env name', () =>
     {
-        const dep = AgentFixture.Of('Deployment')
-        assert.equal(dep.spec.replicas, 1)
+        const dep = HiveFixture.Of('Deployment')
         const pod = dep.spec.template.spec
-        assert.equal(pod.serviceAccountName, K8sManifestBuilder.AgentServiceAccountOf('dev1'))
+        assert.equal(pod.serviceAccountName, K8sManifestBuilder.HiveAgentNameOf(HiveId))
         const c = pod.containers[0]
-        assert.equal(c.image, 'pragmatic-server:dev')
-        assert.equal(c.imagePullPolicy, 'IfNotPresent')
         assert.deepEqual(c.command, ['node', 'dist/bin/pragmatic-agentd.js'])
         const byName = (n: string) => c.env.find((e: any) => e.name === n)
+        assert.equal(byName('PRAGMATIC_AGENT_HIVE_ID').value, HiveId)
         assert.equal(byName('PRAGMATIC_AGENT_REGISTRY_URL').value, Registry)
-        assert.equal(byName('PRAGMATIC_AGENT_HIVE_ID').value, 'hive-a')
-        assert.equal(byName('PRAGMATIC_AGENT_ENV_NAME').value, 'dev1')
+        assert.equal(byName('PRAGMATIC_AGENT_ENV_NAME'), undefined)
         const token = byName('PRAGMATIC_AGENT_TOKEN')
         assert.equal(token.value, undefined)
         assert.equal(token.valueFrom.secretKeyRef.name, TokenSecret)
-        assert.ok(token.valueFrom.secretKeyRef.key)
-        assert.ok(!AgentFixture.Text().includes(Fixture.SecretValue))
     })
 
-    it('leaves Render unchanged', () =>
+    it('env server deployment carries the hive and environment labels on its metadata', () =>
     {
-        assert.deepEqual(Fixture.Items(false).map(i => i.kind), ['Namespace', 'Deployment', 'Service'])
+        const dep = Fixture.Items(false)[1]!
+        assert.equal(dep.metadata.labels!['pragmatic/hive'], HiveId)
+        assert.equal(dep.metadata.labels!['pragmatic/environment'], 'dev1')
     })
 })

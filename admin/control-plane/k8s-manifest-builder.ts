@@ -65,9 +65,12 @@ export class K8sManifestBuilder
     private static readonly ServiceAccountKind = 'ServiceAccount'
     private static readonly RoleKind = 'Role'
     private static readonly RoleBindingKind = 'RoleBinding'
+    private static readonly ClusterRoleKind = 'ClusterRole'
+    private static readonly ClusterRoleBindingKind = 'ClusterRoleBinding'
     private static readonly AppsApiGroup = 'apps'
     private static readonly DeploymentsResource = 'deployments'
     private static readonly GetVerb = 'get'
+    private static readonly ListVerb = 'list'
     private static readonly PatchVerb = 'patch'
     private static readonly IfNotPresent = 'IfNotPresent'
     private static readonly ClusterIpType = 'ClusterIP'
@@ -100,9 +103,11 @@ export class K8sManifestBuilder
     private static readonly AgentEntrypoint = ['node', 'dist/bin/pragmatic-agentd.js']
     private static readonly AgentRegistryUrlVar = 'PRAGMATIC_AGENT_REGISTRY_URL'
     private static readonly AgentHiveIdVar = 'PRAGMATIC_AGENT_HIVE_ID'
-    private static readonly AgentEnvNameVar = 'PRAGMATIC_AGENT_ENV_NAME'
     private static readonly AgentTokenVar = 'PRAGMATIC_AGENT_TOKEN'
     private static readonly AgentTokenSecretKey = 'token'
+    /** Namespace hosting the per-hive agent's ServiceAccount + Deployment (cluster-scoped RBAC has none). The Namespace object itself is emitted by RenderHiveAgent. */
+    private static readonly HiveAgentNamespace = 'pragmatic-system'
+    private static readonly HiveAgentPrefix = 'pragmatic-hive-'
 
     public static readonly ServerContainerName = 'server'
 
@@ -140,34 +145,20 @@ export class K8sManifestBuilder
         return `${K8sManifestBuilder.NamespaceOf(environmentName)}-${K8sManifestBuilder.DatabaseSuffix}`
     }
 
-    public static AgentServiceAccountOf(environmentName: string): string
+    public static HiveAgentNameOf(hiveId: string): string
     {
-        return `${K8sManifestBuilder.NamespaceOf(environmentName)}-${K8sManifestBuilder.AgentSuffix}`
+        return `${K8sManifestBuilder.HiveAgentPrefix}${hiveId}-${K8sManifestBuilder.AgentSuffix}`
     }
 
-    public static AgentRoleOf(environmentName: string): string
-    {
-        return `${K8sManifestBuilder.NamespaceOf(environmentName)}-${K8sManifestBuilder.AgentSuffix}`
-    }
-
-    public static AgentRoleBindingOf(environmentName: string): string
-    {
-        return `${K8sManifestBuilder.NamespaceOf(environmentName)}-${K8sManifestBuilder.AgentSuffix}`
-    }
-
-    public static AgentDeploymentOf(environmentName: string): string
-    {
-        return `${K8sManifestBuilder.NamespaceOf(environmentName)}-${K8sManifestBuilder.AgentSuffix}`
-    }
-
-    /** Renders the in-cluster pull agent: SA + least-privilege Role/RoleBinding + Deployment. The token Secret is referenced by name only. */
-    public RenderAgent(workload: EnvironmentWorkload, registryUrl: string, tokenSecretName: string): string
+    /** Renders the single per-hive pull agent: SA + cluster-wide get/list/patch on deployments + Deployment. */
+    public RenderHiveAgent(hiveId: string, registryUrl: string, tokenSecretName: string): string
     {
         const items: K8sObject[] = [
-            this.AgentServiceAccount(workload),
-            this.AgentRole(workload),
-            this.AgentRoleBinding(workload),
-            this.AgentDeployment(workload, registryUrl, tokenSecretName),
+            this.HiveAgentNamespaceObject(),
+            this.HiveAgentServiceAccount(hiveId),
+            this.HiveAgentClusterRole(hiveId),
+            this.HiveAgentClusterRoleBinding(hiveId),
+            this.HiveAgentDeployment(hiveId, registryUrl, tokenSecretName),
         ]
         return JSON.stringify({
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
@@ -176,82 +167,107 @@ export class K8sManifestBuilder
         })
     }
 
-    private AgentMeta(workload: EnvironmentWorkload, name: string): K8sObject
+    /** Shared across hives, so deliberately NOT hive-labeled: a label-scoped delete of one hive must not drop it. */
+    private HiveAgentNamespaceObject(): K8sObject
     {
         return {
-            ...this.Meta(workload, name),
-            [K8sManifestBuilder.LabelsKey]: {
-                [K8sManifestBuilder.EnvironmentLabel]: workload.environmentName,
-                [K8sManifestBuilder.HiveLabel]: workload.hiveId,
-            },
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.NamespaceKind,
+            [K8sManifestBuilder.MetadataKey]: { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.HiveAgentNamespace },
         }
     }
 
-    private EnvLiteral(key: string, value: string): K8sObject
+    private HiveLabels(hiveId: string): Record<string, string>
+    {
+        return { [K8sManifestBuilder.HiveLabel]: hiveId }
+    }
+
+    /** Labels on an environment server deployment: the hive plus the environment marker the in-cluster agent's selector requires (agent objects deliberately lack it). */
+    private EnvironmentDeploymentLabels(workload: EnvironmentWorkload): Record<string, string>
     {
         return {
-            [K8sManifestBuilder.NameKey]: key,
-            [K8sManifestBuilder.ValueKey]: value,
+            [K8sManifestBuilder.EnvironmentLabel]: workload.environmentName,
+            [K8sManifestBuilder.HiveLabel]: workload.hiveId,
         }
     }
 
-    private AgentServiceAccount(workload: EnvironmentWorkload): K8sObject
+    private HiveAgentNamespacedMeta(hiveId: string, name: string): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.NameKey]: name,
+            [K8sManifestBuilder.NamespaceKey]: K8sManifestBuilder.HiveAgentNamespace,
+            [K8sManifestBuilder.LabelsKey]: this.HiveLabels(hiveId),
+        }
+    }
+
+    private HiveAgentClusterMeta(hiveId: string, name: string): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.NameKey]: name,
+            [K8sManifestBuilder.LabelsKey]: this.HiveLabels(hiveId),
+        }
+    }
+
+    private HiveAgentServiceAccount(hiveId: string): K8sObject
     {
         return {
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
             [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ServiceAccountKind,
-            [K8sManifestBuilder.MetadataKey]: this.AgentMeta(workload, K8sManifestBuilder.AgentServiceAccountOf(workload.environmentName)),
+            [K8sManifestBuilder.MetadataKey]: this.HiveAgentNamespacedMeta(hiveId, K8sManifestBuilder.HiveAgentNameOf(hiveId)),
         }
     }
 
-    private AgentRole(workload: EnvironmentWorkload): K8sObject
+    // Cluster-scoped get/list/patch on deployments: k8s RBAC cannot scope list/patch by label, and the agent must
+    // discover its hive's environment deployments across namespaces, so the grant is cluster-wide by necessity. The
+    // agent bounds what it actually touches with the app-level selector (pragmatic/hive + pragmatic/environment), not
+    // RBAC; a compromised hive-agent token could patch any deployment's image cluster-wide (never secrets/create/delete).
+    private HiveAgentClusterRole(hiveId: string): K8sObject
     {
         return {
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionRbac,
-            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.RoleKind,
-            [K8sManifestBuilder.MetadataKey]: this.AgentMeta(workload, K8sManifestBuilder.AgentRoleOf(workload.environmentName)),
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ClusterRoleKind,
+            [K8sManifestBuilder.MetadataKey]: this.HiveAgentClusterMeta(hiveId, K8sManifestBuilder.HiveAgentNameOf(hiveId)),
             [K8sManifestBuilder.RulesKey]: [{
                 [K8sManifestBuilder.ApiGroupsKey]: [K8sManifestBuilder.AppsApiGroup],
                 [K8sManifestBuilder.ResourcesKey]: [K8sManifestBuilder.DeploymentsResource],
-                [K8sManifestBuilder.VerbsKey]: [K8sManifestBuilder.GetVerb, K8sManifestBuilder.PatchVerb],
-                [K8sManifestBuilder.ResourceNamesKey]: [K8sManifestBuilder.ServerDeploymentOf(workload.environmentName)],
+                [K8sManifestBuilder.VerbsKey]: [K8sManifestBuilder.GetVerb, K8sManifestBuilder.ListVerb, K8sManifestBuilder.PatchVerb],
             }],
         }
     }
 
-    private AgentRoleBinding(workload: EnvironmentWorkload): K8sObject
+    private HiveAgentClusterRoleBinding(hiveId: string): K8sObject
     {
         return {
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionRbac,
-            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.RoleBindingKind,
-            [K8sManifestBuilder.MetadataKey]: this.AgentMeta(workload, K8sManifestBuilder.AgentRoleBindingOf(workload.environmentName)),
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ClusterRoleBindingKind,
+            [K8sManifestBuilder.MetadataKey]: this.HiveAgentClusterMeta(hiveId, K8sManifestBuilder.HiveAgentNameOf(hiveId)),
             [K8sManifestBuilder.SubjectsKey]: [{
                 [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ServiceAccountKind,
-                [K8sManifestBuilder.NameKey]: K8sManifestBuilder.AgentServiceAccountOf(workload.environmentName),
-                [K8sManifestBuilder.NamespaceKey]: K8sManifestBuilder.NamespaceOf(workload.environmentName),
+                [K8sManifestBuilder.NameKey]: K8sManifestBuilder.HiveAgentNameOf(hiveId),
+                [K8sManifestBuilder.NamespaceKey]: K8sManifestBuilder.HiveAgentNamespace,
             }],
             [K8sManifestBuilder.RoleRefKey]: {
                 [K8sManifestBuilder.ApiGroupKey]: K8sManifestBuilder.RbacApiGroup,
-                [K8sManifestBuilder.KindKey]: K8sManifestBuilder.RoleKind,
-                [K8sManifestBuilder.NameKey]: K8sManifestBuilder.AgentRoleOf(workload.environmentName),
+                [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ClusterRoleKind,
+                [K8sManifestBuilder.NameKey]: K8sManifestBuilder.HiveAgentNameOf(hiveId),
             },
         }
     }
 
-    private AgentDeployment(workload: EnvironmentWorkload, registryUrl: string, tokenSecretName: string): K8sObject
+    private HiveAgentDeployment(hiveId: string, registryUrl: string, tokenSecretName: string): K8sObject
     {
-        const name = K8sManifestBuilder.AgentDeploymentOf(workload.environmentName)
+        const name = K8sManifestBuilder.HiveAgentNameOf(hiveId)
         return {
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionApps,
             [K8sManifestBuilder.KindKey]: K8sManifestBuilder.DeploymentKind,
-            [K8sManifestBuilder.MetadataKey]: this.AgentMeta(workload, name),
+            [K8sManifestBuilder.MetadataKey]: this.HiveAgentNamespacedMeta(hiveId, name),
             [K8sManifestBuilder.SpecKey]: {
                 [K8sManifestBuilder.ReplicasKey]: K8sManifestBuilder.SingleReplica,
                 [K8sManifestBuilder.SelectorKey]: { [K8sManifestBuilder.MatchLabelsKey]: this.Selector(name) },
                 [K8sManifestBuilder.TemplateKey]: {
                     [K8sManifestBuilder.MetadataKey]: { [K8sManifestBuilder.LabelsKey]: this.Selector(name) },
                     [K8sManifestBuilder.SpecKey]: {
-                        [K8sManifestBuilder.ServiceAccountNameKey]: K8sManifestBuilder.AgentServiceAccountOf(workload.environmentName),
+                        [K8sManifestBuilder.ServiceAccountNameKey]: K8sManifestBuilder.HiveAgentNameOf(hiveId),
                         [K8sManifestBuilder.ContainersKey]: [{
                             [K8sManifestBuilder.NameKey]: K8sManifestBuilder.AgentContainerName,
                             [K8sManifestBuilder.ImageKey]: K8sManifestBuilder.AgentImage,
@@ -259,8 +275,7 @@ export class K8sManifestBuilder
                             [K8sManifestBuilder.CommandKey]: K8sManifestBuilder.AgentEntrypoint,
                             [K8sManifestBuilder.EnvKey]: [
                                 this.EnvLiteral(K8sManifestBuilder.AgentRegistryUrlVar, registryUrl),
-                                this.EnvLiteral(K8sManifestBuilder.AgentHiveIdVar, workload.hiveId),
-                                this.EnvLiteral(K8sManifestBuilder.AgentEnvNameVar, workload.environmentName),
+                                this.EnvLiteral(K8sManifestBuilder.AgentHiveIdVar, hiveId),
                                 {
                                     [K8sManifestBuilder.NameKey]: K8sManifestBuilder.AgentTokenVar,
                                     [K8sManifestBuilder.ValueFromKey]: {
@@ -275,6 +290,14 @@ export class K8sManifestBuilder
                     },
                 },
             },
+        }
+    }
+
+    private EnvLiteral(key: string, value: string): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.NameKey]: key,
+            [K8sManifestBuilder.ValueKey]: value,
         }
     }
 
@@ -321,7 +344,10 @@ export class K8sManifestBuilder
         return {
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionApps,
             [K8sManifestBuilder.KindKey]: K8sManifestBuilder.DeploymentKind,
-            [K8sManifestBuilder.MetadataKey]: this.Meta(workload, name),
+            [K8sManifestBuilder.MetadataKey]: {
+                ...this.Meta(workload, name),
+                [K8sManifestBuilder.LabelsKey]: this.EnvironmentDeploymentLabels(workload),
+            },
             [K8sManifestBuilder.SpecKey]: {
                 [K8sManifestBuilder.ReplicasKey]: K8sManifestBuilder.SingleReplica,
                 [K8sManifestBuilder.SelectorKey]: { [K8sManifestBuilder.MatchLabelsKey]: this.Selector(name) },

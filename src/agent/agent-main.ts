@@ -1,6 +1,7 @@
 import { InClusterK8sApi } from './k8s-api.js'
+import { AgentWiring } from './agent-wiring.js'
 import { RolloutAgent } from './rollout-agent.js'
-import type { IRolloutTarget } from './rollout-agent.js'
+import type { IEnvironmentState, IRolloutTarget, ISnapshotEnvironment } from './rollout-agent.js'
 import { StructuredLogger } from '../observability/logger.js'
 import type { ILogger } from '../observability/logger.js'
 
@@ -8,7 +9,6 @@ class AgentMain
 {
     private static readonly RegistryUrlEnv = 'PRAGMATIC_AGENT_REGISTRY_URL'
     private static readonly HiveIdEnv = 'PRAGMATIC_AGENT_HIVE_ID'
-    private static readonly EnvNameEnv = 'PRAGMATIC_AGENT_ENV_NAME'
     private static readonly TokenEnv = 'PRAGMATIC_AGENT_TOKEN'
     private static readonly PollIntervalEnv = 'PRAGMATIC_AGENT_POLL_INTERVAL_MS'
     private static readonly MaxBackoffEnv = 'PRAGMATIC_AGENT_MAX_BACKOFF_MS'
@@ -17,13 +17,6 @@ class AgentMain
     private static readonly BackoffFactor = 2
     private static readonly RequestTimeoutMs = 10000
 
-    private static readonly NamespacePrefix = 'pragmatic-env-'
-    private static readonly ServerDeploymentSuffix = '-server'
-    private static readonly ServerContainer = 'server'
-
-    private static readonly TargetPathTemplate = '/api/hives/{hive}/agent/target'
-    private static readonly ReportPathTemplate = '/api/hives/{hive}/agent/report'
-    private static readonly HiveToken = '{hive}'
     private static readonly AuthorizationHeader = 'Authorization'
     private static readonly BearerPrefix = 'Bearer '
     private static readonly ContentTypeHeader = 'Content-Type'
@@ -33,12 +26,12 @@ class AgentMain
     private static readonly TrailingSlash = /\/+$/
     private static readonly Empty = ''
 
-    private static readonly MissingEnvPrefix = 'missing required environment variable '
     private static readonly RegistryFailurePrefix = 'registry request failed with status '
     private static readonly TickFailedPrefix = 'rollout tick failed: '
     private static readonly StartFailedPrefix = 'pragmatic-agentd failed to start: '
     private static readonly StartedLine = 'pragmatic-agentd started'
     private static readonly UnknownError = 'unknown error'
+    private static readonly EnvironmentsKey = 'environments'
     private static readonly EventKey = 'event'
     private static readonly TickFailedEvent = 'tick-failed'
     private static readonly StartupEvent = 'startup'
@@ -53,26 +46,24 @@ class AgentMain
     public static async Run(): Promise<void>
     {
         const logger = StructuredLogger.ToStdout()
-        const registryUrl = AgentMain.Required(AgentMain.RegistryUrlEnv).replace(AgentMain.TrailingSlash, AgentMain.Empty)
-        const hiveId = AgentMain.Required(AgentMain.HiveIdEnv)
-        const envName = AgentMain.Required(AgentMain.EnvNameEnv)
-        const token = AgentMain.Required(AgentMain.TokenEnv)
+        const registryUrl = AgentWiring.Required(AgentMain.RegistryUrlEnv).replace(AgentMain.TrailingSlash, AgentMain.Empty)
+        const hiveId = AgentWiring.Required(AgentMain.HiveIdEnv)
+        const token = AgentWiring.Required(AgentMain.TokenEnv)
         const pollMs = AgentMain.PositiveInt(AgentMain.PollIntervalEnv, AgentMain.DefaultPollIntervalMs)
         const maxBackoffMs = AgentMain.PositiveInt(AgentMain.MaxBackoffEnv, AgentMain.DefaultMaxBackoffMs)
 
         const k8s = new InClusterK8sApi()
-        const namespace = AgentMain.NamespacePrefix + envName
-        const deployment = namespace + AgentMain.ServerDeploymentSuffix
-        const targetUrl = registryUrl + AgentMain.PathOf(AgentMain.TargetPathTemplate, hiveId)
-        const reportUrl = registryUrl + AgentMain.PathOf(AgentMain.ReportPathTemplate, hiveId)
+        const selector = AgentWiring.LabelSelector(hiveId)
+        const targetUrl = AgentWiring.TargetUrl(registryUrl, hiveId)
+        const snapshotUrl = AgentWiring.SnapshotUrl(registryUrl, hiveId)
         const agent = new RolloutAgent({
             fetchTarget: () => AgentMain.FetchTarget(targetUrl, token),
-            readRunningImage: () => k8s.ReadDeploymentImage(namespace, deployment, AgentMain.ServerContainer),
-            patchImage: image => k8s.PatchDeploymentImage(namespace, deployment, AgentMain.ServerContainer, image),
-            report: (runningImage, ready) => AgentMain.Report(reportUrl, token, envName, runningImage, ready),
+            listEnvironments: async (): Promise<ReadonlyArray<IEnvironmentState>> => (await k8s.ListServerDeployments(selector)).map(item => AgentWiring.ToEnvironmentState(item)),
+            patchImage: (namespace, deployment, container, image) => k8s.PatchDeploymentImage(namespace, deployment, container, image),
+            reportSnapshot: environments => AgentMain.ReportSnapshot(snapshotUrl, token, environments),
         })
         logger.Info(AgentMain.StartedLine, { [AgentMain.EventKey]: AgentMain.StartupEvent, [AgentMain.HiveKey]: hiveId })
-        void AgentMain.Loop(agent, logger, pollMs, maxBackoffMs)
+        void AgentMain.Loop(agent, logger, hiveId, pollMs, maxBackoffMs)
     }
 
     public static Fail(error: unknown): void
@@ -81,7 +72,7 @@ class AgentMain
         process.exit(1)
     }
 
-    private static async Loop(agent: RolloutAgent, logger: ILogger, pollMs: number, maxBackoffMs: number): Promise<void>
+    private static async Loop(agent: RolloutAgent, logger: ILogger, hiveId: string, pollMs: number, maxBackoffMs: number): Promise<void>
     {
         let delay = pollMs
         for (;;)
@@ -95,7 +86,7 @@ class AgentMain
             {
                 // message only: never the token, headers or request bodies
                 delay = Math.min(delay * AgentMain.BackoffFactor, maxBackoffMs)
-                logger.Error(AgentMain.TickFailedPrefix + (error instanceof Error ? error.message : AgentMain.UnknownError), { [AgentMain.EventKey]: AgentMain.TickFailedEvent, [AgentMain.BackoffKey]: delay })
+                logger.Error(AgentMain.TickFailedPrefix + (error instanceof Error ? error.message : AgentMain.UnknownError), { [AgentMain.EventKey]: AgentMain.TickFailedEvent, [AgentMain.HiveKey]: hiveId, [AgentMain.BackoffKey]: delay })
             }
             await new Promise<void>(resolve => setTimeout(resolve, delay))
         }
@@ -115,12 +106,12 @@ class AgentMain
         return await response.json() as IRolloutTarget
     }
 
-    private static async Report(url: string, token: string, environmentName: string, runningImage: string, ready: boolean): Promise<void>
+    private static async ReportSnapshot(url: string, token: string, environments: ReadonlyArray<ISnapshotEnvironment>): Promise<void>
     {
         const response = await AgentMain.TimedFetch(url, {
             method: AgentMain.PostMethod,
             headers: { [AgentMain.AuthorizationHeader]: AgentMain.BearerPrefix + token, [AgentMain.ContentTypeHeader]: AgentMain.JsonType },
-            body: JSON.stringify({ environmentName, runningImage, ready }),
+            body: JSON.stringify({ [AgentMain.EnvironmentsKey]: environments }),
         })
         if (!response.ok)
         {
@@ -141,21 +132,6 @@ class AgentMain
         {
             clearTimeout(timer)
         }
-    }
-
-    private static PathOf(template: string, hiveId: string): string
-    {
-        return template.replace(AgentMain.HiveToken, encodeURIComponent(hiveId))
-    }
-
-    private static Required(key: string): string
-    {
-        const value = process.env[key]
-        if (value === undefined || value === AgentMain.Empty)
-        {
-            throw new Error(AgentMain.MissingEnvPrefix + key)
-        }
-        return value
     }
 
     private static PositiveInt(key: string, fallback: number): number
