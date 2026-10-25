@@ -8,6 +8,7 @@ import type { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import type { IHiveOrchestrator, WorkloadHealth } from '../hive-orchestrator.js'
 import type { HiveRecord } from '../platform-records.js'
 import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
+import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import { EnvLogsUnavailableInClusterError, EnvStopUnavailableInClusterError, InClusterEnvironmentRuntime, InClusterHiveMissingError, InClusterOperationFailedError } from '../in-cluster-environment-runtime.js'
 
@@ -68,8 +69,9 @@ test('BringUp applies the placement workload and returns a DNS endpoint with no 
     const ep = await h.Runtime.BringUp(h.Ctx)
     assert.deepEqual(h.Orchestrator.Calls, [{ m: 'Apply', w: Fx.Workload }])
     assert.equal(ep.hostPort, undefined)
-    assert.match(ep.httpUrl, /^http:\/\/.+\.svc\.cluster\.local:8080$/)
-    assert.match(ep.wsUrl, /^ws:\/\/.+\.svc\.cluster\.local:8080\/\?environment=env-1$/)
+    const host = `${K8sManifestBuilder.ServerDeploymentOf('e1')}.${K8sManifestBuilder.NamespaceOf('e1')}.svc.cluster.local:8080`
+    assert.equal(ep.httpUrl, `http://${host}`)
+    assert.equal(ep.wsUrl, `ws://${host}/?environment=env-1`)
 })
 
 test('Start applies then waits healthy', async () =>

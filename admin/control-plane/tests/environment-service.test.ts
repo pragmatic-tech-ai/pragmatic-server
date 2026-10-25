@@ -31,6 +31,10 @@ import type { IDockerEnv, IBundleBuilder, IUserSeeder } from '../docker-env-port
 import { DockerEnvironmentRuntime } from '../environment-runtime.js'
 import type { IEnvironmentRuntime } from '../environment-runtime.js'
 import { EnvironmentRuntimeResolver } from '../environment-runtime-resolver.js'
+import { TenantPurposeName, type EnvDefinition, type EnvOidc } from '../../../environments/seed/bundle.js'
+import type { UserSeed } from '../../../environments/seed/users.js'
+import type { IAdminProxy, AdminConnectInfo, AdminSnapshot } from '../admin-proxy.js'
+import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, IssueTokenParams, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 /** Routes every record (bound or not) to the one Docker fake, preserving the pre-resolver service tests. */
 class SingleBackendResolver
@@ -40,10 +44,6 @@ class SingleBackendResolver
         return new EnvironmentRuntimeResolver(runtime, runtime)
     }
 }
-import { TenantPurposeName, type EnvDefinition, type EnvOidc } from '../../../environments/seed/bundle.js'
-import type { UserSeed } from '../../../environments/seed/users.js'
-import type { IAdminProxy, AdminConnectInfo, AdminSnapshot } from '../admin-proxy.js'
-import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, IssueTokenParams, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 class Fixture
 {

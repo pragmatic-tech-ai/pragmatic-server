@@ -66,11 +66,12 @@ export class EnvironmentRegistry
         await this.persist()
     }
 
+    /** Docker-probes unbound records only; a hive-bound (in-cluster) record's status is owned by the hive agent, so it is left untouched. */
     public async Reconcile(): Promise<void>
     {
         for (const record of this.records.values())
         {
-            if (record.status === EnvStatus.Failed)
+            if (record.status === EnvStatus.Failed || record.hiveId !== undefined)
             {
                 continue
             }
