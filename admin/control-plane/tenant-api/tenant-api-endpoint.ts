@@ -12,6 +12,7 @@ import { ManifestNotGatedError, UnknownHiveError, UnknownManifestError } from '.
 import type { ITenantApiEndpoint } from '../tenant-auth/tenant-plane.js'
 import type { TenantSession } from '../tenant-auth/tenant-session.js'
 import { AdminProxyError, AdminProxyErrorKind } from '../admin-proxy.js'
+import { EnvironmentNotDevelopmentError, EnvironmentNotFoundError, EnvironmentNotRuntimeError } from '../environment-service.js'
 import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, SecurityModelDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 /** The lifecycle action a tenant may request against its own environment; the values byte-match the URL path segments. */
@@ -108,6 +109,7 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     private static readonly IdentityConflictMessage = 'The change conflicts with the environment identity rules'
     private static readonly IdentityInvalidMessage = 'The identity request was rejected as invalid'
     private static readonly IdentityFailedMessage = 'The identity operation failed'
+    private static readonly WrongEnvKindMessage = 'The operation is not available for this environment type'
 
     private readonly health: HiveHealthProducer
 
@@ -527,7 +529,17 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     {
         let status = TenantApiEndpoint.StatusInternal
         let message = TenantApiEndpoint.IdentityFailedMessage
-        if (err instanceof AdminProxyError)
+        if (err instanceof EnvironmentNotDevelopmentError || err instanceof EnvironmentNotRuntimeError)
+        {
+            status = TenantApiEndpoint.StatusBadRequest
+            message = TenantApiEndpoint.WrongEnvKindMessage
+        }
+        else if (err instanceof EnvironmentNotFoundError)
+        {
+            status = TenantApiEndpoint.StatusNotFound
+            message = TenantApiEndpoint.NotFoundMessage
+        }
+        else if (err instanceof AdminProxyError)
         {
             switch (err.Kind)
             {

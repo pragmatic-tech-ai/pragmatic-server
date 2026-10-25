@@ -334,7 +334,7 @@ test.describe('admin portal', () =>
         await expect(page.getByText(row, { exact: true })).toBeVisible()
     })
 
-    test('a runtime environment does not show the Graphs button', async ({ page }) =>
+    test('a runtime environment detail shows Back and no Graphs button', async ({ page }) =>
     {
         fake.EnvType = FakeControlPlane.RuntimeType
         await page.goto(base)

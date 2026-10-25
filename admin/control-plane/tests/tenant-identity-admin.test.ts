@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
 import { beforeEach, describe, it } from 'node:test'
 import { AdminProxyError, AdminProxyErrorKind } from '../admin-proxy.js'
+import { EnvironmentNotDevelopmentError, EnvironmentNotRuntimeError } from '../environment-service.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import type { IEnvironmentService } from '../control-plane-host.js'
 import { TenantApiEndpoint } from '../tenant-api/tenant-api-endpoint.js'
@@ -25,9 +26,9 @@ class ResRecorder
         this.body = body ?? ''
     }
 
-    public Json(): any
+    public Json(): Record<string, unknown>
     {
-        return JSON.parse(this.body)
+        return JSON.parse(this.body) as Record<string, unknown>
     }
 }
 
@@ -274,6 +275,19 @@ describe('TenantApiEndpoint identity-admin routes', () =>
             assert.equal(typeof res.Json().error, 'string')
             assert.doesNotMatch(res.body, /SECRET|10\.0\.0\.5|hunter2/)
         }
+    })
+
+    it('maps a wrong-kind environment on maker-token and app-reader-grant to 400 with a fixed body', async () =>
+    {
+        service.Throw = new EnvironmentNotDevelopmentError('a-env')
+        const mt = await Driver.Send(Fixtures.Req('POST'), Fixtures.Base + 'a-env/maker-token', Fixtures.TenantA)
+        assert.equal(mt.status, 400)
+        assert.equal(typeof mt.Json().error, 'string')
+        service.Throw = new EnvironmentNotRuntimeError('a-env')
+        const ar = await Driver.Send(Fixtures.Req('POST'), Fixtures.Base + 'a-env/app-reader-grant', Fixtures.TenantA)
+        assert.equal(ar.status, 400)
+        assert.equal(typeof ar.Json().error, 'string')
+        assert.doesNotMatch(ar.body, /a-env/)
     })
 
     it('answers other methods on identity-admin paths with 404', async () =>
