@@ -3,9 +3,19 @@ import assert from 'node:assert/strict'
 import { RolloutAgent } from '../rollout-agent.js'
 import type { IEnvironmentState, IRolloutAgentDeps, IRolloutTarget, ISnapshotEnvironment } from '../rollout-agent.js'
 
+const TargetImage = 'img:2'
+const OldImage = 'img:1'
+const TargetVersion = '2'
+const Deployment = 'srv'
+const Container = 'app'
+const DevName = 'dev'
+const DevNamespace = 'ns-dev'
+const ProdName = 'prod'
+const ProdNamespace = 'ns-prod'
+
 class FakeDeps
 {
-    public Target: IRolloutTarget | undefined = { version: '2', image: 'img:2' }
+    public Target: IRolloutTarget | undefined = { version: TargetVersion, image: TargetImage }
     public Envs: IEnvironmentState[] = []
     public ListCalls = 0
     public readonly Patches: string[][] = []
@@ -36,20 +46,20 @@ test('Tick patches only off-target envs and reports one snapshot of all envs', a
 {
     const fake = new FakeDeps()
     fake.Envs = [
-        { environmentName: 'dev', namespace: 'ns-dev', deployment: 'srv', container: 'app', runningImage: 'img:2', ready: true },
-        { environmentName: 'prod', namespace: 'ns-prod', deployment: 'srv', container: 'app', runningImage: 'img:1', ready: false },
+        { environmentName: DevName, namespace: DevNamespace, deployment: Deployment, container: Container, runningImage: TargetImage, ready: true },
+        { environmentName: ProdName, namespace: ProdNamespace, deployment: Deployment, container: Container, runningImage: OldImage, ready: false },
     ]
     await new RolloutAgent(fake.Build()).Tick()
-    assert.deepEqual(fake.Patches, [['ns-prod', 'srv', 'app', 'img:2']])
+    assert.deepEqual(fake.Patches, [[ProdNamespace, Deployment, Container, TargetImage]])
     assert.equal(fake.Snapshots.length, 1)
     const snap = fake.Snapshots[0]
     assert.equal(snap.length, 2)
-    assert.equal(snap[0].environmentName, 'dev')
+    assert.equal(snap[0].environmentName, DevName)
     assert.equal(snap[0].ready, true)
-    assert.equal(snap[0].runningImage, 'img:2')
-    assert.equal(snap[1].environmentName, 'prod')
+    assert.equal(snap[0].runningImage, TargetImage)
+    assert.equal(snap[1].environmentName, ProdName)
     assert.equal(snap[1].ready, false)
-    assert.equal(snap[1].runningImage, 'img:1')
+    assert.equal(snap[1].runningImage, OldImage)
     assert.notEqual(snap[0].detail, snap[1].detail)
     assert.ok(snap[0].detail.length > 0)
 })
@@ -70,4 +80,18 @@ test('Tick with no target neither lists, patches nor reports', async () =>
     assert.equal(fake.ListCalls, 0)
     assert.deepEqual(fake.Patches, [])
     assert.deepEqual(fake.Snapshots, [])
+})
+
+test('Tick patches an env with an undefined running image and still reports it', async () =>
+{
+    const fake = new FakeDeps()
+    fake.Envs = [
+        { environmentName: DevName, namespace: DevNamespace, deployment: Deployment, container: Container, runningImage: undefined, ready: false },
+    ]
+    await new RolloutAgent(fake.Build()).Tick()
+    assert.deepEqual(fake.Patches, [[DevNamespace, Deployment, Container, TargetImage]])
+    assert.equal(fake.Snapshots.length, 1)
+    assert.equal(fake.Snapshots[0].length, 1)
+    assert.equal(fake.Snapshots[0][0].environmentName, DevName)
+    assert.equal(fake.Snapshots[0][0].runningImage, undefined)
 })
