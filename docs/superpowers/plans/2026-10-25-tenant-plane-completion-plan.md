@@ -159,19 +159,20 @@ git commit -m "feat: relocate per-env identity-admin routes from operator to ten
 
 ---
 
-### Task 3: Remove the orphaned operator-portal identity UI
+### Task 3: Remove the orphaned operator-side identity-admin consumers (portal UI + smoke steps)
 
 **Files:**
 - Delete: `admin/portal/src/maker-token-view.ts`, `admin/portal/src/manage-view.ts`, `admin/portal/src/role-config-view.ts`, `admin/portal/src/role-config-view-model.ts` (verify each is used only for identity-admin before deleting)
 - Modify: `admin/portal/src/api-client.ts` (remove the identity-admin client methods + their leaf/segment constants: `Snapshot`, `CreateAccount`, `DisableAccount`, `GrantRole`, `RevokeRole`, `GetConfig`, `SetConfig`, `GetSecurityModel`, `SetSecurityModel`, `IssueMakerToken`, `AdminRoute`, `MakerTokenRoute`, and the `AdminSegment`/`SnapshotLeaf`/`AccountsLeaf`/`GrantsLeaf`/`ConfigLeaf`/`SecurityModelLeaf`/`MakerTokenLeaf` constants)
 - Modify: `admin/portal/src/app.ts`, `main.ts`, `environment-detail-view.ts` and any nav/wiring that imports the deleted views
+- Modify: `admin/control-plane/control-plane-smoke.ts` — remove the operator-side identity-admin steps that now hit removed routes (the "manage grant"/"manage revoke"/"manage lockout" grant steps, the maker-token step, and any snapshot/config/security-model identity steps), and their helper constants/assertions. The operator no longer owns identity, so these steps are dead; removing the revoke-DELETE step also makes control-plane-smoke's Failure-1 moot. Do NOT touch the env create/start/stop/deploy/promote/graph steps.
 - Test: remove/adjust any `admin/portal/tests/*` that covered the deleted views/methods
 
 **Interfaces:**
 - Consumes: nothing new.
-- Produces: an operator portal with no identity-admin surface (platform admin is read-only oversight; identity management belongs to the tenant plane). The portal retains environments/clients/tenants/hives/graphs/promote.
+- Produces: an operator portal with no identity-admin surface (platform admin is read-only oversight; identity management belongs to the tenant plane). The portal retains environments/clients/tenants/hives/graphs/promote. The operator smoke no longer exercises identity-admin.
 
-**Ruling (recorded):** The tenant-portal identity-management mural UI (consuming the Task 2 `/tenant-api` routes) is explicitly out of scope here and is filed as a follow-up Feature — it is a distinct UX surface (the SP-HIVE-7 app was designed via mockups) and does not belong inside a backend-relocation slice.
+**Ruling (recorded):** (1) The tenant-portal identity-management mural UI (consuming the Task 2 `/tenant-api` routes) is explicitly out of scope here and is filed as a follow-up Feature — it is a distinct UX surface (the SP-HIVE-7 app was designed via mockups) and does not belong inside a backend-relocation slice. (2) Removing the operator smoke's identity steps (rather than repointing them to the tenant plane) is deliberate: live tenant-side identity coverage belongs on the tenant-admin smoke / the P4 browser-OIDC e2e, not the operator smoke; the relocated routes already have 27 unit cases.
 
 - [ ] **Step 1: Confirm the blast radius**
 
