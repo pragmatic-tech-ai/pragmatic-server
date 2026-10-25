@@ -20,7 +20,7 @@ import type { HiveObservationRegistry } from './hive-observation-record.js'
 import { InvalidTenantIdError } from './idp-service.js'
 import { PortUnavailableError } from './port-allocator.js'
 import type { TenantProvisioningService } from './tenant-provisioning-service.js'
-import { InvalidEnvironmentNameError, TemplateCatalog } from './template-catalog.js'
+import { InvalidEnvironmentNameError } from './template-catalog.js'
 import type { IOperatorIdentity } from './operator-identity.js'
 import { SessionCookie } from './session-cookie.js'
 import { AdminProxyError, AdminProxyErrorKind, type AdminSnapshot } from './admin-proxy.js'
@@ -163,7 +163,6 @@ export class ControlPlaneHost
     private static readonly LogPrefix = '[control-plane] request failed:'
     private static readonly ApiPrefix = '/api/'
     private static readonly PingPath = '/api/ping'
-    private static readonly TemplatesPath = '/api/templates'
     private static readonly EnvironmentsPath = '/api/environments'
     private static readonly EventsPath = '/api/events'
     private static readonly ClientsSegment = 'clients'
@@ -506,11 +505,6 @@ export class ControlPlaneHost
             }
             res.setHeader(ControlPlaneHost.SetCookieHeader, SessionCookie.BuildClearing(this.secureCookie))
             PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ok: true })
-            return true
-        }
-        if (path === ControlPlaneHost.TemplatesPath && method === PlaneHttp.MethodGet)
-        {
-            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, TemplateCatalog.All())
             return true
         }
         if (path === ControlPlaneHost.ManifestsPath)

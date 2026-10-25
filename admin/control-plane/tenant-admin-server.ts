@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DockerEnv } from '../../environments/seed/docker.js'
@@ -162,7 +162,6 @@ export class TenantAdminServer
             throw new Error(TenantAdminServer.MissingMasterKeyPrefix + keyPath)
         }
         const masterKey = MasterKeyFile.Load(keyPath)
-        mkdirSync(dataRoot, { recursive: true })
         const docker = new DockerEnvAdapter(new DockerEnv())
         const registry = new EnvironmentRegistry(join(dataRoot, ControlPlaneServer.RegistryFile), docker)
         await registry.Load()
@@ -209,14 +208,14 @@ export class TenantAdminServer
             return false
         }
         const rec = value as Record<string, unknown>
-        return TenantAdminServer.HiveStringFields.every(f => typeof rec[f] === 'string' && rec[f] !== '')
+        return TenantAdminServer.HiveStringFields.every(f => typeof rec[f] === 'string' && rec[f] !== TenantAdminServer.EmptyString)
             && TenantAdminServer.HiveObjectFields.every(f => typeof rec[f] === 'object' && rec[f] !== null)
     }
 
     private static Required(env: NodeJS.ProcessEnv, name: string): string
     {
         const value = env[name]
-        if (value === undefined || value === '')
+        if (value === undefined || value === TenantAdminServer.EmptyString)
         {
             throw new Error(TenantAdminServer.MissingEnvPrefix + name)
         }

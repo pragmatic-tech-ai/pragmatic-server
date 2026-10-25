@@ -17,7 +17,6 @@ import { WebSocket } from 'ws'
 import { AdminProxyError, AdminProxyErrorKind, type AdminSnapshot } from '../admin-proxy.js'
 import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { EnvironmentChangeKind, EnvStatus, EnvType, Template, type EnvironmentChange, type EnvironmentRecord } from '../environment-record.js'
-import { TemplateCatalog } from '../template-catalog.js'
 import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
@@ -453,13 +452,6 @@ describe('ControlPlaneHost', () =>
         }
     })
 
-    it('serves the template catalog', async () =>
-    {
-        const r = await Harness.Send(host, 'GET', '/api/templates')
-        assert.equal(r.status, 200)
-        assert.deepEqual(JSON.parse(r.body), JSON.parse(JSON.stringify(TemplateCatalog.All())))
-    })
-
     it('serves static files, 404s misses and traversal', async () =>
     {
         const idx = await Harness.Send(host, 'GET', '/')
@@ -568,7 +560,6 @@ describe('ControlPlaneHost', () =>
     it('gates API routes behind the operator session', async () =>
     {
         assert.equal((await Harness.Anon(host, 'GET', '/api/environments')).status, 401)
-        assert.equal((await Harness.Anon(host, 'GET', '/api/templates')).status, 401)
         assert.equal((await Harness.Anon(host, 'POST', '/api/environments/x/maker-token')).status, 401)
         assert.equal((await Harness.Anon(host, 'GET', '/api/environments', undefined, { cookie: 'cp_session=bogus' })).status, 401)
         assert.equal((await Harness.Anon(host, 'GET', '/api/environments', undefined, { cookie: Harness.AuthCookie })).status, 200)

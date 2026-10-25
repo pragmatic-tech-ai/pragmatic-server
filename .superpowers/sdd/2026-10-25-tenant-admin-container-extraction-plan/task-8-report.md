@@ -95,3 +95,11 @@ Dockerfile changes, the `cp` init command inside node:22-slim, port-forward, eve
 8. package.json cannot hold comments: the `pragmatic-tenant-admind` bin points at `dist-tenant-admin/...`, which exists only after `npm run build:tenant-admin` (plain `npm run build` does not produce it). The Dockerfile runs both.
 
 Verification: control-plane suite 622/622; `tsc -p tsconfig.tools.json --noEmit` clean; `tsc -p tsconfig.tenant-admin.json --noEmit` clean.
+
+## Fix report (whole-branch review)
+
+1. Removed the orphaned operator `GET /api/templates`: `TemplatesPath`, its dispatch/handler, and the `TemplateCatalog` import in `control-plane-host.ts` (`InvalidEnvironmentNameError` import kept; the `Template` enum is untouched). In `control-plane-host.test.ts` removed the catalog test, its `TemplateCatalog` import, and the `/api/templates` 401 assertion inside the gating test (that was an assertion line, not a standalone test). No portal references remained.
+2. `TenantAdminServer.Compose`: removed the dead `mkdirSync` (and its import).
+3. `TenantAdminServer`: the two remaining inline `''` comparisons now use `EmptyString`.
+
+Verification: control-plane suite 621/621 (622 minus the removed test); `tsc -p tsconfig.tools.json --noEmit` and `tsc -p tsconfig.tenant-admin.json --noEmit` both clean.
