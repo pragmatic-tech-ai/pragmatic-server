@@ -1,52 +1,106 @@
 import { strict as assert } from 'node:assert'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, it } from 'node:test'
+import { test } from 'node:test'
 import { HiveObservationRegistry } from '../hive-observation-record.js'
+import type { HiveHealthDto } from '../hive-health-producer.js'
 
-describe('HiveObservationRegistry', () =>
+class ObservationFixture
 {
-    const HiveId = 'hive-1'
-    const TempPrefix = 'hive-observation-'
-    const StoreFile = 'observations.json'
-    let dir: string
-    let registry: HiveObservationRegistry
+    public static readonly Prefix = 'hive-observation-'
+    public static readonly FileName = 'observations.json'
+    public static readonly HiveId = 'hive-1'
+    public static readonly UnknownHiveId = 'nope'
+    public static readonly EnvA = 'a'
+    public static readonly EnvB = 'b'
+    public static readonly ImageOne = 'img:1'
+    public static readonly ImageTwo = 'img:2'
+    public static readonly ImageThree = 'img:3'
+    public static readonly DetailOk = 'ok'
+    public static readonly DetailDown = 'down'
 
-    beforeEach(() =>
+    public static Env(name: string, ready: boolean, runningImage: string | undefined, detail: string): HiveHealthDto
     {
-        dir = mkdtempSync(join(tmpdir(), TempPrefix))
-        registry = new HiveObservationRegistry(join(dir, StoreFile))
-    })
+        return { environmentName: name, ready, runningImage, detail }
+    }
 
-    afterEach(() =>
+    public static async WithStore(body: (file: string, registry: HiveObservationRegistry) => Promise<void>): Promise<void>
     {
-        rmSync(dir, { recursive: true, force: true })
-    })
+        const dir = await mkdtemp(join(tmpdir(), ObservationFixture.Prefix))
+        try
+        {
+            const file = join(dir, ObservationFixture.FileName)
+            await body(file, new HiveObservationRegistry(file))
+        }
+        finally
+        {
+            await rm(dir, { recursive: true, force: true })
+        }
+    }
+}
 
-    it('records a snapshot and returns it', async () =>
+test('records a snapshot and returns it', async () =>
+{
+    await ObservationFixture.WithStore(async (_file, registry) =>
     {
         const envs = [
-            { environmentName: 'a', ready: true, runningImage: 'img:1', detail: 'ok' },
-            { environmentName: 'b', ready: false, runningImage: 'img:2', detail: 'down' },
+            ObservationFixture.Env(ObservationFixture.EnvA, true, ObservationFixture.ImageOne, ObservationFixture.DetailOk),
+            ObservationFixture.Env(ObservationFixture.EnvB, false, ObservationFixture.ImageTwo, ObservationFixture.DetailDown),
         ]
-        await registry.RecordSnapshot(HiveId, envs)
-        assert.deepEqual(registry.LatestFor(HiveId), envs)
+        await registry.RecordSnapshot(ObservationFixture.HiveId, envs)
+        assert.deepEqual(registry.LatestFor(ObservationFixture.HiveId), envs)
     })
+})
 
-    it('overwrites a prior snapshot without merging', async () =>
+test('overwrites a prior snapshot without merging', async () =>
+{
+    await ObservationFixture.WithStore(async (_file, registry) =>
     {
-        await registry.RecordSnapshot(HiveId, [
-            { environmentName: 'a', ready: true, runningImage: 'img:1', detail: '' },
-            { environmentName: 'b', ready: true, runningImage: 'img:2', detail: '' },
+        await registry.RecordSnapshot(ObservationFixture.HiveId, [
+            ObservationFixture.Env(ObservationFixture.EnvA, true, ObservationFixture.ImageOne, ObservationFixture.DetailOk),
+            ObservationFixture.Env(ObservationFixture.EnvB, true, ObservationFixture.ImageTwo, ObservationFixture.DetailOk),
         ])
-        const shorter = [{ environmentName: 'a', ready: false, runningImage: 'img:3', detail: 'x' }]
-        await registry.RecordSnapshot(HiveId, shorter)
-        assert.deepEqual(registry.LatestFor(HiveId), shorter)
+        const shorter = [ObservationFixture.Env(ObservationFixture.EnvA, false, ObservationFixture.ImageThree, ObservationFixture.DetailDown)]
+        await registry.RecordSnapshot(ObservationFixture.HiveId, shorter)
+        assert.deepEqual(registry.LatestFor(ObservationFixture.HiveId), shorter)
     })
+})
 
-    it('returns an empty list for an unknown hive', () =>
+test('returns an empty list for an unknown hive', async () =>
+{
+    await ObservationFixture.WithStore(async (_file, registry) =>
     {
-        assert.deepEqual(registry.LatestFor('nope'), [])
+        assert.deepEqual(registry.LatestFor(ObservationFixture.UnknownHiveId), [])
+    })
+})
+
+test('round-trips through a fresh registry, including an undefined runningImage', async () =>
+{
+    await ObservationFixture.WithStore(async (file, registry) =>
+    {
+        const envs = [
+            ObservationFixture.Env(ObservationFixture.EnvA, true, ObservationFixture.ImageOne, ObservationFixture.DetailOk),
+            ObservationFixture.Env(ObservationFixture.EnvB, false, undefined, ObservationFixture.DetailDown),
+        ]
+        await registry.RecordSnapshot(ObservationFixture.HiveId, envs)
+        const fresh = new HiveObservationRegistry(file)
+        await fresh.Load()
+        const loaded = fresh.LatestFor(ObservationFixture.HiveId)
+        assert.equal(loaded.length, envs.length)
+        assert.equal(loaded[0].runningImage, ObservationFixture.ImageOne)
+        assert.equal(loaded[1].runningImage, undefined)
+        assert.equal(loaded[1].environmentName, ObservationFixture.EnvB)
+    })
+})
+
+test('stamps reportedAt as a parseable ISO-8601 string', async () =>
+{
+    await ObservationFixture.WithStore(async (_file, registry) =>
+    {
+        await registry.RecordSnapshot(ObservationFixture.HiveId, [])
+        const reportedAt = registry.Get(ObservationFixture.HiveId)!.reportedAt
+        assert.ok(!Number.isNaN(Date.parse(reportedAt)))
+        assert.equal(new Date(reportedAt).toISOString(), reportedAt)
     })
 })
