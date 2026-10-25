@@ -19,9 +19,9 @@ export interface IEnvironmentHealthSource
 
 /**
  * Produces the per-environment health DTO list for one hive: resolves the hive's orchestrator, then probes every
- * environment bound to the hive. Shared by the operator `GET /api/hives/:id/health` route and the tenant
- * `GET /tenant-api/hives/:id/health` route so both return the identical health shape. The caller is responsible
- * for resolving the hive (and, on the tenant plane, the ownership check) before handing the record here.
+ * environment bound to the hive. Tenant-plane only: used by the tenant `GET /tenant-api/hives/:id/health` route and
+ * `TenantHealthMonitor` (the operator plane reads the hive observation registry instead). The caller is responsible
+ * for resolving the hive and the ownership check before handing the record here.
  */
 export class HiveHealthProducer
 {

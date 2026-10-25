@@ -26,6 +26,8 @@ export class AgentChannelHost
     private static readonly BadNameMessage = 'Invalid hive id in path'
     private static readonly TooLargeMessage = 'Request body too large'
     private static readonly InternalMessage = 'Internal error'
+    private static readonly ConnectionHeader = 'Connection'
+    private static readonly CloseValue = 'close'
     private static readonly FallbackErrorName = 'Error'
     private static readonly LogPrefix = '[agent-channel]'
 
@@ -211,10 +213,16 @@ export class AgentChannelHost
             let tooLarge = false
             req.on('data', (c: Buffer) =>
             {
+                if (tooLarge)
+                {
+                    return
+                }
                 size += c.length
                 if (size > AgentChannelHost.MaxBodyBytes)
                 {
                     tooLarge = true
+                    chunks.length = 0
+                    reject(new BodyTooLargeError(AgentChannelHost.TooLargeMessage))
                     return
                 }
                 chunks.push(c)
@@ -223,7 +231,6 @@ export class AgentChannelHost
             {
                 if (tooLarge)
                 {
-                    reject(new BodyTooLargeError(AgentChannelHost.TooLargeMessage))
                     return
                 }
                 resolveBody(Buffer.concat(chunks).toString(AgentChannelHost.Utf8))
@@ -235,6 +242,11 @@ export class AgentChannelHost
     /** Maps a failure to a fixed-text response; an unregistered hive is indistinguishable from a wrong token, and no inner-error text reaches the body or log. */
     private WriteError(req: IncomingMessage, res: ServerResponse, err: unknown): void
     {
+        if (err instanceof BodyTooLargeError)
+        {
+            this.WriteTooLarge(req, res)
+            return
+        }
         req.resume()
         if (res.headersSent)
         {
@@ -246,12 +258,20 @@ export class AgentChannelHost
             PlaneHttp.WriteJson(res, AgentChannelHost.StatusUnauthorized, { error: AgentChannelHost.UnauthorizedMessage })
             return
         }
-        if (err instanceof BodyTooLargeError)
-        {
-            PlaneHttp.WriteJson(res, AgentChannelHost.StatusTooLarge, { error: AgentChannelHost.TooLargeMessage })
-            return
-        }
         console.error(AgentChannelHost.LogPrefix, err instanceof Error ? err.name : AgentChannelHost.FallbackErrorName)
         PlaneHttp.WriteJson(res, AgentChannelHost.StatusInternal, { error: AgentChannelHost.InternalMessage })
+    }
+
+    /** Sheds an oversized body: answers 413 and closes the connection once the response is flushed, so the remainder is never read. */
+    private WriteTooLarge(req: IncomingMessage, res: ServerResponse): void
+    {
+        if (res.headersSent)
+        {
+            req.destroy()
+            return
+        }
+        res.setHeader(AgentChannelHost.ConnectionHeader, AgentChannelHost.CloseValue)
+        res.once('finish', () => req.destroy())
+        PlaneHttp.WriteJson(res, AgentChannelHost.StatusTooLarge, { error: AgentChannelHost.TooLargeMessage })
     }
 }
