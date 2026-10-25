@@ -171,7 +171,6 @@ export interface IPortalNavigator
 {
     ShowLogin(): void
     ShowList(): void
-    ShowCreate(): void
     ShowDetail(name: string): void
     ShowManage(name: string): void
     ShowRoles(name: string): void

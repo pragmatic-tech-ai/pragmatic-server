@@ -106,7 +106,6 @@ describe('ControlPlaneHost hive token registration (operator action)', () =>
     {
         const auth = 'Bearer ' + token
         assert.equal((await Harness.Send(host, 'GET', RolloutPath, { authorization: auth })).status, 401)
-        assert.equal((await Harness.Send(host, 'POST', '/api/hives/local1/target', { authorization: auth, body: { version: '1.0.0' } })).status, 401)
     })
 
     it('marks the token-registration response no-store', async () =>

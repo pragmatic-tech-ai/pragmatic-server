@@ -18,11 +18,6 @@ class FakeClient
         return [{ name: 'e1', template: '', type: this.type, environmentId: '', hostPort: 0, status: 'running', createdAt: '', httpUrl: '', wsUrl: '' }]
     }
 
-    public async Logs(): Promise<string>
-    {
-        return ''
-    }
-
     public async GetLoadedGraph(name: string): Promise<GraphLoadedDto | null>
     {
         this.LoadedFor.push(name)

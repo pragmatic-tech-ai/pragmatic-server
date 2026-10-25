@@ -136,12 +136,10 @@ export type RolloutRegistrationDto = {
 export type ChangedEvent = { type: string }
 
 type ErrorCtor = abstract new (...args: never[]) => Error
-type CreateBody = { name?: unknown; template?: unknown; type?: unknown; hostPort?: unknown; hiveId?: unknown }
 type LoginBody = { email?: unknown; password?: unknown }
 
 export class ControlPlaneHost
 {
-    private static readonly HiveIdInvalidMessage = 'hiveId must be a non-empty string'
     private static readonly LocalName = 'localhost'
     private static readonly HttpScheme = 'http://'
     private static readonly BaseUrl = ControlPlaneHost.HttpScheme + ControlPlaneHost.LocalName
@@ -183,12 +181,11 @@ export class ControlPlaneHost
     private static readonly ManifestWithdrawnPathPattern = new RegExp(
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.ManifestsSegment + '/([^/]+)/' + ControlPlaneHost.WithdrawnSegment + '$')
     private static readonly GatingSegment = 'gating'
-    private static readonly TargetSegment = 'target'
     private static readonly RolloutSegment = 'rollout'
     private static readonly RolloutRegistrationSegment = 'rollout-registration'
     private static readonly RolloutPathPattern = new RegExp(
         '^' + ControlPlaneHost.ApiPrefix + '(' + ControlPlaneHost.TenantsSegment + '|' + ControlPlaneHost.HivesSegment + ')/([^/]+)/(' +
-        [ControlPlaneHost.ManifestsSegment, ControlPlaneHost.GatingSegment, ControlPlaneHost.TargetSegment, ControlPlaneHost.RolloutSegment, ControlPlaneHost.RolloutRegistrationSegment].join('|') +
+        [ControlPlaneHost.ManifestsSegment, ControlPlaneHost.GatingSegment, ControlPlaneHost.RolloutSegment, ControlPlaneHost.RolloutRegistrationSegment].join('|') +
         ')(?:/([^/]+))?$')
     private static readonly VersionRequiredMessage = 'version (non-empty string) is required'
     private static readonly ImageRequiredMessage = 'image (non-empty string) is required'
@@ -214,12 +211,6 @@ export class ControlPlaneHost
     private static readonly UnauthenticatedMessage = 'Authentication required'
     private static readonly BadOriginMessage = 'Origin not allowed'
     private static readonly CredentialsRequiredMessage = 'email and password (strings) are required'
-    private static readonly StartAction = 'start'
-    private static readonly StopAction = 'stop'
-    private static readonly LogsAction = 'logs'
-    private static readonly EnvPathPattern = new RegExp(
-        '^' + ControlPlaneHost.EnvironmentsPath + '/([^/]+)(?:/(' +
-        [ControlPlaneHost.StartAction, ControlPlaneHost.StopAction, ControlPlaneHost.LogsAction].join('|') + '))?$')
     private static readonly AdminSegment = 'admin'
     private static readonly SnapshotPath = 'snapshot'
     private static readonly AccountsPath = 'accounts'
@@ -266,10 +257,6 @@ export class ControlPlaneHost
     private static readonly TooLargeMessage = 'Request body too large'
     private static readonly BadJsonMessage = 'Request body must be valid JSON'
     private static readonly NameRequiredMessage = 'name (string) is required'
-    private static readonly TemplateInvalidMessage = 'template must be one of: '
-    private static readonly TypeInvalidMessage = 'type must be one of: '
-    private static readonly HostPortInvalidMessage = 'hostPort must be an integer between 1 and 65535'
-    private static readonly MaxPort = 65535
     private static readonly ErrorStatuses: ReadonlyMap<ErrorCtor, number> = new Map<ErrorCtor, number>([
         [InvalidEnvironmentNameError, ControlPlaneHost.StatusBadRequest],
         [EnvironmentNotFoundError, PlaneHttp.StatusNotFound],
@@ -305,6 +292,7 @@ export class ControlPlaneHost
     private httpServer: HttpServer | undefined
     private wsServer: WebSocketServer | undefined
     private readonly clients = new Set<WebSocket>()
+    private changeSubscription: (() => void) | undefined
     private readonly staticRootAbs: string
 
     public constructor(
@@ -374,11 +362,36 @@ export class ControlPlaneHost
             }
             wss.handleUpgrade(req, socket, head, ws =>
             {
-                this.clients.add(ws)
-                ws.on(ControlPlaneHost.CloseEvent, () => this.clients.delete(ws))
-                ws.on(ControlPlaneHost.ErrorEvent, () => this.clients.delete(ws))
+                this.AddClient(ws)
+                ws.on(ControlPlaneHost.CloseEvent, () => this.RemoveClient(ws))
+                ws.on(ControlPlaneHost.ErrorEvent, () => this.RemoveClient(ws))
             })
         }, () => socket.destroy())
+    }
+
+    /** Tracks an operator ws client; the first one subscribes to environment lifecycle changes (made on any plane) to push them. */
+    private AddClient(ws: WebSocket): void
+    {
+        this.clients.add(ws)
+        if (this.changeSubscription === undefined)
+        {
+            this.changeSubscription = this.service.OnChanged(() => this.Broadcast(ControlPlaneHost.Changed()))
+        }
+    }
+
+    private RemoveClient(ws: WebSocket): void
+    {
+        this.clients.delete(ws)
+        if (this.clients.size === 0)
+        {
+            this.ReleaseChangeSubscription()
+        }
+    }
+
+    private ReleaseChangeSubscription(): void
+    {
+        this.changeSubscription?.()
+        this.changeSubscription = undefined
     }
 
     public async Close(): Promise<void>
@@ -388,6 +401,7 @@ export class ControlPlaneHost
             c.terminate()
         }
         this.clients.clear()
+        this.ReleaseChangeSubscription()
         const wss = this.wsServer
         const server = this.httpServer
         this.wsServer = undefined
@@ -530,11 +544,6 @@ export class ControlPlaneHost
                 PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, (await this.service.ListReconciled()).map(r => ControlPlaneHost.ToDto(r)))
                 return true
             }
-            if (method === PlaneHttp.MethodPost)
-            {
-                await this.HandleCreate(req, res)
-                return true
-            }
             return false
         }
         const am = ControlPlaneHost.AdminPathPattern.exec(path)
@@ -566,45 +575,6 @@ export class ControlPlaneHost
         if (gm !== null)
         {
             return await this.RouteGraphs(req, res, method, gm)
-        }
-        const m = ControlPlaneHost.EnvPathPattern.exec(path)
-        if (m === null)
-        {
-            return false
-        }
-        const name = ControlPlaneHost.Decode(m[1] as string)
-        if (name === undefined)
-        {
-            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
-            return true
-        }
-        const action = m[2]
-        if (action === ControlPlaneHost.StartAction && method === PlaneHttp.MethodPost)
-        {
-            const rec = await this.service.Start(name)
-            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, ControlPlaneHost.ToDto(rec))
-            this.Broadcast(ControlPlaneHost.Changed())
-            return true
-        }
-        if (action === ControlPlaneHost.StopAction && method === PlaneHttp.MethodPost)
-        {
-            const rec = await this.service.Stop(name)
-            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, ControlPlaneHost.ToDto(rec))
-            this.Broadcast(ControlPlaneHost.Changed())
-            return true
-        }
-        if (action === ControlPlaneHost.LogsAction && method === PlaneHttp.MethodGet)
-        {
-            const logs = await this.service.Logs(name)
-            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { logs })
-            return true
-        }
-        if (action === undefined && method === PlaneHttp.MethodDelete)
-        {
-            await this.service.Delete(name)
-            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ok: true })
-            this.Broadcast(ControlPlaneHost.Changed())
-            return true
         }
         return false
     }
@@ -732,7 +702,7 @@ export class ControlPlaneHost
         const tail = m[4]
         const known = resource === ControlPlaneHost.TenantsSegment
             ? sub === ControlPlaneHost.ManifestsSegment || sub === ControlPlaneHost.GatingSegment
-            : sub === ControlPlaneHost.TargetSegment || sub === ControlPlaneHost.RolloutSegment || sub === ControlPlaneHost.RolloutRegistrationSegment
+            : sub === ControlPlaneHost.RolloutSegment || sub === ControlPlaneHost.RolloutRegistrationSegment
         if (!known || (tail !== undefined && sub !== ControlPlaneHost.GatingSegment))
         {
             return false
@@ -765,19 +735,6 @@ export class ControlPlaneHost
         if (sub === ControlPlaneHost.GatingSegment && version !== undefined && method === PlaneHttp.MethodDelete)
         {
             await this.deployments.Ungate(id, version)
-            res.writeHead(ControlPlaneHost.StatusNoContent)
-            res.end()
-            return true
-        }
-        if (sub === ControlPlaneHost.TargetSegment && method === PlaneHttp.MethodPost)
-        {
-            const requested = await this.ReadVersion(req, res)
-            if (requested === undefined)
-            {
-                return true
-            }
-            // Records the selection and pushes it to the hive's environments; an unreachable backend leaves it for the pull agent.
-            await this.deployments.SelectTarget(id, requested)
             res.writeHead(ControlPlaneHost.StatusNoContent)
             res.end()
             return true
@@ -1337,56 +1294,6 @@ export class ControlPlaneHost
     private async Authenticated(req: IncomingMessage): Promise<boolean>
     {
         return (await this.Principal(req)) !== null
-    }
-
-    private async HandleCreate(req: IncomingMessage, res: ServerResponse): Promise<void>
-    {
-        const raw = await this.ReadBody(req)
-        let body: CreateBody
-        try
-        {
-            body = JSON.parse(raw) as CreateBody
-        }
-        catch
-        {
-            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadJsonMessage })
-            return
-        }
-        const valid = Object.values(Template) as string[]
-        if (body === null || typeof body !== 'object' || typeof body.name !== 'string' || body.name.length === 0)
-        {
-            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.NameRequiredMessage })
-            return
-        }
-        if (typeof body.template !== 'string' || !valid.includes(body.template))
-        {
-            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.TemplateInvalidMessage + valid.join(', ') })
-            return
-        }
-        const validTypes = Object.values(EnvType) as string[]
-        if (typeof body.type !== 'string' || !validTypes.includes(body.type))
-        {
-            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.TypeInvalidMessage + validTypes.join(', ') })
-            return
-        }
-        let hostPort: number | undefined
-        if (body.hostPort !== undefined)
-        {
-            if (typeof body.hostPort !== 'number' || !Number.isInteger(body.hostPort) || body.hostPort < 1 || body.hostPort > ControlPlaneHost.MaxPort)
-            {
-                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.HostPortInvalidMessage })
-                return
-            }
-            hostPort = body.hostPort
-        }
-        if (body.hiveId !== undefined && (typeof body.hiveId !== 'string' || body.hiveId.length === 0))
-        {
-            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.HiveIdInvalidMessage })
-            return
-        }
-        const rec = await this.service.Create(body.name, body.template as Template, body.type as EnvType, hostPort, body.hiveId)
-        PlaneHttp.WriteJson(res, ControlPlaneHost.StatusCreated, ControlPlaneHost.ToDto(rec))
-        this.Broadcast(ControlPlaneHost.Changed())
     }
 
     private ReadBody(req: IncomingMessage): Promise<string>

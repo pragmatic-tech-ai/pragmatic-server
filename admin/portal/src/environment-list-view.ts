@@ -3,19 +3,16 @@ import type { ControlPlaneClient } from './api-client.js'
 import type { EnvironmentDto, IPortalNavigator } from './portal-types.js'
 import { PortalViewBase } from './portal-view-base.js'
 
-// Lists environments with per-row Start / Stop / Open / Delete (inline confirm).
+// Lists environments with a per-row Open; lifecycle (create/start/stop/delete) lives on the tenant plane.
 export class EnvironmentListView extends PortalViewBase
 {
-    public static readonly NewLabel = 'New environment'
     public static readonly ClientsLabel = 'Clients'
     public static readonly OpenLabel = 'Open'
     private static readonly HeadingText = 'Environments'
     private static readonly EmptyText = 'No environments yet'
-    private static readonly RunningStatus = 'running'
     private static readonly PortPrefix = 'port '
 
     private readonly rows: StackPanel
-    private pendingDelete: string | undefined
     private environments: EnvironmentDto[] = []
 
     public constructor(private readonly client: ControlPlaneClient, private readonly nav: IPortalNavigator)
@@ -24,7 +21,6 @@ export class EnvironmentListView extends PortalViewBase
         const heading = new TextBlock()
         heading.Text = EnvironmentListView.HeadingText
         this.AddChild(heading)
-        this.AddChild(this.MakeButton(EnvironmentListView.NewLabel, () => { this.nav.ShowCreate() }))
         this.AddChild(this.MakeButton(EnvironmentListView.ClientsLabel, () => { this.nav.ShowClients() }))
         this.AddChild(this.message)
         this.rows = new StackPanel()
@@ -71,32 +67,7 @@ export class EnvironmentListView extends PortalViewBase
         const info = new TextBlock()
         info.Text = [env.name, env.template, env.type, env.status, EnvironmentListView.PortPrefix + String(env.hostPort)].join(PortalViewBase.FieldSeparator)
         row.AddChild(info)
-        const running = env.status === EnvironmentListView.RunningStatus
-        row.AddChild(running
-            ? this.MakeButton(PortalViewBase.StopLabel, () => { void this.Run(() => this.client.StopEnvironment(env.name)) })
-            : this.MakeButton(PortalViewBase.StartLabel, () => { void this.Run(() => this.client.StartEnvironment(env.name)) }))
         row.AddChild(this.MakeButton(EnvironmentListView.OpenLabel, () => { this.nav.ShowDetail(env.name) }))
-        if (this.pendingDelete === env.name)
-        {
-            row.AddChild(this.MakeButton(PortalViewBase.ConfirmDeleteLabel, () =>
-            {
-                this.pendingDelete = undefined
-                void this.Run(() => this.client.DeleteEnvironment(env.name))
-            }))
-            row.AddChild(this.MakeButton(PortalViewBase.CancelLabel, () =>
-            {
-                this.pendingDelete = undefined
-                this.RenderRows()
-            }))
-        }
-        else
-        {
-            row.AddChild(this.MakeButton(PortalViewBase.DeleteLabel, () =>
-            {
-                this.pendingDelete = env.name
-                this.RenderRows()
-            }))
-        }
         return row
     }
 }

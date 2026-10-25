@@ -1,4 +1,4 @@
-import type { AdminSnapshotDto, ClientDto, EnvironmentDto, HiveDto, TenantDto, GraphDto, GraphLoadedDto, GrantMutationDto, IdentityConfigDto, MakerTokenDto, OperatorDto, PromotionResultDto, SecurityModelDto, TemplateDto } from './portal-types.js'
+import type { AdminSnapshotDto, ClientDto, EnvironmentDto, HiveDto, TenantDto, GraphDto, GraphLoadedDto, GrantMutationDto, IdentityConfigDto, MakerTokenDto, OperatorDto, PromotionResultDto, SecurityModelDto } from './portal-types.js'
 
 // Thrown for non-2xx control-plane responses; Message carries the server's error text.
 export class ApiError extends Error
@@ -21,7 +21,6 @@ export class ControlPlaneClient
     private static readonly ClientsRoute = '/api/clients'
     private static readonly TenantsRoute = '/api/tenants'
     private static readonly HivesRoute = '/api/hives'
-    private static readonly TemplatesRoute = '/api/templates'
     private static readonly LoginRoute = '/api/login'
     private static readonly LogoutRoute = '/api/logout'
     private static readonly SessionRoute = '/api/session'
@@ -32,9 +31,6 @@ export class ControlPlaneClient
     private static readonly MakerTokenLeaf = 'maker-token'
     private static readonly PromoteLeaf = 'promote'
     private static readonly LoadedGraphLeaf = 'loaded-graph'
-    private static readonly StartAction = 'start'
-    private static readonly StopAction = 'stop'
-    private static readonly LogsAction = 'logs'
     private static readonly MethodPost = 'POST'
     private static readonly MethodDelete = 'DELETE'
     private static readonly MethodPut = 'PUT'
@@ -149,42 +145,6 @@ export class ControlPlaneClient
             }
             throw e
         }
-    }
-
-    public async ListTemplates(): Promise<TemplateDto[]>
-    {
-        return await this.Send<TemplateDto[]>(ControlPlaneClient.TemplatesRoute, undefined)
-    }
-
-    public async CreateEnvironment(name: string, template: string, type: string, hostPort?: number): Promise<EnvironmentDto>
-    {
-        const body: Record<string, unknown> = { name, template, type }
-        if (hostPort !== undefined)
-        {
-            body.hostPort = hostPort
-        }
-        return await this.Send<EnvironmentDto>(ControlPlaneClient.EnvironmentsRoute, { method: ControlPlaneClient.MethodPost, body: JSON.stringify(body) })
-    }
-
-    public async StartEnvironment(name: string): Promise<EnvironmentDto>
-    {
-        return await this.Action(name, ControlPlaneClient.StartAction)
-    }
-
-    public async StopEnvironment(name: string): Promise<EnvironmentDto>
-    {
-        return await this.Action(name, ControlPlaneClient.StopAction)
-    }
-
-    public async DeleteEnvironment(name: string): Promise<void>
-    {
-        await this.Send<unknown>(this.EnvRoute(name), { method: ControlPlaneClient.MethodDelete })
-    }
-
-    public async Logs(name: string): Promise<string>
-    {
-        const result = await this.Send<{ logs: string }>(this.EnvRoute(name) + ControlPlaneClient.PathSeparator + ControlPlaneClient.LogsAction, undefined)
-        return result.logs
     }
 
     public async Snapshot(name: string): Promise<AdminSnapshotDto>
@@ -360,12 +320,6 @@ export class ControlPlaneClient
     private AdminRoute(name: string, leaf: string): string
     {
         return this.EnvRoute(name) + ControlPlaneClient.AdminSegment + leaf
-    }
-
-    private async Action(name: string, action: string): Promise<EnvironmentDto>
-    {
-        return await this.Send<EnvironmentDto>(this.EnvRoute(name) + ControlPlaneClient.PathSeparator + action,
-            { method: ControlPlaneClient.MethodPost, body: ControlPlaneClient.EmptyBody })
     }
 
     private async Send<T>(route: string, init: { method: string; body?: string } | undefined): Promise<T>

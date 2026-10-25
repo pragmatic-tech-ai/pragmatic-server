@@ -131,16 +131,16 @@ describe('ControlPlaneHost rollout routes', () =>
         assert.equal((await Harness.Send(host, 'POST', '/api/manifests/9.9.9/withdrawn')).status, 404)
     })
 
-    it('records the selected target and reports the rollout status', async () =>
+    it('no longer selects a target from the operator plane, and reports the rollout status', async () =>
     {
         await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
         await Harness.Send(host, 'POST', '/api/tenants/t1/gating', { version: '1.0.0' })
         const selected = await Harness.Send(host, 'POST', '/api/hives/local1/target', { version: '1.0.0' })
-        assert.equal(selected.status, 204)
-        assert.deepEqual(deployments.TargetFor('local1'), { version: '1.0.0', image: 'img:1' })
+        assert.equal(selected.status, 404)
+        assert.equal(deployments.TargetFor('local1'), undefined)
         const status = await Harness.Send(host, 'GET', '/api/hives/local1/rollout')
         assert.equal(status.status, 200)
-        assert.deepEqual(JSON.parse(status.body), { targetVersion: '1.0.0', environments: [] })
+        assert.deepEqual(JSON.parse(status.body), { environments: [] })
     })
 
     it('reveals the agent token only in the registration response, never in a stored record', async () =>
@@ -172,7 +172,6 @@ describe('ControlPlaneHost rollout routes', () =>
             ['GET', '/api/tenants/t1/manifests', undefined],
             ['POST', '/api/tenants/t1/gating', { version: 'v' }],
             ['DELETE', '/api/tenants/t1/gating/v', undefined],
-            ['POST', '/api/hives/local1/target', { version: 'v' }],
             ['GET', '/api/hives/local1/rollout', undefined],
             ['POST', '/api/hives/local1/rollout-registration', undefined]
         ]
@@ -182,19 +181,15 @@ describe('ControlPlaneHost rollout routes', () =>
         }
     })
 
-    it('maps an ungated version to 403, an unknown manifest to 404, and a duplicate publish to 409', async () =>
+    it('maps an unknown manifest to 404, and a duplicate publish to 409', async () =>
     {
         await Harness.Send(host, 'POST', '/api/manifests', { version: '2.0.0', image: 'img:2' })
-        assert.equal((await Harness.Send(host, 'POST', '/api/hives/local1/target', { version: '2.0.0' })).status, 403)
-        assert.equal((await Harness.Send(host, 'POST', '/api/hives/local1/target', { version: '9.9.9' })).status, 404)
         assert.equal((await Harness.Send(host, 'POST', '/api/tenants/t1/gating', { version: '9.9.9' })).status, 404)
-        assert.equal((await Harness.Send(host, 'POST', '/api/hives/nope/target', { version: '2.0.0' })).status, 404)
         assert.equal((await Harness.Send(host, 'POST', '/api/manifests', { version: '2.0.0', image: 'img:2' })).status, 409)
     })
 
-    it('rejects a malformed publish or target body with 400', async () =>
+    it('rejects a malformed publish body with 400', async () =>
     {
         assert.equal((await Harness.Send(host, 'POST', '/api/manifests', { version: '3.0.0' })).status, 400)
-        assert.equal((await Harness.Send(host, 'POST', '/api/hives/local1/target', {})).status, 400)
     })
 })
