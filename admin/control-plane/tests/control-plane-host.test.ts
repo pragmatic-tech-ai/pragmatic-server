@@ -114,6 +114,7 @@ class FakeService implements IEnvironmentService
 
     public async ListReconciled(): Promise<readonly EnvironmentRecord[]>
     {
+        this.MaybeThrow()
         return this.List()
     }
 
@@ -406,24 +407,24 @@ describe('ControlPlaneHost', () =>
 
     it('maps service errors on an operator route', async () =>
     {
-        const path = '/api/environments/x/maker-token'
+        const path = '/api/environments'
         fake.Throw = new EnvironmentNotFoundError('x')
-        assert.equal((await Harness.Send(host, 'POST', path)).status, 404)
+        assert.equal((await Harness.Send(host, 'GET', path)).status, 404)
 
         fake.Throw = new ImageMissingError('docker build -t foo .')
-        const img = await Harness.Send(host, 'POST', path)
+        const img = await Harness.Send(host, 'GET', path)
         assert.equal(img.status, 409)
         assert.equal(JSON.parse(img.body).buildCommand, 'docker build -t foo .')
 
         fake.Throw = new DockerUnavailableError()
-        const dk = await Harness.Send(host, 'POST', path)
+        const dk = await Harness.Send(host, 'GET', path)
         assert.equal(dk.status, 503)
         assert.match(JSON.parse(dk.body).error, /Start Docker/)
 
         fake.Throw = new CreateFailedError('boom')
-        assert.equal((await Harness.Send(host, 'POST', path)).status, 500)
+        assert.equal((await Harness.Send(host, 'GET', path)).status, 500)
         fake.Throw = new Error('weird')
-        const gen = await Harness.Send(host, 'POST', path)
+        const gen = await Harness.Send(host, 'GET', path)
         assert.equal(gen.status, 500)
         assert.ok(!gen.body.includes('weird'))
     })
@@ -477,11 +478,11 @@ describe('ControlPlaneHost', () =>
     it('maps remaining client errors', async () =>
     {
         fake.Throw = new PortUnavailableError('8100 busy')
-        assert.equal((await Harness.Send(host, 'POST', '/api/environments/x/maker-token')).status, 409)
+        assert.equal((await Harness.Send(host, 'GET', '/api/environments')).status, 409)
         fake.Throw = new EnvironmentExistsError('x')
-        assert.equal((await Harness.Send(host, 'POST', '/api/environments/x/maker-token')).status, 409)
+        assert.equal((await Harness.Send(host, 'GET', '/api/environments')).status, 409)
         fake.Throw = new InvalidEnvironmentNameError('X!', '^a$')
-        assert.equal((await Harness.Send(host, 'POST', '/api/environments/x/maker-token')).status, 400)
+        assert.equal((await Harness.Send(host, 'GET', '/api/environments')).status, 400)
     })
 
     it('hides internal detail on 500-class errors', async () =>
@@ -491,11 +492,11 @@ describe('ControlPlaneHost', () =>
         try
         {
             fake.Throw = new CreateFailedError('docker stderr C:\secret\path')
-            const a = await Harness.Send(host, 'POST', '/api/environments/x/maker-token')
+            const a = await Harness.Send(host, 'GET', '/api/environments')
             assert.equal(a.status, 500)
             assert.ok(!a.body.includes('secret'))
             fake.Throw = new Error('fs /etc/leak')
-            const b = await Harness.Send(host, 'POST', '/api/environments/x/maker-token')
+            const b = await Harness.Send(host, 'GET', '/api/environments')
             assert.equal(b.status, 500)
             assert.ok(!b.body.includes('leak'))
         }
@@ -519,7 +520,7 @@ describe('ControlPlaneHost', () =>
 
     it('returns 400 for a malformed percent-encoded name', async () =>
     {
-        assert.equal((await Harness.Send(host, 'POST', '/api/environments/%zz/maker-token')).status, 400)
+        assert.equal((await Harness.Send(host, 'GET', '/api/environments/%zz/loaded-graph')).status, 400)
     })
 
     it('broadcasts environments-changed to ws clients', async () =>
@@ -560,7 +561,7 @@ describe('ControlPlaneHost', () =>
     it('gates API routes behind the operator session', async () =>
     {
         assert.equal((await Harness.Anon(host, 'GET', '/api/environments')).status, 401)
-        assert.equal((await Harness.Anon(host, 'POST', '/api/environments/x/maker-token')).status, 401)
+        assert.equal((await Harness.Anon(host, 'GET', '/api/environments/x/loaded-graph')).status, 401)
         assert.equal((await Harness.Anon(host, 'GET', '/api/environments', undefined, { cookie: 'cp_session=bogus' })).status, 401)
         assert.equal((await Harness.Anon(host, 'GET', '/api/environments', undefined, { cookie: Harness.AuthCookie })).status, 200)
         assert.equal(fake.Calls.length, 0)
@@ -612,15 +613,15 @@ describe('ControlPlaneHost', () =>
 
     it('enforces same-origin on mutating API requests', async () =>
     {
-        const path = '/api/environments/x/maker-token'
+        const path = '/api/logout'
         const evil = await Harness.Send(host, 'POST', path, undefined, { origin: 'http://evil.example' })
         assert.equal(evil.status, 403)
         assert.equal(fake.Calls.length, 0)
         const none = await Harness.Send(host, 'POST', path)
-        assert.equal(none.status, 201)
+        assert.equal(none.status, 200)
         const addr = host.Address()
         const same = await Harness.Send(host, 'POST', path, undefined, { host: `localhost:${addr.port}`, origin: `http://localhost:${addr.port}` })
-        assert.equal(same.status, 201)
+        assert.equal(same.status, 200)
         const evilLogin = await Harness.Anon(host, 'POST', '/api/login', JSON.stringify({ email: FakeOperator.Email, password: FakeOperator.Password }), { origin: 'http://evil.example' })
         assert.equal(evilLogin.status, 403)
     })
@@ -636,105 +637,6 @@ describe('ControlPlaneHost', () =>
         const sameOpened = await new Promise<boolean>(res => { same.once('open', () => res(true)); same.once('error', () => res(false)); same.once('close', () => res(false)) })
         assert.equal(sameOpened, true)
         same.close()
-    })
-
-    it('admin routes require a session (401) and a same origin (403) before reaching the service', async () =>
-    {
-        const anon = await Harness.Anon(host, 'GET', '/api/environments/x/admin/snapshot')
-        assert.equal(anon.status, 401)
-        const cross = await Harness.Send(host, 'POST', '/api/environments/x/admin/accounts', JSON.stringify({ email: 'a@b.c', principalId: 'p', password: 'pw' }), { origin: 'http://evil.example' })
-        assert.equal(cross.status, 403)
-        const crossPut = await Harness.Send(host, 'PUT', '/api/environments/x/admin/config', JSON.stringify({ packId: 'a', delegationDepth: 'b' }), { origin: 'http://evil.example' })
-        assert.equal(crossPut.status, 403)
-        assert.deepEqual(fake.Calls, [])
-    })
-
-    it('admin routes delegate with decoded name and args', async () =>
-    {
-        const origin = { origin: `http://127.0.0.1:${host.Address().port}`, host: `127.0.0.1:${host.Address().port}` }
-        const snap = await Harness.Send(host, 'GET', '/api/environments/my%20env/admin/snapshot', undefined, origin)
-        assert.equal(snap.status, 200)
-        assert.deepEqual(JSON.parse(snap.body).accounts, [])
-        const acct = { email: 'a@b.c', principalId: 'p1', password: 'pw' }
-        const create = await Harness.Send(host, 'POST', '/api/environments/x/admin/accounts', JSON.stringify(acct), origin)
-        assert.equal(create.status, 201)
-        assert.deepEqual(JSON.parse(create.body), { ok: true })
-        const dis = await Harness.Send(host, 'DELETE', '/api/environments/x/admin/accounts/user%2F1', undefined, origin)
-        assert.equal(dis.status, 200)
-        const grant = { subject: 's', role: 'r', resourceKind: 'k', resourcePath: 'p' }
-        assert.equal((await Harness.Send(host, 'POST', '/api/environments/x/admin/grants', JSON.stringify(grant), origin)).status, 200)
-        assert.equal((await Harness.Send(host, 'DELETE', '/api/environments/x/admin/grants', JSON.stringify(grant), origin)).status, 200)
-        assert.equal((await Harness.Send(host, 'GET', '/api/environments/x/admin/config', undefined, origin)).status, 200)
-        const cfg = { packId: 'pk', delegationDepth: 'd' }
-        assert.equal((await Harness.Send(host, 'PUT', '/api/environments/x/admin/config', JSON.stringify(cfg), origin)).status, 200)
-        assert.deepEqual(fake.Calls, [
-            'adminSnapshot:my env',
-            `adminCreateAccount:x:${JSON.stringify(acct)}`,
-            'adminDisableAccount:x:user/1',
-            `adminGrantRole:x:${JSON.stringify(grant)}`,
-            `adminRevokeRole:x:${JSON.stringify(grant)}`,
-            'adminGetConfig:x',
-            `adminSetConfig:x:${JSON.stringify(cfg)}`
-        ])
-    })
-
-    it('security-model routes delegate and map an absent model to JSON null', async () =>
-    {
-        const origin = { origin: `http://127.0.0.1:${host.Address().port}`, host: `127.0.0.1:${host.Address().port}` }
-        const got = await Harness.Send(host, 'GET', '/api/environments/x/admin/security-model', undefined, origin)
-        assert.equal(got.status, 200)
-        assert.equal(JSON.parse(got.body), null)
-        const model = { roles: [{ id: 'r', name: 'R', privileges: [] }] }
-        assert.equal((await Harness.Send(host, 'PUT', '/api/environments/x/admin/security-model', JSON.stringify({ securityModel: model }), origin)).status, 200)
-        assert.equal((await Harness.Send(host, 'PUT', '/api/environments/x/admin/security-model', JSON.stringify({ securityModel: 1 }), origin)).status, 400)
-        assert.deepEqual(fake.Calls, ['adminGetSecurityModel:x', `adminSetSecurityModel:x:${JSON.stringify(model)}`])
-    })
-
-    it('admin routes validate bodies and unknown sub-routes', async () =>
-    {
-        assert.equal((await Harness.Send(host, 'POST', '/api/environments/x/admin/accounts', JSON.stringify({ email: 'a' }))).status, 400)
-        assert.equal((await Harness.Send(host, 'POST', '/api/environments/x/admin/grants', '{bad')).status, 400)
-        assert.equal((await Harness.Send(host, 'PUT', '/api/environments/x/admin/config', JSON.stringify({ packId: 1 }))).status, 400)
-        assert.equal((await Harness.Send(host, 'POST', '/api/environments/x/admin/snapshot')).status, 404)
-        assert.deepEqual(fake.Calls, [])
-    })
-
-    it('maps AdminProxyError kinds and unknown environments to statuses', async () =>
-    {
-        fake.Throw = new AdminProxyError(AdminProxyErrorKind.Connect, 'ECONNREFUSED 10.0.0.5:8101 login failed')
-        const conn = await Harness.Send(host, 'GET', '/api/environments/x/admin/snapshot')
-        assert.equal(conn.status, 503)
-        assert.equal(JSON.parse(conn.body).error, 'Environment is not reachable')
-        assert.ok(!conn.body.includes('ECONNREFUSED'))
-        fake.Throw = new AdminProxyError(AdminProxyErrorKind.Rbac, 'last admin cannot be removed')
-        const rbac = await Harness.Send(host, 'DELETE', '/api/environments/x/admin/grants', JSON.stringify({ subject: 's', role: 'r' }))
-        assert.equal(rbac.status, 409)
-        assert.equal(JSON.parse(rbac.body).error, 'last admin cannot be removed')
-        fake.Throw = new AdminProxyError(AdminProxyErrorKind.Invalid, 'bad principal')
-        const inv = await Harness.Send(host, 'POST', '/api/environments/x/admin/accounts', JSON.stringify({ email: 'a', principalId: 'p', password: 'w' }))
-        assert.equal(inv.status, 400)
-        assert.equal(JSON.parse(inv.body).error, 'bad principal')
-        fake.Throw = new AdminProxyError(AdminProxyErrorKind.Protocol, 'internal detail')
-        const proto = await Harness.Send(host, 'GET', '/api/environments/x/admin/config')
-        assert.equal(proto.status, 500)
-        assert.ok(!proto.body.includes('internal detail'))
-        fake.Throw = new EnvironmentNotFoundError('x')
-        assert.equal((await Harness.Send(host, 'GET', '/api/environments/x/admin/snapshot')).status, 404)
-    })
-
-    it('maps a non-AdminProxyError thrown on an admin route to a generic 500', async () =>
-    {
-        fake.Throw = new Error('secret internal detail 10.0.0.5')
-        const res = await Harness.Send(host, 'GET', '/api/environments/x/admin/snapshot')
-        assert.equal(res.status, 500)
-        assert.ok(!res.body.includes('secret internal detail'))
-    })
-
-    it('rejects an undecodable principalId or environment name in admin paths with 400', async () =>
-    {
-        assert.equal((await Harness.Send(host, 'DELETE', '/api/environments/x/admin/accounts/%E0%A4%A')).status, 400)
-        assert.equal((await Harness.Send(host, 'GET', '/api/environments/%E0%A4%A/admin/snapshot')).status, 400)
-        assert.deepEqual(fake.Calls, [])
     })
 
     it('rejects ws upgrades without a valid session cookie', async () =>
@@ -840,90 +742,5 @@ describe('ControlPlaneHost', () =>
         const none = await Harness.Send(host, 'GET', '/api/environments/rt1/loaded-graph')
         assert.equal(none.status, 200)
         assert.equal(JSON.parse(none.body), null)
-    })
-
-    it('POST maker-token returns 201 with only token, principalId, expiresAt', async () =>
-    {
-        const r = await Harness.Send(host, 'POST', '/api/environments/dev1/maker-token')
-        assert.equal(r.status, 201)
-        const dto = JSON.parse(r.body)
-        assert.deepEqual(dto, { token: 'SECRET-MAKER-TOKEN-123', principalId: 'maker-1', expiresAt: '2027-01-01T00:00:00.000Z' })
-        assert.equal((await Harness.Send(host, 'GET', '/api/environments/dev1/maker-token')).status, 404)
-    })
-
-    it('maker-token requires a session (401) and a same origin (403)', async () =>
-    {
-        assert.equal((await Harness.Anon(host, 'POST', '/api/environments/dev1/maker-token')).status, 401)
-        const cross = await Harness.Send(host, 'POST', '/api/environments/dev1/maker-token', undefined, { origin: 'http://evil.example.com' })
-        assert.equal(cross.status, 403)
-        assert.ok(!fake.Calls.some(c => c.startsWith('adminIssueMakerToken')))
-    })
-
-    it('maps maker-token service errors to statuses', async () =>
-    {
-        const path = '/api/environments/dev1/maker-token'
-        fake.Throw = new EnvironmentNotDevelopmentError('dev1')
-        assert.equal((await Harness.Send(host, 'POST', path)).status, 400)
-        fake.Throw = new EnvironmentNotFoundError('dev1')
-        assert.equal((await Harness.Send(host, 'POST', path)).status, 404)
-        fake.Throw = new AdminProxyError(AdminProxyErrorKind.Rbac, 'denied')
-        assert.equal((await Harness.Send(host, 'POST', path)).status, 409)
-        fake.Throw = new AdminProxyError(AdminProxyErrorKind.Invalid, 'bad')
-        assert.equal((await Harness.Send(host, 'POST', path)).status, 400)
-    })
-
-    it('POST app-reader-grant provisions the read grant and returns no secret', async () =>
-    {
-        const r = await Harness.Send(host, 'POST', '/api/environments/rt1/app-reader-grant')
-        assert.equal(r.status, 200)
-        assert.deepEqual(JSON.parse(r.body), { ok: true })
-        assert.deepEqual(fake.Calls, ['adminGrantAppReader:rt1'])
-        assert.equal((await Harness.Send(host, 'GET', '/api/environments/rt1/app-reader-grant')).status, 404)
-    })
-
-    it('app-reader-grant requires a session (401) and a same origin (403)', async () =>
-    {
-        assert.equal((await Harness.Anon(host, 'POST', '/api/environments/rt1/app-reader-grant')).status, 401)
-        const cross = await Harness.Send(host, 'POST', '/api/environments/rt1/app-reader-grant', undefined, { origin: 'http://evil.example.com' })
-        assert.equal(cross.status, 403)
-        assert.ok(!fake.Calls.some(c => c.startsWith('adminGrantAppReader')))
-    })
-
-    it('maps app-reader-grant service errors to statuses', async () =>
-    {
-        const path = '/api/environments/rt1/app-reader-grant'
-        fake.Throw = new EnvironmentNotRuntimeError('rt1')
-        assert.equal((await Harness.Send(host, 'POST', path)).status, 400)
-        fake.Throw = new EnvironmentNotFoundError('rt1')
-        assert.equal((await Harness.Send(host, 'POST', path)).status, 404)
-        fake.Throw = new AdminProxyError(AdminProxyErrorKind.Rbac, 'denied')
-        assert.equal((await Harness.Send(host, 'POST', path)).status, 409)
-    })
-
-    it('never logs the maker token, even when the service fails', async () =>
-    {
-        const lines: string[] = []
-        const orig = { e: console.error, l: console.log, w: console.warn, i: console.info }
-        const capture = (...a: unknown[]): void => { lines.push(a.map(x => String(x)).join(' ')) }
-        console.error = capture
-        console.log = capture
-        console.warn = capture
-        console.info = capture
-        try
-        {
-            const ok = await Harness.Send(host, 'POST', '/api/environments/dev1/maker-token')
-            assert.ok(ok.body.includes('SECRET-MAKER-TOKEN-123'))
-            fake.Throw = new Error('boom')
-            await Harness.Send(host, 'POST', '/api/environments/dev1/maker-token')
-        }
-        finally
-        {
-            console.error = orig.e
-            console.log = orig.l
-            console.warn = orig.w
-            console.info = orig.i
-        }
-        assert.ok(lines.length > 0)
-        assert.ok(!lines.some(l => l.includes('SECRET-MAKER-TOKEN-123')))
     })
 })
