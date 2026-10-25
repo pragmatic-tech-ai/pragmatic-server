@@ -7,24 +7,19 @@
  *
  *   npx tsx admin/control-plane/rollout-pull-smoke.ts
  *
- * Brings an environment up on v1, deploys the in-cluster agent (SA/Role/RoleBinding/Deployment + a token
- * Secret) pointed at a locally served ControlPlaneHost (via a Host-header-rewriting proxy reachable as
- * host.docker.internal), records v2 as the hive's target WITHOUT pushing (the second registry's backend
+ * Brings an environment up on v1, deploys the single per-hive agent (pragmatic-system Namespace/SA/ClusterRole/
+ * ClusterRoleBinding/Deployment + a token Secret) pointed at a locally served AgentChannelHost (reachable from the
+ * pod as host.docker.internal), records v2 as the hive's target WITHOUT pushing (the second registry's backend
  * is unreachable, so SelectTarget only records), then asserts the AGENT patches the server Deployment to
- * v2 on its own and reports back so the environment is no longer obsolete.
+ * v2 on its own and reports its whole-hive snapshot back so the environment is no longer obsolete.
  */
 import { generateKeyPairSync, randomBytes } from 'node:crypto'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { createServer, request } from 'node:http'
-import type { IncomingMessage, Server, ServerResponse } from 'node:http'
-import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { AgentChannelHost } from './agent-channel-host.js'
 import { ClientRegistry } from './client-registry.js'
-import { ControlPlaneHost } from './control-plane-host.js'
-import type { TenantProvisioningService } from './tenant-provisioning-service.js'
-import type { IEnvironmentService, IGraphService } from './control-plane-host.js'
 import { EnvironmentPlacement } from './environment-placement.js'
 import { EnvironmentRegistry } from './environment-registry.js'
 import { EnvStatus, EnvType, Template } from './environment-record.js'
@@ -42,7 +37,6 @@ import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import { FileKeyStore } from './key-store.js'
 import { KubectlCli, KubectlError, NodeExecFile } from './kubectl.js'
 import { ManifestRegistry } from './manifest-record.js'
-import type { IOperatorIdentity, OperatorPrincipal, OperatorSession } from './operator-identity.js'
 import { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
 import { PlatformDirectory } from './platform-directory.js'
 import { HiveBackend, InfraMode } from './platform-records.js'
@@ -61,94 +55,12 @@ class NoContainerProbe implements IContainerProbe
     }
 }
 
-/** The agent routes need no operator session; this stand-in authenticates nobody. */
-class DenyAllOperator implements IOperatorIdentity
-{
-    public async Authenticate(_email: string, _password: string): Promise<OperatorSession | null>
-    {
-        return null
-    }
-
-    public async ValidateToken(_token: string): Promise<OperatorPrincipal | null>
-    {
-        return null
-    }
-
-    public async Revoke(_token: string): Promise<void>
-    {
-    }
-}
-
 /** A factory whose backend is unreachable: SelectTarget records the selection, then the push is skipped (left for the pull agent). */
 class UnreachableFactory extends HiveOrchestratorFactory
 {
     public override For(hive: HiveRecord): IHiveOrchestrator
     {
         throw new UnsupportedBackendError(hive.cluster.backend, hive.cluster.mode)
-    }
-}
-
-/**
- * ControlPlaneHost only accepts loopback Host headers (DNS-rebinding guard), but a pod reaches the workstation as
- * host.docker.internal. This proxy listens on all interfaces and forwards verbatim with the Host header rewritten
- * to loopback, so the REAL host's agent routes are what the pod talks to.
- */
-class HostHeaderProxy
-{
-    private static readonly HostHeader = 'host'
-    private static readonly ListenAddress = '0.0.0.0'
-    private static readonly Loopback = '127.0.0.1'
-    private static readonly BadGateway = 502
-    private static readonly ErrorEvent = 'error'
-
-    private server: Server | undefined
-
-    public constructor(private readonly upstreamPort: number)
-    {
-    }
-
-    public Listen(): Promise<number>
-    {
-        const S = HostHeaderProxy
-        const server = createServer((req, res) => this.Forward(req, res))
-        this.server = server
-        return new Promise((resolve, reject) =>
-        {
-            server.once(S.ErrorEvent, reject)
-            server.listen(0, S.ListenAddress, () =>
-            {
-                server.off(S.ErrorEvent, reject)
-                resolve((server.address() as AddressInfo).port)
-            })
-        })
-    }
-
-    public async Close(): Promise<void>
-    {
-        const server = this.server
-        this.server = undefined
-        if (server !== undefined)
-        {
-            server.closeAllConnections()
-            await new Promise<void>(res => server.close(() => res()))
-        }
-    }
-
-    private Forward(req: IncomingMessage, res: ServerResponse): void
-    {
-        const S = HostHeaderProxy
-        const headers = { ...req.headers, [S.HostHeader]: S.Loopback + ':' + this.upstreamPort }
-        const upstream = request({ host: S.Loopback, port: this.upstreamPort, method: req.method, path: req.url, headers }, up =>
-        {
-            res.writeHead(up.statusCode ?? S.BadGateway, up.headers)
-            up.pipe(res)
-        })
-        upstream.on(S.ErrorEvent, () =>
-        {
-            res.writeHead(S.BadGateway)
-            res.end()
-        })
-        req.pipe(upstream)
     }
 }
 
@@ -173,6 +85,10 @@ export class RolloutPullSmoke
     private static readonly ContextFlag = '--context'
     private static readonly NamespaceFlag = '-n'
     private static readonly GetVerb = 'get'
+    private static readonly DeleteVerb = 'delete'
+    private static readonly ClusterRoleKind = 'clusterrole'
+    private static readonly ClusterRoleBindingKind = 'clusterrolebinding'
+    private static readonly IgnoreNotFoundFlag = '--ignore-not-found'
     private static readonly LogsVerb = 'logs'
     private static readonly PodKind = 'pod'
     private static readonly NamespaceKind = 'namespace'
@@ -209,11 +125,12 @@ export class RolloutPullSmoke
     private static readonly BootMasterKeyVar = 'SMOKE_MASTER_KEY_B64'
     private static readonly MasterKeyBytes = 32
     private static readonly Base64 = 'base64'
-    private static readonly LoopbackAddress = '127.0.0.1'
+    private static readonly ListenAddress = '0.0.0.0'
     private static readonly ClusterHostUrl = 'http://host.docker.internal:'
-    private static readonly ProxyLabel = 'proxy'
-    private static readonly HostLabel = 'control plane host'
-    private static readonly TokenSecretSuffix = '-agent-token'
+    private static readonly ChannelLabel = 'agent channel host'
+    private static readonly HiveAgentLabel = 'pragmatic-hive-agent'
+    private static readonly TokenSecretName = 'pull-smoke-agent-token'
+    private static readonly SystemNamespace = 'pragmatic-system'
     private static readonly SecretKey = 'token'
     private static readonly SecretKind = 'Secret'
     private static readonly SecretApiVersion = 'v1'
@@ -238,9 +155,9 @@ export class RolloutPullSmoke
     private static readonly InfoSigned = 'signed both image refs with key ref: '
     private static readonly InfoPublished = 'published + gated versions: '
     private static readonly InfoRunning = 'server image: '
-    private static readonly InfoServing = 'control plane host + proxy listening; pod-visible registry url: '
+    private static readonly InfoServing = 'agent channel host listening; pod-visible base url: '
     private static readonly InfoRegistered = 'hive registered; machine token stored in the namespace Secret (not logged)'
-    private static readonly InfoAgentApplied = 'agent objects applied'
+    private static readonly InfoAgentApplied = 'per-hive agent objects applied'
     private static readonly InfoSelected = 'target v2 recorded without push'
     private static readonly InfoStatus = 'rollout status: '
     private static readonly InfoAgentLogs = 'agent logs (tail):\n'
@@ -250,15 +167,14 @@ export class RolloutPullSmoke
         UpOnV1: 'k8s: environment up on v1 (Ready, running pragmatic-server:v1)',
         SelectNoPush: 'registry: SelectTarget(v2) only records; the env still runs v1',
         AgentPatched: 'pull: the in-cluster agent patched the server Deployment to pragmatic-server:v2 on its own',
-        Reported: 'pull: the agent reported back so the env is no longer obsolete',
+        Reported: 'pull: the agent posted its hive snapshot so the env is non-obsolete on v2',
         TargetV2: 'registry: TargetFor(hive) is v2',
     }
 
     private failed = false
     private tempDir: string | undefined
     private tagged = false
-    private host: ControlPlaneHost | undefined
-    private proxy: HostHeaderProxy | undefined
+    private channel: AgentChannelHost | undefined
     private applied = false
     private readonly exec = new NodeExecFile()
     private readonly envName = RolloutPullSmoke.EnvPrefix + randomBytes(RolloutPullSmoke.SuffixBytes).toString(RolloutPullSmoke.Hex)
@@ -311,7 +227,7 @@ export class RolloutPullSmoke
             await registry.Gate(S.TenantId, S.VersionV2)
             console.log(S.InfoTag + S.InfoPublished + S.VersionV1 + S.VersionSep + S.VersionV2)
 
-            const registryUrl = await this.Serve(directory, factory, registry, stores.observations)
+            const channelUrl = await this.ServeChannel(registry)
             const machineToken = await registry.RegisterHive(S.HiveId)
 
             const record = this.NewRecord()
@@ -322,7 +238,7 @@ export class RolloutPullSmoke
             await orchestrator.WaitHealthy(workload)
             await this.CheckRunning(orchestrator, workload, S.ImageV1, S.Labels.UpOnV1)
 
-            await this.ApplyAgent(workload, registryUrl, machineToken)
+            await this.ApplyHiveAgent(channelUrl, machineToken)
 
             await recorder.SelectTarget(S.HiveId, S.VersionV2)
             console.log(S.InfoTag + S.InfoSelected)
@@ -366,38 +282,38 @@ export class RolloutPullSmoke
         return { manifests, gating, selections, observations, registrations }
     }
 
-    /** Serves the real ControlPlaneHost on loopback behind the Host-rewriting proxy; returns the URL a pod uses. */
-    private async Serve(directory: PlatformDirectory, factory: HiveOrchestratorFactory, deployments: PlatformDeploymentRegistry, observations: HiveObservationRegistry): Promise<string>
+    /** Serves the real AgentChannelHost on all interfaces (it has no Host-header guard); returns the base URL a pod uses. */
+    private async ServeChannel(deployments: PlatformDeploymentRegistry): Promise<string>
     {
         const S = RolloutPullSmoke
-        const staticRoot = join(this.tempDir!, S.StaticDirName)
-        await mkdir(staticRoot, { recursive: true })
-        const host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, staticRoot, new DenyAllOperator(), false, directory, deployments, {} as TenantProvisioningService, observations)
-        await host.Listen(0, S.LoopbackAddress)
-        this.host = host
-        const proxy = new HostHeaderProxy(host.Address().port)
-        this.proxy = proxy
-        const url = S.ClusterHostUrl + await proxy.Listen()
+        const channel = new AgentChannelHost(deployments)
+        await channel.Listen(0, S.ListenAddress)
+        this.channel = channel
+        const url = S.ClusterHostUrl + channel.Address().port
         console.log(S.InfoTag + S.InfoServing + url)
         return url
     }
 
-    /** Creates the token Secret (key `token`) and applies the agent objects. The token travels only over kubectl's stdin. */
-    private async ApplyAgent(workload: EnvironmentWorkload, registryUrl: string, machineToken: string): Promise<void>
+    /**
+     * Applies the single per-hive agent. RenderHiveAgent's first item is the pragmatic-system Namespace, and the token
+     * Secret must live in that namespace for the Deployment's secretKeyRef, so the order is: manifest (creates the
+     * Namespace + Deployment), then the Secret. The pod simply waits (CreateContainerConfigError, retried by kubelet)
+     * until the Secret appears. The token travels only over kubectl's stdin.
+     */
+    private async ApplyHiveAgent(channelUrl: string, machineToken: string): Promise<void>
     {
         const S = RolloutPullSmoke
         const kubectl = new KubectlCli(S.Context)
-        const secretName = this.envName + S.TokenSecretSuffix
         this.applied = true
+        await kubectl.Apply(new K8sManifestBuilder().RenderHiveAgent(S.HiveId, channelUrl, S.TokenSecretName))
         await kubectl.Apply(JSON.stringify({
             [S.ApiVersionKey]: S.SecretApiVersion,
             [S.KindKey]: S.SecretKind,
-            [S.MetaKey]: { [S.NameKey]: secretName, [S.NamespaceKey]: K8sManifestBuilder.NamespaceOf(this.envName) },
+            [S.MetaKey]: { [S.NameKey]: S.TokenSecretName, [S.NamespaceKey]: S.SystemNamespace },
             [S.SecretType]: S.SecretOpaque,
             [S.SecretStringData]: { [S.SecretKey]: machineToken },
         }))
         console.log(S.InfoTag + S.InfoRegistered)
-        await kubectl.Apply(new K8sManifestBuilder().RenderAgent(workload, registryUrl, secretName))
         console.log(S.InfoTag + S.InfoAgentApplied)
     }
 
@@ -422,8 +338,7 @@ export class RolloutPullSmoke
         this.Expect(S.Labels.AgentPatched, image === S.ImageV2, detail)
     }
 
-    // EXPECTED-RED: the operator-side agent routes are gone; this docker smoke stays red until the in-hive pod agent is
-    // migrated to the new AgentChannelHost (GET /agent/hives/:id/target + POST /agent/hives/:id/snapshot), tracked as a follow-up.
+    /** The agent reports via POST /agent/hives/:id/snapshot, which AgentChannelHost writes into the shared observation registry StatusFor reads. */
     private async AwaitReport(registry: PlatformDeploymentRegistry): Promise<void>
     {
         const S = RolloutPullSmoke
@@ -548,8 +463,8 @@ export class RolloutPullSmoke
         {
             return
         }
-        const namespace = K8sManifestBuilder.NamespaceOf(this.envName)
-        const agent = K8sManifestBuilder.AgentDeploymentOf(this.envName)
+        const namespace = S.SystemNamespace
+        const agent = K8sManifestBuilder.HiveAgentNameOf(S.HiveId)
         await this.BestEffort(agent, async () =>
         {
             const pods = await this.exec.Run(S.Kubectl, [S.ContextFlag, S.Context, S.GetVerb, S.PodKind, S.NamespaceFlag, namespace])
@@ -571,8 +486,8 @@ export class RolloutPullSmoke
                 await new KubectlCli(S.Context).DeleteNamespace(namespace)
             }
         })
-        await this.BestEffort(S.ProxyLabel, async () => { await this.proxy?.Close() })
-        await this.BestEffort(S.HostLabel, async () => { await this.host?.Close() })
+        await this.BestEffort(S.ChannelLabel, async () => { await this.channel?.Close() })
+        await this.BestEffort(S.HiveAgentLabel, async () => { await this.DeleteHiveAgent() })
         if (this.tagged)
         {
             await this.BestEffort(S.ImageV1, async () => { await this.exec.Run(S.Docker, [S.ImageVerb, S.ImageV1]) })
@@ -583,6 +498,20 @@ export class RolloutPullSmoke
             const dir = this.tempDir
             await this.BestEffort(dir, () => rm(dir, { recursive: true, force: true }))
         }
+    }
+
+    /** The hive agent's ClusterRole/Binding are cluster-scoped and its namespace is shared; remove what this smoke created. */
+    private async DeleteHiveAgent(): Promise<void>
+    {
+        const S = RolloutPullSmoke
+        if (!this.applied)
+        {
+            return
+        }
+        const name = K8sManifestBuilder.HiveAgentNameOf(S.HiveId)
+        await new KubectlCli(S.Context).DeleteNamespace(S.SystemNamespace)
+        await this.exec.Run(S.Kubectl, [S.ContextFlag, S.Context, S.DeleteVerb, S.ClusterRoleBindingKind, name, S.IgnoreNotFoundFlag])
+        await this.exec.Run(S.Kubectl, [S.ContextFlag, S.Context, S.DeleteVerb, S.ClusterRoleKind, name, S.IgnoreNotFoundFlag])
     }
 
     private async BestEffort(what: string, action: () => Promise<unknown>): Promise<void>
