@@ -44,6 +44,7 @@ export class InClusterK8sApi
     public static readonly DefaultCaPath = '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
     public static readonly DefaultHost = 'kubernetes.default.svc'
 
+    private static readonly Empty = ''
     private static readonly Utf8 = 'utf8'
     private static readonly DeploymentPathTemplate = '/apis/apps/v1/namespaces/{ns}/deployments/{dep}'
     private static readonly DeploymentsListPath = '/apis/apps/v1/deployments'
@@ -113,9 +114,9 @@ export class InClusterK8sApi
         const replicas = item.status?.replicas ?? 0
         const readyReplicas = item.status?.readyReplicas ?? 0
         return {
-            namespace: item.metadata?.namespace ?? '',
-            deployment: item.metadata?.name ?? '',
-            container: chosen?.name ?? '',
+            namespace: item.metadata?.namespace ?? InClusterK8sApi.Empty,
+            deployment: item.metadata?.name ?? InClusterK8sApi.Empty,
+            container: chosen?.name ?? InClusterK8sApi.Empty,
             runningImage: chosen?.image,
             ready: replicas > 0 && readyReplicas === replicas,
         }
