@@ -4,6 +4,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { IdpService } from '../idp-service.js'
+import { DockerIdpDriver } from '../docker-idp-driver.js'
+import type { IIdpWorkloadDriver, IdpWorkloadRequest, IdpWorkloadResult } from '../idp-workload-driver.js'
 import { IdpStatus } from '../idp-record.js'
 import { IdpRegistry } from '../idp-registry.js'
 import type { IdpContainerEnv, IdpContainerSpec } from '../idp-container-env.js'
@@ -65,7 +67,7 @@ class Fixture
     public Root = mkdtempSync(join(tmpdir(), 'idpsvc-'))
     public Containers = new FakeContainers()
     public Registry = new IdpRegistry(join(this.Root, 'idps.json'))
-    public Service = new IdpService(new FakeAllocator() as unknown as PortAllocator, this.Containers as unknown as IdpContainerEnv, this.Registry, this.Root, 'img:1')
+    public Service = new IdpService(this.Registry, new DockerIdpDriver(new FakeAllocator() as unknown as PortAllocator, this.Containers as unknown as IdpContainerEnv, this.Root, 'img:1'))
 
     public Dispose(): void
     {
@@ -227,5 +229,81 @@ test('invalid tenantId is rejected before anything launches', async () =>
     finally
     {
         fx.Dispose()
+    }
+})
+
+class FakeDriver implements IIdpWorkloadDriver
+{
+    public static readonly SecretToken = 'tok-SECRET-123'
+    public static readonly SecretCa = 'CA-SECRET-BYTES'
+    public Requests: IdpWorkloadRequest[] = []
+    public Fail = false
+
+    public async EnsureRunning(request: IdpWorkloadRequest): Promise<IdpWorkloadResult>
+    {
+        this.Requests.push(request)
+        if (this.Fail)
+        {
+            throw new Error('driver exploded')
+        }
+        const record = {
+            tenantId: request.tenantId, port: 8443, baseUrl: 'https://idp.svc:8443', containerName: 'c', volumeName: 'v',
+            caDir: 'ca-ref', adminTokenRef: 'admin-ref', createdAt: '2026-01-01T00:00:00.000Z', status: IdpStatus.Running
+        }
+        return {
+            record,
+            connection: { baseUrl: record.baseUrl, ca: Buffer.from(FakeDriver.SecretCa), adminToken: FakeDriver.SecretToken, adminTokenRef: 'admin-ref', caDir: 'ca-ref' }
+        }
+    }
+}
+
+test('EnsureForTenant delegates to the injected driver and persists the driver record', async () =>
+{
+    const root = mkdtempSync(join(tmpdir(), 'idpsvc-drv-'))
+    try
+    {
+        const registry = new IdpRegistry(join(root, 'idps.json'))
+        const driver = new FakeDriver()
+        const service = new IdpService(registry, driver)
+        const conn = await service.EnsureForTenant('t9', 'Tenant Nine')
+        assert.equal(driver.Requests.length, 1)
+        assert.equal(driver.Requests[0]!.tenantId, 't9')
+        assert.equal(driver.Requests[0]!.displayName, 'Tenant Nine')
+        assert.equal(driver.Requests[0]!.existing, undefined)
+        assert.equal(conn.baseUrl, 'https://idp.svc:8443')
+        const rec = registry.Get('t9')
+        assert.equal(rec?.baseUrl, 'https://idp.svc:8443')
+        assert.equal(rec?.adminTokenRef, 'admin-ref')
+        assert.equal(rec?.status, IdpStatus.Running)
+        // Second call hands the persisted record back to the driver.
+        await service.EnsureForTenant('t9', 'Tenant Nine')
+        assert.equal(driver.Requests[1]!.existing?.port, 8443)
+    }
+    finally
+    {
+        rmSync(root, { recursive: true, force: true })
+    }
+})
+
+test('driver failure persists nothing, propagates, and no secret material reaches the registry file or error', async () =>
+{
+    const root = mkdtempSync(join(tmpdir(), 'idpsvc-drv-'))
+    try
+    {
+        const registry = new IdpRegistry(join(root, 'idps.json'))
+        const driver = new FakeDriver()
+        driver.Fail = true
+        const service = new IdpService(registry, driver)
+        await assert.rejects(() => service.EnsureForTenant('t9', 'T'), (e: Error) => !e.message.includes(FakeDriver.SecretToken) && !e.message.includes(FakeDriver.SecretCa))
+        assert.equal(registry.Get('t9'), undefined)
+        driver.Fail = false
+        await service.EnsureForTenant('t9', 'T')
+        const persisted = readFileSync(join(root, 'idps.json'), 'utf8')
+        assert.ok(!persisted.includes(FakeDriver.SecretToken))
+        assert.ok(!persisted.includes(FakeDriver.SecretCa))
+    }
+    finally
+    {
+        rmSync(root, { recursive: true, force: true })
     }
 })

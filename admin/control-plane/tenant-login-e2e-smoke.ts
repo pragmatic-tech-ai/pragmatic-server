@@ -46,6 +46,7 @@ import type { HiveRecord } from './platform-records.js'
 import { AdminProxy, WsAdminConnector } from './admin-proxy.js'
 import { ExecFileDockerExec, IdpContainerEnv } from './idp-container-env.js'
 import { IdpRegistry } from './idp-registry.js'
+import { DockerIdpDriver } from './docker-idp-driver.js'
 import { IdpService } from './idp-service.js'
 import type { IdpConnection } from './idp-service.js'
 import { IdpAdminClient } from './idp-admin-client.js'
@@ -487,7 +488,7 @@ export class TenantLoginE2eSmoke
         await directory.Load()
         this.idpContainers = new IdpContainerEnv(new ExecFileDockerExec())
         this.idpRegistry = new IdpRegistry(join(this.dataRoot, S.IdpsFile))
-        const idpService = new IdpService(new PortAllocator(S.IdpPortFloor, new NetPortProbe()), this.idpContainers, this.idpRegistry, this.dataRoot, DockerEnv.ImageName)
+        const idpService = new IdpService(this.idpRegistry, new DockerIdpDriver(new PortAllocator(S.IdpPortFloor, new NetPortProbe()), this.idpContainers, this.dataRoot, DockerEnv.ImageName))
         const service = new EnvironmentService(
             environments, new PortAllocator(S.EnvPortFloor, new NetPortProbe()), docker, new BundleBuilderAdapter(), new UserSeederAdapter(new UserSeeder()),
             this.dataRoot, new AdminProxy(new WsAdminConnector()), directory, idpService, conn => new IdpAdminClient(conn))

@@ -1,4 +1,5 @@
 import type { EnvironmentWorkload, WorkloadDatabase } from './environment-workload.js'
+import type { IdpWorkloadSpec } from './idp-workload-driver.js'
 
 type K8sObject = Record<string, unknown>
 
@@ -108,6 +109,45 @@ export class K8sManifestBuilder
     /** Namespace hosting the per-hive agent's ServiceAccount + Deployment (cluster-scoped RBAC has none). The Namespace object itself is emitted by RenderHiveAgent. */
     private static readonly HiveAgentNamespace = 'pragmatic-system'
     private static readonly HiveAgentPrefix = 'pragmatic-hive-'
+
+    // IdP workload conventions.
+    private static readonly IdpPrefix = 'pragmatic-idp-'
+    private static readonly IdpContainerName = 'idp'
+    private static readonly IdpEntrypoint = ['node', 'dist/bin/pragmatic-idpd.js']
+    private static readonly IdpDataMount = '/idp-data'
+    private static readonly IdpTlsMount = '/idp-data/tls'
+    private static readonly IdpSecretsMount = '/idp-data/secrets'
+    private static readonly TmpMount = '/tmp'
+    private static readonly IdpBindAll = '0.0.0.0'
+    private static readonly IdpPortVar = 'PRAGMATIC_IDP_PORT'
+    private static readonly IdpBaseUrlVar = 'PRAGMATIC_IDP_BASE_URL'
+    private static readonly IdpHostVar = 'PRAGMATIC_IDP_HOST'
+    private static readonly IdpDataVar = 'PRAGMATIC_IDP_DATA'
+    private static readonly IdpAdminTokenRefVar = 'PRAGMATIC_IDP_ADMIN_TOKEN_REF'
+    private static readonly IdpDnsSuffix = 'svc.cluster.local'
+    private static readonly IdpScheme = 'https'
+    private static readonly HttpsScheme = 'HTTPS'
+    private static readonly IdpDataSuffix = '-data'
+    private static readonly IdpDataVolume = 'data'
+    private static readonly IdpTlsVolume = 'tls'
+    private static readonly IdpSecretsVolume = 'secrets'
+    private static readonly TmpVolume = 'tmp'
+    private static readonly IdpDataSize = '256Mi'
+    private static readonly SecretFileMode = 0o400
+    private static readonly PersistentVolumeClaimKind = 'PersistentVolumeClaim'
+    private static readonly VolumesKey = 'volumes'
+    private static readonly SecretKey = 'secret'
+    private static readonly SecretNameKey = 'secretName'
+    private static readonly DefaultModeKey = 'defaultMode'
+    private static readonly PersistentVolumeClaimKey = 'persistentVolumeClaim'
+    private static readonly ClaimNameKey = 'claimName'
+    private static readonly EmptyDirKey = 'emptyDir'
+    private static readonly ReadOnlyKey = 'readOnly'
+    private static readonly SchemeKey = 'scheme'
+    private static readonly SecurityContextKey = 'securityContext'
+    private static readonly AllowPrivilegeEscalationKey = 'allowPrivilegeEscalation'
+    private static readonly ReadOnlyRootFilesystemKey = 'readOnlyRootFilesystem'
+    private static readonly AutomountTokenKey = 'automountServiceAccountToken'
 
     public static readonly ServerContainerName = 'server'
 
@@ -289,6 +329,181 @@ export class K8sManifestBuilder
                         }],
                     },
                 },
+            },
+        }
+    }
+
+    public static IdpNameOf(tenantId: string): string
+    {
+        return `${K8sManifestBuilder.IdpPrefix}${tenantId}`
+    }
+
+    public static IdpClaimNameOf(tenantId: string): string
+    {
+        return `${K8sManifestBuilder.IdpNameOf(tenantId)}${K8sManifestBuilder.IdpDataSuffix}`
+    }
+
+    /** In-cluster Service DNS origin of a tenant's IdP (service and namespace share the name). */
+    public static IdpBaseUrlOf(tenantId: string, port: number): string
+    {
+        const name = K8sManifestBuilder.IdpNameOf(tenantId)
+        return `${K8sManifestBuilder.IdpScheme}://${name}.${name}.${K8sManifestBuilder.IdpDnsSuffix}:${port}`
+    }
+
+    /** Renders one tenant's IdP as an in-cluster workload: Namespace, SA (no API token), PVC, Deployment, ClusterIP Service. Hive-labeled only (no environment label, so the pull agent never selects it); secrets mounted by Secret name, never inline; no RBAC. */
+    public RenderIdp(spec: IdpWorkloadSpec): string
+    {
+        const items: K8sObject[] = [
+            this.IdpNamespaceObject(spec),
+            this.IdpServiceAccount(spec),
+            this.IdpClaim(spec),
+            this.IdpDeployment(spec),
+            this.IdpService(spec),
+        ]
+        return JSON.stringify({
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ListKind,
+            [K8sManifestBuilder.ItemsKey]: items,
+        })
+    }
+
+    private IdpMeta(spec: IdpWorkloadSpec, name: string): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.NameKey]: name,
+            [K8sManifestBuilder.NamespaceKey]: K8sManifestBuilder.IdpNameOf(spec.tenantId),
+            [K8sManifestBuilder.LabelsKey]: this.HiveLabels(spec.hiveId),
+        }
+    }
+
+    private IdpNamespaceObject(spec: IdpWorkloadSpec): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.NamespaceKind,
+            [K8sManifestBuilder.MetadataKey]: {
+                [K8sManifestBuilder.NameKey]: K8sManifestBuilder.IdpNameOf(spec.tenantId),
+                [K8sManifestBuilder.LabelsKey]: this.HiveLabels(spec.hiveId),
+            },
+        }
+    }
+
+    private IdpServiceAccount(spec: IdpWorkloadSpec): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ServiceAccountKind,
+            [K8sManifestBuilder.MetadataKey]: this.IdpMeta(spec, K8sManifestBuilder.IdpNameOf(spec.tenantId)),
+            [K8sManifestBuilder.AutomountTokenKey]: false,
+        }
+    }
+
+    private IdpClaim(spec: IdpWorkloadSpec): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.PersistentVolumeClaimKind,
+            [K8sManifestBuilder.MetadataKey]: this.IdpMeta(spec, K8sManifestBuilder.IdpClaimNameOf(spec.tenantId)),
+            [K8sManifestBuilder.SpecKey]: {
+                [K8sManifestBuilder.AccessModesKey]: [K8sManifestBuilder.ReadWriteOnce],
+                [K8sManifestBuilder.ResourcesKey]: {
+                    [K8sManifestBuilder.RequestsKey]: { [K8sManifestBuilder.StorageKey]: K8sManifestBuilder.IdpDataSize },
+                },
+            },
+        }
+    }
+
+    private SecretVolume(volumeName: string, secretName: string): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.NameKey]: volumeName,
+            [K8sManifestBuilder.SecretKey]: {
+                [K8sManifestBuilder.SecretNameKey]: secretName,
+                [K8sManifestBuilder.DefaultModeKey]: K8sManifestBuilder.SecretFileMode,
+            },
+        }
+    }
+
+    private IdpDeployment(spec: IdpWorkloadSpec): K8sObject
+    {
+        const name = K8sManifestBuilder.IdpNameOf(spec.tenantId)
+        return {
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionApps,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.DeploymentKind,
+            [K8sManifestBuilder.MetadataKey]: this.IdpMeta(spec, name),
+            [K8sManifestBuilder.SpecKey]: {
+                [K8sManifestBuilder.ReplicasKey]: K8sManifestBuilder.SingleReplica,
+                [K8sManifestBuilder.SelectorKey]: { [K8sManifestBuilder.MatchLabelsKey]: this.Selector(name) },
+                [K8sManifestBuilder.TemplateKey]: {
+                    [K8sManifestBuilder.MetadataKey]: { [K8sManifestBuilder.LabelsKey]: this.Selector(name) },
+                    [K8sManifestBuilder.SpecKey]: {
+                        [K8sManifestBuilder.ServiceAccountNameKey]: name,
+                        [K8sManifestBuilder.AutomountTokenKey]: false,
+                        [K8sManifestBuilder.ContainersKey]: [this.IdpContainer(spec)],
+                        [K8sManifestBuilder.VolumesKey]: [
+                            {
+                                [K8sManifestBuilder.NameKey]: K8sManifestBuilder.IdpDataVolume,
+                                [K8sManifestBuilder.PersistentVolumeClaimKey]: { [K8sManifestBuilder.ClaimNameKey]: K8sManifestBuilder.IdpClaimNameOf(spec.tenantId) },
+                            },
+                            this.SecretVolume(K8sManifestBuilder.IdpTlsVolume, spec.tlsSecretName),
+                            this.SecretVolume(K8sManifestBuilder.IdpSecretsVolume, spec.adminTokenSecretName),
+                            { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.TmpVolume, [K8sManifestBuilder.EmptyDirKey]: {} },
+                        ],
+                    },
+                },
+            },
+        }
+    }
+
+    private IdpContainer(spec: IdpWorkloadSpec): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.NameKey]: K8sManifestBuilder.IdpContainerName,
+            [K8sManifestBuilder.ImageKey]: spec.image,
+            [K8sManifestBuilder.ImagePullPolicyKey]: K8sManifestBuilder.IfNotPresent,
+            [K8sManifestBuilder.CommandKey]: K8sManifestBuilder.IdpEntrypoint,
+            [K8sManifestBuilder.PortsKey]: [{ [K8sManifestBuilder.ContainerPortKey]: spec.port }],
+            [K8sManifestBuilder.SecurityContextKey]: {
+                [K8sManifestBuilder.AllowPrivilegeEscalationKey]: false,
+                [K8sManifestBuilder.ReadOnlyRootFilesystemKey]: true,
+            },
+            [K8sManifestBuilder.EnvKey]: [
+                this.EnvLiteral(K8sManifestBuilder.IdpPortVar, String(spec.port)),
+                this.EnvLiteral(K8sManifestBuilder.IdpBaseUrlVar, K8sManifestBuilder.IdpBaseUrlOf(spec.tenantId, spec.port)),
+                this.EnvLiteral(K8sManifestBuilder.IdpHostVar, K8sManifestBuilder.IdpBindAll),
+                this.EnvLiteral(K8sManifestBuilder.IdpDataVar, K8sManifestBuilder.IdpDataMount),
+                this.EnvLiteral(K8sManifestBuilder.IdpAdminTokenRefVar, spec.adminTokenRef),
+            ],
+            [K8sManifestBuilder.VolumeMountsKey]: [
+                { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.IdpDataVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.IdpDataMount },
+                { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.IdpTlsVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.IdpTlsMount, [K8sManifestBuilder.ReadOnlyKey]: true },
+                { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.IdpSecretsVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.IdpSecretsMount, [K8sManifestBuilder.ReadOnlyKey]: true },
+                { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.TmpVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.TmpMount },
+            ],
+            [K8sManifestBuilder.ReadinessProbeKey]: {
+                [K8sManifestBuilder.HttpGetKey]: {
+                    [K8sManifestBuilder.PathKey]: K8sManifestBuilder.HealthPath,
+                    [K8sManifestBuilder.PortKey]: spec.port,
+                    [K8sManifestBuilder.SchemeKey]: K8sManifestBuilder.HttpsScheme,
+                },
+            },
+        }
+    }
+
+    private IdpService(spec: IdpWorkloadSpec): K8sObject
+    {
+        const name = K8sManifestBuilder.IdpNameOf(spec.tenantId)
+        return {
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ServiceKind,
+            [K8sManifestBuilder.MetadataKey]: this.IdpMeta(spec, name),
+            [K8sManifestBuilder.SpecKey]: {
+                [K8sManifestBuilder.TypeKey]: K8sManifestBuilder.ClusterIpType,
+                [K8sManifestBuilder.SelectorKey]: this.Selector(name),
+                [K8sManifestBuilder.PortsKey]: [{
+                    [K8sManifestBuilder.PortKey]: spec.port,
+                    [K8sManifestBuilder.TargetPortKey]: spec.port,
+                }],
             },
         }
     }
