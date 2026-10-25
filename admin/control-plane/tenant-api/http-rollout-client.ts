@@ -24,6 +24,11 @@ export class HttpRolloutClient implements IRolloutClient
     private static readonly UnreachableMessage = 'The platform agent channel is unreachable'
     private static readonly FailedMessagePrefix = 'The platform agent channel answered HTTP '
     private static readonly RefusedMessage = 'The platform refused to adopt this version'
+    private static readonly VersionKey = 'version'
+    private static readonly TargetVersionKey = 'targetVersion'
+    private static readonly EnvironmentsKey = 'environments'
+    private static readonly IdKey = 'id'
+    private static readonly HiveMismatchMessage = 'The rollout client is bound to a different hive than the one requested'
     private static readonly MalformedMessage = 'The platform agent channel returned an unreadable response'
 
     public constructor(
@@ -36,18 +41,67 @@ export class HttpRolloutClient implements IRolloutClient
     public async ManifestsFor(_tenantId: string): Promise<readonly ManifestRecord[]>
     {
         const response = await this.Send(HttpRolloutClient.MethodGet, HttpRolloutClient.AdoptableSegment)
-        return await this.ReadJson(response) as ManifestRecord[]
+        const body = await this.ReadJson(response)
+        if (!Array.isArray(body) || !body.every(m => HttpRolloutClient.IsManifest(m)))
+        {
+            throw new RolloutUnavailableError(HttpRolloutClient.MalformedMessage)
+        }
+        return body as ManifestRecord[]
     }
 
-    public async StatusFor(_hiveId: string): Promise<HiveRolloutStatus>
+    public async StatusFor(hiveId: string): Promise<HiveRolloutStatus>
     {
+        this.AssertBoundHive(hiveId)
         const response = await this.Send(HttpRolloutClient.MethodGet, HttpRolloutClient.StatusSegment)
-        return await this.ReadJson(response) as HiveRolloutStatus
+        const body = await this.ReadJson(response)
+        if (!HttpRolloutClient.IsStatus(body))
+        {
+            throw new RolloutUnavailableError(HttpRolloutClient.MalformedMessage)
+        }
+        return body
     }
 
-    public async AdoptTarget(_hiveId: string, version: string): Promise<void>
+    public async AdoptTarget(hiveId: string, version: string): Promise<void>
     {
-        await this.Send(HttpRolloutClient.MethodPost, HttpRolloutClient.AdoptSegment, JSON.stringify({ version }))
+        this.AssertBoundHive(hiveId)
+        await this.Send(HttpRolloutClient.MethodPost, HttpRolloutClient.AdoptSegment, JSON.stringify({ [HttpRolloutClient.VersionKey]: version }))
+    }
+
+    /** The channel is per-hive: a call for any other hive would silently act on the wrong one, so it is refused. */
+    private AssertBoundHive(hiveId: string): void
+    {
+        if (hiveId !== this.hiveId)
+        {
+            throw new Error(HttpRolloutClient.HiveMismatchMessage)
+        }
+    }
+
+    private static IsManifest(m: unknown): boolean
+    {
+        return m !== null && typeof m === 'object' && typeof (m as Record<string, unknown>)[HttpRolloutClient.IdKey] === 'string'
+    }
+
+    private static IsStatus(b: unknown): b is HiveRolloutStatus
+    {
+        if (b === null || typeof b !== 'object' || Array.isArray(b))
+        {
+            return false
+        }
+        const o = b as Record<string, unknown>
+        const target = o[HttpRolloutClient.TargetVersionKey]
+        return (target === undefined || typeof target === 'string') && Array.isArray(o[HttpRolloutClient.EnvironmentsKey])
+    }
+
+    private async Drain(response: Response): Promise<void>
+    {
+        try
+        {
+            await response.arrayBuffer()
+        }
+        catch
+        {
+            // The body is discarded; a failed drain changes nothing.
+        }
     }
 
     private async Send(method: string, segment: string, body?: string): Promise<Response>
@@ -68,7 +122,7 @@ export class HttpRolloutClient implements IRolloutClient
         }
         if (!response.ok)
         {
-            await response.arrayBuffer().catch(() => undefined)
+            await this.Drain(response)
             if (response.status === HttpRolloutClient.StatusForbidden)
             {
                 throw new RolloutAdoptionRefusedError(HttpRolloutClient.RefusedMessage)

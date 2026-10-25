@@ -34,6 +34,7 @@ export class AgentChannelHost
     private static readonly NotListeningMessage = 'AgentChannelHost is not listening'
     private static readonly UnauthorizedMessage = 'Unauthorized'
     private static readonly BadRequestMessage = 'Request body must be { environments: HiveHealth[] }'
+    private static readonly VersionKey = 'version'
     private static readonly AdoptBadRequestMessage = 'Request body must be { version: string }'
     private static readonly AdoptRefusedMessage = 'Version is not adoptable for this hive'
     private static readonly BadNameMessage = 'Invalid hive id in path'
@@ -198,7 +199,7 @@ export class AgentChannelHost
         {
             return undefined
         }
-        const version = (body as { version?: unknown }).version
+        const version = (body as Record<string, unknown>)[AgentChannelHost.VersionKey]
         return typeof version === 'string' && version.length > 0 ? version : undefined
     }
 
@@ -314,6 +315,7 @@ export class AgentChannelHost
             PlaneHttp.WriteJson(res, AgentChannelHost.StatusUnauthorized, { error: AgentChannelHost.UnauthorizedMessage })
             return
         }
+        // Intentionally route-agnostic: only the adopt route can raise these (RecordAdoption's gating check).
         if (err instanceof ManifestNotGatedError || err instanceof UnknownManifestError)
         {
             PlaneHttp.WriteJson(res, AgentChannelHost.StatusForbidden, { error: AgentChannelHost.AdoptRefusedMessage })

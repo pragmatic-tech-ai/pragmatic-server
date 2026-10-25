@@ -5,7 +5,7 @@ import { HiveDtoMapper } from './hive-dto.js'
 import { HiveHealthProducer } from '../hive-health-producer.js'
 import type { EnvironmentPlacement } from '../environment-placement.js'
 import type { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
-import { RolloutUnavailableError, type IRolloutClient } from './rollout-client.js'
+import { RolloutAdoptionRefusedError, RolloutUnavailableError, type IRolloutClient } from './rollout-client.js'
 import type { ITenantDirectory } from './tenant-directory.js'
 import type { EnvironmentRecord } from '../environment-record.js'
 import { ManifestNotGatedError, UnknownHiveError, UnknownManifestError } from '../rollout-errors.js'
@@ -209,7 +209,7 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         {
             return this.WriteRolloutError(res, err)
         }
-        if (err instanceof ManifestNotGatedError)
+        if (err instanceof ManifestNotGatedError || err instanceof RolloutAdoptionRefusedError)
         {
             this.WriteJson(res, TenantApiEndpoint.StatusConflict, { [TenantApiEndpoint.ErrorKey]: TenantApiEndpoint.TargetUnavailableMessage })
             return true

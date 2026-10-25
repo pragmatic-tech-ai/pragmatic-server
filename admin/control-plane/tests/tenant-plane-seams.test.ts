@@ -11,7 +11,7 @@ import { HiveBackend, InfraMode } from '../platform-records.js'
 import type { HiveRecord, TenantRecord } from '../platform-records.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
-import type { IRolloutClient } from '../tenant-api/rollout-client.js'
+import { RolloutAdoptionRefusedError, type IRolloutClient } from '../tenant-api/rollout-client.js'
 import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
 import { TenantApiEndpoint } from '../tenant-api/tenant-api-endpoint.js'
 import { TenantHostResolver } from '../tenant-auth/tenant-host-resolver.js'
@@ -58,6 +58,15 @@ class FakeRolloutClient implements IRolloutClient
     public async AdoptTarget(hiveId: string, version: string): Promise<void>
     {
         this.Adopted.push({ hiveId, version })
+    }
+}
+
+/** A rollout client whose platform refuses every adoption, as the HTTP client reports a 403. */
+class RefusingRolloutClient extends FakeRolloutClient
+{
+    public override async AdoptTarget(_hiveId: string, _version: string): Promise<void>
+    {
+        throw new RolloutAdoptionRefusedError(Kit.RefusalMessage)
     }
 }
 
@@ -113,6 +122,7 @@ class Kit
     public static readonly HostPort = 8101
     public static readonly MethodPost = 'POST'
     public static readonly Version = 'v1'
+    public static readonly RefusalMessage = 'refused'
     public static readonly OtherTenant = 'other'
     public static readonly UnknownTenant = 'nope'
     public static readonly BaseDomain = 'admin.example.com'
@@ -184,6 +194,16 @@ describe('tenant plane depends on narrow seams', () =>
         assert.equal(handled, true)
         assert.equal(res.status, 204)
         assert.deepEqual(rollout.Adopted, [{ hiveId: Kit.Hive, version: Kit.Version }])
+    })
+
+    it('TenantApiEndpoint maps a refused adoption from the rollout client to 409, not 500', async () =>
+    {
+        const service = new FakeEnvironmentService([Kit.Env()]) as unknown as IEnvironmentService
+        const endpoint = new TenantApiEndpoint(service, Kit.Directory(), new RefusingRolloutClient(), new HiveOrchestratorFactory(), new EnvironmentPlacement(Kit.Directory()))
+        const res = Kit.Res()
+        const handled = await endpoint.Handle(Kit.PostJson({ version: Kit.Version }), res as unknown as ServerResponse, Kit.TargetPath, Kit.Session())
+        assert.equal(handled, true)
+        assert.equal(res.status, 409)
     })
 
     it('EnvironmentPlacement validates ownership against an ITenantDirectory-only fake', () =>

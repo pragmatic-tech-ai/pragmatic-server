@@ -27,6 +27,7 @@ class Fx
     public static readonly HiveA = 'hive-a'
     public static readonly V1 = '1.0.0'
     public static readonly V2 = '2.0.0'
+    public static readonly V3 = '3.0.0'
     public static readonly Env = 'prod'
     public static readonly Wrong = 'not-the-token'
     public static readonly TokenRef = 'secret://x'
@@ -303,8 +304,8 @@ test('AdoptableFor lists the versions gated for the hive tenant and rejects an u
     await Fx.Run(async reg =>
     {
         await Fx.PublishGated(reg, [Fx.V1, Fx.V2])
-        await reg.Publish('3.0.0', Fx.Image('3.0.0'))
-        await reg.Gate(Fx.TenantB, '3.0.0')
+        await reg.Publish(Fx.V3, Fx.Image(Fx.V3))
+        await reg.Gate(Fx.TenantB, Fx.V3)
         assert.deepEqual(reg.AdoptableFor(Fx.HiveA).map(m => m.id), [Fx.V1, Fx.V2])
         assert.throws(() => reg.AdoptableFor(Fx.NoHive), UnknownHiveError)
     })
