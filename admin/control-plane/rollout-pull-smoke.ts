@@ -187,6 +187,7 @@ export class RolloutPullSmoke
     private static readonly GatingFileName = 'gating.json'
     private static readonly SelectionsFileName = 'selections.json'
     private static readonly ReportsFileName = 'reports.json'
+    private static readonly ObservationsFileName = 'hive-observations.json'
     private static readonly RegistrationsFileName = 'registrations.json'
     private static readonly ClientsFileName = 'clients.json'
     private static readonly TenantsFileName = 'tenants.json'
@@ -305,8 +306,8 @@ export class RolloutPullSmoke
             const stores = await this.LoadStores()
             const placement = new EnvironmentPlacement(directory)
             // Same stores, two registries: `registry` is served to the agent; `recorder` cannot reach the cluster, so SelectTarget only records.
-            const registry = new PlatformDeploymentRegistry(stores.manifests, stores.gating, stores.selections, stores.reports, stores.registrations, directory, factory, environments, placement)
-            const recorder = new PlatformDeploymentRegistry(stores.manifests, stores.gating, stores.selections, stores.reports, stores.registrations, directory, new UnreachableFactory(S.Context, dataRoot), environments, placement)
+            const registry = new PlatformDeploymentRegistry(stores.manifests, stores.gating, stores.selections, stores.reports, stores.registrations, directory, factory, environments, placement, stores.observations)
+            const recorder = new PlatformDeploymentRegistry(stores.manifests, stores.gating, stores.selections, stores.reports, stores.registrations, directory, new UnreachableFactory(S.Context, dataRoot), environments, placement, stores.observations)
             await registry.Publish(S.VersionV1, S.ImageV1)
             await registry.Publish(S.VersionV2, S.ImageV2)
             await registry.Gate(S.TenantId, S.VersionV1)
@@ -353,7 +354,7 @@ export class RolloutPullSmoke
         return join(this.tempDir!, name)
     }
 
-    private async LoadStores(): Promise<{ manifests: ManifestRegistry; gating: GatingRegistry; selections: SelectionRegistry; reports: RolloutReportRegistry; registrations: RolloutRegistrationRegistry }>
+    private async LoadStores(): Promise<{ manifests: ManifestRegistry; gating: GatingRegistry; selections: SelectionRegistry; reports: RolloutReportRegistry; observations: HiveObservationRegistry; registrations: RolloutRegistrationRegistry }>
     {
         const S = RolloutPullSmoke
         const manifests = new ManifestRegistry(this.TempFile(S.ManifestsFileName))
@@ -361,11 +362,12 @@ export class RolloutPullSmoke
         const selections = new SelectionRegistry(this.TempFile(S.SelectionsFileName))
         const reports = new RolloutReportRegistry(this.TempFile(S.ReportsFileName))
         const registrations = new RolloutRegistrationRegistry(this.TempFile(S.RegistrationsFileName))
-        for (const store of [manifests, gating, selections, reports, registrations])
+        const observations = new HiveObservationRegistry(this.TempFile(S.ObservationsFileName))
+        for (const store of [manifests, gating, selections, reports, observations, registrations])
         {
             await store.Load()
         }
-        return { manifests, gating, selections, reports, registrations }
+        return { manifests, gating, selections, reports, observations, registrations }
     }
 
     /** Serves the real ControlPlaneHost on loopback behind the Host-rewriting proxy; returns the URL a pod uses. */

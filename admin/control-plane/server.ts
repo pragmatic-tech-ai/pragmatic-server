@@ -142,7 +142,7 @@ export class ControlPlaneServer
         const adminClientRegistry = new TenantAdminClientRegistry(join(dataRoot, ControlPlaneServer.TenantAdminClientsFile))
         await Promise.all([manifests.Load(), gating.Load(), selections.Load(), reports.Load(), observations.Load(), registrations.Load(), adminClientRegistry.Load()])
         const placement = new EnvironmentPlacement(directory)
-        const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, reports, registrations, directory, orchestrators, registry, placement)
+        const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, reports, registrations, directory, orchestrators, registry, placement, observations)
         const provisioning = new TenantProvisioningService(idpService, directory, conn => new IdpAdminClient(conn))
         const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])

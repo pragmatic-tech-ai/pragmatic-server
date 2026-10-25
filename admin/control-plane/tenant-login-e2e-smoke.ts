@@ -54,6 +54,7 @@ import { NetPortProbe, PortAllocator } from './port-allocator.js'
 import { ManifestRegistry } from './manifest-record.js'
 import { GatingRegistry } from './gating-record.js'
 import { SelectionRegistry } from './selection-record.js'
+import { HiveObservationRegistry } from './hive-observation-record.js'
 import { RolloutReportRegistry } from './rollout-report-record.js'
 import { RolloutRegistrationRegistry } from './rollout-registration-record.js'
 import { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
@@ -129,6 +130,7 @@ export class TenantLoginE2eSmoke
     private static readonly GatingFile = 'gating.json'
     private static readonly SelectionsFile = 'selections.json'
     private static readonly ReportsFile = 'rollout-reports.json'
+    private static readonly ObservationsFile = 'hive-observations.json'
     private static readonly RegistrationsFile = 'rollout-registrations.json'
     private static readonly TenantAdminClientsFile = 'tenant-admin-clients.json'
 
@@ -499,7 +501,9 @@ export class TenantLoginE2eSmoke
         const adminClientRegistry = new TenantAdminClientRegistry(join(this.dataRoot, S.TenantAdminClientsFile))
         await Promise.all([manifests.Load(), gating.Load(), selections.Load(), reports.Load(), registrations.Load(), adminClientRegistry.Load()])
         const placement = new EnvironmentPlacement(directory)
-        const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, reports, registrations, directory, orchestrators, environments, placement)
+        const observations = new HiveObservationRegistry(join(this.dataRoot, S.ObservationsFile))
+        await observations.Load()
+        const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, reports, registrations, directory, orchestrators, environments, placement, observations)
         return { directory, idpService, service, environments, deployments, orchestrators, placement, adminClientRegistry }
     }
 

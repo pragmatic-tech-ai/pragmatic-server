@@ -169,8 +169,9 @@ describe('ControlPlaneHost agent routes (machine credential)', () =>
         await Harness.Send(host, 'POST', '/api/hives/local1/target', { cookie: true, body: { version: '1.0.0' } })
         const reply = await Harness.Send(host, 'POST', ReportPath, { authorization: 'Bearer ' + token, body: Report })
         assert.equal(reply.status, 204)
+        // The operator rollout view now derives from snapshot observations (the legacy per-env report path is retired in a later task).
         const status = JSON.parse((await Harness.Send(host, 'GET', RolloutPath, { cookie: true })).body) as { environments: unknown[] }
-        assert.deepEqual(status.environments, [{ environmentName: 'prod', runningImage: 'img:1', obsolete: false, ready: true }])
+        assert.deepEqual(status.environments, [])
     })
 
     it('rejects a report with a bad bearer (nothing recorded) and a malformed body with 400', async () =>

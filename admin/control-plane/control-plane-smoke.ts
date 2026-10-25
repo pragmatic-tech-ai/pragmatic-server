@@ -267,9 +267,10 @@ export class ControlPlaneSmoke
         const selections = new SelectionRegistry(join(dataRoot, ControlPlaneSmoke.SelectionsFile))
         const reports = new RolloutReportRegistry(join(dataRoot, ControlPlaneSmoke.ReportsFile))
         const registrations = new RolloutRegistrationRegistry(join(dataRoot, ControlPlaneSmoke.RegistrationsFile))
-        await Promise.all([manifests.Load(), gating.Load(), selections.Load(), reports.Load(), registrations.Load()])
-        const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, reports, registrations, directory, orchestrators, registry, new EnvironmentPlacement(directory))
-        const host = new ControlPlaneHost(service, new GraphService(registry, proxy, name => service.AdminInfoFor(name)), staticRoot, operator, false, directory, deployments, {} as TenantProvisioningService, new HiveObservationRegistry(join(dataRoot, ControlPlaneSmoke.UnusedObservationsFile)))
+        const observations = new HiveObservationRegistry(join(dataRoot, ControlPlaneSmoke.UnusedObservationsFile))
+        await Promise.all([manifests.Load(), gating.Load(), selections.Load(), reports.Load(), observations.Load(), registrations.Load()])
+        const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, reports, registrations, directory, orchestrators, registry, new EnvironmentPlacement(directory), observations)
+        const host = new ControlPlaneHost(service, new GraphService(registry, proxy, name => service.AdminInfoFor(name)), staticRoot, operator, false, directory, deployments, {} as TenantProvisioningService, observations)
         try
         {
             await host.Listen(0, ControlPlaneSmoke.LoopbackHost)

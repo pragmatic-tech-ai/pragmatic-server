@@ -38,6 +38,7 @@ import { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
 import { PlatformDirectory } from './platform-directory.js'
 import { HiveBackend, InfraMode } from './platform-records.js'
 import { RolloutRegistrationRegistry } from './rollout-registration-record.js'
+import { HiveObservationRegistry } from './hive-observation-record.js'
 import { RolloutReportRegistry } from './rollout-report-record.js'
 import { SelectionRegistry } from './selection-record.js'
 import { FileSignatureStore } from './signature-store.js'
@@ -80,6 +81,7 @@ export class RolloutPushSmoke
     private static readonly GatingFileName = 'gating.json'
     private static readonly SelectionsFileName = 'selections.json'
     private static readonly ReportsFileName = 'reports.json'
+    private static readonly ObservationsFileName = 'hive-observations.json'
     private static readonly RegistrationsFileName = 'registrations.json'
     private static readonly ClientsFileName = 'clients.json'
     private static readonly TenantsFileName = 'tenants.json'
@@ -216,11 +218,12 @@ export class RolloutPushSmoke
         const selections = new SelectionRegistry(this.TempFile(S.SelectionsFileName))
         const reports = new RolloutReportRegistry(this.TempFile(S.ReportsFileName))
         const registrations = new RolloutRegistrationRegistry(this.TempFile(S.RegistrationsFileName))
-        for (const store of [manifests, gating, selections, reports, registrations])
+        const observations = new HiveObservationRegistry(this.TempFile(S.ObservationsFileName))
+        for (const store of [manifests, gating, selections, reports, observations, registrations])
         {
             await store.Load()
         }
-        return new PlatformDeploymentRegistry(manifests, gating, selections, reports, registrations, directory, factory, environments, new EnvironmentPlacement(directory))
+        return new PlatformDeploymentRegistry(manifests, gating, selections, reports, registrations, directory, factory, environments, new EnvironmentPlacement(directory), new HiveObservationRegistry(this.TempFile(S.ObservationsFileName)))
     }
 
     /**

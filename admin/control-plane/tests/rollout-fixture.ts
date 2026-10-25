@@ -33,7 +33,8 @@ export class RolloutFixture
         const selections = new SelectionRegistry(join(dir, RolloutFixture.SelectionsFile))
         const reports = new RolloutReportRegistry(join(dir, RolloutFixture.ReportsFile))
         const registrations = new RolloutRegistrationRegistry(join(dir, RolloutFixture.RegistrationsFile))
-        await Promise.all([manifests.Load(), gating.Load(), selections.Load(), reports.Load(), registrations.Load()])
-        return new PlatformDeploymentRegistry(manifests, gating, selections, reports, registrations, directory, orchestrators, { List: () => [] }, new EnvironmentPlacement(directory))
+        const observations = RolloutFixture.Observations(dir)
+        await Promise.all([manifests.Load(), gating.Load(), selections.Load(), reports.Load(), observations.Load(), registrations.Load()])
+        return new PlatformDeploymentRegistry(manifests, gating, selections, reports, registrations, directory, orchestrators, { List: () => [] }, new EnvironmentPlacement(directory), observations)
     }
 }
