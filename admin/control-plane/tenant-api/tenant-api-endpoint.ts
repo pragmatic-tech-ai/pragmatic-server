@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import type { IEnvironmentService } from '../control-plane-host.js'
+import type { IEnvironmentService, MakerTokenDto } from '../control-plane-host.js'
 import { EnvironmentDtoMapper } from '../environment-dto.js'
 import { HiveDtoMapper } from './hive-dto.js'
 import { HiveHealthProducer } from '../hive-health-producer.js'
@@ -506,7 +506,8 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
             if (m[2] === TenantApiEndpoint.MakerTokenLeaf)
             {
                 const issued = await this.service.AdminIssueMakerToken(rec.name)
-                this.WriteJson(res, TenantApiEndpoint.StatusCreated, { token: issued.token, principalId: issued.principalId, expiresAt: issued.expiresAt })
+                const dto: MakerTokenDto = { token: issued.token, principalId: issued.principalId, expiresAt: issued.expiresAt }
+                this.WriteJson(res, TenantApiEndpoint.StatusCreated, dto)
             }
             else
             {
