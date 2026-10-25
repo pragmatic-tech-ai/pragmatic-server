@@ -1,3 +1,5 @@
+import { IdpStatus } from './idp-record.js'
+import type { IdpRecord } from './idp-record.js'
 import type { IdpRegistry } from './idp-registry.js'
 import type { IdpConnection, IIdpWorkloadDriver } from './idp-workload-driver.js'
 
@@ -59,12 +61,27 @@ export class IdpService implements IIdpService
     {
         await this.registry.Load()
         const existing = this.registry.Get(tenantId)
-        const takenPorts = this.registry.List().map(r => r.port)
+        // Only the launch path allocates a port; reuse/recover keep the record's own.
+        const launching = existing === undefined || existing.status !== IdpStatus.Running
+        const takenPorts = launching ? this.registry.List().map(r => r.port) : []
         const result = await this.driver.EnsureRunning({ tenantId, displayName, existing, takenPorts })
         if (result.record !== existing)
         {
-            await this.registry.Put(result.record)
+            await this.PersistOrDiscard(result.record)
         }
         return result.connection
+    }
+
+    private async PersistOrDiscard(record: IdpRecord): Promise<void>
+    {
+        try
+        {
+            await this.registry.Put(record)
+        }
+        catch (err)
+        {
+            await this.driver.Discard(record)
+            throw err
+        }
     }
 }

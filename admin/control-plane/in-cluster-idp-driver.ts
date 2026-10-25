@@ -1,5 +1,6 @@
 import { IdpStatus } from './idp-record.js'
 import type { IdpRecord } from './idp-record.js'
+import { IdpDriverMessages } from './idp-workload-driver.js'
 import type { IIdpWorkloadDriver, IdpWorkloadRequest, IdpWorkloadResult, IdpWorkloadSpec } from './idp-workload-driver.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import type { IKubectl } from './kubectl.js'
@@ -26,7 +27,6 @@ export class InClusterIdpDriver implements IIdpWorkloadDriver
 {
     private static readonly IdpPort = 9443
     private static readonly ApplyFailed = 'In-cluster IdP apply failed for tenant '
-    private static readonly Sep = ': '
 
     public constructor(
         private readonly kubectl: IKubectl,
@@ -54,14 +54,28 @@ export class InClusterIdpDriver implements IIdpWorkloadDriver
         catch (err)
         {
             // Message only (KubectlError already redacts); the seeded token / CA are never part of it.
-            const detail = err instanceof Error ? err.message : String(err)
-            throw new Error(`${InClusterIdpDriver.ApplyFailed}${tenantId}${InClusterIdpDriver.Sep}${detail}`)
+            const detail = IdpDriverMessages.Detail(err)
+            throw new Error(`${InClusterIdpDriver.ApplyFailed}${tenantId}${IdpDriverMessages.Separator}${detail}`)
         }
         const baseUrl = K8sManifestBuilder.IdpBaseUrlOf(tenantId, InClusterIdpDriver.IdpPort)
-        const record: IdpRecord = request.existing ?? {
-            tenantId, port: InClusterIdpDriver.IdpPort, baseUrl, containerName: name, volumeName: K8sManifestBuilder.IdpClaimNameOf(tenantId),
-            caDir: seed.caRef, adminTokenRef: seed.adminTokenRef, createdAt: new Date().toISOString(), status: IdpStatus.Running
-        }
+        const record = this.RecordFor(request.existing, tenantId, baseUrl, name, seed)
         return { connection: { baseUrl, ca: seed.ca, adminToken: seed.adminToken, adminTokenRef: seed.adminTokenRef, caDir: seed.caRef }, record }
+    }
+
+    /** In-cluster Discard is a no-op: apply is idempotent and the workload is reconciled on the next call. */
+    public async Discard(): Promise<void>
+    {
+    }
+
+    /** Rebuilds the record for the in-cluster connection; a matching existing record is returned as-is (no re-persist), a stale one (e.g. a docker baseUrl) is replaced. */
+    private RecordFor(existing: IdpRecord | undefined, tenantId: string, baseUrl: string, name: string, seed: IdpSeed): IdpRecord
+    {
+        const fresh: IdpRecord = {
+            tenantId, port: InClusterIdpDriver.IdpPort, baseUrl, containerName: name, volumeName: K8sManifestBuilder.IdpClaimNameOf(tenantId),
+            caDir: seed.caRef, adminTokenRef: seed.adminTokenRef, createdAt: existing?.createdAt ?? new Date().toISOString(), status: IdpStatus.Running
+        }
+        const same = existing !== undefined && existing.port === fresh.port && existing.baseUrl === fresh.baseUrl && existing.containerName === fresh.containerName
+            && existing.volumeName === fresh.volumeName && existing.caDir === fresh.caDir && existing.adminTokenRef === fresh.adminTokenRef && existing.status === fresh.status
+        return same ? existing : fresh
     }
 }

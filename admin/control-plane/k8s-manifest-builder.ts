@@ -1,4 +1,5 @@
 import type { EnvironmentWorkload, WorkloadDatabase } from './environment-workload.js'
+import { IdpContainerEnv } from './idp-container-env.js'
 import type { IdpWorkloadSpec } from './idp-workload-driver.js'
 
 type K8sObject = Record<string, unknown>
@@ -111,7 +112,7 @@ export class K8sManifestBuilder
     private static readonly HiveAgentPrefix = 'pragmatic-hive-'
 
     // IdP workload conventions.
-    private static readonly IdpPrefix = 'pragmatic-idp-'
+    private static readonly IdpPrefix = IdpContainerEnv.NamePrefix
     private static readonly IdpContainerName = 'idp'
     private static readonly IdpEntrypoint = ['node', 'dist/bin/pragmatic-idpd.js']
     private static readonly IdpDataMount = '/idp-data'
@@ -133,7 +134,7 @@ export class K8sManifestBuilder
     private static readonly IdpSecretsVolume = 'secrets'
     private static readonly TmpVolume = 'tmp'
     private static readonly IdpDataSize = '256Mi'
-    private static readonly SecretFileMode = 0o400
+    private static readonly SecretFileMode = 0o440
     private static readonly PersistentVolumeClaimKind = 'PersistentVolumeClaim'
     private static readonly VolumesKey = 'volumes'
     private static readonly SecretKey = 'secret'
@@ -145,6 +146,16 @@ export class K8sManifestBuilder
     private static readonly ReadOnlyKey = 'readOnly'
     private static readonly SchemeKey = 'scheme'
     private static readonly SecurityContextKey = 'securityContext'
+    private static readonly RunAsNonRootKey = 'runAsNonRoot'
+    private static readonly RunAsUserKey = 'runAsUser'
+    private static readonly FsGroupKey = 'fsGroup'
+    private static readonly CapabilitiesKey = 'capabilities'
+    private static readonly DropKey = 'drop'
+    private static readonly AllCapabilities = 'ALL'
+    private static readonly SeccompProfileKey = 'seccompProfile'
+    private static readonly RuntimeDefault = 'RuntimeDefault'
+    /** Non-root uid the IdP image runs as (the 'node' user); also the pod fsGroup so the PVC is writable and 0440 secrets readable. */
+    private static readonly IdpUid = 1000
     private static readonly AllowPrivilegeEscalationKey = 'allowPrivilegeEscalation'
     private static readonly ReadOnlyRootFilesystemKey = 'readOnlyRootFilesystem'
     private static readonly AutomountTokenKey = 'automountServiceAccountToken'
@@ -358,7 +369,7 @@ export class K8sManifestBuilder
             this.IdpServiceAccount(spec),
             this.IdpClaim(spec),
             this.IdpDeployment(spec),
-            this.IdpService(spec),
+            this.IdpServiceObject(spec),
         ]
         return JSON.stringify({
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
@@ -439,6 +450,7 @@ export class K8sManifestBuilder
                     [K8sManifestBuilder.SpecKey]: {
                         [K8sManifestBuilder.ServiceAccountNameKey]: name,
                         [K8sManifestBuilder.AutomountTokenKey]: false,
+                        [K8sManifestBuilder.SecurityContextKey]: { [K8sManifestBuilder.FsGroupKey]: K8sManifestBuilder.IdpUid },
                         [K8sManifestBuilder.ContainersKey]: [this.IdpContainer(spec)],
                         [K8sManifestBuilder.VolumesKey]: [
                             {
@@ -464,7 +476,11 @@ export class K8sManifestBuilder
             [K8sManifestBuilder.CommandKey]: K8sManifestBuilder.IdpEntrypoint,
             [K8sManifestBuilder.PortsKey]: [{ [K8sManifestBuilder.ContainerPortKey]: spec.port }],
             [K8sManifestBuilder.SecurityContextKey]: {
+                [K8sManifestBuilder.RunAsNonRootKey]: true,
+                [K8sManifestBuilder.RunAsUserKey]: K8sManifestBuilder.IdpUid,
                 [K8sManifestBuilder.AllowPrivilegeEscalationKey]: false,
+                [K8sManifestBuilder.CapabilitiesKey]: { [K8sManifestBuilder.DropKey]: [K8sManifestBuilder.AllCapabilities] },
+                [K8sManifestBuilder.SeccompProfileKey]: { [K8sManifestBuilder.TypeKey]: K8sManifestBuilder.RuntimeDefault },
                 [K8sManifestBuilder.ReadOnlyRootFilesystemKey]: true,
             },
             [K8sManifestBuilder.EnvKey]: [
@@ -490,7 +506,7 @@ export class K8sManifestBuilder
         }
     }
 
-    private IdpService(spec: IdpWorkloadSpec): K8sObject
+    private IdpServiceObject(spec: IdpWorkloadSpec): K8sObject
     {
         const name = K8sManifestBuilder.IdpNameOf(spec.tenantId)
         return {

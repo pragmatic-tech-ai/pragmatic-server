@@ -217,6 +217,13 @@ describe('K8sManifestBuilder.RenderIdp', () =>
         const secretNames = pod.volumes.filter((v: any) => v.secret).map((v: any) => v.secret.secretName).sort()
         assert.deepEqual(secretNames, ['idp-admin-secret', 'idp-tls-secret'])
         assert.equal(pod.automountServiceAccountToken, false)
+        assert.equal(pod.securityContext.fsGroup, 1000)
+        assert.equal(pod.volumes.find((v: any) => v.secret).secret.defaultMode, 0o440)
+        const sc = pod.containers[0].securityContext
+        assert.equal(sc.runAsNonRoot, true)
+        assert.equal(sc.runAsUser, 1000)
+        assert.deepEqual(sc.capabilities.drop, ['ALL'])
+        assert.equal(sc.seccompProfile.type, 'RuntimeDefault')
         assert.equal(pod.containers[0].securityContext.allowPrivilegeEscalation, false)
         assert.equal(pod.containers[0].securityContext.readOnlyRootFilesystem, true)
         const env = pod.containers[0].env

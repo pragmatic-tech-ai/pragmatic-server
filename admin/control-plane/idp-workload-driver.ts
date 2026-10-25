@@ -30,6 +30,9 @@ export interface IdpWorkloadResult
 export interface IIdpWorkloadDriver
 {
     EnsureRunning(request: IdpWorkloadRequest): Promise<IdpWorkloadResult>
+
+    /** Rolls back a record this driver just CREATED (never a reused/recovered one) when persisting it failed. */
+    Discard(record: IdpRecord): Promise<void>
 }
 
 /** What the in-cluster IdP workload is rendered from. Secrets are referenced by Secret object name only. */
@@ -44,4 +47,15 @@ export interface IdpWorkloadSpec
     adminTokenRef: string
     /** Secret holding ca.crt / server.crt / server.key (mounted at <data>/tls). */
     tlsSecretName: string
+}
+
+/** Shared message plumbing for driver errors: only the message is forwarded, so secret material never reaches an error. */
+export class IdpDriverMessages
+{
+    public static readonly Separator = ': '
+
+    public static Detail(err: unknown): string
+    {
+        return err instanceof Error ? err.message : String(err)
+    }
 }

@@ -5,6 +5,7 @@ import { DevCa } from '../../src/idp/dev-ca.js'
 import { IdpContainerEnv } from './idp-container-env.js'
 import { IdpStatus } from './idp-record.js'
 import type { IdpRecord } from './idp-record.js'
+import { IdpDriverMessages } from './idp-workload-driver.js'
 import type { IdpConnection, IIdpWorkloadDriver, IdpWorkloadRequest, IdpWorkloadResult } from './idp-workload-driver.js'
 import type { PortAllocator } from './port-allocator.js'
 
@@ -16,8 +17,7 @@ export class DockerIdpDriver implements IIdpWorkloadDriver
     private static readonly SecretsDirName = 'secrets'
     private static readonly CaFileName = 'ca.crt'
     private static readonly AdminTokenRef = 'admin-token'
-    private static readonly CertHost = 'host.docker.internal'
-    private static readonly VolumePrefix = 'pragmatic-idp-data-'
+    private static readonly VolumePrefix = `${IdpContainerEnv.NamePrefix}data-`
     private static readonly TokenBytes = 32
     private static readonly TokenEncoding = 'base64url'
     private static readonly FileEncoding = 'utf8'
@@ -25,7 +25,6 @@ export class DockerIdpDriver implements IIdpWorkloadDriver
     private static readonly ReuseAttempts = 3
     private static readonly ReuseIntervalMs = 500
     private static readonly LaunchFailed = 'IdP launch failed for tenant '
-    private static readonly LaunchFailedSep = ': '
     private static readonly RecoverFailed = 'IdP recovery failed for tenant (its identity volume was preserved) '
 
     public constructor(
@@ -75,8 +74,8 @@ export class DockerIdpDriver implements IIdpWorkloadDriver
         catch (err)
         {
             // Only the message is forwarded: the admin token is never part of any message or logged.
-            const detail = err instanceof Error ? err.message : String(err)
-            throw new Error(`${DockerIdpDriver.RecoverFailed}${record.tenantId}${DockerIdpDriver.LaunchFailedSep}${detail}`)
+            const detail = IdpDriverMessages.Detail(err)
+            throw new Error(`${DockerIdpDriver.RecoverFailed}${record.tenantId}${IdpDriverMessages.Separator}${detail}`)
         }
     }
 
@@ -118,7 +117,7 @@ export class DockerIdpDriver implements IIdpWorkloadDriver
         const tlsDir = join(dir, DockerIdpDriver.TlsDirName)
         try
         {
-            const files = DevCa.EnsureAt(tlsDir, DockerIdpDriver.CertHost, this.openssl)
+            const files = DevCa.EnsureAt(tlsDir, IdpContainerEnv.ContainerHost, this.openssl)
             const ca = readFileSync(files.caFile)
             const adminToken = randomBytes(DockerIdpDriver.TokenBytes).toString(DockerIdpDriver.TokenEncoding)
             const secretsDir = join(dir, DockerIdpDriver.SecretsDirName)
@@ -141,9 +140,15 @@ export class DockerIdpDriver implements IIdpWorkloadDriver
             await this.Cleanup(containerName, volumeName)
             rmSync(dir, { recursive: true, force: true })
             // Only the message is forwarded: the admin token is never part of any message or logged.
-            const detail = err instanceof Error ? err.message : String(err)
-            throw new Error(`${DockerIdpDriver.LaunchFailed}${tenantId}${DockerIdpDriver.LaunchFailedSep}${detail}`)
+            const detail = IdpDriverMessages.Detail(err)
+            throw new Error(`${DockerIdpDriver.LaunchFailed}${tenantId}${IdpDriverMessages.Separator}${detail}`)
         }
+    }
+
+    public async Discard(record: IdpRecord): Promise<void>
+    {
+        await this.Cleanup(record.containerName, record.volumeName)
+        rmSync(this.TenantDir(record.tenantId), { recursive: true, force: true })
     }
 
     private async Cleanup(containerName: string, volumeName: string): Promise<void>

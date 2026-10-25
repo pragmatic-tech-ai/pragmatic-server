@@ -74,6 +74,19 @@ describe('InClusterIdpDriver', () =>
         assert.ok(!kubectl.Applied[0]!.includes(FakeSeeds.Ca))
     })
 
+    it('replaces a stale (docker) existing record but returns a matching one as-is', async () =>
+    {
+        const driver = Make(new FakeKubectl())
+        const first = await driver.EnsureRunning({ tenantId: 't1', displayName: 'T', takenPorts: [] })
+        const same = await driver.EnsureRunning({ tenantId: 't1', displayName: 'T', takenPorts: [], existing: first.record })
+        assert.equal(same.record, first.record)
+        const stale = { ...first.record, baseUrl: 'https://host.docker.internal:12100', port: 12100 }
+        const rebuilt = await driver.EnsureRunning({ tenantId: 't1', displayName: 'T', takenPorts: [], existing: stale })
+        assert.notEqual(rebuilt.record, stale)
+        assert.equal(rebuilt.record.baseUrl, first.record.baseUrl)
+        assert.equal(rebuilt.record.createdAt, stale.createdAt)
+    })
+
     it('apply failure surfaces a fixed message without secret material', async () =>
     {
         const kubectl = new FakeKubectl()

@@ -7,6 +7,7 @@ import { IdpService } from '../idp-service.js'
 import { DockerIdpDriver } from '../docker-idp-driver.js'
 import type { IIdpWorkloadDriver, IdpWorkloadRequest, IdpWorkloadResult } from '../idp-workload-driver.js'
 import { IdpStatus } from '../idp-record.js'
+import type { IdpRecord } from '../idp-record.js'
 import { IdpRegistry } from '../idp-registry.js'
 import type { IdpContainerEnv, IdpContainerSpec } from '../idp-container-env.js'
 import type { PortAllocator } from '../port-allocator.js'
@@ -238,6 +239,13 @@ class FakeDriver implements IIdpWorkloadDriver
     public static readonly SecretCa = 'CA-SECRET-BYTES'
     public Requests: IdpWorkloadRequest[] = []
     public Fail = false
+    public Discarded: string[] = []
+    public Reuse = false
+
+    public async Discard(record: { tenantId: string }): Promise<void>
+    {
+        this.Discarded.push(record.tenantId)
+    }
 
     public async EnsureRunning(request: IdpWorkloadRequest): Promise<IdpWorkloadResult>
     {
@@ -245,6 +253,10 @@ class FakeDriver implements IIdpWorkloadDriver
         if (this.Fail)
         {
             throw new Error('driver exploded')
+        }
+        if (this.Reuse && request.existing !== undefined)
+        {
+            return { record: request.existing, connection: { baseUrl: request.existing.baseUrl, ca: Buffer.from(FakeDriver.SecretCa), adminToken: FakeDriver.SecretToken, adminTokenRef: request.existing.adminTokenRef, caDir: request.existing.caDir } }
         }
         const record = {
             tenantId: request.tenantId, port: 8443, baseUrl: 'https://idp.svc:8443', containerName: 'c', volumeName: 'v',
@@ -301,6 +313,62 @@ test('driver failure persists nothing, propagates, and no secret material reache
         const persisted = readFileSync(join(root, 'idps.json'), 'utf8')
         assert.ok(!persisted.includes(FakeDriver.SecretToken))
         assert.ok(!persisted.includes(FakeDriver.SecretCa))
+    }
+    finally
+    {
+        rmSync(root, { recursive: true, force: true })
+    }
+})
+
+class ThrowingRegistry extends IdpRegistry
+{
+    public PutCalls = 0
+    public FailPut = false
+
+    public override async Put(record: IdpRecord): Promise<void>
+    {
+        this.PutCalls++
+        if (this.FailPut)
+        {
+            throw new Error('disk full')
+        }
+        await super.Put(record)
+    }
+}
+
+test('Put failure after a create discards the new record via the driver, then rethrows', async () =>
+{
+    const root = mkdtempSync(join(tmpdir(), 'idpsvc-drv-'))
+    try
+    {
+        const registry = new ThrowingRegistry(join(root, 'idps.json'))
+        registry.FailPut = true
+        const driver = new FakeDriver()
+        const service = new IdpService(registry, driver)
+        await assert.rejects(() => service.EnsureForTenant('t9', 'T'), /disk full/)
+        assert.deepEqual(driver.Discarded, ['t9'])
+    }
+    finally
+    {
+        rmSync(root, { recursive: true, force: true })
+    }
+})
+
+test('reuse of an existing record neither re-Puts nor Discards', async () =>
+{
+    const root = mkdtempSync(join(tmpdir(), 'idpsvc-drv-'))
+    try
+    {
+        const registry = new ThrowingRegistry(join(root, 'idps.json'))
+        const driver = new FakeDriver()
+        driver.Reuse = true
+        const service = new IdpService(registry, driver)
+        await service.EnsureForTenant('t9', 'T')
+        assert.equal(registry.PutCalls, 1)
+        registry.FailPut = true
+        await service.EnsureForTenant('t9', 'T')
+        assert.equal(registry.PutCalls, 1)
+        assert.deepEqual(driver.Discarded, [])
     }
     finally
     {

@@ -47,9 +47,9 @@ export class ExecFileDockerExec implements IDockerExec
 /** Docker lifecycle for one per-tenant pragmatic-idp container, run from the server image with the IdP entrypoint. */
 export class IdpContainerEnv
 {
-    private static readonly NamePrefix = 'pragmatic-idp-'
+    public static readonly NamePrefix = 'pragmatic-idp-'
     private static readonly DataMount = '/idp-data'
-    private static readonly ContainerHost = 'host.docker.internal'
+    public static readonly ContainerHost = 'host.docker.internal'
     private static readonly HostGateway = 'host-gateway'
     private static readonly BindAll = '0.0.0.0'
     private static readonly Script = 'dist/bin/pragmatic-idpd.js'
