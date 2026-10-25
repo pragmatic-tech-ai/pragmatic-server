@@ -78,6 +78,11 @@ export class InClusterEnvironmentRuntime implements IEnvironmentRuntime
     {
     }
 
+    public PublishesHostPort(): boolean
+    {
+        return false
+    }
+
     public EnsureImage(_def: EnvDefinition): Promise<boolean>
     {
         return Promise.resolve(true)

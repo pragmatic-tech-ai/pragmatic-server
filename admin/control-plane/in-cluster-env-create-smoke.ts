@@ -15,9 +15,10 @@
  * workload carries only PRAGMATIC_PORT, but the served server needs a base dir, tenant source and master key.
  * Exactly as k8s-hive-smoke.ts does, this smoke injects a throwaway per-run boot config (random master key as a
  * plain env var in a throwaway namespace) via a smoke-only EnvironmentPlacement subclass so the pod can reach
- * Ready. Likewise per-env OIDC federation (Federate) is not yet in-cluster aware; the smoke supplies a stub IdP
- * service so Create's federation step does not need a docker IdP. Image provenance fails closed, so the effective
- * image ref is signed with a throwaway Ed25519 key into temp stores that the real factory reads.
+ * Ready. In-cluster create does NOT federate (per-env OIDC federation is deferred in-cluster), so NO IdP is
+ * contacted; an UncontactedIdpService guard proves it (any federation attempt would throw and fail the smoke).
+ * Image provenance fails closed, so the effective image ref is signed with a throwaway Ed25519 key into temp stores
+ * that the real factory reads.
  */
 import { generateKeyPairSync, randomBytes } from 'node:crypto'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
@@ -81,21 +82,25 @@ class BootConfigPlacement extends EnvironmentPlacement
     }
 }
 
-/** Smoke-only IdP stand-in: federation is not in-cluster aware yet, and the smoke must not need a docker IdP. */
-class StubIdpService implements IIdpService
+/**
+ * In-cluster create does NOT federate (per-env OIDC federation is deferred in-cluster), so no IdP is contacted. This
+ * guard proves it: were federation ever reached, the call would throw and fail the smoke. The smoke needs no docker IdP.
+ */
+class UncontactedIdpService implements IIdpService
 {
-    private static readonly BaseUrl = 'https://idp.smoke.invalid'
-    private static readonly Placeholder = 'smoke'
+    private static readonly Message = 'in-cluster create must not contact the IdP: federation is deferred in-cluster'
 
     public EnsureForTenant(_tenantId: string, _displayName: string): Promise<IdpConnection>
     {
-        const S = StubIdpService
-        return Promise.resolve({ baseUrl: S.BaseUrl, ca: Buffer.alloc(0), adminToken: S.Placeholder, adminTokenRef: S.Placeholder, caDir: S.Placeholder })
+        return Promise.reject(new Error(UncontactedIdpService.Message))
     }
 
     public static ClientFactory(): (conn: IdpConnection) => IdpAdminClient
     {
-        return () => ({ RegisterClient: () => Promise.resolve() }) as unknown as IdpAdminClient
+        return () =>
+        {
+            throw new Error(UncontactedIdpService.Message)
+        }
     }
 }
 
@@ -241,13 +246,13 @@ export class InClusterEnvCreateSmoke
         return new EnvironmentService(
             registry,
             new PortAllocator(S.EnvPortFloor, new NetPortProbe()),
-            new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(orchestrators, placement, directory)),
+            new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(orchestrators, placement, directory), directory, orchestrators),
             new UserSeederAdapter(new UserSeeder()),
             dataRoot,
             new AdminProxy(new WsAdminConnector()),
             directory,
-            new StubIdpService(),
-            StubIdpService.ClientFactory())
+            new UncontactedIdpService(),
+            UncontactedIdpService.ClientFactory())
     }
 
     private async WriteKeyPair(keysDir: string, ref: string): Promise<void>

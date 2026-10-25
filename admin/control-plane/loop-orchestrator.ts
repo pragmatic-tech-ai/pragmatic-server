@@ -338,7 +338,7 @@ export class LoopOrchestrator
         const allocator = new PortAllocator(LoopOrchestrator.EnvPortFloor, new NetPortProbe())
         const proxy = new AdminProxy(new WsAdminConnector())
         const idpService = new IdpService(new IdpRegistry(join(dataRoot, LoopOrchestrator.IdpsFile)), new DockerIdpDriver(new PortAllocator(LoopOrchestrator.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), dataRoot, DockerEnv.ImageName))
-        const service = new EnvironmentService(registry, allocator, new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(new HiveOrchestratorFactory(), new EnvironmentPlacement(directory), directory)), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn))
+        const service = new EnvironmentService(registry, allocator, new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(new HiveOrchestratorFactory(), new EnvironmentPlacement(directory), directory), directory, new HiveOrchestratorFactory()), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn))
         const graphs = new GraphService(registry, proxy, name => service.AdminInfoFor(name))
         return new LoopOrchestrator(service, graphs, new SeederLoopLogin(), logger, dataRoot, new PgLoopDatabase(service))
     }

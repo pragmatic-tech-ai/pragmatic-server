@@ -493,7 +493,7 @@ export class TenantLoginE2eSmoke
         this.idpRegistry = new IdpRegistry(join(this.dataRoot, S.IdpsFile))
         const idpService = new IdpService(this.idpRegistry, new DockerIdpDriver(new PortAllocator(S.IdpPortFloor, new NetPortProbe()), this.idpContainers, this.dataRoot, DockerEnv.ImageName))
         const service = new EnvironmentService(
-            environments, new PortAllocator(S.EnvPortFloor, new NetPortProbe()), new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(new HiveOrchestratorFactory(), new EnvironmentPlacement(directory), directory)), new UserSeederAdapter(new UserSeeder()),
+            environments, new PortAllocator(S.EnvPortFloor, new NetPortProbe()), new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(new HiveOrchestratorFactory(), new EnvironmentPlacement(directory), directory), directory, new HiveOrchestratorFactory()), new UserSeederAdapter(new UserSeeder()),
             this.dataRoot, new AdminProxy(new WsAdminConnector()), directory, idpService, conn => new IdpAdminClient(conn))
         const orchestrators = new HiveOrchestratorFactory(S.K8sContext, join(this.dataRoot, S.OrchestratorDir))
         const manifests = new ManifestRegistry(join(this.dataRoot, S.ManifestsFile))

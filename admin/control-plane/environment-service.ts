@@ -135,6 +135,8 @@ export class EnvironmentService
     private static readonly AppReaderRoleName = 'Viewer'
     /** One hour: a maker token is short-lived, so a leaked one expires quickly; callers re-mint on demand. */
     private static readonly MakerTokenTtlSeconds = 3600
+    /** Placeholder host port fed to TemplateCatalog.Resolve for a DNS-reached (in-cluster) env, which never publishes one. */
+    private static readonly NoHostPort = 0
 
     /** Safe names with a Create currently running; closes the race between the existence check and the final registry Put. */
     private readonly inFlight = new Set<string>()
@@ -216,24 +218,22 @@ export class EnvironmentService
         this.inFlight.add(safe)
         try
         {
-            const taken = this.registry.List().map(r => r.hostPort).filter((p): p is number => p !== undefined)
-            let port: number
-            if (hostPort !== undefined)
-            {
-                await this.allocator.Check(hostPort, taken)
-                port = hostPort
-            }
-            else
-            {
-                port = await this.allocator.Allocate(taken)
-            }
-            const { def, seedDir } = TemplateCatalog.Resolve(template, safe, port, type)
-            const bundleDir = join(this.dataRoot, def.name)
+            // Select the runtime from the hive binding BEFORE any side effect: an unsupported hive backend throws
+            // UnsupportedBackendError RAW here, so no port is allocated, no bundle written, and no Failed record persisted.
+            const runtime = this.runtimes.ForHive(hiveId)
+            const hostShaped = runtime.PublishesHostPort()
+
+            // Only a host-port backend (Docker) allocates a host port; an in-cluster env is reached by cluster DNS.
+            const port = hostShaped ? await this.AllocatePort(hostPort) : undefined
+            const { def, seedDir } = TemplateCatalog.Resolve(template, safe, port ?? EnvironmentService.NoHostPort, type)
+            const bundleDir = hostShaped ? join(this.dataRoot, def.name) : undefined
+
+            // Host (localhost) OIDC federation applies only to the host-port backend; in-cluster federation is deferred.
             let oidc: EnvOidc | undefined
             let caHostPath: string | undefined
-            if (platformTenantId !== undefined)
+            if (hostShaped && platformTenantId !== undefined)
             {
-                const federation = await this.Federate(platformTenantId, def, port)
+                const federation = await this.Federate(platformTenantId, def, port as number)
                 oidc = federation.oidc
                 caHostPath = federation.caHostPath
             }
@@ -242,12 +242,16 @@ export class EnvironmentService
                 template,
                 type,
                 environmentId: def.environmentId,
-                hostPort: port,
-                containerName: DockerEnv.ContainerName(def),
-                volumeName: DockerEnv.VolumeName(def),
-                bundleDir,
                 createdAt: new Date().toISOString(),
                 status: EnvStatus.Running
+            }
+            if (hostShaped)
+            {
+                // Docker-shaped fields: a host-port backend owns a published port, container, volume and local bundle.
+                record.hostPort = port
+                record.containerName = DockerEnv.ContainerName(def)
+                record.volumeName = DockerEnv.VolumeName(def)
+                record.bundleDir = bundleDir
             }
             if (hiveId !== undefined)
             {
@@ -255,7 +259,6 @@ export class EnvironmentService
                 record.hiveId = hiveId
             }
             const ctx: EnvRuntimeContext = { def, record, bundleDir, seedDir, oidc, caHostPath }
-            const runtime = this.runtimes.For(record)
             try
             {
                 await runtime.Prepare(ctx)
@@ -290,7 +293,7 @@ export class EnvironmentService
                 await runtime.WaitHealthy(ctx)
                 if (def.kind === EnvKind.Demo)
                 {
-                    await this.SeedDemoUsers(def, bundleDir, seedDir, port)
+                    await this.SeedDemoUsers(def, bundleDir as string, seedDir, port as number)
                 }
             }
             catch (err)
@@ -324,6 +327,18 @@ export class EnvironmentService
         {
             this.inFlight.delete(safe)
         }
+    }
+
+    /** Reserves a host port for a Docker-backed env: honours a caller-chosen port (checked free) or allocates a fresh one. */
+    private async AllocatePort(hostPort?: number): Promise<number>
+    {
+        const taken = this.registry.List().map(r => r.hostPort).filter((p): p is number => p !== undefined)
+        if (hostPort !== undefined)
+        {
+            await this.allocator.Check(hostPort, taken)
+            return hostPort
+        }
+        return await this.allocator.Allocate(taken)
     }
 
     public async Start(name: string): Promise<EnvironmentRecord>
@@ -369,8 +384,12 @@ export class EnvironmentService
         return this.registry.List()
     }
 
-    private static RemoveBundleDir(bundleDir: string): void
+    private static RemoveBundleDir(bundleDir: string | undefined): void
     {
+        if (bundleDir === undefined)
+        {
+            return
+        }
         try
         {
             rmSync(bundleDir, { recursive: true, force: true })

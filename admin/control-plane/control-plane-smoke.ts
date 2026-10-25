@@ -237,7 +237,7 @@ export class ControlPlaneSmoke
         const allocator = new PortAllocator(ControlPlaneSmoke.EnvPortFloor, new NetPortProbe())
         const proxy = new AdminProxy(new WsAdminConnector())
         const idpService = new IdpService(new IdpRegistry(join(dataRoot, ControlPlaneSmoke.IdpsFile)), new DockerIdpDriver(new PortAllocator(ControlPlaneSmoke.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), dataRoot, DockerEnv.ImageName))
-        const service = new EnvironmentService(registry, allocator, new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(new HiveOrchestratorFactory(), new EnvironmentPlacement(directory), directory)), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn))
+        const service = new EnvironmentService(registry, allocator, new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(new HiveOrchestratorFactory(), new EnvironmentPlacement(directory), directory), directory, new HiveOrchestratorFactory()), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn))
         const operator = await OperatorIdentity.Compose({
             identityRoot: join(dataRoot, ControlPlaneSmoke.IdentityDir),
             masterKeyFile: join(dataRoot, ControlPlaneSmoke.MasterKeyFile),

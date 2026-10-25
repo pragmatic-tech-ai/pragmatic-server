@@ -12,6 +12,12 @@ export type EnvRuntimeContext = { def: EnvDefinition; record: EnvironmentRecord;
 /** The backend-shaped lifecycle operations of an environment (Docker today); EnvironmentService orchestrates over this seam. */
 export interface IEnvironmentRuntime
 {
+    /**
+     * True for a backend that publishes a host port and owns a local bundle/container (Docker), so EnvironmentService
+     * allocates a host port, stamps the Docker-shaped record fields, and performs host (localhost) OIDC federation for
+     * it. False for a DNS-reached backend (in-cluster), which carries none of those and defers per-env federation.
+     */
+    PublishesHostPort(): boolean
     EnsureImage(def: EnvDefinition): Promise<boolean>
     BuildCommand(): string
     /** Materialises the environment's deployment artefacts (the Docker bundle) before the image check; runs ahead of EnsureImage so a failure leaves no Failed record. */
@@ -55,6 +61,11 @@ export class DockerEnvironmentRuntime implements IEnvironmentRuntime
         private readonly docker: IDockerEnv,
         private readonly bundle: IBundleBuilder)
     {
+    }
+
+    public PublishesHostPort(): boolean
+    {
+        return true
     }
 
     public EnsureImage(_def: EnvDefinition): Promise<boolean>
