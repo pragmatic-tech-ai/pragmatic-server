@@ -181,7 +181,7 @@ describe('TenantApiEndpoint POST /tenant-api/environments', () =>
         service.Failure = new EnvironmentExistsError('e1')
         const res = await Post(Fixtures.Valid())
         assert.equal(res.status, 409)
-        assert.doesNotMatch(res.body, /e1/)
+        assert.deepEqual(res.Json(), { error: 'An environment with that name already exists' })
     })
 
     it('400s UnsupportedBackendError with a fixed body', async () =>

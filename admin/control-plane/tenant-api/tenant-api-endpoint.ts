@@ -326,7 +326,7 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
 
     /**
      * Creates an environment in the caller's own hive. The hive is derived ONLY from `session.tenantId` via the
-     * directory (one hive per tenant) — the body is never consulted for a hive or tenant, so it cannot steer creation
+     * directory (one hive per tenant) - the body is never consulted for a hive or tenant, so it cannot steer creation
      * cross-tenant. The body is validated before anything is created; failures map to fixed generic bodies.
      */
     private async RouteEnvCreate(req: IncomingMessage, res: ServerResponse, session: TenantSession): Promise<boolean>
