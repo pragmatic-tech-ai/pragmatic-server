@@ -93,14 +93,16 @@
 
 - [ ] Steps: failing test (service uses the injected driver; fake driver returns connection info; secrets not logged) → run fail → implement → suite + `tsc` green → Commit (`feat: pluggable IdP workload driver`). Flag: in-cluster driver acceptance is Docker/kind-gated (Task 8).
 
-### Task 6: Health reported UP the channel
+### Task 6: Tenant health stays LOCAL (no double-report up the channel)
 
-**Files:** Modify `tenant-health-monitor.ts`/the tenant container wiring to POST snapshots via the channel (`AgentChannelHost` `ReportSnapshot` path / `HttpRolloutClient` sibling) in addition to the in-process `TenantEventBus`. Test: a reporter unit test with a fake channel.
+> **Ordering ruling (controller):** the original "report up the channel" wording conflicts with slice 2 — the rollout AGENT already owns the whole-hive snapshot up-feed, and the platform observation is a whole-hive REPLACE, so a second poster (the tenant admin) would clobber the agent's report. The tenant admin runs in-cluster and live-produces its own health for the SPA; it must NOT report up. This task ensures that and guards against regression.
+
+**Files:** Confirm/adjust `tenant-admin-server.ts` + `tenant-health-monitor.ts` so the standalone tenant admin's health monitor feeds ONLY the local `TenantEventBus` (SPA live view) and `GET /tenant-api/hives/:id/health` live-produces via `HiveHealthProducer` against its in-cluster orchestrator — with NO path that POSTs to the platform channel. Test: `admin/control-plane/tests/` guard.
 
 **Interfaces:**
-- Produces: the tenant container's health monitor produces `HiveHealthDto[]` locally and reports it up (the platform's observation read-model, already built, receives it). In collapsed dev the in-process path still feeds the event bus for the SPA's live view.
+- Produces: the standalone tenant admin's health surface is purely local (event bus + live-produce route). The rollout agent remains the SOLE reporter of the whole-hive snapshot to the platform observation read-model. No up-report wiring is added to the tenant admin.
 
-- [ ] Steps: failing test (monitor tick → one snapshot posted up with all envs) → run fail → implement → suite + `tsc` green → Commit (`feat: tenant health reported up the channel`).
+- [ ] Steps: write a guard test asserting the tenant admin's health monitor emits to the event bus and does NOT call any rollout/channel client to post a snapshot (construct `TenantHealthMonitor` with a fake and assert no snapshot POST). Run → confirm it already holds (or adjust wiring if an up-report leaked in) → suite + `tsc` green → Commit (`test: tenant health stays local; agent is sole up-reporter`).
 
 ### Task 7: Sever operator-side tenant mutations
 
