@@ -27,13 +27,13 @@ import { AdminProxyError, AdminProxyErrorKind, type AdminSnapshot } from './admi
 import {
     ClientHasTenantsError,
     HiveHasEnvironmentsError,
-    HivePlacementError,
     RecordExistsError,
     TenantHasHivesError,
     UnknownClientError,
     UnknownTenantError,
     type PlatformDirectory
 } from './platform-directory.js'
+import { HivePlacementError } from './hive-placement-error.js'
 import { HiveBackend, InfraMode, InvalidRecordIdError } from './platform-records.js'
 import { PlaneHttp } from './plane-http.js'
 import { UnsupportedBackendError } from './hive-orchestrator.js'

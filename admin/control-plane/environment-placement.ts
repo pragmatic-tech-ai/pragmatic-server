@@ -1,7 +1,7 @@
 import type { EnvironmentRecord } from './environment-record.js'
 import { EnvironmentWorkloadFactory } from './environment-workload.js'
 import type { EnvironmentWorkload } from './environment-workload.js'
-import { HivePlacementError } from './platform-directory.js'
+import { HivePlacementError } from './hive-placement-error.js'
 import type { ITenantDirectory } from './tenant-api/tenant-directory.js'
 
 /** An environment with no hive binding cannot be scheduled on a hive. */
@@ -31,9 +31,9 @@ export class EnvironmentPlacement
             throw new EnvironmentNotPlacedError(record.name)
         }
         const hive = this.directory.GetHive(record.hiveId)
-        if (record.tenantId && (hive === undefined || hive.tenantId !== record.tenantId))
+        if (record.tenantId)
         {
-            throw new HivePlacementError(record.tenantId, record.hiveId)
+            HivePlacementError.Assert(hive, record.tenantId, record.hiveId)
         }
         return EnvironmentWorkloadFactory.From(record, hive!)
     }

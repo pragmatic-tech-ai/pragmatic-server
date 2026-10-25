@@ -9,7 +9,8 @@ import { HiveRegistry } from '../hive-registry.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
 import { EnvStatus, EnvType, Template } from '../environment-record.js'
 import type { EnvironmentRecord } from '../environment-record.js'
-import { PlatformDirectory, HivePlacementError } from '../platform-directory.js'
+import { PlatformDirectory } from '../platform-directory.js'
+import { HivePlacementError } from '../hive-placement-error.js'
 import { EnvironmentPlacement, EnvironmentNotPlacedError } from '../environment-placement.js'
 
 class PlacementFixture

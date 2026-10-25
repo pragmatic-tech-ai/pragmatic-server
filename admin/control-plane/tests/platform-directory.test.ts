@@ -17,9 +17,9 @@ import {
     UnknownTenantError,
     ClientHasTenantsError,
     TenantHasHivesError,
-    HiveHasEnvironmentsError,
-    HivePlacementError
+    HiveHasEnvironmentsError
 } from '../platform-directory.js'
+import { HivePlacementError } from '../hive-placement-error.js'
 import type { IEnvironmentLookup } from '../platform-directory.js'
 
 class FakeEnvironments implements IEnvironmentLookup

@@ -4,7 +4,7 @@ import { Readable } from 'node:stream'
 import { describe, it } from 'node:test'
 import type { IEnvironmentService } from '../control-plane-host.js'
 import { EnvironmentPlacement } from '../environment-placement.js'
-import { HivePlacementError } from '../platform-directory.js'
+import { HivePlacementError } from '../hive-placement-error.js'
 import type { ManifestRecord } from '../manifest-record.js'
 import type { HiveRolloutStatus } from '../platform-deployment-registry.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
@@ -61,20 +61,75 @@ class FakeRolloutClient implements IRolloutClient
     }
 }
 
+/** Records the status the endpoint wrote; no socket involved. */
+class FakeResponse
+{
+    public status = 0
+    public headersSent = false
+
+    public setHeader(_name: string, _value: string | number | string[]): void
+    {
+    }
+
+    public writeHead(status: number): this
+    {
+        this.status = status
+        this.headersSent = true
+        return this
+    }
+
+    public end(_body?: string): void
+    {
+    }
+}
+
+/** An environment service listing a fixed set of records. */
+class FakeEnvironmentService
+{
+    public constructor(private readonly records: readonly EnvironmentRecord[])
+    {
+    }
+
+    public List(): readonly EnvironmentRecord[]
+    {
+        return this.records
+    }
+}
+
 class Kit
 {
     public static readonly Tenant = 't-a'
     public static readonly Hive = 'hive-a'
+    public static readonly ClientId = 'c'
+    public static readonly DisplayName = 'T'
+    public static readonly EnvName = 'e'
+    public static readonly EnvId = 'eid'
+    public static readonly CreatedAt = '2026-01-01T00:00:00Z'
+    public static readonly ExpiresAt = '2099-01-01T00:00:00Z'
+    public static readonly PrincipalId = 'p'
+    public static readonly ContainerName = 'c'
+    public static readonly VolumeName = 'v'
+    public static readonly BundleDir = '/b'
+    public static readonly HostPort = 8101
+    public static readonly MethodPost = 'POST'
+    public static readonly Version = 'v1'
+    public static readonly OtherTenant = 'other'
+    public static readonly UnknownTenant = 'nope'
+    public static readonly BaseDomain = 'admin.example.com'
+    public static readonly Scheme = 'https'
+    public static readonly HostSuffix = '.' + Kit.BaseDomain
+    public static readonly TargetPath = '/tenant-api/hives/' + Kit.Hive + '/target'
+    public static readonly SessionId = 's'
 
     public static TenantRec(): TenantRecord
     {
-        return { id: Kit.Tenant, clientId: 'c', displayName: 'T', createdAt: '2026-01-01T00:00:00Z' }
+        return { id: Kit.Tenant, clientId: Kit.ClientId, displayName: Kit.DisplayName, createdAt: Kit.CreatedAt }
     }
 
     public static HiveRec(): HiveRecord
     {
         return {
-            id: Kit.Hive, tenantId: Kit.Tenant, displayName: 'H', createdAt: '2026-01-01T00:00:00Z',
+            id: Kit.Hive, tenantId: Kit.Tenant, displayName: Kit.DisplayName, createdAt: Kit.CreatedAt,
             cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Attach }
         }
     }
@@ -87,32 +142,26 @@ class Kit
     public static Env(): EnvironmentRecord
     {
         return {
-            name: 'e', type: EnvType.Development, template: Template.DevBlank, environmentId: 'eid', tenantId: Kit.Tenant, hiveId: Kit.Hive,
-            hostPort: 8101, containerName: 'c', volumeName: 'v', bundleDir: '/b', createdAt: '2026-01-01T00:00:00Z', status: EnvStatus.Running
+            name: Kit.EnvName, type: EnvType.Development, template: Template.DevBlank, environmentId: Kit.EnvId, tenantId: Kit.Tenant, hiveId: Kit.Hive,
+            hostPort: Kit.HostPort, containerName: Kit.ContainerName, volumeName: Kit.VolumeName, bundleDir: Kit.BundleDir, createdAt: Kit.CreatedAt, status: EnvStatus.Running
         }
     }
 
     public static Session(): TenantSession
     {
-        return { id: 's', tenantId: Kit.Tenant, principalId: 'p', expiresAt: '2099-01-01T00:00:00Z' }
+        return { id: Kit.SessionId, tenantId: Kit.Tenant, principalId: Kit.PrincipalId, expiresAt: Kit.ExpiresAt }
     }
 
     public static PostJson(body: unknown): IncomingMessage
     {
         const stream = Readable.from([Buffer.from(JSON.stringify(body))]) as unknown as IncomingMessage & { method?: string }
-        stream.method = 'POST'
+        stream.method = Kit.MethodPost
         return stream
     }
 
-    public static Res(): ServerResponse & { status: number }
+    public static Res(): FakeResponse
     {
-        const res = {
-            status: 0, headersSent: false,
-            setHeader(): void { },
-            writeHead(s: number) { res.status = s; res.headersSent = true; return res },
-            end(): void { },
-        }
-        return res as unknown as ServerResponse & { status: number }
+        return new FakeResponse()
     }
 }
 
@@ -120,27 +169,27 @@ describe('tenant plane depends on narrow seams', () =>
 {
     it('TenantHostResolver resolves via an ITenantDirectory-only fake', () =>
     {
-        const resolver = new TenantHostResolver('admin.example.com', 'https', Kit.Directory())
-        assert.equal(resolver.TenantFor('t-a.admin.example.com'), 't-a')
-        assert.equal(resolver.TenantFor('nope.admin.example.com'), undefined)
+        const resolver = new TenantHostResolver(Kit.BaseDomain, Kit.Scheme, Kit.Directory())
+        assert.equal(resolver.TenantFor(Kit.Tenant + Kit.HostSuffix), Kit.Tenant)
+        assert.equal(resolver.TenantFor(Kit.UnknownTenant + Kit.HostSuffix), undefined)
     })
 
     it('TenantApiEndpoint adopts a target through IRolloutClient.AdoptTarget', async () =>
     {
         const rollout = new FakeRolloutClient()
-        const service = { List: () => [Kit.Env()] } as unknown as IEnvironmentService
+        const service = new FakeEnvironmentService([Kit.Env()]) as unknown as IEnvironmentService
         const endpoint = new TenantApiEndpoint(service, Kit.Directory(), rollout, new HiveOrchestratorFactory(), new EnvironmentPlacement(Kit.Directory()))
         const res = Kit.Res()
-        const handled = await endpoint.Handle(Kit.PostJson({ version: 'v1' }), res, '/tenant-api/hives/hive-a/target', Kit.Session())
+        const handled = await endpoint.Handle(Kit.PostJson({ version: Kit.Version }), res as unknown as ServerResponse, Kit.TargetPath, Kit.Session())
         assert.equal(handled, true)
         assert.equal(res.status, 204)
-        assert.deepEqual(rollout.Adopted, [{ hiveId: Kit.Hive, version: 'v1' }])
+        assert.deepEqual(rollout.Adopted, [{ hiveId: Kit.Hive, version: Kit.Version }])
     })
 
     it('EnvironmentPlacement validates ownership against an ITenantDirectory-only fake', () =>
     {
         const placement = new EnvironmentPlacement(Kit.Directory())
         assert.equal(placement.WorkloadFor(Kit.Env()).hiveId, Kit.Hive)
-        assert.throws(() => placement.WorkloadFor({ ...Kit.Env(), tenantId: 'other' }), HivePlacementError)
+        assert.throws(() => placement.WorkloadFor({ ...Kit.Env(), tenantId: Kit.OtherTenant }), HivePlacementError)
     })
 })
