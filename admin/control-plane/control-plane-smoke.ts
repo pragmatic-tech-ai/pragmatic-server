@@ -6,9 +6,11 @@
  *
  *   npx tsx admin/control-plane/control-plane-smoke.ts
  *
- * Composes the real stack in-process (as server.ts does), then drives the control-plane
- * HTTP API through create/start/stop/delete for dev-blank and demo-contoso, and verifies
- * the seeded demo users over the admin protocol.
+ * Composes the real stack in-process (as server.ts does). The operator no longer manages environment
+ * lifecycle over HTTP (the tenant plane owns that), so this smoke creates/starts/stops/deletes environments
+ * through the EnvironmentService directly, then drives what the operator STILL serves over its HTTP API:
+ * the environment list, per-environment account/grant management, graph contribution, maker tokens, and
+ * promotion into a runtime environment, and verifies the seeded demo users over the admin protocol.
  */
 import { request } from 'node:http'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
@@ -84,12 +86,12 @@ export class ControlPlaneSmoke
     private static readonly DemoPurpose = 1
     private static readonly EnvironmentsPath = '/api/environments'
     private static readonly PathSep = '/'
-    private static readonly StopAction = '/stop'
-    private static readonly StartAction = '/start'
     private static readonly HealthPath = '/healthz'
     private static readonly MethodGet = 'GET'
     private static readonly MethodPost = 'POST'
     private static readonly MethodDelete = 'DELETE'
+    private static readonly ServiceMissingMessage = 'EnvironmentService is not composed'
+    private static readonly ServiceErrorWord = ' error='
     private static readonly JsonContentType = 'application/json'
     private static readonly ContentTypeHeader = 'Content-Type'
     private static readonly DevName = 'smoke-dev'
@@ -110,8 +112,8 @@ export class ControlPlaneSmoke
     private static readonly SetCookieHeader = 'set-cookie'
     private static readonly CookieAttrSep = ';'
     private static readonly StatusOk = 200
-    private static readonly StatusUnauthorized = 401
     private static readonly StatusCreated = 201
+    private static readonly StatusUnauthorized = 401
     private static readonly StatusConflict = 409
     private static readonly MethodPut = 'PUT'
     private static readonly AdminSegment = '/admin/'
@@ -176,20 +178,20 @@ export class ControlPlaneSmoke
     private static readonly Labels = {
         Gate401: 'control plane: unauthenticated request returns 401',
         Login: 'control plane: operator login returns 200 and a session cookie',
-        CreateDev: 'dev-blank: create returns 201',
+        CreateDev: 'dev-blank: service create succeeds',
         RunningDev: 'dev-blank: reaches running',
         HealthDev: 'dev-blank: /healthz returns 200',
-        StopDev: 'dev-blank: stop returns 200',
+        StopDev: 'dev-blank: service stop succeeds',
         StoppedDev: 'dev-blank: reaches stopped',
-        StartDev: 'dev-blank: start returns 200',
+        StartDev: 'dev-blank: service start succeeds',
         RestartedDev: 'dev-blank: running again after start',
-        DeleteDev: 'dev-blank: delete returns 200',
+        DeleteDev: 'dev-blank: service delete succeeds',
         GoneDev: 'dev-blank: no longer listed',
-        CreateDemo: 'demo-contoso: create returns 201',
+        CreateDemo: 'demo-contoso: service create succeeds',
         RunningDemo: 'demo-contoso: reaches running',
         HealthDemo: 'demo-contoso: /healthz returns 200',
         SeededDemo: 'demo-contoso: four demo principals plus admin seeded',
-        DeleteDemo: 'demo-contoso: delete returns 200',
+        DeleteDemo: 'demo-contoso: service delete succeeds',
         GoneDemo: 'demo-contoso: no longer listed',
         PurposeDev: 'dev-blank: tenants.json purpose is Development (0)',
         PurposeDemo: 'demo-contoso: tenants.json purpose is Runtime (1)',
@@ -201,11 +203,11 @@ export class ControlPlaneSmoke
         ManageGetConfig: 'manage: get config returns 200',
         ManagePutConfig: 'manage: put unchanged config returns 200',
         ManageLockout: 'manage: revoking own Owner grant is refused with 409',
-        PromoteCreateDev: 'promote: development env create returns 201 and reaches running',
+        PromoteCreateDev: 'promote: development env create succeeds and reaches running',
         PromoteCreateGraph: 'promote: create graph on dev env returns 201',
         PromoteMakerToken: 'promote: maker token mint returns 201 with a token',
         PromoteContribute: 'promote: graph/contribute with maker token returns the graph with its package',
-        PromoteCreateRuntime: 'promote: runtime env create returns 201 and reaches running',
+        PromoteCreateRuntime: 'promote: runtime env create succeeds and reaches running',
         PromoteResult: 'promote: promote returns 200 with graph name, package count and target env',
         PromoteLoaded: 'promote: loaded-graph on the runtime reflects the promoted graph',
         PromoteCypherRead: 'promote: cypher query on the runtime env graph returns the promoted content',
@@ -219,12 +221,13 @@ export class ControlPlaneSmoke
         EnvAppRepromote: 'env-app: re-promote of the changed graph returns 200 with both packages',
         EnvAppLiveRead: 'env-app: same reader connection sees the re-promoted content with no redeploy',
         EnvAppBundledRead: 'env-app: bundled app still reads its own per-app graph unchanged',
-        PromoteDeleteDev: 'promote: development env delete returns 200',
-        PromoteDeleteRuntime: 'promote: runtime env delete returns 200'
+        PromoteDeleteDev: 'promote: development env delete succeeds',
+        PromoteDeleteRuntime: 'promote: runtime env delete succeeds'
     }
 
     private failed = false
     private controlPort = 0
+    private service: EnvironmentService | undefined
     private sessionCookie = ControlPlaneSmoke.EmptyString
 
     public static async Main(): Promise<void>
@@ -268,6 +271,7 @@ export class ControlPlaneSmoke
         const observations = new HiveObservationRegistry(join(dataRoot, ControlPlaneSmoke.ObservationsFile))
         await Promise.all([manifests.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load()])
         const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, new EnvironmentPlacement(directory), observations)
+        this.service = service
         const host = new ControlPlaneHost(service, new GraphService(registry, proxy, name => service.AdminInfoFor(name)), staticRoot, operator, false, directory, deployments, {} as TenantProvisioningService, observations)
         try
         {
@@ -318,7 +322,7 @@ export class ControlPlaneSmoke
         {
             try
             {
-                await this.Api(ControlPlaneSmoke.MethodDelete, this.EnvPath(name))
+                await this.Svc().Delete(name)
             }
             catch
             {
@@ -331,8 +335,8 @@ export class ControlPlaneSmoke
     {
         const L = ControlPlaneSmoke.Labels
         const name = ControlPlaneSmoke.DevName
-        const created = await this.Api(ControlPlaneSmoke.MethodPost, ControlPlaneSmoke.EnvironmentsPath, { name, template: Template.DevBlank, type: EnvType.Development })
-        this.Expect(L.CreateDev, created.status === ControlPlaneSmoke.StatusCreated, ControlPlaneSmoke.StatusWord + String(created.status))
+        const created = await this.Try(() => this.Svc().Create(name, Template.DevBlank, EnvType.Development))
+        this.Expect(L.CreateDev, created.ok, created.detail)
         const running = await this.WaitFor(name, EnvStatus.Running)
         this.Expect(L.RunningDev, running !== undefined)
         if (running === undefined)
@@ -341,14 +345,14 @@ export class ControlPlaneSmoke
         }
         await this.CheckHealth(L.HealthDev, running.hostPort)
         this.CheckPurpose(L.PurposeDev, dataRoot, name, name, ControlPlaneSmoke.DevPurpose)
-        const stop = await this.Api(ControlPlaneSmoke.MethodPost, this.EnvPath(name) + ControlPlaneSmoke.StopAction)
-        this.Expect(L.StopDev, stop.status === ControlPlaneSmoke.StatusOk, ControlPlaneSmoke.StatusWord + String(stop.status))
+        const stop = await this.Try(() => this.Svc().Stop(name))
+        this.Expect(L.StopDev, stop.ok, stop.detail)
         this.Expect(L.StoppedDev, (await this.WaitFor(name, EnvStatus.Stopped)) !== undefined)
-        const start = await this.Api(ControlPlaneSmoke.MethodPost, this.EnvPath(name) + ControlPlaneSmoke.StartAction)
-        this.Expect(L.StartDev, start.status === ControlPlaneSmoke.StatusOk, ControlPlaneSmoke.StatusWord + String(start.status))
+        const start = await this.Try(() => this.Svc().Start(name))
+        this.Expect(L.StartDev, start.ok, start.detail)
         this.Expect(L.RestartedDev, (await this.WaitFor(name, EnvStatus.Running)) !== undefined)
-        const del = await this.Api(ControlPlaneSmoke.MethodDelete, this.EnvPath(name))
-        this.Expect(L.DeleteDev, del.status === ControlPlaneSmoke.StatusOk, ControlPlaneSmoke.StatusWord + String(del.status))
+        const del = await this.Try(() => this.Svc().Delete(name))
+        this.Expect(L.DeleteDev, del.ok, del.detail)
         this.Expect(L.GoneDev, (await this.Find(name)) === undefined)
     }
 
@@ -356,8 +360,8 @@ export class ControlPlaneSmoke
     {
         const L = ControlPlaneSmoke.Labels
         const name = ControlPlaneSmoke.DemoName
-        const created = await this.Api(ControlPlaneSmoke.MethodPost, ControlPlaneSmoke.EnvironmentsPath, { name, template: Template.DemoContoso, type: EnvType.Runtime })
-        this.Expect(L.CreateDemo, created.status === ControlPlaneSmoke.StatusCreated, ControlPlaneSmoke.StatusWord + String(created.status))
+        const created = await this.Try(() => this.Svc().Create(name, Template.DemoContoso, EnvType.Runtime))
+        this.Expect(L.CreateDemo, created.ok, created.detail)
         const running = await this.WaitFor(name, EnvStatus.Running)
         this.Expect(L.RunningDemo, running !== undefined)
         if (running === undefined)
@@ -368,8 +372,8 @@ export class ControlPlaneSmoke
         this.CheckPurpose(L.PurposeDemo, dataRoot, name, ControlPlaneSmoke.DemoTenant, ControlPlaneSmoke.DemoPurpose)
         await this.CheckSeeded(dataRoot, running.hostPort)
         await this.ManageRoundTrip(name)
-        const del = await this.Api(ControlPlaneSmoke.MethodDelete, this.EnvPath(name))
-        this.Expect(L.DeleteDemo, del.status === ControlPlaneSmoke.StatusOk, ControlPlaneSmoke.StatusWord + String(del.status))
+        const del = await this.Try(() => this.Svc().Delete(name))
+        this.Expect(L.DeleteDemo, del.ok, del.detail)
         this.Expect(L.GoneDemo, (await this.Find(name)) === undefined)
     }
 
@@ -381,9 +385,9 @@ export class ControlPlaneSmoke
         const dev = S.PromoteDevName
         const runtime = S.PromoteRuntimeName
         const graph = S.PromoteGraphName
-        const devCreated = await this.Api(S.MethodPost, S.EnvironmentsPath, { name: dev, template: Template.DevBlank, type: EnvType.Development })
-        const devRunning = devCreated.status === S.StatusCreated ? await this.WaitFor(dev, EnvStatus.Running) : undefined
-        this.Expect(L.PromoteCreateDev, devRunning !== undefined, S.StatusWord + String(devCreated.status))
+        const devCreated = await this.Try(() => this.Svc().Create(dev, Template.DevBlank, EnvType.Development))
+        const devRunning = devCreated.ok ? await this.WaitFor(dev, EnvStatus.Running) : undefined
+        this.Expect(L.PromoteCreateDev, devRunning !== undefined, devCreated.detail)
         if (devRunning === undefined)
         {
             return
@@ -399,9 +403,9 @@ export class ControlPlaneSmoke
         }
         await this.ContributeAs(devRunning.hostPort, dev, makerToken, S.PromoteSolutionId, S.FixturePackage(), S.PromotedPackageCount)
 
-        const rtCreated = await this.Api(S.MethodPost, S.EnvironmentsPath, { name: runtime, template: Template.DemoContoso, type: EnvType.Runtime })
-        const rtRunning = rtCreated.status === S.StatusCreated ? await this.WaitFor(runtime, EnvStatus.Running) : undefined
-        this.Expect(L.PromoteCreateRuntime, rtRunning !== undefined, S.StatusWord + String(rtCreated.status))
+        const rtCreated = await this.Try(() => this.Svc().Create(runtime, Template.DemoContoso, EnvType.Runtime))
+        const rtRunning = rtCreated.ok ? await this.WaitFor(runtime, EnvStatus.Running) : undefined
+        this.Expect(L.PromoteCreateRuntime, rtRunning !== undefined, rtCreated.detail)
         if (rtRunning === undefined)
         {
             return
@@ -418,10 +422,10 @@ export class ControlPlaneSmoke
         await this.CheckRuntimeGraphRead(dataRoot, rtRunning.hostPort)
         await this.RemoteEnvAppRoundTrip(dataRoot, devRunning.hostPort, rtRunning.hostPort, makerToken)
 
-        const delDev = await this.Api(S.MethodDelete, this.EnvPath(dev))
-        this.Expect(L.PromoteDeleteDev, delDev.status === S.StatusOk, S.StatusWord + String(delDev.status))
-        const delRt = await this.Api(S.MethodDelete, this.EnvPath(runtime))
-        this.Expect(L.PromoteDeleteRuntime, delRt.status === S.StatusOk, S.StatusWord + String(delRt.status))
+        const delDev = await this.Try(() => this.Svc().Delete(dev))
+        this.Expect(L.PromoteDeleteDev, delDev.ok, delDev.detail)
+        const delRt = await this.Try(() => this.Svc().Delete(runtime))
+        this.Expect(L.PromoteDeleteRuntime, delRt.ok, delRt.detail)
     }
 
     /**
@@ -691,6 +695,29 @@ export class ControlPlaneSmoke
     {
         const res = await this.Http(ControlPlaneSmoke.MethodGet, hostPort, ControlPlaneSmoke.HealthPath)
         this.Expect(label, res.status === ControlPlaneSmoke.StatusOk, ControlPlaneSmoke.StatusWord + String(res.status))
+    }
+
+    private Svc(): EnvironmentService
+    {
+        if (this.service === undefined)
+        {
+            throw new Error(ControlPlaneSmoke.ServiceMissingMessage)
+        }
+        return this.service
+    }
+
+    /** Runs an EnvironmentService call; ok on completion, otherwise the error message as the detail. */
+    private async Try(action: () => Promise<unknown>): Promise<{ ok: boolean; detail: string }>
+    {
+        try
+        {
+            await action()
+            return { ok: true, detail: ControlPlaneSmoke.EmptyString }
+        }
+        catch (err)
+        {
+            return { ok: false, detail: ControlPlaneSmoke.ServiceErrorWord + (err instanceof Error ? err.message : String(err)) }
+        }
     }
 
     private EnvPath(name: string): string

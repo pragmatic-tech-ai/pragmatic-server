@@ -21,6 +21,8 @@ import { ControlPlaneServer } from './server.js'
 import { SeededTenantDirectory, type TenantDirectorySeed } from './tenant-api/seeded-tenant-directory.js'
 import type { IRolloutClient } from './tenant-api/rollout-client.js'
 import { UnconfiguredRolloutClient } from './tenant-api/unconfigured-rollout-client.js'
+import { TenantAdminEnv } from './tenant-admin-env.js'
+import { HttpRolloutClient } from './tenant-api/http-rollout-client.js'
 import { TenantAdminClientRegistry } from './tenant-auth/tenant-admin-client-record.js'
 import { TenantHostResolver } from './tenant-auth/tenant-host-resolver.js'
 import type { TenantPlane } from './tenant-auth/tenant-plane.js'
@@ -55,15 +57,6 @@ export type TenantAdminComposition = {
  */
 export class TenantAdminServer
 {
-    private static readonly DataRootEnvVar = 'PRAGMATIC_TENANT_ADMIN_DATA_ROOT'
-    private static readonly PortEnvVar = 'PRAGMATIC_TENANT_ADMIN_PORT'
-    private static readonly BindEnvVar = 'PRAGMATIC_TENANT_ADMIN_BIND'
-    private static readonly BaseDomainEnvVar = 'PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN'
-    private static readonly SchemeEnvVar = 'PRAGMATIC_TENANT_ADMIN_EXTERNAL_SCHEME'
-    private static readonly SecureCookieEnvVar = 'PRAGMATIC_TENANT_ADMIN_SECURE_COOKIE'
-    private static readonly SecretTtlEnvVar = 'PRAGMATIC_TENANT_ADMIN_SECRET_TTL_HOURS'
-    private static readonly HealthProbeMsEnvVar = 'PRAGMATIC_TENANT_ADMIN_HEALTH_PROBE_MS'
-    private static readonly HealthProbeTimeoutMsEnvVar = 'PRAGMATIC_TENANT_ADMIN_HEALTH_PROBE_TIMEOUT_MS'
     private static readonly MissingEnvPrefix = 'Missing required environment variable: '
     private static readonly MissingSeedPrefix = 'Tenant-admin seed file not found: '
     private static readonly BadSeedMessage = 'Invalid seed.json: expected { tenant, hives[] }'
@@ -90,7 +83,21 @@ export class TenantAdminServer
     public static async Main(): Promise<void>
     {
         const config = TenantAdminServer.ReadConfig(process.env)
-        await new TenantAdminServer(config, TenantAdminServer.DefaultRolloutClient()).Run()
+        await new TenantAdminServer(config, TenantAdminServer.RolloutClientFrom(process.env)).Run()
+    }
+
+    /** The HTTP rollout client when the agent-channel URL is configured (token + hive id then required); otherwise the default. */
+    public static RolloutClientFrom(env: NodeJS.ProcessEnv): IRolloutClient
+    {
+        const url = env[TenantAdminEnv.RolloutUrl]
+        if (url === undefined || url === '')
+        {
+            return TenantAdminServer.DefaultRolloutClient()
+        }
+        return new HttpRolloutClient(
+            url,
+            TenantAdminServer.Required(env, TenantAdminEnv.RolloutToken),
+            TenantAdminServer.Required(env, TenantAdminEnv.RolloutHiveId))
     }
 
     /** The default rollout client; the in-container HTTP client replaces it when the operator link is wired. */
@@ -102,20 +109,20 @@ export class TenantAdminServer
     /** Pure: derives the config from the environment; a missing required variable throws naming it. */
     public static ReadConfig(env: NodeJS.ProcessEnv): TenantAdminConfig
     {
-        const dataRoot = TenantAdminServer.Required(env, TenantAdminServer.DataRootEnvVar)
-        const portRaw = TenantAdminServer.Required(env, TenantAdminServer.PortEnvVar)
-        const baseDomain = TenantAdminServer.Required(env, TenantAdminServer.BaseDomainEnvVar)
-        const secure = env[TenantAdminServer.SecureCookieEnvVar]
+        const dataRoot = TenantAdminServer.Required(env, TenantAdminEnv.DataRoot)
+        const portRaw = TenantAdminServer.Required(env, TenantAdminEnv.Port)
+        const baseDomain = TenantAdminServer.Required(env, TenantAdminEnv.BaseDomain)
+        const secure = env[TenantAdminEnv.SecureCookie]
         return {
             dataRoot,
             port: ControlPlaneServer.ResolveTenantPort(portRaw),
-            bind: ControlPlaneServer.TenantBind(env[TenantAdminServer.BindEnvVar]),
+            bind: ControlPlaneServer.TenantBind(env[TenantAdminEnv.Bind]),
             baseDomain,
-            scheme: ControlPlaneServer.TenantScheme(env[TenantAdminServer.SchemeEnvVar]),
+            scheme: ControlPlaneServer.TenantScheme(env[TenantAdminEnv.Scheme]),
             secureCookie: secure === TenantAdminServer.TrueToken || secure === TenantAdminServer.OneToken,
-            secretTtlHours: ControlPlaneServer.ParseSecretTtlHours(env[TenantAdminServer.SecretTtlEnvVar]),
-            probeMs: ControlPlaneServer.ParseHealthProbeMs(env[TenantAdminServer.HealthProbeMsEnvVar]),
-            probeTimeoutMs: ControlPlaneServer.ParseHealthProbeTimeoutMs(env[TenantAdminServer.HealthProbeTimeoutMsEnvVar]),
+            secretTtlHours: ControlPlaneServer.ParseSecretTtlHours(env[TenantAdminEnv.SecretTtl]),
+            probeMs: ControlPlaneServer.ParseHealthProbeMs(env[TenantAdminEnv.HealthProbeMs]),
+            probeTimeoutMs: ControlPlaneServer.ParseHealthProbeTimeoutMs(env[TenantAdminEnv.HealthProbeTimeoutMs]),
         }
     }
 

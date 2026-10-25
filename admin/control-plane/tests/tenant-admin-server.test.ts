@@ -10,6 +10,7 @@ import { SeededTenantDirectory } from '../tenant-api/seeded-tenant-directory.js'
 import { TenantApiEndpoint } from '../tenant-api/tenant-api-endpoint.js'
 import { RolloutUnavailableError, type IRolloutClient } from '../tenant-api/rollout-client.js'
 import { UnconfiguredRolloutClient } from '../tenant-api/unconfigured-rollout-client.js'
+import { HttpRolloutClient } from '../tenant-api/http-rollout-client.js'
 import { EnvironmentPlacement } from '../environment-placement.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import type { HiveRecord, TenantRecord } from '../platform-records.js'
@@ -208,5 +209,30 @@ describe('UnconfiguredRolloutClient', () =>
             assert.equal(status, Names.Unavailable)
             assert.match(body, Names.NoRolloutPattern)
         }
+    })
+})
+
+describe('TenantAdminServer.RolloutClientFrom', () =>
+{
+    it('uses the unconfigured default when no rollout URL is set', () =>
+    {
+        assert.ok(TenantAdminServer.RolloutClientFrom({}) instanceof UnconfiguredRolloutClient)
+    })
+
+    it('builds the HTTP client when the URL, token and hive id are set', () =>
+    {
+        const client = TenantAdminServer.RolloutClientFrom({
+            PRAGMATIC_TENANT_ADMIN_ROLLOUT_URL: 'http://channel.example:7000',
+            PRAGMATIC_TENANT_ADMIN_ROLLOUT_TOKEN: 'tok',
+            PRAGMATIC_TENANT_ADMIN_ROLLOUT_HIVE_ID: 'hive-a',
+        })
+        assert.ok(client instanceof HttpRolloutClient)
+    })
+
+    it('fails naming the variable when the URL is set without a token', () =>
+    {
+        assert.throws(
+            () => TenantAdminServer.RolloutClientFrom({ PRAGMATIC_TENANT_ADMIN_ROLLOUT_URL: 'http://c:1', PRAGMATIC_TENANT_ADMIN_ROLLOUT_HIVE_ID: 'h' }),
+            /PRAGMATIC_TENANT_ADMIN_ROLLOUT_TOKEN/)
     })
 })

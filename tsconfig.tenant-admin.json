@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.tools.json",
+  "compilerOptions": { "noEmit": false, "outDir": "dist-tenant-admin" },
+  "include": ["src/bin/pragmatic-tenant-admind.ts", "admin/control-plane/**/*.ts", "environments/**/*.ts"],
+  "exclude": ["**/tests/**", "**/*.test.ts", "**/*-smoke.ts", "admin/control-plane/dev/**"]
+}

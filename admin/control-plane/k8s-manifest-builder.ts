@@ -1,6 +1,8 @@
 import type { EnvironmentWorkload, WorkloadDatabase } from './environment-workload.js'
 import { IdpContainerEnv } from './idp-container-env.js'
 import type { IdpWorkloadSpec } from './idp-workload-driver.js'
+import { TenantAdminEnv } from './tenant-admin-env.js'
+import type { TenantAdminWorkloadSpec } from './tenant-admin-workload.js'
 
 type K8sObject = Record<string, unknown>
 
@@ -108,7 +110,8 @@ export class K8sManifestBuilder
     private static readonly AgentTokenVar = 'PRAGMATIC_AGENT_TOKEN'
     private static readonly AgentTokenSecretKey = 'token'
     /** Namespace hosting the per-hive agent's ServiceAccount + Deployment (cluster-scoped RBAC has none). The Namespace object itself is emitted by RenderHiveAgent. */
-    private static readonly HiveAgentNamespace = 'pragmatic-system'
+    public static readonly SystemNamespace = 'pragmatic-system'
+    private static readonly HiveAgentNamespace = K8sManifestBuilder.SystemNamespace
     private static readonly HiveAgentPrefix = 'pragmatic-hive-'
 
     // IdP workload conventions.
@@ -159,6 +162,33 @@ export class K8sManifestBuilder
     private static readonly AllowPrivilegeEscalationKey = 'allowPrivilegeEscalation'
     private static readonly ReadOnlyRootFilesystemKey = 'readOnlyRootFilesystem'
     private static readonly AutomountTokenKey = 'automountServiceAccountToken'
+
+    // Tenant-admin workload conventions.
+    private static readonly TenantAdminPrefix = 'pragmatic-tenant-admin-'
+    private static readonly TenantAdminContainerName = 'tenant-admin'
+    private static readonly TenantAdminSeedContainerName = 'seed'
+    private static readonly TenantAdminEntrypoint = ['node', 'dist-tenant-admin/src/bin/pragmatic-tenant-admind.js']
+    /** Copies every seeded file into the writable data root; --no-preserve=mode so the app can rewrite its own state files, -f so a restart overwrites. */
+    private static readonly TenantAdminSeedCommand = ['sh', '-c', 'cp -f --no-preserve=mode /seed/* /data/']
+    private static readonly TenantAdminDataMount = '/data'
+    private static readonly TenantAdminSeedMount = '/seed'
+    private static readonly TenantAdminDataVolume = 'data'
+    private static readonly TenantAdminSeedVolume = 'seed'
+    private static readonly TenantAdminDataSuffix = '-data'
+    private static readonly TenantAdminSeedSuffix = '-seed'
+    private static readonly TenantAdminDataSize = '256Mi'
+    private static readonly TenantAdminBindAll = '0.0.0.0'
+    private static readonly TenantAdminUid = 10001
+    private static readonly TenantAdminRootPath = '/'
+    private static readonly HostHeader = 'Host'
+    private static readonly HttpHeadersKey = 'httpHeaders'
+    private static readonly InitContainersKey = 'initContainers'
+    private static readonly ImagePullSecretsKey = 'imagePullSecrets'
+    private static readonly HttpsSchemeName = 'https'
+    private static readonly TrueText = 'true'
+    private static readonly FalseText = 'false'
+    private static readonly HostSeparator = '.'
+    private static readonly AgentTokenSecretSuffix = '-token'
 
     public static readonly ServerContainerName = 'server'
 
@@ -513,6 +543,204 @@ export class K8sManifestBuilder
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
             [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ServiceKind,
             [K8sManifestBuilder.MetadataKey]: this.IdpMeta(spec, name),
+            [K8sManifestBuilder.SpecKey]: {
+                [K8sManifestBuilder.TypeKey]: K8sManifestBuilder.ClusterIpType,
+                [K8sManifestBuilder.SelectorKey]: this.Selector(name),
+                [K8sManifestBuilder.PortsKey]: [{
+                    [K8sManifestBuilder.PortKey]: spec.port,
+                    [K8sManifestBuilder.TargetPortKey]: spec.port,
+                }],
+            },
+        }
+    }
+
+    public static TenantAdminNameOf(tenantId: string): string
+    {
+        return `${K8sManifestBuilder.TenantAdminPrefix}${tenantId}`
+    }
+
+    public static TenantAdminClaimNameOf(tenantId: string): string
+    {
+        return `${K8sManifestBuilder.TenantAdminNameOf(tenantId)}${K8sManifestBuilder.TenantAdminDataSuffix}`
+    }
+
+    /** Name of the Secret the bootstrap seeds the tenant-admin data root from (seed.json, master.key, ...). */
+    public static TenantAdminSeedSecretNameOf(tenantId: string): string
+    {
+        return `${K8sManifestBuilder.TenantAdminNameOf(tenantId)}${K8sManifestBuilder.TenantAdminSeedSuffix}`
+    }
+
+    /** Name of the Secret holding a hive's one-time agent bearer (key `token`). */
+    public static AgentTokenSecretNameOf(hiveId: string): string
+    {
+        return `${K8sManifestBuilder.HiveAgentNameOf(hiveId)}${K8sManifestBuilder.AgentTokenSecretSuffix}`
+    }
+
+    /**
+     * Renders one tenant's tenant-admin container: shared pragmatic-system Namespace (unlabeled, first), SA (no API
+     * token: the process needs no in-cluster access, so no RBAC), data PVC, Deployment (init container seeds the data root
+     * from the seed Secret) and a ClusterIP Service. Hive-labeled only, so the pull agent never selects it. Secrets are
+     * referenced by Secret name only, never inlined.
+     */
+    public RenderTenantAdmin(spec: TenantAdminWorkloadSpec): string
+    {
+        const items: K8sObject[] = [
+            this.HiveAgentNamespaceObject(),
+            this.TenantAdminServiceAccount(spec),
+            this.TenantAdminClaim(spec),
+            this.TenantAdminDeployment(spec),
+            this.TenantAdminServiceObject(spec),
+        ]
+        return JSON.stringify({
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ListKind,
+            [K8sManifestBuilder.ItemsKey]: items,
+        })
+    }
+
+    private TenantAdminServiceAccount(spec: TenantAdminWorkloadSpec): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ServiceAccountKind,
+            [K8sManifestBuilder.MetadataKey]: this.HiveAgentNamespacedMeta(spec.hiveId, K8sManifestBuilder.TenantAdminNameOf(spec.tenantId)),
+            [K8sManifestBuilder.AutomountTokenKey]: false,
+        }
+    }
+
+    private TenantAdminClaim(spec: TenantAdminWorkloadSpec): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.PersistentVolumeClaimKind,
+            [K8sManifestBuilder.MetadataKey]: this.HiveAgentNamespacedMeta(spec.hiveId, K8sManifestBuilder.TenantAdminClaimNameOf(spec.tenantId)),
+            [K8sManifestBuilder.SpecKey]: {
+                [K8sManifestBuilder.AccessModesKey]: [K8sManifestBuilder.ReadWriteOnce],
+                [K8sManifestBuilder.ResourcesKey]: {
+                    [K8sManifestBuilder.RequestsKey]: { [K8sManifestBuilder.StorageKey]: K8sManifestBuilder.TenantAdminDataSize },
+                },
+            },
+        }
+    }
+
+    private TenantAdminSecurityContext(): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.RunAsNonRootKey]: true,
+            [K8sManifestBuilder.RunAsUserKey]: K8sManifestBuilder.TenantAdminUid,
+            [K8sManifestBuilder.AllowPrivilegeEscalationKey]: false,
+            [K8sManifestBuilder.CapabilitiesKey]: { [K8sManifestBuilder.DropKey]: [K8sManifestBuilder.AllCapabilities] },
+            [K8sManifestBuilder.SeccompProfileKey]: { [K8sManifestBuilder.TypeKey]: K8sManifestBuilder.RuntimeDefault },
+            [K8sManifestBuilder.ReadOnlyRootFilesystemKey]: true,
+        }
+    }
+
+    private TenantAdminDeployment(spec: TenantAdminWorkloadSpec): K8sObject
+    {
+        const name = K8sManifestBuilder.TenantAdminNameOf(spec.tenantId)
+        const pod: K8sObject = {
+            [K8sManifestBuilder.ServiceAccountNameKey]: name,
+            [K8sManifestBuilder.AutomountTokenKey]: false,
+            [K8sManifestBuilder.SecurityContextKey]: { [K8sManifestBuilder.FsGroupKey]: K8sManifestBuilder.TenantAdminUid },
+            [K8sManifestBuilder.InitContainersKey]: [this.TenantAdminSeedContainer(spec)],
+            [K8sManifestBuilder.ContainersKey]: [this.TenantAdminContainer(spec)],
+            [K8sManifestBuilder.VolumesKey]: [
+                {
+                    [K8sManifestBuilder.NameKey]: K8sManifestBuilder.TenantAdminDataVolume,
+                    [K8sManifestBuilder.PersistentVolumeClaimKey]: { [K8sManifestBuilder.ClaimNameKey]: K8sManifestBuilder.TenantAdminClaimNameOf(spec.tenantId) },
+                },
+                this.SecretVolume(K8sManifestBuilder.TenantAdminSeedVolume, spec.seedSecretName),
+                { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.TmpVolume, [K8sManifestBuilder.EmptyDirKey]: {} },
+            ],
+        }
+        if (spec.imagePullSecretName !== undefined)
+        {
+            pod[K8sManifestBuilder.ImagePullSecretsKey] = [{ [K8sManifestBuilder.NameKey]: spec.imagePullSecretName }]
+        }
+        return {
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionApps,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.DeploymentKind,
+            [K8sManifestBuilder.MetadataKey]: this.HiveAgentNamespacedMeta(spec.hiveId, name),
+            [K8sManifestBuilder.SpecKey]: {
+                [K8sManifestBuilder.ReplicasKey]: K8sManifestBuilder.SingleReplica,
+                [K8sManifestBuilder.SelectorKey]: { [K8sManifestBuilder.MatchLabelsKey]: this.Selector(name) },
+                [K8sManifestBuilder.TemplateKey]: {
+                    [K8sManifestBuilder.MetadataKey]: { [K8sManifestBuilder.LabelsKey]: this.Selector(name) },
+                    [K8sManifestBuilder.SpecKey]: pod,
+                },
+            },
+        }
+    }
+
+    private TenantAdminSeedContainer(spec: TenantAdminWorkloadSpec): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.NameKey]: K8sManifestBuilder.TenantAdminSeedContainerName,
+            [K8sManifestBuilder.ImageKey]: spec.image,
+            [K8sManifestBuilder.ImagePullPolicyKey]: K8sManifestBuilder.IfNotPresent,
+            [K8sManifestBuilder.CommandKey]: K8sManifestBuilder.TenantAdminSeedCommand,
+            [K8sManifestBuilder.SecurityContextKey]: this.TenantAdminSecurityContext(),
+            [K8sManifestBuilder.VolumeMountsKey]: [
+                { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.TenantAdminSeedVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.TenantAdminSeedMount, [K8sManifestBuilder.ReadOnlyKey]: true },
+                { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.TenantAdminDataVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.TenantAdminDataMount },
+            ],
+        }
+    }
+
+    private TenantAdminContainer(spec: TenantAdminWorkloadSpec): K8sObject
+    {
+        const secure = spec.externalScheme === K8sManifestBuilder.HttpsSchemeName
+        return {
+            [K8sManifestBuilder.NameKey]: K8sManifestBuilder.TenantAdminContainerName,
+            [K8sManifestBuilder.ImageKey]: spec.image,
+            [K8sManifestBuilder.ImagePullPolicyKey]: K8sManifestBuilder.IfNotPresent,
+            [K8sManifestBuilder.CommandKey]: K8sManifestBuilder.TenantAdminEntrypoint,
+            [K8sManifestBuilder.PortsKey]: [{ [K8sManifestBuilder.ContainerPortKey]: spec.port }],
+            [K8sManifestBuilder.SecurityContextKey]: this.TenantAdminSecurityContext(),
+            [K8sManifestBuilder.EnvKey]: [
+                this.EnvLiteral(TenantAdminEnv.DataRoot, K8sManifestBuilder.TenantAdminDataMount),
+                this.EnvLiteral(TenantAdminEnv.Port, String(spec.port)),
+                this.EnvLiteral(TenantAdminEnv.Bind, K8sManifestBuilder.TenantAdminBindAll),
+                this.EnvLiteral(TenantAdminEnv.BaseDomain, spec.baseDomain),
+                this.EnvLiteral(TenantAdminEnv.Scheme, spec.externalScheme),
+                this.EnvLiteral(TenantAdminEnv.SecureCookie, secure ? K8sManifestBuilder.TrueText : K8sManifestBuilder.FalseText),
+                this.EnvLiteral(TenantAdminEnv.RolloutUrl, spec.rolloutUrl),
+                this.EnvLiteral(TenantAdminEnv.RolloutHiveId, spec.hiveId),
+                {
+                    [K8sManifestBuilder.NameKey]: TenantAdminEnv.RolloutToken,
+                    [K8sManifestBuilder.ValueFromKey]: {
+                        [K8sManifestBuilder.SecretKeyRefKey]: {
+                            [K8sManifestBuilder.NameKey]: spec.agentTokenSecretName,
+                            [K8sManifestBuilder.KeyKey]: K8sManifestBuilder.AgentTokenSecretKey,
+                        },
+                    },
+                },
+            ],
+            [K8sManifestBuilder.VolumeMountsKey]: [
+                { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.TenantAdminDataVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.TenantAdminDataMount },
+                { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.TmpVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.TmpMount },
+            ],
+            // The plane answers 403 to any Host that is not a known tenant subdomain, so the probe presents the tenant's own host.
+            [K8sManifestBuilder.ReadinessProbeKey]: {
+                [K8sManifestBuilder.HttpGetKey]: {
+                    [K8sManifestBuilder.PathKey]: K8sManifestBuilder.TenantAdminRootPath,
+                    [K8sManifestBuilder.PortKey]: spec.port,
+                    [K8sManifestBuilder.HttpHeadersKey]: [{
+                        [K8sManifestBuilder.NameKey]: K8sManifestBuilder.HostHeader,
+                        [K8sManifestBuilder.ValueKey]: spec.tenantId + K8sManifestBuilder.HostSeparator + spec.baseDomain,
+                    }],
+                },
+            },
+        }
+    }
+
+    private TenantAdminServiceObject(spec: TenantAdminWorkloadSpec): K8sObject
+    {
+        const name = K8sManifestBuilder.TenantAdminNameOf(spec.tenantId)
+        return {
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ServiceKind,
+            [K8sManifestBuilder.MetadataKey]: this.HiveAgentNamespacedMeta(spec.hiveId, name),
             [K8sManifestBuilder.SpecKey]: {
                 [K8sManifestBuilder.TypeKey]: K8sManifestBuilder.ClusterIpType,
                 [K8sManifestBuilder.SelectorKey]: this.Selector(name),

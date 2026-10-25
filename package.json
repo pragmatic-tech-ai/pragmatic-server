@@ -12,7 +12,8 @@
     "pragmatic-workerd": "dist/bin/pragmatic-workerd.js",
     "pragmatic-gatewayd": "dist/bin/pragmatic-gatewayd.js",
     "pragmatic-agentd": "dist/bin/pragmatic-agentd.js",
-    "pragmatic-idp": "dist/bin/pragmatic-idpd.js"
+    "pragmatic-idp": "dist/bin/pragmatic-idpd.js",
+    "pragmatic-tenant-admind": "dist-tenant-admin/src/bin/pragmatic-tenant-admind.js"
   },
   "exports": {
     ".": {
@@ -22,6 +23,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "build:tenant-admin": "tsc -p tsconfig.tenant-admin.json",
     "typecheck:tools": "tsc -p tsconfig.tools.json && tsc -p admin/portal/tsconfig.json --noEmit && tsc -p admin/tenant-portal/tsconfig.json --noEmit",
     "test": "tsx --test \"src/**/*.test.ts\""
   },
