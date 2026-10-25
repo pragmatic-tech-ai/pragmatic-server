@@ -5,12 +5,9 @@ import { ControlPlaneClient } from './api-client.js'
 import { EnvironmentDetailView } from './environment-detail-view.js'
 import { EnvironmentListView } from './environment-list-view.js'
 import { CreateGraphView } from './create-graph-view.js'
-import { MakerTokenView } from './maker-token-view.js'
 import { PromoteGraphView } from './promote-graph-view.js'
 import { GraphListView } from './graph-list-view.js'
 import { LoginView } from './login-view.js'
-import { RoleConfigView } from './role-config-view.js'
-import { ManageView } from './manage-view.js'
 import { ClientListView } from './client-list-view.js'
 import { CreateClientView } from './create-client-view.js'
 import { TenantListView } from './tenant-list-view.js'
@@ -124,18 +121,6 @@ export class App extends StackPanel implements IPortalNavigator
         this.Show(new EnvironmentDetailView(this.client, this, name))
     }
 
-    public ShowManage(name: string): void
-    {
-        this.SetLogoutVisible(true)
-        this.Show(new ManageView(this.client, this, name))
-    }
-
-    public ShowRoles(name: string): void
-    {
-        this.SetLogoutVisible(true)
-        this.Show(new RoleConfigView(this.client, this, name))
-    }
-
     public ShowGraphs(name: string): void
     {
         this.SetLogoutVisible(true)
@@ -152,12 +137,6 @@ export class App extends StackPanel implements IPortalNavigator
     {
         this.SetLogoutVisible(true)
         this.Show(new PromoteGraphView(this.client, this, devEnvName))
-    }
-
-    public ShowMakerToken(envName: string): void
-    {
-        this.SetLogoutVisible(true)
-        this.Show(new MakerTokenView(this.client, this, envName))
     }
 
     public ShowClients(): void

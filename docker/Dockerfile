@@ -59,7 +59,7 @@ COPY pragmatic-server/ ./pragmatic-server/
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd pragmatic-server && npm install --no-audit --no-fund && npm run build
 
-# Tenant-admin container (node dist-tenant-admin/src/bin/pragmatic-tenant-admind.js): the control-plane tree compiles
+# Tenant-admin container (node dist-tenant-admin/admin/control-plane/bin/pragmatic-tenant-admind.js): the control-plane tree compiles
 # separately from the main build (it lives outside src/), and serves the tenant-portal SPA from
 # dist-tenant-admin/admin/tenant-portal/dist (the path TenantAdminServer resolves relative to its own module).
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \

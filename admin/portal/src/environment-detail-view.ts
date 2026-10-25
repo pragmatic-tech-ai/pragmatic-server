@@ -4,13 +4,10 @@ import { EnvironmentType } from './portal-types.js'
 import type { EnvironmentDto, GraphLoadedDto, IPortalNavigator } from './portal-types.js'
 import { PortalViewBase } from './portal-view-base.js'
 
-// One environment: connect info and navigation to its identity admin and graphs; lifecycle lives on the tenant plane.
+// One environment: connect info and navigation to its graphs; lifecycle lives on the tenant plane.
 export class EnvironmentDetailView extends PortalViewBase
 {
-    private static readonly ManageLabel = 'Manage'
-    public static readonly RolesLabel = 'Roles'
     public static readonly GraphsLabel = 'Graphs'
-    public static readonly MakerTokenLabel = 'Mint maker token'
     public static readonly PromoteLabel = 'Promote graph\u2026'
     private static readonly LoadedGraphPrefix = 'Loaded graph: '
     private static readonly PackagesPrefix = 'Packages: '
@@ -106,13 +103,10 @@ export class EnvironmentDetailView extends PortalViewBase
         {
             this.actions.RemoveChild(child)
         }
-        this.actions.AddChild(this.MakeButton(EnvironmentDetailView.ManageLabel, () => { this.nav.ShowManage(this.name) }))
-        this.actions.AddChild(this.MakeButton(EnvironmentDetailView.RolesLabel, () => { this.nav.ShowRoles(this.name) }))
         if (this.envType === EnvironmentType.Development)
         {
             this.actions.AddChild(this.MakeButton(EnvironmentDetailView.GraphsLabel, () => { this.nav.ShowGraphs(this.name) }))
             this.actions.AddChild(this.MakeButton(EnvironmentDetailView.PromoteLabel, () => { this.nav.ShowPromoteGraph(this.name) }))
-            this.actions.AddChild(this.MakeButton(EnvironmentDetailView.MakerTokenLabel, () => { this.nav.ShowMakerToken(this.name) }))
         }
         this.actions.AddChild(this.MakeButton(PortalViewBase.BackLabel, () => { this.nav.ShowList() }))
     }

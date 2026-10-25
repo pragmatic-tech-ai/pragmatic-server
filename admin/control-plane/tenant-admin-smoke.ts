@@ -3,7 +3,7 @@
  *
  * Requires a local Kubernetes context (default `docker-desktop`; override with PRAGMATIC_SMOKE_CONTEXT) and a
  * `pragmatic-server:dev` image built AFTER the tenant-admin packaging landed (it must contain
- * `dist-tenant-admin/src/bin/pragmatic-tenant-admind.js` and `dist-tenant-admin/admin/tenant-portal/dist`; rebuild with
+ * `dist-tenant-admin/admin/control-plane/bin/pragmatic-tenant-admind.js` and `dist-tenant-admin/admin/tenant-portal/dist`; rebuild with
  * the invocation in docker/Dockerfile's header, and on a kind cluster `kind load docker-image pragmatic-server:dev`).
  * Run with:
  *

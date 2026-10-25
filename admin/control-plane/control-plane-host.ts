@@ -210,24 +210,9 @@ export class ControlPlaneHost
     private static readonly UnauthenticatedMessage = 'Authentication required'
     private static readonly BadOriginMessage = 'Origin not allowed'
     private static readonly CredentialsRequiredMessage = 'email and password (strings) are required'
-    private static readonly AdminSegment = 'admin'
-    private static readonly SnapshotPath = 'snapshot'
-    private static readonly AccountsPath = 'accounts'
-    private static readonly GrantsPath = 'grants'
-    private static readonly ConfigPath = 'config'
-    private static readonly SecurityModelPath = 'security-model'
-    private static readonly AdminPathPattern = new RegExp(
-        '^' + ControlPlaneHost.EnvironmentsPath + '/([^/]+)/' + ControlPlaneHost.AdminSegment + '/(' +
-        [ControlPlaneHost.SnapshotPath, ControlPlaneHost.AccountsPath, ControlPlaneHost.GrantsPath, ControlPlaneHost.ConfigPath, ControlPlaneHost.SecurityModelPath].join('|') + ')(?:/([^/]+))?$')
     private static readonly GraphsSegment = 'graphs'
     private static readonly GraphPathPattern = new RegExp(
         '^' + ControlPlaneHost.EnvironmentsPath + '/([^/]+)/' + ControlPlaneHost.GraphsSegment + '(?:/([^/]+))?$')
-    private static readonly MakerTokenSegment = 'maker-token'
-    private static readonly MakerTokenPathPattern = new RegExp(
-        '^' + ControlPlaneHost.EnvironmentsPath + '/([^/]+)/' + ControlPlaneHost.MakerTokenSegment + '$')
-    private static readonly AppReaderSegment = 'app-reader-grant'
-    private static readonly AppReaderPathPattern = new RegExp(
-        '^' + ControlPlaneHost.EnvironmentsPath + '/([^/]+)/' + ControlPlaneHost.AppReaderSegment + '$')
     private static readonly PromoteSegment = 'promote'
     private static readonly PromotePathPattern = new RegExp(
         '^' + ControlPlaneHost.EnvironmentsPath + '/([^/]+)/' + ControlPlaneHost.GraphsSegment + '/([^/]+)/' + ControlPlaneHost.PromoteSegment + '$')
@@ -236,10 +221,6 @@ export class ControlPlaneHost
         '^' + ControlPlaneHost.EnvironmentsPath + '/([^/]+)/' + ControlPlaneHost.LoadedGraphSegment + '$')
     private static readonly TargetEnvRequiredMessage = 'targetEnv (non-empty string) is required'
     private static readonly DescriptionRequiredMessage = 'description (string) is required'
-    private static readonly AccountFieldsMessage = 'email, principalId and password (non-empty strings) are required'
-    private static readonly GrantFieldsMessage = 'subject and role (strings) are required'
-    private static readonly ConfigFieldsMessage = 'packId and delegationDepth (strings) are required'
-    private static readonly SecurityModelFieldMessage = 'securityModel (object) is required'
     private static readonly BodyObjectMessage = 'Request body must be a JSON object'
     private static readonly ConnectUnavailableMessage = 'Environment is not reachable'
     private static readonly Utf8 = 'utf8'
@@ -539,21 +520,6 @@ export class ControlPlaneHost
                 return true
             }
             return false
-        }
-        const am = ControlPlaneHost.AdminPathPattern.exec(path)
-        if (am !== null)
-        {
-            return await this.RouteAdmin(req, res, method, am)
-        }
-        const tm = ControlPlaneHost.MakerTokenPathPattern.exec(path)
-        if (tm !== null)
-        {
-            return await this.RouteMakerToken(req, res, method, tm)
-        }
-        const rm = ControlPlaneHost.AppReaderPathPattern.exec(path)
-        if (rm !== null)
-        {
-            return await this.RouteAppReaderGrant(res, method, rm)
         }
         const pm = ControlPlaneHost.PromotePathPattern.exec(path)
         if (pm !== null)
@@ -943,50 +909,6 @@ export class ControlPlaneHost
         return { mode: r.mode as InfraMode, endpoint: r.endpoint as string | undefined, credentialRef: r.credentialRef as string | undefined }
     }
 
-    /** Dispatches POST /api/environments/NAME/maker-token; false (unknown route) for any other method. */
-    private async RouteMakerToken(_req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
-    {
-        if (method !== PlaneHttp.MethodPost)
-        {
-            return false
-        }
-        const name = ControlPlaneHost.Decode(m[1] as string)
-        if (name === undefined)
-        {
-            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
-            return true
-        }
-        await this.HandleIssueMakerToken(res, name)
-        return true
-    }
-
-    /** Mints a maker token; the secret is returned once in the response body and never logged. */
-    private async HandleIssueMakerToken(res: ServerResponse, name: string): Promise<void>
-    {
-        const issued = await this.service.AdminIssueMakerToken(name)
-        const dto: MakerTokenDto = { token: issued.token, principalId: issued.principalId, expiresAt: issued.expiresAt }
-        PlaneHttp.WriteJson(res, ControlPlaneHost.StatusCreated, dto)
-    }
-
-    /** Dispatches POST /api/environments/NAME/app-reader-grant; false (unknown route) for any other method. */
-    private async RouteAppReaderGrant(res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
-    {
-        if (method !== PlaneHttp.MethodPost)
-        {
-            return false
-        }
-        const name = ControlPlaneHost.Decode(m[1] as string)
-        if (name === undefined)
-        {
-            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
-            return true
-        }
-        // Grants the well-known app-reader principal a read role on the runtime; no token or secret is minted or returned.
-        await this.service.AdminGrantAppReader(name)
-        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ok: true })
-        return true
-    }
-
     /** Relays POST /api/environments/SOURCE/graphs/GRAPH/promote into the runtime target; false for any other method. */
     private async RoutePromote(req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
     {
@@ -1095,138 +1017,6 @@ export class ControlPlaneHost
         }
         const rec = await this.graphService.Create(env, body.name as string, body.description as string)
         PlaneHttp.WriteJson(res, ControlPlaneHost.StatusCreated, rec)
-    }
-
-    /** Dispatches /api/environments/NAME/admin/SUB[/TAIL]; false when the (sub, method, tail) combination is unknown. */
-    private async RouteAdmin(req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
-    {
-        const name = ControlPlaneHost.Decode(m[1] as string)
-        if (name === undefined)
-        {
-            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
-            return true
-        }
-        const sub = m[2]
-        const tail = m[3]
-        if (sub === ControlPlaneHost.SnapshotPath && tail === undefined && method === PlaneHttp.MethodGet)
-        {
-            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, await this.service.AdminSnapshot(name))
-            return true
-        }
-        if (sub === ControlPlaneHost.ConfigPath && tail === undefined && method === PlaneHttp.MethodGet)
-        {
-            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, await this.service.AdminGetConfig(name))
-            return true
-        }
-        if (sub === ControlPlaneHost.SecurityModelPath && tail === undefined && method === PlaneHttp.MethodGet)
-        {
-            // JSON null (not undefined) so the body is always valid JSON when no model is stored.
-            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, await this.service.AdminGetSecurityModel(name) ?? null)
-            return true
-        }
-        if (sub === ControlPlaneHost.AccountsPath && tail !== undefined && method === PlaneHttp.MethodDelete)
-        {
-            const principalId = ControlPlaneHost.Decode(tail)
-            if (principalId === undefined)
-            {
-                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
-                return true
-            }
-            await this.service.AdminDisableAccount(name, principalId)
-            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ok: true })
-            return true
-        }
-        if (tail !== undefined)
-        {
-            return false
-        }
-        if (sub === ControlPlaneHost.AccountsPath && method === PlaneHttp.MethodPost)
-        {
-            const body = await this.ReadJsonObject(req, res)
-            if (body === undefined)
-            {
-                return true
-            }
-            if (!ControlPlaneHost.NonEmpty(body.email) || !ControlPlaneHost.NonEmpty(body.principalId) || !ControlPlaneHost.NonEmpty(body.password))
-            {
-                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.AccountFieldsMessage })
-                return true
-            }
-            const account = { email: body.email, principalId: body.principalId, password: body.password } as unknown as CreateAccountParams
-            await this.service.AdminCreateAccount(name, account)
-            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusCreated, { ok: true })
-            return true
-        }
-        if (sub === ControlPlaneHost.GrantsPath && (method === PlaneHttp.MethodPost || method === PlaneHttp.MethodDelete))
-        {
-            const body = await this.ReadJsonObject(req, res)
-            if (body === undefined)
-            {
-                return true
-            }
-            if (typeof body.subject !== 'string' || typeof body.role !== 'string')
-            {
-                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.GrantFieldsMessage })
-                return true
-            }
-            const mutation = {
-                subject: body.subject,
-                role: body.role,
-                resourceKind: body.resourceKind,
-                resourcePath: body.resourcePath
-            } as unknown as GrantMutationDto
-            if (method === PlaneHttp.MethodPost)
-            {
-                await this.service.AdminGrantRole(name, mutation)
-            }
-            else
-            {
-                await this.service.AdminRevokeRole(name, mutation)
-            }
-            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ok: true })
-            return true
-        }
-        if (sub === ControlPlaneHost.SecurityModelPath && method === PlaneHttp.MethodPut)
-        {
-            const body = await this.ReadJsonObject(req, res)
-            if (body === undefined)
-            {
-                return true
-            }
-            if (typeof body.securityModel !== 'object' || body.securityModel === null)
-            {
-                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.SecurityModelFieldMessage })
-                return true
-            }
-            await this.service.AdminSetSecurityModel(name, body.securityModel as SecurityModelDto)
-            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ok: true })
-            return true
-        }
-        if (sub === ControlPlaneHost.ConfigPath && method === PlaneHttp.MethodPut)
-        {
-            const body = await this.ReadJsonObject(req, res)
-            if (body === undefined)
-            {
-                return true
-            }
-            if (typeof body.packId !== 'string' || typeof body.delegationDepth !== 'string')
-            {
-                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ConfigFieldsMessage })
-                return true
-            }
-            const config = {
-                packId: body.packId,
-                delegationDepth: body.delegationDepth,
-                providerSettings: body.providerSettings,
-                groupRoleMap: body.groupRoleMap,
-                claimsMapping: body.claimsMapping,
-                securityModel: body.securityModel
-            } as unknown as IdentityConfigDto
-            await this.service.AdminSetConfig(name, config)
-            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ok: true })
-            return true
-        }
-        return false
     }
 
     /** Reads and parses a JSON object body; writes the 400 and returns undefined when it is not one. */

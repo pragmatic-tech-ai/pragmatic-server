@@ -9,7 +9,7 @@
  * Composes the real stack in-process (as server.ts does). The operator no longer manages environment
  * lifecycle over HTTP (the tenant plane owns that), so this smoke creates/starts/stops/deletes environments
  * through the EnvironmentService directly, then drives what the operator STILL serves over its HTTP API:
- * the environment list, per-environment account/grant management, graph contribution, maker tokens, and
+ * the environment list, graph contribution and
  * promotion into a runtime environment, and verifies the seeded demo users over the admin protocol.
  */
 import { request } from 'node:http'
@@ -37,7 +37,7 @@ import { HiveObservationRegistry } from './hive-observation-record.js'
 import { RolloutRegistrationRegistry } from './rollout-registration-record.js'
 import { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
 import { EnvironmentPlacement } from './environment-placement.js'
-import type { EnvironmentDto, MakerTokenDto, PromotionResultDto } from './control-plane-host.js'
+import type { EnvironmentDto, PromotionResultDto } from './control-plane-host.js'
 import { BundleBuilderAdapter, DockerEnvAdapter, UserSeederAdapter } from './docker-env-port.js'
 import { EnvStatus, EnvType, Template } from './environment-record.js'
 import { ClientRegistry } from './client-registry.js'
@@ -89,7 +89,6 @@ export class ControlPlaneSmoke
     private static readonly HealthPath = '/healthz'
     private static readonly MethodGet = 'GET'
     private static readonly MethodPost = 'POST'
-    private static readonly MethodDelete = 'DELETE'
     private static readonly ServiceMissingMessage = 'EnvironmentService is not composed'
     private static readonly ServiceErrorWord = ' error='
     private static readonly JsonContentType = 'application/json'
@@ -114,20 +113,8 @@ export class ControlPlaneSmoke
     private static readonly StatusOk = 200
     private static readonly StatusCreated = 201
     private static readonly StatusUnauthorized = 401
-    private static readonly StatusConflict = 409
-    private static readonly MethodPut = 'PUT'
-    private static readonly AdminSegment = '/admin/'
-    private static readonly SnapshotLeaf = 'snapshot'
-    private static readonly AccountsLeaf = 'accounts'
-    private static readonly GrantsLeaf = 'grants'
-    private static readonly ConfigLeaf = 'config'
-    private static readonly ManagedPrincipal = 'smoke-managed'
-    private static readonly ManagedEmail = 'smoke-managed@contoso.test'
-    private static readonly ManagedPassword = 'smoke-managed-test-password'
     private static readonly ViewerRole = 'Viewer'
-    private static readonly OwnerRole = 'Owner'
     private static readonly TenantKind = 'Tenant'
-    private static readonly OwnerSubject = 'admin'
     private static readonly PollTimeoutMs = 90000
     private static readonly PollIntervalMs = 1000
     private static readonly PassTag = 'PASS '
@@ -168,7 +155,6 @@ export class ControlPlaneSmoke
     private static readonly WsEnvironmentQuery = '/?environment='
     private static readonly GraphsSegment = '/graphs'
     private static readonly PromoteSegment = '/promote'
-    private static readonly MakerTokenAction = '/maker-token'
     private static readonly LoadedGraphAction = '/loaded-graph'
     private static readonly PromotedPackageCount = 1
     private static readonly PromoteExpectedRows = 1
@@ -195,17 +181,9 @@ export class ControlPlaneSmoke
         GoneDemo: 'demo-contoso: no longer listed',
         PurposeDev: 'dev-blank: tenants.json purpose is Development (0)',
         PurposeDemo: 'demo-contoso: tenants.json purpose is Runtime (1)',
-        ManageSnapshot: 'manage: snapshot returns 200 with admin, demo principals and config',
-        ManageCreate: 'manage: create account returns 201',
-        ManageListed: 'manage: new account appears in snapshot',
-        ManageGrant: 'manage: grant Viewer returns 200',
-        ManageRevoke: 'manage: revoke Viewer returns 200',
-        ManageGetConfig: 'manage: get config returns 200',
-        ManagePutConfig: 'manage: put unchanged config returns 200',
-        ManageLockout: 'manage: revoking own Owner grant is refused with 409',
         PromoteCreateDev: 'promote: development env create succeeds and reaches running',
         PromoteCreateGraph: 'promote: create graph on dev env returns 201',
-        PromoteMakerToken: 'promote: maker token mint returns 201 with a token',
+        PromoteMakerToken: 'promote: maker token mint via the environment service returns a token',
         PromoteContribute: 'promote: graph/contribute with maker token returns the graph with its package',
         PromoteCreateRuntime: 'promote: runtime env create succeeds and reaches running',
         PromoteResult: 'promote: promote returns 200 with graph name, package count and target env',
@@ -371,7 +349,6 @@ export class ControlPlaneSmoke
         await this.CheckHealth(L.HealthDemo, running.hostPort)
         this.CheckPurpose(L.PurposeDemo, dataRoot, name, ControlPlaneSmoke.DemoTenant, ControlPlaneSmoke.DemoPurpose)
         await this.CheckSeeded(dataRoot, running.hostPort)
-        await this.ManageRoundTrip(name)
         const del = await this.Try(() => this.Svc().Delete(name))
         this.Expect(L.DeleteDemo, del.ok, del.detail)
         this.Expect(L.GoneDemo, (await this.Find(name)) === undefined)
@@ -394,9 +371,9 @@ export class ControlPlaneSmoke
         }
         const madeGraph = await this.Api(S.MethodPost, this.EnvPath(dev) + S.GraphsSegment, { name: graph, description: S.PromoteGraphDescription })
         this.Expect(L.PromoteCreateGraph, madeGraph.status === S.StatusCreated, S.StatusWord + String(madeGraph.status))
-        const minted = await this.Api(S.MethodPost, this.EnvPath(dev) + S.MakerTokenAction)
-        const makerToken = (minted.json as MakerTokenDto | undefined)?.token ?? S.EmptyString
-        this.Expect(L.PromoteMakerToken, minted.status === S.StatusCreated && makerToken !== S.EmptyString, S.StatusWord + String(minted.status))
+        let makerToken = S.EmptyString
+        const minted = await this.Try(async () => { makerToken = (await this.Svc().AdminIssueMakerToken(dev)).token })
+        this.Expect(L.PromoteMakerToken, minted.ok && makerToken !== S.EmptyString, minted.detail)
         if (makerToken === S.EmptyString)
         {
             return
@@ -652,43 +629,6 @@ export class ControlPlaneSmoke
         {
             conn.dispose()
         }
-    }
-
-    /** Drives the admin Manage routes against the running demo environment through the control plane. */
-    private async ManageRoundTrip(name: string): Promise<void>
-    {
-        const S = ControlPlaneSmoke
-        const L = S.Labels
-        const base = this.EnvPath(name) + S.AdminSegment
-        const snapshot = await this.Api(S.MethodGet, base + S.SnapshotLeaf)
-        const snap = snapshot.json as { accounts?: { principalId: string; email: string }[]; config?: unknown } | undefined
-        const accounts = snap?.accounts ?? []
-        const ids = new Set(accounts.map(a => a.principalId))
-        const missing = S.DemoPrincipals.filter(p => !ids.has(p))
-        const hasAdmin = accounts.some(a => a.email === S.AdminEmail)
-        const snapshotOk = snapshot.status === S.StatusOk && missing.length === 0 && hasAdmin && snap?.config !== undefined
-        this.Expect(L.ManageSnapshot, snapshotOk, S.StatusWord + String(snapshot.status) + S.MissingOpen + missing.join(S.Comma) + S.MissingClose + String(hasAdmin))
-
-        const create = await this.Api(S.MethodPost, base + S.AccountsLeaf, { principalId: S.ManagedPrincipal, email: S.ManagedEmail, password: S.ManagedPassword })
-        this.Expect(L.ManageCreate, create.status === S.StatusCreated, S.StatusWord + String(create.status))
-        const after = await this.Api(S.MethodGet, base + S.SnapshotLeaf)
-        const listed = ((after.json as { accounts?: { principalId: string }[] } | undefined)?.accounts ?? []).some(a => a.principalId === S.ManagedPrincipal)
-        this.Expect(L.ManageListed, after.status === S.StatusOk && listed, S.StatusWord + String(after.status))
-
-        const viewer = { subject: S.ManagedPrincipal, role: S.ViewerRole, resourceKind: S.TenantKind, resourcePath: [] }
-        const grant = await this.Api(S.MethodPost, base + S.GrantsLeaf, viewer)
-        this.Expect(L.ManageGrant, grant.status === S.StatusOk, S.StatusWord + String(grant.status))
-        const revoke = await this.Api(S.MethodDelete, base + S.GrantsLeaf, viewer)
-        this.Expect(L.ManageRevoke, revoke.status === S.StatusOk, S.StatusWord + String(revoke.status))
-
-        const config = await this.Api(S.MethodGet, base + S.ConfigLeaf)
-        this.Expect(L.ManageGetConfig, config.status === S.StatusOk && config.json !== undefined, S.StatusWord + String(config.status))
-        const put = await this.Api(S.MethodPut, base + S.ConfigLeaf, config.json)
-        this.Expect(L.ManagePutConfig, put.status === S.StatusOk, S.StatusWord + String(put.status))
-
-        const owner = { subject: S.OwnerSubject, role: S.OwnerRole, resourceKind: S.TenantKind, resourcePath: [] }
-        const lockout = await this.Api(S.MethodDelete, base + S.GrantsLeaf, owner)
-        this.Expect(L.ManageLockout, lockout.status === S.StatusConflict, S.StatusWord + String(lockout.status))
     }
 
     private async CheckHealth(label: string, hostPort: number): Promise<void>

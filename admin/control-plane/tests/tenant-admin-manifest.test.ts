@@ -65,7 +65,7 @@ describe('K8sManifestBuilder.RenderTenantAdmin', () =>
     {
         const pod = TenantAdminFixture.Of('Deployment').spec.template.spec
         const c = pod.containers[0]
-        assert.deepEqual(c.command, ['node', 'dist-tenant-admin/src/bin/pragmatic-tenant-admind.js'])
+        assert.deepEqual(c.command, ['node', 'dist-tenant-admin/admin/control-plane/bin/pragmatic-tenant-admind.js'])
         assert.equal(c.securityContext.runAsNonRoot, true)
         assert.equal(c.securityContext.allowPrivilegeEscalation, false)
         assert.deepEqual(c.securityContext.capabilities, { drop: ['ALL'] })
