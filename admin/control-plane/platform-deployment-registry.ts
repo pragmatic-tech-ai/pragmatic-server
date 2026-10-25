@@ -3,7 +3,8 @@ import type { HiveRecord } from './platform-records.js'
 import type { ManifestRecord, ManifestRegistry } from './manifest-record.js'
 import type { GatingRegistry } from './gating-record.js'
 import type { SelectionRegistry } from './selection-record.js'
-import type { RolloutReportRegistry } from './rollout-report-record.js'
+import type { HiveObservationRegistry } from './hive-observation-record.js'
+import type { HiveHealthDto } from './hive-health-producer.js'
 import type { RolloutRegistrationRegistry } from './rollout-registration-record.js'
 import type { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import { UnsupportedBackendError } from './hive-orchestrator.js'
@@ -24,7 +25,7 @@ export interface IWorkloadPlacement
 
 export type RolloutTarget = { version: string; image: string }
 
-export type EnvironmentRolloutStatus = { environmentName: string; runningImage: string; obsolete: boolean; ready: boolean }
+export type EnvironmentRolloutStatus = { environmentName: string; runningImage: string | undefined; obsolete: boolean; ready: boolean }
 
 export type HiveRolloutStatus = { targetVersion: string | undefined; environments: EnvironmentRolloutStatus[] }
 
@@ -40,12 +41,12 @@ export class PlatformDeploymentRegistry
         private readonly manifests: ManifestRegistry,
         private readonly gating: GatingRegistry,
         private readonly selections: SelectionRegistry,
-        private readonly reports: RolloutReportRegistry,
         private readonly registrations: RolloutRegistrationRegistry,
         private readonly hives: IHiveLookup,
         private readonly orchestrators: HiveOrchestratorFactory,
         private readonly environments: IEnvironmentLookup,
-        private readonly placement: IWorkloadPlacement)
+        private readonly placement: IWorkloadPlacement,
+        private readonly observations: HiveObservationRegistry)
     {
     }
 
@@ -166,21 +167,21 @@ export class PlatformDeploymentRegistry
         return manifest === undefined ? undefined : { version: manifest.id, image: manifest.image }
     }
 
-    public async Report(hiveId: string, environmentName: string, runningImage: string, ready: boolean): Promise<void>
+    /** The single whole-hive snapshot up-feed; replaces the hive's prior observation. The caller has already verified the bearer. */
+    public async ReportSnapshot(hiveId: string, environments: HiveHealthDto[]): Promise<void>
     {
-        await this.reports.Put({ id: this.ReportId(hiveId, environmentName), hiveId, environmentName, runningImage, ready, reportedAt: new Date().toISOString() })
+        await this.observations.RecordSnapshot(hiveId, environments)
     }
 
     public StatusFor(hiveId: string): HiveRolloutStatus
     {
         const target = this.TargetFor(hiveId)
-        const environments = this.reports.List()
-            .filter(r => r.hiveId === hiveId)
-            .map(r => ({
-                environmentName: r.environmentName,
-                runningImage: r.runningImage,
-                obsolete: target !== undefined && r.runningImage !== target.image,
-                ready: r.ready
+        const environments = this.observations.LatestFor(hiveId)
+            .map(h => ({
+                environmentName: h.environmentName,
+                runningImage: h.runningImage,
+                obsolete: target !== undefined && h.runningImage !== target.image,
+                ready: h.ready
             }))
         return { targetVersion: target?.version, environments }
     }
@@ -215,10 +216,5 @@ export class PlatformDeploymentRegistry
     private GateId(tenantId: string, version: string): string
     {
         return tenantId + PlatformDeploymentRegistry.KeySeparator + version
-    }
-
-    private ReportId(hiveId: string, environmentName: string): string
-    {
-        return hiveId + PlatformDeploymentRegistry.KeySeparator + environmentName
     }
 }

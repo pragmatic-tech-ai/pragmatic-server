@@ -9,7 +9,8 @@ import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import { ManifestRegistry } from './manifest-record.js'
 import { GatingRegistry } from './gating-record.js'
 import { SelectionRegistry } from './selection-record.js'
-import { RolloutReportRegistry } from './rollout-report-record.js'
+import { AgentChannelHost } from './agent-channel-host.js'
+import { HiveObservationRegistry } from './hive-observation-record.js'
 import { RolloutRegistrationRegistry } from './rollout-registration-record.js'
 import { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
 import { EnvironmentPlacement } from './environment-placement.js'
@@ -61,7 +62,7 @@ export class ControlPlaneServer
     private static readonly ManifestsFile = 'manifests.json'
     private static readonly GatingFile = 'gating.json'
     private static readonly SelectionsFile = 'selections.json'
-    private static readonly ReportsFile = 'rollout-reports.json'
+    private static readonly HiveObservationsFile = 'hive-observations.json'
     private static readonly RegistrationsFile = 'rollout-registrations.json'
     private static readonly ParentSegment = '..'
     private static readonly PortalSegment = 'portal'
@@ -83,6 +84,13 @@ export class ControlPlaneServer
     private static readonly TenantBaseDomainEnvVar = 'PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN'
     private static readonly TenantSchemeEnvVar = 'PRAGMATIC_TENANT_ADMIN_EXTERNAL_SCHEME'
     private static readonly DefaultTenantBind = '127.0.0.1'
+    /** Sentinel returned by ParseAgentChannelPort when the agent channel is not configured (or the port is invalid). */
+    public static readonly AgentChannelDisabled = 0
+    private static readonly AgentChannelPortEnvVar = 'PRAGMATIC_AGENT_CHANNEL_PORT'
+    private static readonly AgentChannelBindEnvVar = 'PRAGMATIC_AGENT_CHANNEL_BIND'
+    private static readonly DefaultAgentChannelBind = '0.0.0.0'
+    private static readonly AgentChannelListeningPrefix = 'Agent channel listening on '
+    private static readonly AgentChannelInvalidPortWarning = 'Ignoring invalid PRAGMATIC_AGENT_CHANNEL_PORT (expected an integer 1-65535); agent channel not started: '
     private static readonly DefaultExternalScheme = 'https'
     private static readonly BadTenantPortPrefix = 'Invalid PRAGMATIC_TENANT_ADMIN_PORT: '
     private static readonly TenantListeningPrefix = 'Tenant plane listening on '
@@ -134,14 +142,14 @@ export class ControlPlaneServer
         const manifests = new ManifestRegistry(join(dataRoot, ControlPlaneServer.ManifestsFile))
         const gating = new GatingRegistry(join(dataRoot, ControlPlaneServer.GatingFile))
         const selections = new SelectionRegistry(join(dataRoot, ControlPlaneServer.SelectionsFile))
-        const reports = new RolloutReportRegistry(join(dataRoot, ControlPlaneServer.ReportsFile))
+        const observations = new HiveObservationRegistry(join(dataRoot, ControlPlaneServer.HiveObservationsFile))
         const registrations = new RolloutRegistrationRegistry(join(dataRoot, ControlPlaneServer.RegistrationsFile))
         const adminClientRegistry = new TenantAdminClientRegistry(join(dataRoot, ControlPlaneServer.TenantAdminClientsFile))
-        await Promise.all([manifests.Load(), gating.Load(), selections.Load(), reports.Load(), registrations.Load(), adminClientRegistry.Load()])
+        await Promise.all([manifests.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load(), adminClientRegistry.Load()])
         const placement = new EnvironmentPlacement(directory)
-        const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, reports, registrations, directory, orchestrators, registry, placement)
+        const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, placement, observations)
         const provisioning = new TenantProvisioningService(idpService, directory, conn => new IdpAdminClient(conn))
-        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, orchestrators, deployments, provisioning)
+        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
         const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie, service, deployments, orchestrators, placement,
             masterKey, adminClientRegistry, ControlPlaneServer.ParseSecretTtlHours(process.env[ControlPlaneServer.SecretTtlEnvVar]))
@@ -167,6 +175,18 @@ export class ControlPlaneServer
         // The operator listener is structurally loopback-only: no tenant route is mounted on it.
         await host.Listen(port, ControlPlaneServer.BindHost)
         console.log(ControlPlaneServer.ListeningPrefix + String(port) + ControlPlaneServer.ListeningSuffix)
+        const agentChannelRaw = process.env[ControlPlaneServer.AgentChannelPortEnvVar]
+        const agentChannelPort = ControlPlaneServer.ParseAgentChannelPort(agentChannelRaw)
+        if (agentChannelPort === ControlPlaneServer.AgentChannelDisabled && agentChannelRaw !== undefined && agentChannelRaw !== '')
+        {
+            console.warn(ControlPlaneServer.AgentChannelInvalidPortWarning + agentChannelRaw)
+        }
+        if (agentChannelPort !== ControlPlaneServer.AgentChannelDisabled)
+        {
+            const agentBind = ControlPlaneServer.ParseAgentChannelBind(process.env[ControlPlaneServer.AgentChannelBindEnvVar])
+            await new AgentChannelHost(deployments).Listen(agentChannelPort, agentBind)
+            console.log(ControlPlaneServer.AgentChannelListeningPrefix + agentBind + ControlPlaneServer.HostPortSeparator + String(agentChannelPort))
+        }
         if (tenantStart !== undefined)
         {
             await tenantStart.host.Listen(tenantStart.port, tenantStart.bind)
@@ -239,6 +259,23 @@ export class ControlPlaneServer
     private static TenantBind(raw: string | undefined): string
     {
         return raw === undefined || raw === '' ? ControlPlaneServer.DefaultTenantBind : raw
+    }
+
+    /** Pure: the agent-channel port, or AgentChannelDisabled when unset, blank, or not an integer in 1..65535. */
+    public static ParseAgentChannelPort(raw: string | undefined): number
+    {
+        const port = Number(raw)
+        if (raw === undefined || raw === '' || !Number.isInteger(port) || port < 1 || port > ControlPlaneServer.MaxPort)
+        {
+            return ControlPlaneServer.AgentChannelDisabled
+        }
+        return port
+    }
+
+    /** Pure: the agent-channel bind address; defaults to all interfaces (the channel is the public, bearer-authenticated surface). */
+    public static ParseAgentChannelBind(raw: string | undefined): string
+    {
+        return raw === undefined || raw === '' ? ControlPlaneServer.DefaultAgentChannelBind : raw
     }
 
     /** The dedicated tenant listener port; required (the plane only activates when it is set). */

@@ -65,12 +65,9 @@ class Harness
     }
 }
 
-describe('ControlPlaneHost agent routes (machine credential)', () =>
+describe('ControlPlaneHost hive token registration (operator action)', () =>
 {
-    const TargetPath = '/api/hives/local1/agent/target'
-    const ReportPath = '/api/hives/local1/agent/report'
     const RolloutPath = '/api/hives/local1/rollout'
-    const Report = { environmentName: 'prod', runningImage: 'img:1', ready: true }
     let host: ControlPlaneHost
     let parent: string
     let token: string
@@ -92,7 +89,7 @@ describe('ControlPlaneHost agent routes (machine credential)', () =>
         await directory.CreateHive({ id: 'local1', tenantId: 't1', displayName: 'L', cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
         const factory = new HiveOrchestratorFactory()
         const deployments = await RolloutFixture.Create(parent, directory, factory)
-        host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, factory, deployments, new FakeProvisioning(directory).AsService())
+        host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, deployments, new FakeProvisioning(directory).AsService(), RolloutFixture.Observations(parent))
         await host.Listen(0, '127.0.0.1')
         token = (JSON.parse((await Harness.Send(host, 'POST', '/api/hives/local1/rollout-registration', { cookie: true })).body) as { token: string }).token
         await Harness.Send(host, 'POST', '/api/manifests', { cookie: true, body: { version: '1.0.0', image: 'img:1' } })
@@ -105,35 +102,6 @@ describe('ControlPlaneHost agent routes (machine credential)', () =>
         rmSync(parent, { recursive: true, force: true })
     })
 
-    it('serves the target to a correct bearer without any operator session', async () =>
-    {
-        assert.equal((await Harness.Send(host, 'GET', TargetPath, { authorization: 'Bearer ' + token })).status, 404)
-        await Harness.Send(host, 'POST', '/api/hives/local1/target', { cookie: true, body: { version: '1.0.0' } })
-        const reply = await Harness.Send(host, 'GET', TargetPath, { authorization: 'Bearer ' + token })
-        assert.equal(reply.status, 200)
-        assert.deepEqual(JSON.parse(reply.body), { version: '1.0.0', image: 'img:1' })
-    })
-
-    it('rejects a wrong, missing or malformed bearer with 401 and never echoes a token', async () =>
-    {
-        const wrong = await Harness.Send(host, 'GET', TargetPath, { authorization: 'Bearer wrong-token-value' })
-        const missing = await Harness.Send(host, 'GET', TargetPath)
-        const malformed = await Harness.Send(host, 'GET', TargetPath, { authorization: 'Basic ' + token })
-        const bare = await Harness.Send(host, 'GET', TargetPath, { authorization: token })
-        for (const r of [wrong, missing, malformed, bare])
-        {
-            assert.equal(r.status, 401)
-            assert.ok(!r.body.includes(token))
-            assert.ok(!r.body.includes('wrong-token-value'))
-        }
-    })
-
-    it('does not accept an operator session cookie alone on the agent routes', async () =>
-    {
-        assert.equal((await Harness.Send(host, 'GET', TargetPath, { cookie: true })).status, 401)
-        assert.equal((await Harness.Send(host, 'POST', ReportPath, { cookie: true, body: Report })).status, 401)
-    })
-
     it('does not accept the agent bearer on operator routes', async () =>
     {
         const auth = 'Bearer ' + token
@@ -141,46 +109,10 @@ describe('ControlPlaneHost agent routes (machine credential)', () =>
         assert.equal((await Harness.Send(host, 'POST', '/api/hives/local1/target', { authorization: auth, body: { version: '1.0.0' } })).status, 401)
     })
 
-    it('rejects a wrong method on an agent path without falling through to static serving', async () =>
-    {
-        const del = await Harness.Send(host, 'DELETE', TargetPath)
-        assert.equal(del.status, 401)
-        assert.ok(!del.body.includes('portal'))
-        const get = await Harness.Send(host, 'GET', ReportPath, { authorization: 'Bearer ' + token })
-        assert.equal(get.status, 401)
-    })
-
     it('marks the token-registration response no-store', async () =>
     {
         const reply = await Harness.Send(host, 'POST', '/api/hives/local1/rollout-registration', { cookie: true })
         assert.equal(reply.status, 201)
         assert.equal(reply.cacheControl, 'no-store')
-    })
-
-    it('answers 404 for an unregistered hive without echoing the token', async () =>
-    {
-        const reply = await Harness.Send(host, 'GET', '/api/hives/nope/agent/target', { authorization: 'Bearer ' + token })
-        assert.equal(reply.status, 404)
-        assert.ok(!reply.body.includes(token))
-    })
-
-    it('records a report for a correct bearer, visible via the operator rollout route', async () =>
-    {
-        await Harness.Send(host, 'POST', '/api/hives/local1/target', { cookie: true, body: { version: '1.0.0' } })
-        const reply = await Harness.Send(host, 'POST', ReportPath, { authorization: 'Bearer ' + token, body: Report })
-        assert.equal(reply.status, 204)
-        const status = JSON.parse((await Harness.Send(host, 'GET', RolloutPath, { cookie: true })).body) as { environments: unknown[] }
-        assert.deepEqual(status.environments, [{ environmentName: 'prod', runningImage: 'img:1', obsolete: false, ready: true }])
-    })
-
-    it('rejects a report with a bad bearer (nothing recorded) and a malformed body with 400', async () =>
-    {
-        const bad = await Harness.Send(host, 'POST', ReportPath, { authorization: 'Bearer nope', body: Report })
-        assert.equal(bad.status, 401)
-        assert.ok(!bad.body.includes(token))
-        const status = JSON.parse((await Harness.Send(host, 'GET', RolloutPath, { cookie: true })).body) as { environments: unknown[] }
-        assert.deepEqual(status.environments, [])
-        const invalid = await Harness.Send(host, 'POST', ReportPath, { authorization: 'Bearer ' + token, body: { environmentName: 'prod' } })
-        assert.equal(invalid.status, 400)
     })
 })

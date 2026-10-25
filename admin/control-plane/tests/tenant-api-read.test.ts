@@ -138,6 +138,10 @@ describe('TenantApiEndpoint read routes', () =>
 {
     const TenantA = 't-a'
     const TenantB = 't-b'
+    const SeedHive = 'hive-a'
+    const SeedEnv = 'a-env'
+    const SeedImage = 'registry/img:1'
+    const NoDetail = ''
     let parent: string
     let directory: PlatformDirectory
     let deployments: PlatformDeploymentRegistry
@@ -173,7 +177,7 @@ describe('TenantApiEndpoint read routes', () =>
         await deployments.Publish('v2', 'registry/img:2')
         await deployments.Gate(TenantA, 'v1')
         await deployments.Gate(TenantB, 'v2')
-        await deployments.Report('hive-a', 'a-env', 'registry/img:1', true)
+        await deployments.ReportSnapshot(SeedHive, [{ environmentName: SeedEnv, ready: true, runningImage: SeedImage, detail: NoDetail }])
         endpoint = new TenantApiEndpoint(service, directory, deployments, orchestrators, new EnvironmentPlacement(directory))
     })
 

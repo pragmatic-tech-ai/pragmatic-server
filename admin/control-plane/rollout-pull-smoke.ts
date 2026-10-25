@@ -31,6 +31,7 @@ import { EnvStatus, EnvType, Template } from './environment-record.js'
 import type { EnvironmentRecord, IContainerProbe } from './environment-record.js'
 import type { EnvironmentWorkload } from './environment-workload.js'
 import { GatingRegistry } from './gating-record.js'
+import { HiveObservationRegistry } from './hive-observation-record.js'
 import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import { UnsupportedBackendError } from './hive-orchestrator.js'
 import type { IHiveOrchestrator } from './hive-orchestrator.js'
@@ -47,7 +48,6 @@ import { PlatformDirectory } from './platform-directory.js'
 import { HiveBackend, InfraMode } from './platform-records.js'
 import type { HiveRecord } from './platform-records.js'
 import { RolloutRegistrationRegistry } from './rollout-registration-record.js'
-import { RolloutReportRegistry } from './rollout-report-record.js'
 import { SelectionRegistry } from './selection-record.js'
 import { FileSignatureStore } from './signature-store.js'
 import { TenantRegistry } from './tenant-registry.js'
@@ -184,7 +184,7 @@ export class RolloutPullSmoke
     private static readonly ManifestsFileName = 'manifests.json'
     private static readonly GatingFileName = 'gating.json'
     private static readonly SelectionsFileName = 'selections.json'
-    private static readonly ReportsFileName = 'reports.json'
+    private static readonly ObservationsFileName = 'hive-observations.json'
     private static readonly RegistrationsFileName = 'registrations.json'
     private static readonly ClientsFileName = 'clients.json'
     private static readonly TenantsFileName = 'tenants.json'
@@ -303,15 +303,15 @@ export class RolloutPullSmoke
             const stores = await this.LoadStores()
             const placement = new EnvironmentPlacement(directory)
             // Same stores, two registries: `registry` is served to the agent; `recorder` cannot reach the cluster, so SelectTarget only records.
-            const registry = new PlatformDeploymentRegistry(stores.manifests, stores.gating, stores.selections, stores.reports, stores.registrations, directory, factory, environments, placement)
-            const recorder = new PlatformDeploymentRegistry(stores.manifests, stores.gating, stores.selections, stores.reports, stores.registrations, directory, new UnreachableFactory(S.Context, dataRoot), environments, placement)
+            const registry = new PlatformDeploymentRegistry(stores.manifests, stores.gating, stores.selections, stores.registrations, directory, factory, environments, placement, stores.observations)
+            const recorder = new PlatformDeploymentRegistry(stores.manifests, stores.gating, stores.selections, stores.registrations, directory, new UnreachableFactory(S.Context, dataRoot), environments, placement, stores.observations)
             await registry.Publish(S.VersionV1, S.ImageV1)
             await registry.Publish(S.VersionV2, S.ImageV2)
             await registry.Gate(S.TenantId, S.VersionV1)
             await registry.Gate(S.TenantId, S.VersionV2)
             console.log(S.InfoTag + S.InfoPublished + S.VersionV1 + S.VersionSep + S.VersionV2)
 
-            const registryUrl = await this.Serve(directory, factory, registry)
+            const registryUrl = await this.Serve(directory, factory, registry, stores.observations)
             const machineToken = await registry.RegisterHive(S.HiveId)
 
             const record = this.NewRecord()
@@ -351,28 +351,28 @@ export class RolloutPullSmoke
         return join(this.tempDir!, name)
     }
 
-    private async LoadStores(): Promise<{ manifests: ManifestRegistry; gating: GatingRegistry; selections: SelectionRegistry; reports: RolloutReportRegistry; registrations: RolloutRegistrationRegistry }>
+    private async LoadStores(): Promise<{ manifests: ManifestRegistry; gating: GatingRegistry; selections: SelectionRegistry; observations: HiveObservationRegistry; registrations: RolloutRegistrationRegistry }>
     {
         const S = RolloutPullSmoke
         const manifests = new ManifestRegistry(this.TempFile(S.ManifestsFileName))
         const gating = new GatingRegistry(this.TempFile(S.GatingFileName))
         const selections = new SelectionRegistry(this.TempFile(S.SelectionsFileName))
-        const reports = new RolloutReportRegistry(this.TempFile(S.ReportsFileName))
         const registrations = new RolloutRegistrationRegistry(this.TempFile(S.RegistrationsFileName))
-        for (const store of [manifests, gating, selections, reports, registrations])
+        const observations = new HiveObservationRegistry(this.TempFile(S.ObservationsFileName))
+        for (const store of [manifests, gating, selections, observations, registrations])
         {
             await store.Load()
         }
-        return { manifests, gating, selections, reports, registrations }
+        return { manifests, gating, selections, observations, registrations }
     }
 
     /** Serves the real ControlPlaneHost on loopback behind the Host-rewriting proxy; returns the URL a pod uses. */
-    private async Serve(directory: PlatformDirectory, factory: HiveOrchestratorFactory, deployments: PlatformDeploymentRegistry): Promise<string>
+    private async Serve(directory: PlatformDirectory, factory: HiveOrchestratorFactory, deployments: PlatformDeploymentRegistry, observations: HiveObservationRegistry): Promise<string>
     {
         const S = RolloutPullSmoke
         const staticRoot = join(this.tempDir!, S.StaticDirName)
         await mkdir(staticRoot, { recursive: true })
-        const host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, staticRoot, new DenyAllOperator(), false, directory, factory, deployments, {} as TenantProvisioningService)
+        const host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, staticRoot, new DenyAllOperator(), false, directory, deployments, {} as TenantProvisioningService, observations)
         await host.Listen(0, S.LoopbackAddress)
         this.host = host
         const proxy = new HostHeaderProxy(host.Address().port)
@@ -422,6 +422,8 @@ export class RolloutPullSmoke
         this.Expect(S.Labels.AgentPatched, image === S.ImageV2, detail)
     }
 
+    // EXPECTED-RED: the operator-side agent routes are gone; this docker smoke stays red until the in-hive pod agent is
+    // migrated to the new AgentChannelHost (GET /agent/hives/:id/target + POST /agent/hives/:id/snapshot), tracked as a follow-up.
     private async AwaitReport(registry: PlatformDeploymentRegistry): Promise<void>
     {
         const S = RolloutPullSmoke

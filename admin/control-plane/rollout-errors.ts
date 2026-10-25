@@ -69,3 +69,16 @@ export class UnknownHiveError extends Error
         this.name = UnknownHiveError.ErrorName
     }
 }
+
+/** A request body exceeded the host's size cap. */
+export class BodyTooLargeError extends Error
+{
+    private static readonly ErrorName = 'BodyTooLargeError'
+    private static readonly DefaultMessage = 'Request body too large'
+
+    public constructor(message: string = BodyTooLargeError.DefaultMessage)
+    {
+        super(message)
+        this.name = BodyTooLargeError.ErrorName
+    }
+}

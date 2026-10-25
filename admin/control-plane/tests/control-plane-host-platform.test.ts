@@ -86,7 +86,7 @@ describe('ControlPlaneHost platform routes', () =>
             { List: () => [] })
         await directory.Load()
         const factory = new HiveOrchestratorFactory()
-        host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, factory, await RolloutFixture.Create(parent, directory, factory), (fake = new FakeProvisioning(directory)).AsService())
+        host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, await RolloutFixture.Create(parent, directory, factory), (fake = new FakeProvisioning(directory)).AsService(), RolloutFixture.Observations(parent))
         await host.Listen(0, '127.0.0.1')
     })
 

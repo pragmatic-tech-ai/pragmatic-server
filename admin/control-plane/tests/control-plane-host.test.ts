@@ -334,7 +334,7 @@ describe('ControlPlaneHost', () =>
         operator = new FakeOperator()
         const directory = new PlatformDirectory(new ClientRegistry(join(parent, 'clients.json')), new TenantRegistry(join(parent, 'tenants.json')), new HiveRegistry(join(parent, 'hives.json')), { List: () => [] })
         const factory = new HiveOrchestratorFactory()
-        host = new ControlPlaneHost(fake, fakeGraph, root, operator, false, directory, factory, await RolloutFixture.Create(parent, directory, factory), new FakeProvisioning(directory).AsService())
+        host = new ControlPlaneHost(fake, fakeGraph, root, operator, false, directory, await RolloutFixture.Create(parent, directory, factory), new FakeProvisioning(directory).AsService(), RolloutFixture.Observations(parent))
         await host.Listen(0, '127.0.0.1')
     })
 
@@ -439,6 +439,14 @@ describe('ControlPlaneHost', () =>
     {
         const list = await Harness.Send(host, 'GET', '/api/environments')
         assert.equal(JSON.parse(list.body)[0].type, 'development')
+    })
+
+    it('no longer recognises the retired hive agent routes (session gate applies, then 404)', async () =>
+    {
+        const target = '/api/hives/h1/agent/target'
+        assert.equal((await Harness.Anon(host, 'GET', target, undefined, { authorization: 'Bearer anything' })).status, 401)
+        assert.equal((await Harness.Send(host, 'GET', target)).status, 404)
+        assert.equal((await Harness.Send(host, 'POST', '/api/hives/h1/agent/report', JSON.stringify({ ready: true }))).status, 404)
     })
 
     it('unauthenticated create is 401 before validation', async () =>

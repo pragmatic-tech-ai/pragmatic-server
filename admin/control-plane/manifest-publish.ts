@@ -14,13 +14,13 @@ import { DockerEnvAdapter } from './docker-env-port.js'
 import { EnvironmentPlacement } from './environment-placement.js'
 import { EnvironmentRegistry } from './environment-registry.js'
 import { GatingRegistry } from './gating-record.js'
+import { HiveObservationRegistry } from './hive-observation-record.js'
 import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import { HiveRegistry } from './hive-registry.js'
 import { ManifestRegistry } from './manifest-record.js'
 import { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
 import { PlatformDirectory } from './platform-directory.js'
 import { RolloutRegistrationRegistry } from './rollout-registration-record.js'
-import { RolloutReportRegistry } from './rollout-report-record.js'
 import { SelectionRegistry } from './selection-record.js'
 import { TenantRegistry } from './tenant-registry.js'
 
@@ -53,7 +53,7 @@ export class ManifestPublish
     private static readonly ManifestsFile = 'manifests.json'
     private static readonly GatingFile = 'gating.json'
     private static readonly SelectionsFile = 'selections.json'
-    private static readonly ReportsFile = 'rollout-reports.json'
+    private static readonly ObservationsFile = 'hive-observations.json'
     private static readonly RegistrationsFile = 'rollout-registrations.json'
     private static readonly PublishedPrefix = 'published manifest '
     private static readonly ImageSep = ' -> '
@@ -116,10 +116,10 @@ export class ManifestPublish
         const manifests = new ManifestRegistry(join(dataRoot, ManifestPublish.ManifestsFile))
         const gating = new GatingRegistry(join(dataRoot, ManifestPublish.GatingFile))
         const selections = new SelectionRegistry(join(dataRoot, ManifestPublish.SelectionsFile))
-        const reports = new RolloutReportRegistry(join(dataRoot, ManifestPublish.ReportsFile))
         const registrations = new RolloutRegistrationRegistry(join(dataRoot, ManifestPublish.RegistrationsFile))
-        await Promise.all([manifests.Load(), gating.Load(), selections.Load(), reports.Load(), registrations.Load()])
-        return new PlatformDeploymentRegistry(manifests, gating, selections, reports, registrations, directory, new HiveOrchestratorFactory(), environments, new EnvironmentPlacement(directory))
+        const observations = new HiveObservationRegistry(join(dataRoot, ManifestPublish.ObservationsFile))
+        await Promise.all([manifests.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load()])
+        return new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, new HiveOrchestratorFactory(), environments, new EnvironmentPlacement(directory), observations)
     }
 
     public static async Main(argv: readonly string[]): Promise<void>

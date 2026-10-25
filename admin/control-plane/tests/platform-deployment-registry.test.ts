@@ -7,7 +7,6 @@ import { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
 import { ManifestRegistry } from '../manifest-record.js'
 import { GatingRegistry } from '../gating-record.js'
 import { SelectionRegistry } from '../selection-record.js'
-import { RolloutReportRegistry } from '../rollout-report-record.js'
 import { RolloutRegistrationRegistry } from '../rollout-registration-record.js'
 import { AgentUnauthorizedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, UnknownHiveError, UnknownManifestError } from '../rollout-errors.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
@@ -17,6 +16,8 @@ import type { IHiveOrchestrator } from '../hive-orchestrator.js'
 import type { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import type { EnvironmentRecord } from '../environment-record.js'
 import type { EnvironmentWorkload } from '../environment-workload.js'
+import type { HiveHealthDto } from '../hive-health-producer.js'
+import { RolloutFixture } from './rollout-fixture.js'
 
 class Fx
 {
@@ -39,7 +40,13 @@ class Fx
         return 'registry/pragmatic-server:' + version
     }
 
+    public static Health(name: string, image: string | undefined, ready: boolean): HiveHealthDto
+    {
+        return { environmentName: name, ready, runningImage: image, detail: Fx.NoDetail }
+    }
+
     public static readonly HiveB = 'hive-b'
+    public static readonly NoDetail = ''
     public static readonly EnvNames = ['e1', 'e2', 'e3']
 
     public static EnvRecord(name: string, hiveId: string): EnvironmentRecord
@@ -63,7 +70,7 @@ class Fx
             const orchestrator: IHiveOrchestrator = { Roll: async (w: EnvironmentWorkload, image: string) => { rolls.push((w as unknown as { name: string }).name + '@' + image) } } as unknown as IHiveOrchestrator
             const factory = { For: () => { if (unreachable) { throw new UnsupportedBackendError(HiveBackend.Aks, InfraMode.Attach) } return orchestrator } } as unknown as HiveOrchestratorFactory
             const envs = [Fx.EnvRecord(Fx.EnvNames[0], Fx.HiveA), Fx.EnvRecord(Fx.EnvNames[1], Fx.HiveA), Fx.EnvRecord(Fx.EnvNames[2], Fx.HiveB)]
-            const reg = new PlatformDeploymentRegistry(new ManifestRegistry(join(dir, 'm.json')), new GatingRegistry(join(dir, 'g.json')), new SelectionRegistry(join(dir, 's.json')), new RolloutReportRegistry(join(dir, 'r.json')), registrations, { GetHive: id => hives.get(id) }, factory, { List: () => envs }, { WorkloadFor: e => e as unknown as EnvironmentWorkload })
+            const reg = new PlatformDeploymentRegistry(new ManifestRegistry(join(dir, 'm.json')), new GatingRegistry(join(dir, 'g.json')), new SelectionRegistry(join(dir, 's.json')), registrations, { GetHive: id => hives.get(id) }, factory, { List: () => envs }, { WorkloadFor: e => e as unknown as EnvironmentWorkload }, RolloutFixture.Observations(dir))
             await body(reg, registrations, rolls)
         }
         finally
@@ -143,16 +150,52 @@ test('obsoletion is strict image equality and clears on match', async () =>
     {
         await Fx.PublishGated(reg, [Fx.V1, Fx.V2])
         await reg.SelectTarget(Fx.HiveA, Fx.V2)
-        await reg.Report(Fx.HiveA, Fx.Env, Fx.Image(Fx.V1), true)
+        await reg.ReportSnapshot(Fx.HiveA, [Fx.Health(Fx.Env, Fx.Image(Fx.V1), true)])
         assert.equal(reg.StatusFor(Fx.HiveA).targetVersion, Fx.V2)
         assert.equal(reg.StatusFor(Fx.HiveA).environments[0].obsolete, true)
-        await reg.Report(Fx.HiveA, Fx.Env, Fx.Image(Fx.V2), true)
+        await reg.ReportSnapshot(Fx.HiveA, [Fx.Health(Fx.Env, Fx.Image(Fx.V2), true)])
         assert.equal(reg.StatusFor(Fx.HiveA).environments[0].obsolete, false)
-        await reg.Report(Fx.HiveA, Fx.Env, Fx.Image(Fx.V2).slice(0, -1), true)
+        await reg.ReportSnapshot(Fx.HiveA, [Fx.Health(Fx.Env, Fx.Image(Fx.V2).slice(0, -1), true)])
         assert.equal(reg.StatusFor(Fx.HiveA).environments[0].obsolete, true)
-        await reg.Report(Fx.HiveA, Fx.Env, Fx.Image(Fx.V2) + Fx.Suffix, true)
+        await reg.ReportSnapshot(Fx.HiveA, [Fx.Health(Fx.Env, Fx.Image(Fx.V2) + Fx.Suffix, true)])
         assert.equal(reg.StatusFor(Fx.HiveA).environments[0].obsolete, true)
         assert.equal(reg.StatusFor(Fx.HiveA).environments.length, 1)
+    })
+})
+
+test('ReportSnapshot is reflected by StatusFor, obsolete computed against the target; undefined image is obsolete', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        await Fx.PublishGated(reg, [Fx.V2])
+        await reg.SelectTarget(Fx.HiveA, Fx.V2)
+        await reg.ReportSnapshot(Fx.HiveA, [Fx.Health(Fx.EnvNames[0], Fx.Image(Fx.V2), true), Fx.Health(Fx.EnvNames[1], undefined, false)])
+        assert.deepEqual(reg.StatusFor(Fx.HiveA).environments, [
+            { environmentName: Fx.EnvNames[0], runningImage: Fx.Image(Fx.V2), obsolete: false, ready: true },
+            { environmentName: Fx.EnvNames[1], runningImage: undefined, obsolete: true, ready: false }
+        ])
+    })
+})
+
+test('StatusFor reports obsolete=false for a reported environment when no target is set', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        await reg.ReportSnapshot(Fx.HiveA, [Fx.Health(Fx.EnvNames[0], Fx.Image(Fx.V1), true)])
+        const status = reg.StatusFor(Fx.HiveA)
+        assert.equal(status.targetVersion, undefined)
+        assert.deepEqual(status.environments, [{ environmentName: Fx.EnvNames[0], runningImage: Fx.Image(Fx.V1), obsolete: false, ready: true }])
+    })
+})
+
+test('replacing the snapshot with a shorter list drops the removed environment from StatusFor', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        await reg.ReportSnapshot(Fx.HiveA, [Fx.Health(Fx.EnvNames[0], Fx.Image(Fx.V1), true), Fx.Health(Fx.EnvNames[1], Fx.Image(Fx.V1), true)])
+        assert.deepEqual(reg.StatusFor(Fx.HiveA).environments.map(e => e.environmentName), [Fx.EnvNames[0], Fx.EnvNames[1]])
+        await reg.ReportSnapshot(Fx.HiveA, [Fx.Health(Fx.EnvNames[0], Fx.Image(Fx.V1), true)])
+        assert.deepEqual(reg.StatusFor(Fx.HiveA).environments.map(e => e.environmentName), [Fx.EnvNames[0]])
     })
 })
 

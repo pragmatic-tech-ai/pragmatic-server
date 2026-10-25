@@ -95,9 +95,9 @@ class Harness
             new FakeOperator(),
             false,
             directory,
-            factory,
             await RolloutFixture.Create(parent, directory, factory),
-            new FakeProvisioning(directory).AsService())
+            new FakeProvisioning(directory).AsService(),
+            RolloutFixture.Observations(parent))
         await host.Listen(0, '127.0.0.1')
         return host
     }

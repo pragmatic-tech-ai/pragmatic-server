@@ -54,10 +54,10 @@ import { NetPortProbe, PortAllocator } from './port-allocator.js'
 import { ManifestRegistry } from './manifest-record.js'
 import { GatingRegistry } from './gating-record.js'
 import { SelectionRegistry } from './selection-record.js'
-import { RolloutReportRegistry } from './rollout-report-record.js'
 import { RolloutRegistrationRegistry } from './rollout-registration-record.js'
 import { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
 import { EnvironmentPlacement } from './environment-placement.js'
+import { HiveObservationRegistry } from './hive-observation-record.js'
 import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import type { IHiveOrchestrator } from './hive-orchestrator.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
@@ -128,7 +128,7 @@ export class TenantLoginE2eSmoke
     private static readonly ManifestsFile = 'manifests.json'
     private static readonly GatingFile = 'gating.json'
     private static readonly SelectionsFile = 'selections.json'
-    private static readonly ReportsFile = 'rollout-reports.json'
+    private static readonly ObservationsFile = 'hive-observations.json'
     private static readonly RegistrationsFile = 'rollout-registrations.json'
     private static readonly TenantAdminClientsFile = 'tenant-admin-clients.json'
 
@@ -494,12 +494,13 @@ export class TenantLoginE2eSmoke
         const manifests = new ManifestRegistry(join(this.dataRoot, S.ManifestsFile))
         const gating = new GatingRegistry(join(this.dataRoot, S.GatingFile))
         const selections = new SelectionRegistry(join(this.dataRoot, S.SelectionsFile))
-        const reports = new RolloutReportRegistry(join(this.dataRoot, S.ReportsFile))
         const registrations = new RolloutRegistrationRegistry(join(this.dataRoot, S.RegistrationsFile))
         const adminClientRegistry = new TenantAdminClientRegistry(join(this.dataRoot, S.TenantAdminClientsFile))
-        await Promise.all([manifests.Load(), gating.Load(), selections.Load(), reports.Load(), registrations.Load(), adminClientRegistry.Load()])
+        await Promise.all([manifests.Load(), gating.Load(), selections.Load(), registrations.Load(), adminClientRegistry.Load()])
         const placement = new EnvironmentPlacement(directory)
-        const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, reports, registrations, directory, orchestrators, environments, placement)
+        const observations = new HiveObservationRegistry(join(this.dataRoot, S.ObservationsFile))
+        await observations.Load()
+        const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, environments, placement, observations)
         return { directory, idpService, service, environments, deployments, orchestrators, placement, adminClientRegistry }
     }
 
