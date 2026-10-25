@@ -167,7 +167,7 @@ export class K8sManifestBuilder
     private static readonly TenantAdminPrefix = 'pragmatic-tenant-admin-'
     private static readonly TenantAdminContainerName = 'tenant-admin'
     private static readonly TenantAdminSeedContainerName = 'seed'
-    private static readonly TenantAdminEntrypoint = ['node', 'dist-tenant-admin/src/bin/pragmatic-tenant-admind.js']
+    private static readonly TenantAdminEntrypoint = ['node', 'dist-tenant-admin/admin/control-plane/bin/pragmatic-tenant-admind.js']
     /** Copies every seeded file into the writable data root; --no-preserve=mode so the app can rewrite its own state files, -f so a restart overwrites. */
     private static readonly TenantAdminSeedCommand = ['sh', '-c', 'cp -f --no-preserve=mode /seed/* /data/']
     private static readonly TenantAdminDataMount = '/data'
