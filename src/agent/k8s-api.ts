@@ -12,6 +12,26 @@ interface IDeploymentBody
     spec?: { template?: { spec?: { containers?: IContainerSpec[] } } }
 }
 
+interface IDeploymentListItem extends IDeploymentBody
+{
+    metadata?: { namespace?: string; name?: string }
+    status?: { replicas?: number; readyReplicas?: number }
+}
+
+interface IDeploymentList
+{
+    items?: IDeploymentListItem[]
+}
+
+export interface IServerDeployment
+{
+    namespace: string
+    deployment: string
+    container: string
+    runningImage: string | undefined
+    ready: boolean
+}
+
 interface IK8sResponse
 {
     status: number
@@ -26,6 +46,9 @@ export class InClusterK8sApi
 
     private static readonly Utf8 = 'utf8'
     private static readonly DeploymentPathTemplate = '/apis/apps/v1/namespaces/{ns}/deployments/{dep}'
+    private static readonly DeploymentsListPath = '/apis/apps/v1/deployments'
+    private static readonly LabelSelectorParam = '?labelSelector='
+    private static readonly ServerContainerName = 'server'
     private static readonly NamespaceToken = '{ns}'
     private static readonly DeploymentToken = '{dep}'
     private static readonly GetMethod = 'GET'
@@ -74,6 +97,30 @@ export class InClusterK8sApi
         InClusterK8sApi.EnsureOk(response)
     }
 
+    public async ListServerDeployments(labelSelector: string): Promise<ReadonlyArray<IServerDeployment>>
+    {
+        const path = InClusterK8sApi.DeploymentsListPath + InClusterK8sApi.LabelSelectorParam + encodeURIComponent(labelSelector)
+        const response = await this.Send(InClusterK8sApi.GetMethod, path, undefined, InClusterK8sApi.JsonType)
+        InClusterK8sApi.EnsureOk(response)
+        const list = JSON.parse(response.body) as IDeploymentList
+        return (list.items ?? []).map(item => InClusterK8sApi.ToServerDeployment(item))
+    }
+
+    private static ToServerDeployment(item: IDeploymentListItem): IServerDeployment
+    {
+        const containers = item.spec?.template?.spec?.containers ?? []
+        const chosen = containers.find(c => c.name === InClusterK8sApi.ServerContainerName) ?? containers[0]
+        const replicas = item.status?.replicas ?? 0
+        const readyReplicas = item.status?.readyReplicas ?? 0
+        return {
+            namespace: item.metadata?.namespace ?? '',
+            deployment: item.metadata?.name ?? '',
+            container: chosen?.name ?? '',
+            runningImage: chosen?.image,
+            ready: replicas > 0 && readyReplicas === replicas,
+        }
+    }
+
     private PathOf(namespace: string, deployment: string): string
     {
         return InClusterK8sApi.DeploymentPathTemplate
@@ -90,7 +137,7 @@ export class InClusterK8sApi
     }
 
     // Node's global fetch cannot trust a custom CA without undici, so TLS to the API server uses node:https with the SA CA.
-    private Send(method: string, path: string, body: string | undefined, contentType: string): Promise<IK8sResponse>
+    protected Send(method: string, path: string, body: string | undefined, contentType: string): Promise<IK8sResponse>
     {
         const token = readFileSync(this.tokenPath, InClusterK8sApi.Utf8).trim()
         const ca = readFileSync(this.caPath)
