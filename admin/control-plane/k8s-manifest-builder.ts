@@ -106,7 +106,7 @@ export class K8sManifestBuilder
     private static readonly AgentEnvNameVar = 'PRAGMATIC_AGENT_ENV_NAME'
     private static readonly AgentTokenVar = 'PRAGMATIC_AGENT_TOKEN'
     private static readonly AgentTokenSecretKey = 'token'
-    /** Namespace hosting the per-hive agent's ServiceAccount + Deployment (cluster-scoped RBAC has none). */
+    /** Namespace hosting the per-hive agent's ServiceAccount + Deployment (cluster-scoped RBAC has none). The Namespace object itself is emitted by RenderHiveAgent. */
     private static readonly HiveAgentNamespace = 'pragmatic-system'
     private static readonly HiveAgentPrefix = 'pragmatic-hive-'
 
@@ -166,22 +166,7 @@ export class K8sManifestBuilder
         return `${K8sManifestBuilder.NamespaceOf(environmentName)}-${K8sManifestBuilder.AgentSuffix}`
     }
 
-    public static HiveAgentServiceAccountOf(hiveId: string): string
-    {
-        return `${K8sManifestBuilder.HiveAgentPrefix}${hiveId}-${K8sManifestBuilder.AgentSuffix}`
-    }
-
-    public static HiveAgentRoleOf(hiveId: string): string
-    {
-        return `${K8sManifestBuilder.HiveAgentPrefix}${hiveId}-${K8sManifestBuilder.AgentSuffix}`
-    }
-
-    public static HiveAgentRoleBindingOf(hiveId: string): string
-    {
-        return `${K8sManifestBuilder.HiveAgentPrefix}${hiveId}-${K8sManifestBuilder.AgentSuffix}`
-    }
-
-    public static HiveAgentDeploymentOf(hiveId: string): string
+    public static HiveAgentNameOf(hiveId: string): string
     {
         return `${K8sManifestBuilder.HiveAgentPrefix}${hiveId}-${K8sManifestBuilder.AgentSuffix}`
     }
@@ -190,6 +175,7 @@ export class K8sManifestBuilder
     public RenderHiveAgent(hiveId: string, registryUrl: string, tokenSecretName: string): string
     {
         const items: K8sObject[] = [
+            this.HiveAgentNamespaceObject(),
             this.HiveAgentServiceAccount(hiveId),
             this.HiveAgentClusterRole(hiveId),
             this.HiveAgentClusterRoleBinding(hiveId),
@@ -200,6 +186,16 @@ export class K8sManifestBuilder
             [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ListKind,
             [K8sManifestBuilder.ItemsKey]: items,
         })
+    }
+
+    /** Shared across hives, so deliberately NOT hive-labeled: a label-scoped delete of one hive must not drop it. */
+    private HiveAgentNamespaceObject(): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.NamespaceKind,
+            [K8sManifestBuilder.MetadataKey]: { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.HiveAgentNamespace },
+        }
     }
 
     private HiveLabels(hiveId: string): Record<string, string>
@@ -229,7 +225,7 @@ export class K8sManifestBuilder
         return {
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
             [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ServiceAccountKind,
-            [K8sManifestBuilder.MetadataKey]: this.HiveAgentNamespacedMeta(hiveId, K8sManifestBuilder.HiveAgentServiceAccountOf(hiveId)),
+            [K8sManifestBuilder.MetadataKey]: this.HiveAgentNamespacedMeta(hiveId, K8sManifestBuilder.HiveAgentNameOf(hiveId)),
         }
     }
 
@@ -238,7 +234,7 @@ export class K8sManifestBuilder
         return {
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionRbac,
             [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ClusterRoleKind,
-            [K8sManifestBuilder.MetadataKey]: this.HiveAgentClusterMeta(hiveId, K8sManifestBuilder.HiveAgentRoleOf(hiveId)),
+            [K8sManifestBuilder.MetadataKey]: this.HiveAgentClusterMeta(hiveId, K8sManifestBuilder.HiveAgentNameOf(hiveId)),
             [K8sManifestBuilder.RulesKey]: [{
                 [K8sManifestBuilder.ApiGroupsKey]: [K8sManifestBuilder.AppsApiGroup],
                 [K8sManifestBuilder.ResourcesKey]: [K8sManifestBuilder.DeploymentsResource],
@@ -252,23 +248,23 @@ export class K8sManifestBuilder
         return {
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionRbac,
             [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ClusterRoleBindingKind,
-            [K8sManifestBuilder.MetadataKey]: this.HiveAgentClusterMeta(hiveId, K8sManifestBuilder.HiveAgentRoleBindingOf(hiveId)),
+            [K8sManifestBuilder.MetadataKey]: this.HiveAgentClusterMeta(hiveId, K8sManifestBuilder.HiveAgentNameOf(hiveId)),
             [K8sManifestBuilder.SubjectsKey]: [{
                 [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ServiceAccountKind,
-                [K8sManifestBuilder.NameKey]: K8sManifestBuilder.HiveAgentServiceAccountOf(hiveId),
+                [K8sManifestBuilder.NameKey]: K8sManifestBuilder.HiveAgentNameOf(hiveId),
                 [K8sManifestBuilder.NamespaceKey]: K8sManifestBuilder.HiveAgentNamespace,
             }],
             [K8sManifestBuilder.RoleRefKey]: {
                 [K8sManifestBuilder.ApiGroupKey]: K8sManifestBuilder.RbacApiGroup,
                 [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ClusterRoleKind,
-                [K8sManifestBuilder.NameKey]: K8sManifestBuilder.HiveAgentRoleOf(hiveId),
+                [K8sManifestBuilder.NameKey]: K8sManifestBuilder.HiveAgentNameOf(hiveId),
             },
         }
     }
 
     private HiveAgentDeployment(hiveId: string, registryUrl: string, tokenSecretName: string): K8sObject
     {
-        const name = K8sManifestBuilder.HiveAgentDeploymentOf(hiveId)
+        const name = K8sManifestBuilder.HiveAgentNameOf(hiveId)
         return {
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionApps,
             [K8sManifestBuilder.KindKey]: K8sManifestBuilder.DeploymentKind,
@@ -279,7 +275,7 @@ export class K8sManifestBuilder
                 [K8sManifestBuilder.TemplateKey]: {
                     [K8sManifestBuilder.MetadataKey]: { [K8sManifestBuilder.LabelsKey]: this.Selector(name) },
                     [K8sManifestBuilder.SpecKey]: {
-                        [K8sManifestBuilder.ServiceAccountNameKey]: K8sManifestBuilder.HiveAgentServiceAccountOf(hiveId),
+                        [K8sManifestBuilder.ServiceAccountNameKey]: K8sManifestBuilder.HiveAgentNameOf(hiveId),
                         [K8sManifestBuilder.ContainersKey]: [{
                             [K8sManifestBuilder.NameKey]: K8sManifestBuilder.AgentContainerName,
                             [K8sManifestBuilder.ImageKey]: K8sManifestBuilder.AgentImage,

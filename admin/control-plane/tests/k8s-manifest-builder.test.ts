@@ -216,11 +216,12 @@ describe('K8sManifestBuilder.RenderHiveAgent', () =>
         }
     }
 
-    it('emits SA, ClusterRole, ClusterRoleBinding and Deployment, all hive-labeled', () =>
+    it('emits Namespace, SA, ClusterRole, ClusterRoleBinding and Deployment; all but the shared Namespace hive-labeled', () =>
     {
         const items = HiveFixture.Items()
-        assert.deepEqual(items.map(i => i.kind), ['ServiceAccount', 'ClusterRole', 'ClusterRoleBinding', 'Deployment'])
-        for (const i of items)
+        assert.deepEqual(items.map(i => i.kind), ['Namespace', 'ServiceAccount', 'ClusterRole', 'ClusterRoleBinding', 'Deployment'])
+        assert.equal(items[0].metadata.labels, undefined)
+        for (const i of items.slice(1))
         {
             assert.equal(i.metadata.labels['pragmatic/hive'], HiveId)
         }
@@ -242,15 +243,15 @@ describe('K8sManifestBuilder.RenderHiveAgent', () =>
         const role = HiveFixture.Of('ClusterRole')
         assert.deepEqual(crb.roleRef, { apiGroup: 'rbac.authorization.k8s.io', kind: 'ClusterRole', name: role.metadata.name })
         assert.deepEqual(crb.subjects, [{ kind: 'ServiceAccount', name: sa.metadata.name, namespace: sa.metadata.namespace }])
-        assert.equal(sa.metadata.name, K8sManifestBuilder.HiveAgentServiceAccountOf(HiveId))
-        assert.equal(role.metadata.name, K8sManifestBuilder.HiveAgentRoleOf(HiveId))
+        assert.equal(sa.metadata.name, K8sManifestBuilder.HiveAgentNameOf(HiveId))
+        assert.equal(role.metadata.name, K8sManifestBuilder.HiveAgentNameOf(HiveId))
     })
 
     it('deployment env has hive id, registry url, secret token and no env name', () =>
     {
         const dep = HiveFixture.Of('Deployment')
         const pod = dep.spec.template.spec
-        assert.equal(pod.serviceAccountName, K8sManifestBuilder.HiveAgentServiceAccountOf(HiveId))
+        assert.equal(pod.serviceAccountName, K8sManifestBuilder.HiveAgentNameOf(HiveId))
         const c = pod.containers[0]
         assert.deepEqual(c.command, ['node', 'dist/bin/pragmatic-agentd.js'])
         const byName = (n: string) => c.env.find((e: any) => e.name === n)
@@ -265,6 +266,6 @@ describe('K8sManifestBuilder.RenderHiveAgent', () =>
     it('env server deployment carries the hive label on its metadata', () =>
     {
         const dep = Fixture.Items(false)[1]!
-        assert.equal(dep.metadata.labels!['pragmatic/hive'], 'hive-a')
+        assert.equal(dep.metadata.labels!['pragmatic/hive'], HiveId)
     })
 })
