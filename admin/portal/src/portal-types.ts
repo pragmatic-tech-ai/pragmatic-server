@@ -74,12 +74,6 @@ export type MakerTokenDto =
     expiresAt: string | null
 }
 
-export type TemplateDto =
-{
-    id: string
-    title: string
-}
-
 export type OperatorDto =
 {
     email: string
@@ -171,7 +165,6 @@ export interface IPortalNavigator
 {
     ShowLogin(): void
     ShowList(): void
-    ShowCreate(): void
     ShowDetail(name: string): void
     ShowManage(name: string): void
     ShowRoles(name: string): void

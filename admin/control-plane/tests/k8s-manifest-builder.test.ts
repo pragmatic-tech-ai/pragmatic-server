@@ -2,6 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
 import type { EnvironmentWorkload } from '../environment-workload.js'
+import type { IdpWorkloadSpec } from '../idp-workload-driver.js'
 
 type K8sObject = {
     kind: string
@@ -176,5 +177,59 @@ describe('K8sManifestBuilder.RenderHiveAgent', () =>
         const dep = Fixture.Items(false)[1]!
         assert.equal(dep.metadata.labels!['pragmatic/hive'], HiveId)
         assert.equal(dep.metadata.labels!['pragmatic/environment'], 'dev1')
+    })
+})
+
+describe('K8sManifestBuilder.RenderIdp', () =>
+{
+    const Spec: IdpWorkloadSpec = {
+        tenantId: 't1', hiveId: 'hive-a', image: 'pragmatic-server:dev', port: 9443,
+        adminTokenSecretName: 'idp-admin-secret', adminTokenRef: 'admin-token', tlsSecretName: 'idp-tls-secret'
+    }
+
+    const Items = (): any[] => JSON.parse(new K8sManifestBuilder().RenderIdp(Spec)).items
+
+    it('emits Namespace, ServiceAccount, PVC, Deployment and Service, all hive-labeled', () =>
+    {
+        const items = Items()
+        assert.deepEqual(items.map(i => i.kind), ['Namespace', 'ServiceAccount', 'PersistentVolumeClaim', 'Deployment', 'Service'])
+        for (const i of items)
+        {
+            assert.equal(i.metadata.labels['pragmatic/hive'], 'hive-a', i.kind)
+            assert.equal(i.metadata.labels['pragmatic/environment'], undefined, i.kind)
+        }
+        assert.equal(items[0].metadata.name, 'pragmatic-idp-t1')
+    })
+
+    it('Service is ClusterIP and its DNS name matches IdpBaseUrlOf', () =>
+    {
+        const svc = Items()[4]
+        assert.equal(svc.spec.type, 'ClusterIP')
+        assert.equal(svc.spec.ports[0].port, 9443)
+        assert.equal(K8sManifestBuilder.IdpBaseUrlOf('t1', 9443), `https://${svc.metadata.name}.${svc.metadata.namespace}.svc.cluster.local:9443`)
+    })
+
+    it('carries secrets only as volume refs, never inline, and runs least-privilege', () =>
+    {
+        const raw = new K8sManifestBuilder().RenderIdp(Spec)
+        const dep = Items()[3]
+        const pod = dep.spec.template.spec
+        const secretNames = pod.volumes.filter((v: any) => v.secret).map((v: any) => v.secret.secretName).sort()
+        assert.deepEqual(secretNames, ['idp-admin-secret', 'idp-tls-secret'])
+        assert.equal(pod.automountServiceAccountToken, false)
+        assert.equal(pod.securityContext.fsGroup, 1000)
+        assert.equal(pod.volumes.find((v: any) => v.secret).secret.defaultMode, 0o440)
+        const sc = pod.containers[0].securityContext
+        assert.equal(sc.runAsNonRoot, true)
+        assert.equal(sc.runAsUser, 1000)
+        assert.deepEqual(sc.capabilities.drop, ['ALL'])
+        assert.equal(sc.seccompProfile.type, 'RuntimeDefault')
+        assert.equal(pod.containers[0].securityContext.allowPrivilegeEscalation, false)
+        assert.equal(pod.containers[0].securityContext.readOnlyRootFilesystem, true)
+        const env = pod.containers[0].env
+        assert.ok(env.every((e: any) => e.valueFrom === undefined))
+        assert.equal(env.find((e: any) => e.name === 'PRAGMATIC_IDP_ADMIN_TOKEN_REF').value, 'admin-token')
+        assert.equal(env.find((e: any) => e.name === 'PRAGMATIC_IDP_BASE_URL').value, K8sManifestBuilder.IdpBaseUrlOf('t1', 9443))
+        assert.ok(!raw.includes('ClusterRole') && !raw.includes('RoleBinding'))
     })
 })

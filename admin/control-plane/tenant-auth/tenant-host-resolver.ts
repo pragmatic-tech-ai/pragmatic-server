@@ -1,5 +1,5 @@
 import { PlaneHttp } from '../plane-http.js'
-import type { PlatformDirectory } from '../platform-directory.js'
+import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
 
 /** Maps a tenant subdomain Host header (`<tenantId>.<baseDomain>`) to a known tenant id. */
 export class TenantHostResolver
@@ -13,7 +13,7 @@ export class TenantHostResolver
     public constructor(
         baseDomain: string,
         private readonly externalScheme: string,
-        private readonly directory: PlatformDirectory
+        private readonly directory: ITenantDirectory
     )
     {
         const normalized = baseDomain.toLowerCase()

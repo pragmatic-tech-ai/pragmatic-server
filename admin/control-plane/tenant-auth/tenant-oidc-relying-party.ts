@@ -11,7 +11,7 @@ import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
 import { IdentityPackResolver } from '../../../src/identity/identity-pack-resolver.js'
 import type { IIdpService, IdpConnection } from '../idp-service.js'
 import type { IdpAdminClient } from '../idp-admin-client.js'
-import type { PlatformDirectory } from '../platform-directory.js'
+import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
 import type { TenantAdminClientRegistry } from './tenant-admin-client-record.js'
 
 /**
@@ -188,7 +188,7 @@ export class TenantOidcRelyingParty implements ITenantOidcRelyingParty
 
     public constructor(
         private readonly idp: IIdpService,
-        private readonly directory: PlatformDirectory,
+        private readonly directory: ITenantDirectory,
         private readonly adminClientFactory: (conn: IdpConnection) => IdpAdminClient,
         private readonly resolverOverride?: IdentityPackResolver,
         flowStates?: IOidcFlowStateStore,

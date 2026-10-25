@@ -7,8 +7,6 @@ import type { IPortalNavigator, IPortalView } from './portal-types.js'
 // an error/status message line, and a run-then-refresh helper.
 export abstract class PortalViewBase extends StackPanel implements IPortalView
 {
-    public static readonly StartLabel = 'Start'
-    public static readonly StopLabel = 'Stop'
     public static readonly DeleteLabel = 'Delete'
     public static readonly ConfirmDeleteLabel = 'Confirm delete'
     public static readonly CancelLabel = 'Cancel'

@@ -1,6 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
 import { App } from '../src/app.js'
-import { CreateEnvironmentView } from '../src/create-environment-view.js'
 import { LoginView } from '../src/login-view.js'
 import { EnvironmentListView } from '../src/environment-list-view.js'
 import { EnvironmentDetailView } from '../src/environment-detail-view.js'
@@ -23,13 +22,9 @@ class FakeControlPlane
     public static readonly EnvName = 'alpha'
     public static readonly EnvStatus = 'running'
     public static readonly TemplateOneId = 'dev-blank'
-    public static readonly TemplateOneTitle = 'Blank development'
-    public static readonly TemplateTwoId = 'demo-contoso'
-    public static readonly TemplateTwoTitle = 'Contoso demo'
     public static readonly ListedType = 'development'
     public static readonly RowSeparator = '  |  '
     public static readonly RowPortText = 'port 4101'
-    public static readonly NewName = 'beta'
     public static readonly EnvironmentsPath = '/api/environments'
     public static readonly GraphsPath = '/api/environments/alpha/graphs'
     public static readonly MakerTokenPath = '/api/environments/alpha/maker-token'
@@ -39,8 +34,6 @@ class FakeControlPlane
     public static readonly NewGraphPackageCount = '0'
     public static readonly RuntimeType = 'runtime'
     public static readonly GraphCreatedAt = '2026-01-01T00:00:00.000Z'
-    public static readonly StopPath = '/api/environments/alpha/stop'
-    public static readonly DeletePath = '/api/environments/alpha'
     public static readonly MethodPost = 'POST'
     public static readonly MethodDelete = 'DELETE'
     public static readonly LoginPath = '/api/login'
@@ -63,7 +56,6 @@ class FakeControlPlane
     private static readonly RootPath = '/'
     private static readonly IndexFile = 'index.html'
     private static readonly ParentSegment = '..'
-    private static readonly TemplatesPath = '/api/templates'
     private static readonly EnvPrefix = '/api/environments/'
     private static readonly MethodGet = 'GET'
     private static readonly HostLocal = '127.0.0.1'
@@ -77,7 +69,6 @@ class FakeControlPlane
     }
 
     public readonly Calls: Call[] = []
-    public TemplatesRequests = 0
     public EnvType = FakeControlPlane.ListedType
     public Graphs: Array<{ name: string; description: string; packageCount: number; createdAt: string }> = []
     public Authenticated = true
@@ -173,15 +164,6 @@ class FakeControlPlane
             FakeControlPlane.Json(res, 200, {})
             return
         }
-        if (path === FakeControlPlane.TemplatesPath)
-        {
-            this.TemplatesRequests++
-            FakeControlPlane.Json(res, 200, [
-                { id: FakeControlPlane.TemplateOneId, title: FakeControlPlane.TemplateOneTitle },
-                { id: FakeControlPlane.TemplateTwoId, title: FakeControlPlane.TemplateTwoTitle },
-            ])
-            return
-        }
         if (path === FakeControlPlane.MakerTokenPath && method === FakeControlPlane.MethodPost)
         {
             this.Calls.push({ method, path, body: undefined })
@@ -267,17 +249,6 @@ class PortalSteps
         await page.keyboard.type(text)
     }
 
-    public static async TypeName(page: Page, text: string): Promise<void>
-    {
-        const input = page.locator(PortalSteps.InputSelector).first()
-        if (await input.count() > 0)
-        {
-            await input.fill(text)
-            return
-        }
-        await page.getByText(CreateEnvironmentView.NamePlaceholder, { exact: true }).click()
-        await page.keyboard.type(text)
-    }
 }
 
 test.describe('admin portal', () =>
@@ -303,46 +274,13 @@ test.describe('admin portal', () =>
         await expect(page.getByText(row, { exact: true })).toBeVisible()
     })
 
-    test('create form populates from the API and posts the preselected one', async ({ page }) =>
-    {
-        await page.goto(base)
-        await page.getByText(EnvironmentListView.NewLabel, { exact: true }).click()
-
-        await PortalSteps.TypeName(page, FakeControlPlane.NewName)
-
-        // The view preselects template index 0 after loading ListTemplates; the
-        // native popup is deliberately not driven (Mural ComboBox has no stable locator).
-        await expect(page.getByText(FakeControlPlane.TemplateOneTitle)).toBeVisible()
-        expect(fake.TemplatesRequests).toBeGreaterThan(0)
-        await expect(page.getByText(CreateEnvironmentView.DevelopmentLabel, { exact: true })).toBeVisible()
-
-        await page.getByText(CreateEnvironmentView.CreateLabel, { exact: true }).click()
-        await expect.poll(() => fake.Find(FakeControlPlane.MethodPost, FakeControlPlane.EnvironmentsPath)).toBeDefined()
-        expect(fake.Find(FakeControlPlane.MethodPost, FakeControlPlane.EnvironmentsPath)!.body).toEqual({
-            name: FakeControlPlane.NewName,
-            template: FakeControlPlane.TemplateOneId,
-            type: CreateEnvironmentView.DevelopmentId,
-        })
-    })
-
-    test('Stop and Delete issue the right calls for the environment', async ({ page }) =>
-    {
-        await page.goto(base)
-        await page.getByText(EnvironmentListView.StopLabel, { exact: true }).click()
-        await expect.poll(() => fake.Find(FakeControlPlane.MethodPost, FakeControlPlane.StopPath)).toBeDefined()
-
-        await page.getByText(EnvironmentListView.DeleteLabel, { exact: true }).click()
-        await page.getByText(EnvironmentListView.ConfirmDeleteLabel, { exact: true }).click()
-        await expect.poll(() => fake.Find(FakeControlPlane.MethodDelete, FakeControlPlane.DeletePath)).toBeDefined()
-    })
-
     test('unauthenticated load shows the login view, not the list', async ({ page }) =>
     {
         fake.Authenticated = false
         await page.goto(base)
         await expect(page.getByText(LoginView.LoginLabel, { exact: true })).toBeVisible()
         await expect(page.getByText(LoginView.EmailPlaceholder, { exact: true })).toBeVisible()
-        await expect(page.getByText(EnvironmentListView.NewLabel, { exact: true })).toHaveCount(0)
+        await expect(page.getByText(EnvironmentListView.ClientsLabel, { exact: true })).toHaveCount(0)
     })
 
     test('logging in posts the email and then shows the environment list', async ({ page }) =>
@@ -358,7 +296,7 @@ test.describe('admin portal', () =>
             email: FakeControlPlane.OperatorEmail,
             password: FakeControlPlane.OperatorPassword,
         })
-        await expect(page.getByText(EnvironmentListView.NewLabel, { exact: true })).toBeVisible()
+        await expect(page.getByText(EnvironmentListView.ClientsLabel, { exact: true })).toBeVisible()
     })
 
     test('bad credentials keep the login view and show the error inline', async ({ page }) =>
@@ -371,13 +309,13 @@ test.describe('admin portal', () =>
         await page.getByText(LoginView.LoginLabel, { exact: true }).click()
         await expect(page.getByText(FakeControlPlane.BadCredentialsText)).toBeVisible()
         await expect(page.getByText(LoginView.LoginLabel, { exact: true })).toBeVisible()
-        await expect(page.getByText(EnvironmentListView.NewLabel, { exact: true })).toHaveCount(0)
+        await expect(page.getByText(EnvironmentListView.ClientsLabel, { exact: true })).toHaveCount(0)
     })
 
     test('Logout posts to the server and returns to the login view', async ({ page }) =>
     {
         await page.goto(base)
-        await expect(page.getByText(EnvironmentListView.NewLabel, { exact: true })).toBeVisible()
+        await expect(page.getByText(EnvironmentListView.ClientsLabel, { exact: true })).toBeVisible()
         await page.getByText(App.LogoutLabel, { exact: true }).click()
         await expect.poll(() => fake.Find(FakeControlPlane.MethodPost, FakeControlPlane.LogoutPath)).toBeDefined()
         await expect(page.getByText(LoginView.LoginLabel, { exact: true })).toBeVisible()

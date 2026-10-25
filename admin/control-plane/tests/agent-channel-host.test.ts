@@ -56,6 +56,16 @@ describe('AgentChannelHost', () =>
     const WrongToken = 'wrong-token-value'
     const TargetPath = '/agent/hives/' + Harness.HiveId + '/target'
     const SnapshotPath = '/agent/hives/' + Harness.HiveId + '/snapshot'
+    const GatedVersion = '1.0.0'
+    const UngatedVersion = '2.0.0'
+    const UnpublishedVersion = '9.9.9'
+    const GatedImage = 'img:1'
+    const UngatedImage = 'img:2'
+    const TenantId = 't1'
+    const MalformedJson = '{not json'
+    const AdoptablePath = '/agent/hives/' + Harness.HiveId + '/adoptable'
+    const StatusPath = '/agent/hives/' + Harness.HiveId + '/status'
+    const AdoptPath = '/agent/hives/' + Harness.HiveId + '/adopt'
     const OtherPath = '/agent/hives/' + Harness.HiveId + '/other'
     const LegacyPath = '/api/hives/' + Harness.HiveId + '/agent/target'
     const UnregisteredPath = '/agent/hives/ghost/snapshot'
@@ -198,5 +208,87 @@ describe('AgentChannelHost', () =>
         const reply = await Harness.Send(host, PlaneHttp.MethodGet, BadEncodingPath, Harness.BearerPrefix + token)
         assert.equal(reply.status, 400)
         assert.equal(deployments.StatusFor(Harness.HiveId).environments.length, 0)
+    })
+
+    it('serves the adoptable (gated) versions of the hive tenant to a correct bearer', async () =>
+    {
+        await deployments.Publish(GatedVersion, GatedImage)
+        await deployments.Publish(UngatedVersion, UngatedImage)
+        await deployments.Gate(TenantId, GatedVersion)
+        const reply = await Harness.Send(host, PlaneHttp.MethodGet, AdoptablePath, Harness.BearerPrefix + token)
+        assert.equal(reply.status, 200)
+        assert.deepEqual((JSON.parse(reply.body) as Array<{ id: string }>).map(m => m.id), [GatedVersion])
+    })
+
+    it('serves the rollout status to a correct bearer', async () =>
+    {
+        await deployments.Publish(GatedVersion, GatedImage)
+        await deployments.Gate(TenantId, GatedVersion)
+        await deployments.RecordAdoption(Harness.HiveId, GatedVersion)
+        await deployments.ReportSnapshot(Harness.HiveId, [Health])
+        const reply = await Harness.Send(host, PlaneHttp.MethodGet, StatusPath, Harness.BearerPrefix + token)
+        assert.equal(reply.status, 200)
+        assert.deepEqual(JSON.parse(reply.body), deployments.StatusFor(Harness.HiveId))
+        assert.equal((JSON.parse(reply.body) as { targetVersion: string }).targetVersion, GatedVersion)
+    })
+
+    it('adopts a gated version: 204 and the selection is recorded', async () =>
+    {
+        await deployments.Publish(GatedVersion, GatedImage)
+        await deployments.Gate(TenantId, GatedVersion)
+        const reply = await Harness.Send(host, PlaneHttp.MethodPost, AdoptPath, Harness.BearerPrefix + token, { version: GatedVersion })
+        assert.equal(reply.status, 204)
+        assert.equal(deployments.TargetFor(Harness.HiveId)?.version, GatedVersion)
+    })
+
+    it('refuses a non-gated or unpublished version with 403 and records nothing', async () =>
+    {
+        await deployments.Publish(GatedVersion, GatedImage)
+        for (const version of [GatedVersion, UnpublishedVersion])
+        {
+            const reply = await Harness.Send(host, PlaneHttp.MethodPost, AdoptPath, Harness.BearerPrefix + token, { version })
+            assert.equal(reply.status, 403)
+            assert.ok(!reply.body.includes(version))
+        }
+        assert.equal(deployments.TargetFor(Harness.HiveId), undefined)
+    })
+
+    it('rejects a malformed adopt body with 400 and records nothing', async () =>
+    {
+        await deployments.Publish(GatedVersion, GatedImage)
+        await deployments.Gate(TenantId, GatedVersion)
+        const bodies: unknown[] = [MalformedJson, 'null', [], {}, { version: 5 }, { version: '' }]
+        for (const b of bodies)
+        {
+            assert.equal((await Harness.Send(host, PlaneHttp.MethodPost, AdoptPath, Harness.BearerPrefix + token, b)).status, 400)
+        }
+        assert.equal(deployments.TargetFor(Harness.HiveId), undefined)
+    })
+
+    it('enforces the bearer on the tenant routes and does nothing on 401', async () =>
+    {
+        await deployments.Publish(GatedVersion, GatedImage)
+        await deployments.Gate(TenantId, GatedVersion)
+        const bad = Harness.BearerPrefix + WrongToken
+        const replies = [
+            await Harness.Send(host, PlaneHttp.MethodGet, AdoptablePath),
+            await Harness.Send(host, PlaneHttp.MethodGet, AdoptablePath, bad),
+            await Harness.Send(host, PlaneHttp.MethodGet, StatusPath, bad),
+            await Harness.Send(host, PlaneHttp.MethodPost, AdoptPath, undefined, { version: GatedVersion }),
+            await Harness.Send(host, PlaneHttp.MethodPost, AdoptPath, bad, { version: GatedVersion })
+        ]
+        for (const r of replies)
+        {
+            assert.equal(r.status, 401)
+        }
+        assert.equal(deployments.TargetFor(Harness.HiveId), undefined)
+    })
+
+    it('answers 404 for the wrong method on the tenant routes', async () =>
+    {
+        const auth = Harness.BearerPrefix + token
+        assert.equal((await Harness.Send(host, PlaneHttp.MethodPost, AdoptablePath, auth, {})).status, 404)
+        assert.equal((await Harness.Send(host, PlaneHttp.MethodPost, StatusPath, auth, {})).status, 404)
+        assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, AdoptPath, auth)).status, 404)
     })
 })

@@ -110,14 +110,40 @@ export class PlatformDeploymentRegistry
         await this.gating.Remove(this.GateId(tenantId, version))
     }
 
+    /** Records the selection (after the gating check) and pushes the roll to the hive's orchestrator. */
     public async SelectTarget(hiveId: string, version: string): Promise<void>
+    {
+        const recorded = await this.Record(hiveId, version)
+        await this.Push(recorded.hive, recorded.image)
+    }
+
+    /** Records the selection after the same gating check as SelectTarget but does NOT push: the hive's own agent rolls locally by polling the target. */
+    public async RecordAdoption(hiveId: string, version: string): Promise<void>
+    {
+        await this.Record(hiveId, version)
+    }
+
+    /** The versions gated for the tenant that owns the hive. */
+    public AdoptableFor(hiveId: string): readonly ManifestRecord[]
     {
         const hive = this.hives.GetHive(hiveId)
         if (hive === undefined)
         {
             throw new UnknownHiveError(hiveId)
         }
-        if (this.manifests.Get(version) === undefined)
+        return this.ManifestsFor(hive.tenantId)
+    }
+
+    /** Validates hive, published and gated-for-the-hive's-tenant, then writes the selection; returns what a push needs. */
+    private async Record(hiveId: string, version: string): Promise<{ hive: HiveRecord; image: string }>
+    {
+        const hive = this.hives.GetHive(hiveId)
+        if (hive === undefined)
+        {
+            throw new UnknownHiveError(hiveId)
+        }
+        const manifest = this.manifests.Get(version)
+        if (manifest === undefined)
         {
             throw new UnknownManifestError(version)
         }
@@ -126,9 +152,8 @@ export class PlatformDeploymentRegistry
         {
             throw new ManifestNotGatedError(version)
         }
-        const manifest = this.manifests.Get(version)!
         await this.selections.Put({ id: hiveId, hiveId, targetVersion: version, selectedAt: new Date().toISOString() })
-        await this.Push(hive, manifest.image)
+        return { hive, image: manifest.image }
     }
 
     /** Rolls every environment bound to the hive; an unreachable backend leaves the recorded selection for the pull agent. */

@@ -1,5 +1,6 @@
 node_modules
 dist
+dist-tenant-admin
 docker/master.key
 docker/*.key
 environments/*/master.key

@@ -26,6 +26,7 @@ import { OperatorIdentity, type OperatorComposeOptions } from './operator-identi
 import { NetPortProbe, PortAllocator } from './port-allocator.js'
 import { ExecFileDockerExec, IdpContainerEnv } from './idp-container-env.js'
 import { IdpRegistry } from './idp-registry.js'
+import { DockerIdpDriver } from './docker-idp-driver.js'
 import { IdpService } from './idp-service.js'
 import { IdpAdminClient } from './idp-admin-client.js'
 import { TenantProvisioningService } from './tenant-provisioning-service.js'
@@ -37,25 +38,28 @@ import { TenantAuthEndpoint } from './tenant-auth/tenant-auth-endpoint.js'
 import { TenantAuthGate } from './tenant-auth/tenant-auth-gate.js'
 import { TenantHostResolver } from './tenant-auth/tenant-host-resolver.js'
 import { TenantApiEndpoint } from './tenant-api/tenant-api-endpoint.js'
+import { InProcessRolloutClient } from './tenant-api/in-process-rollout-client.js'
 import { TenantEventBus } from './tenant-api/tenant-events.js'
 import { TenantPlaneHost } from './tenant-plane-host.js'
 import { TenantHealthMonitor } from './tenant-health-monitor.js'
 import { HiveHealthProducer } from './hive-health-producer.js'
 import type { TenantPlane } from './tenant-auth/tenant-plane.js'
 import type { IEnvironmentService } from './control-plane-host.js'
+import type { ITenantDirectory } from './tenant-api/tenant-directory.js'
+import type { IRolloutClient } from './tenant-api/rollout-client.js'
 
 export class ControlPlaneServer
 {
     private static readonly PortEnvVar = 'PRAGMATIC_ADMIN_PORT'
     private static readonly DefaultPort = 7000
-    private static readonly EnvPortFloor = 8100
-    private static readonly IdpPortFloor = 12100
-    private static readonly IdpsFile = 'idps.json'
+    public static readonly EnvPortFloor = 8100
+    public static readonly IdpPortFloor = 12100
+    public static readonly IdpsFile = 'idps.json'
     private static readonly MaxPort = 65535
     private static readonly BadPortPrefix = 'Invalid PRAGMATIC_ADMIN_PORT: '
     private static readonly BindHost = '127.0.0.1'
     private static readonly DataDir = 'data'
-    private static readonly RegistryFile = 'registry.json'
+    public static readonly RegistryFile = 'registry.json'
     private static readonly ClientsFile = 'clients.json'
     private static readonly TenantsFile = 'tenants.json'
     private static readonly HivesFile = 'hives.json'
@@ -64,10 +68,10 @@ export class ControlPlaneServer
     private static readonly SelectionsFile = 'selections.json'
     private static readonly HiveObservationsFile = 'hive-observations.json'
     private static readonly RegistrationsFile = 'rollout-registrations.json'
-    private static readonly ParentSegment = '..'
+    public static readonly ParentSegment = '..'
     private static readonly PortalSegment = 'portal'
-    private static readonly DistSegment = 'dist'
-    private static readonly TenantPortalSegment = 'tenant-portal'
+    public static readonly DistSegment = 'dist'
+    public static readonly TenantPortalSegment = 'tenant-portal'
     private static readonly ListeningPrefix = 'Control plane listening on http://localhost:'
     private static readonly ListeningSuffix = '/'
     private static readonly MasterKeyEnvVar = 'PRAGMATIC_ADMIN_MASTER_KEY_FILE'
@@ -75,7 +79,7 @@ export class ControlPlaneServer
     private static readonly OperatorPasswordEnvVar = 'PRAGMATIC_ADMIN_OPERATOR_PASSWORD'
     private static readonly SecureCookieEnvVar = 'PRAGMATIC_ADMIN_SECURE_COOKIE'
     private static readonly DefaultOperatorEmail = 'admin@control-plane.test'
-    private static readonly MasterKeyFileName = 'master.key'
+    public static readonly MasterKeyFileName = 'master.key'
     private static readonly IdentitySegment = 'identity'
     private static readonly TrueToken = 'true'
     private static readonly OneToken = '1'
@@ -108,7 +112,7 @@ export class ControlPlaneServer
     private static readonly HealthProbeTimeoutMsEnvVar = 'PRAGMATIC_TENANT_ADMIN_HEALTH_PROBE_TIMEOUT_MS'
     // Above the default probe interval (30s) so a legitimately slow-but-healthy probe is not treated as wedged.
     private static readonly DefaultHealthProbeTimeoutMs = 60000
-    private static readonly TenantAdminClientsFile = 'tenant-admin-clients.json'
+    public static readonly TenantAdminClientsFile = 'tenant-admin-clients.json'
     private static readonly TenantAdminOidcDir = 'tenant-admin-oidc'
     private static readonly PositiveIntegerPattern = /^[0-9]+$/
 
@@ -134,7 +138,7 @@ export class ControlPlaneServer
         const bundle = new BundleBuilderAdapter()
         const seeder = new UserSeederAdapter(new UserSeeder())
         const proxy = new AdminProxy(new WsAdminConnector())
-        const idpService = new IdpService(new PortAllocator(ControlPlaneServer.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), new IdpRegistry(join(dataRoot, ControlPlaneServer.IdpsFile)), dataRoot, DockerEnv.ImageName)
+        const idpService = new IdpService(new IdpRegistry(join(dataRoot, ControlPlaneServer.IdpsFile)), new DockerIdpDriver(new PortAllocator(ControlPlaneServer.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), dataRoot, DockerEnv.ImageName))
         const service = new EnvironmentService(registry, allocator, docker, bundle, seeder, dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn))
         const graphService = new GraphService(registry, proxy, name => service.AdminInfoFor(name))
         const staticRoot = join(here, ControlPlaneServer.ParentSegment, ControlPlaneServer.PortalSegment, ControlPlaneServer.DistSegment)
@@ -151,7 +155,7 @@ export class ControlPlaneServer
         const provisioning = new TenantProvisioningService(idpService, directory, conn => new IdpAdminClient(conn))
         const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
-        const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie, service, deployments, orchestrators, placement,
+        const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie, service, new InProcessRolloutClient(deployments), orchestrators, placement,
             masterKey, adminClientRegistry, ControlPlaneServer.ParseSecretTtlHours(process.env[ControlPlaneServer.SecretTtlEnvVar]))
         // Resolve (and validate) the tenant port + bind BEFORE binding the operator listener, so a misconfigured
         // tenant port fails fast at startup rather than after the operator socket is already live.
@@ -218,10 +222,10 @@ export class ControlPlaneServer
         env: NodeJS.ProcessEnv,
         dataRoot: string,
         idpService: IdpService,
-        directory: PlatformDirectory,
+        directory: ITenantDirectory,
         secureCookie: boolean,
         service: IEnvironmentService,
-        deployments: PlatformDeploymentRegistry,
+        rollout: IRolloutClient,
         orchestrators: HiveOrchestratorFactory,
         placement: EnvironmentPlacement,
         masterKey: Buffer,
@@ -234,6 +238,24 @@ export class ControlPlaneServer
         {
             return undefined
         }
+        return ControlPlaneServer.BuildTenantPlane(dataRoot, idpService, directory, secureCookie, service, rollout, orchestrators, placement,
+            masterKey, adminClientRegistry, secretTtlHours)
+    }
+
+    /** Gate-free composition of the tenant plane; callers decide whether the plane is active (ComposeTenantPlane gates on env, the standalone server always builds it). */
+    public static BuildTenantPlane(
+        dataRoot: string,
+        idpService: IdpService,
+        directory: ITenantDirectory,
+        secureCookie: boolean,
+        service: IEnvironmentService,
+        rollout: IRolloutClient,
+        orchestrators: HiveOrchestratorFactory,
+        placement: EnvironmentPlacement,
+        masterKey: Buffer,
+        adminClientRegistry: TenantAdminClientRegistry,
+        secretTtlHours: number): TenantPlane
+    {
         const sessions = new TenantSessionStore(join(dataRoot, ControlPlaneServer.TenantSessionsFile), ControlPlaneServer.TenantSessionTtlMs)
         const durability: TenantAdminDurability = {
             storeRoot: join(dataRoot, ControlPlaneServer.TenantAdminOidcDir),
@@ -244,19 +266,19 @@ export class ControlPlaneServer
         const rp = new TenantOidcRelyingParty(idpService, directory, conn => new IdpAdminClient(conn), undefined, undefined, durability)
         const endpoint = new TenantAuthEndpoint(rp, sessions, secureCookie)
         const gate = new TenantAuthGate(sessions)
-        const api = new TenantApiEndpoint(service, directory, deployments, orchestrators, placement)
+        const api = new TenantApiEndpoint(service, directory, rollout, orchestrators, placement)
         const events = new TenantEventBus()
         return { endpoint, gate, api, events, isDurable: rp.IsDurable }
     }
 
     /** The externally-visible tenant origin scheme; defaults to https when unset or blank. */
-    private static TenantScheme(raw: string | undefined): string
+    public static TenantScheme(raw: string | undefined): string
     {
         return raw === undefined || raw === '' ? ControlPlaneServer.DefaultExternalScheme : raw
     }
 
     /** The tenant listener bind address; defaults to loopback (proxy-fronted) when unset or blank. */
-    private static TenantBind(raw: string | undefined): string
+    public static TenantBind(raw: string | undefined): string
     {
         return raw === undefined || raw === '' ? ControlPlaneServer.DefaultTenantBind : raw
     }
@@ -279,7 +301,7 @@ export class ControlPlaneServer
     }
 
     /** The dedicated tenant listener port; required (the plane only activates when it is set). */
-    private static ResolveTenantPort(raw: string | undefined): number
+    public static ResolveTenantPort(raw: string | undefined): number
     {
         const port = Number(raw)
         if (raw === undefined || raw === '' || !Number.isInteger(port) || port < 1 || port > ControlPlaneServer.MaxPort)

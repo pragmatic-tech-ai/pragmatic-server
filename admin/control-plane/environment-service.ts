@@ -11,7 +11,7 @@ import type { PortAllocator } from './port-allocator.js'
 import { TemplateCatalog } from './template-catalog.js'
 import type { AdminConnectInfo, AdminSnapshot, IAdminProxy } from './admin-proxy.js'
 import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { PlatformDirectory } from './platform-directory.js'
+import type { ITenantDirectory } from './tenant-api/tenant-directory.js'
 import { UnknownHiveError } from './rollout-errors.js'
 import type { IIdpService, IdpConnection } from './idp-service.js'
 import type { IdpAdminClient } from './idp-admin-client.js'
@@ -148,7 +148,7 @@ export class EnvironmentService
         private readonly seeder: IUserSeeder,
         private readonly dataRoot: string,
         private readonly proxy: IAdminProxy,
-        private readonly directory: PlatformDirectory,
+        private readonly directory: ITenantDirectory,
         private readonly idp: IIdpService,
         private readonly adminClientFactory: (conn: IdpConnection) => IdpAdminClient)
     {

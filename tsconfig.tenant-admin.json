@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.tools.json",
+  "compilerOptions": { "noEmit": false, "outDir": "dist-tenant-admin", "paths": { "@pragmatic-tech-ai/todl-runtime": ["./node_modules/@pragmatic-tech-ai/todl-runtime/dist/index.d.ts"] } },
+  "include": ["src/bin/pragmatic-tenant-admind.ts", "admin/control-plane/**/*.ts", "environments/seed/**/*.ts"],
+  "exclude": ["**/tests/**", "**/*.test.ts", "**/*-smoke.ts", "admin/control-plane/dev/**"]
+}

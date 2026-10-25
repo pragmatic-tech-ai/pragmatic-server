@@ -35,6 +35,7 @@ import { PlatformDirectory } from './platform-directory.js'
 import { EnvironmentNotFoundError, EnvironmentService } from './environment-service.js'
 import { ExecFileDockerExec, IdpContainerEnv } from './idp-container-env.js'
 import { IdpRegistry } from './idp-registry.js'
+import { DockerIdpDriver } from './docker-idp-driver.js'
 import { IdpService } from './idp-service.js'
 import { IdpAdminClient } from './idp-admin-client.js'
 import { GraphService } from './graph-service.js'
@@ -331,7 +332,7 @@ export class LoopOrchestrator
         await directory.Load()
         const allocator = new PortAllocator(LoopOrchestrator.EnvPortFloor, new NetPortProbe())
         const proxy = new AdminProxy(new WsAdminConnector())
-        const idpService = new IdpService(new PortAllocator(LoopOrchestrator.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), new IdpRegistry(join(dataRoot, LoopOrchestrator.IdpsFile)), dataRoot, DockerEnv.ImageName)
+        const idpService = new IdpService(new IdpRegistry(join(dataRoot, LoopOrchestrator.IdpsFile)), new DockerIdpDriver(new PortAllocator(LoopOrchestrator.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), dataRoot, DockerEnv.ImageName))
         const service = new EnvironmentService(registry, allocator, docker, new BundleBuilderAdapter(), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn))
         const graphs = new GraphService(registry, proxy, name => service.AdminInfoFor(name))
         return new LoopOrchestrator(service, graphs, new SeederLoopLogin(), logger, dataRoot, new PgLoopDatabase(service))

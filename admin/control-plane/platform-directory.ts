@@ -2,6 +2,7 @@ import type { ClientRegistry } from './client-registry.js'
 import type { TenantRegistry } from './tenant-registry.js'
 import type { HiveRegistry } from './hive-registry.js'
 import type { EnvironmentRecord } from './environment-record.js'
+import { HivePlacementError } from './hive-placement-error.js'
 import { RecordId } from './platform-records.js'
 import type { ClientRecord, TenantRecord, HiveRecord, ClusterSpec, RegistrySpec } from './platform-records.js'
 
@@ -79,18 +80,6 @@ export class HiveHasEnvironmentsError extends Error
     {
         super(HiveHasEnvironmentsError.MessagePrefix + id)
         this.name = HiveHasEnvironmentsError.ErrorName
-    }
-}
-
-export class HivePlacementError extends Error
-{
-    private static readonly ErrorName = 'HivePlacementError'
-    private static readonly MessagePrefix = 'Hive does not belong to tenant: '
-
-    public constructor(tenantId: string, hiveId: string)
-    {
-        super(HivePlacementError.MessagePrefix + hiveId + ' / ' + tenantId)
-        this.name = HivePlacementError.ErrorName
     }
 }
 
@@ -242,10 +231,7 @@ export class PlatformDirectory
     public ValidateHivePlacement(tenantId: string, hiveId: string): void
     {
         const hive = this.hives.Get(hiveId)
-        if (hive === undefined || hive.tenantId !== tenantId)
-        {
-            throw new HivePlacementError(tenantId, hiveId)
-        }
+        HivePlacementError.Assert(hive, tenantId, hiveId)
     }
 
     private AssertNew(id: string, existing: unknown): void

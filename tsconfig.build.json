@@ -1,5 +1,5 @@
 {
   "extends": "./tsconfig.json",
   "include": ["src/**/*.ts"],
-  "exclude": ["src/**/*.test.ts", "src/**/tests/**"]
+  "exclude": ["src/**/*.test.ts", "src/**/tests/**", "src/bin/pragmatic-tenant-admind.ts"]
 }

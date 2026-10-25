@@ -46,6 +46,7 @@ import type { HiveRecord } from './platform-records.js'
 import { AdminProxy, WsAdminConnector } from './admin-proxy.js'
 import { ExecFileDockerExec, IdpContainerEnv } from './idp-container-env.js'
 import { IdpRegistry } from './idp-registry.js'
+import { DockerIdpDriver } from './docker-idp-driver.js'
 import { IdpService } from './idp-service.js'
 import type { IdpConnection } from './idp-service.js'
 import { IdpAdminClient } from './idp-admin-client.js'
@@ -71,6 +72,7 @@ import { TenantAdminClientRegistry } from './tenant-auth/tenant-admin-client-rec
 import { TenantHostResolver } from './tenant-auth/tenant-host-resolver.js'
 import { TenantPlaneHost } from './tenant-plane-host.js'
 import { ControlPlaneServer } from './server.js'
+import { InProcessRolloutClient } from './tenant-api/in-process-rollout-client.js'
 
 /**
  * A resolver whose callback KEEPS the request host's port. The production `TenantHostResolver` strips the port (the
@@ -375,7 +377,7 @@ export class TenantLoginE2eSmoke
         const env: NodeJS.ProcessEnv = { [S.TenantPortEnvKey]: S.TenantPortEnvValue, [S.TenantBaseDomainEnvKey]: S.BaseDomain }
         const masterKey = randomBytes(S.MasterKeyBytes)
         const tenantPlane = ControlPlaneServer.ComposeTenantPlane(
-            env, this.dataRoot, plane.idpService, plane.directory, S.SecureCookie, plane.service, plane.deployments,
+            env, this.dataRoot, plane.idpService, plane.directory, S.SecureCookie, plane.service, new InProcessRolloutClient(plane.deployments),
             plane.orchestrators, plane.placement, masterKey, plane.adminClientRegistry, S.SecretTtlHours)
         if (tenantPlane === undefined)
         {
@@ -486,7 +488,7 @@ export class TenantLoginE2eSmoke
         await directory.Load()
         this.idpContainers = new IdpContainerEnv(new ExecFileDockerExec())
         this.idpRegistry = new IdpRegistry(join(this.dataRoot, S.IdpsFile))
-        const idpService = new IdpService(new PortAllocator(S.IdpPortFloor, new NetPortProbe()), this.idpContainers, this.idpRegistry, this.dataRoot, DockerEnv.ImageName)
+        const idpService = new IdpService(this.idpRegistry, new DockerIdpDriver(new PortAllocator(S.IdpPortFloor, new NetPortProbe()), this.idpContainers, this.dataRoot, DockerEnv.ImageName))
         const service = new EnvironmentService(
             environments, new PortAllocator(S.EnvPortFloor, new NetPortProbe()), docker, new BundleBuilderAdapter(), new UserSeederAdapter(new UserSeeder()),
             this.dataRoot, new AdminProxy(new WsAdminConnector()), directory, idpService, conn => new IdpAdminClient(conn))

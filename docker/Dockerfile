@@ -13,6 +13,9 @@ RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
 COPY TODL/ ./TODL/
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd TODL && npm install --no-audit --no-fund && npm run build
+COPY Mural/ ./Mural/
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
+    cd Mural && npm install --no-audit --no-fund && npm run build
 COPY pragmatic-protocol/ ./pragmatic-protocol/
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd pragmatic-protocol && npm install --no-audit --no-fund && npm run build
@@ -55,6 +58,16 @@ RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
 COPY pragmatic-server/ ./pragmatic-server/
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd pragmatic-server && npm install --no-audit --no-fund && npm run build
+
+# Tenant-admin container (node dist-tenant-admin/src/bin/pragmatic-tenant-admind.js): the control-plane tree compiles
+# separately from the main build (it lives outside src/), and serves the tenant-portal SPA from
+# dist-tenant-admin/admin/tenant-portal/dist (the path TenantAdminServer resolves relative to its own module).
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
+    cd pragmatic-server && npm run build:tenant-admin \
+    && cd admin/tenant-portal && npm install --no-audit --no-fund && npm run build \
+    && mkdir -p ../../dist-tenant-admin/admin/tenant-portal \
+    && cp -r dist ../../dist-tenant-admin/admin/tenant-portal/dist \
+    && rm -rf node_modules dist
 
 # Slim the tree that gets baked into the runtime image: the entrypoint runs the
 # compiled dist with plain `node`, so dev dependencies (TypeScript, tsx, test tooling)

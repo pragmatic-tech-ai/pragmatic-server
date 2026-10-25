@@ -1,7 +1,8 @@
 import type { EnvironmentRecord } from './environment-record.js'
 import { EnvironmentWorkloadFactory } from './environment-workload.js'
 import type { EnvironmentWorkload } from './environment-workload.js'
-import type { PlatformDirectory } from './platform-directory.js'
+import { HivePlacementError } from './hive-placement-error.js'
+import type { ITenantDirectory } from './tenant-api/tenant-directory.js'
 
 /** An environment with no hive binding cannot be scheduled on a hive. */
 export class EnvironmentNotPlacedError extends Error
@@ -19,7 +20,7 @@ export class EnvironmentNotPlacedError extends Error
 /** Binds an environment to its hive: validates tenant ownership, then builds the schedulable workload. */
 export class EnvironmentPlacement
 {
-    public constructor(private readonly directory: PlatformDirectory)
+    public constructor(private readonly directory: ITenantDirectory)
     {
     }
 
@@ -29,11 +30,11 @@ export class EnvironmentPlacement
         {
             throw new EnvironmentNotPlacedError(record.name)
         }
+        const hive = this.directory.GetHive(record.hiveId)
         if (record.tenantId)
         {
-            this.directory.ValidateHivePlacement(record.tenantId, record.hiveId)
+            HivePlacementError.Assert(hive, record.tenantId, record.hiveId)
         }
-        const hive = this.directory.GetHive(record.hiveId)!
-        return EnvironmentWorkloadFactory.From(record, hive)
+        return EnvironmentWorkloadFactory.From(record, hive!)
     }
 }

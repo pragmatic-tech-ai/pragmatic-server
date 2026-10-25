@@ -2,7 +2,6 @@ import { Orientation, StackPanel, TextBlock } from '@pragmatic-tech-ai/mural/bas
 import { Button } from '@pragmatic-tech-ai/mural/framework'
 import type { Visual } from '@pragmatic-tech-ai/mural/visual-engine'
 import { ControlPlaneClient } from './api-client.js'
-import { CreateEnvironmentView } from './create-environment-view.js'
 import { EnvironmentDetailView } from './environment-detail-view.js'
 import { EnvironmentListView } from './environment-list-view.js'
 import { CreateGraphView } from './create-graph-view.js'
@@ -117,12 +116,6 @@ export class App extends StackPanel implements IPortalNavigator
     {
         this.SetLogoutVisible(true)
         this.Show(new EnvironmentListView(this.client, this))
-    }
-
-    public ShowCreate(): void
-    {
-        this.SetLogoutVisible(true)
-        this.Show(new CreateEnvironmentView(this.client, this))
     }
 
     public ShowDetail(name: string): void
