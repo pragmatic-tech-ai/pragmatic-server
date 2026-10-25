@@ -28,12 +28,21 @@ export interface TenantBootstrapInput
     externalScheme: string
     /** Pod-visible base URL of the platform agent channel (also the per-hive agent's registry URL). */
     channelUrl: string
-    /** The tenant's IdP workload; the Secrets it names (TLS, admin token) are referenced, not minted here. Omit when the IdP is provisioned separately. */
+    /**
+     * The tenant's IdP workload. RenderIdp puts it in its OWN namespace (K8sManifestBuilder.IdpNameOf(tenant.id)) and mounts the
+     * Secrets it names (TLS, admin token) from THERE. Bootstrap only references them: it never mints or emits them (the bootstrap
+     * Secret set is pragmatic-system only), so whoever provisions the IdP must create them in the IdP namespace. Omit when the IdP
+     * is provisioned separately.
+     */
     idp?: Pick<IdpWorkloadSpec, 'image' | 'port' | 'tlsSecretName' | 'adminTokenSecretName' | 'adminTokenRef'>
     /** The signing trust root's PUBLIC key (PEM). Never the private half. */
     trustRootPublicKey: string
     pullCredential?: PullCredential
 }
+
+/** A rendered v1 List as the builder emits it (only the fields bootstrap reads). */
+type RenderedList = { items: RenderedItem[] }
+type RenderedItem = { kind: string; metadata: { name: string } }
 
 type SecretEntry = { readonly name: string; readonly type: string; readonly data: Map<string, Buffer> }
 
@@ -49,6 +58,15 @@ export class BootstrapSecretSet
     private static readonly ListKind = 'List'
     private static readonly OpaqueType = 'Opaque'
     private static readonly Base64 = 'base64'
+    private static readonly Utf8 = 'utf8'
+    private static readonly ApiVersionKey = 'apiVersion'
+    private static readonly KindKey = 'kind'
+    private static readonly MetadataKey = 'metadata'
+    private static readonly NameKey = 'name'
+    private static readonly NamespaceKey = 'namespace'
+    private static readonly TypeKey = 'type'
+    private static readonly DataKey = 'data'
+    private static readonly ItemsKey = 'items'
     private static readonly UnknownSecretPrefix = 'Unknown bootstrap secret: '
     private static readonly Redacted = '[BootstrapSecretSet: values redacted]'
 
@@ -59,7 +77,7 @@ export class BootstrapSecretSet
         const map = new Map<string, Buffer>()
         for (const [key, value] of Object.entries(data))
         {
-            map.set(key, typeof value === 'string' ? Buffer.from(value, 'utf8') : value)
+            map.set(key, typeof value === 'string' ? Buffer.from(value, BootstrapSecretSet.Utf8) : value)
         }
         this.#entries.push({ name, type, data: map })
     }
@@ -72,7 +90,7 @@ export class BootstrapSecretSet
         {
             throw new Error(BootstrapSecretSet.UnknownSecretPrefix + secretName)
         }
-        entry.data.set(key, typeof value === 'string' ? Buffer.from(value, 'utf8') : value)
+        entry.data.set(key, typeof value === 'string' ? Buffer.from(value, BootstrapSecretSet.Utf8) : value)
     }
 
     public Names(): string[]
@@ -84,13 +102,13 @@ export class BootstrapSecretSet
     public RenderManifest(): string
     {
         const items = this.#entries.map(e => ({
-            apiVersion: BootstrapSecretSet.ApiVersion,
-            kind: BootstrapSecretSet.SecretKind,
-            metadata: { name: e.name, namespace: K8sManifestBuilder.SystemNamespace },
-            type: e.type,
-            data: Object.fromEntries([...e.data].map(([k, v]) => [k, v.toString(BootstrapSecretSet.Base64)])),
+            [BootstrapSecretSet.ApiVersionKey]: BootstrapSecretSet.ApiVersion,
+            [BootstrapSecretSet.KindKey]: BootstrapSecretSet.SecretKind,
+            [BootstrapSecretSet.MetadataKey]: { [BootstrapSecretSet.NameKey]: e.name, [BootstrapSecretSet.NamespaceKey]: K8sManifestBuilder.SystemNamespace },
+            [BootstrapSecretSet.TypeKey]: e.type,
+            [BootstrapSecretSet.DataKey]: Object.fromEntries([...e.data].map(([k, v]) => [k, v.toString(BootstrapSecretSet.Base64)])),
         }))
-        return JSON.stringify({ apiVersion: BootstrapSecretSet.ApiVersion, kind: BootstrapSecretSet.ListKind, items })
+        return JSON.stringify({ [BootstrapSecretSet.ApiVersionKey]: BootstrapSecretSet.ApiVersion, [BootstrapSecretSet.KindKey]: BootstrapSecretSet.ListKind, [BootstrapSecretSet.ItemsKey]: items })
     }
 
     public toJSON(): string
@@ -132,6 +150,9 @@ export class TenantAdminBootstrap
     private static readonly DockerConfigKey = '.dockerconfigjson'
     private static readonly DockerConfigType = 'kubernetes.io/dockerconfigjson'
     private static readonly MasterKeyBytes = 32
+    private static readonly ApiVersionKey = 'apiVersion'
+    private static readonly KindKey = 'kind'
+    private static readonly ItemsKey = 'items'
     private static readonly ApiVersion = 'v1'
     private static readonly ListKind = 'List'
     private static readonly NamespaceKind = 'Namespace'
@@ -188,7 +209,7 @@ export class TenantAdminBootstrap
             rendered.push(this.manifests.RenderIdp(idp))
         }
         rendered.push(this.manifests.RenderTenantAdmin(admin))
-        const items = rendered.flatMap(r => (JSON.parse(r) as { items: Array<{ kind: string; metadata: { name: string } }> }).items)
+        const items = rendered.flatMap(r => (JSON.parse(r) as RenderedList).items)
         const seen = new Set<string>()
         const unique = items.filter(i =>
         {
@@ -205,6 +226,6 @@ export class TenantAdminBootstrap
             ...unique.filter(i => i.kind === TenantAdminBootstrap.NamespaceKind),
             ...unique.filter(i => i.kind !== TenantAdminBootstrap.NamespaceKind),
         ]
-        return JSON.stringify({ apiVersion: TenantAdminBootstrap.ApiVersion, kind: TenantAdminBootstrap.ListKind, items: ordered })
+        return JSON.stringify({ [TenantAdminBootstrap.ApiVersionKey]: TenantAdminBootstrap.ApiVersion, [TenantAdminBootstrap.KindKey]: TenantAdminBootstrap.ListKind, [TenantAdminBootstrap.ItemsKey]: ordered })
     }
 }

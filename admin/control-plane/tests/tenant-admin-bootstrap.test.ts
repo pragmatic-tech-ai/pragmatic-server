@@ -132,6 +132,18 @@ describe('TenantAdminBootstrap.GenerateBootstrap', () =>
         assert.equal(Buffer.from(pull.data['.dockerconfigjson'], 'base64').toString('utf8'), BootstrapFixture.PullJson)
     })
 
+    it('references the IdP Secrets from the IdP namespace and never emits them into pragmatic-system', async () =>
+    {
+        const b = await new TenantAdminBootstrap(new FakeRegistrar()).GenerateBootstrap(BootstrapFixture.Input())
+        const idpNs = K8sManifestBuilder.IdpNameOf('acme')
+        const items = JSON.parse(b.manifest).items as Array<{ kind: string; metadata: { name: string; namespace?: string } }>
+        const idpDeployment = items.find(i => i.kind === 'Deployment' && i.metadata.name === idpNs)!
+        assert.equal(idpDeployment.metadata.namespace, idpNs)
+        const volumes = (idpDeployment as any).spec.template.spec.volumes.map((v: any) => v.secret?.secretName).filter(Boolean)
+        assert.deepEqual(volumes.sort(), ['idp-admin', 'idp-tls'])
+        assert.ok(!b.secrets.Names().some(n => n === 'idp-tls' || n === 'idp-admin'))
+    })
+
     it('omits the pull credential Secret when none is supplied', async () =>
     {
         const b = await new TenantAdminBootstrap(new FakeRegistrar()).GenerateBootstrap(BootstrapFixture.Input(false))

@@ -64,6 +64,12 @@ class NoContainerProbe implements IContainerProbe
     }
 }
 
+/** The slices of the tenant-api responses the smoke reads. */
+type SessionDto = { principalId?: string }
+type HiveDto = { id?: string }
+type EnvironmentDto = { name?: string }
+type ManifestDto = { version?: string }
+
 type HttpResult = { status: number; headers: Record<string, string | string[] | undefined>; text: string; json: unknown }
 
 export class TenantAdminSmoke
@@ -98,6 +104,7 @@ export class TenantAdminSmoke
     private static readonly Pem = 'pem'
     private static readonly Spki = 'spki'
     private static readonly Utf8 = 'utf8'
+    private static readonly ContentTypeResponseHeader = 'content-type'
     private static readonly ChannelLabel = 'agent channel host'
     private static readonly HiveSelectorPrefix = 'pragmatic/hive='
     private static readonly DotSep = '.'
@@ -402,6 +409,11 @@ export class TenantAdminSmoke
         return local
     }
 
+    private static AsList<T>(json: unknown): T[]
+    {
+        return Array.isArray(json) ? json as T[] : []
+    }
+
     private static FreePort(): Promise<number>
     {
         return new Promise<number>((resolve, reject) =>
@@ -420,7 +432,7 @@ export class TenantAdminSmoke
     {
         const S = TenantAdminSmoke
         const root = await this.Http(port, S.MethodGet, S.RootPath)
-        const contentType = String(root.headers['content-type'] ?? S.EmptyString)
+        const contentType = String(root.headers[S.ContentTypeResponseHeader] ?? S.EmptyString)
         this.Expect(S.Labels.SpaServed, root.status === S.StatusOk && contentType.includes(S.HtmlWord), S.StatusWord + String(root.status) + S.Space + contentType)
         const session = await this.Http(port, S.MethodGet, S.SessionPath)
         this.Expect(S.Labels.SessionGate, session.status === S.StatusUnauthorized, S.StatusWord + String(session.status))
@@ -433,15 +445,15 @@ export class TenantAdminSmoke
     {
         const S = TenantAdminSmoke
         const session = await this.Http(port, S.MethodGet, S.SessionPath, undefined, true)
-        this.Expect(S.Labels.Session, session.status === S.StatusOk && (session.json as { principalId?: string } | undefined)?.principalId === S.SessionPrincipal, S.StatusWord + String(session.status))
+        this.Expect(S.Labels.Session, session.status === S.StatusOk && (session.json as SessionDto | undefined)?.principalId === S.SessionPrincipal, S.StatusWord + String(session.status))
         const hives = await this.Http(port, S.MethodGet, S.HivesPath, undefined, true)
-        const hiveList = Array.isArray(hives.json) ? hives.json as Array<{ id?: string }> : []
+        const hiveList = TenantAdminSmoke.AsList<HiveDto>(hives.json)
         this.Expect(S.Labels.Hives, hives.status === S.StatusOk && hiveList.length === 1 && hiveList[0]?.id === S.HiveId, S.StatusWord + String(hives.status))
         const envs = await this.Http(port, S.MethodGet, S.EnvironmentsPath, undefined, true)
-        const envList = Array.isArray(envs.json) ? envs.json as Array<{ name?: string }> : []
+        const envList = TenantAdminSmoke.AsList<EnvironmentDto>(envs.json)
         this.Expect(S.Labels.Environments, envs.status === S.StatusOk && envList.some(e => e.name === S.SeedEnvName), S.StatusWord + String(envs.status) + S.DetailSep + envs.text.slice(0, 200))
         const manifests = await this.Http(port, S.MethodGet, S.ManifestsPath, undefined, true)
-        const versions = Array.isArray(manifests.json) ? (manifests.json as Array<{ version?: string }>).map(m => m.version) : []
+        const versions = TenantAdminSmoke.AsList<ManifestDto>(manifests.json).map(m => m.version)
         this.Expect(S.Labels.Manifests, manifests.status === S.StatusOk && versions.includes(S.VersionV1) && versions.includes(S.VersionV2), S.StatusWord + String(manifests.status) + S.DetailSep + manifests.text.slice(0, 200))
         const adopt = await this.Http(port, S.MethodPost, S.HivesPrefix + S.HiveId + S.TargetSuffix, JSON.stringify({ [S.VersionKey]: S.VersionV2 }), true)
         this.Expect(S.Labels.Adopt, adopt.status === S.StatusNoContent, S.StatusWord + String(adopt.status) + S.DetailSep + adopt.text.slice(0, 200))

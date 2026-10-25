@@ -72,6 +72,7 @@ export class TenantAdminServer
     private static readonly HiveStringFields = ['id', 'tenantId', 'displayName', 'createdAt'] as const
     private static readonly HiveObjectFields = ['cluster', 'registry'] as const
     private static readonly Utf8 = 'utf8'
+    private static readonly EmptyString = ''
 
     public constructor(
         private readonly config: TenantAdminConfig,
@@ -90,7 +91,7 @@ export class TenantAdminServer
     public static RolloutClientFrom(env: NodeJS.ProcessEnv): IRolloutClient
     {
         const url = env[TenantAdminEnv.RolloutUrl]
-        if (url === undefined || url === '')
+        if (url === undefined || url === TenantAdminServer.EmptyString)
         {
             return TenantAdminServer.DefaultRolloutClient()
         }
