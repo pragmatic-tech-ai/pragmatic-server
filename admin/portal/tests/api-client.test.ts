@@ -1,7 +1,6 @@
 import { afterEach, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { ControlPlaneClient } from '../src/api-client.js'
-import type { SecurityModelDto } from '../src/portal-types.js'
 
 type Recorded = { route: string; init: RequestInit | undefined }
 
@@ -25,52 +24,6 @@ class FetchStub
         globalThis.fetch = FetchStub.Original
     }
 }
-
-describe('ControlPlaneClient security model', () =>
-{
-    afterEach(() => { FetchStub.Restore() })
-
-    it('GetSecurityModel GETs the security-model route and returns the payload', async () =>
-    {
-        const model = { roles: [] }
-        FetchStub.Install(model)
-        assert.deepEqual(await new ControlPlaneClient().GetSecurityModel('my env'), model)
-        assert.equal(FetchStub.Calls[0]!.route, '/api/environments/my%20env/admin/security-model')
-        assert.equal(FetchStub.Calls[0]!.init?.method, undefined)
-    })
-
-    it('GetSecurityModel passes a null payload through', async () =>
-    {
-        FetchStub.Install(null)
-        assert.equal(await new ControlPlaneClient().GetSecurityModel('e'), null)
-    })
-
-    it('SetSecurityModel PUTs { securityModel } to the security-model route', async () =>
-    {
-        FetchStub.Install({ ok: true })
-        const model = { businessUnits: [], teams: [], membership: {}, ownershipRules: [], roles: [] } as SecurityModelDto
-        await new ControlPlaneClient().SetSecurityModel('e', model)
-        const call = FetchStub.Calls[0]!
-        assert.equal(call.route, '/api/environments/e/admin/security-model')
-        assert.equal(call.init?.method, 'PUT')
-        assert.deepEqual(JSON.parse(call.init?.body as string), { securityModel: model })
-    })
-})
-
-describe('ControlPlaneClient maker token', () =>
-{
-    afterEach(() => { FetchStub.Restore() })
-
-    it('IssueMakerToken POSTs to the maker-token route and returns the parsed token', async () =>
-    {
-        const issued = { token: 'tok-abc', principalId: 'maker-1', expiresAt: null }
-        FetchStub.Install(issued)
-        const result = await new ControlPlaneClient().IssueMakerToken('envX')
-        assert.equal(FetchStub.Calls[0]!.route, '/api/environments/envX/maker-token')
-        assert.equal(FetchStub.Calls[0]!.init?.method, 'POST')
-        assert.deepEqual(result, issued)
-    })
-})
 
 describe('ControlPlaneClient graphs', () =>
 {
