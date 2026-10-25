@@ -1,0 +1,12 @@
+{
+	# Dev only: no public ACME, no admin API. TLS is the local dev CA mounted at /certs.
+	auto_https off
+	admin off
+}
+
+# Terminates TLS for every tenant subdomain and forwards to the tenant plane on the host.
+# Caddy preserves the original Host header, so TenantHostResolver still sees <tenant>.lvh.me.
+https://*.lvh.me {
+	tls /certs/lvh.crt /certs/lvh.key
+	reverse_proxy host.docker.internal:7100
+}

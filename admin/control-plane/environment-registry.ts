@@ -12,6 +12,7 @@ export class EnvironmentRegistry
     private static readonly RootKey = 'environments'
     private static readonly NotFoundCode = 'ENOENT'
     private static readonly JsonIndent = 2
+    private static readonly NoContainerName = ''
 
     private readonly records = new Map<string, EnvironmentRecord>()
 
@@ -65,15 +66,16 @@ export class EnvironmentRegistry
         await this.persist()
     }
 
+    /** Docker-probes unbound records only; a hive-bound (in-cluster) record's status is owned by the hive agent, so it is left untouched. */
     public async Reconcile(): Promise<void>
     {
         for (const record of this.records.values())
         {
-            if (record.status === EnvStatus.Failed)
+            if (record.status === EnvStatus.Failed || record.hiveId !== undefined)
             {
                 continue
             }
-            const running = await this.probe.Running(record.containerName)
+            const running = await this.probe.Running(record.containerName ?? EnvironmentRegistry.NoContainerName)
             this.records.set(record.name, { ...record, status: running ? EnvStatus.Running : EnvStatus.Stopped })
         }
         await this.persist()

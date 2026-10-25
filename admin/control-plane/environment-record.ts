@@ -28,10 +28,13 @@ export type EnvironmentRecord = {
     tenantId?: string
     /** The hive this environment is placed on; unset while unbound. */
     hiveId?: string
-    hostPort: number
-    containerName: string
-    volumeName: string
-    bundleDir: string
+    /** Docker-backend fields: absent for backends that do not publish a host port or own a bundle/container. */
+    hostPort?: number
+    containerName?: string
+    volumeName?: string
+    bundleDir?: string
+    /** Where the environment is reachable, as reported by the runtime at create/start. */
+    endpoint?: { httpUrl: string; wsUrl: string }
     createdAt: string
     status: EnvStatus
 }

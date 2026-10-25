@@ -12,7 +12,10 @@ import { ManifestNotGatedError, UnknownHiveError, UnknownManifestError } from '.
 import type { ITenantApiEndpoint } from '../tenant-auth/tenant-plane.js'
 import type { TenantSession } from '../tenant-auth/tenant-session.js'
 import { AdminProxyError, AdminProxyErrorKind } from '../admin-proxy.js'
-import { EnvironmentNotDevelopmentError, EnvironmentNotFoundError, EnvironmentNotRuntimeError } from '../environment-service.js'
+import { EnvStopUnavailableInClusterError } from '../in-cluster-environment-runtime.js'
+import { EnvironmentExistsError, EnvironmentNotDevelopmentError, EnvironmentNotFoundError, EnvironmentNotRuntimeError } from '../environment-service.js'
+import { EnvType, Template } from '../environment-record.js'
+import { UnsupportedBackendError } from '../hive-orchestrator.js'
 import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, SecurityModelDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 /** The lifecycle action a tenant may request against its own environment; the values byte-match the URL path segments. */
@@ -90,6 +93,7 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     private static readonly StatusBadRequest = 400
     private static readonly StatusNotFound = 404
     private static readonly StatusConflict = 409
+    private static readonly StatusNotImplemented = 501
     private static readonly StatusInternal = 500
     private static readonly StatusUnavailable = 503
     private static readonly NotFoundMessage = 'Not found'
@@ -110,6 +114,15 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     private static readonly IdentityInvalidMessage = 'The identity request was rejected as invalid'
     private static readonly IdentityFailedMessage = 'The identity operation failed'
     private static readonly WrongEnvKindMessage = 'The operation is not available for this environment type'
+    private static readonly NameKey = 'name'
+    private static readonly TemplateKey = 'template'
+    private static readonly TypeKey = 'type'
+    private static readonly CreateFieldsMessage = 'name (non-empty string), template and type (known values) are required'
+    /** Fixed generic bodies for create failures: the inner error text (names, hosts, backends) never reaches the wire. */
+    private static readonly NoHiveMessage = 'The tenant has no hive to create an environment in'
+    private static readonly CreateExistsMessage = 'An environment with that name already exists'
+    private static readonly CreateUnsupportedMessage = 'The hive backend does not support this operation'
+    private static readonly CreateFailedMessage = 'The environment could not be created'
 
     private readonly health: HiveHealthProducer
 
@@ -161,6 +174,10 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         }
         if (method === TenantApiEndpoint.MethodPost)
         {
+            if (path === TenantApiEndpoint.EnvironmentsPath)
+            {
+                return await this.RouteEnvCreate(req, res, session)
+            }
             const tm = TenantApiEndpoint.HiveTargetPathPattern.exec(path)
             if (tm !== null)
             {
@@ -289,9 +306,80 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
             this.WriteNotFound(res)
             return true
         }
-        const updated = await this.Perform(action, rec.name)
+        let updated: EnvironmentRecord
+        try
+        {
+            updated = await this.Perform(action, rec.name)
+        }
+        catch (err)
+        {
+            if (err instanceof EnvStopUnavailableInClusterError)
+            {
+                this.WriteJson(res, TenantApiEndpoint.StatusNotImplemented, { [TenantApiEndpoint.ErrorKey]: err.message })
+                return true
+            }
+            throw err
+        }
         this.WriteJson(res, TenantApiEndpoint.StatusOk, EnvironmentDtoMapper.ToDto(updated))
         return true
+    }
+
+    /**
+     * Creates an environment in the caller's own hive. The hive is derived ONLY from `session.tenantId` via the
+     * directory (one hive per tenant) - the body is never consulted for a hive or tenant, so it cannot steer creation
+     * cross-tenant. The body is validated before anything is created; failures map to fixed generic bodies.
+     */
+    private async RouteEnvCreate(req: IncomingMessage, res: ServerResponse, session: TenantSession): Promise<boolean>
+    {
+        const body = await this.ReadObject(req, res)
+        if (body === undefined)
+        {
+            return true
+        }
+        const name = body[TenantApiEndpoint.NameKey]
+        const template = body[TenantApiEndpoint.TemplateKey]
+        const type = body[TenantApiEndpoint.TypeKey]
+        if (typeof name !== 'string' || name.length === 0
+            || !Object.values(Template).includes(template as Template)
+            || !Object.values(EnvType).includes(type as EnvType))
+        {
+            this.WriteJson(res, TenantApiEndpoint.StatusBadRequest, { [TenantApiEndpoint.ErrorKey]: TenantApiEndpoint.CreateFieldsMessage })
+            return true
+        }
+        const hive = this.directory.ListHives(session.tenantId)[0]
+        if (hive === undefined)
+        {
+            this.WriteJson(res, TenantApiEndpoint.StatusConflict, { [TenantApiEndpoint.ErrorKey]: TenantApiEndpoint.NoHiveMessage })
+            return true
+        }
+        try
+        {
+            const record = await this.service.Create(name, template as Template, type as EnvType, undefined, hive.id)
+            this.WriteJson(res, TenantApiEndpoint.StatusCreated, EnvironmentDtoMapper.ToDto(record))
+        }
+        catch (err)
+        {
+            this.WriteCreateError(res, err)
+        }
+        return true
+    }
+
+    /** Maps a create failure to a fixed status and a fixed generic body; the caught error (and its text) is never echoed. */
+    private WriteCreateError(res: ServerResponse, err: unknown): void
+    {
+        let status = TenantApiEndpoint.StatusInternal
+        let message = TenantApiEndpoint.CreateFailedMessage
+        if (err instanceof EnvironmentExistsError)
+        {
+            status = TenantApiEndpoint.StatusConflict
+            message = TenantApiEndpoint.CreateExistsMessage
+        }
+        else if (err instanceof UnsupportedBackendError)
+        {
+            status = TenantApiEndpoint.StatusBadRequest
+            message = TenantApiEndpoint.CreateUnsupportedMessage
+        }
+        this.WriteJson(res, status, { [TenantApiEndpoint.ErrorKey]: message })
     }
 
     /** Dispatches the validated action to the matching service method. */

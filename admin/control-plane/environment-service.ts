@@ -16,7 +16,9 @@ import { UnknownHiveError } from './rollout-errors.js'
 import type { IIdpService, IdpConnection } from './idp-service.js'
 import type { IdpAdminClient } from './idp-admin-client.js'
 import type { ILogProcess } from '../../environments/seed/docker.js'
-import type { IDockerEnv, IBundleBuilder, IUserSeeder } from './docker-env-port.js'
+import type { IUserSeeder } from './docker-env-port.js'
+import type { EnvEndpoint, EnvRuntimeContext } from './environment-runtime.js'
+import type { EnvironmentRuntimeResolver } from './environment-runtime-resolver.js'
 
 export class EnvironmentExistsError extends Error
 {
@@ -133,6 +135,8 @@ export class EnvironmentService
     private static readonly AppReaderRoleName = 'Viewer'
     /** One hour: a maker token is short-lived, so a leaked one expires quickly; callers re-mint on demand. */
     private static readonly MakerTokenTtlSeconds = 3600
+    /** Placeholder host port fed to TemplateCatalog.Resolve for a DNS-reached (in-cluster) env, which never publishes one. */
+    private static readonly NoHostPort = 0
 
     /** Safe names with a Create currently running; closes the race between the existence check and the final registry Put. */
     private readonly inFlight = new Set<string>()
@@ -143,8 +147,7 @@ export class EnvironmentService
     public constructor(
         private readonly registry: EnvironmentRegistry,
         private readonly allocator: PortAllocator,
-        private readonly docker: IDockerEnv,
-        private readonly bundle: IBundleBuilder,
+        private readonly runtimes: EnvironmentRuntimeResolver,
         private readonly seeder: IUserSeeder,
         private readonly dataRoot: string,
         private readonly proxy: IAdminProxy,
@@ -215,30 +218,50 @@ export class EnvironmentService
         this.inFlight.add(safe)
         try
         {
-            const taken = this.registry.List().map(r => r.hostPort)
-            let port: number
-            if (hostPort !== undefined)
-            {
-                await this.allocator.Check(hostPort, taken)
-                port = hostPort
-            }
-            else
-            {
-                port = await this.allocator.Allocate(taken)
-            }
-            const { def, seedDir } = TemplateCatalog.Resolve(template, safe, port, type)
-            const bundleDir = join(this.dataRoot, def.name)
+            // Select the runtime from the hive binding BEFORE any side effect: an unsupported hive backend throws
+            // UnsupportedBackendError RAW here, so no port is allocated, no bundle written, and no Failed record persisted.
+            const runtime = this.runtimes.ForHive(hiveId)
+            const hostShaped = runtime.PublishesHostPort()
+
+            // Only a host-port backend (Docker) allocates a host port; an in-cluster env is reached by cluster DNS.
+            const port = hostShaped ? await this.AllocatePort(hostPort) : undefined
+            const { def, seedDir } = TemplateCatalog.Resolve(template, safe, port ?? EnvironmentService.NoHostPort, type)
+            const bundleDir = hostShaped ? join(this.dataRoot, def.name) : undefined
+
+            // Host (localhost) OIDC federation applies only to the host-port backend; in-cluster federation is deferred.
             let oidc: EnvOidc | undefined
             let caHostPath: string | undefined
-            if (platformTenantId !== undefined)
+            if (hostShaped && platformTenantId !== undefined)
             {
-                const federation = await this.Federate(platformTenantId, def, port)
+                const federation = await this.Federate(platformTenantId, def, port as number)
                 oidc = federation.oidc
                 caHostPath = federation.caHostPath
             }
+            const record: EnvironmentRecord = {
+                name: def.name,
+                template,
+                type,
+                environmentId: def.environmentId,
+                createdAt: new Date().toISOString(),
+                status: EnvStatus.Running
+            }
+            if (hostShaped)
+            {
+                // Docker-shaped fields: a host-port backend owns a published port, container, volume and local bundle.
+                record.hostPort = port
+                record.containerName = DockerEnv.ContainerName(def)
+                record.volumeName = DockerEnv.VolumeName(def)
+                record.bundleDir = bundleDir
+            }
+            if (hiveId !== undefined)
+            {
+                record.tenantId = platformTenantId
+                record.hiveId = hiveId
+            }
+            const ctx: EnvRuntimeContext = { def, record, bundleDir, seedDir, oidc, caHostPath }
             try
             {
-                await this.bundle.Generate(def, bundleDir, seedDir, oidc)
+                await runtime.Prepare(ctx)
             }
             catch (err)
             {
@@ -249,7 +272,7 @@ export class EnvironmentService
             let imageOk: boolean
             try
             {
-                imageOk = await this.docker.EnsureImage()
+                imageOk = await runtime.EnsureImage(def)
             }
             catch
             {
@@ -259,40 +282,26 @@ export class EnvironmentService
             if (!imageOk)
             {
                 EnvironmentService.RemoveBundleDir(bundleDir)
-                throw new ImageMissingError(this.docker.BuildCommand())
+                throw new ImageMissingError(runtime.BuildCommand())
             }
 
-            const record: EnvironmentRecord = {
-                name: def.name,
-                template,
-                type,
-                environmentId: def.environmentId,
-                hostPort: port,
-                containerName: DockerEnv.ContainerName(def),
-                volumeName: DockerEnv.VolumeName(def),
-                bundleDir,
-                createdAt: new Date().toISOString(),
-                status: EnvStatus.Running
-            }
-            if (hiveId !== undefined)
-            {
-                record.tenantId = platformTenantId
-                record.hiveId = hiveId
-            }
             try
             {
-                await this.docker.Up(def, bundleDir, caHostPath)
-                await this.docker.WaitHealthy(port, def)
+                record.createdAt = new Date().toISOString()
+                const endpoint = await runtime.BringUp(ctx)
+                record.endpoint = EnvironmentService.StoredEndpoint(endpoint)
+                await runtime.WaitHealthy(ctx)
                 if (def.kind === EnvKind.Demo)
                 {
-                    await this.SeedDemoUsers(def, bundleDir, seedDir, port)
+                    // A Demo template is always host-port-backed (Docker), so bundleDir/port are set here; in-cluster never seeds.
+                    await this.SeedDemoUsers(def, bundleDir as string, seedDir, port as number)
                 }
             }
             catch (err)
             {
                 try
                 {
-                    await this.docker.Down(def, true)
+                    await runtime.Teardown(ctx, true)
                 }
                 catch
                 {
@@ -300,7 +309,7 @@ export class EnvironmentService
                 }
                 try
                 {
-                    await this.docker.RemoveVolume(def)
+                    await runtime.RemoveVolume(ctx)
                 }
                 catch
                 {
@@ -321,19 +330,29 @@ export class EnvironmentService
         }
     }
 
+    /** Reserves a host port for a Docker-backed env: honours a caller-chosen port (checked free) or allocates a fresh one. */
+    private async AllocatePort(hostPort?: number): Promise<number>
+    {
+        const taken = this.registry.List().map(r => r.hostPort).filter((p): p is number => p !== undefined)
+        if (hostPort !== undefined)
+        {
+            await this.allocator.Check(hostPort, taken)
+            return hostPort
+        }
+        return await this.allocator.Allocate(taken)
+    }
+
     public async Start(name: string): Promise<EnvironmentRecord>
     {
         const rec = this.Require(name)
-        const def = EnvironmentService.DefOf(rec)
-        await this.docker.Up(def, rec.bundleDir)
-        await this.docker.WaitHealthy(rec.hostPort, def)
-        return this.SetStatus(rec, EnvStatus.Running)
+        const endpoint = await this.runtimes.For(rec).Start(this.CtxOf(rec))
+        return this.SetStatus({ ...rec, endpoint: EnvironmentService.StoredEndpoint(endpoint) }, EnvStatus.Running)
     }
 
     public async Stop(name: string): Promise<EnvironmentRecord>
     {
         const rec = this.Require(name)
-        await this.docker.Down(EnvironmentService.DefOf(rec))
+        await this.runtimes.For(rec).Stop(this.CtxOf(rec))
         return this.SetStatus(rec, EnvStatus.Stopped)
     }
 
@@ -347,9 +366,10 @@ export class EnvironmentService
     public async Delete(name: string): Promise<void>
     {
         const rec = this.Require(name)
-        const def = EnvironmentService.DefOf(rec)
-        await this.docker.Down(def, true)
-        await this.docker.RemoveVolume(def)
+        const ctx = this.CtxOf(rec)
+        const runtime = this.runtimes.For(rec)
+        await runtime.Teardown(ctx, true)
+        await runtime.RemoveVolume(ctx)
         await this.registry.Remove(name)
         this.NotifyChanged(EnvironmentChangeKind.Deleted, rec)
     }
@@ -365,8 +385,12 @@ export class EnvironmentService
         return this.registry.List()
     }
 
-    private static RemoveBundleDir(bundleDir: string): void
+    private static RemoveBundleDir(bundleDir: string | undefined): void
     {
+        if (bundleDir === undefined)
+        {
+            return
+        }
         try
         {
             rmSync(bundleDir, { recursive: true, force: true })
@@ -380,13 +404,13 @@ export class EnvironmentService
     public async Logs(name: string): Promise<string>
     {
         const rec = this.Require(name)
-        return this.docker.Logs(EnvironmentService.DefOf(rec))
+        return this.runtimes.For(rec).Logs(this.CtxOf(rec))
     }
 
     public LogStream(name: string, onData: (chunk: string) => void): ILogProcess
     {
         const rec = this.Require(name)
-        return this.docker.LogStream(EnvironmentService.DefOf(rec), onData)
+        return this.runtimes.For(rec).LogStream(this.CtxOf(rec), onData)
     }
 
     public async AdminSnapshot(name: string): Promise<AdminSnapshot>
@@ -494,9 +518,19 @@ export class EnvironmentService
         return { ...db, password: EnvironmentService.Secret(secrets, BundleBuilder.DbSecretRef(EnvironmentService.DefOf(rec), db)) }
     }
 
-    private static async ReadSecrets(bundleDir: string): Promise<Record<string, string>>
+    private CtxOf(rec: EnvironmentRecord): EnvRuntimeContext
     {
-        return JSON.parse(await readFile(join(bundleDir, EnvironmentService.SecretsFile), EnvironmentService.Utf8)) as Record<string, string>
+        return { def: EnvironmentService.DefOf(rec), record: rec, bundleDir: rec.bundleDir }
+    }
+
+    private static StoredEndpoint(endpoint: EnvEndpoint): { httpUrl: string; wsUrl: string }
+    {
+        return { httpUrl: endpoint.httpUrl, wsUrl: endpoint.wsUrl }
+    }
+
+    private static async ReadSecrets(bundleDir: string | undefined): Promise<Record<string, string>>
+    {
+        return JSON.parse(await readFile(join(bundleDir as string, EnvironmentService.SecretsFile), EnvironmentService.Utf8)) as Record<string, string>
     }
 
     private Require(name: string): EnvironmentRecord
@@ -549,7 +583,7 @@ export class EnvironmentService
     /** Re-derives the definition from the stored type, falling back to the template default (DefaultTypeFor) for legacy records with no type. */
     private static DefOf(rec: EnvironmentRecord): EnvDefinition
     {
-        return TemplateCatalog.Resolve(rec.template, rec.name, rec.hostPort, rec.type ?? TemplateCatalog.DefaultTypeFor(rec.template)).def
+        return TemplateCatalog.Resolve(rec.template, rec.name, rec.hostPort as number, rec.type ?? TemplateCatalog.DefaultTypeFor(rec.template)).def
     }
 
     private async SeedDemoUsers(def: EnvDefinition, bundleDir: string, seedDir: string, port: number): Promise<void>

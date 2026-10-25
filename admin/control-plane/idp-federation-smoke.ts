@@ -1,16 +1,19 @@
 /**
- * GATED end-to-end smoke for SP-HIVE-6c-proper per-tenant IdP federation. NOT part of `npm test`.
+ * SUPERSEDED — DO NOT RUN. Retained only for reference and typecheck coverage; it early-exits (exit 0) before
+ * attempting its now-invalid scenario. NOT part of `npm test`.
  *
- * Requires Docker Desktop (the federated login resolves `host.docker.internal`, so this is Docker-Desktop-only)
- * and a FRESH `pragmatic-server:dev` image (rebuild it first: see admin/README.md). Run with:
+ * This smoke proved SP-HIVE-6c per-tenant IdP federation by creating a Docker environment bound to a Local/Attach
+ * hive and driving a localhost OIDC login. Its premise no longer holds: the EnvironmentRuntimeResolver now routes a
+ * hive-bound environment to the in-cluster runtime (not Docker), and in-cluster per-env OIDC federation is deferred,
+ * so a bound-Docker-federation create cannot run as this smoke assumes (it would wait on a `record.hostPort` the
+ * in-cluster path never publishes). Bound environments are now exercised by in-cluster-env-create-smoke.ts, and
+ * in-cluster federation is tracked by a follow-up Feature. This file is kept (not deleted) so the federation harness
+ * is on hand when in-cluster federation lands; it must still typecheck.
  *
- *   npx tsx admin/control-plane/idp-federation-smoke.ts
- *
- * Composes the real control-plane services in-process (as server.ts does), provisions a platform tenant (which
- * launches its IdP container), creates a hive plus a bound environment (which registers an OIDC client at the IdP
- * and federates the env container), then plays the browser: env /auth/oidc/begin -> IdP login -> env callback ->
- * session. A second bound environment then rides the IdP SSO cookie with no second login. The dev CA is handed to
- * the HTTPS client in-process; no secret (owner password, tokens) is ever printed.
+ * Original behavior (no longer reachable): composed the real control-plane services in-process (as server.ts does),
+ * provisioned a platform tenant (launching its IdP container), created a hive plus a bound environment (registering
+ * an OIDC client at the IdP and federating the env container), then played the browser through login + SSO across
+ * two environments. No secret (owner password, tokens) was ever printed.
  */
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import type { IncomingMessage } from 'node:http'
@@ -22,6 +25,11 @@ import { fileURLToPath } from 'node:url'
 import { DockerEnv } from '../../environments/seed/docker.js'
 import { UserSeeder } from '../../environments/seed/users.js'
 import { BundleBuilderAdapter, DockerEnvAdapter, UserSeederAdapter } from './docker-env-port.js'
+import { DockerEnvironmentRuntime } from './environment-runtime.js'
+import { EnvironmentRuntimeResolver } from './environment-runtime-resolver.js'
+import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
+import { EnvironmentPlacement } from './environment-placement.js'
+import { InClusterEnvironmentRuntime } from './in-cluster-environment-runtime.js'
 import { EnvType, Template } from './environment-record.js'
 import { EnvironmentRegistry } from './environment-registry.js'
 import { EnvironmentService } from './environment-service.js'
@@ -232,6 +240,8 @@ export class IdpFederationSmoke
     private static readonly TeardownWarning = 'WARN best-effort teardown failed: '
     private static readonly SessionKeysNote = 'session response does not expose email/name keys; principalId only'
     private static readonly NotComposed = 'smoke services not composed'
+    /** Printed when the superseded smoke is invoked; it exits cleanly without attempting the now-invalid bound-Docker scenario. */
+    private static readonly SupersededNote = 'SUPERSEDED — skipped; bound envs now run in-cluster and per-env OIDC federation moves in-cluster (deferred). See the in-cluster federation follow-up Feature.'
 
     private static readonly Labels = {
         OwnerPassword: 'idp: Provision returned a one-time owner password',
@@ -257,6 +267,14 @@ export class IdpFederationSmoke
     private readonly createdEnvs: string[] = []
 
     public static async Main(): Promise<void>
+    {
+        // SUPERSEDED: exit cleanly before composing anything, rather than attempt the now-invalid bound-Docker scenario.
+        console.log(IdpFederationSmoke.InfoTag + IdpFederationSmoke.SupersededNote)
+        process.exit(0)
+    }
+
+    /** The original scenario entry point, retained for when in-cluster federation lands; not reached while superseded. */
+    public static async RunScenario(): Promise<void>
     {
         const smoke = new IdpFederationSmoke()
         const ok = await smoke.Run()
@@ -355,7 +373,7 @@ export class IdpFederationSmoke
         this.idpRegistry = new IdpRegistry(join(this.dataRoot, S.IdpsFile))
         this.idpService = new IdpService(this.idpRegistry, new DockerIdpDriver(new PortAllocator(S.IdpPortFloor, new NetPortProbe()), this.idpContainers, this.dataRoot, DockerEnv.ImageName))
         this.service = new EnvironmentService(
-            registry, new PortAllocator(S.EnvPortFloor, new NetPortProbe()), docker, new BundleBuilderAdapter(), new UserSeederAdapter(new UserSeeder()),
+            registry, new PortAllocator(S.EnvPortFloor, new NetPortProbe()), new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(new HiveOrchestratorFactory(), new EnvironmentPlacement(directory), directory), directory, new HiveOrchestratorFactory()), new UserSeederAdapter(new UserSeeder()),
             this.dataRoot, new AdminProxy(new WsAdminConnector()), directory, this.idpService, conn => new IdpAdminClient(conn))
         return directory
     }
@@ -398,9 +416,9 @@ export class IdpFederationSmoke
         {
             const record = await this.Envs().Create(name, Template.DevBlank, EnvType.Development, undefined, S.HiveId)
             this.createdEnvs.push(record.name)
-            const ok = await this.WaitEnvHealthy(record.hostPort)
+            const ok = await this.WaitEnvHealthy(record.hostPort as number)
             this.Check(label, ok)
-            return ok ? { name: record.name, port: record.hostPort } : undefined
+            return ok ? { name: record.name, port: record.hostPort as number } : undefined
         }
         catch (e)
         {

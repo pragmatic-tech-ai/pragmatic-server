@@ -28,10 +28,28 @@ import { HivePlacementError } from '../hive-placement-error.js'
 import { UnknownHiveError } from '../rollout-errors.js'
 import type { ILogProcess } from '../../../environments/seed/docker.js'
 import type { IDockerEnv, IBundleBuilder, IUserSeeder } from '../docker-env-port.js'
+import { DockerEnvironmentRuntime } from '../environment-runtime.js'
+import type { IEnvironmentRuntime } from '../environment-runtime.js'
+import { EnvironmentRuntimeResolver } from '../environment-runtime-resolver.js'
+import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
+import { UnsupportedBackendError } from '../hive-orchestrator.js'
 import { TenantPurposeName, type EnvDefinition, type EnvOidc } from '../../../environments/seed/bundle.js'
 import type { UserSeed } from '../../../environments/seed/users.js'
 import type { IAdminProxy, AdminConnectInfo, AdminSnapshot } from '../admin-proxy.js'
 import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, IssueTokenParams, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+
+/**
+ * Routes every record (bound or not) to the one Docker fake, preserving the pre-resolver service tests. The real
+ * directory + orchestrator factory are still passed so the resolver's eager backend validation runs against the
+ * actual hive records (a bound env on a supported Local/Attach hive validates and routes to the fake).
+ */
+class SingleBackendResolver
+{
+    public static Of(runtime: IEnvironmentRuntime, directory: PlatformDirectory, orchestrators: HiveOrchestratorFactory): EnvironmentRuntimeResolver
+    {
+        return new EnvironmentRuntimeResolver(runtime, runtime, directory, orchestrators)
+    }
+}
 
 class Fixture
 {
@@ -418,7 +436,7 @@ class Harness
             cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach, configRef: 'kube-ref' },
             registry: { mode: InfraMode.Attach, endpoint: 'reg.local', credentialRef: 'cred-ref' }
         })
-        h.Service = new EnvironmentService(h.Registry, new FakeAllocator(h.Calls, busy), h.Docker, h.Bundle, h.Seeder, h.DataRoot, h.Proxy, h.Directory, h.Idp, c => new IdpAdminClient(c))
+        h.Service = new EnvironmentService(h.Registry, new FakeAllocator(h.Calls, busy), SingleBackendResolver.Of(new DockerEnvironmentRuntime(h.Docker, h.Bundle), h.Directory, new HiveOrchestratorFactory()), h.Seeder, h.DataRoot, h.Proxy, h.Directory, h.Idp, c => new IdpAdminClient(c))
         return h
     }
 
@@ -426,7 +444,7 @@ class Harness
     public UseIdp(idp: IIdpService): void
     {
         this.Idp = idp
-        this.Service = new EnvironmentService(this.Registry, new FakeAllocator(this.Calls, false), this.Docker, this.Bundle, this.Seeder, this.DataRoot, this.Proxy, this.Directory, idp, c => new IdpAdminClient(c))
+        this.Service = new EnvironmentService(this.Registry, new FakeAllocator(this.Calls, false), SingleBackendResolver.Of(new DockerEnvironmentRuntime(this.Docker, this.Bundle), this.Directory, new HiveOrchestratorFactory()), this.Seeder, this.DataRoot, this.Proxy, this.Directory, idp, c => new IdpAdminClient(c))
     }
 
     public static Record(name: string, status: EnvStatus): EnvironmentRecord
@@ -817,6 +835,23 @@ test('Create with an unknown hiveId throws UnknownHiveError and creates nothing'
     const h = await Harness.Make()
     await assert.rejects(() => h.Service.Create('bound2', Template.DevBlank, EnvType.Development, undefined, 'nope'), UnknownHiveError)
     assert.equal(h.Registry.Get('bound2'), undefined)
+    assert.deepEqual(h.Calls, [])
+})
+
+test('Create on a hive with an unsupported (cloud) backend throws UnsupportedBackendError RAW and persists no record', async () =>
+{
+    const h = await Harness.Make()
+    await h.Directory.CreateHive({
+        id: 'h-aks', tenantId: 'plat-t1', displayName: 'AKS',
+        cluster: { backend: HiveBackend.Aks, mode: InfraMode.Provision },
+        registry: { mode: InfraMode.Provision }
+    })
+    h.Calls.length = 0
+    // The resolver validates the backend before any side effect: the error surfaces raw, never wrapped in CreateFailedError.
+    await assert.rejects(
+        () => h.Service.Create('cloud1', Template.DevBlank, EnvType.Development, undefined, 'h-aks'),
+        (e: unknown) => e instanceof UnsupportedBackendError && !(e instanceof CreateFailedError))
+    assert.equal(h.Registry.Get('cloud1'), undefined)
     assert.deepEqual(h.Calls, [])
 })
 

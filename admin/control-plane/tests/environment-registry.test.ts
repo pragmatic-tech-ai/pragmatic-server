@@ -159,3 +159,22 @@ test('a record with an explicit type round-trips through persist/Load', async ()
         await rm(dir, { recursive: true, force: true })
     }
 })
+
+test('Reconcile leaves a hive-bound Running record untouched even when the docker probe says not running', async () =>
+{
+    const dir = await mkdtemp(join(tmpdir(), 'envreg-'))
+    try
+    {
+        const probe = new FakeProbe()
+        const reg = new EnvironmentRegistry(join(dir, 'envs.json'), probe)
+        await reg.Put({ ...RegistryFixture.Record('a', 8081, EnvStatus.Running), hiveId: 'h1' })
+        await reg.Put(RegistryFixture.Record('b', 8082, EnvStatus.Running))
+        await reg.Reconcile()
+        assert.equal(reg.Get('a')?.status, EnvStatus.Running)
+        assert.equal(reg.Get('b')?.status, EnvStatus.Stopped)
+    }
+    finally
+    {
+        await rm(dir, { recursive: true, force: true })
+    }
+})
