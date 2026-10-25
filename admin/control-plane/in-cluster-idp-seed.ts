@@ -38,7 +38,9 @@ export class IdpSecretSet
 
     public Add(name: string, data: Map<string, Buffer>): void
     {
-        this.#entries.push({ name, data })
+        // Defensive copy: later caller mutation must not change the secret set's bytes.
+        const copy = new Map<string, Buffer>([...data].map(([k, v]) => [k, Buffer.from(v)]))
+        this.#entries.push({ name, data: copy })
     }
 
     public Names(): string[]
@@ -118,7 +120,9 @@ export class InClusterIdpSeedSource implements IIdpSeedSource
     private static readonly TokenEncoding = 'base64url'
     private static readonly TmpPrefix = 'idp-seed-'
     private static readonly Utf8 = 'utf8'
-    // The IdP's DevCa.EnsureAt guard on the read-only tls mount also requires ca.key, so all four files are seeded.
+    // ca.key ships in the mounted TLS Secret because DevCa.EnsureAt's idempotency guard requires it present; without it the IdP
+    // regenerates into the read-only mount and fails.
+    // TODO: tracked for removal - relax the guard for read-only mounts so the CA signing key is not mounted into the pod.
     private static readonly TlsFiles = ['server.crt', 'server.key', 'ca.crt', 'ca.key']
     private static readonly CaFile = 'ca.crt'
 
