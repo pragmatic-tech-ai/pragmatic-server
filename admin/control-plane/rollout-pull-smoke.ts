@@ -422,8 +422,8 @@ export class RolloutPullSmoke
         this.Expect(S.Labels.AgentPatched, image === S.ImageV2, detail)
     }
 
-    // EXPECTED-RED: StatusFor now reads snapshot observations, but the pod agent still reports via the legacy per-env route;
-    // this poll stays red until a later plan moves the agent to snapshot reporting.
+    // EXPECTED-RED: the operator-side agent routes are gone; this docker smoke stays red until the in-hive pod agent is
+    // migrated to the new AgentChannelHost (GET /agent/hives/:id/target + POST /agent/hives/:id/snapshot), tracked as a follow-up.
     private async AwaitReport(registry: PlatformDeploymentRegistry): Promise<void>
     {
         const S = RolloutPullSmoke

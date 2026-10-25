@@ -4,10 +4,17 @@ import { ControlPlaneServer } from '../server.js'
 
 describe('ControlPlaneServer.ParseAgentChannelPort', () =>
 {
+    const ValidPortRaw = '8443'
+    const ValidPort = 8443
+    const MaxPortRaw = '65535'
+    const MaxPort = 65535
+    const DefaultBind = '0.0.0.0'
+    const LoopbackBind = '127.0.0.1'
+
     it('accepts a valid port', () =>
     {
-        assert.equal(ControlPlaneServer.ParseAgentChannelPort('8443'), 8443)
-        assert.equal(ControlPlaneServer.ParseAgentChannelPort('65535'), 65535)
+        assert.equal(ControlPlaneServer.ParseAgentChannelPort(ValidPortRaw), ValidPort)
+        assert.equal(ControlPlaneServer.ParseAgentChannelPort(MaxPortRaw), MaxPort)
     })
 
     for (const raw of [undefined, '', '0', '-1', '65536', 'abc', '1.5'])
@@ -20,8 +27,8 @@ describe('ControlPlaneServer.ParseAgentChannelPort', () =>
 
     it('defaults the bind to all interfaces and honours an override', () =>
     {
-        assert.equal(ControlPlaneServer.ParseAgentChannelBind(undefined), '0.0.0.0')
-        assert.equal(ControlPlaneServer.ParseAgentChannelBind(''), '0.0.0.0')
-        assert.equal(ControlPlaneServer.ParseAgentChannelBind('127.0.0.1'), '127.0.0.1')
+        assert.equal(ControlPlaneServer.ParseAgentChannelBind(undefined), DefaultBind)
+        assert.equal(ControlPlaneServer.ParseAgentChannelBind(''), DefaultBind)
+        assert.equal(ControlPlaneServer.ParseAgentChannelBind(LoopbackBind), LoopbackBind)
     })
 })

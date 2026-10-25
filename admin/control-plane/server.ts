@@ -84,13 +84,13 @@ export class ControlPlaneServer
     private static readonly TenantBaseDomainEnvVar = 'PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN'
     private static readonly TenantSchemeEnvVar = 'PRAGMATIC_TENANT_ADMIN_EXTERNAL_SCHEME'
     private static readonly DefaultTenantBind = '127.0.0.1'
+    /** Sentinel returned by ParseAgentChannelPort when the agent channel is not configured (or the port is invalid). */
+    public static readonly AgentChannelDisabled = 0
     private static readonly AgentChannelPortEnvVar = 'PRAGMATIC_AGENT_CHANNEL_PORT'
     private static readonly AgentChannelBindEnvVar = 'PRAGMATIC_AGENT_CHANNEL_BIND'
     private static readonly DefaultAgentChannelBind = '0.0.0.0'
     private static readonly AgentChannelListeningPrefix = 'Agent channel listening on '
-    private static readonly AgentChannelBindPortSeparator = ':'
-    /** Sentinel returned by ParseAgentChannelPort when the agent channel is not configured (or the port is invalid). */
-    public static readonly AgentChannelDisabled = 0
+    private static readonly AgentChannelInvalidPortWarning = 'Ignoring invalid PRAGMATIC_AGENT_CHANNEL_PORT (expected an integer 1-65535); agent channel not started: '
     private static readonly DefaultExternalScheme = 'https'
     private static readonly BadTenantPortPrefix = 'Invalid PRAGMATIC_TENANT_ADMIN_PORT: '
     private static readonly TenantListeningPrefix = 'Tenant plane listening on '
@@ -175,12 +175,17 @@ export class ControlPlaneServer
         // The operator listener is structurally loopback-only: no tenant route is mounted on it.
         await host.Listen(port, ControlPlaneServer.BindHost)
         console.log(ControlPlaneServer.ListeningPrefix + String(port) + ControlPlaneServer.ListeningSuffix)
-        const agentChannelPort = ControlPlaneServer.ParseAgentChannelPort(process.env[ControlPlaneServer.AgentChannelPortEnvVar])
+        const agentChannelRaw = process.env[ControlPlaneServer.AgentChannelPortEnvVar]
+        const agentChannelPort = ControlPlaneServer.ParseAgentChannelPort(agentChannelRaw)
+        if (agentChannelPort === ControlPlaneServer.AgentChannelDisabled && agentChannelRaw !== undefined && agentChannelRaw !== '')
+        {
+            console.warn(ControlPlaneServer.AgentChannelInvalidPortWarning + agentChannelRaw)
+        }
         if (agentChannelPort !== ControlPlaneServer.AgentChannelDisabled)
         {
             const agentBind = ControlPlaneServer.ParseAgentChannelBind(process.env[ControlPlaneServer.AgentChannelBindEnvVar])
             await new AgentChannelHost(deployments).Listen(agentChannelPort, agentBind)
-            console.log(ControlPlaneServer.AgentChannelListeningPrefix + agentBind + ControlPlaneServer.AgentChannelBindPortSeparator + String(agentChannelPort))
+            console.log(ControlPlaneServer.AgentChannelListeningPrefix + agentBind + ControlPlaneServer.HostPortSeparator + String(agentChannelPort))
         }
         if (tenantStart !== undefined)
         {
