@@ -123,17 +123,25 @@ class FakeService implements IEnvironmentService
         return { OnData() {}, OnClose() {}, Kill() {} }
     }
 
-    private listener: ((change: EnvironmentChange) => void) | undefined
+    private readonly listeners = new Set<(change: EnvironmentChange) => void>()
+
+    public get ListenerCount(): number
+    {
+        return this.listeners.size
+    }
 
     public OnChanged(cb: (change: EnvironmentChange) => void): () => void
     {
-        this.listener = cb
-        return () => { this.listener = undefined }
+        this.listeners.add(cb)
+        return () => { this.listeners.delete(cb) }
     }
 
     public EmitChange(): void
     {
-        this.listener?.({ kind: EnvironmentChangeKind.Created, record: this.Record })
+        for (const l of [...this.listeners])
+        {
+            l({ kind: EnvironmentChangeKind.Created, record: this.Record })
+        }
     }
 
     public async Logs(name: string): Promise<string>
@@ -290,6 +298,29 @@ class Harness
     public static readonly Forbidden = ['bundleDir', 'containerName', 'volumeName', 'master', 'secret', 'password', 'ctr-secret-name', 'vol-secret-name', '/secret/bundle']
 
     public static readonly AuthCookie = 'cp_session=valid-token'
+    private static readonly PollMs = 10
+    private static readonly SettleMs = 100
+    private static readonly PollLimit = 300
+
+    public static async OpenEvents(host: ControlPlaneHost): Promise<WebSocket>
+    {
+        const ws = new WebSocket(`ws://127.0.0.1:${host.Address().port}/api/events`, { headers: { Cookie: Harness.AuthCookie } })
+        await new Promise<void>((res, rej) => { ws.once('open', () => res()); ws.once('error', rej) })
+        return ws
+    }
+
+    public static async WaitFor(done: () => boolean): Promise<void>
+    {
+        for (let i = 0; i < Harness.PollLimit && !done(); i++)
+        {
+            await Harness.Settle(Harness.PollMs)
+        }
+    }
+
+    public static Settle(ms: number = Harness.SettleMs): Promise<void>
+    {
+        return new Promise(res => setTimeout(res, ms))
+    }
 
     public static Send(host: ControlPlaneHost, method: string, path: string, body?: string, headers: Record<string, string> = {}): Promise<Reply>
     {
@@ -508,6 +539,30 @@ describe('ControlPlaneHost', () =>
         fake.EmitChange()
         assert.deepEqual(JSON.parse(await msg), { type: 'environments-changed' })
         ws.close()
+    })
+
+    it('subscribes once for many ws clients and releases after the last disconnects', async () =>
+    {
+        assert.equal(fake.ListenerCount, 0)
+        const first = await Harness.OpenEvents(host)
+        assert.equal(fake.ListenerCount, 1)
+        const second = await Harness.OpenEvents(host)
+        assert.equal(fake.ListenerCount, 1)
+        first.close()
+        await Harness.WaitFor(() => first.readyState === WebSocket.CLOSED)
+        await Harness.Settle()
+        assert.equal(fake.ListenerCount, 1)
+        second.close()
+        await Harness.WaitFor(() => fake.ListenerCount === 0)
+        assert.equal(fake.ListenerCount, 0)
+    })
+
+    it('releases the subscription on Close', async () =>
+    {
+        await Harness.OpenEvents(host)
+        assert.equal(fake.ListenerCount, 1)
+        await host.Close()
+        assert.equal(fake.ListenerCount, 0)
     })
 
     it('gates API routes behind the operator session', async () =>

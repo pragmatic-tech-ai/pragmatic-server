@@ -694,7 +694,7 @@ export class ControlPlaneHost
         return true
     }
 
-    /** Dispatches /api/(tenants|hives)/ID/(manifests|gating[/VERSION]|target|rollout|rollout-registration); false for an unknown (resource, sub, method) combination. */
+    /** Dispatches /api/(tenants|hives)/ID/(manifests|gating[/VERSION]|rollout|rollout-registration); false for an unknown (resource, sub, method) combination. */
     private async RouteRollout(req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
     {
         const resource = m[1] as string

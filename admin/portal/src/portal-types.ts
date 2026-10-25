@@ -74,12 +74,6 @@ export type MakerTokenDto =
     expiresAt: string | null
 }
 
-export type TemplateDto =
-{
-    id: string
-    title: string
-}
-
 export type OperatorDto =
 {
     email: string
