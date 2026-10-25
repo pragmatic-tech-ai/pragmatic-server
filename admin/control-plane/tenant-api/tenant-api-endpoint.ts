@@ -5,7 +5,7 @@ import { HiveDtoMapper } from './hive-dto.js'
 import { HiveHealthProducer } from '../hive-health-producer.js'
 import type { EnvironmentPlacement } from '../environment-placement.js'
 import type { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
-import type { IRolloutClient } from './rollout-client.js'
+import { RolloutUnavailableError, type IRolloutClient } from './rollout-client.js'
 import type { ITenantDirectory } from './tenant-directory.js'
 import type { EnvironmentRecord } from '../environment-record.js'
 import { ManifestNotGatedError, UnknownHiveError, UnknownManifestError } from '../rollout-errors.js'
@@ -67,6 +67,7 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     private static readonly StatusBadRequest = 400
     private static readonly StatusNotFound = 404
     private static readonly StatusConflict = 409
+    private static readonly StatusUnavailable = 503
     private static readonly NotFoundMessage = 'Not found'
     private static readonly BadJsonMessage = 'Request body must be valid JSON'
     private static readonly BodyObjectMessage = 'Request body must be a JSON object'
@@ -107,7 +108,14 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
             }
             if (path === TenantApiEndpoint.ManifestsPath)
             {
-                this.WriteJson(res, TenantApiEndpoint.StatusOk, [...this.rolloutClient.ManifestsFor(session.tenantId)])
+                try
+                {
+                    this.WriteJson(res, TenantApiEndpoint.StatusOk, [...this.rolloutClient.ManifestsFor(session.tenantId)])
+                }
+                catch (err)
+                {
+                    return this.WriteRolloutError(res, err)
+                }
                 return true
             }
             const m = TenantApiEndpoint.HiveSubPathPattern.exec(path)
@@ -147,7 +155,14 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         }
         if (sub === TenantApiEndpoint.RolloutSegment)
         {
-            this.WriteJson(res, TenantApiEndpoint.StatusOk, this.rolloutClient.StatusFor(hive.id))
+            try
+            {
+                this.WriteJson(res, TenantApiEndpoint.StatusOk, this.rolloutClient.StatusFor(hive.id))
+            }
+            catch (err)
+            {
+                return this.WriteRolloutError(res, err)
+            }
             return true
         }
         this.WriteJson(res, TenantApiEndpoint.StatusOk, await this.health.Produce(hive))
@@ -190,6 +205,10 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     /** Maps the rollout engine's selection errors to fixed generic bodies; rethrows anything else so the host's generic writer answers. */
     private WriteTargetError(res: ServerResponse, err: unknown): boolean
     {
+        if (err instanceof RolloutUnavailableError)
+        {
+            return this.WriteRolloutError(res, err)
+        }
         if (err instanceof ManifestNotGatedError)
         {
             this.WriteJson(res, TenantApiEndpoint.StatusConflict, { [TenantApiEndpoint.ErrorKey]: TenantApiEndpoint.TargetUnavailableMessage })
@@ -198,6 +217,17 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         if (err instanceof UnknownManifestError || err instanceof UnknownHiveError)
         {
             this.WriteNotFound(res)
+            return true
+        }
+        throw err
+    }
+
+    /** A rollout client with no operator link answers 503 with its clear message; anything else rethrows to the host's generic writer. */
+    private WriteRolloutError(res: ServerResponse, err: unknown): boolean
+    {
+        if (err instanceof RolloutUnavailableError)
+        {
+            this.WriteJson(res, TenantApiEndpoint.StatusUnavailable, { [TenantApiEndpoint.ErrorKey]: err.message })
             return true
         }
         throw err

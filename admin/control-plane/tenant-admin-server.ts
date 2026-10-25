@@ -68,21 +68,15 @@ export class TenantAdminServer
     private static readonly BadSeedMessage = 'Invalid seed.json: expected { tenant, hives[] }'
     private static readonly MissingMasterKeyPrefix = 'Tenant-admin master key file not found: '
     private static readonly SeedFile = 'seed.json'
-    private static readonly MasterKeyFileName = 'master.key'
-    private static readonly RegistryFile = 'registry.json'
-    private static readonly IdpsFile = 'idps.json'
-    private static readonly TenantAdminClientsFile = 'tenant-admin-clients.json'
-    private static readonly ParentSegment = '..'
-    private static readonly TenantPortalSegment = 'tenant-portal'
-    private static readonly DistSegment = 'dist'
-    private static readonly IdpPortFloor = 12100
-    private static readonly EnvPortFloor = 8100
     private static readonly TrueToken = 'true'
     private static readonly OneToken = '1'
-    private static readonly SchemeHostSeparator = '://'
-    private static readonly HostPortSeparator = ':'
-    private static readonly ListeningPrefix = 'Tenant plane listening on '
-    private static readonly ListeningSuffix = '/'
+    private static readonly ListeningTemplate = 'Tenant plane listening on {scheme}://{domain}:{port}/'
+    private static readonly SchemeToken = '{scheme}'
+    private static readonly DomainToken = '{domain}'
+    private static readonly PortToken = '{port}'
+    private static readonly BadHiveMessage = 'Invalid seed.json: every hive needs string id, tenantId, displayName, createdAt and object cluster, registry'
+    private static readonly HiveStringFields = ['id', 'tenantId', 'displayName', 'createdAt'] as const
+    private static readonly HiveObjectFields = ['cluster', 'registry'] as const
     private static readonly Utf8 = 'utf8'
 
     public constructor(
@@ -137,6 +131,10 @@ export class TenantAdminServer
         {
             throw new Error(TenantAdminServer.BadSeedMessage)
         }
+        if (!seed.hives.every(h => TenantAdminServer.IsHive(h)))
+        {
+            throw new Error(TenantAdminServer.BadHiveMessage)
+        }
         return new SeededTenantDirectory({ tenant: seed.tenant, hives: seed.hives })
     }
 
@@ -148,32 +146,28 @@ export class TenantAdminServer
     {
         const cfg = this.config
         const dataRoot = cfg.dataRoot
-        mkdirSync(dataRoot, { recursive: true })
         const directory = TenantAdminServer.LoadSeed(dataRoot)
-        const keyPath = join(dataRoot, TenantAdminServer.MasterKeyFileName)
+        const keyPath = join(dataRoot, ControlPlaneServer.MasterKeyFileName)
         if (!existsSync(keyPath))
         {
             throw new Error(TenantAdminServer.MissingMasterKeyPrefix + keyPath)
         }
         const masterKey = MasterKeyFile.Load(keyPath)
+        mkdirSync(dataRoot, { recursive: true })
         const docker = new DockerEnvAdapter(new DockerEnv())
-        const registry = new EnvironmentRegistry(join(dataRoot, TenantAdminServer.RegistryFile), docker)
+        const registry = new EnvironmentRegistry(join(dataRoot, ControlPlaneServer.RegistryFile), docker)
         await registry.Load()
-        const adminClients = new TenantAdminClientRegistry(join(dataRoot, TenantAdminServer.TenantAdminClientsFile))
+        const adminClients = new TenantAdminClientRegistry(join(dataRoot, ControlPlaneServer.TenantAdminClientsFile))
         await adminClients.Load()
-        const idpService = new IdpService(new PortAllocator(TenantAdminServer.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), new IdpRegistry(join(dataRoot, TenantAdminServer.IdpsFile)), dataRoot, DockerEnv.ImageName)
-        const service = new EnvironmentService(registry, new PortAllocator(TenantAdminServer.EnvPortFloor, new NetPortProbe()), docker, new BundleBuilderAdapter(), new UserSeederAdapter(new UserSeeder()), dataRoot, new AdminProxy(new WsAdminConnector()), directory, idpService, conn => new IdpAdminClient(conn))
+        const idpService = new IdpService(new PortAllocator(ControlPlaneServer.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), new IdpRegistry(join(dataRoot, ControlPlaneServer.IdpsFile)), dataRoot, DockerEnv.ImageName)
+        const service = new EnvironmentService(registry, new PortAllocator(ControlPlaneServer.EnvPortFloor, new NetPortProbe()), docker, new BundleBuilderAdapter(), new UserSeederAdapter(new UserSeeder()), dataRoot, new AdminProxy(new WsAdminConnector()), directory, idpService, conn => new IdpAdminClient(conn))
         const orchestrators = new HiveOrchestratorFactory()
         const placement = new EnvironmentPlacement(directory)
-        const plane = ControlPlaneServer.ComposeTenantPlane(
-            TenantAdminServer.PlaneEnv(cfg), dataRoot, idpService, directory, cfg.secureCookie, service, this.rollout, orchestrators, placement,
+        const plane = ControlPlaneServer.BuildTenantPlane(
+            dataRoot, idpService, directory, cfg.secureCookie, service, this.rollout, orchestrators, placement,
             masterKey, adminClients, cfg.secretTtlHours)
-        if (plane === undefined)
-        {
-            throw new Error(TenantAdminServer.MissingEnvPrefix + TenantAdminServer.PortEnvVar)
-        }
         const resolver = new TenantHostResolver(cfg.baseDomain, cfg.scheme, directory)
-        const staticRoot = join(dirname(fileURLToPath(import.meta.url)), TenantAdminServer.ParentSegment, TenantAdminServer.TenantPortalSegment, TenantAdminServer.DistSegment)
+        const staticRoot = join(dirname(fileURLToPath(import.meta.url)), ControlPlaneServer.ParentSegment, ControlPlaneServer.TenantPortalSegment, ControlPlaneServer.DistSegment)
         const monitor = cfg.probeMs > 0
             ? new TenantHealthMonitor(directory, new HiveHealthProducer(service, orchestrators, placement), plane.events, cfg.probeMs, cfg.probeTimeoutMs)
             : undefined
@@ -187,13 +181,27 @@ export class TenantAdminServer
         const composition = await this.Compose()
         const cfg = composition.config
         await composition.host.Listen(cfg.port, cfg.bind)
-        console.log(TenantAdminServer.ListeningPrefix + cfg.scheme + TenantAdminServer.SchemeHostSeparator + cfg.baseDomain + TenantAdminServer.HostPortSeparator + String(cfg.port) + TenantAdminServer.ListeningSuffix)
+        console.log(TenantAdminServer.ListeningLine(cfg))
     }
 
-    /** ComposeTenantPlane activates off the env pair; rebuild it from the already-validated config. */
-    private static PlaneEnv(cfg: TenantAdminConfig): NodeJS.ProcessEnv
+    private static ListeningLine(cfg: TenantAdminConfig): string
     {
-        return { [TenantAdminServer.PortEnvVar]: String(cfg.port), [TenantAdminServer.BaseDomainEnvVar]: cfg.baseDomain }
+        return TenantAdminServer.ListeningTemplate
+            .replace(TenantAdminServer.SchemeToken, cfg.scheme)
+            .replace(TenantAdminServer.DomainToken, cfg.baseDomain)
+            .replace(TenantAdminServer.PortToken, String(cfg.port))
+    }
+
+    /** True when the value is a well-formed HiveRecord: required string fields non-empty, cluster/registry objects. */
+    private static IsHive(value: unknown): boolean
+    {
+        if (value === null || typeof value !== 'object')
+        {
+            return false
+        }
+        const rec = value as Record<string, unknown>
+        return TenantAdminServer.HiveStringFields.every(f => typeof rec[f] === 'string' && rec[f] !== '')
+            && TenantAdminServer.HiveObjectFields.every(f => typeof rec[f] === 'object' && rec[f] !== null)
     }
 
     private static Required(env: NodeJS.ProcessEnv, name: string): string

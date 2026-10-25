@@ -8,3 +8,15 @@ export interface IRolloutClient
     StatusFor(hiveId: string): HiveRolloutStatus
     AdoptTarget(hiveId: string, version: string): Promise<void>
 }
+
+/** Raised by a rollout client that has no operator link: the tenant API maps it to a clear 503 rather than an opaque 500. */
+export class RolloutUnavailableError extends Error
+{
+    private static readonly ErrorName = 'RolloutUnavailableError'
+
+    public constructor(message: string)
+    {
+        super(message)
+        this.name = RolloutUnavailableError.ErrorName
+    }
+}

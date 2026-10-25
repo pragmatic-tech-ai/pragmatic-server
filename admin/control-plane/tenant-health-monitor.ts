@@ -1,4 +1,3 @@
-
 import type { HiveHealthDto, HiveHealthProducer } from './hive-health-producer.js'
 import type { HiveRecord } from './platform-records.js'
 import { TenantEventType, type TenantEventBus } from './tenant-api/tenant-events.js'

@@ -31,6 +31,7 @@ export class SeededTenantDirectory implements ITenantDirectory
         return this.hives.find(h => h.id === id)
     }
 
+    /** With a tenant id, that tenant's hives; with no argument, every seeded hive (the health monitor's IHiveLister read; ITenantDirectory itself requires the id). */
     public ListHives(tenantId?: string): readonly HiveRecord[]
     {
         return tenantId === undefined ? this.hives : this.hives.filter(h => h.tenantId === tenantId)
