@@ -191,3 +191,80 @@ describe('K8sManifestBuilder.RenderAgent', () =>
         assert.deepEqual(Fixture.Items(false).map(i => i.kind), ['Namespace', 'Deployment', 'Service'])
     })
 })
+
+describe('K8sManifestBuilder.RenderHiveAgent', () =>
+{
+    const Registry = 'http://host.docker.internal:7000'
+    const TokenSecret = 'agent-token-secret'
+    const HiveId = 'hive-a'
+
+    class HiveFixture
+    {
+        public static Items(): any[]
+        {
+            const doc = JSON.parse(new K8sManifestBuilder().RenderHiveAgent(HiveId, Registry, TokenSecret))
+            assert.equal(doc.apiVersion, 'v1')
+            assert.equal(doc.kind, 'List')
+            return doc.items
+        }
+
+        public static Of(kind: string): any
+        {
+            const found = HiveFixture.Items().filter(i => i.kind === kind)
+            assert.equal(found.length, 1)
+            return found[0]
+        }
+    }
+
+    it('emits SA, ClusterRole, ClusterRoleBinding and Deployment, all hive-labeled', () =>
+    {
+        const items = HiveFixture.Items()
+        assert.deepEqual(items.map(i => i.kind), ['ServiceAccount', 'ClusterRole', 'ClusterRoleBinding', 'Deployment'])
+        for (const i of items)
+        {
+            assert.equal(i.metadata.labels['pragmatic/hive'], HiveId)
+        }
+        assert.equal(HiveFixture.Of('ClusterRole').metadata.namespace, undefined)
+        assert.equal(HiveFixture.Of('ClusterRoleBinding').metadata.namespace, undefined)
+    })
+
+    it('ClusterRole allows only get/list/patch on apps/deployments', () =>
+    {
+        const role = HiveFixture.Of('ClusterRole')
+        assert.equal(role.rules.length, 1)
+        assert.deepEqual(role.rules[0], { apiGroups: ['apps'], resources: ['deployments'], verbs: ['get', 'list', 'patch'] })
+    })
+
+    it('ClusterRoleBinding binds the ClusterRole to the service account', () =>
+    {
+        const crb = HiveFixture.Of('ClusterRoleBinding')
+        const sa = HiveFixture.Of('ServiceAccount')
+        const role = HiveFixture.Of('ClusterRole')
+        assert.deepEqual(crb.roleRef, { apiGroup: 'rbac.authorization.k8s.io', kind: 'ClusterRole', name: role.metadata.name })
+        assert.deepEqual(crb.subjects, [{ kind: 'ServiceAccount', name: sa.metadata.name, namespace: sa.metadata.namespace }])
+        assert.equal(sa.metadata.name, K8sManifestBuilder.HiveAgentServiceAccountOf(HiveId))
+        assert.equal(role.metadata.name, K8sManifestBuilder.HiveAgentRoleOf(HiveId))
+    })
+
+    it('deployment env has hive id, registry url, secret token and no env name', () =>
+    {
+        const dep = HiveFixture.Of('Deployment')
+        const pod = dep.spec.template.spec
+        assert.equal(pod.serviceAccountName, K8sManifestBuilder.HiveAgentServiceAccountOf(HiveId))
+        const c = pod.containers[0]
+        assert.deepEqual(c.command, ['node', 'dist/bin/pragmatic-agentd.js'])
+        const byName = (n: string) => c.env.find((e: any) => e.name === n)
+        assert.equal(byName('PRAGMATIC_AGENT_HIVE_ID').value, HiveId)
+        assert.equal(byName('PRAGMATIC_AGENT_REGISTRY_URL').value, Registry)
+        assert.equal(byName('PRAGMATIC_AGENT_ENV_NAME'), undefined)
+        const token = byName('PRAGMATIC_AGENT_TOKEN')
+        assert.equal(token.value, undefined)
+        assert.equal(token.valueFrom.secretKeyRef.name, TokenSecret)
+    })
+
+    it('env server deployment carries the hive label on its metadata', () =>
+    {
+        const dep = Fixture.Items(false)[1]!
+        assert.equal(dep.metadata.labels!['pragmatic/hive'], 'hive-a')
+    })
+})

@@ -65,9 +65,12 @@ export class K8sManifestBuilder
     private static readonly ServiceAccountKind = 'ServiceAccount'
     private static readonly RoleKind = 'Role'
     private static readonly RoleBindingKind = 'RoleBinding'
+    private static readonly ClusterRoleKind = 'ClusterRole'
+    private static readonly ClusterRoleBindingKind = 'ClusterRoleBinding'
     private static readonly AppsApiGroup = 'apps'
     private static readonly DeploymentsResource = 'deployments'
     private static readonly GetVerb = 'get'
+    private static readonly ListVerb = 'list'
     private static readonly PatchVerb = 'patch'
     private static readonly IfNotPresent = 'IfNotPresent'
     private static readonly ClusterIpType = 'ClusterIP'
@@ -103,6 +106,9 @@ export class K8sManifestBuilder
     private static readonly AgentEnvNameVar = 'PRAGMATIC_AGENT_ENV_NAME'
     private static readonly AgentTokenVar = 'PRAGMATIC_AGENT_TOKEN'
     private static readonly AgentTokenSecretKey = 'token'
+    /** Namespace hosting the per-hive agent's ServiceAccount + Deployment (cluster-scoped RBAC has none). */
+    private static readonly HiveAgentNamespace = 'pragmatic-system'
+    private static readonly HiveAgentPrefix = 'pragmatic-hive-'
 
     public static readonly ServerContainerName = 'server'
 
@@ -158,6 +164,145 @@ export class K8sManifestBuilder
     public static AgentDeploymentOf(environmentName: string): string
     {
         return `${K8sManifestBuilder.NamespaceOf(environmentName)}-${K8sManifestBuilder.AgentSuffix}`
+    }
+
+    public static HiveAgentServiceAccountOf(hiveId: string): string
+    {
+        return `${K8sManifestBuilder.HiveAgentPrefix}${hiveId}-${K8sManifestBuilder.AgentSuffix}`
+    }
+
+    public static HiveAgentRoleOf(hiveId: string): string
+    {
+        return `${K8sManifestBuilder.HiveAgentPrefix}${hiveId}-${K8sManifestBuilder.AgentSuffix}`
+    }
+
+    public static HiveAgentRoleBindingOf(hiveId: string): string
+    {
+        return `${K8sManifestBuilder.HiveAgentPrefix}${hiveId}-${K8sManifestBuilder.AgentSuffix}`
+    }
+
+    public static HiveAgentDeploymentOf(hiveId: string): string
+    {
+        return `${K8sManifestBuilder.HiveAgentPrefix}${hiveId}-${K8sManifestBuilder.AgentSuffix}`
+    }
+
+    /** Renders the single per-hive pull agent: SA + cluster-wide get/list/patch on deployments + Deployment. */
+    public RenderHiveAgent(hiveId: string, registryUrl: string, tokenSecretName: string): string
+    {
+        const items: K8sObject[] = [
+            this.HiveAgentServiceAccount(hiveId),
+            this.HiveAgentClusterRole(hiveId),
+            this.HiveAgentClusterRoleBinding(hiveId),
+            this.HiveAgentDeployment(hiveId, registryUrl, tokenSecretName),
+        ]
+        return JSON.stringify({
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ListKind,
+            [K8sManifestBuilder.ItemsKey]: items,
+        })
+    }
+
+    private HiveLabels(hiveId: string): Record<string, string>
+    {
+        return { [K8sManifestBuilder.HiveLabel]: hiveId }
+    }
+
+    private HiveAgentNamespacedMeta(hiveId: string, name: string): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.NameKey]: name,
+            [K8sManifestBuilder.NamespaceKey]: K8sManifestBuilder.HiveAgentNamespace,
+            [K8sManifestBuilder.LabelsKey]: this.HiveLabels(hiveId),
+        }
+    }
+
+    private HiveAgentClusterMeta(hiveId: string, name: string): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.NameKey]: name,
+            [K8sManifestBuilder.LabelsKey]: this.HiveLabels(hiveId),
+        }
+    }
+
+    private HiveAgentServiceAccount(hiveId: string): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ServiceAccountKind,
+            [K8sManifestBuilder.MetadataKey]: this.HiveAgentNamespacedMeta(hiveId, K8sManifestBuilder.HiveAgentServiceAccountOf(hiveId)),
+        }
+    }
+
+    private HiveAgentClusterRole(hiveId: string): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionRbac,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ClusterRoleKind,
+            [K8sManifestBuilder.MetadataKey]: this.HiveAgentClusterMeta(hiveId, K8sManifestBuilder.HiveAgentRoleOf(hiveId)),
+            [K8sManifestBuilder.RulesKey]: [{
+                [K8sManifestBuilder.ApiGroupsKey]: [K8sManifestBuilder.AppsApiGroup],
+                [K8sManifestBuilder.ResourcesKey]: [K8sManifestBuilder.DeploymentsResource],
+                [K8sManifestBuilder.VerbsKey]: [K8sManifestBuilder.GetVerb, K8sManifestBuilder.ListVerb, K8sManifestBuilder.PatchVerb],
+            }],
+        }
+    }
+
+    private HiveAgentClusterRoleBinding(hiveId: string): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionRbac,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ClusterRoleBindingKind,
+            [K8sManifestBuilder.MetadataKey]: this.HiveAgentClusterMeta(hiveId, K8sManifestBuilder.HiveAgentRoleBindingOf(hiveId)),
+            [K8sManifestBuilder.SubjectsKey]: [{
+                [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ServiceAccountKind,
+                [K8sManifestBuilder.NameKey]: K8sManifestBuilder.HiveAgentServiceAccountOf(hiveId),
+                [K8sManifestBuilder.NamespaceKey]: K8sManifestBuilder.HiveAgentNamespace,
+            }],
+            [K8sManifestBuilder.RoleRefKey]: {
+                [K8sManifestBuilder.ApiGroupKey]: K8sManifestBuilder.RbacApiGroup,
+                [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ClusterRoleKind,
+                [K8sManifestBuilder.NameKey]: K8sManifestBuilder.HiveAgentRoleOf(hiveId),
+            },
+        }
+    }
+
+    private HiveAgentDeployment(hiveId: string, registryUrl: string, tokenSecretName: string): K8sObject
+    {
+        const name = K8sManifestBuilder.HiveAgentDeploymentOf(hiveId)
+        return {
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionApps,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.DeploymentKind,
+            [K8sManifestBuilder.MetadataKey]: this.HiveAgentNamespacedMeta(hiveId, name),
+            [K8sManifestBuilder.SpecKey]: {
+                [K8sManifestBuilder.ReplicasKey]: K8sManifestBuilder.SingleReplica,
+                [K8sManifestBuilder.SelectorKey]: { [K8sManifestBuilder.MatchLabelsKey]: this.Selector(name) },
+                [K8sManifestBuilder.TemplateKey]: {
+                    [K8sManifestBuilder.MetadataKey]: { [K8sManifestBuilder.LabelsKey]: this.Selector(name) },
+                    [K8sManifestBuilder.SpecKey]: {
+                        [K8sManifestBuilder.ServiceAccountNameKey]: K8sManifestBuilder.HiveAgentServiceAccountOf(hiveId),
+                        [K8sManifestBuilder.ContainersKey]: [{
+                            [K8sManifestBuilder.NameKey]: K8sManifestBuilder.AgentContainerName,
+                            [K8sManifestBuilder.ImageKey]: K8sManifestBuilder.AgentImage,
+                            [K8sManifestBuilder.ImagePullPolicyKey]: K8sManifestBuilder.IfNotPresent,
+                            [K8sManifestBuilder.CommandKey]: K8sManifestBuilder.AgentEntrypoint,
+                            [K8sManifestBuilder.EnvKey]: [
+                                this.EnvLiteral(K8sManifestBuilder.AgentRegistryUrlVar, registryUrl),
+                                this.EnvLiteral(K8sManifestBuilder.AgentHiveIdVar, hiveId),
+                                {
+                                    [K8sManifestBuilder.NameKey]: K8sManifestBuilder.AgentTokenVar,
+                                    [K8sManifestBuilder.ValueFromKey]: {
+                                        [K8sManifestBuilder.SecretKeyRefKey]: {
+                                            [K8sManifestBuilder.NameKey]: tokenSecretName,
+                                            [K8sManifestBuilder.KeyKey]: K8sManifestBuilder.AgentTokenSecretKey,
+                                        },
+                                    },
+                                },
+                            ],
+                        }],
+                    },
+                },
+            },
+        }
     }
 
     /** Renders the in-cluster pull agent: SA + least-privilege Role/RoleBinding + Deployment. The token Secret is referenced by name only. */
@@ -321,7 +466,10 @@ export class K8sManifestBuilder
         return {
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionApps,
             [K8sManifestBuilder.KindKey]: K8sManifestBuilder.DeploymentKind,
-            [K8sManifestBuilder.MetadataKey]: this.Meta(workload, name),
+            [K8sManifestBuilder.MetadataKey]: {
+                ...this.Meta(workload, name),
+                [K8sManifestBuilder.LabelsKey]: this.HiveLabels(workload.hiveId),
+            },
             [K8sManifestBuilder.SpecKey]: {
                 [K8sManifestBuilder.ReplicasKey]: K8sManifestBuilder.SingleReplica,
                 [K8sManifestBuilder.SelectorKey]: { [K8sManifestBuilder.MatchLabelsKey]: this.Selector(name) },
