@@ -217,6 +217,10 @@ export class K8sManifestBuilder
         }
     }
 
+    // Cluster-scoped get/list/patch on deployments: k8s RBAC cannot scope list/patch by label, and the agent must
+    // discover its hive's environment deployments across namespaces, so the grant is cluster-wide by necessity. The
+    // agent bounds what it actually touches with the app-level selector (pragmatic/hive + pragmatic/environment), not
+    // RBAC; a compromised hive-agent token could patch any deployment's image cluster-wide (never secrets/create/delete).
     private HiveAgentClusterRole(hiveId: string): K8sObject
     {
         return {
