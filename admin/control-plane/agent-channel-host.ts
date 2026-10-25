@@ -3,11 +3,7 @@ import type { AddressInfo } from 'node:net'
 import { PlaneHttp } from './plane-http.js'
 import type { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
 import type { HiveHealthDto } from './hive-health-producer.js'
-import { AgentUnauthorizedError } from './rollout-errors.js'
-
-class BodyTooLargeError extends Error
-{
-}
+import { AgentUnauthorizedError, BodyTooLargeError, HiveNotRegisteredError, UnknownHiveError } from './rollout-errors.js'
 
 /** The dedicated public listener for the hive agent channel: two bearer-authenticated routes, nothing else. */
 export class AgentChannelHost
@@ -30,6 +26,7 @@ export class AgentChannelHost
     private static readonly BadNameMessage = 'Invalid hive id in path'
     private static readonly TooLargeMessage = 'Request body too large'
     private static readonly InternalMessage = 'Internal error'
+    private static readonly FallbackErrorName = 'Error'
     private static readonly LogPrefix = '[agent-channel]'
 
     private httpServer: HttpServer | undefined
@@ -44,13 +41,13 @@ export class AgentChannelHost
         {
             void this.Handle(req, res)
         })
-        this.httpServer = server
         return new Promise((resolve, reject) =>
         {
             server.once('error', reject)
             server.listen(port, bind, () =>
             {
                 server.off('error', reject)
+                this.httpServer = server
                 resolve()
             })
         })
@@ -85,7 +82,7 @@ export class AgentChannelHost
         }
         catch (err)
         {
-            this.WriteError(res, err)
+            this.WriteError(req, res, err)
         }
     }
 
@@ -168,7 +165,7 @@ export class AgentChannelHost
         {
             return undefined
         }
-        return environments as HiveHealthDto[]
+        return (environments as HiveHealthDto[]).map(h => ({ environmentName: h.environmentName, ready: h.ready, runningImage: h.runningImage, detail: h.detail }))
     }
 
     private static IsHiveHealth(e: unknown): e is HiveHealthDto
@@ -235,15 +232,16 @@ export class AgentChannelHost
         })
     }
 
-    /** Maps a failure to a fixed-text response; token and inner-error text never reach the body. */
-    private WriteError(res: ServerResponse, err: unknown): void
+    /** Maps a failure to a fixed-text response; an unregistered hive is indistinguishable from a wrong token, and no inner-error text reaches the body or log. */
+    private WriteError(req: IncomingMessage, res: ServerResponse, err: unknown): void
     {
+        req.resume()
         if (res.headersSent)
         {
             res.end()
             return
         }
-        if (err instanceof AgentUnauthorizedError)
+        if (err instanceof AgentUnauthorizedError || err instanceof HiveNotRegisteredError || err instanceof UnknownHiveError)
         {
             PlaneHttp.WriteJson(res, AgentChannelHost.StatusUnauthorized, { error: AgentChannelHost.UnauthorizedMessage })
             return
@@ -253,7 +251,7 @@ export class AgentChannelHost
             PlaneHttp.WriteJson(res, AgentChannelHost.StatusTooLarge, { error: AgentChannelHost.TooLargeMessage })
             return
         }
-        console.error(AgentChannelHost.LogPrefix, err)
+        console.error(AgentChannelHost.LogPrefix, err instanceof Error ? err.name : AgentChannelHost.FallbackErrorName)
         PlaneHttp.WriteJson(res, AgentChannelHost.StatusInternal, { error: AgentChannelHost.InternalMessage })
     }
 }

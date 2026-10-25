@@ -40,7 +40,7 @@ import { UnsupportedBackendError } from './hive-orchestrator.js'
 import { KubectlError } from './kubectl.js'
 import type { HiveRolloutStatus, PlatformDeploymentRegistry } from './platform-deployment-registry.js'
 import type { ManifestRecord } from './manifest-record.js'
-import { AgentUnauthorizedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, UnknownHiveError, UnknownManifestError } from './rollout-errors.js'
+import { AgentUnauthorizedError, BodyTooLargeError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, UnknownHiveError, UnknownManifestError } from './rollout-errors.js'
 import type { ClientRecord, ClusterSpec, HiveRecord, RegistrySpec, TenantRecord } from './platform-records.js'
 import type { CreateAccountParams, GraphLoadedDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ILogProcess } from '../../environments/seed/docker.js'
@@ -138,10 +138,6 @@ export type ChangedEvent = { type: string }
 type ErrorCtor = abstract new (...args: never[]) => Error
 type CreateBody = { name?: unknown; template?: unknown; type?: unknown; hostPort?: unknown; hiveId?: unknown }
 type LoginBody = { email?: unknown; password?: unknown }
-
-class BodyTooLargeError extends Error
-{
-}
 
 export class ControlPlaneHost
 {
