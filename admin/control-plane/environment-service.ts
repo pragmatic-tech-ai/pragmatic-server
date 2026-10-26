@@ -185,7 +185,6 @@ export class EnvironmentService
             secret = randomBytes(EnvironmentService.OidcSecretBytes).toString(EnvironmentService.OidcSecretEncoding)
             const clientId = def.environmentId
             // Host-port (Docker): http://localhost:<port>. In-cluster: the env's browser host https://<environmentId>.<baseDomain>, byte-stable across restarts.
-            // An in-cluster env with no known base domain has no browser-reachable origin, so it is not federated.
             const inCluster = port === undefined
             let origin: string
             if (inCluster)

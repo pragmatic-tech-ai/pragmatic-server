@@ -152,6 +152,7 @@ export class K8sManifestBuilder
     private static readonly IdpBindAll = '0.0.0.0'
     private static readonly IdpPortVar = 'PRAGMATIC_IDP_PORT'
     private static readonly IdpBaseUrlVar = 'PRAGMATIC_IDP_BASE_URL'
+    private static readonly IdpInternalUrlVar = 'PRAGMATIC_IDP_INTERNAL_URL'
     private static readonly IdpHostVar = 'PRAGMATIC_IDP_HOST'
     private static readonly IdpDataVar = 'PRAGMATIC_IDP_DATA'
     private static readonly IdpAdminTokenRefVar = 'PRAGMATIC_IDP_ADMIN_TOKEN_REF'
@@ -605,6 +606,26 @@ export class K8sManifestBuilder
         }
     }
 
+    /**
+     * The IdP container env. Split-host when baseDomain is set: PRAGMATIC_IDP_BASE_URL = the BROWSER base (so iss +
+     * issuer + authorization_endpoint are browser-reachable) and PRAGMATIC_IDP_INTERNAL_URL = the internal
+     * Service-DNS base (token_endpoint + jwks_uri the pod reaches). Absent baseDomain ⇒ single-host (BASE_URL =
+     * internal, no INTERNAL_URL), byte-identical to the pre-6c pod.
+     */
+    private IdpEnv(spec: IdpWorkloadSpec): K8sObject[]
+    {
+        const internal = K8sManifestBuilder.IdpBaseUrlOf(spec.tenantId, spec.port)
+        const baseUrl = spec.baseDomain === undefined ? internal : K8sManifestBuilder.IdpBrowserUrlOf(spec.tenantId, spec.baseDomain)
+        return [
+            this.EnvLiteral(K8sManifestBuilder.IdpPortVar, String(spec.port)),
+            this.EnvLiteral(K8sManifestBuilder.IdpBaseUrlVar, baseUrl),
+            ...(spec.baseDomain === undefined ? [] : [this.EnvLiteral(K8sManifestBuilder.IdpInternalUrlVar, internal)]),
+            this.EnvLiteral(K8sManifestBuilder.IdpHostVar, K8sManifestBuilder.IdpBindAll),
+            this.EnvLiteral(K8sManifestBuilder.IdpDataVar, K8sManifestBuilder.IdpDataMount),
+            this.EnvLiteral(K8sManifestBuilder.IdpAdminTokenRefVar, spec.adminTokenRef),
+        ]
+    }
+
     private IdpContainer(spec: IdpWorkloadSpec): K8sObject
     {
         return {
@@ -621,13 +642,7 @@ export class K8sManifestBuilder
                 [K8sManifestBuilder.SeccompProfileKey]: { [K8sManifestBuilder.TypeKey]: K8sManifestBuilder.RuntimeDefault },
                 [K8sManifestBuilder.ReadOnlyRootFilesystemKey]: true,
             },
-            [K8sManifestBuilder.EnvKey]: [
-                this.EnvLiteral(K8sManifestBuilder.IdpPortVar, String(spec.port)),
-                this.EnvLiteral(K8sManifestBuilder.IdpBaseUrlVar, K8sManifestBuilder.IdpBaseUrlOf(spec.tenantId, spec.port)),
-                this.EnvLiteral(K8sManifestBuilder.IdpHostVar, K8sManifestBuilder.IdpBindAll),
-                this.EnvLiteral(K8sManifestBuilder.IdpDataVar, K8sManifestBuilder.IdpDataMount),
-                this.EnvLiteral(K8sManifestBuilder.IdpAdminTokenRefVar, spec.adminTokenRef),
-            ],
+            [K8sManifestBuilder.EnvKey]: this.IdpEnv(spec),
             [K8sManifestBuilder.VolumeMountsKey]: [
                 { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.IdpDataVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.IdpDataMount },
                 { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.IdpTlsVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.IdpTlsMount, [K8sManifestBuilder.ReadOnlyKey]: true },

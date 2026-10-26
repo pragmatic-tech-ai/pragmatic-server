@@ -253,6 +253,24 @@ describe('K8sManifestBuilder.RenderIdp', () =>
         assert.equal(items[0].metadata.name, 'pragmatic-idp-t1')
     })
 
+    it('with baseDomain the IdP Deployment env serves the split: BASE_URL=browser, INTERNAL_URL=internal', () =>
+    {
+        const dep = JSON.parse(new K8sManifestBuilder().RenderIdp({ ...Spec, baseDomain: 'd.localtest' })).items.find((i: any) => i.kind === 'Deployment')
+        const env = dep.spec.template.spec.containers[0].env as { name: string; value: string }[]
+        const val = (n: string): string | undefined => env.find(e => e.name === n)?.value
+        assert.equal(val('PRAGMATIC_IDP_BASE_URL'), K8sManifestBuilder.IdpBrowserUrlOf('t1', 'd.localtest'))
+        assert.equal(val('PRAGMATIC_IDP_INTERNAL_URL'), K8sManifestBuilder.IdpBaseUrlOf('t1', 9443))
+    })
+
+    it('without baseDomain the IdP Deployment env is single-host: BASE_URL=internal, no INTERNAL_URL', () =>
+    {
+        const dep = Items().find((i: any) => i.kind === 'Deployment')
+        const env = dep.spec.template.spec.containers[0].env as { name: string; value: string }[]
+        const val = (n: string): string | undefined => env.find(e => e.name === n)?.value
+        assert.equal(val('PRAGMATIC_IDP_BASE_URL'), K8sManifestBuilder.IdpBaseUrlOf('t1', 9443))
+        assert.equal(val('PRAGMATIC_IDP_INTERNAL_URL'), undefined)
+    })
+
     it('with baseDomain emits exactly one ssl-passthrough nginx Ingress routing the browser host to the IdP Service', () =>
     {
         const items = JSON.parse(new K8sManifestBuilder().RenderIdp({ ...Spec, baseDomain: 'd.localtest' })).items
