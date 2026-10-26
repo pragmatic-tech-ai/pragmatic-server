@@ -22,6 +22,7 @@ class FakeKubectl implements IKubectl
     public async RolloutStatus(): Promise<void> { }
     public async SetImage(): Promise<void> { }
     public async Scale(): Promise<void> { }
+    public async RolloutRestart(): Promise<void> { }
     public async Get(): Promise<string> { return '' }
     public async DeleteNamespace(): Promise<void> { }
 }

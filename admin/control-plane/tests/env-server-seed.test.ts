@@ -280,3 +280,17 @@ it('ApplyIdpCa applies a Secret carrying ca.crt ONLY in the env namespace (never
     assert.deepEqual(Object.keys(secret.data), ['ca.crt'])
     assert.equal(Buffer.from(secret.data['ca.crt'], 'base64').toString(), 'PUBLIC-CA')
 })
+
+it('ApplyUiTrust applies a Secret with exactly one <ref>.pub key (never a private key)', async () =>
+{
+    const kubectl = new CaCaptureKubectl()
+    await EnvServerSeedSource.ApplyUiTrust(kubectl as never, 'e1', 'hive-root', Buffer.from('PEMDATA'))
+    assert.equal(kubectl.Applied.length, 1)
+    const secret = JSON.parse(kubectl.Applied[0]!)
+    assert.equal(secret.kind, 'Secret')
+    assert.equal(secret.metadata.name, 'e1-ui-trust')
+    assert.equal(secret.metadata.namespace, K8sManifestBuilder.NamespaceOf('e1'))
+    assert.deepEqual(Object.keys(secret.data), ['hive-root.pub'])
+    assert.equal(secret.data['hive-root.pub'], Buffer.from('PEMDATA').toString('base64'))
+    assert.ok(!Object.keys(secret.data).some(k => k.endsWith('.key')))
+})

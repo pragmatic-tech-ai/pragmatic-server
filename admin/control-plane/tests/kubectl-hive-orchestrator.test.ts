@@ -25,6 +25,7 @@ class FakeKubectl implements IKubectl
     public RolloutStatus(n: string, d: string) { return this.Record('RolloutStatus', [n, d]) }
     public SetImage(n: string, d: string, c: string, i: string) { return this.Record('SetImage', [n, d, c, i]) }
     public Scale(n: string, d: string, r: number) { return this.Record('Scale', [n, d, String(r)]) }
+    public RolloutRestart(n: string, d: string) { return this.Record('RolloutRestart', [n, d]) }
     public async Get(n: string, r: string)
     {
         await this.Record('Get', [n, r])

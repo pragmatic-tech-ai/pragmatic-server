@@ -72,6 +72,13 @@ test('Scale args', async () =>
     assert.deepEqual(f.Last.args, ['--context', 'kind-hive', 'scale', 'deployment/dep', '--replicas=0', '-n', 'ns'])
 })
 
+test('RolloutRestart args', async () =>
+{
+    const f = new KubectlFixture()
+    await f.Cli.RolloutRestart('ns', 'dep')
+    assert.deepEqual(f.Last.args, ['--context', 'kind-hive', 'rollout', 'restart', 'deployment/dep', '-n', 'ns'])
+})
+
 test('Get args and returns stdout', async () =>
 {
     const f = new KubectlFixture()

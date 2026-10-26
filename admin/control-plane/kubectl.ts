@@ -11,6 +11,7 @@ export interface IKubectl
     RolloutStatus(namespace: string, deployment: string): Promise<void>
     SetImage(namespace: string, deployment: string, container: string, image: string): Promise<void>
     Scale(namespace: string, deployment: string, replicas: number): Promise<void>
+    RolloutRestart(namespace: string, deployment: string): Promise<void>
     Get(namespace: string, resource: string): Promise<string>
     DeleteNamespace(namespace: string): Promise<void>
 }
@@ -75,6 +76,7 @@ export class KubectlCli implements IKubectl
     private static readonly Stdin = '-'
     private static readonly Rollout = 'rollout'
     private static readonly Status = 'status'
+    private static readonly Restart = 'restart'
     private static readonly Set = 'set'
     private static readonly Image = 'image'
     private static readonly ScaleVerb = 'scale'
@@ -116,6 +118,11 @@ export class KubectlCli implements IKubectl
     public async Scale(namespace: string, deployment: string, replicas: number): Promise<void>
     {
         await this.Invoke([KubectlCli.ScaleVerb, KubectlCli.DeploymentPrefix + deployment, KubectlCli.ReplicasFlag + String(replicas), KubectlCli.NamespaceFlag, namespace])
+    }
+
+    public async RolloutRestart(namespace: string, deployment: string): Promise<void>
+    {
+        await this.Invoke([KubectlCli.Rollout, KubectlCli.Restart, KubectlCli.DeploymentPrefix + deployment, KubectlCli.NamespaceFlag, namespace])
     }
 
     public Get(namespace: string, resource: string): Promise<string>

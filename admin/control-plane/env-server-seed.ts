@@ -115,6 +115,7 @@ export class EnvServerSeedSource
     private static readonly IdpCaSecretNameSuffix = '-idp-ca'
     private static readonly UiTrustSecretNameSuffix = '-ui-trust'
     private static readonly IdpCaKey = 'ca.crt'
+    private static readonly PublicKeySuffix = '.pub'
     private static readonly SecretKindName = 'Secret'
     private static readonly MissingRefPrefix = 'provisioned-secrets.json has no entry for db password ref: '
 
@@ -148,6 +149,18 @@ export class EnvServerSeedSource
             [EnvServerSeedSource.KindKey]: EnvServerSeedSource.SecretKindName,
             [EnvServerSeedSource.MetadataKey]: { [EnvServerSeedSource.NameKey]: EnvServerSeedSource.IdpCaSecretNameOf(environmentName), [EnvServerSeedSource.NamespaceKey]: K8sManifestBuilder.NamespaceOf(environmentName) },
             [EnvServerSeedSource.DataKey]: { [EnvServerSeedSource.IdpCaKey]: caPem.toString(EnvServerSeedSource.Base64) },
+        }
+        await kubectl.Apply(JSON.stringify(secret))
+    }
+
+    /** Applies the UI trust-root Secret: ONLY `<trustKeyRef>.pub` (public key); no private key is ever a key of it. */
+    public static async ApplyUiTrust(kubectl: IKubectl, environmentName: string, trustKeyRef: string, publicKeyPem: Buffer): Promise<void>
+    {
+        const secret = {
+            [EnvServerSeedSource.ApiVersionKey]: EnvServerSeedSource.ApiVersion,
+            [EnvServerSeedSource.KindKey]: EnvServerSeedSource.SecretKindName,
+            [EnvServerSeedSource.MetadataKey]: { [EnvServerSeedSource.NameKey]: EnvServerSeedSource.UiTrustSecretNameOf(environmentName), [EnvServerSeedSource.NamespaceKey]: K8sManifestBuilder.NamespaceOf(environmentName) },
+            [EnvServerSeedSource.DataKey]: { [trustKeyRef + EnvServerSeedSource.PublicKeySuffix]: publicKeyPem.toString(EnvServerSeedSource.Base64) },
         }
         await kubectl.Apply(JSON.stringify(secret))
     }
