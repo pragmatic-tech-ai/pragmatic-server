@@ -57,6 +57,7 @@ class FakeOrchestrator implements IHiveOrchestrator
 
     public FailWith: Error | undefined
     public Ready = true
+    public readonly ScaleReplicas: number[] = []
 
     private Rec(m: string, w: EnvironmentWorkload): void
     {
@@ -72,6 +73,7 @@ class FakeOrchestrator implements IHiveOrchestrator
     public async WaitHealthy(w: EnvironmentWorkload): Promise<void> { this.Rec('WaitHealthy', w) }
     public async Health(w: EnvironmentWorkload): Promise<WorkloadHealth> { this.Rec('Health', w); return { ready: this.Ready, runningImage: undefined, detail: '' } }
     public async Roll(w: EnvironmentWorkload, _image: string): Promise<void> { this.Rec('Roll', w) }
+    public async Scale(w: EnvironmentWorkload, replicas: number): Promise<void> { this.Rec('Scale', w); this.ScaleReplicas.push(replicas) }
     public async Teardown(w: EnvironmentWorkload): Promise<void> { this.Rec('Teardown', w) }
 }
 

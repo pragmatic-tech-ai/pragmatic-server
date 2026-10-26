@@ -27,6 +27,7 @@ class FakeKubectl implements IKubectl
     }
 
     public async SetImage(): Promise<void> { }
+    public async Scale(): Promise<void> { }
     public async Get(): Promise<string> { return '' }
     public async DeleteNamespace(): Promise<void> { }
 }
