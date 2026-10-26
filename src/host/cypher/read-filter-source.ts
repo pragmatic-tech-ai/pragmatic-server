@@ -13,6 +13,9 @@ import type { IWriteTargetSource } from '../write-target-source.js'
 export interface IReadFilterSource
 {
     ReadFilterFor(context: AccessContext): Promise<IInstanceFilter>
+
+    /** Every concept the tenant security model references (the set an app's own concepts are subtracted from to form the depth-filter bypass). */
+    GovernedConceptsFor(context: AccessContext): Promise<ReadonlySet<string>>
 }
 
 /** Produces the FIELD-READ mask for a request. One of two impls is chosen by the server per the identity state. */
@@ -98,6 +101,12 @@ export class TenantReadAuthorization implements IReadFilterSource, IWriteAuthori
         return new AccessDepthInstanceFilter(evaluator, context.Principal, PrivilegeAction.Read)
     }
 
+    public async GovernedConceptsFor(context: AccessContext): Promise<ReadonlySet<string>>
+    {
+        const evaluator = await this.EvaluatorFor(context.Tenant.Id)
+        return evaluator.GovernedConcepts()
+    }
+
     public async WriteAuthorizerFor(context: AccessContext): Promise<IWriteAuthorizer>
     {
         const evaluator = await this.EvaluatorFor(context.Tenant.Id)
@@ -176,6 +185,11 @@ export class AllowAllReadFilterSource implements IReadFilterSource
     public async ReadFilterFor(): Promise<IInstanceFilter>
     {
         return new AllowAllInstanceFilter()
+    }
+
+    public async GovernedConceptsFor(): Promise<ReadonlySet<string>>
+    {
+        return new Set<string>()
     }
 }
 
