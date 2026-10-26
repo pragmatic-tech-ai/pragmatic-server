@@ -9,16 +9,15 @@ export class NorthwindUiBundle
     private static readonly AppVersion = '1.0.0'
     private static readonly EntryPath = 'index.html'
     private static readonly AssetPath = 'assets/app.js'
-    private static readonly IndexHtml =
-        '<!DOCTYPE html>\n' +
-        '<html><head><meta charset="utf-8"><title>Northwind</title></head>\n' +
-        '<body><h1>northwind-ui-ready</h1><script src="assets/app.js"></script></body></html>\n'
-    private static readonly AppJs = "console.log('northwind-ui-ready');\n"
+    private static readonly ScriptTagOpen = '<script src="'
+    private static readonly ScriptTagClose = '"></script>'
+    private static readonly ConsoleLogOpen = "console.log('"
+    private static readonly ConsoleLogClose = "');\n"
 
     /** Builds the demo bundle: the artifact config plus the entry shell and its one asset. */
     public static Load(): UiDeployBundle
     {
-        const encoder = new TextEncoder()
+        const encoder = new TextEncoder();
         return {
             config:
             {
@@ -29,9 +28,23 @@ export class NorthwindUiBundle
             },
             files:
             [
-                { path: NorthwindUiBundle.EntryPath, bytes: encoder.encode(NorthwindUiBundle.IndexHtml) },
-                { path: NorthwindUiBundle.AssetPath, bytes: encoder.encode(NorthwindUiBundle.AppJs) },
+                { path: NorthwindUiBundle.EntryPath, bytes: encoder.encode(NorthwindUiBundle.IndexHtml()) },
+                { path: NorthwindUiBundle.AssetPath, bytes: encoder.encode(NorthwindUiBundle.AppJs()) },
             ],
         }
+    }
+
+    /** The shell body: the marker and the asset reference are interpolated from the constants, never restated. */
+    private static IndexHtml(): string
+    {
+        return '<!DOCTYPE html>\n'
+            + '<html><head><meta charset="utf-8"><title>Northwind</title></head>\n'
+            + `<body><h1>${NorthwindUiBundle.Marker}</h1>${NorthwindUiBundle.ScriptTagOpen}${NorthwindUiBundle.AssetPath}${NorthwindUiBundle.ScriptTagClose}</body></html>\n`;
+    }
+
+    /** The one-line asset: logs the marker, interpolated from the constant. */
+    private static AppJs(): string
+    {
+        return `${NorthwindUiBundle.ConsoleLogOpen}${NorthwindUiBundle.Marker}${NorthwindUiBundle.ConsoleLogClose}`;
     }
 }

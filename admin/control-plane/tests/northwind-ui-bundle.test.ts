@@ -12,7 +12,7 @@ test('Load returns the northwind config and the two UI files', () =>
     assert.deepEqual(b.files.map(f => f.path).sort(), ['assets/app.js', 'index.html'])
     const shell = Buffer.from(b.files.find(f => f.path === 'index.html')!.bytes).toString('utf8')
     assert.ok(shell.includes(NorthwindUiBundle.Marker))
-    assert.ok(shell.includes('assets/app.js'))
+    assert.ok(shell.includes('<script src="assets/app.js"></script>'))
 })
 
 test('the loaded bundle packs and unpacks losslessly', () =>
@@ -21,4 +21,9 @@ test('the loaded bundle packs and unpacks losslessly', () =>
     const packed = UiArtifact.Pack(b.config, b.files)
     const out = UiArtifact.Unpack(packed.layerBlob)
     assert.deepEqual(out.map(f => f.path).sort(), ['assets/app.js', 'index.html'])
+    for (const original of b.files)
+    {
+        const restored = out.find(f => f.path === original.path)!
+        assert.ok(Buffer.from(restored.bytes).equals(Buffer.from(original.bytes)), original.path)
+    }
 })
