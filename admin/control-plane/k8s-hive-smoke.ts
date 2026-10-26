@@ -21,6 +21,9 @@ import { get } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { BundleBuilder } from '../../environments/seed/bundle.js'
+import { EnvServerSeedSource } from './env-server-seed.js'
+import { TemplateCatalog } from './template-catalog.js'
 import { EnvironmentWorkloadFactory } from './environment-workload.js'
 import type { EnvironmentWorkload } from './environment-workload.js'
 import { EnvStatus, EnvType, Template } from './environment-record.js'
@@ -64,13 +67,7 @@ export class K8sHiveSmoke
     private static readonly LoopbackHost = '127.0.0.1'
     private static readonly EpochIso = '1970-01-01T00:00:00.000Z'
     private static readonly EmptyString = ''
-    private static readonly BootBaseDirKey = 'PRAGMATIC_BASE_DIR'
-    private static readonly BootBaseDir = '/tmp/pragmatic-data'
-    private static readonly BootTenantKey = 'PRAGMATIC_ENVIRONMENT_ID'
-    private static readonly BootMasterKeyEnvKey = 'PRAGMATIC_MASTER_KEY_B64_ENV'
-    private static readonly BootMasterKeyVar = 'SMOKE_MASTER_KEY_B64'
-    private static readonly MasterKeyBytes = 32
-    private static readonly Base64 = 'base64'
+    private static readonly SeedDirPrefix = 'k8s-smoke-seed-'
     private static readonly Kubectl = 'kubectl'
     private static readonly ContextFlag = '--context'
     private static readonly NamespaceFlag = '-n'
@@ -138,6 +135,7 @@ export class K8sHiveSmoke
             await orchestrator.Apply(workload)
             this.Expect(S.Labels.Apply, true)
             this.Expect(S.Labels.Namespace, await this.NamespaceExists(namespace))
+            await this.ApplySeed(orchestrator, workload.environmentName)
             await orchestrator.WaitHealthy(workload)
             this.Expect(S.Labels.Healthy, true)
             await this.CheckHealth(orchestrator, workload, S.Labels.Health)
@@ -237,26 +235,23 @@ export class K8sHiveSmoke
             createdAt: S.EpochIso,
             status: EnvStatus.Unknown,
         }
-        const stock = EnvironmentWorkloadFactory.From(record, S.Hive())
-        return { ...stock, env: { ...stock.env, ...S.BootEnv() } }
+        return EnvironmentWorkloadFactory.From(record, S.Hive())
     }
 
-    /**
-     * LOCAL-SMOKE-ONLY boot config. The stock workload carries only PRAGMATIC_PORT, but the server
-     * refuses to start without a base dir, a tenant source and a master key (the docker model mounts
-     * these as files). Injecting real config/secrets into a k8s workload is SP-HIVE-3's job; here a
-     * throwaway random master key is set as a plain env var in a throwaway namespace purely so the
-     * orchestrator mechanics can be proven against a pod that actually reaches Ready. The key is
-     * generated per run, never logged, and never written to disk.
-     */
-    private static BootEnv(): Record<string, string>
+    /** Applies the real env-server seed (tenants ConfigMap + Secrets) exactly as InClusterEnvironmentRuntime.BringUp does. */
+    private async ApplySeed(orchestrator: IHiveOrchestrator, environmentName: string): Promise<void>
     {
         const S = K8sHiveSmoke
-        return {
-            [S.BootBaseDirKey]: S.BootBaseDir,
-            [S.BootTenantKey]: S.EnvName,
-            [S.BootMasterKeyEnvKey]: S.BootMasterKeyVar,
-            [S.BootMasterKeyVar]: randomBytes(S.MasterKeyBytes).toString(S.Base64),
+        const { def, seedDir } = TemplateCatalog.Resolve(Template.DevBlank, environmentName, 0, EnvType.Development)
+        const bundleDir = await mkdtemp(join(tmpdir(), S.SeedDirPrefix))
+        try
+        {
+            await BundleBuilder.Generate(def, bundleDir, seedDir)
+            await EnvServerSeedSource.ApplyBundle(orchestrator.Kubectl, bundleDir, environmentName)
+        }
+        finally
+        {
+            await rm(bundleDir, { recursive: true, force: true })
         }
     }
 

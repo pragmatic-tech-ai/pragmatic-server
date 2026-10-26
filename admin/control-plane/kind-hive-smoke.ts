@@ -19,12 +19,16 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { BundleBuilder } from '../../environments/seed/bundle.js'
+import { EnvServerSeedSource } from './env-server-seed.js'
+import { TemplateCatalog } from './template-catalog.js'
 import { EnvironmentWorkloadFactory } from './environment-workload.js'
 import type { EnvironmentWorkload } from './environment-workload.js'
 import { EnvStatus, EnvType, Template } from './environment-record.js'
 import type { EnvironmentRecord } from './environment-record.js'
 import { EffectiveRegistry } from './effective-registry.js'
 import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
+import type { IHiveOrchestrator } from './hive-orchestrator.js'
 import { DockerImageDigest } from './image-digest.js'
 import { ImageSigner } from './image-signer.js'
 import { FileKeyStore } from './key-store.js'
@@ -68,18 +72,12 @@ export class KindHiveSmoke
     private static readonly Spki = 'spki'
     private static readonly Pkcs8 = 'pkcs8'
     private static readonly Utf8 = 'utf8'
-    private static readonly Base64 = 'base64'
     private static readonly InfoTag = 'INFO '
     private static readonly InfoSigned = 'signed effective image ref with key ref: '
     private static readonly CleanupWarning = 'WARN temp key/signature store cleanup failed -- '
     private static readonly EpochIso = '1970-01-01T00:00:00.000Z'
     private static readonly EmptyString = ''
-    private static readonly BootBaseDirKey = 'PRAGMATIC_BASE_DIR'
-    private static readonly BootBaseDir = '/tmp/pragmatic-data'
-    private static readonly BootTenantKey = 'PRAGMATIC_ENVIRONMENT_ID'
-    private static readonly BootMasterKeyEnvKey = 'PRAGMATIC_MASTER_KEY_B64_ENV'
-    private static readonly BootMasterKeyVar = 'SMOKE_MASTER_KEY_B64'
-    private static readonly MasterKeyBytes = 32
+    private static readonly SeedDirPrefix = 'kind-smoke-seed-'
     private static readonly PassTag = 'PASS '
     private static readonly FailTag = 'FAIL '
     private static readonly IdSep = ': '
@@ -134,6 +132,7 @@ export class KindHiveSmoke
             for (const hive of hives)
             {
                 await hive.orchestrator.Apply(hive.workload)
+                await this.ApplySeed(hive.orchestrator, hive.workload.environmentName)
             }
             this.Expect(S.Labels.Apply, true)
             for (const hive of hives)
@@ -281,23 +280,23 @@ export class KindHiveSmoke
             createdAt: S.EpochIso,
             status: EnvStatus.Unknown,
         }
-        const stock = EnvironmentWorkloadFactory.From(record, hive)
-        return { ...stock, env: { ...stock.env, ...S.BootEnv(name) } }
+        return EnvironmentWorkloadFactory.From(record, hive)
     }
 
-    /**
-     * LOCAL-SMOKE-ONLY boot config (same rationale as k8s-hive-smoke.ts): a throwaway random master key
-     * as a plain env var in a throwaway cluster so the pod can reach Ready. Generated per run, never
-     * logged, never written to disk.
-     */
-    private static BootEnv(tenant: string): Record<string, string>
+    /** Applies the real env-server seed (tenants ConfigMap + Secrets) exactly as InClusterEnvironmentRuntime.BringUp does. */
+    private async ApplySeed(orchestrator: IHiveOrchestrator, environmentName: string): Promise<void>
     {
         const S = KindHiveSmoke
-        return {
-            [S.BootBaseDirKey]: S.BootBaseDir,
-            [S.BootTenantKey]: tenant,
-            [S.BootMasterKeyEnvKey]: S.BootMasterKeyVar,
-            [S.BootMasterKeyVar]: randomBytes(S.MasterKeyBytes).toString(S.Base64),
+        const { def, seedDir } = TemplateCatalog.Resolve(Template.DevBlank, environmentName, 0, EnvType.Development)
+        const bundleDir = await mkdtemp(join(tmpdir(), S.SeedDirPrefix))
+        try
+        {
+            await BundleBuilder.Generate(def, bundleDir, seedDir)
+            await EnvServerSeedSource.ApplyBundle(orchestrator.Kubectl, bundleDir, environmentName)
+        }
+        finally
+        {
+            await rm(bundleDir, { recursive: true, force: true })
         }
     }
 

@@ -16,8 +16,12 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { BundleBuilder } from '../../environments/seed/bundle.js'
+import { EnvServerSeedSource } from './env-server-seed.js'
+import { TemplateCatalog } from './template-catalog.js'
 import { EnvironmentWorkloadFactory } from './environment-workload.js'
 import type { EnvironmentWorkload } from './environment-workload.js'
+import type { IHiveOrchestrator } from './hive-orchestrator.js'
 import { EnvStatus, EnvType, Template } from './environment-record.js'
 import type { EnvironmentRecord } from './environment-record.js'
 import { EffectiveRegistry } from './effective-registry.js'
@@ -75,13 +79,7 @@ export class RegistryProvenanceSmoke
     private static readonly Utf8 = 'utf8'
     private static readonly EpochIso = '1970-01-01T00:00:00.000Z'
     private static readonly EmptyString = ''
-    private static readonly BootBaseDirKey = 'PRAGMATIC_BASE_DIR'
-    private static readonly BootBaseDir = '/tmp/pragmatic-data'
-    private static readonly BootTenantKey = 'PRAGMATIC_ENVIRONMENT_ID'
-    private static readonly BootMasterKeyEnvKey = 'PRAGMATIC_MASTER_KEY_B64_ENV'
-    private static readonly BootMasterKeyVar = 'SMOKE_MASTER_KEY_B64'
-    private static readonly MasterKeyBytes = 32
-    private static readonly Base64 = 'base64'
+    private static readonly SeedDirPrefix = 'registry-smoke-seed-'
     private static readonly TamperedSignature = 'AAAA'
     private static readonly PassTag = 'PASS '
     private static readonly FailTag = 'FAIL '
@@ -179,6 +177,7 @@ export class RegistryProvenanceSmoke
         const workload = this.NewWorkload()
         await orchestrator.Apply(workload)
         this.Expect(S.Labels.Verified, true)
+        await this.ApplySeed(orchestrator, workload.environmentName)
         await orchestrator.WaitHealthy(workload)
         this.Expect(S.Labels.Healthy, true)
         const health = await orchestrator.Health(workload)
@@ -287,19 +286,23 @@ export class RegistryProvenanceSmoke
             createdAt: S.EpochIso,
             status: EnvStatus.Unknown,
         }
-        const stock = EnvironmentWorkloadFactory.From(record, S.Hive())
-        return { ...stock, env: { ...stock.env, ...S.BootEnv(name) } }
+        return EnvironmentWorkloadFactory.From(record, S.Hive())
     }
 
-    /** LOCAL-SMOKE-ONLY boot config (same approach as k8s-hive-smoke): throwaway random key, never logged or written to disk. */
-    private static BootEnv(name: string): Record<string, string>
+    /** Applies the real env-server seed (tenants ConfigMap + Secrets) exactly as InClusterEnvironmentRuntime.BringUp does. */
+    private async ApplySeed(orchestrator: IHiveOrchestrator, environmentName: string): Promise<void>
     {
         const S = RegistryProvenanceSmoke
-        return {
-            [S.BootBaseDirKey]: S.BootBaseDir,
-            [S.BootTenantKey]: name,
-            [S.BootMasterKeyEnvKey]: S.BootMasterKeyVar,
-            [S.BootMasterKeyVar]: randomBytes(S.MasterKeyBytes).toString(S.Base64),
+        const { def, seedDir } = TemplateCatalog.Resolve(Template.DevBlank, environmentName, 0, EnvType.Development)
+        const bundleDir = await mkdtemp(join(tmpdir(), S.SeedDirPrefix))
+        try
+        {
+            await BundleBuilder.Generate(def, bundleDir, seedDir)
+            await EnvServerSeedSource.ApplyBundle(orchestrator.Kubectl, bundleDir, environmentName)
+        }
+        finally
+        {
+            await rm(bundleDir, { recursive: true, force: true })
         }
     }
 

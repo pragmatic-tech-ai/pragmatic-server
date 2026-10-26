@@ -17,6 +17,9 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { BundleBuilder } from '../../environments/seed/bundle.js'
+import { EnvServerSeedSource } from './env-server-seed.js'
+import { TemplateCatalog } from './template-catalog.js'
 import { ClientRegistry } from './client-registry.js'
 import { EnvironmentPlacement } from './environment-placement.js'
 import { EnvironmentRegistry } from './environment-registry.js'
@@ -95,14 +98,8 @@ export class RolloutPushSmoke
     private static readonly Utf8 = 'utf8'
     private static readonly EpochIso = '1970-01-01T00:00:00.000Z'
     private static readonly EmptyString = ''
+    private static readonly SeedDirPrefix = 'push-smoke-seed-'
     private static readonly DisplayName = 'push smoke'
-    private static readonly BootBaseDirKey = 'PRAGMATIC_BASE_DIR'
-    private static readonly BootBaseDir = '/tmp/pragmatic-data'
-    private static readonly BootTenantKey = 'PRAGMATIC_ENVIRONMENT_ID'
-    private static readonly BootMasterKeyEnvKey = 'PRAGMATIC_MASTER_KEY_B64_ENV'
-    private static readonly BootMasterKeyVar = 'SMOKE_MASTER_KEY_B64'
-    private static readonly MasterKeyBytes = 32
-    private static readonly Base64 = 'base64'
     private static readonly PassTag = 'PASS '
     private static readonly FailTag = 'FAIL '
     private static readonly DetailSep = ' -- '
@@ -175,11 +172,12 @@ export class RolloutPushSmoke
 
             const record = this.NewRecord()
             await environments.Put(record)
-            const workload = this.BootWorkload(new EnvironmentPlacement(directory).WorkloadFor(record))
+            const workload = new EnvironmentPlacement(directory).WorkloadFor(record)
             const orchestrator = factory.For(hive)
 
             // Bring the environment up on v1 via the Deployment itself (the registry only rolls what already exists).
             await orchestrator.Apply({ ...workload, image: S.ImageV1 })
+            await this.ApplySeed(orchestrator, this.envName)
             await orchestrator.WaitHealthy(workload)
             await this.CheckRunning(orchestrator, workload, S.ImageV1, S.Labels.UpOnV1)
 
@@ -286,17 +284,21 @@ export class RolloutPushSmoke
         }
     }
 
-    /** LOCAL-SMOKE-ONLY boot config (same approach as k8s-hive-smoke): throwaway random key, never logged or written to disk. */
-    private BootWorkload(stock: EnvironmentWorkload): EnvironmentWorkload
+    /** Applies the real env-server seed (tenants ConfigMap + Secrets) exactly as InClusterEnvironmentRuntime.BringUp does. */
+    private async ApplySeed(orchestrator: IHiveOrchestrator, environmentName: string): Promise<void>
     {
         const S = RolloutPushSmoke
-        const boot = {
-            [S.BootBaseDirKey]: S.BootBaseDir,
-            [S.BootTenantKey]: this.envName,
-            [S.BootMasterKeyEnvKey]: S.BootMasterKeyVar,
-            [S.BootMasterKeyVar]: randomBytes(S.MasterKeyBytes).toString(S.Base64),
+        const { def, seedDir } = TemplateCatalog.Resolve(Template.DevBlank, environmentName, 0, EnvType.Development)
+        const bundleDir = await mkdtemp(join(tmpdir(), S.SeedDirPrefix))
+        try
+        {
+            await BundleBuilder.Generate(def, bundleDir, seedDir)
+            await EnvServerSeedSource.ApplyBundle(orchestrator.Kubectl, bundleDir, environmentName)
         }
-        return { ...stock, env: { ...stock.env, ...boot } }
+        finally
+        {
+            await rm(bundleDir, { recursive: true, force: true })
+        }
     }
 
     private async NamespaceExists(namespace: string): Promise<boolean>
