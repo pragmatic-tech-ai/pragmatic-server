@@ -1,5 +1,15 @@
 import { OciRegistryClient } from './oci-registry-client.js'
 
+/** A material-free failure packing or unpacking a UI artifact; the message is fixed and never echoes input. */
+export class UiArtifactError extends Error
+{
+    public constructor(message: string)
+    {
+        super(message)
+        this.name = 'UiArtifactError'
+    }
+}
+
 export interface UiBundleFile
 {
     path: string
@@ -37,6 +47,8 @@ export class UiArtifact
     private static readonly ManifestMediaType = 'application/vnd.oci.image.manifest.v1+json'
     private static readonly SchemaVersion = 2
     private static readonly Base64 = 'base64'
+    private static readonly DuplicatePathMessage = 'UI bundle contains a duplicate file path'
+    private static readonly MalformedLayerMessage = 'UI layer blob is malformed'
 
     /** Packs the bundle. Layer keys and config assets are sorted, so the digest ignores input order. */
     public static Pack(config: UiArtifactConfig, files: readonly UiBundleFile[]): UiArtifactPacked
@@ -46,6 +58,10 @@ export class UiArtifact
         const layerMap: Record<string, string> = {}
         for (const f of sorted)
         {
+            if (Object.prototype.hasOwnProperty.call(layerMap, f.path))
+            {
+                throw new UiArtifactError(UiArtifact.DuplicatePathMessage)
+            }
             layerMap[f.path] = Buffer.from(f.bytes).toString(UiArtifact.Base64)
         }
         const layerBlob = encoder.encode(JSON.stringify(layerMap))
@@ -70,7 +86,19 @@ export class UiArtifact
 
     public static Unpack(layerBlob: Uint8Array): UiBundleFile[]
     {
-        const map = JSON.parse(new TextDecoder().decode(layerBlob)) as Record<string, string>
+        let map: Record<string, string>
+        try
+        {
+            map = JSON.parse(new TextDecoder().decode(layerBlob)) as Record<string, string>
+        }
+        catch
+        {
+            throw new UiArtifactError(UiArtifact.MalformedLayerMessage)
+        }
+        if (map === null || typeof map !== 'object' || Array.isArray(map) || Object.values(map).some(v => typeof v !== 'string'))
+        {
+            throw new UiArtifactError(UiArtifact.MalformedLayerMessage)
+        }
         return Object.keys(map).map(path => ({ path, bytes: new Uint8Array(Buffer.from(map[path], UiArtifact.Base64)) }))
     }
 
