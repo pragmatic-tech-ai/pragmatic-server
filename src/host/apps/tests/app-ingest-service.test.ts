@@ -538,6 +538,22 @@ test('a same-version retry after a failed live-pointer write resumes by writing 
     })
 })
 
+test('re-deploying an existing non-live version with identical UI and manifest but a differing package is a Conflict', async () =>
+{
+    await IngestFixture.Run(async fx =>
+    {
+        assert.equal((await fx.Service.Ingest(IngestFixture.Params())).status, AppWriteStatus.Applied)
+        const next = IngestFixture.Params()
+        next.appVersion = '2.0.0'
+        next.manifest.version = '2.0.0'
+        assert.equal((await fx.Service.Ingest(next)).status, AppWriteStatus.Applied)
+        const differingPackage = IngestFixture.Params()
+        differingPackage.packages[1]!.modelJson = '{"changed":true}'
+        assert.equal((await fx.Service.Ingest(differingPackage)).status, AppWriteStatus.Conflict)
+        assert.equal(readFileSync(join(fx.AppsDir, 'shop', 'live'), 'utf8'), '2.0.0')
+    })
+})
+
 test('re-deploying an existing non-live version is a Conflict when the content differs and a repoint when identical', async () =>
 {
     await IngestFixture.Run(async fx =>

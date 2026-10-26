@@ -62,6 +62,16 @@ test('different input orders produce byte-identical layer blobs', () =>
     assert.ok(Buffer.from(x.layerBlob).equals(Buffer.from(y.layerBlob)))
 })
 
+test('a file named __proto__ round-trips through Pack and Unpack', () =>
+{
+    const proto = { path: '__proto__', bytes: new Uint8Array([1, 2, 3]) }
+    const out = UiArtifact.Unpack(UiArtifact.Pack(Fx.Cfg, [Fx.FileA, proto]).layerBlob)
+    const found = out.find(f => f.path === '__proto__')
+    assert.ok(found)
+    assert.deepEqual([...found.bytes], [1, 2, 3])
+    assert.equal(out.length, 2)
+})
+
 test('Pack rejects a duplicate path', () =>
 {
     assert.throws(() => UiArtifact.Pack(Fx.Cfg, [Fx.FileA, { path: Fx.FileA.path, bytes: Fx.FileB.bytes }]), UiArtifactError)

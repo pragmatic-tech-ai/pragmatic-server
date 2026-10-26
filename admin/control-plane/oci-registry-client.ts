@@ -8,30 +8,36 @@ export type OciFetch = (
 /** The registry could not be reached (the fetch itself threw). Never carries the underlying error text. */
 export class OciUnavailableError extends Error
 {
+    private static readonly ErrorName = 'OciUnavailableError'
+
     public constructor(message: string)
     {
         super(message)
-        this.name = 'OciUnavailableError'
+        this.name = OciUnavailableError.ErrorName
     }
 }
 
 /** A caller-supplied reference or digest had an unsafe shape; it is refused before any request. Never echoes the value. */
 export class OciArgumentError extends Error
 {
+    private static readonly ErrorName = 'OciArgumentError'
+
     public constructor(message: string)
     {
         super(message)
-        this.name = 'OciArgumentError'
+        this.name = OciArgumentError.ErrorName
     }
 }
 
 /** The registry answered with an unexpected status. Carries the status number only, never the response body. */
 export class OciResponseError extends Error
 {
+    private static readonly ErrorName = 'OciResponseError'
+
     public constructor(public readonly status: number, message: string)
     {
         super(message)
-        this.name = 'OciResponseError'
+        this.name = OciResponseError.ErrorName
     }
 }
 
@@ -112,7 +118,7 @@ export class OciRegistryClient
     public async PullManifest(repo: string, reference: string): Promise<Uint8Array>
     {
         const S = OciRegistryClient
-        OciRegistryClient.AssertReference(reference)
+        S.AssertReference(reference)
         return this.ReadBytes(await this.Send(S.MethodGet, this.RepoUrl(repo) + S.ManifestsPath + reference, S.StatusOk))
     }
 

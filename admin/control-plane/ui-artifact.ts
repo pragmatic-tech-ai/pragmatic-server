@@ -3,10 +3,12 @@ import { OciRegistryClient } from './oci-registry-client.js'
 /** A material-free failure packing or unpacking a UI artifact; the message is fixed and never echoes input. */
 export class UiArtifactError extends Error
 {
+    private static readonly ErrorName = 'UiArtifactError'
+
     public constructor(message: string)
     {
         super(message)
-        this.name = 'UiArtifactError'
+        this.name = UiArtifactError.ErrorName
     }
 }
 
@@ -55,7 +57,7 @@ export class UiArtifact
     {
         const encoder = new TextEncoder()
         const sorted = [...files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
-        const layerMap: Record<string, string> = {}
+        const layerMap: Record<string, string> = Object.create(null)
         for (const f of sorted)
         {
             if (Object.prototype.hasOwnProperty.call(layerMap, f.path))

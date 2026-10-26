@@ -241,13 +241,22 @@ export class AppIngestService
         return false
     }
 
-    /** True when the marker and every UI file of the plan are byte-identical to what is stored for this version. */
+    /** True when the marker and every UI file are byte-identical to what is stored, and no already-stored package file differs. */
     private async MatchesStored(plan: IngestPlan): Promise<boolean>
     {
         for (const file of [plan.marker, ...plan.files.filter(f => f.storage === this.applications)])
         {
             if (!await this.applications.Exists(file.path)
                 || Buffer.compare(Buffer.from(await this.applications.ReadBytes(file.path)), Buffer.from(file.bytes)) !== 0)
+            {
+                return false
+            }
+        }
+        // A package not yet written is a legitimate interrupted resume; one that is stored must be byte-identical.
+        for (const file of plan.files.filter(f => f.storage === this.packages))
+        {
+            if (await this.packages.Exists(file.path)
+                && Buffer.compare(Buffer.from(await this.packages.ReadBytes(file.path)), Buffer.from(file.bytes)) !== 0)
             {
                 return false
             }

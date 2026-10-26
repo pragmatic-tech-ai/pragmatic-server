@@ -113,7 +113,7 @@ test('PullManifest GETs /v2/<repo>/manifests/<ref> and returns the bytes', async
 test('a non-2xx response raises OciResponseError carrying the status and no body', async () =>
 {
     const fake = new FakeRegistry(() => new Response('secret-body-text', { status: 500 }))
-    await assert.rejects(() => new OciRegistryClient(Base, fake.Fetch).PullBlob('app', 'sha256:' + '0'.repeat(64) + ''), (err: unknown) =>
+    await assert.rejects(() => new OciRegistryClient(Base, fake.Fetch).PullBlob('app', 'sha256:' + '0'.repeat(64)), (err: unknown) =>
     {
         assert.ok(err instanceof OciResponseError)
         assert.equal(err.status, 500)
@@ -185,4 +185,7 @@ test('a malformed digest or reference is refused before any request', async () =
     await assert.rejects(() => client.PullManifest('app', 'a b'), OciArgumentError)
     await assert.rejects(() => client.PushManifest('app', '', Bytes), OciArgumentError)
     assert.equal(fake.requests.length, 0)
+    const secret = 'secret-bad-value'
+    await assert.rejects(() => client.PullBlob('app', 'sha256:' + secret), (err: unknown) => err instanceof OciArgumentError && !err.message.includes(secret))
+    await assert.rejects(() => client.PullManifest('app', 'a/' + secret), (err: unknown) => err instanceof OciArgumentError && !err.message.includes(secret))
 })

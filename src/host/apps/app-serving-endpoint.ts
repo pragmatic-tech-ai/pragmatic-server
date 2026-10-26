@@ -195,6 +195,7 @@ export class AppServingEndpoint
         {
             return app + AppServingEndpoint.Separator
         }
+        // A torn/interrupted pointer write (a bare WriteText overwrite, not stage-then-rename) yields a 404 for this app (fail-closed), not a rollback; "previous version" covers only the pointer-ABSENT case.
         const version = (await storage.ReadText(pointer)).trim()
         if (!PragmaticAppManifestParser.IsSafeSegment(version))
         {
