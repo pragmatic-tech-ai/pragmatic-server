@@ -23,6 +23,12 @@ import { HiveRegistry } from './hive-registry.js'
 import { PlatformDirectory } from './platform-directory.js'
 import { TenantRegistry } from './tenant-registry.js'
 import { EnvironmentRegistry } from './environment-registry.js'
+import { UiDeployActuator } from './ui-deploy-actuator.js'
+import { OciRegistryClient } from './oci-registry-client.js'
+import { InClusterRegistry } from './in-cluster-registry.js'
+import { UiArtifactSigner } from './ui-artifact-signer.js'
+import { FileKeyStore } from './key-store.js'
+import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import { EnvironmentService } from './environment-service.js'
 import { GraphService } from './graph-service.js'
 import { OperatorIdentity, type OperatorComposeOptions } from './operator-identity.js'
@@ -63,6 +69,8 @@ export class ControlPlaneServer
     private static readonly BindHost = '127.0.0.1'
     private static readonly DataDir = 'data'
     public static readonly RegistryFile = 'registry.json'
+    private static readonly KeysDirName = 'keys'
+    private static readonly HttpScheme = 'http://'
     private static readonly ClientsFile = 'clients.json'
     private static readonly TenantsFile = 'tenants.json'
     private static readonly HivesFile = 'hives.json'
@@ -144,7 +152,7 @@ export class ControlPlaneServer
         const idpService = new IdpService(new IdpRegistry(join(dataRoot, ControlPlaneServer.IdpsFile)), new DockerIdpDriver(new PortAllocator(ControlPlaneServer.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), dataRoot, DockerEnv.ImageName))
         const orchestrators = new HiveOrchestratorFactory()
         const placement = new EnvironmentPlacement(directory)
-        const service = new EnvironmentService(registry, allocator, new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, bundle), new InClusterEnvironmentRuntime(orchestrators, placement, directory, bundle), directory, orchestrators), seeder, dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn))
+        const service = new EnvironmentService(registry, allocator, new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, bundle), new InClusterEnvironmentRuntime(orchestrators, placement, directory, bundle), directory, orchestrators), seeder, dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn), ControlPlaneServer.UiDeployerOf(dataRoot, orchestrators, registry))
         const graphService = new GraphService(registry, proxy, name => service.AdminInfoFor(name))
         const staticRoot = join(here, ControlPlaneServer.ParentSegment, ControlPlaneServer.PortalSegment, ControlPlaneServer.DistSegment)
         const manifests = new ManifestRegistry(join(dataRoot, ControlPlaneServer.ManifestsFile))
@@ -361,6 +369,13 @@ export class ControlPlaneServer
             return ControlPlaneServer.DefaultHealthProbeTimeoutMs
         }
         return ms
+    }
+
+    /** The UI deploy actuator: pushes via the control-plane registry address and signs with the keys under dataRoot. */
+    private static UiDeployerOf(dataRoot: string, orchestrators: HiveOrchestratorFactory, registry: EnvironmentRegistry): UiDeployActuator
+    {
+        const keys = new FileKeyStore(join(dataRoot, ControlPlaneServer.KeysDirName))
+        return new UiDeployActuator(new OciRegistryClient(ControlPlaneServer.HttpScheme + InClusterRegistry.PushBase()), new UiArtifactSigner(keys), keys, orchestrators, new K8sManifestBuilder(), registry)
     }
 
     private static ResolvePort(raw: string | undefined): number

@@ -20,6 +20,7 @@ import type { ILogProcess } from '../../environments/seed/docker.js'
 import type { IUserSeeder } from './docker-env-port.js'
 import type { EnvEndpoint, EnvRuntimeContext } from './environment-runtime.js'
 import type { EnvironmentRuntimeResolver } from './environment-runtime-resolver.js'
+import type { IUiDeployActuator, UiDeployBundle } from './ui-deploy-actuator.js'
 
 export class EnvironmentExistsError extends Error
 {
@@ -30,6 +31,18 @@ export class EnvironmentExistsError extends Error
     {
         super(EnvironmentExistsError.MessagePrefix + envName)
         this.name = EnvironmentExistsError.ErrorName
+    }
+}
+
+export class EnvironmentUiDeployUnavailableError extends Error
+{
+    private static readonly ErrorName = 'EnvironmentUiDeployUnavailableError'
+    private static readonly MessagePrefix = 'UI deploy is unavailable for environment: '
+
+    public constructor(envName: string)
+    {
+        super(EnvironmentUiDeployUnavailableError.MessagePrefix + envName)
+        this.name = EnvironmentUiDeployUnavailableError.ErrorName
     }
 }
 
@@ -155,7 +168,8 @@ export class EnvironmentService
         private readonly proxy: IAdminProxy,
         private readonly directory: ITenantDirectory,
         private readonly idp: IIdpService,
-        private readonly adminClientFactory: (conn: IdpConnection) => IdpAdminClient)
+        private readonly adminClientFactory: (conn: IdpConnection) => IdpAdminClient,
+        private readonly uiDeployer?: IUiDeployActuator)
     {
     }
 
@@ -380,6 +394,18 @@ export class EnvironmentService
         const rec = this.Require(name)
         const endpoint = await this.runtimes.For(rec).Start(this.CtxOf(rec))
         return this.SetStatus({ ...rec, endpoint: EnvironmentService.StoredEndpoint(endpoint) }, EnvStatus.Running)
+    }
+
+    /** Builds, pushes, signs and rolls out a UI bundle into an in-cluster environment; returns the record carrying its appDeployment. */
+    public async DeployAppToEnvironment(name: string, bundle: UiDeployBundle): Promise<EnvironmentRecord>
+    {
+        const rec = this.Require(name)
+        const hive = rec.hiveId === undefined ? undefined : this.directory.GetHive(rec.hiveId)
+        if (this.uiDeployer === undefined || hive === undefined)
+        {
+            throw new EnvironmentUiDeployUnavailableError(name)
+        }
+        return this.uiDeployer.DeployAppToEnvironment(rec, hive, bundle)
     }
 
     public async Stop(name: string): Promise<EnvironmentRecord>

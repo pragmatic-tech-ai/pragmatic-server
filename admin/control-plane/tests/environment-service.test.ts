@@ -1126,3 +1126,24 @@ test('BOUND in-cluster Create federates with a split issuer/discovery and a byte
         assert.equal(rec.idpBaseDomain, 'hive.test')
     })
 })
+
+test('DeployAppToEnvironment delegates to the actuator with the record and its hive, and returns the updated record', async () =>
+{
+    const h = await Harness.Make()
+    const seen: string[] = []
+    const updated = { ...Harness.Record('s1', EnvStatus.Running), hiveId: 'h1' }
+    const actuator = { DeployAppToEnvironment: async (r: EnvironmentRecord, hive: { id: string }) => { seen.push(r.name + ':' + hive.id); return updated } }
+    h.Service = new EnvironmentService(h.Registry, new FakeAllocator(h.Calls, false), SingleBackendResolver.Of(new DockerEnvironmentRuntime(h.Docker, h.Bundle), h.Directory, new HiveOrchestratorFactory()), h.Seeder, h.DataRoot, h.Proxy, h.Directory, h.Idp, c => new IdpAdminClient(c), actuator)
+    await h.Registry.Put({ ...Harness.Record('s1', EnvStatus.Running), hiveId: 'h1' })
+    const bundle = { config: { appName: 'a', appVersion: '1', entry: 'i', assets: [] }, files: [] }
+    assert.equal(await h.Service.DeployAppToEnvironment('s1', bundle), updated)
+    assert.deepEqual(seen, ['s1:h1'])
+})
+
+test('DeployAppToEnvironment is unavailable without an actuator or a hive binding', async () =>
+{
+    const h = await Harness.Make()
+    await h.Registry.Put(Harness.Record('s1', EnvStatus.Running))
+    const bundle = { config: { appName: 'a', appVersion: '1', entry: 'i', assets: [] }, files: [] }
+    await assert.rejects(h.Service.DeployAppToEnvironment('s1', bundle), /UI deploy is unavailable/)
+})
