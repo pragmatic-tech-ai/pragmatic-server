@@ -134,10 +134,21 @@ export class InClusterUiServingSmoke
     private static readonly HttpOk = 200
     private static readonly StatusKey = 'status'
     private static readonly ReadyReplicasKey = 'readyReplicas'
+    private static readonly PodsResource = 'pods'
+    /** Mirrors the unpack init container name K8sManifestBuilder renders. */
+    private static readonly UiUnpackContainerName = 'ui-unpack'
+    private static readonly ItemsKey = 'items'
+    private static readonly InitStatusesKey = 'initContainerStatuses'
+    private static readonly NameKey = 'name'
+    private static readonly StateKey = 'state'
+    private static readonly LastStateKey = 'lastState'
+    private static readonly TerminatedKey = 'terminated'
+    private static readonly ExitCodeKey = 'exitCode'
+    private static readonly SuccessExitCode = 0
     private static readonly NoReplicas = 0
     private static readonly OneReplica = 1
     private static readonly PageWaitMs = 60000
-    private static readonly NotReadyWindowMs = 90000
+    private static readonly NotReadyWindowMs = 120000
     private static readonly NotReadyPollMs = 5000
     private static readonly TamperSignatureBytes = 64
     private static readonly Base64 = 'base64'
@@ -166,6 +177,7 @@ export class InClusterUiServingSmoke
         ServedAsset: 'browser: /app/<tenant>/northwind/assets/app.js returns 200 with the asset body',
         TamperEnv: 'tamper env created and deployed cleanly before tampering',
         TamperInjected: 'tamper: signature companion overwritten in the registry while the env was scaled to zero',
+        TamperRejected: 'tamper: the ui-unpack init container terminated non-zero (signature verification rejected the artifact)',
         TamperNotReady: 'tamper: Deployment never became ready within the bounded window (pod-side verify fail-closed)',
         TamperNotServed: 'tamper: /app/<tenant>/northwind/ does NOT serve the marker',
     }
@@ -329,8 +341,9 @@ export class InClusterUiServingSmoke
         this.Expect(S.Labels.TamperInjected, true)
 
         await this.kubectl.Scale(namespace, deployment, S.OneReplica)
-        const everReady = await this.BecomesReady(namespace, deployment)
-        this.Expect(S.Labels.TamperNotReady, !everReady)
+        const outcome = await this.ObserveTamperOutcome(namespace, deployment)
+        this.Expect(S.Labels.TamperRejected, outcome.rejected)
+        this.Expect(S.Labels.TamperNotReady, !outcome.becameReady)
         this.Expect(S.Labels.TamperNotServed, !(await this.ServesMarker(context, S.TamperEnvName)))
     }
 
@@ -346,10 +359,11 @@ export class InClusterUiServingSmoke
         await oci.PushManifest(repo, sigTag, encoder.encode(JSON.stringify({ ...existing, layers })))
     }
 
-    /** Polls the Deployment's readyReplicas for the bounded window; true if it ever reaches ready. */
-    private async BecomesReady(namespace: string, deployment: string): Promise<boolean>
+    /** One bounded poll loop: does the unpack init container reject (non-zero exit), and does the Deployment ever become ready. */
+    private async ObserveTamperOutcome(namespace: string, deployment: string): Promise<{ rejected: boolean; becameReady: boolean }>
     {
         const S = InClusterUiServingSmoke
+        let rejected = false
         const deadline = Date.now() + S.NotReadyWindowMs
         while (Date.now() < deadline)
         {
@@ -357,9 +371,49 @@ export class InClusterUiServingSmoke
             const ready = json[S.StatusKey]?.[S.ReadyReplicasKey]
             if (typeof ready === 'number' && ready > S.NoReplicas)
             {
-                return true
+                return { rejected, becameReady: true }
             }
+            rejected = rejected || await this.UnpackRejected(namespace)
             await new Promise<void>(resolve => setTimeout(resolve, S.NotReadyPollMs))
+        }
+        return { rejected, becameReady: false }
+    }
+
+    /** True once any pod in the env namespace shows the ui-unpack init container with a non-zero exit (current or last state). */
+    private async UnpackRejected(namespace: string): Promise<boolean>
+    {
+        const S = InClusterUiServingSmoke
+        const pods = JSON.parse(await this.kubectl.Get(namespace, S.PodsResource)) as Record<string, unknown>
+        const items = pods[S.ItemsKey]
+        if (!Array.isArray(items))
+        {
+            return false
+        }
+        for (const pod of items as Record<string, unknown>[])
+        {
+            const status = pod[S.StatusKey] as Record<string, unknown> | undefined
+            const inits = status?.[S.InitStatusesKey]
+            if (!Array.isArray(inits))
+            {
+                continue
+            }
+            for (const init of inits as Record<string, unknown>[])
+            {
+                if (init[S.NameKey] !== S.UiUnpackContainerName)
+                {
+                    continue
+                }
+                for (const key of [S.StateKey, S.LastStateKey])
+                {
+                    const state = init[key] as Record<string, unknown> | undefined
+                    const terminated = state?.[S.TerminatedKey] as Record<string, unknown> | undefined
+                    const code = terminated?.[S.ExitCodeKey]
+                    if (typeof code === 'number' && code !== S.SuccessExitCode)
+                    {
+                        return true
+                    }
+                }
+            }
         }
         return false
     }
