@@ -2,12 +2,12 @@
  * GATED real-cluster smoke for the in-cluster OCI registry (SP-HIVE UI-serving, Spec 1). OPERATOR-RUN ONLY: NOT a *.test.ts,
  * NOT part of `tsx --test` / `npm test`, never executed by CI.
  *
- * Requires on PATH: `docker`, `kind`, `kubectl`, a running Docker daemon, host port 30500 free, and network access to pull
+ * Requires on PATH: `docker`, `kind`, `kubectl`, a running Docker daemon, the registry node port (InClusterRegistry.NodePort) free, and network access to pull
  * `registry:2` and `curlimages/curl`. Run with:
  *
  *   npx tsx admin/control-plane/registry-roundtrip-smoke.ts
  *
- * Steps: (1) create a kind cluster with a :30500 extraPortMapping and load registry:2; (2) apply the rendered registry manifest
+ * Steps: (1) create a kind cluster with an extraPortMapping for InClusterRegistry.NodePort and load registry:2; (2) apply the rendered registry manifest
  * and wait for the Deployment; (3) from the host, GET /v2/ and push + pull a blob through the node port; (4) from a throwaway
  * in-cluster pod, GET /v2/ through the Service DNS name; (5) tear the cluster down.
  */
@@ -21,7 +21,8 @@ import { KubectlCli, KubectlError, NodeExecFile } from './kubectl.js'
 export class RegistryRoundtripSmoke
 {
     private static readonly ClusterName = 'registry-smoke'
-    private static readonly Context = 'kind-registry-smoke'
+    private static readonly KindContextPrefix = 'kind-'
+    private static readonly Context = RegistryRoundtripSmoke.KindContextPrefix + RegistryRoundtripSmoke.ClusterName
     private static readonly HiveId = 'registry-smoke-hive'
     private static readonly Scheme = 'http://'
     private static readonly Repo = 'smoke/blob'
@@ -63,6 +64,13 @@ export class RegistryRoundtripSmoke
     private static readonly CurlFailFlags: readonly string[] = ['-sSf', '--max-time', '30']
     private static readonly RetryAttempts = 30
     private static readonly RetryIntervalMs = 2000
+    private static readonly ExitOk = 0
+    private static readonly ExitFail = 1
+    private static readonly NoDetail = ''
+    private static readonly ClusterLabelPrefix = 'kind cluster created with the :'
+    private static readonly NodePortLabelSuffix = ' mapping and registry:2 loaded'
+    private static readonly ConfigUpload = 'host: config blob upload accepted'
+    private static readonly NotAccepted = 'not accepted: status '
 
     private static readonly PassTag = 'PASS '
     private static readonly FailTag = 'FAIL '
@@ -72,7 +80,6 @@ export class RegistryRoundtripSmoke
     private static readonly OverallPass = 'OVERALL PASS'
     private static readonly OverallFail = 'OVERALL FAIL'
     private static readonly Labels = {
-        Cluster: 'kind cluster created with the :30500 mapping and registry:2 loaded',
         Rollout: 'registry manifest applied and the Deployment rolled out',
         HostV2: 'host: GET /v2/ through the node port returns 200',
         BlobPush: 'host: monolithic blob upload accepted',
@@ -93,9 +100,10 @@ export class RegistryRoundtripSmoke
 
     public static async Main(): Promise<void>
     {
+        const S = RegistryRoundtripSmoke
         const ok = await new RegistryRoundtripSmoke().Run()
         console.log(ok ? RegistryRoundtripSmoke.OverallPass : RegistryRoundtripSmoke.OverallFail)
-        process.exitCode = ok ? 0 : 1
+        process.exitCode = ok ? S.ExitOk : S.ExitFail
     }
 
     public async Run(): Promise<boolean>
@@ -106,7 +114,7 @@ export class RegistryRoundtripSmoke
             await this.exec.Run(S.Docker, [S.PullVerb, InClusterRegistry.Image])
             await this.kind.CreateCluster(S.ClusterName, { extraPortMappings: [InClusterRegistry.NodePort] })
             await this.kind.LoadImage(InClusterRegistry.Image, S.ClusterName)
-            this.Expect(S.Labels.Cluster, true)
+            this.Expect(S.ClusterLabel(), true)
 
             await this.kubectl.Apply(new K8sManifestBuilder().RenderRegistry(S.HiveId))
             await this.kubectl.RolloutStatus(InClusterRegistry.Namespace, InClusterRegistry.RegistryName)
@@ -134,6 +142,11 @@ export class RegistryRoundtripSmoke
         return !this.failed
     }
 
+    private static ClusterLabel(): string
+    {
+        return RegistryRoundtripSmoke.ClusterLabelPrefix + String(InClusterRegistry.NodePort) + RegistryRoundtripSmoke.NodePortLabelSuffix
+    }
+
     private static BaseUrl(): string
     {
         return RegistryRoundtripSmoke.Scheme + InClusterRegistry.PushBase()
@@ -143,24 +156,19 @@ export class RegistryRoundtripSmoke
     private async HostRoundtrip(): Promise<void>
     {
         const S = RegistryRoundtripSmoke
-        const v2 = await this.Retry(async () => fetch(S.BaseUrl() + InClusterRegistry.V2Path))
+        const v2 = await this.Retry(async () => this.FetchOk(S.BaseUrl() + InClusterRegistry.V2Path))
         this.Expect(S.Labels.HostV2, v2.status === S.OkStatus, String(v2.status))
 
         const repoUrl = S.BaseUrl() + InClusterRegistry.V2Path + S.Repo
         const bytes = randomBytes(S.BlobBytes)
         const digest = S.DigestPrefix + createHash(S.HashAlgorithm).update(bytes).digest(S.Hex)
 
-        const start = await fetch(repoUrl + S.UploadsPath, { method: S.PostMethod })
-        const location = start.headers.get(S.LocationHeader)
-        if (start.status !== S.AcceptedStatus || location === null)
+        const pushed = await this.PushBlob(repoUrl, bytes, digest)
+        this.Expect(S.Labels.BlobPush, pushed.ok, pushed.detail)
+        if (!pushed.ok)
         {
-            this.Expect(S.Labels.BlobPush, false, String(start.status))
             return
         }
-        const target = new URL(location, S.BaseUrl())
-        target.searchParams.set(S.DigestQuery, digest)
-        const put = await fetch(target, { method: S.PutMethod, headers: { [S.ContentType]: S.OctetStream }, body: bytes })
-        this.Expect(S.Labels.BlobPush, put.status === S.CreatedStatus, String(put.status))
 
         const back = await fetch(repoUrl + S.BlobsPath + digest)
         const received = Buffer.from(await back.arrayBuffer())
@@ -169,22 +177,34 @@ export class RegistryRoundtripSmoke
         await this.PushManifest(repoUrl, digest, bytes.length)
     }
 
+    /** Monolithic blob upload: POST must return 202 with a Location, then PUT with the digest must return 201. */
+    private async PushBlob(repoUrl: string, bytes: Buffer, digest: string): Promise<{ ok: boolean; detail: string }>
+    {
+        const S = RegistryRoundtripSmoke
+        const start = await fetch(repoUrl + S.UploadsPath, { method: S.PostMethod })
+        const location = start.headers.get(S.LocationHeader)
+        if (start.status !== S.AcceptedStatus || location === null)
+        {
+            return { ok: false, detail: S.NotAccepted + String(start.status) }
+        }
+        const target = new URL(location, S.BaseUrl())
+        target.searchParams.set(S.DigestQuery, digest)
+        const put = await fetch(target, { method: S.PutMethod, headers: { [S.ContentType]: S.OctetStream }, body: bytes })
+        return { ok: put.status === S.CreatedStatus, detail: S.NotAccepted + String(put.status) }
+    }
+
     /** Uploads the empty config blob and a minimal OCI manifest whose single layer is the pushed blob. */
     private async PushManifest(repoUrl: string, layerDigest: string, layerSize: number): Promise<void>
     {
         const S = RegistryRoundtripSmoke
         const config = Buffer.from(S.EmptyConfigJson)
         const configDigest = S.DigestPrefix + createHash(S.HashAlgorithm).update(config).digest(S.Hex)
-        const start = await fetch(repoUrl + S.UploadsPath, { method: S.PostMethod })
-        const location = start.headers.get(S.LocationHeader)
-        if (location === null)
+        const uploaded = await this.PushBlob(repoUrl, config, configDigest)
+        this.Expect(S.ConfigUpload, uploaded.ok, uploaded.detail)
+        if (!uploaded.ok)
         {
-            this.Expect(S.Labels.ManifestPush, false, String(start.status))
             return
         }
-        const target = new URL(location, S.BaseUrl())
-        target.searchParams.set(S.DigestQuery, configDigest)
-        await fetch(target, { method: S.PutMethod, headers: { [S.ContentType]: S.OctetStream }, body: config })
         const manifest = JSON.stringify({
             schemaVersion: S.SchemaVersion,
             mediaType: S.ManifestMediaType,
@@ -206,7 +226,7 @@ export class RegistryRoundtripSmoke
             S.CommandSeparator, S.CurlBinary, ...S.CurlFailFlags, url,
         ]
         let ok = true
-        let detail = ''
+        let detail = S.NoDetail
         try
         {
             await this.exec.Run(S.Kubectl, args)
@@ -217,6 +237,18 @@ export class RegistryRoundtripSmoke
             detail = KubectlError.Redact(err instanceof Error ? err.message : String(err))
         }
         this.Expect(S.Labels.PodDns, ok, detail)
+    }
+
+    /** Throws unless the URL answers 200, so Retry covers transient non-200 responses right after rollout as well as connection errors. */
+    private async FetchOk(url: string): Promise<Response>
+    {
+        const S = RegistryRoundtripSmoke
+        const response = await fetch(url)
+        if (response.status !== S.OkStatus)
+        {
+            throw new Error(S.NotAccepted + String(response.status))
+        }
+        return response
     }
 
     private async Retry<T>(action: () => Promise<T>): Promise<T>
@@ -238,14 +270,14 @@ export class RegistryRoundtripSmoke
         throw last
     }
 
-    private Expect(label: string, ok: boolean, detail: string = ''): void
+    private Expect(label: string, ok: boolean, detail: string = RegistryRoundtripSmoke.NoDetail): void
     {
         const S = RegistryRoundtripSmoke
         if (!ok)
         {
             this.failed = true
         }
-        console.log((ok ? S.PassTag : S.FailTag) + label + (detail !== '' && !ok ? S.DetailSep + detail : ''))
+        console.log((ok ? S.PassTag : S.FailTag) + label + (detail !== S.NoDetail && !ok ? S.DetailSep + detail : ''))
     }
 }
 
