@@ -441,12 +441,15 @@ describe('K8sManifestBuilder federated served environment', () =>
         assert.ok(!JSON.stringify(deployment).includes('server.key'))
     })
 
-    it('renders one ssl-passthrough Ingress for <environmentId>.<baseDomain> to the env Service', () =>
+    it('renders one TLS-TERMINATING Ingress for <environmentId>.<baseDomain> to the HTTP env Service', () =>
     {
         const ingresses = FederatedEnv.Items().filter((i: any) => i.kind === 'Ingress')
         assert.equal(ingresses.length, 1)
         const ing = ingresses[0]
-        assert.equal(ing.metadata.annotations['nginx.ingress.kubernetes.io/ssl-passthrough'], 'true')
+        // The env server speaks HTTP, so the ingress must TERMINATE TLS (tls section), NOT passthrough
+        // (passthrough would hand raw TLS to an HTTP backend and break the browser handshake).
+        assert.equal(ing.metadata.annotations?.['nginx.ingress.kubernetes.io/ssl-passthrough'], undefined)
+        assert.deepEqual(ing.spec.tls, [{ hosts: ['env-dev1-id.hive.test'] }])
         assert.equal(ing.spec.ingressClassName, 'nginx')
         assert.equal(ing.spec.rules[0].host, 'env-dev1-id.hive.test')
         assert.equal(ing.spec.rules[0].http.paths[0].backend.service.name, K8sManifestBuilder.ServerDeploymentOf('dev1'))

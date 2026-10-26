@@ -123,6 +123,8 @@ export class K8sManifestBuilder
     private static readonly IngressClassNginx = 'nginx'
     private static readonly AnnotationsKey = 'annotations'
     private static readonly SslPassthroughAnnotation = 'nginx.ingress.kubernetes.io/ssl-passthrough'
+    private static readonly TlsKey = 'tls'
+    private static readonly HostsKey = 'hosts'
     private static readonly SslPassthroughValue = 'true'
     private static readonly HostKey = 'host'
     private static readonly HttpKey = 'http'
@@ -1114,20 +1116,27 @@ export class K8sManifestBuilder
         }
     }
 
-    /** Per-env ssl-passthrough Ingress: <environmentId>.<baseDomain> to the env Service (mirrors the IdP Ingress). */
+    /**
+     * Per-env TLS-TERMINATING Ingress: <environmentId>.<baseDomain> → the env Service. The env server speaks plain
+     * HTTP (pragmatic-server-host serves node:http in-cluster), so — unlike the IdP, which serves its own HTTPS and
+     * uses ssl-passthrough — the ingress controller terminates TLS here and proxies HTTP to the backend. In dev,
+     * ingress-nginx serves its default self-signed cert for the host (the Playwright smoke uses ignoreHTTPSErrors);
+     * a real per-host cert Secret is the cloud follow-on. NEVER passthrough (that would hand raw TLS to an HTTP server).
+     */
     private ServerIngress(workload: EnvironmentWorkload, baseDomain: string): K8sObject
     {
         const name = K8sManifestBuilder.ServerDeploymentOf(workload.environmentName)
-        const meta = this.Meta(workload, name)
-        meta[K8sManifestBuilder.AnnotationsKey] = { [K8sManifestBuilder.SslPassthroughAnnotation]: K8sManifestBuilder.SslPassthroughValue }
+        const host = K8sManifestBuilder.EnvBrowserHostOf(workload.environmentId, baseDomain)
         return {
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionNetworking,
             [K8sManifestBuilder.KindKey]: K8sManifestBuilder.IngressKind,
-            [K8sManifestBuilder.MetadataKey]: meta,
+            [K8sManifestBuilder.MetadataKey]: this.Meta(workload, name),
             [K8sManifestBuilder.SpecKey]: {
                 [K8sManifestBuilder.IngressClassNameKey]: K8sManifestBuilder.IngressClassNginx,
+                // TLS section (no secretName in dev → controller default cert) makes nginx terminate TLS for the host.
+                [K8sManifestBuilder.TlsKey]: [{ [K8sManifestBuilder.HostsKey]: [host] }],
                 [K8sManifestBuilder.RulesKey]: [{
-                    [K8sManifestBuilder.HostKey]: K8sManifestBuilder.EnvBrowserHostOf(workload.environmentId, baseDomain),
+                    [K8sManifestBuilder.HostKey]: host,
                     [K8sManifestBuilder.HttpKey]: {
                         [K8sManifestBuilder.PathsKey]: [{
                             [K8sManifestBuilder.PathKey]: K8sManifestBuilder.IdpIngressRootPath,
