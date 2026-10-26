@@ -187,7 +187,6 @@ export class InClusterEnvCreateSmoke
         DemoNorthwindRegistered: 'demo: northwind is registered and lists as an application over the tenant WS',
         DemoNorthwindQuery: 'demo: northwind graph is queryable (Cypher read succeeds under app-private governance)',
         DemoLiveWrite: 'demo: live-data probe written into the data dir',
-        DemoRestart: 'demo: pod restarted (init-container re-ran) and rolled out Ready',
         DemoNoReseedMarker: 'demo: after restart the .env-seeded marker is intact (no re-seed)',
         DemoNoReseedLive: 'demo: after restart the live-data probe survived (seed did not clobber live state)',
         DemoDelete: 'demo: Delete completes',
@@ -296,6 +295,8 @@ export class InClusterEnvCreateSmoke
         this.Expect(S.Labels.DemoNorthwindRegistered, apps.some(a => a.name === NorthwindApp.AppName), apps.map(a => a.name).join(S.Comma))
         await client.OpenApplication(NorthwindApp.AppName)
         const orders = await client.CypherQuery(S.OrdersQuery)
+        // The contoso seed tree carries NO northwind instances, so this asserts the read SUCCEEDS (and logs the row count);
+        // requiring rows would fail on a correct system.
         this.Expect(S.Labels.DemoNorthwindQuery, Array.isArray(orders.items))
         console.log(S.InfoTag + S.OrdersInfo + String(orders.items.length))
         await this.CloseClients()
@@ -307,7 +308,7 @@ export class InClusterEnvCreateSmoke
         const kubectl = new NodeExecFile()
         await kubectl.Run(S.Kubectl, [S.ContextFlag, S.Context, S.RolloutVerb, S.RestartVerb, S.DeploymentPrefix + deployment, S.NamespaceFlag, namespace])
         await kubectl.Run(S.Kubectl, [S.ContextFlag, S.Context, S.RolloutVerb, S.StatusVerb, S.DeploymentPrefix + deployment, S.NamespaceFlag, namespace])
-        this.Expect(S.Labels.DemoRestart, true)
+        // A failed restart/rollout throws above; the marker and probe checks below are the real post-restart assertions.
         this.Expect(S.Labels.DemoNoReseedMarker, await this.PodHasFile(namespace, deployment, markerPath))
         this.Expect(S.Labels.DemoNoReseedLive, await this.PodHasFile(namespace, deployment, probePath))
 
@@ -351,7 +352,11 @@ export class InClusterEnvCreateSmoke
         this.forward = child
         return new Promise<number>((resolve, reject) =>
         {
-            const timer = setTimeout(() => reject(new Error(S.ForwardTimeoutMessage)), S.ForwardTimeoutMs)
+            const timer = setTimeout(() =>
+            {
+                child.kill(S.SigTerm)
+                reject(new Error(S.ForwardTimeoutMessage))
+            }, S.ForwardTimeoutMs)
             child.stdout?.setEncoding(S.Utf8Encoding)
             child.stdout?.on(S.DataEvent, (chunk: string) =>
             {

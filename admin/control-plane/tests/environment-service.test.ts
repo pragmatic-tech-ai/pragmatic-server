@@ -1007,6 +1007,9 @@ test('BOUND Create failure after the secret exists never leaks it in the error, 
 
 class DnsReachedFakeRuntime extends DockerEnvironmentRuntime
 {
+    private static readonly HttpUrl = 'http://svc.ns.svc.cluster.local:8080'
+    private static readonly WsUrl = 'ws://svc.ns.svc.cluster.local:8080/'
+
     public override PublishesHostPort(): boolean
     {
         return false
@@ -1014,7 +1017,7 @@ class DnsReachedFakeRuntime extends DockerEnvironmentRuntime
 
     public override async BringUp(): Promise<EnvEndpoint>
     {
-        return { httpUrl: 'http://svc.ns.svc.cluster.local:8080', wsUrl: 'ws://svc.ns.svc.cluster.local:8080/' }
+        return { httpUrl: DnsReachedFakeRuntime.HttpUrl, wsUrl: DnsReachedFakeRuntime.WsUrl }
     }
 
     public override async WaitHealthy(): Promise<void>
