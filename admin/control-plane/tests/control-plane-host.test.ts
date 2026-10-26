@@ -41,6 +41,8 @@ class FakeOperator implements IOperatorIdentity
     public readonly Dead = new Set<string>()
     public readonly Throwing = new Set<string>()
     public ValidateCalls = 0
+    public HoldCall = -1
+    public Release: (() => void) | undefined
 
     public async Authenticate(email: string, password: string): Promise<OperatorSession | null>
     {
@@ -54,6 +56,10 @@ class FakeOperator implements IOperatorIdentity
     public async ValidateToken(token: string): Promise<OperatorPrincipal | null>
     {
         this.ValidateCalls++
+        if (this.ValidateCalls === this.HoldCall)
+        {
+            await new Promise<void>(res => { this.Release = res })
+        }
         if (this.Throwing.has(token))
         {
             throw new Error('validator down')
@@ -810,6 +816,8 @@ describe('ControlPlaneHost operator socket lifecycle', () =>
     let operator: FakeOperator
     let host: ControlPlaneHost
     let clock: { T: number }
+    let registry: OperatorSocketRegistry<WebSocket>
+    let service: FakeService
 
     beforeEach(async () =>
     {
@@ -821,8 +829,10 @@ describe('ControlPlaneHost operator socket lifecycle', () =>
         clock = { T: 1000 }
         const directory = new PlatformDirectory(new ClientRegistry(join(parent, 'clients.json')), new TenantRegistry(join(parent, 'tenants.json')), new HiveRegistry(join(parent, 'hives.json')), { List: () => [] })
         const factory = new HiveOrchestratorFactory()
+        registry = new OperatorSocketRegistry<WebSocket>()
+        service = new FakeService()
         const tickets = new EventsTicketStore({ ttlMs: TicketTtlMs, now: () => clock.T })
-        host = new ControlPlaneHost(new FakeService(), new FakeGraphService(), root, operator, false, directory, await RolloutFixture.Create(parent, directory, factory), new FakeProvisioning(directory).AsService(), RolloutFixture.Observations(parent), new LoginThrottle(), false, tickets, new OperatorSocketRegistry<WebSocket>(), SweepMs)
+        host = new ControlPlaneHost(service, new FakeGraphService(), root, operator, false, directory, await RolloutFixture.Create(parent, directory, factory), new FakeProvisioning(directory).AsService(), RolloutFixture.Observations(parent), new LoginThrottle(), false, tickets, registry, SweepMs)
         await host.Listen(0, '127.0.0.1')
     })
 
@@ -872,5 +882,42 @@ describe('ControlPlaneHost operator socket lifecycle', () =>
         const opened = await new Promise<boolean>(res => { ws.once('open', () => res(true)); ws.once('error', () => res(false)); ws.once('close', () => res(false)) })
         assert.equal(opened, false)
         ws.terminate()
+    })
+
+    // Opens a socket whose admission ValidateToken is held, runs `during` while it is pending, then releases it.
+    async function HeldAdmission(during: (ws: WebSocket) => Promise<void>): Promise<void>
+    {
+        const ticket = await Harness.TicketFor(host, FakeOperator.Token)
+        operator.HoldCall = operator.ValidateCalls + 2
+        const ws = new WebSocket(`ws://127.0.0.1:${host.Address().port}/api/events`, [ticket])
+        await new Promise<void>((res, rej) => { ws.once('open', () => res()); ws.once('error', rej) })
+        await Harness.WaitFor(() => operator.Release !== undefined)
+        await during(ws)
+        operator.Release?.()
+        await Harness.Settle()
+    }
+
+    it('a peer that closes while admission is pending is not registered and leaks no subscription', async () =>
+    {
+        await HeldAdmission(async ws =>
+        {
+            ws.terminate()
+            await Harness.Settle()
+        })
+        assert.equal(registry.Size(), 0)
+        assert.equal(service.ListenerCount, 0)
+    })
+
+    it('a peer that drops abruptly while admission is pending does not crash the host or register', async () =>
+    {
+        await HeldAdmission(async ws =>
+        {
+            const raw = (ws as unknown as { _socket: { resetAndDestroy?: () => void; destroy: () => void } })._socket
+            raw.resetAndDestroy !== undefined ? raw.resetAndDestroy() : raw.destroy()
+            await Harness.Settle()
+        })
+        assert.equal(registry.Size(), 0)
+        assert.equal(service.ListenerCount, 0)
+        assert.equal((await Harness.Send(host, 'GET', '/api/ping')).status, 200)
     })
 })

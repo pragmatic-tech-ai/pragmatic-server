@@ -397,6 +397,8 @@ export class ControlPlaneHost
 
     private async AdmitClient(token: string, ws: WebSocket): Promise<void>
     {
+        // Attached synchronously, before any await: an error mid-validation must not surface as an unhandled event.
+        ws.on(ControlPlaneHost.ErrorEvent, () => ws.terminate())
         let valid = false
         try
         {
@@ -406,14 +408,13 @@ export class ControlPlaneHost
         {
             valid = false
         }
-        if (!valid)
+        if (!valid || ws.readyState !== WebSocket.OPEN)
         {
-            ws.close()
+            ws.terminate()
             return
         }
         this.AddClient(token, ws)
         ws.on(ControlPlaneHost.CloseEvent, () => this.OnClientGone())
-        ws.on(ControlPlaneHost.ErrorEvent, () => ws.terminate())
     }
 
     /** Tracks an operator ws client; the first one subscribes to environment lifecycle changes (made on any plane) to push them. */
