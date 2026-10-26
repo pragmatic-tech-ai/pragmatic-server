@@ -1,5 +1,6 @@
 import type { EnvironmentWorkload, WorkloadDatabase } from './environment-workload.js'
 import { EnvServerSeedSource } from './env-server-seed.js'
+import { InClusterRegistry } from './in-cluster-registry.js'
 import { IdpContainerEnv } from './idp-container-env.js'
 import type { IdpWorkloadSpec } from './idp-workload-driver.js'
 import { TenantAdminEnv } from './tenant-admin-env.js'
@@ -100,6 +101,12 @@ export class K8sManifestBuilder
     private static readonly DataVolumeName = 'data'
     private static readonly DataVolumeSize = '1Gi'
     private static readonly SingleReplica = 1
+
+    // In-cluster registry conventions.
+    private static readonly NodePortKey = 'nodePort'
+    private static readonly NodePortType = 'NodePort'
+    private static readonly RegistryDataPath = '/var/lib/registry'
+    private static readonly RegistryDataVolume = 'registry-data'
 
     // Pull-agent conventions.
     private static readonly AgentSuffix = 'agent'
@@ -318,6 +325,103 @@ export class K8sManifestBuilder
     public static HiveAgentNameOf(hiveId: string): string
     {
         return `${K8sManifestBuilder.HiveAgentPrefix}${hiveId}-${K8sManifestBuilder.AgentSuffix}`
+    }
+
+    /** Renders the in-cluster OCI registry (registry:2): Namespace, Deployment, NodePort Service, PVC. Addressing is cluster-fixed; hiveId only labels. */
+    public RenderRegistry(hiveId: string): string
+    {
+        const items: K8sObject[] = [
+            this.HiveAgentNamespaceObject(),
+            this.RegistryDeployment(hiveId),
+            this.RegistryService(hiveId),
+            this.RegistryClaim(hiveId),
+        ]
+        return JSON.stringify({
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ListKind,
+            [K8sManifestBuilder.ItemsKey]: items,
+        })
+    }
+
+    private RegistryMeta(hiveId: string, name: string): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.NameKey]: name,
+            [K8sManifestBuilder.NamespaceKey]: InClusterRegistry.Namespace,
+            [K8sManifestBuilder.LabelsKey]: { ...this.HiveLabels(hiveId), ...this.Selector(InClusterRegistry.RegistryName) },
+        }
+    }
+
+    private RegistryDeployment(hiveId: string): K8sObject
+    {
+        const selector = this.Selector(InClusterRegistry.RegistryName)
+        return {
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionApps,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.DeploymentKind,
+            [K8sManifestBuilder.MetadataKey]: this.RegistryMeta(hiveId, InClusterRegistry.RegistryName),
+            [K8sManifestBuilder.SpecKey]: {
+                [K8sManifestBuilder.ReplicasKey]: K8sManifestBuilder.SingleReplica,
+                [K8sManifestBuilder.SelectorKey]: { [K8sManifestBuilder.MatchLabelsKey]: selector },
+                [K8sManifestBuilder.TemplateKey]: {
+                    [K8sManifestBuilder.MetadataKey]: { [K8sManifestBuilder.LabelsKey]: selector },
+                    [K8sManifestBuilder.SpecKey]: {
+                        // Dev infra: registry:2 is not hardened here, so no strict non-root securityContext is imposed.
+                        [K8sManifestBuilder.ContainersKey]: [{
+                            [K8sManifestBuilder.NameKey]: InClusterRegistry.RegistryName,
+                            [K8sManifestBuilder.ImageKey]: InClusterRegistry.Image,
+                            [K8sManifestBuilder.ImagePullPolicyKey]: K8sManifestBuilder.IfNotPresent,
+                            [K8sManifestBuilder.PortsKey]: [{ [K8sManifestBuilder.ContainerPortKey]: InClusterRegistry.ServicePort }],
+                            [K8sManifestBuilder.VolumeMountsKey]: [
+                                { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.RegistryDataVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.RegistryDataPath },
+                            ],
+                            [K8sManifestBuilder.ReadinessProbeKey]: {
+                                [K8sManifestBuilder.HttpGetKey]: {
+                                    [K8sManifestBuilder.PathKey]: InClusterRegistry.V2Path,
+                                    [K8sManifestBuilder.PortKey]: InClusterRegistry.ServicePort,
+                                },
+                            },
+                        }],
+                        [K8sManifestBuilder.VolumesKey]: [{
+                            [K8sManifestBuilder.NameKey]: K8sManifestBuilder.RegistryDataVolume,
+                            [K8sManifestBuilder.PersistentVolumeClaimKey]: { [K8sManifestBuilder.ClaimNameKey]: InClusterRegistry.DataClaimName },
+                        }],
+                    },
+                },
+            },
+        }
+    }
+
+    private RegistryService(hiveId: string): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ServiceKind,
+            [K8sManifestBuilder.MetadataKey]: this.RegistryMeta(hiveId, InClusterRegistry.RegistryName),
+            [K8sManifestBuilder.SpecKey]: {
+                [K8sManifestBuilder.TypeKey]: K8sManifestBuilder.NodePortType,
+                [K8sManifestBuilder.SelectorKey]: this.Selector(InClusterRegistry.RegistryName),
+                [K8sManifestBuilder.PortsKey]: [{
+                    [K8sManifestBuilder.PortKey]: InClusterRegistry.ServicePort,
+                    [K8sManifestBuilder.TargetPortKey]: InClusterRegistry.ServicePort,
+                    [K8sManifestBuilder.NodePortKey]: InClusterRegistry.NodePort,
+                }],
+            },
+        }
+    }
+
+    private RegistryClaim(hiveId: string): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.PersistentVolumeClaimKind,
+            [K8sManifestBuilder.MetadataKey]: this.RegistryMeta(hiveId, InClusterRegistry.DataClaimName),
+            [K8sManifestBuilder.SpecKey]: {
+                [K8sManifestBuilder.AccessModesKey]: [K8sManifestBuilder.ReadWriteOnce],
+                [K8sManifestBuilder.ResourcesKey]: {
+                    [K8sManifestBuilder.RequestsKey]: { [K8sManifestBuilder.StorageKey]: InClusterRegistry.DataSize },
+                },
+            },
+        }
     }
 
     /** Renders the single per-hive pull agent: SA + cluster-wide get/list/patch on deployments + Deployment. */
