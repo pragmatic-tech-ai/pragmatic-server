@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { OciRegistryClient, OciResponseError, OciUnavailableError, type OciFetch } from '../oci-registry-client.js'
+import { OciArgumentError, OciRegistryClient, OciResponseError, OciUnavailableError, type OciFetch } from '../oci-registry-client.js'
 
 interface Recorded
 {
@@ -113,7 +113,7 @@ test('PullManifest GETs /v2/<repo>/manifests/<ref> and returns the bytes', async
 test('a non-2xx response raises OciResponseError carrying the status and no body', async () =>
 {
     const fake = new FakeRegistry(() => new Response('secret-body-text', { status: 500 }))
-    await assert.rejects(() => new OciRegistryClient(Base, fake.Fetch).PullBlob('app', 'sha256:00'), (err: unknown) =>
+    await assert.rejects(() => new OciRegistryClient(Base, fake.Fetch).PullBlob('app', 'sha256:' + '0'.repeat(64) + ''), (err: unknown) =>
     {
         assert.ok(err instanceof OciResponseError)
         assert.equal(err.status, 500)
@@ -135,4 +135,54 @@ test('a thrown fetch raises OciUnavailableError', async () =>
         assert.doesNotMatch(err.message, /secret-host/)
         return true
     })
+})
+
+test('a baseUrl with a trailing slash still produces correct URLs', async () =>
+{
+    const fake = new FakeRegistry(() => new Response(new Uint8Array(Bytes), { status: 200 }))
+    await new OciRegistryClient(Base + '/', fake.Fetch).PullManifest('app', 'v1')
+    assert.equal(fake.requests[0].url, Base + '/v2/app/manifests/v1')
+})
+
+test('an unexpected 2xx (PUT 200 where 201 expected) raises OciResponseError', async () =>
+{
+    const fake = new FakeRegistry(() => new Response(null, { status: 200 }))
+    await assert.rejects(() => new OciRegistryClient(Base, fake.Fetch).PushManifest('app', 'v1', Bytes), (err: unknown) =>
+    {
+        assert.ok(err instanceof OciResponseError)
+        assert.equal(err.status, 200)
+        return true
+    })
+})
+
+test('a non-202 on the uploads POST raises OciResponseError', async () =>
+{
+    const fake = new FakeRegistry(() => new Response(null, { status: 401 }))
+    await assert.rejects(() => new OciRegistryClient(Base, fake.Fetch).PushBlob('app', Bytes), (err: unknown) =>
+    {
+        assert.ok(err instanceof OciResponseError)
+        assert.equal(err.status, 401)
+        return true
+    })
+    assert.equal(fake.requests.length, 1)
+})
+
+test('a body that fails mid-read raises OciUnavailableError', async () =>
+{
+    const broken = new Response(new ReadableStream({ start(c) { c.error(new Error('boom-secret')) } }), { status: 200 })
+    const fake = new FakeRegistry(() => broken)
+    await assert.rejects(() => new OciRegistryClient(Base, fake.Fetch).PullManifest('app', 'v1'), OciUnavailableError)
+})
+
+test('a malformed digest or reference is refused before any request', async () =>
+{
+    const fake = new FakeRegistry(() => new Response(null, { status: 200 }))
+    const client = new OciRegistryClient(Base, fake.Fetch)
+    await assert.rejects(() => client.PullBlob('app', 'sha256:xyz'), OciArgumentError)
+    await assert.rejects(() => client.PullBlob('app', '../etc'), OciArgumentError)
+    await assert.rejects(() => client.PullManifest('app', 'a/b'), OciArgumentError)
+    await assert.rejects(() => client.PullManifest('app', 'a?x=1'), OciArgumentError)
+    await assert.rejects(() => client.PullManifest('app', 'a b'), OciArgumentError)
+    await assert.rejects(() => client.PushManifest('app', '', Bytes), OciArgumentError)
+    assert.equal(fake.requests.length, 0)
 })

@@ -15,6 +15,16 @@ export class OciUnavailableError extends Error
     }
 }
 
+/** A caller-supplied reference or digest had an unsafe shape; it is refused before any request. Never echoes the value. */
+export class OciArgumentError extends Error
+{
+    public constructor(message: string)
+    {
+        super(message)
+        this.name = 'OciArgumentError'
+    }
+}
+
 /** The registry answered with an unexpected status. Carries the status number only, never the response body. */
 export class OciResponseError extends Error
 {
@@ -51,9 +61,16 @@ export class OciRegistryClient
     private static readonly StatusAccepted = 202
     private static readonly TrailingSlash = /\/+$/
     private static readonly NoSlash = ''
+    private static readonly DigestShape = /^sha256:[0-9a-f]{64}$/
+    private static readonly ReferenceShape = /^[A-Za-z0-9_][A-Za-z0-9._:-]{0,127}$/
+    private static readonly BadDigestMessage = 'The OCI digest must be sha256:<64 hex characters>'
+    private static readonly BadReferenceMessage = 'The OCI reference must be a tag or digest without slashes, queries or whitespace'
     private static readonly UnreachableMessage = 'The OCI registry is unreachable'
     private static readonly StatusMessagePrefix = 'The OCI registry answered HTTP '
     private static readonly NoLocationMessage = 'The OCI registry accepted the upload but returned no Location'
+
+    /** The default seam: the global fetch, with the body narrowed to what BodyInit accepts at runtime (Uint8Array is valid). */
+    private static readonly GlobalFetch: OciFetch = (url, init) => fetch(url, init as RequestInit)
 
     private readonly baseUrl: string
 
@@ -61,9 +78,6 @@ export class OciRegistryClient
     {
         this.baseUrl = baseUrl.replace(OciRegistryClient.TrailingSlash, OciRegistryClient.NoSlash)
     }
-
-    /** The default seam: the global fetch, with the body narrowed to what BodyInit accepts at runtime (Uint8Array is valid). */
-    private static readonly GlobalFetch: OciFetch = (url, init) => fetch(url, init as RequestInit)
 
     public static DigestOf(bytes: Uint8Array): string
     {
@@ -90,6 +104,7 @@ export class OciRegistryClient
     public async PushManifest(repo: string, reference: string, manifestBytes: Uint8Array): Promise<string>
     {
         const S = OciRegistryClient
+        S.AssertReference(reference)
         await this.Send(S.MethodPut, this.RepoUrl(repo) + S.ManifestsPath + reference, S.StatusCreated, { [S.ContentTypeHeader]: S.ManifestMediaType }, manifestBytes)
         return S.DigestOf(manifestBytes)
     }
@@ -97,13 +112,26 @@ export class OciRegistryClient
     public async PullManifest(repo: string, reference: string): Promise<Uint8Array>
     {
         const S = OciRegistryClient
+        OciRegistryClient.AssertReference(reference)
         return this.ReadBytes(await this.Send(S.MethodGet, this.RepoUrl(repo) + S.ManifestsPath + reference, S.StatusOk))
     }
 
     public async PullBlob(repo: string, digest: string): Promise<Uint8Array>
     {
         const S = OciRegistryClient
+        if (!S.DigestShape.test(digest))
+        {
+            throw new OciArgumentError(S.BadDigestMessage)
+        }
         return this.ReadBytes(await this.Send(S.MethodGet, this.RepoUrl(repo) + S.BlobsPath + digest, S.StatusOk))
+    }
+
+    private static AssertReference(reference: string): void
+    {
+        if (!OciRegistryClient.ReferenceShape.test(reference))
+        {
+            throw new OciArgumentError(OciRegistryClient.BadReferenceMessage)
+        }
     }
 
     private RepoUrl(repo: string): string
@@ -113,14 +141,21 @@ export class OciRegistryClient
 
     private async ReadBytes(response: Response): Promise<Uint8Array>
     {
-        return new Uint8Array(await response.arrayBuffer())
+        try
+        {
+            return new Uint8Array(await response.arrayBuffer())
+        }
+        catch
+        {
+            throw new OciUnavailableError(OciRegistryClient.UnreachableMessage)
+        }
     }
 
     private async Drain(response: Response): Promise<void>
     {
         try
         {
-            await response.arrayBuffer()
+            await response.body?.cancel()
         }
         catch
         {
