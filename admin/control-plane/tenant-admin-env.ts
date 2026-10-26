@@ -16,4 +16,12 @@ export class TenantAdminEnv
     public static readonly RolloutToken = 'PRAGMATIC_TENANT_ADMIN_ROLLOUT_TOKEN'
     /** The hive the rollout client is bound to. */
     public static readonly RolloutHiveId = 'PRAGMATIC_TENANT_ADMIN_ROLLOUT_HIVE_ID'
+    /** Browser-facing IdP origin (issuer); its presence selects the injected, connection-only IdP service. */
+    public static readonly IdpBrowserBaseUrl = 'PRAGMATIC_IDP_BROWSER_BASE_URL'
+    /** In-cluster (Service DNS) IdP origin for token / jwks / admin calls. */
+    public static readonly IdpBaseUrl = 'PRAGMATIC_IDP_BASE_URL'
+    /** Path of the Secret-mounted IdP CA certificate. */
+    public static readonly IdpCaFile = 'PRAGMATIC_IDP_CA_FILE'
+    /** Path of the Secret-mounted IdP admin-token file (never an inline value). */
+    public static readonly IdpAdminTokenFile = 'PRAGMATIC_IDP_ADMIN_TOKEN_FILE'
 }

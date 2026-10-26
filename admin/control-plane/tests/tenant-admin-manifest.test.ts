@@ -143,3 +143,54 @@ describe('K8sManifestBuilder.RenderTenantAdmin', () =>
         assert.ok(!JSON.parse(text).items.some((i: any) => i.kind === 'Secret'))
     })
 })
+
+class IdpInjectionFixture
+{
+    public static readonly CaBytes = 'RAW-CA-PEM-BYTES'
+    public static readonly TokenBytes = 'raw-idp-admin-token'
+
+    public static Spec(): TenantAdminWorkloadSpec
+    {
+        return {
+            ...TenantAdminFixture.Spec(),
+            idp: {
+                browserBaseUrl: 'https://idp-acme.tenants.test',
+                internalBaseUrl: 'https://pragmatic-idp-acme.pragmatic-system.svc:8443',
+                caSecretName: 'acme-idp-ca',
+                adminTokenSecretName: 'acme-idp-admin',
+            },
+        }
+    }
+}
+
+describe('K8sManifestBuilder.RenderTenantAdmin IdP injection', () =>
+{
+    it('omits all IdP env and mounts when no idp is given', () =>
+    {
+        const dep = TenantAdminFixture.Of('Deployment')
+        const c = dep.spec.template.spec.containers[0]
+        assert.equal(c.env.filter((e: any) => e.name.startsWith('PRAGMATIC_IDP_')).length, 0)
+        assert.equal(dep.spec.template.spec.volumes.length, 3)
+    })
+
+    it('injects PRAGMATIC_IDP_* env and read-only Secret mounts by ref, never inline bytes', () =>
+    {
+        const text = new K8sManifestBuilder().RenderTenantAdmin(IdpInjectionFixture.Spec())
+        assert.ok(!text.includes(IdpInjectionFixture.CaBytes))
+        assert.ok(!text.includes(IdpInjectionFixture.TokenBytes))
+        const dep = JSON.parse(text).items.find((i: any) => i.kind === 'Deployment')
+        const pod = dep.spec.template.spec
+        const c = pod.containers[0]
+        const env = (n: string): string => c.env.find((e: any) => e.name === n).value
+        assert.equal(env('PRAGMATIC_IDP_BROWSER_BASE_URL'), 'https://idp-acme.tenants.test')
+        assert.equal(env('PRAGMATIC_IDP_BASE_URL'), 'https://pragmatic-idp-acme.pragmatic-system.svc:8443')
+        assert.equal(env('PRAGMATIC_IDP_CA_FILE'), '/idp/ca/ca.crt')
+        assert.equal(env('PRAGMATIC_IDP_ADMIN_TOKEN_FILE'), '/idp/token/admin-token')
+        const secrets = pod.volumes.filter((v: any) => v.secret).map((v: any) => v.secret.secretName)
+        assert.ok(secrets.includes('acme-idp-ca'))
+        assert.ok(secrets.includes('acme-idp-admin'))
+        const mounts = c.volumeMounts.filter((m: any) => m.mountPath.startsWith('/idp/'))
+        assert.equal(mounts.length, 2)
+        assert.ok(mounts.every((m: any) => m.readOnly === true))
+    })
+})

@@ -30,7 +30,7 @@ import { NetPortProbe, PortAllocator } from './port-allocator.js'
 import { ExecFileDockerExec, IdpContainerEnv } from './idp-container-env.js'
 import { IdpRegistry } from './idp-registry.js'
 import { DockerIdpDriver } from './docker-idp-driver.js'
-import { IdpService } from './idp-service.js'
+import { IdpService, type IIdpService } from './idp-service.js'
 import { IdpAdminClient } from './idp-admin-client.js'
 import { TenantProvisioningService } from './tenant-provisioning-service.js'
 import { TenantSessionStore } from './tenant-auth/tenant-session.js'
@@ -224,7 +224,7 @@ export class ControlPlaneServer
     public static ComposeTenantPlane(
         env: NodeJS.ProcessEnv,
         dataRoot: string,
-        idpService: IdpService,
+        idpService: IIdpService,
         directory: ITenantDirectory,
         secureCookie: boolean,
         service: IEnvironmentService,
@@ -248,7 +248,7 @@ export class ControlPlaneServer
     /** Gate-free composition of the tenant plane; callers decide whether the plane is active (ComposeTenantPlane gates on env, the standalone server always builds it). */
     public static BuildTenantPlane(
         dataRoot: string,
-        idpService: IdpService,
+        idpService: IIdpService,
         directory: ITenantDirectory,
         secureCookie: boolean,
         service: IEnvironmentService,

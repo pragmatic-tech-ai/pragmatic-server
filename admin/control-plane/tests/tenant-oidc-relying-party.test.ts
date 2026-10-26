@@ -1,4 +1,4 @@
-import { test } from 'node:test'
+import { describe, it, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
 import { readFileSync, rmSync } from 'node:fs'
@@ -637,5 +637,29 @@ test('Complete with a bad code throws a generic TenantLoginError that leaks neit
                 assert.ok(!/secret/i.test(err.message))
                 return true
             })
+    })
+})
+
+class SplitHostFixture
+{
+    public static Conn(browser: string, internal: string): IdpConnection
+    {
+        return { baseUrl: internal, browserBaseUrl: browser, ca: Buffer.alloc(0), adminToken: 't', adminTokenRef: 'r', caDir: 'd' }
+    }
+}
+
+describe('TenantOidcRelyingParty split-host config', () =>
+{
+    it('issuer uses the browser base and discovery the internal base', () =>
+    {
+        const conn = SplitHostFixture.Conn('https://idp-acme.tenants.test', 'https://idp.svc:8443')
+        assert.equal(TenantOidcRelyingParty.IssuerFor(conn, 'acme'), 'https://idp-acme.tenants.test/acme')
+        assert.equal(TenantOidcRelyingParty.DiscoveryUrlFor(conn, 'acme'), 'https://idp.svc:8443/acme/.well-known/openid-configuration')
+    })
+
+    it('single-host (browser == internal) yields identical issuer and discovery prefix', () =>
+    {
+        const conn = SplitHostFixture.Conn('https://h:1', 'https://h:1')
+        assert.equal(TenantOidcRelyingParty.DiscoveryUrlFor(conn, 'acme'), TenantOidcRelyingParty.IssuerFor(conn, 'acme') + '/.well-known/openid-configuration')
     })
 })

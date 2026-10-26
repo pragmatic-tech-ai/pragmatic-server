@@ -5,6 +5,8 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { InjectedIdpService } from '../injected-idp-service.js'
+import { IdpService } from '../idp-service.js'
 import { TenantAdminServer } from '../tenant-admin-server.js'
 import { SeededTenantDirectory } from '../tenant-api/seeded-tenant-directory.js'
 import { TenantApiEndpoint } from '../tenant-api/tenant-api-endpoint.js'
@@ -234,5 +236,23 @@ describe('TenantAdminServer.RolloutClientFrom', () =>
         assert.throws(
             () => TenantAdminServer.RolloutClientFrom({ PRAGMATIC_TENANT_ADMIN_ROLLOUT_URL: 'http://c:1', PRAGMATIC_TENANT_ADMIN_ROLLOUT_HIVE_ID: 'h' }),
             /PRAGMATIC_TENANT_ADMIN_ROLLOUT_TOKEN/)
+    })
+})
+
+describe('TenantAdminServer.BuildIdpService', () =>
+{
+    it('selects the injected connection-only service when the issuer env is present, else the docker-backed one', () =>
+    {
+        const dir = mkdtempSync(join(tmpdir(), 'tas-idp-'))
+        try
+        {
+            const injected = TenantAdminServer.BuildIdpService({ PRAGMATIC_IDP_BROWSER_BASE_URL: 'https://b', PRAGMATIC_IDP_BASE_URL: 'https://i', PRAGMATIC_IDP_CA_FILE: '/ca', PRAGMATIC_IDP_ADMIN_TOKEN_FILE: '/t' }, dir)
+            assert.ok(injected instanceof InjectedIdpService)
+            assert.ok(TenantAdminServer.BuildIdpService({}, dir) instanceof IdpService)
+        }
+        finally
+        {
+            rmSync(dir, { recursive: true, force: true })
+        }
     })
 })

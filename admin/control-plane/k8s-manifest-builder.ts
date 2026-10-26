@@ -192,6 +192,12 @@ export class K8sManifestBuilder
     private static readonly TenantAdminSeedMount = '/seed'
     private static readonly TenantAdminDataVolume = 'data'
     private static readonly TenantAdminSeedVolume = 'seed'
+    private static readonly TenantAdminIdpCaVolume = 'idp-ca'
+    private static readonly TenantAdminIdpCaMount = '/idp/ca'
+    private static readonly TenantAdminIdpCaFile = '/idp/ca/ca.crt'
+    private static readonly TenantAdminIdpTokenVolume = 'idp-token'
+    private static readonly TenantAdminIdpTokenMount = '/idp/token'
+    private static readonly TenantAdminIdpTokenFile = '/idp/token/admin-token'
     private static readonly TenantAdminDataSuffix = '-data'
     private static readonly TenantAdminSeedSuffix = '-seed'
     private static readonly TenantAdminDataSize = '256Mi'
@@ -765,6 +771,7 @@ export class K8sManifestBuilder
                 },
                 this.SecretVolume(K8sManifestBuilder.TenantAdminSeedVolume, spec.seedSecretName),
                 { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.TmpVolume, [K8sManifestBuilder.EmptyDirKey]: {} },
+                ...this.TenantAdminIdpVolumes(spec),
             ],
         }
         if (spec.imagePullSecretName !== undefined)
@@ -801,6 +808,45 @@ export class K8sManifestBuilder
         }
     }
 
+    /** Secret volumes carrying the operator-provisioned IdP CA cert and admin token (by ref only). */
+    private TenantAdminIdpVolumes(spec: TenantAdminWorkloadSpec): K8sObject[]
+    {
+        if (spec.idp === undefined)
+        {
+            return []
+        }
+        return [
+            this.SecretVolume(K8sManifestBuilder.TenantAdminIdpCaVolume, spec.idp.caSecretName),
+            this.SecretVolume(K8sManifestBuilder.TenantAdminIdpTokenVolume, spec.idp.adminTokenSecretName),
+        ]
+    }
+
+    private TenantAdminIdpMounts(spec: TenantAdminWorkloadSpec): K8sObject[]
+    {
+        if (spec.idp === undefined)
+        {
+            return []
+        }
+        return [
+            { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.TenantAdminIdpCaVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.TenantAdminIdpCaMount, [K8sManifestBuilder.ReadOnlyKey]: true },
+            { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.TenantAdminIdpTokenVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.TenantAdminIdpTokenMount, [K8sManifestBuilder.ReadOnlyKey]: true },
+        ]
+    }
+
+    private TenantAdminIdpEnv(spec: TenantAdminWorkloadSpec): K8sObject[]
+    {
+        if (spec.idp === undefined)
+        {
+            return []
+        }
+        return [
+            this.EnvLiteral(TenantAdminEnv.IdpBrowserBaseUrl, spec.idp.browserBaseUrl),
+            this.EnvLiteral(TenantAdminEnv.IdpBaseUrl, spec.idp.internalBaseUrl),
+            this.EnvLiteral(TenantAdminEnv.IdpCaFile, K8sManifestBuilder.TenantAdminIdpCaFile),
+            this.EnvLiteral(TenantAdminEnv.IdpAdminTokenFile, K8sManifestBuilder.TenantAdminIdpTokenFile),
+        ]
+    }
+
     private TenantAdminContainer(spec: TenantAdminWorkloadSpec): K8sObject
     {
         const secure = spec.externalScheme === K8sManifestBuilder.HttpsSchemeName
@@ -829,10 +875,12 @@ export class K8sManifestBuilder
                         },
                     },
                 },
+                ...this.TenantAdminIdpEnv(spec),
             ],
             [K8sManifestBuilder.VolumeMountsKey]: [
                 { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.TenantAdminDataVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.TenantAdminDataMount },
                 { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.TmpVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.TmpMount },
+                ...this.TenantAdminIdpMounts(spec),
             ],
             // The plane answers 403 to any Host that is not a known tenant subdomain, so the probe presents the tenant's own host.
             [K8sManifestBuilder.ReadinessProbeKey]: {
