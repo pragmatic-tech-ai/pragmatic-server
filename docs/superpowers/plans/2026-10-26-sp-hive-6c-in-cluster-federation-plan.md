@@ -14,6 +14,7 @@
 
 - OOP: methods/statics on classes; no module-level free functions or mutable state. Allman braces. No inline string literals (hoist to `private static readonly` PascalCase). PascalCase interfaces + public methods. Engine-never-calls-up.
 - SECRET-SAFETY (verbatim): IdP admin token, OIDC client secret, owner password, CA **private** key — held server-side by name only; NEVER in logs, DTOs, errors, thrown messages, or persisted records (refs/mounts only). The CA private key stays unshipped (DdLv8 invariant — do not reintroduce it into any Secret). The injected tenant-admin/env connection carries the admin token + CA **cert** by Secret ref/mount, never inline.
+- **SERVER-KEY SAFETY (producer side, load-bearing):** a relying-party pod (tenant-admin, served env) needs only the PUBLIC `ca.crt` to trust the IdP — NEVER the IdP's server **private key**. The existing per-tenant IdP TLS Secret holds `server.crt`+`server.key`+`ca.crt` together; it MUST NOT be mounted into an RP pod. The producer projects a **separate `ca.crt`-only Secret** (or mounts only the `ca.crt` key via a Secret item selector) for RP pods. Pin a test that the RP pod's mount exposes `ca.crt` only, never `server.key`.
 - Docker-Desktop / single-host path BYTE-IDENTICAL: `baseDomain` absent ⇒ internal base = browser base ⇒ single-host discovery, single-SAN cert, `PRAGMATIC_IDP_BASE_URL` = internal base exactly as today. The P4 `in-cluster-idp-smoke`, `idp-sso-smoke`, `tenant-login-e2e-smoke`, and the Docker federation must not change behavior.
 - `todl-identity-cloud` (the RP) is NOT modified. If a task thinks it must change the RP, STOP — re-check the split-host model (the RP already supports it).
 - Tests live in `tests/` subfolders. NEVER `npm install` at repo root. LF-only. Commit trailer: `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
@@ -96,34 +97,36 @@
 ## Task 5: Per-env served-app federation (S4 / DclV4)
 
 **Files:**
-- Modify: `admin/control-plane/environment-service.ts` (`Federate` extended to the in-cluster backend: `issuer=conn.browserBaseUrl`, `discoveryUrl=conn.baseUrl`, `redirect_uri=https://<env>.<baseDomain>/auth/oidc/callback…`, register the client, inject providerSettings + secret-by-ref), `admin/control-plane/k8s-manifest-builder.ts` (per-env `Ingress` host=`<env>.<baseDomain>` when federated; env `ServerDeployment` gains a CA Secret mount + `NODE_EXTRA_CA_CERTS`), `environments/seed/bundle.ts` (no shape change — split issuer/discovery values flow through)
+- Modify: `admin/control-plane/environment-service.ts` (`Federate` extended to the in-cluster backend: `issuer=conn.browserBaseUrl`, `discoveryUrl=conn.baseUrl`, `redirect_uri=https://<env>.<baseDomain>/auth/oidc/callback…`, register the client, inject providerSettings + secret-by-ref), `admin/control-plane/k8s-manifest-builder.ts` (per-env `Ingress` host=`<env>.<baseDomain>` when federated; env `ServerDeployment` mounts a **ca.crt-only** Secret + sets `NODE_EXTRA_CA_CERTS` — NEVER the IdP server.key, per SERVER-KEY SAFETY), `environments/seed/bundle.ts` (no shape change — split issuer/discovery values flow through). PRODUCER: project/reference a ca.crt-only Secret for the env pod.
 - Test: `admin/control-plane/tests/environment-service.test.ts`, `k8s-manifest-builder.test.ts` (extend)
 
 **Interfaces:**
 - Consumes: Task 2 (`browserBaseUrl`), Task 4's connection pattern, the in-cluster backend (`PublishesHostPort()==false`).
 - Produces: in-cluster bound env federates with a browser-reachable, byte-stable redirect_uri; env pod trusts the CA via `NODE_EXTRA_CA_CERTS`.
 
-- [ ] **Step 1: Write failing tests.** (a) `Federate` in-cluster emits providerSettings with `issuer==browser`, `discoveryUrl==internal`, `redirect_uri==https://<env>.<baseDomain>/…`, + the secret by ref; the Docker host-port branch is byte-identical (issuer==discovery==host.docker.internal, localhost redirect). (b) the env `ServerDeployment` carries a CA volume mount + `NODE_EXTRA_CA_CERTS` pointing at it when federated. (c) a per-env `Ingress` host==`<env>.<baseDomain>` is rendered for a federated in-cluster env.
+- [ ] **Step 1: Write failing tests.** (a) `Federate` in-cluster emits providerSettings with `issuer==browser`, `discoveryUrl==internal`, `redirect_uri==https://<env>.<baseDomain>/…`, + the secret by ref; the Docker host-port branch is byte-identical (issuer==discovery==host.docker.internal, localhost redirect). (b) the env `ServerDeployment` carries a CA volume mount + `NODE_EXTRA_CA_CERTS` pointing at it when federated, and the mounted Secret exposes `ca.crt` ONLY — assert no `server.key` key is mounted (SERVER-KEY SAFETY). (c) a per-env `Ingress` host==`<env>.<baseDomain>` is rendered for a federated in-cluster env.
 - [ ] **Step 2: Run tests — expect fail.**
 - [ ] **Step 3: Implement** the in-cluster `Federate` branch, the env Ingress, the CA mount + `NODE_EXTRA_CA_CERTS`. Keep the Docker path byte-identical.
 - [ ] **Step 4: Run tests — expect pass.** Full control-plane suite + `tsc` tools+tenant-admin+build+portal.
 - [ ] **Step 5: Commit.**
 
-## Task 6: kind substrate + gated browser-OIDC e2e (S5 / Dcles + DbMhM)
+## Task 6: producer wiring + kind substrate + gated browser-OIDC e2e (S5 / Dcles + DbMhM)
 
 **Files:**
-- Modify: `admin/control-plane/kind.ts` (`CreateCluster` gains a kind config with `extraPortMappings` for :443→host; `IKind` signature extended; existing callers pass no mappings = unchanged)
+- Modify: `admin/control-plane/tenant-admin-bootstrap.ts` (PRODUCER — populate `spec.idp` for the tenant-admin pod from the operator-provisioned IdP connection: browser base, internal base, the admin-token Secret ref, and a **ca.crt-only** Secret ref), and the IdP provisioning/seed path to PROJECT a ca.crt-only Secret for RP pods (derive it from the minted cert's `ca.crt` alone — do NOT expose `server.key`). This is the missing producer half of Task 4's consumption side.
+- Modify: `admin/control-plane/kind.ts` (`CreateCluster` gains a kind config with `extraPortMappings` for :443→host; `IKind` signature extended with an optional config; existing callers pass none = unchanged; the one `implements IKind` test double updates its signature)
 - Create: a gated in-cluster federation smoke (e.g. `admin/control-plane/in-cluster-federation-smoke.ts`) — installs ingress-nginx with `--enable-ssl-passthrough`, provisions a tenant IdP (dual-SAN), deploys tenant-admin (port-forward) + a bound env (via its Ingress), drives Playwright through the Ingress(es) for a real OIDC login, asserts a session with `email`/`name`, second env rides SSO; operator-run
 - Delete/retire: the Docker-era `admin/control-plane/idp-federation-smoke.ts` (Dcles) if still present
-- Test: smoke is type-checked + run by the operator (not in CI); unit-test any pure helpers extracted
+- Test: `admin/control-plane/tests/` for the bootstrap producer (spec.idp populated; ca.crt-only Secret projected — assert NO `server.key`); smoke is type-checked + run by the operator (not in CI); unit-test any pure helpers extracted
 
 **Interfaces:**
-- Consumes: Tasks 1–5.
+- Consumes: Tasks 1–5 (the InjectedIdpService connection contract, the dual-SAN cert, the Ingresses).
+- Produces: a fully wired tenant-admin pod (spec.idp populated) consuming a ca.crt-only Secret + admin-token Secret; the e2e proof.
 
-- [ ] **Step 1:** Extend `KindCli.CreateCluster` to accept an optional cluster config (extraPortMappings); unit-test the rendered config includes the :443 mapping; existing no-config callers unchanged. Write failing test first.
-- [ ] **Step 2: Run — expect fail, then implement, then pass.**
-- [ ] **Step 3:** Write the gated smoke (ingress-nginx install + passthrough, provision, deploy, Playwright login, SSO second env, teardown). Mark operator-run; do NOT execute (needs a cluster + browser). Follow the `tenant-login-e2e-smoke` host-resolver/ignoreHTTPSErrors idiom; retire the Docker-era federation smoke.
-- [ ] **Step 4:** Full control-plane suite + `tsc` tools+tenant-admin+build+portal clean; grep confirms `todl-identity-cloud` untouched and no `ca.key` reintroduced into any Secret.
+- [ ] **Step 1 (producer):** Write failing tests — `tenant-admin-bootstrap` populates `spec.idp` (browser/internal bases + admin-token ref + ca-only Secret ref); the IdP provisioning projects a `ca.crt`-only Secret for RP pods and the tenant-admin pod mount exposes `ca.crt` only (NO `server.key`, per SERVER-KEY SAFETY). Implement; pass.
+- [ ] **Step 2 (kind substrate):** Extend `KindCli.CreateCluster` to accept an optional cluster config (extraPortMappings for :443); update the `implements IKind` test double; unit-test the rendered config includes the :443 mapping; existing no-config callers unchanged. Failing test first, then implement, then pass.
+- [ ] **Step 3 (smoke):** Write the gated smoke (ingress-nginx install + `--enable-ssl-passthrough`, provision, deploy tenant-admin + bound env, Playwright login through the Ingress(es), SSO second env, teardown). Mark operator-run; do NOT execute (needs a cluster + browser). Follow the `tenant-login-e2e-smoke` host-resolver/ignoreHTTPSErrors idiom; retire the Docker-era federation smoke.
+- [ ] **Step 4:** Full control-plane suite + `tsc` tools+tenant-admin+build+portal clean; grep confirms `todl-identity-cloud` untouched, no `ca.key` reintroduced into any Secret, and no RP-pod mount exposes `server.key`.
 - [ ] **Step 5: Commit.**
 
 ---
