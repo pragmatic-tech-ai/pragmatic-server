@@ -187,11 +187,21 @@ export class EnvironmentService
             // Host-port (Docker): http://localhost:<port>. In-cluster: the env's browser host https://<environmentId>.<baseDomain>, byte-stable across restarts.
             // An in-cluster env with no known base domain has no browser-reachable origin, so it is not federated.
             const inCluster = port === undefined
-            if (inCluster && conn.baseDomain === undefined)
+            let origin: string
+            if (inCluster)
             {
-                return undefined
+                const baseDomain = conn.baseDomain
+                // An in-cluster env with no known base domain has no browser-reachable origin, so it is not federated.
+                if (baseDomain === undefined)
+                {
+                    return undefined
+                }
+                origin = EnvironmentService.HttpsPrefix + K8sManifestBuilder.EnvBrowserHostOf(def.environmentId, baseDomain)
             }
-            const origin = inCluster ? EnvironmentService.HttpsPrefix + K8sManifestBuilder.EnvBrowserHostOf(def.environmentId, conn.baseDomain as string) : EnvironmentService.HttpPrefix + String(port)
+            else
+            {
+                origin = EnvironmentService.HttpPrefix + String(port)
+            }
             const redirectUri = origin + EnvironmentService.OidcCallbackPath + EnvironmentService.EnvironmentQueryPrefix + encodeURIComponent(def.environmentId)
             await this.adminClientFactory(conn).RegisterClient(platformTenantId, { clientId, redirectUris: [redirectUri], secret })
             // The issuer is the browser-facing base (equals baseUrl on Docker); discovery/token/jwks are fetched on the internal base.

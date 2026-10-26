@@ -134,8 +134,8 @@ export class K8sManifestBuilder
     private static readonly BackendKey = 'backend'
     private static readonly ServiceKey = 'service'
     private static readonly PortNumberKey = 'number'
-    private static readonly IdpIngressRootPath = '/'
-    // Served-environment federation: ca.crt-only trust mount + per-env passthrough Ingress.
+    private static readonly IngressRootPath = '/'
+    // Served-environment federation: ca.crt-only trust mount + per-env TLS-terminating Ingress.
     private static readonly EnvIdpCaVolume = 'idp-ca'
     private static readonly EnvIdpCaMount = '/etc/idp-ca'
     private static readonly EnvIdpCaFile = '/etc/idp-ca/ca.crt'
@@ -677,7 +677,7 @@ export class K8sManifestBuilder
                     [K8sManifestBuilder.HostKey]: K8sManifestBuilder.IdpBrowserHostOf(spec.tenantId, baseDomain),
                     [K8sManifestBuilder.HttpKey]: {
                         [K8sManifestBuilder.PathsKey]: [{
-                            [K8sManifestBuilder.PathKey]: K8sManifestBuilder.IdpIngressRootPath,
+                            [K8sManifestBuilder.PathKey]: K8sManifestBuilder.IngressRootPath,
                             [K8sManifestBuilder.PathTypeKey]: K8sManifestBuilder.PathTypePrefix,
                             [K8sManifestBuilder.BackendKey]: {
                                 [K8sManifestBuilder.ServiceKey]: {
@@ -1139,7 +1139,7 @@ export class K8sManifestBuilder
                     [K8sManifestBuilder.HostKey]: host,
                     [K8sManifestBuilder.HttpKey]: {
                         [K8sManifestBuilder.PathsKey]: [{
-                            [K8sManifestBuilder.PathKey]: K8sManifestBuilder.IdpIngressRootPath,
+                            [K8sManifestBuilder.PathKey]: K8sManifestBuilder.IngressRootPath,
                             [K8sManifestBuilder.PathTypeKey]: K8sManifestBuilder.PathTypePrefix,
                             [K8sManifestBuilder.BackendKey]: {
                                 [K8sManifestBuilder.ServiceKey]: {

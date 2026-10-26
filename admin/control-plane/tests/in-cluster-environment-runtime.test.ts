@@ -85,11 +85,11 @@ class Harness
     public readonly BundleDir = mkdtempSync(join(tmpdir(), 'icr-'))
     public readonly Ctx: EnvRuntimeContext = { def: Fx.Def, record: this.Record, bundleDir: this.BundleDir }
 
-    public constructor(hiveKnown: boolean = true)
+    public constructor(hiveKnown: boolean = true, workload: EnvironmentWorkload = Fx.Workload)
     {
         const orchestrator = this.Orchestrator
         const factory = { For: (_h: HiveRecord) => orchestrator } as unknown as HiveOrchestratorFactory
-        const placement = { WorkloadFor: (_r: EnvironmentRecord) => Fx.Workload } as unknown as EnvironmentPlacement
+        const placement = { WorkloadFor: (_r: EnvironmentRecord) => workload } as unknown as EnvironmentPlacement
         const directory: ITenantDirectory = {
             GetTenant: () => undefined,
             GetHive: () => hiveKnown ? Fx.Hive : undefined,
@@ -213,6 +213,17 @@ test('BringUp applies the workload first, then a seed List with the ConfigMap an
     const items = (JSON.parse(h.Orchestrator.Fake.Applied[0]) as { items: { kind: string; metadata: { name: string } }[] }).items
     assert.ok(items.some(i => i.kind === 'ConfigMap' && i.metadata.name === EnvServerSeedSource.ConfigMapNameOf('e1')))
     assert.ok(items.some(i => i.kind === 'Secret' && i.metadata.name === EnvServerSeedSource.SecretNameOf('e1')))
+})
+
+test('BringUp applies the ca.crt-only IdP trust Secret when the workload is federated and caPem is present', async () =>
+{
+    const workload = { ...Fx.Workload, federation: { baseDomain: 'hive.test', caSecretName: EnvServerSeedSource.IdpCaSecretNameOf('e1') } } as EnvironmentWorkload
+    const h = new Harness(true, workload)
+    await h.Runtime.Prepare(h.Ctx)
+    const ctx: EnvRuntimeContext = { ...h.Ctx, caPem: Buffer.from('CA-PEM-BYTES') }
+    await h.Runtime.BringUp(ctx)
+    const idpCa = h.Orchestrator.Fake.Applied.map(a => JSON.parse(a) as { kind?: string; metadata?: { name?: string } }).find(m => m.kind === 'Secret' && m.metadata?.name === EnvServerSeedSource.IdpCaSecretNameOf('e1'))
+    assert.ok(idpCa, 'the <env>-idp-ca Secret is applied so the pod CA mount resolves')
 })
 
 test('a failing seed apply surfaces the generic error with no secret bytes or stderr', async () =>

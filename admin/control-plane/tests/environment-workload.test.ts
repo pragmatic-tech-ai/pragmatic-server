@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { EnvironmentWorkloadFactory } from '../environment-workload.js'
+import { EnvServerSeedSource } from '../env-server-seed.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import { HiveBackend, InfraMode, type HiveRecord } from '../platform-records.js'
 
@@ -66,5 +67,18 @@ describe('EnvironmentWorkloadFactory', () =>
         assert.notEqual(w.database.passwordRef, WorkloadFixture.PlantedValue)
         assert.ok(w.secretRefs.includes(w.database.passwordRef))
         assert.ok(!JSON.stringify(w).includes(WorkloadFixture.PlantedValue))
+    })
+
+    it('federates when the record carries an idpBaseDomain, referencing the ca.crt-only Secret', () =>
+    {
+        const rec = { ...WorkloadFixture.Env(Template.DevBlank, EnvType.Development), idpBaseDomain: 'hive.test' }
+        const w = EnvironmentWorkloadFactory.From(rec, WorkloadFixture.Hive())
+        assert.deepEqual(w.federation, { baseDomain: 'hive.test', caSecretName: EnvServerSeedSource.IdpCaSecretNameOf(WorkloadFixture.EnvName) })
+    })
+
+    it('has no federation when the record has no idpBaseDomain', () =>
+    {
+        const w = EnvironmentWorkloadFactory.From(WorkloadFixture.Env(Template.DevBlank, EnvType.Development), WorkloadFixture.Hive())
+        assert.equal(w.federation, undefined)
     })
 })

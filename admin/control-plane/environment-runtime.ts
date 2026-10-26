@@ -15,7 +15,8 @@ export interface IEnvironmentRuntime
     /**
      * True for a backend that publishes a host port and owns a local bundle/container (Docker), so EnvironmentService
      * allocates a host port, stamps the Docker-shaped record fields, and performs host (localhost) OIDC federation for
-     * it. False for a DNS-reached backend (in-cluster), which carries none of those and defers per-env federation.
+     * it. False for a DNS-reached backend (in-cluster), which carries none of those and federates per-env via the
+     * env's browser host (https://<environmentId>.<baseDomain>) when a base domain is known.
      */
     PublishesHostPort(): boolean
     EnsureImage(def: EnvDefinition): Promise<boolean>
