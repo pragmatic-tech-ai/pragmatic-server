@@ -11,11 +11,11 @@
  * env-server workload, waits for rollout-Ready), endpoint is a cluster Service DNS name, Delete tears the
  * namespace down, and a same-name Recreate does not collide.
  *
- * SCOPE: orchestration level only. SP-HIVE-3 boot-config/secret injection is NOT implemented: the stock
- * workload carries only PRAGMATIC_PORT, but the served server needs a base dir, tenant source and master key.
- * Exactly as k8s-hive-smoke.ts does, this smoke injects a throwaway per-run boot config (random master key as a
- * plain env var in a throwaway namespace) via a smoke-only EnvironmentPlacement subclass so the pod can reach
- * Ready. In-cluster create does NOT federate (per-env OIDC federation is deferred in-cluster), so NO IdP is
+ * SP-HIVE-3 boot-config/secret injection is now LIVE: Create runs the real InClusterEnvironmentRuntime path
+ * (Prepare generates the per-env bundle under the control-plane data root; BringUp applies the tenants ConfigMap
+ * and the master-key/provisioned-secrets k8s Secrets alongside the workload), so the pod reaches rollout-Ready
+ * purely from the injected config — no throwaway placement, no plaintext master-key env var.
+ * In-cluster create does NOT federate (per-env OIDC federation is deferred in-cluster), so NO IdP is
  * contacted; an UncontactedIdpService guard proves it (any federation attempt would throw and fail the smoke).
  * Image provenance fails closed, so the effective image ref is signed with a throwaway Ed25519 key into temp stores
  * that the real factory reads.
@@ -53,34 +53,6 @@ import { HiveBackend, InfraMode } from './platform-records.js'
 import type { HiveRecord, TenantRecord } from './platform-records.js'
 import { FileSignatureStore } from './signature-store.js'
 import { SeededTenantDirectory } from './tenant-api/seeded-tenant-directory.js'
-
-/** Smoke-only placement: the stock workload plus a throwaway boot config (the deferred SP-HIVE-3 substrate). */
-class BootConfigPlacement extends EnvironmentPlacement
-{
-    private static readonly BootBaseDirKey = 'PRAGMATIC_BASE_DIR'
-    private static readonly BootBaseDir = '/tmp/pragmatic-data'
-    private static readonly BootTenantKey = 'PRAGMATIC_ENVIRONMENT_ID'
-    private static readonly BootMasterKeyEnvKey = 'PRAGMATIC_MASTER_KEY_B64_ENV'
-    private static readonly BootMasterKeyVar = 'SMOKE_MASTER_KEY_B64'
-    private static readonly MasterKeyBytes = 32
-    private static readonly Base64 = 'base64'
-
-    public override WorkloadFor(record: EnvironmentRecord): EnvironmentWorkload
-    {
-        const S = BootConfigPlacement
-        const stock = super.WorkloadFor(record)
-        return {
-            ...stock,
-            env: {
-                ...stock.env,
-                [S.BootBaseDirKey]: S.BootBaseDir,
-                [S.BootTenantKey]: record.name,
-                [S.BootMasterKeyEnvKey]: S.BootMasterKeyVar,
-                [S.BootMasterKeyVar]: randomBytes(S.MasterKeyBytes).toString(S.Base64),
-            },
-        }
-    }
-}
 
 /**
  * In-cluster create does NOT federate (per-env OIDC federation is deferred in-cluster), so no IdP is contacted. This
@@ -242,7 +214,7 @@ export class InClusterEnvCreateSmoke
         const registry = new EnvironmentRegistry(join(dataRoot, S.RegistryFileName), docker)
         await registry.Load()
         const orchestrators = new HiveOrchestratorFactory(S.Context, dataRoot)
-        const placement = new BootConfigPlacement(directory)
+        const placement = new EnvironmentPlacement(directory)
         return new EnvironmentService(
             registry,
             new PortAllocator(S.EnvPortFloor, new NetPortProbe()),

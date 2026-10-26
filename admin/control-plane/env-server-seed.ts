@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import type { K8sObject } from './k8s-manifest-builder.js'
+import type { IKubectl } from './kubectl.js'
 
 interface EnvSecretEntry
 {
@@ -81,6 +82,8 @@ export class EnvServerSeedSource
     public static readonly ConfigMapNameSuffix = '-tenants'
     public static readonly PasswordKey = 'password'
     private static readonly ApiVersion = 'v1'
+    private static readonly ListKind = 'List'
+    private static readonly ItemsKey = 'items'
     private static readonly ConfigMapKind = 'ConfigMap'
     private static readonly ApiVersionKey = 'apiVersion'
     private static readonly KindKey = 'kind'
@@ -173,5 +176,22 @@ export class EnvServerSeedSource
     private ReadText(file: string): string
     {
         return this.ReadBytes(file).toString(EnvServerSeedSource.Utf8)
+    }
+
+    /**
+     * Applies the env-server seed (tenants ConfigMap + master/provisioned Secrets, and the db-password Secret when a
+     * ref is given) from a generated bundle as one v1 List. The single home for the seed manifest: InClusterEnvironmentRuntime.BringUp
+     * and the gated orchestrator smokes both route through here so a change can never drift between production and the smokes.
+     * The applied JSON carries base64 secret values transiently; it is handed only to kubectl and is never logged.
+     */
+    public static async ApplyBundle(kubectl: IKubectl, bundleDir: string, environmentName: string, dbPasswordRef?: string): Promise<void>
+    {
+        const seed = new EnvServerSeedSource(bundleDir, environmentName, dbPasswordRef)
+        const list = {
+            [EnvServerSeedSource.ApiVersionKey]: EnvServerSeedSource.ApiVersion,
+            [EnvServerSeedSource.KindKey]: EnvServerSeedSource.ListKind,
+            [EnvServerSeedSource.ItemsKey]: [seed.ConfigMapManifest(), ...seed.SecretSet().RenderManifest()],
+        }
+        await kubectl.Apply(JSON.stringify(list))
     }
 }

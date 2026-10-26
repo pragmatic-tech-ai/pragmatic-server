@@ -84,8 +84,6 @@ export class InClusterEnvironmentRuntime implements IEnvironmentRuntime
     private static readonly Dot = '.'
     private static readonly PortSeparator = ':'
     private static readonly EnvironmentQuery = '/?environment='
-    private static readonly ListApiVersion = 'v1'
-    private static readonly ListKind = 'List'
 
     public constructor(
         private readonly orchestrators: HiveOrchestratorFactory,
@@ -129,13 +127,7 @@ export class InClusterEnvironmentRuntime implements IEnvironmentRuntime
         await InClusterEnvironmentRuntime.Guard(async () =>
         {
             await orchestrator.Apply(workload)
-            const seed = new EnvServerSeedSource(bundleDir, ctx.record.name, workload.database?.passwordRef)
-            const list = {
-                apiVersion: InClusterEnvironmentRuntime.ListApiVersion,
-                kind: InClusterEnvironmentRuntime.ListKind,
-                items: [seed.ConfigMapManifest(), ...seed.SecretSet().RenderManifest()]
-            }
-            await orchestrator.Kubectl.Apply(JSON.stringify(list))
+            await EnvServerSeedSource.ApplyBundle(orchestrator.Kubectl, bundleDir, ctx.record.name, workload.database?.passwordRef)
         })
         return InClusterEnvironmentRuntime.EndpointOf(ctx, workload)
     }
