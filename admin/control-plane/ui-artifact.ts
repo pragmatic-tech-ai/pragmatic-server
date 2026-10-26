@@ -44,6 +44,9 @@ interface UiBlobDescriptor
 /** Packs a UI bundle into an OCI config blob + JSON layer blob + image manifest, reproducibly, and unpacks it. */
 export class UiArtifact
 {
+    /** Single home of the signature-companion format; the packer side, init container and unpacker must agree. */
+    public static readonly SignatureMediaType = 'application/vnd.pragmatic.ui.signature.v1'
+    public static readonly SignatureTagSuffix = '.sig'
     private static readonly ConfigMediaType = 'application/vnd.pragmatic.ui.config.v1+json'
     private static readonly LayerMediaType = 'application/vnd.pragmatic.ui.layer.v1+json'
     private static readonly ManifestMediaType = 'application/vnd.oci.image.manifest.v1+json'

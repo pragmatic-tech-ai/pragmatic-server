@@ -51,10 +51,6 @@ export class UiDeployError extends Error
 /** Builds, pushes, signs, records and rolls out a UI artifact for one environment. */
 export class UiDeployActuator implements IUiDeployActuator
 {
-    /** Must equal the media type the pod-side unpacker requires of the signature layer. */
-    public static readonly SignatureMediaType = 'application/vnd.pragmatic.ui.signature.v1'
-    /** Must equal the init container's signature tag suffix (artifactTag + suffix). */
-    public static readonly SigTagSuffix = '.sig'
     private static readonly RepoSeparator = '/'
     private static readonly TagSeparator = '-'
     private static readonly EmptyConfigMediaType = 'application/vnd.oci.empty.v1+json'
@@ -102,11 +98,12 @@ export class UiDeployActuator implements IUiDeployActuator
         const pushedDigest = await this.oci.PushManifest(repo, artifactTag, packed.manifestBytes)
 
         const signature = await this.signer.Sign(appName, appVersion, packed.manifestDigest, trustRef)
-        await this.PushSignature(repo, artifactTag + S.SigTagSuffix, signature)
+        await this.PushSignature(repo, artifactTag + UiArtifact.SignatureTagSuffix, signature)
 
         const publicPem = await this.keys.PublicKey(trustRef)
         await EnvServerSeedSource.ApplyUiTrust(kubectl, record.name, trustRef, Buffer.from(publicPem, S.Utf8))
 
+        // Order is fail-forward: a failure after Put leaves the record claiming an un-applied deployment; a failure before Put leaves orphan registry artifacts. Both are acceptable; a retry re-applies.
         const updated: EnvironmentRecord = { ...record, appDeployment: { appName, appVersion, repo, artifactTag, manifestDigest: pushedDigest } }
         await this.records.Put(updated)
 
@@ -128,7 +125,7 @@ export class UiDeployActuator implements IUiDeployActuator
             schemaVersion: S.SchemaVersion,
             mediaType: S.ManifestMediaType,
             config: { mediaType: S.EmptyConfigMediaType, digest: configDigest, size: configBlob.byteLength },
-            layers: [{ mediaType: S.SignatureMediaType, digest: sigDigest, size: sigBlob.byteLength }],
+            layers: [{ mediaType: UiArtifact.SignatureMediaType, digest: sigDigest, size: sigBlob.byteLength }],
         }
         await this.oci.PushManifest(repo, sigTag, encoder.encode(JSON.stringify(manifest)))
     }

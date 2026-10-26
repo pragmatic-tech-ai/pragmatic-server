@@ -1,3 +1,4 @@
+import { UiArtifact } from './ui-artifact.js'
 import type { EnvironmentWorkload, WorkloadAppDeployment, WorkloadDatabase } from './environment-workload.js'
 import { EnvServerSeedSource } from './env-server-seed.js'
 import { InClusterRegistry } from './in-cluster-registry.js'
@@ -261,7 +262,6 @@ export class K8sManifestBuilder
     private static readonly UiTrustVolume = 'ui-trust'
     private static readonly UiTrustMount = '/pragmatic/ui-trust'
     private static readonly UiPubSuffix = '.pub'
-    private static readonly UiSigTagSuffix = '.sig'
     private static readonly UiRegistryBaseVar = 'PRAGMATIC_UI_REGISTRY_BASE'
     private static readonly UiRepoVar = 'PRAGMATIC_UI_REPO'
     private static readonly UiArtifactTagVar = 'PRAGMATIC_UI_ARTIFACT_TAG'
@@ -1221,7 +1221,7 @@ export class K8sManifestBuilder
                 this.EnvLiteral(K8sManifestBuilder.UiRegistryBaseVar, app.registryPullBase),
                 this.EnvLiteral(K8sManifestBuilder.UiRepoVar, app.repo),
                 this.EnvLiteral(K8sManifestBuilder.UiArtifactTagVar, app.artifactTag),
-                this.EnvLiteral(K8sManifestBuilder.UiSigTagVar, `${app.artifactTag}${K8sManifestBuilder.UiSigTagSuffix}`),
+                this.EnvLiteral(K8sManifestBuilder.UiSigTagVar, `${app.artifactTag}${UiArtifact.SignatureTagSuffix}`),
                 this.EnvLiteral(K8sManifestBuilder.UiManifestDigestVar, app.manifestDigest),
                 this.EnvLiteral(K8sManifestBuilder.UiAppNameVar, app.appName),
                 this.EnvLiteral(K8sManifestBuilder.UiAppVersionVar, app.appVersion),

@@ -47,7 +47,6 @@ export class UiUnpacker
     private static readonly UnsafeSegment = /[\\:\0]/
     private static readonly CurrentDir = '.'
     private static readonly ParentDir = '..'
-    private static readonly SignatureMediaType = 'application/vnd.pragmatic.ui.signature.v1'
 
     public constructor(
         private readonly client: OciRegistryClient,
@@ -96,7 +95,7 @@ export class UiUnpacker
         const layerDigest = S.SingleLayerDigest(manifest)
 
         const sigManifest = S.ParseJson(await this.client.PullManifest(input.repo, input.sigTag))
-        const sigBlob = await this.client.PullBlob(input.repo, S.SingleLayerDigest(sigManifest, S.SignatureMediaType))
+        const sigBlob = await this.client.PullBlob(input.repo, S.SingleLayerDigest(sigManifest, UiArtifact.SignatureMediaType))
         const signature = new TextDecoder().decode(sigBlob).trim()
         await this.verifier.Verify(input.appName, input.appVersion, input.expectedManifestDigest, signature, input.trustRootRef)
 
