@@ -323,7 +323,7 @@ describe('K8sManifestBuilder server seed init-container', () =>
         const script = init.command.find((c: string) => c.includes('.env-seeded'))
         assert.ok(script)
         assert.ok(script.includes('existsSync'))
-        assert.equal(init.command[init.command.length - 1], '/pragmatic/seed/seed.json')
+        assert.equal(init.command[init.command.length - 1], `/pragmatic/seed/${EnvServerSeedSource.SeedKey}`)
     })
 
     it('mounts a volume referencing the seed Secret', () =>
