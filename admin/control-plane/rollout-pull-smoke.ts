@@ -436,7 +436,7 @@ export class RolloutPullSmoke
         try
         {
             await BundleBuilder.Generate(def, bundleDir, seedDir)
-            await EnvServerSeedSource.ApplyBundle(orchestrator.Kubectl, bundleDir, environmentName)
+            await EnvServerSeedSource.ApplyBundle(orchestrator.Kubectl, bundleDir, environmentName, def.environmentId)
         }
         finally
         {

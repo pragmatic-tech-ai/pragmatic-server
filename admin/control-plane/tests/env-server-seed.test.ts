@@ -1,9 +1,10 @@
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { EnvServerSeedSource, EnvServerSecretSet } from '../env-server-seed.js'
+import { EnvServerSeedSource, EnvServerSecretSet, SeedTooLargeError } from '../env-server-seed.js'
+import type { IKubectl } from '../kubectl.js'
 
 class Fixture
 {
@@ -97,5 +98,112 @@ describe('EnvServerSeedSource', () =>
     it('does not leak secret bytes in a missing-ref error', () =>
     {
         assert.throws(() => new EnvServerSeedSource(dir, Fixture.Env, 'nope/ref').SecretSet(), (e: Error) => !e.message.includes('SENTINEL'))
+    })
+})
+
+class SeedFixture
+{
+    public static readonly Id = 'contoso-id'
+    public static readonly Name = 'acme'
+    public static readonly Files: Record<string, string> = {
+        'identity/tenant-config.json': '{"SENTINEL-SEED-A":1}',
+        'packages/northwind/0.1.0/model.json': '{"SENTINEL-SEED-B":2}',
+        'applications/northwind/application.json': '{"SENTINEL-SEED-C":3}',
+    }
+
+    public static WriteTree(bundle: string, id: string, files: Record<string, string>): void
+    {
+        Fixture.Write(bundle)
+        for (const [rel, text] of Object.entries(files))
+        {
+            const full = join(bundle, 'data', id, ...rel.split('/'))
+            mkdirSync(join(full, '..'), { recursive: true })
+            writeFileSync(full, text)
+        }
+    }
+
+    public static SeedOf(set: EnvServerSecretSet): Record<string, string>
+    {
+        const secret = set.RenderManifest().find(o => (o.metadata as { name: string }).name === EnvServerSeedSource.SeedSecretNameOf(SeedFixture.Name))!
+        const data = secret.data as Record<string, string>
+        assert.deepEqual(Object.keys(data), ['seed.json'])
+        return JSON.parse(Buffer.from(data['seed.json'], 'base64').toString('utf8')) as Record<string, string>
+    }
+}
+
+describe('EnvServerSeedSource seed-tree projection', () =>
+{
+    it('projects data/<environmentId> as relpath -> base64, id-rooted (not name-rooted)', () =>
+    {
+        const bundle = mkdtempSync(join(tmpdir(), 'env-seed-tree-'))
+        try
+        {
+            SeedFixture.WriteTree(bundle, SeedFixture.Id, SeedFixture.Files)
+            SeedFixture.WriteTree(bundle, SeedFixture.Name, { 'identity/wrong.json': 'WRONG' })
+            const set = new EnvServerSeedSource(bundle, SeedFixture.Name, undefined, SeedFixture.Id).SecretSet()
+            const seed = SeedFixture.SeedOf(set)
+            assert.deepEqual(Object.keys(seed).sort(), Object.keys(SeedFixture.Files).sort())
+            for (const [rel, text] of Object.entries(SeedFixture.Files))
+            {
+                assert.equal(Buffer.from(seed[rel], 'base64').toString('utf8'), text)
+            }
+        }
+        finally { rmSync(bundle, { recursive: true, force: true }) }
+    })
+
+    it('skips cleanly when data/<environmentId> is absent', () =>
+    {
+        const bundle = mkdtempSync(join(tmpdir(), 'env-seed-none-'))
+        try
+        {
+            Fixture.Write(bundle)
+            const names = new EnvServerSeedSource(bundle, SeedFixture.Name, undefined, SeedFixture.Id).SecretSet().Names()
+            assert.ok(!names.includes(EnvServerSeedSource.SeedSecretNameOf(SeedFixture.Name)))
+        }
+        finally { rmSync(bundle, { recursive: true, force: true }) }
+    })
+
+    it('never leaks seed bytes through toJSON/toString', () =>
+    {
+        const bundle = mkdtempSync(join(tmpdir(), 'env-seed-redact-'))
+        try
+        {
+            SeedFixture.WriteTree(bundle, SeedFixture.Id, SeedFixture.Files)
+            const set = new EnvServerSeedSource(bundle, SeedFixture.Name, undefined, SeedFixture.Id).SecretSet()
+            for (const text of [JSON.stringify(set), String(set)])
+            {
+                assert.ok(!text.includes('SENTINEL'))
+                assert.ok(!text.includes(Buffer.from(SeedFixture.Files['identity/tenant-config.json']).toString('base64')))
+            }
+        }
+        finally { rmSync(bundle, { recursive: true, force: true }) }
+    })
+
+    it('throws SeedTooLargeError (without seed bytes) over the ceiling', () =>
+    {
+        const bundle = mkdtempSync(join(tmpdir(), 'env-seed-big-'))
+        try
+        {
+            SeedFixture.WriteTree(bundle, SeedFixture.Id, { 'packages/big.json': 'SENTINEL' + 'x'.repeat(1100000) })
+            assert.throws(
+                () => new EnvServerSeedSource(bundle, SeedFixture.Name, undefined, SeedFixture.Id).SecretSet(),
+                (e: Error) => e instanceof SeedTooLargeError && !e.message.includes('SENTINEL'))
+        }
+        finally { rmSync(bundle, { recursive: true, force: true }) }
+    })
+
+    it('ApplyBundle includes the seed Secret in the applied List', async () =>
+    {
+        const bundle = mkdtempSync(join(tmpdir(), 'env-seed-apply-'))
+        try
+        {
+            SeedFixture.WriteTree(bundle, SeedFixture.Id, SeedFixture.Files)
+            let applied = ''
+            const kubectl = { Apply: async (json: string) => { applied = json } } as unknown as IKubectl
+            await EnvServerSeedSource.ApplyBundle(kubectl, bundle, SeedFixture.Name, SeedFixture.Id)
+            const items = (JSON.parse(applied) as { items: { kind: string, metadata: { name: string } }[] }).items
+            assert.ok(items.some(i => i.kind === 'Secret' && i.metadata.name === EnvServerSeedSource.SeedSecretNameOf(SeedFixture.Name)))
+        }
+        finally { rmSync(bundle, { recursive: true, force: true }) }
     })
 })
