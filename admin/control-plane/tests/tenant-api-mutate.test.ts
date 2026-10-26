@@ -20,7 +20,6 @@ import { HiveBackend, InfraMode, type HiveRecord } from '../platform-records.js'
 import { InProcessRolloutClient } from '../tenant-api/in-process-rollout-client.js'
 import { RolloutFixture } from './rollout-fixture.js'
 import { TenantApiEndpoint, TenantEnvAction } from '../tenant-api/tenant-api-endpoint.js'
-import { EnvStopUnavailableInClusterError } from '../in-cluster-environment-runtime.js'
 import type { IEnvironmentService } from '../control-plane-host.js'
 import type { TenantSession } from '../tenant-auth/tenant-session.js'
 
@@ -66,7 +65,6 @@ class ResRecorder
 class FakeService
 {
     public readonly Calls: Array<{ action: string; name: string }> = []
-    public StopError: Error | undefined
 
     public constructor(private readonly records: readonly EnvironmentRecord[])
     {
@@ -91,14 +89,12 @@ class FakeService
     public async Stop(name: string): Promise<EnvironmentRecord>
     {
         this.Calls.push({ action: TenantEnvAction.Stop, name })
-        if (this.StopError) throw this.StopError
         return this.Shaped(name, EnvStatus.Stopped)
     }
 
     public async Restart(name: string): Promise<EnvironmentRecord>
     {
         this.Calls.push({ action: TenantEnvAction.Restart, name })
-        if (this.StopError) throw this.StopError
         return this.Shaped(name, EnvStatus.Running)
     }
 
@@ -295,16 +291,12 @@ describe('TenantApiEndpoint mutation routes', () =>
         assert.deepEqual(deployments.Targets, [])
     })
 
-    for (const action of [TenantEnvAction.Stop, TenantEnvAction.Restart])
+    it('Stop on an in-cluster env succeeds and reports the Stopped status', async () =>
     {
-        it(`${action} on an in-cluster env answers 501 with the fixed message, not a 500`, async () =>
-        {
-            service.StopError = new EnvStopUnavailableInClusterError()
-            const res = await Handle(Fixtures.Post(), `/tenant-api/environments/a-env/${action}`, Fixtures.Session(TenantA))
-            assert.equal(res.status, 501)
-            assert.deepEqual(res.Json(), { error: new EnvStopUnavailableInClusterError().message })
-        })
-    }
+        const res = await Handle(Fixtures.Post(), '/tenant-api/environments/a-env/stop', Fixtures.Session(TenantA))
+        assert.equal(res.status, 200)
+        assert.equal((res.Json() as { status: string }).status, EnvStatus.Stopped)
+    })
 
     for (const action of Object.values(TenantEnvAction))
     {

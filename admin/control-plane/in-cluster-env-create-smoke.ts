@@ -141,6 +141,16 @@ export class InClusterEnvCreateSmoke
     private static readonly StatusVerb = 'status'
     private static readonly PortForwardVerb = 'port-forward'
     private static readonly NamespaceFlag = '-n'
+    private static readonly PvcKind = 'pvc'
+    private static readonly SecretKind = 'secret'
+    private static readonly NameOutput = '-o=name'
+    private static readonly ReadyReplicasPath = '-o=jsonpath={.status.readyReplicas}'
+    private static readonly DeploymentKind = 'deployment'
+    private static readonly ZeroReplicas = 0
+    private static readonly OneReplica = 1
+    private static readonly ReplicaAttempts = 60
+    private static readonly ReplicaIntervalMs = 2000
+    private static readonly HealthzPath = '/healthz'
     private static readonly ContainerFlag = '-c'
     private static readonly ArgSeparator = '--'
     private static readonly DeploymentPrefix = 'deployment/'
@@ -189,6 +199,11 @@ export class InClusterEnvCreateSmoke
         DemoLiveWrite: 'demo: live-data probe written into the data dir',
         DemoNoReseedMarker: 'demo: after restart the .env-seeded marker is intact (no re-seed)',
         DemoNoReseedLive: 'demo: after restart the live-data probe survived (seed did not clobber live state)',
+        StopScaled: 'stop: server Deployment scaled to 0 ready replicas (pod gone)',
+        StopRetained: 'stop: namespace, data PVC and env Secrets still exist (nothing torn down)',
+        StartBack: 'start: server Deployment back to 1 ready replica',
+        StartHealthy: 'start: /healthz answers OK through the tunnel',
+        StartDataKept: 'start: live-data probe written before Stop survived (PVC data preserved)',
         DemoDelete: 'demo: Delete completes',
     }
 
@@ -312,8 +327,55 @@ export class InClusterEnvCreateSmoke
         this.Expect(S.Labels.DemoNoReseedMarker, await this.PodHasFile(namespace, deployment, markerPath))
         this.Expect(S.Labels.DemoNoReseedLive, await this.PodHasFile(namespace, deployment, probePath))
 
+        await this.RunStopStartPhase(service, name, namespace, deployment, probePath)
+
         await service.Delete(name)
         this.Expect(S.Labels.DemoDelete, true)
+    }
+
+    /**
+     * Stop = scale-to-zero (OPERATOR-RUN, needs a live cluster): the pod disappears but the namespace, data PVC and env
+     * Secrets are retained; Start brings the pod back healthy with the pre-Stop live-data probe still on the PVC.
+     */
+    private async RunStopStartPhase(service: EnvironmentService, name: string, namespace: string, deployment: string, probePath: string): Promise<void>
+    {
+        const S = InClusterEnvCreateSmoke
+        await service.Stop(name)
+        this.Expect(S.Labels.StopScaled, await this.WaitReadyReplicas(namespace, deployment, S.ZeroReplicas))
+        const pvcs = await this.KubectlOut([S.GetVerb, S.PvcKind, S.NameOutput, S.NamespaceFlag, namespace])
+        const secrets = await this.KubectlOut([S.GetVerb, S.SecretKind, S.NameOutput, S.NamespaceFlag, namespace])
+        this.Expect(S.Labels.StopRetained, (await this.GetNamespace(namespace)) !== undefined && pvcs.trim().length > 0 && secrets.trim().length > 0)
+
+        await service.Start(name)
+        this.Expect(S.Labels.StartBack, await this.WaitReadyReplicas(namespace, deployment, S.OneReplica))
+        const port = await this.StartForward(namespace, deployment)
+        const health = await fetch(S.LoopbackHttp + String(port) + S.HealthzPath)
+        this.StopForward()
+        this.Expect(S.Labels.StartHealthy, health.ok)
+        this.Expect(S.Labels.StartDataKept, await this.PodHasFile(namespace, deployment, probePath))
+    }
+
+    /** Polls the Deployment's readyReplicas (empty output means 0) until it equals the wanted count. */
+    private async WaitReadyReplicas(namespace: string, deployment: string, wanted: number): Promise<boolean>
+    {
+        const S = InClusterEnvCreateSmoke
+        for (let attempt = 0; attempt < S.ReplicaAttempts; attempt++)
+        {
+            const out = await this.KubectlOut([S.GetVerb, S.DeploymentKind, deployment, S.ReadyReplicasPath, S.NamespaceFlag, namespace])
+            if (Number(out.trim() || S.ZeroReplicas) === wanted)
+            {
+                return true
+            }
+            await new Promise<void>(resolve => setTimeout(resolve, S.ReplicaIntervalMs))
+        }
+        return false
+    }
+
+    private async KubectlOut(args: string[]): Promise<string>
+    {
+        const S = InClusterEnvCreateSmoke
+        const out = await new NodeExecFile().Run(S.Kubectl, [S.ContextFlag, S.Context, ...args])
+        return out.stdout
     }
 
     /** Reads the env admin password from the per-env bundle the control plane generated, logs in over the tunnel and binds a client. */

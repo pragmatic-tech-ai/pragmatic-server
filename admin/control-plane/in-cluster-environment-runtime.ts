@@ -36,19 +36,6 @@ export class EnvLogsUnavailableInClusterError extends Error
     }
 }
 
-/** The orchestrator offers no stop distinct from teardown, so an in-cluster environment cannot be stopped. */
-export class EnvStopUnavailableInClusterError extends Error
-{
-    private static readonly DefaultMessage = 'Stopping is not available for in-cluster environments; delete the environment instead.'
-    private static readonly ErrorName = 'EnvStopUnavailableInClusterError'
-
-    public constructor()
-    {
-        super(EnvStopUnavailableInClusterError.DefaultMessage)
-        this.name = EnvStopUnavailableInClusterError.ErrorName
-    }
-}
-
 /** A hive-bound record whose hive is not in the directory. */
 export class InClusterBundleMissingError extends Error
 {
@@ -145,9 +132,11 @@ export class InClusterEnvironmentRuntime implements IEnvironmentRuntime
         return endpoint
     }
 
-    public Stop(_ctx: EnvRuntimeContext): Promise<void>
+    /** Scale-to-zero only: the namespace, PVC and Secrets are retained so Start can bring the same data back. NEVER Teardown. */
+    public async Stop(ctx: EnvRuntimeContext): Promise<void>
     {
-        return Promise.reject(new EnvStopUnavailableInClusterError())
+        const { orchestrator, workload } = this.Resolve(ctx)
+        await InClusterEnvironmentRuntime.Guard(() => orchestrator.Scale(workload, 0))
     }
 
     public async Teardown(ctx: EnvRuntimeContext, _removeData: boolean): Promise<void>

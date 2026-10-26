@@ -12,7 +12,6 @@ import { ManifestNotGatedError, UnknownHiveError, UnknownManifestError } from '.
 import type { ITenantApiEndpoint } from '../tenant-auth/tenant-plane.js'
 import type { TenantSession } from '../tenant-auth/tenant-session.js'
 import { AdminProxyError, AdminProxyErrorKind } from '../admin-proxy.js'
-import { EnvStopUnavailableInClusterError } from '../in-cluster-environment-runtime.js'
 import { EnvironmentExistsError, EnvironmentNotDevelopmentError, EnvironmentNotFoundError, EnvironmentNotRuntimeError } from '../environment-service.js'
 import { EnvType, Template } from '../environment-record.js'
 import { UnsupportedBackendError } from '../hive-orchestrator.js'
@@ -93,7 +92,6 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     private static readonly StatusBadRequest = 400
     private static readonly StatusNotFound = 404
     private static readonly StatusConflict = 409
-    private static readonly StatusNotImplemented = 501
     private static readonly StatusInternal = 500
     private static readonly StatusUnavailable = 503
     private static readonly NotFoundMessage = 'Not found'
@@ -306,20 +304,7 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
             this.WriteNotFound(res)
             return true
         }
-        let updated: EnvironmentRecord
-        try
-        {
-            updated = await this.Perform(action, rec.name)
-        }
-        catch (err)
-        {
-            if (err instanceof EnvStopUnavailableInClusterError)
-            {
-                this.WriteJson(res, TenantApiEndpoint.StatusNotImplemented, { [TenantApiEndpoint.ErrorKey]: err.message })
-                return true
-            }
-            throw err
-        }
+        const updated = await this.Perform(action, rec.name)
         this.WriteJson(res, TenantApiEndpoint.StatusOk, EnvironmentDtoMapper.ToDto(updated))
         return true
     }
