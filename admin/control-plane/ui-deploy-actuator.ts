@@ -39,6 +39,7 @@ export interface IUiDeployActuator
 export class UiDeployError extends Error
 {
     public static readonly NoTrustRootMessage = 'Hive has no trust root; refusing an unsigned UI deploy'
+    public static readonly RolloutFailedMessage = 'UI deploy rollout did not become healthy'
     private static readonly ErrorName = 'UiDeployError'
 
     public constructor(message: string)
@@ -58,6 +59,12 @@ export class UiDeployActuator implements IUiDeployActuator
     private static readonly SchemaVersion = 2
     private static readonly EmptyConfigJson = '{}'
     private static readonly Utf8 = 'utf8'
+    private static readonly SchemaVersionKey = 'schemaVersion'
+    private static readonly MediaTypeKey = 'mediaType'
+    private static readonly ConfigKey = 'config'
+    private static readonly LayersKey = 'layers'
+    private static readonly DigestKey = 'digest'
+    private static readonly SizeKey = 'size'
 
     public constructor(
         private readonly oci: OciRegistryClient,
@@ -108,7 +115,17 @@ export class UiDeployActuator implements IUiDeployActuator
         await this.records.Put(updated)
 
         await kubectl.Apply(this.manifests.Render(EnvironmentWorkloadFactory.From(updated, hive)))
-        await kubectl.RolloutRestart(K8sManifestBuilder.NamespaceOf(record.name), K8sManifestBuilder.ServerDeploymentOf(record.name))
+        const namespace = K8sManifestBuilder.NamespaceOf(record.name)
+        const deployment = K8sManifestBuilder.ServerDeploymentOf(record.name)
+        await kubectl.RolloutRestart(namespace, deployment)
+        try
+        {
+            await kubectl.RolloutStatus(namespace, deployment)
+        }
+        catch
+        {
+            throw new UiDeployError(UiDeployError.RolloutFailedMessage)
+        }
         return updated
     }
 
@@ -122,10 +139,10 @@ export class UiDeployActuator implements IUiDeployActuator
         const configDigest = await this.oci.PushBlob(repo, configBlob)
         const sigDigest = await this.oci.PushBlob(repo, sigBlob)
         const manifest = {
-            schemaVersion: S.SchemaVersion,
-            mediaType: S.ManifestMediaType,
-            config: { mediaType: S.EmptyConfigMediaType, digest: configDigest, size: configBlob.byteLength },
-            layers: [{ mediaType: UiArtifact.SignatureMediaType, digest: sigDigest, size: sigBlob.byteLength }],
+            [S.SchemaVersionKey]: S.SchemaVersion,
+            [S.MediaTypeKey]: S.ManifestMediaType,
+            [S.ConfigKey]: { [S.MediaTypeKey]: S.EmptyConfigMediaType, [S.DigestKey]: configDigest, [S.SizeKey]: configBlob.byteLength },
+            [S.LayersKey]: [{ [S.MediaTypeKey]: UiArtifact.SignatureMediaType, [S.DigestKey]: sigDigest, [S.SizeKey]: sigBlob.byteLength }],
         }
         await this.oci.PushManifest(repo, sigTag, encoder.encode(JSON.stringify(manifest)))
     }

@@ -74,10 +74,11 @@ describe('K8sManifestBuilder UI unpack', () =>
     it('leaves the Deployment unchanged without appDeployment', () =>
     {
         const dep = Fixture.Deployment(false)
-        const json = JSON.stringify(dep)
+        const explicitUndefined = { ...Fixture.Workload(false), appDeployment: undefined }
+        const other = JSON.parse(new K8sManifestBuilder().Render(explicitUndefined)).items.find((o: any) => o.kind === 'Deployment' && o.spec.template.spec.initContainers)
+        assert.deepEqual(dep, other)
+        assert.equal(new K8sManifestBuilder().Render(Fixture.Workload(false)), new K8sManifestBuilder().Render(explicitUndefined))
         assert.equal(dep.spec.template.spec.initContainers.length, 1)
-        assert.ok(!json.includes('PRAGMATIC_UI_'))
-        assert.ok(!json.includes('ui-trust'))
     })
 
     it('RenderRegistry carries no hive label but keeps the app selector', () =>

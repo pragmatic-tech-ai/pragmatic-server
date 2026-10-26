@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { OciRegistryClient } from '../oci-registry-client.js'
 import { EnvironmentWorkloadFactory } from '../environment-workload.js'
 import { InClusterRegistry } from '../in-cluster-registry.js'
 import { EnvServerSeedSource } from '../env-server-seed.js'
@@ -14,6 +15,17 @@ class WorkloadFixture
     public static readonly Image = 'pragmatic-server:dev'
     public static readonly DbImage = 'postgres:16'
     public static readonly ServerPort = 8080
+    public static readonly AppName = 'crm'
+    public static readonly AppVersion = '1.2.3'
+    public static readonly TrustRef = 'trust-root-1'
+    public static readonly NoTrustKeyRef = ''
+    public static readonly HttpScheme = 'http://'
+    public static readonly UiTrustSecret = 'e1-ui-trust'
+
+    public static App()
+    {
+        return { appName: WorkloadFixture.AppName, appVersion: WorkloadFixture.AppVersion, repo: 'apps/crm', artifactTag: 'v1.2.3', manifestDigest: 'sha256:abc' }
+    }
 
     public static Hive(): HiveRecord
     {
@@ -85,17 +97,34 @@ describe('EnvironmentWorkloadFactory', () =>
 
     it('maps record.appDeployment into the workload with registry base, trust secret and trust key', () =>
     {
-        const app = { appName: 'crm', appVersion: '1.2.3', repo: 'apps/crm', artifactTag: 'v1.2.3', manifestDigest: 'sha256:abc' }
+        const app = WorkloadFixture.App()
         const rec = { ...WorkloadFixture.Env(Template.DevBlank, EnvType.Development), appDeployment: app }
-        const hive = { ...WorkloadFixture.Hive(), trustRootRef: 'trust-root-1' }
+        const hive = { ...WorkloadFixture.Hive(), trustRootRef: WorkloadFixture.TrustRef }
         const w = EnvironmentWorkloadFactory.From(rec, hive)
         assert.deepEqual(w.appDeployment, {
             ...app,
-            registryPullBase: InClusterRegistry.PullBase(),
+            registryPullBase: WorkloadFixture.HttpScheme + InClusterRegistry.PullBase(),
             trustSecretName: EnvServerSeedSource.UiTrustSecretNameOf(WorkloadFixture.EnvName),
-            trustKeyRef: 'trust-root-1',
+            trustKeyRef: WorkloadFixture.TrustRef,
         })
-        assert.equal(EnvServerSeedSource.UiTrustSecretNameOf('e1'), 'e1-ui-trust')
+        assert.equal(EnvServerSeedSource.UiTrustSecretNameOf(WorkloadFixture.EnvName), WorkloadFixture.UiTrustSecret)
+    })
+
+    it('registryPullBase is an absolute http URL a pod-side OciRegistryClient can use', () =>
+    {
+        const rec = { ...WorkloadFixture.Env(Template.DevBlank, EnvType.Development), appDeployment: WorkloadFixture.App() }
+        const w = EnvironmentWorkloadFactory.From(rec, WorkloadFixture.Hive())
+        const base = w.appDeployment!.registryPullBase
+        assert.ok(base.startsWith(WorkloadFixture.HttpScheme))
+        assert.equal(new URL(base + '/v2/').protocol, 'http:')
+        assert.doesNotThrow(() => new OciRegistryClient(base))
+    })
+
+    it('falls back to the empty trust key ref when the hive has no trustRootRef', () =>
+    {
+        const rec = { ...WorkloadFixture.Env(Template.DevBlank, EnvType.Development), appDeployment: WorkloadFixture.App() }
+        const w = EnvironmentWorkloadFactory.From(rec, WorkloadFixture.Hive())
+        assert.equal(w.appDeployment!.trustKeyRef, WorkloadFixture.NoTrustKeyRef)
     })
 
     it('has no appDeployment when the record has none', () =>

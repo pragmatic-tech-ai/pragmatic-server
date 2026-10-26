@@ -45,6 +45,12 @@ export class UiUnpacker
     private static readonly UiDir = 'ui'
     private static readonly JsonIndent = 2
     private static readonly UnsafeSegment = /[\\:\0]/
+    private static readonly NameKey = 'name'
+    private static readonly VersionKey = 'version'
+    private static readonly PackagesKey = 'packages'
+    private static readonly UiKey = 'ui'
+    private static readonly EntryKey = 'entry'
+    private static readonly AssetsKey = 'assets'
     private static readonly CurrentDir = '.'
     private static readonly ParentDir = '..'
 
@@ -109,8 +115,8 @@ export class UiUnpacker
             }
         }
         const config = S.ParseJson(await this.PullPinned(input.repo, configDigest))
-        const entry = config.entry
-        const assets = config.assets
+        const entry = config[S.EntryKey]
+        const assets = config[S.AssetsKey]
         if (typeof entry !== 'string' || !Array.isArray(assets) || assets.some(a => typeof a !== 'string'))
         {
             throw new UiUnpackError()
@@ -118,7 +124,12 @@ export class UiUnpacker
         const packages = await this.ExistingPackages(input.appName, live)
 
         await this.WriteFiles(S.Join(treeRoot, S.UiDir), files)
-        const appManifest = { name: input.appName, version: input.appVersion, packages, ui: { entry, assets } }
+        const appManifest = {
+            [S.NameKey]: input.appName,
+            [S.VersionKey]: input.appVersion,
+            [S.PackagesKey]: packages,
+            [S.UiKey]: { [S.EntryKey]: entry, [S.AssetsKey]: assets },
+        }
         await this.storage.WriteText(manifestPath, JSON.stringify(appManifest, null, S.JsonIndent))
         await this.storage.WriteText(livePath, input.appVersion)
     }

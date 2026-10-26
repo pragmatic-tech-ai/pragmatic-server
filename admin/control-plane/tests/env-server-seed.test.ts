@@ -259,7 +259,7 @@ describe('EnvServerSeedSource seed-tree projection', () =>
     })
 })
 
-class CaCaptureKubectl
+class CapturingKubectl
 {
     public Applied: string[] = []
 
@@ -271,7 +271,7 @@ class CaCaptureKubectl
 
 it('ApplyIdpCa applies a Secret carrying ca.crt ONLY in the env namespace (never a server key)', async () =>
 {
-    const kubectl = new CaCaptureKubectl()
+    const kubectl = new CapturingKubectl()
     await EnvServerSeedSource.ApplyIdpCa(kubectl as never, 'dev1', Buffer.from('PUBLIC-CA'))
     const secret = JSON.parse(kubectl.Applied[0]!)
     assert.equal(secret.kind, 'Secret')
@@ -283,7 +283,7 @@ it('ApplyIdpCa applies a Secret carrying ca.crt ONLY in the env namespace (never
 
 it('ApplyUiTrust applies a Secret with exactly one <ref>.pub key (never a private key)', async () =>
 {
-    const kubectl = new CaCaptureKubectl()
+    const kubectl = new CapturingKubectl()
     await EnvServerSeedSource.ApplyUiTrust(kubectl as never, 'e1', 'hive-root', Buffer.from('PEMDATA'))
     assert.equal(kubectl.Applied.length, 1)
     const secret = JSON.parse(kubectl.Applied[0]!)

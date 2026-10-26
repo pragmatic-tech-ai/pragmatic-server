@@ -54,6 +54,8 @@ export class EnvironmentWorkloadFactory
     private static readonly DatabaseImage = 'postgres:16'
     private static readonly ServerPort = 8080
     private static readonly NoTrustKeyRef = ''
+    /** The in-cluster registry is plain HTTP; the pod-side client needs an absolute URL base. */
+    private static readonly HttpScheme = 'http://'
     private static readonly PortEnvKey = 'PRAGMATIC_PORT'
 
     /** Database presence follows the real template definition (TemplateCatalog.Resolve), so it cannot drift from the docker model. */
@@ -91,7 +93,7 @@ export class EnvironmentWorkloadFactory
             workload.appDeployment = {
                 appName: record.appDeployment.appName,
                 appVersion: record.appDeployment.appVersion,
-                registryPullBase: InClusterRegistry.PullBase(),
+                registryPullBase: EnvironmentWorkloadFactory.HttpScheme + InClusterRegistry.PullBase(),
                 repo: record.appDeployment.repo,
                 artifactTag: record.appDeployment.artifactTag,
                 manifestDigest: record.appDeployment.manifestDigest,

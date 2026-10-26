@@ -65,7 +65,19 @@ class FakeKubectl implements IKubectl
         this.events.push('restart')
     }
 
-    public async RolloutStatus(): Promise<void> { }
+    public StatusFails = false
+    public Statuses: Array<[string, string]> = []
+
+    public async RolloutStatus(namespace: string, deployment: string): Promise<void>
+    {
+        this.Statuses.push([namespace, deployment])
+        this.events.push('status')
+        if (this.StatusFails)
+        {
+            throw new Error('planted-rollout-detail')
+        }
+    }
+
     public async SetImage(): Promise<void> { }
     public async Scale(): Promise<void> { }
     public async Get(): Promise<string> { return '' }
@@ -168,8 +180,21 @@ describe('UiDeployActuator', () =>
         await fx.actuator.DeployAppToEnvironment(fx.Record(), fx.Hive(Fixture.Ref), fx.Bundle())
         assert.deepEqual(fx.kubectl.Restarts, [[K8sManifestBuilder.NamespaceOf(Fixture.Env), K8sManifestBuilder.ServerDeploymentOf(Fixture.Env)]])
         const tail = fx.events.slice(fx.events.indexOf('put'))
-        assert.deepEqual(tail, ['put', 'apply', 'restart'])
+        assert.deepEqual(tail, ['put', 'apply', 'restart', 'status'])
         assert.ok(fx.kubectl.Applied[1].includes('PRAGMATIC_UI_REPO'), 'rendered manifest carries the unpack init container')
+    })
+
+    it('awaits rollout status on the env Deployment after the restart', async () =>
+    {
+        await fx.actuator.DeployAppToEnvironment(fx.Record(), fx.Hive(Fixture.Ref), fx.Bundle())
+        assert.deepEqual(fx.kubectl.Statuses, [[K8sManifestBuilder.NamespaceOf(Fixture.Env), K8sManifestBuilder.ServerDeploymentOf(Fixture.Env)]])
+    })
+
+    it('rejects material-free when the rollout never becomes healthy', async () =>
+    {
+        fx.kubectl.StatusFails = true
+        await assert.rejects(fx.actuator.DeployAppToEnvironment(fx.Record(), fx.Hive(Fixture.Ref), fx.Bundle()),
+            (e: Error) => e instanceof UiDeployError && e.message === UiDeployError.RolloutFailedMessage && !e.message.includes('planted'))
     })
 
     it('fails fast without a trustRootRef and touches nothing', async () =>
