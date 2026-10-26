@@ -219,7 +219,7 @@ export class K8sManifestBuilder
      * Rejects relpaths that escape the data dir.
      */
     private static readonly ServerSeedMarkerFile = '.env-seeded'
-    private static readonly ServerSeedFile = 'seed.json'
+    private static readonly ServerSeedFile = EnvServerSeedSource.SeedKey
     private static readonly ServerSeedEscapeMessage = 'seed path escapes data dir: '
     public static readonly ServerSeedScript = [
         "const fs=require('fs'),p=require('path');",
