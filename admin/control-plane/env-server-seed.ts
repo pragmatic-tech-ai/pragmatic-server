@@ -77,7 +77,7 @@ export class SeedTooLargeError extends Error
     public constructor(public readonly actualBytes: number, public readonly ceilingBytes: number)
     {
         super(`${SeedTooLargeError.Prefix}${actualBytes}${SeedTooLargeError.Separator}${ceilingBytes}${SeedTooLargeError.Unit}`)
-        this.name = 'SeedTooLargeError'
+        this.name = new.target.name
     }
 }
 
@@ -193,7 +193,7 @@ export class EnvServerSeedSource
     /** Adds the seed Secret (single `seed.json` key: relpath -> base64 bytes) walked under data/<environmentId>; skips when absent/empty. */
     private AddSeedTree(set: EnvServerSecretSet): void
     {
-        if (this.environmentId === undefined)
+        if (this.environmentId === undefined || this.environmentId === '')
         {
             return
         }
@@ -224,7 +224,7 @@ export class EnvServerSeedSource
     private static WalkFiles(dir: string): string[]
     {
         const out: string[] = []
-        for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name)))
+        for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)))
         {
             const full = join(dir, entry.name)
             if (entry.isDirectory())

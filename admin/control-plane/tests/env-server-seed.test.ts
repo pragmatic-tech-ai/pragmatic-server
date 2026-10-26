@@ -148,7 +148,10 @@ describe('EnvServerSeedSource seed-tree projection', () =>
                 assert.equal(Buffer.from(seed[rel], 'base64').toString('utf8'), text)
             }
         }
-        finally { rmSync(bundle, { recursive: true, force: true }) }
+        finally
+        {
+            rmSync(bundle, { recursive: true, force: true })
+        }
     })
 
     it('skips cleanly when data/<environmentId> is absent', () =>
@@ -160,7 +163,41 @@ describe('EnvServerSeedSource seed-tree projection', () =>
             const names = new EnvServerSeedSource(bundle, SeedFixture.Name, undefined, SeedFixture.Id).SecretSet().Names()
             assert.ok(!names.includes(EnvServerSeedSource.SeedSecretNameOf(SeedFixture.Name)))
         }
-        finally { rmSync(bundle, { recursive: true, force: true }) }
+        finally
+        {
+            rmSync(bundle, { recursive: true, force: true })
+        }
+    })
+
+    it('yields no seed Secret for an empty environmentId (does not walk data/)', () =>
+    {
+        const bundle = mkdtempSync(join(tmpdir(), 'env-seed-emptyid-'))
+        try
+        {
+            SeedFixture.WriteTree(bundle, SeedFixture.Id, SeedFixture.Files)
+            const names = new EnvServerSeedSource(bundle, SeedFixture.Name, undefined, '').SecretSet().Names()
+            assert.ok(!names.includes(EnvServerSeedSource.SeedSecretNameOf(SeedFixture.Name)))
+        }
+        finally
+        {
+            rmSync(bundle, { recursive: true, force: true })
+        }
+    })
+
+    it('yields no seed Secret for an empty data/<id> directory', () =>
+    {
+        const bundle = mkdtempSync(join(tmpdir(), 'env-seed-emptydir-'))
+        try
+        {
+            Fixture.Write(bundle)
+            mkdirSync(join(bundle, 'data', SeedFixture.Id), { recursive: true })
+            const names = new EnvServerSeedSource(bundle, SeedFixture.Name, undefined, SeedFixture.Id).SecretSet().Names()
+            assert.ok(!names.includes(EnvServerSeedSource.SeedSecretNameOf(SeedFixture.Name)))
+        }
+        finally
+        {
+            rmSync(bundle, { recursive: true, force: true })
+        }
     })
 
     it('never leaks seed bytes through toJSON/toString', () =>
@@ -170,13 +207,20 @@ describe('EnvServerSeedSource seed-tree projection', () =>
         {
             SeedFixture.WriteTree(bundle, SeedFixture.Id, SeedFixture.Files)
             const set = new EnvServerSeedSource(bundle, SeedFixture.Name, undefined, SeedFixture.Id).SecretSet()
-            for (const text of [JSON.stringify(set), String(set)])
+            const rendered = set.RenderManifest().find(o => (o.metadata as { name: string }).name === EnvServerSeedSource.SeedSecretNameOf(SeedFixture.Name))!
+            const outer = (rendered.data as Record<string, string>)['seed.json']
+            assert.ok(outer.length > 0)
+            for (const text of [JSON.stringify(set), String(set), `${set}`])
             {
                 assert.ok(!text.includes('SENTINEL'))
-                assert.ok(!text.includes(Buffer.from(SeedFixture.Files['identity/tenant-config.json']).toString('base64')))
+                assert.ok(!text.includes(outer))
+                assert.ok(!text.includes('{"type":"Buffer"'))
             }
         }
-        finally { rmSync(bundle, { recursive: true, force: true }) }
+        finally
+        {
+            rmSync(bundle, { recursive: true, force: true })
+        }
     })
 
     it('throws SeedTooLargeError (without seed bytes) over the ceiling', () =>
@@ -187,9 +231,12 @@ describe('EnvServerSeedSource seed-tree projection', () =>
             SeedFixture.WriteTree(bundle, SeedFixture.Id, { 'packages/big.json': 'SENTINEL' + 'x'.repeat(1100000) })
             assert.throws(
                 () => new EnvServerSeedSource(bundle, SeedFixture.Name, undefined, SeedFixture.Id).SecretSet(),
-                (e: Error) => e instanceof SeedTooLargeError && !e.message.includes('SENTINEL'))
+                (e: Error) => e instanceof SeedTooLargeError && !e.message.includes('SENTINEL') && e.actualBytes > e.ceilingBytes && e.ceilingBytes === 1048576 && e.name === 'SeedTooLargeError')
         }
-        finally { rmSync(bundle, { recursive: true, force: true }) }
+        finally
+        {
+            rmSync(bundle, { recursive: true, force: true })
+        }
     })
 
     it('ApplyBundle includes the seed Secret in the applied List', async () =>
@@ -204,6 +251,9 @@ describe('EnvServerSeedSource seed-tree projection', () =>
             const items = (JSON.parse(applied) as { items: { kind: string, metadata: { name: string } }[] }).items
             assert.ok(items.some(i => i.kind === 'Secret' && i.metadata.name === EnvServerSeedSource.SeedSecretNameOf(SeedFixture.Name)))
         }
-        finally { rmSync(bundle, { recursive: true, force: true }) }
+        finally
+        {
+            rmSync(bundle, { recursive: true, force: true })
+        }
     })
 })
