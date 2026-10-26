@@ -24,7 +24,7 @@ class CountingOperator implements IOperatorIdentity
     public async Authenticate(_email: string, _password: string): Promise<OperatorSession | null>
     {
         this.Calls++
-        return this.Succeed ? { token: 't', expiresAt: new Date(Date.now() + 3600000) } : null
+        return this.Succeed ? { token: 't', expiresAt: new Date(Date.now() + Fixture.CookieMs) } : null
     }
 
     public async ValidateToken(_token: string): Promise<OperatorPrincipal | null>

@@ -36,6 +36,7 @@ export class LoginThrottle
     private static readonly NoLock = 0
     private static readonly FirstFailure = 1
     private static readonly Increment = 1
+    private static readonly MinKeys = 1
     private static readonly NeverPruned = Number.NEGATIVE_INFINITY
 
     private readonly maxAttempts: number
@@ -52,7 +53,7 @@ export class LoginThrottle
         this.maxAttempts = options.maxAttempts ?? LoginThrottle.DefaultMaxAttempts
         this.windowMs = options.windowMs ?? LoginThrottle.DefaultWindowMs
         this.lockoutMs = options.lockoutMs ?? LoginThrottle.DefaultLockoutMs
-        this.maxKeys = options.maxKeys ?? LoginThrottle.DefaultMaxKeys
+        this.maxKeys = Math.max(LoginThrottle.MinKeys, options.maxKeys ?? LoginThrottle.DefaultMaxKeys)
         this.now = options.now ?? Date.now
     }
 
@@ -84,9 +85,8 @@ export class LoginThrottle
         }
         this.entries.delete(key)
         this.entries.set(key, entry)
-        while (this.entries.size > this.maxKeys)
+        while (this.entries.size > this.maxKeys && this.EvictOne(now, key))
         {
-            this.EvictOne(now, key)
         }
     }
 
@@ -97,7 +97,8 @@ export class LoginThrottle
     }
 
     /** Evicts the oldest UNLOCKED entry; a locked entry only if none is unlocked; never the key just recorded (so spraying keys cannot shed a lock). */
-    private EvictOne(now: number, keep: string): void
+    /** Returns false when there is no victim (so the caller stops). */
+    private EvictOne(now: number, keep: string): boolean
     {
         let fallback: string | undefined
         for (const [key, entry] of this.entries)
@@ -109,14 +110,16 @@ export class LoginThrottle
             if (entry.lockedUntil <= now)
             {
                 this.entries.delete(key)
-                return
+                return true
             }
             fallback ??= key
         }
-        if (fallback !== undefined)
+        if (fallback === undefined)
         {
-            this.entries.delete(fallback)
+            return false
         }
+        this.entries.delete(fallback)
+        return true
     }
 
     public Clear(email: string, ip: string): void

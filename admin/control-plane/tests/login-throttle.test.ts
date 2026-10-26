@@ -102,6 +102,16 @@ describe('LoginThrottle', () =>
         assert.equal(t.Size(), 0)
     })
 
+    it('terminates with a degenerate maxKeys cap (clamped to 1)', () =>
+    {
+        const clock = new Clock()
+        const t = Fixture.Make(clock, 0)
+        Fixture.Fail(t, Fixture.Max, 'a@x', Fixture.Ip)
+        Fixture.Fail(t, Fixture.Max, 'b@x', Fixture.Ip)
+        Fixture.Fail(t, 1, 'c@x', Fixture.Ip)
+        assert.equal(t.Size(), 1)
+    })
+
     it('evicts unlocked entries before locked ones', () =>
     {
         const clock = new Clock()
