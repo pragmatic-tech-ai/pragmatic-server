@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { OperatorIdentity, OperatorBootstrapError, MasterKeyError, OperatorRole } from '../operator-identity.js'
+import { OperatorIdentity, OperatorBootstrapError, MasterKeyError, OperatorRole, OperatorExistsError } from '../operator-identity.js'
 
 class OperatorIdentityFixture
 {
@@ -123,6 +123,17 @@ describe('OperatorIdentity', () =>
             assert.equal((await identity.ValidateToken(ro!.token))?.role, OperatorRole.ReadOnly)
             assert.equal((await identity.ValidateToken(full!.token))?.role, OperatorRole.Full)
             assert.equal(await identity.Authenticate(OperatorIdentityFixture.ReadEmail, OperatorIdentityFixture.OtherPassword), null)
+        })
+    })
+
+    it('rejects a duplicate operator email with OperatorExistsError', async () =>
+    {
+        await OperatorIdentityFixture.WithRoot(async root =>
+        {
+            const identity = await OperatorIdentityFixture.Compose(root, OperatorIdentityFixture.Password)
+            await identity.CreateOperator(OperatorIdentityFixture.ReadEmail, OperatorIdentityFixture.NewPassword, OperatorRole.ReadOnly)
+            await assert.rejects(() => identity.CreateOperator(OperatorIdentityFixture.ReadEmail, OperatorIdentityFixture.NewPassword, OperatorRole.Full), OperatorExistsError)
+            await assert.rejects(() => identity.CreateOperator(OperatorIdentityFixture.Email, OperatorIdentityFixture.NewPassword, OperatorRole.Full), OperatorExistsError)
         })
     })
 })

@@ -21,7 +21,7 @@ import { InvalidTenantIdError } from './idp-service.js'
 import { PortUnavailableError } from './port-allocator.js'
 import type { TenantProvisioningService } from './tenant-provisioning-service.js'
 import { InvalidEnvironmentNameError } from './template-catalog.js'
-import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal } from './operator-identity.js'
+import { OperatorExistsError, OperatorRole, type IOperatorIdentity, type OperatorPrincipal } from './operator-identity.js'
 import { OperatorAuthorization } from './operator-authorization.js'
 import { SessionCookie } from './session-cookie.js'
 import { EventsTicketStore } from './events-ticket-store.js'
@@ -160,7 +160,9 @@ export class ControlPlaneHost
     private static readonly ForbiddenHostMessage = 'Host not allowed'
     private static readonly ForbiddenRoleMessage = 'Operator role does not permit this action'
     private static readonly OperatorsPath = '/api/operators'
-    private static readonly OperatorFieldsMessage = 'email, password and role (full|readonly) are required'
+    private static readonly MinOperatorPasswordLength = 12
+    private static readonly EmailAt = '@'
+    private static readonly OperatorFieldsMessage = 'a valid email, a password of at least 12 characters and a role (full|readonly) are required'
     private static readonly OperatorRoles: ReadonlyMap<string, OperatorRole> = new Map([['full', OperatorRole.Full], ['readonly', OperatorRole.ReadOnly]])
     private static readonly UnsupportedMediaMessage = 'Content-Type must be application/json'
     private static readonly BadNameMessage = 'Invalid environment name in path'
@@ -260,6 +262,7 @@ export class ControlPlaneHost
         [InvalidEnvironmentNameError, ControlPlaneHost.StatusBadRequest],
         [EnvironmentNotFoundError, PlaneHttp.StatusNotFound],
         [EnvironmentExistsError, ControlPlaneHost.StatusConflict],
+        [OperatorExistsError, ControlPlaneHost.StatusConflict],
         [PortUnavailableError, ControlPlaneHost.StatusConflict],
         [ImageMissingError, ControlPlaneHost.StatusConflict],
         [DockerUnavailableError, ControlPlaneHost.StatusUnavailable],
@@ -1208,13 +1211,21 @@ export class ControlPlaneHost
             return
         }
         const role = typeof body.role === 'string' ? ControlPlaneHost.OperatorRoles.get(body.role) : undefined
-        if (typeof body.email !== 'string' || body.email.length === 0 || typeof body.password !== 'string' || body.password.length === 0 || role === undefined)
+        if (typeof body.email !== 'string' || !ControlPlaneHost.PlausibleEmail(body.email) || typeof body.password !== 'string'
+            || body.password.length < ControlPlaneHost.MinOperatorPasswordLength || role === undefined)
         {
             PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.OperatorFieldsMessage })
             return
         }
         await this.operator.CreateOperator(body.email, body.password, role)
         PlaneHttp.WriteJson(res, ControlPlaneHost.StatusCreated, { email: body.email })
+    }
+
+    /** Minimal shape check: exactly one '@' with a non-empty local part and domain. */
+    private static PlausibleEmail(email: string): boolean
+    {
+        const parts = email.split(ControlPlaneHost.EmailAt)
+        return parts.length === 2 && (parts[0] as string).length > 0 && (parts[1] as string).length > 0
     }
 
     private async HandleLogin(req: IncomingMessage, res: ServerResponse): Promise<void>

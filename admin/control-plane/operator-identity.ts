@@ -39,6 +39,18 @@ export class OperatorBootstrapError extends Error
     }
 }
 
+export class OperatorExistsError extends Error
+{
+    private static readonly ErrorName = 'OperatorExistsError'
+    private static readonly DefaultMessage = 'An operator with that email already exists'
+
+    public constructor(message: string = OperatorExistsError.DefaultMessage)
+    {
+        super(message)
+        this.name = OperatorExistsError.ErrorName
+    }
+}
+
 export class MasterKeyError extends Error
 {
     private static readonly ErrorName = 'MasterKeyError'
@@ -139,6 +151,10 @@ export class OperatorIdentity implements IOperatorIdentity
     /** Creates an authenticatable operator account and grants it the Owner (Full) or Viewer (ReadOnly) role on the control-plane tenant. */
     public async CreateOperator(email: string, password: string, role: OperatorRole): Promise<void>
     {
+        if ((await this.pack.Accounts.FindByEmail(this.tenant, email)) !== null)
+        {
+            throw new OperatorExistsError()
+        }
         const principalId = randomUUID()
         const presented = new PresentedSecret(password)
         try

@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import { ControlPlaneHost } from '../control-plane-host.js'
 import type { IEnvironmentService, IGraphService } from '../control-plane-host.js'
-import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSession } from '../operator-identity.js'
+import { OperatorExistsError, OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSession } from '../operator-identity.js'
 import type { PlatformDirectory } from '../platform-directory.js'
 import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
 import type { TenantProvisioningService } from '../tenant-provisioning-service.js'
@@ -35,6 +35,10 @@ class RoleOperator implements IOperatorIdentity
 
     public async CreateOperator(email: string, _password: string, role: OperatorRole): Promise<void>
     {
+        if (this.Created.some(c => c.email === email))
+        {
+            throw new OperatorExistsError()
+        }
         this.Created.push({ email, role })
     }
 
@@ -59,6 +63,9 @@ class RbacFixture
     public static readonly CookiePrefix = 'cp_session='
     public static readonly Password = 'pw-secret-123'
     public static readonly NewBody = JSON.stringify({ email: 'new@x.test', password: RbacFixture.Password, role: 'readonly' })
+    public static readonly Conflict = 409
+    public static readonly ShortBody = JSON.stringify({ email: 'a@x.test', password: 'short', role: 'full' })
+    public static readonly BadEmailBody = JSON.stringify({ email: 'not-an-email', password: RbacFixture.Password, role: 'full' })
     public static readonly BadRoleBody = JSON.stringify({ email: 'a@x.test', password: 'p', role: 'god' })
 
     public static Send(host: ControlPlaneHost, method: string, path: string, token: string, body: string): Promise<{ status: number; text: string }>
@@ -130,5 +137,20 @@ describe('ControlPlaneHost operator RBAC', () =>
     {
         const r = await RbacFixture.Send(host, 'POST', RbacFixture.Operators, RoleOperator.FullToken, RbacFixture.BadRoleBody)
         assert.equal(r.status, RbacFixture.BadRequest)
+    })
+
+    it('409s a duplicate email', async () =>
+    {
+        await RbacFixture.Send(host, 'POST', RbacFixture.Operators, RoleOperator.FullToken, RbacFixture.NewBody)
+        const r = await RbacFixture.Send(host, 'POST', RbacFixture.Operators, RoleOperator.FullToken, RbacFixture.NewBody)
+        assert.equal(r.status, RbacFixture.Conflict)
+        assert.ok(!r.text.includes(RbacFixture.Password))
+    })
+
+    it('400s a too-short password and a malformed email', async () =>
+    {
+        assert.equal((await RbacFixture.Send(host, 'POST', RbacFixture.Operators, RoleOperator.FullToken, RbacFixture.ShortBody)).status, RbacFixture.BadRequest)
+        assert.equal((await RbacFixture.Send(host, 'POST', RbacFixture.Operators, RoleOperator.FullToken, RbacFixture.BadEmailBody)).status, RbacFixture.BadRequest)
+        assert.equal(operator.Created.length, 0)
     })
 })
