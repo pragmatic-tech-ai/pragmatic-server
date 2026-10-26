@@ -196,7 +196,7 @@ describe('UiUnpacker', () =>
 
     it('carries packages forward from the live manifest', async () =>
     {
-        await h.storage.WriteText(`${Fx.App}/0.9.0/${Fx.ManifestFile}`, JSON.stringify({ name: Fx.App, version: Fx.PriorVersion, packages: [Fx.DataPackage] }))
+        await h.storage.WriteText(`${Fx.App}/${Fx.PriorVersion}/${Fx.ManifestFile}`, JSON.stringify({ name: Fx.App, version: Fx.PriorVersion, packages: [Fx.DataPackage] }))
         await h.storage.WriteText(`${Fx.App}/${Fx.LiveFile}`, Fx.PriorVersion)
         await h.Unpacker().Reconcile(h.Input())
         assert.deepEqual((await h.ReadManifest()).packages, [Fx.DataPackage])

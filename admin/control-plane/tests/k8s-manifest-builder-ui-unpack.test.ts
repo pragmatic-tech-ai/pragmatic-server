@@ -79,6 +79,9 @@ describe('K8sManifestBuilder UI unpack', () =>
         assert.deepEqual(dep, other)
         assert.equal(new K8sManifestBuilder().Render(Fixture.Workload(false)), new K8sManifestBuilder().Render(explicitUndefined))
         assert.equal(dep.spec.template.spec.initContainers.length, 1)
+        const json = JSON.stringify(dep)
+        assert.ok(!json.includes('PRAGMATIC_UI_'))
+        assert.ok(!json.includes('ui-trust'))
     })
 
     it('RenderRegistry carries no hive label but keeps the app selector', () =>
