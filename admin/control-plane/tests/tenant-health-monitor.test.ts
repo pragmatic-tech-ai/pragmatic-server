@@ -668,11 +668,15 @@ describe('TenantHealthMonitor', () =>
         const producer = new FakeProducer()
         const reconciler = new RecordingReconciler()
         directory.Hives = [Hives.Bound('h1', 't1')]
-        producer.Script('h1', [Health.Dto('A', true, 'ok')])
+        // First tick sees both A and B; the second tick OMITS B (a failed probe the producer dropped). B must not be
+        // reconciled on the second tick — proving omission, not merely absence from the fixture.
+        producer.Script('h1', [Health.Dto('A', true, 'ok'), Health.Dto('B', false, 'scaled to 0')])
         const monitor = new TenantHealthMonitor(directory.AsDirectory(), producer.AsProducer(), new TenantEventBus(), Interval, 60000, reconciler)
 
         await Driver.Tick(monitor)
+        producer.Script('h1', [Health.Dto('A', true, 'ok')])
+        await Driver.Tick(monitor)
 
-        assert.deepEqual(reconciler.Calls, [{ name: 'A', ready: true }])
+        assert.deepEqual(reconciler.Calls.map(c => c.name), ['A', 'B', 'A'])
     })
 })

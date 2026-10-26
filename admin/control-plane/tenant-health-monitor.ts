@@ -159,11 +159,13 @@ export class TenantHealthMonitor
         {
             const current: HealthSnapshot = { ready: dto.ready, detail: dto.detail }
             next.set(dto.environmentName, current)
+            // Reconcile the record's status BEFORE emitting HealthChanged: a subscriber that refetches on the event
+            // must not observe the pre-reconcile status (read-your-write across the two notification paths).
+            await this.ReconcileSafely(dto.environmentName, dto.ready)
             if (prior !== undefined && this.HasChanged(prior.get(dto.environmentName), current))
             {
                 this.events.Emit(hive.tenantId, { type: TenantEventType.HealthChanged, environmentName: dto.environmentName })
             }
-            await this.ReconcileSafely(dto.environmentName, dto.ready)
         }
         this.snapshots.set(hive.id, next)
     }

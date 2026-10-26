@@ -214,6 +214,7 @@ export class InClusterEnvCreateSmoke
         StartHealthy: 'start: /healthz answers OK through the tunnel',
         StartDataKept: 'start: live-data probe written before Stop survived (PVC data preserved)',
         MonitorStopped: 'monitor: out-of-band scale to 0 (no Stop call) is reported Stopped within the monitor interval',
+        MonitorPodBack: 'monitor: server Deployment back to 1 ready replica after scale-up',
         MonitorRunning: 'monitor: out-of-band scale back to 1 is reported Running within the monitor interval',
         DemoDelete: 'demo: Delete completes',
     }
@@ -384,6 +385,9 @@ export class InClusterEnvCreateSmoke
         await this.ScaleOutOfBand(namespace, deployment, S.ZeroReplicas)
         this.Expect(S.Labels.MonitorStopped, await this.WaitListedStatus(service, name, EnvStatus.Stopped))
         await this.ScaleOutOfBand(namespace, deployment, S.OneReplica)
+        // Wait for the pod to actually become ready (its own ~2min budget) BEFORE timing the monitor: otherwise the
+        // monitor-observation budget would have to also cover cold pod startup and would flake.
+        this.Expect(S.Labels.MonitorPodBack, await this.WaitReadyReplicas(namespace, deployment, S.OneReplica))
         this.Expect(S.Labels.MonitorRunning, await this.WaitListedStatus(service, name, EnvStatus.Running))
         this.monitor.Stop()
     }
