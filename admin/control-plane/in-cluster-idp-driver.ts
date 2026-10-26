@@ -22,6 +22,8 @@ export interface IIdpSeedSource
     SeedFor(tenantId: string): IdpSeed
     /** Optional: a kubectl-appliable manifest of the seed Secrets, applied before the workload so the mounted Secrets exist. */
     SecretsManifestFor?(tenantId: string): string
+    /** The browser-facing base domain, owned by the seed source (which mints the cert SANs). The driver reads it from here so the advertised browser host and the cert SANs can never diverge. */
+    readonly BaseDomain?: string
 }
 
 /** Hive driver: renders the IdP as an in-cluster workload, applies it through the in-cluster API (kubectl seam), and reports the Service-DNS baseUrl. CA / admin token are SEEDED from bootstrap, never minted here. */
@@ -35,8 +37,7 @@ export class InClusterIdpDriver implements IIdpWorkloadDriver
         private readonly manifests: K8sManifestBuilder,
         private readonly seeds: IIdpSeedSource,
         private readonly hiveId: string,
-        private readonly image: string,
-        private readonly baseDomain?: string)
+        private readonly image: string)
     {
     }
 
@@ -45,7 +46,7 @@ export class InClusterIdpDriver implements IIdpWorkloadDriver
         const { tenantId } = request
         const seed = this.seeds.SeedFor(tenantId)
         const spec: IdpWorkloadSpec = {
-            tenantId, hiveId: this.hiveId, image: this.image, port: InClusterIdpDriver.IdpPort, baseDomain: this.baseDomain,
+            tenantId, hiveId: this.hiveId, image: this.image, port: InClusterIdpDriver.IdpPort, baseDomain: this.seeds.BaseDomain,
             adminTokenSecretName: seed.adminTokenSecretName, adminTokenRef: seed.adminTokenRef, tlsSecretName: seed.tlsSecretName
         }
         const name = K8sManifestBuilder.IdpNameOf(tenantId)
@@ -68,7 +69,7 @@ export class InClusterIdpDriver implements IIdpWorkloadDriver
         }
         const baseUrl = K8sManifestBuilder.IdpBaseUrlOf(tenantId, InClusterIdpDriver.IdpPort)
         const record = this.RecordFor(request.existing, tenantId, baseUrl, name, seed)
-        const browserBaseUrl = this.baseDomain === undefined ? baseUrl : K8sManifestBuilder.IdpBrowserUrlOf(tenantId, this.baseDomain)
+        const browserBaseUrl = this.seeds.BaseDomain === undefined ? baseUrl : K8sManifestBuilder.IdpBrowserUrlOf(tenantId, this.seeds.BaseDomain)
         return { connection: { baseUrl, browserBaseUrl, ca: seed.ca, adminToken: seed.adminToken, adminTokenRef: seed.adminTokenRef, caDir: seed.caRef }, record }
     }
 

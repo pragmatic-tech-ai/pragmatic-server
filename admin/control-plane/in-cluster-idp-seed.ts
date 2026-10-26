@@ -129,6 +129,12 @@ export class InClusterIdpSeedSource implements IIdpSeedSource
     {
     }
 
+    /** The browser-facing base domain this source mints cert SANs for (the single authority; the driver reads it from here). */
+    public get BaseDomain(): string | undefined
+    {
+        return this.baseDomain
+    }
+
     public static TlsSecretNameOf(tenantId: string): string
     {
         return `${K8sManifestBuilder.IdpNameOf(tenantId)}${InClusterIdpSeedSource.TlsSecretSuffix}`

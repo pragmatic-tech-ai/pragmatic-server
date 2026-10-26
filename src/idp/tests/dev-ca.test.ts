@@ -160,6 +160,7 @@ test('a one-element list and a bare string mint equivalent single-SAN certs; eac
         assert.equal(a.subjectAltName, b.subjectAltName)
         assert.equal(a.subject, b.subject)
         assert.throws(() => DevCa.EnsureAt(d3, ['ok.example', 'bad host;']), /invalid host/)
+        assert.throws(() => DevCa.EnsureAt(d3, []), /invalid host/)
     }
     finally
     {
