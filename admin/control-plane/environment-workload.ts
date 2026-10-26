@@ -2,6 +2,7 @@ import { BundleBuilder } from '../../environments/seed/bundle.js'
 import type { EnvironmentRecord } from './environment-record.js'
 import type { HiveRecord } from './platform-records.js'
 import { EnvServerSeedSource } from './env-server-seed.js'
+import { InClusterRegistry } from './in-cluster-registry.js'
 import { TemplateCatalog } from './template-catalog.js'
 
 /** A provisioned Postgres sidecar; the password is referenced by secret name only. */
@@ -19,6 +20,19 @@ export type WorkloadFederation = {
     caSecretName: string
 }
 
+/** The app artifact an environment's pod pulls and verifies: registry coordinates, pinned digest, and the trust Secret/key it verifies against. */
+export type WorkloadAppDeployment = {
+    appName: string
+    appVersion: string
+    registryPullBase: string
+    repo: string
+    artifactTag: string
+    manifestDigest: string
+    trustSecretName: string
+    /** The hive's trust-root reference; empty when the hive has none (the actuator enforces presence). */
+    trustKeyRef: string
+}
+
 /** Backend-neutral description of what to run for one environment. Carries secret names, never values. */
 export type EnvironmentWorkload = {
     environmentName: string
@@ -31,6 +45,7 @@ export type EnvironmentWorkload = {
     secretRefs: readonly string[]
     database?: WorkloadDatabase
     federation?: WorkloadFederation
+    appDeployment?: WorkloadAppDeployment
 }
 
 export class EnvironmentWorkloadFactory
@@ -38,6 +53,7 @@ export class EnvironmentWorkloadFactory
     private static readonly ServerImage = 'pragmatic-server:dev'
     private static readonly DatabaseImage = 'postgres:16'
     private static readonly ServerPort = 8080
+    private static readonly NoTrustKeyRef = ''
     private static readonly PortEnvKey = 'PRAGMATIC_PORT'
 
     /** Database presence follows the real template definition (TemplateCatalog.Resolve), so it cannot drift from the docker model. */
@@ -69,6 +85,19 @@ export class EnvironmentWorkloadFactory
         if (record.idpBaseDomain !== undefined)
         {
             workload.federation = { baseDomain: record.idpBaseDomain, caSecretName: EnvServerSeedSource.IdpCaSecretNameOf(record.name) }
+        }
+        if (record.appDeployment !== undefined)
+        {
+            workload.appDeployment = {
+                appName: record.appDeployment.appName,
+                appVersion: record.appDeployment.appVersion,
+                registryPullBase: InClusterRegistry.PullBase(),
+                repo: record.appDeployment.repo,
+                artifactTag: record.appDeployment.artifactTag,
+                manifestDigest: record.appDeployment.manifestDigest,
+                trustSecretName: EnvServerSeedSource.UiTrustSecretNameOf(record.name),
+                trustKeyRef: hive.trustRootRef ?? EnvironmentWorkloadFactory.NoTrustKeyRef,
+            }
         }
         return workload
     }

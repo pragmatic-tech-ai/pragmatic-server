@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { EnvironmentWorkloadFactory } from '../environment-workload.js'
+import { InClusterRegistry } from '../in-cluster-registry.js'
 import { EnvServerSeedSource } from '../env-server-seed.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import { HiveBackend, InfraMode, type HiveRecord } from '../platform-records.js'
@@ -80,5 +81,26 @@ describe('EnvironmentWorkloadFactory', () =>
     {
         const w = EnvironmentWorkloadFactory.From(WorkloadFixture.Env(Template.DevBlank, EnvType.Development), WorkloadFixture.Hive())
         assert.equal(w.federation, undefined)
+    })
+
+    it('maps record.appDeployment into the workload with registry base, trust secret and trust key', () =>
+    {
+        const app = { appName: 'crm', appVersion: '1.2.3', repo: 'apps/crm', artifactTag: 'v1.2.3', manifestDigest: 'sha256:abc' }
+        const rec = { ...WorkloadFixture.Env(Template.DevBlank, EnvType.Development), appDeployment: app }
+        const hive = { ...WorkloadFixture.Hive(), trustRootRef: 'trust-root-1' }
+        const w = EnvironmentWorkloadFactory.From(rec, hive)
+        assert.deepEqual(w.appDeployment, {
+            ...app,
+            registryPullBase: InClusterRegistry.PullBase(),
+            trustSecretName: EnvServerSeedSource.UiTrustSecretNameOf(WorkloadFixture.EnvName),
+            trustKeyRef: 'trust-root-1',
+        })
+        assert.equal(EnvServerSeedSource.UiTrustSecretNameOf('e1'), 'e1-ui-trust')
+    })
+
+    it('has no appDeployment when the record has none', () =>
+    {
+        const w = EnvironmentWorkloadFactory.From(WorkloadFixture.Env(Template.DevBlank, EnvType.Development), WorkloadFixture.Hive())
+        assert.equal(w.appDeployment, undefined)
     })
 })

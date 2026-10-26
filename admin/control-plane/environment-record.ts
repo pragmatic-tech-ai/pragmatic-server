@@ -19,6 +19,15 @@ export enum Template
     RuntimePostgres = 'runtime-postgres'
 }
 
+/** The app artifact deployed into one environment: its identity plus the registry coordinates and pinned manifest digest. */
+export type AppDeployment = {
+    appName: string
+    appVersion: string
+    repo: string
+    artifactTag: string
+    manifestDigest: string
+}
+
 export type EnvironmentRecord = {
     name: string
     type: EnvType
@@ -35,6 +44,8 @@ export type EnvironmentRecord = {
     bundleDir?: string
     /** Base domain of the in-cluster browser host (<environmentId>.<baseDomain>) when the environment is federated to its tenant IdP. */
     idpBaseDomain?: string
+    /** The app (UI artifact) deployed into this environment, when one has been published to it. */
+    appDeployment?: AppDeployment
     /** Where the environment is reachable, as reported by the runtime at create/start. */
     endpoint?: { httpUrl: string; wsUrl: string }
     createdAt: string

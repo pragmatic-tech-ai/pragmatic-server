@@ -113,6 +113,7 @@ export class EnvServerSeedSource
     private static readonly DataKey = 'data'
     private static readonly Utf8 = 'utf8'
     private static readonly IdpCaSecretNameSuffix = '-idp-ca'
+    private static readonly UiTrustSecretNameSuffix = '-ui-trust'
     private static readonly IdpCaKey = 'ca.crt'
     private static readonly SecretKindName = 'Secret'
     private static readonly MissingRefPrefix = 'provisioned-secrets.json has no entry for db password ref: '
@@ -125,6 +126,12 @@ export class EnvServerSeedSource
     public static SecretNameOf(environmentName: string): string
     {
         return `${environmentName}${EnvServerSeedSource.SecretNameSuffix}`
+    }
+
+    /** Name of the Secret holding the UI-artifact trust root: `<env>-ui-trust`. */
+    public static UiTrustSecretNameOf(environmentName: string): string
+    {
+        return `${environmentName}${EnvServerSeedSource.UiTrustSecretNameSuffix}`
     }
 
     /** Name of the ca.crt-only IdP trust Secret: `<env>-idp-ca`. */
