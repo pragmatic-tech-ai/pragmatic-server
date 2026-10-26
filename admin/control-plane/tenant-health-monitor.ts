@@ -40,7 +40,7 @@ export class TenantHealthMonitor
      * comfortably above the default probe interval (30s) so a legitimately slow-but-healthy probe is never cut.
      */
     private static readonly DefaultProbeTimeoutMs = 60000
-    private static readonly ProbeTimedOut = 'health probe timed out'
+    private static readonly OperationTimedOut = 'monitor operation timed out'
     private readonly snapshots = new Map<string, Map<string, HealthSnapshot>>()
     private timer: ReturnType<typeof setTimeout> | undefined = undefined
     private started = false
@@ -147,7 +147,7 @@ export class TenantHealthMonitor
         let dtos: HiveHealthDto[]
         try
         {
-            dtos = await this.WithProbeTimeout(this.producer.Produce(hive))
+            dtos = await this.WithTimeout(this.producer.Produce(hive))
         }
         catch
         {
@@ -170,16 +170,25 @@ export class TenantHealthMonitor
         this.snapshots.set(hive.id, next)
     }
 
-    /** Pushes one probed env's liveness to the reconciler; any failure is swallowed (nothing logged) so a tick never aborts. */
+    /**
+     * Pushes one probed env's liveness to the reconciler; any failure is swallowed (nothing logged) so a tick never
+     * aborts. The reconcile is bounded by the same `probeTimeoutMs` deadline as the probe, so a wedged local write
+     * (not just a wedged remote probe) can never hold the running-guard open and silence every future tick for all tenants.
+     */
     private async ReconcileSafely(environmentName: string, ready: boolean): Promise<void>
     {
+        const work = this.reconciler?.ReconcileStatus(environmentName, ready)
+        if (work === undefined)
+        {
+            return
+        }
         try
         {
-            await this.reconciler?.ReconcileStatus(environmentName, ready)
+            await this.WithTimeout(work)
         }
         catch
         {
-            // Skip on error, log nothing: the inner error text could carry a secret.
+            // Skip on error or timeout, log nothing: the inner error text could carry a secret.
         }
     }
 
@@ -189,24 +198,25 @@ export class TenantHealthMonitor
     }
 
     /**
-     * Resolves with the probe result, or rejects once `probeTimeoutMs` elapses so a never-settling producer call
-     * cannot hold the tick open. A non-positive timeout disables the deadline. The timer is cleared the moment the
-     * work settles; a rejection handler stays attached to the original work so a late failure never goes unhandled.
+     * Resolves with the work's result, or rejects once `probeTimeoutMs` elapses so a never-settling call (a wedged
+     * orchestrator probe OR a wedged status reconcile) cannot hold the tick open and silence every future tick for all
+     * tenants. A non-positive timeout disables the deadline. The timer is cleared the moment the work settles; a
+     * rejection handler stays attached to the original work so a late failure never goes unhandled.
      */
-    private WithProbeTimeout(work: Promise<HiveHealthDto[]>): Promise<HiveHealthDto[]>
+    private WithTimeout<T>(work: Promise<T>): Promise<T>
     {
         if (this.probeTimeoutMs <= 0)
         {
             return work
         }
-        return new Promise<HiveHealthDto[]>((resolve, reject) =>
+        return new Promise<T>((resolve, reject) =>
         {
-            const timer = setTimeout(() => reject(new Error(TenantHealthMonitor.ProbeTimedOut)), this.probeTimeoutMs)
+            const timer = setTimeout(() => reject(new Error(TenantHealthMonitor.OperationTimedOut)), this.probeTimeoutMs)
             work.then(
-                dtos =>
+                value =>
                 {
                     clearTimeout(timer)
-                    resolve(dtos)
+                    resolve(value)
                 },
                 error =>
                 {

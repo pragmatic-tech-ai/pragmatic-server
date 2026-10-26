@@ -212,6 +212,28 @@ class RecordingReconciler implements IEnvStatusReconciler
     private static readonly PutFailed = 'registry put failed'
 }
 
+/** A reconciler whose ReconcileStatus never settles until Unhang() — models a wedged local write. */
+class HangingReconciler implements IEnvStatusReconciler
+{
+    public readonly Calls: Array<{ name: string; ready: boolean }> = []
+    private unhung = false
+
+    public Unhang(): void
+    {
+        this.unhung = true
+    }
+
+    public ReconcileStatus(environmentName: string, ready: boolean): Promise<void>
+    {
+        this.Calls.push({ name: environmentName, ready })
+        if (this.unhung)
+        {
+            return Promise.resolve()
+        }
+        return new Promise<void>(() => { })
+    }
+}
+
 const Interval = 1000
 
 describe('TenantHealthMonitor', () =>
@@ -678,5 +700,31 @@ describe('TenantHealthMonitor', () =>
         await Driver.Tick(monitor)
 
         assert.deepEqual(reconciler.Calls.map(c => c.name), ['A', 'B', 'A'])
+    })
+
+    it('times out a hung reconcile so the loop is not wedged for all tenants', async () =>
+    {
+        mock.timers.enable({ apis: ['setTimeout'] })
+        const directory = new FakeDirectory()
+        const producer = new FakeProducer()
+        const reconciler = new HangingReconciler()
+        directory.Hives = [Hives.Bound('h1', 't1')]
+        producer.Script('h1', [Health.Dto('A', true, 'ok')])
+        const ReconcileTimeout = 5000
+        const monitor = new TenantHealthMonitor(directory.AsDirectory(), producer.AsProducer(), new TenantEventBus(), Interval, ReconcileTimeout, reconciler)
+
+        // The reconcile hangs; the shared timeout must release the tick instead of holding the running-guard open.
+        const first = Driver.Tick(monitor)
+        await new Promise<void>(resolve => setImmediate(resolve))
+        mock.timers.tick(ReconcileTimeout)
+        await first
+        assert.equal(reconciler.Calls.length, 1)
+
+        // Loop released: a second tick still runs and reconciles (not wedged on the earlier hang).
+        reconciler.Unhang()
+        const second = Driver.Tick(monitor)
+        await new Promise<void>(resolve => setImmediate(resolve))
+        await second
+        assert.equal(reconciler.Calls.length, 2)
     })
 })
