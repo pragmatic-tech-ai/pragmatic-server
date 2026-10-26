@@ -106,7 +106,13 @@ export class InClusterFederationSmoke
     private static readonly IdpTokenRef = 'admin-token'
     private static readonly EnvPortFloor = 8100
 
-    private static readonly IngressManifestUrl = 'https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml'
+    private static readonly IngressManifestUrl = 'https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.11.3/deploy/static/provider/kind/deploy.yaml'
+    private static readonly HostResolverFlag = '--host-resolver-rules='
+    private static readonly MapPrefix = 'MAP '
+    private static readonly MapSuffix = ' 127.0.0.1'
+    private static readonly RuleSeparator = ', '
+    private static readonly Unreachable = 'unreachable'
+    private static readonly SchemeSeparator = '://'
     private static readonly IngressNamespace = 'ingress-nginx'
     private static readonly IngressDeployment = 'ingress-nginx-controller'
     private static readonly PassthroughPatch = '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--enable-ssl-passthrough"}]'
@@ -147,7 +153,18 @@ export class InClusterFederationSmoke
     private static readonly SignaturesFileName = 'signatures.json'
     private static readonly RegistryFileName = 'environments.json'
 
-    private static readonly HostResolverRules = '--host-resolver-rules=MAP idp-icfsmoke.localtest.me 127.0.0.1, MAP icf-env-a.localtest.me 127.0.0.1, MAP icf-env-b.localtest.me 127.0.0.1'
+    /** Chromium host-resolver rules mapping the IdP + both env browser hosts to loopback, derived from the name
+     *  constants so they can never drift from the rendered Ingress hosts. */
+    private static HostResolverRules(): string
+    {
+        const S = InClusterFederationSmoke
+        const hosts = [
+            K8sManifestBuilder.IdpBrowserHostOf(S.TenantId, S.BaseDomain),
+            K8sManifestBuilder.EnvBrowserHostOf(S.EnvAName, S.BaseDomain),
+            K8sManifestBuilder.EnvBrowserHostOf(S.EnvBName, S.BaseDomain),
+        ]
+        return S.HostResolverFlag + hosts.map(h => S.MapPrefix + h + S.MapSuffix).join(S.RuleSeparator)
+    }
     private static readonly BeginPath = '/auth/oidc/begin?environment='
     private static readonly SessionPath = '/auth/session'
     private static readonly CallbackPathFragment = '/auth/oidc/callback'
@@ -339,7 +356,7 @@ export class InClusterFederationSmoke
         const response = await fetch(S.LoopbackHttp + String(port) + S.HealthPath).catch(() => undefined)
         if (response === undefined)
         {
-            throw new Error(S.HealthFailed + 'unreachable')
+            throw new Error(S.HealthFailed + S.Unreachable)
         }
         return response.status
     }
@@ -379,7 +396,7 @@ export class InClusterFederationSmoke
     private async DriveBrowser(password: string): Promise<void>
     {
         const S = InClusterFederationSmoke
-        const browser = await chromium.launch({ args: [S.HostResolverRules] })
+        const browser = await chromium.launch({ args: [S.HostResolverRules()] })
         try
         {
             const context = await browser.newContext({ ignoreHTTPSErrors: true })
@@ -421,7 +438,7 @@ export class InClusterFederationSmoke
 
     private EnvOrigin(envName: string): string
     {
-        return InClusterFederationSmoke.ExternalScheme + '://' + K8sManifestBuilder.EnvBrowserHostOf(envName, InClusterFederationSmoke.BaseDomain)
+        return InClusterFederationSmoke.ExternalScheme + InClusterFederationSmoke.SchemeSeparator + K8sManifestBuilder.EnvBrowserHostOf(envName, InClusterFederationSmoke.BaseDomain)
     }
 
     private StartForward(namespace: string, deployment: string, targetPort: number): ChildProcess

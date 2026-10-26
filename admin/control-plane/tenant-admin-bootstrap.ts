@@ -162,6 +162,7 @@ export class TenantAdminBootstrap
     private static readonly IdpAdminTokenKey = 'admin-token'
     private static readonly IdpCaSuffix = '-idp-ca'
     private static readonly IdpTokenSuffix = '-idp-token'
+    private static readonly PartialIdpMaterial = 'TenantAdminBootstrap: idp.ca and idp.adminToken must be supplied together (or neither)'
     private static readonly DockerConfigKey = '.dockerconfigjson'
     private static readonly DockerConfigType = 'kubernetes.io/dockerconfigjson'
     private static readonly MasterKeyBytes = 32
@@ -211,16 +212,32 @@ export class TenantAdminBootstrap
         {
             secrets.Add(input.pullCredential.secretName, { [TenantAdminBootstrap.DockerConfigKey]: input.pullCredential.dockerConfigJson }, TenantAdminBootstrap.DockerConfigType)
         }
-        if (input.idp?.ca !== undefined && input.idp.adminToken !== undefined)
+        const material = TenantAdminBootstrap.IdpMaterial(input)
+        if (material !== undefined)
         {
             // ca.crt ONLY: derived from the CA bytes alone, never the IdP TLS Secret (server.key).
-            secrets.Add(TenantAdminBootstrap.IdpCaSecretNameOf(tenant.id), { [TenantAdminBootstrap.IdpCaKey]: input.idp.ca })
-            secrets.Add(TenantAdminBootstrap.IdpTokenSecretNameOf(tenant.id), { [TenantAdminBootstrap.IdpAdminTokenKey]: input.idp.adminToken })
+            secrets.Add(TenantAdminBootstrap.IdpCaSecretNameOf(tenant.id), { [TenantAdminBootstrap.IdpCaKey]: material.ca })
+            secrets.Add(TenantAdminBootstrap.IdpTokenSecretNameOf(tenant.id), { [TenantAdminBootstrap.IdpAdminTokenKey]: material.adminToken })
         }
-        return new TenantBootstrap(seed, this.AssembleManifest(input, agentTokenSecretName, seedSecretName), secrets, agentTokenSecretName, seedSecretName)
+        return new TenantBootstrap(seed, this.AssembleManifest(input, agentTokenSecretName, seedSecretName, material !== undefined), secrets, agentTokenSecretName, seedSecretName)
     }
 
-    private AssembleManifest(input: TenantBootstrapInput, agentTokenSecretName: string, seedSecretName: string): string
+    /**
+     * The projected IdP material, or undefined when the IdP is provisioned separately. ALL-OR-NOTHING: supplying
+     * exactly one of `ca`/`adminToken` is a misconfiguration (it would silently leave the pod unfederated), so it throws.
+     */
+    private static IdpMaterial(input: TenantBootstrapInput): { ca: Buffer; adminToken: string } | undefined
+    {
+        const ca = input.idp?.ca
+        const adminToken = input.idp?.adminToken
+        if ((ca === undefined) !== (adminToken === undefined))
+        {
+            throw new Error(TenantAdminBootstrap.PartialIdpMaterial)
+        }
+        return ca !== undefined && adminToken !== undefined ? { ca, adminToken } : undefined
+    }
+
+    private AssembleManifest(input: TenantBootstrapInput, agentTokenSecretName: string, seedSecretName: string, federated: boolean): string
     {
         const { tenant, hive } = input
         const admin: TenantAdminWorkloadSpec = {
@@ -235,7 +252,8 @@ export class TenantAdminBootstrap
             rolloutUrl: input.channelUrl,
             imagePullSecretName: input.pullCredential?.secretName,
         }
-        if (input.idp?.ca !== undefined && input.idp.adminToken !== undefined)
+        // federated implies input.idp is defined (IdpMaterial requires it); the `&& input.idp` narrows it for TS.
+        if (federated && input.idp !== undefined)
         {
             admin.idp = {
                 browserBaseUrl: K8sManifestBuilder.IdpBrowserUrlOf(tenant.id, input.baseDomain),

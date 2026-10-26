@@ -48,6 +48,9 @@ export class KindCli implements IKind
     private static readonly ConfigFileName = 'kind-config.yaml'
     private static readonly TmpPrefix = 'kind-cfg-'
     private static readonly TcpLine = '    protocol: TCP'
+    private static readonly ContainerPortPrefix = '  - containerPort: '
+    private static readonly HostPortPrefix = '    hostPort: '
+    private static readonly ListenAddressLine = '    listenAddress: "127.0.0.1"'
     private static readonly ConfigHeader: readonly string[] = [
         'kind: Cluster',
         'apiVersion: kind.x-k8s.io/v1alpha4',
@@ -92,7 +95,7 @@ export class KindCli implements IKind
         const lines = [...KindCli.ConfigHeader]
         for (const port of config.extraPortMappings)
         {
-            lines.push(`  - containerPort: ${port}`, `    hostPort: ${port}`, KindCli.TcpLine)
+            lines.push(KindCli.ContainerPortPrefix + String(port), KindCli.HostPortPrefix + String(port), KindCli.ListenAddressLine, KindCli.TcpLine)
         }
         return lines.join(KindCli.Newline) + KindCli.Newline
     }

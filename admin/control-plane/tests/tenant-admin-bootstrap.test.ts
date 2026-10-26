@@ -220,6 +220,10 @@ describe('TenantAdminBootstrap in-cluster IdP federation producer', () =>
         const ca = list.items.find(i => i.metadata.name === TenantAdminBootstrap.IdpCaSecretNameOf('acme'))!
         assert.deepEqual(Object.keys(ca.data), ['ca.crt'])
         assert.equal(Buffer.from(ca.data['ca.crt'], 'base64').toString(), CaPem)
+        // The admin-token copy carries admin-token ONLY (same ca-only discipline).
+        const tok = list.items.find(i => i.metadata.name === TenantAdminBootstrap.IdpTokenSecretNameOf('acme'))!
+        assert.deepEqual(Object.keys(tok.data), ['admin-token'])
+        assert.equal(Buffer.from(tok.data['admin-token'], 'base64').toString(), 'idp-admin-token-value')
         const dep = AdminDeployment(b.manifest)
         const volumes = dep.spec.template.spec.volumes.map((v: any) => v.secret?.secretName).filter(Boolean)
         assert.ok(!volumes.includes('idp-tls'))
@@ -227,9 +231,25 @@ describe('TenantAdminBootstrap in-cluster IdP federation producer', () =>
         assert.ok(!JSON.stringify(dep).includes('server.crt'))
     })
 
+    it('never echoes the projected IdP admin token or CA via JSON/string/inspect/manifest', async () =>
+    {
+        const b = await Federated()
+        const leaked = [JSON.stringify(b), String(b.secrets), inspect(b, { depth: 8 }), b.manifest].join('\n')
+        assert.ok(!leaked.includes('idp-admin-token-value'))
+        assert.ok(!leaked.includes(Buffer.from('idp-admin-token-value').toString('base64')))
+        assert.ok(!leaked.includes('CAONLY'))
+    })
+
     it('leaves spec.idp unset when no IdP material is supplied', async () =>
     {
         const b = await new TenantAdminBootstrap(new FakeRegistrar()).GenerateBootstrap(BootstrapFixture.Input())
         assert.ok(!b.secrets.Names().includes(TenantAdminBootstrap.IdpCaSecretNameOf('acme')))
+    })
+
+    it('throws when exactly one of ca/adminToken is supplied (all-or-nothing)', async () =>
+    {
+        const input = BootstrapFixture.Input()
+        input.idp = { ...input.idp!, ca: Buffer.from(CaPem) }
+        await assert.rejects(() => new TenantAdminBootstrap(new FakeRegistrar()).GenerateBootstrap(input), /together/)
     })
 })
