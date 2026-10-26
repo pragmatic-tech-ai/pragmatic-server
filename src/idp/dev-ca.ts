@@ -72,9 +72,9 @@ export class DevCa
             keyFile: join(dir, DevCa.ServerKeyFile),
             caFile: join(dir, DevCa.CaCertFile),
         }
-        // The mint also drops ca.key into `dir`; include it in the idempotency guard so a
-        // partially-cleaned dir (the three result files present but ca.key gone) regenerates the full set.
-        if (existsSync(result.certFile) && existsSync(result.keyFile) && existsSync(result.caFile) && existsSync(join(dir, DevCa.CaKeyFile)))
+        // ca.key is a mint-time-only artifact (openssl needs it to sign the server cert) and is intentionally NOT
+        // persisted; the guard tracks only the three runtime files the IdP serves with.
+        if (existsSync(result.certFile) && existsSync(result.keyFile) && existsSync(result.caFile))
         {
             return result
         }
@@ -84,7 +84,6 @@ export class DevCa
         try
         {
             DevCa.Mint(stage, host, openssl)
-            renameSync(join(stage, DevCa.CaKeyFile), join(dir, DevCa.CaKeyFile))
             renameSync(join(stage, DevCa.ServerKeyFile), result.keyFile)
             renameSync(join(stage, DevCa.CaCertFile), result.caFile)
             renameSync(join(stage, DevCa.ServerCertFile), result.certFile)

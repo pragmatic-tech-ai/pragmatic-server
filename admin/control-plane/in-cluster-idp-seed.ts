@@ -120,10 +120,7 @@ export class InClusterIdpSeedSource implements IIdpSeedSource
     private static readonly TokenEncoding = 'base64url'
     private static readonly TmpPrefix = 'idp-seed-'
     private static readonly Utf8 = 'utf8'
-    // ca.key ships in the mounted TLS Secret because DevCa.EnsureAt's idempotency guard requires it present; without it the IdP
-    // regenerates into the read-only mount and fails.
-    // TODO: tracked for removal - relax the guard for read-only mounts so the CA signing key is not mounted into the pod.
-    private static readonly TlsFiles = ['server.crt', 'server.key', 'ca.crt', 'ca.key']
+    private static readonly TlsFiles = ['server.crt', 'server.key', 'ca.crt']
     private static readonly CaFile = 'ca.crt'
 
     #tenants = new Map<string, IdpTenantSeed>()

@@ -83,10 +83,11 @@ test('EnsureForTenant launches fresh: mints CA, writes token, seeds, ups, persis
     {
         const conn = await fx.Service.EnsureForTenant('t1', 'Tenant One')
         const dir = join(fx.Root, 'idp', 't1')
-        for (const f of ['ca.key', 'ca.crt', 'server.key', 'server.crt'])
+        for (const f of ['ca.crt', 'server.key', 'server.crt'])
         {
             assert.ok(existsSync(join(dir, 'tls', f)), f)
         }
+        assert.ok(!existsSync(join(dir, 'tls', 'ca.key')))
         const tokenFile = join(dir, 'secrets', 'admin-token')
         assert.ok(existsSync(tokenFile))
         if (process.platform !== 'win32')
