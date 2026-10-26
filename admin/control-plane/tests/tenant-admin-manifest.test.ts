@@ -192,5 +192,12 @@ describe('K8sManifestBuilder.RenderTenantAdmin IdP injection', () =>
         const mounts = c.volumeMounts.filter((m: any) => m.mountPath.startsWith('/idp/'))
         assert.equal(mounts.length, 2)
         assert.ok(mounts.every((m: any) => m.readOnly === true))
+        // The pod only REFERENCES Secrets by name — it never embeds a Secret object (no bytes to leak).
+        assert.ok(!JSON.parse(text).items.some((i: any) => i.kind === 'Secret'))
+        // SERVER-KEY SAFETY: the CA/token volumes project ONLY ca.crt / admin-token via `items`, so mounting a
+        // Secret that also held server.key could still never expose it.
+        const vol = (name: string): any => pod.volumes.find((v: any) => v.name === name)
+        assert.deepEqual(vol('idp-ca').secret.items, [{ key: 'ca.crt', path: 'ca.crt' }])
+        assert.deepEqual(vol('idp-token').secret.items, [{ key: 'admin-token', path: 'admin-token' }])
     })
 })

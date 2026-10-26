@@ -32,6 +32,16 @@ describe('InjectedIdpService', () =>
         assert.equal(conn.baseUrl, Names.Internal)
         assert.equal(conn.ca.toString(), Names.Ca)
         assert.equal(conn.adminToken, Names.Token)
+        // caDir/adminTokenRef are read by other IdpConnection consumers (env Federate caHostPath, persisted
+        // tenant record refs) — they must be real, derived from the mounted paths, not empty.
+        assert.equal(conn.caDir, dir)
+        assert.equal(conn.adminTokenRef, 'admin-token')
+    })
+
+    it('FromEnv fails fast naming a missing companion var when the browser base is set', () =>
+    {
+        assert.throws(() => InjectedIdpService.FromEnv({ PRAGMATIC_IDP_BROWSER_BASE_URL: Names.Browser, PRAGMATIC_IDP_ADMIN_TOKEN_FILE: join(dir, 'admin-token') }), /PRAGMATIC_IDP_CA_FILE/)
+        assert.throws(() => InjectedIdpService.FromEnv({ PRAGMATIC_IDP_BROWSER_BASE_URL: Names.Browser, PRAGMATIC_IDP_CA_FILE: join(dir, 'ca.crt') }), /PRAGMATIC_IDP_ADMIN_TOKEN_FILE/)
     })
 
     it('FromEnv is undefined without the issuer var and built when present', () =>

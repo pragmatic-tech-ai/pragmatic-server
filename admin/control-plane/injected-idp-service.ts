@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import { basename, dirname } from 'node:path'
 import { TenantAdminEnv } from './tenant-admin-env.js'
 import type { IdpConnection } from './idp-workload-driver.js'
 import type { IIdpService } from './idp-service.js'
@@ -22,7 +23,8 @@ export interface InjectedIdpConfig
 export class InjectedIdpService implements IIdpService
 {
     private static readonly Utf8 = 'utf8'
-    private static readonly ReadFailed = 'InjectedIdpService: cannot read mounted IdP material file'
+    private static readonly ReadFailed = 'InjectedIdpService: cannot read mounted IdP material file for '
+    private static readonly MissingVar = 'InjectedIdpService: a browser base is set but this env var is missing: '
     private static readonly EmptyRef = ''
 
     public constructor(private readonly config: InjectedIdpConfig)
@@ -37,12 +39,26 @@ export class InjectedIdpService implements IIdpService
         {
             return undefined
         }
+        // Fail fast while the browser base is present but a companion var is missing, naming the offending
+        // var — otherwise the omission would only surface at first login as a generic read error.
+        const caFile = InjectedIdpService.Require(env, TenantAdminEnv.IdpCaFile)
+        const adminTokenFile = InjectedIdpService.Require(env, TenantAdminEnv.IdpAdminTokenFile)
         return new InjectedIdpService({
             browserBaseUrl: browser,
             baseUrl: env[TenantAdminEnv.IdpBaseUrl] ?? browser,
-            caFile: env[TenantAdminEnv.IdpCaFile] ?? InjectedIdpService.EmptyRef,
-            adminTokenFile: env[TenantAdminEnv.IdpAdminTokenFile] ?? InjectedIdpService.EmptyRef,
+            caFile,
+            adminTokenFile,
         })
+    }
+
+    private static Require(env: NodeJS.ProcessEnv, name: string): string
+    {
+        const value = env[name]
+        if (value === undefined || value === InjectedIdpService.EmptyRef)
+        {
+            throw new Error(InjectedIdpService.MissingVar + name)
+        }
+        return value
     }
 
     public EnsureForTenant(_tenantId: string, _displayName: string): Promise<IdpConnection>
@@ -52,10 +68,12 @@ export class InjectedIdpService implements IIdpService
             return Promise.resolve({
                 baseUrl: this.config.baseUrl,
                 browserBaseUrl: this.config.browserBaseUrl,
-                ca: this.ReadFile(this.config.caFile),
-                adminToken: this.ReadFile(this.config.adminTokenFile).toString(InjectedIdpService.Utf8).trim(),
-                adminTokenRef: InjectedIdpService.EmptyRef,
-                caDir: InjectedIdpService.EmptyRef,
+                ca: this.ReadFile(this.config.caFile, TenantAdminEnv.IdpCaFile),
+                adminToken: this.ReadFile(this.config.adminTokenFile, TenantAdminEnv.IdpAdminTokenFile).toString(InjectedIdpService.Utf8).trim(),
+                // Give the fields other IdpConnection consumers read (env Federate's caHostPath, the persisted
+                // tenant record's idp refs) real values derived from the mounted paths, not empty strings.
+                adminTokenRef: basename(this.config.adminTokenFile),
+                caDir: dirname(this.config.caFile),
             })
         }
         catch (err)
@@ -64,7 +82,7 @@ export class InjectedIdpService implements IIdpService
         }
     }
 
-    private ReadFile(path: string): Buffer
+    private ReadFile(path: string, varName: string): Buffer
     {
         try
         {
@@ -72,7 +90,8 @@ export class InjectedIdpService implements IIdpService
         }
         catch
         {
-            throw new Error(InjectedIdpService.ReadFailed)
+            // Name the env var, never the path content or the fs error (which could echo a secret path).
+            throw new Error(InjectedIdpService.ReadFailed + varName)
         }
     }
 }

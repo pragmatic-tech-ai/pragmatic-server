@@ -192,6 +192,8 @@ export class K8sManifestBuilder
     private static readonly TenantAdminSeedMount = '/seed'
     private static readonly TenantAdminDataVolume = 'data'
     private static readonly TenantAdminSeedVolume = 'seed'
+    private static readonly TenantAdminIdpCaItemKey = 'ca.crt'
+    private static readonly TenantAdminIdpTokenItemKey = 'admin-token'
     private static readonly TenantAdminIdpCaVolume = 'idp-ca'
     private static readonly TenantAdminIdpCaMount = '/idp/ca'
     private static readonly TenantAdminIdpCaFile = '/idp/ca/ca.crt'
@@ -544,13 +546,16 @@ export class K8sManifestBuilder
         }
     }
 
-    private SecretVolume(volumeName: string, secretName: string): K8sObject
+    private SecretVolume(volumeName: string, secretName: string, items?: ReadonlyArray<{ key: string; path: string }>): K8sObject
     {
         return {
             [K8sManifestBuilder.NameKey]: volumeName,
             [K8sManifestBuilder.SecretKey]: {
                 [K8sManifestBuilder.SecretNameKey]: secretName,
                 [K8sManifestBuilder.DefaultModeKey]: K8sManifestBuilder.SecretFileMode,
+                // When items is given, project ONLY those keys so a Secret that also carries sensitive keys
+                // (e.g. an IdP TLS Secret's server.key) can never surface in the mount (SERVER-KEY SAFETY).
+                ...(items === undefined ? {} : { [K8sManifestBuilder.ItemsKey]: items.map(i => ({ [K8sManifestBuilder.KeyKey]: i.key, [K8sManifestBuilder.PathKey]: i.path })) }),
             },
         }
     }
@@ -816,8 +821,8 @@ export class K8sManifestBuilder
             return []
         }
         return [
-            this.SecretVolume(K8sManifestBuilder.TenantAdminIdpCaVolume, spec.idp.caSecretName),
-            this.SecretVolume(K8sManifestBuilder.TenantAdminIdpTokenVolume, spec.idp.adminTokenSecretName),
+            this.SecretVolume(K8sManifestBuilder.TenantAdminIdpCaVolume, spec.idp.caSecretName, [{ key: K8sManifestBuilder.TenantAdminIdpCaItemKey, path: K8sManifestBuilder.TenantAdminIdpCaItemKey }]),
+            this.SecretVolume(K8sManifestBuilder.TenantAdminIdpTokenVolume, spec.idp.adminTokenSecretName, [{ key: K8sManifestBuilder.TenantAdminIdpTokenItemKey, path: K8sManifestBuilder.TenantAdminIdpTokenItemKey }]),
         ]
     }
 
