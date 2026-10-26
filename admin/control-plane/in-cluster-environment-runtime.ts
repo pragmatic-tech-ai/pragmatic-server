@@ -71,6 +71,7 @@ export class InClusterEnvironmentRuntime implements IEnvironmentRuntime
     private static readonly Dot = '.'
     private static readonly PortSeparator = ':'
     private static readonly EnvironmentQuery = '/?environment='
+    private static readonly StoppedReplicas = 0
 
     public constructor(
         private readonly orchestrators: HiveOrchestratorFactory,
@@ -136,7 +137,7 @@ export class InClusterEnvironmentRuntime implements IEnvironmentRuntime
     public async Stop(ctx: EnvRuntimeContext): Promise<void>
     {
         const { orchestrator, workload } = this.Resolve(ctx)
-        await InClusterEnvironmentRuntime.Guard(() => orchestrator.Scale(workload, 0))
+        await InClusterEnvironmentRuntime.Guard(() => orchestrator.Scale(workload, InClusterEnvironmentRuntime.StoppedReplicas))
     }
 
     public async Teardown(ctx: EnvRuntimeContext, _removeData: boolean): Promise<void>
