@@ -1,4 +1,4 @@
-import { test } from 'node:test'
+import { describe, it, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
 import { readFileSync, rmSync } from 'node:fs'
@@ -169,7 +169,7 @@ class IdpFixture
             const baseUrl = 'https://' + IdpFixture.Host + ':' + port
             host = new IdpHost(baseUrl, key, realms, clients, new InMemoryAuthorizationCodeStore(), new IdpSsoSessionStore(), tls, true, admin)
             await host.Listen(port, IdpFixture.Host)
-            const conn: IdpConnection = { baseUrl, ca, adminToken: IdpFixture.AdminToken, adminTokenRef: 'admin-token', caDir: join(dir, 'tls') }
+            const conn: IdpConnection = { baseUrl, browserBaseUrl: baseUrl, ca, adminToken: IdpFixture.AdminToken, adminTokenRef: 'admin-token', caDir: join(dir, 'tls') }
             const client = new IdpAdminClient({ baseUrl, adminToken: IdpFixture.AdminToken, ca })
             await client.EnsureRealm(IdpFixture.TenantId, 'Acme')
             await client.SeedAccount(IdpFixture.TenantId, { email: IdpFixture.OwnerEmail, principalId: IdpFixture.OwnerPrincipalId, displayName: IdpFixture.OwnerDisplayName, password: IdpFixture.OwnerPassword })
@@ -335,6 +335,7 @@ class DurableFixture
     {
         return {
             baseUrl: DurableFixture.DummyBaseUrl,
+            browserBaseUrl: DurableFixture.DummyBaseUrl,
             ca: Buffer.alloc(0),
             adminToken: DurableFixture.DummyAdminToken,
             adminTokenRef: DurableFixture.DummyAdminTokenRef,
@@ -636,5 +637,29 @@ test('Complete with a bad code throws a generic TenantLoginError that leaks neit
                 assert.ok(!/secret/i.test(err.message))
                 return true
             })
+    })
+})
+
+class SplitHostFixture
+{
+    public static Conn(browser: string, internal: string): IdpConnection
+    {
+        return { baseUrl: internal, browserBaseUrl: browser, ca: Buffer.alloc(0), adminToken: 't', adminTokenRef: 'r', caDir: 'd' }
+    }
+}
+
+describe('TenantOidcRelyingParty split-host config', () =>
+{
+    it('issuer uses the browser base and discovery the internal base', () =>
+    {
+        const conn = SplitHostFixture.Conn('https://idp-acme.tenants.test', 'https://idp.svc:8443')
+        assert.equal(TenantOidcRelyingParty.IssuerFor(conn, 'acme'), 'https://idp-acme.tenants.test/acme')
+        assert.equal(TenantOidcRelyingParty.DiscoveryUrlFor(conn, 'acme'), 'https://idp.svc:8443/acme/.well-known/openid-configuration')
+    })
+
+    it('single-host (browser == internal) yields identical issuer and discovery prefix', () =>
+    {
+        const conn = SplitHostFixture.Conn('https://h:1', 'https://h:1')
+        assert.equal(TenantOidcRelyingParty.DiscoveryUrlFor(conn, 'acme'), TenantOidcRelyingParty.IssuerFor(conn, 'acme') + '/.well-known/openid-configuration')
     })
 })

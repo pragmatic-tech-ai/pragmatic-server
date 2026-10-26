@@ -32,7 +32,12 @@ class HostFixture
     public static readonly CaDirName = 'ca';
     public static readonly Utf8 = 'utf8';
 
-    public static async WithHost(body: (host: IdpHost, key: IdpSigningKey, caPem: string) => Promise<void>): Promise<void>
+    public static readonly InternalBaseUrl = 'https://idp.hive.svc.cluster.local:8443';
+    public static readonly HostSource = '../idp-host.ts';
+    public static readonly TokenCtorSnippet = 'new TokenEndpoint(this.baseUrl,';
+    public static readonly TokenCtorBadSnippet = 'new TokenEndpoint(this.internalBaseUrl';
+
+    public static async WithHost(body: (host: IdpHost, key: IdpSigningKey, caPem: string) => Promise<void>, internalBaseUrl?: string): Promise<void>
     {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), HostFixture.DirPrefix));
         let host: IdpHost | undefined;
@@ -42,7 +47,7 @@ class HostFixture
             const realm = await IdpRealm.OpenFor(path.join(dir, HostFixture.RealmDirName), HostFixture.TenantId, HostFixture.DisplayName, randomBytes(32));
             const ca = DevCa.EnsureAt(path.join(dir, HostFixture.CaDirName), HostFixture.Localhost);
             const tls = IdpTlsMaterial.Load({ certFile: ca.certFile, keyFile: ca.keyFile });
-            host = HostFixture.Build(HostFixture.BaseUrl, key, new IdpRealmSet([[HostFixture.TenantId, realm]]), tls);
+            host = HostFixture.Build(HostFixture.BaseUrl, key, new IdpRealmSet([[HostFixture.TenantId, realm]]), tls, internalBaseUrl);
             await host.Listen(0, HostFixture.Loopback);
             await body(host, key, fs.readFileSync(ca.caFile, HostFixture.Utf8));
         }
@@ -56,9 +61,9 @@ class HostFixture
         }
     }
 
-    public static Build(baseUrl: string, key: IdpSigningKey, realms: IdpRealmSet, tls: { key: Buffer; cert: Buffer }): IdpHost
+    public static Build(baseUrl: string, key: IdpSigningKey, realms: IdpRealmSet, tls: { key: Buffer; cert: Buffer }, internalBaseUrl?: string): IdpHost
     {
-        return new IdpHost(baseUrl, key, realms, new IdpClientStore(), new InMemoryAuthorizationCodeStore(), new IdpSsoSessionStore(), tls, true);
+        return new IdpHost(baseUrl, key, realms, new IdpClientStore(), new InMemoryAuthorizationCodeStore(), new IdpSsoSessionStore(), tls, true, undefined, internalBaseUrl);
     }
 
     public static Get(host: IdpHost, caPem: string, urlPath: string): Promise<HttpsReply>
@@ -94,6 +99,38 @@ test('discovery returns exactly the four https fields for the tenant', async () 
         assert.equal(r.body.token_endpoint, `${r.body.issuer}/token`);
         assert.equal(r.body.jwks_uri, `${r.body.issuer}/jwks`);
     });
+});
+
+test('split-host: issuer and authorize on the browser base, token and jwks on the internal base', async () =>
+{
+    await HostFixture.WithHost(async (host, _key, ca) =>
+    {
+        const r = await HostFixture.Get(host, ca, `/${HostFixture.TenantId}/.well-known/openid-configuration`);
+        const issuer = `${HostFixture.BaseUrl}/${HostFixture.TenantId}`;
+        const internal = `${HostFixture.InternalBaseUrl}/${HostFixture.TenantId}`;
+        assert.equal(r.body.issuer, issuer);
+        assert.equal(r.body.authorization_endpoint, `${issuer}/authorize`);
+        assert.equal(r.body.token_endpoint, `${internal}/token`);
+        assert.equal(r.body.jwks_uri, `${internal}/jwks`);
+    }, HostFixture.InternalBaseUrl);
+});
+
+test('token iss stays derived from the browser baseUrl, never the internal base', () =>
+{
+    const src = fs.readFileSync(new URL(HostFixture.HostSource, import.meta.url), HostFixture.Utf8);
+    assert.ok(src.includes(HostFixture.TokenCtorSnippet));
+    assert.ok(!src.includes(HostFixture.TokenCtorBadSnippet));
+});
+
+test('an empty internal base falls back to the browser base (no relative endpoints)', async () =>
+{
+    await HostFixture.WithHost(async (host, _key, ca) =>
+    {
+        const r = await HostFixture.Get(host, ca, `/${HostFixture.TenantId}/.well-known/openid-configuration`);
+        const issuer = `${HostFixture.BaseUrl}/${HostFixture.TenantId}`;
+        assert.equal(r.body.token_endpoint, `${issuer}/token`);
+        assert.equal(r.body.jwks_uri, `${issuer}/jwks`);
+    }, '');
 });
 
 test('jwks serves the signing public key', async () =>

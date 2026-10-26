@@ -7,7 +7,7 @@ import type { IBundleBuilder, IDockerEnv } from './docker-env-port.js'
 export type EnvEndpoint = { httpUrl: string; wsUrl: string; hostPort?: number }
 
 /** Everything a runtime backend needs to act on one environment. seedDir feeds Prepare only. */
-export type EnvRuntimeContext = { def: EnvDefinition; record: EnvironmentRecord; bundleDir?: string; seedDir?: string; oidc?: EnvOidc; caHostPath?: string }
+export type EnvRuntimeContext = { def: EnvDefinition; record: EnvironmentRecord; bundleDir?: string; seedDir?: string; oidc?: EnvOidc; caHostPath?: string; caPem?: Buffer }
 
 /** The backend-shaped lifecycle operations of an environment (Docker today); EnvironmentService orchestrates over this seam. */
 export interface IEnvironmentRuntime
@@ -15,7 +15,8 @@ export interface IEnvironmentRuntime
     /**
      * True for a backend that publishes a host port and owns a local bundle/container (Docker), so EnvironmentService
      * allocates a host port, stamps the Docker-shaped record fields, and performs host (localhost) OIDC federation for
-     * it. False for a DNS-reached backend (in-cluster), which carries none of those and defers per-env federation.
+     * it. False for a DNS-reached backend (in-cluster), which carries none of those and federates per-env via the
+     * env's browser host (https://<environmentId>.<baseDomain>) when a base domain is known.
      */
     PublishesHostPort(): boolean
     EnsureImage(def: EnvDefinition): Promise<boolean>

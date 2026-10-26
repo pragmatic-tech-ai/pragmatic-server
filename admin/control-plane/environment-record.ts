@@ -33,6 +33,8 @@ export type EnvironmentRecord = {
     containerName?: string
     volumeName?: string
     bundleDir?: string
+    /** Base domain of the in-cluster browser host (<environmentId>.<baseDomain>) when the environment is federated to its tenant IdP. */
+    idpBaseDomain?: string
     /** Where the environment is reachable, as reported by the runtime at create/start. */
     endpoint?: { httpUrl: string; wsUrl: string }
     createdAt: string

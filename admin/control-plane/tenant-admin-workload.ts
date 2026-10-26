@@ -16,4 +16,16 @@ export interface TenantAdminWorkloadSpec
     rolloutUrl: string
     /** Optional pull-only registry credential Secret (dockerconfigjson) for the image. */
     imagePullSecretName?: string
+    /** Operator-provisioned IdP the pod connects to; CA cert and admin token arrive by Secret mount only. */
+    idp?: TenantAdminIdpInjection
+}
+
+export interface TenantAdminIdpInjection
+{
+    browserBaseUrl: string
+    internalBaseUrl: string
+    /** Secret holding ONLY the public CA certificate under key `ca.crt` (never the TLS Secret with the server key). */
+    caSecretName: string
+    /** Secret holding the IdP admin token under key `admin-token`. */
+    adminTokenSecretName: string
 }

@@ -37,6 +37,10 @@ class FakeSeeds implements IIdpSeedSource
     public static readonly Token = 'seeded-token-VALUE'
     public static readonly Ca = 'seeded-ca-BYTES'
 
+    public constructor(public readonly BaseDomain?: string)
+    {
+    }
+
     public SeedFor(): IdpSeed
     {
         return {
@@ -49,6 +53,22 @@ class FakeSeeds implements IIdpSeedSource
 describe('InClusterIdpDriver', () =>
 {
     const Make = (kubectl: FakeKubectl) => new InClusterIdpDriver(kubectl, new K8sManifestBuilder(), new FakeSeeds(), 'hive-a', 'pragmatic-server:dev')
+
+    it('browserBaseUrl is the idp-<tenant>.<baseDomain> origin when the seed source carries a baseDomain', async () =>
+    {
+        // baseDomain is owned by the seed source (the cert-minting authority); the driver reads it from there,
+        // so the advertised browser host and the cert SANs can never diverge.
+        const driver = new InClusterIdpDriver(new FakeKubectl(), new K8sManifestBuilder(), new FakeSeeds('d.localtest'), 'hive-a', 'img')
+        const result = await driver.EnsureRunning({ tenantId: 't1', displayName: 'T', takenPorts: [] })
+        assert.equal(result.connection.browserBaseUrl, 'https://idp-t1.d.localtest')
+        assert.equal(result.connection.baseUrl, K8sManifestBuilder.IdpBaseUrlOf('t1', 9443))
+    })
+
+    it('browserBaseUrl equals the internal baseUrl when no baseDomain is set', async () =>
+    {
+        const result = await Make(new FakeKubectl()).EnsureRunning({ tenantId: 't1', displayName: 'T', takenPorts: [] })
+        assert.equal(result.connection.browserBaseUrl, result.connection.baseUrl)
+    })
 
     it('applies the rendered IdP workload, waits for rollout, and returns the in-cluster service DNS baseUrl', async () =>
     {

@@ -17,7 +17,8 @@ import { ExecFileDockerExec, IdpContainerEnv } from './idp-container-env.js'
 import { IdpAdminClient } from './idp-admin-client.js'
 import { IdpRegistry } from './idp-registry.js'
 import { DockerIdpDriver } from './docker-idp-driver.js'
-import { IdpService } from './idp-service.js'
+import { IdpService, type IIdpService } from './idp-service.js'
+import { InjectedIdpService } from './injected-idp-service.js'
 import { MasterKeyFile } from './master-key-file.js'
 import { NetPortProbe, PortAllocator } from './port-allocator.js'
 import { ControlPlaneServer } from './server.js'
@@ -130,6 +131,16 @@ export class TenantAdminServer
         }
     }
 
+    /**
+     * In-cluster the operator provisioned the IdP, so the pod only CONNECTS (injected env + mounted Secret files);
+     * otherwise the dev-collapse docker-backed IdpService launches one.
+     */
+    public static BuildIdpService(env: NodeJS.ProcessEnv, dataRoot: string): IIdpService
+    {
+        return InjectedIdpService.FromEnv(env)
+            ?? new IdpService(new IdpRegistry(join(dataRoot, ControlPlaneServer.IdpsFile)), new DockerIdpDriver(new PortAllocator(ControlPlaneServer.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), dataRoot, DockerEnv.ImageName))
+    }
+
     /** Reads `<dataRoot>/seed.json` and builds the single-tenant directory view from it. */
     public static LoadSeed(dataRoot: string): SeededTenantDirectory
     {
@@ -170,7 +181,7 @@ export class TenantAdminServer
         await registry.Load()
         const adminClients = new TenantAdminClientRegistry(join(dataRoot, ControlPlaneServer.TenantAdminClientsFile))
         await adminClients.Load()
-        const idpService = new IdpService(new IdpRegistry(join(dataRoot, ControlPlaneServer.IdpsFile)), new DockerIdpDriver(new PortAllocator(ControlPlaneServer.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), dataRoot, DockerEnv.ImageName))
+        const idpService = TenantAdminServer.BuildIdpService(process.env, dataRoot)
         const orchestrators = new HiveOrchestratorFactory()
         const placement = new EnvironmentPlacement(directory)
         const service = new EnvironmentService(registry, new PortAllocator(ControlPlaneServer.EnvPortFloor, new NetPortProbe()), new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(orchestrators, placement, directory, new BundleBuilderAdapter()), directory, orchestrators), new UserSeederAdapter(new UserSeeder()), dataRoot, new AdminProxy(new WsAdminConnector()), directory, idpService, conn => new IdpAdminClient(conn))

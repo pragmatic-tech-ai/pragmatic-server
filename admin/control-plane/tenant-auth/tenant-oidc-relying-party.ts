@@ -326,12 +326,23 @@ export class TenantOidcRelyingParty implements ITenantOidcRelyingParty
         return this.resolverOverride ?? new IdentityPackResolver(new CaTrustingHttpClient(conn.ca), this.flowStates)
     }
 
+    /** The OIDC issuer: the browser-facing origin (equals the internal one on single-host deployments). */
+    public static IssuerFor(conn: IdpConnection, tenantId: string): string
+    {
+        return conn.browserBaseUrl + TenantOidcRelyingParty.IssuerSeparator + encodeURIComponent(tenantId)
+    }
+
+    /** The discovery document URL, fetched over the internal origin. */
+    public static DiscoveryUrlFor(conn: IdpConnection, tenantId: string): string
+    {
+        return conn.baseUrl + TenantOidcRelyingParty.IssuerSeparator + encodeURIComponent(tenantId) + TenantOidcRelyingParty.WellKnownSuffix
+    }
+
     private configFor(conn: IdpConnection, tenantId: string, secretRef: string, callbackUrl: string): IdentityConfig
     {
-        const issuer = conn.baseUrl + TenantOidcRelyingParty.IssuerSeparator + encodeURIComponent(tenantId)
         const providerSettings = new Map<string, string>([
-            [OidcSettingKeys.Issuer, issuer],
-            [OidcSettingKeys.DiscoveryUrl, issuer + TenantOidcRelyingParty.WellKnownSuffix],
+            [OidcSettingKeys.Issuer, TenantOidcRelyingParty.IssuerFor(conn, tenantId)],
+            [OidcSettingKeys.DiscoveryUrl, TenantOidcRelyingParty.DiscoveryUrlFor(conn, tenantId)],
             [OidcSettingKeys.ClientId, TenantOidcRelyingParty.AdminClientId],
             [OidcSettingKeys.RedirectUri, callbackUrl],
             [OidcSettingKeys.SecretRef, secretRef],

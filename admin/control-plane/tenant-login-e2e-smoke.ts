@@ -8,7 +8,7 @@
  *   npx tsx admin/control-plane/tenant-login-e2e-smoke.ts
  *
  * Proves the whole tenant-admin loop end to end: it composes the real control plane in-process (as server.ts and
- * idp-federation-smoke.ts do), provisions tenant `acme` (launching its IdP container), creates a hive plus one
+ * the retired Docker-era federation smoke did), provisions tenant `acme` (launching its IdP container), creates a hive plus one
  * hive-bound environment brought up on the hive's cluster, publishes + gates a real v1/v2 version set, then plays a
  * real Playwright Chromium: the headless browser completes the REAL tenant-admin OIDC login against the tenant's own
  * `pragmatic-idp` container through the real relying-party and the subdomain-routed tenant plane, boots the portal
@@ -17,7 +17,7 @@
  * fake recorder. The owner one-time password, tokens and cookies are captured but NEVER printed. Containers, the
  * k8s namespace, the extra image tags and the temp dir are always torn down.
  *
- * Why the environment is brought up on the hive cluster (and not via EnvironmentService.Create as idp-federation's
+ * Why the environment is brought up on the hive cluster (and not via EnvironmentService.Create as the retired federation smoke's
  * CreateBound does): a Local/Attach hive's detail health probe and its roll Push both go through the kubectl
  * orchestrator, so the hive-bound environment must be a real workload on that cluster -- a plain docker-container
  * environment is invisible to the hive's orchestrator and would make the hive-detail health 500. This mirrors the

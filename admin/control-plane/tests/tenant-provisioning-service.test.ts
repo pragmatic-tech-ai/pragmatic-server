@@ -104,6 +104,7 @@ class ProvFixture
             await host.Listen(0, ProvFixture.Loopback);
             const conn: IdpConnection = {
                 baseUrl: ProvFixture.HttpsScheme + ProvFixture.Localhost + ProvFixture.Colon + host.Address().port,
+                browserBaseUrl: ProvFixture.HttpsScheme + ProvFixture.Localhost + ProvFixture.Colon + host.Address().port,
                 ca: fs.readFileSync(ca.caFile),
                 adminToken: ProvFixture.Token,
                 adminTokenRef: ProvFixture.TokenRef,

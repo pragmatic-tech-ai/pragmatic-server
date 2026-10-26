@@ -257,7 +257,7 @@ class FakeDriver implements IIdpWorkloadDriver
         }
         if (this.Reuse && request.existing !== undefined)
         {
-            return { record: request.existing, connection: { baseUrl: request.existing.baseUrl, ca: Buffer.from(FakeDriver.SecretCa), adminToken: FakeDriver.SecretToken, adminTokenRef: request.existing.adminTokenRef, caDir: request.existing.caDir } }
+            return { record: request.existing, connection: { baseUrl: request.existing.baseUrl, browserBaseUrl: request.existing.baseUrl, ca: Buffer.from(FakeDriver.SecretCa), adminToken: FakeDriver.SecretToken, adminTokenRef: request.existing.adminTokenRef, caDir: request.existing.caDir } }
         }
         const record = {
             tenantId: request.tenantId, port: 8443, baseUrl: 'https://idp.svc:8443', containerName: 'c', volumeName: 'v',
@@ -265,7 +265,7 @@ class FakeDriver implements IIdpWorkloadDriver
         }
         return {
             record,
-            connection: { baseUrl: record.baseUrl, ca: Buffer.from(FakeDriver.SecretCa), adminToken: FakeDriver.SecretToken, adminTokenRef: 'admin-ref', caDir: 'ca-ref' }
+            connection: { baseUrl: record.baseUrl, browserBaseUrl: record.baseUrl, ca: Buffer.from(FakeDriver.SecretCa), adminToken: FakeDriver.SecretToken, adminTokenRef: 'admin-ref', caDir: 'ca-ref' }
         }
     }
 }

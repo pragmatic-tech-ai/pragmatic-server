@@ -16,6 +16,7 @@ class MainFixture
     public static readonly Utf8 = 'utf8';
     public static readonly CaFile = 'ca.crt';
     public static readonly TlsDir = 'tls';
+    public static readonly InternalBaseUrl = 'https://idp.hive.svc.cluster.local:8443';
 
     public static readonly AdminRef = 'admin-token';
     public static readonly AdminToken = 'main-admin-token-xyz';
@@ -111,6 +112,47 @@ test('Compose binds HTTPS and serves discovery for a configured tenant', async (
     finally
     {
         await host.Close();
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('Compose with PRAGMATIC_IDP_INTERNAL_URL serves split-host discovery (token/jwks on the internal base)', async () =>
+{
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), MainFixture.DirPrefix));
+    const host = await IdpMain.Compose({
+        PRAGMATIC_IDP_DATA: dir,
+        PRAGMATIC_IDP_BASE_URL: MainFixture.BaseUrl,
+        PRAGMATIC_IDP_INTERNAL_URL: MainFixture.InternalBaseUrl,
+        PRAGMATIC_IDP_TENANTS: MainFixture.TenantId,
+    });
+    try
+    {
+        await host.Listen(0, MainFixture.Loopback);
+        const ca = fs.readFileSync(path.join(dir, MainFixture.TlsDir, MainFixture.CaFile), MainFixture.Utf8);
+        const r = await MainFixture.Get(host.Address().port, ca, `/${MainFixture.TenantId}/.well-known/openid-configuration`);
+        const issuer = `${MainFixture.BaseUrl}/${MainFixture.TenantId}`;
+        const internal = `${MainFixture.InternalBaseUrl}/${MainFixture.TenantId}`;
+        assert.equal(r.body.issuer, issuer);
+        assert.equal(r.body.authorization_endpoint, `${issuer}/authorize`);
+        assert.equal(r.body.token_endpoint, `${internal}/token`);
+        assert.equal(r.body.jwks_uri, `${internal}/jwks`);
+    }
+    finally
+    {
+        await host.Close();
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('Compose rejects a non-https PRAGMATIC_IDP_INTERNAL_URL with a clear message', async () =>
+{
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), MainFixture.DirPrefix));
+    try
+    {
+        await assert.rejects(IdpMain.Compose({ PRAGMATIC_IDP_DATA: dir, PRAGMATIC_IDP_BASE_URL: MainFixture.BaseUrl, PRAGMATIC_IDP_INTERNAL_URL: 'http://idp.hive.svc' }), /PRAGMATIC_IDP_INTERNAL_URL.*https/);
+    }
+    finally
+    {
         fs.rmSync(dir, { recursive: true, force: true });
     }
 });

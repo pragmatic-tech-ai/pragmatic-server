@@ -116,6 +116,32 @@ export class K8sManifestBuilder
     private static readonly HiveAgentPrefix = 'pragmatic-hive-'
 
     // IdP workload conventions.
+    private static readonly IdpBrowserHostPrefix = 'idp-'
+    private static readonly ApiVersionNetworking = 'networking.k8s.io/v1'
+    private static readonly IngressKind = 'Ingress'
+    private static readonly IngressClassNameKey = 'ingressClassName'
+    private static readonly IngressClassNginx = 'nginx'
+    private static readonly AnnotationsKey = 'annotations'
+    private static readonly SslPassthroughAnnotation = 'nginx.ingress.kubernetes.io/ssl-passthrough'
+    private static readonly TlsKey = 'tls'
+    private static readonly HostsKey = 'hosts'
+    private static readonly SslPassthroughValue = 'true'
+    private static readonly HostKey = 'host'
+    private static readonly HttpKey = 'http'
+    private static readonly PathsKey = 'paths'
+    private static readonly PathTypeKey = 'pathType'
+    private static readonly PathTypePrefix = 'Prefix'
+    private static readonly BackendKey = 'backend'
+    private static readonly ServiceKey = 'service'
+    private static readonly PortNumberKey = 'number'
+    private static readonly IngressRootPath = '/'
+    // Served-environment federation: ca.crt-only trust mount + per-env TLS-terminating Ingress.
+    private static readonly EnvIdpCaVolume = 'idp-ca'
+    private static readonly EnvIdpCaMount = '/etc/idp-ca'
+    private static readonly EnvIdpCaFile = '/etc/idp-ca/ca.crt'
+    private static readonly EnvIdpCaItemKey = 'ca.crt'
+    private static readonly NodeExtraCaCertsVar = 'NODE_EXTRA_CA_CERTS'
+    private static readonly HostDotSeparator = '.'
     private static readonly IdpPrefix = IdpContainerEnv.NamePrefix
     private static readonly IdpContainerName = 'idp'
     private static readonly IdpEntrypoint = ['node', 'dist/bin/pragmatic-idpd.js']
@@ -126,6 +152,7 @@ export class K8sManifestBuilder
     private static readonly IdpBindAll = '0.0.0.0'
     private static readonly IdpPortVar = 'PRAGMATIC_IDP_PORT'
     private static readonly IdpBaseUrlVar = 'PRAGMATIC_IDP_BASE_URL'
+    private static readonly IdpInternalUrlVar = 'PRAGMATIC_IDP_INTERNAL_URL'
     private static readonly IdpHostVar = 'PRAGMATIC_IDP_HOST'
     private static readonly IdpDataVar = 'PRAGMATIC_IDP_DATA'
     private static readonly IdpAdminTokenRefVar = 'PRAGMATIC_IDP_ADMIN_TOKEN_REF'
@@ -175,6 +202,14 @@ export class K8sManifestBuilder
     private static readonly TenantAdminSeedMount = '/seed'
     private static readonly TenantAdminDataVolume = 'data'
     private static readonly TenantAdminSeedVolume = 'seed'
+    private static readonly TenantAdminIdpCaItemKey = 'ca.crt'
+    private static readonly TenantAdminIdpTokenItemKey = 'admin-token'
+    private static readonly TenantAdminIdpCaVolume = 'idp-ca'
+    private static readonly TenantAdminIdpCaMount = '/idp/ca'
+    private static readonly TenantAdminIdpCaFile = '/idp/ca/ca.crt'
+    private static readonly TenantAdminIdpTokenVolume = 'idp-token'
+    private static readonly TenantAdminIdpTokenMount = '/idp/token'
+    private static readonly TenantAdminIdpTokenFile = '/idp/token/admin-token'
     private static readonly TenantAdminDataSuffix = '-data'
     private static readonly TenantAdminSeedSuffix = '-seed'
     private static readonly TenantAdminDataSize = '256Mi'
@@ -264,6 +299,10 @@ export class K8sManifestBuilder
             items.push(this.DatabaseService(workload))
         }
         items.push(this.ServerDataClaim(workload))
+        if (workload.federation)
+        {
+            items.push(this.ServerIngress(workload, workload.federation.baseDomain))
+        }
         return JSON.stringify({
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
             [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ListKind,
@@ -441,7 +480,20 @@ export class K8sManifestBuilder
         return `${K8sManifestBuilder.IdpScheme}://${name}.${name}.${K8sManifestBuilder.IdpDnsSuffix}:${port}`
     }
 
-    /** Renders one tenant's IdP as an in-cluster workload: Namespace, SA (no API token), PVC, Deployment, ClusterIP Service. Hive-labeled only (no environment label, so the pull agent never selects it); secrets mounted by Secret name, never inline; no RBAC. */
+    /** Browser-facing origin of a tenant's IdP: https://idp-<tenant>.<baseDomain>[:port]. The internal Service-DNS origin stays IdpBaseUrlOf. */
+    public static IdpBrowserUrlOf(tenantId: string, baseDomain: string, port?: number): string
+    {
+        const suffix = port === undefined ? '' : `:${port}`
+        return `${K8sManifestBuilder.IdpScheme}://${K8sManifestBuilder.IdpBrowserHostOf(tenantId, baseDomain)}${suffix}`
+    }
+
+    /** Browser-facing hostname idp-<tenant>.<baseDomain> (the second SAN on the IdP cert). */
+    public static IdpBrowserHostOf(tenantId: string, baseDomain: string): string
+    {
+        return `${K8sManifestBuilder.IdpBrowserHostPrefix}${tenantId}.${baseDomain}`
+    }
+
+    /** Renders one tenant's IdP as an in-cluster workload: Namespace, SA (no API token), PVC, Deployment, ClusterIP Service, plus an ssl-passthrough Ingress when baseDomain is set. Hive-labeled only (no environment label, so the pull agent never selects it); secrets mounted by Secret name, never inline; no RBAC. */
     public RenderIdp(spec: IdpWorkloadSpec): string
     {
         const items: K8sObject[] = [
@@ -451,6 +503,10 @@ export class K8sManifestBuilder
             this.IdpDeployment(spec),
             this.IdpServiceObject(spec),
         ]
+        if (spec.baseDomain !== undefined)
+        {
+            items.push(this.IdpIngressObject(spec, spec.baseDomain))
+        }
         return JSON.stringify({
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
             [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ListKind,
@@ -504,13 +560,16 @@ export class K8sManifestBuilder
         }
     }
 
-    private SecretVolume(volumeName: string, secretName: string): K8sObject
+    private SecretVolume(volumeName: string, secretName: string, items?: ReadonlyArray<{ key: string; path: string }>): K8sObject
     {
         return {
             [K8sManifestBuilder.NameKey]: volumeName,
             [K8sManifestBuilder.SecretKey]: {
                 [K8sManifestBuilder.SecretNameKey]: secretName,
                 [K8sManifestBuilder.DefaultModeKey]: K8sManifestBuilder.SecretFileMode,
+                // When items is given, project ONLY those keys so a Secret that also carries sensitive keys
+                // (e.g. an IdP TLS Secret's server.key) can never surface in the mount (SERVER-KEY SAFETY).
+                ...(items === undefined ? {} : { [K8sManifestBuilder.ItemsKey]: items.map(i => ({ [K8sManifestBuilder.KeyKey]: i.key, [K8sManifestBuilder.PathKey]: i.path })) }),
             },
         }
     }
@@ -547,6 +606,26 @@ export class K8sManifestBuilder
         }
     }
 
+    /**
+     * The IdP container env. Split-host when baseDomain is set: PRAGMATIC_IDP_BASE_URL = the BROWSER base (so iss +
+     * issuer + authorization_endpoint are browser-reachable) and PRAGMATIC_IDP_INTERNAL_URL = the internal
+     * Service-DNS base (token_endpoint + jwks_uri the pod reaches). Absent baseDomain ⇒ single-host (BASE_URL =
+     * internal, no INTERNAL_URL), byte-identical to the pre-6c pod.
+     */
+    private IdpEnv(spec: IdpWorkloadSpec): K8sObject[]
+    {
+        const internal = K8sManifestBuilder.IdpBaseUrlOf(spec.tenantId, spec.port)
+        const baseUrl = spec.baseDomain === undefined ? internal : K8sManifestBuilder.IdpBrowserUrlOf(spec.tenantId, spec.baseDomain)
+        return [
+            this.EnvLiteral(K8sManifestBuilder.IdpPortVar, String(spec.port)),
+            this.EnvLiteral(K8sManifestBuilder.IdpBaseUrlVar, baseUrl),
+            ...(spec.baseDomain === undefined ? [] : [this.EnvLiteral(K8sManifestBuilder.IdpInternalUrlVar, internal)]),
+            this.EnvLiteral(K8sManifestBuilder.IdpHostVar, K8sManifestBuilder.IdpBindAll),
+            this.EnvLiteral(K8sManifestBuilder.IdpDataVar, K8sManifestBuilder.IdpDataMount),
+            this.EnvLiteral(K8sManifestBuilder.IdpAdminTokenRefVar, spec.adminTokenRef),
+        ]
+    }
+
     private IdpContainer(spec: IdpWorkloadSpec): K8sObject
     {
         return {
@@ -563,13 +642,7 @@ export class K8sManifestBuilder
                 [K8sManifestBuilder.SeccompProfileKey]: { [K8sManifestBuilder.TypeKey]: K8sManifestBuilder.RuntimeDefault },
                 [K8sManifestBuilder.ReadOnlyRootFilesystemKey]: true,
             },
-            [K8sManifestBuilder.EnvKey]: [
-                this.EnvLiteral(K8sManifestBuilder.IdpPortVar, String(spec.port)),
-                this.EnvLiteral(K8sManifestBuilder.IdpBaseUrlVar, K8sManifestBuilder.IdpBaseUrlOf(spec.tenantId, spec.port)),
-                this.EnvLiteral(K8sManifestBuilder.IdpHostVar, K8sManifestBuilder.IdpBindAll),
-                this.EnvLiteral(K8sManifestBuilder.IdpDataVar, K8sManifestBuilder.IdpDataMount),
-                this.EnvLiteral(K8sManifestBuilder.IdpAdminTokenRefVar, spec.adminTokenRef),
-            ],
+            [K8sManifestBuilder.EnvKey]: this.IdpEnv(spec),
             [K8sManifestBuilder.VolumeMountsKey]: [
                 { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.IdpDataVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.IdpDataMount },
                 { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.IdpTlsVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.IdpTlsMount, [K8sManifestBuilder.ReadOnlyKey]: true },
@@ -599,6 +672,36 @@ export class K8sManifestBuilder
                 [K8sManifestBuilder.PortsKey]: [{
                     [K8sManifestBuilder.PortKey]: spec.port,
                     [K8sManifestBuilder.TargetPortKey]: spec.port,
+                }],
+            },
+        }
+    }
+
+    private IdpIngressObject(spec: IdpWorkloadSpec, baseDomain: string): K8sObject
+    {
+        const name = K8sManifestBuilder.IdpNameOf(spec.tenantId)
+        const meta = this.IdpMeta(spec, name)
+        meta[K8sManifestBuilder.AnnotationsKey] = { [K8sManifestBuilder.SslPassthroughAnnotation]: K8sManifestBuilder.SslPassthroughValue }
+        return {
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionNetworking,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.IngressKind,
+            [K8sManifestBuilder.MetadataKey]: meta,
+            [K8sManifestBuilder.SpecKey]: {
+                [K8sManifestBuilder.IngressClassNameKey]: K8sManifestBuilder.IngressClassNginx,
+                [K8sManifestBuilder.RulesKey]: [{
+                    [K8sManifestBuilder.HostKey]: K8sManifestBuilder.IdpBrowserHostOf(spec.tenantId, baseDomain),
+                    [K8sManifestBuilder.HttpKey]: {
+                        [K8sManifestBuilder.PathsKey]: [{
+                            [K8sManifestBuilder.PathKey]: K8sManifestBuilder.IngressRootPath,
+                            [K8sManifestBuilder.PathTypeKey]: K8sManifestBuilder.PathTypePrefix,
+                            [K8sManifestBuilder.BackendKey]: {
+                                [K8sManifestBuilder.ServiceKey]: {
+                                    [K8sManifestBuilder.NameKey]: name,
+                                    [K8sManifestBuilder.PortKey]: { [K8sManifestBuilder.PortNumberKey]: spec.port },
+                                },
+                            },
+                        }],
+                    },
                 }],
             },
         }
@@ -701,6 +804,7 @@ export class K8sManifestBuilder
                 },
                 this.SecretVolume(K8sManifestBuilder.TenantAdminSeedVolume, spec.seedSecretName),
                 { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.TmpVolume, [K8sManifestBuilder.EmptyDirKey]: {} },
+                ...this.TenantAdminIdpVolumes(spec),
             ],
         }
         if (spec.imagePullSecretName !== undefined)
@@ -737,6 +841,45 @@ export class K8sManifestBuilder
         }
     }
 
+    /** Secret volumes carrying the operator-provisioned IdP CA cert and admin token (by ref only). */
+    private TenantAdminIdpVolumes(spec: TenantAdminWorkloadSpec): K8sObject[]
+    {
+        if (spec.idp === undefined)
+        {
+            return []
+        }
+        return [
+            this.SecretVolume(K8sManifestBuilder.TenantAdminIdpCaVolume, spec.idp.caSecretName, [{ key: K8sManifestBuilder.TenantAdminIdpCaItemKey, path: K8sManifestBuilder.TenantAdminIdpCaItemKey }]),
+            this.SecretVolume(K8sManifestBuilder.TenantAdminIdpTokenVolume, spec.idp.adminTokenSecretName, [{ key: K8sManifestBuilder.TenantAdminIdpTokenItemKey, path: K8sManifestBuilder.TenantAdminIdpTokenItemKey }]),
+        ]
+    }
+
+    private TenantAdminIdpMounts(spec: TenantAdminWorkloadSpec): K8sObject[]
+    {
+        if (spec.idp === undefined)
+        {
+            return []
+        }
+        return [
+            { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.TenantAdminIdpCaVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.TenantAdminIdpCaMount, [K8sManifestBuilder.ReadOnlyKey]: true },
+            { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.TenantAdminIdpTokenVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.TenantAdminIdpTokenMount, [K8sManifestBuilder.ReadOnlyKey]: true },
+        ]
+    }
+
+    private TenantAdminIdpEnv(spec: TenantAdminWorkloadSpec): K8sObject[]
+    {
+        if (spec.idp === undefined)
+        {
+            return []
+        }
+        return [
+            this.EnvLiteral(TenantAdminEnv.IdpBrowserBaseUrl, spec.idp.browserBaseUrl),
+            this.EnvLiteral(TenantAdminEnv.IdpBaseUrl, spec.idp.internalBaseUrl),
+            this.EnvLiteral(TenantAdminEnv.IdpCaFile, K8sManifestBuilder.TenantAdminIdpCaFile),
+            this.EnvLiteral(TenantAdminEnv.IdpAdminTokenFile, K8sManifestBuilder.TenantAdminIdpTokenFile),
+        ]
+    }
+
     private TenantAdminContainer(spec: TenantAdminWorkloadSpec): K8sObject
     {
         const secure = spec.externalScheme === K8sManifestBuilder.HttpsSchemeName
@@ -765,10 +908,12 @@ export class K8sManifestBuilder
                         },
                     },
                 },
+                ...this.TenantAdminIdpEnv(spec),
             ],
             [K8sManifestBuilder.VolumeMountsKey]: [
                 { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.TenantAdminDataVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.TenantAdminDataMount },
                 { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.TmpVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.TmpMount },
+                ...this.TenantAdminIdpMounts(spec),
             ],
             // The plane answers 403 to any Host that is not a known tenant subdomain, so the probe presents the tenant's own host.
             [K8sManifestBuilder.ReadinessProbeKey]: {
@@ -857,6 +1002,31 @@ export class K8sManifestBuilder
             this.EnvLiteral(K8sManifestBuilder.SecretsFileVar, this.MountedFile(K8sManifestBuilder.ServerSecretsMount, EnvServerSeedSource.SecretsFile)),
             this.EnvLiteral(K8sManifestBuilder.DeploymentModeVar, K8sManifestBuilder.DeploymentModeLocal),
         )
+        const volumeMounts: K8sObject[] = [
+            { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.ServerConfigVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.ServerConfigMount, [K8sManifestBuilder.ReadOnlyKey]: true },
+            { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.ServerSecretsVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.ServerSecretsMount, [K8sManifestBuilder.ReadOnlyKey]: true },
+            { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.ServerDataVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.ServerDataMount },
+        ]
+        const volumes: K8sObject[] = [
+            {
+                [K8sManifestBuilder.NameKey]: K8sManifestBuilder.ServerConfigVolume,
+                [K8sManifestBuilder.ConfigMapKey]: { [K8sManifestBuilder.NameKey]: EnvServerSeedSource.ConfigMapNameOf(workload.environmentName) },
+            },
+            this.SecretVolume(K8sManifestBuilder.ServerSecretsVolume, EnvServerSeedSource.SecretNameOf(workload.environmentName)),
+            {
+                [K8sManifestBuilder.NameKey]: K8sManifestBuilder.ServerDataVolume,
+                [K8sManifestBuilder.PersistentVolumeClaimKey]: { [K8sManifestBuilder.ClaimNameKey]: K8sManifestBuilder.ServerDataClaimNameOf(workload.environmentName) },
+            },
+            this.SecretVolume(K8sManifestBuilder.ServerSeedVolume, EnvServerSeedSource.SeedSecretNameOf(workload.environmentName)),
+        ]
+        if (workload.federation)
+        {
+            // The served app uses the default fetch client with no ca: plumb, so it trusts the IdP via NODE_EXTRA_CA_CERTS.
+            // Only the public ca.crt is projected (items selector): the IdP server key can never surface in this pod.
+            env.push(this.EnvLiteral(K8sManifestBuilder.NodeExtraCaCertsVar, K8sManifestBuilder.EnvIdpCaFile))
+            volumeMounts.push({ [K8sManifestBuilder.NameKey]: K8sManifestBuilder.EnvIdpCaVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.EnvIdpCaMount, [K8sManifestBuilder.ReadOnlyKey]: true })
+            volumes.push(this.SecretVolume(K8sManifestBuilder.EnvIdpCaVolume, workload.federation.caSecretName, [{ key: K8sManifestBuilder.EnvIdpCaItemKey, path: K8sManifestBuilder.EnvIdpCaItemKey }]))
+        }
         return {
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionApps,
             [K8sManifestBuilder.KindKey]: K8sManifestBuilder.DeploymentKind,
@@ -878,11 +1048,7 @@ export class K8sManifestBuilder
                             [K8sManifestBuilder.ImagePullPolicyKey]: K8sManifestBuilder.IfNotPresent,
                             [K8sManifestBuilder.PortsKey]: [{ [K8sManifestBuilder.ContainerPortKey]: workload.serverPort }],
                             [K8sManifestBuilder.EnvKey]: env,
-                            [K8sManifestBuilder.VolumeMountsKey]: [
-                                { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.ServerConfigVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.ServerConfigMount, [K8sManifestBuilder.ReadOnlyKey]: true },
-                                { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.ServerSecretsVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.ServerSecretsMount, [K8sManifestBuilder.ReadOnlyKey]: true },
-                                { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.ServerDataVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.ServerDataMount },
-                            ],
+                            [K8sManifestBuilder.VolumeMountsKey]: volumeMounts,
                             [K8sManifestBuilder.ReadinessProbeKey]: {
                                 [K8sManifestBuilder.HttpGetKey]: {
                                     [K8sManifestBuilder.PathKey]: K8sManifestBuilder.HealthPath,
@@ -890,18 +1056,7 @@ export class K8sManifestBuilder
                                 },
                             },
                         }],
-                        [K8sManifestBuilder.VolumesKey]: [
-                            {
-                                [K8sManifestBuilder.NameKey]: K8sManifestBuilder.ServerConfigVolume,
-                                [K8sManifestBuilder.ConfigMapKey]: { [K8sManifestBuilder.NameKey]: EnvServerSeedSource.ConfigMapNameOf(workload.environmentName) },
-                            },
-                            this.SecretVolume(K8sManifestBuilder.ServerSecretsVolume, EnvServerSeedSource.SecretNameOf(workload.environmentName)),
-                            {
-                                [K8sManifestBuilder.NameKey]: K8sManifestBuilder.ServerDataVolume,
-                                [K8sManifestBuilder.PersistentVolumeClaimKey]: { [K8sManifestBuilder.ClaimNameKey]: K8sManifestBuilder.ServerDataClaimNameOf(workload.environmentName) },
-                            },
-                            this.SecretVolume(K8sManifestBuilder.ServerSeedVolume, EnvServerSeedSource.SeedSecretNameOf(workload.environmentName)),
-                        ],
+                        [K8sManifestBuilder.VolumesKey]: volumes,
                     },
                 },
             },
@@ -974,6 +1129,50 @@ export class K8sManifestBuilder
                 }],
             },
         }
+    }
+
+    /**
+     * Per-env TLS-TERMINATING Ingress: <environmentId>.<baseDomain> → the env Service. The env server speaks plain
+     * HTTP (pragmatic-server-host serves node:http in-cluster), so — unlike the IdP, which serves its own HTTPS and
+     * uses ssl-passthrough — the ingress controller terminates TLS here and proxies HTTP to the backend. In dev,
+     * ingress-nginx serves its default self-signed cert for the host (the Playwright smoke uses ignoreHTTPSErrors);
+     * a real per-host cert Secret is the cloud follow-on. NEVER passthrough (that would hand raw TLS to an HTTP server).
+     */
+    private ServerIngress(workload: EnvironmentWorkload, baseDomain: string): K8sObject
+    {
+        const name = K8sManifestBuilder.ServerDeploymentOf(workload.environmentName)
+        const host = K8sManifestBuilder.EnvBrowserHostOf(workload.environmentId, baseDomain)
+        return {
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionNetworking,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.IngressKind,
+            [K8sManifestBuilder.MetadataKey]: this.Meta(workload, name),
+            [K8sManifestBuilder.SpecKey]: {
+                [K8sManifestBuilder.IngressClassNameKey]: K8sManifestBuilder.IngressClassNginx,
+                // TLS section (no secretName in dev → controller default cert) makes nginx terminate TLS for the host.
+                [K8sManifestBuilder.TlsKey]: [{ [K8sManifestBuilder.HostsKey]: [host] }],
+                [K8sManifestBuilder.RulesKey]: [{
+                    [K8sManifestBuilder.HostKey]: host,
+                    [K8sManifestBuilder.HttpKey]: {
+                        [K8sManifestBuilder.PathsKey]: [{
+                            [K8sManifestBuilder.PathKey]: K8sManifestBuilder.IngressRootPath,
+                            [K8sManifestBuilder.PathTypeKey]: K8sManifestBuilder.PathTypePrefix,
+                            [K8sManifestBuilder.BackendKey]: {
+                                [K8sManifestBuilder.ServiceKey]: {
+                                    [K8sManifestBuilder.NameKey]: name,
+                                    [K8sManifestBuilder.PortKey]: { [K8sManifestBuilder.PortNumberKey]: workload.serverPort },
+                                },
+                            },
+                        }],
+                    },
+                }],
+            },
+        }
+    }
+
+    /** Browser-facing hostname <environmentId>.<baseDomain> of a federated in-cluster environment. */
+    public static EnvBrowserHostOf(environmentId: string, baseDomain: string): string
+    {
+        return `${environmentId}${K8sManifestBuilder.HostDotSeparator}${baseDomain}`
     }
 
     private DatabaseStatefulSet(workload: EnvironmentWorkload, db: WorkloadDatabase): K8sObject

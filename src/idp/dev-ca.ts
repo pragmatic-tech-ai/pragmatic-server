@@ -54,18 +54,29 @@ export class DevCa
     private static readonly SubjectPrefix = '/CN='
     private static readonly ValidDays = '3650'
     private static readonly KeySpec = 'rsa:2048'
-    private static readonly SanPrefix = 'subjectAltName=DNS:'
+    private static readonly SanPrefix = 'subjectAltName='
+    private static readonly DnsPrefix = 'DNS:'
+    private static readonly SanSeparator = ','
     private static readonly SanSuffix = ',IP:127.0.0.1'
     private static readonly BasicConstraints = 'basicConstraints=CA:FALSE'
     private static readonly Eol = '\n'
     private static readonly KeyMode = 0o600
     private static readonly OpensslFailed = 'DevCa: failed to run openssl (is the openssl CLI installed and on PATH?): '
 
-    public static EnsureAt(dir: string, host: string, openssl: string = DevCa.Openssl): DevCaFiles
+    /** `host` is one DNS name, or a list (CN = the first; every one becomes a DNS SAN). A bare string behaves exactly as a one-element list. */
+    public static EnsureAt(dir: string, host: string | readonly string[], openssl: string = DevCa.Openssl): DevCaFiles
     {
-        if (!DevCa.HostPattern.test(host))
+        const hosts: readonly string[] = typeof host === 'string' ? [host] : host
+        if (hosts.length === 0)
         {
-            throw new Error(DevCa.InvalidHost + host)
+            throw new Error(DevCa.InvalidHost + String(host))
+        }
+        for (const h of hosts)
+        {
+            if (!DevCa.HostPattern.test(h))
+            {
+                throw new Error(DevCa.InvalidHost + h)
+            }
         }
         // Sweep any staging dir a prior crashed mint left behind (a hard-kill in the sub-second window before the
         // finally-rmSync) so its transient ca.key cannot persist across restarts. Runs before the idempotency
@@ -87,7 +98,7 @@ export class DevCa
         const stage = mkdtempSync(join(dir, DevCa.StagingPrefix))
         try
         {
-            DevCa.Mint(stage, host, openssl)
+            DevCa.Mint(stage, hosts, openssl)
             renameSync(join(stage, DevCa.ServerKeyFile), result.keyFile)
             renameSync(join(stage, DevCa.CaCertFile), result.caFile)
             renameSync(join(stage, DevCa.ServerCertFile), result.certFile)
@@ -122,14 +133,14 @@ export class DevCa
         }
     }
 
-    private static Mint(d: string, host: string, openssl: string): void
+    private static Mint(d: string, hosts: readonly string[], openssl: string): void
     {
         const p = (f: string): string => join(d, f)
         DevCa.Run(openssl, [DevCa.ReqCmd, DevCa.FlagX509, DevCa.FlagNewkey, DevCa.KeySpec, DevCa.FlagNodes, DevCa.FlagKeyout, p(DevCa.CaKeyFile),
             DevCa.FlagOut, p(DevCa.CaCertFile), DevCa.FlagDays, DevCa.ValidDays, DevCa.FlagSubj, DevCa.CaSubject])
         DevCa.Run(openssl, [DevCa.ReqCmd, DevCa.FlagNewkey, DevCa.KeySpec, DevCa.FlagNodes, DevCa.FlagKeyout, p(DevCa.ServerKeyFile),
-            DevCa.FlagOut, p(DevCa.ServerCsrFile), DevCa.FlagSubj, DevCa.SubjectPrefix + host])
-        writeFileSync(p(DevCa.ExtFile), DevCa.SanPrefix + host + DevCa.SanSuffix + DevCa.Eol + DevCa.BasicConstraints + DevCa.Eol)
+            DevCa.FlagOut, p(DevCa.ServerCsrFile), DevCa.FlagSubj, DevCa.SubjectPrefix + hosts[0]])
+        writeFileSync(p(DevCa.ExtFile), DevCa.SanPrefix + hosts.map(h => DevCa.DnsPrefix + h).join(DevCa.SanSeparator) + DevCa.SanSuffix + DevCa.Eol + DevCa.BasicConstraints + DevCa.Eol)
         DevCa.Run(openssl, [DevCa.X509Cmd, DevCa.FlagReq, DevCa.FlagIn, p(DevCa.ServerCsrFile), DevCa.FlagCa, p(DevCa.CaCertFile),
             DevCa.FlagCaKey, p(DevCa.CaKeyFile), DevCa.FlagCaCreateSerial, DevCa.FlagOut, p(DevCa.ServerCertFile),
             DevCa.FlagDays, DevCa.ValidDays, DevCa.FlagExtfile, p(DevCa.ExtFile)])
