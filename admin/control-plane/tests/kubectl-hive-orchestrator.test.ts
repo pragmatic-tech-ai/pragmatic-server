@@ -24,6 +24,7 @@ class FakeKubectl implements IKubectl
     public Apply(m: string) { return this.Record('Apply', [m]) }
     public RolloutStatus(n: string, d: string) { return this.Record('RolloutStatus', [n, d]) }
     public SetImage(n: string, d: string, c: string, i: string) { return this.Record('SetImage', [n, d, c, i]) }
+    public Scale(n: string, d: string, r: number) { return this.Record('Scale', [n, d, String(r)]) }
     public async Get(n: string, r: string)
     {
         await this.Record('Get', [n, r])
@@ -113,6 +114,13 @@ describe('KubectlHiveOrchestrator', () =>
         v.reject = true
         await assert.rejects(o.Apply(Fixture.Workload(true)), /unverified localhost:5000\/srv:1/)
         assert.deepEqual(k.calls, [])
+    })
+
+    it('Scale calls kubectl.Scale with the derived namespace and deployment', async () =>
+    {
+        const { o, k } = Fixture.Make()
+        await o.Scale(Fixture.Workload(false), 0)
+        assert.deepEqual(k.calls, [['Scale', Fixture.Ns, Fixture.Dep, '0']])
     })
 
     it('Roll verifies the effective image before SetImage', async () =>

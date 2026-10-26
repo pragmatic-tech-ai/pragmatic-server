@@ -11,6 +11,7 @@ export interface IHiveOrchestrator
     WaitHealthy(w: EnvironmentWorkload): Promise<void>
     Health(w: EnvironmentWorkload): Promise<WorkloadHealth>
     Roll(w: EnvironmentWorkload, image: string): Promise<void>
+    Scale(workload: EnvironmentWorkload, replicas: number): Promise<void>
     Teardown(w: EnvironmentWorkload): Promise<void>
 }
 

@@ -16,7 +16,7 @@ import type { HiveRecord } from '../platform-records.js'
 import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
-import { EnvLogsUnavailableInClusterError, EnvStopUnavailableInClusterError, InClusterEnvironmentRuntime, InClusterHiveMissingError, InClusterOperationFailedError, InClusterBundleMissingError } from '../in-cluster-environment-runtime.js'
+import { EnvLogsUnavailableInClusterError, InClusterEnvironmentRuntime, InClusterHiveMissingError, InClusterOperationFailedError, InClusterBundleMissingError } from '../in-cluster-environment-runtime.js'
 
 class Fx
 {
@@ -57,6 +57,7 @@ class FakeOrchestrator implements IHiveOrchestrator
 
     public FailWith: Error | undefined
     public Ready = true
+    public readonly ScaleReplicas: number[] = []
 
     private Rec(m: string, w: EnvironmentWorkload): void
     {
@@ -72,6 +73,7 @@ class FakeOrchestrator implements IHiveOrchestrator
     public async WaitHealthy(w: EnvironmentWorkload): Promise<void> { this.Rec('WaitHealthy', w) }
     public async Health(w: EnvironmentWorkload): Promise<WorkloadHealth> { this.Rec('Health', w); return { ready: this.Ready, runningImage: undefined, detail: '' } }
     public async Roll(w: EnvironmentWorkload, _image: string): Promise<void> { this.Rec('Roll', w) }
+    public async Scale(w: EnvironmentWorkload, replicas: number): Promise<void> { this.Rec('Scale', w); this.ScaleReplicas.push(replicas) }
     public async Teardown(w: EnvironmentWorkload): Promise<void> { this.Rec('Teardown', w) }
 }
 
@@ -155,10 +157,21 @@ test('Logs and LogStream throw the named unavailable error', async () =>
     assert.throws(() => h.Runtime.LogStream(h.Ctx, () => {}), EnvLogsUnavailableInClusterError)
 })
 
-test('Stop throws the named unavailable error', async () =>
+test('Stop scales the server to 0 and never tears down', async () =>
 {
     const h = new Harness()
-    await assert.rejects(() => h.Runtime.Stop(h.Ctx), EnvStopUnavailableInClusterError)
+    await h.Runtime.Stop(h.Ctx)
+    assert.deepEqual(h.Orchestrator.ScaleReplicas, [0])
+    assert.ok(h.Orchestrator.Calls.some(c => c.m === 'Scale'))
+    assert.ok(!h.Orchestrator.Calls.some(c => c.m === 'Teardown'))
+    assert.ok(!h.Orchestrator.Order.includes('Teardown'))
+})
+
+test('A failing Scale on Stop maps to the generic error without stderr text', async () =>
+{
+    const h = new Harness()
+    h.Orchestrator.FailWith = new Error(Fx.Secret)
+    await assert.rejects(() => h.Runtime.Stop(h.Ctx), (e: Error) => e instanceof InClusterOperationFailedError && !e.message.includes('SECRET'))
 })
 
 test('Probe returns Health().ready', async () =>

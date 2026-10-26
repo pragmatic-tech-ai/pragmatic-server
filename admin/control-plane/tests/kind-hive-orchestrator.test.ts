@@ -62,6 +62,11 @@ class FakeInner implements IHiveOrchestrator
         this.calls.push('Roll')
     }
 
+    public async Scale(_w: EnvironmentWorkload, _replicas: number): Promise<void>
+    {
+        this.calls.push('Scale')
+    }
+
     public async Teardown(_w: EnvironmentWorkload): Promise<void>
     {
         this.calls.push('Teardown')
@@ -143,6 +148,14 @@ test('Roll and WaitHealthy delegate to inner', async () =>
     await f.sut.WaitHealthy(Fixture.Workload)
     assert.ok(f.inner.calls.includes('Roll'))
     assert.ok(f.inner.calls.includes('WaitHealthy'))
+})
+
+test('Scale delegates to inner without ensuring the cluster', async () =>
+{
+    const f = new Fixture()
+    await f.sut.Scale(Fixture.Workload, 0)
+    assert.deepEqual(f.inner.calls, ['Scale'])
+    assert.deepEqual(f.kind.created, [])
 })
 
 test('ClusterName exposes the constructed name', () =>

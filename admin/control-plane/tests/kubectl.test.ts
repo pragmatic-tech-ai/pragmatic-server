@@ -65,6 +65,13 @@ test('SetImage args', async () =>
     assert.deepEqual(f.Last.args, ['--context', 'kind-hive', 'set', 'image', 'deployment/web', 'app=img:2', '-n', 'ns1'])
 })
 
+test('Scale args', async () =>
+{
+    const f = new KubectlFixture()
+    await f.Cli.Scale('ns', 'dep', 0)
+    assert.deepEqual(f.Last.args, ['--context', 'kind-hive', 'scale', 'deployment/dep', '--replicas=0', '-n', 'ns'])
+})
+
 test('Get args and returns stdout', async () =>
 {
     const f = new KubectlFixture()
