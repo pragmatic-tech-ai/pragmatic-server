@@ -115,6 +115,11 @@ export class InClusterEnvironmentRuntime implements IEnvironmentRuntime
         await InClusterEnvironmentRuntime.Guard(async () =>
         {
             await orchestrator.Apply(workload)
+            if (workload.federation !== undefined && ctx.caPem !== undefined)
+            {
+                // ca.crt-only trust Secret, applied after the namespace exists and before the pod needs the mount.
+                await EnvServerSeedSource.ApplyIdpCa(orchestrator.Kubectl, ctx.record.name, ctx.caPem)
+            }
             await EnvServerSeedSource.ApplyBundle(orchestrator.Kubectl, bundleDir, ctx.record.name, ctx.def.environmentId, workload.database?.passwordRef)
         })
         return InClusterEnvironmentRuntime.EndpointOf(ctx, workload)

@@ -9,6 +9,8 @@ export interface IdpConnection
     adminToken: string
     adminTokenRef: string
     caDir: string
+    /** Base domain of the in-cluster browser hosts (idp-<tenant>.<baseDomain>, <env>.<baseDomain>); unset when none. */
+    baseDomain?: string
 }
 
 export interface IdpWorkloadRequest

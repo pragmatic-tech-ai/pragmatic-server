@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EnvServerSeedSource, EnvServerSecretSet, SeedTooLargeError } from '../env-server-seed.js'
+import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
 import type { IKubectl } from '../kubectl.js'
 
 class Fixture
@@ -256,4 +257,26 @@ describe('EnvServerSeedSource seed-tree projection', () =>
             rmSync(bundle, { recursive: true, force: true })
         }
     })
+})
+
+class CaCaptureKubectl
+{
+    public Applied: string[] = []
+
+    public async Apply(manifestJson: string): Promise<void>
+    {
+        this.Applied.push(manifestJson)
+    }
+}
+
+it('ApplyIdpCa applies a Secret carrying ca.crt ONLY in the env namespace (never a server key)', async () =>
+{
+    const kubectl = new CaCaptureKubectl()
+    await EnvServerSeedSource.ApplyIdpCa(kubectl as never, 'dev1', Buffer.from('PUBLIC-CA'))
+    const secret = JSON.parse(kubectl.Applied[0]!)
+    assert.equal(secret.kind, 'Secret')
+    assert.equal(secret.metadata.name, 'dev1-idp-ca')
+    assert.equal(secret.metadata.namespace, K8sManifestBuilder.NamespaceOf('dev1'))
+    assert.deepEqual(Object.keys(secret.data), ['ca.crt'])
+    assert.equal(Buffer.from(secret.data['ca.crt'], 'base64').toString(), 'PUBLIC-CA')
 })

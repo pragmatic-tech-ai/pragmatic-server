@@ -416,3 +416,49 @@ describe('K8sManifestBuilder seed script behaviour', () =>
         assert.ok(!existsSync(join(root, 'data', 'escape')))
     })
 })
+
+class FederatedEnv
+{
+    public static Items(): any[]
+    {
+        return JSON.parse(new K8sManifestBuilder().Render({ ...Fixture.Workload(false), federation: { baseDomain: 'hive.test', caSecretName: 'dev1-idp-ca' } })).items
+    }
+}
+
+describe('K8sManifestBuilder federated served environment', () =>
+{
+    it('mounts a ca.crt-only Secret read-only and sets NODE_EXTRA_CA_CERTS to it (never the IdP server key)', () =>
+    {
+        const deployment = FederatedEnv.Items().find((i: any) => i.kind === 'Deployment')
+        const pod = deployment.spec.template.spec
+        const container = pod.containers[0]
+        assert.equal(container.env.find((e: any) => e.name === 'NODE_EXTRA_CA_CERTS').value, '/etc/idp-ca/ca.crt')
+        const mount = container.volumeMounts.find((m: any) => m.mountPath === '/etc/idp-ca')
+        assert.equal(mount.readOnly, true)
+        const volume = pod.volumes.find((v: any) => v.name === mount.name)
+        assert.equal(volume.secret.secretName, 'dev1-idp-ca')
+        assert.deepEqual(volume.secret.items, [{ key: 'ca.crt', path: 'ca.crt' }])
+        assert.ok(!JSON.stringify(deployment).includes('server.key'))
+    })
+
+    it('renders one ssl-passthrough Ingress for <environmentId>.<baseDomain> to the env Service', () =>
+    {
+        const ingresses = FederatedEnv.Items().filter((i: any) => i.kind === 'Ingress')
+        assert.equal(ingresses.length, 1)
+        const ing = ingresses[0]
+        assert.equal(ing.metadata.annotations['nginx.ingress.kubernetes.io/ssl-passthrough'], 'true')
+        assert.equal(ing.spec.ingressClassName, 'nginx')
+        assert.equal(ing.spec.rules[0].host, 'env-dev1-id.hive.test')
+        assert.equal(ing.spec.rules[0].http.paths[0].backend.service.name, K8sManifestBuilder.ServerDeploymentOf('dev1'))
+        assert.equal(ing.spec.rules[0].http.paths[0].backend.service.port.number, 8080)
+    })
+
+    it('a non-federated env has no Ingress, no CA mount and no NODE_EXTRA_CA_CERTS', () =>
+    {
+        const items = Fixture.Items(false)
+        assert.ok(items.every((i: any) => i.kind !== 'Ingress'))
+        const text = JSON.stringify(items)
+        assert.ok(!text.includes('NODE_EXTRA_CA_CERTS'))
+        assert.ok(!text.includes('/etc/idp-ca'))
+    })
+})

@@ -112,6 +112,9 @@ export class EnvServerSeedSource
     private static readonly NamespaceKey = 'namespace'
     private static readonly DataKey = 'data'
     private static readonly Utf8 = 'utf8'
+    private static readonly IdpCaSecretNameSuffix = '-idp-ca'
+    private static readonly IdpCaKey = 'ca.crt'
+    private static readonly SecretKindName = 'Secret'
     private static readonly MissingRefPrefix = 'provisioned-secrets.json has no entry for db password ref: '
 
     public constructor(private readonly bundleDir: string, private readonly environmentName: string, private readonly dbPasswordRef?: string, private readonly environmentId?: string)
@@ -122,6 +125,24 @@ export class EnvServerSeedSource
     public static SecretNameOf(environmentName: string): string
     {
         return `${environmentName}${EnvServerSeedSource.SecretNameSuffix}`
+    }
+
+    /** Name of the ca.crt-only IdP trust Secret: `<env>-idp-ca`. */
+    public static IdpCaSecretNameOf(environmentName: string): string
+    {
+        return `${environmentName}${EnvServerSeedSource.IdpCaSecretNameSuffix}`
+    }
+
+    /** Applies the ca.crt-only trust Secret (public CA cert only; the IdP server key is never a key of it). Values go only to kubectl. */
+    public static async ApplyIdpCa(kubectl: IKubectl, environmentName: string, caPem: Buffer): Promise<void>
+    {
+        const secret = {
+            [EnvServerSeedSource.ApiVersionKey]: EnvServerSeedSource.ApiVersion,
+            [EnvServerSeedSource.KindKey]: EnvServerSeedSource.SecretKindName,
+            [EnvServerSeedSource.MetadataKey]: { [EnvServerSeedSource.NameKey]: EnvServerSeedSource.IdpCaSecretNameOf(environmentName), [EnvServerSeedSource.NamespaceKey]: K8sManifestBuilder.NamespaceOf(environmentName) },
+            [EnvServerSeedSource.DataKey]: { [EnvServerSeedSource.IdpCaKey]: caPem.toString(EnvServerSeedSource.Base64) },
+        }
+        await kubectl.Apply(JSON.stringify(secret))
     }
 
     /** Name of the tenants ConfigMap: `<env>-tenants`. */

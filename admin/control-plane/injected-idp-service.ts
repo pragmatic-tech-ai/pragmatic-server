@@ -14,6 +14,8 @@ export interface InjectedIdpConfig
     caFile: string
     /** Path of the mounted admin-token Secret file. */
     adminTokenFile: string
+    /** Base domain of the in-cluster browser hosts, when the pod knows it. */
+    baseDomain?: string
 }
 
 /**
@@ -48,6 +50,7 @@ export class InjectedIdpService implements IIdpService
             baseUrl: env[TenantAdminEnv.IdpBaseUrl] ?? browser,
             caFile,
             adminTokenFile,
+            baseDomain: env[TenantAdminEnv.BaseDomain],
         })
     }
 
@@ -74,6 +77,7 @@ export class InjectedIdpService implements IIdpService
                 // tenant record's idp refs) real values derived from the mounted paths, not empty strings.
                 adminTokenRef: basename(this.config.adminTokenFile),
                 caDir: dirname(this.config.caFile),
+                baseDomain: this.config.baseDomain,
             })
         }
         catch (err)

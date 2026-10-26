@@ -13,6 +13,7 @@ import type { AdminConnectInfo, AdminSnapshot, IAdminProxy } from './admin-proxy
 import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ITenantDirectory } from './tenant-api/tenant-directory.js'
 import { UnknownHiveError } from './rollout-errors.js'
+import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import type { IIdpService, IdpConnection } from './idp-service.js'
 import type { IdpAdminClient } from './idp-admin-client.js'
 import type { ILogProcess } from '../../environments/seed/docker.js'
@@ -107,6 +108,7 @@ export class CreateFailedError extends Error
 /** Orchestrates environment lifecycle over the SP-ENV blocks via fakeable seams. */
 export class EnvironmentService
 {
+    private static readonly HttpsPrefix = 'https://'
     private static readonly HttpPrefix = 'http://localhost:'
     private static readonly WsPrefix = 'ws://localhost:'
     private static readonly NoDatabasePrefix = 'environment has no provisioned database: '
@@ -173,7 +175,7 @@ export class EnvironmentService
     }
 
     /** Registers a per-environment OIDC client at the tenant's IdP and returns the config the served app is bundled with. The secret is never logged or put in an error. */
-    private async Federate(platformTenantId: string, def: EnvDefinition, port: number): Promise<{ oidc: EnvOidc; caHostPath: string }>
+    private async Federate(platformTenantId: string, def: EnvDefinition, port: number | undefined): Promise<{ oidc: EnvOidc; caHostPath: string; caPem: Buffer; baseDomain?: string } | undefined>
     {
         const displayName = this.directory.GetTenant(platformTenantId)?.displayName ?? platformTenantId
         let secret = ''
@@ -182,18 +184,28 @@ export class EnvironmentService
             const conn = await this.idp.EnsureForTenant(platformTenantId, displayName)
             secret = randomBytes(EnvironmentService.OidcSecretBytes).toString(EnvironmentService.OidcSecretEncoding)
             const clientId = def.environmentId
-            const redirectUri = EnvironmentService.HttpPrefix + String(port) + EnvironmentService.OidcCallbackPath + EnvironmentService.EnvironmentQueryPrefix + encodeURIComponent(def.environmentId)
+            // Host-port (Docker): http://localhost:<port>. In-cluster: the env's browser host https://<environmentId>.<baseDomain>, byte-stable across restarts.
+            // An in-cluster env with no known base domain has no browser-reachable origin, so it is not federated.
+            const inCluster = port === undefined
+            if (inCluster && conn.baseDomain === undefined)
+            {
+                return undefined
+            }
+            const origin = inCluster ? EnvironmentService.HttpsPrefix + K8sManifestBuilder.EnvBrowserHostOf(def.environmentId, conn.baseDomain as string) : EnvironmentService.HttpPrefix + String(port)
+            const redirectUri = origin + EnvironmentService.OidcCallbackPath + EnvironmentService.EnvironmentQueryPrefix + encodeURIComponent(def.environmentId)
             await this.adminClientFactory(conn).RegisterClient(platformTenantId, { clientId, redirectUris: [redirectUri], secret })
-            const issuer = conn.baseUrl + EnvironmentService.IssuerSeparator + encodeURIComponent(platformTenantId)
+            // The issuer is the browser-facing base (equals baseUrl on Docker); discovery/token/jwks are fetched on the internal base.
+            const issuer = conn.browserBaseUrl + EnvironmentService.IssuerSeparator + encodeURIComponent(platformTenantId)
+            const discoveryBase = conn.baseUrl + EnvironmentService.IssuerSeparator + encodeURIComponent(platformTenantId)
             const oidc: EnvOidc = {
                 issuer,
-                discoveryUrl: issuer + EnvironmentService.DiscoverySuffix,
+                discoveryUrl: discoveryBase + EnvironmentService.DiscoverySuffix,
                 clientId,
                 redirectUri,
                 secretRef: def.environmentId + EnvironmentService.OidcSecretRefSuffix,
                 secret
             }
-            return { oidc, caHostPath: join(conn.caDir, EnvironmentService.CaFileName) }
+            return { oidc, caHostPath: join(conn.caDir, EnvironmentService.CaFileName), caPem: conn.ca, baseDomain: inCluster ? conn.baseDomain : undefined }
         }
         catch (err)
         {
@@ -228,14 +240,21 @@ export class EnvironmentService
             const { def, seedDir } = TemplateCatalog.Resolve(template, safe, port ?? EnvironmentService.NoHostPort, type)
             const bundleDir = join(this.dataRoot, def.name)
 
-            // Host (localhost) OIDC federation applies only to the host-port backend; in-cluster federation is deferred.
+            // Host-port backends federate over localhost; in-cluster backends federate over the env's browser host (when a base domain is known).
             let oidc: EnvOidc | undefined
             let caHostPath: string | undefined
-            if (hostShaped && platformTenantId !== undefined)
+            let caPem: Buffer | undefined
+            let idpBaseDomain: string | undefined
+            if (platformTenantId !== undefined)
             {
-                const federation = await this.Federate(platformTenantId, def, port as number)
-                oidc = federation.oidc
-                caHostPath = federation.caHostPath
+                const federation = await this.Federate(platformTenantId, def, port)
+                if (federation !== undefined)
+                {
+                    oidc = federation.oidc
+                    caHostPath = federation.caHostPath
+                    caPem = federation.caPem
+                    idpBaseDomain = federation.baseDomain
+                }
             }
             const record: EnvironmentRecord = {
                 name: def.name,
@@ -253,12 +272,16 @@ export class EnvironmentService
                 record.volumeName = DockerEnv.VolumeName(def)
                 record.bundleDir = bundleDir
             }
+            if (idpBaseDomain !== undefined)
+            {
+                record.idpBaseDomain = idpBaseDomain
+            }
             if (hiveId !== undefined)
             {
                 record.tenantId = platformTenantId
                 record.hiveId = hiveId
             }
-            const ctx: EnvRuntimeContext = { def, record, bundleDir, seedDir, oidc, caHostPath }
+            const ctx: EnvRuntimeContext = { def, record, bundleDir, seedDir, oidc, caHostPath, caPem }
             try
             {
                 await runtime.Prepare(ctx)

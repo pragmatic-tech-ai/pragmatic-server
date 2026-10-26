@@ -1029,8 +1029,12 @@ class DnsReachedFakeRuntime extends DockerEnvironmentRuntime
 test('Create demo on a DNS-reached (in-cluster) backend does not host-seed users and still persists Running', async () =>
 {
     const h = await Harness.Make()
-    h.Service = new EnvironmentService(h.Registry, new FakeAllocator(h.Calls, false), SingleBackendResolver.Of(new DnsReachedFakeRuntime(h.Docker, h.Bundle), h.Directory, new HiveOrchestratorFactory()), h.Seeder, h.DataRoot, h.Proxy, h.Directory, h.Idp, c => new IdpAdminClient(c))
+    // No base domain on the connection: no browser-reachable origin, so the env is not federated (and the IdP is never asked to register a client).
+    const unfederated: IdpConnection = { baseUrl: 'https://idp.internal', browserBaseUrl: 'https://idp.internal', ca: Buffer.from('ca'), adminToken: 't', adminTokenRef: 'r', caDir: '/ca' }
+    h.Service = new EnvironmentService(h.Registry, new FakeAllocator(h.Calls, false), SingleBackendResolver.Of(new DnsReachedFakeRuntime(h.Docker, h.Bundle), h.Directory, new HiveOrchestratorFactory()), h.Seeder, h.DataRoot, h.Proxy, h.Directory, new FakeIdp(unfederated), c => new IdpAdminClient(c))
     const rec = await h.Service.Create('demo-ic', Template.DemoContoso, EnvType.Runtime, undefined, 'h1')
+    assert.equal(h.Bundle.Oidc, undefined)
+    assert.equal(rec.idpBaseDomain, undefined)
     assert.ok(!h.Calls.includes('seedUsers'))
     assert.ok(!h.Calls.includes('login'))
     assert.equal(rec.status, EnvStatus.Running)
@@ -1101,4 +1105,24 @@ test('ReconcileStatus on Unknown with ready Puts Running', async () =>
     assert.deepEqual(h.Calls.filter(c => c.startsWith('put:')), [`put:${EnvStatus.Running}`])
     assert.equal(received.length, 1)
     assert.equal(h.Registry.Get('rc1')?.status, EnvStatus.Running)
+})
+
+test('BOUND in-cluster Create federates with a split issuer/discovery and a byte-stable https browser redirect_uri', async () =>
+{
+    await IdpFixture.With('plat-t1', async (real, clients) =>
+    {
+        const h = await Harness.Make()
+        const conn: IdpConnection = { ...real, browserBaseUrl: 'https://idp-plat-t1.hive.test', baseDomain: 'hive.test' }
+        h.Service = new EnvironmentService(h.Registry, new FakeAllocator(h.Calls, false), SingleBackendResolver.Of(new DnsReachedFakeRuntime(h.Docker, h.Bundle), h.Directory, new HiveOrchestratorFactory()), h.Seeder, h.DataRoot, h.Proxy, h.Directory, new FakeIdp(conn), c => new IdpAdminClient(c))
+        const rec = await h.Service.Create('fedic', Template.DevBlank, EnvType.Development, undefined, 'h1')
+        const oidc = h.Bundle.Oidc
+        assert.ok(oidc)
+        assert.equal(oidc.issuer, 'https://idp-plat-t1.hive.test/plat-t1')
+        assert.equal(oidc.discoveryUrl, conn.baseUrl + '/plat-t1/.well-known/openid-configuration')
+        assert.equal(oidc.redirectUri, 'https://' + rec.environmentId + '.hive.test/auth/oidc/callback?environment=' + rec.environmentId)
+        assert.equal(oidc.secretRef, rec.environmentId + '-oidc-secret')
+        assert.equal(await clients.VerifySecret('plat-t1', oidc.clientId, oidc.secret), true)
+        assert.equal(clients.RedirectAllowed('plat-t1', oidc.clientId, oidc.redirectUri), true)
+        assert.equal(rec.idpBaseDomain, 'hive.test')
+    })
 })

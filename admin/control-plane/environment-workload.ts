@@ -1,6 +1,7 @@
 import { BundleBuilder } from '../../environments/seed/bundle.js'
 import type { EnvironmentRecord } from './environment-record.js'
 import type { HiveRecord } from './platform-records.js'
+import { EnvServerSeedSource } from './env-server-seed.js'
 import { TemplateCatalog } from './template-catalog.js'
 
 /** A provisioned Postgres sidecar; the password is referenced by secret name only. */
@@ -9,6 +10,13 @@ export type WorkloadDatabase = {
     user: string
     database: string
     passwordRef: string
+}
+
+/** In-cluster OIDC federation of a served environment: its browser host base domain and the ca.crt-only Secret it trusts the IdP through. */
+export type WorkloadFederation = {
+    baseDomain: string
+    /** Secret holding ONLY the public CA certificate (key ca.crt); never the IdP server key. */
+    caSecretName: string
 }
 
 /** Backend-neutral description of what to run for one environment. Carries secret names, never values. */
@@ -22,6 +30,7 @@ export type EnvironmentWorkload = {
     env: Readonly<Record<string, string>>
     secretRefs: readonly string[]
     database?: WorkloadDatabase
+    federation?: WorkloadFederation
 }
 
 export class EnvironmentWorkloadFactory
@@ -56,6 +65,10 @@ export class EnvironmentWorkloadFactory
                 database: def.database.database,
                 passwordRef,
             }
+        }
+        if (record.idpBaseDomain !== undefined)
+        {
+            workload.federation = { baseDomain: record.idpBaseDomain, caSecretName: EnvServerSeedSource.IdpCaSecretNameOf(record.name) }
         }
         return workload
     }

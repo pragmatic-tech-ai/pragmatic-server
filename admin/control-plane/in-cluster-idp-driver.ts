@@ -70,7 +70,7 @@ export class InClusterIdpDriver implements IIdpWorkloadDriver
         const baseUrl = K8sManifestBuilder.IdpBaseUrlOf(tenantId, InClusterIdpDriver.IdpPort)
         const record = this.RecordFor(request.existing, tenantId, baseUrl, name, seed)
         const browserBaseUrl = this.seeds.BaseDomain === undefined ? baseUrl : K8sManifestBuilder.IdpBrowserUrlOf(tenantId, this.seeds.BaseDomain)
-        return { connection: { baseUrl, browserBaseUrl, ca: seed.ca, adminToken: seed.adminToken, adminTokenRef: seed.adminTokenRef, caDir: seed.caRef }, record }
+        return { connection: { baseUrl, browserBaseUrl, ca: seed.ca, adminToken: seed.adminToken, adminTokenRef: seed.adminTokenRef, caDir: seed.caRef, baseDomain: this.seeds.BaseDomain }, record }
     }
 
     /** In-cluster Discard is a no-op: apply is idempotent and the workload is reconciled on the next call. */

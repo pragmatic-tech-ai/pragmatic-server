@@ -7,7 +7,7 @@ import type { IBundleBuilder, IDockerEnv } from './docker-env-port.js'
 export type EnvEndpoint = { httpUrl: string; wsUrl: string; hostPort?: number }
 
 /** Everything a runtime backend needs to act on one environment. seedDir feeds Prepare only. */
-export type EnvRuntimeContext = { def: EnvDefinition; record: EnvironmentRecord; bundleDir?: string; seedDir?: string; oidc?: EnvOidc; caHostPath?: string }
+export type EnvRuntimeContext = { def: EnvDefinition; record: EnvironmentRecord; bundleDir?: string; seedDir?: string; oidc?: EnvOidc; caHostPath?: string; caPem?: Buffer }
 
 /** The backend-shaped lifecycle operations of an environment (Docker today); EnvironmentService orchestrates over this seam. */
 export interface IEnvironmentRuntime
