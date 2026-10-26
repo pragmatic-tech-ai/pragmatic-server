@@ -495,7 +495,7 @@ test('the reserved version names live and ui are rejected', async () =>
 {
     await IngestFixture.Run(async fx =>
     {
-        for (const reserved of ['live', 'ui'])
+        for (const reserved of ['live', 'ui', 'application.json'])
         {
             const params = IngestFixture.Params()
             params.appVersion = reserved
@@ -535,5 +535,28 @@ test('a same-version retry after a failed live-pointer write resumes by writing 
         assert.equal((await service.Ingest(IngestFixture.Params())).status, AppWriteStatus.Applied)
         assert.equal(readFileSync(join(fx.AppsDir, 'shop', 'live'), 'utf8'), '1.0.0')
         assert.equal((await service.Ingest(IngestFixture.Params())).status, AppWriteStatus.Conflict)
+    })
+})
+
+test('re-deploying an existing non-live version is a Conflict when the content differs and a repoint when identical', async () =>
+{
+    await IngestFixture.Run(async fx =>
+    {
+        assert.equal((await fx.Service.Ingest(IngestFixture.Params())).status, AppWriteStatus.Applied)
+        const next = IngestFixture.Params()
+        next.appVersion = '2.0.0'
+        next.manifest.version = '2.0.0'
+        assert.equal((await fx.Service.Ingest(next)).status, AppWriteStatus.Applied)
+        assert.equal(readFileSync(join(fx.AppsDir, 'shop', 'live'), 'utf8'), '2.0.0')
+        const differing = IngestFixture.Params()
+        differing.uiBundle[0]!.contentBase64 = Buffer.from('<html>changed</html>').toString('base64')
+        assert.equal((await fx.Service.Ingest(differing)).status, AppWriteStatus.Conflict)
+        assert.equal(readFileSync(join(fx.AppsDir, 'shop', 'live'), 'utf8'), '2.0.0')
+        assert.equal(readFileSync(join(fx.AppsDir, 'shop', '1.0.0', 'ui', 'index.html'), 'utf8'), '<html></html>')
+        const differingManifest = IngestFixture.Params()
+        differingManifest.manifest.packages = []
+        assert.equal((await fx.Service.Ingest(differingManifest)).status, AppWriteStatus.Conflict)
+        assert.equal((await fx.Service.Ingest(IngestFixture.Params())).status, AppWriteStatus.Applied)
+        assert.equal(readFileSync(join(fx.AppsDir, 'shop', 'live'), 'utf8'), '1.0.0')
     })
 })

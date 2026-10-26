@@ -61,7 +61,7 @@ export class AppIngestService
     private static readonly ModelFile = 'model.json'
     private static readonly UiDir = 'ui'
     private static readonly LivePointerFile = 'live'
-    private static readonly ReservedVersions: ReadonlySet<string> = new Set(['live', 'ui'])
+    private static readonly ReservedVersions: ReadonlySet<string> = new Set(['live', 'ui', 'application.json'])
     private static readonly ReservedVersionMessage = 'this application version name is reserved'
     private static readonly Separator = '/'
     private static readonly TempPrefix = '.ingest-'
@@ -218,6 +218,11 @@ export class AppIngestService
                 {
                     throw new IngestRejection(AppWriteStatus.Conflict, AppIngestService.VersionExistsMessage)
                 }
+                // Immutability: a resume is only an idempotent redeploy of byte-identical content, never a silent replacement.
+                if (!await this.MatchesStored(plan))
+                {
+                    throw new IngestRejection(AppWriteStatus.Conflict, AppIngestService.VersionExistsMessage)
+                }
                 return true
             }
         }
@@ -234,6 +239,20 @@ export class AppIngestService
             }
         }
         return false
+    }
+
+    /** True when the marker and every UI file of the plan are byte-identical to what is stored for this version. */
+    private async MatchesStored(plan: IngestPlan): Promise<boolean>
+    {
+        for (const file of [plan.marker, ...plan.files.filter(f => f.storage === this.applications)])
+        {
+            if (!await this.applications.Exists(file.path)
+                || Buffer.compare(Buffer.from(await this.applications.ReadBytes(file.path)), Buffer.from(file.bytes)) !== 0)
+            {
+                return false
+            }
+        }
+        return true
     }
 
     /** The version `<app>/live` names, or undefined when the pointer is absent or unreadable. */
