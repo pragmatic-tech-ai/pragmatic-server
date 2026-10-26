@@ -1,4 +1,5 @@
 import type { EnvironmentWorkload, WorkloadDatabase } from './environment-workload.js'
+import { EnvServerSeedSource } from './env-server-seed.js'
 import { IdpContainerEnv } from './idp-container-env.js'
 import type { IdpWorkloadSpec } from './idp-workload-driver.js'
 import { TenantAdminEnv } from './tenant-admin-env.js'
@@ -190,7 +191,29 @@ export class K8sManifestBuilder
     private static readonly HostSeparator = '.'
     private static readonly AgentTokenSecretSuffix = '-token'
 
+    // In-cluster server boot wiring (env var names and file contract match environments/seed/docker.ts).
+    private static readonly ConfigMapKey = 'configMap'
+    private static readonly BaseDirVar = 'PRAGMATIC_BASE_DIR'
+    private static readonly TenantsFileVar = 'PRAGMATIC_TENANTS_FILE'
+    private static readonly MasterKeyFileVar = 'PRAGMATIC_MASTER_KEY_FILE'
+    private static readonly SecretsFileVar = 'PRAGMATIC_PROVISIONED_SECRETS_FILE'
+    private static readonly DeploymentModeVar = 'PRAGMATIC_DEPLOYMENT_MODE'
+    private static readonly DeploymentModeLocal = 'local'
+    private static readonly ServerDataMount = '/pragmatic/data'
+    private static readonly ServerConfigMount = '/pragmatic/config'
+    private static readonly ServerSecretsMount = '/pragmatic/secrets'
+    private static readonly ServerConfigVolume = 'config'
+    private static readonly ServerSecretsVolume = 'secrets'
+    private static readonly ServerDataVolume = 'data'
+    private static readonly ServerDataClaimSuffix = '-data'
+    private static readonly PathSeparator = '/'
+
     public static readonly ServerContainerName = 'server'
+
+    public static ServerDataClaimNameOf(environmentName: string): string
+    {
+        return `${K8sManifestBuilder.ServerDeploymentOf(environmentName)}${K8sManifestBuilder.ServerDataClaimSuffix}`
+    }
 
     public static NamespaceOf(environmentName: string): string
     {
@@ -214,6 +237,7 @@ export class K8sManifestBuilder
             items.push(this.DatabaseStatefulSet(workload, workload.database))
             items.push(this.DatabaseService(workload))
         }
+        items.push(this.ServerDataClaim(workload))
         return JSON.stringify({
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
             [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ListKind,
@@ -796,10 +820,17 @@ export class K8sManifestBuilder
     private ServerDeployment(workload: EnvironmentWorkload): K8sObject
     {
         const name = K8sManifestBuilder.ServerDeploymentOf(workload.environmentName)
-        const env = Object.entries(workload.env).map(([k, v]) => ({
+        const env: K8sObject[] = Object.entries(workload.env).map(([k, v]) => ({
             [K8sManifestBuilder.NameKey]: k,
             [K8sManifestBuilder.ValueKey]: v,
         }))
+        env.push(
+            this.EnvLiteral(K8sManifestBuilder.BaseDirVar, K8sManifestBuilder.ServerDataMount),
+            this.EnvLiteral(K8sManifestBuilder.TenantsFileVar, this.MountedFile(K8sManifestBuilder.ServerConfigMount, EnvServerSeedSource.TenantsFile)),
+            this.EnvLiteral(K8sManifestBuilder.MasterKeyFileVar, this.MountedFile(K8sManifestBuilder.ServerSecretsMount, EnvServerSeedSource.MasterKeyFile)),
+            this.EnvLiteral(K8sManifestBuilder.SecretsFileVar, this.MountedFile(K8sManifestBuilder.ServerSecretsMount, EnvServerSeedSource.SecretsFile)),
+            this.EnvLiteral(K8sManifestBuilder.DeploymentModeVar, K8sManifestBuilder.DeploymentModeLocal),
+        )
         return {
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionApps,
             [K8sManifestBuilder.KindKey]: K8sManifestBuilder.DeploymentKind,
@@ -819,6 +850,11 @@ export class K8sManifestBuilder
                             [K8sManifestBuilder.ImagePullPolicyKey]: K8sManifestBuilder.IfNotPresent,
                             [K8sManifestBuilder.PortsKey]: [{ [K8sManifestBuilder.ContainerPortKey]: workload.serverPort }],
                             [K8sManifestBuilder.EnvKey]: env,
+                            [K8sManifestBuilder.VolumeMountsKey]: [
+                                { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.ServerConfigVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.ServerConfigMount, [K8sManifestBuilder.ReadOnlyKey]: true },
+                                { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.ServerSecretsVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.ServerSecretsMount, [K8sManifestBuilder.ReadOnlyKey]: true },
+                                { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.ServerDataVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.ServerDataMount },
+                            ],
                             [K8sManifestBuilder.ReadinessProbeKey]: {
                                 [K8sManifestBuilder.HttpGetKey]: {
                                     [K8sManifestBuilder.PathKey]: K8sManifestBuilder.HealthPath,
@@ -826,7 +862,39 @@ export class K8sManifestBuilder
                                 },
                             },
                         }],
+                        [K8sManifestBuilder.VolumesKey]: [
+                            {
+                                [K8sManifestBuilder.NameKey]: K8sManifestBuilder.ServerConfigVolume,
+                                [K8sManifestBuilder.ConfigMapKey]: { [K8sManifestBuilder.NameKey]: EnvServerSeedSource.ConfigMapNameOf(workload.environmentName) },
+                            },
+                            this.SecretVolume(K8sManifestBuilder.ServerSecretsVolume, EnvServerSeedSource.SecretNameOf(workload.environmentName)),
+                            {
+                                [K8sManifestBuilder.NameKey]: K8sManifestBuilder.ServerDataVolume,
+                                [K8sManifestBuilder.PersistentVolumeClaimKey]: { [K8sManifestBuilder.ClaimNameKey]: K8sManifestBuilder.ServerDataClaimNameOf(workload.environmentName) },
+                            },
+                        ],
                     },
+                },
+            },
+        }
+    }
+
+    private MountedFile(dir: string, file: string): string
+    {
+        return `${dir}${K8sManifestBuilder.PathSeparator}${file}`
+    }
+
+    /** Standalone PVC for the server base dir (a Deployment cannot use volumeClaimTemplates). */
+    private ServerDataClaim(workload: EnvironmentWorkload): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.PersistentVolumeClaimKind,
+            [K8sManifestBuilder.MetadataKey]: this.Meta(workload, K8sManifestBuilder.ServerDataClaimNameOf(workload.environmentName)),
+            [K8sManifestBuilder.SpecKey]: {
+                [K8sManifestBuilder.AccessModesKey]: [K8sManifestBuilder.ReadWriteOnce],
+                [K8sManifestBuilder.ResourcesKey]: {
+                    [K8sManifestBuilder.RequestsKey]: { [K8sManifestBuilder.StorageKey]: K8sManifestBuilder.DataVolumeSize },
                 },
             },
         }

@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
+import { EnvServerSeedSource } from '../env-server-seed.js'
 import type { EnvironmentWorkload } from '../environment-workload.js'
 import type { IdpWorkloadSpec } from '../idp-workload-driver.js'
 
@@ -45,7 +46,7 @@ describe('K8sManifestBuilder', () =>
     it('renders all five objects when a database is present', () =>
     {
         const items = Fixture.Items(true)
-        assert.deepEqual(items.map(i => i.kind), ['Namespace', 'Deployment', 'Service', 'StatefulSet', 'Service'])
+        assert.deepEqual(items.map(i => i.kind), ['Namespace', 'Deployment', 'Service', 'StatefulSet', 'Service', 'PersistentVolumeClaim'])
         const server = items[2]!
         assert.equal(server.spec.type, 'ClusterIP')
         assert.equal(server.spec.ports[0].port, 8080)
@@ -55,7 +56,7 @@ describe('K8sManifestBuilder', () =>
 
     it('renders only namespace, deployment and service without a database', () =>
     {
-        assert.deepEqual(Fixture.Items(false).map(i => i.kind), ['Namespace', 'Deployment', 'Service'])
+        assert.deepEqual(Fixture.Items(false).map(i => i.kind), ['Namespace', 'Deployment', 'Service', 'PersistentVolumeClaim'])
     })
 
     it('labels the namespace', () =>
@@ -78,7 +79,7 @@ describe('K8sManifestBuilder', () =>
         assert.equal(c.image, 'pragmatic-server:dev')
         assert.equal(c.imagePullPolicy, 'IfNotPresent')
         assert.equal(c.ports[0].containerPort, 8080)
-        assert.deepEqual(c.env.map((e: any) => e.name), ['PRAGMATIC_PORT', 'OTHER'])
+        assert.deepEqual(c.env.map((e: any) => e.name), ['PRAGMATIC_PORT', 'OTHER', 'PRAGMATIC_BASE_DIR', 'PRAGMATIC_TENANTS_FILE', 'PRAGMATIC_MASTER_KEY_FILE', 'PRAGMATIC_PROVISIONED_SECRETS_FILE', 'PRAGMATIC_DEPLOYMENT_MODE'])
         assert.equal(c.readinessProbe.httpGet.path, '/healthz')
         assert.equal(c.readinessProbe.httpGet.port, 8080)
     })
@@ -97,6 +98,45 @@ describe('K8sManifestBuilder', () =>
         assert.equal(pw.value, undefined)
         assert.equal(pw.valueFrom.secretKeyRef.name, 'db-pass-ref')
         assert.ok(sts.spec.volumeClaimTemplates[0].spec.resources.requests.storage)
+    })
+})
+
+describe('K8sManifestBuilder server boot wiring', () =>
+{
+    const pod = (items: K8sObject[]) => items.find(i => i.kind === 'Deployment')!.spec.template.spec
+
+    it('injects the five boot env vars, three mounts and three volumes', () =>
+    {
+        const spec = pod(Fixture.Items(false))
+        const c = spec.containers[0]
+        const val = (n: string) => c.env.find((e: any) => e.name === n).value
+        assert.equal(val('PRAGMATIC_PORT'), '8080')
+        assert.equal(val('PRAGMATIC_BASE_DIR'), '/pragmatic/data')
+        assert.equal(val('PRAGMATIC_TENANTS_FILE'), '/pragmatic/config/tenants.json')
+        assert.equal(val('PRAGMATIC_MASTER_KEY_FILE'), '/pragmatic/secrets/master.key')
+        assert.equal(val('PRAGMATIC_PROVISIONED_SECRETS_FILE'), '/pragmatic/secrets/provisioned-secrets.json')
+        assert.equal(val('PRAGMATIC_DEPLOYMENT_MODE'), 'local')
+        assert.deepEqual(c.volumeMounts.map((m: any) => m.mountPath), ['/pragmatic/config', '/pragmatic/secrets', '/pragmatic/data'])
+        assert.equal(spec.volumes.length, 3)
+        assert.equal(spec.volumes[0].configMap.name, EnvServerSeedSource.ConfigMapNameOf('dev1'))
+        assert.equal(spec.volumes[1].secret.secretName, EnvServerSeedSource.SecretNameOf('dev1'))
+        assert.equal(spec.volumes[2].persistentVolumeClaim.claimName, K8sManifestBuilder.ServerDataClaimNameOf('dev1'))
+        assert.deepEqual(c.volumeMounts.map((m: any) => m.name), spec.volumes.map((v: any) => v.name))
+    })
+
+    it('backs the base dir with a standalone PVC, not volumeClaimTemplates, and keeps the db password ref', () =>
+    {
+        const items = Fixture.Items(true)
+        const pvc = items.find(i => i.kind === 'PersistentVolumeClaim')!
+        assert.equal(pvc.metadata.name, K8sManifestBuilder.ServerDataClaimNameOf('dev1'))
+        assert.equal(pvc.metadata.namespace, K8sManifestBuilder.NamespaceOf('dev1'))
+        assert.deepEqual(pvc.spec.accessModes, ['ReadWriteOnce'])
+        const dep = items.find(i => i.kind === 'Deployment')!
+        assert.equal(dep.spec.volumeClaimTemplates, undefined)
+        const sts = items.find(i => i.kind === 'StatefulSet')!
+        const pw = sts.spec.template.spec.containers[0].env.find((e: any) => e.name === 'POSTGRES_PASSWORD')
+        assert.equal(pw.valueFrom.secretKeyRef.name, 'db-pass-ref')
+        assert.equal(sts.spec.volumeClaimTemplates.length, 1)
     })
 })
 
