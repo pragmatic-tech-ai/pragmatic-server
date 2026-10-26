@@ -21,7 +21,7 @@ import { Repository, toJSON } from '@pragmatic-tech-ai/todl'
 import type { PackageDocument } from '@pragmatic-tech-ai/todl'
 import { RemoteBindMode } from '@pragmatic-tech-ai/todl/build-system-core'
 import { AdminProtocol, AppWriteStatus, CypherProtocol, GraphProtocol, PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { ContributedPackageDto, GraphLoadedDto, SecurityModelDto, RoleConfigDto, RoleAssignmentDto, RoleOverrideDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { ContributedPackageDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { BuiltHelloApp } from '../../src/tests/e2e/hello-app-builder.js'
 import { HelloAppBuilder } from '../../src/tests/e2e/hello-app-builder.js'
 import { DockerEnv } from '../../environments/seed/docker.js'
@@ -118,12 +118,6 @@ export class ControlPlaneSmoke
     private static readonly StatusUnauthorized = 401
     private static readonly ViewerRole = 'Viewer'
     private static readonly TenantKind = 'Tenant'
-    private static readonly AdminPrincipal = 'admin'
-    private static readonly AppReaderRoleId = 'app-reader'
-    private static readonly AppReaderRoleName = 'App Reader'
-    private static readonly BundledConceptId = 'hello.greeting'
-    private static readonly ReadAction = 'read'
-    private static readonly OrganizationLevel = 'organization'
     private static readonly PollTimeoutMs = 90000
     private static readonly PollIntervalMs = 1000
     private static readonly PassTag = 'PASS '
@@ -207,7 +201,6 @@ export class ControlPlaneSmoke
         EnvAppRead: 'env-app: Viewer reads the promoted env graph with no OpenApplication',
         EnvAppRepromote: 'env-app: re-promote of the changed graph returns 200 with both packages',
         EnvAppLiveRead: 'env-app: same reader connection sees the re-promoted content with no redeploy',
-        EnvAppGrantRead: 'env-app: runtime grants the admin read on the bundled app concept',
         EnvAppBundledRead: 'env-app: bundled app still reads its own per-app graph unchanged',
         PromoteDeleteDev: 'promote: development env delete succeeds',
         PromoteDeleteRuntime: 'promote: runtime env delete succeeds'
@@ -476,22 +469,6 @@ export class ControlPlaneSmoke
             const gadgets = await ControlPlaneSmoke.ScalarCount(readerClient, S.RepromoteCypher)
             this.Expect(L.EnvAppLiveRead, widgets === S.PromoteExpectedRows && gadgets === S.PromoteExpectedRows, String(widgets) + S.Comma + String(gadgets))
 
-            step = L.EnvAppGrantRead
-            const grantConn = await seeder.Connect(S.WsPrefix + String(rtPort), S.DemoTenant, adminToken)
-            try
-            {
-                const model = await grantConn.sendRequest(AdminProtocol.GetSecurityModel, undefined)
-                this.Expect(L.EnvAppGrantRead, model !== undefined, String(model !== undefined))
-                if (model !== undefined)
-                {
-                    await grantConn.sendRequest(AdminProtocol.SetSecurityModel, { securityModel: ControlPlaneSmoke.WithBundledReadGrant(model) })
-                }
-            }
-            finally
-            {
-                grantConn.dispose()
-            }
-
             step = L.EnvAppBundledRead
             await adminClient.OpenApplication(HelloAppBuilder.AppName)
             const greetings = await ControlPlaneSmoke.ScalarCount(adminClient, S.BundledCypher)
@@ -544,25 +521,6 @@ export class ControlPlaneSmoke
             return page.items[0]?.[0]
         }
         return undefined
-    }
-
-    /**
-     * Returns the runtime security model widened with an organization-level read on the bundled app's own concept,
-     * assigned to the provisioned admin. A bundled app's per-app graph is connector-backed and so flows through the
-     * access-depth filter, which fail-closes any concept the model grants no read privilege on; the demo model governs
-     * only the northwind.* business concepts, so without this grant the admin reads zero of its own app's instances.
-     */
-    private static WithBundledReadGrant(model: SecurityModelDto): SecurityModelDto
-    {
-        const S = ControlPlaneSmoke
-        const role: RoleConfigDto = { id: S.AppReaderRoleId, name: S.AppReaderRoleName, privileges: [{ action: S.ReadAction, concept: S.BundledConceptId, level: S.OrganizationLevel }] }
-        const assignment: RoleAssignmentDto = model.roleAssignment ?? { claimsMapping: [], overrides: [], teamRoles: [] }
-        const override: RoleOverrideDto = { principalId: S.AdminPrincipal, roles: [S.AppReaderRoleId] }
-        return {
-            ...model,
-            roles: [...(model.roles ?? []), role],
-            roleAssignment: { ...assignment, overrides: [...assignment.overrides, override] },
-        }
     }
 
     /** A second compiled package (a distinct concept + one instance) used to prove the re-promoted graph is read live. */

@@ -149,3 +149,25 @@ test('AllowAllReadFilterSource.GovernedConceptsFor returns an empty set', async 
     const governed = await AllowAllReadFilterSource.Instance.GovernedConceptsFor()
     assert.equal(governed.size, 0)
 })
+
+test('TenantReadAuthorization.HasSecurityModelFor is false with no model (fail-closed) and true once one is set', async () =>
+{
+    const store = new FakeStore(undefined)
+    const auth = new TenantReadAuthorization(store)
+    const context = ReadFilterFixture.Context(ReadFilterFixture.PrincipalId)
+    assert.equal(await auth.HasSecurityModelFor(context), false)
+    store.model = ReadFilterFixture.OrgModel(ReadFilterFixture.PrincipalId)
+    auth.Invalidate(ReadFilterFixture.TenantId)
+    assert.equal(await auth.HasSecurityModelFor(context), true)
+})
+
+test('TenantReadAuthorization.HasSecurityModelFor is false when the tenant has no stored config', async () =>
+{
+    const auth = new TenantReadAuthorization(new FakeStore(undefined, true))
+    assert.equal(await auth.HasSecurityModelFor(ReadFilterFixture.Context(ReadFilterFixture.PrincipalId)), false)
+})
+
+test('AllowAllReadFilterSource.HasSecurityModelFor is true (the depth axis is inactive)', async () =>
+{
+    assert.equal(await AllowAllReadFilterSource.Instance.HasSecurityModelFor(), true)
+})

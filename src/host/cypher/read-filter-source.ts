@@ -16,6 +16,9 @@ export interface IReadFilterSource
 
     /** Every concept the tenant security model references (the set an app's own concepts are subtracted from to form the depth-filter bypass). */
     GovernedConceptsFor(context: AccessContext): Promise<ReadonlySet<string>>
+
+    /** False when the tenant has NO security model (the depth filter is deny-all): nothing may be treated as app-private then. */
+    HasSecurityModelFor(context: AccessContext): Promise<boolean>
 }
 
 /** Produces the FIELD-READ mask for a request. One of two impls is chosen by the server per the identity state. */
@@ -92,6 +95,7 @@ export class AllowAllWriteAuthorizerSource implements IWriteAuthorizerSource
 export class TenantReadAuthorization implements IReadFilterSource, IWriteAuthorizerSource, IFieldReadMaskSource, ISecurityModelReload
 {
     private readonly evaluators = new Map<string, Promise<AccessDepthEvaluator>>()
+    private readonly modelless = new Set<string>()
 
     constructor(private readonly store: ITenantConfigStore) {}
 
@@ -105,6 +109,12 @@ export class TenantReadAuthorization implements IReadFilterSource, IWriteAuthori
     {
         const evaluator = await this.EvaluatorFor(context.Tenant.Id)
         return evaluator.GovernedConcepts()
+    }
+
+    public async HasSecurityModelFor(context: AccessContext): Promise<boolean>
+    {
+        await this.EvaluatorFor(context.Tenant.Id)
+        return !this.modelless.has(context.Tenant.Id)
     }
 
     public async WriteAuthorizerFor(context: AccessContext): Promise<IWriteAuthorizer>
@@ -144,6 +154,7 @@ export class TenantReadAuthorization implements IReadFilterSource, IWriteAuthori
     public Invalidate(environmentId: string): void
     {
         this.evaluators.delete(environmentId)
+        this.modelless.delete(environmentId)
     }
 
     private EvaluatorFor(environmentId: string): Promise<AccessDepthEvaluator>
@@ -171,8 +182,10 @@ export class TenantReadAuthorization implements IReadFilterSource, IWriteAuthori
         const model: ISecurityModelConfig | null | undefined = config?.SecurityModel
         if (model === undefined || model === null)
         {
+            this.modelless.add(environmentId)
             return AccessDepthEvaluator.DenyAll()
         }
+        this.modelless.delete(environmentId)
         return AccessDepthEvaluator.FromConfig(model)
     }
 }
@@ -190,6 +203,11 @@ export class AllowAllReadFilterSource implements IReadFilterSource
     public async GovernedConceptsFor(): Promise<ReadonlySet<string>>
     {
         return new Set<string>()
+    }
+
+    public async HasSecurityModelFor(): Promise<boolean>
+    {
+        return true
     }
 }
 

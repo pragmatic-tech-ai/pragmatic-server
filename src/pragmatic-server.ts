@@ -35,7 +35,7 @@ import { PolicyConnectionResolver } from './host/policy-connection-resolver.js'
 import type { ConnectorsPolicy } from './host/connector-policy.js'
 import { Action } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
-import { IdentityEnforcement, PolicyCatalog, CompositeInstanceFilter, AllowAllInstanceFilter } from '@pragmatic-tech-ai/todl-identity-engine'
+import { IdentityEnforcement, PolicyCatalog, CompositeInstanceFilter, AllowAllInstanceFilter, ConceptBypassInstanceFilter } from '@pragmatic-tech-ai/todl-identity-engine'
 import { TenantReadAuthorization, AllowAllReadFilterSource, AllowAllFieldReadMaskSource } from './host/cypher/read-filter-source.js'
 import { FieldMaskedGraphQuery, AllowAllFieldReadMask } from './host/cypher/field-masked-graph-query.js'
 import { AllowAllWriteAuthorizerSource } from './host/cypher/read-filter-source.js'
@@ -141,7 +141,7 @@ export interface PragmaticServerOptions
 /** The node labels a Cypher query references; wildcard when any node pattern is unlabeled; parseFailed when the text is not valid Cypher (nothing is prefetched). */
 export type ReferencedLabelSet = { labels: readonly string[]; wildcard: boolean; parseFailed: boolean }
 
-type AppBase = { domain: Domain; plan: ModelConnectorPlan; nativeBase: IGraphQuery; defaultConcepts: ReadonlySet<string> }
+type AppBase = { domain: Domain; plan: ModelConnectorPlan; nativeBase: IGraphQuery; defaultConcepts: ReadonlySet<string>; ownConcepts: ReadonlySet<string> }
 
 /** Headless single-tenant in-process host: composes the engine over the lazy root and opens a solution. */
 export class PragmaticServer implements IEnvironmentGraphHost
@@ -540,7 +540,9 @@ export class PragmaticServer implements IEnvironmentGraphHost
         const base = new ConnectorRuntimeGraphQuery(nativeBase, snapshot, built.defaultConcepts)
         const rules = await AccessPolicySetting.Load(this.AppsStorage(), name)
         const predicate = IdentityEnforcement.Over(PolicyCatalog.FromPolicies(rules), context, Action.Read).InstanceFilter()
-        const depth = await (await this.DepthFilterSource()).ReadFilterFor(context)
+        const depthSource = await this.DepthFilterSource()
+        const bypass = await this.AppPrivateConcepts(depthSource, context, built)
+        const depth = new ConceptBypassInstanceFilter(await depthSource.ReadFilterFor(context), bypass)
         const composite = new CompositeInstanceFilter([predicate, depth])
         const shareIndex = await this.ShareIndexFor(context, name)
         const instanceFilter = shareIndex.IsEmpty()
@@ -557,6 +559,39 @@ export class PragmaticServer implements IEnvironmentGraphHost
             return filtered
         }
         return new FieldMaskedGraphQuery(filtered, mask)
+    }
+
+    /**
+     * The concepts the bound app owns outright: declared by one of its OWN manifest packages and by no other manifest in its
+     * Domain (so a transitive dependency's concept never qualifies). A TypeInfo does not expose its declaring model, so
+     * ownership is read off each loaded manifest instead.
+     */
+    private static OwnConcepts(domain: Domain, nativeBase: IGraphQuery, manifest: PragmaticAppManifest): ReadonlySet<string>
+    {
+        const ownPackages = new Set(manifest.packages.map(p => p.id))
+        const own = new Set<string>()
+        const foreign = new Set<string>()
+        for (const m of domain.manifests)
+        {
+            const target = ownPackages.has(m.model) ? own : foreign
+            for (const t of m.types())
+            {
+                target.add(t.fullName)
+            }
+        }
+        return new Set(nativeBase.Concepts().map(t => t.fullName).filter(full => own.has(full) && !foreign.has(full)))
+    }
+
+    /** The own concepts the tenant security model does not reference: the org depth filter defers to the app policy for these alone. */
+    private async AppPrivateConcepts(source: IReadFilterSource, context: AccessContext, built: AppBase): Promise<ReadonlySet<string>>
+    {
+        if (!(await source.HasSecurityModelFor(context)))
+        {
+            // No security model: the depth filter is deny-all by design, so no concept may defer to app policy.
+            return new Set<string>()
+        }
+        const governed = await source.GovernedConceptsFor(context)
+        return new Set([...built.ownConcepts].filter(full => !governed.has(full)))
     }
 
     private async ShareServiceFor(context: AccessContext, name: string): Promise<ShareService>
@@ -700,7 +735,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
         const nativeBase = new GraphQuery(domain.graph)
         const connectorName = `${PragmaticServer.BuiltinConnectorPrefix}${manifest.name}${PragmaticServer.AppGraphKeySeparator}${manifest.version}`
         const augmented = BuiltinBindings.Augment(plan, nativeBase, connectorName, this.DataRootFor(manifest.name), this.BuiltinEngine())
-        return { domain, plan: augmented.plan, nativeBase, defaultConcepts: augmented.defaultConcepts }
+        return { domain, plan: augmented.plan, nativeBase, defaultConcepts: augmented.defaultConcepts, ownConcepts: PragmaticServer.OwnConcepts(domain, nativeBase, manifest) }
     }
 
     /** The per-app record-share store (memoized), over the app's built-in document store. */
