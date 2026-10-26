@@ -14,6 +14,9 @@ class ProducerFixture
     public static readonly Secret = 'SECRET-TOKEN-xyz'
     public static readonly BadEnv = 'bad'
     public static readonly GoodEnv = 'good'
+    public static readonly RunningImage = 'img:1'
+    public static readonly Detail = 'ok'
+    public static readonly NoOrchestrator = 'no orchestrator'
 
     public static Hive(): HiveRecord
     {
@@ -48,7 +51,7 @@ class ProducerFixture
                 {
                     throw new Error(ProducerFixture.Secret)
                 }
-                return { ready: true, runningImage: 'img:1', detail: 'ok' }
+                return { ready: true, runningImage: ProducerFixture.RunningImage, detail: ProducerFixture.Detail }
             }
         } as unknown as IHiveOrchestrator
     }
@@ -63,7 +66,7 @@ describe('HiveHealthProducer', () =>
             ProducerFixture.Factory(() => ProducerFixture.Orchestrator()),
             ProducerFixture.Placement())
         const dtos = await producer.Produce(ProducerFixture.Hive())
-        assert.deepEqual(dtos, [{ environmentName: ProducerFixture.GoodEnv, ready: true, runningImage: 'img:1', detail: 'ok' }])
+        assert.deepEqual(dtos, [{ environmentName: ProducerFixture.GoodEnv, ready: true, runningImage: ProducerFixture.RunningImage, detail: ProducerFixture.Detail }])
         assert.ok(!JSON.stringify(dtos).includes(ProducerFixture.Secret))
     })
 
@@ -73,9 +76,9 @@ describe('HiveHealthProducer', () =>
             ProducerFixture.Source(),
             ProducerFixture.Factory(() =>
             {
-                throw new Error('no orchestrator')
+                throw new Error(ProducerFixture.NoOrchestrator)
             }),
             ProducerFixture.Placement())
-        await assert.rejects(() => producer.Produce(ProducerFixture.Hive()), /no orchestrator/)
+        await assert.rejects(() => producer.Produce(ProducerFixture.Hive()), new RegExp(ProducerFixture.NoOrchestrator))
     })
 })
