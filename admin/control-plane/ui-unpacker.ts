@@ -1,5 +1,5 @@
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
-import type { OciRegistryClient } from './oci-registry-client.js'
+import { OciRegistryClient } from './oci-registry-client.js'
 import { UiArtifact, type UiBundleFile } from './ui-artifact.js'
 import type { UiArtifactVerifier } from './ui-artifact-signer.js'
 
@@ -47,6 +47,7 @@ export class UiUnpacker
     private static readonly UnsafeSegment = /[\\:\0]/
     private static readonly CurrentDir = '.'
     private static readonly ParentDir = '..'
+    private static readonly SignatureMediaType = 'application/vnd.pragmatic.ui.signature.v1'
 
     public constructor(
         private readonly client: OciRegistryClient,
@@ -79,7 +80,8 @@ export class UiUnpacker
         const treeRoot = S.Join(input.appName, input.appVersion)
         const manifestPath = S.Join(treeRoot, S.ManifestFile)
         const livePath = S.Join(input.appName, S.LiveFile)
-        if (await this.ReadLive(livePath) === input.appVersion && await this.storage.Exists(manifestPath))
+        const live = await this.ReadLive(livePath)
+        if (live === input.appVersion && await this.storage.Exists(manifestPath))
         {
             return
         }
@@ -94,12 +96,12 @@ export class UiUnpacker
         const layerDigest = S.SingleLayerDigest(manifest)
 
         const sigManifest = S.ParseJson(await this.client.PullManifest(input.repo, input.sigTag))
-        const sigBlob = await this.client.PullBlob(input.repo, S.SingleLayerDigest(sigManifest))
+        const sigBlob = await this.client.PullBlob(input.repo, S.SingleLayerDigest(sigManifest, S.SignatureMediaType))
         const signature = new TextDecoder().decode(sigBlob).trim()
         await this.verifier.Verify(input.appName, input.appVersion, input.expectedManifestDigest, signature, input.trustRootRef)
 
         // Verified. Fetch and fully validate everything before the first write.
-        const files = UiArtifact.Unpack(await this.client.PullBlob(input.repo, layerDigest))
+        const files = UiArtifact.Unpack(await this.PullPinned(input.repo, layerDigest))
         for (const f of files)
         {
             if (!S.IsSafeRelativePath(f.path))
@@ -107,19 +109,30 @@ export class UiUnpacker
                 throw new UiUnpackError()
             }
         }
-        const config = S.ParseJson(await this.client.PullBlob(input.repo, configDigest))
+        const config = S.ParseJson(await this.PullPinned(input.repo, configDigest))
         const entry = config.entry
         const assets = config.assets
         if (typeof entry !== 'string' || !Array.isArray(assets) || assets.some(a => typeof a !== 'string'))
         {
             throw new UiUnpackError()
         }
-        const packages = await this.ExistingPackages(input.appName, livePath)
+        const packages = await this.ExistingPackages(input.appName, live)
 
         await this.WriteFiles(S.Join(treeRoot, S.UiDir), files)
         const appManifest = { name: input.appName, version: input.appVersion, packages, ui: { entry, assets } }
         await this.storage.WriteText(manifestPath, JSON.stringify(appManifest, null, S.JsonIndent))
         await this.storage.WriteText(livePath, input.appVersion)
+    }
+
+    /** Pulls a blob and requires its content hash to equal the digest the signed manifest committed to. */
+    private async PullPinned(repo: string, digest: string): Promise<Uint8Array>
+    {
+        const bytes = await this.client.PullBlob(repo, digest)
+        if (OciRegistryClient.DigestOf(bytes) !== digest)
+        {
+            throw new UiUnpackError()
+        }
+        return bytes
     }
 
     private async WriteFiles(uiRoot: string, files: readonly UiBundleFile[]): Promise<void>
@@ -143,10 +156,9 @@ export class UiUnpacker
     }
 
     /** The packages of the current live manifest (or the legacy `<app>/application.json`) so a UI-only deploy keeps data packages. */
-    private async ExistingPackages(appName: string, livePath: string): Promise<UiPackageRef[]>
+    private async ExistingPackages(appName: string, live: string | undefined): Promise<UiPackageRef[]>
     {
         const S = UiUnpacker
-        const live = await this.ReadLive(livePath)
         const candidates: string[] = []
         if (live !== undefined && S.IsSafeSegment(live))
         {
@@ -222,10 +234,14 @@ export class UiUnpacker
         return digest
     }
 
-    private static SingleLayerDigest(manifest: Record<string, unknown>): string
+    private static SingleLayerDigest(manifest: Record<string, unknown>, mediaType?: string): string
     {
         const layers = manifest.layers
         if (!Array.isArray(layers) || layers.length !== 1)
+        {
+            throw new UiUnpackError()
+        }
+        if (mediaType !== undefined && (layers[0] as { mediaType?: unknown } | null)?.mediaType !== mediaType)
         {
             throw new UiUnpackError()
         }

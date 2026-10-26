@@ -184,4 +184,50 @@ describe('UiUnpacker', () =>
         await Unpacker().Reconcile(Input())
         assert.deepEqual((await ReadManifest()).packages, [{ id: 'legacy', version: '1' }])
     })
+
+    it('a swapped layer blob (manifest signed, bytes different) aborts and writes nothing', async () =>
+    {
+        const layerDigest = OciRegistryClient.DigestOf(packed.layerBlob)
+        registry.blobs.set(layerDigest, enc.encode('{"index.html":"ZXZpbA=="}'))
+        await assert.rejects(() => Unpacker().Reconcile(Input()), UiUnpackError)
+        await NothingWritten()
+    })
+
+    it('a swapped config blob aborts and writes nothing', async () =>
+    {
+        registry.blobs.set(OciRegistryClient.DigestOf(packed.configBlob), enc.encode('{"entry":"x","assets":[]}'))
+        await assert.rejects(() => Unpacker().Reconcile(Input()), UiUnpackError)
+        await NothingWritten()
+    })
+
+    it('a signature layer with the wrong mediaType aborts', async () =>
+    {
+        const m = JSON.parse(new TextDecoder().decode(registry.manifests.get(`${Fx.Repo}:${Fx.SigTag}`)!))
+        m.layers[0].mediaType = 'application/octet-stream'
+        registry.manifests.set(`${Fx.Repo}:${Fx.SigTag}`, enc.encode(JSON.stringify(m)))
+        await assert.rejects(() => Unpacker().Reconcile(Input()), UiUnpackError)
+        await NothingWritten()
+    })
+
+    it('a layer file path containing .. is rejected and nothing is written', async () =>
+    {
+        const evil = UiArtifact.Pack(
+            { appName: Fx.App, appVersion: Fx.Version, entry: 'index.html', assets: [] },
+            [{ path: '../evil.js', bytes: enc.encode(Fx.AppJs) }],
+        )
+        registry.manifests.set(`${Fx.Repo}:${Fx.Tag}`, evil.manifestBytes)
+        registry.PutBlob(evil.layerBlob)
+        registry.PutBlob(evil.configBlob)
+        PublishSignature(await signer.Sign(Fx.App, Fx.Version, evil.manifestDigest, Fx.KeyRef))
+        await assert.rejects(() => Unpacker().Reconcile(Input({ expectedManifestDigest: evil.manifestDigest })), UiUnpackError)
+        await NothingWritten()
+        assert.equal(await storage.Exists('evil.js'), false)
+    })
+
+    it('an appVersion with a traversal is rejected and nothing is written', async () =>
+    {
+        await assert.rejects(() => Unpacker().Reconcile(Input({ appVersion: '..' })), UiUnpackError)
+        await assert.rejects(() => Unpacker().Reconcile(Input({ appName: '../x' })), UiUnpackError)
+        await NothingWritten()
+    })
 })
