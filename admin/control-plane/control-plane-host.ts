@@ -43,6 +43,7 @@ import type { ManifestRecord } from './manifest-record.js'
 import { BodyTooLargeError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, UnknownHiveError, UnknownManifestError } from './rollout-errors.js'
 import type { ClientRecord, ClusterSpec, HiveRecord, RegistrySpec, TenantRecord } from './platform-records.js'
 import type { CreateAccountParams, GraphLoadedDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { LoginThrottle } from './login-throttle.js'
 import type { ILogProcess } from '../../environments/seed/docker.js'
 
 export interface IEnvironmentService
@@ -206,6 +207,13 @@ export class ControlPlaneHost
     private static readonly SetCookieHeader = 'set-cookie'
     private static readonly CookieHeader = 'cookie'
     private static readonly StatusUnauthorized = 401
+    private static readonly StatusTooManyRequests = 429
+    private static readonly RetryAfterHeader = 'retry-after'
+    private static readonly ForwardedForHeader = 'x-forwarded-for'
+    private static readonly ForwardedSeparator = ','
+    private static readonly MsPerSecond = 1000
+    private static readonly TooManyAttemptsMessage = 'Too many login attempts; try again later'
+    private static readonly UnknownClientIp = ''
     private static readonly InvalidCredentialsMessage = 'Invalid email or password'
     private static readonly UnauthenticatedMessage = 'Authentication required'
     private static readonly BadOriginMessage = 'Origin not allowed'
@@ -284,7 +292,9 @@ export class ControlPlaneHost
         private readonly directory: PlatformDirectory,
         private readonly deployments: PlatformDeploymentRegistry,
         private readonly provisioning: TenantProvisioningService,
-        private readonly observations: HiveObservationRegistry)
+        private readonly observations: HiveObservationRegistry,
+        private readonly loginThrottle: LoginThrottle = new LoginThrottle(),
+        private readonly trustedProxy: boolean = false)
     {
         this.staticRootAbs = resolve(staticRoot)
     }
@@ -1059,14 +1069,40 @@ export class ControlPlaneHost
             PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.CredentialsRequiredMessage })
             return
         }
+        const clientIp = this.ClientIp(req)
+        const gate = this.loginThrottle.CheckAllowed(body.email, clientIp)
+        if (!gate.allowed)
+        {
+            res.setHeader(ControlPlaneHost.RetryAfterHeader, String(Math.ceil(gate.retryAfterMs / ControlPlaneHost.MsPerSecond)))
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusTooManyRequests, { error: ControlPlaneHost.TooManyAttemptsMessage })
+            return
+        }
         const session = await this.operator.Authenticate(body.email, body.password)
         if (session === null)
         {
+            this.loginThrottle.RecordFailure(body.email, clientIp)
             PlaneHttp.WriteJson(res, ControlPlaneHost.StatusUnauthorized, { error: ControlPlaneHost.InvalidCredentialsMessage })
             return
         }
+        this.loginThrottle.Clear(body.email, clientIp)
         res.setHeader(ControlPlaneHost.SetCookieHeader, SessionCookie.Build(session.token, session.expiresAt, this.secureCookie))
         PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { email: body.email })
+    }
+
+    /** Socket peer address, or (only behind a trusted proxy) the last x-forwarded-for hop. */
+    private ClientIp(req: IncomingMessage): string
+    {
+        if (this.trustedProxy)
+        {
+            const raw = req.headers[ControlPlaneHost.ForwardedForHeader]
+            const header = Array.isArray(raw) ? raw.join(ControlPlaneHost.ForwardedSeparator) : raw
+            const last = header?.split(ControlPlaneHost.ForwardedSeparator).pop()?.trim()
+            if (last !== undefined && last.length > 0)
+            {
+                return last
+            }
+        }
+        return req.socket.remoteAddress ?? ControlPlaneHost.UnknownClientIp
     }
 
     private async Principal(req: IncomingMessage): Promise<{ email: string } | null>

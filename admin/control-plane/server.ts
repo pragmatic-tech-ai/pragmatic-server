@@ -5,6 +5,7 @@ import { DockerEnv } from '../../environments/seed/docker.js'
 import { UserSeeder } from '../../environments/seed/users.js'
 import { AdminProxy, WsAdminConnector } from './admin-proxy.js'
 import { ControlPlaneHost } from './control-plane-host.js'
+import { LoginThrottle } from './login-throttle.js'
 import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import { ManifestRegistry } from './manifest-record.js'
 import { GatingRegistry } from './gating-record.js'
@@ -92,6 +93,7 @@ export class ControlPlaneServer
     private static readonly DefaultOperatorEmail = 'admin@control-plane.test'
     public static readonly MasterKeyFileName = 'master.key'
     private static readonly IdentitySegment = 'identity'
+    private static readonly TrustedProxyEnvVar = 'PRAGMATIC_ADMIN_TRUSTED_PROXY'
     private static readonly TrueToken = 'true'
     private static readonly OneToken = '1'
     private static readonly TenantPortEnvVar = 'PRAGMATIC_TENANT_ADMIN_PORT'
@@ -164,7 +166,7 @@ export class ControlPlaneServer
         await Promise.all([manifests.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load(), adminClientRegistry.Load()])
         const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, placement, observations)
         const provisioning = new TenantProvisioningService(idpService, directory, conn => new IdpAdminClient(conn))
-        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations)
+        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations, new LoginThrottle(), opts.trustedProxy)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
         const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie, service, new InProcessRolloutClient(deployments), orchestrators, placement,
             masterKey, adminClientRegistry, ControlPlaneServer.ParseSecretTtlHours(process.env[ControlPlaneServer.SecretTtlEnvVar]))
@@ -210,16 +212,18 @@ export class ControlPlaneServer
     }
 
     /** Pure: derives operator-identity compose options and cookie policy from the environment. */
-    public static ReadOperatorOptions(env: NodeJS.ProcessEnv, dataRoot: string): OperatorComposeOptions & { secureCookie: boolean }
+    public static ReadOperatorOptions(env: NodeJS.ProcessEnv, dataRoot: string): OperatorComposeOptions & { secureCookie: boolean; trustedProxy: boolean }
     {
         const password = env[ControlPlaneServer.OperatorPasswordEnvVar]
         const secure = env[ControlPlaneServer.SecureCookieEnvVar]
+        const proxied = env[ControlPlaneServer.TrustedProxyEnvVar]
         return {
             masterKeyFile: env[ControlPlaneServer.MasterKeyEnvVar] ?? join(dataRoot, ControlPlaneServer.MasterKeyFileName),
             identityRoot: join(dataRoot, ControlPlaneServer.IdentitySegment),
             operatorEmail: env[ControlPlaneServer.OperatorEmailEnvVar] ?? ControlPlaneServer.DefaultOperatorEmail,
             initialPassword: password === undefined || password === '' ? undefined : password,
             secureCookie: secure === ControlPlaneServer.TrueToken || secure === ControlPlaneServer.OneToken,
+            trustedProxy: proxied === ControlPlaneServer.TrueToken || proxied === ControlPlaneServer.OneToken,
         }
     }
 
