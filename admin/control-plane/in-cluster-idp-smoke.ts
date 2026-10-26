@@ -144,6 +144,7 @@ export class InClusterIdpSmoke
             const result = await driver.EnsureRunning({ tenantId: S.TenantId, displayName: S.TenantId, takenPorts: [] })
             this.Expect(S.Labels.Ready, result.record.status === IdpStatus.Running && result.record.baseUrl === result.connection.baseUrl, S.RecordDetail(result))
             this.Expect(S.Labels.Connection, S.ConnectionOk(result))
+            await this.CheckTlsSecret(namespace)
             forward = this.StartForward(namespace)
             const port = await S.LocalPortOf(forward)
             const host = new URL(result.connection.baseUrl).hostname

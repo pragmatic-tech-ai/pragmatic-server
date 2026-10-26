@@ -65,7 +65,11 @@ separate migration, not in scope here (and unnecessary for dev CAs, which re-pro
   untouched. `IdpTlsMaterial.Load` is unchanged.
 - **`ca.key` still minted in staging.** openssl must have the CA key to sign the CSR; it just isn't moved out
   of the staging dir. `chmod 600` on the staging `ca.key` is retained (defense-in-depth while it briefly
-  exists).
+  exists). On the normal path the staging dir (and its `ca.key`) is destroyed by the `finally rmSync(stage)`.
+  A hard-kill in the sub-second window before that `rmSync` could leave a `.devca-*` staging dir behind; to
+  keep the "not persisted" guarantee robust, `EnsureAt` sweeps any leftover `StagingPrefix` dir in `dir`
+  (best-effort, before the idempotency return) on its next run — which the pod runs on every boot and the
+  control-plane on every mint. The read-only in-cluster mount holds no staging dir, so the sweep no-ops there.
 - **Uniform change (not in-cluster-only).** Fixing only the in-cluster projection and leaving `DevCa`
   persisting `ca.key` on the control-plane was the rejected alternative (Approach B); the user chose the
   stronger, simpler posture where no component retains the CA key.

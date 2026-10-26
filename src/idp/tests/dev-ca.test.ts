@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { X509Certificate } from 'node:crypto'
@@ -62,6 +62,26 @@ test('re-mints when a runtime file is missing', () =>
         {
             assert.ok(existsSync(f), f)
         }
+    }
+    finally
+    {
+        rmSync(dir, { recursive: true, force: true })
+    }
+})
+
+test('sweeps a staging dir a prior crashed mint left behind (its transient ca.key does not persist)', () =>
+{
+    const dir = mkdtempSync(join(tmpdir(), 'devca-'))
+    try
+    {
+        DevCa.EnsureAt(dir, 'idp.local')
+        // Simulate a hard-kill between the renames and the finally-rmSync: a leftover staging dir holding ca.key.
+        const stale = join(dir, '.devca-stale')
+        mkdirSync(stale)
+        writeFileSync(join(stale, 'ca.key'), 'leftover-ca-signing-key')
+        DevCa.EnsureAt(dir, 'idp.local')
+        assert.ok(!existsSync(stale))
+        assert.ok(!existsSync(join(stale, 'ca.key')))
     }
     finally
     {
