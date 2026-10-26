@@ -6,6 +6,10 @@ import { InClusterRegistry } from '../in-cluster-registry.js'
 const HiveId = 'hive-1'
 const HiveLabel = 'pragmatic/hive'
 const NodePortType = 'NodePort'
+const NamespaceKind = 'Namespace'
+const DeploymentKind = 'Deployment'
+const ServiceKind = 'Service'
+const ClaimKind = 'PersistentVolumeClaim'
 
 describe('K8sManifestBuilder.RenderRegistry', () =>
 {
@@ -17,14 +21,14 @@ describe('K8sManifestBuilder.RenderRegistry', () =>
     before(() =>
     {
         items = JSON.parse(new K8sManifestBuilder().RenderRegistry(HiveId)).items as any[]
-        dep = items.find(o => o.kind === 'Deployment')
-        svc = items.find(o => o.kind === 'Service')
-        pvc = items.find(o => o.kind === 'PersistentVolumeClaim')
+        dep = items.find(o => o.kind === DeploymentKind)
+        svc = items.find(o => o.kind === ServiceKind)
+        pvc = items.find(o => o.kind === ClaimKind)
     })
 
     it('renders the registry Namespace first, matching the builder system namespace', () =>
     {
-        assert.equal(items[0].kind, 'Namespace')
+        assert.equal(items[0].kind, NamespaceKind)
         assert.equal(items[0].metadata.name, InClusterRegistry.Namespace)
         assert.equal(K8sManifestBuilder.SystemNamespace, InClusterRegistry.Namespace)
     })
