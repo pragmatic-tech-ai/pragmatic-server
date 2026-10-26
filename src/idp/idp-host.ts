@@ -158,6 +158,7 @@ export class IdpHost
 
     private httpsServer: Server | undefined;
     private readonly baseUrl: string;
+    private readonly internalBaseUrl: string;
     private readonly authorize: AuthorizeEndpoint;
     private readonly token: TokenEndpoint;
 
@@ -170,13 +171,15 @@ export class IdpHost
         private readonly sso: IdpSsoSessionStore,
         private readonly tls: { key: Buffer; cert: Buffer },
         private readonly secureCookie: boolean,
-        private readonly admin?: IdpAdminEndpoint)
+        private readonly admin?: IdpAdminEndpoint,
+        internalBaseUrl?: string)
     {
         if (new URL(baseUrl).protocol !== IdpHost.HttpsProtocol)
         {
             throw new Error(IdpHost.NotHttpsMessage);
         }
         this.baseUrl = baseUrl.replace(/\/+$/, '');
+        this.internalBaseUrl = internalBaseUrl === undefined ? this.baseUrl : internalBaseUrl.replace(/\/+$/, '');
         this.authorize = new AuthorizeEndpoint(realms, clients, codes, sso, secureCookie);
         this.token = new TokenEndpoint(this.baseUrl, signingKey, codes, clients);
     }
@@ -427,12 +430,14 @@ export class IdpHost
 
     private Discovery(tenantId: string): Record<string, string>
     {
-        const issuer = `${this.baseUrl}/${encodeURIComponent(tenantId)}`;
+        const tenantSegment = encodeURIComponent(tenantId);
+        const issuer = `${this.baseUrl}/${tenantSegment}`;
+        const internal = `${this.internalBaseUrl}/${tenantSegment}`;
         return {
             [IdpHost.IssuerField]: issuer,
             [IdpHost.AuthorizationEndpointField]: `${issuer}/${IdpHost.AuthorizeRest}`,
-            [IdpHost.TokenEndpointField]: `${issuer}/${IdpHost.TokenRest}`,
-            [IdpHost.JwksUriField]: `${issuer}/${IdpHost.JwksRest}`
+            [IdpHost.TokenEndpointField]: `${internal}/${IdpHost.TokenRest}`,
+            [IdpHost.JwksUriField]: `${internal}/${IdpHost.JwksRest}`
         };
     }
 
