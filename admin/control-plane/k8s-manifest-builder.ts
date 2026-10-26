@@ -1,4 +1,4 @@
-import type { EnvironmentWorkload, WorkloadDatabase } from './environment-workload.js'
+import type { EnvironmentWorkload, WorkloadAppDeployment, WorkloadDatabase } from './environment-workload.js'
 import { EnvServerSeedSource } from './env-server-seed.js'
 import { InClusterRegistry } from './in-cluster-registry.js'
 import { IdpContainerEnv } from './idp-container-env.js'
@@ -256,6 +256,22 @@ export class K8sManifestBuilder
     private static readonly ServerSeedContainerName = 'seed'
     private static readonly NodeBinary = 'node'
     private static readonly NodeEvalFlag = '-e'
+    private static readonly UiUnpackContainerName = 'ui-unpack'
+    private static readonly UiUnpackBinPath = 'dist-tenant-admin/admin/control-plane/bin/pragmatic-ui-unpack.js'
+    private static readonly UiTrustVolume = 'ui-trust'
+    private static readonly UiTrustMount = '/pragmatic/ui-trust'
+    private static readonly UiPubSuffix = '.pub'
+    private static readonly UiSigTagSuffix = '.sig'
+    private static readonly UiRegistryBaseVar = 'PRAGMATIC_UI_REGISTRY_BASE'
+    private static readonly UiRepoVar = 'PRAGMATIC_UI_REPO'
+    private static readonly UiArtifactTagVar = 'PRAGMATIC_UI_ARTIFACT_TAG'
+    private static readonly UiSigTagVar = 'PRAGMATIC_UI_SIG_TAG'
+    private static readonly UiManifestDigestVar = 'PRAGMATIC_UI_MANIFEST_DIGEST'
+    private static readonly UiAppNameVar = 'PRAGMATIC_UI_APP_NAME'
+    private static readonly UiAppVersionVar = 'PRAGMATIC_UI_APP_VERSION'
+    private static readonly UiTrustRootRefVar = 'PRAGMATIC_UI_TRUST_ROOT_REF'
+    private static readonly UiDataDirVar = 'PRAGMATIC_UI_DATA_DIR'
+    private static readonly UiTrustDirVar = 'PRAGMATIC_UI_TRUST_DIR'
     /**
      * Unpacks seed.json ({ relpath: base64 }) into the env data dir (argv[1]) unless the marker exists. Idempotent: a restart never clobbers live state.
      * Rejects relpaths that escape the data dir.
@@ -327,14 +343,14 @@ export class K8sManifestBuilder
         return `${K8sManifestBuilder.HiveAgentPrefix}${hiveId}-${K8sManifestBuilder.AgentSuffix}`
     }
 
-    /** Renders the in-cluster OCI registry (registry:2): Namespace, Deployment, NodePort Service, PVC. Addressing is cluster-fixed; hiveId only labels. */
-    public RenderRegistry(hiveId: string): string
+    /** Renders the in-cluster OCI registry (registry:2): Namespace, Deployment, NodePort Service, PVC. Addressing is cluster-fixed; the objects are unlabeled by hive (shared infra). */
+    public RenderRegistry(_hiveId: string): string
     {
         const items: K8sObject[] = [
             this.HiveAgentNamespaceObject(),
-            this.RegistryDeployment(hiveId),
-            this.RegistryService(hiveId),
-            this.RegistryClaim(hiveId),
+            this.RegistryDeployment(),
+            this.RegistryService(),
+            this.RegistryClaim(),
         ]
         return JSON.stringify({
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
@@ -343,22 +359,22 @@ export class K8sManifestBuilder
         })
     }
 
-    private RegistryMeta(hiveId: string, name: string): K8sObject
+    private RegistryMeta(name: string): K8sObject
     {
         return {
             [K8sManifestBuilder.NameKey]: name,
             [K8sManifestBuilder.NamespaceKey]: InClusterRegistry.Namespace,
-            [K8sManifestBuilder.LabelsKey]: { ...this.HiveLabels(hiveId), ...this.Selector(InClusterRegistry.RegistryName) },
+            [K8sManifestBuilder.LabelsKey]: this.Selector(InClusterRegistry.RegistryName),
         }
     }
 
-    private RegistryDeployment(hiveId: string): K8sObject
+    private RegistryDeployment(): K8sObject
     {
         const selector = this.Selector(InClusterRegistry.RegistryName)
         return {
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionApps,
             [K8sManifestBuilder.KindKey]: K8sManifestBuilder.DeploymentKind,
-            [K8sManifestBuilder.MetadataKey]: this.RegistryMeta(hiveId, InClusterRegistry.RegistryName),
+            [K8sManifestBuilder.MetadataKey]: this.RegistryMeta(InClusterRegistry.RegistryName),
             [K8sManifestBuilder.SpecKey]: {
                 [K8sManifestBuilder.ReplicasKey]: K8sManifestBuilder.SingleReplica,
                 [K8sManifestBuilder.SelectorKey]: { [K8sManifestBuilder.MatchLabelsKey]: selector },
@@ -391,12 +407,12 @@ export class K8sManifestBuilder
         }
     }
 
-    private RegistryService(hiveId: string): K8sObject
+    private RegistryService(): K8sObject
     {
         return {
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
             [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ServiceKind,
-            [K8sManifestBuilder.MetadataKey]: this.RegistryMeta(hiveId, InClusterRegistry.RegistryName),
+            [K8sManifestBuilder.MetadataKey]: this.RegistryMeta(InClusterRegistry.RegistryName),
             [K8sManifestBuilder.SpecKey]: {
                 [K8sManifestBuilder.TypeKey]: K8sManifestBuilder.NodePortType,
                 [K8sManifestBuilder.SelectorKey]: this.Selector(InClusterRegistry.RegistryName),
@@ -409,12 +425,12 @@ export class K8sManifestBuilder
         }
     }
 
-    private RegistryClaim(hiveId: string): K8sObject
+    private RegistryClaim(): K8sObject
     {
         return {
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
             [K8sManifestBuilder.KindKey]: K8sManifestBuilder.PersistentVolumeClaimKind,
-            [K8sManifestBuilder.MetadataKey]: this.RegistryMeta(hiveId, InClusterRegistry.DataClaimName),
+            [K8sManifestBuilder.MetadataKey]: this.RegistryMeta(InClusterRegistry.DataClaimName),
             [K8sManifestBuilder.SpecKey]: {
                 [K8sManifestBuilder.AccessModesKey]: [K8sManifestBuilder.ReadWriteOnce],
                 [K8sManifestBuilder.ResourcesKey]: {
@@ -1131,6 +1147,14 @@ export class K8sManifestBuilder
             volumeMounts.push({ [K8sManifestBuilder.NameKey]: K8sManifestBuilder.EnvIdpCaVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.EnvIdpCaMount, [K8sManifestBuilder.ReadOnlyKey]: true })
             volumes.push(this.SecretVolume(K8sManifestBuilder.EnvIdpCaVolume, workload.federation.caSecretName, [{ key: K8sManifestBuilder.EnvIdpCaItemKey, path: K8sManifestBuilder.EnvIdpCaItemKey }]))
         }
+        const initContainers: K8sObject[] = [this.ServerSeedContainer(workload)]
+        if (workload.appDeployment)
+        {
+            // Only the public <trustKeyRef>.pub is projected (items selector); the unpacker verifies the app artifact against it.
+            const pubFile = `${workload.appDeployment.trustKeyRef}${K8sManifestBuilder.UiPubSuffix}`
+            initContainers.push(this.UiUnpackContainer(workload, workload.appDeployment))
+            volumes.push(this.SecretVolume(K8sManifestBuilder.UiTrustVolume, workload.appDeployment.trustSecretName, [{ key: pubFile, path: pubFile }]))
+        }
         return {
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionApps,
             [K8sManifestBuilder.KindKey]: K8sManifestBuilder.DeploymentKind,
@@ -1145,7 +1169,7 @@ export class K8sManifestBuilder
                     [K8sManifestBuilder.MetadataKey]: { [K8sManifestBuilder.LabelsKey]: this.Selector(name) },
                     [K8sManifestBuilder.SpecKey]: {
                         [K8sManifestBuilder.SecurityContextKey]: { [K8sManifestBuilder.FsGroupKey]: K8sManifestBuilder.ServerUid },
-                        [K8sManifestBuilder.InitContainersKey]: [this.ServerSeedContainer(workload)],
+                        [K8sManifestBuilder.InitContainersKey]: initContainers,
                         [K8sManifestBuilder.ContainersKey]: [{
                             [K8sManifestBuilder.NameKey]: K8sManifestBuilder.ServerContainerName,
                             [K8sManifestBuilder.ImageKey]: workload.image,
@@ -1180,6 +1204,34 @@ export class K8sManifestBuilder
             [K8sManifestBuilder.VolumeMountsKey]: [
                 { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.ServerSeedVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.ServerSeedMount, [K8sManifestBuilder.ReadOnlyKey]: true },
                 { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.ServerDataVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.ServerDataMount },
+            ],
+        }
+    }
+
+    /** Pulls, verifies and unpacks the app UI artifact into the shared data dir. Same hardened context as the seed container; the data PVC (fsGroup) stays writable. */
+    private UiUnpackContainer(workload: EnvironmentWorkload, app: WorkloadAppDeployment): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.NameKey]: K8sManifestBuilder.UiUnpackContainerName,
+            [K8sManifestBuilder.ImageKey]: workload.image,
+            [K8sManifestBuilder.ImagePullPolicyKey]: K8sManifestBuilder.IfNotPresent,
+            [K8sManifestBuilder.CommandKey]: [K8sManifestBuilder.NodeBinary, K8sManifestBuilder.UiUnpackBinPath],
+            [K8sManifestBuilder.SecurityContextKey]: this.ServerSeedSecurityContext(),
+            [K8sManifestBuilder.EnvKey]: [
+                this.EnvLiteral(K8sManifestBuilder.UiRegistryBaseVar, app.registryPullBase),
+                this.EnvLiteral(K8sManifestBuilder.UiRepoVar, app.repo),
+                this.EnvLiteral(K8sManifestBuilder.UiArtifactTagVar, app.artifactTag),
+                this.EnvLiteral(K8sManifestBuilder.UiSigTagVar, `${app.artifactTag}${K8sManifestBuilder.UiSigTagSuffix}`),
+                this.EnvLiteral(K8sManifestBuilder.UiManifestDigestVar, app.manifestDigest),
+                this.EnvLiteral(K8sManifestBuilder.UiAppNameVar, app.appName),
+                this.EnvLiteral(K8sManifestBuilder.UiAppVersionVar, app.appVersion),
+                this.EnvLiteral(K8sManifestBuilder.UiTrustRootRefVar, app.trustKeyRef),
+                this.EnvLiteral(K8sManifestBuilder.UiDataDirVar, K8sManifestBuilder.ServerDataMount),
+                this.EnvLiteral(K8sManifestBuilder.UiTrustDirVar, K8sManifestBuilder.UiTrustMount),
+            ],
+            [K8sManifestBuilder.VolumeMountsKey]: [
+                { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.ServerDataVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.ServerDataMount },
+                { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.UiTrustVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.UiTrustMount, [K8sManifestBuilder.ReadOnlyKey]: true },
             ],
         }
     }

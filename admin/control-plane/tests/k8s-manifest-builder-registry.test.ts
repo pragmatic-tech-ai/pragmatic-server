@@ -35,7 +35,7 @@ describe('K8sManifestBuilder.RenderRegistry', () =>
     it('renders a registry Deployment in the registry namespace with a /v2/ readiness probe', () =>
     {
         assert.equal(dep.metadata.namespace, InClusterRegistry.Namespace)
-        assert.equal(dep.metadata.labels[HiveLabel], HiveId)
+        assert.equal(dep.metadata.labels[HiveLabel], undefined)
         const c = dep.spec.template.spec.containers[0]
         assert.equal(c.image, InClusterRegistry.Image)
         assert.equal(c.readinessProbe.httpGet.path, InClusterRegistry.V2Path)
