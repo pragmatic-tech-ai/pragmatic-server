@@ -38,6 +38,7 @@ export class AppServingEndpoint
     private static readonly Empty = ''
     private static readonly UiDir = 'ui'
     private static readonly ManifestFile = 'application.json'
+    private static readonly LivePointerFile = 'live'
     private static readonly AmpersandPattern = /&/g
     private static readonly QuotePattern = /"/g
     private static readonly LessThanPattern = /</g
@@ -115,10 +116,12 @@ export class AppServingEndpoint
         }
         let manifest: PragmaticAppManifest
         let storage: IStorage
+        let base: string
         try
         {
             storage = (await this.servers.ServerFor(route.tenant)).AppsStorage()
-            const manifestPath = route.app + AppServingEndpoint.Separator + AppServingEndpoint.ManifestFile
+            base = await AppServingEndpoint.ResolveBase(storage, route.app)
+            const manifestPath = base + AppServingEndpoint.ManifestFile
             if (!await storage.Exists(manifestPath))
             {
                 this.Fail(res, AppServingEndpoint.NotFoundStatus)
@@ -154,7 +157,7 @@ export class AppServingEndpoint
             return
         }
         const file = isShell ? ui.entry : route.rest
-        const uiPath = route.app + AppServingEndpoint.Separator + AppServingEndpoint.UiDir + AppServingEndpoint.Separator + file
+        const uiPath = base + AppServingEndpoint.UiDir + AppServingEndpoint.Separator + file
         let bytes: Uint8Array
         try
         {
@@ -178,6 +181,25 @@ export class AppServingEndpoint
             [AppServingEndpoint.NoSniffHeader]: AppServingEndpoint.NoSniffValue,
         })
         res.end(method === AppServingEndpoint.HeadMethod ? undefined : body)
+    }
+
+    /**
+     * The storage prefix (with trailing separator) the app is served from: `<app>/<version>/` when `<app>/live` names a
+     * version, else the legacy `<app>/` layout. The pointer content is untrusted storage data, so it must be a safe segment.
+     */
+    private static async ResolveBase(storage: IStorage, app: string): Promise<string>
+    {
+        const pointer = app + AppServingEndpoint.Separator + AppServingEndpoint.LivePointerFile
+        if (!await storage.Exists(pointer))
+        {
+            return app + AppServingEndpoint.Separator
+        }
+        const version = (await storage.ReadText(pointer)).trim()
+        if (!PragmaticAppManifestParser.IsSafeSegment(version))
+        {
+            throw new Error(version)
+        }
+        return app + AppServingEndpoint.Separator + version + AppServingEndpoint.Separator
     }
 
     /** Adds only the (validated, non-secret) app name to the shell; never a tenant. */

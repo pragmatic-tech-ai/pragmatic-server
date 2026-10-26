@@ -8,10 +8,11 @@ export interface PragmaticAppSummary
     version: string
 }
 
-/** Lists and loads applications from a tenant's `applications/` storage (`<name>/application.json`). */
+/** Lists and loads applications from a tenant's `applications/` storage (`<name>/<live version>/application.json`, or the legacy `<name>/application.json`). */
 export class PragmaticAppsRegistry
 {
     private static readonly ManifestFile = 'application.json'
+    private static readonly LivePointerFile = 'live'
     private static readonly RootPath = '.'
     private static readonly Separator = '/'
     private static readonly SeparatorPattern = /[\\/:]/
@@ -36,7 +37,7 @@ export class PragmaticAppsRegistry
         const result: PragmaticAppSummary[] = []
         for (const entry of entries)
         {
-            if (!entry.IsDirectory || !await this.storage.Exists(PragmaticAppsRegistry.ManifestPath(entry.Name)))
+            if (!entry.IsDirectory || !await this.storage.Exists(await this.ManifestPath(entry.Name)))
             {
                 continue
             }
@@ -49,7 +50,7 @@ export class PragmaticAppsRegistry
     public async ApplicationFor(name: string): Promise<PragmaticApplication>
     {
         PragmaticAppsRegistry.AssertValidName(name)
-        const path = PragmaticAppsRegistry.ManifestPath(name)
+        const path = await this.ManifestPath(name)
         if (!await this.storage.Exists(path))
         {
             throw new Error(PragmaticAppsRegistry.NotFoundError + name)
@@ -72,8 +73,16 @@ export class PragmaticAppsRegistry
         }
     }
 
-    private static ManifestPath(name: string): string
+    /** `<name>/<version>/application.json` when `<name>/live` names a version, else the legacy `<name>/application.json`. */
+    private async ManifestPath(name: string): Promise<string>
     {
-        return name + PragmaticAppsRegistry.Separator + PragmaticAppsRegistry.ManifestFile
+        const pointer = name + PragmaticAppsRegistry.Separator + PragmaticAppsRegistry.LivePointerFile
+        if (!await this.storage.Exists(pointer))
+        {
+            return name + PragmaticAppsRegistry.Separator + PragmaticAppsRegistry.ManifestFile
+        }
+        const version = (await this.storage.ReadText(pointer)).trim()
+        PragmaticAppsRegistry.AssertValidName(version)
+        return name + PragmaticAppsRegistry.Separator + version + PragmaticAppsRegistry.Separator + PragmaticAppsRegistry.ManifestFile
     }
 }

@@ -49,16 +49,16 @@ interface IngestPlan
  * serialized per app (the lock does NOT serialize shared-package writes across DIFFERENT apps: a pathological
  * cross-app race on the same package id@version is acceptable for SP0). Client paths are never trusted.
  *
- * Versioning caveat: only packages are version-qualified on disk. UI assets and application.json live under the app
- * name alone, so deploying a NEW version overwrites the live version's UI/manifest in place; the immutability
- * guarantee holds only per name@version. Version-scoped UI storage + an atomic directory swap is a deferred
- * Feature (R6). Request size is bounded by the wire frame limit (acceptable for SP0).
+ * Layout: UI assets and application.json are version-scoped (`<app>/<version>/ui/...`, `<app>/<version>/application.json`),
+ * so a new version never touches an earlier tree. After the version tree is committed, the small pointer file
+ * `<app>/live` (the version string) is overwritten: that write is the atomic app-level switch. Request size is bounded by the wire frame limit (acceptable for SP0).
  */
 export class AppIngestService
 {
     private static readonly ManifestFile = 'application.json'
     private static readonly ModelFile = 'model.json'
     private static readonly UiDir = 'ui'
+    private static readonly LivePointerFile = 'live'
     private static readonly Separator = '/'
     private static readonly TempPrefix = '.ingest-'
     private static readonly TempSuffix = '.tmp'
@@ -124,6 +124,8 @@ export class AppIngestService
             {
                 await this.AssertImmutable(plan, params)
                 await this.Commit(plan)
+                // The final commit point: the whole version tree is in place, so atomically repoint the app at it.
+                await this.applications.WriteText([appName, AppIngestService.LivePointerFile].join(AppIngestService.Separator), appVersion)
             }
             catch (error)
             {
@@ -277,7 +279,7 @@ export class AppIngestService
                 throw new IngestRejection(AppWriteStatus.Invalid, AppIngestService.DuplicatePathMessage)
             }
             uiPaths.add(path)
-            files.push({ storage: this.applications, path: [params.appName, AppIngestService.UiDir, path].join(AppIngestService.Separator), bytes: Buffer.from(asset.contentBase64, AppIngestService.Base64Encoding) })
+            files.push({ storage: this.applications, path: [params.appName, params.appVersion, AppIngestService.UiDir, path].join(AppIngestService.Separator), bytes: Buffer.from(asset.contentBase64, AppIngestService.Base64Encoding) })
         }
         const projection: Record<string, unknown> = {
             name: manifest.name,
@@ -299,7 +301,7 @@ export class AppIngestService
         }
         const marker: PlannedFile = {
             storage: this.applications,
-            path: params.appName + AppIngestService.Separator + AppIngestService.ManifestFile,
+            path: [params.appName, params.appVersion, AppIngestService.ManifestFile].join(AppIngestService.Separator),
             bytes: new TextEncoder().encode(JSON.stringify(projection)),
         }
         return { files, marker }

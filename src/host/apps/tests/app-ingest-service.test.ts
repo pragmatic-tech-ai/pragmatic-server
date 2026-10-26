@@ -116,10 +116,10 @@ test('a valid deploy writes packages, UI assets and application.json last, and t
         assert.equal(result.reason, undefined)
         assert.ok(existsSync(join(fx.PackagesDir, 'shop.core', '1.0.0', 'model.json')))
         assert.ok(existsSync(join(fx.PackagesDir, 'shop.base', '2.0.0', 'model.json')))
-        assert.equal(readFileSync(join(fx.AppsDir, 'shop', 'ui', 'assets', 'app.js'), 'utf8'), IngestFixture.Secret)
-        assert.equal(fx.Apps.Renamed[fx.Apps.Renamed.length - 1], 'shop/application.json')
-        assert.ok(fx.Apps.Renamed.indexOf('shop/ui/index.html') < fx.Apps.Renamed.length - 1)
-        assert.deepEqual(readdirSync(join(fx.AppsDir, 'shop')).sort(), ['application.json', 'ui'])
+        assert.equal(readFileSync(join(fx.AppsDir, 'shop', '1.0.0', 'ui', 'assets', 'app.js'), 'utf8'), IngestFixture.Secret)
+        assert.equal(fx.Apps.Renamed[fx.Apps.Renamed.length - 1], 'shop/1.0.0/application.json')
+        assert.ok(fx.Apps.Renamed.indexOf('shop/1.0.0/ui/index.html') < fx.Apps.Renamed.length - 1)
+        assert.deepEqual(readdirSync(join(fx.AppsDir, 'shop')).sort(), ['1.0.0', 'live'])
         const app = await new PragmaticAppsRegistry(fx.Apps).ApplicationFor('shop')
         assert.equal(app.Manifest.version, '1.0.0')
         assert.deepEqual(fx.Invalidator.Keys, ['shop@1.0.0'])
@@ -135,7 +135,7 @@ test('an incomplete package closure is rejected and nothing servable is written'
         const result = await fx.Service.Ingest(params)
         assert.notEqual(result.status, AppWriteStatus.Applied)
         assert.match(result.reason ?? '', /shop\.base@2\.0\.0/)
-        assert.equal(existsSync(join(fx.AppsDir, 'shop', 'application.json')), false)
+        assert.equal(existsSync(join(fx.AppsDir, 'shop', '1.0.0', 'application.json')), false)
         assert.equal(existsSync(join(fx.AppsDir, 'shop')), false)
         assert.equal(existsSync(join(fx.PackagesDir)), false)
         assert.deepEqual(fx.Invalidator.Keys, [])
@@ -287,14 +287,14 @@ test('redeploying an existing name@version is refused and leaves the live app un
     await IngestFixture.Run(async fx =>
     {
         assert.equal((await fx.Service.Ingest(IngestFixture.Params())).status, AppWriteStatus.Applied)
-        const before = readFileSync(join(fx.AppsDir, 'shop', 'application.json'), 'utf8')
+        const before = readFileSync(join(fx.AppsDir, 'shop', '1.0.0', 'application.json'), 'utf8')
         const again = IngestFixture.Params()
         again.uiBundle[0]!.contentBase64 = Buffer.from('<html>changed</html>').toString('base64')
         const result = await fx.Service.Ingest(again)
         assert.equal(result.status, AppWriteStatus.Conflict)
         assert.match(result.reason ?? '', /immutable/)
-        assert.equal(readFileSync(join(fx.AppsDir, 'shop', 'application.json'), 'utf8'), before)
-        assert.equal(readFileSync(join(fx.AppsDir, 'shop', 'ui', 'index.html'), 'utf8'), '<html></html>')
+        assert.equal(readFileSync(join(fx.AppsDir, 'shop', '1.0.0', 'application.json'), 'utf8'), before)
+        assert.equal(readFileSync(join(fx.AppsDir, 'shop', '1.0.0', 'ui', 'index.html'), 'utf8'), '<html></html>')
     })
 })
 
@@ -321,7 +321,7 @@ test('an invalidation failure after the marker landed does not flip the deploy t
         const service = new AppIngestService(fx.Packages, fx.Apps, throwing)
         const result = await service.Ingest(IngestFixture.Params())
         assert.equal(result.status, AppWriteStatus.Applied)
-        assert.ok(existsSync(join(fx.AppsDir, 'shop', 'application.json')))
+        assert.ok(existsSync(join(fx.AppsDir, 'shop', '1.0.0', 'application.json')))
     })
 })
 
@@ -330,7 +330,7 @@ test('a failure during commit removes renamed files, logs only class/code, and k
     await IngestFixture.Run(async fx =>
     {
         const apps = new FailingStorage(fx.AppsDir)
-        apps.FailRenameTo = 'shop/application.json'
+        apps.FailRenameTo = 'shop/1.0.0/application.json'
         const lines: string[] = []
         const logger = StructuredLogger.ToSink(line => lines.push(line))
         const service = new AppIngestService(fx.Packages, apps, fx.Invalidator, logger)
@@ -339,9 +339,9 @@ test('a failure during commit removes renamed files, logs only class/code, and k
         assert.equal(JSON.stringify(result).includes(IngestFixture.Secret), false)
         assert.equal(lines.join('').includes(IngestFixture.Secret), false)
         assert.match(lines.join(''), /"errorClass":"Error"/)
-        assert.equal(existsSync(join(fx.AppsDir, 'shop', 'application.json')), false)
-        assert.equal(existsSync(join(fx.AppsDir, 'shop', 'ui', 'index.html')), false)
-        assert.deepEqual(readdirSync(join(fx.AppsDir, 'shop', 'ui')).filter(n => n.includes('.ingest-')), [])
+        assert.equal(existsSync(join(fx.AppsDir, 'shop', '1.0.0', 'application.json')), false)
+        assert.equal(existsSync(join(fx.AppsDir, 'shop', '1.0.0', 'ui', 'index.html')), false)
+        assert.deepEqual(readdirSync(join(fx.AppsDir, 'shop', '1.0.0', 'ui')).filter(n => n.includes('.ingest-')), [])
         assert.deepEqual(fx.Invalidator.Keys, [])
     })
 })
@@ -354,8 +354,8 @@ test('a bundle asset named like a temp file does not collide with staging', asyn
         params.uiBundle.push({ path: 'assets/app.js.ingest-tmp', contentBase64: Buffer.from('x').toString('base64') })
         const result = await fx.Service.Ingest(params)
         assert.equal(result.status, AppWriteStatus.Applied)
-        assert.equal(readFileSync(join(fx.AppsDir, 'shop', 'ui', 'assets', 'app.js'), 'utf8'), IngestFixture.Secret)
-        assert.equal(readFileSync(join(fx.AppsDir, 'shop', 'ui', 'assets', 'app.js.ingest-tmp'), 'utf8'), 'x')
+        assert.equal(readFileSync(join(fx.AppsDir, 'shop', '1.0.0', 'ui', 'assets', 'app.js'), 'utf8'), IngestFixture.Secret)
+        assert.equal(readFileSync(join(fx.AppsDir, 'shop', '1.0.0', 'ui', 'assets', 'app.js.ingest-tmp'), 'utf8'), 'x')
     })
 })
 
@@ -368,7 +368,7 @@ test('a multi-megabyte UI asset is accepted (base64 validation scales past the r
         params.uiBundle[0]!.contentBase64 = Buffer.alloc(largeBytes, 0x61).toString('base64')
         const result = await fx.Service.Ingest(params)
         assert.equal(result.status, AppWriteStatus.Applied)
-        assert.equal(readFileSync(join(fx.AppsDir, 'shop', 'ui', IngestFixture.Entry)).length, largeBytes)
+        assert.equal(readFileSync(join(fx.AppsDir, 'shop', '1.0.0', 'ui', IngestFixture.Entry)).length, largeBytes)
     })
 })
 
@@ -400,7 +400,7 @@ test('only a whitelisted manifest projection is persisted', async () =>
         ;(params.manifest as unknown as Record<string, unknown>).evil = 'x'
         ;(params.manifest.packages[0] as unknown as Record<string, unknown>).extra = 'y'
         await fx.Service.Ingest(params)
-        const stored = JSON.parse(readFileSync(join(fx.AppsDir, 'shop', 'application.json'), 'utf8'))
+        const stored = JSON.parse(readFileSync(join(fx.AppsDir, 'shop', '1.0.0', 'application.json'), 'utf8'))
         assert.deepEqual(stored, {
             name: 'shop', version: '1.0.0', packages: [{ id: 'shop.core', version: '1.0.0' }],
             ui: { entry: 'index.html', assets: ['assets/app.js'] },
@@ -408,13 +408,13 @@ test('only a whitelisted manifest projection is persisted', async () =>
     })
 })
 
-test('a mid-commit failure never deletes a pre-existing file the commit overwrote', async () =>
+test('a mid-commit failure of a later version leaves the earlier version tree and the live pointer untouched', async () =>
 {
     await IngestFixture.Run(async fx =>
     {
         assert.equal((await fx.Service.Ingest(IngestFixture.Params())).status, AppWriteStatus.Applied)
         const apps = new FailingStorage(fx.AppsDir)
-        apps.FailRenameTo = 'shop/application.json'
+        apps.FailRenameTo = 'shop/2.0.0/application.json'
         const service = new AppIngestService(fx.Packages, apps, fx.Invalidator)
         const next = IngestFixture.Params()
         next.appVersion = '2.0.0'
@@ -422,9 +422,71 @@ test('a mid-commit failure never deletes a pre-existing file the commit overwrot
         next.uiBundle.push({ path: 'extra.js', contentBase64: Buffer.from('n').toString('base64') })
         const result = await service.Ingest(next)
         assert.equal(result.status, AppWriteStatus.Failed)
-        assert.ok(existsSync(join(fx.AppsDir, 'shop', 'ui', 'index.html')))
-        assert.ok(existsSync(join(fx.AppsDir, 'shop', 'ui', 'assets', 'app.js')))
-        assert.equal(existsSync(join(fx.AppsDir, 'shop', 'ui', 'extra.js')), false)
-        assert.equal(JSON.parse(readFileSync(join(fx.AppsDir, 'shop', 'application.json'), 'utf8')).version, '1.0.0')
+        assert.ok(existsSync(join(fx.AppsDir, 'shop', '1.0.0', 'ui', 'index.html')))
+        assert.ok(existsSync(join(fx.AppsDir, 'shop', '1.0.0', 'ui', 'assets', 'app.js')))
+        assert.equal(existsSync(join(fx.AppsDir, 'shop', '2.0.0', 'application.json')), false)
+        assert.equal(existsSync(join(fx.AppsDir, 'shop', '2.0.0', 'ui', 'extra.js')), false)
+        assert.equal(readFileSync(join(fx.AppsDir, 'shop', 'live'), 'utf8'), '1.0.0')
+        assert.equal(JSON.parse(readFileSync(join(fx.AppsDir, 'shop', '1.0.0', 'application.json'), 'utf8')).version, '1.0.0')
+    })
+})
+
+test('Ingest writes UI under <app>/<version>/ui and the manifest under <app>/<version>/application.json', async () =>
+{
+    await IngestFixture.Run(async fx =>
+    {
+        assert.equal((await fx.Service.Ingest(IngestFixture.Params())).status, AppWriteStatus.Applied)
+        assert.equal(readFileSync(join(fx.AppsDir, 'shop', '1.0.0', 'ui', 'index.html'), 'utf8'), '<html></html>')
+        assert.equal(JSON.parse(readFileSync(join(fx.AppsDir, 'shop', '1.0.0', 'application.json'), 'utf8')).version, '1.0.0')
+        assert.equal(existsSync(join(fx.AppsDir, 'shop', 'ui')), false)
+        assert.equal(existsSync(join(fx.AppsDir, 'shop', 'application.json')), false)
+    })
+})
+
+class OrderingStorage extends RecordingStorage
+{
+    public readonly Order: string[] = []
+
+    public override async Rename(from: string, to: string): Promise<void>
+    {
+        await super.Rename(from, to)
+        this.Order.push(to)
+    }
+
+    public override async WriteText(path: string, text: string): Promise<void>
+    {
+        await super.WriteText(path, text)
+        this.Order.push(path)
+    }
+}
+
+test('Ingest writes a <app>/live pointer naming the deployed version, written after the version tree', async () =>
+{
+    await IngestFixture.Run(async fx =>
+    {
+        const apps = new OrderingStorage(fx.AppsDir)
+        const service = new AppIngestService(fx.Packages, apps, fx.Invalidator)
+        assert.equal((await service.Ingest(IngestFixture.Params())).status, AppWriteStatus.Applied)
+        assert.equal(readFileSync(join(fx.AppsDir, 'shop', 'live'), 'utf8'), '1.0.0')
+        assert.equal(apps.Order[apps.Order.length - 1], 'shop/live')
+        assert.equal(apps.Order[apps.Order.length - 2], 'shop/1.0.0/application.json')
+    })
+})
+
+test('deploying a second version leaves the first version tree intact and repoints <app>/live', async () =>
+{
+    await IngestFixture.Run(async fx =>
+    {
+        assert.equal((await fx.Service.Ingest(IngestFixture.Params())).status, AppWriteStatus.Applied)
+        const next = IngestFixture.Params()
+        next.appVersion = '2.0.0'
+        next.manifest.version = '2.0.0'
+        next.uiBundle[0]!.contentBase64 = Buffer.from('<html>v2</html>').toString('base64')
+        assert.equal((await fx.Service.Ingest(next)).status, AppWriteStatus.Applied)
+        assert.equal(readFileSync(join(fx.AppsDir, 'shop', '1.0.0', 'ui', 'index.html'), 'utf8'), '<html></html>')
+        assert.equal(JSON.parse(readFileSync(join(fx.AppsDir, 'shop', '1.0.0', 'application.json'), 'utf8')).version, '1.0.0')
+        assert.equal(readFileSync(join(fx.AppsDir, 'shop', '2.0.0', 'ui', 'index.html'), 'utf8'), '<html>v2</html>')
+        assert.equal(readFileSync(join(fx.AppsDir, 'shop', 'live'), 'utf8'), '2.0.0')
+        assert.equal((await new PragmaticAppsRegistry(fx.Apps).ApplicationFor('shop')).Manifest.version, '2.0.0')
     })
 })

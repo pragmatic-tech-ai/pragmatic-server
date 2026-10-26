@@ -28,18 +28,36 @@ class ServeFixture
 
     public readonly Dir = mkdtempSync(join(tmpdir(), 'serve-'))
 
-    public async Start(): Promise<PragmaticServerHost>
+    /** Writes a version-scoped tree `<app>/<version>/{application.json,ui/...}` whose shell names the version. */
+    public WriteVersion(version: string): void
+    {
+        const root = join(this.Dir, ServeFixture.Tenant, 'applications', ServeFixture.App, version)
+        mkdirSync(join(root, 'ui', 'assets'), { recursive: true })
+        writeFileSync(join(root, 'ui', 'index.html'), '<html><head></head><body>shell-' + version + '</body></html>')
+        writeFileSync(join(root, 'ui', 'assets', 'app.js'), 'console.log("' + version + '")')
+        writeFileSync(join(root, 'application.json'), JSON.stringify({ name: ServeFixture.App, version, packages: [], ui: { entry: 'index.html', assets: ['assets/app.js'] } }))
+    }
+
+    public WriteLive(version: string): void
+    {
+        writeFileSync(join(this.Dir, ServeFixture.Tenant, 'applications', ServeFixture.App, 'live'), version)
+    }
+
+    public async Start(legacy = true): Promise<PragmaticServerHost>
     {
         const keyPath = join(this.Dir, 'key')
         writeFileSync(keyPath, randomBytes(32))
         const entries = new Map<string, TenantProvisioning>()
         entries.set(ServeFixture.Tenant, { displayName: 'Tenant One', purpose: TenantPurpose.Runtime })
         const apps = join(this.Dir, ServeFixture.Tenant, 'applications')
-        const ui = join(apps, ServeFixture.App, 'ui')
-        mkdirSync(join(ui, 'assets'), { recursive: true })
-        writeFileSync(join(ui, 'index.html'), ServeFixture.Shell)
-        writeFileSync(join(ui, 'assets', 'app.js'), ServeFixture.Script)
-        writeFileSync(join(apps, ServeFixture.App, 'application.json'), JSON.stringify({ name: ServeFixture.App, version: '1.0.0', packages: [], ui: { entry: 'index.html', assets: ['assets/app.js'] } }))
+        if (legacy)
+        {
+            const ui = join(apps, ServeFixture.App, 'ui')
+            mkdirSync(join(ui, 'assets'), { recursive: true })
+            writeFileSync(join(ui, 'index.html'), ServeFixture.Shell)
+            writeFileSync(join(ui, 'assets', 'app.js'), ServeFixture.Script)
+            writeFileSync(join(apps, ServeFixture.App, 'application.json'), JSON.stringify({ name: ServeFixture.App, version: '1.0.0', packages: [], ui: { entry: 'index.html', assets: ['assets/app.js'] } }))
+        }
         writeFileSync(join(apps, 'secret.txt'), ServeFixture.Secret)
         return PragmaticServerHost.StartAsync({ port: 0, baseDir: this.Dir, masterKey: { keyFilePath: keyPath }, provisioning: new InMemoryTenantProvisioning(entries) })
     }
@@ -131,5 +149,86 @@ test('the manifest parser reads a validated ui and rejects unsafe paths', () =>
     for (const ui of [{ entry: '../x', assets: [] }, { entry: 'index.html', assets: ['../../s'] }, { entry: '/abs', assets: [] }, { entry: 'index.html', assets: ['C:/x'] }, { entry: 'index.html', assets: 'no' }, 'str'])
     {
         assert.throws(() => PragmaticAppManifestParser.Parse(JSON.stringify({ ...base, ui })))
+    }
+})
+
+test('serving reads <app>/live then serves <app>/<version>/ui/<file> and the version manifest', async () =>
+{
+    const fixture = new ServeFixture()
+    fixture.WriteVersion('2.0.0')
+    fixture.WriteLive('2.0.0')
+    const host = await fixture.Start(false)
+    try
+    {
+        const port = host.Address().port
+        const shell = await ServeFixture.Get(port, '/app/t1/shop/')
+        assert.equal(shell.status, 200)
+        assert.ok(shell.body.includes('shell-2.0.0'))
+        const asset = await ServeFixture.Get(port, '/app/t1/shop/assets/app.js')
+        assert.equal(asset.status, 200)
+        assert.ok(asset.body.includes('2.0.0'))
+    }
+    finally
+    {
+        await host.DisposeAsync()
+        fixture.Dispose()
+    }
+})
+
+test("after re-pointing <app>/live to an earlier version, serving returns that earlier version's assets", async () =>
+{
+    const fixture = new ServeFixture()
+    fixture.WriteVersion('1.0.0')
+    fixture.WriteVersion('2.0.0')
+    fixture.WriteLive('2.0.0')
+    const host = await fixture.Start(false)
+    try
+    {
+        const port = host.Address().port
+        assert.ok((await ServeFixture.Get(port, '/app/t1/shop/assets/app.js')).body.includes('2.0.0'))
+        fixture.WriteLive('1.0.0')
+        const shell = await ServeFixture.Get(port, '/app/t1/shop/')
+        assert.ok(shell.body.includes('shell-1.0.0'))
+        assert.ok((await ServeFixture.Get(port, '/app/t1/shop/assets/app.js')).body.includes('1.0.0'))
+    }
+    finally
+    {
+        await host.DisposeAsync()
+        fixture.Dispose()
+    }
+})
+
+test('serving falls back to the legacy <app>/ui + <app>/application.json when <app>/live is absent', async () =>
+{
+    const fixture = new ServeFixture()
+    const host = await fixture.Start()
+    try
+    {
+        const port = host.Address().port
+        const shell = await ServeFixture.Get(port, '/app/t1/shop/')
+        assert.equal(shell.status, 200)
+        assert.ok(shell.body.includes('shell'))
+        assert.equal((await ServeFixture.Get(port, '/app/t1/shop/assets/app.js')).body, ServeFixture.Script)
+    }
+    finally
+    {
+        await host.DisposeAsync()
+        fixture.Dispose()
+    }
+})
+
+test('a live pointer that is not a safe segment answers 404', async () =>
+{
+    const fixture = new ServeFixture()
+    const host = await fixture.Start()
+    try
+    {
+        fixture.WriteLive('../x')
+        assert.equal((await ServeFixture.Get(host.Address().port, '/app/t1/shop/')).status, 404)
+    }
+    finally
+    {
+        await host.DisposeAsync()
+        fixture.Dispose()
     }
 })
