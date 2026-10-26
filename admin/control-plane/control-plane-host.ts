@@ -1077,10 +1077,12 @@ export class ControlPlaneHost
             PlaneHttp.WriteJson(res, ControlPlaneHost.StatusTooManyRequests, { error: ControlPlaneHost.TooManyAttemptsMessage })
             return
         }
+        // Count the attempt at the gate, synchronously (no await between Check and Record), so a parallel burst
+        // serialises and only maxAttempts requests get through; success below wipes the optimistic count.
+        this.loginThrottle.RecordFailure(body.email, clientIp)
         const session = await this.operator.Authenticate(body.email, body.password)
         if (session === null)
         {
-            this.loginThrottle.RecordFailure(body.email, clientIp)
             PlaneHttp.WriteJson(res, ControlPlaneHost.StatusUnauthorized, { error: ControlPlaneHost.InvalidCredentialsMessage })
             return
         }

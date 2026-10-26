@@ -35,12 +35,15 @@ export class LoginThrottle
     private static readonly NoRetryMs = 0
     private static readonly NoLock = 0
     private static readonly FirstFailure = 1
+    private static readonly Increment = 1
+    private static readonly NeverPruned = Number.NEGATIVE_INFINITY
 
     private readonly maxAttempts: number
     private readonly windowMs: number
     private readonly lockoutMs: number
     private readonly maxKeys: number
     private readonly now: () => number
+    private lastPruneAt = LoginThrottle.NeverPruned
     // Map preserves insertion order; entries are re-inserted on update so the first key is the oldest.
     private readonly entries = new Map<string, ThrottleEntry>()
 
@@ -74,7 +77,7 @@ export class LoginThrottle
         const fresh = prior === undefined || now - prior.windowStart >= this.windowMs
         const entry: ThrottleEntry = fresh
             ? { failures: LoginThrottle.FirstFailure, windowStart: now, lockedUntil: LoginThrottle.NoLock }
-            : { failures: prior.failures + LoginThrottle.FirstFailure, windowStart: prior.windowStart, lockedUntil: prior.lockedUntil }
+            : { failures: prior.failures + LoginThrottle.Increment, windowStart: prior.windowStart, lockedUntil: prior.lockedUntil }
         if (entry.failures >= this.maxAttempts)
         {
             entry.lockedUntil = now + this.lockoutMs
@@ -83,12 +86,36 @@ export class LoginThrottle
         this.entries.set(key, entry)
         while (this.entries.size > this.maxKeys)
         {
-            const oldest = this.entries.keys().next()
-            if (oldest.done === true)
+            this.EvictOne(now, key)
+        }
+    }
+
+    /** Number of tracked keys (observability / tests). */
+    public Size(): number
+    {
+        return this.entries.size
+    }
+
+    /** Evicts the oldest UNLOCKED entry; a locked entry only if none is unlocked; never the key just recorded (so spraying keys cannot shed a lock). */
+    private EvictOne(now: number, keep: string): void
+    {
+        let fallback: string | undefined
+        for (const [key, entry] of this.entries)
+        {
+            if (key === keep)
             {
-                break
+                continue
             }
-            this.entries.delete(oldest.value)
+            if (entry.lockedUntil <= now)
+            {
+                this.entries.delete(key)
+                return
+            }
+            fallback ??= key
+        }
+        if (fallback !== undefined)
+        {
+            this.entries.delete(fallback)
         }
     }
 
@@ -99,6 +126,13 @@ export class LoginThrottle
 
     private Prune(now: number): void
     {
+        // Full scans are amortised: at most one per (window + lockout). Expired entries are never counted regardless,
+        // because CheckAllowed compares lockedUntil and RecordFailure restarts a stale window.
+        if (now - this.lastPruneAt < this.windowMs + this.lockoutMs)
+        {
+            return
+        }
+        this.lastPruneAt = now
         for (const [key, entry] of this.entries)
         {
             const windowOver = now - entry.windowStart >= this.windowMs

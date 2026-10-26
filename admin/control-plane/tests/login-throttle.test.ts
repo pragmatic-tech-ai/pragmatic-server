@@ -93,14 +93,23 @@ describe('LoginThrottle', () =>
     it('prunes stale entries on access', () =>
     {
         const clock = new Clock()
-        const t = Fixture.Make(clock, 2)
+        const t = Fixture.Make(clock, 3)
         Fixture.Fail(t, 1, 'a@x', Fixture.Ip)
-        Fixture.Fail(t, 1, 'b@x', Fixture.Ip)
-        clock.Time += Fixture.Window
+        Fixture.Fail(t, Fixture.Max, 'b@x', Fixture.Ip)
+        assert.equal(t.Size(), 2)
+        clock.Time += Fixture.Window + Fixture.Lockout
         t.CheckAllowed('z@x', Fixture.Ip)
-        Fixture.Fail(t, Fixture.Max, 'c@x', Fixture.Ip)
-        Fixture.Fail(t, Fixture.Max, 'd@x', Fixture.Ip)
-        assert.equal(t.CheckAllowed('c@x', Fixture.Ip).allowed, false)
-        assert.equal(t.CheckAllowed('d@x', Fixture.Ip).allowed, false)
+        assert.equal(t.Size(), 0)
+    })
+
+    it('evicts unlocked entries before locked ones', () =>
+    {
+        const clock = new Clock()
+        const t = Fixture.Make(clock, 2)
+        Fixture.Fail(t, Fixture.Max, 'locked@x', Fixture.Ip)
+        Fixture.Fail(t, 1, 'u1@x', Fixture.Ip)
+        Fixture.Fail(t, 1, 'u2@x', Fixture.Ip)
+        assert.equal(t.Size(), 2)
+        assert.equal(t.CheckAllowed('locked@x', Fixture.Ip).allowed, false)
     })
 })
