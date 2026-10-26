@@ -1,8 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
-
-type K8sObject = Record<string, unknown>
+import type { K8sObject } from './k8s-manifest-builder.js'
 
 interface EnvSecretEntry
 {

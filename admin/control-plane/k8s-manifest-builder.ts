@@ -4,7 +4,7 @@ import type { IdpWorkloadSpec } from './idp-workload-driver.js'
 import { TenantAdminEnv } from './tenant-admin-env.js'
 import type { TenantAdminWorkloadSpec } from './tenant-admin-workload.js'
 
-type K8sObject = Record<string, unknown>
+export type K8sObject = Record<string, unknown>
 
 /** Renders an EnvironmentWorkload as a kubectl-appliable v1 List. Secrets are referenced by name only. */
 export class K8sManifestBuilder
