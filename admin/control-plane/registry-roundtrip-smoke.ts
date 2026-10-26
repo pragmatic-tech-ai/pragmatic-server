@@ -69,7 +69,6 @@ export class RegistryRoundtripSmoke
     private static readonly NoDetail = ''
     private static readonly ClusterLabelPrefix = 'kind cluster created with the :'
     private static readonly NodePortLabelSuffix = ' mapping and registry:2 loaded'
-    private static readonly ConfigUpload = 'host: config blob upload accepted'
     private static readonly NotAccepted = 'not accepted: status '
 
     private static readonly PassTag = 'PASS '
@@ -82,6 +81,7 @@ export class RegistryRoundtripSmoke
     private static readonly Labels = {
         Rollout: 'registry manifest applied and the Deployment rolled out',
         HostV2: 'host: GET /v2/ through the node port returns 200',
+        ConfigUpload: 'host: config blob upload accepted',
         BlobPush: 'host: monolithic blob upload accepted',
         BlobRoundtrip: 'host: blob GET by digest is byte-equal to what was pushed',
         ManifestPush: 'host: minimal manifest PUT accepted',
@@ -189,7 +189,7 @@ export class RegistryRoundtripSmoke
         }
         const target = new URL(location, S.BaseUrl())
         target.searchParams.set(S.DigestQuery, digest)
-        const put = await fetch(target, { method: S.PutMethod, headers: { [S.ContentType]: S.OctetStream }, body: bytes })
+        const put = await fetch(target, { method: S.PutMethod, headers: { [S.ContentType]: S.OctetStream }, body: new Uint8Array(bytes) })
         return { ok: put.status === S.CreatedStatus, detail: S.NotAccepted + String(put.status) }
     }
 
@@ -200,7 +200,7 @@ export class RegistryRoundtripSmoke
         const config = Buffer.from(S.EmptyConfigJson)
         const configDigest = S.DigestPrefix + createHash(S.HashAlgorithm).update(config).digest(S.Hex)
         const uploaded = await this.PushBlob(repoUrl, config, configDigest)
-        this.Expect(S.ConfigUpload, uploaded.ok, uploaded.detail)
+        this.Expect(S.Labels.ConfigUpload, uploaded.ok, uploaded.detail)
         if (!uploaded.ok)
         {
             return
@@ -277,7 +277,7 @@ export class RegistryRoundtripSmoke
         {
             this.failed = true
         }
-        console.log((ok ? S.PassTag : S.FailTag) + label + (detail !== S.NoDetail && !ok ? S.DetailSep + detail : ''))
+        console.log((ok ? S.PassTag : S.FailTag) + label + (detail !== S.NoDetail && !ok ? S.DetailSep + detail : S.NoDetail))
     }
 }
 
