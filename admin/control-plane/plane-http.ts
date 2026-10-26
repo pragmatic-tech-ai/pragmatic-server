@@ -12,6 +12,8 @@ export class PlaneHttp
     public static readonly JsonType = 'application/json; charset=utf-8'
     public static readonly DefaultType = 'application/octet-stream'
     public static readonly MethodGet = 'GET'
+    public static readonly MethodHead = 'HEAD'
+    public static readonly MethodOptions = 'OPTIONS'
     public static readonly MethodPost = 'POST'
     public static readonly MethodPut = 'PUT'
     public static readonly MethodDelete = 'DELETE'

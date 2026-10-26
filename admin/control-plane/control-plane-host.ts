@@ -146,6 +146,9 @@ export class ControlPlaneHost
 {
     private static readonly LocalName = 'localhost'
     private static readonly HttpScheme = 'http://'
+    private static readonly HttpsProto = 'https'
+    private static readonly HttpsScheme = ControlPlaneHost.HttpsProto + '://'
+    private static readonly ForwardedProtoHeader = 'x-forwarded-proto'
     private static readonly BaseUrl = ControlPlaneHost.HttpScheme + ControlPlaneHost.LocalName
     private static readonly PortSeparator = ':'
     private static readonly DefaultAllowedHosts: ReadonlySet<string> = new Set([ControlPlaneHost.LocalName, '127.0.0.1', '[::1]'])
@@ -162,7 +165,7 @@ export class ControlPlaneHost
     private static readonly OperatorsPath = '/api/operators'
     private static readonly MinOperatorPasswordLength = 12
     private static readonly EmailAt = '@'
-    private static readonly OperatorFieldsMessage = 'a valid email, a password of at least 12 characters and a role (full|readonly) are required'
+    private static readonly OperatorFieldsMessage = 'a valid email, a password of at least ' + ControlPlaneHost.MinOperatorPasswordLength + ' characters and a role (full|readonly) are required'
     private static readonly OperatorRoles: ReadonlyMap<string, OperatorRole> = new Map([['full', OperatorRole.Full], ['readonly', OperatorRole.ReadOnly]])
     private static readonly UnsupportedMediaMessage = 'Content-Type must be application/json'
     private static readonly BadNameMessage = 'Invalid environment name in path'
@@ -216,7 +219,7 @@ export class ControlPlaneHost
     private static readonly ProtocolHeader = 'sec-websocket-protocol'
     private static readonly ProtocolSeparator = ','
     private static readonly RevalidateIntervalMs = 30_000
-    private static readonly LogoutPath = '/api/logout'
+    private static readonly LogoutPath = OperatorAuthorization.LogoutPath
     private static readonly SetCookieHeader = 'set-cookie'
     private static readonly CookieHeader = 'cookie'
     private static readonly StatusUnauthorized = 401
@@ -368,7 +371,7 @@ export class ControlPlaneHost
     /** The operator events ws: operator host + operator origin + a single-use ticket (the subprotocol), then tracked per session in the registry. */
     private UpgradeOperatorEvents(req: IncomingMessage, socket: Duplex, head: Buffer, wss: WebSocketServer): void
     {
-        if (!this.HostAllowed(req) || !ControlPlaneHost.OriginAllowed(req))
+        if (!this.HostAllowed(req) || !this.OriginAllowed(req))
         {
             socket.destroy()
             return
@@ -550,7 +553,7 @@ export class ControlPlaneHost
             const path = new URL(req.url ?? PlaneHttp.RootPath, ControlPlaneHost.BaseUrl).pathname
             if (path.startsWith(ControlPlaneHost.ApiPrefix))
             {
-                if (PlaneHttp.IsMutating(req) && !ControlPlaneHost.OriginAllowed(req))
+                if (PlaneHttp.IsMutating(req) && !this.OriginAllowed(req))
                 {
                     req.resume()
                     PlaneHttp.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.BadOriginMessage })
@@ -615,7 +618,7 @@ export class ControlPlaneHost
         if (path === ControlPlaneHost.EventsTicketPath && method === PlaneHttp.MethodGet)
         {
             const token = SessionCookie.Read(req.headers[ControlPlaneHost.CookieHeader])
-            if (!ControlPlaneHost.OriginAllowed(req))
+            if (!this.OriginAllowed(req))
             {
                 PlaneHttp.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.BadOriginMessage })
             }
@@ -1420,11 +1423,27 @@ export class ControlPlaneHost
         return path === ControlPlaneHost.PingPath || path === ControlPlaneHost.LoginPath || path === ControlPlaneHost.SessionPath
     }
 
-    /** Absent Origin is allowed (non-browser / same-origin navigation); a present one must equal our own origin. */
-    private static OriginAllowed(req: IncomingMessage): boolean
+    /** Absent Origin is allowed (non-browser / same-origin navigation); a present one must equal our own origin,
+     *  scheme included. The scheme is http unless a trusted proxy reports https via x-forwarded-proto. */
+    private OriginAllowed(req: IncomingMessage): boolean
     {
         const origin = req.headers[PlaneHttp.OriginHeader]
-        return origin === undefined || origin === ControlPlaneHost.HttpScheme + req.headers[PlaneHttp.HostHeader]
+        return origin === undefined || origin === this.OwnScheme(req) + req.headers[PlaneHttp.HostHeader]
+    }
+
+    private OwnScheme(req: IncomingMessage): string
+    {
+        if (this.trustedProxy)
+        {
+            const raw = req.headers[ControlPlaneHost.ForwardedProtoHeader]
+            const header = Array.isArray(raw) ? raw.join(ControlPlaneHost.ForwardedSeparator) : raw
+            const last = header?.split(ControlPlaneHost.ForwardedSeparator).pop()?.trim().toLowerCase()
+            if (last !== undefined && last + '://' === ControlPlaneHost.HttpsScheme)
+            {
+                return ControlPlaneHost.HttpsScheme
+            }
+        }
+        return ControlPlaneHost.HttpScheme
     }
 
     private static HasBody(req: IncomingMessage): boolean

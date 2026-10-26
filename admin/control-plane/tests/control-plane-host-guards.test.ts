@@ -55,6 +55,11 @@ class Fixture
     public static readonly TempPrefix = 'cp-guards-'
     public static readonly FakeRoot = '/d'
     public static readonly AttackerWithPort = 'evil.example.com:80'
+    public static readonly ProxyHost = 'console.corp.example'
+    public static readonly ForwardedProtoHeader = 'x-forwarded-proto'
+    public static readonly Https = 'https'
+    public static readonly HttpsPrefix = 'https://'
+    public static readonly EvilHttpsOrigin = 'https://evil.example'
     public static readonly EnvHostValue = 'x.example'
 
     public static Send(host: ControlPlaneHost, method: string, path: string, headers: Record<string, string>): Promise<number>
@@ -78,11 +83,11 @@ describe('ControlPlaneHost host guards', () =>
     let root: string
     let host: ControlPlaneHost
 
-    async function Start(allowedHosts?: readonly string[]): Promise<void>
+    async function Start(allowedHosts?: readonly string[], trustedProxy?: boolean): Promise<void>
     {
         host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new NullOperator(), false,
             {} as PlatformDirectory, {} as PlatformDeploymentRegistry, {} as TenantProvisioningService, {} as HiveObservationRegistry,
-            undefined, undefined, undefined, undefined, undefined, allowedHosts)
+            undefined, trustedProxy, undefined, undefined, undefined, allowedHosts)
         await host.Listen(0, Fixture.Loopback)
     }
 
@@ -134,5 +139,30 @@ describe('ControlPlaneHost host guards', () =>
         assert.deepEqual(ControlPlaneServer.ParseHostList(Fixture.HostListRaw), ['a.example', 'b.example'])
         assert.deepEqual(ControlPlaneServer.ReadOperatorOptions({ PRAGMATIC_ADMIN_ALLOWED_HOSTS: Fixture.EnvHostValue }, Fixture.FakeRoot).allowedHosts, [Fixture.EnvHostValue])
         assert.deepEqual(ControlPlaneServer.ParseHostList(undefined), [])
+    })
+
+    it('allows an https Origin behind a trusted proxy reporting https, and rejects a foreign one', async () =>
+    {
+        await Start([Fixture.ProxyHost], true)
+        const base = { [Fixture.HostHeader]: Fixture.ProxyHost, [Fixture.ForwardedProtoHeader]: Fixture.Https, [Fixture.ContentType]: Fixture.JsonType }
+        const ok = { ...base, [Fixture.OriginHeader]: Fixture.HttpsPrefix + Fixture.ProxyHost }
+        const evil = { ...base, [Fixture.OriginHeader]: Fixture.EvilHttpsOrigin }
+        assert.equal(await Fixture.Send(host, Fixture.Post, Fixture.StatePath, ok), Fixture.Unauthorized)
+        assert.equal(await Fixture.Send(host, Fixture.Post, Fixture.StatePath, evil), Fixture.Forbidden)
+    })
+
+    it('keeps http Origins working without a proxy and rejects an https Origin (scheme mismatch)', async () =>
+    {
+        await Start([Fixture.ProxyHost])
+        const base = { [Fixture.HostHeader]: Fixture.ProxyHost, [Fixture.ContentType]: Fixture.JsonType }
+        assert.equal(await Fixture.Send(host, Fixture.Post, Fixture.StatePath, { ...base, [Fixture.OriginHeader]: Fixture.HttpPrefix + Fixture.ProxyHost }), Fixture.Unauthorized)
+        assert.equal(await Fixture.Send(host, Fixture.Post, Fixture.StatePath, { ...base, [Fixture.OriginHeader]: Fixture.HttpsPrefix + Fixture.ProxyHost }), Fixture.Forbidden)
+    })
+
+    it('ignores x-forwarded-proto when the proxy is not trusted', async () =>
+    {
+        await Start([Fixture.ProxyHost], false)
+        const headers = { [Fixture.HostHeader]: Fixture.ProxyHost, [Fixture.ForwardedProtoHeader]: Fixture.Https, [Fixture.ContentType]: Fixture.JsonType, [Fixture.OriginHeader]: Fixture.HttpsPrefix + Fixture.ProxyHost }
+        assert.equal(await Fixture.Send(host, Fixture.Post, Fixture.StatePath, headers), Fixture.Forbidden)
     })
 })
