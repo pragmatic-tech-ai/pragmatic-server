@@ -291,9 +291,10 @@ export class EnvironmentService
                 const endpoint = await runtime.BringUp(ctx)
                 record.endpoint = EnvironmentService.StoredEndpoint(endpoint)
                 await runtime.WaitHealthy(ctx)
-                if (def.kind === EnvKind.Demo)
+                if (def.kind === EnvKind.Demo && hostShaped)
                 {
-                    // A Demo template is always host-port-backed (Docker), so bundleDir/port are set here; in-cluster never seeds.
+                    // Host-port (Docker) demos seed their users over the published port. A DNS-reached (in-cluster) demo has no
+                    // host port to dial; its tree is projected by the seed init-container instead.
                     await this.SeedDemoUsers(def, bundleDir as string, seedDir, port as number)
                 }
             }
