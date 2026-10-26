@@ -3,6 +3,8 @@ import type { IdpRecord } from './idp-record.js'
 export interface IdpConnection
 {
     baseUrl: string
+    /** The origin a browser reaches the IdP on; equals baseUrl when no separate browser-facing host exists. */
+    browserBaseUrl: string
     ca: Buffer
     adminToken: string
     adminTokenRef: string
@@ -42,6 +44,8 @@ export interface IdpWorkloadSpec
     hiveId: string
     image: string
     port: number
+    /** Base domain for the browser-facing IdP host (idp-<tenant>.<baseDomain>); absent for single-host deployments. */
+    baseDomain?: string
     /** Secret holding the admin token under key `adminTokenRef` (mounted at <data>/secrets). */
     adminTokenSecretName: string
     adminTokenRef: string

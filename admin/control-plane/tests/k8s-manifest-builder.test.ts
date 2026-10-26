@@ -253,6 +253,13 @@ describe('K8sManifestBuilder.RenderIdp', () =>
         assert.equal(items[0].metadata.name, 'pragmatic-idp-t1')
     })
 
+    it('IdpBrowserUrlOf is the idp-<tenant>.<baseDomain> browser origin, distinct from the internal base', () =>
+    {
+        assert.equal(K8sManifestBuilder.IdpBrowserUrlOf('t1', 'd.localtest'), 'https://idp-t1.d.localtest')
+        assert.equal(K8sManifestBuilder.IdpBrowserUrlOf('t1', 'd.localtest', 8443), 'https://idp-t1.d.localtest:8443')
+        assert.notEqual(K8sManifestBuilder.IdpBrowserUrlOf('t1', 'd.localtest'), K8sManifestBuilder.IdpBaseUrlOf('t1', 9443))
+    })
+
     it('Service is ClusterIP and its DNS name matches IdpBaseUrlOf', () =>
     {
         const svc = Items()[4]

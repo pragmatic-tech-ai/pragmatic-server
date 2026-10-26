@@ -128,3 +128,44 @@ test('an invalid host is rejected before openssl runs', () =>
         assert.throws(() => DevCa.EnsureAt(tmpdir(), bad, 'no-such-openssl-binary'), /invalid host/)
     }
 })
+
+test('a host list mints a multi-SAN cert (CN = first host) and still never persists ca.key', () =>
+{
+    const dir = mkdtempSync(join(tmpdir(), 'devca-'))
+    try
+    {
+        const f = DevCa.EnsureAt(dir, ['a.example', 'b.example'])
+        assert.ok(!existsSync(join(dir, 'ca.key')))
+        const cert = new X509Certificate(readFileSync(f.certFile))
+        assert.ok(cert.subjectAltName?.includes('DNS:a.example'))
+        assert.ok(cert.subjectAltName?.includes('DNS:b.example'))
+        assert.ok(cert.subjectAltName?.includes('IP Address:127.0.0.1'))
+        assert.ok(cert.subject.includes('CN=a.example'))
+    }
+    finally
+    {
+        rmSync(dir, { recursive: true, force: true })
+    }
+})
+
+test('a one-element list and a bare string mint equivalent single-SAN certs; each listed host is validated', () =>
+{
+    const d1 = mkdtempSync(join(tmpdir(), 'devca-'))
+    const d2 = mkdtempSync(join(tmpdir(), 'devca-'))
+    const d3 = mkdtempSync(join(tmpdir(), 'devca-'))
+    try
+    {
+        const a = new X509Certificate(readFileSync(DevCa.EnsureAt(d1, ['only.example']).certFile))
+        const b = new X509Certificate(readFileSync(DevCa.EnsureAt(d2, 'only.example').certFile))
+        assert.equal(a.subjectAltName, b.subjectAltName)
+        assert.equal(a.subject, b.subject)
+        assert.throws(() => DevCa.EnsureAt(d3, ['ok.example', 'bad host;']), /invalid host/)
+    }
+    finally
+    {
+        for (const d of [d1, d2, d3])
+        {
+            rmSync(d, { recursive: true, force: true })
+        }
+    }
+})

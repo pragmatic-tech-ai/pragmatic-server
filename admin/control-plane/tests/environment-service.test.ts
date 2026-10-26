@@ -405,6 +405,7 @@ class IdpFixture
             await host.Listen(0, '127.0.0.1')
             const conn: IdpConnection = {
                 baseUrl: 'https://localhost:' + host.Address().port,
+                browserBaseUrl: 'https://localhost:' + host.Address().port,
                 ca: readFileSync(ca.caFile),
                 adminToken: IdpFixture.Token,
                 adminTokenRef: 'admin-token',

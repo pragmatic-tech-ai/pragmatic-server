@@ -69,7 +69,7 @@ export class DockerIdpDriver implements IIdpWorkloadDriver
             await this.containers.SeedVolume(record.volumeName, dir, this.image)
             await this.containers.Up({ tenantId: record.tenantId, port: record.port, volumeName: record.volumeName, adminTokenRef: record.adminTokenRef, image: this.image })
             await this.containers.WaitHealthy(record.port, ca)
-            return { baseUrl: record.baseUrl, ca, adminToken, adminTokenRef: record.adminTokenRef, caDir: record.caDir }
+            return { baseUrl: record.baseUrl, browserBaseUrl: record.baseUrl, ca, adminToken, adminTokenRef: record.adminTokenRef, caDir: record.caDir }
         }
         catch (err)
         {
@@ -105,7 +105,7 @@ export class DockerIdpDriver implements IIdpWorkloadDriver
         {
             return undefined
         }
-        return { baseUrl: record.baseUrl, ca, adminToken, adminTokenRef: record.adminTokenRef, caDir: record.caDir }
+        return { baseUrl: record.baseUrl, browserBaseUrl: record.baseUrl, ca, adminToken, adminTokenRef: record.adminTokenRef, caDir: record.caDir }
     }
 
     private async Launch(tenantId: string, takenPorts: number[]): Promise<IdpWorkloadResult>
@@ -133,7 +133,7 @@ export class DockerIdpDriver implements IIdpWorkloadDriver
                 tenantId, port, baseUrl, containerName, volumeName, caDir: tlsDir,
                 adminTokenRef: DockerIdpDriver.AdminTokenRef, createdAt: new Date().toISOString(), status: IdpStatus.Running
             }
-            return { connection: { baseUrl, ca, adminToken, adminTokenRef: DockerIdpDriver.AdminTokenRef, caDir: tlsDir }, record }
+            return { connection: { baseUrl, browserBaseUrl: baseUrl, ca, adminToken, adminTokenRef: DockerIdpDriver.AdminTokenRef, caDir: tlsDir }, record }
         }
         catch (err)
         {

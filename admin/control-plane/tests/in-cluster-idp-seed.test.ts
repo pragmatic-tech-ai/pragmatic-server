@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { X509Certificate } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -31,6 +32,26 @@ describe('InClusterIdpSeedSource', () =>
 {
     const Tenant = 't1'
     const Secrets = (manifest: string): Secret[] => JSON.parse(manifest).items as Secret[]
+
+    it('HostOf is the internal host alone, or internal + idp-<tenant>.<baseDomain> with a baseDomain', () =>
+    {
+        const internal = new URL(K8sManifestBuilder.IdpBaseUrlOf(Tenant, 9443)).hostname
+        assert.deepEqual(InClusterIdpSeedSource.HostOf(Tenant), [internal])
+        assert.deepEqual(InClusterIdpSeedSource.HostOf(Tenant, 'd.localtest'), [internal, 'idp-t1.d.localtest'])
+    })
+
+    it('a seed built with a baseDomain mints a cert carrying both SANs; without one only the internal SAN', () =>
+    {
+        const sanOf = (source: InClusterIdpSeedSource): string =>
+        {
+            const crt = Secrets(source.SecretsManifestFor(Tenant)).find(s => s.metadata.name.endsWith('-tls'))!.data['server.crt']
+            return new X509Certificate(Buffer.from(crt, 'base64')).subjectAltName ?? ''
+        }
+        const dual = sanOf(new InClusterIdpSeedSource(undefined, 'd.localtest'))
+        assert.ok(dual.includes('DNS:idp-t1.d.localtest'))
+        assert.ok(dual.includes(`DNS:${InClusterIdpSeedSource.HostOf(Tenant)[0]}`))
+        assert.ok(!sanOf(new InClusterIdpSeedSource()).includes('d.localtest'))
+    })
 
     it('renders Secret names that byte-match the refs RenderIdp mounts', async () =>
     {

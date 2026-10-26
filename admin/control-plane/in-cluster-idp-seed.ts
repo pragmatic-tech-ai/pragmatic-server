@@ -125,7 +125,7 @@ export class InClusterIdpSeedSource implements IIdpSeedSource
 
     #tenants = new Map<string, IdpTenantSeed>()
 
-    public constructor(private readonly openssl?: string)
+    public constructor(private readonly openssl?: string, private readonly baseDomain?: string)
     {
     }
 
@@ -139,10 +139,11 @@ export class InClusterIdpSeedSource implements IIdpSeedSource
         return `${K8sManifestBuilder.IdpNameOf(tenantId)}${InClusterIdpSeedSource.AdminSecretSuffix}`
     }
 
-    /** The host the IdP serves/self-issues on (from IdpBaseUrlOf), which the server cert's SAN must equal. */
-    public static HostOf(tenantId: string): string
+    /** The SAN hosts of the IdP cert: the internal Service-DNS host the IdP self-issues on (from IdpBaseUrlOf), plus the browser-facing idp-<tenant>.<baseDomain> when a baseDomain is set. */
+    public static HostOf(tenantId: string, baseDomain?: string): readonly string[]
     {
-        return new URL(K8sManifestBuilder.IdpBaseUrlOf(tenantId, InClusterIdpSeedSource.IdpPort)).hostname
+        const internal = new URL(K8sManifestBuilder.IdpBaseUrlOf(tenantId, InClusterIdpSeedSource.IdpPort)).hostname
+        return baseDomain === undefined ? [internal] : [internal, K8sManifestBuilder.IdpBrowserHostOf(tenantId, baseDomain)]
     }
 
     public SeedFor(tenantId: string): IdpSeed
@@ -187,7 +188,7 @@ export class InClusterIdpSeedSource implements IIdpSeedSource
         const dir = mkdtempSync(join(tmpdir(), InClusterIdpSeedSource.TmpPrefix))
         try
         {
-            DevCa.EnsureAt(dir, InClusterIdpSeedSource.HostOf(tenantId), this.openssl)
+            DevCa.EnsureAt(dir, InClusterIdpSeedSource.HostOf(tenantId, this.baseDomain), this.openssl)
             const tls = new Map<string, Buffer>()
             for (const file of InClusterIdpSeedSource.TlsFiles)
             {

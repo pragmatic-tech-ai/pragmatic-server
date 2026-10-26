@@ -116,6 +116,7 @@ export class K8sManifestBuilder
     private static readonly HiveAgentPrefix = 'pragmatic-hive-'
 
     // IdP workload conventions.
+    private static readonly IdpBrowserHostPrefix = 'idp-'
     private static readonly IdpPrefix = IdpContainerEnv.NamePrefix
     private static readonly IdpContainerName = 'idp'
     private static readonly IdpEntrypoint = ['node', 'dist/bin/pragmatic-idpd.js']
@@ -439,6 +440,19 @@ export class K8sManifestBuilder
     {
         const name = K8sManifestBuilder.IdpNameOf(tenantId)
         return `${K8sManifestBuilder.IdpScheme}://${name}.${name}.${K8sManifestBuilder.IdpDnsSuffix}:${port}`
+    }
+
+    /** Browser-facing origin of a tenant's IdP: https://idp-<tenant>.<baseDomain>[:port]. The internal Service-DNS origin stays IdpBaseUrlOf. */
+    public static IdpBrowserUrlOf(tenantId: string, baseDomain: string, port?: number): string
+    {
+        const suffix = port === undefined ? '' : `:${port}`
+        return `${K8sManifestBuilder.IdpScheme}://${K8sManifestBuilder.IdpBrowserHostOf(tenantId, baseDomain)}${suffix}`
+    }
+
+    /** Browser-facing hostname idp-<tenant>.<baseDomain> (the second SAN on the IdP cert). */
+    public static IdpBrowserHostOf(tenantId: string, baseDomain: string): string
+    {
+        return `${K8sManifestBuilder.IdpBrowserHostPrefix}${tenantId}.${baseDomain}`
     }
 
     /** Renders one tenant's IdP as an in-cluster workload: Namespace, SA (no API token), PVC, Deployment, ClusterIP Service. Hive-labeled only (no environment label, so the pull agent never selects it); secrets mounted by Secret name, never inline; no RBAC. */

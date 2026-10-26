@@ -50,6 +50,20 @@ describe('InClusterIdpDriver', () =>
 {
     const Make = (kubectl: FakeKubectl) => new InClusterIdpDriver(kubectl, new K8sManifestBuilder(), new FakeSeeds(), 'hive-a', 'pragmatic-server:dev')
 
+    it('browserBaseUrl is the idp-<tenant>.<baseDomain> origin when a baseDomain is set', async () =>
+    {
+        const driver = new InClusterIdpDriver(new FakeKubectl(), new K8sManifestBuilder(), new FakeSeeds(), 'hive-a', 'img', 'd.localtest')
+        const result = await driver.EnsureRunning({ tenantId: 't1', displayName: 'T', takenPorts: [] })
+        assert.equal(result.connection.browserBaseUrl, 'https://idp-t1.d.localtest')
+        assert.equal(result.connection.baseUrl, K8sManifestBuilder.IdpBaseUrlOf('t1', 9443))
+    })
+
+    it('browserBaseUrl equals the internal baseUrl when no baseDomain is set', async () =>
+    {
+        const result = await Make(new FakeKubectl()).EnsureRunning({ tenantId: 't1', displayName: 'T', takenPorts: [] })
+        assert.equal(result.connection.browserBaseUrl, result.connection.baseUrl)
+    })
+
     it('applies the rendered IdP workload, waits for rollout, and returns the in-cluster service DNS baseUrl', async () =>
     {
         const kubectl = new FakeKubectl()
