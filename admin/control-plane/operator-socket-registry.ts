@@ -6,18 +6,18 @@ export interface WebSocketLike
 }
 
 /** Tracks live operator event sockets per session token so logout/expiry can close them. */
-export class OperatorSocketRegistry
+export class OperatorSocketRegistry<T extends WebSocketLike = WebSocketLike>
 {
     private static readonly CloseEvent = 'close'
 
-    private readonly byToken = new Map<string, Set<WebSocketLike>>()
+    private readonly byToken = new Map<string, Set<T>>()
 
-    public Add(token: string, ws: WebSocketLike): void
+    public Add(token: string, ws: T): void
     {
         let set = this.byToken.get(token)
         if (set === undefined)
         {
-            set = new Set<WebSocketLike>()
+            set = new Set<T>()
             this.byToken.set(token, set)
         }
         set.add(ws)
@@ -38,7 +38,7 @@ export class OperatorSocketRegistry
         }
     }
 
-    public *All(): Iterable<WebSocketLike>
+    public *All(): Iterable<T>
     {
         for (const set of this.byToken.values())
         {
@@ -66,7 +66,7 @@ export class OperatorSocketRegistry
         this.byToken.clear()
     }
 
-    private Remove(token: string, ws: WebSocketLike): void
+    private Remove(token: string, ws: T): void
     {
         const set = this.byToken.get(token)
         if (set === undefined)

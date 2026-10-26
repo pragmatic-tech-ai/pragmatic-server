@@ -166,9 +166,12 @@ export class ControlPlaneClient
         {
             ticket = (await this.Send<{ ticket: string }>(ControlPlaneClient.EventsTicketRoute, undefined)).ticket
         }
-        catch
+        catch (e)
         {
-            this.ScheduleReconnect()
+            if (!(e instanceof ApiError && e.Status === ApiError.UnauthorizedStatus))
+            {
+                this.ScheduleReconnect()
+            }
             return
         }
         if (this.handlers.length === 0 || this.socket !== undefined)

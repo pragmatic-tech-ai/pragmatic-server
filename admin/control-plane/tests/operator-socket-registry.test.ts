@@ -71,3 +71,33 @@ test('CloseToken on unknown token is a no-op', () =>
     r.CloseToken('x')
     assert.equal(r.Size(), 0)
 })
+
+test('partial close leaves the remaining sockets registered', () =>
+{
+    const r = new OperatorSocketRegistry()
+    const a = new FakeSocket()
+    const b = new FakeSocket()
+    const c = new FakeSocket()
+    r.Add('t1', a)
+    r.Add('t1', b)
+    r.Add('t1', c)
+    a.Emit('close')
+    assert.equal(r.Size(), 2)
+    assert.deepEqual(r.Tokens(), ['t1'])
+    b.Emit('close')
+    assert.equal(r.Size(), 1)
+    assert.deepEqual([...r.All()], [c])
+})
+
+test('CloseToken closes every socket of a multi-socket token', () =>
+{
+    const r = new OperatorSocketRegistry()
+    const socks = [new FakeSocket(), new FakeSocket(), new FakeSocket()]
+    for (const s of socks)
+    {
+        r.Add('t1', s)
+    }
+    r.CloseToken('t1')
+    assert.ok(socks.every(s => s.Closed))
+    assert.equal(r.Size(), 0)
+})

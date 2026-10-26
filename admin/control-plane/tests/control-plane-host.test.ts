@@ -25,6 +25,9 @@ import { PlatformDirectory } from '../platform-directory.js'
 import { EnvironmentNotDevelopmentError, EnvironmentNotRuntimeError } from '../environment-service.js'
 import { GraphExistsError, GraphNotFoundError } from '../graph-service.js'
 import type { IOperatorIdentity, OperatorPrincipal, OperatorSession } from '../operator-identity.js'
+import { EventsTicketStore } from '../events-ticket-store.js'
+import { OperatorSocketRegistry } from '../operator-socket-registry.js'
+import { LoginThrottle } from '../login-throttle.js'
 
 type Reply = { status: number; body: string; setCookie?: string[] | undefined }
 
@@ -34,6 +37,10 @@ class FakeOperator implements IOperatorIdentity
     public static readonly Password = 'correct-horse'
     public static readonly Token = 'valid-token'
     public Revoked: string[] = []
+    public readonly Extra = new Set<string>()
+    public readonly Dead = new Set<string>()
+    public readonly Throwing = new Set<string>()
+    public ValidateCalls = 0
 
     public async Authenticate(email: string, password: string): Promise<OperatorSession | null>
     {
@@ -46,7 +53,13 @@ class FakeOperator implements IOperatorIdentity
 
     public async ValidateToken(token: string): Promise<OperatorPrincipal | null>
     {
-        return token === FakeOperator.Token ? { email: FakeOperator.Email, principalId: 'p1' } : null
+        this.ValidateCalls++
+        if (this.Throwing.has(token))
+        {
+            throw new Error('validator down')
+        }
+        const known = token === FakeOperator.Token || this.Extra.has(token)
+        return known && !this.Dead.has(token) ? { email: FakeOperator.Email, principalId: 'p1' } : null
     }
 
     public async Revoke(token: string): Promise<void>
@@ -307,6 +320,20 @@ class Harness
         const r = await Harness.Send(host, 'GET', '/api/events-ticket')
         assert.equal(r.status, 200)
         return (JSON.parse(r.body) as { ticket: string }).ticket
+    }
+
+    public static async TicketFor(host: ControlPlaneHost, token: string): Promise<string>
+    {
+        const r = await Harness.Anon(host, 'GET', '/api/events-ticket', undefined, { cookie: `cp_session=${token}` })
+        assert.equal(r.status, 200)
+        return (JSON.parse(r.body) as { ticket: string }).ticket
+    }
+
+    public static async OpenAs(host: ControlPlaneHost, token: string): Promise<WebSocket>
+    {
+        const ws = new WebSocket(`ws://127.0.0.1:${host.Address().port}/api/events`, [await Harness.TicketFor(host, token)])
+        await new Promise<void>((res, rej) => { ws.once('open', () => res()); ws.once('error', rej) })
+        return ws
     }
 
     public static async OpenEvents(host: ControlPlaneHost, headers: Record<string, string> = {}): Promise<WebSocket>
@@ -661,6 +688,12 @@ describe('ControlPlaneHost', () =>
         assert.equal(await opens(new WebSocket(url, [ticket])), false)
     })
 
+    it('events-ticket refuses a foreign Origin', async () =>
+    {
+        const r = await Harness.Anon(host, 'GET', '/api/events-ticket', undefined, { cookie: Harness.AuthCookie, origin: 'http://evil.example' })
+        assert.equal(r.status, 403)
+    })
+
     it('events-ticket requires a session', async () =>
     {
         assert.equal((await Harness.Anon(host, 'GET', '/api/events-ticket')).status, 401)
@@ -766,5 +799,78 @@ describe('ControlPlaneHost', () =>
         const none = await Harness.Send(host, 'GET', '/api/environments/rt1/loaded-graph')
         assert.equal(none.status, 200)
         assert.equal(JSON.parse(none.body), null)
+    })
+})
+
+describe('ControlPlaneHost operator socket lifecycle', () =>
+{
+    const SweepMs = 20
+    const TicketTtlMs = 50
+    let parent: string
+    let operator: FakeOperator
+    let host: ControlPlaneHost
+    let clock: { T: number }
+
+    beforeEach(async () =>
+    {
+        parent = mkdtempSync(join(tmpdir(), 'cp-sock-'))
+        const root = join(parent, 'static')
+        mkdirSync(root)
+        operator = new FakeOperator()
+        operator.Extra.add('other-token')
+        clock = { T: 1000 }
+        const directory = new PlatformDirectory(new ClientRegistry(join(parent, 'clients.json')), new TenantRegistry(join(parent, 'tenants.json')), new HiveRegistry(join(parent, 'hives.json')), { List: () => [] })
+        const factory = new HiveOrchestratorFactory()
+        const tickets = new EventsTicketStore({ ttlMs: TicketTtlMs, now: () => clock.T })
+        host = new ControlPlaneHost(new FakeService(), new FakeGraphService(), root, operator, false, directory, await RolloutFixture.Create(parent, directory, factory), new FakeProvisioning(directory).AsService(), RolloutFixture.Observations(parent), new LoginThrottle(), false, tickets, new OperatorSocketRegistry<WebSocket>(), SweepMs)
+        await host.Listen(0, '127.0.0.1')
+    })
+
+    afterEach(async () =>
+    {
+        await host.Close()
+        rmSync(parent, { recursive: true, force: true })
+    })
+
+    it('sweep closes sockets of an invalid token, keeps valid ones, and survives a throwing validator', async () =>
+    {
+        const dead = await Harness.OpenAs(host, FakeOperator.Token)
+        const alive = await Harness.OpenAs(host, 'other-token')
+        operator.Throwing.add('other-token')
+        operator.Dead.add(FakeOperator.Token)
+        await Harness.WaitFor(() => dead.readyState === WebSocket.CLOSED)
+        assert.equal(dead.readyState, WebSocket.CLOSED)
+        assert.equal(alive.readyState, WebSocket.OPEN)
+        alive.terminate()
+    })
+
+    it('Close clears the revalidation timer', async () =>
+    {
+        const ws = await Harness.OpenAs(host, FakeOperator.Token)
+        await host.Close()
+        ws.terminate()
+        const before = operator.ValidateCalls
+        await new Promise(res => setTimeout(res, SweepMs * 5))
+        assert.equal(operator.ValidateCalls, before)
+    })
+
+    it('rejects an upgrade with an expired ticket', async () =>
+    {
+        const ticket = await Harness.TicketFor(host, FakeOperator.Token)
+        clock.T += TicketTtlMs + 1
+        const ws = new WebSocket(`ws://127.0.0.1:${host.Address().port}/api/events`, [ticket])
+        const opened = await new Promise<boolean>(res => { ws.once('open', () => res(true)); ws.once('error', () => res(false)); ws.once('close', () => res(false)) })
+        assert.equal(opened, false)
+        ws.terminate()
+    })
+
+    it('closes a socket whose session was revoked between redeem and admission', async () =>
+    {
+        const ticket = await Harness.TicketFor(host, FakeOperator.Token)
+        operator.Dead.add(FakeOperator.Token)
+        const ws = new WebSocket(`ws://127.0.0.1:${host.Address().port}/api/events`, [ticket])
+        const opened = await new Promise<boolean>(res => { ws.once('open', () => res(true)); ws.once('error', () => res(false)); ws.once('close', () => res(false)) })
+        assert.equal(opened, false)
+        ws.terminate()
     })
 })
