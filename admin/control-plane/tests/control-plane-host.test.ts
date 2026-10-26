@@ -24,7 +24,7 @@ import { PlatformDirectory } from '../platform-directory.js'
 
 import { EnvironmentNotDevelopmentError, EnvironmentNotRuntimeError } from '../environment-service.js'
 import { GraphExistsError, GraphNotFoundError } from '../graph-service.js'
-import type { IOperatorIdentity, OperatorPrincipal, OperatorSession } from '../operator-identity.js'
+import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSession } from '../operator-identity.js'
 import { EventsTicketStore } from '../events-ticket-store.js'
 import { OperatorSocketRegistry } from '../operator-socket-registry.js'
 import { LoginThrottle } from '../login-throttle.js'
@@ -65,7 +65,11 @@ class FakeOperator implements IOperatorIdentity
             throw new Error('validator down')
         }
         const known = token === FakeOperator.Token || this.Extra.has(token)
-        return known && !this.Dead.has(token) ? { email: FakeOperator.Email, principalId: 'p1' } : null
+        return known && !this.Dead.has(token) ? { email: FakeOperator.Email, principalId: 'p1', role: OperatorRole.Full } : null
+    }
+
+    public async CreateOperator(_email: string, _password: string, _role: OperatorRole): Promise<void>
+    {
     }
 
     public async Revoke(token: string): Promise<void>

@@ -12,7 +12,7 @@ import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
 import { PlatformDirectory } from '../platform-directory.js'
-import type { IOperatorIdentity, OperatorPrincipal, OperatorSession } from '../operator-identity.js'
+import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSession } from '../operator-identity.js'
 
 /**
  * The operator listener's structural isolation: with the tenant plane split onto its own `TenantPlaneHost`, the
@@ -42,7 +42,11 @@ class FakeOperator implements IOperatorIdentity
 
     public async ValidateToken(token: string): Promise<OperatorPrincipal | null>
     {
-        return token === FakeOperator.Token ? { email: FakeOperator.Email, principalId: 'p1' } : null
+        return token === FakeOperator.Token ? { email: FakeOperator.Email, principalId: 'p1', role: OperatorRole.Full } : null
+    }
+
+    public async CreateOperator(_email: string, _password: string, _role: OperatorRole): Promise<void>
+    {
     }
 
     public async Revoke(): Promise<void>

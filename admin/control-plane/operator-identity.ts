@@ -1,19 +1,28 @@
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
 import { FileIdentityStores, ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
-import { Tenant, TenantKind, DelegationDepth, AuthMethod, Credential, PresentedSecret, AuthenticatedResult } from '@pragmatic-tech-ai/todl-identity'
+import { Tenant, TenantKind, DelegationDepth, AuthMethod, Credential, PresentedSecret, AuthenticatedResult, Grant, Role, ResourceRef, ResourceKind } from '@pragmatic-tech-ai/todl-identity'
 import { ServerBootstrap } from '../../src/identity/server-bootstrap.js'
 
 export type OperatorSession = { token: string; expiresAt: Date }
-export type OperatorPrincipal = { email: string; principalId: string }
+
+/** Operator authority: Full may mutate (Owner grant on the control-plane tenant); ReadOnly may only observe (Viewer grant, or no Owner grant). */
+export enum OperatorRole
+{
+    Full,
+    ReadOnly
+}
+
+export type OperatorPrincipal = { email: string; principalId: string; role: OperatorRole }
 
 export interface IOperatorIdentity
 {
     Authenticate(email: string, password: string): Promise<OperatorSession | null>
     ValidateToken(token: string): Promise<OperatorPrincipal | null>
     Revoke(token: string): Promise<void>
+    CreateOperator(email: string, password: string, role: OperatorRole): Promise<void>
 }
 
 export type OperatorComposeOptions = { identityRoot: string; masterKeyFile: string; operatorEmail: string; initialPassword?: string }
@@ -47,6 +56,7 @@ export class OperatorIdentity implements IOperatorIdentity
     private static readonly OperatorTenantDisplay = 'SP-ADMIN Control Plane'
     private static readonly AdminPrincipalId = 'admin'
     private static readonly AdminPasswordRef = 'control-plane-admin-pw'
+    private static readonly EmailClaim = 'email'
     private static readonly MasterKeyBytes = 32
     private static readonly KeyFileMode = 0o600
     private static readonly SecretDirMode = 0o700
@@ -122,7 +132,33 @@ export class OperatorIdentity implements IOperatorIdentity
         {
             return null
         }
-        return { email: this.operatorEmail, principalId: principal.Id }
+        const email = principal.Id === OperatorIdentity.AdminPrincipalId ? this.operatorEmail : (principal.Claim(OperatorIdentity.EmailClaim) ?? principal.Id)
+        return { email, principalId: principal.Id, role: await this.RoleFor(principal.Id) }
+    }
+
+    /** Creates an authenticatable operator account and grants it the Owner (Full) or Viewer (ReadOnly) role on the control-plane tenant. */
+    public async CreateOperator(email: string, password: string, role: OperatorRole): Promise<void>
+    {
+        const principalId = randomUUID()
+        const presented = new PresentedSecret(password)
+        try
+        {
+            await this.pack.Registrar.Register(this.tenant, email, principalId, presented)
+        }
+        finally
+        {
+            presented.Clear()
+        }
+        const grantRole = role === OperatorRole.Full ? Role.Owner : Role.Viewer
+        await this.pack.Grants.Save(new Grant(principalId, grantRole, new ResourceRef(ResourceKind.Tenant, this.tenant.Id, [])))
+    }
+
+    /** Deny-by-default: Full only when an Owner grant on this tenant exists; anything else is ReadOnly. */
+    private async RoleFor(principalId: string): Promise<OperatorRole>
+    {
+        const grants = await this.pack.Grants.GrantsFor(principalId, this.tenant)
+        const isOwner = grants.some(g => g.Role === Role.Owner && g.Resource.Kind === ResourceKind.Tenant && g.Resource.TenantId === this.tenant.Id)
+        return isOwner ? OperatorRole.Full : OperatorRole.ReadOnly
     }
 
     public async Revoke(token: string): Promise<void>

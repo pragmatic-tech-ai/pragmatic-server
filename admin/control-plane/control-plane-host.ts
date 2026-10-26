@@ -21,7 +21,8 @@ import { InvalidTenantIdError } from './idp-service.js'
 import { PortUnavailableError } from './port-allocator.js'
 import type { TenantProvisioningService } from './tenant-provisioning-service.js'
 import { InvalidEnvironmentNameError } from './template-catalog.js'
-import type { IOperatorIdentity } from './operator-identity.js'
+import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal } from './operator-identity.js'
+import { OperatorAuthorization } from './operator-authorization.js'
 import { SessionCookie } from './session-cookie.js'
 import { EventsTicketStore } from './events-ticket-store.js'
 import { OperatorSocketRegistry } from './operator-socket-registry.js'
@@ -157,6 +158,10 @@ export class ControlPlaneHost
     private static readonly StatusForbidden = 403
     private static readonly StatusUnsupported = 415
     private static readonly ForbiddenHostMessage = 'Host not allowed'
+    private static readonly ForbiddenRoleMessage = 'Operator role does not permit this action'
+    private static readonly OperatorsPath = '/api/operators'
+    private static readonly OperatorFieldsMessage = 'email, password and role (full|readonly) are required'
+    private static readonly OperatorRoles: ReadonlyMap<string, OperatorRole> = new Map([['full', OperatorRole.Full], ['readonly', OperatorRole.ReadOnly]])
     private static readonly UnsupportedMediaMessage = 'Content-Type must be application/json'
     private static readonly BadNameMessage = 'Invalid environment name in path'
     private static readonly NotListeningMessage = 'ControlPlaneHost is not listening'
@@ -306,7 +311,8 @@ export class ControlPlaneHost
         private readonly ticketStore: EventsTicketStore = new EventsTicketStore(),
         private readonly registry: OperatorSocketRegistry<WebSocket> = new OperatorSocketRegistry<WebSocket>(),
         private readonly revalidateIntervalMs: number = ControlPlaneHost.RevalidateIntervalMs,
-        allowedHosts: readonly string[] = [])
+        allowedHosts: readonly string[] = [],
+        private readonly authorization: OperatorAuthorization = new OperatorAuthorization())
     {
         this.allowedHosts = new Set([...ControlPlaneHost.DefaultAllowedHosts, ...allowedHosts.map(h => h.toLowerCase())])
         this.staticRootAbs = resolve(staticRoot)
@@ -547,11 +553,21 @@ export class ControlPlaneHost
                     PlaneHttp.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.BadOriginMessage })
                     return
                 }
-                if (!ControlPlaneHost.IsPublicApi(path) && !(await this.Authenticated(req)))
+                if (!ControlPlaneHost.IsPublicApi(path))
                 {
-                    req.resume()
-                    PlaneHttp.WriteJson(res, ControlPlaneHost.StatusUnauthorized, { error: ControlPlaneHost.UnauthenticatedMessage })
-                    return
+                    const who = await this.Principal(req)
+                    if (who === null)
+                    {
+                        req.resume()
+                        PlaneHttp.WriteJson(res, ControlPlaneHost.StatusUnauthorized, { error: ControlPlaneHost.UnauthenticatedMessage })
+                        return
+                    }
+                    if (!this.authorization.Authorize(who.role, req.method ?? PlaneHttp.MethodGet, path))
+                    {
+                        req.resume()
+                        PlaneHttp.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.ForbiddenRoleMessage })
+                        return
+                    }
                 }
             }
             const handled = await this.RouteApi(req, res, path)
@@ -623,6 +639,11 @@ export class ControlPlaneHost
                 this.registry.CloseToken(token)
             }
             PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ok: true })
+            return true
+        }
+        if (path === ControlPlaneHost.OperatorsPath && method === PlaneHttp.MethodPost)
+        {
+            await this.HandleCreateOperator(req, res)
             return true
         }
         if (path === ControlPlaneHost.ManifestsPath)
@@ -1178,6 +1199,24 @@ export class ControlPlaneHost
         return body as Record<string, unknown>
     }
 
+    /** Full-only (the central RBAC gate has already run). The password is never echoed. */
+    private async HandleCreateOperator(req: IncomingMessage, res: ServerResponse): Promise<void>
+    {
+        const body = await this.ReadJsonObject(req, res)
+        if (body === undefined)
+        {
+            return
+        }
+        const role = typeof body.role === 'string' ? ControlPlaneHost.OperatorRoles.get(body.role) : undefined
+        if (typeof body.email !== 'string' || body.email.length === 0 || typeof body.password !== 'string' || body.password.length === 0 || role === undefined)
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.OperatorFieldsMessage })
+            return
+        }
+        await this.operator.CreateOperator(body.email, body.password, role)
+        PlaneHttp.WriteJson(res, ControlPlaneHost.StatusCreated, { email: body.email })
+    }
+
     private async HandleLogin(req: IncomingMessage, res: ServerResponse): Promise<void>
     {
         const raw = await this.ReadBody(req)
@@ -1234,15 +1273,10 @@ export class ControlPlaneHost
         return req.socket.remoteAddress ?? ControlPlaneHost.UnknownClientIp
     }
 
-    private async Principal(req: IncomingMessage): Promise<{ email: string } | null>
+    private async Principal(req: IncomingMessage): Promise<OperatorPrincipal | null>
     {
         const token = SessionCookie.Read(req.headers[ControlPlaneHost.CookieHeader])
         return token === undefined || token.length === 0 ? null : await this.operator.ValidateToken(token)
-    }
-
-    private async Authenticated(req: IncomingMessage): Promise<boolean>
-    {
-        return (await this.Principal(req)) !== null
     }
 
     private ReadBody(req: IncomingMessage): Promise<string>

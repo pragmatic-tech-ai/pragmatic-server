@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test'
 import { ControlPlaneHost } from '../control-plane-host.js'
 import type { IEnvironmentService, IGraphService } from '../control-plane-host.js'
 import { ControlPlaneServer } from '../server.js'
-import type { IOperatorIdentity, OperatorPrincipal, OperatorSession } from '../operator-identity.js'
+import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSession } from '../operator-identity.js'
 import type { PlatformDirectory } from '../platform-directory.js'
 import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
 import type { TenantProvisioningService } from '../tenant-provisioning-service.js'
@@ -23,6 +23,10 @@ class NullOperator implements IOperatorIdentity
     public async ValidateToken(_token: string): Promise<OperatorPrincipal | null>
     {
         return null
+    }
+
+    public async CreateOperator(_email: string, _password: string, _role: OperatorRole): Promise<void>
+    {
     }
 
     public async Revoke(_token: string): Promise<void>
