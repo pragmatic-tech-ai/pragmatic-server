@@ -1,5 +1,9 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
 import { EnvServerSeedSource } from '../env-server-seed.js'
 import type { EnvironmentWorkload } from '../environment-workload.js'
@@ -319,7 +323,7 @@ describe('K8sManifestBuilder server seed init-container', () =>
         const script = init.command.find((c: string) => c.includes('.env-seeded'))
         assert.ok(script)
         assert.ok(script.includes('existsSync'))
-        assert.ok(script.includes('/pragmatic/seed/seed.json'))
+        assert.equal(init.command[init.command.length - 1], '/pragmatic/seed/seed.json')
     })
 
     it('mounts a volume referencing the seed Secret', () =>
@@ -329,5 +333,53 @@ describe('K8sManifestBuilder server seed init-container', () =>
         const mount = init.volumeMounts.find((m: any) => m.mountPath === '/pragmatic/seed')
         const volume = pod.volumes.find((v: any) => v.name === mount.name)
         assert.equal(volume.secret.secretName, EnvServerSeedSource.SeedSecretNameOf('dev1'))
+    })
+})
+
+describe('K8sManifestBuilder seed script behaviour', () =>
+{
+    class ScriptFixture
+    {
+        public static Run(dest: string, seed: string): ReturnType<typeof spawnSync>
+        {
+            return spawnSync(process.execPath, ['-e', K8sManifestBuilder.ServerSeedScript, dest, seed], { encoding: 'utf8' })
+        }
+
+        public static Seed(root: string, entries: Record<string, string>): string
+        {
+            const map: Record<string, string> = {}
+            for (const [k, v] of Object.entries(entries))
+            {
+                map[k] = Buffer.from(v).toString('base64')
+            }
+            const path = join(root, 'seed.json')
+            writeFileSync(path, JSON.stringify(map))
+            return path
+        }
+    }
+
+    it('unpacks nested entries and writes the marker on first run, then leaves modified files alone', () =>
+    {
+        const root = mkdtempSync(join(tmpdir(), 'seed-'))
+        const dest = join(root, 'data', 'env-1')
+        const seed = ScriptFixture.Seed(root, { 'packages/x/0.1.0/model.json': 'A', 'applications/x/application.json': 'B' })
+        assert.equal(ScriptFixture.Run(dest, seed).status, 0)
+        assert.equal(readFileSync(join(dest, 'packages/x/0.1.0/model.json'), 'utf8'), 'A')
+        assert.equal(readFileSync(join(dest, 'applications/x/application.json'), 'utf8'), 'B')
+        assert.ok(existsSync(join(dest, '.env-seeded')))
+        writeFileSync(join(dest, 'packages/x/0.1.0/model.json'), 'LIVE')
+        assert.equal(ScriptFixture.Run(dest, seed).status, 0)
+        assert.equal(readFileSync(join(dest, 'packages/x/0.1.0/model.json'), 'utf8'), 'LIVE')
+    })
+
+    it('rejects an escaping entry and writes no marker', () =>
+    {
+        const root = mkdtempSync(join(tmpdir(), 'seed-'))
+        const dest = join(root, 'data', 'env-1')
+        const seed = ScriptFixture.Seed(root, { '../escape': 'X' })
+        const result = ScriptFixture.Run(dest, seed)
+        assert.notEqual(result.status, 0)
+        assert.ok(!existsSync(join(dest, '.env-seeded')))
+        assert.ok(!existsSync(join(root, 'data', 'escape')))
     })
 })

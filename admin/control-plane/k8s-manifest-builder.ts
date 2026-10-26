@@ -218,14 +218,17 @@ export class K8sManifestBuilder
      * Unpacks seed.json ({ relpath: base64 }) into the env data dir (argv[1]) unless the marker exists. Idempotent: a restart never clobbers live state.
      * Rejects relpaths that escape the data dir.
      */
-    private static readonly ServerSeedScript = [
+    private static readonly ServerSeedMarkerFile = '.env-seeded'
+    private static readonly ServerSeedFile = 'seed.json'
+    private static readonly ServerSeedEscapeMessage = 'seed path escapes data dir: '
+    public static readonly ServerSeedScript = [
         "const fs=require('fs'),p=require('path');",
-        "const d=p.resolve(process.argv[1]);const m=p.join(d,'.env-seeded');",
+        `const d=p.resolve(process.argv[1]);const m=p.join(d,'${K8sManifestBuilder.ServerSeedMarkerFile}');`,
         'if(!fs.existsSync(m)){',
-        "const s=JSON.parse(fs.readFileSync('/pragmatic/seed/seed.json','utf8'));",
+        "const s=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));",
         'for(const [r,b] of Object.entries(s)){',
         'const t=p.resolve(d,r);',
-        "if(t!==d&&!t.startsWith(d+p.sep))throw new Error('seed path escapes data dir: '+r);",
+        `if(t!==d&&!t.startsWith(d+p.sep))throw new Error('${K8sManifestBuilder.ServerSeedEscapeMessage}'+r);`,
         'fs.mkdirSync(p.dirname(t),{recursive:true});',
         "fs.writeFileSync(t,Buffer.from(b,'base64'));}",
         "fs.mkdirSync(d,{recursive:true});fs.writeFileSync(m,'');}",
@@ -913,7 +916,7 @@ export class K8sManifestBuilder
             [K8sManifestBuilder.NameKey]: K8sManifestBuilder.ServerSeedContainerName,
             [K8sManifestBuilder.ImageKey]: workload.image,
             [K8sManifestBuilder.ImagePullPolicyKey]: K8sManifestBuilder.IfNotPresent,
-            [K8sManifestBuilder.CommandKey]: [K8sManifestBuilder.NodeBinary, K8sManifestBuilder.NodeEvalFlag, K8sManifestBuilder.ServerSeedScript, dest],
+            [K8sManifestBuilder.CommandKey]: [K8sManifestBuilder.NodeBinary, K8sManifestBuilder.NodeEvalFlag, K8sManifestBuilder.ServerSeedScript, dest, this.MountedFile(K8sManifestBuilder.ServerSeedMount, K8sManifestBuilder.ServerSeedFile)],
             [K8sManifestBuilder.SecurityContextKey]: this.ServerSeedSecurityContext(),
             [K8sManifestBuilder.VolumeMountsKey]: [
                 { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.ServerSeedVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.ServerSeedMount, [K8sManifestBuilder.ReadOnlyKey]: true },
