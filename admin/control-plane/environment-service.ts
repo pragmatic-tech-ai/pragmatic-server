@@ -386,6 +386,29 @@ export class EnvironmentService
         return this.registry.List()
     }
 
+    /**
+     * Brings a record's status in line with real workload readiness (called by the health monitor). Writes only
+     * Running/Stopped; a Failed record is terminal and an absent or already-matching record is a no-op.
+     */
+    public async ReconcileStatus(name: string, ready: boolean): Promise<void>
+    {
+        const target = ready ? EnvStatus.Running : EnvStatus.Stopped
+        const rec = this.registry.Get(name)
+        if (rec === undefined)
+        {
+            return
+        }
+        if (rec.status === EnvStatus.Failed)
+        {
+            return
+        }
+        if (rec.status === target)
+        {
+            return
+        }
+        await this.SetStatus(rec, target)
+    }
+
     private static RemoveBundleDir(bundleDir: string | undefined): void
     {
         if (bundleDir === undefined)

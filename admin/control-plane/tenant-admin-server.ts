@@ -180,7 +180,7 @@ export class TenantAdminServer
         const resolver = new TenantHostResolver(cfg.baseDomain, cfg.scheme, directory)
         const staticRoot = join(dirname(fileURLToPath(import.meta.url)), ControlPlaneServer.ParentSegment, ControlPlaneServer.TenantPortalSegment, ControlPlaneServer.DistSegment)
         const monitor = cfg.probeMs > 0
-            ? new TenantHealthMonitor(directory, new HiveHealthProducer(service, orchestrators, placement), plane.events, cfg.probeMs, cfg.probeTimeoutMs)
+            ? new TenantHealthMonitor(directory, new HiveHealthProducer(service, orchestrators, placement), plane.events, cfg.probeMs, cfg.probeTimeoutMs, service)
             : undefined
         const host = new TenantPlaneHost(plane, resolver, staticRoot, service, monitor)
         return { directory, rollout: this.rollout, plane, host, monitor, config: cfg }

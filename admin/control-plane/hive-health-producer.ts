@@ -38,8 +38,16 @@ export class HiveHealthProducer
         const dtos: HiveHealthDto[] = []
         for (const env of this.environments.List().filter(e => e.hiveId === hive.id))
         {
-            const health = await orchestrator.Health(this.placement.WorkloadFor(env))
-            dtos.push({ environmentName: env.name, ready: health.ready, runningImage: health.runningImage, detail: health.detail })
+            try
+            {
+                const health = await orchestrator.Health(this.placement.WorkloadFor(env))
+                dtos.push({ environmentName: env.name, ready: health.ready, runningImage: health.runningImage, detail: health.detail })
+            }
+            catch
+            {
+                // One failing env must not blank the hive; the error is deliberately dropped (it may carry secrets).
+                continue
+            }
         }
         return dtos
     }

@@ -1035,3 +1035,69 @@ test('Create demo on a DNS-reached (in-cluster) backend does not host-seed users
     assert.equal(rec.status, EnvStatus.Running)
     assert.equal(rec.hostPort, undefined)
 })
+
+class ReconcileFixture
+{
+    public static async Seed(status: EnvStatus): Promise<{ h: Harness; received: EnvironmentChange[] }>
+    {
+        const h = await Harness.Make()
+        await h.Registry.Put(Harness.Record('rc1', status))
+        h.Calls.length = 0
+        const received: EnvironmentChange[] = []
+        h.Service.OnChanged(change => received.push(change))
+        return { h, received }
+    }
+}
+
+test('ReconcileStatus on Running with not-ready Puts Stopped once and fires one Changed event', async () =>
+{
+    const { h, received } = await ReconcileFixture.Seed(EnvStatus.Running)
+    await h.Service.ReconcileStatus('rc1', false)
+    assert.deepEqual(h.Calls.filter(c => c.startsWith('put:')), [`put:${EnvStatus.Stopped}`])
+    assert.equal(received.length, 1)
+    assert.equal(received[0].kind, EnvironmentChangeKind.Changed)
+    assert.equal(received[0].record.status, EnvStatus.Stopped)
+    assert.equal(h.Registry.Get('rc1')?.status, EnvStatus.Stopped)
+})
+
+test('ReconcileStatus on Stopped with not-ready is idempotent: no Put, no event', async () =>
+{
+    const { h, received } = await ReconcileFixture.Seed(EnvStatus.Stopped)
+    await h.Service.ReconcileStatus('rc1', false)
+    assert.deepEqual(h.Calls.filter(c => c.startsWith('put:')), [])
+    assert.equal(received.length, 0)
+})
+
+test('ReconcileStatus never touches a Failed record', async () =>
+{
+    const { h, received } = await ReconcileFixture.Seed(EnvStatus.Failed)
+    await h.Service.ReconcileStatus('rc1', true)
+    assert.deepEqual(h.Calls.filter(c => c.startsWith('put:')), [])
+    assert.equal(received.length, 0)
+    assert.equal(h.Registry.Get('rc1')?.status, EnvStatus.Failed)
+})
+
+test('ReconcileStatus on an absent name resolves without a Put', async () =>
+{
+    const { h, received } = await ReconcileFixture.Seed(EnvStatus.Running)
+    await h.Service.ReconcileStatus('ghost', true)
+    assert.deepEqual(h.Calls.filter(c => c.startsWith('put:')), [])
+    assert.equal(received.length, 0)
+})
+
+test('ReconcileStatus on Running with ready is idempotent: no Put', async () =>
+{
+    const { h, received } = await ReconcileFixture.Seed(EnvStatus.Running)
+    await h.Service.ReconcileStatus('rc1', true)
+    assert.deepEqual(h.Calls.filter(c => c.startsWith('put:')), [])
+    assert.equal(received.length, 0)
+})
+
+test('ReconcileStatus on Unknown with ready Puts Running', async () =>
+{
+    const { h, received } = await ReconcileFixture.Seed(EnvStatus.Unknown)
+    await h.Service.ReconcileStatus('rc1', true)
+    assert.deepEqual(h.Calls.filter(c => c.startsWith('put:')), [`put:${EnvStatus.Running}`])
+    assert.equal(received.length, 1)
+    assert.equal(h.Registry.Get('rc1')?.status, EnvStatus.Running)
+})
