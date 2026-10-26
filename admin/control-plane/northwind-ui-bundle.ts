@@ -17,7 +17,7 @@ export class NorthwindUiBundle
     /** Builds the demo bundle: the artifact config plus the entry shell and its one asset. */
     public static Load(): UiDeployBundle
     {
-        const encoder = new TextEncoder();
+        const encoder = new TextEncoder()
         return {
             config:
             {
@@ -39,12 +39,12 @@ export class NorthwindUiBundle
     {
         return '<!DOCTYPE html>\n'
             + '<html><head><meta charset="utf-8"><title>Northwind</title></head>\n'
-            + `<body><h1>${NorthwindUiBundle.Marker}</h1>${NorthwindUiBundle.ScriptTagOpen}${NorthwindUiBundle.AssetPath}${NorthwindUiBundle.ScriptTagClose}</body></html>\n`;
+            + `<body><h1>${NorthwindUiBundle.Marker}</h1>${NorthwindUiBundle.ScriptTagOpen}${NorthwindUiBundle.AssetPath}${NorthwindUiBundle.ScriptTagClose}</body></html>\n`
     }
 
     /** The one-line asset: logs the marker, interpolated from the constant. */
     private static AppJs(): string
     {
-        return `${NorthwindUiBundle.ConsoleLogOpen}${NorthwindUiBundle.Marker}${NorthwindUiBundle.ConsoleLogClose}`;
+        return `${NorthwindUiBundle.ConsoleLogOpen}${NorthwindUiBundle.Marker}${NorthwindUiBundle.ConsoleLogClose}`
     }
 }
