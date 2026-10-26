@@ -19,6 +19,7 @@ import { InClusterIdpDriver } from './in-cluster-idp-driver.js'
 import { InClusterIdpSeedSource } from './in-cluster-idp-seed.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import { KubectlCli, KubectlError, NodeExecFile } from './kubectl.js'
+import { IdpStatus } from './idp-record.js'
 import type { IdpWorkloadResult } from './idp-workload-driver.js'
 
 interface HttpsResponse
@@ -133,7 +134,7 @@ export class InClusterIdpSmoke
             await kubectl.DeleteNamespace(namespace)
             await this.WaitGone(namespace)
             const result = await driver.EnsureRunning({ tenantId: S.TenantId, displayName: S.TenantId, takenPorts: [] })
-            this.Expect(S.Labels.Ready, true)
+            this.Expect(S.Labels.Ready, result.record.status === IdpStatus.Running && result.record.baseUrl === result.connection.baseUrl, S.RecordDetail(result))
             this.Expect(S.Labels.Connection, S.ConnectionOk(result))
             forward = this.StartForward(namespace)
             const port = await S.LocalPortOf(forward)
@@ -152,8 +153,8 @@ export class InClusterIdpSmoke
             const jwks = typeof uri === 'string' ? await S.Https(port, host, ca, S.MethodGet, new URL(uri).pathname) : undefined
             const keys = S.ParseObject(jwks?.body ?? S.EmptyString)?.[S.JwksKeysField]
             this.Expect(S.Labels.Jwks, Array.isArray(keys) && keys.length > 0, jwks === undefined ? S.NoJwksUri : S.StatusDetail(jwks))
-            await driver.EnsureRunning({ tenantId: S.TenantId, displayName: S.TenantId, takenPorts: [] })
-            this.Expect(S.Labels.Idempotent, true)
+            const again = await driver.EnsureRunning({ tenantId: S.TenantId, displayName: S.TenantId, takenPorts: [], existing: result.record })
+            this.Expect(S.Labels.Idempotent, again.record === result.record && again.record.status === IdpStatus.Running && again.connection.baseUrl === result.connection.baseUrl && again.connection.ca.equals(result.connection.ca), S.RecordDetail(again))
         }
         catch (err)
         {
@@ -176,6 +177,11 @@ export class InClusterIdpSmoke
             }
         }
         return !this.failed
+    }
+
+    private static RecordDetail(result: IdpWorkloadResult): string
+    {
+        return InClusterIdpSmoke.StatusTag + String(result.record.status)
     }
 
     private static ConnectionOk(result: IdpWorkloadResult): boolean
@@ -308,8 +314,20 @@ export class InClusterIdpSmoke
             }
             await new Promise<void>(r => setTimeout(r, S.IntervalMs))
         }
-        const out = await new NodeExecFile().Run(S.Kubectl, [S.ContextFlag, S.Context, S.GetVerb, S.NamespaceKind, namespace, S.OutputFlag, S.PhaseJsonPath])
-        return out.stdout.trim() === S.TerminatingPhase
+        try
+        {
+            const out = await new NodeExecFile().Run(S.Kubectl, [S.ContextFlag, S.Context, S.GetVerb, S.NamespaceKind, namespace, S.OutputFlag, S.PhaseJsonPath])
+            return out.stdout.trim() === S.TerminatingPhase
+        }
+        catch (e)
+        {
+            // Vanished between the last poll and this read: that is gone.
+            if (String((e as { stderr?: unknown }).stderr ?? S.EmptyString).includes(S.NotFoundWord))
+            {
+                return true
+            }
+            throw e
+        }
     }
 
     /** On failure, dumps pod listing + description + logs (redacted) so an environmental blocker is recorded exactly. */
