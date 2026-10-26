@@ -20,6 +20,8 @@ export interface IdpSeed
 export interface IIdpSeedSource
 {
     SeedFor(tenantId: string): IdpSeed
+    /** Optional: a kubectl-appliable manifest of the seed Secrets, applied before the workload so the mounted Secrets exist. */
+    SecretsManifestFor?(tenantId: string): string
 }
 
 /** Hive driver: renders the IdP as an in-cluster workload, applies it through the in-cluster API (kubectl seam), and reports the Service-DNS baseUrl. CA / admin token are SEEDED from bootstrap, never minted here. */
@@ -49,6 +51,12 @@ export class InClusterIdpDriver implements IIdpWorkloadDriver
         try
         {
             await this.kubectl.Apply(this.manifests.RenderIdp(spec))
+            // Seed Secrets go in after the workload apply (which creates the namespace) and before rollout, so the pod's Secret mounts resolve.
+            const secrets = this.seeds.SecretsManifestFor?.(tenantId)
+            if (secrets !== undefined)
+            {
+                await this.kubectl.Apply(secrets)
+            }
             await this.kubectl.RolloutStatus(name, name)
         }
         catch (err)
