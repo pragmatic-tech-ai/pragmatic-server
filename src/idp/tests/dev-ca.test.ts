@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { X509Certificate } from 'node:crypto'
@@ -12,6 +12,7 @@ test('mints a CA, server cert and key, idempotently', () =>
     try
     {
         const a = DevCa.EnsureAt(dir, 'idp.local')
+        assert.ok(!existsSync(join(dir, 'ca.key')))
         const bytesA = [a.certFile, a.keyFile, a.caFile].map(f => readFileSync(f))
         const b = DevCa.EnsureAt(dir, 'idp.local')
         assert.deepEqual(b, a)
@@ -30,18 +31,57 @@ test('mints a CA, server cert and key, idempotently', () =>
     }
 })
 
-test('regenerates the full set when ca.key is missing from an otherwise-complete dir', () =>
+test('treats the three runtime files as complete without ca.key (no re-mint)', () =>
 {
     const dir = mkdtempSync(join(tmpdir(), 'devca-'))
     try
     {
         const first = DevCa.EnsureAt(dir, 'idp.local')
         const firstCert = readFileSync(first.certFile)
-        rmSync(join(dir, 'ca.key'), { force: true })
         const second = DevCa.EnsureAt(dir, 'idp.local')
-        // ca.key is back, and a fresh mint happened (the guard did not treat the dir as complete).
-        assert.ok(existsSync(join(dir, 'ca.key')))
+        assert.ok(readFileSync(second.certFile).equals(firstCert))
+        assert.ok(!existsSync(join(dir, 'ca.key')))
+    }
+    finally
+    {
+        rmSync(dir, { recursive: true, force: true })
+    }
+})
+
+test('re-mints when a runtime file is missing', () =>
+{
+    const dir = mkdtempSync(join(tmpdir(), 'devca-'))
+    try
+    {
+        const first = DevCa.EnsureAt(dir, 'idp.local')
+        const firstCert = readFileSync(first.certFile)
+        rmSync(first.certFile, { force: true })
+        const second = DevCa.EnsureAt(dir, 'idp.local')
         assert.ok(!readFileSync(second.certFile).equals(firstCert))
+        for (const f of [second.certFile, second.keyFile, second.caFile])
+        {
+            assert.ok(existsSync(f), f)
+        }
+    }
+    finally
+    {
+        rmSync(dir, { recursive: true, force: true })
+    }
+})
+
+test('sweeps a staging dir a prior crashed mint left behind (its transient ca.key does not persist)', () =>
+{
+    const dir = mkdtempSync(join(tmpdir(), 'devca-'))
+    try
+    {
+        DevCa.EnsureAt(dir, 'idp.local')
+        // Simulate a hard-kill between the renames and the finally-rmSync: a leftover staging dir holding ca.key.
+        const stale = join(dir, '.devca-stale')
+        mkdirSync(stale)
+        writeFileSync(join(stale, 'ca.key'), 'leftover-ca-signing-key')
+        DevCa.EnsureAt(dir, 'idp.local')
+        assert.ok(!existsSync(stale))
+        assert.ok(!existsSync(join(stale, 'ca.key')))
     }
     finally
     {

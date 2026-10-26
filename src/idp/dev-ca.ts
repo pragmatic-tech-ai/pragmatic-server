@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 export interface DevCaFiles
@@ -67,14 +67,18 @@ export class DevCa
         {
             throw new Error(DevCa.InvalidHost + host)
         }
+        // Sweep any staging dir a prior crashed mint left behind (a hard-kill in the sub-second window before the
+        // finally-rmSync) so its transient ca.key cannot persist across restarts. Runs before the idempotency
+        // return because a crash after the renames but before rmSync leaves BOTH the runtime files AND the stage.
+        DevCa.SweepStaging(dir)
         const result: DevCaFiles = {
             certFile: join(dir, DevCa.ServerCertFile),
             keyFile: join(dir, DevCa.ServerKeyFile),
             caFile: join(dir, DevCa.CaCertFile),
         }
-        // The mint also drops ca.key into `dir`; include it in the idempotency guard so a
-        // partially-cleaned dir (the three result files present but ca.key gone) regenerates the full set.
-        if (existsSync(result.certFile) && existsSync(result.keyFile) && existsSync(result.caFile) && existsSync(join(dir, DevCa.CaKeyFile)))
+        // ca.key is a mint-time-only artifact (openssl needs it to sign the server cert) and is intentionally NOT
+        // persisted; the guard tracks only the three runtime files the IdP serves with.
+        if (existsSync(result.certFile) && existsSync(result.keyFile) && existsSync(result.caFile))
         {
             return result
         }
@@ -84,7 +88,6 @@ export class DevCa
         try
         {
             DevCa.Mint(stage, host, openssl)
-            renameSync(join(stage, DevCa.CaKeyFile), join(dir, DevCa.CaKeyFile))
             renameSync(join(stage, DevCa.ServerKeyFile), result.keyFile)
             renameSync(join(stage, DevCa.CaCertFile), result.caFile)
             renameSync(join(stage, DevCa.ServerCertFile), result.certFile)
@@ -94,6 +97,29 @@ export class DevCa
             rmSync(stage, { recursive: true, force: true })
         }
         return result
+    }
+
+    /**
+     * Best-effort removal of any `StagingPrefix` dir left inside `dir` by a prior crashed mint. No-ops when `dir`
+     * is absent or not writable (the in-cluster TLS mount is read-only and never minted into, so it holds no
+     * staging dir to sweep); never throws, so a sweep failure cannot break an otherwise-valid EnsureAt.
+     */
+    private static SweepStaging(dir: string): void
+    {
+        try
+        {
+            for (const entry of readdirSync(dir))
+            {
+                if (entry.startsWith(DevCa.StagingPrefix))
+                {
+                    rmSync(join(dir, entry), { recursive: true, force: true })
+                }
+            }
+        }
+        catch
+        {
+            // dir absent or unreadable: nothing to sweep.
+        }
     }
 
     private static Mint(d: string, host: string, openssl: string): void

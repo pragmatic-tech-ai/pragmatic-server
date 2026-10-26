@@ -9,7 +9,9 @@
  * Drives a real InClusterIdpDriver (wired with the InClusterIdpSeedSource, real KubectlCli + K8sManifestBuilder) in-process:
  * EnsureRunning applies the seed Secrets + the IdP workload and waits for rollout. The host then port-forwards the IdP Service and,
  * over the seeded CA only (rejectUnauthorized, SNI = the Service-DNS host so the cert SAN matches), proves the admin API gates on the
- * seeded token, the realm serves OIDC discovery, and the jwks_uri returns keys. Finally re-applies (idempotency) and deletes the namespace.
+ * seeded token, the realm serves OIDC discovery, and the jwks_uri returns keys. It also reads the applied per-tenant TLS Secret back and
+ * asserts its data keys are exactly server.crt/server.key/ca.crt (the CA signing key ca.key is never shipped); the healthy pod above proves
+ * DevCa.EnsureAt does not re-mint against that read-only mount. Operator-run only (needs a cluster). Finally re-applies (idempotency) and deletes the namespace.
  */
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
@@ -60,6 +62,10 @@ export class InClusterIdpSmoke
     private static readonly EndEvent = 'end'
     private static readonly TimeoutEvent = 'timeout'
     private static readonly Utf8 = 'utf8'
+    private static readonly SecretKind = 'secret'
+    private static readonly DataJsonPath = 'jsonpath={.data}'
+    private static readonly ExpectedTlsKeys = ['ca.crt', 'server.crt', 'server.key']
+    private static readonly CaKeyName = 'ca.key'
     private static readonly SigTerm = 'SIGTERM'
     private static readonly LoopbackHost = '127.0.0.1'
     private static readonly ForwardTimeoutMs = 30000
@@ -84,6 +90,7 @@ export class InClusterIdpSmoke
     private static readonly Space = ' '
     private static readonly Slash = '/'
     private static readonly Comma = ','
+    private static readonly KeysTag = 'keys='
     private static readonly MissingTag = ' missing='
     private static readonly StatusTag = 'status='
     private static readonly NoJwksUri = 'no jwks_uri'
@@ -104,6 +111,7 @@ export class InClusterIdpSmoke
     private static readonly JwksKeysField = 'keys'
     private static readonly Labels = {
         Ready: 'idp: EnsureRunning applies seed Secrets + workload and rollout reaches Ready',
+        TlsSecret: 'idp: applied TLS Secret carries exactly server.crt/server.key/ca.crt and no ca.key',
         Connection: 'idp: connection reports Service-DNS baseUrl + seeded CA + admin token',
         AdminBad: 'idp: admin API rejects a bad token',
         AdminOk: 'idp: admin API accepts the seeded token (EnsureRealm)',
@@ -136,6 +144,7 @@ export class InClusterIdpSmoke
             const result = await driver.EnsureRunning({ tenantId: S.TenantId, displayName: S.TenantId, takenPorts: [] })
             this.Expect(S.Labels.Ready, result.record.status === IdpStatus.Running && result.record.baseUrl === result.connection.baseUrl, S.RecordDetail(result))
             this.Expect(S.Labels.Connection, S.ConnectionOk(result))
+            await this.CheckTlsSecret(namespace)
             forward = this.StartForward(namespace)
             const port = await S.LocalPortOf(forward)
             const host = new URL(result.connection.baseUrl).hostname
@@ -188,6 +197,16 @@ export class InClusterIdpSmoke
     {
         const c = result.connection
         return c.baseUrl === K8sManifestBuilder.IdpBaseUrlOf(InClusterIdpSmoke.TenantId, InClusterIdpSmoke.ServicePort) && c.ca.length > 0 && c.adminToken.length > 0
+    }
+
+    /** Reads the applied per-tenant TLS Secret back from the cluster and checks its key set (names only; values are never printed). */
+    private async CheckTlsSecret(namespace: string): Promise<void>
+    {
+        const S = InClusterIdpSmoke
+        const name = InClusterIdpSeedSource.TlsSecretNameOf(S.TenantId)
+        const out = await new NodeExecFile().Run(S.Kubectl, [S.ContextFlag, S.Context, S.NamespaceFlag, namespace, S.GetVerb, S.SecretKind, name, S.OutputFlag, S.DataJsonPath])
+        const keys = Object.keys(S.ParseObject(out.stdout) ?? {}).sort()
+        this.Expect(S.Labels.TlsSecret, keys.join(S.Comma) === S.ExpectedTlsKeys.join(S.Comma) && !keys.includes(S.CaKeyName), S.KeysTag + keys.join(S.Comma))
     }
 
     private StartForward(namespace: string): ChildProcess

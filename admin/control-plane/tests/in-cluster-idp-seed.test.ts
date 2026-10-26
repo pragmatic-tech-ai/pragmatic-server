@@ -65,6 +65,14 @@ describe('InClusterIdpSeedSource', () =>
         }
     })
 
+    it('projects the TLS Secret with exactly server.crt/server.key/ca.crt and never the CA signing key', () =>
+    {
+        const source = new InClusterIdpSeedSource()
+        const tls = Secrets(source.SecretsManifestFor(Tenant)).find(s => s.metadata.name === source.SeedFor(Tenant).tlsSecretName)!
+        assert.deepEqual(Object.keys(tls.data).sort(), ['ca.crt', 'server.crt', 'server.key'])
+        assert.equal(tls.data['ca.key'], undefined)
+    })
+
     it('never leaks the TLS private key or admin token through toString / toJSON', () =>
     {
         const source = new InClusterIdpSeedSource()
