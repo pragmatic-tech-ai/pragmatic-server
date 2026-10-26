@@ -1,4 +1,10 @@
 import { test } from 'node:test'
+import { mkdtempSync, readFileSync, existsSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { BundleBuilderAdapter } from '../docker-env-port.js'
+import { EnvServerSeedSource } from '../env-server-seed.js'
+import type { IKubectl } from '../kubectl.js'
 import assert from 'node:assert/strict'
 import type { EnvDefinition } from '../../../environments/seed/bundle.js'
 import type { EnvRuntimeContext } from '../environment-runtime.js'
@@ -20,15 +26,42 @@ class Fx
     public static readonly Def = { name: 'e1', environmentId: 'env-1' } as unknown as EnvDefinition
 }
 
+class FakeKubectl
+{
+    public readonly Applied: string[] = []
+    public Log: string[] | undefined
+    public FailWith: Error | undefined
+
+    public async Apply(manifestJson: string): Promise<void>
+    {
+        this.Log?.push('KubectlApply')
+        if (this.FailWith)
+        {
+            throw this.FailWith
+        }
+        this.Applied.push(manifestJson)
+    }
+}
+
 class FakeOrchestrator implements IHiveOrchestrator
 {
     public readonly Calls: { m: string; w: EnvironmentWorkload }[] = []
+    public readonly Order: string[] = []
+    public readonly Fake = new FakeKubectl()
+    public readonly Kubectl = this.Fake as unknown as IKubectl
+
+    public constructor()
+    {
+        this.Fake.Log = this.Order
+    }
+
     public FailWith: Error | undefined
     public Ready = true
 
     private Rec(m: string, w: EnvironmentWorkload): void
     {
         this.Calls.push({ m, w })
+        this.Order.push(m)
         if (this.FailWith)
         {
             throw this.FailWith
@@ -47,7 +80,8 @@ class Harness
     public readonly Orchestrator = new FakeOrchestrator()
     public readonly Runtime: InClusterEnvironmentRuntime
     public readonly Record: EnvironmentRecord = { name: 'e1', type: EnvType.Runtime, template: Template.DevBlank, environmentId: 'env-1', hiveId: 'h1', createdAt: 'now', status: EnvStatus.Running }
-    public readonly Ctx: EnvRuntimeContext = { def: Fx.Def, record: this.Record }
+    public readonly BundleDir = mkdtempSync(join(tmpdir(), 'icr-'))
+    public readonly Ctx: EnvRuntimeContext = { def: Fx.Def, record: this.Record, bundleDir: this.BundleDir }
 
     public constructor(hiveKnown: boolean = true)
     {
@@ -59,13 +93,14 @@ class Harness
             GetHive: () => hiveKnown ? Fx.Hive : undefined,
             ListHives: () => []
         }
-        this.Runtime = new InClusterEnvironmentRuntime(factory, placement, directory)
+        this.Runtime = new InClusterEnvironmentRuntime(factory, placement, directory, new BundleBuilderAdapter())
     }
 }
 
 test('BringUp applies the placement workload and returns a DNS endpoint with no hostPort', async () =>
 {
     const h = new Harness()
+    await h.Runtime.Prepare(h.Ctx)
     const ep = await h.Runtime.BringUp(h.Ctx)
     assert.deepEqual(h.Orchestrator.Calls, [{ m: 'Apply', w: Fx.Workload }])
     assert.equal(ep.hostPort, undefined)
@@ -77,6 +112,7 @@ test('BringUp applies the placement workload and returns a DNS endpoint with no 
 test('Start applies then waits healthy', async () =>
 {
     const h = new Harness()
+    await h.Runtime.Prepare(h.Ctx)
     await h.Runtime.Start(h.Ctx)
     assert.deepEqual(h.Orchestrator.Calls.map(c => c.m), ['Apply', 'WaitHealthy'])
 })
@@ -125,12 +161,45 @@ test('Probe returns Health().ready', async () =>
     assert.equal(await h.Runtime.Probe(h.Ctx), false)
 })
 
-test('EnsureImage is true and Prepare is a no-op', async () =>
+test('EnsureImage is true and Prepare never touches the orchestrator', async () =>
 {
     const h = new Harness()
     assert.equal(await h.Runtime.EnsureImage(Fx.Def), true)
     await h.Runtime.Prepare(h.Ctx)
     assert.equal(h.Orchestrator.Calls.length, 0)
+})
+
+test('Prepare generates the bundle and a second Prepare keeps master.key byte-identical', async () =>
+{
+    const h = new Harness()
+    await h.Runtime.Prepare(h.Ctx)
+    for (const f of ['master.key', 'provisioned-secrets.json', 'tenants.json'])
+    {
+        assert.ok(existsSync(join(h.BundleDir, f)), f)
+    }
+    const first = readFileSync(join(h.BundleDir, 'master.key'))
+    await h.Runtime.Prepare(h.Ctx)
+    assert.ok(first.equals(readFileSync(join(h.BundleDir, 'master.key'))))
+})
+
+test('BringUp applies the workload first, then a seed List with the ConfigMap and Secret the Deployment references', async () =>
+{
+    const h = new Harness()
+    await h.Runtime.Prepare(h.Ctx)
+    await h.Runtime.BringUp(h.Ctx)
+    assert.deepEqual(h.Orchestrator.Order, ['Apply', 'KubectlApply'])
+    assert.equal(h.Orchestrator.Fake.Applied.length, 1)
+    const items = (JSON.parse(h.Orchestrator.Fake.Applied[0]) as { items: { kind: string; metadata: { name: string } }[] }).items
+    assert.ok(items.some(i => i.kind === 'ConfigMap' && i.metadata.name === EnvServerSeedSource.ConfigMapNameOf('e1')))
+    assert.ok(items.some(i => i.kind === 'Secret' && i.metadata.name === EnvServerSeedSource.SecretNameOf('e1')))
+})
+
+test('a failing seed apply surfaces the generic error with no secret bytes or stderr', async () =>
+{
+    const h = new Harness()
+    await h.Runtime.Prepare(h.Ctx)
+    h.Orchestrator.Fake.FailWith = new Error(Fx.Secret)
+    await assert.rejects(() => h.Runtime.BringUp(h.Ctx), (e: Error) => e instanceof InClusterOperationFailedError && !e.message.includes('SECRET') && !e.message.includes('stderr'))
 })
 
 test('a missing hive throws the fixed hive-missing error', async () =>

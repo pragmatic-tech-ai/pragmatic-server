@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { KindHiveOrchestrator } from '../kind-hive-orchestrator.js'
 import type { IKind } from '../kind.js'
 import type { IHiveOrchestrator, WorkloadHealth } from '../hive-orchestrator.js'
+import type { IKubectl } from '../kubectl.js'
 import type { EnvironmentWorkload } from '../environment-workload.js'
 
 class FakeKind implements IKind
@@ -36,6 +37,7 @@ class FakeKind implements IKind
 
 class FakeInner implements IHiveOrchestrator
 {
+    public readonly Kubectl = undefined as unknown as IKubectl
     public calls: string[] = []
     public health: WorkloadHealth = { ready: true, runningImage: 'img:1', detail: 'ok' }
 

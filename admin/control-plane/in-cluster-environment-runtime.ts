@@ -1,3 +1,5 @@
+import type { IBundleBuilder } from './docker-env-port.js'
+import { EnvServerSeedSource } from './env-server-seed.js'
 import type { EnvDefinition } from '../../environments/seed/bundle.js'
 import type { ILogProcess } from '../../environments/seed/docker.js'
 import type { EnvEndpoint, EnvRuntimeContext, IEnvironmentRuntime } from './environment-runtime.js'
@@ -70,11 +72,14 @@ export class InClusterEnvironmentRuntime implements IEnvironmentRuntime
     private static readonly Dot = '.'
     private static readonly PortSeparator = ':'
     private static readonly EnvironmentQuery = '/?environment='
+    private static readonly ListApiVersion = 'v1'
+    private static readonly ListKind = 'List'
 
     public constructor(
         private readonly orchestrators: HiveOrchestratorFactory,
         private readonly placement: EnvironmentPlacement,
-        private readonly directory: ITenantDirectory)
+        private readonly directory: ITenantDirectory,
+        private readonly bundle: IBundleBuilder)
     {
     }
 
@@ -93,15 +98,28 @@ export class InClusterEnvironmentRuntime implements IEnvironmentRuntime
         return InClusterEnvironmentRuntime.BuildCommandText
     }
 
-    public Prepare(_ctx: EnvRuntimeContext): Promise<void>
+    public async Prepare(ctx: EnvRuntimeContext): Promise<void>
     {
-        return Promise.resolve()
+        if (ctx.bundleDir !== undefined)
+        {
+            await this.bundle.Generate(ctx.def, ctx.bundleDir, ctx.seedDir, ctx.oidc)
+        }
     }
 
     public async BringUp(ctx: EnvRuntimeContext): Promise<EnvEndpoint>
     {
         const { orchestrator, workload } = this.Resolve(ctx)
-        await InClusterEnvironmentRuntime.Guard(() => orchestrator.Apply(workload))
+        await InClusterEnvironmentRuntime.Guard(async () =>
+        {
+            await orchestrator.Apply(workload)
+            const seed = new EnvServerSeedSource(ctx.bundleDir!, ctx.record.name, workload.database?.passwordRef)
+            const list = {
+                apiVersion: InClusterEnvironmentRuntime.ListApiVersion,
+                kind: InClusterEnvironmentRuntime.ListKind,
+                items: [seed.ConfigMapManifest(), ...seed.SecretSet().RenderManifest()]
+            }
+            await orchestrator.Kubectl.Apply(JSON.stringify(list))
+        })
         return InClusterEnvironmentRuntime.EndpointOf(ctx, workload)
     }
 

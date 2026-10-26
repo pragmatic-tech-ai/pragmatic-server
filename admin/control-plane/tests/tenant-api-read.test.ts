@@ -12,6 +12,7 @@ import { EnvironmentPlacement } from '../environment-placement.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import { UnsupportedBackendError } from '../hive-orchestrator.js'
 import type { IHiveOrchestrator, WorkloadHealth } from '../hive-orchestrator.js'
+import type { IKubectl } from '../kubectl.js'
 import type { EnvironmentWorkload } from '../environment-workload.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import { HiveBackend, InfraMode, type HiveRecord } from '../platform-records.js'
@@ -80,6 +81,7 @@ class FakeService
 
 class FakeOrchestrator implements IHiveOrchestrator
 {
+    public readonly Kubectl = undefined as unknown as IKubectl
     public async Apply(_w: EnvironmentWorkload): Promise<void>
     {
     }

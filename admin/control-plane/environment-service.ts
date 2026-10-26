@@ -226,7 +226,7 @@ export class EnvironmentService
             // Only a host-port backend (Docker) allocates a host port; an in-cluster env is reached by cluster DNS.
             const port = hostShaped ? await this.AllocatePort(hostPort) : undefined
             const { def, seedDir } = TemplateCatalog.Resolve(template, safe, port ?? EnvironmentService.NoHostPort, type)
-            const bundleDir = hostShaped ? join(this.dataRoot, def.name) : undefined
+            const bundleDir = join(this.dataRoot, def.name)
 
             // Host (localhost) OIDC federation applies only to the host-port backend; in-cluster federation is deferred.
             let oidc: EnvOidc | undefined

@@ -373,7 +373,7 @@ export class IdpFederationSmoke
         this.idpRegistry = new IdpRegistry(join(this.dataRoot, S.IdpsFile))
         this.idpService = new IdpService(this.idpRegistry, new DockerIdpDriver(new PortAllocator(S.IdpPortFloor, new NetPortProbe()), this.idpContainers, this.dataRoot, DockerEnv.ImageName))
         this.service = new EnvironmentService(
-            registry, new PortAllocator(S.EnvPortFloor, new NetPortProbe()), new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(new HiveOrchestratorFactory(), new EnvironmentPlacement(directory), directory), directory, new HiveOrchestratorFactory()), new UserSeederAdapter(new UserSeeder()),
+            registry, new PortAllocator(S.EnvPortFloor, new NetPortProbe()), new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(new HiveOrchestratorFactory(), new EnvironmentPlacement(directory), directory, new BundleBuilderAdapter()), directory, new HiveOrchestratorFactory()), new UserSeederAdapter(new UserSeeder()),
             this.dataRoot, new AdminProxy(new WsAdminConnector()), directory, this.idpService, conn => new IdpAdminClient(conn))
         return directory
     }

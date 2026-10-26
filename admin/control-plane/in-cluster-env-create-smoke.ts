@@ -246,7 +246,7 @@ export class InClusterEnvCreateSmoke
         return new EnvironmentService(
             registry,
             new PortAllocator(S.EnvPortFloor, new NetPortProbe()),
-            new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(orchestrators, placement, directory), directory, orchestrators),
+            new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(orchestrators, placement, directory, new BundleBuilderAdapter()), directory, orchestrators),
             new UserSeederAdapter(new UserSeeder()),
             dataRoot,
             new AdminProxy(new WsAdminConnector()),

@@ -1,3 +1,4 @@
+import type { IKubectl } from './kubectl.js'
 import type { EnvironmentWorkload } from './environment-workload.js'
 import type { HiveBackend, InfraMode } from './platform-records.js'
 
@@ -5,6 +6,7 @@ export type WorkloadHealth = { ready: boolean; runningImage: string | undefined;
 
 export interface IHiveOrchestrator
 {
+    readonly Kubectl: IKubectl
     Apply(w: EnvironmentWorkload): Promise<void>
     WaitHealthy(w: EnvironmentWorkload): Promise<void>
     Health(w: EnvironmentWorkload): Promise<WorkloadHealth>

@@ -495,7 +495,7 @@ export class TenantLoginE2eSmoke
         const orchestrators = new HiveOrchestratorFactory(S.K8sContext, join(this.dataRoot, S.OrchestratorDir))
         const placement = new EnvironmentPlacement(directory)
         const service = new EnvironmentService(
-            environments, new PortAllocator(S.EnvPortFloor, new NetPortProbe()), new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(orchestrators, placement, directory), directory, orchestrators), new UserSeederAdapter(new UserSeeder()),
+            environments, new PortAllocator(S.EnvPortFloor, new NetPortProbe()), new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(orchestrators, placement, directory, new BundleBuilderAdapter()), directory, orchestrators), new UserSeederAdapter(new UserSeeder()),
             this.dataRoot, new AdminProxy(new WsAdminConnector()), directory, idpService, conn => new IdpAdminClient(conn))
         const manifests = new ManifestRegistry(join(this.dataRoot, S.ManifestsFile))
         const gating = new GatingRegistry(join(this.dataRoot, S.GatingFile))

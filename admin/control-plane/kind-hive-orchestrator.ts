@@ -1,6 +1,7 @@
 import type { EnvironmentWorkload } from './environment-workload.js'
 import type { IHiveOrchestrator, WorkloadHealth } from './hive-orchestrator.js'
 import type { IKind } from './kind.js'
+import type { IKubectl } from './kubectl.js'
 
 /** Provisions a kind cluster on demand and delegates workload lifecycle to an inner orchestrator. */
 export class KindHiveOrchestrator implements IHiveOrchestrator
@@ -15,6 +16,11 @@ export class KindHiveOrchestrator implements IHiveOrchestrator
         private readonly inner: IHiveOrchestrator,
     )
     {
+    }
+
+    public get Kubectl(): IKubectl
+    {
+        return this.inner.Kubectl
     }
 
     public get ClusterName(): string
