@@ -39,6 +39,9 @@ import { EnvironmentRegistry } from './environment-registry.js'
 import { EnvironmentService } from './environment-service.js'
 import { EnvStatus, EnvType, Template } from './environment-record.js'
 import type { EnvironmentRecord } from './environment-record.js'
+import { TemplateCatalog } from './template-catalog.js'
+import { BundleBuilder } from '../../environments/seed/bundle.js'
+import { EnvServerSeedSource } from './env-server-seed.js'
 import type { EnvironmentWorkload } from './environment-workload.js'
 import { ClientRegistry } from './client-registry.js'
 import { HiveRegistry } from './hive-registry.js'
@@ -179,13 +182,8 @@ export class TenantLoginE2eSmoke
     private static readonly Spki = 'spki'
     private static readonly Pkcs8 = 'pkcs8'
     private static readonly Utf8 = 'utf8'
-    private static readonly Base64 = 'base64'
 
-    private static readonly BootBaseDirKey = 'PRAGMATIC_BASE_DIR'
-    private static readonly BootBaseDir = '/tmp/pragmatic-data'
-    private static readonly BootTenantKey = 'PRAGMATIC_ENVIRONMENT_ID'
-    private static readonly BootMasterKeyEnvKey = 'PRAGMATIC_MASTER_KEY_B64_ENV'
-    private static readonly BootMasterKeyVar = 'SMOKE_MASTER_KEY_B64'
+    private static readonly SeedDirPrefix = 'tenant-login-seed-'
 
     private static readonly TenantPortEnvKey = 'PRAGMATIC_TENANT_ADMIN_PORT'
     private static readonly TenantPortEnvValue = '1'
@@ -359,9 +357,10 @@ export class TenantLoginE2eSmoke
             this.Check(S.M_EnvHealthy, false, S.EnvRecordNotFound)
             return undefined
         }
-        const workload = this.BootWorkload(plane.placement.WorkloadFor(record))
+        const workload = plane.placement.WorkloadFor(record)
         const orchestrator = plane.orchestrators.For(hive)
         await orchestrator.Apply({ ...workload, image: S.ImageV1 })
+        await this.ApplySeed(orchestrator, workload.environmentName)
         await orchestrator.WaitHealthy(workload)
         const health = await orchestrator.Health(workload)
         this.Check(S.M_EnvHealthy, health.ready && health.runningImage === S.ImageV1, health.detail)
@@ -466,7 +465,7 @@ export class TenantLoginE2eSmoke
         }
         try
         {
-            const health = await orchestrator.Health(this.BootWorkload(plane.placement.WorkloadFor(record)))
+            const health = await orchestrator.Health(plane.placement.WorkloadFor(record))
             console.log(S.InfoTag + S.InfoRunningImage + String(health.runningImage))
         }
         catch (e)
@@ -558,17 +557,21 @@ export class TenantLoginE2eSmoke
         }
     }
 
-    /** SMOKE-ONLY boot config (same approach as rollout-push-smoke): throwaway random key, never logged or written to disk. */
-    private BootWorkload(stock: EnvironmentWorkload): EnvironmentWorkload
+    /** Applies the real env-server seed (tenants ConfigMap + master/provisioned Secrets) after Apply, exactly as InClusterEnvironmentRuntime.BringUp does, so the hive-bound pod boots from injected config. */
+    private async ApplySeed(orchestrator: IHiveOrchestrator, environmentName: string): Promise<void>
     {
         const S = TenantLoginE2eSmoke
-        const boot = {
-            [S.BootBaseDirKey]: S.BootBaseDir,
-            [S.BootTenantKey]: this.envName,
-            [S.BootMasterKeyEnvKey]: S.BootMasterKeyVar,
-            [S.BootMasterKeyVar]: randomBytes(S.MasterKeyBytes).toString(S.Base64),
+        const { def, seedDir } = TemplateCatalog.Resolve(Template.DevBlank, environmentName, 0, EnvType.Development)
+        const bundleDir = mkdtempSync(join(tmpdir(), S.SeedDirPrefix))
+        try
+        {
+            await BundleBuilder.Generate(def, bundleDir, seedDir)
+            await EnvServerSeedSource.ApplyBundle(orchestrator.Kubectl, bundleDir, environmentName)
         }
-        return { ...stock, env: { ...stock.env, ...boot } }
+        finally
+        {
+            rmSync(bundleDir, { recursive: true, force: true })
+        }
     }
 
     private async CheckIdpHealthy(conn: IdpConnection): Promise<void>
