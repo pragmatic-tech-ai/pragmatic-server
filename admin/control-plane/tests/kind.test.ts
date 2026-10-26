@@ -35,6 +35,29 @@ test('CreateCluster runs kind create cluster --name <n>', async () =>
     assert.deepEqual(fake.LastArgs, ['create', 'cluster', '--name', 'c1'])
 })
 
+test('CreateCluster with extraPortMappings passes --config', async () =>
+{
+    const fake = new FakeExecFile()
+    await new KindCli(fake).CreateCluster('c1', { extraPortMappings: [443] })
+    assert.deepEqual(fake.LastArgs.slice(0, 4), ['create', 'cluster', '--name', 'c1'])
+    assert.equal(fake.LastArgs[4], '--config')
+    assert.equal(fake.LastArgs.length, 6)
+})
+
+test('RenderConfig maps container port to host port', () =>
+{
+    const yaml = KindCli.RenderConfig({ extraPortMappings: [443, 80] })
+    assert.match(yaml, /containerPort: 443\n\s+hostPort: 443/)
+    assert.match(yaml, /containerPort: 80\n\s+hostPort: 80/)
+})
+
+test('CreateCluster with an empty config is the bare command', async () =>
+{
+    const fake = new FakeExecFile()
+    await new KindCli(fake).CreateCluster('c1', { extraPortMappings: [] })
+    assert.deepEqual(fake.LastArgs, ['create', 'cluster', '--name', 'c1'])
+})
+
 test('DeleteCluster runs kind delete cluster --name <n>', async () =>
 {
     const fake = new FakeExecFile()

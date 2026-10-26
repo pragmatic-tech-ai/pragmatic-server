@@ -34,10 +34,21 @@ export interface TenantBootstrapInput
      * Secret set is pragmatic-system only), so whoever provisions the IdP must create them in the IdP namespace. Omit when the IdP
      * is provisioned separately.
      */
-    idp?: Pick<IdpWorkloadSpec, 'image' | 'port' | 'tlsSecretName' | 'adminTokenSecretName' | 'adminTokenRef'>
+    idp?: Pick<IdpWorkloadSpec, 'image' | 'port' | 'tlsSecretName' | 'adminTokenSecretName' | 'adminTokenRef'> & TenantIdpMaterial
     /** The signing trust root's PUBLIC key (PEM). Never the private half. */
     trustRootPublicKey: string
     pullCredential?: PullCredential
+}
+
+/**
+ * The minted IdP material the producer projects for the tenant-admin pod (which lives in pragmatic-system, so it cannot mount the
+ * IdP-namespace Secrets). `ca` is the PUBLIC CA certificate only; the IdP's TLS Secret (server key) is never referenced by the pod.
+ * When both are supplied the tenant-admin spec gets its `idp` connection and the Secrets below are projected.
+ */
+export interface TenantIdpMaterial
+{
+    ca?: Buffer
+    adminToken?: string
 }
 
 /** A rendered v1 List as the builder emits it (only the fields bootstrap reads). */
@@ -147,6 +158,10 @@ export class TenantAdminBootstrap
     public static readonly MasterKeyKey = 'master.key'
     public static readonly TrustRootKey = 'trust-root.pub'
     private static readonly TokenKey = 'token'
+    private static readonly IdpCaKey = 'ca.crt'
+    private static readonly IdpAdminTokenKey = 'admin-token'
+    private static readonly IdpCaSuffix = '-idp-ca'
+    private static readonly IdpTokenSuffix = '-idp-token'
     private static readonly DockerConfigKey = '.dockerconfigjson'
     private static readonly DockerConfigType = 'kubernetes.io/dockerconfigjson'
     private static readonly MasterKeyBytes = 32
@@ -163,6 +178,18 @@ export class TenantAdminBootstrap
         private readonly registrar: IHiveRegistrar,
         private readonly manifests: K8sManifestBuilder = new K8sManifestBuilder())
     {
+    }
+
+    /** Name of the ca.crt-only IdP trust Secret projected into pragmatic-system for the tenant-admin pod. */
+    public static IdpCaSecretNameOf(tenantId: string): string
+    {
+        return `${K8sManifestBuilder.TenantAdminNameOf(tenantId)}${TenantAdminBootstrap.IdpCaSuffix}`
+    }
+
+    /** Name of the admin-token Secret copy projected into pragmatic-system (the IdP-namespace original is unreachable from the pod). */
+    public static IdpTokenSecretNameOf(tenantId: string): string
+    {
+        return `${K8sManifestBuilder.TenantAdminNameOf(tenantId)}${TenantAdminBootstrap.IdpTokenSuffix}`
     }
 
     public async GenerateBootstrap(input: TenantBootstrapInput): Promise<TenantBootstrap>
@@ -184,6 +211,12 @@ export class TenantAdminBootstrap
         {
             secrets.Add(input.pullCredential.secretName, { [TenantAdminBootstrap.DockerConfigKey]: input.pullCredential.dockerConfigJson }, TenantAdminBootstrap.DockerConfigType)
         }
+        if (input.idp?.ca !== undefined && input.idp.adminToken !== undefined)
+        {
+            // ca.crt ONLY: derived from the CA bytes alone, never the IdP TLS Secret (server.key).
+            secrets.Add(TenantAdminBootstrap.IdpCaSecretNameOf(tenant.id), { [TenantAdminBootstrap.IdpCaKey]: input.idp.ca })
+            secrets.Add(TenantAdminBootstrap.IdpTokenSecretNameOf(tenant.id), { [TenantAdminBootstrap.IdpAdminTokenKey]: input.idp.adminToken })
+        }
         return new TenantBootstrap(seed, this.AssembleManifest(input, agentTokenSecretName, seedSecretName), secrets, agentTokenSecretName, seedSecretName)
     }
 
@@ -202,10 +235,24 @@ export class TenantAdminBootstrap
             rolloutUrl: input.channelUrl,
             imagePullSecretName: input.pullCredential?.secretName,
         }
+        if (input.idp?.ca !== undefined && input.idp.adminToken !== undefined)
+        {
+            admin.idp = {
+                browserBaseUrl: K8sManifestBuilder.IdpBrowserUrlOf(tenant.id, input.baseDomain),
+                internalBaseUrl: K8sManifestBuilder.IdpBaseUrlOf(tenant.id, input.idp.port),
+                caSecretName: TenantAdminBootstrap.IdpCaSecretNameOf(tenant.id),
+                adminTokenSecretName: TenantAdminBootstrap.IdpTokenSecretNameOf(tenant.id),
+            }
+        }
         const rendered = [this.manifests.RenderHiveAgent(hive.id, input.channelUrl, agentTokenSecretName)]
         if (input.idp !== undefined)
         {
-            const idp: IdpWorkloadSpec = { tenantId: tenant.id, hiveId: hive.id, ...input.idp }
+            const { image, port, tlsSecretName, adminTokenSecretName, adminTokenRef } = input.idp
+            const idp: IdpWorkloadSpec = { tenantId: tenant.id, hiveId: hive.id, image, port, tlsSecretName, adminTokenSecretName, adminTokenRef }
+            if (admin.idp !== undefined)
+            {
+                idp.baseDomain = input.baseDomain
+            }
             rendered.push(this.manifests.RenderIdp(idp))
         }
         rendered.push(this.manifests.RenderTenantAdmin(admin))

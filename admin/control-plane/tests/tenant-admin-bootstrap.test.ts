@@ -183,3 +183,53 @@ describe('TenantAdminBootstrap.GenerateBootstrap', () =>
         assert.ok(!leaked.includes(Buffer.from(BootstrapFixture.PullJson).toString('base64')))
     })
 })
+
+describe('TenantAdminBootstrap in-cluster IdP federation producer', () =>
+{
+    const CaPem = '-----BEGIN CERTIFICATE-----\nCAONLY\n-----END CERTIFICATE-----\n'
+
+    async function Federated()
+    {
+        const input = BootstrapFixture.Input()
+        input.idp = { ...input.idp!, ca: Buffer.from(CaPem), adminToken: 'idp-admin-token-value' }
+        return new TenantAdminBootstrap(new FakeRegistrar()).GenerateBootstrap(input)
+    }
+
+    function AdminDeployment(manifest: string): any
+    {
+        const items = (JSON.parse(manifest) as { items: any[] }).items
+        return items.find(i => i.kind === 'Deployment' && i.metadata.name === K8sManifestBuilder.TenantAdminNameOf('acme'))
+    }
+
+    it('populates spec.idp with browser/internal bases and ca-only + admin-token Secret refs', async () =>
+    {
+        const b = await Federated()
+        const dep = AdminDeployment(b.manifest)
+        const env = dep.spec.template.spec.containers[0].env as { name: string; value?: string }[]
+        assert.ok(env.some(e => e.value === K8sManifestBuilder.IdpBrowserUrlOf('acme', 'tenants.test')))
+        assert.ok(env.some(e => e.value === K8sManifestBuilder.IdpBaseUrlOf('acme', 9443)))
+        const secretVolumes = dep.spec.template.spec.volumes.map((v: any) => v.secret?.secretName).filter(Boolean)
+        assert.ok(secretVolumes.includes(TenantAdminBootstrap.IdpCaSecretNameOf('acme')))
+        assert.ok(secretVolumes.includes(TenantAdminBootstrap.IdpTokenSecretNameOf('acme')))
+    })
+
+    it('projects a ca.crt-only Secret and never references the IdP TLS Secret from the pod', async () =>
+    {
+        const b = await Federated()
+        const list = JSON.parse(b.secrets.RenderManifest()) as { items: { metadata: { name: string }; data: Record<string, string> }[] }
+        const ca = list.items.find(i => i.metadata.name === TenantAdminBootstrap.IdpCaSecretNameOf('acme'))!
+        assert.deepEqual(Object.keys(ca.data), ['ca.crt'])
+        assert.equal(Buffer.from(ca.data['ca.crt'], 'base64').toString(), CaPem)
+        const dep = AdminDeployment(b.manifest)
+        const volumes = dep.spec.template.spec.volumes.map((v: any) => v.secret?.secretName).filter(Boolean)
+        assert.ok(!volumes.includes('idp-tls'))
+        assert.ok(!JSON.stringify(dep).includes('server.key'))
+        assert.ok(!JSON.stringify(dep).includes('server.crt'))
+    })
+
+    it('leaves spec.idp unset when no IdP material is supplied', async () =>
+    {
+        const b = await new TenantAdminBootstrap(new FakeRegistrar()).GenerateBootstrap(BootstrapFixture.Input())
+        assert.ok(!b.secrets.Names().includes(TenantAdminBootstrap.IdpCaSecretNameOf('acme')))
+    })
+})
