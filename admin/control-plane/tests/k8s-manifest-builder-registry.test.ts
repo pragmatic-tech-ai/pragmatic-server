@@ -1,31 +1,48 @@
-import { describe, it } from 'node:test'
+import { before, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
 import { InClusterRegistry } from '../in-cluster-registry.js'
 
+const HiveId = 'hive-1'
+const HiveLabel = 'pragmatic/hive'
+const NodePortType = 'NodePort'
+
 describe('K8sManifestBuilder.RenderRegistry', () =>
 {
-    const items = JSON.parse(new K8sManifestBuilder().RenderRegistry('hive-1')).items as any[]
-    const dep = items.find(o => o.kind === 'Deployment')
-    const svc = items.find(o => o.kind === 'Service')
-    const pvc = items.find(o => o.kind === 'PersistentVolumeClaim')
+    let items: any[]
+    let dep: any
+    let svc: any
+    let pvc: any
 
-    it('renders a registry:2 Deployment in pragmatic-system with a /v2/ readiness probe', () =>
+    before(() =>
+    {
+        items = JSON.parse(new K8sManifestBuilder().RenderRegistry(HiveId)).items as any[]
+        dep = items.find(o => o.kind === 'Deployment')
+        svc = items.find(o => o.kind === 'Service')
+        pvc = items.find(o => o.kind === 'PersistentVolumeClaim')
+    })
+
+    it('renders the registry Namespace first, matching the builder system namespace', () =>
     {
         assert.equal(items[0].kind, 'Namespace')
-        assert.equal(dep.metadata.namespace, 'pragmatic-system')
-        assert.equal(dep.metadata.labels['pragmatic/hive'], 'hive-1')
+        assert.equal(items[0].metadata.name, InClusterRegistry.Namespace)
+        assert.equal(K8sManifestBuilder.SystemNamespace, InClusterRegistry.Namespace)
+    })
+    it('renders a registry Deployment in the registry namespace with a /v2/ readiness probe', () =>
+    {
+        assert.equal(dep.metadata.namespace, InClusterRegistry.Namespace)
+        assert.equal(dep.metadata.labels[HiveLabel], HiveId)
         const c = dep.spec.template.spec.containers[0]
-        assert.equal(c.image, 'registry:2')
-        assert.equal(c.readinessProbe.httpGet.path, '/v2/')
-        assert.equal(c.readinessProbe.httpGet.port, 5000)
+        assert.equal(c.image, InClusterRegistry.Image)
+        assert.equal(c.readinessProbe.httpGet.path, InClusterRegistry.V2Path)
+        assert.equal(c.readinessProbe.httpGet.port, InClusterRegistry.ServicePort)
     })
     it('exposes a NodePort Service whose nodePort matches InClusterRegistry.NodePort', () =>
     {
-        assert.equal(svc.spec.type, 'NodePort')
+        assert.equal(svc.spec.type, NodePortType)
         const p = svc.spec.ports[0]
-        assert.equal(p.port, 5000)
-        assert.equal(p.targetPort, 5000)
+        assert.equal(p.port, InClusterRegistry.ServicePort)
+        assert.equal(p.targetPort, InClusterRegistry.ServicePort)
         assert.equal(p.nodePort, InClusterRegistry.NodePort)
     })
     it('backs the registry with a PVC the Deployment mounts', () =>
