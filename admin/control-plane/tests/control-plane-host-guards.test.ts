@@ -48,6 +48,10 @@ class Fixture
     public static readonly ContentType = 'content-type'
     public static readonly EmptyJson = '{}'
     public static readonly HostListRaw = ' a.example , ,b.example,'
+    public static readonly TempPrefix = 'cp-guards-'
+    public static readonly FakeRoot = '/d'
+    public static readonly AttackerWithPort = 'evil.example.com:80'
+    public static readonly EnvHostValue = 'x.example'
 
     public static Send(host: ControlPlaneHost, method: string, path: string, headers: Record<string, string>): Promise<number>
     {
@@ -80,7 +84,7 @@ describe('ControlPlaneHost host guards', () =>
 
     beforeEach(() =>
     {
-        root = mkdtempSync(join(tmpdir(), 'cp-guards-'))
+        root = mkdtempSync(join(tmpdir(), Fixture.TempPrefix))
     })
 
     afterEach(async () =>
@@ -93,6 +97,12 @@ describe('ControlPlaneHost host guards', () =>
     {
         await Start()
         assert.equal(await Fixture.Send(host, Fixture.Get, Fixture.StatePath, { [Fixture.HostHeader]: Fixture.Attacker }), Fixture.Forbidden)
+    })
+
+    it('rejects an attacker Host that carries a port', async () =>
+    {
+        await Start()
+        assert.equal(await Fixture.Send(host, Fixture.Get, Fixture.StatePath, { [Fixture.HostHeader]: Fixture.AttackerWithPort }), Fixture.Forbidden)
     })
 
     it('accepts a loopback Host with no config', async () =>
@@ -118,7 +128,7 @@ describe('ControlPlaneHost host guards', () =>
     it('parses the comma-separated allowed-host env list', () =>
     {
         assert.deepEqual(ControlPlaneServer.ParseHostList(Fixture.HostListRaw), ['a.example', 'b.example'])
-        assert.deepEqual(ControlPlaneServer.ReadOperatorOptions({ PRAGMATIC_ADMIN_ALLOWED_HOSTS: 'x.example' }, '/d').allowedHosts, ['x.example'])
+        assert.deepEqual(ControlPlaneServer.ReadOperatorOptions({ PRAGMATIC_ADMIN_ALLOWED_HOSTS: Fixture.EnvHostValue }, Fixture.FakeRoot).allowedHosts, [Fixture.EnvHostValue])
         assert.deepEqual(ControlPlaneServer.ParseHostList(undefined), [])
     })
 })
