@@ -32,10 +32,13 @@ import { BundleBuilderAdapter, DockerEnvAdapter, UserSeederAdapter } from './doc
 import { EffectiveRegistry } from './effective-registry.js'
 import { EnvironmentPlacement } from './environment-placement.js'
 import { EnvType, Template } from './environment-record.js'
+import type { EnvironmentRecord } from './environment-record.js'
 import { EnvironmentRegistry } from './environment-registry.js'
 import { DockerEnvironmentRuntime } from './environment-runtime.js'
 import { EnvironmentRuntimeResolver } from './environment-runtime-resolver.js'
 import { EnvironmentService } from './environment-service.js'
+import { EnvironmentWorkloadFactory } from './environment-workload.js'
+import { EnvServerSeedSource } from './env-server-seed.js'
 import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import { IdpAdminClient } from './idp-admin-client.js'
 import type { IIdpService, IdpConnection } from './idp-service.js'
@@ -59,6 +62,8 @@ import { SeededTenantDirectory } from './tenant-api/seeded-tenant-directory.js'
 import { UiArtifact } from './ui-artifact.js'
 import { UiArtifactSigner } from './ui-artifact-signer.js'
 import { UiDeployActuator } from './ui-deploy-actuator.js'
+import type { IEnvironmentRecordSink } from './ui-deploy-actuator.js'
+import type { IKeyStore } from './key-store.js'
 
 /** Returns the already-provisioned tenant IdP connection (the in-cluster driver ran in this process). */
 class UiSmokeIdpService implements IIdpService
@@ -146,7 +151,18 @@ export class InClusterUiServingSmoke
     private static readonly ExitCodeKey = 'exitCode'
     private static readonly SuccessExitCode = 0
     private static readonly NoReplicas = 0
-    private static readonly OneReplica = 1
+    private static readonly TamperAppVersion = '1.0.0-tamper'
+    private static readonly EmptyConfigMediaType = 'application/vnd.oci.empty.v1+json'
+    private static readonly ManifestMediaType = 'application/vnd.oci.image.manifest.v1+json'
+    private static readonly SchemaVersion = 2
+    private static readonly EmptyConfigJson = '{}'
+    private static readonly SchemaVersionKey = 'schemaVersion'
+    private static readonly MediaTypeKey = 'mediaType'
+    private static readonly ConfigKey = 'config'
+    private static readonly LayersKey = 'layers'
+    private static readonly DigestKey = 'digest'
+    private static readonly SizeKey = 'size'
+    private static readonly NoTrustRootMessage = 'hive has no trust root; cannot run the tamper case'
     private static readonly PageWaitMs = 60000
     private static readonly NotReadyWindowMs = 120000
     private static readonly NotReadyPollMs = 5000
@@ -184,6 +200,8 @@ export class InClusterUiServingSmoke
 
     private failed = false
     private tempDir: string | undefined
+    private records: IEnvironmentRecordSink | undefined
+    private keys: IKeyStore | undefined
     private readonly exec = new NodeExecFile()
     private readonly kind = new KindCli(this.exec)
     private readonly kubectl = new KubectlCli(InClusterUiServingSmoke.Context, this.exec)
@@ -317,46 +335,65 @@ export class InClusterUiServingSmoke
     }
 
     /**
-     * Tamper case: deploy a second env cleanly, scale it to zero (so no healthy old pod can mask the result), overwrite the pushed
-     * signature companion with a different (well-formed base64, wrong) signature, scale back up, then require that the Deployment
-     * never becomes ready and that the marker is never served.
+     * Tamper case (first-unpack fail-closed): push a VALID artifact under a distinct tamper tag with a GARBAGE signature companion,
+     * point a brand-new env (fresh empty PVC, so the unpacker's idempotent short-circuit cannot apply) at it by hand (NOT through the
+     * actuator, which would re-sign), and require the ui-unpack init container to reject it, the Deployment never to become ready, and
+     * the marker never to be served.
      */
     private async AssertTampered(service: EnvironmentService, context: BrowserContext, created: string[]): Promise<void>
     {
         const S = InClusterUiServingSmoke
-        await service.Create(S.TamperEnvName, Template.DevBlank, EnvType.Development, undefined, S.HiveId)
+        const rec = await service.Create(S.TamperEnvName, Template.DevBlank, EnvType.Development, undefined, S.HiveId)
         created.push(S.TamperEnvName)
+        const hive = S.Hive()
+        const trustRef = hive.trustRootRef
+        if (trustRef === undefined || this.keys === undefined || this.records === undefined)
+        {
+            throw new Error(S.NoTrustRootMessage)
+        }
         const bundle = NorthwindUiBundle.Load()
-        await service.DeployAppToEnvironment(S.TamperEnvName, bundle)
-        this.Expect(S.Labels.TamperEnv, true)
-
-        const namespace = K8sManifestBuilder.NamespaceOf(S.TamperEnvName)
-        const deployment = K8sManifestBuilder.ServerDeploymentOf(S.TamperEnvName)
-        await this.kubectl.Scale(namespace, deployment, S.NoReplicas)
-
         const oci = new OciRegistryClient(S.OciScheme + InClusterRegistry.PushBase())
-        const repo = UiDeployActuator.RepoOf(S.Hive(), bundle.config.appName)
-        const sigTag = UiDeployActuator.ArtifactTagOf(bundle.config.appName, bundle.config.appVersion) + UiArtifact.SignatureTagSuffix
-        await this.TamperSignature(oci, repo, sigTag)
+        const repo = UiDeployActuator.RepoOf(hive, bundle.config.appName)
+        const tamperTag = UiDeployActuator.ArtifactTagOf(bundle.config.appName, S.TamperAppVersion)
+        const packed = UiArtifact.Pack(bundle.config, bundle.files)
+        await oci.PushBlob(repo, packed.configBlob)
+        await oci.PushBlob(repo, packed.layerBlob)
+        const pushedDigest = await oci.PushManifest(repo, tamperTag, packed.manifestBytes)
+        await this.PushBadSignature(oci, repo, tamperTag + UiArtifact.SignatureTagSuffix)
         this.Expect(S.Labels.TamperInjected, true)
 
-        await this.kubectl.Scale(namespace, deployment, S.OneReplica)
+        const publicPem = await this.keys.PublicKey(trustRef)
+        await EnvServerSeedSource.ApplyUiTrust(this.kubectl, S.TamperEnvName, trustRef, Buffer.from(publicPem, S.Utf8))
+        const deployed: EnvironmentRecord = { ...rec, appDeployment: { appName: bundle.config.appName, appVersion: S.TamperAppVersion, repo, artifactTag: tamperTag, manifestDigest: pushedDigest } }
+        await this.records.Put(deployed)
+        const namespace = K8sManifestBuilder.NamespaceOf(S.TamperEnvName)
+        const deployment = K8sManifestBuilder.ServerDeploymentOf(S.TamperEnvName)
+        await this.kubectl.Apply(new K8sManifestBuilder().Render(EnvironmentWorkloadFactory.From(deployed, hive)))
+        await this.kubectl.RolloutRestart(namespace, deployment)
+        this.Expect(S.Labels.TamperEnv, true)
+
         const outcome = await this.ObserveTamperOutcome(namespace, deployment)
         this.Expect(S.Labels.TamperRejected, outcome.rejected)
         this.Expect(S.Labels.TamperNotReady, !outcome.becameReady)
         this.Expect(S.Labels.TamperNotServed, !(await this.ServesMarker(context, S.TamperEnvName)))
     }
 
-    /** Replaces the signature companion manifest with one whose single layer carries a different base64 signature. */
-    private async TamperSignature(oci: OciRegistryClient, repo: string, sigTag: string): Promise<void>
+    /** Mirrors UiDeployActuator.PushSignature, but the signature layer is random bytes, so verification must fail. */
+    private async PushBadSignature(oci: OciRegistryClient, repo: string, sigTag: string): Promise<void>
     {
         const S = InClusterUiServingSmoke
         const encoder = new TextEncoder()
-        const existing = JSON.parse(new TextDecoder().decode(await oci.PullManifest(repo, sigTag))) as { config: unknown; layers: Record<string, unknown>[] }
-        const wrong = encoder.encode(randomBytes(S.TamperSignatureBytes).toString(S.Base64))
-        const wrongDigest = await oci.PushBlob(repo, wrong)
-        const layers = existing.layers.map(layer => ({ ...layer, digest: wrongDigest, size: wrong.byteLength }))
-        await oci.PushManifest(repo, sigTag, encoder.encode(JSON.stringify({ ...existing, layers })))
+        const sigBlob = encoder.encode(randomBytes(S.TamperSignatureBytes).toString(S.Base64))
+        const configBlob = encoder.encode(S.EmptyConfigJson)
+        const configDigest = await oci.PushBlob(repo, configBlob)
+        const sigDigest = await oci.PushBlob(repo, sigBlob)
+        const manifest = {
+            [S.SchemaVersionKey]: S.SchemaVersion,
+            [S.MediaTypeKey]: S.ManifestMediaType,
+            [S.ConfigKey]: { [S.MediaTypeKey]: S.EmptyConfigMediaType, [S.DigestKey]: configDigest, [S.SizeKey]: configBlob.byteLength },
+            [S.LayersKey]: [{ [S.MediaTypeKey]: UiArtifact.SignatureMediaType, [S.DigestKey]: sigDigest, [S.SizeKey]: sigBlob.byteLength }],
+        }
+        await oci.PushManifest(repo, sigTag, encoder.encode(JSON.stringify(manifest)))
     }
 
     /** One bounded poll loop: does the unpack init container reject (non-zero exit), and does the Deployment ever become ready. */
@@ -460,6 +497,7 @@ export class InClusterUiServingSmoke
         await writeFile(join(keysDir, S.SigningKeyRef + FileKeyStore.PublicSuffix), pair.publicKey.export({ type: S.Spki, format: S.Pem }), S.Utf8)
         await writeFile(join(keysDir, S.SigningKeyRef + FileKeyStore.PrivateSuffix), pair.privateKey.export({ type: S.Pkcs8, format: S.Pem }), S.Utf8)
         const keys = new FileKeyStore(keysDir)
+        this.keys = keys
         const hive = S.Hive()
         const signatures = new FileSignatureStore(join(dataRoot, S.SignaturesFileName))
         await new ImageSigner(new DockerImageDigest(), signatures, keys).Sign(EffectiveRegistry.For(hive).ImageRef(S.Image), S.SigningKeyRef)
@@ -467,6 +505,7 @@ export class InClusterUiServingSmoke
         const docker = new DockerEnvAdapter(new DockerEnv())
         const registry = new EnvironmentRegistry(join(dataRoot, S.RegistryFileName), docker)
         await registry.Load()
+        this.records = registry
         const orchestrators = new HiveOrchestratorFactory(S.Context, dataRoot)
         const placement = new EnvironmentPlacement(directory)
         const actuator = new UiDeployActuator(new OciRegistryClient(S.OciScheme + InClusterRegistry.PushBase()), new UiArtifactSigner(keys), keys, orchestrators, new K8sManifestBuilder(), registry)
