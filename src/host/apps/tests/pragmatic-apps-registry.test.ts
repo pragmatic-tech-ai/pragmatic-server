@@ -114,3 +114,37 @@ test('List fails closed when one manifest is malformed', async () =>
     }
     finally { f.Dispose() }
 })
+
+test('List skips an app with a garbage live pointer and still lists the others', async () =>
+{
+    const f = new AppsFixture()
+    try
+    {
+        f.AddApp('demo')
+        mkdirSync(join(f.Dir, 'broken'))
+        writeFileSync(join(f.Dir, 'broken', 'live'), '../..')
+        mkdirSync(join(f.Dir, 'empty'))
+        writeFileSync(join(f.Dir, 'empty', 'live'), '')
+        const list = await f.Registry().List()
+        assert.deepEqual(list.map(a => a.name), ['demo'])
+    }
+    finally
+    {
+        f.Dispose()
+    }
+})
+
+test('List falls back to the legacy manifest when the live pointer is garbage', async () =>
+{
+    const f = new AppsFixture()
+    try
+    {
+        f.AddApp('demo')
+        writeFileSync(join(f.Dir, 'demo', 'live'), '../bad')
+        assert.deepEqual((await f.Registry().List()).map(a => a.name), ['demo'])
+    }
+    finally
+    {
+        f.Dispose()
+    }
+})

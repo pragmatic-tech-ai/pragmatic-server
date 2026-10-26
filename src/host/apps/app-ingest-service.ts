@@ -44,9 +44,11 @@ interface IngestPlan
  * `PragmaticServer`, so ingest is already tenant-scoped. Everything is validated before the first byte is written;
  * an already-present `name@version` is refused (versions are immutable), package and UI files are staged under
  * unique temp names and renamed into place, and `application.json` is renamed in LAST as the commit marker, so a
- * version is never listed or loadable half-ingested. A hard crash mid-commit can still leave non-servable orphan
- * files (no `application.json` for the version means it is not listed). Concurrent ingests of one app are
- * serialized per app (the lock does NOT serialize shared-package writes across DIFFERENT apps: a pathological
+ * version tree is never treated as complete while half-ingested. The `<app>/live` pointer, written after the tree, is the app-level
+ * gate: until it names a version the app serves the previous one. A hard crash mid-commit can still leave
+ * non-servable orphan files (no `application.json` in the version tree means the version is incomplete and never
+ * made live). A same-version retry whose tree is complete but whose pointer is not yet written only rewrites the pointer.
+ * Concurrent ingests of one app are serialized per app (the lock does NOT serialize shared-package writes across DIFFERENT apps: a pathological
  * cross-app race on the same package id@version is acceptable for SP0). Client paths are never trusted.
  *
  * Layout: UI assets and application.json are version-scoped (`<app>/<version>/ui/...`, `<app>/<version>/application.json`),
@@ -59,6 +61,8 @@ export class AppIngestService
     private static readonly ModelFile = 'model.json'
     private static readonly UiDir = 'ui'
     private static readonly LivePointerFile = 'live'
+    private static readonly ReservedVersions: ReadonlySet<string> = new Set(['live', 'ui'])
+    private static readonly ReservedVersionMessage = 'this application version name is reserved'
     private static readonly Separator = '/'
     private static readonly TempPrefix = '.ingest-'
     private static readonly TempSuffix = '.tmp'
@@ -122,8 +126,11 @@ export class AppIngestService
         {
             try
             {
-                await this.AssertImmutable(plan, params)
-                await this.Commit(plan)
+                const resume = await this.AssertImmutable(plan, params)
+                if (!resume)
+                {
+                    await this.Commit(plan)
+                }
                 // The final commit point: the whole version tree is in place, so atomically repoint the app at it.
                 await this.applications.WriteText([appName, AppIngestService.LivePointerFile].join(AppIngestService.Separator), appVersion)
             }
@@ -190,7 +197,7 @@ export class AppIngestService
     }
 
     /** Versions are immutable: refuse an already-deployed name@version and a package version whose content differs. */
-    private async AssertImmutable(plan: IngestPlan, params: CypherAppDeployParamsDto): Promise<void>
+    private async AssertImmutable(plan: IngestPlan, params: CypherAppDeployParamsDto): Promise<boolean>
     {
         if (await this.applications.Exists(plan.marker.path))
         {
@@ -205,7 +212,13 @@ export class AppIngestService
             }
             if ((existing as { version?: unknown } | undefined)?.version === params.appVersion)
             {
-                throw new IngestRejection(AppWriteStatus.Conflict, AppIngestService.VersionExistsMessage)
+                // The marker is renamed in last, so the tree is complete. If the pointer does not yet name this version, a
+                // previous deploy failed at the pointer write: resume by only (re)writing the pointer. Else it is live: Conflict.
+                if (await this.LiveVersion(params.appName) === params.appVersion)
+                {
+                    throw new IngestRejection(AppWriteStatus.Conflict, AppIngestService.VersionExistsMessage)
+                }
+                return true
             }
         }
         for (const file of plan.files)
@@ -220,6 +233,21 @@ export class AppIngestService
                 file.skip = true
             }
         }
+        return false
+    }
+
+    /** The version `<app>/live` names, or undefined when the pointer is absent or unreadable. */
+    private async LiveVersion(appName: string): Promise<string | undefined>
+    {
+        const pointer = [appName, AppIngestService.LivePointerFile].join(AppIngestService.Separator)
+        try
+        {
+            return await this.applications.Exists(pointer) ? (await this.applications.ReadText(pointer)).trim() : undefined
+        }
+        catch
+        {
+            return undefined
+        }
     }
 
     private Validate(params: CypherAppDeployParamsDto): IngestPlan
@@ -232,6 +260,10 @@ export class AppIngestService
         const manifest = params.manifest
         AppIngestService.AssertSegment(params.appName, AppIngestService.UnsafeNameMessage)
         AppIngestService.AssertSegment(params.appVersion, AppIngestService.UnsafeNameMessage)
+        if (AppIngestService.ReservedVersions.has(params.appVersion))
+        {
+            throw new IngestRejection(AppWriteStatus.Invalid, AppIngestService.ReservedVersionMessage)
+        }
         if (manifest.name !== params.appName || manifest.version !== params.appVersion)
         {
             throw new IngestRejection(AppWriteStatus.Invalid, AppIngestService.NameMismatchMessage)

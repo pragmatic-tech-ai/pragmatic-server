@@ -39,6 +39,7 @@ export class AppServingEndpoint
     private static readonly UiDir = 'ui'
     private static readonly ManifestFile = 'application.json'
     private static readonly LivePointerFile = 'live'
+    private static readonly UnsafePointerError = 'live pointer is not a safe version segment'
     private static readonly AmpersandPattern = /&/g
     private static readonly QuotePattern = /"/g
     private static readonly LessThanPattern = /</g
@@ -197,7 +198,7 @@ export class AppServingEndpoint
         const version = (await storage.ReadText(pointer)).trim()
         if (!PragmaticAppManifestParser.IsSafeSegment(version))
         {
-            throw new Error(version)
+            throw new Error(AppServingEndpoint.UnsafePointerError)
         }
         return app + AppServingEndpoint.Separator + version + AppServingEndpoint.Separator
     }

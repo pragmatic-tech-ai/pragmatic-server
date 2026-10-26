@@ -490,3 +490,50 @@ test('deploying a second version leaves the first version tree intact and repoin
         assert.equal((await new PragmaticAppsRegistry(fx.Apps).ApplicationFor('shop')).Manifest.version, '2.0.0')
     })
 })
+
+test('the reserved version names live and ui are rejected', async () =>
+{
+    await IngestFixture.Run(async fx =>
+    {
+        for (const reserved of ['live', 'ui'])
+        {
+            const params = IngestFixture.Params()
+            params.appVersion = reserved
+            params.manifest.version = reserved
+            const result = await fx.Service.Ingest(params)
+            assert.equal(result.status, AppWriteStatus.Invalid)
+            assert.match(result.reason ?? '', /reserved/)
+        }
+        assert.equal(existsSync(join(fx.AppsDir, 'shop')), false)
+    })
+})
+
+class PointerFailingStorage extends RecordingStorage
+{
+    public FailPointer = true
+
+    public override async WriteText(path: string, text: string): Promise<void>
+    {
+        if (this.FailPointer && path === 'shop/live')
+        {
+            throw new Error('pointer boom')
+        }
+        await super.WriteText(path, text)
+    }
+}
+
+test('a same-version retry after a failed live-pointer write resumes by writing only the pointer', async () =>
+{
+    await IngestFixture.Run(async fx =>
+    {
+        const apps = new PointerFailingStorage(fx.AppsDir)
+        const service = new AppIngestService(fx.Packages, apps, fx.Invalidator)
+        assert.equal((await service.Ingest(IngestFixture.Params())).status, AppWriteStatus.Failed)
+        assert.ok(existsSync(join(fx.AppsDir, 'shop', '1.0.0', 'application.json')))
+        assert.equal(existsSync(join(fx.AppsDir, 'shop', 'live')), false)
+        apps.FailPointer = false
+        assert.equal((await service.Ingest(IngestFixture.Params())).status, AppWriteStatus.Applied)
+        assert.equal(readFileSync(join(fx.AppsDir, 'shop', 'live'), 'utf8'), '1.0.0')
+        assert.equal((await service.Ingest(IngestFixture.Params())).status, AppWriteStatus.Conflict)
+    })
+})

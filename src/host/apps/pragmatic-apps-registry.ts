@@ -73,16 +73,26 @@ export class PragmaticAppsRegistry
         }
     }
 
-    /** `<name>/<version>/application.json` when `<name>/live` names a version, else the legacy `<name>/application.json`. */
+    /** `<name>/<version>/application.json` when `<name>/live` names a version, else the legacy `<name>/application.json` (also used when the pointer is corrupt). */
     private async ManifestPath(name: string): Promise<string>
     {
         const pointer = name + PragmaticAppsRegistry.Separator + PragmaticAppsRegistry.LivePointerFile
+        const legacy = name + PragmaticAppsRegistry.Separator + PragmaticAppsRegistry.ManifestFile
         if (!await this.storage.Exists(pointer))
         {
-            return name + PragmaticAppsRegistry.Separator + PragmaticAppsRegistry.ManifestFile
+            return legacy
         }
-        const version = (await this.storage.ReadText(pointer)).trim()
-        PragmaticAppsRegistry.AssertValidName(version)
+        let version: string
+        try
+        {
+            version = (await this.storage.ReadText(pointer)).trim()
+            PragmaticAppsRegistry.AssertValidName(version)
+        }
+        catch
+        {
+            // A corrupt or unreadable pointer must not abort listing: fall back to the legacy manifest (absent => app skipped).
+            return legacy
+        }
         return name + PragmaticAppsRegistry.Separator + version + PragmaticAppsRegistry.Separator + PragmaticAppsRegistry.ManifestFile
     }
 }

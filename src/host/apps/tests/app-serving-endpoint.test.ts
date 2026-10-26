@@ -217,14 +217,18 @@ test('serving falls back to the legacy <app>/ui + <app>/application.json when <a
     }
 })
 
-test('a live pointer that is not a safe segment answers 404', async () =>
+test('a live pointer that is not a safe segment answers 404 even when an unguarded read would succeed', async () =>
 {
     const fixture = new ServeFixture()
-    const host = await fixture.Start()
+    fixture.WriteVersion('2.0.0')
+    const host = await fixture.Start(false)
     try
     {
-        fixture.WriteLive('../x')
+        // Unguarded, `shop/../shop/2.0.0/application.json` normalises to a real, servable manifest.
+        fixture.WriteLive('../shop/2.0.0')
         assert.equal((await ServeFixture.Get(host.Address().port, '/app/t1/shop/')).status, 404)
+        fixture.WriteLive('2.0.0')
+        assert.equal((await ServeFixture.Get(host.Address().port, '/app/t1/shop/')).status, 200)
     }
     finally
     {
