@@ -17,7 +17,6 @@ export class UiSignatureError extends Error
 /** Produces a detached Ed25519 signature binding an app's name, version and manifest digest. */
 export class UiArtifactSigner
 {
-    private static readonly Separator = '\n'
     private static readonly Base64 = 'base64'
 
     public constructor(private readonly keys: IKeyStore)
@@ -27,7 +26,7 @@ export class UiArtifactSigner
     /** The single definition of the signed payload; Verify reuses it so the two cannot diverge. */
     public static CanonicalPayload(appName: string, appVersion: string, manifestDigest: string): string
     {
-        return [appName, appVersion, manifestDigest].join(UiArtifactSigner.Separator)
+        return JSON.stringify([appName, appVersion, manifestDigest])
     }
 
     public async Sign(appName: string, appVersion: string, manifestDigest: string, signingKeyRef: string): Promise<string>

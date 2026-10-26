@@ -94,6 +94,40 @@ describe('UiArtifactSigner / UiArtifactVerifier', () =>
         await assert.rejects(fx.verifier.Verify(UiSignerFixture.App, UiSignerFixture.Version, UiSignerFixture.Digest, sig, UiSignerFixture.KeyB), UiSignatureError)
     })
 
+    it('splice-equivalent tuples yield different payloads and signatures do not cross-verify', async () =>
+    {
+        const d = UiSignerFixture.Digest
+        assert.notEqual(UiArtifactSigner.CanonicalPayload('a\nb', 'c', d), UiArtifactSigner.CanonicalPayload('a', 'b\nc', d))
+        const sig = await fx.signer.Sign('a\nb', 'c', d, UiSignerFixture.KeyA)
+        await assert.rejects(fx.verifier.Verify('a', 'b\nc', d, sig, UiSignerFixture.KeyA), UiSignatureError)
+    })
+
+    it('an empty-string trust root rejects', async () =>
+    {
+        const sig = await fx.Sign()
+        await assert.rejects(fx.verifier.Verify(UiSignerFixture.App, UiSignerFixture.Version, UiSignerFixture.Digest, sig, ''), UiSignatureError)
+    })
+
+    it('an empty or garbage signature rejects', async () =>
+    {
+        for (const bad of ['', '!!!not-base64!!!'])
+        {
+            await assert.rejects(fx.verifier.Verify(UiSignerFixture.App, UiSignerFixture.Version, UiSignerFixture.Digest, bad, UiSignerFixture.KeyA), UiSignatureError)
+        }
+    })
+
+    it('a truncated base64 signature rejects', async () =>
+    {
+        const sig = await fx.Sign()
+        await assert.rejects(fx.verifier.Verify(UiSignerFixture.App, UiSignerFixture.Version, UiSignerFixture.Digest, sig.slice(0, 20), UiSignerFixture.KeyA), UiSignatureError)
+    })
+
+    it('an unknown trust root ref rejects with UiSignatureError', async () =>
+    {
+        const sig = await fx.Sign()
+        await assert.rejects(fx.verifier.Verify(UiSignerFixture.App, UiSignerFixture.Version, UiSignerFixture.Digest, sig, 'no-such-key'), UiSignatureError)
+    })
+
     it('the thrown error names no key material or signature bytes', async () =>
     {
         const sig = await fx.Sign()
