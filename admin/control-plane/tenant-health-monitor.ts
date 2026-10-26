@@ -8,6 +8,12 @@ export interface IHiveLister
     ListHives(): readonly HiveRecord[]
 }
 
+/** The narrow write the monitor needs to push a probed env's liveness into its registry status. EnvironmentService satisfies it. */
+export interface IEnvStatusReconciler
+{
+    ReconcileStatus(environmentName: string, ready: boolean): Promise<void>
+}
+
 /** One environment's last-observed health on a hive: only the fields the diff compares, never a secret. */
 type HealthSnapshot = { ready: boolean; detail: string }
 
@@ -48,7 +54,8 @@ export class TenantHealthMonitor
         private readonly producer: HiveHealthProducer,
         private readonly events: TenantEventBus,
         private readonly intervalMs: number,
-        private readonly probeTimeoutMs: number = TenantHealthMonitor.DefaultProbeTimeoutMs)
+        private readonly probeTimeoutMs: number = TenantHealthMonitor.DefaultProbeTimeoutMs,
+        private readonly reconciler?: IEnvStatusReconciler)
     {
     }
 
@@ -156,8 +163,22 @@ export class TenantHealthMonitor
             {
                 this.events.Emit(hive.tenantId, { type: TenantEventType.HealthChanged, environmentName: dto.environmentName })
             }
+            await this.ReconcileSafely(dto.environmentName, dto.ready)
         }
         this.snapshots.set(hive.id, next)
+    }
+
+    /** Pushes one probed env's liveness to the reconciler; any failure is swallowed (nothing logged) so a tick never aborts. */
+    private async ReconcileSafely(environmentName: string, ready: boolean): Promise<void>
+    {
+        try
+        {
+            await this.reconciler?.ReconcileStatus(environmentName, ready)
+        }
+        catch
+        {
+            // Skip on error, log nothing: the inner error text could carry a secret.
+        }
     }
 
     private HasChanged(before: HealthSnapshot | undefined, after: HealthSnapshot): boolean

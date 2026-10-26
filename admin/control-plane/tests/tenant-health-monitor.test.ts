@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { afterEach, describe, it, mock } from 'node:test'
-import { TenantHealthMonitor } from '../tenant-health-monitor.js'
+import { TenantHealthMonitor, type IEnvStatusReconciler } from '../tenant-health-monitor.js'
 import { TenantEventBus, TenantEventType, type TenantEvent } from '../tenant-api/tenant-events.js'
 import type { HiveHealthDto, HiveHealthProducer } from '../hive-health-producer.js'
 import type { PlatformDirectory } from '../platform-directory.js'
@@ -189,6 +189,27 @@ class Driver
     {
         return (monitor as unknown as { Tick(): Promise<void> }).Tick()
     }
+}
+
+/** Records every `(environmentName, ready)` the monitor reconciles; optionally rejects after recording. */
+class RecordingReconciler implements IEnvStatusReconciler
+{
+    public readonly Calls: Array<{ name: string; ready: boolean }> = []
+
+    public constructor(private readonly rejectFor?: string)
+    {
+    }
+
+    public async ReconcileStatus(environmentName: string, ready: boolean): Promise<void>
+    {
+        this.Calls.push({ name: environmentName, ready })
+        if (this.rejectFor === environmentName)
+        {
+            throw new Error(RecordingReconciler.PutFailed)
+        }
+    }
+
+    private static readonly PutFailed = 'registry put failed'
 }
 
 const Interval = 1000
@@ -587,5 +608,71 @@ describe('TenantHealthMonitor', () =>
         monitor.Stop()
         monitor.Stop()
         assert.ok(true)
+    })
+
+    it('reconciles every probed env with its ready flag', async () =>
+    {
+        const directory = new FakeDirectory()
+        const producer = new FakeProducer()
+        const reconciler = new RecordingReconciler()
+        directory.Hives = [Hives.Bound('h1', 't1')]
+        producer.Script('h1', [Health.Dto('A', true, 'ok'), Health.Dto('B', false, 'scaled to 0')])
+        const monitor = new TenantHealthMonitor(directory.AsDirectory(), producer.AsProducer(), new TenantEventBus(), Interval, 60000, reconciler)
+
+        await Driver.Tick(monitor)
+
+        assert.deepEqual(reconciler.Calls, [{ name: 'A', ready: true }, { name: 'B', ready: false }])
+    })
+
+    it('without a reconciler still probes and emits HealthChanged', async () =>
+    {
+        const directory = new FakeDirectory()
+        const producer = new FakeProducer()
+        const bus = new TenantEventBus()
+        const recorder = new Recorder()
+        recorder.Watch(bus, 't1')
+        directory.Hives = [Hives.Bound('h1', 't1')]
+        producer.Script('h1', [Health.Dto('A', true, 'ok')])
+        const monitor = new TenantHealthMonitor(directory.AsDirectory(), producer.AsProducer(), bus, Interval)
+
+        await Driver.Tick(monitor)
+        producer.Script('h1', [Health.Dto('A', false, 'down')])
+        await Driver.Tick(monitor)
+
+        assert.equal(recorder.For('t1').length, 1)
+    })
+
+    it('a rejecting reconciler does not abort the tick or later ticks', async () =>
+    {
+        const directory = new FakeDirectory()
+        const producer = new FakeProducer()
+        const bus = new TenantEventBus()
+        const recorder = new Recorder()
+        recorder.Watch(bus, 't1')
+        const reconciler = new RecordingReconciler('A')
+        directory.Hives = [Hives.Bound('h1', 't1')]
+        producer.Script('h1', [Health.Dto('A', true, 'ok'), Health.Dto('B', true, 'ok')])
+        const monitor = new TenantHealthMonitor(directory.AsDirectory(), producer.AsProducer(), bus, Interval, 60000, reconciler)
+
+        await Driver.Tick(monitor)
+        producer.Script('h1', [Health.Dto('A', true, 'ok'), Health.Dto('B', false, 'down')])
+        await Driver.Tick(monitor)
+
+        assert.deepEqual(reconciler.Calls.map(c => c.name), ['A', 'B', 'A', 'B'])
+        assert.equal(recorder.For('t1').length, 1)
+    })
+
+    it('does not reconcile an env the producer omitted (RF3)', async () =>
+    {
+        const directory = new FakeDirectory()
+        const producer = new FakeProducer()
+        const reconciler = new RecordingReconciler()
+        directory.Hives = [Hives.Bound('h1', 't1')]
+        producer.Script('h1', [Health.Dto('A', true, 'ok')])
+        const monitor = new TenantHealthMonitor(directory.AsDirectory(), producer.AsProducer(), new TenantEventBus(), Interval, 60000, reconciler)
+
+        await Driver.Tick(monitor)
+
+        assert.deepEqual(reconciler.Calls, [{ name: 'A', ready: true }])
     })
 })

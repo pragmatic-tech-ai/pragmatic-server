@@ -44,12 +44,13 @@ import { EffectiveRegistry } from './effective-registry.js'
 import { EnvironmentDtoMapper } from './environment-dto.js'
 import { EnvironmentPlacement } from './environment-placement.js'
 import { EnvironmentRegistry } from './environment-registry.js'
-import { EnvType, Template } from './environment-record.js'
+import { EnvStatus, EnvType, Template } from './environment-record.js'
 import type { EnvironmentRecord } from './environment-record.js'
 import { DockerEnvironmentRuntime } from './environment-runtime.js'
 import { EnvironmentRuntimeResolver } from './environment-runtime-resolver.js'
 import { EnvironmentService } from './environment-service.js'
 import type { EnvironmentWorkload } from './environment-workload.js'
+import { HiveHealthProducer } from './hive-health-producer.js'
 import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import { DockerImageDigest } from './image-digest.js'
 import { ImageSigner } from './image-signer.js'
@@ -64,6 +65,8 @@ import { HiveBackend, InfraMode } from './platform-records.js'
 import type { HiveRecord, TenantRecord } from './platform-records.js'
 import { FileSignatureStore } from './signature-store.js'
 import { SeededTenantDirectory } from './tenant-api/seeded-tenant-directory.js'
+import { TenantEventBus } from './tenant-api/tenant-events.js'
+import { TenantHealthMonitor } from './tenant-health-monitor.js'
 
 /**
  * In-cluster create does NOT federate (per-env OIDC federation is deferred in-cluster), so no IdP is contacted. This
@@ -182,6 +185,12 @@ export class InClusterEnvCreateSmoke
     private static readonly OrdersInfo = 'northwind orders visible to the env admin: '
     private static readonly Comma = ','
     private static readonly NoSecretMessage = 'provisioned-secrets.json has no entry for '
+    private static readonly ScaleVerb = 'scale'
+    private static readonly ReplicasFlag = '--replicas='
+    private static readonly MonitorIntervalMs = 3000
+    private static readonly MonitorProbeTimeoutMs = 20000
+    private static readonly MonitorPollMs = 1000
+    private static readonly MonitorWaitIntervals = 4
     private static readonly Labels = {
         Create: 'create: dev-blank env bound to the hive; workload applied and rollout Ready',
         Registered: 'create: record carries hiveId/tenantId and is listed',
@@ -204,6 +213,8 @@ export class InClusterEnvCreateSmoke
         StartBack: 'start: server Deployment back to 1 ready replica',
         StartHealthy: 'start: /healthz answers OK through the tunnel',
         StartDataKept: 'start: live-data probe written before Stop survived (PVC data preserved)',
+        MonitorStopped: 'monitor: out-of-band scale to 0 (no Stop call) is reported Stopped within the monitor interval',
+        MonitorRunning: 'monitor: out-of-band scale back to 1 is reported Running within the monitor interval',
         DemoDelete: 'demo: Delete completes',
     }
 
@@ -212,6 +223,8 @@ export class InClusterEnvCreateSmoke
     private failed = false
     private tempDir: string | undefined
     private forward: ChildProcess | undefined
+    private monitor: TenantHealthMonitor | undefined
+    private monitorDeps: { directory: SeededTenantDirectory; orchestrators: HiveOrchestratorFactory; placement: EnvironmentPlacement } | undefined
     private readonly clients: PragmaticClient[] = []
 
     public static async Main(): Promise<void>
@@ -279,6 +292,7 @@ export class InClusterEnvCreateSmoke
             {
                 await this.BestEffortDelete(service, demoName)
             }
+            this.monitor?.Stop()
             this.StopForward()
             await this.BestEffortNamespaceDelete(namespace)
             await this.BestEffortNamespaceDelete(demoNamespace)
@@ -353,6 +367,47 @@ export class InClusterEnvCreateSmoke
         this.StopForward()
         this.Expect(S.Labels.StartHealthy, health.ok)
         this.Expect(S.Labels.StartDataKept, await this.PodHasFile(namespace, deployment, probePath))
+
+        await this.RunMonitorPhase(service, name, namespace, deployment)
+    }
+
+    /**
+     * Monitor phase (OPERATOR-RUN, needs a live cluster): with the TenantHealthMonitor running and the service as its
+     * reconciler, an out-of-band `kubectl scale` (NO Stop/Start call) must flip the listed status within the monitor interval.
+     */
+    private async RunMonitorPhase(service: EnvironmentService, name: string, namespace: string, deployment: string): Promise<void>
+    {
+        const S = InClusterEnvCreateSmoke
+        const deps = this.monitorDeps as NonNullable<typeof this.monitorDeps>
+        this.monitor = new TenantHealthMonitor(deps.directory, new HiveHealthProducer(service, deps.orchestrators, deps.placement), new TenantEventBus(), S.MonitorIntervalMs, S.MonitorProbeTimeoutMs, service)
+        this.monitor.Start()
+        await this.ScaleOutOfBand(namespace, deployment, S.ZeroReplicas)
+        this.Expect(S.Labels.MonitorStopped, await this.WaitListedStatus(service, name, EnvStatus.Stopped))
+        await this.ScaleOutOfBand(namespace, deployment, S.OneReplica)
+        this.Expect(S.Labels.MonitorRunning, await this.WaitListedStatus(service, name, EnvStatus.Running))
+        this.monitor.Stop()
+    }
+
+    private async ScaleOutOfBand(namespace: string, deployment: string, replicas: number): Promise<void>
+    {
+        const S = InClusterEnvCreateSmoke
+        await this.KubectlOut([S.ScaleVerb, S.DeploymentPrefix + deployment, S.ReplicasFlag + String(replicas), S.NamespaceFlag, namespace])
+    }
+
+    /** Polls the plain (non-probing) env list until the named env reports the wanted status, or a few monitor intervals elapse. */
+    private async WaitListedStatus(service: EnvironmentService, name: string, wanted: EnvStatus): Promise<boolean>
+    {
+        const S = InClusterEnvCreateSmoke
+        const deadline = Date.now() + S.MonitorIntervalMs * S.MonitorWaitIntervals
+        while (Date.now() < deadline)
+        {
+            if (service.List().find(r => r.name === name)?.status === wanted)
+            {
+                return true
+            }
+            await new Promise<void>(resolve => setTimeout(resolve, S.MonitorPollMs))
+        }
+        return false
     }
 
     /** Polls the Deployment's readyReplicas (empty output means 0) until it equals the wanted count. */
@@ -479,6 +534,7 @@ export class InClusterEnvCreateSmoke
         await registry.Load()
         const orchestrators = new HiveOrchestratorFactory(S.Context, dataRoot)
         const placement = new EnvironmentPlacement(directory)
+        this.monitorDeps = { directory, orchestrators, placement }
         return new EnvironmentService(
             registry,
             new PortAllocator(S.EnvPortFloor, new NetPortProbe()),
