@@ -94,6 +94,8 @@ export class ControlPlaneServer
     public static readonly MasterKeyFileName = 'master.key'
     private static readonly IdentitySegment = 'identity'
     private static readonly TrustedProxyEnvVar = 'PRAGMATIC_ADMIN_TRUSTED_PROXY'
+    private static readonly AllowedHostsEnvVar = 'PRAGMATIC_ADMIN_ALLOWED_HOSTS'
+    private static readonly ListSeparator = ','
     private static readonly TrueToken = 'true'
     private static readonly OneToken = '1'
     private static readonly TenantPortEnvVar = 'PRAGMATIC_TENANT_ADMIN_PORT'
@@ -166,7 +168,7 @@ export class ControlPlaneServer
         await Promise.all([manifests.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load(), adminClientRegistry.Load()])
         const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, placement, observations)
         const provisioning = new TenantProvisioningService(idpService, directory, conn => new IdpAdminClient(conn))
-        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations, new LoginThrottle(), opts.trustedProxy)
+        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations, new LoginThrottle(), opts.trustedProxy, undefined, undefined, undefined, opts.allowedHosts)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
         const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie, service, new InProcessRolloutClient(deployments), orchestrators, placement,
             masterKey, adminClientRegistry, ControlPlaneServer.ParseSecretTtlHours(process.env[ControlPlaneServer.SecretTtlEnvVar]))
@@ -212,7 +214,7 @@ export class ControlPlaneServer
     }
 
     /** Pure: derives operator-identity compose options and cookie policy from the environment. */
-    public static ReadOperatorOptions(env: NodeJS.ProcessEnv, dataRoot: string): OperatorComposeOptions & { secureCookie: boolean; trustedProxy: boolean }
+    public static ReadOperatorOptions(env: NodeJS.ProcessEnv, dataRoot: string): OperatorComposeOptions & { secureCookie: boolean; trustedProxy: boolean; allowedHosts: readonly string[] }
     {
         const password = env[ControlPlaneServer.OperatorPasswordEnvVar]
         const secure = env[ControlPlaneServer.SecureCookieEnvVar]
@@ -224,7 +226,14 @@ export class ControlPlaneServer
             initialPassword: password === undefined || password === '' ? undefined : password,
             secureCookie: secure === ControlPlaneServer.TrueToken || secure === ControlPlaneServer.OneToken,
             trustedProxy: proxied === ControlPlaneServer.TrueToken || proxied === ControlPlaneServer.OneToken,
+            allowedHosts: ControlPlaneServer.ParseHostList(env[ControlPlaneServer.AllowedHostsEnvVar]),
         }
+    }
+
+    /** Pure: splits a comma-separated host list, trimming blanks and dropping empties. */
+    public static ParseHostList(raw: string | undefined): string[]
+    {
+        return (raw ?? '').split(ControlPlaneServer.ListSeparator).map(h => h.trim()).filter(h => h.length > 0)
     }
 
     /**

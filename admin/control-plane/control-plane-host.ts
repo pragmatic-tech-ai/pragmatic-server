@@ -147,7 +147,7 @@ export class ControlPlaneHost
     private static readonly HttpScheme = 'http://'
     private static readonly BaseUrl = ControlPlaneHost.HttpScheme + ControlPlaneHost.LocalName
     private static readonly PortSeparator = ':'
-    private static readonly AllowedHosts: ReadonlySet<string> = new Set([ControlPlaneHost.LocalName, '127.0.0.1', '[::1]'])
+    private static readonly DefaultAllowedHosts: ReadonlySet<string> = new Set([ControlPlaneHost.LocalName, '127.0.0.1', '[::1]'])
     private static readonly ContentTypeHeader = 'content-type'
     private static readonly CacheControlHeader = 'Cache-Control'
     private static readonly NoStore = 'no-store'
@@ -289,6 +289,7 @@ export class ControlPlaneHost
     private revalidating = false
     private revalidateTimer: ReturnType<typeof setInterval> | undefined
     private readonly staticRootAbs: string
+    private readonly allowedHosts: ReadonlySet<string>
 
     public constructor(
         private readonly service: IEnvironmentService,
@@ -304,8 +305,10 @@ export class ControlPlaneHost
         private readonly trustedProxy: boolean = false,
         private readonly ticketStore: EventsTicketStore = new EventsTicketStore(),
         private readonly registry: OperatorSocketRegistry<WebSocket> = new OperatorSocketRegistry<WebSocket>(),
-        private readonly revalidateIntervalMs: number = ControlPlaneHost.RevalidateIntervalMs)
+        private readonly revalidateIntervalMs: number = ControlPlaneHost.RevalidateIntervalMs,
+        allowedHosts: readonly string[] = [])
     {
+        this.allowedHosts = new Set([...ControlPlaneHost.DefaultAllowedHosts, ...allowedHosts.map(h => h.toLowerCase())])
         this.staticRootAbs = resolve(staticRoot)
     }
 
@@ -356,7 +359,7 @@ export class ControlPlaneHost
     /** The operator events ws: operator host + operator origin + a single-use ticket (the subprotocol), then tracked per session in the registry. */
     private UpgradeOperatorEvents(req: IncomingMessage, socket: Duplex, head: Buffer, wss: WebSocketServer): void
     {
-        if (!ControlPlaneHost.HostAllowed(req) || !ControlPlaneHost.OriginAllowed(req))
+        if (!this.HostAllowed(req) || !ControlPlaneHost.OriginAllowed(req))
         {
             socket.destroy()
             return
@@ -524,7 +527,7 @@ export class ControlPlaneHost
     {
         try
         {
-            if (!ControlPlaneHost.HostAllowed(req))
+            if (!this.HostAllowed(req))
             {
                 PlaneHttp.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.ForbiddenHostMessage })
                 return
@@ -1362,9 +1365,9 @@ export class ControlPlaneHost
         }
     }
 
-    private static HostAllowed(req: IncomingMessage): boolean
+    private HostAllowed(req: IncomingMessage): boolean
     {
-        return PlaneHttp.HostIn(req, ControlPlaneHost.AllowedHosts)
+        return PlaneHttp.HostIn(req, this.allowedHosts)
     }
 
     private static IsPublicApi(path: string): boolean
