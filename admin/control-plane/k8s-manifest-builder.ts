@@ -180,6 +180,8 @@ export class K8sManifestBuilder
     private static readonly TenantAdminDataSize = '256Mi'
     private static readonly TenantAdminBindAll = '0.0.0.0'
     private static readonly TenantAdminUid = 10001
+    /** Non-root uid the server image runs as (docker/Dockerfile `USER 10001`); also the pod fsGroup so the 0440 Secret files are readable and the data PVC is writable. */
+    private static readonly ServerUid = 10001
     private static readonly TenantAdminRootPath = '/'
     private static readonly HostHeader = 'Host'
     private static readonly HttpHeadersKey = 'httpHeaders'
@@ -844,6 +846,7 @@ export class K8sManifestBuilder
                 [K8sManifestBuilder.TemplateKey]: {
                     [K8sManifestBuilder.MetadataKey]: { [K8sManifestBuilder.LabelsKey]: this.Selector(name) },
                     [K8sManifestBuilder.SpecKey]: {
+                        [K8sManifestBuilder.SecurityContextKey]: { [K8sManifestBuilder.FsGroupKey]: K8sManifestBuilder.ServerUid },
                         [K8sManifestBuilder.ContainersKey]: [{
                             [K8sManifestBuilder.NameKey]: K8sManifestBuilder.ServerContainerName,
                             [K8sManifestBuilder.ImageKey]: workload.image,

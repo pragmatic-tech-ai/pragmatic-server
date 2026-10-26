@@ -124,6 +124,13 @@ describe('K8sManifestBuilder server boot wiring', () =>
         assert.deepEqual(c.volumeMounts.map((m: any) => m.name), spec.volumes.map((v: any) => v.name))
     })
 
+    it('sets fsGroup so the non-root server reads the 0440 secrets and writes the data PVC', () =>
+    {
+        const spec = pod(Fixture.Items(false))
+        assert.equal(spec.securityContext.fsGroup, 10001)
+        assert.equal(spec.volumes[1].secret.defaultMode, 0o440)
+    })
+
     it('backs the base dir with a standalone PVC, not volumeClaimTemplates, and keeps the db password ref', () =>
     {
         const items = Fixture.Items(true)
