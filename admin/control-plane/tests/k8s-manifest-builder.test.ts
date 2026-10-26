@@ -1,5 +1,9 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
 import { EnvServerSeedSource } from '../env-server-seed.js'
 import type { EnvironmentWorkload } from '../environment-workload.js'
@@ -19,6 +23,7 @@ class Fixture
     {
         const workload: EnvironmentWorkload = {
             environmentName: 'dev1',
+            environmentId: 'env-dev1-id',
             hiveId: 'hive-a',
             image: 'pragmatic-server:dev',
             serverPort: 8080,
@@ -105,7 +110,7 @@ describe('K8sManifestBuilder server boot wiring', () =>
 {
     const pod = (items: K8sObject[]) => items.find(i => i.kind === 'Deployment')!.spec.template.spec
 
-    it('injects the five boot env vars, three mounts and three volumes', () =>
+    it('injects the five boot env vars, three server mounts and four volumes (incl. init-only seed)', () =>
     {
         const spec = pod(Fixture.Items(false))
         const c = spec.containers[0]
@@ -117,11 +122,11 @@ describe('K8sManifestBuilder server boot wiring', () =>
         assert.equal(val('PRAGMATIC_PROVISIONED_SECRETS_FILE'), '/pragmatic/secrets/provisioned-secrets.json')
         assert.equal(val('PRAGMATIC_DEPLOYMENT_MODE'), 'local')
         assert.deepEqual(c.volumeMounts.map((m: any) => m.mountPath), ['/pragmatic/config', '/pragmatic/secrets', '/pragmatic/data'])
-        assert.equal(spec.volumes.length, 3)
+        assert.equal(spec.volumes.length, 4)
         assert.equal(spec.volumes[0].configMap.name, EnvServerSeedSource.ConfigMapNameOf('dev1'))
         assert.equal(spec.volumes[1].secret.secretName, EnvServerSeedSource.SecretNameOf('dev1'))
         assert.equal(spec.volumes[2].persistentVolumeClaim.claimName, K8sManifestBuilder.ServerDataClaimNameOf('dev1'))
-        assert.deepEqual(c.volumeMounts.map((m: any) => m.name), spec.volumes.map((v: any) => v.name))
+        assert.deepEqual(c.volumeMounts.map((m: any) => m.name), spec.volumes.slice(0, 3).map((v: any) => v.name))
     })
 
     it('sets fsGroup so the non-root server reads the 0440 secrets and writes the data PVC', () =>
@@ -278,5 +283,103 @@ describe('K8sManifestBuilder.RenderIdp', () =>
         assert.equal(env.find((e: any) => e.name === 'PRAGMATIC_IDP_ADMIN_TOKEN_REF').value, 'admin-token')
         assert.equal(env.find((e: any) => e.name === 'PRAGMATIC_IDP_BASE_URL').value, K8sManifestBuilder.IdpBaseUrlOf('t1', 9443))
         assert.ok(!raw.includes('ClusterRole') && !raw.includes('RoleBinding'))
+    })
+})
+
+describe('K8sManifestBuilder server seed init-container', () =>
+{
+    class SeedFixture
+    {
+        public static Pod(): any
+        {
+            const deployment = Fixture.Items(false).find(i => i.kind === 'Deployment')!
+            return deployment.spec.template.spec
+        }
+    }
+
+    it('renders a hardened init-container keyed on environmentId, not environmentName', () =>
+    {
+        const pod = SeedFixture.Pod()
+        assert.equal(pod.initContainers.length, 1)
+        const init = pod.initContainers[0]
+        assert.equal(init.image, pod.containers[0].image)
+        const dest = '/pragmatic/data/env-dev1-id'
+        assert.ok(init.command.includes(dest))
+        assert.ok(!init.command.some((c: string) => c.includes('/pragmatic/data/dev1')))
+        const seedMount = init.volumeMounts.find((m: any) => m.mountPath === '/pragmatic/seed')
+        assert.equal(seedMount.readOnly, true)
+        const dataMount = init.volumeMounts.find((m: any) => m.mountPath === '/pragmatic/data')
+        assert.equal(dataMount.readOnly, undefined)
+        const dataVolume = pod.volumes.find((v: any) => v.name === dataMount.name)
+        assert.equal(dataVolume.persistentVolumeClaim.claimName, K8sManifestBuilder.ServerDataClaimNameOf('dev1'))
+        assert.equal(init.securityContext.runAsUser, 10001)
+        assert.equal(init.securityContext.readOnlyRootFilesystem, true)
+        assert.deepEqual(init.securityContext.capabilities.drop, ['ALL'])
+    })
+
+    it('guards the unpack on the .env-seeded marker', () =>
+    {
+        const init = SeedFixture.Pod().initContainers[0]
+        const script = init.command.find((c: string) => c.includes('.env-seeded'))
+        assert.ok(script)
+        assert.ok(script.includes('existsSync'))
+        assert.equal(init.command[init.command.length - 1], `/pragmatic/seed/${EnvServerSeedSource.SeedKey}`)
+    })
+
+    it('mounts a volume referencing the seed Secret', () =>
+    {
+        const pod = SeedFixture.Pod()
+        const init = pod.initContainers[0]
+        const mount = init.volumeMounts.find((m: any) => m.mountPath === '/pragmatic/seed')
+        const volume = pod.volumes.find((v: any) => v.name === mount.name)
+        assert.equal(volume.secret.secretName, EnvServerSeedSource.SeedSecretNameOf('dev1'))
+    })
+})
+
+describe('K8sManifestBuilder seed script behaviour', () =>
+{
+    class ScriptFixture
+    {
+        public static Run(dest: string, seed: string): ReturnType<typeof spawnSync>
+        {
+            return spawnSync(process.execPath, ['-e', K8sManifestBuilder.ServerSeedScript, dest, seed], { encoding: 'utf8' })
+        }
+
+        public static Seed(root: string, entries: Record<string, string>): string
+        {
+            const map: Record<string, string> = {}
+            for (const [k, v] of Object.entries(entries))
+            {
+                map[k] = Buffer.from(v).toString('base64')
+            }
+            const path = join(root, 'seed.json')
+            writeFileSync(path, JSON.stringify(map))
+            return path
+        }
+    }
+
+    it('unpacks nested entries and writes the marker on first run, then leaves modified files alone', () =>
+    {
+        const root = mkdtempSync(join(tmpdir(), 'seed-'))
+        const dest = join(root, 'data', 'env-1')
+        const seed = ScriptFixture.Seed(root, { 'packages/x/0.1.0/model.json': 'A', 'applications/x/application.json': 'B' })
+        assert.equal(ScriptFixture.Run(dest, seed).status, 0)
+        assert.equal(readFileSync(join(dest, 'packages/x/0.1.0/model.json'), 'utf8'), 'A')
+        assert.equal(readFileSync(join(dest, 'applications/x/application.json'), 'utf8'), 'B')
+        assert.ok(existsSync(join(dest, '.env-seeded')))
+        writeFileSync(join(dest, 'packages/x/0.1.0/model.json'), 'LIVE')
+        assert.equal(ScriptFixture.Run(dest, seed).status, 0)
+        assert.equal(readFileSync(join(dest, 'packages/x/0.1.0/model.json'), 'utf8'), 'LIVE')
+    })
+
+    it('rejects an escaping entry and writes no marker', () =>
+    {
+        const root = mkdtempSync(join(tmpdir(), 'seed-'))
+        const dest = join(root, 'data', 'env-1')
+        const seed = ScriptFixture.Seed(root, { '../escape': 'X' })
+        const result = ScriptFixture.Run(dest, seed)
+        assert.notEqual(result.status, 0)
+        assert.ok(!existsSync(join(dest, '.env-seeded')))
+        assert.ok(!existsSync(join(root, 'data', 'escape')))
     })
 })

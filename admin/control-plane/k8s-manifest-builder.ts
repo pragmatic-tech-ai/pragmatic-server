@@ -209,6 +209,30 @@ export class K8sManifestBuilder
     private static readonly ServerDataVolume = 'data'
     private static readonly ServerDataClaimSuffix = '-data'
     private static readonly PathSeparator = '/'
+    private static readonly ServerSeedMount = '/pragmatic/seed'
+    private static readonly ServerSeedVolume = 'seed'
+    private static readonly ServerSeedContainerName = 'seed'
+    private static readonly NodeBinary = 'node'
+    private static readonly NodeEvalFlag = '-e'
+    /**
+     * Unpacks seed.json ({ relpath: base64 }) into the env data dir (argv[1]) unless the marker exists. Idempotent: a restart never clobbers live state.
+     * Rejects relpaths that escape the data dir.
+     */
+    private static readonly ServerSeedMarkerFile = '.env-seeded'
+    private static readonly ServerSeedFile = 'seed.json'
+    private static readonly ServerSeedEscapeMessage = 'seed path escapes data dir: '
+    public static readonly ServerSeedScript = [
+        "const fs=require('fs'),p=require('path');",
+        `const d=p.resolve(process.argv[1]);const m=p.join(d,'${K8sManifestBuilder.ServerSeedMarkerFile}');`,
+        'if(!fs.existsSync(m)){',
+        "const s=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));",
+        'for(const [r,b] of Object.entries(s)){',
+        'const t=p.resolve(d,r);',
+        `if(t!==d&&!t.startsWith(d+p.sep))throw new Error('${K8sManifestBuilder.ServerSeedEscapeMessage}'+r);`,
+        'fs.mkdirSync(p.dirname(t),{recursive:true});',
+        "fs.writeFileSync(t,Buffer.from(b,'base64'));}",
+        "fs.mkdirSync(d,{recursive:true});fs.writeFileSync(m,'');}",
+    ].join('')
 
     public static readonly ServerContainerName = 'server'
 
@@ -847,6 +871,7 @@ export class K8sManifestBuilder
                     [K8sManifestBuilder.MetadataKey]: { [K8sManifestBuilder.LabelsKey]: this.Selector(name) },
                     [K8sManifestBuilder.SpecKey]: {
                         [K8sManifestBuilder.SecurityContextKey]: { [K8sManifestBuilder.FsGroupKey]: K8sManifestBuilder.ServerUid },
+                        [K8sManifestBuilder.InitContainersKey]: [this.ServerSeedContainer(workload)],
                         [K8sManifestBuilder.ContainersKey]: [{
                             [K8sManifestBuilder.NameKey]: K8sManifestBuilder.ServerContainerName,
                             [K8sManifestBuilder.ImageKey]: workload.image,
@@ -875,10 +900,40 @@ export class K8sManifestBuilder
                                 [K8sManifestBuilder.NameKey]: K8sManifestBuilder.ServerDataVolume,
                                 [K8sManifestBuilder.PersistentVolumeClaimKey]: { [K8sManifestBuilder.ClaimNameKey]: K8sManifestBuilder.ServerDataClaimNameOf(workload.environmentName) },
                             },
+                            this.SecretVolume(K8sManifestBuilder.ServerSeedVolume, EnvServerSeedSource.SeedSecretNameOf(workload.environmentName)),
                         ],
                     },
                 },
             },
+        }
+    }
+
+    /** Unpacks the projected env seed tree into data/<environmentId>/ (NOT environmentName: the server reads by id). Hardened like the tenant-admin seed. */
+    private ServerSeedContainer(workload: EnvironmentWorkload): K8sObject
+    {
+        const dest = this.MountedFile(K8sManifestBuilder.ServerDataMount, workload.environmentId)
+        return {
+            [K8sManifestBuilder.NameKey]: K8sManifestBuilder.ServerSeedContainerName,
+            [K8sManifestBuilder.ImageKey]: workload.image,
+            [K8sManifestBuilder.ImagePullPolicyKey]: K8sManifestBuilder.IfNotPresent,
+            [K8sManifestBuilder.CommandKey]: [K8sManifestBuilder.NodeBinary, K8sManifestBuilder.NodeEvalFlag, K8sManifestBuilder.ServerSeedScript, dest, this.MountedFile(K8sManifestBuilder.ServerSeedMount, K8sManifestBuilder.ServerSeedFile)],
+            [K8sManifestBuilder.SecurityContextKey]: this.ServerSeedSecurityContext(),
+            [K8sManifestBuilder.VolumeMountsKey]: [
+                { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.ServerSeedVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.ServerSeedMount, [K8sManifestBuilder.ReadOnlyKey]: true },
+                { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.ServerDataVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.ServerDataMount },
+            ],
+        }
+    }
+
+    private ServerSeedSecurityContext(): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.RunAsNonRootKey]: true,
+            [K8sManifestBuilder.RunAsUserKey]: K8sManifestBuilder.ServerUid,
+            [K8sManifestBuilder.AllowPrivilegeEscalationKey]: false,
+            [K8sManifestBuilder.CapabilitiesKey]: { [K8sManifestBuilder.DropKey]: [K8sManifestBuilder.AllCapabilities] },
+            [K8sManifestBuilder.SeccompProfileKey]: { [K8sManifestBuilder.TypeKey]: K8sManifestBuilder.RuntimeDefault },
+            [K8sManifestBuilder.ReadOnlyRootFilesystemKey]: true,
         }
     }
 

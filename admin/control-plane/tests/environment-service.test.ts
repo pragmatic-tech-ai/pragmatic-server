@@ -1004,3 +1004,34 @@ test('BOUND Create failure after the secret exists never leaks it in the error, 
         assert.ok(!JSON.stringify(h.Registry.Get('fedbad2')).includes(secret))
     })
 })
+
+class DnsReachedFakeRuntime extends DockerEnvironmentRuntime
+{
+    private static readonly HttpUrl = 'http://svc.ns.svc.cluster.local:8080'
+    private static readonly WsUrl = 'ws://svc.ns.svc.cluster.local:8080/'
+
+    public override PublishesHostPort(): boolean
+    {
+        return false
+    }
+
+    public override async BringUp(): Promise<EnvEndpoint>
+    {
+        return { httpUrl: DnsReachedFakeRuntime.HttpUrl, wsUrl: DnsReachedFakeRuntime.WsUrl }
+    }
+
+    public override async WaitHealthy(): Promise<void>
+    {
+    }
+}
+
+test('Create demo on a DNS-reached (in-cluster) backend does not host-seed users and still persists Running', async () =>
+{
+    const h = await Harness.Make()
+    h.Service = new EnvironmentService(h.Registry, new FakeAllocator(h.Calls, false), SingleBackendResolver.Of(new DnsReachedFakeRuntime(h.Docker, h.Bundle), h.Directory, new HiveOrchestratorFactory()), h.Seeder, h.DataRoot, h.Proxy, h.Directory, h.Idp, c => new IdpAdminClient(c))
+    const rec = await h.Service.Create('demo-ic', Template.DemoContoso, EnvType.Runtime, undefined, 'h1')
+    assert.ok(!h.Calls.includes('seedUsers'))
+    assert.ok(!h.Calls.includes('login'))
+    assert.equal(rec.status, EnvStatus.Running)
+    assert.equal(rec.hostPort, undefined)
+})

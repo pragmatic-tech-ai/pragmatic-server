@@ -76,6 +76,7 @@ class Fixture
     public readonly sut = new KindHiveOrchestrator(this.kind, Fixture.Cluster, this.inner)
     public static readonly Workload: EnvironmentWorkload = {
         environmentName: 'dev',
+        environmentId: 'dev-id',
         hiveId: 'h1',
         image: 'pragmatic-server:dev',
         serverPort: 8080,

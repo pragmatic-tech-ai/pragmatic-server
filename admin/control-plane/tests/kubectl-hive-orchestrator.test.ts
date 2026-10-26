@@ -65,7 +65,7 @@ class Fixture
 
     public static Workload(withDb: boolean): EnvironmentWorkload
     {
-        const w: EnvironmentWorkload = { environmentName: 'dev1', hiveId: 'h', image: 'srv:1', serverPort: 8080, env: {}, secretRefs: ['s'] }
+        const w: EnvironmentWorkload = { environmentName: 'dev1', environmentId: 'dev1-id', hiveId: 'h', image: 'srv:1', serverPort: 8080, env: {}, secretRefs: ['s'] }
         if (withDb)
         {
             w.database = { image: 'postgres:16', user: 'u', database: 'd', passwordRef: 'p' }

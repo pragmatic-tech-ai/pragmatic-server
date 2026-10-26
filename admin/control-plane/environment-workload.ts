@@ -14,6 +14,8 @@ export type WorkloadDatabase = {
 /** Backend-neutral description of what to run for one environment. Carries secret names, never values. */
 export type EnvironmentWorkload = {
     environmentName: string
+    /** The id the server reads its data dir by (data/<environmentId>/); differs from the name for e.g. Demo envs. */
+    environmentId: string
     hiveId: string
     image: string
     serverPort: number
@@ -37,6 +39,7 @@ export class EnvironmentWorkloadFactory
         const secretRefs = [def.environmentId + BundleBuilder.AdminSecretSuffix]
         const workload: EnvironmentWorkload = {
             environmentName: record.name,
+            environmentId: def.environmentId,
             hiveId: hive.id,
             image: EnvironmentWorkloadFactory.ServerImage,
             serverPort: EnvironmentWorkloadFactory.ServerPort,

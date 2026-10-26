@@ -127,7 +127,7 @@ export class InClusterEnvironmentRuntime implements IEnvironmentRuntime
         await InClusterEnvironmentRuntime.Guard(async () =>
         {
             await orchestrator.Apply(workload)
-            await EnvServerSeedSource.ApplyBundle(orchestrator.Kubectl, bundleDir, ctx.record.name, workload.database?.passwordRef)
+            await EnvServerSeedSource.ApplyBundle(orchestrator.Kubectl, bundleDir, ctx.record.name, ctx.def.environmentId, workload.database?.passwordRef)
         })
         return InClusterEnvironmentRuntime.EndpointOf(ctx, workload)
     }

@@ -17,14 +17,25 @@
  * purely from the injected config — no throwaway placement, no plaintext master-key env var.
  * In-cluster create does NOT federate (per-env OIDC federation is deferred in-cluster), so NO IdP is
  * contacted; an UncontactedIdpService guard proves it (any federation attempt would throw and fail the smoke).
+ * SP-HIVE-3b adds a DEMO phase (Template.DemoContoso): Create projects the contoso seed tree (identity, packages,
+ * applications incl. northwind) into the `<env>-env-seed` Secret, the server pod's init-container unpacks it into
+ * `data/contoso/` (marker `.env-seeded`), and over a `kubectl port-forward` tunnel + the tenant WS the smoke asserts
+ * northwind is registered and its graph is queryable (reads succeed under app-private governance). It then writes a
+ * live-data probe file, restarts the pod (init-container re-runs) and asserts the marker and probe survive, i.e. a
+ * restart does NOT re-seed. OPERATOR-RUN ONLY: it needs a live docker-desktop cluster and is never executed by CI.
  * Image provenance fails closed, so the effective image ref is signed with a throwaway Ed25519 key into temp stores
  * that the real factory reads.
  */
+import { spawn } from 'node:child_process'
+import type { ChildProcess } from 'node:child_process'
 import { generateKeyPairSync, randomBytes } from 'node:crypto'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { BundleBuilder } from '../../environments/seed/bundle.js'
+import { NorthwindApp } from '../../environments/seed/compile.js'
 import { DockerEnv } from '../../environments/seed/docker.js'
 import { UserSeeder } from '../../environments/seed/users.js'
 import { AdminProxy, WsAdminConnector } from './admin-proxy.js'
@@ -121,6 +132,46 @@ export class InClusterEnvCreateSmoke
     private static readonly OverallFail = 'OVERALL FAIL'
     private static readonly CrashPrefix = 'smoke crashed: '
     private static readonly EndpointPrefix = 'endpoint='
+    private static readonly DemoEnvPrefix = 'icc-demo-'
+    private static readonly DemoEnvironmentId = 'contoso'
+    private static readonly SecretsFileName = 'provisioned-secrets.json'
+    private static readonly ExecVerb = 'exec'
+    private static readonly RolloutVerb = 'rollout'
+    private static readonly RestartVerb = 'restart'
+    private static readonly StatusVerb = 'status'
+    private static readonly PortForwardVerb = 'port-forward'
+    private static readonly NamespaceFlag = '-n'
+    private static readonly ContainerFlag = '-c'
+    private static readonly ArgSeparator = '--'
+    private static readonly DeploymentPrefix = 'deployment/'
+    private static readonly ShellBinary = 'sh'
+    private static readonly ShellEvalFlag = '-c'
+    private static readonly TestFileCommand = 'test -f '
+    private static readonly WriteProbeCommand = 'echo '
+    private static readonly RedirectOperator = ' > '
+    private static readonly DataMount = '/pragmatic/data'
+    private static readonly SeedMarkerName = '.env-seeded'
+    private static readonly LiveProbeName = 'live-probe.txt'
+    private static readonly LiveProbeValue = 'live-data-must-survive-restart'
+    private static readonly PathSeparator = '/'
+    private static readonly LocalPortBase = 18000
+    private static readonly LocalPortSpread = 1000
+    private static readonly ServerPort = 8080
+    private static readonly PortMapSeparator = ':'
+    private static readonly ForwardingBanner = 'Forwarding from'
+    private static readonly DataEvent = 'data'
+    private static readonly ErrorEvent = 'error'
+    private static readonly Utf8Encoding = 'utf8'
+    private static readonly SigTerm = 'SIGTERM'
+    private static readonly ForwardTimeoutMs = 30000
+    private static readonly ForwardTimeoutMessage = 'port-forward did not become ready in time'
+    private static readonly LoopbackHttp = 'http://127.0.0.1:'
+    private static readonly LoopbackWs = 'ws://127.0.0.1:'
+    private static readonly WsQuerySeparator = '/?environment='
+    private static readonly OrdersQuery = 'MATCH (o:Order) RETURN o'
+    private static readonly OrdersInfo = 'northwind orders visible to the env admin: '
+    private static readonly Comma = ','
+    private static readonly NoSecretMessage = 'provisioned-secrets.json has no entry for '
     private static readonly Labels = {
         Create: 'create: dev-blank env bound to the hive; workload applied and rollout Ready',
         Registered: 'create: record carries hiveId/tenantId and is listed',
@@ -131,12 +182,22 @@ export class InClusterEnvCreateSmoke
         Recreate: 'recreate: same name Create succeeds after Delete (no collision)',
         RecreateReady: 'recreate: namespace exists again',
         FinalDelete: 'cleanup: final Delete completes',
+        DemoCreate: 'demo: Create (Template.DemoContoso) on the hive completes and rolls out Ready',
+        DemoMarker: 'demo: seed marker .env-seeded present under data/contoso (init-container projected the tree)',
+        DemoNorthwindRegistered: 'demo: northwind is registered and lists as an application over the tenant WS',
+        DemoNorthwindQuery: 'demo: northwind graph is queryable (Cypher read succeeds under app-private governance)',
+        DemoLiveWrite: 'demo: live-data probe written into the data dir',
+        DemoNoReseedMarker: 'demo: after restart the .env-seeded marker is intact (no re-seed)',
+        DemoNoReseedLive: 'demo: after restart the live-data probe survived (seed did not clobber live state)',
+        DemoDelete: 'demo: Delete completes',
     }
 
     private static readonly EnvName = InClusterEnvCreateSmoke.EnvPrefix + randomBytes(InClusterEnvCreateSmoke.SuffixBytes).toString(InClusterEnvCreateSmoke.Hex)
 
     private failed = false
     private tempDir: string | undefined
+    private forward: ChildProcess | undefined
+    private readonly clients: PragmaticClient[] = []
 
     public static async Main(): Promise<void>
     {
@@ -151,6 +212,9 @@ export class InClusterEnvCreateSmoke
         const namespace = K8sManifestBuilder.NamespaceOf(S.EnvName)
         let service: EnvironmentService | undefined
         let created = false
+        const demoName = S.DemoEnvPrefix + randomBytes(S.SuffixBytes).toString(S.Hex)
+        const demoNamespace = K8sManifestBuilder.NamespaceOf(demoName)
+        let demoCreated = false
         try
         {
             service = await this.ComposeService()
@@ -180,6 +244,10 @@ export class InClusterEnvCreateSmoke
             await service.Delete(S.EnvName)
             created = false
             this.Expect(S.Labels.FinalDelete, true)
+
+            demoCreated = true
+            await this.RunDemoPhase(service, demoName, demoNamespace)
+            demoCreated = false
         }
         catch (err)
         {
@@ -192,10 +260,144 @@ export class InClusterEnvCreateSmoke
             {
                 await this.BestEffortDelete(service)
             }
+            if (demoCreated && service !== undefined)
+            {
+                await this.BestEffortDelete(service, demoName)
+            }
+            this.StopForward()
             await this.BestEffortNamespaceDelete(namespace)
+            await this.BestEffortNamespaceDelete(demoNamespace)
             await this.CleanupTempStores()
         }
         return !this.failed
+    }
+
+    /**
+     * Demo phase: create a Template.DemoContoso env on the hive, then assert the seeded tree is live in the pod and that a
+     * restart never re-seeds. Reads go through a kubectl port-forward tunnel because the cluster Service DNS is not
+     * resolvable from the operator's machine.
+     */
+    private async RunDemoPhase(service: EnvironmentService, name: string, namespace: string): Promise<void>
+    {
+        const S = InClusterEnvCreateSmoke
+        const record = await service.Create(name, Template.DemoContoso, EnvType.Runtime, undefined, S.HiveId)
+        this.Expect(S.Labels.DemoCreate, record.hiveId === S.HiveId)
+        const deployment = K8sManifestBuilder.ServerDeploymentOf(name)
+        const dataDir = S.DataMount + S.PathSeparator + S.DemoEnvironmentId
+        const markerPath = dataDir + S.PathSeparator + S.SeedMarkerName
+        const probePath = dataDir + S.PathSeparator + S.LiveProbeName
+
+        this.Expect(S.Labels.DemoMarker, await this.PodHasFile(namespace, deployment, markerPath))
+
+        const port = await this.StartForward(namespace, deployment)
+        const client = await this.ConnectAsAdmin(name, port)
+        const apps = await client.ListApplications()
+        this.Expect(S.Labels.DemoNorthwindRegistered, apps.some(a => a.name === NorthwindApp.AppName), apps.map(a => a.name).join(S.Comma))
+        await client.OpenApplication(NorthwindApp.AppName)
+        const orders = await client.CypherQuery(S.OrdersQuery)
+        // The contoso seed tree carries NO northwind instances, so this asserts the read SUCCEEDS (and logs the row count);
+        // requiring rows would fail on a correct system.
+        this.Expect(S.Labels.DemoNorthwindQuery, Array.isArray(orders.items))
+        console.log(S.InfoTag + S.OrdersInfo + String(orders.items.length))
+        await this.CloseClients()
+        this.StopForward()
+
+        await this.PodExec(namespace, deployment, S.WriteProbeCommand + S.LiveProbeValue + S.RedirectOperator + probePath)
+        this.Expect(S.Labels.DemoLiveWrite, await this.PodHasFile(namespace, deployment, probePath))
+
+        const kubectl = new NodeExecFile()
+        await kubectl.Run(S.Kubectl, [S.ContextFlag, S.Context, S.RolloutVerb, S.RestartVerb, S.DeploymentPrefix + deployment, S.NamespaceFlag, namespace])
+        await kubectl.Run(S.Kubectl, [S.ContextFlag, S.Context, S.RolloutVerb, S.StatusVerb, S.DeploymentPrefix + deployment, S.NamespaceFlag, namespace])
+        // A failed restart/rollout throws above; the marker and probe checks below are the real post-restart assertions.
+        this.Expect(S.Labels.DemoNoReseedMarker, await this.PodHasFile(namespace, deployment, markerPath))
+        this.Expect(S.Labels.DemoNoReseedLive, await this.PodHasFile(namespace, deployment, probePath))
+
+        await service.Delete(name)
+        this.Expect(S.Labels.DemoDelete, true)
+    }
+
+    /** Reads the env admin password from the per-env bundle the control plane generated, logs in over the tunnel and binds a client. */
+    private async ConnectAsAdmin(name: string, port: number): Promise<PragmaticClient>
+    {
+        const S = InClusterEnvCreateSmoke
+        const secretsPath = join(this.tempDir as string, name, S.SecretsFileName)
+        const secrets = JSON.parse(await readFile(secretsPath, S.Utf8)) as Record<string, string>
+        const ref = S.DemoEnvironmentId + BundleBuilder.AdminSecretSuffix
+        const password = secrets[ref]
+        if (password === undefined)
+        {
+            throw new Error(S.NoSecretMessage + ref)
+        }
+        const email = BundleBuilder.AdminEmailPrefix + S.DemoEnvironmentId + BundleBuilder.AdminEmailSuffix
+        const token = await new UserSeeder().Login(S.LoopbackHttp + String(port), S.DemoEnvironmentId, email, password)
+        const client = await PragmaticClient.ConnectAsync(S.LoopbackWs + String(port) + S.WsQuerySeparator + encodeURIComponent(S.DemoEnvironmentId), { bearerToken: token })
+        this.clients.push(client)
+        return client
+    }
+
+    private async CloseClients(): Promise<void>
+    {
+        for (const client of this.clients.splice(0))
+        {
+            await client.DisposeAsync()
+        }
+    }
+
+    /** Spawns `kubectl port-forward deployment/<d> <local>:8080` and resolves the local port once kubectl reports it is forwarding. */
+    private StartForward(namespace: string, deployment: string): Promise<number>
+    {
+        const S = InClusterEnvCreateSmoke
+        const local = S.LocalPortBase + Math.floor(Math.random() * S.LocalPortSpread)
+        const child = spawn(S.Kubectl, [S.ContextFlag, S.Context, S.PortForwardVerb, S.DeploymentPrefix + deployment, String(local) + S.PortMapSeparator + String(S.ServerPort), S.NamespaceFlag, namespace])
+        this.forward = child
+        return new Promise<number>((resolve, reject) =>
+        {
+            const timer = setTimeout(() =>
+            {
+                child.kill(S.SigTerm)
+                reject(new Error(S.ForwardTimeoutMessage))
+            }, S.ForwardTimeoutMs)
+            child.stdout?.setEncoding(S.Utf8Encoding)
+            child.stdout?.on(S.DataEvent, (chunk: string) =>
+            {
+                if (chunk.includes(S.ForwardingBanner))
+                {
+                    clearTimeout(timer)
+                    resolve(local)
+                }
+            })
+            child.on(S.ErrorEvent, (e: Error) =>
+            {
+                clearTimeout(timer)
+                reject(e)
+            })
+        })
+    }
+
+    private StopForward(): void
+    {
+        this.forward?.kill(InClusterEnvCreateSmoke.SigTerm)
+        this.forward = undefined
+    }
+
+    private async PodExec(namespace: string, deployment: string, script: string): Promise<string>
+    {
+        const S = InClusterEnvCreateSmoke
+        const out = await new NodeExecFile().Run(S.Kubectl, [S.ContextFlag, S.Context, S.ExecVerb, S.DeploymentPrefix + deployment, S.NamespaceFlag, namespace, S.ContainerFlag, K8sManifestBuilder.ServerContainerName, S.ArgSeparator, S.ShellBinary, S.ShellEvalFlag, script])
+        return out.stdout
+    }
+
+    private async PodHasFile(namespace: string, deployment: string, path: string): Promise<boolean>
+    {
+        try
+        {
+            await this.PodExec(namespace, deployment, InClusterEnvCreateSmoke.TestFileCommand + path)
+            return true
+        }
+        catch
+        {
+            return false
+        }
     }
 
     /** Composes the real service as TenantAdminServer.Compose does, over temp stores and a signed image. */
@@ -290,16 +492,16 @@ export class InClusterEnvCreateSmoke
         }
     }
 
-    private async BestEffortDelete(service: EnvironmentService): Promise<void>
+    private async BestEffortDelete(service: EnvironmentService, name: string = InClusterEnvCreateSmoke.EnvName): Promise<void>
     {
         const S = InClusterEnvCreateSmoke
         try
         {
-            await service.Delete(S.EnvName)
+            await service.Delete(name)
         }
         catch (e)
         {
-            console.log(S.TeardownWarning + S.EnvName + S.DetailSep + KubectlError.Redact(e instanceof Error ? e.message : String(e)))
+            console.log(S.TeardownWarning + name + S.DetailSep + KubectlError.Redact(e instanceof Error ? e.message : String(e)))
         }
     }
 

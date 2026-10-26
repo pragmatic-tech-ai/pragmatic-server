@@ -1,5 +1,5 @@
 import { test } from 'node:test'
-import { mkdtempSync, readFileSync, existsSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, existsSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { BundleBuilderAdapter } from '../docker-env-port.js'
@@ -214,4 +214,38 @@ test('a missing hive throws the fixed hive-missing error', async () =>
 {
     const h = new Harness(false)
     await assert.rejects(() => h.Runtime.BringUp(h.Ctx), InClusterHiveMissingError)
+})
+
+test('BringUp threads def.environmentId (not record.name) into the seed Secret, after the workload Apply', async () =>
+{
+    const h = new Harness()
+    const seededId = 'env-seeded-42'
+    const ctx: EnvRuntimeContext = { def: { name: 'e1', environmentId: seededId } as unknown as EnvDefinition, record: h.Record, bundleDir: h.BundleDir }
+    await h.Runtime.Prepare(ctx)
+    const treeDir = join(h.BundleDir, 'data', seededId, 'contoso')
+    mkdirSync(treeDir, { recursive: true })
+    writeFileSync(join(treeDir, 'marker.txt'), 'seed-bytes')
+    await h.Runtime.BringUp(ctx)
+    assert.deepEqual(h.Orchestrator.Order, ['Apply', 'KubectlApply'])
+    const items = (JSON.parse(h.Orchestrator.Fake.Applied[0]) as { items: { kind: string; metadata: { name: string }; data: Record<string, string> }[] }).items
+    const seed = items.find(i => i.kind === 'Secret' && i.metadata.name === EnvServerSeedSource.SeedSecretNameOf('e1'))
+    assert.ok(seed, 'seed Secret named from the environment name')
+    const tree = JSON.parse(Buffer.from(seed.data[EnvServerSeedSource.SeedKey], 'base64').toString('utf8')) as Record<string, string>
+    assert.ok(Object.keys(tree).includes('contoso/marker.txt'))
+    assert.equal(Buffer.from(tree['contoso/marker.txt'], 'base64').toString('utf8'), 'seed-bytes')
+})
+
+test('BringUp never projects data/<record.name> when it differs from def.environmentId', async () =>
+{
+    const h = new Harness()
+    mkdirSync(join(h.BundleDir, 'data', 'e1'), { recursive: true })
+    writeFileSync(join(h.BundleDir, 'data', 'e1', 'wrong.txt'), 'x')
+    await h.Runtime.Prepare(h.Ctx)
+    await h.Runtime.BringUp(h.Ctx)
+    const items = (JSON.parse(h.Orchestrator.Fake.Applied[0]) as { items: { kind: string; metadata: { name: string }; data: Record<string, string> }[] }).items
+    for (const seed of items.filter(i => i.metadata.name === EnvServerSeedSource.SeedSecretNameOf('e1')))
+    {
+        const tree = JSON.parse(Buffer.from(seed.data[EnvServerSeedSource.SeedKey], 'base64').toString('utf8')) as Record<string, string>
+        assert.ok(!Object.keys(tree).includes('wrong.txt'))
+    }
 })
