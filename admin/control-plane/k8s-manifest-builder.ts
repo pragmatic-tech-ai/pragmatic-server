@@ -117,6 +117,22 @@ export class K8sManifestBuilder
 
     // IdP workload conventions.
     private static readonly IdpBrowserHostPrefix = 'idp-'
+    private static readonly ApiVersionNetworking = 'networking.k8s.io/v1'
+    private static readonly IngressKind = 'Ingress'
+    private static readonly IngressClassNameKey = 'ingressClassName'
+    private static readonly IngressClassNginx = 'nginx'
+    private static readonly AnnotationsKey = 'annotations'
+    private static readonly SslPassthroughAnnotation = 'nginx.ingress.kubernetes.io/ssl-passthrough'
+    private static readonly SslPassthroughValue = 'true'
+    private static readonly HostKey = 'host'
+    private static readonly HttpKey = 'http'
+    private static readonly PathsKey = 'paths'
+    private static readonly PathTypeKey = 'pathType'
+    private static readonly PathTypePrefix = 'Prefix'
+    private static readonly BackendKey = 'backend'
+    private static readonly ServiceKey = 'service'
+    private static readonly PortNumberKey = 'number'
+    private static readonly IdpIngressRootPath = '/'
     private static readonly IdpPrefix = IdpContainerEnv.NamePrefix
     private static readonly IdpContainerName = 'idp'
     private static readonly IdpEntrypoint = ['node', 'dist/bin/pragmatic-idpd.js']
@@ -455,7 +471,7 @@ export class K8sManifestBuilder
         return `${K8sManifestBuilder.IdpBrowserHostPrefix}${tenantId}.${baseDomain}`
     }
 
-    /** Renders one tenant's IdP as an in-cluster workload: Namespace, SA (no API token), PVC, Deployment, ClusterIP Service. Hive-labeled only (no environment label, so the pull agent never selects it); secrets mounted by Secret name, never inline; no RBAC. */
+    /** Renders one tenant's IdP as an in-cluster workload: Namespace, SA (no API token), PVC, Deployment, ClusterIP Service, plus an ssl-passthrough Ingress when baseDomain is set. Hive-labeled only (no environment label, so the pull agent never selects it); secrets mounted by Secret name, never inline; no RBAC. */
     public RenderIdp(spec: IdpWorkloadSpec): string
     {
         const items: K8sObject[] = [
@@ -465,6 +481,10 @@ export class K8sManifestBuilder
             this.IdpDeployment(spec),
             this.IdpServiceObject(spec),
         ]
+        if (spec.baseDomain !== undefined)
+        {
+            items.push(this.IdpIngressObject(spec, spec.baseDomain))
+        }
         return JSON.stringify({
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
             [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ListKind,
@@ -613,6 +633,36 @@ export class K8sManifestBuilder
                 [K8sManifestBuilder.PortsKey]: [{
                     [K8sManifestBuilder.PortKey]: spec.port,
                     [K8sManifestBuilder.TargetPortKey]: spec.port,
+                }],
+            },
+        }
+    }
+
+    private IdpIngressObject(spec: IdpWorkloadSpec, baseDomain: string): K8sObject
+    {
+        const name = K8sManifestBuilder.IdpNameOf(spec.tenantId)
+        const meta = this.IdpMeta(spec, name)
+        meta[K8sManifestBuilder.AnnotationsKey] = { [K8sManifestBuilder.SslPassthroughAnnotation]: K8sManifestBuilder.SslPassthroughValue }
+        return {
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionNetworking,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.IngressKind,
+            [K8sManifestBuilder.MetadataKey]: meta,
+            [K8sManifestBuilder.SpecKey]: {
+                [K8sManifestBuilder.IngressClassNameKey]: K8sManifestBuilder.IngressClassNginx,
+                [K8sManifestBuilder.RulesKey]: [{
+                    [K8sManifestBuilder.HostKey]: K8sManifestBuilder.IdpBrowserHostOf(spec.tenantId, baseDomain),
+                    [K8sManifestBuilder.HttpKey]: {
+                        [K8sManifestBuilder.PathsKey]: [{
+                            [K8sManifestBuilder.PathKey]: K8sManifestBuilder.IdpIngressRootPath,
+                            [K8sManifestBuilder.PathTypeKey]: K8sManifestBuilder.PathTypePrefix,
+                            [K8sManifestBuilder.BackendKey]: {
+                                [K8sManifestBuilder.ServiceKey]: {
+                                    [K8sManifestBuilder.NameKey]: name,
+                                    [K8sManifestBuilder.PortKey]: { [K8sManifestBuilder.PortNumberKey]: spec.port },
+                                },
+                            },
+                        }],
+                    },
                 }],
             },
         }

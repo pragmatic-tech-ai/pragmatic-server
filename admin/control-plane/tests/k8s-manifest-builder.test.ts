@@ -253,6 +253,32 @@ describe('K8sManifestBuilder.RenderIdp', () =>
         assert.equal(items[0].metadata.name, 'pragmatic-idp-t1')
     })
 
+    it('with baseDomain emits exactly one ssl-passthrough nginx Ingress routing the browser host to the IdP Service', () =>
+    {
+        const items = JSON.parse(new K8sManifestBuilder().RenderIdp({ ...Spec, baseDomain: 'd.localtest' })).items
+        const ingresses = items.filter((i: any) => i.kind === 'Ingress')
+        assert.equal(ingresses.length, 1)
+        const ing = ingresses[0]
+        assert.equal(ing.apiVersion, 'networking.k8s.io/v1')
+        assert.equal(ing.metadata.namespace, 'pragmatic-idp-t1')
+        assert.equal(ing.metadata.annotations['nginx.ingress.kubernetes.io/ssl-passthrough'], 'true')
+        assert.equal(ing.spec.ingressClassName, 'nginx')
+        assert.equal(ing.spec.rules.length, 1)
+        assert.equal(ing.spec.rules[0].host, 'idp-t1.d.localtest')
+        const path = ing.spec.rules[0].http.paths[0]
+        assert.equal(path.path, '/')
+        assert.equal(path.pathType, 'Prefix')
+        assert.equal(path.backend.service.name, 'pragmatic-idp-t1')
+        assert.equal(path.backend.service.port.number, 9443)
+    })
+
+    it('without baseDomain emits no Ingress', () =>
+    {
+        const items = Items()
+        assert.ok(items.every((i: any) => i.kind !== 'Ingress'))
+        assert.equal(items.length, 5)
+    })
+
     it('IdpBrowserUrlOf is the idp-<tenant>.<baseDomain> browser origin, distinct from the internal base', () =>
     {
         assert.equal(K8sManifestBuilder.IdpBrowserUrlOf('t1', 'd.localtest'), 'https://idp-t1.d.localtest')
