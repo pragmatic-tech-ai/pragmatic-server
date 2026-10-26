@@ -26,6 +26,7 @@ export class ControlPlaneClient
     private static readonly SessionRoute = '/api/session'
     private static readonly CredentialsMode = 'same-origin'
     private static readonly EventsRoute = '/api/events'
+    private static readonly EventsTicketRoute = '/api/events-ticket'
     private static readonly PathSeparator = '/'
     private static readonly GraphsLeaf = 'graphs'
     private static readonly PromoteLeaf = 'promote'
@@ -47,6 +48,7 @@ export class ControlPlaneClient
 
     private readonly handlers: Array<() => void> = []
     private socket: WebSocket | undefined
+    private connecting = false
 
     public async ListEnvironments(): Promise<EnvironmentDto[]>
     {
@@ -143,17 +145,38 @@ export class ControlPlaneClient
     public OnChanged(handler: () => void): void
     {
         this.handlers.push(handler)
-        if (this.socket !== undefined)
+        if (this.socket !== undefined || this.connecting)
         {
             return
         }
         this.Connect()
     }
 
+    // Fetches a single-use ticket, then opens the socket with it as the subprotocol; no ticket, no socket (retried via the reconnect delay).
     private Connect(): void
     {
+        this.connecting = true
+        void this.OpenWithTicket().finally(() => { this.connecting = false })
+    }
+
+    private async OpenWithTicket(): Promise<void>
+    {
+        let ticket: string
+        try
+        {
+            ticket = (await this.Send<{ ticket: string }>(ControlPlaneClient.EventsTicketRoute, undefined)).ticket
+        }
+        catch
+        {
+            this.ScheduleReconnect()
+            return
+        }
+        if (this.handlers.length === 0 || this.socket !== undefined)
+        {
+            return
+        }
         const scheme = location.protocol === ControlPlaneClient.HttpsScheme ? ControlPlaneClient.WssScheme : ControlPlaneClient.WsScheme
-        const socket = new WebSocket(scheme + ControlPlaneClient.SchemeSuffix + location.host + ControlPlaneClient.EventsRoute)
+        const socket = new WebSocket(scheme + ControlPlaneClient.SchemeSuffix + location.host + ControlPlaneClient.EventsRoute, [ticket])
         socket.addEventListener(ControlPlaneClient.MessageEvent, (ev: MessageEvent) => { this.OnMessage(String(ev.data)) })
         socket.addEventListener(ControlPlaneClient.CloseEvent, () => { this.OnClosed(socket) })
         this.socket = socket
@@ -167,9 +190,14 @@ export class ControlPlaneClient
             return
         }
         this.socket = undefined
+        this.ScheduleReconnect()
+    }
+
+    private ScheduleReconnect(): void
+    {
         setTimeout(() =>
         {
-            if (this.socket === undefined && this.handlers.length > 0)
+            if (this.socket === undefined && !this.connecting && this.handlers.length > 0)
             {
                 this.Connect()
             }

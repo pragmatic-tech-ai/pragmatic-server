@@ -302,9 +302,16 @@ class Harness
     private static readonly SettleMs = 100
     private static readonly PollLimit = 300
 
-    public static async OpenEvents(host: ControlPlaneHost): Promise<WebSocket>
+    public static async Ticket(host: ControlPlaneHost): Promise<string>
     {
-        const ws = new WebSocket(`ws://127.0.0.1:${host.Address().port}/api/events`, { headers: { Cookie: Harness.AuthCookie } })
+        const r = await Harness.Send(host, 'GET', '/api/events-ticket')
+        assert.equal(r.status, 200)
+        return (JSON.parse(r.body) as { ticket: string }).ticket
+    }
+
+    public static async OpenEvents(host: ControlPlaneHost, headers: Record<string, string> = {}): Promise<WebSocket>
+    {
+        const ws = new WebSocket(`ws://127.0.0.1:${host.Address().port}/api/events`, [await Harness.Ticket(host)], { headers })
         await new Promise<void>((res, rej) => { ws.once('open', () => res()); ws.once('error', rej) })
         return ws
     }
@@ -526,8 +533,7 @@ describe('ControlPlaneHost', () =>
     it('broadcasts environments-changed to ws clients', async () =>
     {
         const addr = host.Address()
-        const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/api/events`, { headers: { Cookie: Harness.AuthCookie } })
-        await new Promise<void>((res, rej) => { ws.once('open', () => res()); ws.once('error', rej) })
+        const ws = await Harness.OpenEvents(host)
         const msg = new Promise<string>(res => ws.once('message', d => res(d.toString())))
         fake.EmitChange()
         assert.deepEqual(JSON.parse(await msg), { type: 'environments-changed' })
@@ -629,26 +635,44 @@ describe('ControlPlaneHost', () =>
     it('enforces same-origin on the ws upgrade', async () =>
     {
         const addr = host.Address()
-        const evil = new WebSocket(`ws://127.0.0.1:${addr.port}/api/events`, { headers: { Cookie: Harness.AuthCookie, Origin: 'http://evil.example' } })
+        const evil = new WebSocket(`ws://127.0.0.1:${addr.port}/api/events`, [await Harness.Ticket(host)], { headers: { Origin: 'http://evil.example' } })
         const evilOpened = await new Promise<boolean>(res => { evil.once('open', () => res(true)); evil.once('error', () => res(false)); evil.once('close', () => res(false)) })
         assert.equal(evilOpened, false)
         evil.terminate()
-        const same = new WebSocket(`ws://127.0.0.1:${addr.port}/api/events`, { headers: { Cookie: Harness.AuthCookie, Origin: `http://127.0.0.1:${addr.port}` } })
+        const same = new WebSocket(`ws://127.0.0.1:${addr.port}/api/events`, [await Harness.Ticket(host)], { headers: { Origin: `http://127.0.0.1:${addr.port}` } })
         const sameOpened = await new Promise<boolean>(res => { same.once('open', () => res(true)); same.once('error', () => res(false)); same.once('close', () => res(false)) })
         assert.equal(sameOpened, true)
         same.close()
     })
 
-    it('rejects ws upgrades without a valid session cookie', async () =>
+    it('rejects ws upgrades without a valid single-use ticket (cookie alone is not enough)', async () =>
     {
-        const addr = host.Address()
-        for (const headers of [{}, { Cookie: 'cp_session=bogus' }])
+        const url = `ws://127.0.0.1:${host.Address().port}/api/events`
+        const opens = async (ws: WebSocket): Promise<boolean> =>
         {
-            const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/api/events`, { headers })
             const opened = await new Promise<boolean>(res => { ws.once('open', () => res(true)); ws.once('error', () => res(false)); ws.once('close', () => res(false)) })
-            assert.equal(opened, false)
             ws.terminate()
+            return opened
         }
+        assert.equal(await opens(new WebSocket(url, { headers: { Cookie: Harness.AuthCookie } })), false)
+        assert.equal(await opens(new WebSocket(url, ['bogus'])), false)
+        const ticket = await Harness.Ticket(host)
+        assert.equal(await opens(new WebSocket(url, [ticket])), true)
+        assert.equal(await opens(new WebSocket(url, [ticket])), false)
+    })
+
+    it('events-ticket requires a session', async () =>
+    {
+        assert.equal((await Harness.Anon(host, 'GET', '/api/events-ticket')).status, 401)
+    })
+
+    it('logout closes the operator event sockets of that session', async () =>
+    {
+        const ws = await Harness.OpenEvents(host)
+        const closed = new Promise<void>(res => ws.once('close', () => res()))
+        assert.equal((await Harness.Send(host, 'POST', '/api/logout', '{}')).status, 200)
+        await closed
+        assert.equal(ws.readyState, WebSocket.CLOSED)
     })
 
     it('POST graphs with name+description returns 201 and a leak-free GraphDto', async () =>

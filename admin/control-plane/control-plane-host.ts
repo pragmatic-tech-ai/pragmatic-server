@@ -23,6 +23,8 @@ import type { TenantProvisioningService } from './tenant-provisioning-service.js
 import { InvalidEnvironmentNameError } from './template-catalog.js'
 import type { IOperatorIdentity } from './operator-identity.js'
 import { SessionCookie } from './session-cookie.js'
+import { EventsTicketStore } from './events-ticket-store.js'
+import { OperatorSocketRegistry } from './operator-socket-registry.js'
 import { AdminProxyError, AdminProxyErrorKind, type AdminSnapshot } from './admin-proxy.js'
 import {
     ClientHasTenantsError,
@@ -203,6 +205,9 @@ export class ControlPlaneHost
     private static readonly RegistryInvalidMessage = 'registry must be { mode, endpoint?, credentialRef? } with a valid mode; mode one of: '
     private static readonly LoginPath = '/api/login'
     private static readonly SessionPath = '/api/session'
+    private static readonly EventsTicketPath = '/api/events-ticket'
+    private static readonly ProtocolHeader = 'sec-websocket-protocol'
+    private static readonly RevalidateIntervalMs = 30_000
     private static readonly LogoutPath = '/api/logout'
     private static readonly SetCookieHeader = 'set-cookie'
     private static readonly CookieHeader = 'cookie'
@@ -279,8 +284,8 @@ export class ControlPlaneHost
 
     private httpServer: HttpServer | undefined
     private wsServer: WebSocketServer | undefined
-    private readonly clients = new Set<WebSocket>()
     private changeSubscription: (() => void) | undefined
+    private revalidateTimer: ReturnType<typeof setInterval> | undefined
     private readonly staticRootAbs: string
 
     public constructor(
@@ -294,14 +299,16 @@ export class ControlPlaneHost
         private readonly provisioning: TenantProvisioningService,
         private readonly observations: HiveObservationRegistry,
         private readonly loginThrottle: LoginThrottle = new LoginThrottle(),
-        private readonly trustedProxy: boolean = false)
+        private readonly trustedProxy: boolean = false,
+        private readonly ticketStore: EventsTicketStore = new EventsTicketStore(),
+        private readonly registry: OperatorSocketRegistry = new OperatorSocketRegistry())
     {
         this.staticRootAbs = resolve(staticRoot)
     }
 
     public Listen(port: number, host: string): Promise<void>
     {
-        const wss = new WebSocketServer({ noServer: true })
+        const wss = new WebSocketServer({ noServer: true, handleProtocols: protocols => protocols.values().next().value as string })
         const server = createServer((req, res) =>
         {
             void this.Handle(req, res)
@@ -312,6 +319,7 @@ export class ControlPlaneHost
         })
         this.httpServer = server
         this.wsServer = wss
+        this.StartRevalidation()
         return new Promise((res, rej) =>
         {
             server.once('error', rej)
@@ -335,7 +343,7 @@ export class ControlPlaneHost
         socket.destroy()
     }
 
-    /** The operator events ws: operator host + operator origin + operator session, then tracked in `clients`. */
+    /** The operator events ws: operator host + operator origin + a single-use ticket (the subprotocol), then tracked per session in the registry. */
     private UpgradeOperatorEvents(req: IncomingMessage, socket: Duplex, head: Buffer, wss: WebSocketServer): void
     {
         if (!ControlPlaneHost.HostAllowed(req) || !ControlPlaneHost.OriginAllowed(req))
@@ -343,38 +351,81 @@ export class ControlPlaneHost
             socket.destroy()
             return
         }
-        void this.Authenticated(req).then(ok =>
+        const ticket = ControlPlaneHost.SingleProtocol(req)
+        const token = ticket === undefined ? null : this.ticketStore.Redeem(ticket)
+        if (token === null)
         {
-            if (!ok)
+            socket.destroy()
+            return
+        }
+        void this.operator.ValidateToken(token).then(principal =>
+        {
+            if (principal === null)
             {
                 socket.destroy()
                 return
             }
             wss.handleUpgrade(req, socket, head, ws =>
             {
-                this.AddClient(ws)
-                ws.on(ControlPlaneHost.CloseEvent, () => this.RemoveClient(ws))
-                ws.on(ControlPlaneHost.ErrorEvent, () => this.RemoveClient(ws))
+                this.AddClient(token, ws)
+                ws.on(ControlPlaneHost.CloseEvent, () => this.OnClientGone())
+                ws.on(ControlPlaneHost.ErrorEvent, () => ws.terminate())
             })
         }, () => socket.destroy())
     }
 
-    /** Tracks an operator ws client; the first one subscribes to environment lifecycle changes (made on any plane) to push them. */
-    private AddClient(ws: WebSocket): void
+    /** The lone Sec-WebSocket-Protocol value (the ticket), or undefined when absent, empty or multi-valued. */
+    private static SingleProtocol(req: IncomingMessage): string | undefined
     {
-        this.clients.add(ws)
+        const raw = req.headers[ControlPlaneHost.ProtocolHeader]
+        if (typeof raw !== 'string')
+        {
+            return undefined
+        }
+        const value = raw.trim()
+        return value.length === 0 || value.includes(ControlPlaneHost.ForwardedSeparator) ? undefined : value
+    }
+
+    /** Tracks an operator ws client; the first one subscribes to environment lifecycle changes (made on any plane) to push them. */
+    private AddClient(token: string, ws: WebSocket): void
+    {
+        this.registry.Add(token, ws)
         if (this.changeSubscription === undefined)
         {
             this.changeSubscription = this.service.OnChanged(() => this.Broadcast(ControlPlaneHost.Changed()))
         }
     }
 
-    private RemoveClient(ws: WebSocket): void
+    private OnClientGone(): void
     {
-        this.clients.delete(ws)
-        if (this.clients.size === 0)
+        if (this.registry.Size() === 0)
         {
             this.ReleaseChangeSubscription()
+        }
+    }
+
+    /** Periodically closes sockets whose session token no longer validates (expired or revoked elsewhere). */
+    private StartRevalidation(): void
+    {
+        this.revalidateTimer = setInterval(() => { void this.RevalidateSockets() }, ControlPlaneHost.RevalidateIntervalMs)
+        this.revalidateTimer.unref()
+    }
+
+    private async RevalidateSockets(): Promise<void>
+    {
+        for (const token of this.registry.Tokens())
+        {
+            try
+            {
+                if ((await this.operator.ValidateToken(token)) === null)
+                {
+                    this.registry.CloseToken(token)
+                }
+            }
+            catch
+            {
+                // a transient validation failure must not kill the sweep; retry next tick
+            }
         }
     }
 
@@ -386,11 +437,16 @@ export class ControlPlaneHost
 
     public async Close(): Promise<void>
     {
-        for (const c of this.clients)
+        if (this.revalidateTimer !== undefined)
         {
-            c.terminate()
+            clearInterval(this.revalidateTimer)
+            this.revalidateTimer = undefined
         }
-        this.clients.clear()
+        for (const c of [...this.registry.All()])
+        {
+            c.terminate?.()
+        }
+        this.registry.Clear()
         this.ReleaseChangeSubscription()
         const wss = this.wsServer
         const server = this.httpServer
@@ -487,6 +543,19 @@ export class ControlPlaneHost
             }
             return true
         }
+        if (path === ControlPlaneHost.EventsTicketPath && method === PlaneHttp.MethodGet)
+        {
+            const token = SessionCookie.Read(req.headers[ControlPlaneHost.CookieHeader])
+            if (token === undefined || token.length === 0 || (await this.operator.ValidateToken(token)) === null)
+            {
+                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusUnauthorized, { error: ControlPlaneHost.UnauthenticatedMessage })
+            }
+            else
+            {
+                PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ticket: this.ticketStore.Mint(token) })
+            }
+            return true
+        }
         if (path === ControlPlaneHost.LogoutPath && method === PlaneHttp.MethodPost)
         {
             const token = SessionCookie.Read(req.headers[ControlPlaneHost.CookieHeader])
@@ -495,6 +564,10 @@ export class ControlPlaneHost
                 await this.operator.Revoke(token)
             }
             res.setHeader(ControlPlaneHost.SetCookieHeader, SessionCookie.BuildClearing(this.secureCookie))
+            if (token !== undefined)
+            {
+                this.registry.CloseToken(token)
+            }
             PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ok: true })
             return true
         }
@@ -1229,11 +1302,12 @@ export class ControlPlaneHost
     private Broadcast(event: ChangedEvent): void
     {
         const text = JSON.stringify(event)
-        for (const c of this.clients)
+        for (const c of this.registry.All())
         {
-            if (c.readyState === WebSocket.OPEN)
+            const ws = c as WebSocket
+            if (ws.readyState === WebSocket.OPEN)
             {
-                c.send(text)
+                ws.send(text)
             }
         }
     }
