@@ -179,7 +179,7 @@ export class IdpHost
             throw new Error(IdpHost.NotHttpsMessage);
         }
         this.baseUrl = baseUrl.replace(/\/+$/, '');
-        this.internalBaseUrl = internalBaseUrl === undefined ? this.baseUrl : internalBaseUrl.replace(/\/+$/, '');
+        this.internalBaseUrl = internalBaseUrl !== undefined && internalBaseUrl.trim().length > 0 ? internalBaseUrl.replace(/\/+$/, '') : this.baseUrl;
         this.authorize = new AuthorizeEndpoint(realms, clients, codes, sso, secureCookie);
         this.token = new TokenEndpoint(this.baseUrl, signingKey, codes, clients);
     }

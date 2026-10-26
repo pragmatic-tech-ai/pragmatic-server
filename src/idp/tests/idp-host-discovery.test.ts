@@ -35,6 +35,7 @@ class HostFixture
     public static readonly InternalBaseUrl = 'https://idp.hive.svc.cluster.local:8443';
     public static readonly HostSource = '../idp-host.ts';
     public static readonly TokenCtorSnippet = 'new TokenEndpoint(this.baseUrl,';
+    public static readonly TokenCtorBadSnippet = 'new TokenEndpoint(this.internalBaseUrl';
 
     public static async WithHost(body: (host: IdpHost, key: IdpSigningKey, caPem: string) => Promise<void>, internalBaseUrl?: string): Promise<void>
     {
@@ -118,6 +119,18 @@ test('token iss stays derived from the browser baseUrl, never the internal base'
 {
     const src = fs.readFileSync(new URL(HostFixture.HostSource, import.meta.url), HostFixture.Utf8);
     assert.ok(src.includes(HostFixture.TokenCtorSnippet));
+    assert.ok(!src.includes(HostFixture.TokenCtorBadSnippet));
+});
+
+test('an empty internal base falls back to the browser base (no relative endpoints)', async () =>
+{
+    await HostFixture.WithHost(async (host, _key, ca) =>
+    {
+        const r = await HostFixture.Get(host, ca, `/${HostFixture.TenantId}/.well-known/openid-configuration`);
+        const issuer = `${HostFixture.BaseUrl}/${HostFixture.TenantId}`;
+        assert.equal(r.body.token_endpoint, `${issuer}/token`);
+        assert.equal(r.body.jwks_uri, `${issuer}/jwks`);
+    }, '');
 });
 
 test('jwks serves the signing public key', async () =>
