@@ -16,7 +16,7 @@ import type { HiveRecord } from '../platform-records.js'
 import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
-import { EnvLogsUnavailableInClusterError, EnvStopUnavailableInClusterError, InClusterEnvironmentRuntime, InClusterHiveMissingError, InClusterOperationFailedError } from '../in-cluster-environment-runtime.js'
+import { EnvLogsUnavailableInClusterError, EnvStopUnavailableInClusterError, InClusterEnvironmentRuntime, InClusterHiveMissingError, InClusterOperationFailedError, InClusterBundleMissingError } from '../in-cluster-environment-runtime.js'
 
 class Fx
 {
@@ -115,6 +115,14 @@ test('Start applies then waits healthy', async () =>
     await h.Runtime.Prepare(h.Ctx)
     await h.Runtime.Start(h.Ctx)
     assert.deepEqual(h.Orchestrator.Calls.map(c => c.m), ['Apply', 'WaitHealthy'])
+})
+
+test('BringUp without a bundle dir throws the named missing-bundle error before touching the cluster', async () =>
+{
+    const h = new Harness()
+    const ctx: EnvRuntimeContext = { def: Fx.Def, record: h.Record, bundleDir: undefined }
+    await assert.rejects(() => h.Runtime.BringUp(ctx), InClusterBundleMissingError)
+    assert.equal(h.Orchestrator.Calls.length, 0)
 })
 
 test('Teardown calls orchestrator Teardown; RemoveVolume is a no-op', async () =>

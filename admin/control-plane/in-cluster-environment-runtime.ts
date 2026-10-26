@@ -50,6 +50,18 @@ export class EnvStopUnavailableInClusterError extends Error
 }
 
 /** A hive-bound record whose hive is not in the directory. */
+export class InClusterBundleMissingError extends Error
+{
+    private static readonly DefaultMessage = 'The boot bundle for this in-cluster environment is not available; it must be prepared before bring-up.'
+    private static readonly ErrorName = 'InClusterBundleMissingError'
+
+    public constructor()
+    {
+        super(InClusterBundleMissingError.DefaultMessage)
+        this.name = InClusterBundleMissingError.ErrorName
+    }
+}
+
 export class InClusterHiveMissingError extends Error
 {
     private static readonly DefaultMessage = 'The hive for this environment was not found.'
@@ -109,10 +121,15 @@ export class InClusterEnvironmentRuntime implements IEnvironmentRuntime
     public async BringUp(ctx: EnvRuntimeContext): Promise<EnvEndpoint>
     {
         const { orchestrator, workload } = this.Resolve(ctx)
+        const bundleDir = ctx.bundleDir
+        if (bundleDir === undefined)
+        {
+            throw new InClusterBundleMissingError()
+        }
         await InClusterEnvironmentRuntime.Guard(async () =>
         {
             await orchestrator.Apply(workload)
-            const seed = new EnvServerSeedSource(ctx.bundleDir!, ctx.record.name, workload.database?.passwordRef)
+            const seed = new EnvServerSeedSource(bundleDir, ctx.record.name, workload.database?.passwordRef)
             const list = {
                 apiVersion: InClusterEnvironmentRuntime.ListApiVersion,
                 kind: InClusterEnvironmentRuntime.ListKind,

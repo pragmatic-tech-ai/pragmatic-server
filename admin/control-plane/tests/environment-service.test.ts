@@ -29,7 +29,7 @@ import { UnknownHiveError } from '../rollout-errors.js'
 import type { ILogProcess } from '../../../environments/seed/docker.js'
 import type { IDockerEnv, IBundleBuilder, IUserSeeder } from '../docker-env-port.js'
 import { DockerEnvironmentRuntime } from '../environment-runtime.js'
-import type { IEnvironmentRuntime } from '../environment-runtime.js'
+import type { IEnvironmentRuntime, EnvEndpoint, EnvRuntimeContext } from '../environment-runtime.js'
 import { EnvironmentRuntimeResolver } from '../environment-runtime-resolver.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import { UnsupportedBackendError } from '../hive-orchestrator.js'
@@ -198,6 +198,28 @@ class FakeBundle implements IBundleBuilder
         }
         await writeFile(join(bundleDir, 'provisioned-secrets.json'), JSON.stringify(secrets))
     }
+}
+
+/** An in-cluster-shaped runtime (publishes no host port) that records the ctx handed to Start, to observe CtxOf. */
+class CtxRecordingRuntime implements IEnvironmentRuntime
+{
+    public StartCtx: EnvRuntimeContext | undefined
+    private static readonly Endpoint: EnvEndpoint = { httpUrl: 'http://svc', wsUrl: 'ws://svc' }
+    private static readonly Process: ILogProcess = { OnData() {}, OnClose() {}, Kill() {} }
+
+    public PublishesHostPort(): boolean { return false }
+    public EnsureImage(): Promise<boolean> { return Promise.resolve(true) }
+    public BuildCommand(): string { return '' }
+    public Prepare(): Promise<void> { return Promise.resolve() }
+    public BringUp(): Promise<EnvEndpoint> { return Promise.resolve(CtxRecordingRuntime.Endpoint) }
+    public WaitHealthy(): Promise<void> { return Promise.resolve() }
+    public Start(ctx: EnvRuntimeContext): Promise<EnvEndpoint> { this.StartCtx = ctx; return Promise.resolve(CtxRecordingRuntime.Endpoint) }
+    public Stop(): Promise<void> { return Promise.resolve() }
+    public Teardown(): Promise<void> { return Promise.resolve() }
+    public RemoveVolume(): Promise<void> { return Promise.resolve() }
+    public Logs(): Promise<string> { return Promise.resolve('') }
+    public LogStream(): ILogProcess { return CtxRecordingRuntime.Process }
+    public Probe(): Promise<boolean> { return Promise.resolve(true) }
 }
 
 class FakeSeeder implements IUserSeeder
@@ -531,6 +553,18 @@ test('Start unknown throws; Start known brings it up Running', async () =>
     assert.ok(h.Calls.includes('up') && h.Calls.includes('waitHealthy'))
     assert.equal(rec.status, EnvStatus.Running)
     assert.equal(h.Registry.Get('s1')?.status, EnvStatus.Running)
+})
+
+test('Start recovers a bundle dir from the data root when the record carries none (in-cluster regression guard)', async () =>
+{
+    const h = await Harness.Make()
+    const runtime = new CtxRecordingRuntime()
+    h.Service = new EnvironmentService(h.Registry, new FakeAllocator(h.Calls, false), SingleBackendResolver.Of(runtime, h.Directory, new HiveOrchestratorFactory()), h.Seeder, h.DataRoot, h.Proxy, h.Directory, h.Idp, c => new IdpAdminClient(c))
+    const record = Harness.Record('s1', EnvStatus.Stopped)
+    delete (record as { bundleDir?: string }).bundleDir
+    await h.Registry.Put(record)
+    await h.Service.Start('s1')
+    assert.equal(runtime.StartCtx?.bundleDir, join(h.DataRoot, 's1'))
 })
 
 test('a throwing OnChanged subscriber neither fails Start nor blocks later subscribers', async () =>

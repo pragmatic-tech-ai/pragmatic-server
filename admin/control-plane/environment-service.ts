@@ -520,7 +520,9 @@ export class EnvironmentService
 
     private CtxOf(rec: EnvironmentRecord): EnvRuntimeContext
     {
-        return { def: EnvironmentService.DefOf(rec), record: rec, bundleDir: rec.bundleDir }
+        // An in-cluster record carries no bundleDir field (that field marks the Docker local bundle), but its boot
+        // bundle is generated at the same data-root path in Create, so a later Start/Restart recovers it here.
+        return { def: EnvironmentService.DefOf(rec), record: rec, bundleDir: rec.bundleDir ?? join(this.dataRoot, rec.name) }
     }
 
     private static StoredEndpoint(endpoint: EnvEndpoint): { httpUrl: string; wsUrl: string }
