@@ -358,6 +358,16 @@ class FakeAdminProxy implements IAdminProxy
         return { tokenRef: 'ref', token: 'secret-token', principalId: params.principalId, scopes: params.scopes, expiresAt: 'later' } as unknown as TokenIssuedDto
     }
 
+    public async ListTokens(_info: AdminConnectInfo): Promise<any>
+    {
+        throw new Error('unused')
+    }
+
+    public async RevokeToken(_info: AdminConnectInfo, _params: any): Promise<any>
+    {
+        throw new Error('unused')
+    }
+
     public async SetConfig(info: AdminConnectInfo, config: IdentityConfigDto): Promise<void>
     {
         this.Calls.push({ method: 'SetConfig', info, args: [config] })

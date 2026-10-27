@@ -119,6 +119,18 @@ class FakeConnection implements IAdminConnection
         return { token: 'tok', principalId: 'maker' }
     }
 
+    public async ListTokens(): Promise<any>
+    {
+        this.Record('ListTokens')
+        return [{ tokenId: 't1', principalId: 'maker' }]
+    }
+
+    public async RevokeToken(_p: any): Promise<any>
+    {
+        this.Record('RevokeToken')
+        return { ok: true }
+    }
+
     public Dispose(): void
     {
         this.Disposed++
@@ -178,6 +190,8 @@ describe('AdminProxy', () =>
             ['GetGraph', async p => { await p.GetGraph(Fixtures.Info, {} as any) }],
             ['DeleteGraph', p => p.DeleteGraph(Fixtures.Info, {} as any)],
             ['IssueToken', async p => { await p.IssueToken(Fixtures.Info, {} as any) }],
+            ['ListTokens', async p => { await p.ListTokens(Fixtures.Info) }],
+            ['RevokeToken', async p => { await p.RevokeToken(Fixtures.Info, {} as any) }],
         ]
         for (const [call, run] of cases)
         {
@@ -218,6 +232,8 @@ describe('AdminProxy', () =>
             ['cannot revoke your own tenant-Owner grant', AdminProxyErrorKind.Rbac],
             ['invalid params: bad email', AdminProxyErrorKind.Invalid],
             ['boom', AdminProxyErrorKind.Protocol],
+            ['service token not found: t9', AdminProxyErrorKind.NotFound],
+            ['Service Token Not Found', AdminProxyErrorKind.NotFound],
         ]
         for (const [message, kind] of cases)
         {
@@ -239,6 +255,15 @@ describe('AdminProxy', () =>
         await assert.rejects(new AdminProxy(new FakeConnector(bad)).IssueToken(Fixtures.Info, {} as any), (e: unknown) =>
             e instanceof AdminProxyError && e.Kind === AdminProxyErrorKind.Invalid)
         assert.equal(bad.Disposed, 1)
+    })
+
+    it('ListTokens and RevokeToken return the connection results', async () =>
+    {
+        const conn = new FakeConnection()
+        const proxy = new AdminProxy(new FakeConnector(conn))
+        assert.deepEqual(await proxy.ListTokens(Fixtures.Info), [{ tokenId: 't1', principalId: 'maker' }])
+        assert.deepEqual(await proxy.RevokeToken(Fixtures.Info, { tokenId: 't1' } as any), { ok: true })
+        assert.equal(conn.Disposed, 2)
     })
 
     it('disposes in finally when a method throws', async () =>

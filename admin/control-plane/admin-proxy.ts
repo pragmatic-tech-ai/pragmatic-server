@@ -1,5 +1,5 @@
 import { AdminProtocol, GraphProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { AccountDto, CreateAccountParams, GraphCreateParamsDto, GraphDetailDto, GraphExportDto, GraphLoadParamsDto, GraphLoadedDto, GraphRefParamsDto, GraphSummaryDto, GrantDto, GrantMutationDto, IdentityConfigDto, IssueTokenParams, MessageConnection, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { AccountDto, CreateAccountParams, GraphCreateParamsDto, GraphDetailDto, GraphExportDto, GraphLoadParamsDto, GraphLoadedDto, GraphRefParamsDto, GraphSummaryDto, GrantDto, GrantMutationDto, IdentityConfigDto, AdminAckDto, IssueTokenParams, MessageConnection, RevokeTokenParams, SecurityModelDto, ServiceTokenSummaryDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { UserSeeder } from '../../environments/seed/users.js'
 
 export type AdminConnectInfo = { httpUrl: string; wsUrl: string; tenant: string; email: string; password: string }
@@ -11,6 +11,7 @@ export enum AdminProxyErrorKind
     Rbac = 'rbac',
     Invalid = 'invalid',
     Protocol = 'protocol',
+    NotFound = 'not-found',
 }
 
 export class AdminProxyError extends Error
@@ -66,6 +67,8 @@ export interface IAdminConnection
     LoadGraph(params: GraphLoadParamsDto): Promise<GraphLoadedDto>
     GetLoadedGraph(): Promise<GraphLoadedDto | null>
     IssueToken(params: IssueTokenParams): Promise<TokenIssuedDto>
+    ListTokens(): Promise<ServiceTokenSummaryDto[]>
+    RevokeToken(params: RevokeTokenParams): Promise<AdminAckDto>
     Dispose(): void
 }
 
@@ -93,6 +96,8 @@ export interface IAdminProxy
     LoadGraph(info: AdminConnectInfo, params: GraphLoadParamsDto): Promise<GraphLoadedDto>
     GetLoadedGraph(info: AdminConnectInfo): Promise<GraphLoadedDto | null>
     IssueToken(info: AdminConnectInfo, params: IssueTokenParams): Promise<TokenIssuedDto>
+    ListTokens(info: AdminConnectInfo): Promise<ServiceTokenSummaryDto[]>
+    RevokeToken(info: AdminConnectInfo, params: RevokeTokenParams): Promise<AdminAckDto>
 }
 
 /** Typed facade over the environment admin protocol; one short-lived authenticated connection per call. */
@@ -102,6 +107,7 @@ export class AdminProxy implements IAdminProxy
     private static readonly SelfLockoutText = 'cannot revoke your own'
     private static readonly LastAdminText = 'last administrator'
     private static readonly InvalidParamsText = 'invalid params'
+    private static readonly TokenNotFoundText = 'service token not found'
     private static readonly ConnectionTexts = ['econnreset', 'econnrefused', 'epipe', 'socket hang up', 'closed']
     private static readonly DisposeFailedLog = 'AdminProxy: connection dispose failed'
 
@@ -204,6 +210,16 @@ export class AdminProxy implements IAdminProxy
         return this.With(info, conn => conn.IssueToken(params))
     }
 
+    public async ListTokens(info: AdminConnectInfo): Promise<ServiceTokenSummaryDto[]>
+    {
+        return this.With(info, conn => conn.ListTokens())
+    }
+
+    public async RevokeToken(info: AdminConnectInfo, params: RevokeTokenParams): Promise<AdminAckDto>
+    {
+        return this.With(info, conn => conn.RevokeToken(params))
+    }
+
     private async With<T>(info: AdminConnectInfo, body: (conn: IAdminConnection) => Promise<T>): Promise<T>
     {
         let conn: IAdminConnection
@@ -256,6 +272,10 @@ export class AdminProxy implements IAdminProxy
         if (lower.includes(AdminProxy.InvalidParamsText))
         {
             return new AdminProxyError(AdminProxyErrorKind.Invalid, message)
+        }
+        if (lower.includes(AdminProxy.TokenNotFoundText))
+        {
+            return new AdminProxyError(AdminProxyErrorKind.NotFound, message)
         }
         if (AdminProxy.ConnectionTexts.some(t => lower.includes(t)))
         {
@@ -362,6 +382,16 @@ export class WsAdminConnection implements IAdminConnection
     public IssueToken(params: IssueTokenParams): Promise<TokenIssuedDto>
     {
         return this.conn.sendRequest(AdminProtocol.IssueToken, params)
+    }
+
+    public ListTokens(): Promise<ServiceTokenSummaryDto[]>
+    {
+        return this.conn.sendRequest(AdminProtocol.ListTokens, undefined)
+    }
+
+    public RevokeToken(params: RevokeTokenParams): Promise<AdminAckDto>
+    {
+        return this.conn.sendRequest(AdminProtocol.RevokeToken, params)
     }
 
     public Dispose(): void

@@ -116,6 +116,16 @@ class FakeAdminProxy implements IAdminProxy
         throw new Error('unused')
     }
 
+    public async ListTokens(_info: AdminConnectInfo): Promise<any>
+    {
+        throw new Error('unused')
+    }
+
+    public async RevokeToken(_info: AdminConnectInfo, _params: any): Promise<any>
+    {
+        throw new Error('unused')
+    }
+
     public async DeleteGraph(info: AdminConnectInfo, params: GraphRefParamsDto): Promise<void>
     {
         this.Track(info, `delete:${params.graphName}`)
