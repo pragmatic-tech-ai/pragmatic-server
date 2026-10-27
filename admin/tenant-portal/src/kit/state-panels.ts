@@ -39,6 +39,11 @@ export class SkeletonPanel extends StackPanel
         this.Build()
     }
 
+    public get Role(): string
+    {
+        return SkeletonPanel.BusyRole
+    }
+
     public get Kind(): SkeletonKind
     {
         return this.kind

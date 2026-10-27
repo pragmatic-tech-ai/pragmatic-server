@@ -131,6 +131,21 @@ describe('ScreenHost', () =>
         assert.equal(new ScreenHost(Fixture.Inputs({ loading: true, allowed: false })).State, ScreenState.Loading)
     })
 
+    it('precedence: denied beats empty', () =>
+    {
+        const host = new ScreenHost(Fixture.Inputs({ allowed: false, isEmpty: true }))
+        assert.equal(host.State, ScreenState.Denied)
+        const nodes = Walk.Collect(host)
+        assert.ok(nodes.some(n => n instanceof DeniedStatePanel))
+        assert.ok(!nodes.some(n => n instanceof EmptyStatePanel))
+    })
+
+    it('Denied panel renders the overridden what text in the tree', () =>
+    {
+        const texts = Walk.Texts(new DeniedStatePanel({ what: 'Billing' }))
+        assert.ok(texts.includes("You don't have access to Billing"))
+    })
+
     it('Update re-resolves and swaps the panel', () =>
     {
         const host = new ScreenHost(Fixture.Inputs({ loading: true }))
@@ -183,6 +198,7 @@ describe('ScreenHost', () =>
             const panel = new SkeletonPanel(kind)
             assert.equal(panel.Kind, kind)
             assert.equal(panel.Tag, SkeletonPanel.BusyRole)
+            assert.equal(panel.Role, 'busy')
             assert.ok(Walk.Collect(panel).some(n => n instanceof Rectangle))
         })
     }

@@ -30,7 +30,8 @@ export interface ScreenHostInputs
 // Resolves to exactly one state: loading > denied > error > empty > populated.
 export class ScreenHost extends StackPanel
 {
-    private static readonly DefaultEmpty: EmptyStateConfig = { title: '' }
+    private static readonly EmptyTitleFallback = ''
+    private static readonly DefaultEmpty: EmptyStateConfig = { title: ScreenHost.EmptyTitleFallback }
 
     private inputs: ScreenHostInputs
     private state: ScreenState
