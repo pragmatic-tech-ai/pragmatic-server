@@ -31,7 +31,6 @@ export type AdoptResult = { outcome: AdoptOutcome; message: string | undefined }
 export class ReleasesViewModel extends Observable
 {
     public static readonly VersionsProperty = 'Versions'
-    public static readonly PendingProperty = 'Pending'
 
     public static readonly LabelOnVersion = 'Already on this version'
     public static readonly LabelWillRestart = 'Will restart'
@@ -48,7 +47,6 @@ export class ReleasesViewModel extends Observable
     private rollout: HiveRolloutDto = { targetVersion: undefined, environments: [] }
     private statuses = new Map<string, EnvStatus>()
     private running: string | undefined
-    private pending: string | undefined
     private lastResult: AdoptResult | undefined
     private generation = 0
 
@@ -65,11 +63,6 @@ export class ReleasesViewModel extends Observable
     public get RunningVersion(): string | undefined
     {
         return this.running
-    }
-
-    public get Pending(): string | undefined
-    {
-        return this.pending
     }
 
     // The outcome and unaugmented server message of the last ConfirmAdopt.
@@ -154,25 +147,15 @@ export class ReleasesViewModel extends Observable
             : ReleasesViewModel.ImpactPrefix + version + ReleasesViewModel.ImpactMiddle + names
     }
 
-    public BeginAdopt(version: string): void
+    // No optimistic mutation: the target only changes through a successful Load.
+    public async ConfirmAdopt(version: string): Promise<AdoptOutcome>
     {
         // A withdrawn version is never adoptable; the view hides it, and this guards a direct call.
         if (this.versions.find(r => r.version === version)?.withdrawn === true)
         {
-            return
+            this.lastResult = { outcome: AdoptOutcome.Unknown, message: undefined }
+            return AdoptOutcome.Unknown
         }
-        this.lastResult = undefined
-        this.SetPending(version)
-    }
-
-    public CancelAdopt(): void
-    {
-        this.SetPending(undefined)
-    }
-
-    // No optimistic mutation: the target only changes through a successful Load.
-    public async ConfirmAdopt(version: string): Promise<AdoptOutcome>
-    {
         let result: AdoptResult
         try
         {
@@ -184,7 +167,6 @@ export class ReleasesViewModel extends Observable
             result = ReleasesViewModel.ResultOf(e)
         }
         this.lastResult = result
-        this.SetPending(undefined)
         if (result.outcome === AdoptOutcome.Adopted || result.outcome === AdoptOutcome.Unknown)
         {
             await this.Load().catch(() => undefined)
@@ -253,12 +235,5 @@ export class ReleasesViewModel extends Observable
         }
         const [image] = [...images]
         return image === undefined ? undefined : sorted.find(m => m.image === image)?.id
-    }
-
-    private SetPending(value: string | undefined): void
-    {
-        const old = this.pending
-        this.pending = value
-        this.RaisePropertyChanged(ReleasesViewModel.PendingProperty, old, value)
     }
 }

@@ -115,13 +115,13 @@ describe('ReleasesViewModel', () =>
         assert.equal(vm.EnvSteps('v3')[1]!.label, ReleasesViewModel.LabelWillRestart)
     })
 
-    it('BeginAdopt on a withdrawn version is a no-op', async () =>
+    it('ConfirmAdopt on a withdrawn version is Unknown and never selects the target', async () =>
     {
-        const vm = await Fx.Vm(new FakeSource())
-        vm.BeginAdopt('v4')
-        assert.equal(vm.Pending, undefined)
-        vm.BeginAdopt('v2')
-        assert.equal(vm.Pending, 'v2')
+        const src = new FakeSource()
+        const vm = await Fx.Vm(src)
+        assert.equal(await vm.ConfirmAdopt('v4'), AdoptOutcome.Unknown)
+        assert.equal(src.Selected.length, 0)
+        assert.equal(vm.RunningVersion, 'v3')
     })
 
     it('ConfirmAdopt success submits and reloads', async () =>

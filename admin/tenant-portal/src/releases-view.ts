@@ -31,7 +31,6 @@ export class ReleasesView extends TenantViewBase
     public static readonly PublishedKey = 'Published'
     public static readonly NotesKey = 'Notes'
     public static readonly NotOnKey = 'Environments not on this version'
-    public static readonly NotOnSuffix = ' environments not on this version'
     public static readonly CurrentSuffix = ' (current)'
     public static readonly NoText = ''
 
@@ -196,7 +195,6 @@ export class ReleasesView extends TenantViewBase
         const body = new StackPanel()
         body.Orientation = Orientation.Vertical
         body.AddChild(new KeyValueGrid({ items }))
-        body.AddChild(ReleasesView.Muted(String(offer.notOnCount) + ReleasesView.NotOnSuffix))
         const act = new Act({
             can: this.CanAdopt,
             need: ReleasesView.NeedAdopt,

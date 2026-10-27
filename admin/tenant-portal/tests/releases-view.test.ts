@@ -115,7 +115,8 @@ describe('ReleasesView', () =>
         const texts = Fixtures.Texts(view)
         assert.ok(texts.includes('v2'))
         assert.ok(texts.includes('fixes things'))
-        assert.ok(texts.includes('2' + ReleasesView.NotOnSuffix))
+        assert.ok(texts.includes(ReleasesView.NotOnKey))
+        assert.ok(texts.includes('2'))
     })
 
     it('shows the empty state when no versions are offered', async () =>
