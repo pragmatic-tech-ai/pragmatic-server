@@ -48,11 +48,12 @@ export class OverviewView extends TenantViewBase
         {
             panel.Orientation = Orientation.Vertical
         }
-        this.body.AddChild(this.dialogHost)
         this.body.AddChild(this.bannerSlot)
         this.body.AddChild(this.cards)
         this.subscriptions.push(this.vm.PropertyChanged(OverviewViewModel.RowsProperty).subscribe(() => this.Rebuild()))
         this.host = new ScreenHost(this.Inputs())
+        // Outside the ScreenHost so the dialog is visible in every state (including Empty).
+        this.AddChild(this.dialogHost)
         this.AddChild(new Section({ title: OverviewView.Title, sub: OverviewView.Sub, actions: this.headerSlot, body: this.host }))
         this.Rebuild()
     }

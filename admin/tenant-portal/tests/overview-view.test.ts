@@ -6,7 +6,7 @@ import type { Visual } from '@pragmatic-tech-ai/mural/runtime'
 import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pragmatic'
 import { CreateEnvironmentDialog } from '../src/create-environment-dialog.js'
 import { EnvironmentCard } from '../src/environment-card.js'
-import { Banner, ScreenState } from '../src/kit/index.js'
+import { Act, Banner, ScreenState } from '../src/kit/index.js'
 import { NavSection } from '../src/nav-model.js'
 import { TenantApiError } from '../src/tenant-api-client.js'
 import { OverviewView } from '../src/overview-view.js'
@@ -288,5 +288,17 @@ describe('OverviewView', () =>
         assert.equal(nav.Opened.length, 1)
         assert.equal(nav.Opened[0].name, 'gamma')
         assert.equal(view.OpenDialog, undefined)
+    })
+
+    it('the empty-state Create opens a dialog that is visible in the view tree', async () =>
+    {
+        const src = new FakeSource()
+        src.Envs = []
+        const { view } = await Harness.Make(src)
+        assert.equal(view.Host.State, ScreenState.Empty)
+        const act = Fixtures.Collect(view.Host).find(v => v instanceof Act) as Act
+        act.Press()
+        assert.ok(view.OpenDialog instanceof CreateEnvironmentDialog)
+        assert.equal(Fixtures.Collect(view).filter(v => v instanceof CreateEnvironmentDialog).length, 1)
     })
 })
