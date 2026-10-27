@@ -26,7 +26,6 @@ export class FakeTenantControlPlane
     public static readonly OwnerRoleLabel = 'Tenant owner'
     public static readonly OwnerContact = 'owner-contact@example.com'
     public static readonly TenantDisplayName = 'Example Tenant'
-    public static readonly HiveId = 'hive-1'
     public static readonly HiveDisplayName = 'Example Hive'
     public static readonly RunningStatus = 'running'
     public static readonly StoppedStatus = 'stopped'
@@ -327,7 +326,7 @@ export class FakeTenantControlPlane
                 email: FakeTenantControlPlane.UserEmail,
                 roleLabel: FakeTenantControlPlane.OwnerRoleLabel,
                 tenant: { id: FakeTenantControlPlane.TenantId, displayName: FakeTenantControlPlane.TenantDisplayName, organisation: FakeTenantControlPlane.OrganisationName },
-                hive: { id: FakeTenantControlPlane.HiveId, displayName: FakeTenantControlPlane.HiveDisplayName },
+                hive: { id: FakeTenantControlPlane.HiveOneId, displayName: FakeTenantControlPlane.HiveDisplayName },
                 capabilities: { envs: true, adopt: true, access: true, settings: true },
                 ownerContact: FakeTenantControlPlane.OwnerContact
             }
