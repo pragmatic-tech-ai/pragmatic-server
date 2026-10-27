@@ -52,7 +52,14 @@ export class UsersAccessView extends TenantViewBase
     private readonly principalBox = new TextBox()
     private readonly passwordBox = new TextBox()
     private readonly form = new StackPanel()
-    private readonly selectionListener = (): void => this.vm.SelectAccount((this.grid.SelectedItem as AccountRow | undefined)?.PrincipalId)
+    private suppressSelection = false
+    private readonly selectionListener = (): void =>
+    {
+        if (!this.suppressSelection)
+        {
+            this.vm.SelectAccount((this.grid.SelectedItem as AccountRow | undefined)?.PrincipalId)
+        }
+    }
 
     public constructor(source: IUsersAccessSource, currentPrincipalId: string)
     {
@@ -160,7 +167,18 @@ export class UsersAccessView extends TenantViewBase
 
     private UpdateGrid(): void
     {
-        this.grid.ItemsSource = [...this.vm.Rows]
+        // Replacing ItemsSource resets the grid selection; re-select the VM's account without echoing back.
+        this.suppressSelection = true
+        try
+        {
+            this.grid.ItemsSource = [...this.vm.Rows]
+            const selected = this.vm.SelectedPrincipalId
+            this.grid.SelectedItem = selected === undefined ? undefined : this.vm.Rows.find(r => r.PrincipalId === selected)
+        }
+        finally
+        {
+            this.suppressSelection = false
+        }
     }
 
     // Runs a view-model call; failures surface through ShowError (401 drops to login).
@@ -195,12 +213,10 @@ export class UsersAccessView extends TenantViewBase
         vm.DraftPrincipalId = this.principalBox.Text
         vm.DraftPassword = this.passwordBox.Text
         await vm.CreateAccount()
-        if (vm.Error === UsersAccessView.Empty)
-        {
-            this.emailBox.Text = UsersAccessView.Empty
-            this.principalBox.Text = UsersAccessView.Empty
-            this.passwordBox.Text = UsersAccessView.Empty
-        }
+        // The VM clears each draft only on success, so the boxes follow it.
+        this.emailBox.Text = vm.DraftEmail
+        this.principalBox.Text = vm.DraftPrincipalId
+        this.passwordBox.Text = vm.DraftPassword
     }
 
     private MakeSelectedSection(principalId: string): StackPanel
@@ -216,7 +232,7 @@ export class UsersAccessView extends TenantViewBase
         }
         else
         {
-            section.AddChild(this.MakeButton(UsersAccessView.DisableLabel, () => vm.RequestDisable(principalId)))
+            section.AddChild(this.MakeButton(UsersAccessView.DisableLabel, () => { void this.Act(() => vm.RequestDisable(principalId)) }))
         }
         section.AddChild(this.Text(UsersAccessView.GrantsHeading))
         const grants = vm.SelectedGrants
@@ -249,7 +265,7 @@ export class UsersAccessView extends TenantViewBase
         }
         else
         {
-            row.AddChild(this.MakeButton(UsersAccessView.RevokeLabel, () => vm.RequestRevoke(grant)))
+            row.AddChild(this.MakeButton(UsersAccessView.RevokeLabel, () => { void this.Act(() => vm.RequestRevoke(grant)) }))
         }
         return row
     }

@@ -212,26 +212,26 @@ export class UsersAccessViewModel extends Observable
         })
     }
 
-    public RequestDisable(principalId: string): void
+    public RequestDisable(principalId: string): Promise<void>
     {
         if (principalId === this.currentPrincipalId)
         {
             this.pendingGrant = undefined
             this.SetPending({ kind: PendingKind.DisableSelf, principalId })
-            return
+            return Promise.resolve()
         }
-        void this.DisableAccount(principalId).catch(e => this.SetError(UsersAccessViewModel.MessageOf(e)))
+        return this.DisableAccount(principalId)
     }
 
-    public RequestRevoke(grant: GrantDto): void
+    public RequestRevoke(grant: GrantDto): Promise<void>
     {
         if (grant.subject === this.currentPrincipalId)
         {
             this.pendingGrant = grant
             this.SetPending({ kind: PendingKind.RevokeSelf, principalId: grant.subject, role: grant.role })
-            return
+            return Promise.resolve()
         }
-        void this.RevokeRole(grant).catch(e => this.SetError(UsersAccessViewModel.MessageOf(e)))
+        return this.RevokeRole(grant)
     }
 
     public async ConfirmPending(): Promise<void>
@@ -304,12 +304,22 @@ export class UsersAccessViewModel extends Observable
         }
         catch (e)
         {
+            if (UsersAccessViewModel.IsUnauthorized(e))
+            {
+                throw e
+            }
             this.SetError(UsersAccessViewModel.MessageOf(e))
         }
         finally
         {
             this.ExitBusy()
         }
+    }
+
+    // A 401 is not a displayable error: it propagates so the view can route to login.
+    private static IsUnauthorized(e: unknown): boolean
+    {
+        return e instanceof TenantApiError && e.Status === TenantApiError.UnauthorizedStatus
     }
 
     private static MessageOf(e: unknown): string
@@ -329,7 +339,7 @@ export class UsersAccessViewModel extends Observable
 
     private FailWith(e: unknown): void
     {
-        if (!(e instanceof TenantApiError))
+        if (!(e instanceof TenantApiError) || UsersAccessViewModel.IsUnauthorized(e))
         {
             throw e
         }

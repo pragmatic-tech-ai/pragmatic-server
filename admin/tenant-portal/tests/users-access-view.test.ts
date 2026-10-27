@@ -5,7 +5,8 @@ import { DataGridTextColumn } from '@pragmatic-tech-ai/mural/framework/data-grid
 import { SelectionMode } from '@pragmatic-tech-ai/mural/framework/list/selector.js'
 import { AccountRow } from '../src/account-row.js'
 import { TenantApiError } from '../src/tenant-api-client.js'
-import type { AdminSnapshotDto, CreateAccountParams, EnvironmentDto, GrantMutationDto, IUsersAccessSource } from '../src/tenant-types.js'
+import { GridLength, GridUnitType } from '@pragmatic-tech-ai/mural/basic/panels/grid.js'
+import type { AdminSnapshotDto, CreateAccountParams, EnvironmentDto, GrantMutationDto, ITenantNavigator, IUsersAccessSource } from '../src/tenant-types.js'
 import { UsersAccessView } from '../src/users-access-view.js'
 
 class Fixtures
@@ -49,6 +50,30 @@ class Fixtures
         return out
     }
 
+    // Like Texts, but skips TextBox nodes (their Text is user input, not rendered output).
+    public static TextsSkippingBoxes(node: unknown): string[]
+    {
+        const n = node as { Text?: unknown; Placeholder?: unknown; Children?: Iterable<unknown>; Content?: unknown }
+        if (n.Placeholder !== undefined)
+        {
+            return []
+        }
+        const out: string[] = []
+        if (typeof n.Text === 'string')
+        {
+            out.push(n.Text)
+        }
+        if (n.Content !== undefined && n.Content !== null)
+        {
+            out.push(...Fixtures.TextsSkippingBoxes(n.Content))
+        }
+        for (const c of n.Children ?? [])
+        {
+            out.push(...Fixtures.TextsSkippingBoxes(c))
+        }
+        return out
+    }
+
     public static Labels(root: unknown): string[]
     {
         return Fixtures.Buttons(root).map(b => Fixtures.Texts(b).join(''))
@@ -85,6 +110,7 @@ class FakeSource implements IUsersAccessSource
             { subject: 'bob', role: 'Viewer', resourceKind: 'Environment', resourcePath: ['dev'] },
         ],
     }
+    public mutationError: Error | undefined
     public snapshotCalls: string[] = []
     public created: CreateAccountParams[] = []
     public disabled: string[] = []
@@ -112,23 +138,50 @@ class FakeSource implements IUsersAccessSource
 
     public async CreateAccount(_env: string, params: CreateAccountParams): Promise<void>
     {
+        this.Check()
         this.created.push(params)
     }
 
     public async DisableAccount(_env: string, principalId: string): Promise<void>
     {
+        this.Check()
         this.disabled.push(principalId)
     }
 
     public async GrantRole(_env: string, grant: GrantMutationDto): Promise<void>
     {
+        this.Check()
         this.granted.push(grant)
     }
 
     public async RevokeRole(_env: string, grant: GrantMutationDto): Promise<void>
     {
+        this.Check()
         this.revoked.push(grant)
     }
+
+    private Check(): void
+    {
+        if (this.mutationError !== undefined)
+        {
+            throw this.mutationError
+        }
+    }
+}
+
+class Nav implements ITenantNavigator
+{
+    public logins = 0
+
+    public ShowLogin(): void
+    {
+        this.logins++
+    }
+
+    public ShowTree(): void {}
+    public ShowHiveDetail(): void {}
+    public ShowEnvironmentDetail(): void {}
+    public ShowUsersAccess(): void {}
 }
 
 class Harness
@@ -191,19 +244,124 @@ describe('UsersAccessView', () =>
         assert.equal(src.snapshotCalls[src.snapshotCalls.length - 1], 'prod')
     })
 
-    it('has a create form and never echoes the password after create', async () =>
+    it('has a create form; the password lives only in the password TextBox', async () =>
     {
         const { src, view } = await Harness.Make()
         assert.ok(Fixtures.Labels(view).includes('Create'))
         Harness.BoxOf(view, UsersAccessView.EmailPlaceholder).Text = 'n@x.io'
         Harness.BoxOf(view, UsersAccessView.PrincipalPlaceholder).Text = 'n'
-        Harness.BoxOf(view, UsersAccessView.PasswordPlaceholder).Text = 'hunter2-secret'
+        const pw = Harness.BoxOf(view, UsersAccessView.PasswordPlaceholder) as unknown as { Text: string; IsPassword: boolean }
+        pw.Text = 'hunter2-secret'
+        assert.equal(pw.IsPassword, true)
+        assert.ok(!Fixtures.TextsSkippingBoxes(view).includes('hunter2-secret'))
         Fixtures.Click(view, 'Create')
         await Fixtures.Settle()
         await Fixtures.Settle()
         assert.deepEqual(src.created, [{ email: 'n@x.io', principalId: 'n', password: 'hunter2-secret' }])
-        assert.equal(Harness.BoxOf(view, UsersAccessView.PasswordPlaceholder).Text, '')
-        assert.ok(!Fixtures.Texts(view).includes('hunter2-secret'))
+        assert.equal(pw.Text, '')
+        assert.equal(Harness.BoxOf(view, UsersAccessView.EmailPlaceholder).Text, '')
+    })
+
+    it('retains create-form text when the create fails', async () =>
+    {
+        const { src, view } = await Harness.Make()
+        src.mutationError = new TenantApiError(409, 'exists')
+        Harness.BoxOf(view, UsersAccessView.EmailPlaceholder).Text = 'n@x.io'
+        Harness.BoxOf(view, UsersAccessView.PasswordPlaceholder).Text = 'pw'
+        Fixtures.Click(view, 'Create')
+        await Fixtures.Settle()
+        await Fixtures.Settle()
+        assert.equal(Harness.BoxOf(view, UsersAccessView.EmailPlaceholder).Text, 'n@x.io')
+        assert.equal(Harness.BoxOf(view, UsersAccessView.PasswordPlaceholder).Text, 'pw')
+        assert.ok(Fixtures.Texts(view).includes('exists'))
+    })
+
+    it('routes a 401 from a load to login', async () =>
+    {
+        const src = new FakeSource()
+        src.snapshotError = new TenantApiError(401, 'expired')
+        const nav = new Nav()
+        const view = new UsersAccessView(src, 'me')
+        view.AttachNavigator(nav)
+        await view.Refresh()
+        assert.equal(nav.logins, 1)
+        assert.ok(!Fixtures.Texts(view).includes('expired'))
+    })
+
+    it('routes a 401 from a mutation to login', async () =>
+    {
+        const src = new FakeSource()
+        const nav = new Nav()
+        const view = new UsersAccessView(src, 'me')
+        view.AttachNavigator(nav)
+        await view.Refresh()
+        view.Grid.SelectedItem = (view.Grid.ItemsSource as AccountRow[])[1]
+        await Fixtures.Settle()
+        src.mutationError = new TenantApiError(401, 'expired')
+        Fixtures.Click(view, 'Disable')
+        await Fixtures.Settle()
+        await Fixtures.Settle()
+        assert.equal(nav.logins, 1)
+    })
+
+    it('uses the expected column widths', async () =>
+    {
+        const { view } = await Harness.Make()
+        const w = ([...view.Grid.Columns] as DataGridTextColumn[]).map(c => c.Width)
+        assert.deepEqual(w.map(x => [x.Value, x.UnitType]), [[2, GridUnitType.Star], [2, GridUnitType.Star], [GridLength.Auto.Value, GridUnitType.Auto], [3, GridUnitType.Star]])
+    })
+
+    it('Dispose removes the selection listener and disposes the grid', async () =>
+    {
+        const { view } = await Harness.Make()
+        const grid = view.Grid as unknown as { RemoveSelectionChangedListener: (l: () => void) => void; dispose: () => void }
+        const calls: string[] = []
+        const rm = grid.RemoveSelectionChangedListener.bind(grid)
+        const ds = grid.dispose.bind(grid)
+        grid.RemoveSelectionChangedListener = l => { calls.push('remove'); rm(l) }
+        grid.dispose = () => { calls.push('dispose'); ds() }
+        view.Dispose()
+        assert.deepEqual(calls, ['remove', 'dispose'])
+    })
+
+    it('confirms self-revoke and revokes non-self directly', async () =>
+    {
+        const { src, view } = await Harness.Make()
+        view.Grid.SelectedItem = (view.Grid.ItemsSource as AccountRow[])[1]
+        await Fixtures.Settle()
+        Fixtures.Click(view, 'Revoke')
+        await Fixtures.Settle()
+        await Fixtures.Settle()
+        assert.deepEqual(src.revoked.map(r => r.subject), ['bob'])
+        view.Grid.SelectedItem = (view.Grid.ItemsSource as AccountRow[])[0]
+        await Fixtures.Settle()
+        Fixtures.Click(view, 'Revoke')
+        await Fixtures.Settle()
+        assert.ok(Fixtures.Labels(view).includes('Confirm revoke'))
+        Fixtures.Click(view, 'Cancel')
+        await Fixtures.Settle()
+        assert.ok(!Fixtures.Labels(view).includes('Confirm revoke'))
+        assert.equal(src.revoked.length, 1)
+        Fixtures.Click(view, 'Revoke')
+        await Fixtures.Settle()
+        Fixtures.Click(view, 'Confirm revoke')
+        await Fixtures.Settle()
+        await Fixtures.Settle()
+        assert.deepEqual(src.revoked.map(r => r.subject), ['bob', 'me'])
+    })
+
+    it('keeps the selected-account section across a reload', async () =>
+    {
+        const { src, view } = await Harness.Make()
+        const before = view.Grid.ItemsSource as AccountRow[]
+        view.Grid.SelectedItem = before[1]
+        await Fixtures.Settle()
+        Fixtures.Click(view, 'Grant')
+        await Fixtures.Settle()
+        await Fixtures.Settle()
+        assert.equal(src.granted.length, 1)
+        assert.notEqual(view.Grid.ItemsSource, before)
+        assert.ok(Fixtures.Texts(view).includes(UsersAccessView.SelectedHeading + 'bob'))
     })
 
     it('adapts grid selection to the view model', async () =>
