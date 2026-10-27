@@ -864,6 +864,17 @@ test('AdminRevokeToken forwards the ref to proxy.RevokeToken and resolves void',
     assert.equal(result, undefined)
 })
 
+test('service-token ops are not gated on EnvType: a Runtime env forwards list, issue and revoke', async () =>
+{
+    const h = await Harness.Make()
+    await AdminFixture.Seed(h)
+    await h.Registry.Put({ ...h.Registry.Get(AdminFixture.Name)!, type: EnvType.Runtime })
+    await h.Service.AdminListTokens(AdminFixture.Name)
+    await h.Service.AdminIssueToken(AdminFixture.Name, { principalId: 'svc', scopes: ['s'], expiresInSeconds: 60 })
+    await h.Service.AdminRevokeToken(AdminFixture.Name, 'r')
+    assert.deepEqual(h.Proxy.Calls.map(c => c.method), ['ListTokens', 'IssueToken', 'RevokeToken'])
+})
+
 test('AdminIssueMakerToken on a non-Development env throws before any proxy call', async () =>
 {
     const h = await Harness.Make()
