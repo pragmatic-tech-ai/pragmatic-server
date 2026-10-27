@@ -63,6 +63,12 @@ export class ServiceTokensView extends TenantViewBase
     {
         if (!this.suppressSelection)
         {
+            // A pending revoke belongs to one row; selecting another row drops it.
+            const pending = this.vm.Pending
+            if (pending !== undefined && this.SelectedRow()?.TokenRef !== pending)
+            {
+                this.vm.CancelPending()
+            }
             this.Render()
         }
     }
@@ -74,7 +80,11 @@ export class ServiceTokensView extends TenantViewBase
         this.BuildGrid()
         this.BuildForm()
         const rerender = (): void => this.Render()
-        this.vm.PropertyChanged(ServiceTokensViewModel.RowsProperty).subscribe(() => this.UpdateGrid())
+        this.vm.PropertyChanged(ServiceTokensViewModel.RowsProperty).subscribe(() =>
+        {
+            this.UpdateGrid()
+            this.Render()
+        })
         this.vm.PropertyChanged(ServiceTokensViewModel.EnvironmentsProperty).subscribe(rerender)
         this.vm.PropertyChanged(ServiceTokensViewModel.SelectedEnvironmentProperty).subscribe(rerender)
         this.vm.PropertyChanged(ServiceTokensViewModel.StateProperty).subscribe(rerender)
@@ -97,6 +107,7 @@ export class ServiceTokensView extends TenantViewBase
 
     public Dispose(): void
     {
+        this.vm.DismissSecret()
         this.grid.RemoveSelectionChangedListener(this.selectionListener)
         this.grid.dispose()
     }

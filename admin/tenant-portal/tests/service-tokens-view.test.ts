@@ -6,7 +6,7 @@ import { SelectionMode } from '@pragmatic-tech-ai/mural/framework/list/selector.
 import type { ServiceTokenRow } from '../src/service-token-row.js'
 import { ServiceTokensView } from '../src/service-tokens-view.js'
 import { TenantApiError } from '../src/tenant-api-client.js'
-import type { EnvironmentDto, IssueTokenParams, ITokensSource, ServiceTokenSummaryDto, TokenIssuedDto } from '../src/tenant-types.js'
+import type { EnvironmentDto, ITenantNavigator, IssueTokenParams, ITokensSource, ServiceTokenSummaryDto, TokenIssuedDto } from '../src/tenant-types.js'
 
 class Fixtures
 {
@@ -101,6 +101,7 @@ class FakeSource implements ITokensSource
     public envs: EnvironmentDto[] = [{ name: 'dev' } as EnvironmentDto, { name: 'prod' } as EnvironmentDto]
     public listEnvError: Error | undefined
     public listError: Error | undefined
+    public issueError: Error | undefined
     public tokens: ServiceTokenSummaryDto[] = [
         { tokenRef: 'ref-1', principalId: 'svc-a', scopes: ['read', 'write'], expiresAt: null, revoked: false },
         { tokenRef: 'ref-2', principalId: 'svc-b', scopes: ['read'], expiresAt: null, revoked: true },
@@ -130,6 +131,10 @@ class FakeSource implements ITokensSource
 
     public async IssueToken(_env: string, params: IssueTokenParams): Promise<TokenIssuedDto>
     {
+        if (this.issueError !== undefined)
+        {
+            throw this.issueError
+        }
         this.issued.push(params)
         return { tokenRef: 'ref-new', token: Fixtures.Secret, principalId: params.principalId, scopes: params.scopes, expiresAt: null }
     }
@@ -138,6 +143,22 @@ class FakeSource implements ITokensSource
     {
         this.revoked.push(tokenRef)
     }
+}
+
+class Nav implements ITenantNavigator
+{
+    public logins = 0
+
+    public ShowLogin(): void
+    {
+        this.logins++
+    }
+
+    public ShowTree(): void {}
+    public ShowHiveDetail(): void {}
+    public ShowEnvironmentDetail(): void {}
+    public ShowUsersAccess(): void {}
+    public ShowServiceTokens(): void {}
 }
 
 class Harness
@@ -226,6 +247,13 @@ describe('ServiceTokensView', () =>
         await Harness.Issue(view)
         const gridHas = (): boolean => JSON.stringify(view.Grid.ItemsSource).includes(Fixtures.Secret)
         assert.equal(gridHas(), false)
+        for (const r of view.Grid.ItemsSource as ServiceTokenRow[])
+        {
+            for (const v of [r.TokenRef, r.PrincipalId, r.ScopesText, r.ExpiresText, r.StatusText])
+            {
+                assert.equal(v.includes(Fixtures.Secret), false)
+            }
+        }
         assert.ok(Fixtures.Texts(view).includes(Fixtures.Secret))
         Fixtures.Click(view, ServiceTokensView.DismissLabel)
         assert.equal(Fixtures.Texts(view).some(t => t.includes(Fixtures.Secret)), false)
@@ -292,5 +320,59 @@ describe('ServiceTokensView', () =>
         src.listEnvError = new TenantApiError(TenantApiError.UnauthorizedStatus, 'no')
         const { view } = await Harness.Make(src)
         assert.equal(Fixtures.Texts(view).some(t => t.includes('error: ')), true)
+    })
+
+    it('keeps the typed text and shows no secret when issuing fails', async () =>
+    {
+        const src = new FakeSource()
+        src.issueError = new Error('nope')
+        const { view } = await Harness.Make(src)
+        await Harness.Issue(view)
+        assert.equal(Fixtures.BoxOf(view, ServiceTokensView.PrincipalPlaceholder).Text, 'svc-new')
+        assert.equal(Fixtures.BoxOf(view, ServiceTokensView.ScopesPlaceholder).Text, 'read, write  admin')
+        assert.equal(Fixtures.Labels(view).includes(ServiceTokensView.DismissLabel), false)
+        assert.ok(Fixtures.Texts(view).includes('nope'))
+    })
+
+    it('Dispose clears the issued secret from the view', async () =>
+    {
+        const { view } = await Harness.Make()
+        await Harness.Issue(view)
+        assert.ok(Fixtures.Texts(view).includes(Fixtures.Secret))
+        view.Dispose()
+        assert.equal(Fixtures.Texts(view).some(t => t.includes(Fixtures.Secret)), false)
+    })
+
+    it('selecting another row cancels a pending revoke', async () =>
+    {
+        const { src, view } = await Harness.Make()
+        const rows = view.Grid.ItemsSource as ServiceTokenRow[]
+        view.Grid.SelectedItem = rows[0]
+        Fixtures.Click(view, ServiceTokensView.RevokeLabel)
+        view.Grid.SelectedItem = rows[1]
+        assert.equal(Fixtures.Labels(view).includes(ServiceTokensView.ConfirmRevokeLabel), false)
+        assert.deepEqual(src.revoked, [])
+    })
+
+    it('reload keeps the selected token section only while the row still exists', async () =>
+    {
+        const { src, view } = await Harness.Make()
+        view.Grid.SelectedItem = (view.Grid.ItemsSource as ServiceTokenRow[])[0]
+        assert.ok(Fixtures.Texts(view).includes(ServiceTokensView.SelectedHeading + 'ref-1'))
+        src.tokens = [src.tokens[1]]
+        Fixtures.Click(view, 'prod')
+        await Fixtures.Settle()
+        assert.equal(Fixtures.Texts(view).some(t => t.startsWith(ServiceTokensView.SelectedHeading)), false)
+    })
+
+    it('a 401 with a navigator attached routes to login', async () =>
+    {
+        const src = new FakeSource()
+        src.issueError = new TenantApiError(TenantApiError.UnauthorizedStatus, 'no')
+        const { view } = await Harness.Make(src)
+        const nav = new Nav()
+        view.AttachNavigator(nav)
+        await Harness.Issue(view)
+        assert.equal(nav.logins, 1)
     })
 })
