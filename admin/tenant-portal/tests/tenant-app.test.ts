@@ -13,6 +13,7 @@ import { ServiceTokensView } from '../src/service-tokens-view.js'
 import { RolesPrivilegesView } from '../src/roles-privileges-view.js'
 import { FieldSecurityView } from '../src/field-security-view.js'
 import { UsersAccessHubView } from '../src/users-access-hub-view.js'
+import { EnvironmentDetailView } from '../src/environment-detail-view.js'
 import { ComingSoonView } from '../src/coming-soon-view.js'
 import { TenantTreeView } from '../src/tenant-tree-view.js'
 import { NavRail } from '../src/nav-rail.js'
@@ -190,7 +191,7 @@ describe('TenantApp', () =>
         app.ShowEnvironmentDetail(env)
         await new Promise(r => setTimeout(r, 0))
         const detail = Fixtures.CurrentOf(app)
-        assert.ok(!(detail instanceof TenantTreeView) && !(detail instanceof ComingSoonView))
+        assert.ok(detail instanceof EnvironmentDetailView)
         // A delete of a different env does not swap the pane.
         client.Handler!({ type: TenantEventType.EnvironmentDeleted, environmentName: 'other' })
         await new Promise(r => setTimeout(r, 0))
@@ -340,7 +341,24 @@ describe('TenantApp', () =>
         await app.Boot()
         assert.doesNotThrow(() => client.Handler!({ type: TenantEventType.EnvironmentChanged, environmentName: 'x' }))
         app.ShowLogin()
+        assert.doesNotThrow(() => client.Handler!({ type: TenantEventType.EnvironmentChanged, environmentName: 'x' }))
         assert.doesNotThrow(() => app.ShowLogin())
+    })
+
+    it('an event with the tree active takes a single refresh path', async () =>
+    {
+        const { app, client } = Fixtures.Make(Session)
+        await app.Boot()
+        app.ShowSection(NavSection.Environments)
+        await new Promise(r => setTimeout(r, 0))
+        const tree = Fixtures.CurrentOf(app) as TenantTreeView
+        let applied = 0
+        let refreshed = 0
+        tree.ApplyEvent = async () => { applied++ }
+        tree.Refresh = async () => { refreshed++ }
+        client.Handler!({ type: TenantEventType.EnvironmentChanged, environmentName: 'x' })
+        assert.equal(applied, 1)
+        assert.equal(refreshed, 0)
     })
 
     it('logout clears the stored principalId', async () =>

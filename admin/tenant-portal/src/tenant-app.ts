@@ -202,7 +202,12 @@ export class TenantApp extends StackPanel implements ITenantNavigator
 
     private OnTenantEvent(ev: TenantEvent): void
     {
-        this.tree?.ApplyEvent(ev)
+        if (this.tree !== undefined)
+        {
+            // The interim tree is the active view: ApplyEvent is its one refresh path (no extra Refresh).
+            void this.tree.ApplyEvent(ev)
+            return
+        }
         if (ev.type === TenantEventType.EnvironmentDeleted && ev.environmentName === this.currentEnvName)
         {
             // The open environment was deleted: fall back to the environments list rather than refreshing a gone env.
