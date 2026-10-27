@@ -1,6 +1,7 @@
 import { StackPanel, TextBlock, TextBox } from '@pragmatic-tech-ai/mural/basic'
-import { Button, ButtonVariant, ComboBox, Dialog, DialogAction } from '@pragmatic-tech-ai/mural/framework'
-import { RelayCommand, type Visual } from '@pragmatic-tech-ai/mural/runtime'
+import { ButtonVariant, ComboBox, Dialog, DialogAction } from '@pragmatic-tech-ai/mural/framework'
+import { RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
+import { DialogButtons } from './kit/dialog-support.js'
 import { TenantApiError } from './tenant-api-client.js'
 import { EnvType, Template, type EnvironmentDto, type IEnvironmentsSource } from './tenant-types.js'
 
@@ -58,7 +59,7 @@ export class CreateEnvironmentDialog extends Dialog
         this.onCreated = onCreated
         this.Title = CreateEnvironmentDialog.DialogTitle
         this.createCommand = new RelayCommand(() => void this.Submit(), () => this.CreateEnabled)
-        this.cancelCommand = new RelayCommand(() => this.Dismiss())
+        this.cancelCommand = new RelayCommand(() => this.Dismiss(), () => !this.submitting)
 
         const panel = new StackPanel()
         panel.AddChild(CreateEnvironmentDialog.Line(CreateEnvironmentDialog.Reassurance))
@@ -114,6 +115,15 @@ export class CreateEnvironmentDialog extends Dialog
     }
 
     // The owner subscribes to be told when the dialog wants to go away.
+    // Test seam: click Cancel (ignored mid-submit, like the real button).
+    public Cancel(): void
+    {
+        if (this.cancelCommand.CanExecute())
+        {
+            this.cancelCommand.Execute()
+        }
+    }
+
     public AddDismissListener(listener: () => void): void
     {
         this.dismissListeners.push(listener)
@@ -150,8 +160,12 @@ export class CreateEnvironmentDialog extends Dialog
         try
         {
             const env = await this.source.CreateEnvironment({ name: this.nameBox.Text, template: this.template, type: this.type })
-            this.onCreated(env)
-            this.Dismiss()
+            this.submitting = false
+            if (!this.dismissed)
+            {
+                this.onCreated(env)
+                this.Dismiss()
+            }
         }
         catch (err)
         {
@@ -219,6 +233,7 @@ export class CreateEnvironmentDialog extends Dialog
     {
         this.errorBlock.Text = this.errorText ?? CreateEnvironmentDialog.NoText
         this.createCommand.RaiseCanExecuteChanged()
+        this.cancelCommand.RaiseCanExecuteChanged()
         this.SyncCreateButton()
     }
 
@@ -226,7 +241,7 @@ export class CreateEnvironmentDialog extends Dialog
     // the command state onto the rendered Create button.
     private SyncCreateButton(): void
     {
-        const button = CreateEnvironmentDialog.FindButton(this, this.createCommand)
+        const button = DialogButtons.FindByCommand(this, this.createCommand)
         if (button !== undefined)
         {
             button.IsEnabled = this.CreateEnabled
@@ -235,28 +250,15 @@ export class CreateEnvironmentDialog extends Dialog
 
     private Dismiss(): void
     {
+        if (this.dismissed || this.submitting)
+        {
+            return
+        }
         this.dismissed = true
         for (const listener of this.dismissListeners)
         {
             listener()
         }
-    }
-
-    private static FindButton(root: Visual, command: RelayCommand): Button | undefined
-    {
-        if (root instanceof Button && root.Command === command)
-        {
-            return root
-        }
-        for (const child of (root as unknown as { visualChildren?: readonly Visual[] }).visualChildren ?? [])
-        {
-            const found = CreateEnvironmentDialog.FindButton(child, command)
-            if (found !== undefined)
-            {
-                return found
-            }
-        }
-        return undefined
     }
 
     private static Line(text: string): TextBlock

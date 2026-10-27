@@ -1,6 +1,7 @@
 import { StackPanel, TextBlock, TextBox } from '@pragmatic-tech-ai/mural/basic'
-import { Button, ButtonVariant, Dialog, DialogAction } from '@pragmatic-tech-ai/mural/framework'
-import { RelayCommand, type Visual } from '@pragmatic-tech-ai/mural/runtime'
+import { ButtonVariant, Dialog, DialogAction } from '@pragmatic-tech-ai/mural/framework'
+import { RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
+import { DialogButtons } from './dialog-support.js'
 
 export enum ConfirmTone
 {
@@ -116,28 +117,11 @@ export class ConfirmDialog extends Dialog
 
     private SyncConfirmButton(): void
     {
-        const button = ConfirmDialog.FindButton(this, this.confirmCommand)
+        const button = DialogButtons.FindByCommand(this, this.confirmCommand)
         if (button !== undefined)
         {
             button.IsEnabled = this.Matches()
         }
-    }
-
-    private static FindButton(root: Visual, command: RelayCommand): Button | undefined
-    {
-        if (root instanceof Button && root.Command === command)
-        {
-            return root
-        }
-        for (const child of (root as unknown as { visualChildren?: readonly Visual[] }).visualChildren ?? [])
-        {
-            const found = ConfirmDialog.FindButton(child, command)
-            if (found !== undefined)
-            {
-                return found
-            }
-        }
-        return undefined
     }
 
     private Matches(): boolean
