@@ -529,7 +529,7 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
             this.WriteJson(res, TenantApiEndpoint.StatusBadRequest, { [TenantApiEndpoint.ErrorKey]: TenantApiEndpoint.TokenIssueFieldsMessage })
             return true
         }
-        const params = { principalId: body.principalId, scopes, expiresInSeconds: expires ?? null } as unknown as IssueTokenParams
+        const params = { principalId: body.principalId, scopes: (scopes as string[]).map(x => x.trim()), expiresInSeconds: expires ?? null } as unknown as IssueTokenParams
         const issued = await this.service.AdminIssueToken(name, params)
         this.WriteJson(res, TenantApiEndpoint.StatusCreated, issued, { [TenantApiEndpoint.CacheControlHeader]: TenantApiEndpoint.NoStore })
         return true

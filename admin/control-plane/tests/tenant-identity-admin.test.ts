@@ -387,6 +387,13 @@ describe('TenantApiEndpoint identity-admin routes', () =>
         assert.equal(service.Calls.length, 0)
     })
 
+    it('POST tokens trims each scope before issuing', async () =>
+    {
+        await Driver.Send(Fixtures.Req('POST', { principalId: 'svc', scopes: ['read ', ' write'] }), Fixtures.Base + 'a-env/admin/tokens', Fixtures.TenantA)
+        const params = service.Calls[0]!.args[1] as { scopes: string[] }
+        assert.deepEqual(params.scopes, ['read', 'write'])
+    })
+
     it('answers other methods on identity-admin paths with 404', async () =>
     {
         const res = await Driver.Send(Fixtures.Req('POST'), Fixtures.Base + 'a-env/admin/snapshot', Fixtures.TenantA)
