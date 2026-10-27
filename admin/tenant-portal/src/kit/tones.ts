@@ -22,6 +22,8 @@ export class Tones
         [PillTone.Neutral]: 'Fg2',
     }
 
+    public static readonly MissingBrushMessage = 'Tones: theme brush resource not found: '
+
     private static readonly SoftKeys: Readonly<Record<PillTone, string>> = {
         [PillTone.Success]: 'StateSuccessSoft',
         [PillTone.Warning]: 'StateWarningSoft',
@@ -32,11 +34,21 @@ export class Tones
 
     public static Brush(tone: PillTone): Brush
     {
-        return Application.ResolveDefaultResource<Brush>(Tones.Keys[tone]) as Brush
+        return Tones.Resolve(Tones.Keys[tone])
     }
 
     public static SoftBrush(tone: PillTone): Brush
     {
-        return Application.ResolveDefaultResource<Brush>(Tones.SoftKeys[tone]) as Brush
+        return Tones.Resolve(Tones.SoftKeys[tone])
+    }
+
+    private static Resolve(key: string): Brush
+    {
+        const brush = Application.ResolveDefaultResource<Brush>(key)
+        if (brush === undefined)
+        {
+            throw new Error(Tones.MissingBrushMessage + key)
+        }
+        return brush
     }
 }
