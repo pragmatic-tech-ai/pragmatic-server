@@ -2,6 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { EnvironmentDetailViewModel } from '../src/environment-detail-view-model.js'
 import type { IEnvDetailSource } from '../src/environment-detail-view-model.js'
+import { EnvironmentRow } from '../src/environment-row.js'
 import { EnvStatus, EnvType, Template } from '../src/tenant-types.js'
 import type { EnvironmentDto, HiveHealthDto } from '../src/tenant-types.js'
 
@@ -163,6 +164,50 @@ describe('EnvironmentDetailViewModel', () =>
         assert.equal(src.DisposeCalls, 1)
         src.Push('late')
         assert.equal(vm.LogBuffer, 'a')
+    })
+
+    it('Delete calls the source once with the env name and propagates rejection', async () =>
+    {
+        const src = new FakeEnvDetailSource()
+        const vm = new EnvironmentDetailViewModel(src, Make.Env('running'), 'h1')
+        await vm.Delete()
+        assert.deepEqual(src.Calls, ['delete:e1'])
+        src.DeleteEnvironment = async () => { throw new Error('boom') }
+        await assert.rejects(() => vm.Delete(), /boom/)
+    })
+
+    it('LiveUrl follows the live status, not the construction status', async () =>
+    {
+        const src = new FakeEnvDetailSource()
+        const env = { ...Make.Env('running'), httpUrl: 'http://x' }
+        const vm = new EnvironmentDetailViewModel(src, env, 'h1')
+        assert.equal(vm.LiveUrl, 'http://x')
+        src.Result = Make.Env('stopped')
+        await vm.Stop()
+        assert.equal(vm.LiveUrl, '')
+        src.Result = Make.Env('running')
+        await vm.Start()
+        assert.equal(vm.LiveUrl, 'http://x')
+    })
+
+    it('Version is the image tag after LoadHealth and the sentinel without an image', async () =>
+    {
+        const src = new FakeEnvDetailSource()
+        const vm = new EnvironmentDetailViewModel(src, Make.Env('running'), 'h1')
+        assert.equal(vm.Version, new EnvironmentRow(Make.Env('running')).Version)
+        assert.equal(vm.Version, String.fromCharCode(0x2014))
+        await vm.LoadHealth()
+        assert.equal(vm.Version, 'v1')
+        assert.equal(vm.Version, new EnvironmentRow(Make.Env('running'), src.Health[1]).Version)
+    })
+
+    it('exposes raw env fields', () =>
+    {
+        const vm = new EnvironmentDetailViewModel(new FakeEnvDetailSource(), Make.Env('running'), 'h1')
+        assert.equal(vm.Name, 'e1')
+        assert.equal(vm.Template, Template.DevBlank)
+        assert.equal(vm.EnvironmentId, 'id1')
+        assert.equal(vm.CreatedAt, '')
     })
 
 })

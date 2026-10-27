@@ -54,9 +54,8 @@ export class EnvironmentRow
         return this.health.ready ? PillKind.Healthy : PillKind.Failing
     }
 
-    public get Version(): string
+    public static VersionOf(image: string | undefined): string
     {
-        const image = this.health?.runningImage
         if (image === undefined || image === EnvironmentRow.EmptyText)
         {
             return EnvironmentRow.NoVersion
@@ -66,9 +65,19 @@ export class EnvironmentRow
         return tag === EnvironmentRow.EmptyText ? EnvironmentRow.NoVersion : tag
     }
 
+    public static UrlOf(status: EnvStatus, httpUrl: string): string | undefined
+    {
+        return status === EnvStatus.Running ? httpUrl : undefined
+    }
+
+    public get Version(): string
+    {
+        return EnvironmentRow.VersionOf(this.health?.runningImage)
+    }
+
     public get Url(): string | undefined
     {
-        return this.IsRunning ? this.Dto.httpUrl : undefined
+        return EnvironmentRow.UrlOf(this.Dto.status, this.Dto.httpUrl)
     }
 
     public get IsRunning(): boolean

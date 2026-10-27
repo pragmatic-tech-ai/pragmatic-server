@@ -1,5 +1,6 @@
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
-import type { EnvironmentDto, HiveHealthDto } from './tenant-types.js'
+import { EnvironmentRow } from './environment-row.js'
+import type { EnvStatus, EnvironmentDto, HiveHealthDto, Template } from './tenant-types.js'
 
 // The slice of TenantApiClient the environment detail needs.
 export interface IEnvDetailSource
@@ -19,6 +20,7 @@ export class EnvironmentDetailViewModel extends Observable
     public static readonly HealthProperty = 'Health'
     public static readonly LogBufferProperty = 'LogBuffer'
     public static readonly PausedProperty = 'Paused'
+    private static readonly EmptyText = ''
     public static readonly MaxLogChars = 100_000
 
     private status: string
@@ -40,6 +42,37 @@ export class EnvironmentDetailViewModel extends Observable
     public get Status(): string
     {
         return this.status
+    }
+
+    public get Name(): string
+    {
+        return this.env.name
+    }
+
+    public get Template(): Template
+    {
+        return this.env.template
+    }
+
+    public get EnvironmentId(): string
+    {
+        return this.env.environmentId
+    }
+
+    public get CreatedAt(): string
+    {
+        return this.env.createdAt
+    }
+
+    // Live: derived from the current status, not the construction-time one.
+    public get LiveUrl(): string
+    {
+        return EnvironmentRow.UrlOf(this.status as EnvStatus, this.env.httpUrl) ?? EnvironmentDetailViewModel.EmptyText
+    }
+
+    public get Version(): string
+    {
+        return EnvironmentRow.VersionOf(this.health?.runningImage)
     }
 
     public get RunningVersion(): string
@@ -65,6 +98,11 @@ export class EnvironmentDetailViewModel extends Observable
     public get Paused(): boolean
     {
         return this.paused
+    }
+
+    public async Delete(): Promise<void>
+    {
+        await this.source.DeleteEnvironment(this.env.name)
     }
 
     public async Start(): Promise<void>
