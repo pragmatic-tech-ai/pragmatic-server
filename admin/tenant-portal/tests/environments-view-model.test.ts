@@ -1,6 +1,8 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { EnvironmentsViewModel } from '../src/environments-view-model.js'
+import { TenantApiError } from '../src/tenant-api-client.js'
+import { EnvironmentRow } from '../src/environment-row.js'
 import { PillKind } from '../src/kit/pill-kinds.js'
 import { EnvStatus, EnvType, Template, TenantEventType } from '../src/tenant-types.js'
 import type { CreateEnvironmentParams, EnvironmentDto, HiveHealthDto, IEnvironmentsSource } from '../src/tenant-types.js'
@@ -24,6 +26,8 @@ class FakeSource implements IEnvironmentsSource
     public Health = new Map<string, HiveHealthDto[]>()
     public HealthThrows = new Set<string>()
     public Calls: string[] = []
+    public ListError: Error | undefined
+    public StartError: string | undefined
     public ListGate: Array<(envs: EnvironmentDto[]) => void> | undefined
 
     public async ListEnvironments(): Promise<EnvironmentDto[]>
@@ -32,6 +36,10 @@ class FakeSource implements IEnvironmentsSource
         {
             const gate = this.ListGate
             return new Promise<EnvironmentDto[]>(resolve => { gate.push(resolve) })
+        }
+        if (this.ListError !== undefined)
+        {
+            throw this.ListError
         }
         return this.Envs
     }
@@ -48,6 +56,10 @@ class FakeSource implements IEnvironmentsSource
     public async StartEnvironment(name: string): Promise<EnvironmentDto>
     {
         this.Calls.push('start:' + name)
+        if (this.StartError !== undefined)
+        {
+            throw new Error(this.StartError)
+        }
         return Make.Env(name, EnvStatus.Running)
     }
 
@@ -135,9 +147,9 @@ describe('EnvironmentsViewModel', () =>
     {
         const vm = new EnvironmentsViewModel(Fixture.Basic())
         await vm.Load()
-        vm.Filter = 'a'
+        vm.Filter = 'alp'
         vm.SelectAllFiltered()
-        assert.deepEqual([...vm.Selected].sort(), ['alpha', 'beta', 'gamma'])
+        assert.deepEqual([...vm.Selected], ['alpha'])
         vm.ClearSelection()
         vm.Filter = 'beta'
         vm.SelectAllFiltered()
@@ -198,5 +210,107 @@ describe('EnvironmentsViewModel', () =>
         assert.equal(await vm.ApplyEvent({ type: TenantEventType.HealthChanged, environmentName: 'n' }), true)
         assert.equal(vm.Rows.length, 0)
         assert.equal(await vm.ApplyEvent({ type: 'other' as never, environmentName: 'n' }), false)
+    })
+
+    it('prunes selection on reload', async () =>
+    {
+        const s = Fixture.Basic()
+        const vm = new EnvironmentsViewModel(s)
+        await vm.Load()
+        vm.Toggle('beta')
+        vm.Toggle('alpha')
+        s.Envs = [Make.Env('alpha', EnvStatus.Running)]
+        await vm.Load()
+        assert.deepEqual([...vm.Selected], ['alpha'])
+    })
+
+    it('a rejected ListEnvironments sets Error and clears Busy', async () =>
+    {
+        const s = Fixture.Basic()
+        s.ListError = new Error('down')
+        const vm = new EnvironmentsViewModel(s)
+        await vm.Load()
+        assert.equal(vm.Error, 'down')
+        assert.equal(vm.Busy, false)
+    })
+
+    it('a 401 from GetHealth fails the whole Load', async () =>
+    {
+        const s = Fixture.Basic()
+        s.GetHealth = async () => { throw new TenantApiError(TenantApiError.UnauthorizedStatus, 'no') }
+        const vm = new EnvironmentsViewModel(s)
+        await assert.rejects(vm.Load())
+        assert.equal(vm.Busy, false)
+    })
+
+    it('bulk aggregates the first error and still attempts the rest', async () =>
+    {
+        const s = Fixture.Basic()
+        s.Envs = [Make.Env('a1', EnvStatus.Stopped), Make.Env('a2', EnvStatus.Stopped)]
+        const vm = new EnvironmentsViewModel(s)
+        await vm.Load()
+        vm.SelectAllFiltered()
+        s.StartError = 'nope'
+        await vm.StartSelected()
+        assert.deepEqual(s.Calls, ['start:a1', 'start:a2'])
+        assert.equal(vm.Error, 'nope')
+        assert.equal(vm.Busy, false)
+    })
+
+    it('bulk is a no-op while Busy', async () =>
+    {
+        const s = Fixture.Basic()
+        const vm = new EnvironmentsViewModel(s)
+        await vm.Load()
+        vm.Toggle('beta')
+        s.ListGate = []
+        const pending = vm.Load()
+        await new Promise(r => setTimeout(r, 0))
+        assert.equal(vm.Busy, true)
+        await vm.StartSelected()
+        assert.deepEqual(s.Calls, [])
+        s.ListGate[0](s.Envs)
+        await pending
+    })
+
+    it('Busy stays a single span across a bulk action', async () =>
+    {
+        const s = Fixture.Basic()
+        const vm = new EnvironmentsViewModel(s)
+        await vm.Load()
+        vm.Toggle('beta')
+        const seen: boolean[] = []
+        vm.PropertyChanged(EnvironmentsViewModel.BusyProperty).subscribe(e => { seen.push(e.newValue as boolean) })
+        await vm.StartSelected()
+        assert.deepEqual(seen, [true, false])
+    })
+
+    it('Version edge cases', () =>
+    {
+        const row = (img: string | undefined) => new EnvironmentRow(Make.Env('x', EnvStatus.Running), Make.Health('x', true, img))
+        assert.equal(row('').Version, '\u2014')
+        assert.equal(row('img:').Version, '\u2014')
+        assert.equal(row('img').Version, 'img')
+    })
+
+    it('EnvironmentChanged for a known name reloads', async () =>
+    {
+        const s = Fixture.Basic()
+        const vm = new EnvironmentsViewModel(s)
+        await vm.Load()
+        s.Envs = [Make.Env('alpha', EnvStatus.Stopped)]
+        assert.equal(await vm.ApplyEvent({ type: TenantEventType.EnvironmentChanged, environmentName: 'alpha' }), true)
+        assert.equal(vm.Rows.length, 1)
+        assert.equal(vm.Rows[0].IsStopped, true)
+    })
+
+    it('Filter raises Filter and Rows changes', () =>
+    {
+        const vm = new EnvironmentsViewModel(new FakeSource())
+        const names: string[] = []
+        vm.PropertyChanged(EnvironmentsViewModel.FilterProperty).subscribe(() => { names.push(EnvironmentsViewModel.FilterProperty) })
+        vm.PropertyChanged(EnvironmentsViewModel.RowsProperty).subscribe(() => { names.push(EnvironmentsViewModel.RowsProperty) })
+        vm.Filter = 'x'
+        assert.deepEqual(names, [EnvironmentsViewModel.FilterProperty, EnvironmentsViewModel.RowsProperty])
     })
 })

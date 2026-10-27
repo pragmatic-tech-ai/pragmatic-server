@@ -11,6 +11,7 @@ export class EnvironmentsViewModel extends Observable
     public static readonly BusyProperty = 'Busy'
     public static readonly ErrorProperty = 'Error'
     public static readonly SelectionProperty = 'Selected'
+    public static readonly FilterProperty = 'Filter'
 
     private allRows: readonly EnvironmentRow[] = []
     private filter = ''
@@ -49,7 +50,9 @@ export class EnvironmentsViewModel extends Observable
     public set Filter(value: string)
     {
         const old = this.Rows
+        const oldFilter = this.filter
         this.filter = value
+        this.RaisePropertyChanged(EnvironmentsViewModel.FilterProperty, oldFilter, value)
         this.RaisePropertyChanged(EnvironmentsViewModel.RowsProperty, old, this.Rows)
     }
 
@@ -179,11 +182,13 @@ export class EnvironmentsViewModel extends Observable
         }
         catch
         {
-            // Reload failures are swallowed; Load already recorded displayable errors.
+            // Background event reloads are best-effort: every failure, including a 401, is swallowed.
+            // Only the foreground Load path surfaces an auth failure.
         }
     }
 
-    // Health is best-effort per hive: one hive failing degrades only its own rows.
+    // Health is best-effort per hive: one hive failing degrades only its own rows, except a 401
+    // (dead session), which fails the whole load.
     private async LoadHealth(envs: readonly EnvironmentDto[]): Promise<Map<string, HiveHealthDto>>
     {
         const map = new Map<string, HiveHealthDto>()
@@ -195,23 +200,31 @@ export class EnvironmentsViewModel extends Observable
                 hives.add(e.hiveId)
             }
         }
-        for (const hiveId of hives)
+        const lists = await Promise.all([...hives].map(h => this.HealthOf(h)))
+        for (const list of lists)
         {
-            let list: HiveHealthDto[] = []
-            try
-            {
-                list = await this.source.GetHealth(hiveId)
-            }
-            catch
-            {
-                list = []
-            }
             for (const h of list)
             {
                 map.set(h.environmentName, h)
             }
         }
         return map
+    }
+
+    private async HealthOf(hiveId: string): Promise<HiveHealthDto[]>
+    {
+        try
+        {
+            return await this.source.GetHealth(hiveId)
+        }
+        catch (e)
+        {
+            if (EnvironmentsViewModel.IsUnauthorized(e))
+            {
+                throw e
+            }
+            return []
+        }
     }
 
     private async RunBulk(pick: (r: EnvironmentRow) => boolean, act: (name: string) => Promise<unknown>): Promise<void>
@@ -223,9 +236,9 @@ export class EnvironmentsViewModel extends Observable
         const names = this.allRows.filter(r => this.selected.has(r.Name) && pick(r)).map(r => r.Name)
         this.SetError(undefined)
         this.EnterBusy()
-        let firstError: string | undefined
         try
         {
+            let firstError: string | undefined
             for (const n of names)
             {
                 try
@@ -241,16 +254,16 @@ export class EnvironmentsViewModel extends Observable
                     firstError ??= EnvironmentsViewModel.MessageOf(e)
                 }
             }
+            this.ClearSelection()
+            await this.Load()
+            if (firstError !== undefined)
+            {
+                this.SetError(firstError)
+            }
         }
         finally
         {
             this.ExitBusy()
-        }
-        this.ClearSelection()
-        await this.Load()
-        if (firstError !== undefined)
-        {
-            this.SetError(firstError)
         }
     }
 
