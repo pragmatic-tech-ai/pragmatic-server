@@ -7,6 +7,7 @@ import { EnvironmentNotDevelopmentError, EnvironmentNotRuntimeError } from '../e
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import type { IEnvironmentService } from '../control-plane-host.js'
 import { TenantApiEndpoint } from '../tenant-api/tenant-api-endpoint.js'
+import { SeededTenantDirectory } from '../tenant-api/seeded-tenant-directory.js'
 import type { TenantSession } from '../tenant-auth/tenant-session.js'
 
 /** Records what the endpoint wrote so a test can assert on status and JSON body without a real socket. */
@@ -144,6 +145,12 @@ class Fixtures
         }
     }
 
+    /** A directory whose tenant records NO owner, so every session fails open to owner and the capability guard stays out of the way. */
+    public static Directory(): SeededTenantDirectory
+    {
+        return new SeededTenantDirectory({ tenant: { id: Fixtures.TenantA, clientId: 'c', displayName: 'A', createdAt: '2026-01-01T00:00:00Z' }, hives: [] })
+    }
+
     public static Session(tenantId: string): TenantSession
     {
         return { id: 'sess-' + tenantId, tenantId, principalId: 'p-' + tenantId, expiresAt: '2099-01-01T00:00:00Z' }
@@ -200,7 +207,7 @@ describe('TenantApiEndpoint identity-admin routes', () =>
     beforeEach(() =>
     {
         service = new FakeService([Fixtures.Env('a-env', Fixtures.TenantA), Fixtures.Env('b-env', Fixtures.TenantB)])
-        endpoint = new TenantApiEndpoint(service as unknown as IEnvironmentService, undefined as never, undefined as never, undefined as never, undefined as never)
+        endpoint = new TenantApiEndpoint(service as unknown as IEnvironmentService, Fixtures.Directory(), undefined as never, undefined as never, undefined as never)
     })
 
     class Driver

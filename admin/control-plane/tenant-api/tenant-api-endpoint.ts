@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { IEnvironmentService, MakerTokenDto } from '../control-plane-host.js'
 import { EnvironmentDtoMapper } from '../environment-dto.js'
-import { TenantAdminCapabilities } from './tenant-admin-capabilities.js'
+import { TenantAdminCapabilities, type AdminCapabilities } from './tenant-admin-capabilities.js'
 import { TenantProfileMapper } from './tenant-profile-dto.js'
 import { HiveDtoMapper } from './hive-dto.js'
 import { HiveHealthProducer } from '../hive-health-producer.js'
@@ -59,6 +59,8 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         '^' + TenantApiEndpoint.Prefix + TenantApiEndpoint.EnvironmentsSegment + '/([^/]+)/(' +
         Object.values(TenantEnvAction).join('|') + ')$')
     private static readonly AdminSegment = 'admin'
+    private static readonly AccessCapability = 'access'
+    private static readonly SettingsCapability = 'settings'
     private static readonly SnapshotLeaf = 'snapshot'
     private static readonly AccountsLeaf = 'accounts'
     private static readonly GrantsLeaf = 'grants'
@@ -96,6 +98,8 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     private static readonly StatusNoContent = 204
     private static readonly StatusBadRequest = 400
     private static readonly StatusNotFound = 404
+    private static readonly StatusForbidden = 403
+    private static readonly ForbiddenMessage = 'forbidden'
     private static readonly StatusConflict = 409
     private static readonly StatusInternal = 500
     private static readonly StatusUnavailable = 503
@@ -422,6 +426,11 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         }
         try
         {
+            const required = TenantApiEndpoint.RequiredCapability(method, m[2] as string)
+            if (required !== undefined && !this.RequireCapability(res, session, required))
+            {
+                return true
+            }
             if (!await this.DispatchAdmin(req, res, method, rec.name, m[2] as string, m[3]))
             {
                 this.WriteNotFound(res)
@@ -432,6 +441,40 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
             this.WriteIdentityError(res, err)
         }
         return true
+    }
+
+    /**
+     * The single audit point for capability enforcement: which admin write routes need which capability. GETs, environment
+     * lifecycle/create, hive target and the env credential routes are deliberately absent (open to any tenant admin).
+     */
+    private static RequiredCapability(method: string, leaf: string): keyof AdminCapabilities | undefined
+    {
+        const write = method === TenantApiEndpoint.MethodPost || method === TenantApiEndpoint.MethodPut || method === TenantApiEndpoint.MethodDelete
+        if (!write)
+        {
+            return undefined
+        }
+        if (leaf === TenantApiEndpoint.ConfigLeaf)
+        {
+            return method === TenantApiEndpoint.MethodPut ? TenantApiEndpoint.SettingsCapability : undefined
+        }
+        if (leaf === TenantApiEndpoint.AccountsLeaf || leaf === TenantApiEndpoint.GrantsLeaf || leaf === TenantApiEndpoint.TokensLeaf || leaf === TenantApiEndpoint.SecurityModelLeaf)
+        {
+            return TenantApiEndpoint.AccessCapability
+        }
+        return undefined
+    }
+
+    /** Honesty invariant: derives capabilities via the SAME TenantAdminCapabilities.For the profile route reports; writes a generic 403 and returns false when missing. */
+    private RequireCapability(res: ServerResponse, session: TenantSession, capability: keyof AdminCapabilities): boolean
+    {
+        const caps = TenantAdminCapabilities.For(session, this.directory.GetTenant(session.tenantId)).capabilities
+        if (caps[capability])
+        {
+            return true
+        }
+        this.WriteJson(res, TenantApiEndpoint.StatusForbidden, { [TenantApiEndpoint.ErrorKey]: TenantApiEndpoint.ForbiddenMessage })
+        return false
     }
 
     /** Runs one admin (leaf, method, tail) combination; false when the combination is not a route. */
