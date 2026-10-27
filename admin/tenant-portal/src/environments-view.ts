@@ -82,6 +82,12 @@ export class EnvironmentsView extends TenantViewBase
         this.Rebuild()
     }
 
+    // Names of the environments currently loaded (for the create dialog's uniqueness check).
+    public ExistingNames(): readonly string[]
+    {
+        return this.vm.AllRows.map(r => r.Name)
+    }
+
     // Test seam: the environments grid.
     public get Grid(): DataGrid
     {

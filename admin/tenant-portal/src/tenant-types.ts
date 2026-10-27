@@ -104,7 +104,6 @@ export enum VersionBadge
 export interface ITenantNavigator
 {
     ShowLogin(): void
-    ShowTree(): void
     ShowHiveDetail(hive: HiveDto): void
     ShowEnvironmentDetail(env: EnvironmentDto): void
     ShowUsersAccess(): void

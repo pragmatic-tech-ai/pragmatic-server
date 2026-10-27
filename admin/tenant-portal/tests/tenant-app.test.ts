@@ -1,5 +1,6 @@
 import { after, before, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { StackPanel } from '@pragmatic-tech-ai/mural/basic'
 import { Button } from '@pragmatic-tech-ai/mural/framework'
 import { Application } from '@pragmatic-tech-ai/mural/runtime'
@@ -15,7 +16,8 @@ import { FieldSecurityView } from '../src/field-security-view.js'
 import { UsersAccessHubView } from '../src/users-access-hub-view.js'
 import { EnvironmentDetailView } from '../src/environment-detail-view.js'
 import { ComingSoonView } from '../src/coming-soon-view.js'
-import { TenantTreeView } from '../src/tenant-tree-view.js'
+import { EnvironmentsView } from '../src/environments-view.js'
+import { CreateEnvironmentDialog } from '../src/create-environment-dialog.js'
 import { NavRail } from '../src/nav-rail.js'
 import { NavModel, NavSection } from '../src/nav-model.js'
 import { UserMenu } from '../src/user-menu.js'
@@ -75,6 +77,7 @@ class FakeClient
 
     public async ListEnvironments(): Promise<EnvironmentDto[]>
     {
+        this.Calls.push('list')
         return []
     }
 
@@ -211,7 +214,7 @@ describe('TenantApp', () =>
         // A delete of the open env swaps back to the environments list.
         client.Handler!({ type: TenantEventType.EnvironmentDeleted, environmentName: 'e1' })
         await new Promise(r => setTimeout(r, 0))
-        assert.ok(Fixtures.CurrentOf(app) instanceof TenantTreeView)
+        assert.ok(Fixtures.CurrentOf(app) instanceof EnvironmentsView)
         assert.equal(app.ActiveSection, NavSection.Environments)
     })
 
@@ -338,13 +341,13 @@ describe('TenantApp', () =>
         assert.equal(Fixtures.Find(app, NavRail)!.Active, NavSection.UsersAccess)
     })
 
-    it('ShowSection(Environments) shows the interim tree host and marks Environments active', async () =>
+    it('ShowSection(Environments) shows the environments list and marks Environments active', async () =>
     {
         const { app } = Fixtures.Make(Session)
         await app.Boot()
         Fixtures.Find(app, NavRail)!.Select(NavSection.Environments)
         await new Promise(r => setTimeout(r, 0))
-        assert.ok(Fixtures.CurrentOf(app) instanceof TenantTreeView)
+        assert.ok(Fixtures.CurrentOf(app) instanceof EnvironmentsView)
         assert.equal(Fixtures.Find(app, NavRail)!.Active, NavSection.Environments)
     })
 
@@ -397,7 +400,7 @@ describe('TenantApp', () =>
         assert.ok(Fixtures.CurrentOf(app) instanceof FieldSecurityView)
     })
 
-    it('OnTenantEvent and Teardown do not throw with no tree pane', async () =>
+    it('OnTenantEvent and Teardown do not throw with no environments pane', async () =>
     {
         const { app, client } = Fixtures.Make(Session)
         await app.Boot()
@@ -407,20 +410,52 @@ describe('TenantApp', () =>
         assert.doesNotThrow(() => app.ShowLogin())
     })
 
-    it('an event with the tree active takes a single refresh path', async () =>
+    it('an event with the environments list active takes a single refresh path', async () =>
     {
         const { app, client } = Fixtures.Make(Session)
         await app.Boot()
         app.ShowSection(NavSection.Environments)
         await new Promise(r => setTimeout(r, 0))
-        const tree = Fixtures.CurrentOf(app) as TenantTreeView
+        const list = Fixtures.CurrentOf(app) as EnvironmentsView
         let applied = 0
         let refreshed = 0
-        tree.ApplyEvent = async () => { applied++ }
-        tree.Refresh = async () => { refreshed++ }
+        list.ApplyEvent = async () => { applied++ }
+        list.Refresh = async () => { refreshed++ }
         client.Handler!({ type: TenantEventType.EnvironmentChanged, environmentName: 'x' })
         assert.equal(applied, 1)
         assert.equal(refreshed, 0)
+    })
+
+    it('an environment-created event reloads the shown environments list', async () =>
+    {
+        const { app, client } = Fixtures.Make(Session)
+        await app.Boot()
+        app.ShowSection(NavSection.Environments)
+        await new Promise(r => setTimeout(r, 0))
+        const before = client.Calls.filter(c => c === 'list').length
+        client.Handler!({ type: TenantEventType.EnvironmentCreated, environmentName: 'new' })
+        await new Promise(r => setTimeout(r, 0))
+        assert.ok(client.Calls.filter(c => c === 'list').length > before)
+    })
+
+    it('the create handler presents the dialog and removing it on dismiss works', async () =>
+    {
+        const { app } = Fixtures.Make(Session)
+        await app.Boot()
+        app.ShowSection(NavSection.Environments)
+        await new Promise(r => setTimeout(r, 0))
+        const list = Fixtures.CurrentOf(app) as EnvironmentsView
+        list.CreateHandler()
+        const dialog = Fixtures.Find(app, CreateEnvironmentDialog)
+        assert.ok(dialog !== undefined)
+        dialog.Cancel()
+        assert.equal(Fixtures.Find(app, CreateEnvironmentDialog), undefined)
+    })
+
+    it('the shell no longer references the retired tree', async () =>
+    {
+        const src = readFileSync(new URL('../src/tenant-app.ts', import.meta.url), 'utf8')
+        assert.ok(!src.includes('TenantTree'))
     })
 
     it('logout clears the stored principalId', async () =>

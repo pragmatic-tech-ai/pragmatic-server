@@ -1,13 +1,14 @@
 import { Orientation, StackPanel } from '@pragmatic-tech-ai/mural/basic'
 import { ComingSoonView } from './coming-soon-view.js'
+import { CreateEnvironmentDialog } from './create-environment-dialog.js'
 import { EnvironmentDetailView } from './environment-detail-view.js'
+import { EnvironmentsView } from './environments-view.js'
+import { EnvironmentsViewModel } from './environments-view-model.js'
 import { HiveDetailView } from './hive-detail-view.js'
 import { IdentityPlate } from './identity-plate.js'
 import { NavModel, NavSection } from './nav-model.js'
 import { NavRail } from './nav-rail.js'
 import { TenantApiClient } from './tenant-api-client.js'
-import { TenantTreeView } from './tenant-tree-view.js'
-import { TenantTreeViewModel } from './tenant-tree-view-model.js'
 import { TenantViewBase } from './tenant-view-base.js'
 import { TenantEventType } from './tenant-types.js'
 import type { AdminCapabilitiesDto, EnvironmentDto, HiveDto, ITenantNavigator, ITenantView, SessionDto, TenantEvent, TenantProfileDto } from './tenant-types.js'
@@ -30,6 +31,8 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     private readonly rightColumn = new StackPanel()
     private readonly topHost = new StackPanel()
     private readonly detailHost = new StackPanel()
+    // Minimal dialog layer: holds the open create dialog (if any) beneath the content pane.
+    private readonly dialogHost = new StackPanel()
     // Populated by Boot; stays undefined when the profile read fails (permissive fallback).
     private profile: TenantProfileDto | undefined
     private current: ITenantView | undefined
@@ -38,8 +41,8 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     // Operator's principal from the Boot session; UsersAccessView uses it to guard self-disable.
     private currentPrincipalId = ''
     private active: NavSection = NavSection.Overview
-    // Interim environments host: set only while the tree is the shown view.
-    private tree: TenantTreeView | undefined
+    // Live-event host: set only while the environments list is the shown view.
+    private environments: EnvironmentsView | undefined
     private eventUnsub: (() => void) | undefined
 
     public constructor(client: TenantApiClient = new TenantApiClient())
@@ -51,6 +54,7 @@ export class TenantApp extends StackPanel implements ITenantNavigator
         this.rightColumn.Orientation = Orientation.Vertical
         this.rightColumn.AddChild(this.topHost)
         this.rightColumn.AddChild(this.detailHost)
+        this.rightColumn.AddChild(this.dialogHost)
         this.AddChild(this.navRail)
         this.AddChild(this.rightColumn)
     }
@@ -126,11 +130,6 @@ export class TenantApp extends StackPanel implements ITenantNavigator
         }
     }
 
-    public ShowTree(): void
-    {
-        this.ShowSection(NavSection.Environments)
-    }
-
     public ShowHiveDetail(hive: HiveDto): void
     {
         this.MarkEnvironmentsActive()
@@ -198,9 +197,23 @@ export class TenantApp extends StackPanel implements ITenantNavigator
 
     private ShowEnvironments(): void
     {
-        const tree = new TenantTreeView(new TenantTreeViewModel(this.client))
-        this.Show(tree)
-        this.tree = tree
+        const view = new EnvironmentsView(new EnvironmentsViewModel(this.client))
+        view.CreateHandler = () => this.OpenCreateEnvironment(view)
+        this.Show(view)
+        this.environments = view
+    }
+
+    private OpenCreateEnvironment(view: EnvironmentsView): void
+    {
+        this.CloseDialog()
+        const dialog = new CreateEnvironmentDialog(this.client, view.ExistingNames(), env => this.ShowEnvironmentDetail(env))
+        dialog.AddDismissListener(() => this.CloseDialog())
+        this.dialogHost.AddChild(dialog)
+    }
+
+    private CloseDialog(): void
+    {
+        this.Clear(this.dialogHost)
     }
 
     private MarkEnvironmentsActive(): void
@@ -227,7 +240,8 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     {
         this.current?.Dispose?.()
         this.current = undefined
-        this.tree = undefined
+        this.environments = undefined
+        this.CloseDialog()
         this.eventUnsub?.()
         this.eventUnsub = undefined
         this.Clear(this.topHost)
@@ -236,10 +250,10 @@ export class TenantApp extends StackPanel implements ITenantNavigator
 
     private OnTenantEvent(ev: TenantEvent): void
     {
-        if (this.tree !== undefined)
+        if (this.environments !== undefined)
         {
-            // The interim tree is the active view: ApplyEvent is its one refresh path (no extra Refresh).
-            void this.tree.ApplyEvent(ev)
+            // The environments list is the active view: ApplyEvent is its one refresh path (no extra Refresh).
+            void this.environments.ApplyEvent(ev)
             return
         }
         if (ev.type === TenantEventType.EnvironmentDeleted && ev.environmentName === this.currentEnvName)
@@ -257,7 +271,7 @@ export class TenantApp extends StackPanel implements ITenantNavigator
         this.current?.Dispose?.()
         this.Clear(this.detailHost)
         this.current = view
-        this.tree = undefined
+        this.environments = undefined
         this.currentEnvName = undefined
         view.AttachNavigator(this)
         this.detailHost.AddChild(view)
