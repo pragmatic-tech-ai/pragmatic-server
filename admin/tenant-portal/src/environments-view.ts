@@ -37,6 +37,8 @@ export class EnvironmentsView extends TenantViewBase
     public static readonly HealthHeader = 'Health'
     public static readonly UrlHeader = 'Live URL'
     public static readonly SubSeparator = ' \u00b7 '
+    public static readonly ErrorSeparator = ' '
+    public static readonly NoText = ''
     public static readonly StoppedText = 'Stopped'
     public static readonly NotServingText = 'Not serving'
 
@@ -45,9 +47,12 @@ export class EnvironmentsView extends TenantViewBase
     private readonly headerBox = new Checkbox()
     private readonly body = new StackPanel()
     private readonly bulkSlot = new StackPanel()
+    private readonly errorSlot = new StackPanel()
+    private readonly errorLine = new TextBlock()
     private readonly subscriptions: IDisposable[] = []
     private suppressSearch = false
     private bulkShown = false
+    private errorShown = false
     private localError: string | undefined
     private readonly headerListener = (): void => this.OnHeaderClicked()
     private host: ScreenHost | undefined
@@ -64,7 +69,10 @@ export class EnvironmentsView extends TenantViewBase
         this.headerBox.AddClickHandler(this.headerListener)
         this.body.Orientation = Orientation.Vertical
         this.bulkSlot.Orientation = Orientation.Vertical
+        this.errorSlot.Orientation = Orientation.Vertical
+        this.errorLine.Foreground = Tones.Brush(PillTone.Danger)
         this.body.AddChild(this.searchBox)
+        this.body.AddChild(this.errorSlot)
         this.body.AddChild(this.bulkSlot)
         this.body.AddChild(this.grid)
         this.BuildGrid()
@@ -75,7 +83,7 @@ export class EnvironmentsView extends TenantViewBase
         {
             this.subscriptions.push(this.vm.PropertyChanged(key).subscribe(rebuild))
         }
-        for (const key of [EnvironmentsViewModel.BusyProperty, EnvironmentsViewModel.ErrorProperty])
+        for (const key of [EnvironmentsViewModel.BusyProperty, EnvironmentsViewModel.ErrorProperty, EnvironmentsViewModel.ActionErrorProperty])
         {
             this.subscriptions.push(this.vm.PropertyChanged(key).subscribe(refreshState))
         }
@@ -110,6 +118,12 @@ export class EnvironmentsView extends TenantViewBase
     public get BulkActions(): readonly Act[]
     {
         return this.bulkShown ? this.bulkActs : []
+    }
+
+    // Test seam: the inline error text shown above the grid, or undefined when hidden.
+    public get InlineError(): string | undefined
+    {
+        return this.errorShown ? this.errorLine.Text : undefined
     }
 
     // Test seam: the search box.
@@ -271,7 +285,7 @@ export class EnvironmentsView extends TenantViewBase
             loading: vm.Busy && none,
             allowed: true,
             isEmpty: !vm.Busy && none,
-            error: message !== undefined,
+            error: message !== undefined && none,
             skeleton: SkeletonKind.Table,
             empty: {
                 glyph: KitGlyph.Layers,
@@ -279,7 +293,7 @@ export class EnvironmentsView extends TenantViewBase
                 body: EnvironmentsView.EmptyBody,
                 action: this.MakeCreateAct(),
             },
-            errorConfig: message === undefined ? undefined : { title: message },
+            errorConfig: message === undefined || !none ? undefined : { title: message },
             content: this.body,
         }
     }
@@ -297,6 +311,7 @@ export class EnvironmentsView extends TenantViewBase
     private RefreshState(): void
     {
         this.SyncBulk()
+        this.SyncInlineError()
         this.host?.Update(this.Inputs())
     }
 
@@ -314,6 +329,38 @@ export class EnvironmentsView extends TenantViewBase
         finally
         {
             this.suppressSearch = false
+        }
+    }
+
+    // Action failures always show inline; a load failure shows inline only while rows exist
+    // (with no rows the ScreenHost shows it full-pane).
+    private SyncInlineError(): void
+    {
+        const parts: string[] = []
+        if (this.vm.ActionError !== undefined)
+        {
+            parts.push(this.vm.ActionError)
+        }
+        const loadError = this.vm.Error ?? this.localError
+        if (loadError !== undefined && this.vm.AllRows.length > 0)
+        {
+            parts.push(loadError)
+        }
+        const text = parts.join(EnvironmentsView.ErrorSeparator)
+        const want = text !== EnvironmentsView.NoText
+        this.errorLine.Text = text
+        if (want === this.errorShown)
+        {
+            return
+        }
+        this.errorShown = want
+        if (want)
+        {
+            this.errorSlot.AddChild(this.errorLine)
+        }
+        else
+        {
+            this.errorSlot.RemoveChild(this.errorLine)
         }
     }
 

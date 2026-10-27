@@ -7,6 +7,7 @@ export class EnvironmentRow
 {
     private static readonly NoVersion = '\u2014'
     private static readonly TagSeparator = ':'
+    private static readonly EmptyText = ''
 
     private static readonly StatusPills: ReadonlyMap<EnvStatus, PillKind> = new Map<EnvStatus, PillKind>([
         [EnvStatus.Running, PillKind.Running],
@@ -56,13 +57,13 @@ export class EnvironmentRow
     public get Version(): string
     {
         const image = this.health?.runningImage
-        if (image === undefined || image === '')
+        if (image === undefined || image === EnvironmentRow.EmptyText)
         {
             return EnvironmentRow.NoVersion
         }
         const i = image.lastIndexOf(EnvironmentRow.TagSeparator)
         const tag = i >= 0 ? image.substring(i + 1) : image
-        return tag === '' ? EnvironmentRow.NoVersion : tag
+        return tag === EnvironmentRow.EmptyText ? EnvironmentRow.NoVersion : tag
     }
 
     public get Url(): string | undefined

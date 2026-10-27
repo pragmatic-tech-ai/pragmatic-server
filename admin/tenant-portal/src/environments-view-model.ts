@@ -10,6 +10,7 @@ export class EnvironmentsViewModel extends Observable
     public static readonly RowsProperty = 'Rows'
     public static readonly BusyProperty = 'Busy'
     public static readonly ErrorProperty = 'Error'
+    public static readonly ActionErrorProperty = 'ActionError'
     public static readonly SelectionProperty = 'Selected'
     public static readonly FilterProperty = 'Filter'
 
@@ -18,6 +19,7 @@ export class EnvironmentsViewModel extends Observable
     private selected: ReadonlySet<string> = new Set<string>()
     private busyCount = 0
     private error: string | undefined
+    private actionError: string | undefined
     private loadToken = 0
 
     public constructor(private readonly source: IEnvironmentsSource)
@@ -66,6 +68,12 @@ export class EnvironmentsViewModel extends Observable
         return this.error
     }
 
+    // Failure of the last bulk action; independent of load errors and never touched by Load.
+    public get ActionError(): string | undefined
+    {
+        return this.actionError
+    }
+
     public get Selected(): ReadonlySet<string>
     {
         return this.selected
@@ -93,6 +101,7 @@ export class EnvironmentsViewModel extends Observable
 
     public ClearSelection(): void
     {
+        this.SetActionError(undefined)
         this.SetSelected(new Set<string>())
     }
 
@@ -234,7 +243,7 @@ export class EnvironmentsViewModel extends Observable
             return
         }
         const names = this.allRows.filter(r => this.selected.has(r.Name) && pick(r)).map(r => r.Name)
-        this.SetError(undefined)
+        this.SetActionError(undefined)
         this.EnterBusy()
         try
         {
@@ -258,7 +267,7 @@ export class EnvironmentsViewModel extends Observable
             await this.Load()
             if (firstError !== undefined)
             {
-                this.SetError(firstError)
+                this.SetActionError(firstError)
             }
         }
         finally
@@ -272,6 +281,16 @@ export class EnvironmentsViewModel extends Observable
         const old = this.selected
         this.selected = next
         this.RaisePropertyChanged(EnvironmentsViewModel.SelectionProperty, old, next)
+    }
+
+    private SetActionError(value: string | undefined): void
+    {
+        const old = this.actionError
+        this.actionError = value
+        if (old !== value)
+        {
+            this.RaisePropertyChanged(EnvironmentsViewModel.ActionErrorProperty, old, value)
+        }
     }
 
     private SetError(value: string | undefined): void

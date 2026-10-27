@@ -97,6 +97,7 @@ class FakeSource implements IEnvironmentsSource
     public Envs: EnvironmentDto[] = [Fixtures.Env('alpha', EnvStatus.Running), Fixtures.Env('beta', EnvStatus.Stopped)]
     public Calls: string[] = []
     public ListError: Error | undefined
+    public StartFail = new Set<string>()
     public Gate: Array<(envs: EnvironmentDto[]) => void> | undefined
 
     public async ListEnvironments(): Promise<EnvironmentDto[]>
@@ -113,7 +114,7 @@ class FakeSource implements IEnvironmentsSource
         return this.Envs
     }
     public async GetHealth(_hiveId: string): Promise<HiveHealthDto[]> { return [] }
-    public async StartEnvironment(name: string): Promise<EnvironmentDto> { this.Calls.push('start:' + name); return Fixtures.Env(name, EnvStatus.Running) }
+    public async StartEnvironment(name: string): Promise<EnvironmentDto> { this.Calls.push('start:' + name); if (this.StartFail.has(name)) { throw new Error('could not start ' + name) } return Fixtures.Env(name, EnvStatus.Running) }
     public async StopEnvironment(name: string): Promise<EnvironmentDto> { this.Calls.push('stop:' + name); return Fixtures.Env(name, EnvStatus.Stopped) }
     public async RestartEnvironment(name: string): Promise<EnvironmentDto> { this.Calls.push('restart:' + name); return Fixtures.Env(name, EnvStatus.Running) }
     public async CreateEnvironment(_p: CreateEnvironmentParams): Promise<EnvironmentDto> { throw new Error('unused') }
@@ -308,5 +309,40 @@ describe('EnvironmentsView', () =>
         view.AttachNavigator(new Nav())
         assert.equal(Fixtures.Collect(view).filter(v => v instanceof Section).length, 1)
         assert.equal(Fixtures.Collect(view).filter(v => v === view.Grid).length, 1)
+    })
+
+    it('a partial bulk failure keeps the grid and a persistent inline error across a live reload', async () =>
+    {
+        const src = new FakeSource()
+        src.Envs = [Fixtures.Env('a1', EnvStatus.Stopped), Fixtures.Env('a2', EnvStatus.Stopped)]
+        src.StartFail.add('a2')
+        const { view, vm } = await Harness.Make(src)
+        vm.SelectAllFiltered()
+        Fixtures.Click(view.BulkActions[0])
+        await Fixtures.Settle()
+        assert.equal(view.Host.State, ScreenState.Populated)
+        assert.equal(Fixtures.Rows(view).length, 2)
+        assert.equal(view.InlineError, 'could not start a2')
+        await vm.Load()
+        assert.equal(view.Host.State, ScreenState.Populated)
+        assert.equal(view.InlineError, 'could not start a2')
+        vm.ClearSelection()
+        assert.equal(view.InlineError, undefined)
+    })
+
+    it('a load failure with rows stays Populated with an inline error; with no rows it is full-pane', async () =>
+    {
+        const src = new FakeSource()
+        const { view } = await Harness.Make(src)
+        src.ListError = new Error('down')
+        await view.Refresh()
+        assert.equal(view.Host.State, ScreenState.Populated)
+        assert.equal(view.InlineError, 'down')
+        const empty = new FakeSource()
+        empty.Envs = []
+        empty.ListError = new Error('down')
+        const second = await Harness.Make(empty)
+        assert.equal(second.view.Host.State, ScreenState.Error)
+        assert.equal(second.view.InlineError, undefined)
     })
 })

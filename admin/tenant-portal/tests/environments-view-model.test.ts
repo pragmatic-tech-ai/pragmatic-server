@@ -253,8 +253,32 @@ describe('EnvironmentsViewModel', () =>
         s.StartError = 'nope'
         await vm.StartSelected()
         assert.deepEqual(s.Calls, ['start:a1', 'start:a2'])
-        assert.equal(vm.Error, 'nope')
+        assert.equal(vm.ActionError, 'nope')
+        assert.equal(vm.Error, undefined)
         assert.equal(vm.Busy, false)
+    })
+
+    it('a successful Load leaves ActionError intact; ClearSelection and a new bulk clear it', async () =>
+    {
+        const s = Fixture.Basic()
+        s.Envs = [Make.Env('a1', EnvStatus.Stopped)]
+        const vm = new EnvironmentsViewModel(s)
+        await vm.Load()
+        vm.SelectAllFiltered()
+        s.StartError = 'nope'
+        await vm.StartSelected()
+        assert.equal(vm.ActionError, 'nope')
+        await vm.Load()
+        assert.equal(vm.ActionError, 'nope')
+        vm.ClearSelection()
+        assert.equal(vm.ActionError, undefined)
+        vm.SelectAllFiltered()
+        await vm.StartSelected()
+        assert.equal(vm.ActionError, 'nope')
+        s.StartError = undefined
+        vm.SelectAllFiltered()
+        await vm.StartSelected()
+        assert.equal(vm.ActionError, undefined)
     })
 
     it('bulk is a no-op while Busy', async () =>
