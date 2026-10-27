@@ -12,6 +12,7 @@ import type { ScreenHostInputs } from './kit/index.js'
 import type { EnvironmentRow } from './environment-row.js'
 import { EnvironmentsViewModel } from './environments-view-model.js'
 import type { ITenantNavigator, TenantEvent } from './tenant-types.js'
+import { TenantApiError } from './tenant-api-client.js'
 import { TenantViewBase } from './tenant-view-base.js'
 
 // Tenant admin "Environments": searchable, multi-selectable grid of the hive's environments
@@ -47,7 +48,9 @@ export class EnvironmentsView extends TenantViewBase
     private readonly subscriptions: IDisposable[] = []
     private suppressSearch = false
     private bulkShown = false
-    private host!: ScreenHost
+    private localError: string | undefined
+    private readonly headerListener = (): void => this.OnHeaderClicked()
+    private host: ScreenHost | undefined
     private bulkActs: Act[] = []
     private createAct!: Act
     private createHandler: () => void = () => { }
@@ -58,7 +61,7 @@ export class EnvironmentsView extends TenantViewBase
         this.Orientation = Orientation.Vertical
         this.searchBox.Placeholder = EnvironmentsView.SearchPlaceholder
         this.subscriptions.push(this.searchBox.PropertyChanged(TextBox.TextKey).subscribe(() => this.OnSearchChanged()))
-        this.headerBox.AddClickHandler(() => this.OnHeaderClicked())
+        this.headerBox.AddClickHandler(this.headerListener)
         this.body.Orientation = Orientation.Vertical
         this.bulkSlot.Orientation = Orientation.Vertical
         this.body.AddChild(this.searchBox)
@@ -67,10 +70,14 @@ export class EnvironmentsView extends TenantViewBase
         this.BuildGrid()
         this.BuildChrome()
         const rebuild = (): void => this.Rebuild()
-        for (const key of [EnvironmentsViewModel.RowsProperty, EnvironmentsViewModel.SelectionProperty,
-            EnvironmentsViewModel.BusyProperty, EnvironmentsViewModel.ErrorProperty, EnvironmentsViewModel.FilterProperty])
+        const refreshState = (): void => this.RefreshState()
+        for (const key of [EnvironmentsViewModel.RowsProperty, EnvironmentsViewModel.SelectionProperty, EnvironmentsViewModel.FilterProperty])
         {
             this.subscriptions.push(this.vm.PropertyChanged(key).subscribe(rebuild))
+        }
+        for (const key of [EnvironmentsViewModel.BusyProperty, EnvironmentsViewModel.ErrorProperty])
+        {
+            this.subscriptions.push(this.vm.PropertyChanged(key).subscribe(refreshState))
         }
         this.Rebuild()
     }
@@ -84,7 +91,7 @@ export class EnvironmentsView extends TenantViewBase
     // Test seam: the state host (skeleton / error / empty / populated).
     public get Host(): ScreenHost
     {
-        return this.host
+        return this.host as ScreenHost
     }
 
     // Test seam: the header Create action.
@@ -132,13 +139,14 @@ export class EnvironmentsView extends TenantViewBase
 
     public async Refresh(): Promise<void>
     {
+        this.SetLocalError(undefined)
         try
         {
             await this.vm.Load()
         }
         catch (e)
         {
-            this.ShowError(e)
+            this.ReportError(e)
         }
     }
 
@@ -155,6 +163,7 @@ export class EnvironmentsView extends TenantViewBase
             s.dispose()
         }
         this.subscriptions.length = 0
+        this.headerBox.RemoveClickHandler(this.headerListener)
         this.grid.dispose()
     }
 
@@ -187,14 +196,33 @@ export class EnvironmentsView extends TenantViewBase
 
     private async RunBulk(run: () => Promise<void>): Promise<void>
     {
+        this.SetLocalError(undefined)
         try
         {
             await run()
         }
         catch (e)
         {
-            this.ShowError(e)
+            this.ReportError(e)
         }
+    }
+
+    // A 401 drops to login; every other failure shows through the ScreenHost error state
+    // (the base message line is not part of this view's layout).
+    private ReportError(e: unknown): void
+    {
+        if (e instanceof TenantApiError && e.Status === TenantApiError.UnauthorizedStatus && this.Navigator !== undefined)
+        {
+            this.ShowError(e)
+            return
+        }
+        this.SetLocalError(e instanceof Error ? e.message : String(e))
+    }
+
+    private SetLocalError(value: string | undefined): void
+    {
+        this.localError = value
+        this.RefreshState()
     }
 
     private BuildChrome(): void
@@ -202,6 +230,11 @@ export class EnvironmentsView extends TenantViewBase
         for (const child of [...this.Children])
         {
             this.RemoveChild(child)
+        }
+        if (this.host !== undefined)
+        {
+            // Release the shared body from the previous host so it has a single parent.
+            this.host.Update({ loading: false, allowed: true, isEmpty: false, error: false })
         }
         this.createAct = this.MakeCreateAct()
         this.bulkActs = [
@@ -227,11 +260,12 @@ export class EnvironmentsView extends TenantViewBase
     {
         const vm = this.vm
         const none = vm.AllRows.length === 0
+        const message = vm.Error ?? this.localError
         return {
             loading: vm.Busy && none,
             allowed: true,
             isEmpty: !vm.Busy && none,
-            error: vm.Error !== undefined,
+            error: message !== undefined,
             skeleton: SkeletonKind.Table,
             empty: {
                 glyph: KitGlyph.Layers,
@@ -239,7 +273,7 @@ export class EnvironmentsView extends TenantViewBase
                 body: EnvironmentsView.EmptyBody,
                 action: this.MakeCreateAct(),
             },
-            errorConfig: vm.Error === undefined ? undefined : { title: vm.Error },
+            errorConfig: message === undefined ? undefined : { title: message },
             content: this.body,
         }
     }
@@ -250,7 +284,14 @@ export class EnvironmentsView extends TenantViewBase
         this.SyncSearchBox()
         this.SyncBulk()
         this.SyncHeaderBox()
-        this.host.Update(this.Inputs())
+        this.RefreshState()
+    }
+
+    // Busy/Error-only changes: re-resolve the host and toolbar without rebuilding grid cells.
+    private RefreshState(): void
+    {
+        this.SyncBulk()
+        this.host?.Update(this.Inputs())
     }
 
     private SyncSearchBox(): void

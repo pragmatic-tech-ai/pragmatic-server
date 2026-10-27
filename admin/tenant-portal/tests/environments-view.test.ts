@@ -8,7 +8,7 @@ import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pr
 import { DataGridRow } from '@pragmatic-tech-ai/mural/framework/data-grid/data-grid.js'
 import { EnvironmentsView } from '../src/environments-view.js'
 import { EnvironmentsViewModel } from '../src/environments-view-model.js'
-import { ScreenState, EmptyStatePanel } from '../src/kit/index.js'
+import { ScreenState, EmptyStatePanel, SkeletonKind, SkeletonPanel, Act, Section } from '../src/kit/index.js'
 import { EnvStatus, EnvType, Template } from '../src/tenant-types.js'
 import type { AdminCapabilitiesDto, CreateEnvironmentParams, EnvironmentDto, HiveHealthDto, IEnvironmentsSource, ITenantNavigator } from '../src/tenant-types.js'
 
@@ -96,8 +96,22 @@ class FakeSource implements IEnvironmentsSource
 {
     public Envs: EnvironmentDto[] = [Fixtures.Env('alpha', EnvStatus.Running), Fixtures.Env('beta', EnvStatus.Stopped)]
     public Calls: string[] = []
+    public ListError: Error | undefined
+    public Gate: Array<(envs: EnvironmentDto[]) => void> | undefined
 
-    public async ListEnvironments(): Promise<EnvironmentDto[]> { return this.Envs }
+    public async ListEnvironments(): Promise<EnvironmentDto[]>
+    {
+        if (this.Gate !== undefined)
+        {
+            const gate = this.Gate
+            return new Promise<EnvironmentDto[]>(resolve => { gate.push(resolve) })
+        }
+        if (this.ListError !== undefined)
+        {
+            throw this.ListError
+        }
+        return this.Envs
+    }
     public async GetHealth(_hiveId: string): Promise<HiveHealthDto[]> { return [] }
     public async StartEnvironment(name: string): Promise<EnvironmentDto> { this.Calls.push('start:' + name); return Fixtures.Env(name, EnvStatus.Running) }
     public async StopEnvironment(name: string): Promise<EnvironmentDto> { this.Calls.push('stop:' + name); return Fixtures.Env(name, EnvStatus.Stopped) }
@@ -242,5 +256,57 @@ describe('EnvironmentsView', () =>
         await Fixtures.Settle()
         assert.deepEqual(src.Calls, ['start:beta'])
         assert.equal(vm.Selected.size, 0)
+    })
+
+    it('a failing load reaches the Error state', async () =>
+    {
+        const src = new FakeSource()
+        src.ListError = new Error('boom')
+        const { view } = await Harness.Make(src)
+        assert.equal(view.Host.State, ScreenState.Error)
+        assert.ok(Fixtures.VisualTexts(view.Host).includes('boom'))
+    })
+
+    it('first load shows the Table skeleton, a reload with rows stays Populated', async () =>
+    {
+        Fixtures.InitApp()
+        const src = new FakeSource()
+        const gate: Array<(envs: EnvironmentDto[]) => void> = []
+        src.Gate = gate
+        const vm = new EnvironmentsViewModel(src)
+        const view = new EnvironmentsView(vm)
+        view.AttachNavigator(new Nav())
+        const first = view.Refresh()
+        assert.equal(view.Host.State, ScreenState.Loading)
+        const sk = Fixtures.Collect(view.Host).find(v => v instanceof SkeletonPanel) as SkeletonPanel
+        assert.equal(sk.Kind, SkeletonKind.Table)
+        gate[0]([Fixtures.Env('alpha', EnvStatus.Running)])
+        await first
+        assert.equal(view.Host.State, ScreenState.Populated)
+        const again = view.Refresh()
+        assert.equal(vm.Busy, true)
+        assert.equal(view.Host.State, ScreenState.Populated)
+        gate[1]([Fixtures.Env('alpha', EnvStatus.Running)])
+        await again
+        assert.equal(view.Host.State, ScreenState.Populated)
+    })
+
+    it('gates the empty-state Create action like the header one', async () =>
+    {
+        const src = new FakeSource()
+        src.Envs = []
+        const { view } = await Harness.Make(src, { envs: false, adopt: true, access: true, settings: true })
+        assert.equal(view.Host.State, ScreenState.Empty)
+        const acts = Fixtures.Collect(view.Host).filter(v => v instanceof Act) as Act[]
+        assert.equal(acts.length, 1)
+        assert.equal(acts[0].Enabled, false)
+    })
+
+    it('keeps a single Section in the tree after attach', async () =>
+    {
+        const { view } = await Harness.Make()
+        view.AttachNavigator(new Nav())
+        assert.equal(Fixtures.Collect(view).filter(v => v instanceof Section).length, 1)
+        assert.equal(Fixtures.Collect(view).filter(v => v === view.Grid).length, 1)
     })
 })
