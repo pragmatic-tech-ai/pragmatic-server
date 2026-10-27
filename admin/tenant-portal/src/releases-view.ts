@@ -125,6 +125,7 @@ export class ReleasesView extends TenantViewBase
             s.dispose()
         }
         this.subscriptions.length = 0
+        this.CloseAdopt()
         this.grid?.dispose()
         this.grid = undefined
     }
@@ -196,10 +197,6 @@ export class ReleasesView extends TenantViewBase
         body.Orientation = Orientation.Vertical
         body.AddChild(new KeyValueGrid({ items }))
         body.AddChild(ReleasesView.Muted(String(offer.notOnCount) + ReleasesView.NotOnSuffix))
-        if (offer.manifest.withdrawn === true)
-        {
-            body.AddChild(new StatusPill(PillKind.Withdrawn))
-        }
         const act = new Act({
             can: this.CanAdopt,
             need: ReleasesView.NeedAdopt,
