@@ -137,6 +137,7 @@ export class ServiceTokensViewModel extends Observable
     public async SelectEnvironment(name: string): Promise<void>
     {
         this.CancelPending()
+        this.DismissSecret()
         this.SetSelectedEnvironment(name)
         await this.LoadTokens()
     }

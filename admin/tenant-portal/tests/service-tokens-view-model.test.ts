@@ -31,6 +31,7 @@ class FakeSource implements ITokensSource
     public ListError: Error | undefined
     public MutationError: Error | undefined
     public Issued: IssueTokenParams | undefined
+    public Deferred: Array<(r: ServiceTokenSummaryDto[]) => void> | undefined
 
     public async ListEnvironments(): Promise<EnvironmentDto[]>
     {
@@ -41,6 +42,11 @@ class FakeSource implements ITokensSource
     public async ListTokens(env: string): Promise<ServiceTokenSummaryDto[]>
     {
         this.Calls.push('tokens:' + env)
+        if (this.Deferred !== undefined)
+        {
+            const d = this.Deferred
+            return new Promise<ServiceTokenSummaryDto[]>(resolve => { d.push(resolve) })
+        }
         if (this.ListError !== undefined)
         {
             throw this.ListError
@@ -148,6 +154,7 @@ describe('ServiceTokensViewModel', () =>
         await vm.IssueToken()
         assert.deepEqual(src.Issued, { principalId: 'svc', scopes: ['a', 'b', 'c'], expiresInSeconds: 2592000 })
         assert.equal(vm.IssuedSecret?.token, 'SECRET')
+        assert.ok(vm.Rows.every(r => !JSON.stringify(r).includes('SECRET')))
         assert.equal(vm.DraftPrincipalId, '')
         assert.equal(vm.DraftScopes, '')
         assert.deepEqual(src.Calls, ['issue:envA', 'tokens:envA'])
@@ -216,5 +223,55 @@ describe('ServiceTokensViewModel', () =>
         await vm.LoadEnvironments()
         assert.equal(vm.State, TokensState.Error)
         assert.equal(vm.Error, 'boom')
+    })
+
+    it('discards a stale overlapping load and keeps Busy until the newest resolves', async () =>
+    {
+        const src = new FakeSource()
+        const vm = new ServiceTokensViewModel(src)
+        await vm.LoadEnvironments()
+        const pending: Array<(r: ServiceTokenSummaryDto[]) => void> = []
+        src.Deferred = pending
+        const a = vm.LoadTokens()
+        const b = vm.LoadTokens()
+        pending[0]([Make.Token('stale1'), Make.Token('stale2')])
+        await a
+        assert.equal(vm.Busy, true)
+        assert.equal(vm.Rows.length, 1)
+        assert.equal(vm.Rows[0].TokenRef, 't1')
+        pending[1]([Make.Token('fresh')])
+        await b
+        assert.equal(vm.Busy, false)
+        assert.deepEqual(vm.Rows.map(r => r.TokenRef), ['fresh'])
+    })
+
+    it('failed issue keeps drafts, leaves no secret, and does not reload', async () =>
+    {
+        const src = new FakeSource()
+        const vm = new ServiceTokensViewModel(src)
+        await vm.LoadEnvironments()
+        src.Calls = []
+        src.MutationError = new TenantApiError(409, 'exists')
+        vm.DraftPrincipalId = 'svc'
+        vm.DraftScopes = 'a b'
+        await vm.IssueToken()
+        assert.equal(vm.IssuedSecret, undefined)
+        assert.equal(vm.DraftPrincipalId, 'svc')
+        assert.equal(vm.DraftScopes, 'a b')
+        assert.equal(vm.Error, 'exists')
+        assert.deepEqual(src.Calls, ['issue:envA'])
+    })
+
+    it('SelectEnvironment clears a stale IssuedSecret', async () =>
+    {
+        const src = new FakeSource()
+        const vm = new ServiceTokensViewModel(src)
+        await vm.LoadEnvironments()
+        vm.DraftPrincipalId = 'svc'
+        vm.DraftScopes = 'a'
+        await vm.IssueToken()
+        assert.notEqual(vm.IssuedSecret, undefined)
+        await vm.SelectEnvironment('envB')
+        assert.equal(vm.IssuedSecret, undefined)
     })
 })
