@@ -433,4 +433,50 @@ describe('UsersAccessViewModel', () =>
             assert.ok(raised.has(k), k)
         }
     })
+
+    it('stale load resolving first does not drop Busy while the newer load is pending', async () =>
+    {
+        const src = new FakeSource()
+        const resolvers: Array<(s: AdminSnapshotDto) => void> = []
+        src.GetAdminSnapshot = (env: string) => new Promise<AdminSnapshotDto>(r => { src.Calls.push('snapshot:' + env); resolvers.push(r) })
+        const vm = new UsersAccessViewModel(src, 'me')
+        const first = vm.SelectEnvironment('envA')
+        const second = vm.SelectEnvironment('envB')
+        resolvers[0](Make.Snapshot())
+        await first
+        assert.equal(vm.Busy, true)
+        resolvers[1](Make.Snapshot())
+        await second
+        assert.equal(vm.Busy, false)
+    })
+
+    it('SelectEnvironment during an in-flight mutation does not drop Busy', async () =>
+    {
+        const src = new FakeSource()
+        const vm = new UsersAccessViewModel(src, 'me')
+        await vm.SelectEnvironment('envA')
+        let release: () => void = () => undefined
+        src.DisableAccount = () => new Promise<void>(r => { release = r })
+        const mutation = vm.DisableAccount('other')
+        await vm.SelectEnvironment('envB')
+        assert.equal(vm.Busy, true)
+        release()
+        await mutation
+        assert.equal(vm.Busy, false)
+    })
+
+    it('LoadEnvironments failure invalidates an in-flight snapshot load', async () =>
+    {
+        const src = new FakeSource()
+        let resolve: (s: AdminSnapshotDto) => void = () => undefined
+        src.GetAdminSnapshot = () => new Promise<AdminSnapshotDto>(r => { resolve = r })
+        const vm = new UsersAccessViewModel(src, 'me')
+        const load = vm.SelectEnvironment('envA')
+        src.ListEnvironments = async () => { throw new TenantApiError(500, 'boom') }
+        await vm.LoadEnvironments()
+        resolve(Make.Snapshot())
+        await load
+        assert.equal(vm.Rows.length, 0)
+        assert.equal(vm.State, UsersAccessState.Error)
+    })
 })

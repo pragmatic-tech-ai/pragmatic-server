@@ -43,7 +43,7 @@ export class UsersAccessViewModel extends Observable
     private selectedEnvironment: string | undefined
     private rows: readonly AccountRow[] = []
     private grants: readonly GrantDto[] = []
-    private busy = false
+    private busyCount = 0
     private error = ''
     private state = UsersAccessState.Loading
     private selectedPrincipalId: string | undefined
@@ -73,7 +73,7 @@ export class UsersAccessViewModel extends Observable
 
     public get Busy(): boolean
     {
-        return this.busy
+        return this.busyCount > 0
     }
 
     public get Error(): string
@@ -112,6 +112,7 @@ export class UsersAccessViewModel extends Observable
         }
         catch (e)
         {
+            this.loadToken++
             this.ClearRows()
             this.FailWith(e)
             return
@@ -139,14 +140,14 @@ export class UsersAccessViewModel extends Observable
 
     public async LoadSnapshot(): Promise<void>
     {
-        this.SetBusy(true)
+        this.EnterBusy()
         try
         {
             await this.ReloadSnapshot()
         }
         finally
         {
-            this.SetBusy(false)
+            this.ExitBusy()
         }
     }
 
@@ -237,7 +238,7 @@ export class UsersAccessViewModel extends Observable
     {
         const pending = this.pending
         const grant = this.pendingGrant
-        if (pending === undefined || this.busy)
+        if (pending === undefined || this.Busy)
         {
             return
         }
@@ -290,12 +291,12 @@ export class UsersAccessViewModel extends Observable
     private async Mutate(call: (env: string) => Promise<void>): Promise<void>
     {
         const env = this.selectedEnvironment
-        if (env === undefined || this.busy)
+        if (env === undefined || this.Busy)
         {
             return
         }
         this.SetError('')
-        this.SetBusy(true)
+        this.EnterBusy()
         try
         {
             await call(env)
@@ -307,7 +308,7 @@ export class UsersAccessViewModel extends Observable
         }
         finally
         {
-            this.SetBusy(false)
+            this.ExitBusy()
         }
     }
 
@@ -357,11 +358,23 @@ export class UsersAccessViewModel extends Observable
         this.RaisePropertyChanged(UsersAccessViewModel.PendingProperty, old, value)
     }
 
-    private SetBusy(value: boolean): void
+    // Counter, not a flag: overlapping loads and mutations each hold Busy until they finish.
+    private EnterBusy(): void
     {
-        const old = this.busy
-        this.busy = value
-        this.RaisePropertyChanged(UsersAccessViewModel.BusyProperty, old, value)
+        this.busyCount++
+        if (this.busyCount === 1)
+        {
+            this.RaisePropertyChanged(UsersAccessViewModel.BusyProperty, false, true)
+        }
+    }
+
+    private ExitBusy(): void
+    {
+        this.busyCount--
+        if (this.busyCount === 0)
+        {
+            this.RaisePropertyChanged(UsersAccessViewModel.BusyProperty, true, false)
+        }
     }
 
     private SetError(value: string): void
