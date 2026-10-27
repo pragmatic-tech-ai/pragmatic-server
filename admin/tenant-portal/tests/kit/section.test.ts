@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import { StackPanel, TextBlock } from '@pragmatic-tech-ai/mural/basic'
 import { Application } from '@pragmatic-tech-ai/mural/runtime'
 import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pragmatic'
-import { Act, ConfirmDialog, KeyValueGrid, ScreenHost, Section, StatusPill } from '../../src/kit/index.js'
+import * as Kit from '../../src/kit/index.js'
+import { KeyValueGrid, Section } from '../../src/kit/index.js'
 
 class Walk
 {
@@ -83,11 +84,29 @@ describe('Section and KeyValueGrid', () =>
         assert.equal([...new KeyValueGrid({ items, cols: 1 }).Children].length, 3)
     })
 
+    it('KeyValueGrid sanitizes cols without dropping items', () =>
+    {
+        const items = [{ key: 'a', value: '1' }, { key: 'b', value: '2' }, { key: 'c', value: '3' }]
+        const rowCount = (cols: number): number => [...new KeyValueGrid({ items, cols }).Children].length
+        assert.equal(rowCount(0), 3)
+        assert.equal(rowCount(2.5), 2)
+        assert.equal(rowCount(Number.NaN), 2)
+        assert.equal(rowCount(Number.POSITIVE_INFINITY), 2)
+        assert.deepEqual(Walk.Texts(new KeyValueGrid({ items, cols: Number.NaN })), ['a', '1', 'b', '2', 'c', '3'])
+    })
+
     it('barrel re-exports the kit surface', () =>
     {
-        for (const name of [StatusPill, ScreenHost, ConfirmDialog, Act, Section, KeyValueGrid])
+        const expected = [
+            'KitGlyph', 'IconCatalog', 'PillTone', 'Tones', 'PillKind', 'PillKinds', 'StatusPill',
+            'ScreenState', 'ScreenHost', 'SkeletonKind', 'SkeletonPanel', 'EmptyStatePanel',
+            'ErrorStatePanel', 'DeniedStatePanel', 'ConfirmDialog', 'ConfirmTone', 'Act', 'ActVariant',
+            'Section', 'KeyValueGrid',
+        ]
+        const surface = Kit as unknown as Record<string, unknown>
+        for (const name of expected)
         {
-            assert.notEqual(name, undefined)
+            assert.notEqual(surface[name], undefined, name)
         }
     })
 })

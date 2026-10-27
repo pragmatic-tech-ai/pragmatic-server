@@ -30,7 +30,12 @@ export class KeyValueGrid extends StackPanel
 
     public get Cols(): number
     {
-        return Math.max(1, this.inputs.cols ?? KeyValueGrid.DefaultCols)
+        const requested = this.inputs.cols
+        if (requested === undefined || !Number.isFinite(requested))
+        {
+            return KeyValueGrid.DefaultCols
+        }
+        return Math.max(1, Math.floor(requested))
     }
 
     private Build(): void
