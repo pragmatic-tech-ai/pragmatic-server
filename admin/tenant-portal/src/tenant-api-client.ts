@@ -1,5 +1,5 @@
 import { TenantEventType } from './tenant-types.js'
-import type { EnvironmentDto, HiveDto, HiveHealthDto, HiveRolloutDto, IWebSocketFactory, IWebSocketLike, ManifestDto, SessionDto, TenantEvent } from './tenant-types.js'
+import type { AdminSnapshotDto, CreateAccountParams, EnvironmentDto, GrantMutationDto, HiveDto, HiveHealthDto, HiveRolloutDto, IUsersAccessSource, IWebSocketFactory, IWebSocketLike, ManifestDto, SessionDto, TenantEvent } from './tenant-types.js'
 
 // Thrown for non-2xx tenant-surface responses; Message carries the server's error text.
 export class TenantApiError extends Error
@@ -71,6 +71,10 @@ export class TenantApiClient
     private static readonly RestartAction = 'restart'
     private static readonly PathSeparator = '/'
     private static readonly MethodPost = 'POST'
+    private static readonly MethodDelete = 'DELETE'
+    private static readonly AdminSnapshotLeaf = '/admin/snapshot'
+    private static readonly AdminAccountsLeaf = '/admin/accounts'
+    private static readonly AdminGrantsLeaf = '/admin/grants'
     private static readonly CredentialsMode = 'same-origin'
     private static readonly ContentTypeHeader = 'content-type'
     private static readonly JsonType = 'application/json'
@@ -161,6 +165,32 @@ export class TenantApiClient
     public async RestartEnvironment(name: string): Promise<EnvironmentDto>
     {
         return await this.Action(name, TenantApiClient.RestartAction)
+    }
+
+    public async GetAdminSnapshot(env: string): Promise<AdminSnapshotDto>
+    {
+        return await this.Send<AdminSnapshotDto>(this.EnvRoute(env) + TenantApiClient.AdminSnapshotLeaf, undefined)
+    }
+
+    public async CreateAccount(env: string, params: CreateAccountParams): Promise<void>
+    {
+        await this.Send<unknown>(this.EnvRoute(env) + TenantApiClient.AdminAccountsLeaf, { method: TenantApiClient.MethodPost, body: JSON.stringify(params) })
+    }
+
+    public async DisableAccount(env: string, principalId: string): Promise<void>
+    {
+        await this.Send<unknown>(this.EnvRoute(env) + TenantApiClient.AdminAccountsLeaf + TenantApiClient.PathSeparator + encodeURIComponent(principalId),
+            { method: TenantApiClient.MethodDelete })
+    }
+
+    public async GrantRole(env: string, grant: GrantMutationDto): Promise<void>
+    {
+        await this.Send<unknown>(this.EnvRoute(env) + TenantApiClient.AdminGrantsLeaf, { method: TenantApiClient.MethodPost, body: JSON.stringify(grant) })
+    }
+
+    public async RevokeRole(env: string, grant: GrantMutationDto): Promise<void>
+    {
+        await this.Send<unknown>(this.EnvRoute(env) + TenantApiClient.AdminGrantsLeaf, { method: TenantApiClient.MethodDelete, body: JSON.stringify(grant) })
     }
 
     // Registers a handler on the shared events socket (opened lazily); returns an unsubscribe.

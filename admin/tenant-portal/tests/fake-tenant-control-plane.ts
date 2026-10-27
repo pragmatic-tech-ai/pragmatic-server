@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { extname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocketServer, type WebSocket } from 'ws'
-import type { EnvironmentDto, HiveDto, HiveHealthDto, HiveRolloutDto, ManifestDto, SessionDto, TenantEvent } from '../src/tenant-types.js'
+import type { AccountDto, EnvironmentDto, GrantDto, GrantMutationDto, HiveDto, HiveHealthDto, HiveRolloutDto, ManifestDto, SessionDto, TenantEvent } from '../src/tenant-types.js'
 
 // Serves the built dist/ statically and fakes the 7a tenant surface with canned
 // data, recording every mutating call. GATED: used only by the Playwright spec.
@@ -38,6 +38,13 @@ export class FakeTenantControlPlane
     private static readonly RolloutLeaf = 'rollout'
     private static readonly HealthLeaf = 'health'
     private static readonly TargetLeaf = 'target'
+    private static readonly AdminSegment = 'admin'
+    private static readonly SnapshotLeaf = 'snapshot'
+    private static readonly AccountsLeaf = 'accounts'
+    private static readonly GrantsLeaf = 'grants'
+    private static readonly MethodDelete = 'DELETE'
+    private static readonly AdminMarker = '/admin/'
+    private static readonly TenantKind = 'Tenant'
     private static readonly LogsSuffix = '/logs/stream'
     private static readonly Actions = ['start', 'stop', 'restart']
     private static readonly PathSeparator = '/'
@@ -71,6 +78,17 @@ export class FakeTenantControlPlane
     public EnvironmentsRequests = 0
     // When set, the next environments list reports alpha-env with this status.
     public AlphaStatusOverride: string | undefined
+    public readonly Accounts: AccountDto[] =
+    [
+        { principalId: 'owner-1', email: 'owner@example.com', disabled: false },
+        { principalId: 'editor-1', email: 'editor@example.com', disabled: false },
+    ]
+    public readonly Grants: GrantDto[] =
+    [
+        { subject: 'owner-1', role: 'Owner', resourceKind: 'Tenant', resourcePath: [] },
+        { subject: 'editor-1', role: 'Editor', resourceKind: 'Tenant', resourcePath: [] },
+    ]
+    public readonly AdminCalls: Array<{ env: string; method: string; leaf: string; body: unknown }> = []
     public readonly LifecycleCalls: Array<{ subject: string; action: string }> = []
     private readonly root = fileURLToPath(new URL('../dist/', import.meta.url))
     private readonly eventSockets = new Set<WebSocket>()
@@ -293,6 +311,11 @@ export class FakeTenantControlPlane
             await this.HandleHive(method, path, req, res)
             return
         }
+        if (path.startsWith(FakeTenantControlPlane.EnvPrefix) && path.includes(FakeTenantControlPlane.AdminMarker))
+        {
+            await this.HandleAdmin(method, path, req, res)
+            return
+        }
         if (path.startsWith(FakeTenantControlPlane.EnvPrefix))
         {
             await this.HandleEnvironment(method, path, req, res)
@@ -341,6 +364,68 @@ export class FakeTenantControlPlane
         await FakeTenantControlPlane.ReadBody(req)
         this.LifecycleCalls.push({ subject: name, action })
         FakeTenantControlPlane.Json(res, 200, env)
+    }
+
+    // /tenant-api/environments/:name/admin/(snapshot|accounts[/:id]|grants)
+    private async HandleAdmin(method: string, path: string, req: IncomingMessage, res: ServerResponse): Promise<void>
+    {
+        const [rawName, admin, leaf, rawId] = path.slice(FakeTenantControlPlane.EnvPrefix.length).split(FakeTenantControlPlane.PathSeparator)
+        const env = decodeURIComponent(rawName ?? FakeTenantControlPlane.Empty)
+        const known = this.Environments().some(e => e.name === env)
+        if (!known || admin !== FakeTenantControlPlane.AdminSegment)
+        {
+            res.writeHead(404)
+            res.end()
+            return
+        }
+        if (leaf === FakeTenantControlPlane.SnapshotLeaf && method === FakeTenantControlPlane.MethodGet)
+        {
+            FakeTenantControlPlane.Json(res, 200, { accounts: this.Accounts, grants: this.Grants })
+            return
+        }
+        const raw = await FakeTenantControlPlane.ReadBody(req)
+        const body: unknown = raw.length > 0 ? JSON.parse(raw) : undefined
+        if (leaf === FakeTenantControlPlane.AccountsLeaf && method === FakeTenantControlPlane.MethodPost)
+        {
+            const a = body as { email: string; principalId: string }
+            this.Accounts.push({ principalId: a.principalId, email: a.email, disabled: false })
+            this.AdminCalls.push({ env, method, leaf, body })
+            FakeTenantControlPlane.Json(res, 201, { ok: true })
+        }
+        else if (leaf === FakeTenantControlPlane.AccountsLeaf && method === FakeTenantControlPlane.MethodDelete && rawId !== undefined)
+        {
+            const id = decodeURIComponent(rawId)
+            const account = this.Accounts.find(a => a.principalId === id)
+            if (account !== undefined)
+            {
+                account.disabled = true
+            }
+            this.AdminCalls.push({ env, method, leaf: leaf + FakeTenantControlPlane.PathSeparator + id, body })
+            FakeTenantControlPlane.Json(res, 200, { ok: true })
+        }
+        else if (leaf === FakeTenantControlPlane.GrantsLeaf && method === FakeTenantControlPlane.MethodPost)
+        {
+            const g = body as GrantMutationDto
+            this.Grants.push({ subject: g.subject, role: g.role, resourceKind: g.resourceKind ?? FakeTenantControlPlane.TenantKind, resourcePath: g.resourcePath ?? [] })
+            this.AdminCalls.push({ env, method, leaf, body })
+            FakeTenantControlPlane.Json(res, 200, { ok: true })
+        }
+        else if (leaf === FakeTenantControlPlane.GrantsLeaf && method === FakeTenantControlPlane.MethodDelete)
+        {
+            const g = body as GrantMutationDto
+            const i = this.Grants.findIndex(x => x.subject === g.subject && x.role === g.role)
+            if (i >= 0)
+            {
+                this.Grants.splice(i, 1)
+            }
+            this.AdminCalls.push({ env, method, leaf, body })
+            FakeTenantControlPlane.Json(res, 200, { ok: true })
+        }
+        else
+        {
+            res.writeHead(404)
+            res.end()
+        }
     }
 
     private async Serve(path: string, res: ServerResponse): Promise<void>

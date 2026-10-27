@@ -173,6 +173,74 @@ describe('TenantApiClient fetch', () =>
     })
 })
 
+describe('TenantApiClient admin (users and access)', () =>
+{
+    afterEach(() => { FetchStub.Restore() })
+
+    it('GetAdminSnapshot GETs the snapshot route and returns accounts + grants', async () =>
+    {
+        const snap = { accounts: [{ principalId: 'p1', email: 'a@b', disabled: false }], grants: [{ subject: 'p1', role: 'Admin', resourceKind: 'Tenant', resourcePath: [] }] }
+        FetchStub.Install(snap)
+        assert.deepEqual(await new TestClient(new FakeWebSocketFactory()).GetAdminSnapshot('envA'), snap)
+        assert.equal(FetchStub.Calls[0]!.route, '/tenant-api/environments/envA/admin/snapshot')
+        assert.equal(FetchStub.Calls[0]!.init?.method, undefined)
+    })
+
+    it('CreateAccount POSTs the body and resolves on 201', async () =>
+    {
+        FetchStub.Install({ ok: true }, 201)
+        const params = { email: 'a@b', principalId: 'p1', password: 'pw' }
+        await new TestClient(new FakeWebSocketFactory()).CreateAccount('envA', params)
+        const call = FetchStub.Calls[0]!
+        assert.equal(call.route, '/tenant-api/environments/envA/admin/accounts')
+        assert.equal(call.init?.method, 'POST')
+        assert.deepEqual(JSON.parse(call.init?.body as string), params)
+        assert.deepEqual(call.init?.headers, { 'content-type': 'application/json' })
+    })
+
+    it('DisableAccount DELETEs the account route', async () =>
+    {
+        FetchStub.Install({ ok: true })
+        await new TestClient(new FakeWebSocketFactory()).DisableAccount('envA', 'p1')
+        assert.equal(FetchStub.Calls[0]!.route, '/tenant-api/environments/envA/admin/accounts/p1')
+        assert.equal(FetchStub.Calls[0]!.init?.method, 'DELETE')
+    })
+
+    it('GrantRole POSTs and RevokeRole DELETEs the grants route with the body', async () =>
+    {
+        const grant = { subject: 'p1', role: 'Admin' }
+        const c = new TestClient(new FakeWebSocketFactory())
+        FetchStub.Install({ ok: true })
+        await c.GrantRole('envA', grant)
+        assert.equal(FetchStub.Calls[0]!.route, '/tenant-api/environments/envA/admin/grants')
+        assert.equal(FetchStub.Calls[0]!.init?.method, 'POST')
+        assert.deepEqual(JSON.parse(FetchStub.Calls[0]!.init?.body as string), grant)
+        FetchStub.Install({ ok: true })
+        await c.RevokeRole('envA', grant)
+        assert.equal(FetchStub.Calls[0]!.route, '/tenant-api/environments/envA/admin/grants')
+        assert.equal(FetchStub.Calls[0]!.init?.method, 'DELETE')
+        assert.deepEqual(JSON.parse(FetchStub.Calls[0]!.init?.body as string), grant)
+    })
+
+    it('DisableAccount maps a 409 to TenantApiError with the backend message', async () =>
+    {
+        FetchStub.Install({ error: 'cannot disable last owner' }, 409)
+        await assert.rejects(new TestClient(new FakeWebSocketFactory()).DisableAccount('envA', 'p1'), (e: unknown) =>
+            e instanceof TenantApiError && e.Status === 409 && e.message === 'cannot disable last owner')
+    })
+
+    it('encodes the env and principalId path segments', async () =>
+    {
+        const c = new TestClient(new FakeWebSocketFactory())
+        FetchStub.Install({ accounts: [], grants: [] })
+        await c.GetAdminSnapshot('env/A b')
+        assert.equal(FetchStub.Calls[0]!.route, '/tenant-api/environments/env%2FA%20b/admin/snapshot')
+        FetchStub.Install({ ok: true })
+        await c.DisableAccount('env/A b', 'u@x/1')
+        assert.equal(FetchStub.Calls[0]!.route, '/tenant-api/environments/env%2FA%20b/admin/accounts/u%40x%2F1')
+    })
+})
+
 describe('TenantApiClient BeginLogin', () =>
 {
     it('navigates to the bare begin route', () =>

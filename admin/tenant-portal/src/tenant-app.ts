@@ -29,6 +29,7 @@ export class TenantApp extends StackPanel implements ITenantNavigator
 {
     public static readonly TitleText = 'Pragmatic Tenant Admin'
     public static readonly LogoutLabel = 'Logout'
+    public static readonly UsersAccessPlaceholderText = 'Users & Access'
     public static readonly EmptySelectionText = 'Select a hive or environment'
 
     private readonly client: TenantApiClient
@@ -108,6 +109,12 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     {
         this.Show(new EnvironmentDetailView(this.client, env, env.hiveId))
         this.currentEnvName = env.name
+    }
+
+    // Placeholder until the Users & Access view lands.
+    public ShowUsersAccess(): void
+    {
+        this.Show(new DetailPlaceholderView(TenantApp.UsersAccessPlaceholderText))
     }
 
     private async Logout(): Promise<void>

@@ -58,6 +58,7 @@ export interface ITenantNavigator
     ShowTree(): void
     ShowHiveDetail(hive: HiveDto): void
     ShowEnvironmentDetail(env: EnvironmentDto): void
+    ShowUsersAccess(): void
 }
 
 export interface ITenantView
@@ -79,4 +80,31 @@ export interface IWebSocketLike
 export interface IWebSocketFactory
 {
     Open(url: string): IWebSocketLike
+}
+
+// Admin wire shapes mirrored from the server; the portal never imports pragmatic-protocol.
+export type AccountDto = { principalId: string; email: string; disabled: boolean }
+export type GrantDto = { subject: string; role: string; resourceKind: string; resourcePath: string[] }
+export type GrantMutationDto = { subject: string; role: string; resourceKind?: string; resourcePath?: string[] }
+export type CreateAccountParams = { email: string; principalId: string; password: string }
+export type AdminSnapshotDto = { accounts: AccountDto[]; grants: GrantDto[] }
+
+// Role identifiers accepted by the server's grant API (AdminEnums.Roles).
+export enum TenantRole
+{
+    Owner = 'Owner',
+    Admin = 'Admin',
+    Editor = 'Editor',
+    Viewer = 'Viewer',
+    Maker = 'Maker',
+}
+
+export interface IUsersAccessSource
+{
+    ListEnvironments(): Promise<EnvironmentDto[]>
+    GetAdminSnapshot(env: string): Promise<AdminSnapshotDto>
+    CreateAccount(env: string, params: CreateAccountParams): Promise<void>
+    DisableAccount(env: string, principalId: string): Promise<void>
+    GrantRole(env: string, grant: GrantMutationDto): Promise<void>
+    RevokeRole(env: string, grant: GrantMutationDto): Promise<void>
 }
