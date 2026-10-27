@@ -53,7 +53,7 @@ export class BrowserWebSocketFactory implements IWebSocketFactory
 }
 
 // fetch wrapper over the tenant REST surface plus the events and log-follow sockets.
-export class TenantApiClient
+export class TenantApiClient implements IUsersAccessSource
 {
     private static readonly SessionRoute = '/tenant-auth/session'
     private static readonly LogoutRoute = '/tenant-auth/logout'
