@@ -258,6 +258,10 @@ export class FieldSecurityViewModel extends Observable
             {
                 throw e
             }
+            if (this.draft !== draft)
+            {
+                return
+            }
             if (FieldSecurityViewModel.IsForbidden(e))
             {
                 this.FailWith(e)

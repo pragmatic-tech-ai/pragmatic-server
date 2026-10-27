@@ -24,10 +24,14 @@ class Make
             fieldSecurity: {
                 securedFields: [{ concept: 'Customer', field: 'ssn' }],
                 profiles: [
-                    { id: 'p1', name: 'Full', grants: [{ concept: 'Customer', field: 'ssn', read: true }] },
-                    { id: 'p2', name: 'None', grants: [] }
+                    { id: 'p1', name: 'Full', grants: [{ concept: 'Customer', field: 'ssn', read: true }, { concept: 'Order', field: 'total', read: true, update: true }] },
+                    { id: 'p2', name: 'Other', grants: [{ concept: 'Customer', field: 'ssn', update: true }] }
                 ],
-                profileAssignment: { claimsMapping: [], overrides: [], teamProfiles: [] }
+                profileAssignment: {
+                    claimsMapping: [{ claim: 'groups', value: 'ops', profiles: ['p1'] }],
+                    overrides: [{ principalId: 'u1', profiles: ['p2'] }],
+                    teamProfiles: [{ teamId: 't1', profiles: ['p1', 'p2'] }]
+                }
             },
             roles: [
                 { id: 'r1', name: 'Admin', privileges: [{ action: PrivilegeAction.Read, concept: 'Customer', level: AccessLevel.User }] },
@@ -172,9 +176,77 @@ describe('FieldSecurityViewModel', () =>
         assert.deepEqual(saved.roleAssignment, original.roleAssignment)
         assert.deepEqual(saved.roles, original.roles)
         assert.deepEqual(saved.fieldSecurity?.securedFields, original.fieldSecurity?.securedFields)
-        assert.equal(saved.fieldSecurity?.profiles[0].grants[0].update, true)
+        assert.deepEqual(saved.fieldSecurity?.profileAssignment, original.fieldSecurity?.profileAssignment)
+        assert.deepEqual(saved.fieldSecurity?.profiles[1], original.fieldSecurity?.profiles[1])
+        const expected = Make.Model().fieldSecurity!.profiles[0]
+        expected.grants[0].update = true
+        assert.deepEqual(saved.fieldSecurity?.profiles[0], expected)
         assert.equal(vm.Dirty, false)
         assert.equal(vm.SelectedProfileId, 'p1')
+    })
+
+    it('a non-401 Save error sets Error and returns Busy to false', async () =>
+    {
+        const src = new FakeSource()
+        const vm = await Fixture.Loaded(src)
+        src.SetError = new Error('disk full')
+        await vm.Save()
+        assert.equal(vm.Error, 'disk full')
+        assert.equal(vm.State, FieldSecurityState.Ready)
+        assert.equal(vm.Busy, false)
+    })
+
+    it('a 403 on Save sets the Forbidden state', async () =>
+    {
+        const src = new FakeSource()
+        const vm = await Fixture.Loaded(src)
+        src.SetError = new TenantApiError(TenantApiError.ForbiddenStatus, 'forbidden')
+        await vm.Save()
+        assert.equal(vm.State, FieldSecurityState.Forbidden)
+        assert.equal(vm.Error, '')
+        assert.equal(vm.Busy, false)
+    })
+
+    it('rethrows a 401 from Save', async () =>
+    {
+        const src = new FakeSource()
+        const vm = await Fixture.Loaded(src)
+        src.SetError = new TenantApiError(TenantApiError.UnauthorizedStatus, 'no')
+        await assert.rejects(vm.Save(), (e: unknown) => e instanceof TenantApiError && e.Status === TenantApiError.UnauthorizedStatus)
+        assert.equal(vm.Busy, false)
+    })
+
+    it('a Save that fails after switching environment does not touch the new environment state', async () =>
+    {
+        const src = new FakeSource()
+        const vm = await Fixture.Loaded(src)
+        let fail: (e: Error) => void = () => { }
+        src.SetSecurityModel = () => new Promise<void>((_, reject) => { fail = reject })
+        const saving = vm.Save()
+        await vm.SelectEnvironment('envB')
+        fail(new TenantApiError(TenantApiError.ForbiddenStatus, 'forbidden'))
+        await saving
+        assert.equal(vm.SelectedEnvironment, 'envB')
+        assert.equal(vm.State, FieldSecurityState.Ready)
+        assert.equal(vm.Error, '')
+    })
+
+    it('overlapping loads raise Busy once and clear it once', async () =>
+    {
+        const src = new FakeSource()
+        const vm = await Fixture.Loaded(src)
+        const busy: boolean[] = []
+        vm.PropertyChanged(FieldSecurityViewModel.BusyProperty).subscribe(() => busy.push(vm.Busy))
+        src.Deferred = []
+        const a = vm.LoadModel()
+        const b = vm.LoadModel()
+        assert.deepEqual(busy, [true])
+        src.Deferred[0].resolve(Make.Model())
+        await a
+        assert.deepEqual(busy, [true])
+        src.Deferred[1].resolve(Make.Model())
+        await b
+        assert.deepEqual(busy, [true, false])
     })
 
     it('Revert reloads from the source and clears Dirty', async () =>
