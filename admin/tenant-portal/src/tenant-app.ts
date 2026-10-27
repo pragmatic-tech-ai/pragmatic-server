@@ -5,6 +5,7 @@ import { TenantApiClient } from './tenant-api-client.js'
 import { TenantTreeView } from './tenant-tree-view.js'
 import { TenantTreeViewModel } from './tenant-tree-view-model.js'
 import { TenantViewBase } from './tenant-view-base.js'
+import { UsersAccessView } from './users-access-view.js'
 import { TenantEventType } from './tenant-types.js'
 import type { EnvironmentDto, HiveDto, ITenantNavigator, ITenantView, SessionDto, TenantEvent } from './tenant-types.js'
 
@@ -29,8 +30,8 @@ export class TenantApp extends StackPanel implements ITenantNavigator
 {
     public static readonly TitleText = 'Pragmatic Tenant Admin'
     public static readonly LogoutLabel = 'Logout'
-    public static readonly UsersAccessPlaceholderText = 'Users & Access'
     public static readonly EmptySelectionText = 'Select a hive or environment'
+    private static readonly UsersAccessLabel = 'Users & Access'
 
     private readonly client: TenantApiClient
     private readonly topBar = new StackPanel()
@@ -41,6 +42,8 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     private current: ITenantView | undefined
     // Name of the environment the detail pane is showing, so a delete of it swaps the pane back rather than refreshing a gone env.
     private currentEnvName: string | undefined
+    // Operator's principal from the Boot session; UsersAccessView uses it to guard self-disable.
+    private currentPrincipalId = ''
     private tree: TenantTreeView | undefined
     private eventUnsub: (() => void) | undefined
 
@@ -53,6 +56,7 @@ export class TenantApp extends StackPanel implements ITenantNavigator
         this.topBar.Orientation = Orientation.Horizontal
         this.topBar.AddChild(title)
         this.topBar.AddChild(this.tenantName)
+        this.topBar.AddChild(TenantViewBase.MakeButton(TenantApp.UsersAccessLabel, () => this.ShowUsersAccess()))
         this.topBar.AddChild(TenantViewBase.MakeButton(TenantApp.LogoutLabel, () => { void this.Logout() }))
         this.body.Orientation = Orientation.Horizontal
         this.body.AddChild(this.treeHost)
@@ -79,6 +83,7 @@ export class TenantApp extends StackPanel implements ITenantNavigator
             return
         }
         this.tenantName.Text = session.email ?? session.tenantId
+        this.currentPrincipalId = session.principalId
         this.eventUnsub?.()
         this.eventUnsub = this.client.OnEvent(ev => this.OnTenantEvent(ev))
         this.ShowTree()
@@ -111,10 +116,14 @@ export class TenantApp extends StackPanel implements ITenantNavigator
         this.currentEnvName = env.name
     }
 
-    // Placeholder until the Users & Access view lands.
     public ShowUsersAccess(): void
     {
-        this.Show(new DetailPlaceholderView(TenantApp.UsersAccessPlaceholderText))
+        this.Show(new UsersAccessView(this.client, this.currentPrincipalId))
+    }
+
+    public get CurrentPrincipalId(): string
+    {
+        return this.currentPrincipalId
     }
 
     private async Logout(): Promise<void>
@@ -139,6 +148,7 @@ export class TenantApp extends StackPanel implements ITenantNavigator
         this.eventUnsub?.()
         this.eventUnsub = undefined
         this.tenantName.Text = ''
+        this.currentPrincipalId = ''
     }
 
     private OnTenantEvent(ev: TenantEvent): void
