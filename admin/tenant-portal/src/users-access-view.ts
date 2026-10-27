@@ -44,8 +44,6 @@ export class UsersAccessView extends TenantViewBase
     public static readonly GrantSeparator = ' '
     public static readonly PathSeparator = '/'
 
-    private static readonly Empty = ''
-
     private readonly vm: UsersAccessViewModel
     private readonly grid = new DataGrid()
     private readonly emailBox = new TextBox()
@@ -257,7 +255,7 @@ export class UsersAccessView extends TenantViewBase
         const path = grant.resourcePath.join(UsersAccessView.PathSeparator)
         row.AddChild(this.Text(grant.role + UsersAccessView.GrantSeparator + path))
         const pending = vm.Pending
-        const confirming = pending !== undefined && pending.kind === PendingKind.RevokeSelf && pending.role === grant.role && pending.principalId === grant.subject
+        const confirming = pending !== undefined && pending.kind === PendingKind.RevokeSelf && UsersAccessView.SameGrant(vm.PendingGrant, grant)
         if (confirming)
         {
             row.AddChild(this.Text(UsersAccessView.SelfRevokeWarning))
@@ -268,6 +266,12 @@ export class UsersAccessView extends TenantViewBase
             row.AddChild(this.MakeButton(UsersAccessView.RevokeLabel, () => { void this.Act(() => vm.RequestRevoke(grant)) }))
         }
         return row
+    }
+
+    private static SameGrant(a: GrantDto | undefined, b: GrantDto): boolean
+    {
+        return a !== undefined && a.subject === b.subject && a.role === b.role && a.resourceKind === b.resourceKind
+            && a.resourcePath.length === b.resourcePath.length && a.resourcePath.every((seg, i) => seg === b.resourcePath[i])
     }
 
     private MakeConfirmStrip(confirmLabel: string): StackPanel

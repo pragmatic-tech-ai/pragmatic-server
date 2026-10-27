@@ -180,6 +180,26 @@ describe('UsersAccessViewModel', () =>
         assert.equal(vm.Busy, false)
     })
 
+    it('non-API load failure sets Error state instead of stranding Loading', async () =>
+    {
+        const src = new FakeSource()
+        src.SnapshotError = new TypeError('fetch failed')
+        const vm = new UsersAccessViewModel(src, 'me')
+        await vm.SelectEnvironment('envA')
+        assert.equal(vm.State, UsersAccessState.Error)
+        assert.equal(vm.Error, 'fetch failed')
+        assert.equal(vm.Busy, false)
+    })
+
+    it('a 401 load failure still rethrows', async () =>
+    {
+        const src = new FakeSource()
+        src.SnapshotError = new TenantApiError(401, 'expired')
+        const vm = new UsersAccessViewModel(src, 'me')
+        await assert.rejects(() => vm.SelectEnvironment('envA'), /expired/)
+        assert.equal(vm.Busy, false)
+    })
+
     it('CreateAccount calls source, clears draft, reloads', async () =>
     {
         const src = new FakeSource()

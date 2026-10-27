@@ -350,6 +350,19 @@ describe('UsersAccessView', () =>
         assert.deepEqual(src.revoked.map(r => r.subject), ['bob', 'me'])
     })
 
+    it('shows the self-revoke confirm on only the targeted grant row', async () =>
+    {
+        const src = new FakeSource()
+        src.snapshot.grants.push({ subject: 'me', role: 'Owner', resourceKind: 'Environment', resourcePath: ['prod'] })
+        const { view } = await Harness.Make(src)
+        view.Grid.SelectedItem = (view.Grid.ItemsSource as AccountRow[])[0]
+        await Fixtures.Settle()
+        Fixtures.Click(view, 'Revoke')
+        await Fixtures.Settle()
+        assert.equal(Fixtures.Labels(view).filter(l => l === 'Confirm revoke').length, 1)
+        assert.equal(Fixtures.Labels(view).filter(l => l === 'Revoke').length, 1)
+    })
+
     it('keeps the selected-account section across a reload', async () =>
     {
         const { src, view } = await Harness.Make()

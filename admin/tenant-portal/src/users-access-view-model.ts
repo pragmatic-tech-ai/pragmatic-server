@@ -31,12 +31,13 @@ export class UsersAccessViewModel extends Observable
     public static readonly ErrorProperty = 'Error'
     public static readonly StateProperty = 'State'
     public static readonly SelectedPrincipalIdProperty = 'SelectedPrincipalId'
+    private static readonly EmptyDraft = ''
     public static readonly PendingProperty = 'Pending'
     public static readonly SelectedGrantsProperty = 'SelectedGrants'
 
-    public DraftEmail = ''
-    public DraftPrincipalId = ''
-    public DraftPassword = ''
+    public DraftEmail = UsersAccessViewModel.EmptyDraft
+    public DraftPrincipalId = UsersAccessViewModel.EmptyDraft
+    public DraftPassword = UsersAccessViewModel.EmptyDraft
     public DraftRole: TenantRole = TenantRole.Viewer
 
     private environments: readonly string[] = []
@@ -95,6 +96,12 @@ export class UsersAccessViewModel extends Observable
     {
         const id = this.selectedPrincipalId
         return id === undefined ? [] : this.grants.filter(g => g.subject === id)
+    }
+
+    // The grant a pending RevokeSelf targets (full identity), for display matching.
+    public get PendingGrant(): GrantDto | undefined
+    {
+        return this.pendingGrant
     }
 
     public get Pending(): PendingAction | undefined
@@ -206,9 +213,9 @@ export class UsersAccessViewModel extends Observable
         await this.Mutate(async env =>
         {
             await this.source.CreateAccount(env, params)
-            this.DraftEmail = ''
-            this.DraftPrincipalId = ''
-            this.DraftPassword = ''
+            this.DraftEmail = UsersAccessViewModel.EmptyDraft
+            this.DraftPrincipalId = UsersAccessViewModel.EmptyDraft
+            this.DraftPassword = UsersAccessViewModel.EmptyDraft
         })
     }
 
@@ -339,11 +346,11 @@ export class UsersAccessViewModel extends Observable
 
     private FailWith(e: unknown): void
     {
-        if (!(e instanceof TenantApiError) || UsersAccessViewModel.IsUnauthorized(e))
+        if (UsersAccessViewModel.IsUnauthorized(e))
         {
             throw e
         }
-        this.SetError(e.message)
+        this.SetError(UsersAccessViewModel.MessageOf(e))
         this.SetState(UsersAccessState.Error)
     }
 
