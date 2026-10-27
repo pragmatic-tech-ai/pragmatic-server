@@ -26,7 +26,7 @@ enum WizardStep
 export class AdoptWizard extends StackPanel
 {
     public static readonly TrustNote = 'If a new version fails verification, your environment keeps serving the version it runs now.'
-    public static readonly RollingText = 'Rolling…'
+    public static readonly RollingText = 'Rolling\u2026'
     public static readonly AdoptedText = 'Adopted: the hive now targets this version.'
     public static readonly RefusedText = 'Adopt was refused.'
     public static readonly UnavailableText = 'Adopt is unavailable right now.'
