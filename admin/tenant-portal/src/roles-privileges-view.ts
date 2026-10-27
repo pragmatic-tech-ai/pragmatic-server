@@ -8,57 +8,7 @@ import type { PrivilegeRow } from './privilege-row.js'
 import { RolesPrivilegesState, RolesPrivilegesViewModel } from './roles-privileges-view-model.js'
 import type { IRolesPrivilegesSource } from './roles-privileges-view-model.js'
 import { AccessLevel, Actions, LevelCycle, PrivilegeAction } from './security-model-draft.js'
-import { TenantApiError } from './tenant-api-client.js'
-import type { EnvironmentDto, SecurityModelDto } from './tenant-types.js'
 import { TenantViewBase } from './tenant-view-base.js'
-
-// Wraps the source so a 403 from any call is remembered; the view model reports it
-// only as an error message, and the view renders permission-denied distinctly.
-class ForbiddenProbe implements IRolesPrivilegesSource
-{
-    private static readonly ForbiddenStatus = 403
-
-    private forbidden = false
-
-    public constructor(private readonly inner: IRolesPrivilegesSource)
-    {
-    }
-
-    public get Forbidden(): boolean
-    {
-        return this.forbidden
-    }
-
-    public ListEnvironments(): Promise<EnvironmentDto[]>
-    {
-        return this.Track(() => this.inner.ListEnvironments())
-    }
-
-    public GetSecurityModel(env: string): Promise<SecurityModelDto | null>
-    {
-        return this.Track(() => this.inner.GetSecurityModel(env))
-    }
-
-    public SetSecurityModel(env: string, model: SecurityModelDto): Promise<void>
-    {
-        return this.Track(() => this.inner.SetSecurityModel(env, model))
-    }
-
-    private async Track<T>(call: () => Promise<T>): Promise<T>
-    {
-        try
-        {
-            const result = await call()
-            this.forbidden = false
-            return result
-        }
-        catch (e)
-        {
-            this.forbidden = e instanceof TenantApiError && e.Status === ForbiddenProbe.ForbiddenStatus
-            throw e
-        }
-    }
-}
 
 // Tenant admin "Roles & privileges": role picker plus a concept x action matrix whose
 // cells cycle through the access levels in place.
@@ -131,7 +81,6 @@ export class RolesPrivilegesView extends TenantViewBase
     ])
 
     private readonly vm: RolesPrivilegesViewModel
-    private readonly probe: ForbiddenProbe
     private readonly grid = new DataGrid()
     private readonly roleBox = new TextBox()
     private readonly conceptBox = new TextBox()
@@ -141,8 +90,7 @@ export class RolesPrivilegesView extends TenantViewBase
     public constructor(source: IRolesPrivilegesSource)
     {
         super()
-        this.probe = new ForbiddenProbe(source)
-        this.vm = new RolesPrivilegesViewModel(this.probe)
+        this.vm = new RolesPrivilegesViewModel(source)
         this.roleBox.Placeholder = RolesPrivilegesView.RolePlaceholder
         this.conceptBox.Placeholder = RolesPrivilegesView.ConceptPlaceholder
         this.BuildGrid()
@@ -188,8 +136,7 @@ export class RolesPrivilegesView extends TenantViewBase
         }
         const vm = this.vm
         this.AddChild(this.MakeEnvironmentStrip())
-        const denied = vm.State === RolesPrivilegesState.Error && this.probe.Forbidden
-        this.message.Text = denied ? TenantViewBase.NoMessage : vm.Error
+        this.message.Text = vm.Error
         this.AddChild(this.message)
         switch (vm.State)
         {
@@ -199,11 +146,10 @@ export class RolesPrivilegesView extends TenantViewBase
             case RolesPrivilegesState.NoEnvironment:
                 this.AddChild(this.Text(RolesPrivilegesView.NoEnvironmentText))
                 return
+            case RolesPrivilegesState.Forbidden:
+                this.AddChild(this.Text(RolesPrivilegesView.PermissionDeniedText))
+                return
             case RolesPrivilegesState.Error:
-                if (denied)
-                {
-                    this.AddChild(this.Text(RolesPrivilegesView.PermissionDeniedText))
-                }
                 return
             case RolesPrivilegesState.Empty:
                 this.AddChild(this.Text(RolesPrivilegesView.EmptyText))
@@ -245,16 +191,22 @@ export class RolesPrivilegesView extends TenantViewBase
         text.Text = RolesPrivilegesView.SymbolOf(row.LevelFor(action))
         const button = new Button()
         button.Content = text
-        button.AddClickHandler(() =>
+        button.AddClickHandler(() => this.WhenIdle(() =>
         {
-            if (this.vm.Busy)
-            {
-                return
-            }
             text.Text = RolesPrivilegesView.SymbolOf(row.Cycle(action))
             this.vm.RefreshDirty()
-        })
+        }))
         return button
+    }
+
+    // Every draft-mutating click is a no-op while a load or save is in flight, so an edit
+    // cannot land after Save snapshotted the draft and then be lost on rebase.
+    private WhenIdle(action: () => void): void
+    {
+        if (!this.vm.Busy)
+        {
+            action()
+        }
     }
 
     private static SymbolOf(level: AccessLevel): string
@@ -297,12 +249,12 @@ export class RolesPrivilegesView extends TenantViewBase
         for (const role of this.vm.Roles)
         {
             const label = role.id === this.vm.SelectedRoleId ? RolesPrivilegesView.SelectedMark + role.name : role.name
-            strip.AddChild(this.MakeButton(label, () => this.vm.SelectRole(role.id)))
+            strip.AddChild(this.MakeButton(label, () => this.WhenIdle(() => this.vm.SelectRole(role.id))))
         }
         const selected = this.vm.SelectedRoleId
         if (selected !== undefined)
         {
-            strip.AddChild(this.MakeButton(RolesPrivilegesView.DeleteRoleLabel, () => this.vm.DeleteRole(selected)))
+            strip.AddChild(this.MakeButton(RolesPrivilegesView.DeleteRoleLabel, () => this.WhenIdle(() => this.vm.DeleteRole(selected))))
         }
         return strip
     }
@@ -314,15 +266,21 @@ export class RolesPrivilegesView extends TenantViewBase
         this.addRoleStrip.AddChild(this.roleBox)
         this.addRoleStrip.AddChild(this.MakeButton(RolesPrivilegesView.AddRoleLabel, () =>
         {
-            this.vm.AddRole(this.roleBox.Text)
-            this.roleBox.Text = TenantViewBase.NoMessage
+            this.WhenIdle(() =>
+            {
+                this.vm.AddRole(this.roleBox.Text)
+                this.roleBox.Text = TenantViewBase.NoMessage
+            })
         }))
         this.addConceptStrip.Orientation = Orientation.Horizontal
         this.addConceptStrip.AddChild(this.conceptBox)
         this.addConceptStrip.AddChild(this.MakeButton(RolesPrivilegesView.AddConceptLabel, () =>
         {
-            this.vm.AddConcept(this.conceptBox.Text)
-            this.conceptBox.Text = TenantViewBase.NoMessage
+            this.WhenIdle(() =>
+            {
+                this.vm.AddConcept(this.conceptBox.Text)
+                this.conceptBox.Text = TenantViewBase.NoMessage
+            })
         }))
     }
 

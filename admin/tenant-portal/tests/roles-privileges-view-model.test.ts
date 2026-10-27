@@ -39,6 +39,7 @@ class FakeSource implements IRolesPrivilegesSource
     public Envs: EnvironmentDto[] = [Make.Env('envA'), Make.Env('envB')]
     public Model: SecurityModelDto | null = Make.Model()
     public GetError: Error | undefined
+    public SetError: Error | undefined
     public Saved: Array<{ env: string; model: SecurityModelDto }> = []
     public Deferred: Array<{ env: string; resolve: (m: SecurityModelDto | null) => void }> | undefined
 
@@ -63,6 +64,10 @@ class FakeSource implements IRolesPrivilegesSource
 
     public async SetSecurityModel(env: string, model: SecurityModelDto): Promise<void>
     {
+        if (this.SetError !== undefined)
+        {
+            throw this.SetError
+        }
         this.Saved.push({ env, model })
     }
 }
@@ -194,6 +199,30 @@ describe('RolesPrivilegesViewModel', () =>
         assert.equal(vm.Error, 'boom')
         assert.equal(vm.State, RolesPrivilegesState.Error)
         assert.equal(vm.Busy, false)
+    })
+
+    it('a 403 on load sets the Forbidden state with no raw error', async () =>
+    {
+        const src = new FakeSource()
+        src.GetError = new TenantApiError(TenantApiError.ForbiddenStatus, 'forbidden')
+        const vm = await Fixture.Loaded(src)
+        assert.equal(vm.State, RolesPrivilegesState.Forbidden)
+        assert.equal(vm.Error, '')
+        assert.equal(vm.Busy, false)
+    })
+
+    it('a 403 on Save sets the Forbidden state; other Save errors stay in Ready with the message', async () =>
+    {
+        const src = new FakeSource()
+        const vm = await Fixture.Loaded(src)
+        src.SetError = new Error('disk full')
+        await vm.Save()
+        assert.equal(vm.State, RolesPrivilegesState.Ready)
+        assert.equal(vm.Error, 'disk full')
+        src.SetError = new TenantApiError(TenantApiError.ForbiddenStatus, 'forbidden')
+        await vm.Save()
+        assert.equal(vm.State, RolesPrivilegesState.Forbidden)
+        assert.equal(vm.Error, '')
     })
 
     it('rethrows a 401', async () =>

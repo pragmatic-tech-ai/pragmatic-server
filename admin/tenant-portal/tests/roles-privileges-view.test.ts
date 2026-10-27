@@ -1,16 +1,33 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { Button } from '@pragmatic-tech-ai/mural/framework'
+import { Application } from '@pragmatic-tech-ai/mural/runtime'
+import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pragmatic'
+import { DataGridRow } from '@pragmatic-tech-ai/mural/framework/data-grid/data-grid.js'
+import type { Visual } from '@pragmatic-tech-ai/mural/runtime'
 import { DataGridTemplateColumn, DataGridTextColumn } from '@pragmatic-tech-ai/mural/framework/data-grid/data-grid-column.js'
 import type { PrivilegeRow } from '../src/privilege-row.js'
 import { RolesPrivilegesView } from '../src/roles-privileges-view.js'
-import { AccessLevel, PrivilegeAction } from '../src/security-model-draft.js'
+import { AccessLevel, Actions, PrivilegeAction } from '../src/security-model-draft.js'
 import { TenantApiError } from '../src/tenant-api-client.js'
 import type { EnvironmentDto, SecurityModelDto } from '../src/tenant-types.js'
 import type { IRolesPrivilegesSource } from '../src/roles-privileges-view-model.js'
 
 class Fixtures
 {
+    private static app: Application | undefined
+
+    // Realizing grid rows needs the themed Application (as main.ts sets up).
+    public static InitApp(): void
+    {
+        if (Fixtures.app === undefined)
+        {
+            Fixtures.app = new Application()
+            Fixtures.app.initialize({ theme: Pragmatic, scheme: PragmaticLight })
+        }
+        Application.current = Fixtures.app
+    }
+
     public static Texts(node: unknown): string[]
     {
         const n = node as { Text?: unknown; Children?: Iterable<unknown>; Content?: unknown }
@@ -92,14 +109,29 @@ class Fixtures
         return false
     }
 
-    // Builds the cell for (rowIndex, actionIndex) through the column's CellTemplate.
-    public static Cell(view: RolesPrivilegesView, rowIndex: number, actionIndex: number): Button
+    public static Collect(v: Visual, out: Visual[] = []): Visual[]
     {
-        const col = [...view.Grid.Columns][actionIndex + 1] as DataGridTemplateColumn
-        const row = (view.Grid.ItemsSource as PrivilegeRow[])[rowIndex]
-        const visual = col.CellTemplate!.Apply(row)
-        const b = Fixtures.Buttons(visual)
-        return (visual instanceof Button ? visual : b[0])
+        out.push(v)
+        for (const c of v.visualChildren)
+        {
+            Fixtures.Collect(c, out)
+        }
+        return out
+    }
+
+    public static Rows(view: RolesPrivilegesView): DataGridRow[]
+    {
+        return view.Grid.logicalChildren.filter(c => c instanceof DataGridRow) as DataGridRow[]
+    }
+
+    // The realized cell Button for (concept, action column) found by walking the live grid.
+    public static Cell(view: RolesPrivilegesView, concept: string, actionIndex: number): Button
+    {
+        const index = (view.Grid.ItemsSource as PrivilegeRow[]).findIndex(r => r.Concept === concept)
+        const row = Fixtures.Rows(view)[index]
+        const buttons = Fixtures.Collect(row).filter(v => v instanceof Button) as Button[]
+        assert.equal(buttons.length, Actions.length)
+        return buttons[actionIndex]
     }
 }
 
@@ -107,6 +139,7 @@ class FakeSource implements IRolesPrivilegesSource
 {
     public Envs: EnvironmentDto[] = [{ name: 'dev' } as EnvironmentDto]
     public GetError: Error | undefined
+    public SetError: Error | undefined
     public Model: SecurityModelDto | null = {
         businessUnits: [],
         teams: [],
@@ -134,6 +167,10 @@ class FakeSource implements IRolesPrivilegesSource
 
     public async SetSecurityModel(_env: string, _model: SecurityModelDto): Promise<void>
     {
+        if (this.SetError !== undefined)
+        {
+            throw this.SetError
+        }
     }
 }
 
@@ -141,6 +178,7 @@ class Harness
 {
     public static async Make(src = new FakeSource()): Promise<RolesPrivilegesView>
     {
+        Fixtures.InitApp()
         const view = new RolesPrivilegesView(src)
         await view.Refresh()
         return view
@@ -162,19 +200,45 @@ describe('RolesPrivilegesView', () =>
         assert.deepEqual(rows.map(r => r.Concept).sort(), ['Customer', 'Order'])
     })
 
-    it('a cell is a Button labelled with the level symbol; clicking advances it and flips Dirty', async () =>
+    it('the realized grid has one DataGridRow per concept', async () =>
     {
         const view = await Harness.Make()
-        const rows = view.Grid.ItemsSource as PrivilegeRow[]
-        const customer = rows.findIndex(r => r.Concept === 'Customer')
-        const readIndex = 1
-        const cell = Fixtures.Cell(view, customer, readIndex)
+        assert.equal(Fixtures.Rows(view).length, 2)
+    })
+
+    it('a realized cell is a Button labelled with the level symbol; clicking advances it and flips Dirty', async () =>
+    {
+        const view = await Harness.Make()
+        const cell = Fixtures.Cell(view, 'Customer', Actions.indexOf(PrivilegeAction.Read))
         assert.deepEqual(Fixtures.Texts(cell), [RolesPrivilegesView.UserSymbol])
         assert.equal(Fixtures.Texts(view).includes(RolesPrivilegesView.DirtyText), false)
         Fixtures.ClickButton(cell)
         assert.deepEqual(Fixtures.Texts(cell), [RolesPrivilegesView.BusinessUnitSymbol])
         assert.ok(Fixtures.Texts(view).includes(RolesPrivilegesView.DirtyText))
-        assert.equal(view.Grid.ItemsSource, rows)
+        assert.equal(Fixtures.Rows(view).length, 2)
+    })
+
+    it('mutating controls are no-ops while a save is in flight', async () =>
+    {
+        const src = new FakeSource()
+        const view = await Harness.Make(src)
+        let release: () => void = () => {}
+        src.SetSecurityModel = (): Promise<void> => new Promise<void>(r => { release = r })
+        Fixtures.ClickButton(Fixtures.Cell(view, 'Customer', 0))
+        Fixtures.Click(view, RolesPrivilegesView.SaveLabel)
+        await Fixtures.Settle()
+        const roleCount = Fixtures.Labels(view).length
+        const cell = Fixtures.Cell(view, 'Order', 0)
+        Fixtures.ClickButton(cell)
+        assert.deepEqual(Fixtures.Texts(cell), [RolesPrivilegesView.NoneSymbol])
+        Fixtures.Click(view, 'Viewer')
+        assert.ok(Fixtures.Labels(view).includes(RolesPrivilegesView.SelectedMark + 'Admin'))
+        Fixtures.Click(view, RolesPrivilegesView.DeleteRoleLabel)
+        assert.equal(Fixtures.Labels(view).length, roleCount)
+        Fixtures.Click(view, RolesPrivilegesView.AddConceptLabel)
+        assert.equal((view.Grid.ItemsSource as PrivilegeRow[]).length, 2)
+        release()
+        await Fixtures.Settle()
     })
 
     it('renders a role button per role with the selected one marked, and delete-role', async () =>
@@ -240,6 +304,18 @@ describe('RolesPrivilegesView', () =>
         assert.ok(denied.includes(RolesPrivilegesView.PermissionDeniedText))
         assert.equal(denied.includes(RolesPrivilegesView.EmptyText), false)
         assert.equal(denied.includes('forbidden'), false)
+    })
+
+    it('a 403 on Save renders the permission-denied text, not the raw error', async () =>
+    {
+        const src = new FakeSource()
+        const view = await Harness.Make(src)
+        src.SetError = new TenantApiError(403, 'forbidden')
+        Fixtures.Click(view, RolesPrivilegesView.SaveLabel)
+        await Fixtures.Settle()
+        const texts = Fixtures.Texts(view)
+        assert.ok(texts.includes(RolesPrivilegesView.PermissionDeniedText))
+        assert.equal(texts.includes('forbidden'), false)
     })
 
     it('renders NoEnvironment when the tenant has no environments', async () =>

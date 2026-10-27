@@ -11,6 +11,7 @@ export enum RolesPrivilegesState
     Ready,
     Error,
     NoEnvironment,
+    Forbidden,
 }
 
 export interface IRolesPrivilegesSource extends ISecurityModelSource
@@ -30,6 +31,8 @@ export class RolesPrivilegesViewModel extends Observable
     public static readonly ErrorProperty = 'Error'
     public static readonly StateProperty = 'State'
     public static readonly DirtyProperty = 'Dirty'
+
+    private static readonly NoMessage = ''
 
     private environments: readonly string[] = []
     private selectedEnvironment: string | undefined
@@ -249,7 +252,14 @@ export class RolesPrivilegesViewModel extends Observable
             {
                 throw e
             }
-            this.SetError(RolesPrivilegesViewModel.MessageOf(e))
+            if (RolesPrivilegesViewModel.IsForbidden(e))
+            {
+                this.FailWith(e)
+            }
+            else
+            {
+                this.SetError(RolesPrivilegesViewModel.MessageOf(e))
+            }
         }
         finally
         {
@@ -304,6 +314,11 @@ export class RolesPrivilegesViewModel extends Observable
         return e instanceof TenantApiError && e.Status === TenantApiError.UnauthorizedStatus
     }
 
+    private static IsForbidden(e: unknown): boolean
+    {
+        return e instanceof TenantApiError && e.Status === TenantApiError.ForbiddenStatus
+    }
+
     private static MessageOf(e: unknown): string
     {
         return e instanceof Error ? e.message : String(e)
@@ -314,6 +329,12 @@ export class RolesPrivilegesViewModel extends Observable
         if (RolesPrivilegesViewModel.IsUnauthorized(e))
         {
             throw e
+        }
+        if (RolesPrivilegesViewModel.IsForbidden(e))
+        {
+            this.SetError(RolesPrivilegesViewModel.NoMessage)
+            this.SetState(RolesPrivilegesState.Forbidden)
+            return
         }
         this.SetError(RolesPrivilegesViewModel.MessageOf(e))
         this.SetState(RolesPrivilegesState.Error)

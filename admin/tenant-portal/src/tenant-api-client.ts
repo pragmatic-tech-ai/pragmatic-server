@@ -5,6 +5,7 @@ import type { AdminSnapshotDto, CreateAccountParams, EnvironmentDto, GrantMutati
 export class TenantApiError extends Error
 {
     public static readonly UnauthorizedStatus = 401
+    public static readonly ForbiddenStatus = 403
 
     public readonly Status: number
 
