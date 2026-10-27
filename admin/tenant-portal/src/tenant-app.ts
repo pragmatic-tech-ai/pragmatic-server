@@ -1,55 +1,42 @@
-import { Orientation, StackPanel, TextBlock } from '@pragmatic-tech-ai/mural/basic'
+import { Orientation, StackPanel } from '@pragmatic-tech-ai/mural/basic'
+import { ComingSoonView } from './coming-soon-view.js'
 import { EnvironmentDetailView } from './environment-detail-view.js'
 import { HiveDetailView } from './hive-detail-view.js'
+import { IdentityPlate } from './identity-plate.js'
+import { NavModel, NavSection } from './nav-model.js'
+import { NavRail } from './nav-rail.js'
 import { TenantApiClient } from './tenant-api-client.js'
 import { TenantTreeView } from './tenant-tree-view.js'
 import { TenantTreeViewModel } from './tenant-tree-view-model.js'
 import { TenantViewBase } from './tenant-view-base.js'
 import { TenantEventType } from './tenant-types.js'
 import type { EnvironmentDto, HiveDto, ITenantNavigator, ITenantView, SessionDto, TenantEvent } from './tenant-types.js'
+import { TopBar } from './top-bar.js'
+import { UserMenu } from './user-menu.js'
 import { ServiceTokensView } from './service-tokens-view.js'
 import { RolesPrivilegesView } from './roles-privileges-view.js'
 import { FieldSecurityView } from './field-security-view.js'
-import { UsersAccessView } from './users-access-view.js'
+import { UsersAccessHubView } from './users-access-hub-view.js'
 
-// Minimal detail view until the hive / environment detail views land.
-class DetailPlaceholderView extends TenantViewBase
-{
-    public constructor(text: string)
-    {
-        super()
-        const t = new TextBlock()
-        t.Text = text
-        this.AddChild(t)
-    }
-
-    public Refresh(): void
-    {
-    }
-}
-
-// Root shell: auth-gated boot, top bar, and a tree + detail two-pane frame.
+// Root shell: auth-gated boot; a nav rail on the left, and on the right a top bar over the section content host.
 export class TenantApp extends StackPanel implements ITenantNavigator
 {
     public static readonly TitleText = 'Pragmatic Tenant Admin'
-    public static readonly LogoutLabel = 'Logout'
-    public static readonly EmptySelectionText = 'Select a hive or environment'
-    public static readonly UsersAccessLabel = 'Users & Access'
-    public static readonly ServiceTokensLabel = 'Service Tokens'
-    public static readonly RolesPrivilegesLabel = 'Roles & Privileges'
-    public static readonly FieldSecurityLabel = 'Field Security'
+    // The hive name is not on the session yet (R1 fallback); shown until the session carries it.
+    public static readonly HivePlaceholder = '(this hive)'
 
     private readonly client: TenantApiClient
-    private readonly topBar = new StackPanel()
-    private readonly tenantName = new TextBlock()
-    private readonly body = new StackPanel()
-    private readonly treeHost = new StackPanel()
+    private readonly navRail: NavRail
+    private readonly rightColumn = new StackPanel()
+    private readonly topHost = new StackPanel()
     private readonly detailHost = new StackPanel()
     private current: ITenantView | undefined
     // Name of the environment the detail pane is showing, so a delete of it swaps the pane back rather than refreshing a gone env.
     private currentEnvName: string | undefined
     // Operator's principal from the Boot session; UsersAccessView uses it to guard self-disable.
     private currentPrincipalId = ''
+    private active: NavSection = NavSection.Overview
+    // Interim environments host: set only while the tree is the shown view.
     private tree: TenantTreeView | undefined
     private eventUnsub: (() => void) | undefined
 
@@ -57,24 +44,16 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     {
         super()
         this.client = client
-        const title = new TextBlock()
-        title.Text = TenantApp.TitleText
-        this.topBar.Orientation = Orientation.Horizontal
-        this.topBar.AddChild(title)
-        this.topBar.AddChild(this.tenantName)
-        this.topBar.AddChild(TenantViewBase.MakeButton(TenantApp.UsersAccessLabel, () => this.ShowUsersAccess()))
-        this.topBar.AddChild(TenantViewBase.MakeButton(TenantApp.ServiceTokensLabel, () => this.ShowServiceTokens()))
-        this.topBar.AddChild(TenantViewBase.MakeButton(TenantApp.RolesPrivilegesLabel, () => this.ShowRolesPrivileges()))
-        this.topBar.AddChild(TenantViewBase.MakeButton(TenantApp.FieldSecurityLabel, () => this.ShowFieldSecurity()))
-        this.topBar.AddChild(TenantViewBase.MakeButton(TenantApp.LogoutLabel, () => { void this.Logout() }))
-        this.body.Orientation = Orientation.Horizontal
-        this.body.AddChild(this.treeHost)
-        this.body.AddChild(this.detailHost)
-        this.AddChild(this.topBar)
-        this.AddChild(this.body)
+        this.navRail = new NavRail(s => this.ShowSection(s), this.active)
+        this.Orientation = Orientation.Horizontal
+        this.rightColumn.Orientation = Orientation.Vertical
+        this.rightColumn.AddChild(this.topHost)
+        this.rightColumn.AddChild(this.detailHost)
+        this.AddChild(this.navRail)
+        this.AddChild(this.rightColumn)
     }
 
-    // Probes the session cookie: signed in -> tree, otherwise (null or any failure) -> login.
+    // Probes the session cookie: signed in -> Overview, otherwise (null or any failure) -> login.
     public async Boot(): Promise<void>
     {
         let session: SessionDto | null
@@ -91,11 +70,11 @@ export class TenantApp extends StackPanel implements ITenantNavigator
             this.ShowLogin()
             return
         }
-        this.tenantName.Text = session.email ?? session.tenantId
         this.currentPrincipalId = session.principalId
+        this.BuildTopBar(session)
         this.eventUnsub?.()
         this.eventUnsub = this.client.OnEvent(ev => this.OnTenantEvent(ev))
-        this.ShowTree()
+        this.ShowSection(NavSection.Overview)
     }
 
     public ShowLogin(): void
@@ -104,30 +83,45 @@ export class TenantApp extends StackPanel implements ITenantNavigator
         this.client.BeginLogin()
     }
 
+    public ShowSection(section: NavSection): void
+    {
+        this.active = section
+        this.navRail.SetActive(section)
+        switch (section)
+        {
+            case NavSection.Environments:
+                this.ShowEnvironments()
+                break
+            case NavSection.UsersAccess:
+                this.Show(new UsersAccessHubView(this.client, this.currentPrincipalId))
+                break
+            default:
+                this.Show(new ComingSoonView(TenantApp.LabelFor(section)))
+                break
+        }
+    }
+
     public ShowTree(): void
     {
-        this.Clear(this.treeHost)
-        this.tree = new TenantTreeView(new TenantTreeViewModel(this.client))
-        this.tree.AttachNavigator(this)
-        this.treeHost.AddChild(this.tree)
-        void this.tree.Refresh()
-        this.Show(new DetailPlaceholderView(TenantApp.EmptySelectionText))
+        this.ShowSection(NavSection.Environments)
     }
 
     public ShowHiveDetail(hive: HiveDto): void
     {
+        this.MarkEnvironmentsActive()
         this.Show(new HiveDetailView(this.client, hive))
     }
 
     public ShowEnvironmentDetail(env: EnvironmentDto): void
     {
+        this.MarkEnvironmentsActive()
         this.Show(new EnvironmentDetailView(this.client, env, env.hiveId))
         this.currentEnvName = env.name
     }
 
     public ShowUsersAccess(): void
     {
-        this.Show(new UsersAccessView(this.client, this.currentPrincipalId))
+        this.ShowSection(NavSection.UsersAccess)
     }
 
     public ShowServiceTokens(): void
@@ -145,9 +139,40 @@ export class TenantApp extends StackPanel implements ITenantNavigator
         this.Show(new FieldSecurityView(this.client))
     }
 
+    public get ActiveSection(): NavSection
+    {
+        return this.active
+    }
+
     public get CurrentPrincipalId(): string
     {
         return this.currentPrincipalId
+    }
+
+    private static LabelFor(section: NavSection): string
+    {
+        return NavModel.Items.find(i => i.Section === section)?.Label ?? ''
+    }
+
+    private BuildTopBar(session: SessionDto): void
+    {
+        const plate = new IdentityPlate({ tenant: session.tenantId, hive: TenantApp.HivePlaceholder })
+        const userMenu = new UserMenu({ email: session.email ?? session.tenantId, onLogout: () => { void this.Logout() } })
+        this.Clear(this.topHost)
+        this.topHost.AddChild(new TopBar({ plate, userMenu }))
+    }
+
+    private ShowEnvironments(): void
+    {
+        const tree = new TenantTreeView(new TenantTreeViewModel(this.client))
+        this.Show(tree)
+        this.tree = tree
+    }
+
+    private MarkEnvironmentsActive(): void
+    {
+        this.active = NavSection.Environments
+        this.navRail.SetActive(NavSection.Environments)
     }
 
     private async Logout(): Promise<void>
@@ -171,7 +196,7 @@ export class TenantApp extends StackPanel implements ITenantNavigator
         this.tree = undefined
         this.eventUnsub?.()
         this.eventUnsub = undefined
-        this.tenantName.Text = ''
+        this.Clear(this.topHost)
         this.currentPrincipalId = ''
     }
 
@@ -180,19 +205,20 @@ export class TenantApp extends StackPanel implements ITenantNavigator
         this.tree?.ApplyEvent(ev)
         if (ev.type === TenantEventType.EnvironmentDeleted && ev.environmentName === this.currentEnvName)
         {
-            // The open environment was deleted: swap the pane back to the placeholder rather than refreshing a gone env.
-            this.Show(new DetailPlaceholderView(TenantApp.EmptySelectionText))
+            // The open environment was deleted: fall back to the environments list rather than refreshing a gone env.
+            this.ShowSection(NavSection.Environments)
             return
         }
         void this.current?.Refresh()
     }
 
-    // Swaps the detail pane: disposes the outgoing view, mounts the incoming one.
+    // Swaps the content pane: disposes the outgoing view, mounts the incoming one.
     private Show(view: TenantViewBase): void
     {
         this.current?.Dispose?.()
         this.Clear(this.detailHost)
         this.current = view
+        this.tree = undefined
         this.currentEnvName = undefined
         view.AttachNavigator(this)
         this.detailHost.AddChild(view)

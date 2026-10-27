@@ -1,3 +1,5 @@
+import type { NavSection } from './nav-model.js'
+
 // Wire shapes of the 7a tenant surface (/tenant-auth/* + /tenant-api/*), kept verbatim.
 
 export type SessionDto = { tenantId: string; principalId: string; email?: string }
@@ -62,6 +64,7 @@ export interface ITenantNavigator
     ShowServiceTokens(): void
     ShowRolesPrivileges(): void
     ShowFieldSecurity(): void
+    ShowSection(section: NavSection): void
 }
 
 export interface ITenantView

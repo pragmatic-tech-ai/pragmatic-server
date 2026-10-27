@@ -1,7 +1,9 @@
-import { describe, it } from 'node:test'
+import { after, before, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { StackPanel } from '@pragmatic-tech-ai/mural/basic'
 import { Button } from '@pragmatic-tech-ai/mural/framework'
+import { Application } from '@pragmatic-tech-ai/mural/runtime'
+import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pragmatic'
 import { TenantApp } from '../src/tenant-app.js'
 import { TenantApiError } from '../src/tenant-api-client.js'
 import type { TenantApiClient } from '../src/tenant-api-client.js'
@@ -10,7 +12,12 @@ import type { EnvironmentDto, HiveDto, HiveHealthDto, ITenantNavigator, ITenantV
 import { ServiceTokensView } from '../src/service-tokens-view.js'
 import { RolesPrivilegesView } from '../src/roles-privileges-view.js'
 import { FieldSecurityView } from '../src/field-security-view.js'
-import { UsersAccessView } from '../src/users-access-view.js'
+import { UsersAccessHubView } from '../src/users-access-hub-view.js'
+import { ComingSoonView } from '../src/coming-soon-view.js'
+import { TenantTreeView } from '../src/tenant-tree-view.js'
+import { NavRail } from '../src/nav-rail.js'
+import { NavModel, NavSection } from '../src/nav-model.js'
+import { UserMenu } from '../src/user-menu.js'
 
 class FakeClient
 {
@@ -128,6 +135,11 @@ class Fixtures
         return undefined
     }
 
+    public static CurrentOf(app: TenantApp): unknown
+    {
+        return (app as unknown as { current: unknown }).current
+    }
+
     public static Click(b: Button): void
     {
         const hs = (b as unknown as { _clickHandlers: Array<(a: unknown) => void> })._clickHandlers
@@ -145,32 +157,49 @@ const Session: SessionDto = { tenantId: 't1', principalId: 'p', email: 'me@x.io'
 
 describe('TenantApp', () =>
 {
+    let previous: Application | null
+
+    before(() =>
+    {
+        previous = Application.current
+        const app = new Application()
+        Application.current = app
+        app.initialize({ theme: Pragmatic, scheme: PragmaticLight })
+    })
+
+    after(() =>
+    {
+        Application.current = previous
+    })
+
     it('boot with a session subscribes once and shows the tenant name', async () =>
     {
         const { app, client } = Fixtures.Make(Session)
         await app.Boot()
         assert.equal(client.Calls.filter(c => c === 'onevent').length, 1)
         assert.ok(Fixtures.Texts(app).includes('me@x.io'))
-        assert.ok(Fixtures.Texts(app).includes(TenantApp.EmptySelectionText))
+        assert.ok(Fixtures.CurrentOf(app) instanceof ComingSoonView, 'Overview placeholder shown, not a tree')
         assert.ok(!client.Calls.some(c => c.startsWith('login')))
     })
 
-    it('swaps the detail pane back to the placeholder when the open environment is deleted', async () =>
+    it('falls back to the environments list when the open environment is deleted', async () =>
     {
         const { app, client } = Fixtures.Make(Session)
         await app.Boot()
         const env: EnvironmentDto = { name: 'e1', template: 't', type: 'development', environmentId: 'e1', hiveId: 'h1', hostPort: 9000, status: 'running', createdAt: '', httpUrl: '', wsUrl: '' }
         app.ShowEnvironmentDetail(env)
         await new Promise(r => setTimeout(r, 0))
-        assert.ok(!Fixtures.Texts(app).includes(TenantApp.EmptySelectionText), 'detail pane replaced the placeholder')
+        const detail = Fixtures.CurrentOf(app)
+        assert.ok(!(detail instanceof TenantTreeView) && !(detail instanceof ComingSoonView))
         // A delete of a different env does not swap the pane.
         client.Handler!({ type: TenantEventType.EnvironmentDeleted, environmentName: 'other' })
         await new Promise(r => setTimeout(r, 0))
-        assert.ok(!Fixtures.Texts(app).includes(TenantApp.EmptySelectionText), 'unrelated delete left the pane')
-        // A delete of the open env swaps back to the placeholder.
+        assert.equal(Fixtures.CurrentOf(app), detail, 'unrelated delete left the pane')
+        // A delete of the open env swaps back to the environments list.
         client.Handler!({ type: TenantEventType.EnvironmentDeleted, environmentName: 'e1' })
         await new Promise(r => setTimeout(r, 0))
-        assert.ok(Fixtures.Texts(app).includes(TenantApp.EmptySelectionText), 'placeholder restored after the open env was deleted')
+        assert.ok(Fixtures.CurrentOf(app) instanceof TenantTreeView)
+        assert.equal(app.ActiveSection, NavSection.Environments)
     })
 
     it('null session begins login with no tenant argument', async () =>
@@ -191,7 +220,7 @@ describe('TenantApp', () =>
     {
         const { app, client } = Fixtures.Make(Session)
         await app.Boot()
-        const btn = Fixtures.Find(app, Button, b => Fixtures.Texts(b).includes(TenantApp.LogoutLabel))!
+        const btn = Fixtures.Find(app, Button, b => Fixtures.Texts(b).includes(UserMenu.LogoutLabel))!
         Fixtures.Click(btn)
         await new Promise(r => setTimeout(r, 0))
         assert.deepEqual(client.Calls, ['onevent', 'logout', 'login:0'])
@@ -209,7 +238,7 @@ describe('TenantApp', () =>
         show(b)
         assert.equal(a.Disposed, 1)
         assert.equal(b.Disposed, 0)
-        Fixtures.Click(Fixtures.Find(app, Button, x => Fixtures.Texts(x).includes(TenantApp.LogoutLabel))!)
+        Fixtures.Click(Fixtures.Find(app, Button, x => Fixtures.Texts(x).includes(UserMenu.LogoutLabel))!)
         await new Promise(r => setTimeout(r, 0))
         assert.equal(b.Disposed, 1)
         assert.equal(a.Disposed, 1)
@@ -223,52 +252,95 @@ describe('TenantApp', () =>
         assert.equal(app.CurrentPrincipalId, Session.principalId)
     })
 
-    it('the Users & Access top-bar button shows the UsersAccessView', async () =>
+    it('the nav rail has six items', async () =>
     {
         const { app } = Fixtures.Make(Session)
         await app.Boot()
-        const btn = Fixtures.Find(app, Button, b => Fixtures.Texts(b).includes(TenantApp.UsersAccessLabel))
-        assert.ok(btn, 'Users & Access button exists')
-        Fixtures.Click(btn)
-        await new Promise(r => setTimeout(r, 0))
-        const current = (app as unknown as { current: unknown }).current
-        assert.ok(current instanceof UsersAccessView)
+        const rail = Fixtures.Find(app, NavRail)!
+        assert.equal(NavModel.Items.length, 6)
+        for (const item of NavModel.Items)
+        {
+            assert.ok(Fixtures.Texts(rail).includes(item.Label), item.Label)
+        }
+        assert.equal(rail.Active, NavSection.Overview)
     })
 
-    it('the Service Tokens top-bar button shows the ServiceTokensView', async () =>
+    it('ShowSection(UsersAccess) shows the hub', async () =>
     {
         const { app } = Fixtures.Make(Session)
         await app.Boot()
-        const btn = Fixtures.Find(app, Button, b => Fixtures.Texts(b).includes(TenantApp.ServiceTokensLabel))
-        assert.ok(btn, 'Service Tokens button exists')
-        Fixtures.Click(btn)
+        app.ShowSection(NavSection.UsersAccess)
         await new Promise(r => setTimeout(r, 0))
-        const current = (app as unknown as { current: unknown }).current
-        assert.ok(current instanceof ServiceTokensView)
+        assert.ok(Fixtures.CurrentOf(app) instanceof UsersAccessHubView)
+        assert.equal(Fixtures.Find(app, NavRail)!.Active, NavSection.UsersAccess)
     })
 
-    it('the Roles & Privileges top-bar button shows the RolesPrivilegesView', async () =>
+    it('ShowSection(Environments) shows the interim tree host and marks Environments active', async () =>
     {
         const { app } = Fixtures.Make(Session)
         await app.Boot()
-        const btn = Fixtures.Find(app, Button, b => Fixtures.Texts(b).includes(TenantApp.RolesPrivilegesLabel))
-        assert.ok(btn, 'Roles & Privileges button exists')
-        Fixtures.Click(btn)
+        Fixtures.Find(app, NavRail)!.Select(NavSection.Environments)
         await new Promise(r => setTimeout(r, 0))
-        const current = (app as unknown as { current: unknown }).current
-        assert.ok(current instanceof RolesPrivilegesView)
+        assert.ok(Fixtures.CurrentOf(app) instanceof TenantTreeView)
+        assert.equal(Fixtures.Find(app, NavRail)!.Active, NavSection.Environments)
     })
 
-    it('the Field Security top-bar button shows the FieldSecurityView', async () =>
+    it('other sections show a ComingSoonView titled with the nav label', async () =>
     {
         const { app } = Fixtures.Make(Session)
         await app.Boot()
-        const btn = Fixtures.Find(app, Button, b => Fixtures.Texts(b).includes(TenantApp.FieldSecurityLabel))
-        assert.ok(btn, 'Field Security button exists')
-        Fixtures.Click(btn)
-        await new Promise(r => setTimeout(r, 0))
-        const current = (app as unknown as { current: unknown }).current
-        assert.ok(current instanceof FieldSecurityView)
+        app.ShowSection(NavSection.Releases)
+        const view = Fixtures.CurrentOf(app)
+        assert.ok(view instanceof ComingSoonView)
+        assert.ok(Fixtures.Texts(view).includes('Releases'))
+    })
+
+    it('showing an environment or hive detail keeps Environments active', async () =>
+    {
+        const { app } = Fixtures.Make(Session)
+        await app.Boot()
+        const env: EnvironmentDto = { name: 'e1', template: 't', type: 'development', environmentId: 'e1', hiveId: 'h1', hostPort: 9000, status: 'running', createdAt: '', httpUrl: '', wsUrl: '' }
+        app.ShowEnvironmentDetail(env)
+        assert.equal(Fixtures.Find(app, NavRail)!.Active, NavSection.Environments)
+        app.ShowSection(NavSection.Settings)
+        const hive: HiveDto = { id: 'h1', tenantId: 't1', displayName: 'H', cluster: { backend: 'b', mode: 'm' }, registry: { mode: 'r' }, createdAt: '' }
+        app.ShowHiveDetail(hive)
+        assert.equal(Fixtures.Find(app, NavRail)!.Active, NavSection.Environments)
+    })
+
+    it('the old top-bar command buttons are gone', async () =>
+    {
+        const { app } = Fixtures.Make(Session)
+        await app.Boot()
+        app.ShowSection(NavSection.Overview)
+        const texts = Fixtures.Texts(app)
+        for (const label of ['Service Tokens', 'Roles & Privileges', 'Field Security'])
+        {
+            assert.ok(!texts.includes(label), label)
+        }
+        // 'Users & Access' appears only once: the nav rail row, no top-bar button.
+        assert.equal(texts.filter(t => t === 'Users & Access').length, 1)
+    })
+
+    it('the token/role/field navigator methods still show their views', async () =>
+    {
+        const { app } = Fixtures.Make(Session)
+        await app.Boot()
+        app.ShowServiceTokens()
+        assert.ok(Fixtures.CurrentOf(app) instanceof ServiceTokensView)
+        app.ShowRolesPrivileges()
+        assert.ok(Fixtures.CurrentOf(app) instanceof RolesPrivilegesView)
+        app.ShowFieldSecurity()
+        assert.ok(Fixtures.CurrentOf(app) instanceof FieldSecurityView)
+    })
+
+    it('OnTenantEvent and Teardown do not throw with no tree pane', async () =>
+    {
+        const { app, client } = Fixtures.Make(Session)
+        await app.Boot()
+        assert.doesNotThrow(() => client.Handler!({ type: TenantEventType.EnvironmentChanged, environmentName: 'x' }))
+        app.ShowLogin()
+        assert.doesNotThrow(() => app.ShowLogin())
     })
 
     it('logout clears the stored principalId', async () =>
@@ -276,7 +348,7 @@ describe('TenantApp', () =>
         const { app } = Fixtures.Make(Session)
         await app.Boot()
         assert.equal(app.CurrentPrincipalId, Session.principalId)
-        Fixtures.Click(Fixtures.Find(app, Button, x => Fixtures.Texts(x).includes(TenantApp.LogoutLabel))!)
+        Fixtures.Click(Fixtures.Find(app, Button, x => Fixtures.Texts(x).includes(UserMenu.LogoutLabel))!)
         await new Promise(r => setTimeout(r, 0))
         assert.equal(app.CurrentPrincipalId, '')
     })
