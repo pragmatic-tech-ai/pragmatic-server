@@ -22,7 +22,7 @@ import { UsersAccessHubView } from './users-access-hub-view.js'
 export class TenantApp extends StackPanel implements ITenantNavigator
 {
     public static readonly TitleText = 'Pragmatic Tenant Admin'
-    // The hive name is not on the session yet (R1 fallback); shown until the session carries it.
+    // Fallback hive label when the profile is absent or carries no hive; the plate shows the profile hive name otherwise.
     public static readonly HivePlaceholder = '(this hive)'
 
     private readonly client: TenantApiClient
