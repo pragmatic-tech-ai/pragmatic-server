@@ -42,6 +42,8 @@ export class FakeTenantControlPlane
     private static readonly SnapshotLeaf = 'snapshot'
     private static readonly AccountsLeaf = 'accounts'
     private static readonly GrantsLeaf = 'grants'
+    private static readonly TokensLeaf = 'tokens'
+    private static readonly FakeTokenValue = 'fake-secret-token'
     private static readonly MethodDelete = 'DELETE'
     private static readonly AdminMarker = '/admin/'
     private static readonly TenantKind = 'Tenant'
@@ -87,6 +89,10 @@ export class FakeTenantControlPlane
     [
         { subject: 'owner-1', role: 'Owner', resourceKind: 'Tenant', resourcePath: [] },
         { subject: 'editor-1', role: 'Editor', resourceKind: 'Tenant', resourcePath: [] },
+    ]
+    public readonly Tokens: Array<{ tokenRef: string; principalId: string; scopes: string[]; expiresAt: string | null; revoked: boolean }> =
+    [
+        { tokenRef: 'ref-1', principalId: 'svc-1', scopes: ['read'], expiresAt: null, revoked: false },
     ]
     public readonly AdminCalls: Array<{ env: string; method: string; leaf: string; body: unknown }> = []
     public readonly LifecycleCalls: Array<{ subject: string; action: string }> = []
@@ -417,6 +423,30 @@ export class FakeTenantControlPlane
             if (i >= 0)
             {
                 this.Grants.splice(i, 1)
+            }
+            this.AdminCalls.push({ env, method, leaf, body })
+            FakeTenantControlPlane.Json(res, 200, { ok: true })
+        }
+        else if (leaf === FakeTenantControlPlane.TokensLeaf && method === FakeTenantControlPlane.MethodGet)
+        {
+            FakeTenantControlPlane.Json(res, 200, this.Tokens)
+        }
+        else if (leaf === FakeTenantControlPlane.TokensLeaf && method === FakeTenantControlPlane.MethodPost)
+        {
+            const t = body as { principalId: string; scopes: string[]; expiresInSeconds: number | null }
+            const tokenRef = 'ref-' + String(this.Tokens.length + 1)
+            const expiresAt = t.expiresInSeconds === null ? null : new Date(Date.parse(FakeTenantControlPlane.CreatedAt) + t.expiresInSeconds * 1000).toISOString()
+            this.Tokens.push({ tokenRef, principalId: t.principalId, scopes: t.scopes, expiresAt, revoked: false })
+            this.AdminCalls.push({ env, method, leaf, body })
+            FakeTenantControlPlane.Json(res, 201, { tokenRef, token: FakeTenantControlPlane.FakeTokenValue, principalId: t.principalId, scopes: t.scopes, expiresAt })
+        }
+        else if (leaf === FakeTenantControlPlane.TokensLeaf && method === FakeTenantControlPlane.MethodDelete)
+        {
+            const t = body as { tokenRef: string }
+            const token = this.Tokens.find(x => x.tokenRef === t.tokenRef)
+            if (token !== undefined)
+            {
+                token.revoked = true
             }
             this.AdminCalls.push({ env, method, leaf, body })
             FakeTenantControlPlane.Json(res, 200, { ok: true })

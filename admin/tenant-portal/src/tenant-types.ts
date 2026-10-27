@@ -59,6 +59,7 @@ export interface ITenantNavigator
     ShowHiveDetail(hive: HiveDto): void
     ShowEnvironmentDetail(env: EnvironmentDto): void
     ShowUsersAccess(): void
+    ShowServiceTokens(): void
 }
 
 export interface ITenantView
@@ -107,4 +108,17 @@ export interface IUsersAccessSource
     DisableAccount(env: string, principalId: string): Promise<void>
     GrantRole(env: string, grant: GrantMutationDto): Promise<void>
     RevokeRole(env: string, grant: GrantMutationDto): Promise<void>
+}
+
+export type ServiceTokenSummaryDto = { tokenRef: string; principalId: string; scopes: string[]; expiresAt: string | null; revoked: boolean }
+export type IssueTokenParams = { principalId: string; scopes: string[]; expiresInSeconds: number | null }
+export type TokenIssuedDto = { tokenRef: string; token: string; principalId: string; scopes: string[]; expiresAt: string | null }
+export type RevokeTokenParams = { tokenRef: string }
+
+export interface ITokensSource
+{
+    ListEnvironments(): Promise<EnvironmentDto[]>
+    ListTokens(env: string): Promise<ServiceTokenSummaryDto[]>
+    IssueToken(env: string, params: IssueTokenParams): Promise<TokenIssuedDto>
+    RevokeToken(env: string, tokenRef: string): Promise<void>
 }

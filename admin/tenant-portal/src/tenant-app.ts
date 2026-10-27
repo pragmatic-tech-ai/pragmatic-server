@@ -121,6 +121,11 @@ export class TenantApp extends StackPanel implements ITenantNavigator
         this.Show(new UsersAccessView(this.client, this.currentPrincipalId))
     }
 
+    // Placeholder until the service-tokens view lands (later task).
+    public ShowServiceTokens(): void
+    {
+    }
+
     public get CurrentPrincipalId(): string
     {
         return this.currentPrincipalId

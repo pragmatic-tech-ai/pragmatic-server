@@ -182,6 +182,7 @@ class Nav implements ITenantNavigator
     public ShowHiveDetail(): void {}
     public ShowEnvironmentDetail(): void {}
     public ShowUsersAccess(): void {}
+    public ShowServiceTokens(): void {}
 }
 
 class Harness

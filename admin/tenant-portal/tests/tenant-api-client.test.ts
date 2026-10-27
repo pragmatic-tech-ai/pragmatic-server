@@ -229,6 +229,44 @@ describe('TenantApiClient admin (users and access)', () =>
             e instanceof TenantApiError && e.Status === 409 && e.message === 'cannot disable last owner')
     })
 
+    it('ListTokens GETs the tokens route and returns the summaries', async () =>
+    {
+        const rows = [{ tokenRef: 'r1', principalId: 'svc', scopes: ['a'], expiresAt: null, revoked: false }]
+        FetchStub.Install(rows)
+        const got = await new TestClient(new FakeWebSocketFactory()).ListTokens('e')
+        assert.equal(FetchStub.Calls[0]!.route, '/tenant-api/environments/e/admin/tokens')
+        assert.equal(FetchStub.Calls[0]!.init?.method, undefined)
+        assert.deepEqual(got, rows)
+    })
+
+    it('IssueToken POSTs the params and returns the issued DTO', async () =>
+    {
+        const params = { principalId: 'svc', scopes: ['a', 'b'], expiresInSeconds: 60 }
+        const issued = { tokenRef: 'r2', token: 'secret', principalId: 'svc', scopes: ['a', 'b'], expiresAt: null }
+        FetchStub.Install(issued, 201)
+        const got = await new TestClient(new FakeWebSocketFactory()).IssueToken('e', params)
+        assert.equal(FetchStub.Calls[0]!.route, '/tenant-api/environments/e/admin/tokens')
+        assert.equal(FetchStub.Calls[0]!.init?.method, 'POST')
+        assert.deepEqual(JSON.parse(FetchStub.Calls[0]!.init?.body as string), params)
+        assert.deepEqual(got, issued)
+    })
+
+    it('RevokeToken DELETEs the tokens route with the tokenRef body', async () =>
+    {
+        FetchStub.Install({ ok: true })
+        await new TestClient(new FakeWebSocketFactory()).RevokeToken('e', 'r')
+        assert.equal(FetchStub.Calls[0]!.route, '/tenant-api/environments/e/admin/tokens')
+        assert.equal(FetchStub.Calls[0]!.init?.method, 'DELETE')
+        assert.deepEqual(JSON.parse(FetchStub.Calls[0]!.init?.body as string), { tokenRef: 'r' })
+    })
+
+    it('RevokeToken maps a 409 to TenantApiError', async () =>
+    {
+        FetchStub.Install({ error: 'already revoked' }, 409)
+        await assert.rejects(new TestClient(new FakeWebSocketFactory()).RevokeToken('e', 'r'), (e: unknown) =>
+            e instanceof TenantApiError && e.Status === 409)
+    })
+
     it('encodes the env and principalId path segments', async () =>
     {
         const c = new TestClient(new FakeWebSocketFactory())

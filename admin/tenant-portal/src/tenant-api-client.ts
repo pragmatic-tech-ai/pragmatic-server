@@ -1,5 +1,5 @@
 import { TenantEventType } from './tenant-types.js'
-import type { AdminSnapshotDto, CreateAccountParams, EnvironmentDto, GrantMutationDto, HiveDto, HiveHealthDto, HiveRolloutDto, IUsersAccessSource, IWebSocketFactory, IWebSocketLike, ManifestDto, SessionDto, TenantEvent } from './tenant-types.js'
+import type { AdminSnapshotDto, CreateAccountParams, EnvironmentDto, GrantMutationDto, HiveDto, HiveHealthDto, HiveRolloutDto, IssueTokenParams, ITokensSource, IUsersAccessSource, IWebSocketFactory, IWebSocketLike, ManifestDto, ServiceTokenSummaryDto, SessionDto, TenantEvent, TokenIssuedDto } from './tenant-types.js'
 
 // Thrown for non-2xx tenant-surface responses; Message carries the server's error text.
 export class TenantApiError extends Error
@@ -53,7 +53,7 @@ export class BrowserWebSocketFactory implements IWebSocketFactory
 }
 
 // fetch wrapper over the tenant REST surface plus the events and log-follow sockets.
-export class TenantApiClient implements IUsersAccessSource
+export class TenantApiClient implements IUsersAccessSource, ITokensSource
 {
     private static readonly SessionRoute = '/tenant-auth/session'
     private static readonly LogoutRoute = '/tenant-auth/logout'
@@ -75,6 +75,7 @@ export class TenantApiClient implements IUsersAccessSource
     private static readonly AdminSnapshotLeaf = '/admin/snapshot'
     private static readonly AdminAccountsLeaf = '/admin/accounts'
     private static readonly AdminGrantsLeaf = '/admin/grants'
+    private static readonly AdminTokensLeaf = '/admin/tokens'
     private static readonly CredentialsMode = 'same-origin'
     private static readonly ContentTypeHeader = 'content-type'
     private static readonly JsonType = 'application/json'
@@ -191,6 +192,21 @@ export class TenantApiClient implements IUsersAccessSource
     public async RevokeRole(env: string, grant: GrantMutationDto): Promise<void>
     {
         await this.Send<unknown>(this.EnvRoute(env) + TenantApiClient.AdminGrantsLeaf, { method: TenantApiClient.MethodDelete, body: JSON.stringify(grant) })
+    }
+
+    public async ListTokens(env: string): Promise<ServiceTokenSummaryDto[]>
+    {
+        return await this.Send<ServiceTokenSummaryDto[]>(this.EnvRoute(env) + TenantApiClient.AdminTokensLeaf, undefined)
+    }
+
+    public async IssueToken(env: string, params: IssueTokenParams): Promise<TokenIssuedDto>
+    {
+        return await this.Send<TokenIssuedDto>(this.EnvRoute(env) + TenantApiClient.AdminTokensLeaf, { method: TenantApiClient.MethodPost, body: JSON.stringify(params) })
+    }
+
+    public async RevokeToken(env: string, tokenRef: string): Promise<void>
+    {
+        await this.Send<unknown>(this.EnvRoute(env) + TenantApiClient.AdminTokensLeaf, { method: TenantApiClient.MethodDelete, body: JSON.stringify({ tokenRef }) })
     }
 
     // Registers a handler on the shared events socket (opened lazily); returns an unsubscribe.
