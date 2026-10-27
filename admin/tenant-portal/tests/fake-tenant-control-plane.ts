@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { extname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocketServer, type WebSocket } from 'ws'
-import type { AccountDto, EnvironmentDto, GrantDto, GrantMutationDto, HiveDto, HiveHealthDto, HiveRolloutDto, ManifestDto, SessionDto, TenantEvent } from '../src/tenant-types.js'
+import type { AccountDto, EnvironmentDto, GrantDto, GrantMutationDto, HiveDto, HiveHealthDto, HiveRolloutDto, ManifestDto, ServiceTokenSummaryDto, SessionDto, TenantEvent } from '../src/tenant-types.js'
 
 // Serves the built dist/ statically and fakes the 7a tenant surface with canned
 // data, recording every mutating call. GATED: used only by the Playwright spec.
@@ -90,7 +90,7 @@ export class FakeTenantControlPlane
         { subject: 'owner-1', role: 'Owner', resourceKind: 'Tenant', resourcePath: [] },
         { subject: 'editor-1', role: 'Editor', resourceKind: 'Tenant', resourcePath: [] },
     ]
-    public readonly Tokens: Array<{ tokenRef: string; principalId: string; scopes: string[]; expiresAt: string | null; revoked: boolean }> =
+    public readonly Tokens: ServiceTokenSummaryDto[] =
     [
         { tokenRef: 'ref-1', principalId: 'svc-1', scopes: ['read'], expiresAt: null, revoked: false },
     ]

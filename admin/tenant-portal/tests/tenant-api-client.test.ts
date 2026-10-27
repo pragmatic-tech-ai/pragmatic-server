@@ -264,7 +264,7 @@ describe('TenantApiClient admin (users and access)', () =>
     {
         FetchStub.Install({ error: 'already revoked' }, 409)
         await assert.rejects(new TestClient(new FakeWebSocketFactory()).RevokeToken('e', 'r'), (e: unknown) =>
-            e instanceof TenantApiError && e.Status === 409)
+            e instanceof TenantApiError && e.Status === 409 && e.message === 'already revoked')
     })
 
     it('encodes the env and principalId path segments', async () =>
@@ -276,6 +276,9 @@ describe('TenantApiClient admin (users and access)', () =>
         FetchStub.Install({ ok: true })
         await c.DisableAccount('env/A b', 'u@x/1')
         assert.equal(FetchStub.Calls[0]!.route, '/tenant-api/environments/env%2FA%20b/admin/accounts/u%40x%2F1')
+        FetchStub.Install([])
+        await c.ListTokens('env/A b')
+        assert.equal(FetchStub.Calls[0]!.route, '/tenant-api/environments/env%2FA%20b/admin/tokens')
     })
 })
 
