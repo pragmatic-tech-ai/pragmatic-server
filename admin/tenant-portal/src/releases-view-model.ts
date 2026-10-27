@@ -206,7 +206,7 @@ export class ReleasesViewModel extends Observable
 
     private static ResultOf(e: unknown): AdoptResult
     {
-        const message = (e as Error).message
+        const message = e instanceof Error ? e.message : undefined
         if (e instanceof TenantApiError)
         {
             if (e.Status === ReleasesViewModel.ConflictStatus)

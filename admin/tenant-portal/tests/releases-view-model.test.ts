@@ -156,6 +156,17 @@ describe('ReleasesViewModel', () =>
         assert.equal(await vm.ConfirmAdopt('v2'), AdoptOutcome.Unknown)
     })
 
+    it('a non-TenantApiError is Unknown, not Adopted, and the target is unchanged', async () =>
+    {
+        const src = new FakeSource()
+        const vm = await Fx.Vm(src)
+        src.Failure = new Error('boom')
+        assert.equal(await vm.ConfirmAdopt('v2'), AdoptOutcome.Unknown)
+        assert.equal(vm.LastResult?.outcome, AdoptOutcome.Unknown)
+        assert.equal(src.Selected.length, 0)
+        assert.equal(vm.RunningVersion, 'v3')
+    })
+
     it('empty environments use the no-environments impact and adopt still submits', async () =>
     {
         const src = new FakeSource()
