@@ -75,10 +75,17 @@ class FakeClient
         return []
     }
 
+    public Existing: EnvironmentDto[] = []
+
     public async ListEnvironments(): Promise<EnvironmentDto[]>
     {
         this.Calls.push('list')
-        return []
+        return this.Existing
+    }
+
+    public async CreateEnvironment(p: { name: string; template: Template; type: EnvType }): Promise<EnvironmentDto>
+    {
+        return { name: p.name, template: p.template, type: p.type, environmentId: p.name, hiveId: 'h1', hostPort: 9000, status: EnvStatus.Running, createdAt: '', httpUrl: '', wsUrl: '' }
     }
 
     public async ListTokens(): Promise<ServiceTokenSummaryDto[]>
@@ -449,6 +456,38 @@ describe('TenantApp', () =>
         const dialog = Fixtures.Find(app, CreateEnvironmentDialog)
         assert.ok(dialog !== undefined)
         dialog.Cancel()
+        assert.equal(Fixtures.Find(app, CreateEnvironmentDialog), undefined)
+    })
+
+    it('a successful create navigates to the new environment detail, rejects existing names', async () =>
+    {
+        const { app, client } = Fixtures.Make(Session)
+        client.Existing = [{ name: 'taken', template: Template.DevBlank, type: EnvType.Development, environmentId: 'taken', hiveId: 'h1', hostPort: 9001, status: EnvStatus.Running, createdAt: '', httpUrl: '', wsUrl: '' }]
+        await app.Boot()
+        app.ShowSection(NavSection.Environments)
+        await new Promise(r => setTimeout(r, 0))
+        ;(Fixtures.CurrentOf(app) as EnvironmentsView).CreateHandler()
+        const dialog = Fixtures.Find(app, CreateEnvironmentDialog)!
+        dialog.SetName('taken')
+        assert.equal(dialog.CreateEnabled, false, 'existing name rejected')
+        dialog.SetName('fresh')
+        await dialog.Submit()
+        await new Promise(r => setTimeout(r, 0))
+        const detail = Fixtures.CurrentOf(app)
+        assert.ok(detail instanceof EnvironmentDetailView)
+        assert.equal(app.ActiveSection, NavSection.Environments)
+        assert.equal(Fixtures.Find(app, CreateEnvironmentDialog), undefined)
+    })
+
+    it('changing the shown view dismisses an open create dialog', async () =>
+    {
+        const { app } = Fixtures.Make(Session)
+        await app.Boot()
+        app.ShowSection(NavSection.Environments)
+        await new Promise(r => setTimeout(r, 0))
+        ;(Fixtures.CurrentOf(app) as EnvironmentsView).CreateHandler()
+        assert.ok(Fixtures.Find(app, CreateEnvironmentDialog) !== undefined)
+        app.ShowSection(NavSection.Releases)
         assert.equal(Fixtures.Find(app, CreateEnvironmentDialog), undefined)
     })
 

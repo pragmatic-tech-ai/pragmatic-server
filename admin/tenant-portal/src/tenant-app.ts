@@ -31,7 +31,7 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     private readonly rightColumn = new StackPanel()
     private readonly topHost = new StackPanel()
     private readonly detailHost = new StackPanel()
-    // Minimal dialog layer: holds the open create dialog (if any) beneath the content pane.
+    // Minimal dialog layer: holds the open create dialog (if any) above the content pane.
     private readonly dialogHost = new StackPanel()
     // Populated by Boot; stays undefined when the profile read fails (permissive fallback).
     private profile: TenantProfileDto | undefined
@@ -53,8 +53,8 @@ export class TenantApp extends StackPanel implements ITenantNavigator
         this.Orientation = Orientation.Horizontal
         this.rightColumn.Orientation = Orientation.Vertical
         this.rightColumn.AddChild(this.topHost)
-        this.rightColumn.AddChild(this.detailHost)
         this.rightColumn.AddChild(this.dialogHost)
+        this.rightColumn.AddChild(this.detailHost)
         this.AddChild(this.navRail)
         this.AddChild(this.rightColumn)
     }
@@ -213,6 +213,7 @@ export class TenantApp extends StackPanel implements ITenantNavigator
 
     private CloseDialog(): void
     {
+        // Neither CreateEnvironmentDialog nor Mural's Dialog exposes Dispose, so removal is the whole teardown.
         this.Clear(this.dialogHost)
     }
 
@@ -268,6 +269,7 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     // Swaps the content pane: disposes the outgoing view, mounts the incoming one.
     private Show(view: TenantViewBase): void
     {
+        this.CloseDialog()
         this.current?.Dispose?.()
         this.Clear(this.detailHost)
         this.current = view
