@@ -32,6 +32,7 @@ class Nav implements ITenantNavigator
     public ShowEnvironmentDetail(): void { this.Env++ }
     public ShowUsersAccess(): void {}
     public ShowServiceTokens(): void {}
+    public ShowRolesPrivileges(): void {}
 }
 
 describe('TenantTreeView', () =>

@@ -267,6 +267,33 @@ describe('TenantApiClient admin (users and access)', () =>
             e instanceof TenantApiError && e.Status === 409 && e.message === 'already revoked')
     })
 
+    it('GetSecurityModel GETs the security-model route and returns the body', async () =>
+    {
+        const model = { businessUnits: [], teams: [], membership: { claimsMapping: [], overrides: [] }, ownershipRules: [] }
+        FetchStub.Install(model)
+        const got = await new TestClient(new FakeWebSocketFactory()).GetSecurityModel('e')
+        assert.equal(FetchStub.Calls[0]!.route, '/tenant-api/environments/e/admin/security-model')
+        assert.equal(FetchStub.Calls[0]!.init?.method, undefined)
+        assert.deepEqual(got, model)
+    })
+
+    it('GetSecurityModel returns null when the body is null', async () =>
+    {
+        FetchStub.Install(null)
+        const got = await new TestClient(new FakeWebSocketFactory()).GetSecurityModel('e')
+        assert.equal(got, null)
+    })
+
+    it('SetSecurityModel PUTs the wrapped model', async () =>
+    {
+        const model = { businessUnits: [], teams: [], membership: { claimsMapping: [], overrides: [] }, ownershipRules: [] }
+        FetchStub.Install({ ok: true })
+        await new TestClient(new FakeWebSocketFactory()).SetSecurityModel('e', model)
+        assert.equal(FetchStub.Calls[0]!.route, '/tenant-api/environments/e/admin/security-model')
+        assert.equal(FetchStub.Calls[0]!.init?.method, 'PUT')
+        assert.deepEqual(JSON.parse(FetchStub.Calls[0]!.init?.body as string), { securityModel: model })
+    })
+
     it('encodes the env and principalId path segments', async () =>
     {
         const c = new TestClient(new FakeWebSocketFactory())

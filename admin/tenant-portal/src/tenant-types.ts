@@ -60,6 +60,7 @@ export interface ITenantNavigator
     ShowEnvironmentDetail(env: EnvironmentDto): void
     ShowUsersAccess(): void
     ShowServiceTokens(): void
+    ShowRolesPrivileges(): void
 }
 
 export interface ITenantView
@@ -121,4 +122,164 @@ export interface ITokensSource
     ListTokens(env: string): Promise<ServiceTokenSummaryDto[]>
     IssueToken(env: string, params: IssueTokenParams): Promise<TokenIssuedDto>
     RevokeToken(env: string, tokenRef: string): Promise<void>
+}
+
+export interface BusinessUnitDto
+{
+    id: string
+    name: string
+    parent?: string
+}
+
+export interface TeamDto
+{
+    id: string
+    name: string
+    owningBusinessUnit?: string
+}
+
+export interface MembershipClaimRuleDto
+{
+    claim: string
+    value: string
+    homeBusinessUnit?: string
+    teams?: string[]
+}
+
+export interface MembershipOverrideDto
+{
+    principalId: string
+    homeBusinessUnit?: string
+    teams?: string[]
+}
+
+export interface MembershipDto
+{
+    claimsMapping: MembershipClaimRuleDto[]
+    overrides: MembershipOverrideDto[]
+}
+
+export interface OwnershipSourceDto
+{
+    kind: string
+    value: string
+}
+
+export interface OwnershipRuleDto
+{
+    concept: string
+    owningBusinessUnit: OwnershipSourceDto
+    owner?: OwnershipSourceDto
+}
+
+export interface PrivilegeDto
+{
+    action: string
+    concept: string
+    level: string
+}
+
+export interface RoleConfigDto
+{
+    id: string
+    name: string
+    privileges: PrivilegeDto[]
+}
+
+export interface RoleClaimRuleDto
+{
+    claim: string
+    value: string
+    roles: string[]
+}
+
+export interface RoleOverrideDto
+{
+    principalId: string
+    roles: string[]
+}
+
+export interface TeamRoleGrantDto
+{
+    teamId: string
+    roles: string[]
+}
+
+export interface RoleAssignmentDto
+{
+    claimsMapping: RoleClaimRuleDto[]
+    overrides: RoleOverrideDto[]
+    teamRoles: TeamRoleGrantDto[]
+}
+
+export interface SecuredFieldDto
+{
+    concept: string
+    field: string
+}
+
+export interface FieldGrantDto
+{
+    concept: string
+    field: string
+    read?: boolean
+    update?: boolean
+    create?: boolean
+}
+
+export interface FieldProfileDto
+{
+    id: string
+    name: string
+    grants: FieldGrantDto[]
+}
+
+export interface FieldProfileClaimRuleDto
+{
+    claim: string
+    value: string
+    profiles: string[]
+}
+
+export interface FieldProfileOverrideDto
+{
+    principalId: string
+    profiles: string[]
+}
+
+export interface FieldProfileTeamGrantDto
+{
+    teamId: string
+    profiles: string[]
+}
+
+export interface FieldProfileAssignmentDto
+{
+    claimsMapping: FieldProfileClaimRuleDto[]
+    overrides: FieldProfileOverrideDto[]
+    teamProfiles: FieldProfileTeamGrantDto[]
+}
+
+export interface FieldSecurityDto
+{
+    securedFields: SecuredFieldDto[]
+    profiles: FieldProfileDto[]
+    profileAssignment: FieldProfileAssignmentDto
+}
+
+export interface SecurityModelDto
+{
+    businessUnits: BusinessUnitDto[]
+    teams: TeamDto[]
+    membership: MembershipDto
+    ownershipRules: OwnershipRuleDto[]
+    roles?: RoleConfigDto[]
+    roleAssignment?: RoleAssignmentDto
+    fieldSecurity?: FieldSecurityDto
+}
+
+export interface ISecurityModelSource
+{
+    GetSecurityModel(env: string): Promise<SecurityModelDto | null>
+    SetSecurityModel(env: string, model: SecurityModelDto): Promise<void>
 }

@@ -129,6 +129,11 @@ export class TenantApp extends StackPanel implements ITenantNavigator
         this.Show(new ServiceTokensView(this.client))
     }
 
+    public ShowRolesPrivileges(): void
+    {
+        // The Roles & Privileges view is attached in a later task.
+    }
+
     public get CurrentPrincipalId(): string
     {
         return this.currentPrincipalId

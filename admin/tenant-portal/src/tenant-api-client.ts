@@ -1,5 +1,5 @@
 import { TenantEventType } from './tenant-types.js'
-import type { AdminSnapshotDto, CreateAccountParams, EnvironmentDto, GrantMutationDto, HiveDto, HiveHealthDto, HiveRolloutDto, IssueTokenParams, ITokensSource, IUsersAccessSource, IWebSocketFactory, IWebSocketLike, ManifestDto, ServiceTokenSummaryDto, SessionDto, TenantEvent, TokenIssuedDto } from './tenant-types.js'
+import type { AdminSnapshotDto, CreateAccountParams, EnvironmentDto, GrantMutationDto, HiveDto, HiveHealthDto, HiveRolloutDto, IssueTokenParams, ISecurityModelSource, ITokensSource, IUsersAccessSource, IWebSocketFactory, IWebSocketLike, ManifestDto, SecurityModelDto, ServiceTokenSummaryDto, SessionDto, TenantEvent, TokenIssuedDto } from './tenant-types.js'
 
 // Thrown for non-2xx tenant-surface responses; Message carries the server's error text.
 export class TenantApiError extends Error
@@ -53,7 +53,7 @@ export class BrowserWebSocketFactory implements IWebSocketFactory
 }
 
 // fetch wrapper over the tenant REST surface plus the events and log-follow sockets.
-export class TenantApiClient implements IUsersAccessSource, ITokensSource
+export class TenantApiClient implements IUsersAccessSource, ITokensSource, ISecurityModelSource
 {
     private static readonly SessionRoute = '/tenant-auth/session'
     private static readonly LogoutRoute = '/tenant-auth/logout'
@@ -72,10 +72,12 @@ export class TenantApiClient implements IUsersAccessSource, ITokensSource
     private static readonly PathSeparator = '/'
     private static readonly MethodPost = 'POST'
     private static readonly MethodDelete = 'DELETE'
+    private static readonly MethodPut = 'PUT'
     private static readonly AdminSnapshotLeaf = '/admin/snapshot'
     private static readonly AdminAccountsLeaf = '/admin/accounts'
     private static readonly AdminGrantsLeaf = '/admin/grants'
     private static readonly AdminTokensLeaf = '/admin/tokens'
+    private static readonly AdminSecurityModelLeaf = '/admin/security-model'
     private static readonly CredentialsMode = 'same-origin'
     private static readonly ContentTypeHeader = 'content-type'
     private static readonly JsonType = 'application/json'
@@ -207,6 +209,16 @@ export class TenantApiClient implements IUsersAccessSource, ITokensSource
     public async RevokeToken(env: string, tokenRef: string): Promise<void>
     {
         await this.Send<unknown>(this.EnvRoute(env) + TenantApiClient.AdminTokensLeaf, { method: TenantApiClient.MethodDelete, body: JSON.stringify({ tokenRef }) })
+    }
+
+    public async GetSecurityModel(env: string): Promise<SecurityModelDto | null>
+    {
+        return await this.Send<SecurityModelDto | null>(this.EnvRoute(env) + TenantApiClient.AdminSecurityModelLeaf, undefined)
+    }
+
+    public async SetSecurityModel(env: string, model: SecurityModelDto): Promise<void>
+    {
+        await this.Send<unknown>(this.EnvRoute(env) + TenantApiClient.AdminSecurityModelLeaf, { method: TenantApiClient.MethodPut, body: JSON.stringify({ securityModel: model }) })
     }
 
     // Registers a handler on the shared events socket (opened lazily); returns an unsubscribe.
