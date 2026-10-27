@@ -65,6 +65,7 @@ class ResRecorder
 class FakeService
 {
     public readonly Calls: Array<{ action: string; name: string }> = []
+    public readonly Deletes: string[] = []
 
     public constructor(private readonly records: readonly EnvironmentRecord[])
     {
@@ -90,6 +91,11 @@ class FakeService
     {
         this.Calls.push({ action: TenantEnvAction.Stop, name })
         return this.Shaped(name, EnvStatus.Stopped)
+    }
+
+    public async Delete(name: string): Promise<void>
+    {
+        this.Deletes.push(name)
     }
 
     public async Restart(name: string): Promise<EnvironmentRecord>
@@ -176,6 +182,12 @@ class Fixtures
     public static Post(): IncomingMessage
     {
         return { method: 'POST' } as unknown as IncomingMessage
+    }
+
+    /** A DELETE request with no body. */
+    public static Delete(): IncomingMessage
+    {
+        return { method: 'DELETE' } as unknown as IncomingMessage
     }
 
     /** A POST request carrying a JSON body as a real readable stream (the target route reads it). */
@@ -323,6 +335,44 @@ describe('TenantApiEndpoint mutation routes', () =>
             assert.deepEqual(service.Calls, [])
         })
     }
+
+    describe('DELETE environment', () =>
+    {
+        it('deletes the own-tenant environment and answers 204', async () =>
+        {
+            const res = await Handle(Fixtures.Delete(), '/tenant-api/environments/a-env', Fixtures.Session(TenantA))
+            assert.equal(res.status, 204)
+            assert.deepEqual(service.Deletes, ['a-env'])
+        })
+
+        it('404s a cross-tenant environment and never deletes', async () =>
+        {
+            const res = await Handle(Fixtures.Delete(), '/tenant-api/environments/b-env', Fixtures.Session(TenantA))
+            assert.equal(res.status, 404)
+            assert.deepEqual(service.Deletes, [])
+        })
+
+        it('404s an unknown environment and never deletes', async () =>
+        {
+            const res = await Handle(Fixtures.Delete(), '/tenant-api/environments/nope', Fixtures.Session(TenantA))
+            assert.equal(res.status, 404)
+            assert.deepEqual(service.Deletes, [])
+        })
+
+        it('404s a lifecycle-shaped path and never deletes', async () =>
+        {
+            const res = await Handle(Fixtures.Delete(), '/tenant-api/environments/a-env/start', Fixtures.Session(TenantA))
+            assert.equal(res.status, 404)
+            assert.deepEqual(service.Deletes, [])
+        })
+
+        it('lets the owning B session delete b-env, proving only the A session was blocked', async () =>
+        {
+            const res = await Handle(Fixtures.Delete(), '/tenant-api/environments/b-env', Fixtures.Session(TenantB))
+            assert.equal(res.status, 204)
+            assert.deepEqual(service.Deletes, ['b-env'])
+        })
+    })
 
     it('derives the tenant from the session, not the path: an A session cannot roll a B hive even though the hive id is in the URL', async () =>
     {

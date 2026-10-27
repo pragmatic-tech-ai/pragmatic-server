@@ -58,6 +58,9 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     private static readonly EnvActionPathPattern = new RegExp(
         '^' + TenantApiEndpoint.Prefix + TenantApiEndpoint.EnvironmentsSegment + '/([^/]+)/(' +
         Object.values(TenantEnvAction).join('|') + ')$')
+    /** Matches .../environments/NAME exactly (no trailing segment), so lifecycle-shaped paths never reach Delete. */
+    private static readonly EnvNamePathPattern = new RegExp(
+        '^' + TenantApiEndpoint.Prefix + TenantApiEndpoint.EnvironmentsSegment + '/([^/]+)$')
     private static readonly AdminSegment = 'admin'
     private static readonly AccessCapability = 'access'
     private static readonly SettingsCapability = 'settings'
@@ -213,6 +216,14 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
                 return await this.RouteEnvAction(res, em, session)
             }
         }
+        if (method === TenantApiEndpoint.MethodDelete)
+        {
+            const dm = TenantApiEndpoint.EnvNamePathPattern.exec(path)
+            if (dm !== null)
+            {
+                return await this.RouteEnvDelete(res, dm, session)
+            }
+        }
         const adm = TenantApiEndpoint.AdminPathPattern.exec(path)
         if (adm !== null)
         {
@@ -332,6 +343,22 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         }
         const updated = await this.Perform(action, rec.name)
         this.WriteJson(res, TenantApiEndpoint.StatusOk, EnvironmentDtoMapper.ToDto(updated))
+        return true
+    }
+
+    /** Deletes the tenant's own environment (204); 404 (not 403) when unknown or owned by another tenant, so existence is never revealed and the service Delete is never reached. No capability gate: every admin role has envs, same as the lifecycle routes. */
+    private async RouteEnvDelete(res: ServerResponse, m: RegExpExecArray, session: TenantSession): Promise<boolean>
+    {
+        const name = TenantApiEndpoint.Decode(m[1] as string)
+        const rec = name === undefined ? undefined : this.service.List().find(r => r.name === name)
+        if (rec === undefined || rec.tenantId !== session.tenantId)
+        {
+            this.WriteNotFound(res)
+            return true
+        }
+        await this.service.Delete(rec.name)
+        res.writeHead(TenantApiEndpoint.StatusNoContent)
+        res.end()
         return true
     }
 
