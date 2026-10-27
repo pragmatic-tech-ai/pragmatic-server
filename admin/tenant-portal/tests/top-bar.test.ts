@@ -2,7 +2,7 @@ import { after, before, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { TextBlock } from '@pragmatic-tech-ai/mural/basic'
 import { Button, ToolTipService } from '@pragmatic-tech-ai/mural/framework'
-import { Application } from '@pragmatic-tech-ai/mural/runtime'
+import { Application, Style } from '@pragmatic-tech-ai/mural/runtime'
 import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pragmatic'
 import { IdentityPlate } from '../src/identity-plate.js'
 import { TopBar } from '../src/top-bar.js'
@@ -78,6 +78,15 @@ describe('top bar', () =>
         const plate = new IdentityPlate({ org: 'Acme', tenant: 'Prod', hive: 'hive-1' })
         assert.equal(Walk.Buttons(plate).length, 0)
         assert.equal(ToolTipService.GetToolTip(plate), IdentityPlate.HoverTitle)
+    })
+
+    it('plate renders the hive id with the theme mono style', () =>
+    {
+        const plate = new IdentityPlate({ tenant: 'Prod', hive: 'hive-1' })
+        const hive = Walk.Collect(plate).find(n => n instanceof TextBlock && n.Text === 'hive-1') as TextBlock
+        const code = Application.ResolveDefaultResource<Style>('Code')
+        assert.ok(code instanceof Style)
+        assert.equal(hive.Style, code)
     })
 
     it('user menu shows email, initials and a Logout that invokes onLogout', () =>

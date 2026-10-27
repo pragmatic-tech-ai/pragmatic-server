@@ -1,5 +1,6 @@
 import { Icon, Orientation, StackPanel, TextBlock } from '@pragmatic-tech-ai/mural/basic'
 import { ToolTipService } from '@pragmatic-tech-ai/mural/framework'
+import { Application, Style } from '@pragmatic-tech-ai/mural/runtime'
 import { IconCatalog, KitGlyph } from './kit/icon-catalog.js'
 
 export interface IdentityPlateInputs
@@ -15,8 +16,8 @@ export class IdentityPlate extends StackPanel
 {
     public static readonly HoverTitle = 'This console manages one tenant in one hive'
     public static readonly Separator = '/'
-    // The theme ships no mono resource, so the hive id names a monospace family directly.
-    public static readonly MonoFontFamily = 'Consolas, monospace'
+    // Theme mono TextBlock style (FontMono family, Code weight/size/line-height).
+    private static readonly MonoStyleKey = 'Code'
 
     private readonly inputs: IdentityPlateInputs
 
@@ -41,7 +42,7 @@ export class IdentityPlate extends StackPanel
         this.AddChild(IdentityPlate.MakeText(this.inputs.tenant))
         this.AddChild(IdentityPlate.MakeIcon(KitGlyph.HardDrive))
         const hive = IdentityPlate.MakeText(this.inputs.hive)
-        hive.FontFamily = IdentityPlate.MonoFontFamily
+        hive.Style = Application.ResolveDefaultResource<Style>(IdentityPlate.MonoStyleKey)
         this.AddChild(hive)
     }
 

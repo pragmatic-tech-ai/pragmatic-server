@@ -53,7 +53,7 @@ export class TopBar extends StackPanel
         return this.bannerSlot
     }
 
-    public get BarSurface(): unknown
+    public get BarSurface(): Brush | undefined
     {
         return this.bar.Fill
     }
