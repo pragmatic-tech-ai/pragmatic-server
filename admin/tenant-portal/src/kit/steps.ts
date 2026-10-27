@@ -7,7 +7,8 @@ export interface StepsInputs
     onChange?: (index: number) => void
 }
 
-// An ordered horizontal strip of step labels with one active step. The active step wears
+// An ordered horizontal strip of step labels with one active step. It is a non-interactive
+// indicator: the owner drives it via Select/Advance/Back; clicking a label does nothing. The active step wears
 // the Primary button variant (a fill-and-weight difference, not hue alone); IsActiveStep
 // is the test seam that reads it. No branching, validation, or animation.
 export class Steps extends StackPanel
@@ -59,13 +60,12 @@ export class Steps extends StackPanel
 
     private Build(): void
     {
-        this.inputs.labels.forEach((label, i) =>
+        this.inputs.labels.forEach(label =>
         {
             const button = new Button()
             const text = new TextBlock()
             text.Text = label
             button.Content = text
-            button.AddClickHandler(() => this.Select(i))
             this.buttons.push(button)
             this.AddChild(button)
         })

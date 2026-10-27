@@ -144,4 +144,18 @@ describe('AdoptWizard', () =>
         Fixtures.Click(w.ContentHost, 'Close')
         assert.equal(closed, 1)
     })
+
+    it('cannot reach Outcome without walking through Review and the Roll out run', async () =>
+    {
+        const { w, vm } = Fixtures.Make(AdoptOutcome.Adopted)
+        assert.ok(w.ActiveStep < 4)
+        w.Next()
+        w.Next()
+        assert.ok(w.ActiveStep < 3)
+        assert.equal(vm.Calls, 0)
+        Fixtures.Click(w.ContentHost, 'Roll out')
+        assert.ok(w.ActiveStep < 4)
+        await w.Settled
+        assert.equal(w.ActiveStep, 4)
+    })
 })
