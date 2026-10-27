@@ -160,6 +160,7 @@ class Nav implements ITenantNavigator
     public ShowUsersAccess(): void {}
     public ShowServiceTokens(): void {}
     public ShowRolesPrivileges(): void {}
+    public ShowFieldSecurity(): void {}
 }
 
 class Harness

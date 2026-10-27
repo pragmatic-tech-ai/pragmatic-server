@@ -9,6 +9,7 @@ import { TenantEventType } from './tenant-types.js'
 import type { EnvironmentDto, HiveDto, ITenantNavigator, ITenantView, SessionDto, TenantEvent } from './tenant-types.js'
 import { ServiceTokensView } from './service-tokens-view.js'
 import { RolesPrivilegesView } from './roles-privileges-view.js'
+import { FieldSecurityView } from './field-security-view.js'
 import { UsersAccessView } from './users-access-view.js'
 
 // Minimal detail view until the hive / environment detail views land.
@@ -36,6 +37,7 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     public static readonly UsersAccessLabel = 'Users & Access'
     public static readonly ServiceTokensLabel = 'Service Tokens'
     public static readonly RolesPrivilegesLabel = 'Roles & Privileges'
+    public static readonly FieldSecurityLabel = 'Field Security'
 
     private readonly client: TenantApiClient
     private readonly topBar = new StackPanel()
@@ -63,6 +65,7 @@ export class TenantApp extends StackPanel implements ITenantNavigator
         this.topBar.AddChild(TenantViewBase.MakeButton(TenantApp.UsersAccessLabel, () => this.ShowUsersAccess()))
         this.topBar.AddChild(TenantViewBase.MakeButton(TenantApp.ServiceTokensLabel, () => this.ShowServiceTokens()))
         this.topBar.AddChild(TenantViewBase.MakeButton(TenantApp.RolesPrivilegesLabel, () => this.ShowRolesPrivileges()))
+        this.topBar.AddChild(TenantViewBase.MakeButton(TenantApp.FieldSecurityLabel, () => this.ShowFieldSecurity()))
         this.topBar.AddChild(TenantViewBase.MakeButton(TenantApp.LogoutLabel, () => { void this.Logout() }))
         this.body.Orientation = Orientation.Horizontal
         this.body.AddChild(this.treeHost)
@@ -135,6 +138,11 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     public ShowRolesPrivileges(): void
     {
         this.Show(new RolesPrivilegesView(this.client))
+    }
+
+    public ShowFieldSecurity(): void
+    {
+        this.Show(new FieldSecurityView(this.client))
     }
 
     public get CurrentPrincipalId(): string

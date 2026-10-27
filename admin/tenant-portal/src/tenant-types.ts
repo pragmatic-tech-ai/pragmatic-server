@@ -61,6 +61,7 @@ export interface ITenantNavigator
     ShowUsersAccess(): void
     ShowServiceTokens(): void
     ShowRolesPrivileges(): void
+    ShowFieldSecurity(): void
 }
 
 export interface ITenantView

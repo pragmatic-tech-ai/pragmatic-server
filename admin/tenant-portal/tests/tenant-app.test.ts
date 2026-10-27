@@ -9,6 +9,7 @@ import { TenantEventType } from '../src/tenant-types.js'
 import type { EnvironmentDto, HiveDto, HiveHealthDto, ITenantNavigator, ITenantView, ServiceTokenSummaryDto, SessionDto, TenantEvent } from '../src/tenant-types.js'
 import { ServiceTokensView } from '../src/service-tokens-view.js'
 import { RolesPrivilegesView } from '../src/roles-privileges-view.js'
+import { FieldSecurityView } from '../src/field-security-view.js'
 import { UsersAccessView } from '../src/users-access-view.js'
 
 class FakeClient
@@ -256,6 +257,18 @@ describe('TenantApp', () =>
         await new Promise(r => setTimeout(r, 0))
         const current = (app as unknown as { current: unknown }).current
         assert.ok(current instanceof RolesPrivilegesView)
+    })
+
+    it('the Field Security top-bar button shows the FieldSecurityView', async () =>
+    {
+        const { app } = Fixtures.Make(Session)
+        await app.Boot()
+        const btn = Fixtures.Find(app, Button, b => Fixtures.Texts(b).includes(TenantApp.FieldSecurityLabel))
+        assert.ok(btn, 'Field Security button exists')
+        Fixtures.Click(btn)
+        await new Promise(r => setTimeout(r, 0))
+        const current = (app as unknown as { current: unknown }).current
+        assert.ok(current instanceof FieldSecurityView)
     })
 
     it('logout clears the stored principalId', async () =>
