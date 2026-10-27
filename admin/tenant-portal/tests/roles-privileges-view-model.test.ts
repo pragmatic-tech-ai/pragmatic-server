@@ -4,13 +4,14 @@ import { AccessLevel, PrivilegeAction } from '../src/security-model-draft.js'
 import { RolesPrivilegesState, RolesPrivilegesViewModel } from '../src/roles-privileges-view-model.js'
 import type { IRolesPrivilegesSource } from '../src/roles-privileges-view-model.js'
 import { TenantApiError } from '../src/tenant-api-client.js'
+import { EnvStatus, EnvType, Template } from '../src/tenant-types.js'
 import type { EnvironmentDto, SecurityModelDto } from '../src/tenant-types.js'
 
 class Make
 {
     public static Env(name: string): EnvironmentDto
     {
-        return { name, template: 't', type: 'runtime', environmentId: 'id-' + name, hostPort: 1, status: 'running', createdAt: '', httpUrl: '', wsUrl: '' }
+        return { name, template: Template.DevBlank, type: EnvType.Runtime, environmentId: 'id-' + name, hostPort: 1, status: EnvStatus.Running, createdAt: '', httpUrl: '', wsUrl: '' }
     }
 
     public static Model(): SecurityModelDto

@@ -2,7 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { SelectionKind, TenantTreeViewModel } from '../src/tenant-tree-view-model.js'
 import type { ITreeSource } from '../src/tenant-tree-view-model.js'
-import { TenantEventType } from '../src/tenant-types.js'
+import { EnvStatus, EnvType, Template, TenantEventType } from '../src/tenant-types.js'
 import type { EnvironmentDto, HiveDto } from '../src/tenant-types.js'
 
 class Make
@@ -14,7 +14,7 @@ class Make
 
     public static Env(name: string, hiveId: string | undefined, status = 'running'): EnvironmentDto
     {
-        return { name, template: 'x', type: 'runtime', environmentId: name, hiveId, hostPort: 1, status, createdAt: '', httpUrl: '', wsUrl: '' }
+        return { name, template: Template.DevBlank, type: EnvType.Runtime, environmentId: name, hiveId, hostPort: 1, status: status as EnvStatus, createdAt: '', httpUrl: '', wsUrl: '' }
     }
 }
 

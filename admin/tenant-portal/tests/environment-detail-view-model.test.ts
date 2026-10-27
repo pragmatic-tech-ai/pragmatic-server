@@ -2,13 +2,14 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { EnvironmentDetailViewModel } from '../src/environment-detail-view-model.js'
 import type { IEnvDetailSource } from '../src/environment-detail-view-model.js'
+import { EnvStatus, EnvType, Template } from '../src/tenant-types.js'
 import type { EnvironmentDto, HiveHealthDto } from '../src/tenant-types.js'
 
 class Make
 {
     public static Env(status: string): EnvironmentDto
     {
-        return { name: 'e1', template: 't', type: 'runtime', environmentId: 'id1', hiveId: 'h1', hostPort: 1, status, createdAt: '', httpUrl: '', wsUrl: '' }
+        return { name: 'e1', template: Template.DevBlank, type: EnvType.Runtime, environmentId: 'id1', hiveId: 'h1', hostPort: 1, status: status as EnvStatus, createdAt: '', httpUrl: '', wsUrl: '' }
     }
 }
 

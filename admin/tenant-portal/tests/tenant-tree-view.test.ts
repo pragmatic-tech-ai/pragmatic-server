@@ -6,7 +6,7 @@ import { TreeView, TreeViewItem } from '@pragmatic-tech-ai/mural/framework'
 import { TenantTreeView } from '../src/tenant-tree-view.js'
 import { TenantTreeViewModel } from '../src/tenant-tree-view-model.js'
 import type { ITreeSource } from '../src/tenant-tree-view-model.js'
-import { TenantEventType } from '../src/tenant-types.js'
+import { EnvStatus, EnvType, Template, TenantEventType } from '../src/tenant-types.js'
 import type { EnvironmentDto, HiveDto, ITenantNavigator } from '../src/tenant-types.js'
 
 class Src implements ITreeSource
@@ -18,7 +18,7 @@ class Src implements ITreeSource
 
     public async ListEnvironments(): Promise<EnvironmentDto[]>
     {
-        return [{ name: 'e1', template: 'x', type: 'r', environmentId: 'e1', hiveId: 'h1', hostPort: 1, status: 'running', createdAt: '', httpUrl: '', wsUrl: '' }]
+        return [{ name: 'e1', template: Template.DevBlank, type: EnvType.Runtime, environmentId: 'e1', hiveId: 'h1', hostPort: 1, status: EnvStatus.Running, createdAt: '', httpUrl: '', wsUrl: '' }]
     }
 }
 

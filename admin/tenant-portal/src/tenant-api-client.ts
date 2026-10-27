@@ -1,5 +1,5 @@
 import { TenantEventType } from './tenant-types.js'
-import type { AdminSnapshotDto, CreateAccountParams, EnvironmentDto, GrantMutationDto, HiveDto, HiveHealthDto, HiveRolloutDto, IssueTokenParams, ISecurityModelSource, ITokensSource, IUsersAccessSource, IWebSocketFactory, IWebSocketLike, ManifestDto, SecurityModelDto, ServiceTokenSummaryDto, SessionDto, TenantEvent, TenantProfileDto, TokenIssuedDto } from './tenant-types.js'
+import type { AdminSnapshotDto, CreateAccountParams, CreateEnvironmentParams, EnvironmentDto, GrantMutationDto, HiveDto, HiveHealthDto, HiveRolloutDto, IssueTokenParams, ISecurityModelSource, ITokensSource, IUsersAccessSource, IWebSocketFactory, IWebSocketLike, ManifestDto, SecurityModelDto, ServiceTokenSummaryDto, SessionDto, TenantEvent, TenantProfileDto, TokenIssuedDto } from './tenant-types.js'
 
 // Thrown for non-2xx tenant-surface responses; Message carries the server's error text.
 export class TenantApiError extends Error
@@ -141,6 +141,13 @@ export class TenantApiClient implements IUsersAccessSource, ITokensSource, ISecu
     public async ListEnvironments(): Promise<EnvironmentDto[]>
     {
         return await this.Send<EnvironmentDto[]>(TenantApiClient.EnvironmentsRoute, undefined)
+    }
+
+    // POSTs a new environment; a duplicate name surfaces as TenantApiError with Status 409.
+    public async CreateEnvironment(params: CreateEnvironmentParams): Promise<EnvironmentDto>
+    {
+        const body = { name: params.name, template: params.template, type: params.type }
+        return await this.Send<EnvironmentDto>(TenantApiClient.EnvironmentsRoute, { method: TenantApiClient.MethodPost, body: JSON.stringify(body) })
     }
 
     public async ListManifests(): Promise<ManifestDto[]>

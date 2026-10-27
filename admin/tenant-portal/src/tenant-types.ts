@@ -26,18 +26,52 @@ export type HiveDto = {
     createdAt: string
 }
 
+// Mirrors of the server's environment-record enums (the portal never imports the server).
+export enum Template
+{
+    DevBlank = 'dev-blank',
+    DemoContoso = 'demo-contoso',
+    RuntimePostgres = 'runtime-postgres',
+}
+
+export enum EnvType
+{
+    Development = 'development',
+    Runtime = 'runtime',
+}
+
+export enum EnvStatus
+{
+    Running = 'running',
+    Stopped = 'stopped',
+    Failed = 'failed',
+    Unknown = 'unknown',
+}
+
 export type EnvironmentDto = {
     name: string
-    template: string
-    type: string
+    template: Template
+    type: EnvType
     environmentId: string
     hiveId?: string
     tenantId?: string
     hostPort: number
-    status: string
+    status: EnvStatus
     createdAt: string
     httpUrl: string
     wsUrl: string
+}
+
+export type CreateEnvironmentParams = { name: string; template: Template; type: EnvType }
+
+export interface IEnvironmentsSource
+{
+    ListEnvironments(): Promise<EnvironmentDto[]>
+    GetHealth(hiveId: string): Promise<HiveHealthDto[]>
+    StartEnvironment(name: string): Promise<EnvironmentDto>
+    StopEnvironment(name: string): Promise<EnvironmentDto>
+    RestartEnvironment(name: string): Promise<EnvironmentDto>
+    CreateEnvironment(params: CreateEnvironmentParams): Promise<EnvironmentDto>
 }
 
 export type ManifestDto = { id: string; image: string; notes?: string; publishedAt: string; withdrawn?: boolean }

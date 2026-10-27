@@ -3,13 +3,14 @@ import assert from 'node:assert/strict'
 import { ServiceTokenRow } from '../src/service-token-row.js'
 import { ServiceTokensViewModel, TokenDuration, TokensState } from '../src/service-tokens-view-model.js'
 import { TenantApiError } from '../src/tenant-api-client.js'
+import { EnvStatus, EnvType, Template } from '../src/tenant-types.js'
 import type { ITokensSource, EnvironmentDto, ServiceTokenSummaryDto, IssueTokenParams, TokenIssuedDto } from '../src/tenant-types.js'
 
 class Make
 {
     public static Env(name: string): EnvironmentDto
     {
-        return { name, template: 't', type: 'runtime', environmentId: 'id-' + name, hostPort: 1, status: 'running', createdAt: '', httpUrl: '', wsUrl: '' }
+        return { name, template: Template.DevBlank, type: EnvType.Runtime, environmentId: 'id-' + name, hostPort: 1, status: EnvStatus.Running, createdAt: '', httpUrl: '', wsUrl: '' }
     }
 
     public static Token(ref: string, over: Partial<ServiceTokenSummaryDto> = {}): ServiceTokenSummaryDto

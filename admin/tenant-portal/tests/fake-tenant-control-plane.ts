@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { extname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocketServer, type WebSocket } from 'ws'
+import { EnvStatus, EnvType, Template, TenantEventType } from '../src/tenant-types.js'
 import type { AccountDto, EnvironmentDto, GrantDto, GrantMutationDto, HiveDto, HiveHealthDto, HiveRolloutDto, ManifestDto, SecurityModelDto, ServiceTokenSummaryDto, SessionDto, TenantEvent, TenantProfileDto } from '../src/tenant-types.js'
 
 // Serves the built dist/ statically and fakes the 7a tenant surface with canned
@@ -37,6 +38,8 @@ export class FakeTenantControlPlane
     private static readonly ProfilePath = '/tenant-api/profile'
     private static readonly HivesPath = '/tenant-api/hives'
     private static readonly EnvironmentsPath = '/tenant-api/environments'
+    private static readonly BadRequestMessage = 'bad request'
+    private static readonly CreatedIdSuffix = '-created-id'
     private static readonly ManifestsPath = '/tenant-api/manifests'
     private static readonly EventsPath = '/tenant-api/events'
     private static readonly HivePrefix = '/tenant-api/hives/'
@@ -86,6 +89,8 @@ export class FakeTenantControlPlane
 
     public readonly TargetCalls: Array<{ subject: string; version: string }> = []
     public EnvironmentsRequests = 0
+    // Names of environments created through the POST route, for e2e assertions.
+    public readonly CreatedEnvironments: string[] = []
     // When set, the next environments list reports alpha-env with this status.
     public AlphaStatusOverride: string | undefined
     public readonly Accounts: AccountDto[] =
@@ -243,17 +248,17 @@ export class FakeTenantControlPlane
         }
     }
 
-    private Env(name: string, hiveId: string, status: string): EnvironmentDto
+    private Env(name: string, hiveId: string, status: string, template: Template = Template.DevBlank, type: EnvType = EnvType.Runtime, environmentId = `${name}-id`): EnvironmentDto
     {
         return {
             name,
-            template: 'dev-blank',
-            type: 'runtime',
-            environmentId: `${name}-id`,
+            template,
+            type,
+            environmentId,
             hiveId,
             tenantId: FakeTenantControlPlane.TenantId,
             hostPort: 4101,
-            status,
+            status: status as EnvStatus,
             createdAt: FakeTenantControlPlane.CreatedAt,
             httpUrl: 'http://localhost:4101',
             wsUrl: 'ws://localhost:4101/',
@@ -338,6 +343,11 @@ export class FakeTenantControlPlane
             FakeTenantControlPlane.Json(res, 200, this.Hives())
             return
         }
+        if (path === FakeTenantControlPlane.EnvironmentsPath && method === FakeTenantControlPlane.MethodPost)
+        {
+            await this.HandleCreate(req, res)
+            return
+        }
         if (path === FakeTenantControlPlane.EnvironmentsPath)
         {
             this.EnvironmentsRequests++
@@ -365,6 +375,34 @@ export class FakeTenantControlPlane
             return
         }
         await this.Serve(path, res)
+    }
+
+    private async HandleCreate(req: IncomingMessage, res: ServerResponse): Promise<void>
+    {
+        let body: { name?: unknown; template?: unknown; type?: unknown }
+        try
+        {
+            body = JSON.parse(await FakeTenantControlPlane.ReadBody(req)) as typeof body
+        }
+        catch
+        {
+            FakeTenantControlPlane.Json(res, 400, { error: FakeTenantControlPlane.BadRequestMessage })
+            return
+        }
+        const templates: string[] = Object.values(Template)
+        const types: string[] = Object.values(EnvType)
+        if (typeof body.name !== 'string' || body.name.length === 0
+            || typeof body.template !== 'string' || !templates.includes(body.template)
+            || typeof body.type !== 'string' || !types.includes(body.type))
+        {
+            FakeTenantControlPlane.Json(res, 400, { error: FakeTenantControlPlane.BadRequestMessage })
+            return
+        }
+        const name = body.name
+        const dto = this.Env(name, FakeTenantControlPlane.HiveOneId, FakeTenantControlPlane.RunningStatus, body.template as Template, body.type as EnvType, `${name}${FakeTenantControlPlane.CreatedIdSuffix}`)
+        this.CreatedEnvironments.push(name)
+        this.PushEvent({ type: TenantEventType.EnvironmentCreated, environmentName: name })
+        FakeTenantControlPlane.Json(res, 201, dto)
     }
 
     private async HandleHive(method: string, path: string, req: IncomingMessage, res: ServerResponse): Promise<void>

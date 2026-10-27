@@ -3,14 +3,14 @@ import assert from 'node:assert/strict'
 import { AccountRow } from '../src/account-row.js'
 import { UsersAccessViewModel, UsersAccessState, PendingKind } from '../src/users-access-view-model.js'
 import { TenantApiError } from '../src/tenant-api-client.js'
-import { TenantRole } from '../src/tenant-types.js'
+import { EnvStatus, EnvType, Template, TenantRole } from '../src/tenant-types.js'
 import type { IUsersAccessSource, AdminSnapshotDto, EnvironmentDto, CreateAccountParams, GrantMutationDto, GrantDto } from '../src/tenant-types.js'
 
 class Make
 {
     public static Env(name: string): EnvironmentDto
     {
-        return { name, template: 't', type: 'runtime', environmentId: 'id-' + name, hostPort: 1, status: 'running', createdAt: '', httpUrl: '', wsUrl: '' }
+        return { name, template: Template.DevBlank, type: EnvType.Runtime, environmentId: 'id-' + name, hostPort: 1, status: EnvStatus.Running, createdAt: '', httpUrl: '', wsUrl: '' }
     }
 
     public static Grant(subject: string, role: string): GrantDto

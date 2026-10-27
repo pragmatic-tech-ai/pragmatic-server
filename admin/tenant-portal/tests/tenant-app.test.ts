@@ -7,7 +7,7 @@ import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pr
 import { TenantApp } from '../src/tenant-app.js'
 import { TenantApiError } from '../src/tenant-api-client.js'
 import type { TenantApiClient } from '../src/tenant-api-client.js'
-import { TenantEventType } from '../src/tenant-types.js'
+import { EnvStatus, EnvType, Template, TenantEventType } from '../src/tenant-types.js'
 import type { EnvironmentDto, TenantProfileDto, HiveDto, HiveHealthDto, ITenantNavigator, ITenantView, ServiceTokenSummaryDto, SessionDto, TenantEvent } from '../src/tenant-types.js'
 import { ServiceTokensView } from '../src/service-tokens-view.js'
 import { RolesPrivilegesView } from '../src/roles-privileges-view.js'
@@ -199,7 +199,7 @@ describe('TenantApp', () =>
     {
         const { app, client } = Fixtures.Make(Session)
         await app.Boot()
-        const env: EnvironmentDto = { name: 'e1', template: 't', type: 'development', environmentId: 'e1', hiveId: 'h1', hostPort: 9000, status: 'running', createdAt: '', httpUrl: '', wsUrl: '' }
+        const env: EnvironmentDto = { name: 'e1', template: Template.DevBlank, type: EnvType.Development, environmentId: 'e1', hiveId: 'h1', hostPort: 9000, status: EnvStatus.Running, createdAt: '', httpUrl: '', wsUrl: '' }
         app.ShowEnvironmentDetail(env)
         await new Promise(r => setTimeout(r, 0))
         const detail = Fixtures.CurrentOf(app)
@@ -362,7 +362,7 @@ describe('TenantApp', () =>
     {
         const { app } = Fixtures.Make(Session)
         await app.Boot()
-        const env: EnvironmentDto = { name: 'e1', template: 't', type: 'development', environmentId: 'e1', hiveId: 'h1', hostPort: 9000, status: 'running', createdAt: '', httpUrl: '', wsUrl: '' }
+        const env: EnvironmentDto = { name: 'e1', template: Template.DevBlank, type: EnvType.Development, environmentId: 'e1', hiveId: 'h1', hostPort: 9000, status: EnvStatus.Running, createdAt: '', httpUrl: '', wsUrl: '' }
         app.ShowEnvironmentDetail(env)
         assert.equal(Fixtures.Find(app, NavRail)!.Active, NavSection.Environments)
         app.ShowSection(NavSection.Settings)

@@ -1,7 +1,7 @@
 import { afterEach, describe, it, mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { TenantApiClient, TenantApiError } from '../src/tenant-api-client.js'
-import { TenantEventType } from '../src/tenant-types.js'
+import { EnvStatus, EnvType, Template, TenantEventType } from '../src/tenant-types.js'
 import type { IWebSocketFactory, IWebSocketLike, TenantEvent } from '../src/tenant-types.js'
 
 type Recorded = { route: string; init: RequestInit | undefined }
@@ -143,6 +143,27 @@ describe('TenantApiClient fetch', () =>
         FetchStub.Install([{ id: 'm' }])
         assert.deepEqual(await c.ListManifests(), [{ id: 'm' }])
         assert.equal(FetchStub.Calls[0]!.route, '/tenant-api/manifests')
+    })
+
+    it('CreateEnvironment POSTs name, template and type and returns the DTO', async () =>
+    {
+        const c = new TestClient(new FakeWebSocketFactory())
+        const dto = { name: 'gamma', template: Template.DemoContoso, type: EnvType.Development, status: EnvStatus.Running }
+        FetchStub.Install(dto, 201)
+        const created = await c.CreateEnvironment({ name: 'gamma', template: Template.DemoContoso, type: EnvType.Development })
+        assert.deepEqual(created, dto)
+        assert.equal(FetchStub.Calls[0]!.route, '/tenant-api/environments')
+        assert.equal(FetchStub.Calls[0]!.init?.method, 'POST')
+        assert.deepEqual(JSON.parse(String(FetchStub.Calls[0]!.init?.body)), { name: 'gamma', template: 'demo-contoso', type: 'development' })
+    })
+
+    it('CreateEnvironment throws TenantApiError 409 on a duplicate name', async () =>
+    {
+        const c = new TestClient(new FakeWebSocketFactory())
+        FetchStub.Install({ error: 'An environment with that name already exists' }, 409)
+        await assert.rejects(
+            () => c.CreateEnvironment({ name: 'alpha-env', template: Template.DevBlank, type: EnvType.Runtime }),
+            (e: unknown) => e instanceof TenantApiError && e.Status === 409)
     })
 
     it('GetRollout and GetHealth hit the hive sub-routes', async () =>
