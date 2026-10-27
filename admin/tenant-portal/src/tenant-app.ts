@@ -7,6 +7,7 @@ import { TenantTreeViewModel } from './tenant-tree-view-model.js'
 import { TenantViewBase } from './tenant-view-base.js'
 import { TenantEventType } from './tenant-types.js'
 import type { EnvironmentDto, HiveDto, ITenantNavigator, ITenantView, SessionDto, TenantEvent } from './tenant-types.js'
+import { ServiceTokensView } from './service-tokens-view.js'
 import { UsersAccessView } from './users-access-view.js'
 
 // Minimal detail view until the hive / environment detail views land.
@@ -32,6 +33,7 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     public static readonly LogoutLabel = 'Logout'
     public static readonly EmptySelectionText = 'Select a hive or environment'
     public static readonly UsersAccessLabel = 'Users & Access'
+    public static readonly ServiceTokensLabel = 'Service Tokens'
 
     private readonly client: TenantApiClient
     private readonly topBar = new StackPanel()
@@ -57,6 +59,7 @@ export class TenantApp extends StackPanel implements ITenantNavigator
         this.topBar.AddChild(title)
         this.topBar.AddChild(this.tenantName)
         this.topBar.AddChild(TenantViewBase.MakeButton(TenantApp.UsersAccessLabel, () => this.ShowUsersAccess()))
+        this.topBar.AddChild(TenantViewBase.MakeButton(TenantApp.ServiceTokensLabel, () => this.ShowServiceTokens()))
         this.topBar.AddChild(TenantViewBase.MakeButton(TenantApp.LogoutLabel, () => { void this.Logout() }))
         this.body.Orientation = Orientation.Horizontal
         this.body.AddChild(this.treeHost)
@@ -121,9 +124,9 @@ export class TenantApp extends StackPanel implements ITenantNavigator
         this.Show(new UsersAccessView(this.client, this.currentPrincipalId))
     }
 
-    // Placeholder until the service-tokens view lands (later task).
     public ShowServiceTokens(): void
     {
+        this.Show(new ServiceTokensView(this.client))
     }
 
     public get CurrentPrincipalId(): string

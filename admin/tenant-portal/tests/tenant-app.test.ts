@@ -7,6 +7,7 @@ import { TenantApiError } from '../src/tenant-api-client.js'
 import type { TenantApiClient } from '../src/tenant-api-client.js'
 import { TenantEventType } from '../src/tenant-types.js'
 import type { EnvironmentDto, HiveDto, HiveHealthDto, ITenantNavigator, ITenantView, SessionDto, TenantEvent } from '../src/tenant-types.js'
+import { ServiceTokensView } from '../src/service-tokens-view.js'
 import { UsersAccessView } from '../src/users-access-view.js'
 
 class FakeClient
@@ -52,6 +53,11 @@ class FakeClient
     }
 
     public async ListEnvironments(): Promise<EnvironmentDto[]>
+    {
+        return []
+    }
+
+    public async ListTokens(): Promise<unknown[]>
     {
         return []
     }
@@ -225,6 +231,18 @@ describe('TenantApp', () =>
         await new Promise(r => setTimeout(r, 0))
         const current = (app as unknown as { current: unknown }).current
         assert.ok(current instanceof UsersAccessView)
+    })
+
+    it('the Service Tokens top-bar button shows the ServiceTokensView', async () =>
+    {
+        const { app } = Fixtures.Make(Session)
+        await app.Boot()
+        const btn = Fixtures.Find(app, Button, b => Fixtures.Texts(b).includes(TenantApp.ServiceTokensLabel))
+        assert.ok(btn, 'Service Tokens button exists')
+        Fixtures.Click(btn)
+        await new Promise(r => setTimeout(r, 0))
+        const current = (app as unknown as { current: unknown }).current
+        assert.ok(current instanceof ServiceTokensView)
     })
 
     it('logout clears the stored principalId', async () =>
