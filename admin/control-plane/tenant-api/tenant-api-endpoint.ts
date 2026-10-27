@@ -15,7 +15,7 @@ import { AdminProxyError, AdminProxyErrorKind } from '../admin-proxy.js'
 import { EnvironmentExistsError, EnvironmentNotDevelopmentError, EnvironmentNotFoundError, EnvironmentNotRuntimeError } from '../environment-service.js'
 import { EnvType, Template } from '../environment-record.js'
 import { UnsupportedBackendError } from '../hive-orchestrator.js'
-import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, SecurityModelDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, IssueTokenParams, SecurityModelDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 /** The lifecycle action a tenant may request against its own environment; the values byte-match the URL path segments. */
 export enum TenantEnvAction
@@ -60,12 +60,13 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     private static readonly GrantsLeaf = 'grants'
     private static readonly ConfigLeaf = 'config'
     private static readonly SecurityModelLeaf = 'security-model'
+    private static readonly TokensLeaf = 'tokens'
     private static readonly MakerTokenLeaf = 'maker-token'
     private static readonly AppReaderLeaf = 'app-reader-grant'
     /** Matches .../environments/NAME/admin/LEAF[/PRINCIPAL] for the per-environment identity-admin surface. */
     private static readonly AdminPathPattern = new RegExp(
         '^' + TenantApiEndpoint.Prefix + TenantApiEndpoint.EnvironmentsSegment + '/([^/]+)/' + TenantApiEndpoint.AdminSegment + '/(' +
-        [TenantApiEndpoint.SnapshotLeaf, TenantApiEndpoint.AccountsLeaf, TenantApiEndpoint.GrantsLeaf, TenantApiEndpoint.ConfigLeaf, TenantApiEndpoint.SecurityModelLeaf].join('|') +
+        [TenantApiEndpoint.SnapshotLeaf, TenantApiEndpoint.AccountsLeaf, TenantApiEndpoint.GrantsLeaf, TenantApiEndpoint.ConfigLeaf, TenantApiEndpoint.SecurityModelLeaf, TenantApiEndpoint.TokensLeaf].join('|') +
         ')(?:/([^/]+))?$')
     /** Matches .../environments/NAME/(maker-token|app-reader-grant). */
     private static readonly EnvCredentialPathPattern = new RegExp(
@@ -102,6 +103,10 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     private static readonly TargetUnavailableMessage = 'Requested version is not available for this hive'
     private static readonly ErrorKey = 'error'
     private static readonly OkKey = 'ok'
+    private static readonly CacheControlHeader = 'Cache-Control'
+    private static readonly NoStore = 'no-store'
+    private static readonly TokenIssueFieldsMessage = 'principalId (non-empty string), scopes (non-empty string array) and expiresInSeconds (positive integer or null) are required'
+    private static readonly TokenRefMessage = 'tokenRef (non-empty string) is required'
     private static readonly AccountFieldsMessage = 'email, principalId and password (non-empty strings) are required'
     private static readonly GrantFieldsMessage = 'subject and role (strings) are required'
     private static readonly SecurityModelFieldMessage = 'securityModel (object) is required'
@@ -443,6 +448,14 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         {
             return await this.AdminGrant(req, res, name, method === TenantApiEndpoint.MethodPost)
         }
+        if (leaf === TenantApiEndpoint.TokensLeaf && method === TenantApiEndpoint.MethodPost)
+        {
+            return await this.AdminIssueToken(req, res, name)
+        }
+        if (leaf === TenantApiEndpoint.TokensLeaf && method === TenantApiEndpoint.MethodDelete)
+        {
+            return await this.AdminRevokeToken(req, res, name)
+        }
         if (leaf === TenantApiEndpoint.SecurityModelLeaf && method === TenantApiEndpoint.MethodPut)
         {
             return await this.AdminSetSecurityModel(req, res, name)
@@ -465,6 +478,11 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         if (leaf === TenantApiEndpoint.ConfigLeaf)
         {
             this.WriteJson(res, TenantApiEndpoint.StatusOk, await this.service.AdminGetConfig(name))
+            return true
+        }
+        if (leaf === TenantApiEndpoint.TokensLeaf)
+        {
+            this.WriteJson(res, TenantApiEndpoint.StatusOk, await this.service.AdminListTokens(name))
             return true
         }
         if (leaf === TenantApiEndpoint.SecurityModelLeaf)
@@ -491,6 +509,47 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         const account = { email: body.email, principalId: body.principalId, password: body.password } as unknown as CreateAccountParams
         await this.service.AdminCreateAccount(name, account)
         this.WriteJson(res, TenantApiEndpoint.StatusCreated, { [TenantApiEndpoint.OkKey]: true })
+        return true
+    }
+
+    /** Issues a service token; the secret is returned only here, never cached. */
+    private async AdminIssueToken(req: IncomingMessage, res: ServerResponse, name: string): Promise<boolean>
+    {
+        const body = await this.ReadObject(req, res)
+        if (body === undefined)
+        {
+            return true
+        }
+        const expires = body.expiresInSeconds
+        const scopes = body.scopes
+        const scopesOk = Array.isArray(scopes) && scopes.length > 0 && scopes.every(x => typeof x === 'string')
+        const expiresOk = expires === undefined || expires === null || (typeof expires === 'number' && Number.isInteger(expires) && expires > 0)
+        if (!TenantApiEndpoint.NonEmpty(body.principalId) || !scopesOk || !expiresOk)
+        {
+            this.WriteJson(res, TenantApiEndpoint.StatusBadRequest, { [TenantApiEndpoint.ErrorKey]: TenantApiEndpoint.TokenIssueFieldsMessage })
+            return true
+        }
+        const params = { principalId: body.principalId, scopes, expiresInSeconds: expires ?? null } as unknown as IssueTokenParams
+        const issued = await this.service.AdminIssueToken(name, params)
+        this.WriteJson(res, TenantApiEndpoint.StatusCreated, issued, { [TenantApiEndpoint.CacheControlHeader]: TenantApiEndpoint.NoStore })
+        return true
+    }
+
+    /** Revokes a service token; the tokenRef travels in the body because it contains slashes. */
+    private async AdminRevokeToken(req: IncomingMessage, res: ServerResponse, name: string): Promise<boolean>
+    {
+        const body = await this.ReadObject(req, res)
+        if (body === undefined)
+        {
+            return true
+        }
+        if (!TenantApiEndpoint.NonEmpty(body.tokenRef))
+        {
+            this.WriteJson(res, TenantApiEndpoint.StatusBadRequest, { [TenantApiEndpoint.ErrorKey]: TenantApiEndpoint.TokenRefMessage })
+            return true
+        }
+        await this.service.AdminRevokeToken(name, body.tokenRef as string)
+        this.WriteJson(res, TenantApiEndpoint.StatusOk, { [TenantApiEndpoint.OkKey]: true })
         return true
     }
 
@@ -624,6 +683,10 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
                     status = TenantApiEndpoint.StatusConflict
                     message = TenantApiEndpoint.IdentityConflictMessage
                     break
+                case AdminProxyErrorKind.NotFound:
+                    status = TenantApiEndpoint.StatusNotFound
+                    message = TenantApiEndpoint.NotFoundMessage
+                    break
                 case AdminProxyErrorKind.Invalid:
                     status = TenantApiEndpoint.StatusBadRequest
                     message = TenantApiEndpoint.IdentityInvalidMessage
@@ -733,9 +796,9 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         this.WriteJson(res, TenantApiEndpoint.StatusNotFound, { [TenantApiEndpoint.ErrorKey]: TenantApiEndpoint.NotFoundMessage })
     }
 
-    private WriteJson(res: ServerResponse, status: number, body: unknown): void
+    private WriteJson(res: ServerResponse, status: number, body: unknown, extraHeaders: Record<string, string> = {}): void
     {
-        res.writeHead(status, { [TenantApiEndpoint.ContentTypeHeader]: TenantApiEndpoint.JsonType })
+        res.writeHead(status, { [TenantApiEndpoint.ContentTypeHeader]: TenantApiEndpoint.JsonType, ...extraHeaders })
         res.end(JSON.stringify(body))
     }
 }

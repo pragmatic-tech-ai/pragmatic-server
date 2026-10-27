@@ -14,10 +14,12 @@ class ResRecorder
 {
     public status = 0
     public body = ''
+    public headers: Record<string, string> = {}
 
-    public writeHead(status: number): this
+    public writeHead(status: number, headers?: Record<string, string>): this
     {
         this.status = status
+        this.headers = headers ?? {}
         return this
     }
 
@@ -97,6 +99,21 @@ class FakeService
         return this.Rec('AdminIssueMakerToken', a, { token: 'tok', principalId: 'maker', expiresAt: 'x' })
     }
 
+    public async AdminListTokens(...a: unknown[]): Promise<unknown>
+    {
+        return this.Rec('AdminListTokens', a, [{ tokenRef: 'r1', principalId: 'svc', scopes: ['read'], expiresAt: null }])
+    }
+
+    public async AdminIssueToken(...a: unknown[]): Promise<unknown>
+    {
+        return this.Rec('AdminIssueToken', a, { token: 'secret-tok', tokenRef: 'r1', principalId: 'svc', scopes: ['read'], expiresAt: null })
+    }
+
+    public async AdminRevokeToken(...a: unknown[]): Promise<void>
+    {
+        this.Rec('AdminRevokeToken', a, undefined)
+    }
+
     public async AdminGrantAppReader(...a: unknown[]): Promise<void>
     {
         this.Rec('AdminGrantAppReader', a, undefined)
@@ -160,7 +177,11 @@ describe('TenantApiEndpoint identity-admin routes', () =>
     const Account = { email: 'a@b.c', principalId: 'p1', password: 'pw' }
     const Config = { packId: 'local', delegationDepth: 'one' }
     const Model = { roles: [] }
+    const IssueBody = { principalId: 'svc', scopes: ['read'], expiresInSeconds: 60 }
     const Routes: RouteSpec[] = [
+        new RouteSpec('GET', 'admin/tokens', 'AdminListTokens'),
+        new RouteSpec('POST', 'admin/tokens', 'AdminIssueToken', IssueBody),
+        new RouteSpec('DELETE', 'admin/tokens', 'AdminRevokeToken', { tokenRef: 'r' }),
         new RouteSpec('GET', 'admin/snapshot', 'AdminSnapshot'),
         new RouteSpec('GET', 'admin/config', 'AdminGetConfig'),
         new RouteSpec('GET', 'admin/security-model', 'AdminGetSecurityModel'),
@@ -288,6 +309,73 @@ describe('TenantApiEndpoint identity-admin routes', () =>
         assert.equal(ar.status, 400)
         assert.equal(typeof ar.Json().error, 'string')
         assert.doesNotMatch(ar.body, /a-env/)
+    })
+
+    it('GET tokens returns summaries with no token secret field', async () =>
+    {
+        const res = await Driver.Send(Fixtures.Req('GET'), Fixtures.Base + 'a-env/admin/tokens', Fixtures.TenantA)
+        assert.equal(res.status, 200)
+        const list = JSON.parse(res.body) as Array<Record<string, unknown>>
+        assert.equal(list.length, 1)
+        for (const t of list)
+        {
+            assert.equal('token' in t, false)
+        }
+    })
+
+    it('POST tokens returns 201, the issued DTO, and Cache-Control: no-store', async () =>
+    {
+        const res = await Driver.Send(Fixtures.Req('POST', IssueBody), Fixtures.Base + 'a-env/admin/tokens', Fixtures.TenantA)
+        assert.equal(res.status, 201)
+        assert.equal(res.Json().token, 'secret-tok')
+        assert.equal(res.headers['Cache-Control'], 'no-store')
+        assert.deepEqual(service.Calls[0]!.args, ['a-env', IssueBody])
+    })
+
+    it('POST tokens 400s invalid bodies without calling the service', async () =>
+    {
+        const bad: unknown[] = [
+            { principalId: 'svc', scopes: [] },
+            { scopes: ['read'] },
+            { principalId: 'svc', scopes: [1] },
+            { principalId: 'svc', scopes: ['read'], expiresInSeconds: 0 },
+            { principalId: 'svc', scopes: ['read'], expiresInSeconds: 1.5 },
+            { principalId: 'svc', scopes: ['read'], expiresInSeconds: 'x' },
+        ]
+        for (const b of bad)
+        {
+            const res = await Driver.Send(Fixtures.Req('POST', b), Fixtures.Base + 'a-env/admin/tokens', Fixtures.TenantA)
+            assert.equal(res.status, 400)
+            assert.equal(typeof res.Json().error, 'string')
+        }
+        assert.equal(service.Calls.length, 0)
+    })
+
+    it('POST tokens accepts null/absent expiresInSeconds', async () =>
+    {
+        const res = await Driver.Send(Fixtures.Req('POST', { principalId: 'svc', scopes: ['read'], expiresInSeconds: null }), Fixtures.Base + 'a-env/admin/tokens', Fixtures.TenantA)
+        assert.equal(res.status, 201)
+        const res2 = await Driver.Send(Fixtures.Req('POST', { principalId: 'svc', scopes: ['read'] }), Fixtures.Base + 'a-env/admin/tokens', Fixtures.TenantA)
+        assert.equal(res2.status, 201)
+    })
+
+    it('DELETE tokens 400s a missing or empty tokenRef', async () =>
+    {
+        for (const b of [{}, { tokenRef: '' }, { tokenRef: 1 }])
+        {
+            const res = await Driver.Send(Fixtures.Req('DELETE', b), Fixtures.Base + 'a-env/admin/tokens', Fixtures.TenantA)
+            assert.equal(res.status, 400)
+        }
+        assert.equal(service.Calls.length, 0)
+    })
+
+    it('maps a NotFound AdminProxyError on revoke to a generic 404', async () =>
+    {
+        service.Throw = new AdminProxyError(AdminProxyErrorKind.NotFound, 'SECRET-inner')
+        const res = await Driver.Send(Fixtures.Req('DELETE', { tokenRef: 'r' }), Fixtures.Base + 'a-env/admin/tokens', Fixtures.TenantA)
+        assert.equal(res.status, 404)
+        assert.equal(typeof res.Json().error, 'string')
+        assert.doesNotMatch(res.body, /SECRET/)
     })
 
     it('answers other methods on identity-admin paths with 404', async () =>
