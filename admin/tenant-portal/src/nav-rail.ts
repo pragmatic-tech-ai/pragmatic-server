@@ -1,5 +1,7 @@
 import { Icon, Orientation, StackPanel, TextBlock } from '@pragmatic-tech-ai/mural/basic'
 import { Button } from '@pragmatic-tech-ai/mural/framework'
+import { Application } from '@pragmatic-tech-ai/mural/runtime'
+import type { Brush } from '@pragmatic-tech-ai/mural/visual-engine'
 import { IconCatalog } from './kit/icon-catalog.js'
 import { NavItem, NavModel, NavSection } from './nav-model.js'
 
@@ -10,6 +12,8 @@ export class NavRail extends StackPanel
     public static readonly FooterText = 'Runs inside your hive. Manages one tenant.'
     // Role marker: Mural has no ARIA bridge, so the current item is exposed as a Tag.
     public static readonly CurrentRole = 'current'
+    // Pragmatic theme surface key: Bg0 is the warm off-white page surface (the "paper" sidebar).
+    public static readonly SurfaceKey = 'Bg0'
 
     private readonly onSelect: (section: NavSection) => void
     private readonly rows = new Map<NavSection, Button>()
@@ -20,6 +24,7 @@ export class NavRail extends StackPanel
         super()
         this.onSelect = onSelect
         this.Orientation = Orientation.Vertical
+        this.Fill = Application.ResolveDefaultResource<Brush>(NavRail.SurfaceKey)
         this.Build()
         if (active !== undefined)
         {
@@ -30,6 +35,12 @@ export class NavRail extends StackPanel
     public get Active(): NavSection | undefined
     {
         return this.active
+    }
+
+    // Runs the same path a row click runs (also the test seam).
+    public Select(section: NavSection): void
+    {
+        this.onSelect(section)
     }
 
     public SetActive(section: NavSection): void
@@ -70,7 +81,7 @@ export class NavRail extends StackPanel
         content.AddChild(text)
         const button = new Button()
         button.Content = content
-        button.AddClickHandler(() => this.onSelect(item.Section))
+        button.AddClickHandler(() => this.Select(item.Section))
         return button
     }
 }

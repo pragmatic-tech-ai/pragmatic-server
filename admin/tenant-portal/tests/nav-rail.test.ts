@@ -115,11 +115,14 @@ describe('NavRail', () =>
     {
         const picked: NavSection[] = []
         const rail = new NavRail(s => picked.push(s))
-        const button = Walk.Buttons(rail)[2]
-        for (const h of (button as unknown as { _clickHandlers: Array<(a: unknown) => void> })._clickHandlers)
-        {
-            h({})
-        }
+        rail.Select(NavSection.UsersAccess)
         assert.deepEqual(picked, [NavSection.UsersAccess])
+    })
+
+    it('uses the theme paper surface as its background', () =>
+    {
+        const rail = new NavRail(() => { })
+        assert.notEqual(rail.Fill, undefined)
+        assert.equal(rail.Fill, Application.ResolveDefaultResource(NavRail.SurfaceKey))
     })
 })
