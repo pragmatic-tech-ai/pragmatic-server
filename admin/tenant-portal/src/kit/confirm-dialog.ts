@@ -1,6 +1,6 @@
 import { StackPanel, TextBlock, TextBox } from '@pragmatic-tech-ai/mural/basic'
-import { ButtonVariant, Dialog, DialogAction } from '@pragmatic-tech-ai/mural/framework'
-import { RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
+import { Button, ButtonVariant, Dialog, DialogAction } from '@pragmatic-tech-ai/mural/framework'
+import { RelayCommand, type Visual } from '@pragmatic-tech-ai/mural/runtime'
 
 export enum ConfirmTone
 {
@@ -55,7 +55,7 @@ export class ConfirmDialog extends Dialog
         {
             panel.AddChild(this.Line(ConfirmDialog.TypeTemplate.replace(ConfirmDialog.NameToken, inputs.confirmName)))
             this.box = new TextBox()
-            this.box.PropertyChanged(TextBox.TextKey).subscribe(() => this.confirmCommand.RaiseCanExecuteChanged())
+            this.box.PropertyChanged(TextBox.TextKey).subscribe(() => this.OnTypedChanged())
             panel.AddChild(this.box)
         }
         this.Content = panel
@@ -67,6 +67,7 @@ export class ConfirmDialog extends Dialog
             new DialogAction(inputs.actionLabel, this.confirmCommand, confirmVariant),
         ]
         this.AddCloseRequestedListener(() => inputs.onClose())
+        this.AddLoadedListener(() => this.SyncConfirmButton())
     }
 
     // Test seam: whether the confirm action is currently enabled.
@@ -103,6 +104,40 @@ export class ConfirmDialog extends Dialog
     public Cancel(): void
     {
         this.cancelCommand.Execute()
+    }
+
+    // Mural's Button gates clicks on CanExecute but does not dim itself, so mirror
+    // the command state onto the rendered confirm button's IsEnabled.
+    private OnTypedChanged(): void
+    {
+        this.confirmCommand.RaiseCanExecuteChanged()
+        this.SyncConfirmButton()
+    }
+
+    private SyncConfirmButton(): void
+    {
+        const button = ConfirmDialog.FindButton(this, this.confirmCommand)
+        if (button !== undefined)
+        {
+            button.IsEnabled = this.Matches()
+        }
+    }
+
+    private static FindButton(root: Visual, command: RelayCommand): Button | undefined
+    {
+        if (root instanceof Button && root.Command === command)
+        {
+            return root
+        }
+        for (const child of (root as unknown as { visualChildren?: readonly Visual[] }).visualChildren ?? [])
+        {
+            const found = ConfirmDialog.FindButton(child, command)
+            if (found !== undefined)
+            {
+                return found
+            }
+        }
+        return undefined
     }
 
     private Matches(): boolean

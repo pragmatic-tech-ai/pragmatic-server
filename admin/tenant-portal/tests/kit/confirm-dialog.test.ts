@@ -1,8 +1,32 @@
 import { after, before, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { Application } from '@pragmatic-tech-ai/mural/runtime'
+import { TextBlock, TextBox } from '@pragmatic-tech-ai/mural/basic'
+import { Button } from '@pragmatic-tech-ai/mural/framework'
+import { Application, type Visual } from '@pragmatic-tech-ai/mural/runtime'
+import { HeadlessTarget } from '@pragmatic-tech-ai/mural/visual-engine'
 import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pragmatic'
 import { ConfirmDialog } from '../../src/kit/confirm-dialog.js'
+
+class Tree
+{
+    public static Collect<T>(root: Visual, type: new (...a: never[]) => T, out: T[] = []): T[]
+    {
+        if (root instanceof type)
+        {
+            out.push(root)
+        }
+        for (const c of (root as unknown as { visualChildren?: readonly Visual[] }).visualChildren ?? [])
+        {
+            Tree.Collect(c, type, out)
+        }
+        return out
+    }
+
+    public static Label(button: Button): string | undefined
+    {
+        return Tree.Collect(button, TextBlock)[0]?.Text
+    }
+}
 
 class Harness
 {
@@ -93,5 +117,35 @@ describe('ConfirmDialog', () =>
         const h = new Harness()
         h.Make('prod').Cancel()
         assert.deepEqual(h.calls, ['close'])
+    })
+
+    it('rendered confirm button enables reactively as the real TextBox changes', () =>
+    {
+        const d = new Harness().Make('prod')
+        const target = new HeadlessTarget(600, 400)
+        target.Content = d
+        target.Flush()
+        const confirm = Tree.Collect(d, Button).find(b => Tree.Label(b) === 'Delete')
+        assert.notEqual(confirm, undefined)
+        const box = Tree.Collect(d, TextBox)[0]
+        assert.notEqual(box, undefined)
+        assert.equal(confirm!.IsEnabled, false)
+        box.Text = 'PROD'
+        assert.equal(confirm!.IsEnabled, false)
+        box.Text = 'prod'
+        assert.equal(confirm!.IsEnabled, true)
+        box.Text = ''
+        assert.equal(confirm!.IsEnabled, false)
+    })
+
+    it('renders a TextBlock per consequence', () =>
+    {
+        const d = new Harness().Make('prod', ['Drops data', 'Revokes tokens'])
+        const target = new HeadlessTarget(600, 400)
+        target.Content = d
+        target.Flush()
+        const texts = Tree.Collect(d, TextBlock).map(t => t.Text)
+        assert.ok(texts.some(t => t.includes('Drops data')))
+        assert.ok(texts.some(t => t.includes('Revokes tokens')))
     })
 })

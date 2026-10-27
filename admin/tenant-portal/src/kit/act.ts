@@ -23,6 +23,8 @@ export interface ActInputs
 export class Act extends Button
 {
     private static readonly NeedTemplate = 'Requires role: '
+    private static readonly OpenParen = ' ('
+    private static readonly CloseParen = ')'
 
     private readonly inputs: ActInputs
     private readonly reason: string | undefined
@@ -74,7 +76,7 @@ export class Act extends Button
     {
         if (inputs.disabledReason !== undefined && inputs.need !== undefined)
         {
-            return `${inputs.disabledReason} (${Act.NeedTemplate}${inputs.need})`
+            return inputs.disabledReason + Act.OpenParen + Act.NeedTemplate + inputs.need + Act.CloseParen
         }
         if (inputs.need !== undefined)
         {
