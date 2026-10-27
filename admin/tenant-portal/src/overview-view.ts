@@ -7,6 +7,7 @@ import { EnvironmentCard } from './environment-card.js'
 import { NavSection } from './nav-model.js'
 import { OverviewViewModel } from './overview-view-model.js'
 import type { IEnvironmentsSource, IOverviewSource, ITenantNavigator, TenantEvent } from './tenant-types.js'
+import { TenantApiError } from './tenant-api-client.js'
 import { TenantViewBase } from './tenant-view-base.js'
 
 // Tenant admin home: environment cards, a "newer version offered" banner, and a gated Create action.
@@ -36,6 +37,7 @@ export class OverviewView extends TenantViewBase
     private reviewAct: Act | undefined
     private cardList: EnvironmentCard[] = []
     private banner: Banner | undefined
+    private localError: string | undefined
 
     public constructor(private readonly source: IOverviewSource & IEnvironmentsSource, hiveId: string)
     {
@@ -100,7 +102,15 @@ export class OverviewView extends TenantViewBase
 
     public async Refresh(): Promise<void>
     {
-        await this.vm.Load()
+        this.localError = undefined
+        try
+        {
+            await this.vm.Load()
+        }
+        catch (e)
+        {
+            this.ReportError(e)
+        }
         this.Rebuild()
     }
 
@@ -141,17 +151,29 @@ export class OverviewView extends TenantViewBase
         })
     }
 
+    // A 401 drops to login; every other failure shows through the ScreenHost error state.
+    private ReportError(e: unknown): void
+    {
+        if (e instanceof TenantApiError && e.Status === TenantApiError.UnauthorizedStatus && this.Navigator !== undefined)
+        {
+            this.ShowError(e)
+            return
+        }
+        this.localError = e instanceof Error ? e.message : String(e)
+    }
+
     private Inputs(): ScreenHostInputs
     {
-        const failed = this.vm.Error
+        const isEmpty = this.vm.Loaded && this.vm.Rows.length === 0
+        const failed = this.vm.Error || this.localError !== undefined
         return {
             loading: !this.vm.Loaded && !failed,
             allowed: true,
-            isEmpty: this.vm.Loaded && this.vm.Rows.length === 0,
+            isEmpty,
             error: failed,
             skeleton: SkeletonKind.Cards,
-            empty: { glyph: KitGlyph.Layers, title: OverviewView.EmptyTitle, action: this.MakeCreateAct() },
-            errorConfig: failed ? { title: OverviewView.ErrorTitle } : undefined,
+            empty: { glyph: KitGlyph.Layers, title: OverviewView.EmptyTitle, action: isEmpty ? this.MakeCreateAct() : undefined },
+            errorConfig: failed ? { title: this.localError ?? OverviewView.ErrorTitle } : undefined,
             content: this.body,
         }
     }

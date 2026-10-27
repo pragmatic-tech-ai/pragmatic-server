@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { TenantApiError } from '../src/tenant-api-client.js'
 import { OverviewViewModel } from '../src/overview-view-model.js'
 import { PillKind } from '../src/kit/pill-kinds.js'
 import { EnvStatus, EnvType, Template, TenantEventType } from '../src/tenant-types.js'
@@ -223,5 +224,17 @@ describe('OverviewViewModel', () =>
         // No current version, so the newest non-withdrawn manifest is offered while e1 still differs from it.
         assert.equal(vm.OfferAvailable, true)
         assert.equal(vm.OfferedVersion, 'v2')
+    })
+
+    it('a 401 on any read rejects Load instead of degrading or setting Error', async () =>
+    {
+        for (const field of ['EnvFailure', 'HealthFailure', 'ManifestsFailure', 'RolloutFailure'] as const)
+        {
+            const s = new FakeSource()
+            s[field] = new TenantApiError(401, 'x')
+            const vm = new OverviewViewModel(s, 'h')
+            await assert.rejects(() => vm.Load())
+            assert.equal(vm.Error, false)
+        }
     })
 })

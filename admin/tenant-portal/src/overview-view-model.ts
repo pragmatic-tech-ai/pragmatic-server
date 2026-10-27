@@ -1,5 +1,6 @@
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import { EnvironmentRow } from './environment-row.js'
+import { TenantApiError } from './tenant-api-client.js'
 import { TenantEventType } from './tenant-types.js'
 import type { EnvironmentDto, HiveHealthDto, HiveRolloutDto, IOverviewSource, ManifestDto, TenantEvent } from './tenant-types.js'
 
@@ -59,13 +60,17 @@ export class OverviewViewModel extends Observable
         {
             result = await Promise.all([
                 this.source.ListEnvironments(),
-                this.source.GetHealth(this.hiveId).catch((): HiveHealthDto[] => []),
-                this.source.ListManifests().catch((): ManifestDto[] => []),
-                this.source.GetRollout(this.hiveId).catch((): HiveRolloutDto | undefined => undefined),
+                this.source.GetHealth(this.hiveId).catch((e): HiveHealthDto[] => OverviewViewModel.Degrade(e, [])),
+                this.source.ListManifests().catch((e): ManifestDto[] => OverviewViewModel.Degrade(e, [])),
+                this.source.GetRollout(this.hiveId).catch((e): HiveRolloutDto | undefined => OverviewViewModel.Degrade(e, undefined)),
             ])
         }
-        catch
+        catch (e)
         {
+            if (OverviewViewModel.IsUnauthorized(e))
+            {
+                throw e
+            }
             if (generation === this.generation)
             {
                 this.error = true
@@ -101,6 +106,21 @@ export class OverviewViewModel extends Observable
         }
         await this.Load().catch(() => undefined)
         return true
+    }
+
+    // A 401 is session death and must surface; any other enrichment failure degrades to the fallback.
+    private static Degrade<T>(e: unknown, fallback: T): T
+    {
+        if (OverviewViewModel.IsUnauthorized(e))
+        {
+            throw e
+        }
+        return fallback
+    }
+
+    private static IsUnauthorized(e: unknown): boolean
+    {
+        return e instanceof TenantApiError && e.Status === TenantApiError.UnauthorizedStatus
     }
 
     // The newest non-withdrawn, non-current manifest that at least one environment is not running.

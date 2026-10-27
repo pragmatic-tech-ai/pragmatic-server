@@ -8,6 +8,7 @@ import { CreateEnvironmentDialog } from '../src/create-environment-dialog.js'
 import { EnvironmentCard } from '../src/environment-card.js'
 import { Banner, ScreenState } from '../src/kit/index.js'
 import { NavSection } from '../src/nav-model.js'
+import { TenantApiError } from '../src/tenant-api-client.js'
 import { OverviewView } from '../src/overview-view.js'
 import { EnvStatus, EnvType, Template, TenantEventType } from '../src/tenant-types.js'
 import type { AdminCapabilitiesDto, CreateEnvironmentParams, EnvironmentDto, HiveHealthDto, HiveRolloutDto, IEnvironmentsSource, IOverviewSource, ITenantNavigator, ManifestDto } from '../src/tenant-types.js'
@@ -60,6 +61,7 @@ class FakeSource implements IOverviewSource, IEnvironmentsSource
     public Envs: EnvironmentDto[] = [Fixtures.Env('alpha'), Fixtures.Env('beta')]
     public EnvFailure: Error | undefined
     public Offer = false
+    public HealthFailure: Error | undefined
 
     public async ListEnvironments(): Promise<EnvironmentDto[]>
     {
@@ -69,7 +71,14 @@ class FakeSource implements IOverviewSource, IEnvironmentsSource
         }
         return this.Envs
     }
-    public async GetHealth(_hiveId: string): Promise<HiveHealthDto[]> { return [] }
+    public async GetHealth(_hiveId: string): Promise<HiveHealthDto[]>
+    {
+        if (this.HealthFailure !== undefined)
+        {
+            throw this.HealthFailure
+        }
+        return []
+    }
     public async ListManifests(): Promise<ManifestDto[]>
     {
         const out: ManifestDto[] = [{ id: 'v1', image: 'img:v1', publishedAt: '2026-01-01' }]
@@ -95,7 +104,8 @@ class Nav implements ITenantNavigator
     public Sections: unknown[] = []
     public Caps: AdminCapabilitiesDto | undefined
 
-    public ShowLogin(): void {}
+    public LoginCount = 0
+    public ShowLogin(): void { this.LoginCount++ }
     public ShowTree(): void {}
     public ShowHiveDetail(): void {}
     public ShowEnvironmentDetail(env: EnvironmentDto): void { this.Opened.push(env) }
@@ -228,5 +238,55 @@ describe('OverviewView', () =>
         src.Envs = [Fixtures.Env('alpha'), Fixtures.Env('beta'), Fixtures.Env('gamma')]
         await view.ApplyEvent({ type: TenantEventType.EnvironmentCreated, environmentName: 'gamma' })
         assert.equal(view.Cards.length, 3)
+    })
+
+    it('a 401 on a read drops to login instead of rendering the home', async () =>
+    {
+        const src = new FakeSource()
+        src.HealthFailure = new TenantApiError(401, 'x')
+        const { view, nav } = await Harness.Make(src)
+        assert.equal(nav.LoginCount, 1)
+        assert.notEqual(view.Host.State, ScreenState.Populated)
+    })
+
+    it('a non-401 refresh failure shows the error state', async () =>
+    {
+        const src = new FakeSource()
+        src.EnvFailure = new TenantApiError(500, 'down')
+        const { view, nav } = await Harness.Make(src)
+        assert.equal(nav.LoginCount, 0)
+        assert.equal(view.Host.State, ScreenState.Error)
+    })
+
+    it('renders the loading state before the first refresh', () =>
+    {
+        Fixtures.InitApp()
+        const view = new OverviewView(new FakeSource(), 'h1')
+        assert.equal(view.Host.State, ScreenState.Loading)
+    })
+
+    it('a dismissed create dialog can be reopened', async () =>
+    {
+        const { view } = await Harness.Make()
+        view.CreateAction.Press()
+        const first = view.OpenDialog as CreateEnvironmentDialog
+        first.Cancel()
+        assert.equal(view.OpenDialog, undefined)
+        view.CreateAction.Press()
+        const second: unknown = view.OpenDialog
+        assert.ok(second instanceof CreateEnvironmentDialog)
+        assert.notEqual(second, first)
+    })
+
+    it('a created environment opens its detail', async () =>
+    {
+        const { view, nav } = await Harness.Make()
+        view.CreateAction.Press()
+        const dialog = view.OpenDialog as CreateEnvironmentDialog
+        dialog.SetName('gamma')
+        await dialog.Submit()
+        assert.equal(nav.Opened.length, 1)
+        assert.equal(nav.Opened[0].name, 'gamma')
+        assert.equal(view.OpenDialog, undefined)
     })
 })
