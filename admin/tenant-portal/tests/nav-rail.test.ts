@@ -111,6 +111,21 @@ describe('NavRail', () =>
         assert.deepEqual(Walk.Texts(again[0]), ['Overview'])
     })
 
+    it('exposes the primary-nav role/label marker and one current item per active section', () =>
+    {
+        const rail = new NavRail(() => { })
+        assert.equal(rail.Role, NavRail.NavRole)
+        assert.equal(rail.Label, NavRail.NavLabel)
+        assert.equal(rail.Tag, NavRail.NavRole)
+        for (const item of NavModel.Items)
+        {
+            rail.SetActive(item.Section)
+            const current = Walk.Buttons(rail).filter(b => b.Tag === NavRail.CurrentRole)
+            assert.equal(current.length, 1)
+            assert.deepEqual(Walk.Texts(current[0]), [item.Label])
+        }
+    })
+
     it('activating an item invokes onSelect with its section', () =>
     {
         const picked: NavSection[] = []

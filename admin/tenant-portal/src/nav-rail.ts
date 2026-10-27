@@ -12,6 +12,10 @@ export class NavRail extends StackPanel
     public static readonly FooterText = 'Runs inside your hive. Manages one tenant.'
     // Role marker: Mural has no ARIA bridge, so the current item is exposed as a Tag.
     public static readonly CurrentRole = 'current'
+    // Primary-navigation landmark seam (the nav / aria-label analog). Not real SR semantics;
+    // a later screen-reader pass wires these to the host element.
+    public static readonly NavRole = 'nav'
+    public static readonly NavLabel = 'Primary'
     // Pragmatic theme surface key: Bg0 is the warm off-white page surface (the "paper" sidebar).
     public static readonly SurfaceKey = 'Bg0'
 
@@ -24,12 +28,23 @@ export class NavRail extends StackPanel
         super()
         this.onSelect = onSelect
         this.Orientation = Orientation.Vertical
+        this.Tag = NavRail.NavRole
         this.Fill = Application.ResolveDefaultResource<Brush>(NavRail.SurfaceKey)
         this.Build()
         if (active !== undefined)
         {
             this.SetActive(active)
         }
+    }
+
+    public get Role(): string
+    {
+        return NavRail.NavRole
+    }
+
+    public get Label(): string
+    {
+        return NavRail.NavLabel
     }
 
     public get Active(): NavSection | undefined
