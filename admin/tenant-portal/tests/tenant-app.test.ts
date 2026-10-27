@@ -7,7 +7,8 @@ import { TenantApiError } from '../src/tenant-api-client.js'
 import type { TenantApiClient } from '../src/tenant-api-client.js'
 import { TenantEventType } from '../src/tenant-types.js'
 import type { EnvironmentDto, HiveDto, HiveHealthDto, ITenantNavigator, ITenantView, ServiceTokenSummaryDto, SessionDto, TenantEvent } from '../src/tenant-types.js'
-import { ServiceTokensView } from '../src/service-tokens-view.js'
+import { ServiceTokensView } from '../src/service-tokens-view.js'
+import { RolesPrivilegesView } from '../src/roles-privileges-view.js'
 import { UsersAccessView } from '../src/users-access-view.js'
 
 class FakeClient
@@ -243,6 +244,18 @@ describe('TenantApp', () =>
         await new Promise(r => setTimeout(r, 0))
         const current = (app as unknown as { current: unknown }).current
         assert.ok(current instanceof ServiceTokensView)
+    })
+
+    it('the Roles & Privileges top-bar button shows the RolesPrivilegesView', async () =>
+    {
+        const { app } = Fixtures.Make(Session)
+        await app.Boot()
+        const btn = Fixtures.Find(app, Button, b => Fixtures.Texts(b).includes(TenantApp.RolesPrivilegesLabel))
+        assert.ok(btn, 'Roles & Privileges button exists')
+        Fixtures.Click(btn)
+        await new Promise(r => setTimeout(r, 0))
+        const current = (app as unknown as { current: unknown }).current
+        assert.ok(current instanceof RolesPrivilegesView)
     })
 
     it('logout clears the stored principalId', async () =>
