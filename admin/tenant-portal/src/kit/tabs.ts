@@ -15,8 +15,8 @@ export interface TabsInputs
 }
 
 // A horizontal strip of tab buttons above a single content host showing the active entry.
-// The active tab is distinguished by its Primary button variant (not colour alone: the
-// variant is also readable via IsActiveTab).
+// The active tab wears the Primary button variant (a fill-and-weight difference, not hue
+// alone); IsActiveTab is the test seam that reads it.
 export class Tabs extends StackPanel
 {
     private readonly inputs: TabsInputs
