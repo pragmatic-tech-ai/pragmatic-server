@@ -234,6 +234,15 @@ describe('RolesPrivilegesViewModel', () =>
         assert.equal(vm.Busy, false)
     })
 
+    it('rethrows a 401 from Save', async () =>
+    {
+        const src = new FakeSource()
+        const vm = await Fixture.Loaded(src)
+        src.SetError = new TenantApiError(TenantApiError.UnauthorizedStatus, 'no')
+        await assert.rejects(vm.Save(), (e: unknown) => e instanceof TenantApiError && e.Status === TenantApiError.UnauthorizedStatus)
+        assert.equal(vm.Busy, false)
+    })
+
     it('discards a load that resolves after a newer SelectEnvironment', async () =>
     {
         const src = new FakeSource()

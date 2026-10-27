@@ -11,16 +11,16 @@ class Fixtures
             businessUnits: [{ id: 'bu1', name: 'Root' }],
             teams: [{ id: 't1', name: 'Team' }],
             membership: { claimsMapping: [], overrides: [] },
-            ownershipRules: [{ concept: 'Zeta', owningBusinessUnit: 'bu1' }],
+            ownershipRules: [{ concept: 'Zeta', owningBusinessUnit: { kind: 'fixed', value: 'bu1' } }],
             roles: [
                 { id: 'r1', name: 'Admin', privileges: [
                     { action: 'read', concept: 'Order', level: 'organization' },
                     { action: 'create', concept: 'Order', level: 'bogus' }] },
                 { id: 'r2', name: 'Viewer', privileges: [{ action: 'read', concept: 'Alpha', level: 'user' }] }
             ],
-            roleAssignment: { byUser: { u1: ['r1'] } },
-            fieldSecurity: { securedFields: [{ concept: 'Mid', field: 'x' }], profiles: [], profileAssignment: {} }
-        } as unknown as SecurityModelDto
+            roleAssignment: { claimsMapping: [], overrides: [{ principalId: 'u1', roles: ['r1'] }], teamRoles: [] },
+            fieldSecurity: { securedFields: [{ concept: 'Mid', field: 'x' }], profiles: [], profileAssignment: { claimsMapping: [], overrides: [], teamProfiles: [] } }
+        }
     }
 }
 
