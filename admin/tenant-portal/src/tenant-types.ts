@@ -89,6 +89,16 @@ export interface IReleasesSource
     SelectTarget(hiveId: string, version: string): Promise<void>
 }
 
+// The slice of TenantApiClient the Overview home needs.
+export interface IOverviewSource
+{
+    ListEnvironments(): Promise<EnvironmentDto[]>
+    GetHealth(hiveId: string): Promise<HiveHealthDto[]>
+    ListManifests(): Promise<ManifestDto[]>
+    GetRollout(hiveId: string): Promise<HiveRolloutDto>
+    CreateEnvironment(params: CreateEnvironmentParams): Promise<EnvironmentDto>
+}
+
 export type HiveHealthDto = { environmentName: string; ready: boolean; runningImage: string | undefined; detail: string }
 
 export enum TenantEventType
