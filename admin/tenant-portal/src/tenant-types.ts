@@ -80,6 +80,15 @@ export type RolloutEnvDto = { environmentName: string; runningImage: string | un
 
 export type HiveRolloutDto = { targetVersion: string | undefined; environments: RolloutEnvDto[] }
 
+// The slice of TenantApiClient the Releases page and Adopt wizard need.
+export interface IReleasesSource
+{
+    ListManifests(): Promise<ManifestDto[]>
+    GetRollout(hiveId: string): Promise<HiveRolloutDto>
+    ListEnvironments(): Promise<EnvironmentDto[]>
+    SelectTarget(hiveId: string, version: string): Promise<void>
+}
+
 export type HiveHealthDto = { environmentName: string; ready: boolean; runningImage: string | undefined; detail: string }
 
 export enum TenantEventType
