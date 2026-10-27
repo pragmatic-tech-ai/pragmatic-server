@@ -83,7 +83,7 @@ describe('StatusPill', () =>
 
     it('labels equal their literal design strings', () =>
     {
-        assert.equal(PillKinds.Entry(PillKind.Observed).label, 'Observed — read-only')
+        assert.equal(PillKinds.Entry(PillKind.Observed).label, 'Observed \u2014 read-only')
         assert.equal(PillKinds.Entry(PillKind.Connected).label, 'Connected')
         assert.equal(PillKinds.Entry(PillKind.Never).label, 'Never dialled in')
         assert.equal(PillKinds.Entry(PillKind.Gated).label, 'Gated out')
