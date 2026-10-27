@@ -35,7 +35,7 @@ export class EnvironmentsView extends TenantViewBase
     public static readonly ApplicationHeader = 'Application'
     public static readonly HealthHeader = 'Health'
     public static readonly UrlHeader = 'Live URL'
-    public static readonly SubSeparator = ' · '
+    public static readonly SubSeparator = ' \u00b7 '
     public static readonly StoppedText = 'Stopped'
     public static readonly NotServingText = 'Not serving'
 
