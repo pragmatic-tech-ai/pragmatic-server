@@ -338,6 +338,8 @@ describe('TenantApiEndpoint identity-admin routes', () =>
             { principalId: 'svc', scopes: [] },
             { scopes: ['read'] },
             { principalId: 'svc', scopes: [1] },
+            { principalId: 'svc', scopes: [''] },
+            { principalId: 'svc', scopes: ['read', '  '] },
             { principalId: 'svc', scopes: ['read'], expiresInSeconds: 0 },
             { principalId: 'svc', scopes: ['read'], expiresInSeconds: 1.5 },
             { principalId: 'svc', scopes: ['read'], expiresInSeconds: 'x' },
@@ -376,6 +378,13 @@ describe('TenantApiEndpoint identity-admin routes', () =>
         assert.equal(res.status, 404)
         assert.equal(typeof res.Json().error, 'string')
         assert.doesNotMatch(res.body, /SECRET/)
+    })
+
+    it('GET on a tokens sub-path 404s and never lists tokens', async () =>
+    {
+        const res = await Driver.Send(Fixtures.Req('GET'), Fixtures.Base + 'a-env/admin/tokens/x', Fixtures.TenantA)
+        assert.equal(res.status, 404)
+        assert.equal(service.Calls.length, 0)
     })
 
     it('answers other methods on identity-admin paths with 404', async () =>

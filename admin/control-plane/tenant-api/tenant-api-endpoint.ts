@@ -522,7 +522,7 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         }
         const expires = body.expiresInSeconds
         const scopes = body.scopes
-        const scopesOk = Array.isArray(scopes) && scopes.length > 0 && scopes.every(x => typeof x === 'string')
+        const scopesOk = Array.isArray(scopes) && scopes.length > 0 && scopes.every(x => TenantApiEndpoint.NonEmpty(x) && (x as string).trim().length > 0)
         const expiresOk = expires === undefined || expires === null || (typeof expires === 'number' && Number.isInteger(expires) && expires > 0)
         if (!TenantApiEndpoint.NonEmpty(body.principalId) || !scopesOk || !expiresOk)
         {
