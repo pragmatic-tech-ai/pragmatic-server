@@ -26,7 +26,7 @@ export class ReleasesView extends TenantViewBase
     public static readonly EmptyTitle = 'No new versions offered. New versions arrive when your hive checks in.'
     public static readonly MatrixTitle = 'What runs where'
     public static readonly EnvironmentHeader = 'Environment'
-    public static readonly NotRunningText = '—'
+    public static readonly NotRunningText = '\u2014'
     public static readonly VersionKey = 'Version'
     public static readonly PublishedKey = 'Published'
     public static readonly NotesKey = 'Notes'
