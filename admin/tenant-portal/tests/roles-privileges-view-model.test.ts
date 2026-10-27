@@ -17,9 +17,15 @@ class Make
     {
         return {
             businessUnits: [{ id: 'bu1', name: 'Root' } as never],
-            teams: [],
-            membership: { claimsMapping: [], overrides: [] },
+            teams: [{ id: 't1', name: 'Team One', owningBusinessUnit: 'bu1' }],
+            membership: { claimsMapping: [{ claim: 'groups', value: 'ops', team: 't1' } as never], overrides: [] },
             ownershipRules: [{ concept: 'Order' } as never],
+            roleAssignment: { claimsMapping: [{ claim: 'groups', value: 'ops', role: 'r1' } as never], overrides: [], teamRoles: [{ team: 't1', role: 'r2' } as never] },
+            fieldSecurity: {
+                securedFields: [{ concept: 'Customer', field: 'ssn' }],
+                profiles: [{ id: 'p1', name: 'Full', grants: [] }],
+                profileAssignment: { claimsMapping: [], overrides: [], teamProfiles: [] }
+            },
             roles: [
                 { id: 'r1', name: 'Admin', privileges: [{ action: PrivilegeAction.Read, concept: 'Customer', level: AccessLevel.User }] },
                 { id: 'r2', name: 'Viewer', privileges: [] }
@@ -146,8 +152,16 @@ describe('RolesPrivilegesViewModel', () =>
         const saved = src.Saved[0].model
         const original = Make.Model()
         assert.deepEqual(saved.businessUnits, original.businessUnits)
+        assert.deepEqual(saved.teams, original.teams)
+        assert.deepEqual(saved.membership, original.membership)
         assert.deepEqual(saved.ownershipRules, original.ownershipRules)
+        assert.deepEqual(saved.roleAssignment, original.roleAssignment)
+        assert.deepEqual(saved.fieldSecurity, original.fieldSecurity)
         assert.deepEqual(saved.roles?.[1], original.roles?.[1])
+        assert.equal(saved.roles?.[0].id, 'r1')
+        assert.equal(saved.roles?.[0].name, 'Admin')
+        assert.equal(saved.roles?.[0].privileges.length, 2)
+        assert.ok(saved.roles?.[0].privileges.some(p => p.concept === 'Customer' && p.action === PrivilegeAction.Read && p.level === AccessLevel.User))
         assert.ok(saved.roles?.[0].privileges.some(p => p.concept === 'Customer' && p.action === PrivilegeAction.Create && p.level === AccessLevel.User))
         assert.equal(vm.Dirty, false)
         assert.equal(vm.SelectedRoleId, 'r1')
