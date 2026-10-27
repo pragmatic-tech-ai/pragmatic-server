@@ -1,4 +1,4 @@
-import type { PrivilegeDto, RoleConfigDto, SecurityModelDto } from './tenant-types.js'
+import type { FieldGrantDto, FieldProfileDto, FieldSecurityDto, PrivilegeDto, RoleConfigDto, SecuredFieldDto, SecurityModelDto } from './tenant-types.js'
 
 export enum PrivilegeAction
 {
@@ -20,6 +20,19 @@ export enum AccessLevel
     BusinessUnitAndChildren = 'businessUnitAndChildren',
     Organization = 'organization'
 }
+
+export enum FieldPermission
+{
+    Read = 'read',
+    Update = 'update',
+    Create = 'create'
+}
+
+export const FieldPermissions: readonly FieldPermission[] = [
+    FieldPermission.Read,
+    FieldPermission.Update,
+    FieldPermission.Create
+]
 
 export const Actions: readonly PrivilegeAction[] = [
     PrivilegeAction.Create,
@@ -51,13 +64,17 @@ export class SecurityModelDraft
     private static readonly EdgeDashes = /^-+|-+$/g
     private static readonly FallbackSlug = 'role'
     private static readonly EmptyString = ''
+    private static readonly ProfileIdPrefix = 'profile-'
+    private static readonly FallbackProfileSlug = 'profile'
 
     private readonly model: SecurityModelDto
     private readonly addedConcepts = new Set<string>()
     private readonly rolesAbsent: boolean
+    private readonly fieldSecurityAbsent: boolean
     private dirty = false
 
     public SelectedRoleId: string | undefined
+    public SelectedProfileId: string | undefined
 
     private constructor(model: SecurityModelDto)
     {
@@ -65,6 +82,8 @@ export class SecurityModelDraft
         this.rolesAbsent = model.roles === undefined
         this.model.roles = this.model.roles ?? []
         this.SelectedRoleId = this.model.roles[0]?.id
+        this.fieldSecurityAbsent = model.fieldSecurity === undefined
+        this.SelectedProfileId = model.fieldSecurity?.profiles[0]?.id
     }
 
     public static From(model: SecurityModelDto | null): SecurityModelDraft
@@ -85,6 +104,17 @@ export class SecurityModelDraft
     private static RoleId(slug: string, n: number): string
     {
         return `${SecurityModelDraft.RoleIdPrefix}${slug}${SecurityModelDraft.SlugSeparator}${n}`
+    }
+
+    private static ProfileId(slug: string, n: number): string
+    {
+        return `${SecurityModelDraft.ProfileIdPrefix}${slug}${SecurityModelDraft.SlugSeparator}${n}`
+    }
+
+    private static Slug(name: string, fallback: string): string
+    {
+        return name.toLowerCase().replace(SecurityModelDraft.NonSlug, SecurityModelDraft.SlugSeparator)
+            .replace(SecurityModelDraft.EdgeDashes, SecurityModelDraft.EmptyString) || fallback
     }
 
     private static Clone<T>(value: T): T
@@ -207,14 +237,127 @@ export class SecurityModelDraft
         this.dirty = true
     }
 
+    public get SecuredFields(): readonly SecuredFieldDto[]
+    {
+        return this.model.fieldSecurity?.securedFields ?? []
+    }
+
+    public get Profiles(): readonly FieldProfileDto[]
+    {
+        return this.model.fieldSecurity?.profiles ?? []
+    }
+
+    public FieldGrant(concept: string, field: string, permission: FieldPermission): boolean
+    {
+        const grant = this.SelectedProfile()?.grants.find(g => g.concept === concept && g.field === field)
+        return grant?.[permission] === true
+    }
+
+    public SetFieldGrant(concept: string, field: string, permission: FieldPermission, value: boolean): void
+    {
+        const profile = this.SelectedProfile()
+        if (profile === undefined)
+        {
+            return
+        }
+        let grant = profile.grants.find(g => g.concept === concept && g.field === field)
+        if (grant === undefined)
+        {
+            grant = { concept, field }
+            profile.grants.push(grant)
+        }
+        grant[permission] = value
+        if (!grant.read && !grant.update && !grant.create)
+        {
+            profile.grants = profile.grants.filter(g => !(g.concept === concept && g.field === field))
+        }
+        this.dirty = true
+    }
+
+    public AddProfile(name: string): string
+    {
+        const profiles = this.EnsureFieldSecurity().profiles
+        const slug = SecurityModelDraft.Slug(name, SecurityModelDraft.FallbackProfileSlug)
+        let n = 1
+        while (profiles.some(p => p.id === SecurityModelDraft.ProfileId(slug, n)))
+        {
+            n++
+        }
+        const id = SecurityModelDraft.ProfileId(slug, n)
+        profiles.push({ id, name, grants: [] })
+        this.SelectedProfileId = id
+        this.dirty = true
+        return id
+    }
+
+    public DeleteProfile(id: string): void
+    {
+        const profiles = this.model.fieldSecurity?.profiles ?? []
+        const i = profiles.findIndex(p => p.id === id)
+        if (i < 0)
+        {
+            return
+        }
+        profiles.splice(i, 1)
+        if (this.SelectedProfileId === id)
+        {
+            this.SelectedProfileId = profiles[0]?.id
+        }
+        this.dirty = true
+    }
+
+    public AddSecuredField(concept: string, field: string): void
+    {
+        const fs = this.EnsureFieldSecurity()
+        if (!fs.securedFields.some(f => f.concept === concept && f.field === field))
+        {
+            fs.securedFields.push({ concept, field })
+        }
+        this.dirty = true
+    }
+
+    public RemoveSecuredField(concept: string, field: string): void
+    {
+        const fs = this.model.fieldSecurity
+        if (fs === undefined)
+        {
+            return
+        }
+        fs.securedFields = fs.securedFields.filter(f => !(f.concept === concept && f.field === field))
+        for (const profile of fs.profiles)
+        {
+            profile.grants = profile.grants.filter((g: FieldGrantDto) => !(g.concept === concept && g.field === field))
+        }
+        this.dirty = true
+    }
+
     public ToDto(): SecurityModelDto
     {
         const out = SecurityModelDraft.Clone(this.model)
+        if (this.fieldSecurityAbsent && out.fieldSecurity !== undefined
+            && out.fieldSecurity.securedFields.length === 0 && out.fieldSecurity.profiles.length === 0)
+        {
+            delete out.fieldSecurity
+        }
         if (this.rolesAbsent && (out.roles?.length ?? 0) === 0)
         {
             delete out.roles
         }
         return out
+    }
+
+    private EnsureFieldSecurity(): FieldSecurityDto
+    {
+        return this.model.fieldSecurity ?? (this.model.fieldSecurity = {
+            securedFields: [],
+            profiles: [],
+            profileAssignment: { claimsMapping: [], overrides: [], teamProfiles: [] }
+        })
+    }
+
+    private SelectedProfile(): FieldProfileDto | undefined
+    {
+        return this.Profiles.find(p => p.id === this.SelectedProfileId)
     }
 
     private SelectedRole(): RoleConfigDto | undefined

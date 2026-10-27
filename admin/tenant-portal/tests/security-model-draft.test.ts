@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { AccessLevel, PrivilegeAction, SecurityModelDraft } from '../src/security-model-draft.js'
+import { AccessLevel, FieldPermission, PrivilegeAction, SecurityModelDraft } from '../src/security-model-draft.js'
 import type { SecurityModelDto } from '../src/tenant-types.js'
 
 class Fixtures
@@ -149,5 +149,116 @@ describe('SecurityModelDraft', () =>
         const d = SecurityModelDraft.From(Fixtures.Full())
         d.AddConcept('Brand')
         assert.equal(d.Dirty, true)
+    })
+
+    describe('field security', () =>
+    {
+        const WithProfiles = (): SecurityModelDto =>
+        {
+            const m = Fixtures.Full()
+            m.fieldSecurity = {
+                securedFields: [{ concept: 'Order', field: 'total' }, { concept: 'Order', field: 'note' }],
+                profiles: [
+                    { id: 'p1', name: 'Finance', grants: [{ concept: 'Order', field: 'total', read: true, update: false }] },
+                    { id: 'p2', name: 'Other', grants: [{ concept: 'Order', field: 'total', read: true }] }
+                ],
+                profileAssignment: { claimsMapping: [], overrides: [{ principalId: 'u1', profiles: ['p1'] }], teamProfiles: [] }
+            } as never
+            return m
+        }
+
+        it('FieldGrant reads selected profile; absent grant or profile is false', () =>
+        {
+            const d = SecurityModelDraft.From(WithProfiles())
+            assert.equal(d.SelectedProfileId, 'p1')
+            assert.equal(d.FieldGrant('Order', 'total', FieldPermission.Read), true)
+            assert.equal(d.FieldGrant('Order', 'total', FieldPermission.Update), false)
+            assert.equal(d.FieldGrant('Order', 'note', FieldPermission.Read), false)
+            d.SelectedProfileId = 'nope'
+            assert.equal(d.FieldGrant('Order', 'total', FieldPermission.Read), false)
+        })
+
+        it('SetFieldGrant creates a grant and removes it when all flags are false', () =>
+        {
+            const d = SecurityModelDraft.From(WithProfiles())
+            d.SetFieldGrant('Order', 'note', FieldPermission.Update, true)
+            assert.equal(d.FieldGrant('Order', 'note', FieldPermission.Update), true)
+            assert.equal(d.Dirty, true)
+            d.SetFieldGrant('Order', 'note', FieldPermission.Update, false)
+            assert.equal(d.Profiles[0].grants.some(g => g.field === 'note'), false)
+            d.SetFieldGrant('Order', 'total', FieldPermission.Read, false)
+            assert.equal(d.Profiles[0].grants.length, 0)
+            assert.equal(d.SecuredFields.length, 2)
+        })
+
+        it('AddProfile creates fieldSecurity when absent; DeleteProfile removes', () =>
+        {
+            const m = Fixtures.Full()
+            delete m.fieldSecurity
+            const d = SecurityModelDraft.From(m)
+            const id = d.AddProfile('Finance Team')
+            assert.equal(id, 'profile-finance-team-1')
+            assert.equal(d.SelectedProfileId, id)
+            assert.equal(d.AddProfile('Finance Team'), 'profile-finance-team-2')
+            assert.deepEqual(d.ToDto().fieldSecurity!.profileAssignment, { claimsMapping: [], overrides: [], teamProfiles: [] })
+            d.DeleteProfile('profile-finance-team-2')
+            assert.equal(d.SelectedProfileId, id)
+            d.DeleteProfile(id)
+            assert.equal(d.Profiles.length, 0)
+        })
+
+        it('AddSecuredField dedups; RemoveSecuredField strips grants from all profiles', () =>
+        {
+            const d = SecurityModelDraft.From(WithProfiles())
+            d.AddSecuredField('Order', 'total')
+            d.AddSecuredField('Order', 'extra')
+            assert.equal(d.SecuredFields.length, 3)
+            d.RemoveSecuredField('Order', 'total')
+            assert.equal(d.SecuredFields.some(f => f.field === 'total'), false)
+            for (const p of d.Profiles)
+            {
+                assert.equal(p.grants.some(g => g.field === 'total'), false)
+            }
+        })
+
+        it('round-trips untouched sections, changes only the edited grant, never mutates input', () =>
+        {
+            const input = WithProfiles()
+            const snap = structuredClone(input)
+            const d = SecurityModelDraft.From(input)
+            d.SetFieldGrant('Order', 'total', FieldPermission.Create, true)
+            const out = d.ToDto()
+            assert.deepEqual(input, snap)
+            assert.deepEqual(out.businessUnits, snap.businessUnits)
+            assert.deepEqual(out.teams, snap.teams)
+            assert.deepEqual(out.membership, snap.membership)
+            assert.deepEqual(out.ownershipRules, snap.ownershipRules)
+            assert.deepEqual(out.roles, snap.roles)
+            assert.deepEqual(out.roleAssignment, snap.roleAssignment)
+            assert.deepEqual(out.fieldSecurity!.profileAssignment, snap.fieldSecurity!.profileAssignment)
+            assert.deepEqual(out.fieldSecurity!.securedFields, snap.fieldSecurity!.securedFields)
+            assert.deepEqual(out.fieldSecurity!.profiles[1], snap.fieldSecurity!.profiles[1])
+            assert.deepEqual(out.fieldSecurity!.profiles[0].grants, [{ concept: 'Order', field: 'total', read: true, update: false, create: true }])
+        })
+
+        it('a SetLevel role edit leaves fieldSecurity unchanged', () =>
+        {
+            const input = WithProfiles()
+            const d = SecurityModelDraft.From(input)
+            d.SelectedRoleId = 'r2'
+            d.SetLevel('Alpha', PrivilegeAction.Read, AccessLevel.Organization)
+            assert.deepEqual(d.ToDto().fieldSecurity, input.fieldSecurity)
+        })
+
+        it('ToDto keeps fieldSecurity absent when absent and untouched; preserves when present', () =>
+        {
+            const m = Fixtures.Full()
+            delete m.fieldSecurity
+            assert.equal('fieldSecurity' in SecurityModelDraft.From(m).ToDto(), false)
+            const d = SecurityModelDraft.From(m)
+            d.AddSecuredField('A', 'b')
+            assert.equal(d.ToDto().fieldSecurity!.securedFields.length, 1)
+            assert.deepEqual(SecurityModelDraft.From(Fixtures.Full()).ToDto().fieldSecurity, Fixtures.Full().fieldSecurity)
+        })
     })
 })
