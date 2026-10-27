@@ -7,7 +7,7 @@ import { TenantTreeViewModel } from './tenant-tree-view-model.js'
 import { TenantViewBase } from './tenant-view-base.js'
 import { TenantEventType } from './tenant-types.js'
 import type { EnvironmentDto, HiveDto, ITenantNavigator, ITenantView, SessionDto, TenantEvent } from './tenant-types.js'
-import { ServiceTokensView } from './service-tokens-view.js'
+import { ServiceTokensView } from './service-tokens-view.js'
 import { RolesPrivilegesView } from './roles-privileges-view.js'
 import { UsersAccessView } from './users-access-view.js'
 
@@ -34,7 +34,7 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     public static readonly LogoutLabel = 'Logout'
     public static readonly EmptySelectionText = 'Select a hive or environment'
     public static readonly UsersAccessLabel = 'Users & Access'
-    public static readonly ServiceTokensLabel = 'Service Tokens'
+    public static readonly ServiceTokensLabel = 'Service Tokens'
     public static readonly RolesPrivilegesLabel = 'Roles & Privileges'
 
     private readonly client: TenantApiClient
@@ -61,7 +61,7 @@ export class TenantApp extends StackPanel implements ITenantNavigator
         this.topBar.AddChild(title)
         this.topBar.AddChild(this.tenantName)
         this.topBar.AddChild(TenantViewBase.MakeButton(TenantApp.UsersAccessLabel, () => this.ShowUsersAccess()))
-        this.topBar.AddChild(TenantViewBase.MakeButton(TenantApp.ServiceTokensLabel, () => this.ShowServiceTokens()))
+        this.topBar.AddChild(TenantViewBase.MakeButton(TenantApp.ServiceTokensLabel, () => this.ShowServiceTokens()))
         this.topBar.AddChild(TenantViewBase.MakeButton(TenantApp.RolesPrivilegesLabel, () => this.ShowRolesPrivileges()))
         this.topBar.AddChild(TenantViewBase.MakeButton(TenantApp.LogoutLabel, () => { void this.Logout() }))
         this.body.Orientation = Orientation.Horizontal
