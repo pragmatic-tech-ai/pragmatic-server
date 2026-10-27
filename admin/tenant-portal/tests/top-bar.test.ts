@@ -101,6 +101,15 @@ describe('top bar', () =>
         assert.equal(calls, 1)
     })
 
+    it('user menu shows a role line only when roleLabel is given', () =>
+    {
+        const withRole = Walk.Texts(new UserMenu({ email: 'a@b.c', roleLabel: 'Tenant owner', onLogout: () => {} }))
+        assert.ok(withRole.includes('Tenant owner'))
+        const without = Walk.Texts(new UserMenu({ email: 'a@b.c', onLogout: () => {} }))
+        assert.ok(!without.includes('Tenant owner'))
+        assert.equal(without.length, withRole.length - 1)
+    })
+
     it('top bar contains plate and user menu and starts with an empty banner slot', () =>
     {
         const plate = new IdentityPlate({ tenant: 'Prod', hive: 'hive-1' })

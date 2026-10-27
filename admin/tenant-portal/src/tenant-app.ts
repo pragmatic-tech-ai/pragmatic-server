@@ -30,7 +30,7 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     private readonly rightColumn = new StackPanel()
     private readonly topHost = new StackPanel()
     private readonly detailHost = new StackPanel()
-    // Populated by Boot in Task 4.
+    // Populated by Boot; stays undefined when the profile read fails (permissive fallback).
     private profile: TenantProfileDto | undefined
     private current: ITenantView | undefined
     // Name of the environment the detail pane is showing, so a delete of it swaps the pane back rather than refreshing a gone env.
@@ -73,6 +73,14 @@ export class TenantApp extends StackPanel implements ITenantNavigator
             return
         }
         this.currentPrincipalId = session.principalId
+        try
+        {
+            this.profile = await this.client.Profile()
+        }
+        catch
+        {
+            this.profile = undefined
+        }
         this.BuildTopBar(session)
         this.eventUnsub?.()
         this.eventUnsub = this.client.OnEvent(ev => this.OnTenantEvent(ev))
@@ -173,8 +181,17 @@ export class TenantApp extends StackPanel implements ITenantNavigator
 
     private BuildTopBar(session: SessionDto): void
     {
-        const plate = new IdentityPlate({ tenant: session.tenantId, hive: TenantApp.HivePlaceholder })
-        const userMenu = new UserMenu({ email: session.email ?? session.tenantId, onLogout: () => { void this.Logout() } })
+        const profile = this.profile
+        const plate = new IdentityPlate({
+            org: profile?.tenant.organisation,
+            tenant: profile?.tenant.displayName ?? session.tenantId,
+            hive: profile?.hive?.displayName ?? TenantApp.HivePlaceholder
+        })
+        const userMenu = new UserMenu({
+            email: profile?.email ?? session.email ?? session.tenantId,
+            roleLabel: profile?.roleLabel,
+            onLogout: () => { void this.Logout() }
+        })
         this.Clear(this.topHost)
         this.topHost.AddChild(new TopBar({ plate, userMenu }))
     }

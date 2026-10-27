@@ -4,10 +4,11 @@ import { Act, ActVariant } from './kit/act.js'
 export interface UserMenuInputs
 {
     email: string
+    roleLabel?: string
     onLogout: () => void
 }
 
-// Minimal inline user menu: avatar (email initials), email, Logout. Role label is deferred to TA-3.
+// Minimal inline user menu: avatar (email initials), email, Logout. Optional role line under the email.
 export class UserMenu extends StackPanel
 {
     public static readonly LogoutLabel = 'Logout'
@@ -24,6 +25,10 @@ export class UserMenu extends StackPanel
         this.Orientation = Orientation.Horizontal
         this.AddChild(UserMenu.MakeText(UserMenu.InitialsFor(inputs.email)))
         this.AddChild(UserMenu.MakeText(inputs.email))
+        if (inputs.roleLabel !== undefined && inputs.roleLabel !== '')
+        {
+            this.AddChild(UserMenu.MakeText(inputs.roleLabel))
+        }
         this.logout = new Act({ can: true, label: UserMenu.LogoutLabel, variant: ActVariant.Secondary, onClick: inputs.onLogout })
         this.AddChild(this.logout)
     }

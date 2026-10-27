@@ -8,7 +8,7 @@ import { TenantApp } from '../src/tenant-app.js'
 import { TenantApiError } from '../src/tenant-api-client.js'
 import type { TenantApiClient } from '../src/tenant-api-client.js'
 import { TenantEventType } from '../src/tenant-types.js'
-import type { EnvironmentDto, HiveDto, HiveHealthDto, ITenantNavigator, ITenantView, ServiceTokenSummaryDto, SessionDto, TenantEvent } from '../src/tenant-types.js'
+import type { EnvironmentDto, TenantProfileDto, HiveDto, HiveHealthDto, ITenantNavigator, ITenantView, ServiceTokenSummaryDto, SessionDto, TenantEvent } from '../src/tenant-types.js'
 import { ServiceTokensView } from '../src/service-tokens-view.js'
 import { RolesPrivilegesView } from '../src/roles-privileges-view.js'
 import { FieldSecurityView } from '../src/field-security-view.js'
@@ -37,6 +37,17 @@ class FakeClient
             throw this.session
         }
         return this.session
+    }
+
+    public ProfileResult: TenantProfileDto | Error | undefined
+
+    public async Profile(): Promise<TenantProfileDto>
+    {
+        if (this.ProfileResult === undefined || this.ProfileResult instanceof Error)
+        {
+            throw this.ProfileResult ?? new Error('no profile')
+        }
+        return this.ProfileResult
     }
 
     public BeginLogin(...args: unknown[]): void
@@ -147,9 +158,10 @@ class Fixtures
         for (const h of hs) h({})
     }
 
-    public static Make(session: SessionDto | null | TenantApiError): { app: TenantApp; client: FakeClient }
+    public static Make(session: SessionDto | null | TenantApiError, profile?: TenantProfileDto | Error): { app: TenantApp; client: FakeClient }
     {
         const client = new FakeClient(session)
+        client.ProfileResult = profile
         return { app: new TenantApp(client as unknown as TenantApiClient), client }
     }
 }
@@ -215,6 +227,40 @@ describe('TenantApp', () =>
         const { app, client } = Fixtures.Make(new TenantApiError(401, 'no'))
         await app.Boot()
         assert.deepEqual(client.Calls, ['login:0'])
+    })
+
+    it('boot with a profile wires plate, role label and live navigator getters', async () =>
+    {
+        const profile: TenantProfileDto = {
+            principalId: 'p',
+            email: 'owner@nw.io',
+            roleLabel: 'Tenant owner',
+            tenant: { id: 't1', displayName: 'Northwind Production', organisation: 'Northwind Group' },
+            hive: { id: 'h1', displayName: 'hv-nw-eu1' },
+            capabilities: { envs: true, adopt: true, access: true, settings: true }
+        }
+        const { app } = Fixtures.Make(Session, profile)
+        await app.Boot()
+        const texts = Fixtures.Texts(app)
+        for (const t of ['Northwind Group', 'Northwind Production', 'hv-nw-eu1', 'Tenant owner', 'owner@nw.io'])
+        {
+            assert.ok(texts.includes(t), t)
+        }
+        assert.deepEqual(app.Capabilities, profile.capabilities)
+        assert.equal(app.Profile, profile)
+    })
+
+    it('boot falls back permissively when the profile read fails', async () =>
+    {
+        const { app, client } = Fixtures.Make(Session, new Error('boom'))
+        await app.Boot()
+        const texts = Fixtures.Texts(app)
+        assert.ok(texts.includes(Session.tenantId))
+        assert.ok(texts.includes(TenantApp.HivePlaceholder))
+        assert.ok(!texts.includes('Tenant owner'))
+        assert.equal(app.Capabilities, undefined)
+        assert.equal(app.Profile, undefined)
+        assert.deepEqual(client.Calls, ['onevent'])
     })
 
     it('logout calls client.Logout, tears down the subscription, returns to login', async () =>
