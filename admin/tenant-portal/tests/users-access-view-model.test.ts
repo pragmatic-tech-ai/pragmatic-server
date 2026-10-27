@@ -140,8 +140,9 @@ describe('UsersAccessViewModel', () =>
         assert.deepEqual([...vm.Environments], ['envA', 'envB'])
         assert.equal(vm.SelectedEnvironment, 'envA')
         assert.equal(vm.State, UsersAccessState.Ready)
-        assert.ok(states.includes(UsersAccessState.Loading))
+        assert.equal(states[0], UsersAccessState.Loading)
         assert.equal(states[states.length - 1], UsersAccessState.Ready)
+        assert.ok(states.length >= 2)
         assert.ok(envRaised > 0)
         assert.equal(vm.Rows.length, 2)
     })
@@ -279,5 +280,157 @@ describe('UsersAccessViewModel', () =>
         await vm.LoadSnapshot()
         assert.equal(vm.SelectedPrincipalId, undefined)
         assert.equal(vm.SelectedGrants.length, 0)
+    })
+
+    it('LoadEnvironments failure sets Error state and clears rows', async () =>
+    {
+        const src = new FakeSource()
+        src.ListEnvironments = async () => { throw new TenantApiError(500, 'boom') }
+        const vm = new UsersAccessViewModel(src, 'me')
+        await vm.LoadEnvironments()
+        assert.equal(vm.State, UsersAccessState.Error)
+        assert.equal(vm.Error, 'boom')
+        assert.equal(vm.Rows.length, 0)
+    })
+
+    it('snapshot failure after a good load clears stale rows; NoEnvironment clears too', async () =>
+    {
+        const src = new FakeSource()
+        const vm = new UsersAccessViewModel(src, 'me')
+        await vm.SelectEnvironment('envA')
+        assert.equal(vm.Rows.length, 2)
+        src.SnapshotError = new TenantApiError(500, 'down')
+        await vm.LoadSnapshot()
+        assert.equal(vm.Rows.length, 0)
+        src.SnapshotError = undefined
+        await vm.LoadSnapshot()
+        assert.equal(vm.Rows.length, 2)
+        src.Envs = []
+        await vm.LoadEnvironments()
+        assert.equal(vm.Rows.length, 0)
+        assert.equal(vm.SelectedEnvironment, undefined)
+    })
+
+    it('CreateAccount failure keeps draft including password and does not reload', async () =>
+    {
+        const src = new FakeSource()
+        const vm = new UsersAccessViewModel(src, 'me')
+        await vm.SelectEnvironment('envA')
+        vm.DraftEmail = 'n@x'
+        vm.DraftPrincipalId = 'np'
+        vm.DraftPassword = 'secret'
+        src.MutationError = new TenantApiError(400, 'weak password')
+        await vm.CreateAccount()
+        assert.equal(vm.Error, 'weak password')
+        assert.equal(vm.DraftEmail, 'n@x')
+        assert.equal(vm.DraftPrincipalId, 'np')
+        assert.equal(vm.DraftPassword, 'secret')
+        assert.equal(src.Count('snapshot'), 1)
+        assert.equal(vm.Busy, false)
+    })
+
+    it('GrantRole failure sets Error, keeps rows, no reload', async () =>
+    {
+        const src = new FakeSource()
+        const vm = new UsersAccessViewModel(src, 'me')
+        await vm.SelectEnvironment('envA')
+        vm.SelectAccount('other')
+        const before = vm.Rows
+        src.MutationError = new TenantApiError(403, 'forbidden')
+        await vm.GrantRole()
+        assert.equal(vm.Error, 'forbidden')
+        assert.equal(vm.Rows, before)
+        assert.equal(src.Count('snapshot'), 1)
+    })
+
+    it('RevokeRole failure sets Error, keeps rows, no reload', async () =>
+    {
+        const src = new FakeSource()
+        const vm = new UsersAccessViewModel(src, 'me')
+        await vm.SelectEnvironment('envA')
+        const before = vm.Rows
+        src.MutationError = new TenantApiError(409, 'last owner')
+        await vm.RevokeRole(Make.Grant('other', 'Viewer'))
+        assert.equal(vm.Error, 'last owner')
+        assert.equal(vm.Rows, before)
+        assert.equal(src.Count('snapshot'), 1)
+    })
+
+    it('non-TenantApiError from a fire-and-forget mutation lands in Error, not unhandled', async () =>
+    {
+        const src = new FakeSource()
+        const vm = new UsersAccessViewModel(src, 'me')
+        await vm.SelectEnvironment('envA')
+        src.MutationError = new Error('network')
+        vm.RequestDisable('other')
+        await Make.Tick()
+        assert.equal(vm.Error, 'network')
+        assert.equal(vm.Busy, false)
+    })
+
+    it('SelectEnvironment clears a pended self-action', async () =>
+    {
+        const src = new FakeSource()
+        const vm = new UsersAccessViewModel(src, 'me')
+        await vm.SelectEnvironment('envA')
+        vm.RequestDisable('me')
+        await vm.SelectEnvironment('envB')
+        assert.equal(vm.Pending, undefined)
+        await vm.ConfirmPending()
+        assert.equal(src.Count('disable'), 0)
+    })
+
+    it('discards a stale snapshot that resolves after a newer one', async () =>
+    {
+        const src = new FakeSource()
+        const resolvers: Array<(s: AdminSnapshotDto) => void> = []
+        src.GetAdminSnapshot = (env: string) => new Promise<AdminSnapshotDto>(r => { src.Calls.push('snapshot:' + env); resolvers.push(r) })
+        const vm = new UsersAccessViewModel(src, 'me')
+        const first = vm.SelectEnvironment('envA')
+        const second = vm.SelectEnvironment('envB')
+        resolvers[1]({ accounts: [{ principalId: 'new', email: 'n@x', disabled: false }], grants: [] })
+        await second
+        resolvers[0](Make.Snapshot())
+        await first
+        assert.equal(vm.Rows.length, 1)
+        assert.equal(vm.Rows[0].PrincipalId, 'new')
+    })
+
+    it('Busy spans mutation and reload; mutators no-op while Busy', async () =>
+    {
+        const src = new FakeSource()
+        const vm = new UsersAccessViewModel(src, 'me')
+        await vm.SelectEnvironment('envA')
+        const busy: boolean[] = []
+        vm.PropertyChanged(UsersAccessViewModel.BusyProperty).subscribe(() => busy.push(vm.Busy))
+        const p1 = vm.DisableAccount('other')
+        const p2 = vm.DisableAccount('other')
+        await Promise.all([p1, p2])
+        assert.deepEqual(busy, [true, false])
+        assert.equal(src.Count('disable'), 1)
+    })
+
+    it('raises Rows/Busy/Error/SelectedPrincipalId/Pending/SelectedGrants keys', async () =>
+    {
+        const src = new FakeSource()
+        const vm = new UsersAccessViewModel(src, 'me')
+        const raised = new Set<string>()
+        const keys = [
+            UsersAccessViewModel.RowsProperty, UsersAccessViewModel.BusyProperty, UsersAccessViewModel.ErrorProperty,
+            UsersAccessViewModel.SelectedPrincipalIdProperty, UsersAccessViewModel.PendingProperty, UsersAccessViewModel.SelectedGrantsProperty,
+        ]
+        for (const k of keys)
+        {
+            vm.PropertyChanged(k).subscribe(() => raised.add(k))
+        }
+        await vm.SelectEnvironment('envA')
+        vm.SelectAccount('other')
+        vm.RequestDisable('me')
+        src.MutationError = new TenantApiError(409, 'conflict')
+        await vm.DisableAccount('other')
+        for (const k of keys)
+        {
+            assert.ok(raised.has(k), k)
+        }
     })
 })

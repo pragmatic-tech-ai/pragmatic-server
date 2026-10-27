@@ -32,6 +32,7 @@ export class UsersAccessViewModel extends Observable
     public static readonly StateProperty = 'State'
     public static readonly SelectedPrincipalIdProperty = 'SelectedPrincipalId'
     public static readonly PendingProperty = 'Pending'
+    public static readonly SelectedGrantsProperty = 'SelectedGrants'
 
     public DraftEmail = ''
     public DraftPrincipalId = ''
@@ -48,6 +49,7 @@ export class UsersAccessViewModel extends Observable
     private selectedPrincipalId: string | undefined
     private pending: PendingAction | undefined
     private pendingGrant: GrantDto | undefined
+    private loadToken = 0
 
     public constructor(private readonly source: IUsersAccessSource, private readonly currentPrincipalId: string)
     {
@@ -110,6 +112,7 @@ export class UsersAccessViewModel extends Observable
         }
         catch (e)
         {
+            this.ClearRows()
             this.FailWith(e)
             return
         }
@@ -118,7 +121,9 @@ export class UsersAccessViewModel extends Observable
         this.RaisePropertyChanged(UsersAccessViewModel.EnvironmentsProperty, old, this.environments)
         if (this.environments.length === 0)
         {
+            this.loadToken++
             this.SetSelectedEnvironment(undefined)
+            this.ClearRows()
             this.SetState(UsersAccessState.NoEnvironment)
             return
         }
@@ -127,23 +132,43 @@ export class UsersAccessViewModel extends Observable
 
     public async SelectEnvironment(name: string): Promise<void>
     {
+        this.CancelPending()
         this.SetSelectedEnvironment(name)
         await this.LoadSnapshot()
     }
 
     public async LoadSnapshot(): Promise<void>
     {
+        this.SetBusy(true)
+        try
+        {
+            await this.ReloadSnapshot()
+        }
+        finally
+        {
+            this.SetBusy(false)
+        }
+    }
+
+    // Loads the snapshot; a stale response (a newer load started meanwhile) is discarded.
+    private async ReloadSnapshot(): Promise<void>
+    {
         const env = this.selectedEnvironment
         if (env === undefined)
         {
             return
         }
+        const token = ++this.loadToken
         this.SetState(UsersAccessState.Loading)
-        this.SetBusy(true)
         try
         {
             const snapshot = await this.source.GetAdminSnapshot(env)
+            if (token !== this.loadToken)
+            {
+                return
+            }
             const oldRows = this.rows
+            const oldGrants = this.SelectedGrants
             this.rows = AccountRow.FromSnapshot(snapshot)
             this.grants = snapshot.grants
             this.RaisePropertyChanged(UsersAccessViewModel.RowsProperty, oldRows, this.rows)
@@ -152,36 +177,38 @@ export class UsersAccessViewModel extends Observable
             {
                 this.SetSelectedPrincipalId(undefined)
             }
+            this.RaisePropertyChanged(UsersAccessViewModel.SelectedGrantsProperty, oldGrants, this.SelectedGrants)
             this.SetError('')
             this.SetState(this.rows.length === 0 ? UsersAccessState.Empty : UsersAccessState.Ready)
         }
         catch (e)
         {
+            if (token !== this.loadToken)
+            {
+                return
+            }
+            this.ClearRows()
             this.FailWith(e)
-        }
-        finally
-        {
-            this.SetBusy(false)
         }
     }
 
     public SelectAccount(principalId: string | undefined): void
     {
+        const oldGrants = this.SelectedGrants
         this.SetSelectedPrincipalId(principalId)
+        this.RaisePropertyChanged(UsersAccessViewModel.SelectedGrantsProperty, oldGrants, this.SelectedGrants)
     }
 
     public async CreateAccount(): Promise<void>
     {
         const params = { email: this.DraftEmail, principalId: this.DraftPrincipalId, password: this.DraftPassword }
-        const ok = await this.Mutate(env => this.source.CreateAccount(env, params))
-        if (!ok)
+        await this.Mutate(async env =>
         {
-            return
-        }
-        this.DraftEmail = ''
-        this.DraftPrincipalId = ''
-        this.DraftPassword = ''
-        await this.LoadSnapshot()
+            await this.source.CreateAccount(env, params)
+            this.DraftEmail = ''
+            this.DraftPrincipalId = ''
+            this.DraftPassword = ''
+        })
     }
 
     public RequestDisable(principalId: string): void
@@ -192,7 +219,7 @@ export class UsersAccessViewModel extends Observable
             this.SetPending({ kind: PendingKind.DisableSelf, principalId })
             return
         }
-        void this.DisableAccount(principalId)
+        void this.DisableAccount(principalId).catch(e => this.SetError(UsersAccessViewModel.MessageOf(e)))
     }
 
     public RequestRevoke(grant: GrantDto): void
@@ -203,26 +230,30 @@ export class UsersAccessViewModel extends Observable
             this.SetPending({ kind: PendingKind.RevokeSelf, principalId: grant.subject, role: grant.role })
             return
         }
-        void this.RevokeRole(grant)
+        void this.RevokeRole(grant).catch(e => this.SetError(UsersAccessViewModel.MessageOf(e)))
     }
 
     public async ConfirmPending(): Promise<void>
     {
         const pending = this.pending
         const grant = this.pendingGrant
-        if (pending === undefined)
+        if (pending === undefined || this.busy)
         {
             return
         }
         this.pendingGrant = undefined
         this.SetPending(undefined)
-        if (pending.kind === PendingKind.RevokeSelf && grant !== undefined)
+        switch (pending.kind)
         {
-            await this.RevokeRole(grant)
-        }
-        else
-        {
-            await this.DisableAccount(pending.principalId)
+            case PendingKind.DisableSelf:
+                await this.DisableAccount(pending.principalId)
+                return
+            case PendingKind.RevokeSelf:
+                if (grant !== undefined)
+                {
+                    await this.RevokeRole(grant)
+                }
+                return
         }
     }
 
@@ -234,10 +265,7 @@ export class UsersAccessViewModel extends Observable
 
     public async DisableAccount(principalId: string): Promise<void>
     {
-        if (await this.Mutate(env => this.source.DisableAccount(env, principalId)))
-        {
-            await this.LoadSnapshot()
-        }
+        await this.Mutate(env => this.source.DisableAccount(env, principalId))
     }
 
     public async GrantRole(): Promise<void>
@@ -248,49 +276,54 @@ export class UsersAccessViewModel extends Observable
             return
         }
         const grant = { subject, role: this.DraftRole }
-        if (await this.Mutate(env => this.source.GrantRole(env, grant)))
-        {
-            await this.LoadSnapshot()
-        }
+        await this.Mutate(env => this.source.GrantRole(env, grant))
     }
 
     public async RevokeRole(grant: GrantDto): Promise<void>
     {
         const body = { subject: grant.subject, role: grant.role, resourceKind: grant.resourceKind, resourcePath: grant.resourcePath }
-        if (await this.Mutate(env => this.source.RevokeRole(env, body)))
-        {
-            await this.LoadSnapshot()
-        }
+        await this.Mutate(env => this.source.RevokeRole(env, body))
     }
 
-    // Runs one mutating call; a TenantApiError surfaces as Error and returns false (no reload).
-    private async Mutate(call: (env: string) => Promise<void>): Promise<boolean>
+    // Runs one mutating call plus its follow-on reload under a single Busy span. No-op while Busy.
+    // Any failure surfaces as Error with no reload; Rows stay as they were.
+    private async Mutate(call: (env: string) => Promise<void>): Promise<void>
     {
         const env = this.selectedEnvironment
-        if (env === undefined)
+        if (env === undefined || this.busy)
         {
-            return false
+            return
         }
         this.SetError('')
         this.SetBusy(true)
         try
         {
             await call(env)
-            return true
+            await this.ReloadSnapshot()
         }
         catch (e)
         {
-            if (e instanceof TenantApiError)
-            {
-                this.SetError(e.message)
-                return false
-            }
-            throw e
+            this.SetError(UsersAccessViewModel.MessageOf(e))
         }
         finally
         {
             this.SetBusy(false)
         }
+    }
+
+    private static MessageOf(e: unknown): string
+    {
+        return e instanceof Error ? e.message : String(e)
+    }
+
+    private ClearRows(): void
+    {
+        const oldRows = this.rows
+        const oldGrants = this.SelectedGrants
+        this.rows = []
+        this.grants = []
+        this.RaisePropertyChanged(UsersAccessViewModel.RowsProperty, oldRows, this.rows)
+        this.RaisePropertyChanged(UsersAccessViewModel.SelectedGrantsProperty, oldGrants, this.SelectedGrants)
     }
 
     private FailWith(e: unknown): void
