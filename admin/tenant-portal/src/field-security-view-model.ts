@@ -160,7 +160,7 @@ export class FieldSecurityViewModel extends Observable
             }
             this.draft = SecurityModelDraft.From(model)
             this.Refresh()
-            this.SetError('')
+            this.SetError(FieldSecurityViewModel.NoMessage)
         }
         catch (e)
         {
@@ -239,7 +239,7 @@ export class FieldSecurityViewModel extends Observable
         {
             return
         }
-        this.SetError('')
+        this.SetError(FieldSecurityViewModel.NoMessage)
         this.EnterBusy()
         try
         {
