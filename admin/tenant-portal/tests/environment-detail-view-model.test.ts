@@ -32,6 +32,11 @@ class FakeEnvDetailSource implements IEnvDetailSource
         return this.Result
     }
 
+    public async DeleteEnvironment(name: string): Promise<void>
+    {
+        this.Calls.push('delete:' + name)
+    }
+
     public async StopEnvironment(name: string): Promise<EnvironmentDto>
     {
         this.Calls.push('stop:' + name)

@@ -7,6 +7,7 @@ export interface IEnvDetailSource
     StartEnvironment(name: string): Promise<EnvironmentDto>
     StopEnvironment(name: string): Promise<EnvironmentDto>
     RestartEnvironment(name: string): Promise<EnvironmentDto>
+    DeleteEnvironment(name: string): Promise<void>
     GetHealth(hiveId: string): Promise<HiveHealthDto[]>
     OpenLogStream(name: string, onChunk: (t: string) => void): () => void
 }

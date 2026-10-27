@@ -185,6 +185,11 @@ export class TenantApiClient implements IUsersAccessSource, ITokensSource, ISecu
         return await this.Action(name, TenantApiClient.RestartAction)
     }
 
+    public async DeleteEnvironment(name: string): Promise<void>
+    {
+        await this.Send<void>(this.EnvRoute(name), { method: TenantApiClient.MethodDelete })
+    }
+
     public async GetAdminSnapshot(env: string): Promise<AdminSnapshotDto>
     {
         return await this.Send<AdminSnapshotDto>(this.EnvRoute(env) + TenantApiClient.AdminSnapshotLeaf, undefined)

@@ -243,6 +243,14 @@ describe('TenantApiClient admin (users and access)', () =>
         assert.equal(FetchStub.Calls[0]!.init?.method, 'DELETE')
     })
 
+    it('DeleteEnvironment DELETEs the environment route', async () =>
+    {
+        FetchStub.Install({ ok: true })
+        await new TestClient(new FakeWebSocketFactory()).DeleteEnvironment('e1')
+        assert.equal(FetchStub.Calls[0]!.route, '/tenant-api/environments/e1')
+        assert.equal(FetchStub.Calls[0]!.init?.method, 'DELETE')
+    })
+
     it('GrantRole POSTs and RevokeRole DELETEs the grants route with the body', async () =>
     {
         const grant = { subject: 'p1', role: 'Admin' }
