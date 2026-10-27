@@ -50,6 +50,7 @@ export class SecurityModelDraft
     private static readonly NonSlug = /[^a-z0-9]+/g
     private static readonly EdgeDashes = /^-+|-+$/g
     private static readonly FallbackSlug = 'role'
+    private static readonly EmptyString = ''
 
     private readonly model: SecurityModelDto
     private readonly addedConcepts = new Set<string>()
@@ -79,6 +80,11 @@ export class SecurityModelDraft
             })
         }
         return new SecurityModelDraft(SecurityModelDraft.Clone(model))
+    }
+
+    private static RoleId(slug: string, n: number): string
+    {
+        return `${SecurityModelDraft.RoleIdPrefix}${slug}${SecurityModelDraft.SlugSeparator}${n}`
     }
 
     private static Clone<T>(value: T): T
@@ -121,7 +127,7 @@ export class SecurityModelDraft
     {
         const role = this.SelectedRole()
         const stored = role?.privileges.find(p => p.concept === concept && p.action === action)?.level
-        return (LevelCycle as readonly string[]).includes(stored ?? '') ? stored as AccessLevel : AccessLevel.None
+        return (LevelCycle as readonly string[]).includes(stored ?? SecurityModelDraft.EmptyString) ? stored as AccessLevel : AccessLevel.None
     }
 
     public SetLevel(concept: string, action: PrivilegeAction, level: AccessLevel): void
@@ -134,14 +140,12 @@ export class SecurityModelDraft
         const existing = role.privileges.findIndex(p => p.concept === concept && p.action === action)
         if (level === AccessLevel.None)
         {
-            if (existing >= 0)
-            {
-                role.privileges.splice(existing, 1)
-            }
+            role.privileges = role.privileges.filter(p => !(p.concept === concept && p.action === action))
         }
         else if (existing >= 0)
         {
             role.privileges[existing].level = level
+            role.privileges = role.privileges.filter((p, i) => i === existing || !(p.concept === concept && p.action === action))
         }
         else
         {
@@ -164,13 +168,13 @@ export class SecurityModelDraft
     {
         const roles = this.model.roles ?? (this.model.roles = [])
         const slug = name.toLowerCase().replace(SecurityModelDraft.NonSlug, SecurityModelDraft.SlugSeparator)
-            .replace(SecurityModelDraft.EdgeDashes, '') || SecurityModelDraft.FallbackSlug
+            .replace(SecurityModelDraft.EdgeDashes, SecurityModelDraft.EmptyString) || SecurityModelDraft.FallbackSlug
         let n = 1
-        while (roles.some(r => r.id === `${SecurityModelDraft.RoleIdPrefix}${slug}-${n}`))
+        while (roles.some(r => r.id === SecurityModelDraft.RoleId(slug, n)))
         {
             n++
         }
-        const id = `${SecurityModelDraft.RoleIdPrefix}${slug}-${n}`
+        const id = SecurityModelDraft.RoleId(slug, n)
         roles.push({ id, name, privileges: [] })
         this.SelectedRoleId = id
         this.dirty = true

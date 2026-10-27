@@ -96,4 +96,58 @@ describe('SecurityModelDraft', () =>
         assert.deepEqual(out.roles![1].privileges, [{ action: 'read', concept: 'Alpha', level: 'businessUnit' }])
         assert.notEqual(out.roles![0], d.Roles[0])
     })
+
+    it('None removes all matching entries but keeps the row', () =>
+    {
+        const m = Fixtures.Full()
+        m.roles![0].privileges.push({ action: 'read', concept: 'Order', level: 'user' })
+        const d = SecurityModelDraft.From(m)
+        d.SelectedRoleId = 'r1'
+        d.SetLevel('Order', PrivilegeAction.Read, AccessLevel.None)
+        const out = d.ToDto()
+        assert.deepEqual(out.roles![0].privileges, [{ action: 'create', concept: 'Order', level: 'bogus' }])
+        assert.ok(d.Concepts.includes('Order'))
+    })
+
+    it('keeps roles absent or empty as loaded', () =>
+    {
+        const a = Fixtures.Full()
+        delete a.roles
+        assert.equal('roles' in SecurityModelDraft.From(a).ToDto(), false)
+        const e = Fixtures.Full()
+        e.roles = []
+        assert.deepEqual(SecurityModelDraft.From(e).ToDto().roles, [])
+    })
+
+    it('ToDto reflects AddRole and DeleteRole with other sections unchanged', () =>
+    {
+        const input = Fixtures.Full()
+        const snap = structuredClone(input)
+        const d = SecurityModelDraft.From(input)
+        const id = d.AddRole('New')
+        d.DeleteRole('r2')
+        const out = d.ToDto()
+        assert.deepEqual(out.roles!.map(r => r.id), ['r1', id])
+        assert.deepEqual(out.roles![1].privileges, [])
+        assert.deepEqual(out.fieldSecurity, snap.fieldSecurity)
+        assert.deepEqual(out.roleAssignment, snap.roleAssignment)
+        assert.deepEqual(out.businessUnits, snap.businessUnits)
+    })
+
+    it('overwrites a garbage stored level when edited', () =>
+    {
+        const d = SecurityModelDraft.From(Fixtures.Full())
+        d.SelectedRoleId = 'r1'
+        assert.equal(d.CycleLevel('Order', PrivilegeAction.Create), AccessLevel.User)
+        const out = d.ToDto()
+        assert.deepEqual(out.roles![0].privileges.filter(p => p.action === 'create'), [{ action: 'create', concept: 'Order', level: 'user' }])
+        assert.equal(JSON.stringify(out).includes('bogus'), false)
+    })
+
+    it('AddConcept sets Dirty', () =>
+    {
+        const d = SecurityModelDraft.From(Fixtures.Full())
+        d.AddConcept('Brand')
+        assert.equal(d.Dirty, true)
+    })
 })
