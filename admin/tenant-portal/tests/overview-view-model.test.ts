@@ -35,6 +35,8 @@ class FakeSource implements IOverviewSource
     ]
     public EnvFailure: Error | undefined
     public HealthFailure: Error | undefined
+    public ManifestsFailure: Error | undefined
+    public RolloutFailure: Error | undefined
 
     public async ListEnvironments(): Promise<EnvironmentDto[]>
     {
@@ -56,11 +58,19 @@ class FakeSource implements IOverviewSource
 
     public async ListManifests(): Promise<ManifestDto[]>
     {
+        if (this.ManifestsFailure !== undefined)
+        {
+            throw this.ManifestsFailure
+        }
         return this.Manifests
     }
 
     public async GetRollout(): Promise<HiveRolloutDto>
     {
+        if (this.RolloutFailure !== undefined)
+        {
+            throw this.RolloutFailure
+        }
         return this.Rollout
     }
 
@@ -158,5 +168,60 @@ describe('OverviewViewModel', () =>
         const reloaded = await vm.ApplyEvent({ type: TenantEventType.EnvironmentCreated, environmentName: 'e3' })
         assert.equal(reloaded, true)
         assert.equal(vm.Rows.length, 3)
+    })
+
+    it('degrades without an offer when ListManifests fails', async () =>
+    {
+        const s = new FakeSource()
+        s.ManifestsFailure = new Error('down')
+        const vm = new OverviewViewModel(s, 'h')
+        await vm.Load()
+        assert.equal(vm.Error, false)
+        assert.equal(vm.OfferAvailable, false)
+        assert.equal(vm.Rows.length, 2)
+    })
+
+    it('degrades without a false offer when GetRollout fails', async () =>
+    {
+        const s = new FakeSource()
+        s.RolloutFailure = new Error('down')
+        const vm = new OverviewViewModel(s, 'h')
+        await vm.Load()
+        assert.equal(vm.Error, false)
+        assert.equal(vm.OfferAvailable, false)
+        assert.equal(vm.Rows.length, 2)
+    })
+
+    it('offers nothing when no environment is behind a non-current newer version', async () =>
+    {
+        const s = new FakeSource()
+        s.Rollout = {
+            targetVersion: 'v1',
+            environments: [
+                { environmentName: 'e1', runningImage: 'img:v2', obsolete: false, ready: true },
+                { environmentName: 'e2', runningImage: 'img:v2', obsolete: false, ready: true },
+            ],
+        }
+        const vm = new OverviewViewModel(s, 'h')
+        await vm.Load()
+        assert.equal(vm.OfferAvailable, false)
+        assert.equal(vm.OfferedVersion, undefined)
+    })
+
+    it('resolves no current version for mixed images without a target', async () =>
+    {
+        const s = new FakeSource()
+        s.Rollout = {
+            targetVersion: undefined,
+            environments: [
+                { environmentName: 'e1', runningImage: 'img:v1', obsolete: false, ready: true },
+                { environmentName: 'e2', runningImage: 'img:v2', obsolete: false, ready: true },
+            ],
+        }
+        const vm = new OverviewViewModel(s, 'h')
+        await vm.Load()
+        // No current version, so the newest non-withdrawn manifest is offered while e1 still differs from it.
+        assert.equal(vm.OfferAvailable, true)
+        assert.equal(vm.OfferedVersion, 'v2')
     })
 })
