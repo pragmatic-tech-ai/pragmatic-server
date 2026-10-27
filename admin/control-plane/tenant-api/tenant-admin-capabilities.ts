@@ -27,7 +27,7 @@ export class TenantAdminCapabilities
         }
         if (tenant.ownerEmail !== undefined)
         {
-            return tenant.ownerEmail === session.email
+            return session.email !== undefined && tenant.ownerEmail.toLowerCase() === session.email.toLowerCase()
         }
         return true
     }

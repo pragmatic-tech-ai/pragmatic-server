@@ -34,6 +34,12 @@ describe('TenantAdminCapabilities', () =>
         assert.deepEqual(r.capabilities, All)
     })
 
+    it('owner by email matches case-insensitively', () =>
+    {
+        const r = TenantAdminCapabilities.For(Fx.Session('p9', 'Owner@X.io'), Fx.Tenant({ ownerEmail: 'owner@x.io' }))
+        assert.equal(r.roleLabel, TenantAdminCapabilities.OwnerRoleLabel)
+    })
+
     it('principal mismatch is a non-owner even when the email matches', () =>
     {
         assert.equal(TenantAdminCapabilities.IsOwner(Fx.Session('p2', 'o@x.io'), Fx.Tenant({ ownerPrincipalId: 'p1', ownerEmail: 'o@x.io' })), false)

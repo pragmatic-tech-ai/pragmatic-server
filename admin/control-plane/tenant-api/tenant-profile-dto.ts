@@ -10,7 +10,7 @@ export type TenantProfileDto = {
     email?: string
     roleLabel: string
     tenant: { id: string; displayName: string; organisation?: string }
-    hive: { id: string; displayName: string }
+    hive?: { id: string; displayName: string }
     capabilities: AdminCapabilitiesDto
     ownerContact?: string
 }
@@ -33,8 +33,11 @@ export class TenantProfileMapper
             principalId: session.principalId,
             roleLabel: caps.roleLabel,
             tenant: tenantPart,
-            hive: { id: hive?.id ?? '', displayName: hive?.displayName ?? '' },
             capabilities: { ...caps.capabilities },
+        }
+        if (hive !== undefined)
+        {
+            dto.hive = { id: hive.id, displayName: hive.displayName }
         }
         if (session.email !== undefined)
         {

@@ -49,9 +49,9 @@ class Fx
         return { id: 'secret-bearer', tenantId: 't1', principalId, email, expiresAt: '2099-01-01T00:00:00Z' }
     }
 
-    public static async Get(tenant: TenantRecord, organisation: string | undefined, session: TenantSession): Promise<{ res: ResRecorder; dto: TenantProfileDto }>
+    public static async Get(tenant: TenantRecord, organisation: string | undefined, session: TenantSession, hives: readonly HiveRecord[] = [Fx.Hive()]): Promise<{ res: ResRecorder; dto: TenantProfileDto }>
     {
-        const directory = new SeededTenantDirectory({ tenant, hives: [Fx.Hive()], organisation })
+        const directory = new SeededTenantDirectory({ tenant, hives, organisation })
         const unused = undefined as never
         const endpoint = new TenantApiEndpoint(unused, directory, unused, unused, unused)
         const res = new ResRecorder()
@@ -91,5 +91,11 @@ describe('GET /tenant-api/profile', () =>
         assert.equal(dto.roleLabel, TenantAdminCapabilities.AdminRoleLabel)
         assert.deepEqual(dto.capabilities, { envs: true, adopt: true, access: false, settings: false })
         assert.equal(dto.ownerContact, 'o@x.io')
+    })
+
+    it('omits hive when the tenant has no seeded hive', async () =>
+    {
+        const { dto } = await Fx.Get(Fx.Tenant({}), undefined, Fx.Session('p1'), [])
+        assert.equal('hive' in dto, false)
     })
 })
