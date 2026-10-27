@@ -9,7 +9,7 @@ import { TenantApp } from '../src/tenant-app.js'
 import { TenantApiError } from '../src/tenant-api-client.js'
 import type { TenantApiClient } from '../src/tenant-api-client.js'
 import { EnvStatus, EnvType, Template, TenantEventType } from '../src/tenant-types.js'
-import type { EnvironmentDto, TenantProfileDto, HiveDto, HiveHealthDto, ITenantNavigator, ITenantView, ServiceTokenSummaryDto, SessionDto, TenantEvent } from '../src/tenant-types.js'
+import type { HiveRolloutDto, ManifestDto, EnvironmentDto, TenantProfileDto, HiveDto, HiveHealthDto, ITenantNavigator, ITenantView, ServiceTokenSummaryDto, SessionDto, TenantEvent } from '../src/tenant-types.js'
 import { ServiceTokensView } from '../src/service-tokens-view.js'
 import { RolesPrivilegesView } from '../src/roles-privileges-view.js'
 import { FieldSecurityView } from '../src/field-security-view.js'
@@ -18,6 +18,7 @@ import { EnvironmentDetailView } from '../src/environment-detail-view.js'
 import { ComingSoonView } from '../src/coming-soon-view.js'
 import { EnvironmentsView } from '../src/environments-view.js'
 import { CreateEnvironmentDialog } from '../src/create-environment-dialog.js'
+import { ReleasesView } from '../src/releases-view.js'
 import { NavRail } from '../src/nav-rail.js'
 import { NavModel, NavSection } from '../src/nav-model.js'
 import { UserMenu } from '../src/user-menu.js'
@@ -86,6 +87,21 @@ class FakeClient
     public async CreateEnvironment(p: { name: string; template: Template; type: EnvType }): Promise<EnvironmentDto>
     {
         return { name: p.name, template: p.template, type: p.type, environmentId: p.name, hiveId: 'h1', hostPort: 9000, status: EnvStatus.Running, createdAt: '', httpUrl: '', wsUrl: '' }
+    }
+
+    public async ListManifests(): Promise<ManifestDto[]>
+    {
+        return []
+    }
+
+    public async GetRollout(): Promise<HiveRolloutDto>
+    {
+        return { targetVersion: undefined, environments: [] }
+    }
+
+    public async ListHives(): Promise<HiveDto[]>
+    {
+        return [{ id: 'h1', tenantId: 't1', displayName: 'H', cluster: { backend: 'b', mode: 'm' }, registry: { mode: 'r' }, createdAt: '' }]
     }
 
     public async ListTokens(): Promise<ServiceTokenSummaryDto[]>
@@ -362,10 +378,20 @@ describe('TenantApp', () =>
     {
         const { app } = Fixtures.Make(Session)
         await app.Boot()
-        app.ShowSection(NavSection.Releases)
+        app.ShowSection(NavSection.Settings)
         const view = Fixtures.CurrentOf(app)
         assert.ok(view instanceof ComingSoonView)
-        assert.ok(Fixtures.Texts(view).includes('Releases'))
+        assert.ok(Fixtures.Texts(view).includes('Settings'))
+    })
+
+    it('ShowSection(Releases) shows the ReleasesView, not a placeholder', async () =>
+    {
+        const { app } = Fixtures.Make(Session)
+        await app.Boot()
+        Fixtures.Find(app, NavRail)!.Select(NavSection.Releases)
+        await new Promise(r => setTimeout(r, 0))
+        assert.ok(Fixtures.CurrentOf(app) instanceof ReleasesView)
+        assert.equal(Fixtures.Find(app, NavRail)!.Active, NavSection.Releases)
     })
 
     it('showing an environment or hive detail keeps Environments active', async () =>
@@ -487,7 +513,7 @@ describe('TenantApp', () =>
         await new Promise(r => setTimeout(r, 0))
         ;(Fixtures.CurrentOf(app) as EnvironmentsView).CreateHandler()
         assert.ok(Fixtures.Find(app, CreateEnvironmentDialog) !== undefined)
-        app.ShowSection(NavSection.Releases)
+        app.ShowSection(NavSection.Settings)
         assert.equal(Fixtures.Find(app, CreateEnvironmentDialog), undefined)
     })
 

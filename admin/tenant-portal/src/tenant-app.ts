@@ -8,6 +8,7 @@ import { HiveDetailView } from './hive-detail-view.js'
 import { IdentityPlate } from './identity-plate.js'
 import { NavModel, NavSection } from './nav-model.js'
 import { NavRail } from './nav-rail.js'
+import { ReleasesView } from './releases-view.js'
 import { TenantApiClient } from './tenant-api-client.js'
 import { TenantViewBase } from './tenant-view-base.js'
 import { TenantEventType } from './tenant-types.js'
@@ -124,6 +125,9 @@ export class TenantApp extends StackPanel implements ITenantNavigator
             case NavSection.UsersAccess:
                 this.Show(new UsersAccessHubView(this.client, this.currentPrincipalId))
                 break
+            case NavSection.Releases:
+                void this.ShowReleases()
+                break
             default:
                 this.Show(new ComingSoonView(TenantApp.LabelFor(section)))
                 break
@@ -193,6 +197,27 @@ export class TenantApp extends StackPanel implements ITenantNavigator
         })
         this.Clear(this.topHost)
         this.topHost.AddChild(new TopBar({ plate, userMenu }))
+    }
+
+    private async ShowReleases(): Promise<void>
+    {
+        let hiveId = this.profile?.hive?.id
+        if (hiveId === undefined)
+        {
+            try
+            {
+                hiveId = (await this.client.ListHives())[0]?.id
+            }
+            catch
+            {
+                hiveId = undefined
+            }
+        }
+        if (this.active !== NavSection.Releases)
+        {
+            return
+        }
+        this.Show(hiveId === undefined ? new ComingSoonView(TenantApp.LabelFor(NavSection.Releases)) : new ReleasesView(this.client, hiveId))
     }
 
     private ShowEnvironments(): void
