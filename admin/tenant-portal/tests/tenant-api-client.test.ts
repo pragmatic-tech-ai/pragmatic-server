@@ -101,6 +101,22 @@ describe('TenantApiClient fetch', () =>
         assert.equal(FetchStub.Calls[0]!.route, '/tenant-auth/session')
     })
 
+    it('Profile GETs the profile route and returns the DTO', async () =>
+    {
+        const dto = {
+            principalId: 'p',
+            email: 'a@b',
+            roleLabel: 'Tenant owner',
+            tenant: { id: 't', displayName: 'T', organisation: 'Org' },
+            hive: { id: 'h', displayName: 'H' },
+            capabilities: { envs: true, adopt: true, access: true, settings: true },
+            ownerContact: 'o@b'
+        }
+        FetchStub.Install(dto)
+        assert.deepEqual(await new TestClient(new FakeWebSocketFactory()).Profile(), dto)
+        assert.equal(FetchStub.Calls[0]!.route, '/tenant-api/profile')
+    })
+
     it('Session returns null on 401', async () =>
     {
         FetchStub.Install({ error: 'no' }, 401)

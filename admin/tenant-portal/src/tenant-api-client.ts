@@ -1,5 +1,5 @@
 import { TenantEventType } from './tenant-types.js'
-import type { AdminSnapshotDto, CreateAccountParams, EnvironmentDto, GrantMutationDto, HiveDto, HiveHealthDto, HiveRolloutDto, IssueTokenParams, ISecurityModelSource, ITokensSource, IUsersAccessSource, IWebSocketFactory, IWebSocketLike, ManifestDto, SecurityModelDto, ServiceTokenSummaryDto, SessionDto, TenantEvent, TokenIssuedDto } from './tenant-types.js'
+import type { AdminSnapshotDto, CreateAccountParams, EnvironmentDto, GrantMutationDto, HiveDto, HiveHealthDto, HiveRolloutDto, IssueTokenParams, ISecurityModelSource, ITokensSource, IUsersAccessSource, IWebSocketFactory, IWebSocketLike, ManifestDto, SecurityModelDto, ServiceTokenSummaryDto, SessionDto, TenantEvent, TenantProfileDto, TokenIssuedDto } from './tenant-types.js'
 
 // Thrown for non-2xx tenant-surface responses; Message carries the server's error text.
 export class TenantApiError extends Error
@@ -57,6 +57,7 @@ export class BrowserWebSocketFactory implements IWebSocketFactory
 export class TenantApiClient implements IUsersAccessSource, ITokensSource, ISecurityModelSource
 {
     private static readonly SessionRoute = '/tenant-auth/session'
+    private static readonly ProfileRoute = '/tenant-api/profile'
     private static readonly LogoutRoute = '/tenant-auth/logout'
     private static readonly BeginLoginRoute = '/tenant-auth/oidc/begin'
     private static readonly HivesRoute = '/tenant-api/hives'
@@ -114,6 +115,12 @@ export class TenantApiClient implements IUsersAccessSource, ITokensSource, ISecu
             }
             throw e
         }
+    }
+
+    // The signed-in principal's profile and admin capabilities; Send throws TenantApiError on non-2xx.
+    public async Profile(): Promise<TenantProfileDto>
+    {
+        return await this.Send<TenantProfileDto>(TenantApiClient.ProfileRoute, undefined)
     }
 
     public BeginLogin(): void

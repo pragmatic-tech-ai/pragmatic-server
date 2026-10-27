@@ -83,6 +83,9 @@ class FakeNav implements ITenantNavigator
     public ShowRolesPrivileges(): void { this.calls.push('roles') }
     public ShowFieldSecurity(): void { this.calls.push('field') }
     public ShowSection(_section: unknown): void {}
+    public get Profile(): undefined { return undefined }
+    public get Capabilities(): undefined { return undefined }
+    public get OwnerContact(): undefined { return undefined }
 }
 
 describe('UsersAccessHubView', () =>

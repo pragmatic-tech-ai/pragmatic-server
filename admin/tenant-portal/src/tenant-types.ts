@@ -4,6 +4,19 @@ import type { NavSection } from './nav-model.js'
 
 export type SessionDto = { tenantId: string; principalId: string; email?: string }
 
+// Mirrored by hand from the server's tenant-profile-dto.ts; the portal never imports pragmatic-protocol.
+export type AdminCapabilitiesDto = { envs: boolean; adopt: boolean; access: boolean; settings: boolean }
+
+export type TenantProfileDto = {
+    principalId: string
+    email?: string
+    roleLabel: string
+    tenant: { id: string; displayName: string; organisation?: string }
+    hive?: { id: string; displayName: string }
+    capabilities: AdminCapabilitiesDto
+    ownerContact?: string
+}
+
 export type HiveDto = {
     id: string
     tenantId: string
@@ -65,6 +78,9 @@ export interface ITenantNavigator
     ShowRolesPrivileges(): void
     ShowFieldSecurity(): void
     ShowSection(section: NavSection): void
+    get Profile(): TenantProfileDto | undefined
+    get Capabilities(): AdminCapabilitiesDto | undefined
+    get OwnerContact(): string | undefined
 }
 
 export interface ITenantView

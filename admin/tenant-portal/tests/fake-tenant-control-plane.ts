@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { extname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocketServer, type WebSocket } from 'ws'
-import type { AccountDto, EnvironmentDto, GrantDto, GrantMutationDto, HiveDto, HiveHealthDto, HiveRolloutDto, ManifestDto, SecurityModelDto, ServiceTokenSummaryDto, SessionDto, TenantEvent } from '../src/tenant-types.js'
+import type { AccountDto, EnvironmentDto, GrantDto, GrantMutationDto, HiveDto, HiveHealthDto, HiveRolloutDto, ManifestDto, SecurityModelDto, ServiceTokenSummaryDto, SessionDto, TenantEvent, TenantProfileDto } from '../src/tenant-types.js'
 
 // Serves the built dist/ statically and fakes the 7a tenant surface with canned
 // data, recording every mutating call. GATED: used only by the Playwright spec.
@@ -22,6 +22,12 @@ export class FakeTenantControlPlane
     public static readonly TenantId = 'tenant-1'
     public static readonly PrincipalId = 'principal-1'
     public static readonly UserEmail = 'owner@example.com'
+    public static readonly OrganisationName = 'Example Org'
+    public static readonly OwnerRoleLabel = 'Tenant owner'
+    public static readonly OwnerContact = 'owner-contact@example.com'
+    public static readonly TenantDisplayName = 'Example Tenant'
+    public static readonly HiveId = 'hive-1'
+    public static readonly HiveDisplayName = 'Example Hive'
     public static readonly RunningStatus = 'running'
     public static readonly StoppedStatus = 'stopped'
     public static readonly StartAction = 'start'
@@ -29,6 +35,7 @@ export class FakeTenantControlPlane
     public static readonly ChangedStatus = 'degraded'
 
     private static readonly SessionPath = '/tenant-auth/session'
+    private static readonly ProfilePath = '/tenant-api/profile'
     private static readonly HivesPath = '/tenant-api/hives'
     private static readonly EnvironmentsPath = '/tenant-api/environments'
     private static readonly ManifestsPath = '/tenant-api/manifests'
@@ -311,6 +318,20 @@ export class FakeTenantControlPlane
         {
             const session: SessionDto = { tenantId: FakeTenantControlPlane.TenantId, principalId: FakeTenantControlPlane.PrincipalId, email: FakeTenantControlPlane.UserEmail }
             FakeTenantControlPlane.Json(res, 200, session)
+            return
+        }
+        if (path === FakeTenantControlPlane.ProfilePath)
+        {
+            const profile: TenantProfileDto = {
+                principalId: FakeTenantControlPlane.PrincipalId,
+                email: FakeTenantControlPlane.UserEmail,
+                roleLabel: FakeTenantControlPlane.OwnerRoleLabel,
+                tenant: { id: FakeTenantControlPlane.TenantId, displayName: FakeTenantControlPlane.TenantDisplayName, organisation: FakeTenantControlPlane.OrganisationName },
+                hive: { id: FakeTenantControlPlane.HiveId, displayName: FakeTenantControlPlane.HiveDisplayName },
+                capabilities: { envs: true, adopt: true, access: true, settings: true },
+                ownerContact: FakeTenantControlPlane.OwnerContact
+            }
+            FakeTenantControlPlane.Json(res, 200, profile)
             return
         }
         if (path === FakeTenantControlPlane.HivesPath)

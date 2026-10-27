@@ -10,7 +10,7 @@ import { TenantTreeView } from './tenant-tree-view.js'
 import { TenantTreeViewModel } from './tenant-tree-view-model.js'
 import { TenantViewBase } from './tenant-view-base.js'
 import { TenantEventType } from './tenant-types.js'
-import type { EnvironmentDto, HiveDto, ITenantNavigator, ITenantView, SessionDto, TenantEvent } from './tenant-types.js'
+import type { EnvironmentDto, HiveDto, ITenantNavigator, ITenantView, SessionDto, TenantEvent, TenantProfileDto, AdminCapabilitiesDto } from './tenant-types.js'
 import { TopBar } from './top-bar.js'
 import { UserMenu } from './user-menu.js'
 import { ServiceTokensView } from './service-tokens-view.js'
@@ -30,6 +30,8 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     private readonly rightColumn = new StackPanel()
     private readonly topHost = new StackPanel()
     private readonly detailHost = new StackPanel()
+    // Populated by Boot in Task 4.
+    private profile: TenantProfileDto | undefined
     private current: ITenantView | undefined
     // Name of the environment the detail pane is showing, so a delete of it swaps the pane back rather than refreshing a gone env.
     private currentEnvName: string | undefined
@@ -81,6 +83,21 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     {
         this.Teardown()
         this.client.BeginLogin()
+    }
+
+    public get Profile(): TenantProfileDto | undefined
+    {
+        return this.profile
+    }
+
+    public get Capabilities(): AdminCapabilitiesDto | undefined
+    {
+        return this.profile?.capabilities
+    }
+
+    public get OwnerContact(): string | undefined
+    {
+        return this.profile?.ownerContact
     }
 
     public ShowSection(section: NavSection): void
