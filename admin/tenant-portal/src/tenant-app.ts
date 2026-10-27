@@ -5,9 +5,9 @@ import { TenantApiClient } from './tenant-api-client.js'
 import { TenantTreeView } from './tenant-tree-view.js'
 import { TenantTreeViewModel } from './tenant-tree-view-model.js'
 import { TenantViewBase } from './tenant-view-base.js'
-import { UsersAccessView } from './users-access-view.js'
 import { TenantEventType } from './tenant-types.js'
 import type { EnvironmentDto, HiveDto, ITenantNavigator, ITenantView, SessionDto, TenantEvent } from './tenant-types.js'
+import { UsersAccessView } from './users-access-view.js'
 
 // Minimal detail view until the hive / environment detail views land.
 class DetailPlaceholderView extends TenantViewBase
@@ -31,7 +31,7 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     public static readonly TitleText = 'Pragmatic Tenant Admin'
     public static readonly LogoutLabel = 'Logout'
     public static readonly EmptySelectionText = 'Select a hive or environment'
-    private static readonly UsersAccessLabel = 'Users & Access'
+    public static readonly UsersAccessLabel = 'Users & Access'
 
     private readonly client: TenantApiClient
     private readonly topBar = new StackPanel()

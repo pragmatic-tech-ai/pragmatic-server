@@ -4,10 +4,10 @@ import { StackPanel } from '@pragmatic-tech-ai/mural/basic'
 import { Button } from '@pragmatic-tech-ai/mural/framework'
 import { TenantApp } from '../src/tenant-app.js'
 import { TenantApiError } from '../src/tenant-api-client.js'
-import { UsersAccessView } from '../src/users-access-view.js'
 import type { TenantApiClient } from '../src/tenant-api-client.js'
 import { TenantEventType } from '../src/tenant-types.js'
 import type { EnvironmentDto, HiveDto, HiveHealthDto, ITenantNavigator, ITenantView, SessionDto, TenantEvent } from '../src/tenant-types.js'
+import { UsersAccessView } from '../src/users-access-view.js'
 
 class FakeClient
 {
@@ -219,13 +219,22 @@ describe('TenantApp', () =>
     {
         const { app } = Fixtures.Make(Session)
         await app.Boot()
-        const label = (TenantApp as unknown as { UsersAccessLabel: string }).UsersAccessLabel
-        const btn = Fixtures.Find(app, Button, b => Fixtures.Texts(b).includes(label))
+        const btn = Fixtures.Find(app, Button, b => Fixtures.Texts(b).includes(TenantApp.UsersAccessLabel))
         assert.ok(btn, 'Users & Access button exists')
         Fixtures.Click(btn)
         await new Promise(r => setTimeout(r, 0))
         const current = (app as unknown as { current: unknown }).current
         assert.ok(current instanceof UsersAccessView)
+    })
+
+    it('logout clears the stored principalId', async () =>
+    {
+        const { app } = Fixtures.Make(Session)
+        await app.Boot()
+        assert.equal(app.CurrentPrincipalId, Session.principalId)
+        Fixtures.Click(Fixtures.Find(app, Button, x => Fixtures.Texts(x).includes(TenantApp.LogoutLabel))!)
+        await new Promise(r => setTimeout(r, 0))
+        assert.equal(app.CurrentPrincipalId, '')
     })
 
     it('a second Boot does not stack event subscriptions', async () =>
