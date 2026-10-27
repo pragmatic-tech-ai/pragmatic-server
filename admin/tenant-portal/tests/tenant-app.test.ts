@@ -19,6 +19,7 @@ import { ComingSoonView } from '../src/coming-soon-view.js'
 import { EnvironmentsView } from '../src/environments-view.js'
 import { CreateEnvironmentDialog } from '../src/create-environment-dialog.js'
 import { ReleasesView } from '../src/releases-view.js'
+import { OverviewView } from '../src/overview-view.js'
 import { NavRail } from '../src/nav-rail.js'
 import { NavModel, NavSection } from '../src/nav-model.js'
 import { UserMenu } from '../src/user-menu.js'
@@ -217,7 +218,8 @@ describe('TenantApp', () =>
         await app.Boot()
         assert.equal(client.Calls.filter(c => c === 'onevent').length, 1)
         assert.ok(Fixtures.Texts(app).includes('me@x.io'))
-        assert.ok(Fixtures.CurrentOf(app) instanceof ComingSoonView, 'Overview placeholder shown, not a tree')
+        await new Promise(r => setTimeout(r, 0))
+        assert.ok(Fixtures.CurrentOf(app) instanceof OverviewView, 'Overview landing shown, not a placeholder')
         assert.ok(!client.Calls.some(c => c.startsWith('login')))
     })
 
@@ -302,7 +304,7 @@ describe('TenantApp', () =>
         assert.ok(!texts.includes('Tenant owner'))
         assert.equal(app.Capabilities, undefined)
         assert.equal(app.Profile, undefined)
-        assert.deepEqual(client.Calls, ['onevent'])
+        assert.deepEqual(client.Calls, ['onevent', 'list'])
     })
 
     it('logout calls client.Logout, tears down the subscription, returns to login', async () =>
@@ -312,7 +314,7 @@ describe('TenantApp', () =>
         const btn = Fixtures.Find(app, Button, b => Fixtures.Texts(b).includes(UserMenu.LogoutLabel))!
         Fixtures.Click(btn)
         await new Promise(r => setTimeout(r, 0))
-        assert.deepEqual(client.Calls, ['onevent', 'logout', 'login:0'])
+        assert.deepEqual(client.Calls, ['onevent', 'list', 'logout', 'login:0'])
         assert.equal(client.UnsubCalls, 1)
     })
 
@@ -382,6 +384,17 @@ describe('TenantApp', () =>
         const view = Fixtures.CurrentOf(app)
         assert.ok(view instanceof ComingSoonView)
         assert.ok(Fixtures.Texts(view).includes('Settings'))
+    })
+
+    it('ShowSection(Overview) shows the OverviewView, not a placeholder', async () =>
+    {
+        const { app } = Fixtures.Make(Session)
+        await app.Boot()
+        app.ShowSection(NavSection.Environments)
+        Fixtures.Find(app, NavRail)!.Select(NavSection.Overview)
+        await new Promise(r => setTimeout(r, 0))
+        assert.ok(Fixtures.CurrentOf(app) instanceof OverviewView)
+        assert.equal(Fixtures.Find(app, NavRail)!.Active, NavSection.Overview)
     })
 
     it('ShowSection(Releases) shows the ReleasesView, not a placeholder', async () =>
