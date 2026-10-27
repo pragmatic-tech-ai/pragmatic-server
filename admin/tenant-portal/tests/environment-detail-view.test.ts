@@ -87,6 +87,7 @@ class FakeSource implements IEnvDetailSource
     public Opened = 0
     public Closed = 0
     public DeleteError: Error | undefined
+    public Emit: (t: string) => void = () => undefined
 
     public async StartEnvironment(name: string): Promise<EnvironmentDto> { this.Calls.push('start:' + name); return Fixtures.Env(EnvStatus.Running) }
     public async StopEnvironment(name: string): Promise<EnvironmentDto> { this.Calls.push('stop:' + name); return Fixtures.Env(EnvStatus.Stopped) }
@@ -100,9 +101,10 @@ class FakeSource implements IEnvDetailSource
         }
     }
     public async GetHealth(_hiveId: string): Promise<HiveHealthDto[]> { return [{ environmentName: 'alpha', ready: true, runningImage: 'img:v7', detail: 'ok' }] }
-    public OpenLogStream(_name: string, _onChunk: (t: string) => void): () => void
+    public OpenLogStream(_name: string, onChunk: (t: string) => void): () => void
     {
         this.Opened++
+        this.Emit = onChunk
         return () => { this.Closed++ }
     }
 }
@@ -214,6 +216,18 @@ describe('EnvironmentDetailView', () =>
         assert.equal(([...unknown.Children].find(c => c instanceof Banner) as Banner).Tone, BannerTone.Info)
         const running = Fixtures.Make(EnvStatus.Running).view
         assert.ok(![...running.Children].some(c => c instanceof Banner))
+    })
+
+    it('log tailing survives a re-render', async () =>
+    {
+        const { view, src } = Fixtures.Make(EnvStatus.Running)
+        await view.Refresh()
+        Fixtures.Click(Fixtures.TabsOf(view), 'Health & activity')
+        Fixtures.Click(Fixtures.TabsOf(view), 'View logs')
+        Fixtures.Click(Fixtures.TabsOf(view), 'Pause')
+        Fixtures.Click(Fixtures.TabsOf(view), 'Resume')
+        src.Emit('some-line')
+        assert.ok(Fixtures.Texts(view).includes('some-line'))
     })
 
     it('Dispose closes the log stream once; tab switches do not reopen it', async () =>
