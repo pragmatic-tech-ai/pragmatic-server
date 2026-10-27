@@ -197,8 +197,7 @@ export class SecurityModelDraft
     public AddRole(name: string): string
     {
         const roles = this.model.roles ?? (this.model.roles = [])
-        const slug = name.toLowerCase().replace(SecurityModelDraft.NonSlug, SecurityModelDraft.SlugSeparator)
-            .replace(SecurityModelDraft.EdgeDashes, SecurityModelDraft.EmptyString) || SecurityModelDraft.FallbackSlug
+        const slug = SecurityModelDraft.Slug(name, SecurityModelDraft.FallbackSlug)
         let n = 1
         while (roles.some(r => r.id === SecurityModelDraft.RoleId(slug, n)))
         {
@@ -309,10 +308,11 @@ export class SecurityModelDraft
     public AddSecuredField(concept: string, field: string): void
     {
         const fs = this.EnsureFieldSecurity()
-        if (!fs.securedFields.some(f => f.concept === concept && f.field === field))
+        if (fs.securedFields.some(f => f.concept === concept && f.field === field))
         {
-            fs.securedFields.push({ concept, field })
+            return
         }
+        fs.securedFields.push({ concept, field })
         this.dirty = true
     }
 

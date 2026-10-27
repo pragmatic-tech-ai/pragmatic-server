@@ -163,7 +163,7 @@ describe('SecurityModelDraft', () =>
                     { id: 'p2', name: 'Other', grants: [{ concept: 'Order', field: 'total', read: true }] }
                 ],
                 profileAssignment: { claimsMapping: [], overrides: [{ principalId: 'u1', profiles: ['p1'] }], teamProfiles: [] }
-            } as never
+            }
             return m
         }
 
@@ -211,6 +211,7 @@ describe('SecurityModelDraft', () =>
         {
             const d = SecurityModelDraft.From(WithProfiles())
             d.AddSecuredField('Order', 'total')
+            assert.equal(d.Dirty, false)
             d.AddSecuredField('Order', 'extra')
             assert.equal(d.SecuredFields.length, 3)
             d.RemoveSecuredField('Order', 'total')
