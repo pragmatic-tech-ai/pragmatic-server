@@ -6,7 +6,7 @@ import { TenantApp } from '../src/tenant-app.js'
 import { TenantApiError } from '../src/tenant-api-client.js'
 import type { TenantApiClient } from '../src/tenant-api-client.js'
 import { TenantEventType } from '../src/tenant-types.js'
-import type { EnvironmentDto, HiveDto, HiveHealthDto, ITenantNavigator, ITenantView, SessionDto, TenantEvent } from '../src/tenant-types.js'
+import type { EnvironmentDto, HiveDto, HiveHealthDto, ITenantNavigator, ITenantView, ServiceTokenSummaryDto, SessionDto, TenantEvent } from '../src/tenant-types.js'
 import { ServiceTokensView } from '../src/service-tokens-view.js'
 import { UsersAccessView } from '../src/users-access-view.js'
 
@@ -57,7 +57,7 @@ class FakeClient
         return []
     }
 
-    public async ListTokens(): Promise<unknown[]>
+    public async ListTokens(): Promise<ServiceTokenSummaryDto[]>
     {
         return []
     }
