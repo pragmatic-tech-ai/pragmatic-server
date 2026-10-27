@@ -9,4 +9,6 @@ export interface ITenantDirectory
     GetTenant(id: string): TenantRecord | undefined
     GetHive(id: string): HiveRecord | undefined
     ListHives(tenantId: string): readonly HiveRecord[]
+    /** The tenant's organisation name, when the directory knows it (optional: the platform directory does not carry one). */
+    GetOrganisation?(tenantId: string): string | undefined
 }

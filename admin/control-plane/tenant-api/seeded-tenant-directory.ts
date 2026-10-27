@@ -4,6 +4,7 @@ import type { ITenantDirectory } from './tenant-directory.js'
 export type TenantDirectorySeed = {
     readonly tenant: TenantRecord
     readonly hives: readonly HiveRecord[]
+    readonly organisation?: string
 }
 
 /**
@@ -14,16 +15,23 @@ export class SeededTenantDirectory implements ITenantDirectory
 {
     private readonly tenant: TenantRecord
     private readonly hives: readonly HiveRecord[]
+    private readonly organisation: string | undefined
 
     public constructor(seed: TenantDirectorySeed)
     {
         this.tenant = seed.tenant
         this.hives = [...seed.hives]
+        this.organisation = seed.organisation
     }
 
     public GetTenant(id: string): TenantRecord | undefined
     {
         return id === this.tenant.id ? this.tenant : undefined
+    }
+
+    public GetOrganisation(tenantId: string): string | undefined
+    {
+        return tenantId === this.tenant.id ? this.organisation : undefined
     }
 
     public GetHive(id: string): HiveRecord | undefined

@@ -22,6 +22,8 @@ export interface TenantBootstrapInput
 {
     tenant: TenantRecord
     hive: HiveRecord
+    /** The tenant's organisation name, seeded into the hive read-model when known. */
+    organisation?: string
     tenantAdminImage: string
     tenantPlanePort: number
     baseDomain: string
@@ -199,7 +201,7 @@ export class TenantAdminBootstrap
         const agentTokenSecretName = K8sManifestBuilder.AgentTokenSecretNameOf(hive.id)
         const seedSecretName = K8sManifestBuilder.TenantAdminSeedSecretNameOf(tenant.id)
         const agentToken = await this.registrar.RegisterHive(hive.id)
-        const seed: TenantDirectorySeed = { tenant: { ...tenant }, hives: [{ ...hive, agentTokenRef: agentTokenSecretName }] }
+        const seed: TenantDirectorySeed = { tenant: { ...tenant }, hives: [{ ...hive, agentTokenRef: agentTokenSecretName }], ...(input.organisation !== undefined ? { organisation: input.organisation } : {}) }
 
         const secrets = new BootstrapSecretSet()
         secrets.Add(agentTokenSecretName, { [TenantAdminBootstrap.TokenKey]: agentToken })

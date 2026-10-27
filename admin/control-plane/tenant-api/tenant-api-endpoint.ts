@@ -1,6 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { IEnvironmentService, MakerTokenDto } from '../control-plane-host.js'
 import { EnvironmentDtoMapper } from '../environment-dto.js'
+import { TenantAdminCapabilities } from './tenant-admin-capabilities.js'
+import { TenantProfileMapper } from './tenant-profile-dto.js'
 import { HiveDtoMapper } from './hive-dto.js'
 import { HiveHealthProducer } from '../hive-health-producer.js'
 import type { EnvironmentPlacement } from '../environment-placement.js'
@@ -43,6 +45,8 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     private static readonly RolloutSegment = 'rollout'
     private static readonly HealthSegment = 'health'
     private static readonly TargetSegment = 'target'
+    private static readonly ProfileSegment = 'profile'
+    private static readonly ProfilePath = TenantApiEndpoint.Prefix + TenantApiEndpoint.ProfileSegment
     private static readonly HivesPath = TenantApiEndpoint.Prefix + TenantApiEndpoint.HivesSegment
     private static readonly EnvironmentsPath = TenantApiEndpoint.Prefix + TenantApiEndpoint.EnvironmentsSegment
     private static readonly ManifestsPath = TenantApiEndpoint.Prefix + TenantApiEndpoint.ManifestsSegment
@@ -139,11 +143,24 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         this.health = new HiveHealthProducer(service, orchestrators, placement)
     }
 
+    private RouteProfile(res: ServerResponse, session: TenantSession): void
+    {
+        const tenant = this.directory.GetTenant(session.tenantId)
+        const hive = this.directory.ListHives(session.tenantId)[0]
+        const dto = TenantProfileMapper.ToDto(session, tenant, hive, this.directory.GetOrganisation?.(session.tenantId), TenantAdminCapabilities.For(session, tenant))
+        this.WriteJson(res, TenantApiEndpoint.StatusOk, dto)
+    }
+
     public async Handle(req: IncomingMessage, res: ServerResponse, path: string, session: TenantSession): Promise<boolean>
     {
         const method = req.method ?? TenantApiEndpoint.MethodNone
         if (method === TenantApiEndpoint.MethodGet)
         {
+            if (path === TenantApiEndpoint.ProfilePath)
+            {
+                this.RouteProfile(res, session)
+                return true
+            }
             if (path === TenantApiEndpoint.HivesPath)
             {
                 this.WriteJson(res, TenantApiEndpoint.StatusOk, this.directory.ListHives(session.tenantId).map(h => HiveDtoMapper.ToDto(h)))
