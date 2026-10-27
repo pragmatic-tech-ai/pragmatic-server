@@ -192,6 +192,23 @@ class FakeService implements IEnvironmentService
         this.MaybeThrow()
     }
 
+    public async AdminListTokens(name: string): Promise<any>
+    {
+        this.Calls.push(`adminListTokens:${name}`)
+        return []
+    }
+
+    public async AdminIssueToken(name: string, _params: any): Promise<any>
+    {
+        this.Calls.push(`adminIssueToken:${name}`)
+        throw new Error('unused')
+    }
+
+    public async AdminRevokeToken(name: string, _tokenRef: string): Promise<void>
+    {
+        this.Calls.push(`adminRevokeToken:${name}`)
+    }
+
     public async AdminIssueMakerToken(name: string): Promise<any>
     {
         this.Calls.push(`adminIssueMakerToken:${name}`)

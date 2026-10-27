@@ -45,7 +45,7 @@ import type { HiveRolloutStatus, PlatformDeploymentRegistry } from './platform-d
 import type { ManifestRecord } from './manifest-record.js'
 import { BodyTooLargeError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, UnknownHiveError, UnknownManifestError } from './rollout-errors.js'
 import type { ClientRecord, ClusterSpec, HiveRecord, RegistrySpec, TenantRecord } from './platform-records.js'
-import type { CreateAccountParams, GraphLoadedDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { CreateAccountParams, GraphLoadedDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto, ServiceTokenSummaryDto, IssueTokenParams } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { LoginThrottle } from './login-throttle.js'
 import type { ILogProcess } from '../../environments/seed/docker.js'
 
@@ -72,6 +72,9 @@ export interface IEnvironmentService
     AdminGetSecurityModel(name: string): Promise<SecurityModelDto | undefined>
     AdminSetSecurityModel(name: string, securityModel: SecurityModelDto): Promise<void>
     AdminIssueMakerToken(name: string): Promise<TokenIssuedDto>
+    AdminListTokens(name: string): Promise<ServiceTokenSummaryDto[]>
+    AdminIssueToken(name: string, params: IssueTokenParams): Promise<TokenIssuedDto>
+    AdminRevokeToken(name: string, tokenRef: string): Promise<void>
     AdminGrantAppReader(name: string): Promise<void>
 }
 

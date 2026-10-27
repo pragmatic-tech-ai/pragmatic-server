@@ -358,14 +358,16 @@ class FakeAdminProxy implements IAdminProxy
         return { tokenRef: 'ref', token: 'secret-token', principalId: params.principalId, scopes: params.scopes, expiresAt: 'later' } as unknown as TokenIssuedDto
     }
 
-    public async ListTokens(_info: AdminConnectInfo): Promise<any>
+    public async ListTokens(info: AdminConnectInfo): Promise<any>
     {
-        throw new Error('unused')
+        this.Calls.push({ method: 'ListTokens', info, args: [] })
+        return [{ tokenRef: 'r1' }]
     }
 
-    public async RevokeToken(_info: AdminConnectInfo, _params: any): Promise<any>
+    public async RevokeToken(info: AdminConnectInfo, params: any): Promise<any>
     {
-        throw new Error('unused')
+        this.Calls.push({ method: 'RevokeToken', info, args: [params] })
+        return { ok: true }
     }
 
     public async SetConfig(info: AdminConnectInfo, config: IdentityConfigDto): Promise<void>
@@ -827,6 +829,39 @@ test('AdminIssueMakerToken grants Maker then issues a maker token; repeat call s
     assert.equal(h.Proxy.Calls[0].info.password, AdminFixture.Password)
     await h.Service.AdminIssueMakerToken(AdminFixture.Name)
     assert.equal(h.Proxy.Calls.length, 4)
+})
+
+test('AdminListTokens forwards to proxy.ListTokens with the env admin info, with no env-type guard', async () =>
+{
+    const h = await Harness.Make()
+    await AdminFixture.Seed(h)
+    const list = await h.Service.AdminListTokens(AdminFixture.Name)
+    assert.deepEqual(h.Proxy.Calls.map(c => c.method), ['ListTokens'])
+    assert.equal(h.Proxy.Calls[0].info.password, AdminFixture.Password)
+    assert.deepEqual(list, [{ tokenRef: 'r1' }] as unknown as typeof list)
+})
+
+test('AdminIssueToken forwards params to proxy.IssueToken and returns its result', async () =>
+{
+    const h = await Harness.Make()
+    await AdminFixture.Seed(h)
+    const params: IssueTokenParams = { principalId: 'svc', scopes: ['s'], expiresInSeconds: 60 }
+    const dto = await h.Service.AdminIssueToken(AdminFixture.Name, params)
+    assert.deepEqual(h.Proxy.Calls.map(c => c.method), ['IssueToken'])
+    assert.equal(h.Proxy.Calls[0].args[0], params)
+    assert.equal(h.Proxy.Calls[0].info.password, AdminFixture.Password)
+    assert.equal(dto.token, 'secret-token')
+})
+
+test('AdminRevokeToken forwards the ref to proxy.RevokeToken and resolves void', async () =>
+{
+    const h = await Harness.Make()
+    await AdminFixture.Seed(h)
+    const result = await h.Service.AdminRevokeToken(AdminFixture.Name, 'r')
+    assert.deepEqual(h.Proxy.Calls.map(c => c.method), ['RevokeToken'])
+    assert.deepEqual(h.Proxy.Calls[0].args, [{ tokenRef: 'r' }])
+    assert.equal(h.Proxy.Calls[0].info.password, AdminFixture.Password)
+    assert.equal(result, undefined)
 })
 
 test('AdminIssueMakerToken on a non-Development env throws before any proxy call', async () =>

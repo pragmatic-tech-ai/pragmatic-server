@@ -10,7 +10,7 @@ import type { EnvironmentRegistry } from './environment-registry.js'
 import type { PortAllocator } from './port-allocator.js'
 import { TemplateCatalog } from './template-catalog.js'
 import type { AdminConnectInfo, AdminSnapshot, IAdminProxy } from './admin-proxy.js'
-import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto, ServiceTokenSummaryDto, IssueTokenParams } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ITenantDirectory } from './tenant-api/tenant-directory.js'
 import { UnknownHiveError } from './rollout-errors.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
@@ -517,6 +517,24 @@ export class EnvironmentService
     {
         const info = await this.AdminInfoFor(name)
         return this.proxy.GrantRole(info, mutation)
+    }
+
+    public async AdminListTokens(name: string): Promise<ServiceTokenSummaryDto[]>
+    {
+        const info = await this.AdminInfoFor(name)
+        return this.proxy.ListTokens(info)
+    }
+
+    public async AdminIssueToken(name: string, params: IssueTokenParams): Promise<TokenIssuedDto>
+    {
+        const info = await this.AdminInfoFor(name)
+        return this.proxy.IssueToken(info, params)
+    }
+
+    public async AdminRevokeToken(name: string, tokenRef: string): Promise<void>
+    {
+        const info = await this.AdminInfoFor(name)
+        await this.proxy.RevokeToken(info, { tokenRef })
     }
 
     public async AdminIssueMakerToken(name: string): Promise<TokenIssuedDto>
