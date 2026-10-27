@@ -30,6 +30,8 @@ class ResRecorder
 /** Answers every Admin*, lifecycle and list call with a benign value; the guard test only cares about the HTTP status. */
 class FakeService
 {
+    public Calls = 0
+
     public constructor(private readonly records: readonly EnvironmentRecord[])
     {
     }
@@ -41,45 +43,84 @@ class FakeService
 
     public async Start(name: string): Promise<EnvironmentRecord>
     {
+        this.Calls++
         return { ...this.records.find(r => r.name === name)!, status: EnvStatus.Running }
     }
 
     public async AdminSnapshot(): Promise<unknown>
     {
+        this.Calls++
         return { accounts: [], grants: [], config: {} }
     }
 
     public async AdminCreateAccount(): Promise<void>
     {
+        this.Calls++
     }
 
     public async AdminDisableAccount(): Promise<void>
     {
+        this.Calls++
     }
 
     public async AdminGrantRole(): Promise<void>
     {
+        this.Calls++
     }
 
     public async AdminRevokeRole(): Promise<void>
     {
+        this.Calls++
     }
 
     public async AdminSetSecurityModel(): Promise<void>
     {
+        this.Calls++
     }
 
     public async AdminSetConfig(): Promise<void>
     {
+        this.Calls++
     }
 
     public async AdminIssueToken(): Promise<unknown>
     {
+        this.Calls++
         return { token: 't', tokenRef: 'r1', principalId: 'svc', scopes: ['read'], expiresAt: null }
     }
 
     public async AdminRevokeToken(): Promise<void>
     {
+        this.Calls++
+    }
+
+    public async AdminListTokens(): Promise<unknown>
+    {
+        this.Calls++
+        return []
+    }
+
+    public async AdminGetConfig(): Promise<unknown>
+    {
+        this.Calls++
+        return { packId: 'local' }
+    }
+
+    public async AdminGetSecurityModel(): Promise<unknown>
+    {
+        this.Calls++
+        return undefined
+    }
+
+    public async AdminIssueMakerToken(): Promise<unknown>
+    {
+        this.Calls++
+        return { token: 't', principalId: 'maker', expiresAt: 'x' }
+    }
+
+    public async AdminGrantAppReader(): Promise<void>
+    {
+        this.Calls++
     }
 }
 
@@ -112,20 +153,40 @@ class Fixtures
         new Route('PUT', 'admin/config', { packId: 'local', delegationDepth: 'one' })
     ]
 
+    public static readonly Open: Route[] = [
+        new Route('GET', 'admin/snapshot'),
+        new Route('GET', 'admin/config'),
+        new Route('GET', 'admin/tokens'),
+        new Route('GET', 'admin/security-model'),
+        new Route('POST', 'maker-token'),
+        new Route('POST', 'app-reader-grant')
+    ]
+
+    public static readonly Unrouted: Route[] = [
+        new Route('PUT', 'admin/accounts', {}),
+        new Route('POST', 'admin/security-model', {}),
+        new Route('POST', 'admin/config', {}),
+        new Route('DELETE', 'admin/config', {}),
+        new Route('POST', 'admin/accounts/user%2F1', {}),
+        new Route('DELETE', 'admin/grants/extra', {}),
+        new Route('PUT', 'admin/tokens', {})
+    ]
+
     public static Tenant(owner: boolean): TenantRecord
     {
         const t: TenantRecord = { id: Fixtures.TenantId, clientId: 'c', displayName: 'A', createdAt: '2026-01-01T00:00:00Z' }
         return owner ? { ...t, ownerPrincipalId: Fixtures.OwnerId } : t
     }
 
-    public static Endpoint(owner: boolean): TenantApiEndpoint
+    public static Build(owner: boolean, envTenant: string = Fixtures.TenantId): { endpoint: TenantApiEndpoint; service: FakeService }
     {
         const env: EnvironmentRecord = {
-            name: 'a-env', type: EnvType.Development, template: Template.DevBlank, environmentId: 'eid', tenantId: Fixtures.TenantId, hiveId: undefined, hostPort: 8101,
+            name: 'a-env', type: EnvType.Development, template: Template.DevBlank, environmentId: 'eid', tenantId: envTenant, hiveId: undefined, hostPort: 8101,
             containerName: 'c', volumeName: 'v', bundleDir: '/b', createdAt: '2026-01-01T00:00:00Z', status: EnvStatus.Stopped
         }
         const directory = new SeededTenantDirectory({ tenant: Fixtures.Tenant(owner), hives: [] })
-        return new TenantApiEndpoint(new FakeService([env]) as unknown as IEnvironmentService, directory, undefined as never, undefined as never, undefined as never)
+        const service = new FakeService([env])
+        return { endpoint: new TenantApiEndpoint(service as unknown as IEnvironmentService, directory, undefined as never, undefined as never, undefined as never), service }
     }
 
     public static Session(principalId: string): TenantSession
@@ -154,35 +215,67 @@ describe('TenantApiEndpoint capability guard', () =>
 {
     for (const r of Fixtures.Guarded)
     {
-        it(`${r.Method} ${r.Suffix} is 403 generic for a non-owner`, async () =>
+        it(`${r.Method} ${r.Suffix} is 403 generic for a non-owner and never reaches the handler`, async () =>
         {
-            const res = await Fixtures.Send(Fixtures.Endpoint(true), Fixtures.Session('someone-else'), r.Method, Fixtures.Base + r.Suffix, r.Body)
+            const f = Fixtures.Build(true)
+            const res = await Fixtures.Send(f.endpoint, Fixtures.Session('someone-else'), r.Method, Fixtures.Base + r.Suffix, r.Body)
             assert.equal(res.status, 403)
             assert.deepEqual(JSON.parse(res.body), Fixtures.Forbidden)
+            assert.equal(f.service.Calls, 0)
         })
 
-        it(`${r.Method} ${r.Suffix} is allowed for the owner`, async () =>
+        it(`${r.Method} ${r.Suffix} is allowed for the owner and reaches the handler`, async () =>
         {
-            const res = await Fixtures.Send(Fixtures.Endpoint(true), Fixtures.Session(Fixtures.OwnerId), r.Method, Fixtures.Base + r.Suffix, r.Body)
+            const f = Fixtures.Build(true)
+            const res = await Fixtures.Send(f.endpoint, Fixtures.Session(Fixtures.OwnerId), r.Method, Fixtures.Base + r.Suffix, r.Body)
             assert.ok(res.status === 200 || res.status === 201, `status ${res.status}`)
+            assert.equal(f.service.Calls, 1)
         })
 
         it(`${r.Method} ${r.Suffix} is allowed when the tenant records no owner (fail-open)`, async () =>
         {
-            const res = await Fixtures.Send(Fixtures.Endpoint(false), Fixtures.Session('someone-else'), r.Method, Fixtures.Base + r.Suffix, r.Body)
+            const f = Fixtures.Build(false)
+            const res = await Fixtures.Send(f.endpoint, Fixtures.Session('someone-else'), r.Method, Fixtures.Base + r.Suffix, r.Body)
             assert.ok(res.status === 200 || res.status === 201, `status ${res.status}`)
+            assert.equal(f.service.Calls, 1)
+        })
+
+        it(`${r.Method} ${r.Suffix} on a foreign environment is 404 (ownership wins over 403)`, async () =>
+        {
+            const f = Fixtures.Build(true, 't-other')
+            const res = await Fixtures.Send(f.endpoint, Fixtures.Session('someone-else'), r.Method, Fixtures.Base + r.Suffix, r.Body)
+            assert.equal(res.status, 404)
+            assert.equal(f.service.Calls, 0)
         })
     }
 
-    it('GET admin/snapshot stays open for a non-owner', async () =>
+    for (const r of Fixtures.Open)
     {
-        const res = await Fixtures.Send(Fixtures.Endpoint(true), Fixtures.Session('someone-else'), 'GET', Fixtures.Base + 'admin/snapshot')
-        assert.equal(res.status, 200)
-    })
+        it(`${r.Method} ${r.Suffix} stays open for a non-owner`, async () =>
+        {
+            const f = Fixtures.Build(true)
+            const res = await Fixtures.Send(f.endpoint, Fixtures.Session('someone-else'), r.Method, Fixtures.Base + r.Suffix, r.Body)
+            assert.ok(res.status === 200 || res.status === 201, `status ${res.status}`)
+            assert.equal(f.service.Calls, 1)
+        })
+    }
+
+    for (const r of Fixtures.Unrouted)
+    {
+        it(`${r.Method} ${r.Suffix} (no such route) is 404 for a non-owner, not 403`, async () =>
+        {
+            const f = Fixtures.Build(true)
+            const res = await Fixtures.Send(f.endpoint, Fixtures.Session('someone-else'), r.Method, Fixtures.Base + r.Suffix, r.Body)
+            assert.equal(res.status, 404)
+            assert.equal(f.service.Calls, 0)
+        })
+    }
 
     it('environment start stays open for a non-owner', async () =>
     {
-        const res = await Fixtures.Send(Fixtures.Endpoint(true), Fixtures.Session('someone-else'), 'POST', '/tenant-api/environments/a-env/start')
+        const f = Fixtures.Build(true)
+        const res = await Fixtures.Send(f.endpoint, Fixtures.Session('someone-else'), 'POST', '/tenant-api/environments/a-env/start')
         assert.equal(res.status, 200)
+        assert.equal(f.service.Calls, 1)
     })
 })

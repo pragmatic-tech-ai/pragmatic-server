@@ -426,7 +426,7 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         }
         try
         {
-            const required = TenantApiEndpoint.RequiredCapability(method, m[2] as string)
+            const required = TenantApiEndpoint.RequiredCapability(method, m[2] as string, m[3])
             if (required !== undefined && !this.RequireCapability(res, session, required))
             {
                 return true
@@ -447,20 +447,28 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
      * The single audit point for capability enforcement: which admin write routes need which capability. GETs, environment
      * lifecycle/create, hive target and the env credential routes are deliberately absent (open to any tenant admin).
      */
-    private static RequiredCapability(method: string, leaf: string): keyof AdminCapabilities | undefined
+    private static RequiredCapability(method: string, leaf: string, tail: string | undefined): keyof AdminCapabilities | undefined
     {
-        const write = method === TenantApiEndpoint.MethodPost || method === TenantApiEndpoint.MethodPut || method === TenantApiEndpoint.MethodDelete
-        if (!write)
+        const M = TenantApiEndpoint
+        if (tail !== undefined)
         {
-            return undefined
+            return leaf === M.AccountsLeaf && method === M.MethodDelete ? M.AccessCapability : undefined
         }
-        if (leaf === TenantApiEndpoint.ConfigLeaf)
+        if (leaf === M.AccountsLeaf)
         {
-            return method === TenantApiEndpoint.MethodPut ? TenantApiEndpoint.SettingsCapability : undefined
+            return method === M.MethodPost ? M.AccessCapability : undefined
         }
-        if (leaf === TenantApiEndpoint.AccountsLeaf || leaf === TenantApiEndpoint.GrantsLeaf || leaf === TenantApiEndpoint.TokensLeaf || leaf === TenantApiEndpoint.SecurityModelLeaf)
+        if (leaf === M.TokensLeaf || leaf === M.GrantsLeaf)
         {
-            return TenantApiEndpoint.AccessCapability
+            return method === M.MethodPost || method === M.MethodDelete ? M.AccessCapability : undefined
+        }
+        if (leaf === M.SecurityModelLeaf)
+        {
+            return method === M.MethodPut ? M.AccessCapability : undefined
+        }
+        if (leaf === M.ConfigLeaf)
+        {
+            return method === M.MethodPut ? M.SettingsCapability : undefined
         }
         return undefined
     }
