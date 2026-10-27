@@ -94,7 +94,7 @@ export class PillKinds
         [PillKind.Expired, { tone: PillTone.Warning, glyph: KitGlyph.Clock, label: 'Expired' }],
         [PillKind.Disabled, { tone: PillTone.Neutral, glyph: KitGlyph.UserX, label: 'Disabled' }],
         [PillKind.Invited, { tone: PillTone.Info, glyph: KitGlyph.Clock, label: 'Invited' }],
-        [PillKind.Observed, { tone: PillTone.Neutral, glyph: KitGlyph.Eye, label: 'Observed — read-only' }],
+        [PillKind.Observed, { tone: PillTone.Neutral, glyph: KitGlyph.Eye, label: 'Observed \u2014 read-only' }],
         [PillKind.Offered, { tone: PillTone.Info, glyph: KitGlyph.Package, label: 'Offered' }],
         [PillKind.Current, { tone: PillTone.Success, glyph: KitGlyph.CircleCheck, label: 'Current' }],
         [PillKind.Allowed, { tone: PillTone.Success, glyph: KitGlyph.CircleCheck, label: 'Allowed' }],

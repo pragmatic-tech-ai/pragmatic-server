@@ -57,14 +57,36 @@ describe('StatusPill', () =>
         })
     }
 
-    it('rebuilds on Kind change and honours LabelOverride', () =>
+    it('rebuilds on Kind change leaving exactly one icon and one text', () =>
     {
         const pill = new StatusPill(PillKind.Healthy)
         pill.Kind = PillKind.Failing
+        const nodes = Walk.Collect(pill)
+        assert.equal(nodes.filter(n => n instanceof Icon).length, 1)
+        assert.equal(nodes.filter(n => n instanceof TextBlock).length, 1)
+        assert.equal((nodes.find(n => n instanceof Icon) as Icon).Source, IconCatalog.Definition(KitGlyph.CircleAlert))
+        assert.equal((nodes.find(n => n instanceof TextBlock) as TextBlock).Text, 'Failing')
+    })
+
+    it('LabelOverride changes only the label', () =>
+    {
+        const pill = new StatusPill(PillKind.Failing)
         pill.LabelOverride = 'Custom'
         const nodes = Walk.Collect(pill)
+        const icon = nodes.find(n => n instanceof Icon) as Icon
         assert.equal((nodes.find(n => n instanceof TextBlock) as TextBlock).Text, 'Custom')
-        assert.equal((nodes.find(n => n instanceof Icon) as Icon).Source, IconCatalog.Definition(KitGlyph.CircleAlert))
+        assert.equal(icon.Source, IconCatalog.Definition(KitGlyph.CircleAlert))
+        assert.equal(icon.Foreground, Tones.Brush(PillTone.Danger))
+        assert.equal(nodes.filter(n => n instanceof Icon).length, 1)
+        assert.equal(nodes.filter(n => n instanceof TextBlock).length, 1)
+    })
+
+    it('labels equal their literal design strings', () =>
+    {
+        assert.equal(PillKinds.Entry(PillKind.Observed).label, 'Observed — read-only')
+        assert.equal(PillKinds.Entry(PillKind.Connected).label, 'Connected')
+        assert.equal(PillKinds.Entry(PillKind.Never).label, 'Never dialled in')
+        assert.equal(PillKinds.Entry(PillKind.Gated).label, 'Gated out')
     })
 
     it('falls back for an unknown kind without throwing', () =>
