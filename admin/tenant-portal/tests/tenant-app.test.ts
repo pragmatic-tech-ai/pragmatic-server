@@ -250,6 +250,22 @@ describe('TenantApp', () =>
         assert.equal(app.Profile, profile)
     })
 
+    it('boot with a profile lacking a hive shows the tenant name and the hive placeholder', async () =>
+    {
+        const profile: TenantProfileDto = {
+            principalId: 'p',
+            roleLabel: 'Tenant owner',
+            tenant: { id: 't1', displayName: 'Northwind Production' },
+            capabilities: { envs: true, adopt: true, access: true, settings: true }
+        }
+        const { app } = Fixtures.Make(Session, profile)
+        await app.Boot()
+        const texts = Fixtures.Texts(app)
+        assert.ok(texts.includes('Northwind Production'))
+        assert.ok(texts.includes(TenantApp.HivePlaceholder))
+        assert.ok(!texts.includes(Session.tenantId))
+    })
+
     it('boot falls back permissively when the profile read fails', async () =>
     {
         const { app, client } = Fixtures.Make(Session, new Error('boom'))

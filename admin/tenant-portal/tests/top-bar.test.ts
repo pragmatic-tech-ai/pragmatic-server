@@ -110,6 +110,13 @@ describe('top bar', () =>
         assert.equal(without.length, withRole.length - 1)
     })
 
+    it('user menu with an empty roleLabel renders no role line, same as undefined', () =>
+    {
+        const empty = Walk.Texts(new UserMenu({ email: 'a@b.c', roleLabel: '', onLogout: () => {} }))
+        const absent = Walk.Texts(new UserMenu({ email: 'a@b.c', onLogout: () => {} }))
+        assert.deepEqual(empty, absent)
+    })
+
     it('top bar contains plate and user menu and starts with an empty banner slot', () =>
     {
         const plate = new IdentityPlate({ tenant: 'Prod', hive: 'hive-1' })
