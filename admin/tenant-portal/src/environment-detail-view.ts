@@ -132,7 +132,7 @@ export class EnvironmentDetailView extends TenantViewBase
         header.Orientation = Orientation.Vertical
         header.AddChild(this.Text(vm.Name))
         header.AddChild(pills)
-        header.AddChild(this.Text(vm.Template + EnvironmentDetailView.IdentitySeparator + vm.EnvironmentId))
+        header.AddChild(this.Text(vm.Template + EnvironmentDetailView.IdentitySeparator + vm.Type + EnvironmentDetailView.IdentitySeparator + vm.EnvironmentId))
         header.AddChild(this.Text(EnvironmentDetailView.UrlPrefix + this.LiveUrlText()))
         header.AddChild(this.MakeActions())
         return header

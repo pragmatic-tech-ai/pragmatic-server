@@ -142,15 +142,15 @@ describe('EnvironmentDetailViewModel', () =>
         assert.equal(src.DisposeCalls, 1)
     })
 
-    it('LoadHealth clears RunningVersion when the row disappears', async () =>
+    it('LoadHealth clears Version when the row disappears', async () =>
     {
         const src = new FakeEnvDetailSource()
         const vm = new EnvironmentDetailViewModel(src, Make.Env('running'), 'h1')
         await vm.LoadHealth()
-        assert.equal(vm.RunningVersion, 'img:v1')
+        assert.equal(vm.Version, 'v1')
         src.Health = []
         await vm.LoadHealth()
-        assert.equal(vm.RunningVersion, '')
+        assert.equal(vm.Version, EnvironmentRow.VersionOf(undefined))
     })
 
     it('StopLogs closes the stream once and ignores later chunks', () =>

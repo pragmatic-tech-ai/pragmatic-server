@@ -24,7 +24,6 @@ export class EnvironmentDetailViewModel extends Observable
     public static readonly MaxLogChars = 100_000
 
     private status: string
-    private runningVersion = ''
     private type: string
     private health: HiveHealthDto | undefined
     private logBuffer = ''
@@ -73,11 +72,6 @@ export class EnvironmentDetailViewModel extends Observable
     public get Version(): string
     {
         return EnvironmentRow.VersionOf(this.health?.runningImage)
-    }
-
-    public get RunningVersion(): string
-    {
-        return this.runningVersion
     }
 
     public get Type(): string
@@ -130,7 +124,6 @@ export class EnvironmentDetailViewModel extends Observable
         const rows = await this.source.GetHealth(this.hiveId)
         const old = this.health
         this.health = rows.find(r => r.environmentName === this.env.name)
-        this.runningVersion = this.health?.runningImage ?? ''
         this.RaisePropertyChanged(EnvironmentDetailViewModel.HealthProperty, old, this.health)
     }
 
