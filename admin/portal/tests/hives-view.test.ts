@@ -114,6 +114,21 @@ describe('HivesView', () =>
         assert.ok(Fixtures.Walk(view).some(n => n instanceof HiveDetailView))
         await view.Refresh()
         assert.equal(view.Mode, HivesMode.Detail)
+        assert.ok(Fixtures.Walk(view).some(n => n instanceof HiveDetailView))
+    })
+
+    it('falls back to the list error state when the hive vanished before detail', async () =>
+    {
+        const full = [Fixtures.Hive('a')]
+        let calls = 0
+        const client = { ListFleet: () => Promise.resolve(calls++ === 0 ? full : []) }
+        const view = new HivesView(client as unknown as ControlPlaneClient)
+        await view.ShowList()
+        view.Table?.FocusRow(0)
+        view.Table?.ActivateFocused()
+        await new Promise(r => setTimeout(r, 0))
+        assert.equal(view.Mode, HivesMode.List)
+        assert.equal(view.Host.State, ScreenState.Error)
     })
 
     it('falls back to the list error state when the detail fetch fails', async () =>

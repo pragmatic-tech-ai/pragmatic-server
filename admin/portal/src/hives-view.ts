@@ -145,7 +145,7 @@ export class HivesView extends StackPanel implements IPortalView
         }
         catch
         {
-            hive = undefined
+            // Treated as not found below.
         }
         if (this.mode !== HivesMode.Detail || this.detailRow !== row)
         {
