@@ -24,7 +24,13 @@ export abstract class SecurityModelAssignment<TClaim extends { claim: string; va
 {
     private static readonly EmptyString = ''
 
+    protected readonly model: SecurityModelDto
     private dirty = false
+
+    protected constructor(model: SecurityModelDto)
+    {
+        this.model = model
+    }
 
     public get Dirty(): boolean
     {
@@ -121,17 +127,12 @@ export abstract class SecurityModelAssignment<TClaim extends { claim: string; va
 
     public RemovePrincipalGrant(targetId: string, principalId: string): void
     {
+        // The normal model has one entry per principalId; iterating all matches is defensive against duplicates.
         const overrides = this.Peek()?.overrides
-        const entry = overrides?.find(o => o.principalId === principalId)
-        if (overrides === undefined || entry === undefined || !this.Drop(entry, targetId))
+        if (overrides !== undefined && this.DropAll(overrides, o => o.principalId === principalId, targetId))
         {
-            return
+            this.dirty = true
         }
-        if (this.IdsOf(entry).length === 0)
-        {
-            overrides.splice(overrides.indexOf(entry), 1)
-        }
-        this.dirty = true
     }
 
     public TeamGrants(targetId: string): readonly string[]
@@ -160,17 +161,12 @@ export abstract class SecurityModelAssignment<TClaim extends { claim: string; va
 
     public RemoveTeamGrant(targetId: string, teamId: string): void
     {
+        // The normal model has one entry per teamId; iterating all matches is defensive against duplicates.
         const teams = this.Peek()?.teamGrants
-        const entry = teams?.find(t => t.teamId === teamId)
-        if (teams === undefined || entry === undefined || !this.Drop(entry, targetId))
+        if (teams !== undefined && this.DropAll(teams, t => t.teamId === teamId, targetId))
         {
-            return
+            this.dirty = true
         }
-        if (this.IdsOf(entry).length === 0)
-        {
-            teams.splice(teams.indexOf(entry), 1)
-        }
-        this.dirty = true
     }
 
     private Add(entry: TClaim | TOverride | TTeam, targetId: string): boolean
@@ -182,6 +178,23 @@ export abstract class SecurityModelAssignment<TClaim extends { claim: string; va
         }
         ids.push(targetId)
         return true
+    }
+
+    private DropAll<T extends TOverride | TTeam>(entries: T[], matches: (entry: T) => boolean, targetId: string): boolean
+    {
+        let changed = false
+        for (let i = entries.length - 1; i >= 0; i--)
+        {
+            if (matches(entries[i]) && this.Drop(entries[i], targetId))
+            {
+                changed = true
+                if (this.IdsOf(entries[i]).length === 0)
+                {
+                    entries.splice(i, 1)
+                }
+            }
+        }
+        return changed
     }
 
     private Drop(entry: TClaim | TOverride | TTeam, targetId: string): boolean
@@ -199,19 +212,15 @@ export abstract class SecurityModelAssignment<TClaim extends { claim: string; va
 
 export class RoleAssignmentSection extends SecurityModelAssignment<RoleClaimRuleDto, RoleOverrideDto, TeamRoleGrantDto>
 {
-    private readonly model: SecurityModelDto
-    private readonly ensure: () => RoleAssignmentDto
-
-    public constructor(model: SecurityModelDto, ensure: () => RoleAssignmentDto)
+    public constructor(model: SecurityModelDto)
     {
-        super()
-        this.model = model
-        this.ensure = ensure
+        super(model)
     }
 
     protected Ensure(): AssignmentArrays<RoleClaimRuleDto, RoleOverrideDto, TeamRoleGrantDto>
     {
-        return RoleAssignmentSection.Arrays(this.ensure())
+        this.model.roleAssignment ??= { claimsMapping: [], overrides: [], teamRoles: [] }
+        return RoleAssignmentSection.Arrays(this.model.roleAssignment)
     }
 
     protected Peek(): AssignmentArrays<RoleClaimRuleDto, RoleOverrideDto, TeamRoleGrantDto> | undefined
@@ -248,13 +257,11 @@ export class RoleAssignmentSection extends SecurityModelAssignment<RoleClaimRule
 
 export class ProfileAssignmentSection extends SecurityModelAssignment<FieldProfileClaimRuleDto, FieldProfileOverrideDto, FieldProfileTeamGrantDto>
 {
-    private readonly model: SecurityModelDto
     private readonly ensure: () => FieldSecurityDto
 
     public constructor(model: SecurityModelDto, ensure: () => FieldSecurityDto)
     {
-        super()
-        this.model = model
+        super(model)
         this.ensure = ensure
     }
 

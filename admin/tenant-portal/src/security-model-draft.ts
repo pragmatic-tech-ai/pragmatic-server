@@ -38,7 +38,7 @@ export class SecurityModelDraft
     {
         this.model = model
         this.org = new SecurityModelOrg(this.model)
-        this.roleAssignment = new RoleAssignmentSection(this.model, () => this.EnsureRoleAssignment())
+        this.roleAssignment = new RoleAssignmentSection(this.model)
         this.profileAssignment = new ProfileAssignmentSection(this.model, () => this.EnsureFieldSecurity())
         this.roleAssignmentAbsent = model.roleAssignment === undefined
         this.rolesAbsent = model.roles === undefined
@@ -317,10 +317,7 @@ export class SecurityModelDraft
     public ToDto(): SecurityModelDto
     {
         const out = SecurityModelDraft.Clone(this.model)
-        if (this.fieldSecurityAbsent && out.fieldSecurity !== undefined
-            && out.fieldSecurity.securedFields.length === 0 && out.fieldSecurity.profiles.length === 0
-            && out.fieldSecurity.profileAssignment.claimsMapping.length === 0 && out.fieldSecurity.profileAssignment.overrides.length === 0
-            && out.fieldSecurity.profileAssignment.teamProfiles.length === 0)
+        if (this.fieldSecurityAbsent && out.fieldSecurity !== undefined && SecurityModelDraft.FieldSecurityIsEmpty(out.fieldSecurity))
         {
             delete out.fieldSecurity
         }
@@ -328,17 +325,23 @@ export class SecurityModelDraft
         {
             delete out.roles
         }
-        if (this.roleAssignmentAbsent && out.roleAssignment !== undefined
-            && out.roleAssignment.claimsMapping.length === 0 && out.roleAssignment.overrides.length === 0 && out.roleAssignment.teamRoles.length === 0)
+        if (this.roleAssignmentAbsent && out.roleAssignment !== undefined && SecurityModelDraft.RoleAssignmentIsEmpty(out.roleAssignment))
         {
             delete out.roleAssignment
         }
         return out
     }
 
-    private EnsureRoleAssignment(): RoleAssignmentDto
+    private static RoleAssignmentIsEmpty(a: RoleAssignmentDto): boolean
     {
-        return this.model.roleAssignment ?? (this.model.roleAssignment = { claimsMapping: [], overrides: [], teamRoles: [] })
+        return a.claimsMapping.length === 0 && a.overrides.length === 0 && a.teamRoles.length === 0
+    }
+
+    private static FieldSecurityIsEmpty(fs: FieldSecurityDto): boolean
+    {
+        const a = fs.profileAssignment
+        return fs.securedFields.length === 0 && fs.profiles.length === 0
+            && a.claimsMapping.length === 0 && a.overrides.length === 0 && a.teamProfiles.length === 0
     }
 
     private EnsureFieldSecurity(): FieldSecurityDto

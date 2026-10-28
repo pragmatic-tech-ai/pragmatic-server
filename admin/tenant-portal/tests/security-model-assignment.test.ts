@@ -99,6 +99,38 @@ describe('RoleAssignmentSection', () =>
         assert.equal(d.ToDto().roleAssignment, undefined)
     })
 
+    it('RemoveClaimGrant for a target the rule does not include is a clean no-op', () =>
+    {
+        const d = SecurityModelDraft.From(Fixtures.Shared())
+        d.RoleAssignment.RemoveClaimGrant('ghost', 0)
+        assert.equal(d.RoleAssignment.Dirty, false)
+        assert.equal(d.RoleAssignment.ClaimGrants('r1').length, 1)
+    })
+
+    it('removes a target from every duplicate override and team entry', () =>
+    {
+        const m = Fixtures.Base()
+        m.roleAssignment = {
+            claimsMapping: [],
+            overrides: [{ principalId: 'u1', roles: ['r1'] }, { principalId: 'u1', roles: ['r1', 'r2'] }],
+            teamRoles: [{ teamId: 't1', roles: ['r1'] }, { teamId: 't1', roles: ['r1'] }]
+        }
+        const d = SecurityModelDraft.From(m)
+        d.RoleAssignment.RemovePrincipalGrant('r1', 'u1')
+        d.RoleAssignment.RemoveTeamGrant('r1', 't1')
+        assert.deepEqual(d.ToDto().roleAssignment, { claimsMapping: [], overrides: [{ principalId: 'u1', roles: ['r2'] }], teamRoles: [] })
+    })
+
+    it('ToDto leaves the input model unmutated', () =>
+    {
+        const m = Fixtures.Shared()
+        const before = structuredClone(m)
+        const d = SecurityModelDraft.From(m)
+        d.RoleAssignment.AddTeamGrant('r1', 't1')
+        d.ToDto()
+        assert.deepEqual(m, before)
+    })
+
     it('round-trips an absent roleAssignment: net-empty drops it, a kept grant keeps it', () =>
     {
         const a = SecurityModelDraft.From(Fixtures.Base())
@@ -148,7 +180,10 @@ describe('ProfileAssignmentSection', () =>
         assert.deepEqual(d.ProfileAssignment.PrincipalGrants('p1'), ['u1'])
         assert.deepEqual(d.ProfileAssignment.TeamGrants('p1'), ['t1'])
         assert.equal(d.ProfileAssignment.ClaimGrants('p1').length, 1)
-        assert.deepEqual(d.ToDto().fieldSecurity?.profileAssignment.teamProfiles, [{ teamId: 't1', profiles: ['p1'] }])
+        const out = d.ToDto().fieldSecurity?.profileAssignment
+        assert.deepEqual(out?.teamProfiles, [{ teamId: 't1', profiles: ['p1'] }])
+        assert.deepEqual(out?.overrides, [{ principalId: 'u1', profiles: ['p1'] }])
+        assert.equal(out?.claimsMapping.length, 1)
     })
 
     it('absent fieldSecurity with a net-empty edit drops back out', () =>
