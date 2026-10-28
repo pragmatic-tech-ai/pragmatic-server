@@ -1,12 +1,13 @@
 import { Orientation, StackPanel } from '@pragmatic-tech-ai/mural/basic'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
-import { Act, ActVariant, Banner, BannerTone, KitGlyph, ScreenHost, Section, SkeletonKind } from './kit/index.js'
+import { Act, ActivityList, ActVariant, Banner, BannerTone, KitGlyph, ScreenHost, Section, SkeletonKind } from './kit/index.js'
 import type { ScreenHostInputs } from './kit/index.js'
 import { CreateEnvironmentDialog } from './create-environment-dialog.js'
 import { EnvironmentCard } from './environment-card.js'
 import { NavSection } from './nav-model.js'
+import { OverviewConnectionCard } from './overview-connection-card.js'
 import { OverviewViewModel } from './overview-view-model.js'
-import type { IEnvironmentsSource, IOverviewSource, ITenantNavigator, TenantEvent } from './tenant-types.js'
+import type { IConnectionSource, IEnvironmentsSource, IOverviewSource, ITenantNavigator, TenantEvent } from './tenant-types.js'
 import { TenantApiError } from './tenant-api-client.js'
 import { TenantViewBase } from './tenant-view-base.js'
 
@@ -23,6 +24,11 @@ export class OverviewView extends TenantViewBase
     public static readonly OfferVersionPrefix = ' Offered version: '
     public static readonly EmptyTitle = 'No environments yet. Create your first environment.'
     public static readonly ErrorTitle = 'Could not load your environments.'
+    public static readonly ActivityTitle = 'Recent activity'
+    public static readonly ActivityEmptyText = 'No activity observed yet this session.'
+    public static readonly SeeAllLabel = 'See all activity'
+    public static readonly ConnectionTitle = OverviewConnectionCard.Title
+    private static readonly ActivityMax = 5
 
     private readonly vm: OverviewViewModel
     private readonly subscriptions: IDisposable[] = []
@@ -30,6 +36,8 @@ export class OverviewView extends TenantViewBase
     private readonly dialogHost = new StackPanel()
     private readonly bannerSlot = new StackPanel()
     private readonly cards = new StackPanel()
+    private readonly activitySlot = new StackPanel()
+    private readonly connectionSlot = new StackPanel()
     private readonly headerSlot = new StackPanel()
     private host: ScreenHost | undefined
     private dialog: CreateEnvironmentDialog | undefined
@@ -37,19 +45,22 @@ export class OverviewView extends TenantViewBase
     private reviewAct: Act | undefined
     private cardList: EnvironmentCard[] = []
     private banner: Banner | undefined
+    private connectionCard: OverviewConnectionCard | undefined
     private localError: string | undefined
 
-    public constructor(private readonly source: IOverviewSource & IEnvironmentsSource, hiveId: string)
+    public constructor(private readonly source: IOverviewSource & IEnvironmentsSource & IConnectionSource, hiveId: string)
     {
         super()
         this.vm = new OverviewViewModel(source, hiveId)
         this.Orientation = Orientation.Vertical
-        for (const panel of [this.body, this.dialogHost, this.bannerSlot, this.cards, this.headerSlot])
+        for (const panel of [this.body, this.dialogHost, this.bannerSlot, this.cards, this.activitySlot, this.connectionSlot, this.headerSlot])
         {
             panel.Orientation = Orientation.Vertical
         }
         this.body.AddChild(this.bannerSlot)
         this.body.AddChild(this.cards)
+        this.body.AddChild(this.activitySlot)
+        this.body.AddChild(this.connectionSlot)
         this.subscriptions.push(this.vm.PropertyChanged(OverviewViewModel.RowsProperty).subscribe(() => this.Rebuild()))
         this.host = new ScreenHost(this.Inputs())
         // Outside the ScreenHost so the dialog is visible in every state (including Empty).
@@ -128,6 +139,7 @@ export class OverviewView extends TenantViewBase
             s.dispose()
         }
         this.subscriptions.length = 0
+        this.connectionCard?.Dispose()
         this.CloseDialog()
     }
 
@@ -184,6 +196,8 @@ export class OverviewView extends TenantViewBase
         this.RebuildHeader()
         this.RebuildBanner()
         this.RebuildCards()
+        this.RebuildActivity()
+        this.RebuildConnection()
         this.host?.Update(this.Inputs())
     }
 
@@ -235,6 +249,36 @@ export class OverviewView extends TenantViewBase
             this.cardList.push(card)
             this.cards.AddChild(card)
         }
+    }
+
+    // The activity card re-reads the in-memory log on every rebuild (cheap).
+    private RebuildActivity(): void
+    {
+        for (const child of [...this.activitySlot.Children])
+        {
+            this.activitySlot.RemoveChild(child)
+        }
+        const nav = this.Navigator
+        if (nav === undefined)
+        {
+            return
+        }
+        const body = new ActivityList({ entries: nav.Activity.Entries, max: OverviewView.ActivityMax, emptyText: OverviewView.ActivityEmptyText })
+        const seeAll = new Act({ can: true, onClick: () => nav.OpenActivityDrawer(), label: OverviewView.SeeAllLabel })
+        this.activitySlot.AddChild(new Section({ title: OverviewView.ActivityTitle, actions: seeAll, body }))
+    }
+
+    // Created and loaded exactly once, decoupled from env-event rebuilds so the rollout is not re-probed.
+    private RebuildConnection(): void
+    {
+        if (this.connectionCard !== undefined)
+        {
+            return
+        }
+        const card = new OverviewConnectionCard(this.source, () => this.Navigator?.ShowSection(NavSection.ConnectionStatus))
+        this.connectionCard = card
+        this.connectionSlot.AddChild(card)
+        card.Load().catch((e: unknown) => this.ShowError(e))
     }
 
     private OpenCreate(): void

@@ -6,12 +6,13 @@ import type { Visual } from '@pragmatic-tech-ai/mural/runtime'
 import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pragmatic'
 import { CreateEnvironmentDialog } from '../src/create-environment-dialog.js'
 import { EnvironmentCard } from '../src/environment-card.js'
-import { Act, Banner, ScreenState } from '../src/kit/index.js'
+import { ActivityLog } from '../src/activity-log.js'
+import { Act, ActivityList, Banner, ScreenState } from '../src/kit/index.js'
 import { NavSection } from '../src/nav-model.js'
 import { TenantApiError } from '../src/tenant-api-client.js'
 import { OverviewView } from '../src/overview-view.js'
 import { EnvStatus, EnvType, Template, TenantEventType } from '../src/tenant-types.js'
-import type { AdminCapabilitiesDto, CreateEnvironmentParams, EnvironmentDto, HiveHealthDto, HiveRolloutDto, IEnvironmentsSource, IOverviewSource, ITenantNavigator, ManifestDto } from '../src/tenant-types.js'
+import type { AdminCapabilitiesDto, CreateEnvironmentParams, EnvironmentDto, HiveDto, HiveHealthDto, HiveRolloutDto, IConnectionSource, IEnvironmentsSource, IOverviewSource, ITenantNavigator, ManifestDto } from '../src/tenant-types.js'
 
 class Fixtures
 {
@@ -56,7 +57,7 @@ class Fixtures
     }
 }
 
-class FakeSource implements IOverviewSource, IEnvironmentsSource
+class FakeSource implements IOverviewSource, IEnvironmentsSource, IConnectionSource
 {
     public Envs: EnvironmentDto[] = [Fixtures.Env('alpha'), Fixtures.Env('beta')]
     public EnvFailure: Error | undefined
@@ -88,8 +89,16 @@ class FakeSource implements IOverviewSource, IEnvironmentsSource
         }
         return out
     }
+    public RolloutCalls = 0
+    public HiveListCalls = 0
+    public async ListHives(): Promise<HiveDto[]>
+    {
+        this.HiveListCalls++
+        return [{ id: 'h1', tenantId: 't1', displayName: 'Hive', cluster: { backend: 'k', mode: 'm' }, registry: { mode: 'r' }, createdAt: '' }]
+    }
     public async GetRollout(_hiveId: string): Promise<HiveRolloutDto>
     {
+        this.RolloutCalls++
         return { targetVersion: 'v1', environments: [{ environmentName: 'alpha', runningImage: 'img:v1', obsolete: false, ready: true }] }
     }
     public async StartEnvironment(name: string): Promise<EnvironmentDto> { return Fixtures.Env(name) }
@@ -115,8 +124,10 @@ class Nav implements ITenantNavigator
     public get Profile(): undefined { return undefined }
     public get Capabilities(): AdminCapabilitiesDto | undefined { return this.Caps }
     public get OwnerContact(): undefined { return undefined }
-    public get Activity(): never { throw new Error('unused') }
-    public OpenActivityDrawer(): void {}
+    public readonly Log = new ActivityLog()
+    public DrawerOpens = 0
+    public get Activity(): ActivityLog { return this.Log }
+    public OpenActivityDrawer(): void { this.DrawerOpens++ }
 }
 
 class Harness
@@ -300,5 +311,43 @@ describe('OverviewView', () =>
         act.Press()
         assert.ok(view.OpenDialog instanceof CreateEnvironmentDialog)
         assert.equal(Fixtures.Collect(view).filter(v => v instanceof CreateEnvironmentDialog).length, 1)
+    })
+
+    it('recent activity shows at most 5 rows and See all opens the drawer', async () =>
+    {
+        Fixtures.InitApp()
+        const view = new OverviewView(new FakeSource(), 'h1')
+        const nav = new Nav()
+        for (let i = 0; i < 8; i++)
+        {
+            nav.Log.Record({ type: TenantEventType.EnvironmentChanged, environmentName: 'env' + i })
+        }
+        view.AttachNavigator(nav)
+        await view.Refresh()
+        const list = Fixtures.Collect(view).find(v => v instanceof ActivityList) as ActivityList
+        assert.equal(list.Rows.length, 5)
+        const see = Fixtures.Collect(view).filter(v => v instanceof Act).find(a => Fixtures.Texts(a).includes(OverviewView.SeeAllLabel)) as Act
+        see.Press()
+        assert.equal(nav.DrawerOpens, 1)
+    })
+
+    it('an empty log shows the honest empty text', async () =>
+    {
+        const { view } = await Harness.Make()
+        const list = Fixtures.Collect(view).find(v => v instanceof ActivityList) as ActivityList
+        assert.equal(list.IsEmpty, true)
+        assert.ok(Fixtures.Texts(list).includes(OverviewView.ActivityEmptyText))
+    })
+
+    it('probes the rollout once; env events do not re-probe the connection card', async () =>
+    {
+        const { view, src } = await Harness.Make()
+        await new Promise(resolve => setTimeout(resolve, 10))
+        const before = src.HiveListCalls
+        assert.equal(before, 1)
+        await view.ApplyEvent({ type: TenantEventType.EnvironmentCreated, environmentName: 'gamma' })
+        await new Promise(resolve => setTimeout(resolve, 10))
+        assert.equal(src.HiveListCalls, before)
+        assert.ok(Fixtures.Texts(view).includes(OverviewView.ConnectionTitle))
     })
 })
