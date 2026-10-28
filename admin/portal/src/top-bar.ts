@@ -18,6 +18,7 @@ export interface TopBarInputs
     onLogout: () => void
     onLegacy: () => void
     operatorEmail: string
+    roleLabel: string
 }
 
 // Vertical host: the bar row (context label, destination search, theme toggle, operator email, Logout,
@@ -32,6 +33,7 @@ export class TopBar extends StackPanel
     public static readonly SearchPlaceholder = 'Jump to...'
     public static readonly ThemeToggleLabel = 'Toggle theme'
     private static readonly KeyDownEvent = 'KeyDown'
+    private static readonly RoleSeparator = ' - '
 
     private readonly bar = new StackPanel()
     private readonly spacer = new StackPanel()
@@ -39,6 +41,7 @@ export class TopBar extends StackPanel
     private readonly searchBox = new TextBox()
     private readonly contextLabel = new TextBlock()
     private readonly emailLabel = new TextBlock()
+    private readonly roleLabel = new TextBlock()
     private readonly themeToggle: Act
     private readonly logoutButton: Act
     private readonly legacyButton: Act
@@ -63,6 +66,8 @@ export class TopBar extends StackPanel
 
         this.emailLabel.Text = inputs.operatorEmail
         this.bar.AddChild(this.emailLabel)
+        this.roleLabel.Text = TopBar.RoleSeparator + inputs.roleLabel
+        this.bar.AddChild(this.roleLabel)
         this.logoutButton = new Act({ can: true, label: TopBar.LogoutLabel, variant: ActVariant.Secondary, onClick: () => this.Logout() })
         this.bar.AddChild(this.logoutButton)
         // Dev-only entry into the demoted legacy environment/graph tooling: sits in the operator-menu
@@ -132,6 +137,11 @@ export class TopBar extends StackPanel
         const toDark = this.scheme === ThemeScheme.Light
         this.scheme = toDark ? ThemeScheme.Dark : ThemeScheme.Light
         ThemeManager.ApplyScheme(toDark ? PragmaticDark.instance : PragmaticLight.instance)
+    }
+
+    public get RoleLabelText(): string
+    {
+        return this.inputs.roleLabel
     }
 
     public get OperatorEmail(): string

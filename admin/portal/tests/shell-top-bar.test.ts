@@ -12,6 +12,7 @@ class Fixtures
         return new TopBar({
             context: 'Platform',
             operatorEmail: 'op@example.com',
+            roleLabel: 'Operator',
             onJump: s => { jumps.push(s) },
             onLogout: () => { logouts.push(1) },
             onLegacy: () => { legacies.push(1) },
@@ -106,5 +107,11 @@ describe('PA top bar', () =>
         assert.equal(tb.OperatorEmail, 'op@example.com')
         assert.equal(tb.Context, 'Platform')
         assert.equal(tb.BannerSlot.Children.Count, 0)
+    })
+
+    it('echoes the role label', () =>
+    {
+        const tb = Fixtures.Make([], [])
+        assert.equal(tb.RoleLabelText, 'Operator')
     })
 })

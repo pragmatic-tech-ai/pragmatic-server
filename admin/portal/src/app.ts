@@ -13,12 +13,14 @@ import { TenantListView } from './tenant-list-view.js'
 import { CreateTenantView } from './create-tenant-view.js'
 import { HiveListView } from './hive-list-view.js'
 import { CreateHiveView } from './create-hive-view.js'
-import type { IPortalNavigator, IPortalView } from './portal-types.js'
+import type { IPortalNavigator, IPortalView, OperatorDto } from './portal-types.js'
 
 import { ComingSoonView } from './coming-soon-view.js'
 import { NavModel, PaSection } from './nav-model.js'
 import { NavRail } from './nav-rail.js'
 import { TopBar } from './top-bar.js'
+import { Banner, BannerTone } from './kit/index.js'
+import { OperatorContext } from './operator-context.js'
 
 // Root shell: grouped nav rail + top bar around a content host. Owns the API client, routes the nine
 // sections to placeholders, keeps the legacy drill-down reachable via a dev-only entry, and refreshes
@@ -29,6 +31,7 @@ export class App extends StackPanel implements IPortalNavigator
     public static readonly TitleText = 'Pragmatic Admin'
     public static readonly LogoutLabel = 'Logout'
     private static readonly ContextText = 'Platform'
+    private static readonly ObserverNoticeText = 'Observer - read-only. You can view everything here; actions need the Operator role.'
 
     private readonly client: ControlPlaneClient
     private readonly navColumn = new StackPanel()
@@ -38,6 +41,7 @@ export class App extends StackPanel implements IPortalNavigator
     private navRail: NavRail | undefined
     private topBar: TopBar | undefined
     private shellShown = false
+    private operator: OperatorContext | undefined
     private active: PaSection | undefined
     private current: (Visual & IPortalView) | undefined
 
@@ -80,25 +84,31 @@ export class App extends StackPanel implements IPortalNavigator
         return this.shellShown ? this.topBar : undefined
     }
 
+    // Test/screen seam: the signed-in operator's capability, otherwise undefined.
+    public get Operator(): OperatorContext | undefined
+    {
+        return this.shellShown ? this.operator : undefined
+    }
+
     // Probes the session cookie: signed in -> Fleet in the shell, otherwise -> login.
     public async Boot(): Promise<void>
     {
-        let operator: { email: string } | null = null
+        let session: OperatorDto | null = null
         try
         {
-            operator = await this.client.Session()
+            session = await this.client.Session()
         }
         catch
         {
             // Session probe failed (network/server error): fall back to the login view.
-            operator = null
+            session = null
         }
-        if (operator === null)
+        if (session === null)
         {
             this.ShowLogin()
             return
         }
-        this.MountShell(operator.email)
+        this.MountShell(session.email, OperatorContext.FromWire(session.role))
         this.ShowSection(PaSection.Fleet)
         this.navRail?.FocusActive()
     }
@@ -151,9 +161,10 @@ export class App extends StackPanel implements IPortalNavigator
         return undefined
     }
 
-    private MountShell(operatorEmail: string): void
+    private MountShell(operatorEmail: string, operator: OperatorContext): void
     {
         this.UnmountShell()
+        this.operator = operator
         this.navRail = new NavRail(s => this.ShowSection(s), this.active)
         this.topBar = new TopBar({
             context: App.ContextText,
@@ -161,7 +172,12 @@ export class App extends StackPanel implements IPortalNavigator
             onLogout: () => { void this.Logout() },
             onLegacy: () => this.ShowList(),
             operatorEmail,
+            roleLabel: operator.RoleLabel,
         })
+        if (!operator.CanMutate)
+        {
+            this.topBar.BannerSlot.AddChild(new Banner({ tone: BannerTone.Info, text: App.ObserverNoticeText }))
+        }
         this.navColumn.AddChild(this.navRail)
         this.topHost.AddChild(this.topBar)
         // Nav sits left of the right column: rebuild the root children in order.
@@ -188,6 +204,7 @@ export class App extends StackPanel implements IPortalNavigator
         this.RemoveChild(this.navColumn)
         this.navRail = undefined
         this.topBar = undefined
+        this.operator = undefined
         this.shellShown = false
     }
 
