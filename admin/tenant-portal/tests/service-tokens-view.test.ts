@@ -1,15 +1,28 @@
-import { describe, it } from 'node:test'
+import { beforeEach, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { Button } from '@pragmatic-tech-ai/mural/framework'
-import { DataGridTextColumn } from '@pragmatic-tech-ai/mural/framework/data-grid/data-grid-column.js'
-import { SelectionMode } from '@pragmatic-tech-ai/mural/framework/list/selector.js'
-import type { ServiceTokenRow } from '../src/service-token-row.js'
+import { Button, ButtonVariant } from '@pragmatic-tech-ai/mural/framework'
+import { Application } from '@pragmatic-tech-ai/mural/runtime'
+import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pragmatic'
+import { ServiceTokenRow } from '../src/service-token-row.js'
+import { PillKind } from '../src/kit/pill-kinds.js'
 import { ServiceTokensView } from '../src/service-tokens-view.js'
 import { TenantApiError } from '../src/tenant-api-client.js'
-import type { EnvironmentDto, ITenantNavigator, IssueTokenParams, ITokensSource, ServiceTokenSummaryDto, TokenIssuedDto } from '../src/tenant-types.js'
+import type { AdminCapabilitiesDto, EnvironmentDto, ITenantNavigator, IssueTokenParams, ITokensSource, ServiceTokenSummaryDto, TokenIssuedDto } from '../src/tenant-types.js'
 
 class Fixtures
 {
+    private static app: Application | undefined
+
+    public static InitApp(): void
+    {
+        if (Fixtures.app === undefined)
+        {
+            Fixtures.app = new Application()
+            Fixtures.app.initialize({ theme: Pragmatic, scheme: PragmaticLight })
+        }
+        Application.current = Fixtures.app
+    }
+
     public static readonly Secret = 'sk_live_SUPERSECRET_123'
 
     public static Texts(node: unknown): string[]
@@ -163,7 +176,8 @@ class Nav implements ITenantNavigator
     public ShowFieldSecurity(): void {}
     public ShowSection(_section: unknown): void {}
     public get Profile(): undefined { return undefined }
-    public get Capabilities(): undefined { return undefined }
+    public capabilities: AdminCapabilitiesDto | undefined
+    public get Capabilities(): AdminCapabilitiesDto | undefined { return this.capabilities }
     public get OwnerContact(): undefined { return undefined }
 }
 
@@ -187,17 +201,21 @@ class Harness
 
 describe('ServiceTokensView', () =>
 {
-    it('configures five columns, single selection and rows from the snapshot', async () =>
+    beforeEach(() => Fixtures.InitApp())
+
+    it('renders issued tokens in a SecretTable by reference with no secret', async () =>
     {
         const { view } = await Harness.Make()
-        const grid = view.Grid
-        const cols = [...grid.Columns] as DataGridTextColumn[]
-        assert.equal(cols.length, 5)
-        assert.ok(cols.every(c => c instanceof DataGridTextColumn))
-        assert.deepEqual(cols.map(c => c.BindingPath), ['TokenRef', 'PrincipalId', 'ScopesText', 'ExpiresText', 'StatusText'])
-        assert.equal(grid.SelectionMode, SelectionMode.Single)
-        const rows = grid.ItemsSource as ServiceTokenRow[]
-        assert.deepEqual(rows.map(r => [r.TokenRef, r.ScopesText, r.StatusText]), [['ref-1', 'read, write', 'Active'], ['ref-2', 'read', 'Revoked']])
+        const table = view.Table
+        assert.ok(table)
+        assert.equal(table.RowCount, 2)
+        assert.deepEqual([table.ReferenceAt(0), table.ReferenceAt(1)], ['ref-1', 'ref-2'])
+        const texts = Fixtures.Texts(view)
+        assert.ok(texts.includes('ref-1'))
+        assert.ok(texts.includes('Owner: svc-a'))
+        assert.equal(table.RevokeAct(0).Enabled, true)
+        assert.equal(table.RevokeAct(1).Enabled, false)
+        assert.equal(texts.some(t => t.includes(Fixtures.Secret)), false)
     })
 
     it('renders one button per environment and reloads on a different pick', async () =>
@@ -241,56 +259,81 @@ describe('ServiceTokensView', () =>
         assert.deepEqual(src.issued, [{ principalId: 'svc-new', scopes: ['read', 'write', 'admin'], expiresInSeconds: 2592000 }])
         assert.equal(Fixtures.BoxOf(view, ServiceTokensView.PrincipalPlaceholder).Text, '')
         assert.equal(Fixtures.BoxOf(view, ServiceTokensView.ScopesPlaceholder).Text, '')
-        const texts = Fixtures.Texts(view)
-        assert.ok(texts.includes(Fixtures.Secret))
-        assert.ok(texts.includes(ServiceTokensView.RefLabel + 'ref-new'))
-        assert.ok(Fixtures.Labels(view).includes(ServiceTokensView.DismissLabel))
+        assert.equal(view.Reveal?.Value, Fixtures.Secret)
     })
 
-    it('never carries the secret into the grid, and removes it from every node after Dismiss', async () =>
+    it('reveals the secret once through OnceSecret, then dismisses it', async () =>
     {
         const { view } = await Harness.Make()
         await Harness.Issue(view)
-        const gridHas = (): boolean => JSON.stringify(view.Grid.ItemsSource).includes(Fixtures.Secret)
-        assert.equal(gridHas(), false)
-        for (const r of view.Grid.ItemsSource as ServiceTokenRow[])
-        {
-            for (const v of [r.TokenRef, r.PrincipalId, r.ScopesText, r.ExpiresText, r.StatusText])
-            {
-                assert.equal(v.includes(Fixtures.Secret), false)
-            }
-        }
+        const reveal = view.Reveal
+        assert.ok(reveal)
+        assert.equal(reveal.Value, Fixtures.Secret)
         assert.ok(Fixtures.Texts(view).includes(Fixtures.Secret))
-        Fixtures.Click(view, ServiceTokensView.DismissLabel)
+        reveal.PressStore()
+        assert.equal(view.Reveal, undefined)
+        assert.equal(reveal.Value, '')
         assert.equal(Fixtures.Texts(view).some(t => t.includes(Fixtures.Secret)), false)
-        assert.equal(gridHas(), false)
-        assert.equal(Fixtures.Labels(view).includes(ServiceTokensView.DismissLabel), false)
     })
 
-    it('revokes the selected row after an inline confirm', async () =>
+    it('revoking opens a Danger confirm and only confirm calls the source', async () =>
     {
         const { src, view } = await Harness.Make()
-        assert.equal(Fixtures.Labels(view).includes(ServiceTokensView.RevokeLabel), false)
-        const rows = view.Grid.ItemsSource as ServiceTokenRow[]
-        view.Grid.SelectedItem = rows[0]
-        assert.ok(Fixtures.Labels(view).includes(ServiceTokensView.RevokeLabel))
-        Fixtures.Click(view, ServiceTokensView.RevokeLabel)
-        assert.ok(Fixtures.Labels(view).includes(ServiceTokensView.ConfirmRevokeLabel))
+        view.Table?.RevokeAct(0).Press()
+        const dialog = view.ActiveConfirm
+        assert.ok(dialog)
+        assert.equal(dialog.Actions?.[1]?.Variant, ButtonVariant.Danger)
+        assert.ok(dialog.Lines.some(l => l.includes('stops working immediately')))
         assert.deepEqual(src.revoked, [])
-        Fixtures.Click(view, ServiceTokensView.ConfirmRevokeLabel)
+        dialog.Confirm()
+        await Fixtures.Settle()
         await Fixtures.Settle()
         assert.deepEqual(src.revoked, ['ref-1'])
+        assert.equal(view.ActiveConfirm, undefined)
     })
 
-    it('cancelling the confirm revokes nothing', async () =>
+    it('cancelling the revoke confirm revokes nothing', async () =>
     {
         const { src, view } = await Harness.Make()
-        view.Grid.SelectedItem = (view.Grid.ItemsSource as ServiceTokenRow[])[0]
-        Fixtures.Click(view, ServiceTokensView.RevokeLabel)
-        Fixtures.Click(view, ServiceTokensView.CancelLabel)
+        view.Table?.RevokeAct(0).Press()
+        view.ActiveConfirm?.Cancel()
         await Fixtures.Settle()
         assert.deepEqual(src.revoked, [])
-        assert.ok(Fixtures.Labels(view).includes(ServiceTokensView.RevokeLabel))
+        assert.equal(view.ActiveConfirm, undefined)
+    })
+
+    it('keeps the same dialog instance across unrelated re-renders', async () =>
+    {
+        const { view } = await Harness.Make()
+        view.Table?.RevokeAct(0).Press()
+        const dialog = view.ActiveConfirm
+        view.Render()
+        assert.equal(view.ActiveConfirm, dialog)
+        assert.ok(dialog)
+    })
+
+    it('revoke is denied without the access capability, naming the permission', async () =>
+    {
+        const src = new FakeSource()
+        const view = new ServiceTokensView(src)
+        const nav = new Nav()
+        nav.capabilities = { envs: true, adopt: true, access: false, settings: true }
+        view.AttachNavigator(nav)
+        await view.Refresh()
+        const act = view.Table?.RevokeAct(0)
+        assert.ok(act)
+        assert.equal(act.Enabled, false)
+        assert.ok(act.DisabledHint?.includes('Manage users & access'))
+        act.Press()
+        assert.equal(view.ActiveConfirm, undefined)
+    })
+
+    it('row pill kind follows the token status', () =>
+    {
+        const base = { tokenRef: 'r', principalId: 'p', scopes: [] as string[] }
+        assert.equal(new ServiceTokenRow({ ...base, expiresAt: null, revoked: false }).PillKind, PillKind.Active)
+        assert.equal(new ServiceTokenRow({ ...base, expiresAt: '2000-01-01T00:00:00Z', revoked: false }).PillKind, PillKind.Expired)
+        assert.equal(new ServiceTokenRow({ ...base, expiresAt: null, revoked: true }).PillKind, PillKind.Revoked)
     })
 
     it('renders Empty, NoEnvironment and Error states distinctly', async () =>
@@ -336,7 +379,7 @@ describe('ServiceTokensView', () =>
         await Harness.Issue(view)
         assert.equal(Fixtures.BoxOf(view, ServiceTokensView.PrincipalPlaceholder).Text, 'svc-new')
         assert.equal(Fixtures.BoxOf(view, ServiceTokensView.ScopesPlaceholder).Text, 'read, write  admin')
-        assert.equal(Fixtures.Labels(view).includes(ServiceTokensView.DismissLabel), false)
+        assert.equal(view.Reveal, undefined)
         assert.ok(Fixtures.Texts(view).includes('nope'))
     })
 
@@ -347,28 +390,6 @@ describe('ServiceTokensView', () =>
         assert.ok(Fixtures.Texts(view).includes(Fixtures.Secret))
         view.Dispose()
         assert.equal(Fixtures.Texts(view).some(t => t.includes(Fixtures.Secret)), false)
-    })
-
-    it('selecting another row cancels a pending revoke', async () =>
-    {
-        const { src, view } = await Harness.Make()
-        const rows = view.Grid.ItemsSource as ServiceTokenRow[]
-        view.Grid.SelectedItem = rows[0]
-        Fixtures.Click(view, ServiceTokensView.RevokeLabel)
-        view.Grid.SelectedItem = rows[1]
-        assert.equal(Fixtures.Labels(view).includes(ServiceTokensView.ConfirmRevokeLabel), false)
-        assert.deepEqual(src.revoked, [])
-    })
-
-    it('reload keeps the selected token section only while the row still exists', async () =>
-    {
-        const { src, view } = await Harness.Make()
-        view.Grid.SelectedItem = (view.Grid.ItemsSource as ServiceTokenRow[])[0]
-        assert.ok(Fixtures.Texts(view).includes(ServiceTokensView.SelectedHeading + 'ref-1'))
-        src.tokens = [src.tokens[1]]
-        Fixtures.Click(view, 'prod')
-        await Fixtures.Settle()
-        assert.equal(Fixtures.Texts(view).some(t => t.startsWith(ServiceTokensView.SelectedHeading)), false)
     })
 
     it('a 401 with a navigator attached routes to login', async () =>
