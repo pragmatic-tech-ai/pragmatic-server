@@ -97,3 +97,16 @@ export interface IPortalView
     AttachNavigator(nav: IPortalNavigator): void
     Refresh(): Promise<void>
 }
+
+export type FleetEnvDto = { name: string; ready: boolean; image?: string; detail: string }
+
+export type FleetHiveDto = {
+    id: string
+    displayName: string
+    tenant: { id: string; displayName: string } | null
+    client: { id: string; displayName: string } | null
+    clusterBackend: string
+    clusterMode: string
+    lastSeen: string | null
+    environments: FleetEnvDto[]
+}

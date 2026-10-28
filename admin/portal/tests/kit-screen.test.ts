@@ -1,9 +1,12 @@
 import { after, before, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { TextBlock } from '@pragmatic-tech-ai/mural/basic'
+import { Button } from '@pragmatic-tech-ai/mural/framework'
 import { Key, Application } from '@pragmatic-tech-ai/mural/runtime'
 import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pragmatic'
 import {
-    Act, ErrorStatePanel, InternalTag, KeyActivatedButton, PageHeader, ScreenHost, ScreenHostInputs, ScreenState,
+    Act, ErrorStatePanel, InternalTag, KeyActivatedButton, ObservedPanel, PageHeader, PillKind, ScreenHost, ScreenHostInputs, ScreenState,
+    StatusPill,
 } from '../src/kit/index.js'
 
 class Fixtures
@@ -11,6 +14,16 @@ class Fixtures
     public static Inputs(over: Partial<ScreenHostInputs>): ScreenHostInputs
     {
         return { loading: false, allowed: true, isEmpty: false, error: false, ...over }
+    }
+
+    public static Descendants(v: unknown): unknown[]
+    {
+        const out: unknown[] = []
+        for (const c of [...((v as { Children?: readonly unknown[] }).Children ?? [])])
+        {
+            out.push(c, ...Fixtures.Descendants(c))
+        }
+        return out
     }
 
     public static Click(b: KeyActivatedButton): void
@@ -127,5 +140,25 @@ describe('kit screen states', () =>
     it('InternalTag label is Internal', () =>
     {
         assert.equal(new InternalTag().Label, 'Internal')
+    })
+
+    it('ObservedPanel shows title, Observed pill, default or given note', () =>
+    {
+        const body = new TextBlock()
+        body.Text = 'x'
+        const p = new ObservedPanel({ title: 'Cluster', body })
+        assert.equal(p.Title, 'Cluster')
+        assert.ok(p.NoteText.length > 0)
+        assert.equal(new ObservedPanel({ title: 'T', note: 'custom', body: new TextBlock() }).NoteText, 'custom')
+        const pills = Fixtures.Descendants(p).filter(d => d instanceof StatusPill) as StatusPill[]
+        assert.ok(pills.some(d => d.Kind === PillKind.Observed))
+    })
+
+    it('ObservedPanel contains no interactive control', () =>
+    {
+        const body = new TextBlock()
+        body.Text = 'x'
+        const all = Fixtures.Descendants(new ObservedPanel({ title: 'T', body }))
+        assert.ok(!all.some(d => d instanceof KeyActivatedButton || d instanceof Button))
     })
 })
