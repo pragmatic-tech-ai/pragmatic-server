@@ -261,7 +261,7 @@ export class SettingsView extends TenantViewBase
 
     private static Presence(configured: boolean): StatusPill
     {
-        const pill = new StatusPill(configured ? PillKind.Active : PillKind.Disabled)
+        const pill = new StatusPill(configured ? PillKind.Active : PillKind.Unknown)
         pill.LabelOverride = configured ? SettingsView.Configured : SettingsView.NotConfigured
         return pill
     }

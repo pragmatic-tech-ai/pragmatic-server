@@ -5,7 +5,8 @@ import type { Visual } from '@pragmatic-tech-ai/mural/runtime'
 import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pragmatic'
 import { SettingsView } from '../src/settings-view.js'
 import type { ISettingsSource } from '../src/settings-view-model.js'
-import { ScreenState, StatusPill } from '../src/kit/index.js'
+import { Button } from '@pragmatic-tech-ai/mural/framework'
+import { PillKind, ScreenState, StatusPill } from '../src/kit/index.js'
 import { TenantApiError } from '../src/tenant-api-client.js'
 import type { HiveDto, TenantProfileDto } from '../src/tenant-types.js'
 
@@ -122,7 +123,8 @@ describe('SettingsView', () =>
         assert.ok(t.includes(SettingsView.Configured))
         assert.ok(t.includes(SettingsView.NotConfigured))
         assert.ok(t.includes(SettingsView.IdpNote))
-        assert.equal(Fixtures.Collect(view.IdpTab).filter(v => v instanceof StatusPill).length, 2)
+        const pills = Fixtures.Collect(view.IdpTab).filter((v): v is StatusPill => v instanceof StatusPill)
+        assert.deepEqual(pills.map(p => p.Kind), [PillKind.Active, PillKind.Unknown])
         assert.ok(!/rotate|revoke|edit/i.test(t))
     })
 
@@ -158,5 +160,17 @@ describe('SettingsView', () =>
         src.Failure = new Error('later')
         await view.Vm.Load()
         assert.equal(view.StateHost.State, ScreenState.Populated)
+    })
+})
+
+describe('SettingsView read-only invariant', () =>
+{
+    it('has zero buttons across the three tab contents', async () =>
+    {
+        const view = await Harness.Make()
+        for (const tab of [view.HiveTab, view.ProfileTab, view.IdpTab])
+        {
+            assert.equal(Fixtures.Collect(tab).filter(v => v instanceof Button).length, 0)
+        }
     })
 })
