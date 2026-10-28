@@ -239,6 +239,8 @@ export class ControlPlaneHost
 
     private static readonly SessionPath = '/api/session'
     private static readonly FleetPath = '/api/fleet'
+    private static readonly GatingAllPath = '/api/gating'
+    private static readonly SelectionsAllPath = '/api/selections'
     private static readonly EventsTicketPath = '/api/events-ticket'
     private static readonly ProtocolHeader = 'sec-websocket-protocol'
     private static readonly ProtocolSeparator = ','
@@ -694,6 +696,16 @@ export class ControlPlaneHost
         if (rom !== null)
         {
             return await this.RouteRollout(req, res, method, rom)
+        }
+        if (path === ControlPlaneHost.GatingAllPath && method === PlaneHttp.MethodGet)
+        {
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, [...this.deployments.AllGating()])
+            return true
+        }
+        if (path === ControlPlaneHost.SelectionsAllPath && method === PlaneHttp.MethodGet)
+        {
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, [...this.deployments.AllSelections()])
+            return true
         }
         if (path === ControlPlaneHost.FleetPath && method === PlaneHttp.MethodGet)
         {

@@ -1,8 +1,8 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import type { HiveRecord } from './platform-records.js'
 import type { ManifestRecord, ManifestRegistry } from './manifest-record.js'
-import type { GatingRegistry } from './gating-record.js'
-import type { SelectionRegistry } from './selection-record.js'
+import type { GatingRecord, GatingRegistry } from './gating-record.js'
+import type { SelectionRecord, SelectionRegistry } from './selection-record.js'
 import type { HiveObservationRegistry } from './hive-observation-record.js'
 import type { HiveHealthDto } from './hive-health-producer.js'
 import type { RolloutRegistrationRegistry } from './rollout-registration-record.js'
@@ -69,6 +69,18 @@ export class PlatformDeploymentRegistry
     public AllManifests(): readonly ManifestRecord[]
     {
         return this.manifests.List()
+    }
+
+    /** Every gating allowlist record, across all tenants. */
+    public AllGating(): readonly GatingRecord[]
+    {
+        return this.gating.List()
+    }
+
+    /** Every per-hive selection record. */
+    public AllSelections(): readonly SelectionRecord[]
+    {
+        return this.selections.List()
     }
 
     /** Marks a published version withdrawn (or restores it). A withdrawn version stays published and gated but is flagged for the UI. */

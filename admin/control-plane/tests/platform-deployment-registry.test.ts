@@ -160,6 +160,37 @@ test('SelectTarget validates published and gated for the hive tenant', async () 
     })
 })
 
+test('AllGating lists every gate across tenants, and is empty when fresh', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        assert.deepEqual(reg.AllGating(), [])
+        await reg.Publish(Fx.V1, Fx.Image(Fx.V1))
+        await reg.Publish(Fx.V2, Fx.Image(Fx.V2))
+        await reg.Gate(Fx.TenantA, Fx.V1)
+        await reg.Gate(Fx.TenantA, Fx.V2)
+        const all = reg.AllGating()
+        assert.equal(all.length, 2)
+        assert.deepEqual(all.map(g => g.version).sort(), [Fx.V1, Fx.V2])
+        assert.ok(all.every(g => g.tenantId === Fx.TenantA))
+    })
+})
+
+test('AllSelections lists one record per hive with the latest target, and is empty when fresh', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        assert.deepEqual(reg.AllSelections(), [])
+        await Fx.PublishGated(reg, [Fx.V1, Fx.V2])
+        await reg.SelectTarget(Fx.HiveA, Fx.V1)
+        await reg.SelectTarget(Fx.HiveA, Fx.V2)
+        const all = reg.AllSelections()
+        assert.equal(all.length, 1)
+        assert.equal(all[0].hiveId, Fx.HiveA)
+        assert.equal(all[0].targetVersion, Fx.V2)
+    })
+})
+
 test('obsoletion is strict image equality and clears on match', async () =>
 {
     await Fx.Run(async reg =>

@@ -146,6 +146,44 @@ describe('ControlPlaneHost rollout routes', () =>
         assert.notEqual(all.find(m => m.id === '1.0.0')!.withdrawn, true)
     })
 
+    it('lists every gating record on GET /api/gating, and [] when none', async () =>
+    {
+        const empty = await Harness.Send(host, 'GET', '/api/gating')
+        assert.equal(empty.status, 200)
+        assert.deepEqual(JSON.parse(empty.body), [])
+        await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        await Harness.Send(host, 'POST', '/api/manifests', { version: '2.0.0', image: 'img:2' })
+        await Harness.Send(host, 'POST', '/api/tenants/t1/gating', { version: '1.0.0' })
+        await Harness.Send(host, 'POST', '/api/tenants/t1/gating', { version: '2.0.0' })
+        const listed = await Harness.Send(host, 'GET', '/api/gating')
+        assert.equal(listed.status, 200)
+        const all = JSON.parse(listed.body) as { tenantId: string; version: string }[]
+        assert.deepEqual(all.map(g => g.version).sort(), ['1.0.0', '2.0.0'])
+        assert.ok(all.every(g => g.tenantId === 't1'))
+    })
+
+    it('lists every selection record on GET /api/selections, and [] when none', async () =>
+    {
+        const empty = await Harness.Send(host, 'GET', '/api/selections')
+        assert.equal(empty.status, 200)
+        assert.deepEqual(JSON.parse(empty.body), [])
+        await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        await Harness.Send(host, 'POST', '/api/tenants/t1/gating', { version: '1.0.0' })
+        await deployments.SelectTarget('local1', '1.0.0')
+        const listed = await Harness.Send(host, 'GET', '/api/selections')
+        assert.equal(listed.status, 200)
+        const all = JSON.parse(listed.body) as { hiveId: string; targetVersion: string }[]
+        assert.equal(all.length, 1)
+        assert.equal(all[0]!.hiveId, 'local1')
+        assert.equal(all[0]!.targetVersion, '1.0.0')
+    })
+
+    it('challenges unauthenticated GET /api/gating and /api/selections with 401', async () =>
+    {
+        assert.equal((await Harness.Send(host, 'GET', '/api/gating', undefined, false)).status, 401)
+        assert.equal((await Harness.Send(host, 'GET', '/api/selections', undefined, false)).status, 401)
+    })
+
     it('answers a withdrawn toggle for an unknown version with 404', async () =>
     {
         assert.equal((await Harness.Send(host, 'POST', '/api/manifests/9.9.9/withdrawn')).status, 404)
