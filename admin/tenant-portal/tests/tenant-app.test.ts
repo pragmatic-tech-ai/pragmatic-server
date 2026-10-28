@@ -13,7 +13,7 @@ import type { HiveRolloutDto, ManifestDto, EnvironmentDto, TenantProfileDto, Hiv
 import { ServiceTokensView } from '../src/service-tokens-view.js'
 import { RolesPrivilegesView } from '../src/roles-privileges-view.js'
 import { FieldSecurityView } from '../src/field-security-view.js'
-import { UsersAccessHubView } from '../src/users-access-hub-view.js'
+import { UsersAccessPageView } from '../src/users-access-page-view.js'
 import { EnvironmentDetailView } from '../src/environment-detail-view.js'
 import { ComingSoonView } from '../src/coming-soon-view.js'
 import { EnvironmentsView } from '../src/environments-view.js'
@@ -356,13 +356,13 @@ describe('TenantApp', () =>
         assert.equal(rail.Active, NavSection.Overview)
     })
 
-    it('ShowSection(UsersAccess) shows the hub', async () =>
+    it('ShowSection(UsersAccess) shows the page', async () =>
     {
         const { app } = Fixtures.Make(Session)
         await app.Boot()
         app.ShowSection(NavSection.UsersAccess)
         await new Promise(r => setTimeout(r, 0))
-        assert.ok(Fixtures.CurrentOf(app) instanceof UsersAccessHubView)
+        assert.ok(Fixtures.CurrentOf(app) instanceof UsersAccessPageView)
         assert.equal(Fixtures.Find(app, NavRail)!.Active, NavSection.UsersAccess)
     })
 

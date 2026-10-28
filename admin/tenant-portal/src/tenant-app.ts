@@ -19,7 +19,7 @@ import { UserMenu } from './user-menu.js'
 import { ServiceTokensView } from './service-tokens-view.js'
 import { RolesPrivilegesView } from './roles-privileges-view.js'
 import { FieldSecurityView } from './field-security-view.js'
-import { UsersAccessHubView } from './users-access-hub-view.js'
+import { UsersAccessPageView } from './users-access-page-view.js'
 
 // Root shell: auth-gated boot; a nav rail on the left, and on the right a top bar over the section content host.
 export class TenantApp extends StackPanel implements ITenantNavigator
@@ -124,7 +124,7 @@ export class TenantApp extends StackPanel implements ITenantNavigator
                 this.ShowEnvironments()
                 break
             case NavSection.UsersAccess:
-                this.Show(new UsersAccessHubView(this.client, this.currentPrincipalId))
+                this.Show(new UsersAccessPageView(this.client, this.currentPrincipalId))
                 break
             case NavSection.Overview:
                 void this.ShowOverview()
