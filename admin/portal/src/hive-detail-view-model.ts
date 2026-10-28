@@ -24,6 +24,7 @@ export class HiveDetailViewModel extends Observable
     private static readonly AwaitingText = 'Awaiting first dial-in.'
     private static readonly NoText = ''
     private static readonly NoImage = '-'
+    private static readonly KeyOwner = 'Client / tenant'
     private static readonly KeyConnection = 'Connection'
     private static readonly KeyLastCheckIn = 'Last check-in'
     private static readonly KeyCluster = 'Cluster'
@@ -47,6 +48,7 @@ export class HiveDetailViewModel extends Observable
         this.banner = this.DeriveBanner()
         const connectionLabel = PillKinds.For(FleetPresentation.ConnectionKind(this.row.connection)).label
         this.homeChannel = [
+            { key: HiveDetailViewModel.KeyOwner, value: this.OwnerLabel },
             { key: HiveDetailViewModel.KeyConnection, value: connectionLabel },
             { key: HiveDetailViewModel.KeyLastCheckIn, value: this.row.lastSeenLabel },
             { key: HiveDetailViewModel.KeyCluster, value: this.cluster },

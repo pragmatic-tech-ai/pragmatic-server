@@ -46,10 +46,12 @@ describe('HiveDetailViewModel', () =>
         assert.equal(vm.Banner.tone, BannerTone.Warning)
         assert.ok(vm.Banner.text.includes('Hive One'))
         assert.ok(vm.Banner.text.includes('nothing to retry'))
-        assert.deepEqual(vm.HomeChannel.map(i => i.key), ['Connection', 'Last check-in', 'Cluster', 'Environments observed'])
+        assert.deepEqual(vm.HomeChannel.map(i => i.key), ['Client / tenant', 'Connection', 'Last check-in', 'Cluster', 'Environments observed'])
         const quietLabel = PillKinds.For(FleetPresentation.ConnectionKind(FleetConnection.Quiet)).label
-        assert.equal(vm.HomeChannel[0].value, quietLabel)
-        assert.notEqual(vm.HomeChannel[0].value, vm.HomeChannel[1].value)
+        assert.equal(vm.HomeChannel[1].value, quietLabel)
+        assert.notEqual(vm.HomeChannel[1].value, vm.HomeChannel[2].value)
+        assert.equal(vm.HomeChannel[0].value, vm.OwnerLabel)
+        assert.equal(vm.OwnerLabel, 'Client One / Tenant One')
     })
 
     it('shows an info banner and no envs for an awaiting hive', () =>
@@ -74,6 +76,6 @@ describe('HiveDetailViewModel', () =>
         assert.equal(vm.EnvRows[1].image, '-')
         assert.equal(vm.Cluster, 'k8s / managed')
         const connectedLabel = PillKinds.For(FleetPresentation.ConnectionKind(FleetConnection.Connected)).label
-        assert.equal(vm.HomeChannel[0].value, connectedLabel)
+        assert.equal(vm.HomeChannel[1].value, connectedLabel)
     })
 })
