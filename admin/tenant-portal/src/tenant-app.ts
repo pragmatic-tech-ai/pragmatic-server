@@ -1,4 +1,5 @@
 import { Orientation, StackPanel } from '@pragmatic-tech-ai/mural/basic'
+import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { ActivityLog } from './activity-log.js'
 import { ComingSoonView } from './coming-soon-view.js'
 import { ConnectionStatusView } from './connection-status-view.js'
@@ -55,7 +56,7 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     private readonly activityLog = new ActivityLog()
     private readonly activityList: ActivityList
     private readonly drawer: Drawer
-    private activitySub: { dispose(): void } | undefined
+    private activitySub: IDisposable | undefined
     private topBar: TopBar | undefined
 
     public constructor(client: TenantApiClient = new TenantApiClient())
