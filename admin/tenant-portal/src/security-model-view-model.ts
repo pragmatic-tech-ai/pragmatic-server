@@ -592,6 +592,12 @@ export class SecurityModelViewModel extends Observable
         this.Refresh()
     }
 
+    // Live derivation of the selected role's record-sharing rows (RecordSharingRows only updates on Refresh).
+    public CurrentRecordSharing(): readonly RecordSharingRowData[]
+    {
+        return this.draft?.RecordSharingFor(this.selectedRoleId ?? SecurityModelViewModel.NoRoleId) ?? []
+    }
+
     // Cell edits go straight to the draft through PrivilegeRow / FieldGrantRow; the view calls this afterwards.
     public RefreshDirty(): void
     {

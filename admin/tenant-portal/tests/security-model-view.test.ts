@@ -2,7 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { TextBox } from '@pragmatic-tech-ai/mural/basic'
 import { Checkbox } from '@pragmatic-tech-ai/mural/framework/toggles/checkbox.js'
-import { Button } from '@pragmatic-tech-ai/mural/framework'
+import { Button, ComboBox } from '@pragmatic-tech-ai/mural/framework'
 import { Application } from '@pragmatic-tech-ai/mural/runtime'
 import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pragmatic'
 import { PrivilegeRow } from '../src/privilege-row.js'
@@ -350,6 +350,20 @@ class OrgFixtures
         return out
     }
 
+    public static Combos(node: unknown, out: ComboBox[] = []): ComboBox[]
+    {
+        if (node instanceof ComboBox)
+        {
+            out.push(node)
+        }
+        const n = node as { Children?: Iterable<unknown> }
+        for (const c of n.Children ?? [])
+        {
+            OrgFixtures.Combos(c, out)
+        }
+        return out
+    }
+
     public static Contains(node: unknown, target: unknown): boolean
     {
         if (node === target)
@@ -501,4 +515,66 @@ describe('SecurityModelView Roles / Organization', () =>
         assert.equal(view.Vm.Dirty, true)
         assert.ok(OrgFixtures.Contains(view.MembershipHost, checks[0]))
     })
+
+    it('Record sharing follows a privilege edit without a rebuild', async () =>
+    {
+        const view = await Harness.Make()
+        assert.ok(!Fixtures.Texts(view.RecordHost).includes(SecurityModelView.CanShareLabel))
+        const cell = view.CellFor('Customer', PrivilegeAction.Share)
+        assert.ok(cell)
+        Fixtures.ClickButton(cell)
+        assert.ok(Fixtures.Texts(view.RecordHost).includes(SecurityModelView.CanShareLabel))
+        assert.equal(view.CellFor('Customer', PrivilegeAction.Share), cell)
+    })
+
+    it('a loaded model with no roles or profiles still exposes a saveable Organization pane', async () =>
+    {
+        const src = new FakeSource()
+        src.Model = { ...src.Model!, roles: [], fieldSecurity: undefined }
+        const view = await Harness.Make(src)
+        assert.equal(OrgFixtures.Labels(view.Mode).length, 2)
+        assert.ok(OrgFixtures.Contains(view, view.Mode))
+        view.Mode.Select(1)
+        OrgFixtures.Boxes(view.BusinessUnitHost)[0].Text = 'HQ'
+        Fixtures.Click(view.BusinessUnitHost, SecurityModelView.AddBusinessUnitLabel)
+        assert.equal(view.Vm.Dirty, true)
+        assert.equal(view.SaveEnabled, true)
+        view.Mode.Select(0)
+        const labels = Fixtures.Buttons(view).map(b => Fixtures.Texts(b).join(''))
+        assert.ok(labels.includes(SecurityModelView.AddRoleLabel))
+        assert.ok(labels.includes(SecurityModelView.AddProfileLabel))
+    })
+
+    it('rebuilds do not grow the subscription count', async () =>
+    {
+        const view = await Harness.Make()
+        view.Mode.Select(1)
+        const before = view.SubscriptionCount
+        for (let i = 0; i < 3; i++)
+        {
+            OrgFixtures.Boxes(view.BusinessUnitHost)[0].Text = 'U' + i
+            Fixtures.Click(view.BusinessUnitHost, SecurityModelView.AddBusinessUnitLabel)
+            Fixtures.Click(view.BusinessUnitHost, SecurityModelView.RemoveLabel)
+        }
+        assert.equal(view.SubscriptionCount, before)
+    })
+
+    it('a parent pick edits in place and updates the indent live', async () =>
+    {
+        const src = new FakeSource()
+        src.Model!.businessUnits = [{ id: 'bu1', name: 'Root' }, { id: 'bu2', name: 'Sales' }]
+        const view = await Harness.Make(src)
+        view.Mode.Select(1)
+        const combos = OrgFixtures.Combos(view.BusinessUnitHost)
+        assert.equal(combos.length, 2)
+        assert.equal(combos[1].SelectedIndex, 0)
+        combos[1].SelectedIndex = 1
+        assert.equal(view.Vm.BusinessUnitRows[1].Parent, 'bu1')
+        assert.equal(view.Vm.Dirty, true)
+        assert.ok(OrgFixtures.Contains(view.BusinessUnitHost, combos[1]))
+        assert.ok(Fixtures.Texts(view.BusinessUnitHost).some(t => t.length > 0 && t.trim() === '' && t.length === 4))
+        combos[1].SelectedIndex = 0
+        assert.equal(view.Vm.BusinessUnitRows[1].Parent, undefined)
+    })
 })
+

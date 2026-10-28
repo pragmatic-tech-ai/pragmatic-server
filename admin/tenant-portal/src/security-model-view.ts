@@ -501,19 +501,21 @@ export class SecurityModelView extends TenantViewBase
         this.message.Text = vm.State === SecurityModelState.Error ? TenantViewBase.NoMessage : vm.Error
         this.AddChild(this.MakeEnvironmentStrip())
         this.AddChild(this.message)
-        const ready = vm.State === SecurityModelState.Ready
-        if (ready)
+        // A loaded model (Ready OR Empty of roles/profiles) always exposes the Roles / Organization
+        // switch and the save bar: org data is editable and saveable even with no roles yet.
+        const empty = vm.State === SecurityModelState.Empty
+        const loaded = vm.State === SecurityModelState.Ready || empty
+        if (loaded)
         {
             this.BuildBody()
         }
         this.stateHost.Update(this.HostInputs())
         this.AddChild(this.stateHost)
-        if (vm.State === SecurityModelState.Empty)
+        if (empty)
         {
-            this.AddChild(this.addRoleStrip)
-            this.AddChild(this.addProfileStrip)
+            this.AddChild(this.body)
         }
-        if (ready)
+        if (loaded)
         {
             this.AddChild(this.saveBar)
         }
@@ -559,6 +561,10 @@ export class SecurityModelView extends TenantViewBase
         this.BuildOwnershipHost()
         this.rolesPane.AddChild(this.MakeRoleStrip())
         this.rolesPane.AddChild(this.addRoleStrip)
+        if (this.vm.State === SecurityModelState.Empty)
+        {
+            this.rolesPane.AddChild(this.addProfileStrip)
+        }
         this.rolesPane.AddChild(this.roleTabs)
         this.body.AddChild(this.mode)
     }
@@ -575,7 +581,7 @@ export class SecurityModelView extends TenantViewBase
     // Read-only derived projection: concept, scope text, and a pill per share/assign grant.
     private BuildRecordHost(): void
     {
-        const rows = this.vm.RecordSharingRows
+        const rows = this.vm.CurrentRecordSharing()
         if (this.vm.SelectedRoleId === undefined || rows.length === 0)
         {
             this.recordHost.AddChild(this.Text(this.vm.SelectedRoleId === undefined ? SecurityModelView.NoRoleSelectedText : SecurityModelView.NoRecordSharingText))
@@ -596,6 +602,14 @@ export class SecurityModelView extends TenantViewBase
             }
             this.recordHost.AddChild(strip)
         }
+    }
+
+    // The derived view is read-only (no focused control), so a privilege edit rebuilds only this
+    // subtree; the grid under the click is never touched.
+    private RebuildRecordHost(): void
+    {
+        this.Clear(this.recordHost)
+        this.BuildRecordHost()
     }
 
     private MakePill(label: string): StatusPill
@@ -657,6 +671,7 @@ export class SecurityModelView extends TenantViewBase
             text.Text = SecurityModelView.SymbolOf(row.Cycle(action))
             sentence.Text = SecurityModelView.SentenceFor(row)
             this.vm.RefreshDirty()
+            this.RebuildRecordHost()
         }))
         this.cells.set(SecurityModelView.CellKey(row.Concept, action), button)
         return button
@@ -666,7 +681,10 @@ export class SecurityModelView extends TenantViewBase
     {
         const host = this.fieldHost
         host.AddChild(this.MakeProfileStrip())
-        host.AddChild(this.addProfileStrip)
+        if (this.vm.State !== SecurityModelState.Empty)
+        {
+            host.AddChild(this.addProfileStrip)
+        }
         if (this.vm.SelectedProfileId === undefined)
         {
             host.AddChild(this.Text(SecurityModelView.NoProfileSelectedText))
@@ -866,17 +884,18 @@ export class SecurityModelView extends TenantViewBase
             host.AddChild(this.Text(SecurityModelView.NoBusinessUnitsText))
         }
         const labels = this.UnitLabels()
+        const byId = new Map<string, BusinessUnitRow>(rows.map(r => [r.Id, r]))
         for (const row of rows)
         {
             const strip = this.Strip()
-            const indent = this.Text(this.IndentFor(row))
+            const indent = this.Text(this.IndentFor(row, byId))
             strip.AddChild(indent)
             strip.AddChild(this.MakeTextEdit(() => row.Name, text => row.Rename(text), SecurityModelView.BusinessUnitPlaceholder))
             const others = rows.filter(r => r.Id !== row.Id).map(r => r.Id)
             strip.AddChild(this.MakeUnitChoice(labels, others, () => row.Parent, id =>
             {
                 row.SetParent(id)
-                indent.Text = this.IndentFor(row)
+                indent.Text = this.IndentFor(row, byId)
             }))
             strip.AddChild(this.MakeButton(SecurityModelView.RemoveLabel, () => this.WhenIdle(() => row.Remove())))
             host.AddChild(strip)
@@ -998,7 +1017,12 @@ export class SecurityModelView extends TenantViewBase
         box.Text = read()
         this.rowSubscriptions.push(box.PropertyChanged(TextBox.TextKey).subscribe(() =>
         {
-            if (!this.vm.Busy && box.Text !== read())
+            if (this.vm.Busy)
+            {
+                box.Text = read()
+                return
+            }
+            if (box.Text !== read())
             {
                 apply(box.Text)
             }
@@ -1012,20 +1036,34 @@ export class SecurityModelView extends TenantViewBase
     {
         const none = SecurityModelView.NoneChoice
         const items = [none, ...ids.map(id => labels.get(id) ?? id)]
-        const labelOf = (id: string | undefined): string => id === undefined ? none : (labels.get(id) ?? id)
         const box = new ComboBox()
         box.Items = items
-        box.SelectedItem = labelOf(read())
+        const indexOf = (id: string | undefined): number => id === undefined ? 0 : ids.indexOf(id) + 1
+        box.SelectedIndex = indexOf(read())
+        let syncing = false
+        const snap = (): void =>
+        {
+            syncing = true
+            box.SelectedIndex = indexOf(read())
+            syncing = false
+        }
         box.AddSelectionChangedListener(() =>
         {
-            const picked = items.indexOf(String(box.SelectedItem)) - 1
-            if (this.vm.Busy)
+            if (syncing)
             {
-                box.SelectedItem = labelOf(read())
                 return
             }
-            apply(picked < 0 ? undefined : ids[picked])
-            box.SelectedItem = labelOf(read())
+            const picked = box.SelectedIndex - 1
+            if (this.vm.Busy)
+            {
+                snap()
+                return
+            }
+            if (picked !== indexOf(read()) - 1)
+            {
+                apply(picked < 0 ? undefined : ids[picked])
+            }
+            snap()
         })
         return box
     }
@@ -1067,9 +1105,8 @@ export class SecurityModelView extends TenantViewBase
     }
 
     // Indent by depth along the Parent chain (bounded, so a bad cycle cannot loop).
-    private IndentFor(row: BusinessUnitRow): string
+    private IndentFor(row: BusinessUnitRow, byId: ReadonlyMap<string, BusinessUnitRow>): string
     {
-        const byId = new Map<string, BusinessUnitRow>(this.vm.BusinessUnitRows.map(r => [r.Id, r]))
         let depth = 0
         let parent = row.Parent
         while (parent !== undefined && byId.has(parent) && depth < SecurityModelView.MaxDepth)
