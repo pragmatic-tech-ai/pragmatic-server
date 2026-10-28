@@ -357,7 +357,7 @@ export interface ISecurityModelSource
 // The slice of TenantApiClient the Connection status page needs.
 export interface IConnectionSource
 {
-    GetHives(): Promise<HiveDto[]>
+    ListHives(): Promise<HiveDto[]>
     GetRollout(hiveId: string): Promise<HiveRolloutDto>
 }
 

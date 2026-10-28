@@ -56,7 +56,7 @@ export class ConnectionStatusViewModel extends Observable
         this.SetState(ConnectionState.Loading)
         try
         {
-            const hives = await this.source.GetHives()
+            const hives = await this.source.ListHives()
             if (token !== this.loadToken)
             {
                 return

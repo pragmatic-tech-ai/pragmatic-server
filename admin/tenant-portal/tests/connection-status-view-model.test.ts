@@ -10,7 +10,7 @@ class FakeSource implements IConnectionSource
     public Rollout: HiveRolloutDto = { targetVersion: '1.2.3', environments: [{ environmentName: 'dev', runningImage: 'img:1', obsolete: false, ready: true }] }
     public Failure: unknown
 
-    public async GetHives(): Promise<HiveDto[]>
+    public async ListHives(): Promise<HiveDto[]>
     {
         return this.Hives
     }
@@ -40,9 +40,9 @@ class DeferredSource implements IConnectionSource
         this.release?.()
     }
 
-    public GetHives(): Promise<HiveDto[]>
+    public ListHives(): Promise<HiveDto[]>
     {
-        return this.inner.GetHives()
+        return this.inner.ListHives()
     }
 
     public async GetRollout(_hiveId: string): Promise<HiveRolloutDto>

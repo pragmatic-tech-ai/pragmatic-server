@@ -1,5 +1,6 @@
 import { Orientation, StackPanel } from '@pragmatic-tech-ai/mural/basic'
 import { ComingSoonView } from './coming-soon-view.js'
+import { ConnectionStatusView } from './connection-status-view.js'
 import { CreateEnvironmentDialog } from './create-environment-dialog.js'
 import { EnvironmentDetailView } from './environment-detail-view.js'
 import { EnvironmentsView } from './environments-view.js'
@@ -129,6 +130,9 @@ export class TenantApp extends StackPanel implements ITenantNavigator
                 break
             case NavSection.Releases:
                 void this.ShowReleases()
+                break
+            case NavSection.ConnectionStatus:
+                this.Show(new ConnectionStatusView(this.client))
                 break
             default:
                 this.Show(new ComingSoonView(TenantApp.LabelFor(section)))
