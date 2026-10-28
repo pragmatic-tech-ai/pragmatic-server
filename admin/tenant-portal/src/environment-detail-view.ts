@@ -4,7 +4,7 @@ import type { Visual } from '@pragmatic-tech-ai/mural/runtime'
 import { EnvironmentDetailViewModel } from './environment-detail-view-model.js'
 import type { IEnvDetailSource } from './environment-detail-view-model.js'
 import { EnvironmentRow } from './environment-row.js'
-import { Banner, BannerTone, ConfirmDialog, ConfirmTone, KeyValueGrid, StatusPill, Tabs } from './kit/index.js'
+import { ActivityList, Banner, BannerTone, ConfirmDialog, ConfirmTone, KeyValueGrid, Section, StatusPill, Tabs } from './kit/index.js'
 import { TenantViewBase } from './tenant-view-base.js'
 import { EnvStatus } from './tenant-types.js'
 import type { EnvironmentDto } from './tenant-types.js'
@@ -25,6 +25,8 @@ export class EnvironmentDetailView extends TenantViewBase
     public static readonly ViewLogsLabel = 'View logs'
     public static readonly HideLogsLabel = 'Hide logs'
     public static readonly LogsHeading = 'Logs'
+    public static readonly ActivityTitle = 'Recent activity'
+    public static readonly ActivityEmptyText = 'No activity observed for this environment yet this session.'
     public static readonly AppTabLabel = 'Application & version'
     public static readonly HealthTabLabel = 'Health & activity'
     public static readonly AccessTabLabel = 'Access'
@@ -189,6 +191,7 @@ export class EnvironmentDetailView extends TenantViewBase
         const panel = new StackPanel()
         panel.Orientation = Orientation.Vertical
         panel.AddChild(this.Text(this.DescribeHealth()))
+        panel.AddChild(this.MakeActivitySection())
         panel.AddChild(this.MakeButton(
             this.logsOpen ? EnvironmentDetailView.HideLogsLabel : EnvironmentDetailView.ViewLogsLabel,
             () => { this.logsOpen = !this.logsOpen; this.tabIndex = EnvironmentDetailView.HealthTab; this.Render() }))
@@ -199,6 +202,15 @@ export class EnvironmentDetailView extends TenantViewBase
             panel.AddChild(this.logScroller)
         }
         return panel
+    }
+
+    private MakeActivitySection(): Section
+    {
+        const entries = this.Navigator?.Activity?.EntriesFor(this.env.name) ?? []
+        return new Section({
+            title: EnvironmentDetailView.ActivityTitle,
+            body: new ActivityList({ entries, emptyText: EnvironmentDetailView.ActivityEmptyText }),
+        })
     }
 
     private MakeAccessTab(): KeyValueGrid

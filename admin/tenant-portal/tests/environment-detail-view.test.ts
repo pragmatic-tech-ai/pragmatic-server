@@ -6,8 +6,10 @@ import type { Visual } from '@pragmatic-tech-ai/mural/runtime'
 import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pragmatic'
 import { EnvironmentDetailView } from '../src/environment-detail-view.js'
 import type { IEnvDetailSource } from '../src/environment-detail-view-model.js'
-import { Banner, BannerTone, ConfirmDialog, StatusPill, Tabs } from '../src/kit/index.js'
-import { EnvStatus, EnvType, Template } from '../src/tenant-types.js'
+import { ActivityLog } from '../src/activity-log.js'
+import { ActivityList, Banner, BannerTone, ConfirmDialog, Section, StatusPill, Tabs } from '../src/kit/index.js'
+import { EnvStatus, EnvType, Template, TenantEventType } from '../src/tenant-types.js'
+import type { ITenantNavigator } from '../src/tenant-types.js'
 import type { EnvironmentDto, HiveHealthDto } from '../src/tenant-types.js'
 
 class Fixtures
@@ -78,6 +80,17 @@ class Fixtures
     public static async Settle(): Promise<void>
     {
         await new Promise(r => setTimeout(r, 0))
+    }
+}
+
+class FakeNavigator
+{
+    public readonly Activity = new ActivityLog()
+    public DrawerOpened = 0
+
+    public OpenActivityDrawer(): void
+    {
+        this.DrawerOpened++
     }
 }
 
@@ -243,5 +256,39 @@ describe('EnvironmentDetailView', () =>
         view.Dispose()
         view.Dispose()
         assert.equal(src.Closed, 1)
+    })
+
+    it('Health tab lists only this environment activity, with no history strip', () =>
+    {
+        const { view } = Fixtures.Make(EnvStatus.Running)
+        const nav = new FakeNavigator()
+        nav.Activity.Record({ type: TenantEventType.EnvironmentChanged, environmentName: 'alpha' })
+        nav.Activity.Record({ type: TenantEventType.EnvironmentChanged, environmentName: 'beta' })
+        nav.Activity.Record({ type: TenantEventType.HealthChanged, environmentName: 'alpha' })
+        view.AttachNavigator(nav as unknown as ITenantNavigator)
+        view.Render()
+        Fixtures.Click(Fixtures.TabsOf(view), 'Health & activity')
+        const host = Fixtures.TabsOf(view).ContentHost
+        const list = Fixtures.Collect(host).find(x => x instanceof ActivityList) as ActivityList
+        assert.equal(list.Rows.length, 2)
+        assert.equal(list.IsEmpty, false)
+        const panel = host.visualChildren[0]
+        assert.deepEqual([...panel.visualChildren].map(c => c.constructor.name), ['TextBlock', 'Section', 'Button'])
+        assert.equal(Fixtures.Collect(host).filter(x => x instanceof Section).length, 1)
+    })
+
+    it('Health tab shows the honest empty text when nothing was observed for this environment', () =>
+    {
+        const { view } = Fixtures.Make(EnvStatus.Running)
+        const nav = new FakeNavigator()
+        nav.Activity.Record({ type: TenantEventType.EnvironmentChanged, environmentName: 'beta' })
+        view.AttachNavigator(nav as unknown as ITenantNavigator)
+        view.Render()
+        Fixtures.Click(Fixtures.TabsOf(view), 'Health & activity')
+        const host = Fixtures.TabsOf(view).ContentHost
+        const list = Fixtures.Collect(host).find(x => x instanceof ActivityList) as ActivityList
+        assert.equal(list.IsEmpty, true)
+        assert.ok(Fixtures.Texts(host).includes(EnvironmentDetailView.ActivityEmptyText))
+        assert.ok(Fixtures.Texts(host).includes(EnvironmentDetailView.ActivityTitle))
     })
 })
