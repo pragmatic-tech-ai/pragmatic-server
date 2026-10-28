@@ -23,6 +23,7 @@ export type ClientDto =
     id: string
     displayName: string
     subscriptionRef?: string
+    createdAt: string
 }
 
 export type TenantDto =

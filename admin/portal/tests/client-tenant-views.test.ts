@@ -13,12 +13,12 @@ class FakeClient
     public async CreateClient(id: string, displayName: string, subscriptionRef?: string): Promise<ClientDto>
     {
         this.Calls.push(['CreateClient', id, displayName, subscriptionRef])
-        return { id, displayName, subscriptionRef }
+        return { id, displayName, subscriptionRef, createdAt: '2026-01-01T00:00:00.000Z' }
     }
 
     public async ListClients(): Promise<ClientDto[]>
     {
-        return [{ id: 'c1', displayName: 'One' }, { id: 'c2', displayName: 'Two' }]
+        return [{ id: 'c1', displayName: 'One', createdAt: '2026-01-01T00:00:00.000Z' }, { id: 'c2', displayName: 'Two', createdAt: '2026-01-02T00:00:00.000Z' }]
     }
 
     public async CreateTenant(id: string, clientId: string, displayName: string): Promise<TenantDto>

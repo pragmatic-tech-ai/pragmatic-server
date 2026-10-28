@@ -2,6 +2,7 @@ import { Orientation, StackPanel, TextBlock } from '@pragmatic-tech-ai/mural/bas
 import type { Visual } from '@pragmatic-tech-ai/mural/runtime'
 import type { ControlPlaneClient } from './api-client.js'
 import { FleetConnection, FleetSegment, FleetViewModel } from './fleet-view-model.js'
+import { FleetPresentation } from './fleet-presentation.js'
 import type { FleetRow } from './fleet-view-model.js'
 import {
     DataTable, KeyActivatedButton, PageHeader, PillKind, PillKinds, PillTone, ScreenHost, Section, TableDensity,
@@ -251,15 +252,7 @@ export class FleetView extends StackPanel implements IPortalView
 
     private static ConnectionKind(c: FleetConnection): PillKind
     {
-        switch (c)
-        {
-            case FleetConnection.Connected:
-                return PillKind.Connected
-            case FleetConnection.Quiet:
-                return PillKind.Quiet
-            default:
-                return PillKind.Awaiting
-        }
+        return FleetPresentation.ConnectionKind(c)
     }
 
     private static HealthKind(r: FleetRow): PillKind
