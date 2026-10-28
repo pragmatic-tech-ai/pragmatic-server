@@ -548,6 +548,25 @@ describe('SecurityModelViewModel', () =>
         assert.equal(vm.RolePrincipalRows.length, 1)
     })
 
+    it('ONE Save persists a privilege, a field grant, an org edit AND a role-assignment grant (four axes)', async () =>
+    {
+        const src = new FakeSource()
+        const vm = await Fixture.Loaded(src)
+        vm.PrivilegeRows[0].Cycle(PrivilegeAction.Create)
+        vm.FieldRows[0].Toggle(FieldPermission.Read, true)
+        vm.AddBusinessUnit('X')
+        vm.AddRolePrincipalGrant('alice')
+        await vm.Save()
+        assert.equal(src.Saved.length, 1)
+        const saved = src.Saved[0].model
+        const admin = saved.roles?.find(r => r.id === 'r1')
+        assert.ok(admin?.privileges.some(p => p.concept === 'Customer' && p.action === PrivilegeAction.Create))
+        const full = saved.fieldSecurity?.profiles.find(p => p.id === 'p1')
+        assert.ok(full?.grants.some(g => g.concept === 'Customer' && g.field === 'ssn' && g.read === true))
+        assert.ok(saved.businessUnits.some(u => u.name === 'X'))
+        assert.ok(saved.roleAssignment?.overrides.some(o => o.principalId === 'alice' && o.roles.includes('r1')))
+    })
+
     it('a 401 on Save with assignment edits still rethrows', async () =>
     {
         const src = new FakeSource()

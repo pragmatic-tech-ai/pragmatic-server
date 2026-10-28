@@ -717,6 +717,21 @@ describe('SecurityModelView People / Who-has-this-profile', () =>
         assert.ok(labels.includes(SecurityModelView.AddPersonLabel))
     })
 
+    it('stale role and profile ids in the assignment render without a row', async () =>
+    {
+        const src = PeopleFixtures.Source()
+        src.Model!.roleAssignment!.overrides.push({ principalId: 'ghost', roles: ['gone'] })
+        src.Model!.fieldSecurity!.profileAssignment = {
+            claimsMapping: [],
+            overrides: [{ principalId: 'phantom', profiles: ['gone'] }],
+            teamProfiles: [],
+        } as FieldProfileAssignmentDto
+        const view = await Harness.Make(src)
+        assert.ok(!Fixtures.Texts(view.PeopleHost).includes('ghost'))
+        assert.ok(!Fixtures.Texts(view.FieldHost).includes('phantom'))
+        assert.ok(Fixtures.Texts(view.PeopleHost).includes('alice'))
+    })
+
     it('the subscription count stays flat across assignment renders and Dispose clears it', async () =>
     {
         const view = await Harness.Make(PeopleFixtures.Source())
