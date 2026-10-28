@@ -157,12 +157,7 @@ describe('ReleasesView', () =>
         const view = Fixtures.View(new FakeClient([Fixtures.Manifest('1.0')], true))
         await view.Refresh()
         assert.equal(view.Host.State, ScreenState.Error)
-        const panel = Fixtures.Walk(view).find(n => n instanceof ErrorStatePanel) as ErrorStatePanel
-        assert.ok(panel)
-        for (const h of (panel.RetryButton as unknown as { _clickHandlers: Array<(a: unknown) => void> })._clickHandlers)
-        {
-            h({})
-        }
+        Fixtures.Retry(view)
         await new Promise(r => setTimeout(r, 0))
         assert.equal(view.Host.State, ScreenState.Populated)
     })
@@ -251,6 +246,7 @@ describe('ReleasesView', () =>
         assert.equal(view.Mode, ReleasesMode.Detail)
         assert.ok(Fixtures.Walk(view).some(n => n instanceof ReleaseDetailView))
         assert.ok(!Fixtures.Walk(view).some(n => n instanceof ErrorStatePanel))
+        assert.notEqual(view.Host.State, ScreenState.Error)
     })
 
     it('a second detail refresh re-renders without throwing', async () =>
@@ -262,5 +258,6 @@ describe('ReleasesView', () =>
         await view.Refresh()
         assert.equal(view.Mode, ReleasesMode.Detail)
         assert.ok(Fixtures.Walk(view).some(n => n instanceof ReleaseDetailView))
+        assert.equal(Fixtures.Walk(view).filter(n => n instanceof ReleaseDetailView).length, 1)
     })
 })

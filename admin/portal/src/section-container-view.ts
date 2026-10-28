@@ -85,11 +85,6 @@ export abstract class SectionContainerView<TRow> extends StackPanel implements I
         this.nav = nav
     }
 
-    protected get Navigator(): IPortalNavigator | undefined
-    {
-        return this.nav
-    }
-
     public async Refresh(): Promise<void>
     {
         if (this.state === SectionState.Detail && this.detailRow !== undefined)
