@@ -1,7 +1,7 @@
 import { afterEach, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { ControlPlaneClient } from '../src/api-client.js'
-import type { HiveDto, ManifestDto, TenantDto } from '../src/portal-types.js'
+import type { GatingDto, HiveDto, ManifestDto, SelectionDto, TenantDto } from '../src/portal-types.js'
 
 type Recorded = { route: string; init: RequestInit | undefined }
 
@@ -141,5 +141,31 @@ describe('ControlPlaneClient platform records', () =>
         assert.equal(call.init?.body, undefined)
         assert.equal(call.init?.credentials, 'same-origin')
         assert.deepEqual(manifests, payload)
+    })
+
+    it('ListGating GETs /api/gating and returns the parsed array', async () =>
+    {
+        const payload: GatingDto[] = [{ tenantId: 't1', version: 'v1', gatedAt: '2026-01-01T00:00:00.000Z' }]
+        FetchStub.Install(payload)
+        const gating = await new ControlPlaneClient().ListGating()
+        const call = FetchStub.Calls[0]!
+        assert.equal(call.route, '/api/gating')
+        assert.equal(call.init?.method, undefined)
+        assert.equal(call.init?.body, undefined)
+        assert.equal(call.init?.credentials, 'same-origin')
+        assert.deepEqual(gating, payload)
+    })
+
+    it('ListSelections GETs /api/selections and returns the parsed array', async () =>
+    {
+        const payload: SelectionDto[] = [{ hiveId: 'h1', targetVersion: 'v1', selectedAt: '2026-01-01T00:00:00.000Z' }]
+        FetchStub.Install(payload)
+        const selections = await new ControlPlaneClient().ListSelections()
+        const call = FetchStub.Calls[0]!
+        assert.equal(call.route, '/api/selections')
+        assert.equal(call.init?.method, undefined)
+        assert.equal(call.init?.body, undefined)
+        assert.equal(call.init?.credentials, 'same-origin')
+        assert.deepEqual(selections, payload)
     })
 })
