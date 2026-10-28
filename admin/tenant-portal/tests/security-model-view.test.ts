@@ -83,6 +83,7 @@ class FakeSource implements ISecurityModelEnvSource
     public SetError: Error | undefined
     public ListError: Error | undefined
     public GetError: Error | undefined
+    public SaveGate: Promise<void> | undefined
     public Model: SecurityModelDto | null = {
         businessUnits: [],
         teams: [],
@@ -130,6 +131,7 @@ class FakeSource implements ISecurityModelEnvSource
     public async SetSecurityModel(_env: string, model: SecurityModelDto): Promise<void>
     {
         this.Saves++
+        await this.SaveGate
         if (this.SetError !== undefined)
         {
             throw this.SetError
@@ -257,7 +259,30 @@ describe('SecurityModelView', () =>
         const view = await Harness.Make(src)
         assert.equal(view.StateHost.State, ScreenState.Empty)
         assert.ok(Fixtures.Texts(view).includes(SecurityModelView.EmptyTitle))
-        assert.ok(Fixtures.Buttons(view).some(b => Fixtures.Texts(b).join('') === SecurityModelView.AddRoleLabel))
+        const labels = Fixtures.Buttons(view).map(b => Fixtures.Texts(b).join(''))
+        assert.ok(labels.includes(SecurityModelView.AddRoleLabel))
+        assert.ok(labels.includes(SecurityModelView.AddProfileLabel))
+    })
+
+    it('refuses mutating clicks while a save is in flight', async () =>
+    {
+        const src = new FakeSource()
+        const view = await Harness.Make(src)
+        Fixtures.ClickButton(view.CellFor('Customer', PrivilegeAction.Create))
+        let release: () => void = () => undefined
+        src.SaveGate = new Promise<void>(r => { release = r })
+        Fixtures.Click(view, SecurityModelView.SaveLabel)
+        assert.equal(view.Vm.Busy, true)
+        const before = view.Vm.PrivilegeRows[0].LevelFor(PrivilegeAction.Delete)
+        Fixtures.ClickButton(view.CellFor('Customer', PrivilegeAction.Delete))
+        assert.equal(view.Vm.PrivilegeRows[0].LevelFor(PrivilegeAction.Delete), before)
+        const box = view.GrantBox(Harness.SsnLabel, FieldPermission.Update)
+        Fixtures.ClickButton(box)
+        assert.equal(box?.IsChecked, false)
+        assert.equal(view.Vm.FieldRows[0].IsGranted(FieldPermission.Update), false)
+        release()
+        await Fixtures.Settle()
+        assert.equal(view.Vm.Busy, false)
     })
 
     it('403 shows the denied state naming the permission', async () =>

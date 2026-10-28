@@ -3,7 +3,7 @@ import type { FieldPermission, SecurityModelDraft } from './security-model-draft
 // One secured-field row of the field-security grid for the draft's selected profile.
 export class FieldGrantRow
 {
-    private static readonly LabelSeparator = ' · '
+    private static readonly LabelSeparator = ' \u00b7 '
 
     public constructor(
         private readonly concept: string,

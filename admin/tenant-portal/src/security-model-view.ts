@@ -343,6 +343,7 @@ export class SecurityModelView extends TenantViewBase
         if (vm.State === SecurityModelState.Empty)
         {
             this.AddChild(this.addRoleStrip)
+            this.AddChild(this.addProfileStrip)
         }
         if (ready)
         {
