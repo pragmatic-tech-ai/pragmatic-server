@@ -4,6 +4,7 @@ import { Application, Key } from '@pragmatic-tech-ai/mural/runtime'
 import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pragmatic'
 import { ReleaseDetailView } from '../src/release-detail-view.js'
 import { ReleaseDetailViewModel } from '../src/release-detail-view-model.js'
+import { TextBlock } from '@pragmatic-tech-ai/mural/basic'
 import { Banner, KeyActivatedButton, KeyValueGrid, ObservedPanel, PageHeader, ScreenState } from '../src/kit/index.js'
 import type { FleetHiveDto, ManifestDto } from '../src/portal-types.js'
 
@@ -90,15 +91,24 @@ describe('ReleaseDetailView', () =>
         const grid = Fixtures.Collect(view).find(n => n instanceof KeyValueGrid) as KeyValueGrid
         assert.ok(grid)
         assert.deepEqual(Fixtures.Vm().Profile.map(i => i.key), ['Version', 'Image', 'Published', 'Status', "What's new"])
+        const nodes = Fixtures.Collect(view)
+        assert.equal(nodes.filter(n => n instanceof KeyValueGrid).length, 1)
+        const texts = nodes.filter(n => n instanceof TextBlock).map(n => (n as TextBlock).Text.toLowerCase())
+        assert.ok(texts.length > 0)
+        for (const forbidden of ['sign', 'channel', 'digest', 'provenance', 'token', 'credential'])
+        {
+            assert.ok(!texts.some(t => t.includes(forbidden)), forbidden)
+        }
     })
 
     it('withdrawn release renders a banner', () =>
     {
         const vm = Fixtures.Vm({ withdrawn: true })
         const view = new ReleaseDetailView(vm, () => undefined)
-        const banner = Fixtures.Collect(view).find(n => n instanceof Banner)
+        const banner = Fixtures.Collect(view).find(n => n instanceof Banner) as Banner
         assert.ok(banner)
         assert.ok(vm.WithdrawnBanner.text.length > 0)
+        assert.equal(banner.Text, vm.WithdrawnBanner.text)
     })
 
     it('published release renders no banner', () =>
@@ -113,11 +123,12 @@ describe('ReleaseDetailView', () =>
         assert.equal(view.AdoptionTable?.Rows.length, 0)
     })
 
-    it('a second render builds a fresh slot without a double-parent', () =>
+    it('a second render through the host builds a fresh slot without a double-parent', () =>
     {
         const view = new ReleaseDetailView(Fixtures.Vm(), () => undefined)
         const first = view.AdoptionTable
-        assert.doesNotThrow(() => (view as unknown as { BuildContent(): unknown }).BuildContent())
+        const inputs = (view as unknown as { Inputs(): never }).Inputs()
+        assert.doesNotThrow(() => view.Host.Update(inputs))
         assert.notEqual(view.AdoptionTable, first)
         assert.equal(view.AdoptionTable?.Rows.length, 2)
     })
