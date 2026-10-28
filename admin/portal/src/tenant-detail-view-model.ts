@@ -25,7 +25,7 @@ export class TenantDetailViewModel extends Observable
 {
     private static readonly UnknownClientLabel = '(unknown client)'
     private static readonly NoHiveLabel = 'No hive yet'
-    private static readonly AwaitingLabel = 'Awaiting first dial-in'
+    private static readonly NoHiveConnectionLabel = 'No hive bound yet'
     private static readonly DashLabel = '-'
     private static readonly ClusterSeparator = ' / '
 
@@ -91,7 +91,7 @@ export class TenantDetailViewModel extends Observable
                 hasHive: false,
                 hiveName: TenantDetailViewModel.NoHiveLabel,
                 connection: FleetConnection.Awaiting,
-                lastSeenLabel: TenantDetailViewModel.AwaitingLabel,
+                lastSeenLabel: TenantDetailViewModel.NoHiveConnectionLabel,
                 cluster: TenantDetailViewModel.DashLabel,
             }
         }
@@ -99,7 +99,7 @@ export class TenantDetailViewModel extends Observable
             hasHive: true,
             hiveName: hive.displayName,
             connection: row ? row.connection : FleetConnection.Awaiting,
-            lastSeenLabel: row ? row.lastSeenLabel : TenantDetailViewModel.AwaitingLabel,
+            lastSeenLabel: row ? row.lastSeenLabel : TenantDetailViewModel.NoHiveConnectionLabel,
             cluster: hive.clusterBackend + TenantDetailViewModel.ClusterSeparator + hive.clusterMode,
         }
     }

@@ -23,7 +23,7 @@ export class TenantsViewModel extends Observable
 
     private static readonly UnknownClientLabel = '(unknown client)'
     private static readonly NoHiveLabel = 'No hive yet'
-    private static readonly AwaitingLabel = 'Awaiting first dial-in'
+    private static readonly NoHiveConnectionLabel = 'No hive bound yet'
 
     private rows: readonly TenantListRow[] = []
 
@@ -82,7 +82,7 @@ export class TenantsViewModel extends Observable
             clientName: clientNames.get(t.clientId) ?? TenantsViewModel.UnknownClientLabel,
             hiveName: hive === undefined ? TenantsViewModel.NoHiveLabel : hive.displayName,
             connection: fleetRow === undefined ? FleetConnection.Awaiting : fleetRow.connection,
-            lastSeenLabel: fleetRow === undefined ? TenantsViewModel.AwaitingLabel : fleetRow.lastSeenLabel,
+            lastSeenLabel: fleetRow === undefined ? TenantsViewModel.NoHiveConnectionLabel : fleetRow.lastSeenLabel,
             observedEnvCount: hive === undefined ? 0 : hive.environments.length,
             createdAt: t.createdAt,
         }

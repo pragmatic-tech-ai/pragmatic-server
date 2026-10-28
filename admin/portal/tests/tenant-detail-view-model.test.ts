@@ -64,7 +64,7 @@ describe('TenantDetailViewModel', () =>
         assert.equal(vm.Binding.hasHive, false)
         assert.equal(vm.Binding.hiveName, 'No hive yet')
         assert.equal(vm.Binding.connection, FleetConnection.Awaiting)
-        assert.equal(vm.Binding.lastSeenLabel, 'Awaiting first dial-in')
+        assert.equal(vm.Binding.lastSeenLabel, 'No hive bound yet')
         assert.equal(vm.EnvRows.length, 0)
     })
 

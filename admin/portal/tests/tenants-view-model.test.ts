@@ -67,7 +67,7 @@ describe('TenantsViewModel', () =>
         const t2 = vm.Rows[1]
         assert.equal(t2.hiveName, 'No hive yet')
         assert.equal(t2.connection, FleetConnection.Awaiting)
-        assert.equal(t2.lastSeenLabel, 'Awaiting first dial-in')
+        assert.equal(t2.lastSeenLabel, 'No hive bound yet')
         assert.equal(t2.observedEnvCount, 0)
     })
 
