@@ -183,6 +183,11 @@ describe('ControlPlaneHost rollout routes', () =>
         assert.equal((await Harness.Send(host, 'POST', '/api/hives/nope/rollout-registration')).status, 404)
     })
 
+    it('challenges an unauthenticated GET /api/manifests with 401', async () =>
+    {
+        assert.equal((await Harness.Send(host, 'GET', '/api/manifests', undefined, false)).status, 401)
+    })
+
     it('challenges every rollout route with 401 when unauthenticated', async () =>
     {
         const calls: [string, string, unknown][] = [
