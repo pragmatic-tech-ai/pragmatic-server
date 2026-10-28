@@ -31,10 +31,10 @@ class Fixtures
         return { name: 'alpha', template: Template.DevBlank, type: EnvType.Runtime, environmentId: 'id-alpha', hiveId: 'h1', hostPort: 1, status, createdAt: '2026-01-02', httpUrl: 'http://alpha.example', wsUrl: '' }
     }
 
-    public static Make(status: EnvStatus, source: FakeSource = new FakeSource()): { view: EnvironmentDetailView; src: FakeSource }
+    public static Make(status: EnvStatus, source: FakeSource = new FakeSource(), extra: Partial<EnvironmentDto> = {}): { view: EnvironmentDetailView; src: FakeSource }
     {
         Fixtures.InitApp()
-        return { view: new EnvironmentDetailView(source, Fixtures.Env(status), 'h1'), src: source }
+        return { view: new EnvironmentDetailView(source, { ...Fixtures.Env(status), ...extra }, 'h1'), src: source }
     }
 
     public static Collect(v: Visual, out: Visual[] = []): Visual[]
@@ -168,6 +168,40 @@ describe('EnvironmentDetailView', () =>
         t = Fixtures.Texts(Fixtures.TabsOf(view).ContentHost)
         assert.ok(t.includes('Address'))
         assert.ok(t.includes('http://alpha.example'))
+    })
+
+    it('Application and Access tabs show the deployed UI bundle, signature and sign-in address', () =>
+    {
+        const { view } = Fixtures.Make(EnvStatus.Running, new FakeSource(), { uiBundle: { appName: 'northwind', appVersion: '1.0.0' }, idpBaseDomain: 'apps.example.com' })
+        let t = Fixtures.Texts(Fixtures.TabsOf(view).ContentHost)
+        assert.ok(t.includes('UI bundle'))
+        assert.ok(t.includes('northwind 1.0.0'))
+        assert.ok(t.includes('Image signature'))
+        assert.ok(t.some(x => x.startsWith('Signed')))
+        Fixtures.Click(Fixtures.TabsOf(view), 'Access')
+        t = Fixtures.Texts(Fixtures.TabsOf(view).ContentHost)
+        assert.ok(t.includes('Sign-in address'))
+        assert.ok(t.some(x => x.includes('apps.example.com') && x.includes('id-alpha')))
+    })
+
+    it('shows honest absent states without a bundle or federation', () =>
+    {
+        const { view } = Fixtures.Make(EnvStatus.Running)
+        let t = Fixtures.Texts(Fixtures.TabsOf(view).ContentHost)
+        assert.ok(t.includes('No UI bundle deployed yet'))
+        assert.ok(t.includes('Not applicable'))
+        assert.ok(!t.some(x => x.startsWith('Signed')))
+        Fixtures.Click(Fixtures.TabsOf(view), 'Access')
+        t = Fixtures.Texts(Fixtures.TabsOf(view).ContentHost)
+        assert.ok(t.includes('Not federated'))
+    })
+
+    it('Application and Access tabs carry no action controls', () =>
+    {
+        const { view } = Fixtures.Make(EnvStatus.Running, new FakeSource(), { uiBundle: { appName: 'n', appVersion: '1' }, idpBaseDomain: 'a.b' })
+        assert.equal(Fixtures.Collect(Fixtures.TabsOf(view).ContentHost).filter(x => x instanceof Button).length, 0)
+        Fixtures.Click(Fixtures.TabsOf(view), 'Access')
+        assert.equal(Fixtures.Collect(Fixtures.TabsOf(view).ContentHost).filter(x => x instanceof Button).length, 0)
     })
 
     it('Delete opens a ConfirmDialog; confirm is gated by the typed name and deletes once', async () =>

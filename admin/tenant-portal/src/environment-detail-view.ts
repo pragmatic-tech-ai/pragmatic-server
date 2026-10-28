@@ -36,6 +36,11 @@ export class EnvironmentDetailView extends TenantViewBase
     public static readonly EnvironmentIdKey = 'Environment id'
     public static readonly CreatedKey = 'Created'
     public static readonly AddressKey = 'Address'
+    public static readonly UiBundleKey = 'UI bundle'
+    public static readonly SignatureKey = 'Image signature'
+    public static readonly SignedText = 'Signed by the platform trust root'
+    public static readonly SignatureNotApplicableText = 'Not applicable'
+    public static readonly SignInAddressKey = 'Sign-in address'
     public static readonly IdentitySeparator = ' - '
     public static readonly UrlPrefix = 'URL: '
     public static readonly NotServingText = 'Not serving'
@@ -182,6 +187,8 @@ export class EnvironmentDetailView extends TenantViewBase
                 { key: EnvironmentDetailView.TemplateKey, value: vm.Template },
                 { key: EnvironmentDetailView.EnvironmentIdKey, value: vm.EnvironmentId },
                 { key: EnvironmentDetailView.CreatedKey, value: vm.CreatedAt },
+                { key: EnvironmentDetailView.UiBundleKey, value: vm.UiBundleText },
+                { key: EnvironmentDetailView.SignatureKey, value: vm.HasUiBundle ? EnvironmentDetailView.SignedText : EnvironmentDetailView.SignatureNotApplicableText },
             ],
         })
     }
@@ -215,7 +222,12 @@ export class EnvironmentDetailView extends TenantViewBase
 
     private MakeAccessTab(): KeyValueGrid
     {
-        return new KeyValueGrid({ items: [{ key: EnvironmentDetailView.AddressKey, value: this.LiveUrlText() }] })
+        return new KeyValueGrid({
+            items: [
+                { key: EnvironmentDetailView.AddressKey, value: this.LiveUrlText() },
+                { key: EnvironmentDetailView.SignInAddressKey, value: this.vm.SignInAddress },
+            ],
+        })
     }
 
     private DescribeHealth(): string

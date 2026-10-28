@@ -21,6 +21,10 @@ export class EnvironmentDetailViewModel extends Observable
     public static readonly LogBufferProperty = 'LogBuffer'
     public static readonly PausedProperty = 'Paused'
     private static readonly EmptyText = ''
+    private static readonly NoUiBundleText = 'No UI bundle deployed yet'
+    private static readonly NotFederatedText = 'Not federated'
+    private static readonly BundleSeparator = ' '
+    private static readonly HostSeparator = '.'
     public static readonly MaxLogChars = 100_000
 
     private status: string
@@ -67,6 +71,23 @@ export class EnvironmentDetailViewModel extends Observable
     public get LiveUrl(): string
     {
         return EnvironmentRow.UrlOf(this.status as EnvStatus, this.env.httpUrl) ?? EnvironmentDetailViewModel.EmptyText
+    }
+
+    public get HasUiBundle(): boolean
+    {
+        return this.env.uiBundle !== undefined
+    }
+
+    public get UiBundleText(): string
+    {
+        const b = this.env.uiBundle
+        return b === undefined ? EnvironmentDetailViewModel.NoUiBundleText : b.appName + EnvironmentDetailViewModel.BundleSeparator + b.appVersion
+    }
+
+    public get SignInAddress(): string
+    {
+        const d = this.env.idpBaseDomain
+        return d === undefined ? EnvironmentDetailViewModel.NotFederatedText : this.env.environmentId + EnvironmentDetailViewModel.HostSeparator + d
     }
 
     public get Version(): string
