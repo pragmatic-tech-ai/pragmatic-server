@@ -21,6 +21,7 @@ import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
 import { PlatformDirectory } from '../platform-directory.js'
+import { HiveBackend, InfraMode } from '../platform-records.js'
 
 import { EnvironmentNotDevelopmentError, EnvironmentNotRuntimeError } from '../environment-service.js'
 import { GraphExistsError, GraphNotFoundError } from '../graph-service.js'
@@ -954,5 +955,86 @@ describe('ControlPlaneHost operator socket lifecycle', () =>
         assert.equal(registry.Size(), 0)
         assert.equal(service.ListenerCount, 0)
         assert.equal((await Harness.Send(host, 'GET', '/api/ping')).status, 200)
+    })
+})
+
+describe('ControlPlaneHost GET /api/fleet', () =>
+{
+    const FleetPath = '/api/fleet'
+    const Refs = ['configRef', 'credentialRef', 'trustRootRef', 'agentTokenRef']
+    let parent: string
+    let host: ControlPlaneHost
+    let hives: HiveRegistry
+
+    beforeEach(async () =>
+    {
+        parent = mkdtempSync(join(tmpdir(), 'cp-fleet-'))
+        const root = join(parent, 'static')
+        mkdirSync(root)
+        hives = new HiveRegistry(join(parent, 'hives.json'))
+        const directory = new PlatformDirectory(new ClientRegistry(join(parent, 'clients.json')), new TenantRegistry(join(parent, 'tenants.json')), hives, { List: () => [] })
+        await directory.CreateClient({ id: 'c1', displayName: 'Client One' })
+        await directory.CreateTenant({ id: 't1', clientId: 'c1', displayName: 'Tenant One' })
+        const cluster = { backend: HiveBackend.Aks, mode: InfraMode.Attach, configRef: 'secret-config-ref' }
+        const registry = { mode: InfraMode.Attach, endpoint: 'reg.example', credentialRef: 'secret-cred-ref' }
+        await directory.CreateHive({ id: 'h-seen', tenantId: 't1', displayName: 'Seen Hive', cluster, registry, trustRootRef: 'secret-trust-ref' })
+        await directory.CreateHive({ id: 'h-quiet', tenantId: 't1', displayName: 'Quiet Hive', cluster, registry })
+        await hives.Put({ id: 'h-orphan', tenantId: 'gone', displayName: 'Orphan Hive', cluster, registry, agentTokenRef: 'secret-agent-ref', createdAt: new Date().toISOString() })
+        const observations = RolloutFixture.Observations(parent)
+        await observations.RecordSnapshot('h-seen', [{ environmentName: 'prod', ready: true, runningImage: 'img:1', detail: 'ok' }])
+        const factory = new HiveOrchestratorFactory()
+        host = new ControlPlaneHost(new FakeService(), new FakeGraphService(), root, new FakeOperator(), false, directory, await RolloutFixture.Create(parent, directory, factory), new FakeProvisioning(directory).AsService(), observations)
+        await host.Listen(0, '127.0.0.1')
+    })
+
+    afterEach(async () =>
+    {
+        await host.Close()
+        rmSync(parent, { recursive: true, force: true })
+    })
+
+    it('requires a session', async () =>
+    {
+        assert.equal((await Harness.Anon(host, 'GET', FleetPath)).status, 401)
+    })
+
+    it('joins tenant, client and observation for an observed hive', async () =>
+    {
+        const r = await Harness.Send(host, 'GET', FleetPath)
+        assert.equal(r.status, 200)
+        const row = (JSON.parse(r.body) as Array<Record<string, unknown>>).find(h => h['id'] === 'h-seen') as Record<string, unknown>
+        assert.equal(row['displayName'], 'Seen Hive')
+        assert.deepEqual(row['tenant'], { id: 't1', displayName: 'Tenant One' })
+        assert.deepEqual(row['client'], { id: 'c1', displayName: 'Client One' })
+        assert.equal(row['clusterBackend'], 'aks')
+        assert.equal(row['clusterMode'], 'attach')
+        assert.equal(typeof row['lastSeen'], 'string')
+        assert.deepEqual(row['environments'], [{ name: 'prod', ready: true, image: 'img:1', detail: 'ok' }])
+    })
+
+    it('reports an unobserved hive with null lastSeen and no environments', async () =>
+    {
+        const rows = JSON.parse((await Harness.Send(host, 'GET', FleetPath)).body) as Array<Record<string, unknown>>
+        const row = rows.find(h => h['id'] === 'h-quiet') as Record<string, unknown>
+        assert.equal(row['lastSeen'], null)
+        assert.deepEqual(row['environments'], [])
+    })
+
+    it('yields null tenant and client when the tenant is missing', async () =>
+    {
+        const rows = JSON.parse((await Harness.Send(host, 'GET', FleetPath)).body) as Array<Record<string, unknown>>
+        const row = rows.find(h => h['id'] === 'h-orphan') as Record<string, unknown>
+        assert.equal(row['tenant'], null)
+        assert.equal(row['client'], null)
+    })
+
+    it('never leaks any internal ref', async () =>
+    {
+        const body = (await Harness.Send(host, 'GET', FleetPath)).body
+        for (const k of Refs)
+        {
+            assert.ok(!body.includes(k), `body leaked ${k}`)
+        }
+        assert.ok(!body.includes('secret-'))
     })
 })

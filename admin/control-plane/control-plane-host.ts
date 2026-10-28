@@ -140,6 +140,19 @@ export type RolloutRegistrationDto = {
     token: string
 }
 
+export type FleetEnvDto = { name: string; ready: boolean; image?: string; detail: string }
+
+export type FleetHiveDto = {
+    id: string
+    displayName: string
+    tenant: { id: string; displayName: string } | null
+    client: { id: string; displayName: string } | null
+    clusterBackend: string
+    clusterMode: string
+    lastSeen: string | null
+    environments: FleetEnvDto[]
+}
+
 export type ChangedEvent = { type: string }
 
 type ErrorCtor = abstract new (...args: never[]) => Error
@@ -225,6 +238,7 @@ export class ControlPlaneHost
     }
 
     private static readonly SessionPath = '/api/session'
+    private static readonly FleetPath = '/api/fleet'
     private static readonly EventsTicketPath = '/api/events-ticket'
     private static readonly ProtocolHeader = 'sec-websocket-protocol'
     private static readonly ProtocolSeparator = ','
@@ -676,6 +690,11 @@ export class ControlPlaneHost
         {
             return await this.RouteRollout(req, res, method, rom)
         }
+        if (path === ControlPlaneHost.FleetPath && method === PlaneHttp.MethodGet)
+        {
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, this.BuildFleet())
+            return true
+        }
         const hhm = ControlPlaneHost.HiveHealthPathPattern.exec(path)
         if (hhm !== null)
         {
@@ -757,6 +776,27 @@ export class ControlPlaneHost
             return true
         }
         return false
+    }
+
+    /** Joins every hive with its tenant, client and latest observation; carries no internal refs. */
+    private BuildFleet(): FleetHiveDto[]
+    {
+        return this.directory.ListHives().map(hive =>
+        {
+            const tenant = this.directory.GetTenant(hive.tenantId)
+            const client = tenant === undefined ? undefined : this.directory.GetClient(tenant.clientId)
+            const obs = this.observations.Get(hive.id)
+            return {
+                id: hive.id,
+                displayName: hive.displayName,
+                tenant: tenant === undefined ? null : { id: tenant.id, displayName: tenant.displayName },
+                client: client === undefined ? null : { id: client.id, displayName: client.displayName },
+                clusterBackend: String(hive.cluster.backend),
+                clusterMode: String(hive.cluster.mode),
+                lastSeen: obs?.reportedAt ?? null,
+                environments: (obs?.environments ?? []).map(h => ({ name: h.environmentName, ready: h.ready, image: h.runningImage, detail: h.detail }))
+            }
+        })
     }
 
     /** Serves GET /api/hives/ID/health: live workload health for each environment bound to the hive; false for any other method. */
