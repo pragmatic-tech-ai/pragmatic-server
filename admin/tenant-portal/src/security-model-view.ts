@@ -1,10 +1,18 @@
 import { Orientation, StackPanel, TextBlock, TextBox } from '@pragmatic-tech-ai/mural/basic'
-import { Button } from '@pragmatic-tech-ai/mural/framework'
+import { Button, ComboBox } from '@pragmatic-tech-ai/mural/framework'
 import { Checkbox } from '@pragmatic-tech-ai/mural/framework/toggles/checkbox.js'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { ScreenHost } from './kit/screen-host.js'
 import type { ScreenHostInputs } from './kit/screen-host.js'
+import { PillKind } from './kit/pill-kinds.js'
+import { Section } from './kit/section.js'
+import { StatusPill } from './kit/status-pill.js'
 import { Tabs } from './kit/tabs.js'
+import type { BusinessUnitRow } from './business-unit-row.js'
+import type { MembershipOverrideRow } from './membership-override-row.js'
+import type { MembershipRuleRow } from './membership-rule-row.js'
+import type { OwnershipRuleRow } from './ownership-rule-row.js'
+import type { TeamRow } from './team-row.js'
 import type { FieldGrantRow } from './field-grant-row.js'
 import type { PrivilegeRow } from './privilege-row.js'
 import { AccessLevel, Actions, FieldPermission, FieldPermissions, LevelCycle, PrivilegeAction } from './security-model-draft.js'
@@ -12,12 +20,53 @@ import { SecurityModelState, SecurityModelViewModel } from './security-model-vie
 import type { ISecurityModelEnvSource } from './security-model-view-model.js'
 import { TenantViewBase } from './tenant-view-base.js'
 
-// Tenant admin security-model editor: a role list over two kit tabs (What they can do = the
-// privilege matrix, Fields = the field-security grid) and ONE save bar over the one shared draft.
+// Tenant admin security-model editor: an outer Roles / Organization mode switch over ONE shared
+// draft and ONE save bar. Roles = a role list over three kit tabs (What they can do = the
+// privilege matrix, Fields = the field-security grid, Record sharing = a read-only derived view);
+// Organization = four tenant-wide sub-editors (business units, teams, membership, ownership rules).
+// Scalar org edits mutate the draft in place and only restyle the save bar (like MakeCell), so a
+// focused control is never torn down under its own edit; set-shape edits rebuild.
 export class SecurityModelView extends TenantViewBase
 {
     public static readonly WhatTheyCanDoLabel = 'What they can do'
     public static readonly FieldsLabel = 'Fields'
+    public static readonly RecordSharingLabel = 'Record sharing'
+    public static readonly RolesModeLabel = 'Roles'
+    public static readonly OrganizationModeLabel = 'Organization'
+    public static readonly BusinessUnitsLabel = 'Business units'
+    public static readonly TeamsLabel = 'Teams'
+    public static readonly MembershipLabel = 'Membership'
+    public static readonly OwnershipRulesLabel = 'Ownership rules'
+    public static readonly NoBusinessUnitsText = 'No business units yet. Add one to build your organization tree.'
+    public static readonly NoTeamsText = 'No teams yet. Add one to group people.'
+    public static readonly NoMembershipRulesText = 'No claim rules yet.'
+    public static readonly NoMembershipOverridesText = 'No per-person overrides yet.'
+    public static readonly NoOwnershipRulesText = 'No ownership rules yet. Add one per concept.'
+    public static readonly NoRecordSharingText = 'This role has no concepts to share yet.'
+    public static readonly AddBusinessUnitLabel = 'Add business unit'
+    public static readonly AddTeamLabel = 'Add team'
+    public static readonly AddMembershipRuleLabel = 'Add claim rule'
+    public static readonly AddMembershipOverrideLabel = 'Add override'
+    public static readonly AddOwnershipRuleLabel = 'Add ownership rule'
+    public static readonly CanShareLabel = 'Can share'
+    public static readonly CanAssignLabel = 'Can assign'
+    public static readonly NoneChoice = '(none)'
+    public static readonly ClaimRulesTitle = 'Claim rules'
+    public static readonly OverridesTitle = 'Per-person overrides'
+    private static readonly BusinessUnitPlaceholder = 'New business unit name'
+    private static readonly TeamPlaceholder = 'New team name'
+    private static readonly OwnershipConceptPlaceholder = 'Concept to own'
+    private static readonly ClaimPlaceholder = 'Claim'
+    private static readonly ClaimValuePlaceholder = 'Value'
+    private static readonly PrincipalPlaceholder = 'Principal id'
+    private static readonly OwningKindPlaceholder = 'Owning unit source kind'
+    private static readonly OwningValuePlaceholder = 'Owning unit source value'
+    private static readonly OwnerKindPlaceholder = 'Owner source kind'
+    private static readonly OwnerValuePlaceholder = 'Owner source value'
+    private static readonly IndentUnit = '\u00a0\u00a0\u00a0\u00a0'
+    private static readonly IdOpen = ' ('
+    private static readonly IdClose = ')'
+    private static readonly MaxDepth = 64
     public static readonly SelectedMark = '\u25cf '
     public static readonly EmptyTitle = 'No roles yet. Add a role to start.'
     public static readonly NoEnvironmentTitle = 'No environments available.'
@@ -143,7 +192,29 @@ export class SecurityModelView extends TenantViewBase
     ])
 
     private readonly vm: SecurityModelViewModel
-    private readonly tabs: Tabs
+    private readonly roleTabs: Tabs
+    private readonly mode: Tabs
+    private readonly orgTabs: Tabs
+    private readonly rolesPane = new StackPanel()
+    private readonly orgPane = new StackPanel()
+    private readonly recordHost = new StackPanel()
+    private readonly businessUnitHost = new StackPanel()
+    private readonly teamHost = new StackPanel()
+    private readonly membershipHost = new StackPanel()
+    private readonly ownershipHost = new StackPanel()
+    private readonly businessUnitBox = new TextBox()
+    private readonly teamBox = new TextBox()
+    private readonly ownershipBox = new TextBox()
+    private readonly addBusinessUnitStrip = new StackPanel()
+    private readonly addTeamStrip = new StackPanel()
+    private readonly addMembershipRuleStrip = new StackPanel()
+    private readonly addMembershipOverrideStrip = new StackPanel()
+    private readonly addOwnershipStrip = new StackPanel()
+    private readonly ruleBody = new StackPanel()
+    private readonly overrideBody = new StackPanel()
+    private readonly ruleSection: Section
+    private readonly overrideSection: Section
+    private readonly rowSubscriptions: IDisposable[] = []
     private readonly privilegeHost = new StackPanel()
     private readonly fieldHost = new StackPanel()
     private readonly body = new StackPanel()
@@ -177,16 +248,44 @@ export class SecurityModelView extends TenantViewBase
         this.privilegeHost.Orientation = Orientation.Vertical
         this.fieldHost.Orientation = Orientation.Vertical
         this.body.Orientation = Orientation.Vertical
-        this.tabs = new Tabs({
+        this.businessUnitBox.Placeholder = SecurityModelView.BusinessUnitPlaceholder
+        this.teamBox.Placeholder = SecurityModelView.TeamPlaceholder
+        this.ownershipBox.Placeholder = SecurityModelView.OwnershipConceptPlaceholder
+        for (const panel of [this.rolesPane, this.orgPane, this.recordHost, this.businessUnitHost, this.teamHost, this.membershipHost, this.ownershipHost])
+        {
+            panel.Orientation = Orientation.Vertical
+        }
+        this.roleTabs = new Tabs({
             entries: [
                 { label: SecurityModelView.WhatTheyCanDoLabel, content: this.privilegeHost },
                 { label: SecurityModelView.FieldsLabel, content: this.fieldHost },
+                { label: SecurityModelView.RecordSharingLabel, content: this.recordHost },
             ],
         })
+        this.orgTabs = new Tabs({
+            entries: [
+                { label: SecurityModelView.BusinessUnitsLabel, content: this.businessUnitHost },
+                { label: SecurityModelView.TeamsLabel, content: this.teamHost },
+                { label: SecurityModelView.MembershipLabel, content: this.membershipHost },
+                { label: SecurityModelView.OwnershipRulesLabel, content: this.ownershipHost },
+            ],
+        })
+        this.mode = new Tabs({
+            entries: [
+                { label: SecurityModelView.RolesModeLabel, content: this.rolesPane },
+                { label: SecurityModelView.OrganizationModeLabel, content: this.orgPane },
+            ],
+        })
+        this.ruleBody.Orientation = Orientation.Vertical
+        this.overrideBody.Orientation = Orientation.Vertical
+        this.ruleSection = new Section({ title: SecurityModelView.ClaimRulesTitle, body: this.ruleBody })
+        this.overrideSection = new Section({ title: SecurityModelView.OverridesTitle, body: this.overrideBody })
+        this.orgPane.AddChild(this.orgTabs)
         this.stateHost = new ScreenHost({ loading: true, allowed: true, isEmpty: false, error: false })
         this.saveButton = this.MakeButton(SecurityModelView.SaveLabel, () => { void this.Act(() => this.vm.Save()) })
         this.discardButton = this.MakeButton(SecurityModelView.DiscardLabel, () => { void this.Act(() => this.vm.Revert()) })
         this.BuildAddStrips()
+        this.BuildOrgAddStrips()
         this.BuildSaveBar()
         const rerender = (): void => this.Render()
         const vmType = SecurityModelViewModel
@@ -198,6 +297,12 @@ export class SecurityModelView extends TenantViewBase
         this.subscriptions.push(this.vm.PropertyChanged(vmType.ProfilesProperty).subscribe(rerender))
         this.subscriptions.push(this.vm.PropertyChanged(vmType.SelectedProfileIdProperty).subscribe(rerender))
         this.subscriptions.push(this.vm.PropertyChanged(vmType.FieldRowsProperty).subscribe(rerender))
+        this.subscriptions.push(this.vm.PropertyChanged(vmType.BusinessUnitRowsProperty).subscribe(rerender))
+        this.subscriptions.push(this.vm.PropertyChanged(vmType.TeamRowsProperty).subscribe(rerender))
+        this.subscriptions.push(this.vm.PropertyChanged(vmType.MembershipRuleRowsProperty).subscribe(rerender))
+        this.subscriptions.push(this.vm.PropertyChanged(vmType.MembershipOverrideRowsProperty).subscribe(rerender))
+        this.subscriptions.push(this.vm.PropertyChanged(vmType.OwnershipRuleRowsProperty).subscribe(rerender))
+        this.subscriptions.push(this.vm.PropertyChanged(vmType.RecordSharingRowsProperty).subscribe(rerender))
         this.subscriptions.push(this.vm.PropertyChanged(vmType.StateProperty).subscribe(rerender))
         this.subscriptions.push(this.vm.PropertyChanged(vmType.ErrorProperty).subscribe(rerender))
         // Dirty and Busy only restyle the save bar, so a cell is never torn down under its own click.
@@ -249,9 +354,70 @@ export class SecurityModelView extends TenantViewBase
         return concept + SecurityModelView.CellKeySeparator + part
     }
 
-    public get Tabs(): Tabs
+    // Test seam: the outer Roles / Organization mode switch.
+    public get Mode(): Tabs
     {
-        return this.tabs
+        return this.mode
+    }
+
+    // Test seam: the per-role tabs (What they can do | Fields | Record sharing).
+    public get RoleTabs(): Tabs
+    {
+        return this.roleTabs
+    }
+
+    // Test seam: the Organization sub-editor tabs.
+    public get OrgTabs(): Tabs
+    {
+        return this.orgTabs
+    }
+
+    // Test seam: the Roles pane (role strip, add strip, per-role tabs).
+    public get RolesPane(): StackPanel
+    {
+        return this.rolesPane
+    }
+
+    // Test seam: the Organization pane.
+    public get OrgPane(): StackPanel
+    {
+        return this.orgPane
+    }
+
+    // Test seam: the Record sharing tab content.
+    public get RecordHost(): StackPanel
+    {
+        return this.recordHost
+    }
+
+    // Test seam: the Business units sub-editor body.
+    public get BusinessUnitHost(): StackPanel
+    {
+        return this.businessUnitHost
+    }
+
+    // Test seam: the Teams sub-editor body.
+    public get TeamHost(): StackPanel
+    {
+        return this.teamHost
+    }
+
+    // Test seam: the Membership sub-editor body.
+    public get MembershipHost(): StackPanel
+    {
+        return this.membershipHost
+    }
+
+    // Test seam: the Ownership rules sub-editor body.
+    public get OwnershipHost(): StackPanel
+    {
+        return this.ownershipHost
+    }
+
+    // Test seam: count of live subscriptions (zero after Dispose).
+    public get SubscriptionCount(): number
+    {
+        return this.subscriptions.length + this.rowSubscriptions.length
     }
 
     public get Vm(): SecurityModelViewModel
@@ -322,13 +488,15 @@ export class SecurityModelView extends TenantViewBase
             subscription.dispose()
         }
         this.subscriptions.length = 0
+        this.DisposeRowSubscriptions()
         this.cells.clear()
         this.grants.clear()
     }
 
     public Render(): void
     {
-        this.Clear(this, this.body, this.privilegeHost, this.fieldHost)
+        this.DisposeRowSubscriptions()
+        this.Clear(this, this.body, this.rolesPane, this.privilegeHost, this.fieldHost, this.recordHost, this.businessUnitHost, this.teamHost, this.membershipHost, this.ownershipHost, this.ruleBody, this.overrideBody)
         const vm = this.vm
         this.message.Text = vm.State === SecurityModelState.Error ? TenantViewBase.NoMessage : vm.Error
         this.AddChild(this.MakeEnvironmentStrip())
@@ -384,9 +552,57 @@ export class SecurityModelView extends TenantViewBase
         this.grants.clear()
         this.BuildPrivilegeHost()
         this.BuildFieldHost()
-        this.body.AddChild(this.MakeRoleStrip())
-        this.body.AddChild(this.addRoleStrip)
-        this.body.AddChild(this.tabs)
+        this.BuildRecordHost()
+        this.BuildBusinessUnitHost()
+        this.BuildTeamHost()
+        this.BuildMembershipHost()
+        this.BuildOwnershipHost()
+        this.rolesPane.AddChild(this.MakeRoleStrip())
+        this.rolesPane.AddChild(this.addRoleStrip)
+        this.rolesPane.AddChild(this.roleTabs)
+        this.body.AddChild(this.mode)
+    }
+
+    private DisposeRowSubscriptions(): void
+    {
+        for (const subscription of this.rowSubscriptions)
+        {
+            subscription.dispose()
+        }
+        this.rowSubscriptions.length = 0
+    }
+
+    // Read-only derived projection: concept, scope text, and a pill per share/assign grant.
+    private BuildRecordHost(): void
+    {
+        const rows = this.vm.RecordSharingRows
+        if (this.vm.SelectedRoleId === undefined || rows.length === 0)
+        {
+            this.recordHost.AddChild(this.Text(this.vm.SelectedRoleId === undefined ? SecurityModelView.NoRoleSelectedText : SecurityModelView.NoRecordSharingText))
+            return
+        }
+        for (const row of rows)
+        {
+            const strip = this.Strip()
+            strip.AddChild(this.Text(row.concept))
+            strip.AddChild(this.Text(row.scopeText))
+            if (row.canShare)
+            {
+                strip.AddChild(this.MakePill(SecurityModelView.CanShareLabel))
+            }
+            if (row.canAssign)
+            {
+                strip.AddChild(this.MakePill(SecurityModelView.CanAssignLabel))
+            }
+            this.recordHost.AddChild(strip)
+        }
+    }
+
+    private MakePill(label: string): StatusPill
+    {
+        const pill = new StatusPill(PillKind.Allowed)
+        pill.LabelOverride = label
+        return pill
     }
 
     private BuildPrivilegeHost(): void
@@ -637,6 +853,270 @@ export class SecurityModelView extends TenantViewBase
         this.saveText.Text = this.vm.Dirty ? SecurityModelView.UnsavedText : SecurityModelView.NoChangesText
         this.saveButton.IsEnabled = editable
         this.discardButton.IsEnabled = editable
+    }
+
+    // ---- Organization sub-editors ----
+
+    private BuildBusinessUnitHost(): void
+    {
+        const host = this.businessUnitHost
+        const rows = this.vm.BusinessUnitRows
+        if (rows.length === 0)
+        {
+            host.AddChild(this.Text(SecurityModelView.NoBusinessUnitsText))
+        }
+        const labels = this.UnitLabels()
+        for (const row of rows)
+        {
+            const strip = this.Strip()
+            const indent = this.Text(this.IndentFor(row))
+            strip.AddChild(indent)
+            strip.AddChild(this.MakeTextEdit(() => row.Name, text => row.Rename(text), SecurityModelView.BusinessUnitPlaceholder))
+            const others = rows.filter(r => r.Id !== row.Id).map(r => r.Id)
+            strip.AddChild(this.MakeUnitChoice(labels, others, () => row.Parent, id =>
+            {
+                row.SetParent(id)
+                indent.Text = this.IndentFor(row)
+            }))
+            strip.AddChild(this.MakeButton(SecurityModelView.RemoveLabel, () => this.WhenIdle(() => row.Remove())))
+            host.AddChild(strip)
+        }
+        host.AddChild(this.addBusinessUnitStrip)
+    }
+
+    private BuildTeamHost(): void
+    {
+        const host = this.teamHost
+        const rows = this.vm.TeamRows
+        if (rows.length === 0)
+        {
+            host.AddChild(this.Text(SecurityModelView.NoTeamsText))
+        }
+        const labels = this.UnitLabels()
+        const unitIds = this.vm.BusinessUnitRows.map(u => u.Id)
+        for (const row of rows)
+        {
+            const strip = this.Strip()
+            strip.AddChild(this.MakeTextEdit(() => row.Name, text => row.Rename(text), SecurityModelView.TeamPlaceholder))
+            strip.AddChild(this.MakeUnitChoice(labels, unitIds, () => row.OwningBusinessUnit, id => row.SetOwningBusinessUnit(id)))
+            strip.AddChild(this.MakeButton(SecurityModelView.RemoveLabel, () => this.WhenIdle(() => row.Remove())))
+            host.AddChild(strip)
+        }
+        host.AddChild(this.addTeamStrip)
+    }
+
+    private BuildMembershipHost(): void
+    {
+        const labels = this.UnitLabels()
+        const unitIds = this.vm.BusinessUnitRows.map(u => u.Id)
+        const rules = this.vm.MembershipRuleRows
+        const ruleBody = this.ruleBody
+        if (rules.length === 0)
+        {
+            ruleBody.AddChild(this.Text(SecurityModelView.NoMembershipRulesText))
+        }
+        for (const row of rules)
+        {
+            ruleBody.AddChild(this.MakeRuleRow(row, labels, unitIds))
+        }
+        ruleBody.AddChild(this.addMembershipRuleStrip)
+        const overrides = this.vm.MembershipOverrideRows
+        const overrideBody = this.overrideBody
+        if (overrides.length === 0)
+        {
+            overrideBody.AddChild(this.Text(SecurityModelView.NoMembershipOverridesText))
+        }
+        for (const row of overrides)
+        {
+            overrideBody.AddChild(this.MakeOverrideRow(row, labels, unitIds))
+        }
+        overrideBody.AddChild(this.addMembershipOverrideStrip)
+        this.membershipHost.AddChild(this.ruleSection)
+        this.membershipHost.AddChild(this.overrideSection)
+    }
+
+    private MakeRuleRow(row: MembershipRuleRow, labels: ReadonlyMap<string, string>, unitIds: readonly string[]): StackPanel
+    {
+        const strip = this.Strip()
+        strip.AddChild(this.MakeTextEdit(() => row.Claim, text => row.SetClaim(text), SecurityModelView.ClaimPlaceholder))
+        strip.AddChild(this.MakeTextEdit(() => row.Value, text => row.SetValue(text), SecurityModelView.ClaimValuePlaceholder))
+        strip.AddChild(this.MakeUnitChoice(labels, unitIds, () => row.HomeBusinessUnit, id => row.SetHomeBusinessUnit(id)))
+        for (const team of this.vm.TeamRows)
+        {
+            strip.AddChild(this.MakeTeamToggle(team, () => row.Teams, id => row.ToggleTeam(id)))
+        }
+        strip.AddChild(this.MakeButton(SecurityModelView.RemoveLabel, () => this.WhenIdle(() => row.Remove())))
+        return strip
+    }
+
+    private MakeOverrideRow(row: MembershipOverrideRow, labels: ReadonlyMap<string, string>, unitIds: readonly string[]): StackPanel
+    {
+        const strip = this.Strip()
+        strip.AddChild(this.MakeTextEdit(() => row.PrincipalId, text => row.SetPrincipal(text), SecurityModelView.PrincipalPlaceholder))
+        strip.AddChild(this.MakeUnitChoice(labels, unitIds, () => row.HomeBusinessUnit, id => row.SetHomeBusinessUnit(id)))
+        for (const team of this.vm.TeamRows)
+        {
+            strip.AddChild(this.MakeTeamToggle(team, () => row.Teams, id => row.ToggleTeam(id)))
+        }
+        strip.AddChild(this.MakeButton(SecurityModelView.RemoveLabel, () => this.WhenIdle(() => row.Remove())))
+        return strip
+    }
+
+    private BuildOwnershipHost(): void
+    {
+        const host = this.ownershipHost
+        const rows = this.vm.OwnershipRuleRows
+        if (rows.length === 0)
+        {
+            host.AddChild(this.Text(SecurityModelView.NoOwnershipRulesText))
+        }
+        for (const row of rows)
+        {
+            host.AddChild(this.MakeOwnershipRow(row))
+        }
+        host.AddChild(this.addOwnershipStrip)
+    }
+
+    private MakeOwnershipRow(row: OwnershipRuleRow): StackPanel
+    {
+        const strip = this.Strip()
+        strip.AddChild(this.Text(row.Concept))
+        strip.AddChild(this.MakeTextEdit(() => row.OwningKind, text => row.SetOwningKind(text), SecurityModelView.OwningKindPlaceholder))
+        strip.AddChild(this.MakeTextEdit(() => row.OwningValue, text => row.SetOwningValue(text), SecurityModelView.OwningValuePlaceholder))
+        strip.AddChild(this.MakeTextEdit(() => row.OwnerKind, text => row.SetOwnerKind(text), SecurityModelView.OwnerKindPlaceholder))
+        strip.AddChild(this.MakeTextEdit(() => row.OwnerValue, text => row.SetOwnerValue(text), SecurityModelView.OwnerValuePlaceholder))
+        strip.AddChild(this.MakeButton(SecurityModelView.RemoveLabel, () => this.WhenIdle(() => row.Remove())))
+        return strip
+    }
+
+    // A text edit applies in place (draft mutated through the row, save bar restyled); it never
+    // triggers a rebuild, so the box keeps focus while typing. Ignored while busy.
+    private MakeTextEdit(read: () => string, apply: (text: string) => void, placeholder: string): TextBox
+    {
+        const box = new TextBox()
+        box.Placeholder = placeholder
+        box.Text = read()
+        this.rowSubscriptions.push(box.PropertyChanged(TextBox.TextKey).subscribe(() =>
+        {
+            if (!this.vm.Busy && box.Text !== read())
+            {
+                apply(box.Text)
+            }
+        }))
+        return box
+    }
+
+    // Choices = "(none)" plus the given unit ids; a pick applies in place, then the box snaps to
+    // the draft's truth (a refused pick, e.g. a cycle, shows the unchanged value).
+    private MakeUnitChoice(labels: ReadonlyMap<string, string>, ids: readonly string[], read: () => string | undefined, apply: (id: string | undefined) => void): ComboBox
+    {
+        const none = SecurityModelView.NoneChoice
+        const items = [none, ...ids.map(id => labels.get(id) ?? id)]
+        const labelOf = (id: string | undefined): string => id === undefined ? none : (labels.get(id) ?? id)
+        const box = new ComboBox()
+        box.Items = items
+        box.SelectedItem = labelOf(read())
+        box.AddSelectionChangedListener(() =>
+        {
+            const picked = items.indexOf(String(box.SelectedItem)) - 1
+            if (this.vm.Busy)
+            {
+                box.SelectedItem = labelOf(read())
+                return
+            }
+            apply(picked < 0 ? undefined : ids[picked])
+            box.SelectedItem = labelOf(read())
+        })
+        return box
+    }
+
+    private MakeTeamToggle(team: TeamRow, read: () => readonly string[], toggle: (teamId: string) => void): StackPanel
+    {
+        const strip = this.Strip()
+        const cb = new Checkbox()
+        cb.IsChecked = read().includes(team.Id)
+        cb.AddClickHandler(() =>
+        {
+            if (!this.vm.Busy)
+            {
+                toggle(team.Id)
+            }
+            cb.IsChecked = read().includes(team.Id)
+        })
+        strip.AddChild(cb)
+        strip.AddChild(this.Text(team.Name))
+        return strip
+    }
+
+    // id -> display label; duplicate names get their id appended so the choices stay distinct.
+    private UnitLabels(): ReadonlyMap<string, string>
+    {
+        const rows = this.vm.BusinessUnitRows
+        const counts = new Map<string, number>()
+        for (const r of rows)
+        {
+            counts.set(r.Name, (counts.get(r.Name) ?? 0) + 1)
+        }
+        const labels = new Map<string, string>()
+        for (const r of rows)
+        {
+            const dup = (counts.get(r.Name) ?? 0) > 1
+            labels.set(r.Id, dup ? r.Name + SecurityModelView.IdOpen + r.Id + SecurityModelView.IdClose : r.Name)
+        }
+        return labels
+    }
+
+    // Indent by depth along the Parent chain (bounded, so a bad cycle cannot loop).
+    private IndentFor(row: BusinessUnitRow): string
+    {
+        const byId = new Map<string, BusinessUnitRow>(this.vm.BusinessUnitRows.map(r => [r.Id, r]))
+        let depth = 0
+        let parent = row.Parent
+        while (parent !== undefined && byId.has(parent) && depth < SecurityModelView.MaxDepth)
+        {
+            depth++
+            parent = byId.get(parent)?.Parent
+        }
+        return SecurityModelView.IndentUnit.repeat(depth)
+    }
+
+    // Long-lived add strips (their boxes are stateful), re-attached on each Render.
+    private BuildOrgAddStrips(): void
+    {
+        this.addBusinessUnitStrip.Orientation = Orientation.Horizontal
+        this.addBusinessUnitStrip.AddChild(this.businessUnitBox)
+        this.addBusinessUnitStrip.AddChild(this.MakeButton(SecurityModelView.AddBusinessUnitLabel, () =>
+        {
+            this.WhenIdle(() =>
+            {
+                this.vm.AddBusinessUnit(this.businessUnitBox.Text)
+                this.businessUnitBox.Text = TenantViewBase.NoMessage
+            })
+        }))
+        this.addTeamStrip.Orientation = Orientation.Horizontal
+        this.addTeamStrip.AddChild(this.teamBox)
+        this.addTeamStrip.AddChild(this.MakeButton(SecurityModelView.AddTeamLabel, () =>
+        {
+            this.WhenIdle(() =>
+            {
+                this.vm.AddTeam(this.teamBox.Text)
+                this.teamBox.Text = TenantViewBase.NoMessage
+            })
+        }))
+        this.addMembershipRuleStrip.Orientation = Orientation.Horizontal
+        this.addMembershipRuleStrip.AddChild(this.MakeButton(SecurityModelView.AddMembershipRuleLabel, () => this.WhenIdle(() => this.vm.AddMembershipRule())))
+        this.addMembershipOverrideStrip.Orientation = Orientation.Horizontal
+        this.addMembershipOverrideStrip.AddChild(this.MakeButton(SecurityModelView.AddMembershipOverrideLabel, () => this.WhenIdle(() => this.vm.AddMembershipOverride())))
+        this.addOwnershipStrip.Orientation = Orientation.Horizontal
+        this.addOwnershipStrip.AddChild(this.ownershipBox)
+        this.addOwnershipStrip.AddChild(this.MakeButton(SecurityModelView.AddOwnershipRuleLabel, () =>
+        {
+            this.WhenIdle(() =>
+            {
+                this.vm.AddOwnershipRule(this.ownershipBox.Text)
+                this.ownershipBox.Text = TenantViewBase.NoMessage
+            })
+        }))
     }
 
     private Strip(): StackPanel

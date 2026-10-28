@@ -359,7 +359,7 @@ export class SecurityModelViewModel extends Observable
             return
         }
         this.draft.Org.RenameBusinessUnit(id, name)
-        this.Refresh()
+        this.RefreshDirty()
     }
 
     public SetBusinessUnitParent(id: string, parent?: string): void
@@ -369,7 +369,7 @@ export class SecurityModelViewModel extends Observable
             return
         }
         this.draft.Org.SetBusinessUnitParent(id, parent)
-        this.Refresh()
+        this.RefreshDirty()
     }
 
     public RemoveBusinessUnit(id: string): void
@@ -399,7 +399,7 @@ export class SecurityModelViewModel extends Observable
             return
         }
         this.draft.Org.RenameTeam(id, name)
-        this.Refresh()
+        this.RefreshDirty()
     }
 
     public SetTeamOwningBusinessUnit(id: string, businessUnitId?: string): void
@@ -409,7 +409,7 @@ export class SecurityModelViewModel extends Observable
             return
         }
         this.draft.Org.SetTeamOwningBusinessUnit(id, businessUnitId)
-        this.Refresh()
+        this.RefreshDirty()
     }
 
     public RemoveTeam(id: string): void
@@ -439,7 +439,7 @@ export class SecurityModelViewModel extends Observable
             return
         }
         this.draft.Org.SetMembershipRuleClaim(index, claim)
-        this.Refresh()
+        this.RefreshDirty()
     }
 
     public SetMembershipRuleValue(index: number, value: string): void
@@ -449,7 +449,7 @@ export class SecurityModelViewModel extends Observable
             return
         }
         this.draft.Org.SetMembershipRuleValue(index, value)
-        this.Refresh()
+        this.RefreshDirty()
     }
 
     public SetMembershipRuleHomeBusinessUnit(index: number, businessUnitId?: string): void
@@ -459,7 +459,7 @@ export class SecurityModelViewModel extends Observable
             return
         }
         this.draft.Org.SetMembershipRuleHomeBusinessUnit(index, businessUnitId)
-        this.Refresh()
+        this.RefreshDirty()
     }
 
     public ToggleMembershipRuleTeam(index: number, teamId: string): void
@@ -469,7 +469,7 @@ export class SecurityModelViewModel extends Observable
             return
         }
         this.draft.Org.ToggleMembershipRuleTeam(index, teamId)
-        this.Refresh()
+        this.RefreshDirty()
     }
 
     public RemoveMembershipRule(index: number): void
@@ -499,7 +499,7 @@ export class SecurityModelViewModel extends Observable
             return
         }
         this.draft.Org.SetMembershipOverridePrincipal(index, principalId)
-        this.Refresh()
+        this.RefreshDirty()
     }
 
     public SetMembershipOverrideHomeBusinessUnit(index: number, businessUnitId?: string): void
@@ -509,7 +509,7 @@ export class SecurityModelViewModel extends Observable
             return
         }
         this.draft.Org.SetMembershipOverrideHomeBusinessUnit(index, businessUnitId)
-        this.Refresh()
+        this.RefreshDirty()
     }
 
     public ToggleMembershipOverrideTeam(index: number, teamId: string): void
@@ -519,7 +519,7 @@ export class SecurityModelViewModel extends Observable
             return
         }
         this.draft.Org.ToggleMembershipOverrideTeam(index, teamId)
-        this.Refresh()
+        this.RefreshDirty()
     }
 
     public RemoveMembershipOverride(index: number): void
@@ -549,7 +549,7 @@ export class SecurityModelViewModel extends Observable
             return
         }
         this.draft.Org.SetOwningSourceKind(concept, kind)
-        this.Refresh()
+        this.RefreshDirty()
     }
 
     public SetOwningSourceValue(concept: string, value: string): void
@@ -559,7 +559,7 @@ export class SecurityModelViewModel extends Observable
             return
         }
         this.draft.Org.SetOwningSourceValue(concept, value)
-        this.Refresh()
+        this.RefreshDirty()
     }
 
     public SetOwnerSourceKind(concept: string, kind: string): void
@@ -569,7 +569,7 @@ export class SecurityModelViewModel extends Observable
             return
         }
         this.draft.Org.SetOwnerSourceKind(concept, kind)
-        this.Refresh()
+        this.RefreshDirty()
     }
 
     public SetOwnerSourceValue(concept: string, value: string): void
@@ -579,7 +579,7 @@ export class SecurityModelViewModel extends Observable
             return
         }
         this.draft.Org.SetOwnerSourceValue(concept, value)
-        this.Refresh()
+        this.RefreshDirty()
     }
 
     public RemoveOwnershipRule(concept: string): void

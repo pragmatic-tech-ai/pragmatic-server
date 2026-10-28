@@ -1,5 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { TextBox } from '@pragmatic-tech-ai/mural/basic'
+import { Checkbox } from '@pragmatic-tech-ai/mural/framework/toggles/checkbox.js'
 import { Button } from '@pragmatic-tech-ai/mural/framework'
 import { Application } from '@pragmatic-tech-ai/mural/runtime'
 import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pragmatic'
@@ -173,12 +175,12 @@ class Harness
 
 describe('SecurityModelView', () =>
 {
-    it('renders a role list and two sub-tabs (What they can do / Fields)', async () =>
+    it('renders a role list and three sub-tabs (What they can do / Fields / Record sharing)', async () =>
     {
         const view = await Harness.Make()
-        const strip = [...view.Tabs.Children][0]
+        const strip = [...view.RoleTabs.Children][0]
         const labels = Fixtures.Buttons(strip).map(b => Fixtures.Texts(b).join(''))
-        assert.deepEqual(labels, [SecurityModelView.WhatTheyCanDoLabel, SecurityModelView.FieldsLabel])
+        assert.deepEqual(labels, [SecurityModelView.WhatTheyCanDoLabel, SecurityModelView.FieldsLabel, SecurityModelView.RecordSharingLabel])
         const all = Fixtures.Texts(view)
         assert.ok(all.includes(SecurityModelView.SelectedMark + 'Admin'))
         assert.ok(all.includes('Viewer'))
@@ -311,5 +313,192 @@ describe('SecurityModelView', () =>
         Fixtures.Click(view, SecurityModelView.SaveLabel)
         await Fixtures.Settle()
         assert.equal(nav2.LoginCalls, 1)
+    })
+})
+
+class OrgFixtures
+{
+    public static Boxes(node: unknown, out: TextBox[] = []): TextBox[]
+    {
+        if (node instanceof TextBox)
+        {
+            out.push(node)
+        }
+        const n = node as { Children?: Iterable<unknown>; Content?: unknown }
+        if (n.Content !== undefined && n.Content !== null)
+        {
+            OrgFixtures.Boxes(n.Content, out)
+        }
+        for (const c of n.Children ?? [])
+        {
+            OrgFixtures.Boxes(c, out)
+        }
+        return out
+    }
+
+    public static Checks(node: unknown, out: Checkbox[] = []): Checkbox[]
+    {
+        if (node instanceof Checkbox)
+        {
+            out.push(node)
+        }
+        const n = node as { Children?: Iterable<unknown> }
+        for (const c of n.Children ?? [])
+        {
+            OrgFixtures.Checks(c, out)
+        }
+        return out
+    }
+
+    public static Contains(node: unknown, target: unknown): boolean
+    {
+        if (node === target)
+        {
+            return true
+        }
+        const n = node as { Children?: Iterable<unknown> }
+        for (const c of n.Children ?? [])
+        {
+            if (OrgFixtures.Contains(c, target))
+            {
+                return true
+            }
+        }
+        return false
+    }
+
+    public static Labels(tabs: unknown): string[]
+    {
+        const strip = [...(tabs as { Children: Iterable<unknown> }).Children][0]
+        return Fixtures.Buttons(strip).map(b => Fixtures.Texts(b).join(''))
+    }
+}
+
+describe('SecurityModelView Roles / Organization', () =>
+{
+    it('the outer Mode has Roles and Organization', async () =>
+    {
+        const view = await Harness.Make()
+        assert.deepEqual(OrgFixtures.Labels(view.Mode), [SecurityModelView.RolesModeLabel, SecurityModelView.OrganizationModeLabel])
+    })
+
+    it('the Roles pane shows the role list and three per-role tabs ending in Record sharing', async () =>
+    {
+        const view = await Harness.Make()
+        const labels = OrgFixtures.Labels(view.RoleTabs)
+        assert.equal(labels.length, 3)
+        assert.equal(labels[2], SecurityModelView.RecordSharingLabel)
+        assert.ok(Fixtures.Texts(view.RolesPane).includes('Viewer'))
+    })
+
+    it('Record sharing renders scope text and share/assign pills, read-only', async () =>
+    {
+        const src = new FakeSource()
+        src.Model?.roles?.[0].privileges.push({ action: PrivilegeAction.Share, concept: 'Customer', level: AccessLevel.Organization })
+        const view = await Harness.Make(src)
+        const texts = Fixtures.Texts(view.RecordHost)
+        assert.ok(texts.includes('Customer'))
+        assert.ok(texts.includes(SecurityModelView.CanShareLabel))
+        assert.ok(!texts.includes(SecurityModelView.CanAssignLabel))
+        assert.equal(Fixtures.Buttons(view.RecordHost).length, 0)
+        assert.equal(OrgFixtures.Boxes(view.RecordHost).length, 0)
+    })
+
+    it('the Organization pane has four sub-tabs and no role list', async () =>
+    {
+        const view = await Harness.Make()
+        view.Mode.Select(1)
+        assert.deepEqual(OrgFixtures.Labels(view.OrgTabs), [
+            SecurityModelView.BusinessUnitsLabel,
+            SecurityModelView.TeamsLabel,
+            SecurityModelView.MembershipLabel,
+            SecurityModelView.OwnershipRulesLabel,
+        ])
+        assert.equal(view.Mode.ActiveContent, view.OrgPane)
+        const texts = Fixtures.Texts(view.OrgPane)
+        assert.ok(!texts.includes('Viewer'))
+        assert.ok(!texts.includes(SecurityModelView.SelectedMark + 'Admin'))
+    })
+
+    it('an empty-org model shows an honest empty state with an Add action', async () =>
+    {
+        const view = await Harness.Make()
+        view.Mode.Select(1)
+        assert.ok(Fixtures.Texts(view.BusinessUnitHost).includes(SecurityModelView.NoBusinessUnitsText))
+        const labels = Fixtures.Buttons(view.BusinessUnitHost).map(b => Fixtures.Texts(b).join(''))
+        assert.ok(labels.includes(SecurityModelView.AddBusinessUnitLabel))
+        assert.ok(Fixtures.Texts(view.TeamHost).includes(SecurityModelView.NoTeamsText))
+        assert.ok(Fixtures.Texts(view.OwnershipHost).includes(SecurityModelView.NoOwnershipRulesText))
+    })
+
+    it('switching mode keeps unsaved edits and the shared save bar', async () =>
+    {
+        const view = await Harness.Make()
+        Fixtures.ClickButton(view.CellFor('Customer', PrivilegeAction.Create))
+        assert.equal(view.SaveEnabled, true)
+        view.Mode.Select(1)
+        assert.equal(view.SaveEnabled, true)
+        assert.equal(view.SaveBarText, SecurityModelView.UnsavedText)
+        view.Mode.Select(0)
+        assert.equal(view.Vm.Dirty, true)
+        assert.equal(view.Vm.PrivilegeRows[0].LevelFor(PrivilegeAction.Create), LevelCycle[1])
+    })
+
+    it('Add commits through the add control and rebuilds', async () =>
+    {
+        const view = await Harness.Make()
+        view.Mode.Select(1)
+        const box = OrgFixtures.Boxes(view.BusinessUnitHost)[0]
+        box.Text = 'Sales'
+        Fixtures.Click(view.BusinessUnitHost, SecurityModelView.AddBusinessUnitLabel)
+        assert.deepEqual(view.Vm.BusinessUnitRows.map(r => r.Name), ['Sales'])
+        assert.equal(view.Vm.Dirty, true)
+        assert.ok(!Fixtures.Texts(view.BusinessUnitHost).includes(SecurityModelView.NoBusinessUnitsText))
+    })
+
+    it('a scalar org edit mutates the draft in place without rebuilding the control', async () =>
+    {
+        const src = new FakeSource()
+        src.Model!.businessUnits = [{ id: 'bu1', name: 'Root' }]
+        const view = await Harness.Make(src)
+        view.Mode.Select(1)
+        const nameBox = OrgFixtures.Boxes(view.BusinessUnitHost)[0]
+        assert.equal(nameBox.Text, 'Root')
+        nameBox.Text = 'Renamed'
+        assert.equal(view.Vm.BusinessUnitRows[0].Name, 'Renamed')
+        assert.equal(view.Vm.Dirty, true)
+        assert.equal(view.SaveEnabled, true)
+        assert.ok(OrgFixtures.Contains(view.BusinessUnitHost, nameBox))
+    })
+
+    it('Dispose tears down every subscription', async () =>
+    {
+        const src = new FakeSource()
+        src.Model!.businessUnits = [{ id: 'bu1', name: 'Root' }]
+        const view = await Harness.Make(src)
+        assert.ok(view.SubscriptionCount > 0)
+        view.Dispose()
+        assert.equal(view.SubscriptionCount, 0)
+    })
+
+    it('a populated org renders every sub-editor and a team toggle edits in place', async () =>
+    {
+        const src = new FakeSource()
+        const model = src.Model!
+        model.businessUnits = [{ id: 'bu1', name: 'Root' }, { id: 'bu2', name: 'Sales', parent: 'bu1' }]
+        model.teams = [{ id: 't1', name: 'Alpha', owningBusinessUnit: 'bu1' }]
+        model.membership = { claimsMapping: [{ claim: 'group', value: 'ops', teams: [] }], overrides: [{ principalId: 'alice' }] }
+        model.ownershipRules = [{ concept: 'Customer', owningBusinessUnit: { kind: 'claim', value: 'bu' } }]
+        const view = await Harness.Make(src)
+        view.Mode.Select(1)
+        assert.equal(OrgFixtures.Boxes(view.BusinessUnitHost).length, 3)
+        assert.ok(Fixtures.Texts(view.MembershipHost).includes(SecurityModelView.ClaimRulesTitle))
+        assert.equal(OrgFixtures.Boxes(view.OwnershipHost).length, 5)
+        const checks = OrgFixtures.Checks(view.MembershipHost)
+        assert.equal(checks.length, 2)
+        Fixtures.ClickButton(checks[0])
+        assert.deepEqual([...view.Vm.MembershipRuleRows[0].Teams], ['t1'])
+        assert.equal(view.Vm.Dirty, true)
+        assert.ok(OrgFixtures.Contains(view.MembershipHost, checks[0]))
     })
 })
