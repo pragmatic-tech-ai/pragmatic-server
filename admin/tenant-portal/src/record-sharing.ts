@@ -1,4 +1,4 @@
-import { AccessLevel, LevelCycle, PrivilegeAction } from './security-model-draft.js'
+import { AccessLevel, LevelCycle, PrivilegeAction } from './security-model-enums.js'
 import type { OwnershipRuleDto, PrivilegeDto, RoleConfigDto } from './tenant-types.js'
 
 export interface RecordSharingRowData
@@ -18,6 +18,12 @@ export class RecordSharingDeriver
     private static readonly BusinessUnitScope = 'records in their business unit'
     private static readonly BusinessUnitAndChildrenScope = 'records in their business unit and children'
     private static readonly OrganizationScope = 'all records in the organization'
+    private static readonly Scopes: ReadonlyMap<AccessLevel, string> = new Map<AccessLevel, string>([
+        [AccessLevel.User, RecordSharingDeriver.UserScope],
+        [AccessLevel.BusinessUnit, RecordSharingDeriver.BusinessUnitScope],
+        [AccessLevel.BusinessUnitAndChildren, RecordSharingDeriver.BusinessUnitAndChildrenScope],
+        [AccessLevel.Organization, RecordSharingDeriver.OrganizationScope]
+    ])
     private static readonly NoDirectAccess = 'no direct record access'
     private static readonly OwnershipClause = ' (records owned per the ownership rules)'
 
@@ -49,6 +55,7 @@ export class RecordSharingDeriver
         return rows
     }
 
+    // Unknown levels rank -1, so the > 0 check below excludes them.
     private static Grants(privileges: readonly PrivilegeDto[], action: PrivilegeAction): boolean
     {
         return privileges.some(p => p.action === action && RecordSharingDeriver.Rank(p.level) > 0)
@@ -69,14 +76,6 @@ export class RecordSharingDeriver
                 best = Math.max(best, RecordSharingDeriver.Rank(p.level))
             }
         }
-        // Resolved lazily: security-model-draft imports this module, so enum
-        // values are not safe to read while this class is being defined.
-        const scopes = new Map<AccessLevel, string>([
-            [AccessLevel.User, RecordSharingDeriver.UserScope],
-            [AccessLevel.BusinessUnit, RecordSharingDeriver.BusinessUnitScope],
-            [AccessLevel.BusinessUnitAndChildren, RecordSharingDeriver.BusinessUnitAndChildrenScope],
-            [AccessLevel.Organization, RecordSharingDeriver.OrganizationScope]
-        ])
-        return scopes.get(LevelCycle[best]) ?? RecordSharingDeriver.NoDirectAccess
+        return RecordSharingDeriver.Scopes.get(LevelCycle[best]) ?? RecordSharingDeriver.NoDirectAccess
     }
 }

@@ -100,11 +100,27 @@ describe('RecordSharingDeriver', () =>
         assert.deepEqual(rows.map(r => r.concept), ['Alpha', 'Zeta'])
     })
 
-    it('yields generic scope text for an unknown level without throwing', () =>
+    it('maps an unknown level string to no direct access without throwing', () =>
     {
-        const rows = RecordSharingDeriver.Rows(Fixtures.Role([Fixtures.P(PrivilegeAction.Read, 'Account', 'removedUnit')]), [])
+        const role = Fixtures.Role([Fixtures.P(PrivilegeAction.Read, 'Account', 'removedUnit')])
+        const rows = RecordSharingDeriver.Rows(role, [])
         assert.equal(rows.length, 1)
-        assert.ok(rows[0].scopeText.length > 0)
+        assert.match(rows[0].scopeText, /no direct record access/)
+    })
+
+    it('uses generic business unit wording when the owning unit was removed', () =>
+    {
+        const model: SecurityModelDto = {
+            businessUnits: [],
+            teams: [],
+            membership: { claimsMapping: [], overrides: [] },
+            ownershipRules: [{ concept: 'Account', owningBusinessUnit: { kind: 'fixed', value: 'removedUnit' } }],
+            roles: [Fixtures.Role([Fixtures.P(PrivilegeAction.Read, 'Account', AccessLevel.BusinessUnit)])]
+        }
+        const rows = SecurityModelDraft.From(model).RecordSharingFor('r1')
+        assert.equal(rows.length, 1)
+        assert.match(rows[0].scopeText, /business unit/i)
+        assert.ok(!rows[0].scopeText.includes('removedUnit'))
     })
 })
 
