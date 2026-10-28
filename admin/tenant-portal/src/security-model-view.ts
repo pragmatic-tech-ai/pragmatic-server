@@ -1,9 +1,11 @@
 import { Orientation, StackPanel, TextBlock, TextBox } from '@pragmatic-tech-ai/mural/basic'
 import { Button } from '@pragmatic-tech-ai/mural/framework'
 import { Checkbox } from '@pragmatic-tech-ai/mural/framework/toggles/checkbox.js'
+import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { ScreenHost } from './kit/screen-host.js'
 import type { ScreenHostInputs } from './kit/screen-host.js'
 import { Tabs } from './kit/tabs.js'
+import type { FieldGrantRow } from './field-grant-row.js'
 import type { PrivilegeRow } from './privilege-row.js'
 import { AccessLevel, Actions, FieldPermission, FieldPermissions, LevelCycle, PrivilegeAction } from './security-model-draft.js'
 import { SecurityModelState, SecurityModelViewModel } from './security-model-view-model.js'
@@ -159,6 +161,7 @@ export class SecurityModelView extends TenantViewBase
     private readonly saveText = new TextBlock()
     private readonly saveButton: Button
     private readonly discardButton: Button
+    private readonly subscriptions: IDisposable[] = []
     private readonly cells = new Map<string, Button>()
     private readonly grants = new Map<string, Checkbox>()
 
@@ -187,19 +190,19 @@ export class SecurityModelView extends TenantViewBase
         this.BuildSaveBar()
         const rerender = (): void => this.Render()
         const vmType = SecurityModelViewModel
-        this.vm.PropertyChanged(vmType.EnvironmentsProperty).subscribe(rerender)
-        this.vm.PropertyChanged(vmType.SelectedEnvironmentProperty).subscribe(rerender)
-        this.vm.PropertyChanged(vmType.RolesProperty).subscribe(rerender)
-        this.vm.PropertyChanged(vmType.SelectedRoleIdProperty).subscribe(rerender)
-        this.vm.PropertyChanged(vmType.PrivilegeRowsProperty).subscribe(rerender)
-        this.vm.PropertyChanged(vmType.ProfilesProperty).subscribe(rerender)
-        this.vm.PropertyChanged(vmType.SelectedProfileIdProperty).subscribe(rerender)
-        this.vm.PropertyChanged(vmType.FieldRowsProperty).subscribe(rerender)
-        this.vm.PropertyChanged(vmType.StateProperty).subscribe(rerender)
-        this.vm.PropertyChanged(vmType.ErrorProperty).subscribe(rerender)
+        this.subscriptions.push(this.vm.PropertyChanged(vmType.EnvironmentsProperty).subscribe(rerender))
+        this.subscriptions.push(this.vm.PropertyChanged(vmType.SelectedEnvironmentProperty).subscribe(rerender))
+        this.subscriptions.push(this.vm.PropertyChanged(vmType.RolesProperty).subscribe(rerender))
+        this.subscriptions.push(this.vm.PropertyChanged(vmType.SelectedRoleIdProperty).subscribe(rerender))
+        this.subscriptions.push(this.vm.PropertyChanged(vmType.PrivilegeRowsProperty).subscribe(rerender))
+        this.subscriptions.push(this.vm.PropertyChanged(vmType.ProfilesProperty).subscribe(rerender))
+        this.subscriptions.push(this.vm.PropertyChanged(vmType.SelectedProfileIdProperty).subscribe(rerender))
+        this.subscriptions.push(this.vm.PropertyChanged(vmType.FieldRowsProperty).subscribe(rerender))
+        this.subscriptions.push(this.vm.PropertyChanged(vmType.StateProperty).subscribe(rerender))
+        this.subscriptions.push(this.vm.PropertyChanged(vmType.ErrorProperty).subscribe(rerender))
         // Dirty and Busy only restyle the save bar, so a cell is never torn down under its own click.
-        this.vm.PropertyChanged(vmType.DirtyProperty).subscribe(() => this.UpdateSaveBar())
-        this.vm.PropertyChanged(vmType.BusyProperty).subscribe(() => this.UpdateSaveBar())
+        this.subscriptions.push(this.vm.PropertyChanged(vmType.DirtyProperty).subscribe(() => this.UpdateSaveBar()))
+        this.subscriptions.push(this.vm.PropertyChanged(vmType.BusyProperty).subscribe(() => this.UpdateSaveBar()))
         this.Render()
     }
 
@@ -314,6 +317,11 @@ export class SecurityModelView extends TenantViewBase
 
     public Dispose(): void
     {
+        for (const subscription of this.subscriptions)
+        {
+            subscription.dispose()
+        }
+        this.subscriptions.length = 0
         this.cells.clear()
         this.grants.clear()
     }
@@ -322,7 +330,7 @@ export class SecurityModelView extends TenantViewBase
     {
         this.Clear(this, this.body, this.privilegeHost, this.fieldHost)
         const vm = this.vm
-        this.message.Text = vm.Error
+        this.message.Text = vm.State === SecurityModelState.Error ? TenantViewBase.NoMessage : vm.Error
         this.AddChild(this.MakeEnvironmentStrip())
         this.AddChild(this.message)
         const ready = vm.State === SecurityModelState.Ready
@@ -470,7 +478,7 @@ export class SecurityModelView extends TenantViewBase
 
     // A pointer click flips IsChecked before the handler runs, so the handler reads the new value.
     // While busy the edit is refused and the checkbox snaps back to the draft's value.
-    private MakeGrant(label: string, permission: FieldPermission, row: { IsGranted(p: FieldPermission): boolean; Toggle(p: FieldPermission, v: boolean): void }): Checkbox
+    private MakeGrant(label: string, permission: FieldPermission, row: FieldGrantRow): Checkbox
     {
         const cb = new Checkbox()
         cb.IsChecked = row.IsGranted(permission)
