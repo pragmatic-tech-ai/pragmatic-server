@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { Key, Application } from '@pragmatic-tech-ai/mural/runtime'
 import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pragmatic'
 import {
-    Act, ErrorStatePanel, KeyActivatedButton, ScreenHost, ScreenHostInputs, ScreenState,
+    Act, ErrorStatePanel, InternalTag, KeyActivatedButton, PageHeader, ScreenHost, ScreenHostInputs, ScreenState,
 } from '../src/kit/index.js'
 
 class Fixtures
@@ -86,5 +86,46 @@ describe('kit screen states', () =>
         assert.equal(count, 2)
         Fixtures.Click(act)
         assert.equal(count, 3)
+    })
+
+    it('PageHeader renders breadcrumb, title and no tabs by default', () =>
+    {
+        const h = new PageHeader({ breadcrumb: ['Platform', 'Fleet'], title: 'Fleet' })
+        assert.equal(h.BreadcrumbText, 'Platform / Fleet')
+        assert.equal(h.Title, 'Fleet')
+        assert.equal(h.TabControls.length, 0)
+    })
+
+    it('PageHeader tabs are KeyActivatedButtons and SetActiveTab marks only the chosen one', () =>
+    {
+        let picked = 0
+        const h = new PageHeader({
+            breadcrumb: ['Platform'],
+            title: 'Hives',
+            tabs: [{ label: 'A', onSelect: () => { picked = 1 } }, { label: 'B', onSelect: () => { picked = 2 } }],
+        })
+        assert.equal(h.TabControls.length, 2)
+        assert.ok(h.TabControls[0] instanceof KeyActivatedButton)
+        h.SetActiveTab(1)
+        assert.notEqual(h.TabControls[0].Tag, 'current')
+        assert.equal(h.TabControls[1].Tag, 'current')
+        Fixtures.Press(h.TabControls[1], Key.Return)
+        assert.equal(picked, 2)
+    })
+
+    it('PageHeader includes a provided primaryAction as a child', () =>
+    {
+        const act = new Act({ can: true, label: 'New', onClick: () => { } })
+        const h = new PageHeader({ breadcrumb: ['Platform'], title: 'Clients', primaryAction: act })
+        const found = (function Walk(v: { Children?: readonly unknown[] }): boolean
+        {
+            return [...(v.Children ?? [])].some(c => c === act || Walk(c as { Children?: readonly unknown[] }))
+        })(h as unknown as { Children?: readonly unknown[] })
+        assert.ok(found)
+    })
+
+    it('InternalTag label is Internal', () =>
+    {
+        assert.equal(new InternalTag().Label, 'Internal')
     })
 })
