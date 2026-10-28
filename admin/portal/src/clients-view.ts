@@ -11,7 +11,7 @@ import {
 } from './kit/index.js'
 import type { ScreenHostInputs, TableColumn } from './kit/index.js'
 import { OperatorContext } from './operator-context.js'
-import type { ClientDto, IPortalNavigator, IPortalView } from './portal-types.js'
+import type { ClientDto, FleetHiveDto, IPortalNavigator, IPortalView, TenantDto } from './portal-types.js'
 
 export enum ClientsMode
 {
@@ -62,6 +62,7 @@ export class ClientsView extends StackPanel implements IPortalView
     private detailRow: ClientListRow | undefined
     private nav: IPortalNavigator | undefined
     private errorText: TextBlock | undefined
+    private submitAction: Act | undefined
     private readonly createModel: CreateClientViewModel
 
     public constructor(private readonly client: ControlPlaneClient, private readonly operator: OperatorContext)
@@ -96,6 +97,12 @@ export class ClientsView extends StackPanel implements IPortalView
     public get CreateAction(): Act | undefined
     {
         return this.createAction
+    }
+
+    // Test seam: the create form's submit action.
+    public get SubmitAction(): Act | undefined
+    {
+        return this.submitAction
     }
 
     public AttachNavigator(nav: IPortalNavigator): void
@@ -164,7 +171,25 @@ export class ClientsView extends StackPanel implements IPortalView
         this.mode = ClientsMode.Detail
         this.detailRow = row
         const dto: ClientDto = { id: row.id, displayName: row.displayName, subscriptionRef: row.subscriptionRef, createdAt: row.createdAt }
-        const [tenants, fleet] = await Promise.all([this.client.ListTenants(row.id), this.client.ListFleet()])
+        let tenants: TenantDto[]
+        let fleet: FleetHiveDto[]
+        try
+        {
+            [tenants, fleet] = await Promise.all([this.client.ListTenants(row.id), this.client.ListFleet()])
+        }
+        catch
+        {
+            if (this.mode !== ClientsMode.Detail || this.detailRow !== row)
+            {
+                return
+            }
+            this.mode = ClientsMode.List
+            this.detailRow = undefined
+            this.listMounted = true
+            this.host = new ScreenHost(ClientsView.Inputs(false, true, true))
+            this.Swap(this.host)
+            return
+        }
         if (this.mode !== ClientsMode.Detail || this.detailRow !== row)
         {
             return
@@ -235,6 +260,7 @@ export class ClientsView extends StackPanel implements IPortalView
             () => void this.Submit(idBox.Text, nameBox.Text, subBox.Text),
             ActVariant.Primary,
         ))
+        this.submitAction = submit
         const cancel = new KeyActivatedButton(() => void this.ShowList())
         const cancelText = new TextBlock()
         cancelText.Text = ClientsView.CancelLabel

@@ -12,7 +12,7 @@ class FakeClient
 {
     public readonly Created: string[] = []
 
-    public constructor(private readonly clients: ClientDto[], private readonly fail = false)
+    public constructor(private readonly clients: ClientDto[], private readonly fail = false, private readonly failCreate = false)
     {
     }
 
@@ -34,6 +34,10 @@ class FakeClient
 
     public CreateClient(id: string, displayName: string): Promise<ClientDto>
     {
+        if (this.failCreate)
+        {
+            return Promise.reject(new Error('taken'))
+        }
         this.Created.push(id)
         return Promise.resolve({ id, displayName, createdAt: '2026-01-01T00:00:00Z' })
     }
@@ -44,6 +48,14 @@ class Fixtures
     public static Client(id: string): ClientDto
     {
         return { id, displayName: 'Client ' + id, createdAt: '2026-01-02T00:00:00Z' }
+    }
+
+    public static CreateView(failCreate: boolean): ClientsView
+    {
+        return new ClientsView(
+            new FakeClient([Fixtures.Client('a')], false, failCreate) as unknown as ControlPlaneClient,
+            OperatorContext.FromWire('full'),
+        )
     }
 
     public static View(clients: ClientDto[], role = 'full', fail = false): ClientsView
@@ -119,5 +131,25 @@ describe('ClientsView', () =>
         await view.Refresh()
         await view.Refresh()
         assert.equal(view.Host.State, ScreenState.Populated)
+    })
+
+    it('returns to the list after a successful create', async () =>
+    {
+        const view = Fixtures.CreateView(false)
+        await view.ShowList()
+        view.ShowCreate()
+        view.SubmitAction?.Press()
+        await new Promise(r => setTimeout(r, 0))
+        assert.equal(view.Mode, ClientsMode.List)
+    })
+
+    it('stays on the form when create fails', async () =>
+    {
+        const view = Fixtures.CreateView(true)
+        await view.ShowList()
+        view.ShowCreate()
+        view.SubmitAction?.Press()
+        await new Promise(r => setTimeout(r, 0))
+        assert.equal(view.Mode, ClientsMode.Create)
     })
 })
