@@ -194,11 +194,13 @@ export class SecurityModelOrg
         this.dirty = true
     }
 
+    // Live reference: read only; mutate exclusively through the mutator methods so Dirty stays correct.
     public get Membership(): MembershipDto
     {
         return this.model.membership
     }
 
+    // Live reference: read only; mutate exclusively through the mutator methods so Dirty stays correct.
     public get OwnershipRules(): readonly OwnershipRuleDto[]
     {
         return this.model.ownershipRules
@@ -369,6 +371,10 @@ export class SecurityModelOrg
         {
             return
         }
+        if (rule.owner === undefined && kind === SecurityModelOrg.EmptyString)
+        {
+            return
+        }
         const owner = rule.owner ?? { kind: SecurityModelOrg.EmptyString, value: SecurityModelOrg.EmptyString }
         owner.kind = kind
         SecurityModelOrg.StoreOwner(rule, owner)
@@ -379,6 +385,10 @@ export class SecurityModelOrg
     {
         const rule = this.FindOwnershipRule(concept)
         if (rule === undefined)
+        {
+            return
+        }
+        if (rule.owner === undefined && value === SecurityModelOrg.EmptyString)
         {
             return
         }

@@ -240,6 +240,19 @@ describe('SecurityModelOrg membership', () =>
         assert.equal(org.Dirty, false)
     })
 
+    it('negative override indices are no-ops and do not throw', () =>
+    {
+        const model = Fixtures.Referenced()
+        const before = JSON.stringify(model)
+        const org = new SecurityModelOrg(model)
+        org.SetMembershipOverridePrincipal(-1, 'x')
+        org.SetMembershipOverrideHomeBusinessUnit(-1, 'bu1')
+        org.ToggleMembershipOverrideTeam(-1, 't1')
+        org.RemoveMembershipOverride(-1)
+        assert.equal(JSON.stringify(model), before)
+        assert.equal(org.Dirty, false)
+    })
+
     it('every membership mutation flips Dirty', () =>
     {
         const mutations: ((o: SecurityModelOrg) => void)[] = [
@@ -293,6 +306,7 @@ describe('SecurityModelOrg ownership rules', () =>
         again.AddOwnershipRule('Order')
         assert.equal(model.ownershipRules.length, 1)
         assert.equal(again.Dirty, false)
+        assert.deepEqual(model.ownershipRules[0].owningBusinessUnit, { kind: '', value: '' })
     })
 
     it('sets owning source kind and value', () =>
@@ -319,6 +333,35 @@ describe('SecurityModelOrg ownership rules', () =>
         assert.notEqual(model.ownershipRules[0].owner, undefined)
         org.SetOwnerSourceValue('Order', '')
         assert.equal(model.ownershipRules[0].owner, undefined)
+    })
+
+    it('blank owner setters on a rule without owner stay clean', () =>
+    {
+        const model = Fixtures.Empty()
+        model.ownershipRules = [{ concept: 'Order', owningBusinessUnit: { kind: 'fixed', value: 'bu1' } }]
+        const org = new SecurityModelOrg(model)
+        org.SetOwnerSourceKind('Order', '')
+        org.SetOwnerSourceValue('Order', '')
+        assert.equal(model.ownershipRules[0].owner, undefined)
+        assert.equal(org.Dirty, false)
+    })
+
+    it('every ownership mutator flips Dirty', () =>
+    {
+        const mutations: ((o: SecurityModelOrg) => void)[] = [
+            o => o.AddOwnershipRule('New'),
+            o => o.SetOwningSourceKind('Order', 'n'),
+            o => o.SetOwningSourceValue('Order', 'n'),
+            o => o.SetOwnerSourceKind('Order', 'n'),
+            o => o.SetOwnerSourceValue('Order', 'n'),
+            o => o.RemoveOwnershipRule('Order')
+        ]
+        for (const mutate of mutations)
+        {
+            const org = new SecurityModelOrg(Fixtures.Referenced())
+            mutate(org)
+            assert.equal(org.Dirty, true)
+        }
     })
 
     it('unknown concept is a no-op and RemoveOwnershipRule removes', () =>
