@@ -1,5 +1,6 @@
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import type { FleetHiveDto, ManifestDto } from './portal-types.js'
+import { FleetPresentation } from './fleet-presentation.js'
 import { PortalDates } from './portal-dates.js'
 import { BannerTone } from './kit/index.js'
 import type { KeyValueItem } from './kit/index.js'
@@ -31,8 +32,6 @@ export class ReleaseDetailViewModel extends Observable
     private static readonly StatusWithdrawn = 'Withdrawn'
     private static readonly NoNotes = '(none)'
     private static readonly NoText = ''
-    private static readonly UnassignedLabel = '(unassigned)'
-    private static readonly OwnerSeparator = ' / '
     private static readonly WithdrawnText =
         'This version is withdrawn. Hives stop seeing it as adoptable after their next check-in. Environments already running it keep running it until their tenant adopts another version.'
 
@@ -72,7 +71,7 @@ export class ReleaseDetailViewModel extends Observable
         const rows: ReleaseAdoptionRow[] = []
         for (const hive of this.fleet)
         {
-            const ownerLabel = ReleaseDetailViewModel.OwnerLabel(hive)
+            const ownerLabel = FleetPresentation.OwnerLabel(hive)
             for (const env of hive.environments)
             {
                 if (env.image !== undefined && env.image === this.manifest.image)
@@ -82,11 +81,5 @@ export class ReleaseDetailViewModel extends Observable
             }
         }
         return rows
-    }
-
-    private static OwnerLabel(d: FleetHiveDto): string
-    {
-        const parts = [d.client?.displayName, d.tenant?.displayName].filter((p): p is string => !!p)
-        return parts.length > 0 ? parts.join(ReleaseDetailViewModel.OwnerSeparator) : ReleaseDetailViewModel.UnassignedLabel
     }
 }
