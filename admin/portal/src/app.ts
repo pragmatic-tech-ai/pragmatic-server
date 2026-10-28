@@ -1,5 +1,4 @@
 import { Orientation, StackPanel, TextBlock } from '@pragmatic-tech-ai/mural/basic'
-import { Button } from '@pragmatic-tech-ai/mural/framework'
 import type { Visual } from '@pragmatic-tech-ai/mural/visual-engine'
 import { ControlPlaneClient } from './api-client.js'
 import { EnvironmentDetailView } from './environment-detail-view.js'
@@ -16,40 +15,80 @@ import { HiveListView } from './hive-list-view.js'
 import { CreateHiveView } from './create-hive-view.js'
 import type { IPortalNavigator, IPortalView } from './portal-types.js'
 
-// Root shell: owns the API client, switches list / create / detail, and
-// refreshes the current screen when the events socket reports a change.
+import { ComingSoonView } from './coming-soon-view.js'
+import { KeyActivatedButton } from './kit/key-activated-button.js'
+import { NavModel, PaSection } from './nav-model.js'
+import { NavRail } from './nav-rail.js'
+import { TopBar } from './top-bar.js'
+
+// Root shell: grouped nav rail + top bar around a content host. Owns the API client, routes the nine
+// sections to placeholders, keeps the legacy drill-down reachable via a dev-only entry, and refreshes
+// the current screen when the events socket reports a change.
 export class App extends StackPanel implements IPortalNavigator
 {
+    // Retained for the legacy e2e spec (portal.spec.ts, PA-15 owns its update); the shell brand lives in NavRail.
     public static readonly TitleText = 'Pragmatic Admin'
     public static readonly LogoutLabel = 'Logout'
+    private static readonly ContextText = 'Platform'
+    private static readonly LegacyLabel = 'Legacy environment tools (dev)'
 
-    private readonly client = new ControlPlaneClient()
-    private readonly host = new StackPanel()
-    private readonly header = new StackPanel()
-    private readonly logoutButton: Button
-    private logoutShown = false
+    private readonly client: ControlPlaneClient
+    private readonly navColumn = new StackPanel()
+    private readonly rightColumn = new StackPanel()
+    private readonly topHost = new StackPanel()
+    private readonly contentHost = new StackPanel()
+    private readonly legacyButton: KeyActivatedButton
+    private navRail: NavRail | undefined
+    private topBar: TopBar | undefined
+    private shellShown = false
+    private active: PaSection | undefined
     private current: (Visual & IPortalView) | undefined
 
-    public constructor()
+    public constructor(client: ControlPlaneClient = new ControlPlaneClient(), autoBoot = true)
     {
         super()
-        const title = new TextBlock()
-        title.Text = App.TitleText
-        this.header.Orientation = Orientation.Horizontal
-        this.header.AddChild(title)
-        const logoutText = new TextBlock()
-        logoutText.Text = App.LogoutLabel
-        this.logoutButton = new Button()
-        this.logoutButton.Content = logoutText
-        this.logoutButton.AddClickHandler(() => { void this.Logout() })
-        this.AddChild(this.header)
-        this.AddChild(this.host)
-        this.client.OnChanged(() => { void this.current?.Refresh() })
-        void this.Boot()
+        this.client = client
+        this.Orientation = Orientation.Horizontal
+        this.navColumn.Orientation = Orientation.Vertical
+        this.rightColumn.Orientation = Orientation.Vertical
+        const legacyText = new TextBlock()
+        legacyText.Text = App.LegacyLabel
+        this.legacyButton = new KeyActivatedButton(() => this.ShowList())
+        this.legacyButton.Content = legacyText
+        this.rightColumn.AddChild(this.topHost)
+        this.rightColumn.AddChild(this.contentHost)
+        this.AddChild(this.rightColumn)
+        this.client.OnChanged(() => { void this.current?.Refresh?.() })
+        if (autoBoot)
+        {
+            void this.Boot()
+        }
     }
 
-    // Probes the session cookie: signed in -> list, otherwise -> login.
-    private async Boot(): Promise<void>
+    public get ActiveSection(): PaSection | undefined
+    {
+        return this.active
+    }
+
+    public get CurrentView(): IPortalView | undefined
+    {
+        return this.current
+    }
+
+    // Test seam: the nav rail while signed in, otherwise undefined.
+    public get Nav(): NavRail | undefined
+    {
+        return this.shellShown ? this.navRail : undefined
+    }
+
+    // Test seam: the top bar while signed in, otherwise undefined.
+    public get Top(): TopBar | undefined
+    {
+        return this.shellShown ? this.topBar : undefined
+    }
+
+    // Probes the session cookie: signed in -> Fleet in the shell, otherwise -> login.
+    public async Boot(): Promise<void>
     {
         let operator: { email: string } | null = null
         try
@@ -64,11 +103,31 @@ export class App extends StackPanel implements IPortalNavigator
         if (operator === null)
         {
             this.ShowLogin()
+            return
         }
-        else
+        this.MountShell(operator.email)
+        this.ShowSection(PaSection.Fleet)
+        this.navRail?.FocusActive()
+    }
+
+    public ShowSection(section: PaSection): void
+    {
+        this.active = section
+        this.navRail?.SetActive(section)
+        const label = NavModel.LabelFor(section)
+        const heading = App.HeadingFor(section)
+        const breadcrumb = heading === undefined ? [label] : [heading, label]
+        this.Mount(new ComingSoonView(breadcrumb, label))
+    }
+
+    public ShowLogin(): void
+    {
+        if (this.current instanceof LoginView)
         {
-            this.ShowList()
+            return
         }
+        this.UnmountShell()
+        this.Mount(new LoginView(this.client, this))
     }
 
     private async Logout(): Promise<void>
@@ -84,106 +143,125 @@ export class App extends StackPanel implements IPortalNavigator
         this.ShowLogin()
     }
 
-    public ShowLogin(): void
+    private static HeadingFor(section: PaSection): string | undefined
     {
-        if (this.current instanceof LoginView)
+        for (const group of NavModel.Groups)
+        {
+            for (const item of group.items)
+            {
+                if (item.Section === section)
+                {
+                    return group.heading
+                }
+            }
+        }
+        return undefined
+    }
+
+    private MountShell(operatorEmail: string): void
+    {
+        this.UnmountShell()
+        this.navRail = new NavRail(s => this.ShowSection(s), this.active)
+        this.topBar = new TopBar({
+            context: App.ContextText,
+            onJump: s => this.ShowSection(s),
+            onLogout: () => { void this.Logout() },
+            operatorEmail,
+        })
+        this.navColumn.AddChild(this.navRail)
+        this.navColumn.AddChild(this.legacyButton)
+        this.topHost.AddChild(this.topBar)
+        // Nav sits left of the right column: rebuild the root children in order.
+        this.RemoveChild(this.rightColumn)
+        this.AddChild(this.navColumn)
+        this.AddChild(this.rightColumn)
+        this.shellShown = true
+    }
+
+    private UnmountShell(): void
+    {
+        if (!this.shellShown)
         {
             return
         }
-        this.SetLogoutVisible(false)
-        this.Show(new LoginView(this.client, this))
-    }
-
-    private SetLogoutVisible(visible: boolean): void
-    {
-        const present = this.logoutShown
-        if (visible && !present)
+        for (const child of [...this.navColumn.Children])
         {
-            this.header.AddChild(this.logoutButton)
-            this.logoutShown = true
+            this.navColumn.RemoveChild(child)
         }
-        else if (!visible && present)
+        for (const child of [...this.topHost.Children])
         {
-            this.header.RemoveChild(this.logoutButton)
-            this.logoutShown = false
+            this.topHost.RemoveChild(child)
         }
+        this.RemoveChild(this.navColumn)
+        this.navRail = undefined
+        this.topBar = undefined
+        this.shellShown = false
     }
 
     public ShowList(): void
     {
-        this.SetLogoutVisible(true)
-        this.Show(new EnvironmentListView(this.client, this))
+        this.Mount(new EnvironmentListView(this.client, this))
     }
 
     public ShowDetail(name: string): void
     {
-        this.SetLogoutVisible(true)
-        this.Show(new EnvironmentDetailView(this.client, this, name))
+        this.Mount(new EnvironmentDetailView(this.client, this, name))
     }
 
     public ShowGraphs(name: string): void
     {
-        this.SetLogoutVisible(true)
-        this.Show(new GraphListView(this.client, this, name))
+        this.Mount(new GraphListView(this.client, this, name))
     }
 
     public ShowCreateGraph(name: string): void
     {
-        this.SetLogoutVisible(true)
-        this.Show(new CreateGraphView(this.client, this, name))
+        this.Mount(new CreateGraphView(this.client, this, name))
     }
 
     public ShowPromoteGraph(devEnvName: string): void
     {
-        this.SetLogoutVisible(true)
-        this.Show(new PromoteGraphView(this.client, this, devEnvName))
+        this.Mount(new PromoteGraphView(this.client, this, devEnvName))
     }
 
     public ShowClients(): void
     {
-        this.SetLogoutVisible(true)
-        this.Show(new ClientListView(this.client, this))
+        this.Mount(new ClientListView(this.client, this))
     }
 
     public ShowCreateClient(): void
     {
-        this.SetLogoutVisible(true)
-        this.Show(new CreateClientView(this.client, this))
+        this.Mount(new CreateClientView(this.client, this))
     }
 
     public ShowTenants(clientId: string): void
     {
-        this.SetLogoutVisible(true)
-        this.Show(new TenantListView(this.client, this, clientId))
+        this.Mount(new TenantListView(this.client, this, clientId))
     }
 
     public ShowCreateTenant(clientId: string): void
     {
-        this.SetLogoutVisible(true)
-        this.Show(new CreateTenantView(this.client, this, clientId))
+        this.Mount(new CreateTenantView(this.client, this, clientId))
     }
 
     public ShowHives(clientId: string, tenantId: string): void
     {
-        this.SetLogoutVisible(true)
-        this.Show(new HiveListView(this.client, this, clientId, tenantId))
+        this.Mount(new HiveListView(this.client, this, clientId, tenantId))
     }
 
     public ShowCreateHive(clientId: string, tenantId: string): void
     {
-        this.SetLogoutVisible(true)
-        this.Show(new CreateHiveView(this.client, this, clientId, tenantId))
+        this.Mount(new CreateHiveView(this.client, this, clientId, tenantId))
     }
 
-    private Show(view: Visual & IPortalView): void
+    private Mount(view: Visual & IPortalView): void
     {
-        for (const child of [...this.host.Children])
+        for (const child of [...this.contentHost.Children])
         {
-            this.host.RemoveChild(child)
+            this.contentHost.RemoveChild(child)
         }
         this.current = view
         view.AttachNavigator(this)
-        this.host.AddChild(view)
+        this.contentHost.AddChild(view)
         void view.Refresh()
     }
 }
