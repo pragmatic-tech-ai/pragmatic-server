@@ -4,6 +4,7 @@ import { Application } from '@pragmatic-tech-ai/mural/runtime'
 import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pragmatic'
 import type { ControlPlaneClient } from '../src/api-client.js'
 import { TenantsMode, TenantsView } from '../src/tenants-view.js'
+import { TenantDetailView } from '../src/tenant-detail-view.js'
 import { ScreenState } from '../src/kit/index.js'
 import type { ClientDto, FleetHiveDto, TenantDto } from '../src/portal-types.js'
 
@@ -41,6 +42,17 @@ class FakeClient
 
 class Fixtures
 {
+    public static Walk(root: unknown): unknown[]
+    {
+        const out: unknown[] = [root]
+        const children = (root as { Children?: Iterable<unknown> }).Children
+        for (const c of children ?? [])
+        {
+            out.push(...Fixtures.Walk(c))
+        }
+        return out
+    }
+
     public static Tenant(id: string): TenantDto
     {
         return { id, clientId: 'c1', displayName: 'Tenant ' + id, createdAt: '2026-01-02T00:00:00Z' }
@@ -99,6 +111,9 @@ describe('TenantsView', () =>
         view.Table?.FocusRow(0)
         view.Table?.ActivateFocused()
         await new Promise(r => setTimeout(r, 0))
+        assert.equal(view.Mode, TenantsMode.Detail)
+        assert.ok(Fixtures.Walk(view).some(n => n instanceof TenantDetailView))
+        await view.Refresh()
         assert.equal(view.Mode, TenantsMode.Detail)
     })
 

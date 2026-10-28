@@ -4,7 +4,7 @@ import type { ControlPlaneClient } from './api-client.js'
 import { FleetPresentation } from './fleet-presentation.js'
 import { FleetConnection } from './fleet-view-model.js'
 import { DataTable, PageHeader, PillKinds, ScreenHost, TableDensity } from './kit/index.js'
-import type { ScreenHostInputs, TableColumn } from './kit/index.js'
+import type { PillEntry, ScreenHostInputs, TableColumn } from './kit/index.js'
 import { PortalDates } from './portal-dates.js'
 import type { ClientDto, FleetHiveDto, IPortalNavigator, IPortalView, TenantDto } from './portal-types.js'
 import { TenantDetailView } from './tenant-detail-view.js'
@@ -156,7 +156,7 @@ export class TenantsView extends StackPanel implements IPortalView
             this.mode = TenantsMode.List
             this.detailRow = undefined
             this.listMounted = true
-            this.host = new ScreenHost(TenantsView.Inputs(false, true, true))
+            this.host = new ScreenHost(TenantsView.Inputs(false, true, true, undefined, () => void this.Refresh()))
             this.Swap(this.host)
             return
         }
@@ -223,7 +223,7 @@ export class TenantsView extends StackPanel implements IPortalView
         return root
     }
 
-    private static ConnectionPill(r: TenantListRow): ReturnType<typeof PillKinds.For>
+    private static ConnectionPill(r: TenantListRow): PillEntry
     {
         return PillKinds.For(FleetPresentation.ConnectionKind(r.connection))
     }
