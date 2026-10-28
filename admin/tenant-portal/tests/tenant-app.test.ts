@@ -13,7 +13,7 @@ import type { HiveRolloutDto, ManifestDto, EnvironmentDto, TenantProfileDto, Hiv
 import { ServiceTokensView } from '../src/service-tokens-view.js'
 import { UsersAccessPageView } from '../src/users-access-page-view.js'
 import { EnvironmentDetailView } from '../src/environment-detail-view.js'
-import { ComingSoonView } from '../src/coming-soon-view.js'
+import { SettingsView } from '../src/settings-view.js'
 import { EnvironmentsView } from '../src/environments-view.js'
 import { CreateEnvironmentDialog } from '../src/create-environment-dialog.js'
 import { ReleasesView } from '../src/releases-view.js'
@@ -374,13 +374,13 @@ describe('TenantApp', () =>
         assert.equal(Fixtures.Find(app, NavRail)!.Active, NavSection.Environments)
     })
 
-    it('other sections show a ComingSoonView titled with the nav label', async () =>
+    it('ShowSection(Settings) shows the read-only SettingsView', async () =>
     {
         const { app } = Fixtures.Make(Session)
         await app.Boot()
         app.ShowSection(NavSection.Settings)
         const view = Fixtures.CurrentOf(app)
-        assert.ok(view instanceof ComingSoonView)
+        assert.ok(view instanceof SettingsView)
         assert.ok(Fixtures.Texts(view).includes('Settings'))
     })
 

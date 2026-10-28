@@ -11,6 +11,7 @@ import { NavModel, NavSection } from './nav-model.js'
 import { NavRail } from './nav-rail.js'
 import { OverviewView } from './overview-view.js'
 import { ReleasesView } from './releases-view.js'
+import { SettingsView } from './settings-view.js'
 import { TenantApiClient } from './tenant-api-client.js'
 import { TenantViewBase } from './tenant-view-base.js'
 import { TenantEventType } from './tenant-types.js'
@@ -133,6 +134,9 @@ export class TenantApp extends StackPanel implements ITenantNavigator
                 break
             case NavSection.ConnectionStatus:
                 this.Show(new ConnectionStatusView(this.client))
+                break
+            case NavSection.Settings:
+                this.Show(new SettingsView(this.client))
                 break
             default:
                 this.Show(new ComingSoonView(TenantApp.LabelFor(section)))
