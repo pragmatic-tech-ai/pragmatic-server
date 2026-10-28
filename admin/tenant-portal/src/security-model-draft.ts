@@ -1,8 +1,9 @@
 import { RecordSharingDeriver } from './record-sharing.js'
 import { AccessLevel, FieldPermission, LevelCycle, PrivilegeAction } from './security-model-enums.js'
 import type { RecordSharingRowData } from './record-sharing.js'
+import { ProfileAssignmentSection, RoleAssignmentSection } from './security-model-assignment.js'
 import { SecurityModelOrg } from './security-model-org.js'
-import type { FieldGrantDto, FieldProfileDto, FieldSecurityDto, PrivilegeDto, RoleConfigDto, SecuredFieldDto, SecurityModelDto } from './tenant-types.js'
+import type { FieldGrantDto, FieldProfileDto, FieldSecurityDto, PrivilegeDto, RoleAssignmentDto, RoleConfigDto, SecuredFieldDto, SecurityModelDto } from './tenant-types.js'
 
 export * from './security-model-enums.js'
 
@@ -22,9 +23,12 @@ export class SecurityModelDraft
 
     private readonly model: SecurityModelDto
     private readonly org: SecurityModelOrg
+    private readonly roleAssignment: RoleAssignmentSection
+    private readonly profileAssignment: ProfileAssignmentSection
     private readonly addedConcepts = new Set<string>()
     private readonly rolesAbsent: boolean
     private readonly fieldSecurityAbsent: boolean
+    private readonly roleAssignmentAbsent: boolean
     private dirty = false
 
     public SelectedRoleId: string | undefined
@@ -34,6 +38,9 @@ export class SecurityModelDraft
     {
         this.model = model
         this.org = new SecurityModelOrg(this.model)
+        this.roleAssignment = new RoleAssignmentSection(this.model, () => this.EnsureRoleAssignment())
+        this.profileAssignment = new ProfileAssignmentSection(this.model, () => this.EnsureFieldSecurity())
+        this.roleAssignmentAbsent = model.roleAssignment === undefined
         this.rolesAbsent = model.roles === undefined
         this.model.roles = this.model.roles ?? []
         this.SelectedRoleId = this.model.roles[0]?.id
@@ -87,9 +94,19 @@ export class SecurityModelDraft
         return this.org
     }
 
+    public get RoleAssignment(): RoleAssignmentSection
+    {
+        return this.roleAssignment
+    }
+
+    public get ProfileAssignment(): ProfileAssignmentSection
+    {
+        return this.profileAssignment
+    }
+
     public get Dirty(): boolean
     {
-        return this.dirty || this.org.Dirty
+        return this.dirty || this.org.Dirty || this.roleAssignment.Dirty || this.profileAssignment.Dirty
     }
 
     public get Concepts(): readonly string[]
@@ -301,7 +318,9 @@ export class SecurityModelDraft
     {
         const out = SecurityModelDraft.Clone(this.model)
         if (this.fieldSecurityAbsent && out.fieldSecurity !== undefined
-            && out.fieldSecurity.securedFields.length === 0 && out.fieldSecurity.profiles.length === 0)
+            && out.fieldSecurity.securedFields.length === 0 && out.fieldSecurity.profiles.length === 0
+            && out.fieldSecurity.profileAssignment.claimsMapping.length === 0 && out.fieldSecurity.profileAssignment.overrides.length === 0
+            && out.fieldSecurity.profileAssignment.teamProfiles.length === 0)
         {
             delete out.fieldSecurity
         }
@@ -309,7 +328,17 @@ export class SecurityModelDraft
         {
             delete out.roles
         }
+        if (this.roleAssignmentAbsent && out.roleAssignment !== undefined
+            && out.roleAssignment.claimsMapping.length === 0 && out.roleAssignment.overrides.length === 0 && out.roleAssignment.teamRoles.length === 0)
+        {
+            delete out.roleAssignment
+        }
         return out
+    }
+
+    private EnsureRoleAssignment(): RoleAssignmentDto
+    {
+        return this.model.roleAssignment ?? (this.model.roleAssignment = { claimsMapping: [], overrides: [], teamRoles: [] })
     }
 
     private EnsureFieldSecurity(): FieldSecurityDto
