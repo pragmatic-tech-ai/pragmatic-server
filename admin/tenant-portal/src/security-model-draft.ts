@@ -1,4 +1,6 @@
 import { RecordSharingDeriver } from './record-sharing.js'
+import { RoleHoldersDeriver } from './role-holders.js'
+import type { RoleHolderData } from './role-holders.js'
 import { AccessLevel, FieldPermission, LevelCycle, PrivilegeAction } from './security-model-enums.js'
 import type { RecordSharingRowData } from './record-sharing.js'
 import { ProfileAssignmentSection, RoleAssignmentSection } from './security-model-assignment.js'
@@ -312,6 +314,16 @@ export class SecurityModelDraft
     {
         const role = this.Roles.find(r => r.id === roleId)
         return RecordSharingDeriver.Rows(role, this.model.ownershipRules ?? [])
+    }
+
+    public RoleHoldersFor(roleId: string): RoleHolderData
+    {
+        return RoleHoldersDeriver.Holders(roleId, this.model.roleAssignment, this.model.teams)
+    }
+
+    public DirectHolderCount(roleId: string): number
+    {
+        return this.RoleHoldersFor(roleId).directCount
     }
 
     public ToDto(): SecurityModelDto
