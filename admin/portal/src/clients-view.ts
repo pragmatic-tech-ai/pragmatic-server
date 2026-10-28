@@ -40,6 +40,7 @@ export class ClientsView extends StackPanel implements IPortalView
     private static readonly TableEmptyText = 'No clients match.'
     private static readonly SearchSeparator = ' '
     private static readonly NoneText = '-'
+    private static readonly BlankText = ''
     private static readonly DateLength = 10
     private static readonly ClientKey = 'client'
     private static readonly TenantsKey = 'tenants'
@@ -153,6 +154,10 @@ export class ClientsView extends StackPanel implements IPortalView
         catch
         {
             this.host.Update(ClientsView.Inputs(false, true, true))
+            return
+        }
+        if (this.mode !== ClientsMode.List)
+        {
             return
         }
         const model = this.model
@@ -286,6 +291,10 @@ export class ClientsView extends StackPanel implements IPortalView
 
     private async Submit(id: string, displayName: string, subscriptionRef: string): Promise<void>
     {
+        if (this.errorText !== undefined)
+        {
+            this.errorText.Text = ClientsView.BlankText
+        }
         this.createModel.Id = id
         this.createModel.DisplayName = displayName
         this.createModel.SubscriptionRef = subscriptionRef

@@ -12,7 +12,7 @@ class FakeClient
 {
     public readonly Created: string[] = []
 
-    public constructor(private readonly clients: ClientDto[], private readonly fail = false, private readonly failCreate = false)
+    public constructor(private readonly clients: ClientDto[], private readonly fail = false, private readonly failCreate = false, private readonly failDetail = false)
     {
     }
 
@@ -23,6 +23,10 @@ class FakeClient
 
     public ListTenants(clientId?: string): Promise<TenantDto[]>
     {
+        if (this.failDetail && clientId !== undefined)
+        {
+            return Promise.reject(new Error('detail boom'))
+        }
         const all: TenantDto[] = this.clients.map(c => ({ id: 't-' + c.id, clientId: c.id, displayName: 'T ' + c.id }))
         return Promise.resolve(clientId === undefined ? all : all.filter(t => t.clientId === clientId))
     }
@@ -151,5 +155,19 @@ describe('ClientsView', () =>
         view.SubmitAction?.Press()
         await new Promise(r => setTimeout(r, 0))
         assert.equal(view.Mode, ClientsMode.Create)
+    })
+
+    it('falls back to the list error state when the detail fetch fails', async () =>
+    {
+        const view = new ClientsView(
+            new FakeClient([Fixtures.Client('a')], false, false, true) as unknown as ControlPlaneClient,
+            OperatorContext.FromWire('full'),
+        )
+        await view.ShowList()
+        view.Table?.FocusRow(0)
+        view.Table?.ActivateFocused()
+        await new Promise(r => setTimeout(r, 0))
+        assert.equal(view.Mode, ClientsMode.List)
+        assert.equal(view.Host.State, ScreenState.Error)
     })
 })
