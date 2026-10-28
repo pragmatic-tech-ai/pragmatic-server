@@ -130,6 +130,22 @@ describe('ControlPlaneHost rollout routes', () =>
         assert.equal((JSON.parse(restored.body) as { withdrawn: boolean }).withdrawn, false)
     })
 
+    it('lists every published manifest on GET /api/manifests, including withdrawn, and [] when none', async () =>
+    {
+        const empty = await Harness.Send(host, 'GET', '/api/manifests')
+        assert.equal(empty.status, 200)
+        assert.deepEqual(JSON.parse(empty.body), [])
+        await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        await Harness.Send(host, 'POST', '/api/manifests', { version: '2.0.0', image: 'img:2' })
+        await Harness.Send(host, 'POST', '/api/manifests/2.0.0/withdrawn')
+        const listed = await Harness.Send(host, 'GET', '/api/manifests')
+        assert.equal(listed.status, 200)
+        const all = JSON.parse(listed.body) as { id: string; withdrawn?: boolean }[]
+        assert.deepEqual(all.map(m => m.id).sort(), ['1.0.0', '2.0.0'])
+        assert.equal(all.find(m => m.id === '2.0.0')!.withdrawn, true)
+        assert.notEqual(all.find(m => m.id === '1.0.0')!.withdrawn, true)
+    })
+
     it('answers a withdrawn toggle for an unknown version with 404', async () =>
     {
         assert.equal((await Harness.Send(host, 'POST', '/api/manifests/9.9.9/withdrawn')).status, 404)

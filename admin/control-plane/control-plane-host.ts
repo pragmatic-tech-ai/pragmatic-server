@@ -678,6 +678,11 @@ export class ControlPlaneHost
         }
         if (path === ControlPlaneHost.ManifestsPath)
         {
+            if (method === PlaneHttp.MethodGet)
+            {
+                PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, [...this.deployments.AllManifests()])
+                return true
+            }
             return await this.RoutePublishManifest(req, res, method)
         }
         const mwm = ControlPlaneHost.ManifestWithdrawnPathPattern.exec(path)

@@ -65,6 +65,12 @@ export class PlatformDeploymentRegistry
         return record
     }
 
+    /** Every published manifest, including withdrawn versions. */
+    public AllManifests(): readonly ManifestRecord[]
+    {
+        return this.manifests.List()
+    }
+
     /** Marks a published version withdrawn (or restores it). A withdrawn version stays published and gated but is flagged for the UI. */
     public async SetWithdrawn(version: string, withdrawn: boolean): Promise<ManifestRecord>
     {

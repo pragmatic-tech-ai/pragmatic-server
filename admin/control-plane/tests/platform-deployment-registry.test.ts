@@ -121,6 +121,21 @@ test('SetWithdrawn flags and restores a published version, surfacing on the gate
     })
 })
 
+test('AllManifests lists every published version including withdrawn ones, and is empty when none', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        assert.deepEqual(reg.AllManifests(), [])
+        await reg.Publish(Fx.V1, Fx.Image(Fx.V1))
+        await reg.Publish(Fx.V2, Fx.Image(Fx.V2))
+        await reg.SetWithdrawn(Fx.V2, true)
+        const all = reg.AllManifests()
+        assert.deepEqual(all.map(m => m.id).sort(), [Fx.V1, Fx.V2])
+        assert.equal(all.find(m => m.id === Fx.V2)!.withdrawn, true)
+        assert.notEqual(all.find(m => m.id === Fx.V1)!.withdrawn, true)
+    })
+})
+
 test('SetWithdrawn on an unknown version throws UnknownManifestError', async () =>
 {
     await Fx.Run(async reg =>
