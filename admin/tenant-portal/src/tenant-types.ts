@@ -353,3 +353,25 @@ export interface ISecurityModelSource
     GetSecurityModel(env: string): Promise<SecurityModelDto | null>
     SetSecurityModel(env: string, model: SecurityModelDto): Promise<void>
 }
+
+// The slice of TenantApiClient the Connection status page needs.
+export interface IConnectionSource
+{
+    GetHives(): Promise<HiveDto[]>
+    GetRollout(hiveId: string): Promise<HiveRolloutDto>
+}
+
+export interface ConnectionEnvironment
+{
+    name: string
+    runningImage: string | undefined
+    ready: boolean
+}
+
+export interface ConnectionStatus
+{
+    reachable: boolean
+    detail: string
+    targetVersion: string | undefined
+    environments: readonly ConnectionEnvironment[]
+}
