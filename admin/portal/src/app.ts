@@ -16,6 +16,7 @@ import { CreateHiveView } from './create-hive-view.js'
 import type { IPortalNavigator, IPortalView, OperatorDto } from './portal-types.js'
 
 import { ComingSoonView } from './coming-soon-view.js'
+import { FleetView } from './fleet-view.js'
 import { NavModel, PaSection } from './nav-model.js'
 import { NavRail } from './nav-rail.js'
 import { TopBar } from './top-bar.js'
@@ -117,6 +118,11 @@ export class App extends StackPanel implements IPortalNavigator
     {
         this.active = section
         this.navRail?.SetActive(section)
+        if (section === PaSection.Fleet)
+        {
+            this.Mount(new FleetView(this.client))
+            return
+        }
         const label = NavModel.LabelFor(section)
         const heading = App.HeadingFor(section)
         const breadcrumb = heading === undefined ? [label] : [heading, label]

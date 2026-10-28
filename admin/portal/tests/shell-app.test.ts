@@ -6,6 +6,7 @@ import { App } from '../src/app.js'
 import { Banner } from '../src/kit/index.js'
 import { ClientListView } from '../src/client-list-view.js'
 import { ComingSoonView } from '../src/coming-soon-view.js'
+import { FleetView } from '../src/fleet-view.js'
 import { LoginView } from '../src/login-view.js'
 import { PaSection } from '../src/nav-model.js'
 import { NavRail } from '../src/nav-rail.js'
@@ -37,6 +38,11 @@ class FakeClient
 
     public OnChanged(_handler: () => void): void
     {
+    }
+
+    public ListFleet(): Promise<unknown[]>
+    {
+        return Promise.resolve([])
     }
 
     public ListClients(): Promise<unknown[]>
@@ -85,21 +91,23 @@ describe('PA shell app', () =>
         await app.Boot()
         assert.ok(app.Nav instanceof NavRail)
         assert.ok(app.Top instanceof TopBar)
-        assert.ok(app.CurrentView instanceof ComingSoonView)
+        assert.ok(app.CurrentView instanceof FleetView)
         assert.equal(app.ActiveSection, PaSection.Fleet)
         assert.equal(app.Nav.Active, PaSection.Fleet)
         // The legacy entry lives in the top bar, never in the primary nav: exactly the nine designed rows.
         assert.equal(app.Nav.Rows.size, 9)
     })
 
-    it('routes every section to a placeholder', async () =>
+    it('routes Fleet to FleetView and every other section to a placeholder', async () =>
     {
         const app = Fixtures.Make({ email: 'op@example.com', principalId: 'p1', role: 'full' })
         await app.Boot()
         for (const section of Object.values(PaSection))
         {
             app.ShowSection(section)
-            assert.ok(app.CurrentView instanceof ComingSoonView)
+            assert.ok(section === PaSection.Fleet
+                ? app.CurrentView instanceof FleetView
+                : app.CurrentView instanceof ComingSoonView)
             assert.equal(app.ActiveSection, section)
             assert.equal(app.Nav?.Active, section)
         }
