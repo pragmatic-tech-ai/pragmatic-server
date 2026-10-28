@@ -5,12 +5,13 @@ import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pr
 import type { ControlPlaneClient } from '../src/api-client.js'
 import { ClientsMode, ClientsView } from '../src/clients-view.js'
 import { OperatorContext } from '../src/operator-context.js'
-import { ScreenState } from '../src/kit/index.js'
+import { ErrorStatePanel, ScreenState } from '../src/kit/index.js'
 import type { ClientDto, FleetHiveDto, TenantDto } from '../src/portal-types.js'
 
 class FakeClient
 {
     public readonly Created: string[] = []
+    public DetailBroken = false
 
     public constructor(private readonly clients: ClientDto[], private readonly fail = false, private readonly failCreate = false, private readonly failDetail = false)
     {
@@ -23,7 +24,7 @@ class FakeClient
 
     public ListTenants(clientId?: string): Promise<TenantDto[]>
     {
-        if (this.failDetail && clientId !== undefined)
+        if ((this.failDetail || this.DetailBroken) && clientId !== undefined)
         {
             return Promise.reject(new Error('detail boom'))
         }
@@ -49,6 +50,27 @@ class FakeClient
 
 class Fixtures
 {
+    public static Walk(root: unknown): unknown[]
+    {
+        const out: unknown[] = [root]
+        const children = (root as { Children?: Iterable<unknown> }).Children
+        for (const c of children ?? [])
+        {
+            out.push(...Fixtures.Walk(c))
+        }
+        return out
+    }
+
+    public static Retry(view: ClientsView): void
+    {
+        const panel = Fixtures.Walk(view).find(n => n instanceof ErrorStatePanel) as ErrorStatePanel
+        assert.ok(panel)
+        for (const h of (panel.RetryButton as unknown as { _clickHandlers: Array<(a: unknown) => void> })._clickHandlers)
+        {
+            h({})
+        }
+    }
+
     public static Client(id: string): ClientDto
     {
         return { id, displayName: 'Client ' + id, createdAt: '2026-01-02T00:00:00Z' }
@@ -181,5 +203,23 @@ describe('ClientsView', () =>
         assert.equal(view.Mode, ClientsMode.Detail)
         await view.Refresh()
         assert.equal(view.Mode, ClientsMode.Detail)
+    })
+
+    it('detail-fetch failure shows a live retry that recovers to the list', async () =>
+    {
+        const fake = new FakeClient([Fixtures.Client('a')])
+        const view = new ClientsView(fake as unknown as ControlPlaneClient, OperatorContext.FromWire('full'))
+        await view.ShowList()
+        fake.DetailBroken = true
+        view.Table?.FocusRow(0)
+        view.Table?.ActivateFocused()
+        await new Promise(r => setTimeout(r, 0))
+        assert.equal(view.Host.State, ScreenState.Error)
+        fake.DetailBroken = false
+        Fixtures.Retry(view)
+        await new Promise(r => setTimeout(r, 0))
+        assert.equal(view.Mode, ClientsMode.List)
+        assert.equal(view.Host.State, ScreenState.Populated)
+        assert.equal(view.Table?.Rows.length, 1)
     })
 })

@@ -6,12 +6,12 @@ import { ClientDetailViewModel } from './client-detail-view-model.js'
 import { ClientsViewModel } from './clients-view-model.js'
 import type { ClientListRow } from './clients-view-model.js'
 import { CreateClientViewModel } from './create-client-view-model.js'
-import {
-    Act, ActVariant, DataTable, KeyActivatedButton, PageHeader, ScreenHost, Section, TableDensity,
-} from './kit/index.js'
-import type { ScreenHostInputs, TableColumn } from './kit/index.js'
+import { Act, ActVariant, KeyActivatedButton, PageHeader, Section } from './kit/index.js'
+import type { TableColumn } from './kit/index.js'
 import { OperatorContext } from './operator-context.js'
-import type { ClientDto, FleetHiveDto, IPortalNavigator, IPortalView, TenantDto } from './portal-types.js'
+import type { ClientDto } from './portal-types.js'
+import { SectionContainerView, SectionState } from './section-container-view.js'
+import type { SectionLabels } from './section-container-view.js'
 
 export enum ClientsMode
 {
@@ -20,9 +20,9 @@ export enum ClientsMode
     Detail,
 }
 
-// Clients section: a self-routing container (list / create / detail). Every screen swap clears the
-// content host and adds a freshly built screen, since a Visual may hold only one parent.
-export class ClientsView extends StackPanel implements IPortalView
+// Clients section: a self-routing container (list / detail) with a localized Create form as the
+// base's Custom state.
+export class ClientsView extends SectionContainerView<ClientListRow>
 {
     private static readonly ListBreadcrumb: readonly string[] = ['Provisioning', 'Clients']
     private static readonly CreateBreadcrumb: readonly string[] = ['Clients', 'New client']
@@ -52,15 +52,8 @@ export class ClientsView extends StackPanel implements IPortalView
     private static readonly SubscriptionHeader = 'Subscription'
     private static readonly SinceHeader = 'Client since'
 
-    private readonly content = new StackPanel()
-    private host: ScreenHost
-    private listSlot = new StackPanel()
     private model: ClientsViewModel | undefined
     private createAction: Act | undefined
-    private mode = ClientsMode.List
-    private listMounted = true
-    private detailRow: ClientListRow | undefined
-    private nav: IPortalNavigator | undefined
     private errorText: TextBlock | undefined
     private submitAction: Act | undefined
     private readonly createModel: CreateClientViewModel
@@ -68,30 +61,14 @@ export class ClientsView extends StackPanel implements IPortalView
     public constructor(private readonly client: ControlPlaneClient, private readonly operator: OperatorContext)
     {
         super()
-        this.Orientation = Orientation.Vertical
-        this.content.Orientation = Orientation.Vertical
         this.createModel = new CreateClientViewModel(client)
-        this.host = new ScreenHost(ClientsView.Inputs(true, false, true))
-        this.AddChild(this.content)
-        this.content.AddChild(this.host)
-    }
-
-    // Test seam: the list screen's host.
-    public get Host(): ScreenHost
-    {
-        return this.host
-    }
-
-    // Test seam: the list table (populated list only).
-    public get Table(): DataTable<ClientListRow> | undefined
-    {
-        const child = [...this.listSlot.Children][0]
-        return child instanceof DataTable ? child as DataTable<ClientListRow> : undefined
     }
 
     public get Mode(): ClientsMode
     {
-        return this.mode
+        return this.State === SectionState.Custom
+            ? ClientsMode.Create
+            : this.State === SectionState.Detail ? ClientsMode.Detail : ClientsMode.List
     }
 
     public get CreateAction(): Act | undefined
@@ -105,166 +82,56 @@ export class ClientsView extends StackPanel implements IPortalView
         return this.submitAction
     }
 
-    public AttachNavigator(nav: IPortalNavigator): void
-    {
-        this.nav = nav
-    }
-
-    public async Refresh(): Promise<void>
-    {
-        if (this.mode === ClientsMode.Detail && this.detailRow !== undefined)
-        {
-            await this.ShowDetail(this.detailRow)
-        }
-        else if (this.mode === ClientsMode.List)
-        {
-            await this.ShowList()
-        }
-    }
-
-    public async ShowList(): Promise<void>
-    {
-        if (!this.listMounted)
-        {
-            this.host = new ScreenHost(ClientsView.Inputs(true, false, true))
-            this.Swap(this.host)
-            this.listMounted = true
-        }
-        this.mode = ClientsMode.List
-        this.detailRow = undefined
-        if (this.model === undefined)
-        {
-            this.host.Update(ClientsView.Inputs(true, false, true))
-        }
-        try
-        {
-            const [clients, tenants, fleet] = await Promise.all([
-                this.client.ListClients(), this.client.ListTenants(), this.client.ListFleet(),
-            ])
-            if (this.model === undefined)
-            {
-                this.model = new ClientsViewModel(clients, tenants, fleet)
-            }
-            else
-            {
-                this.model.Update(clients, tenants, fleet)
-            }
-        }
-        catch
-        {
-            this.host.Update(ClientsView.Inputs(false, true, true, undefined, () => void this.Refresh()))
-            return
-        }
-        if (this.mode !== ClientsMode.List)
-        {
-            return
-        }
-        const model = this.model
-        this.host.Update(this.LoadedInputs(model))
-    }
-
     public ShowCreate(): void
     {
-        this.mode = ClientsMode.Create
-        this.listMounted = false
-        this.Swap(this.BuildCreate())
+        this.EnterCustom()
+        this.SwapScreen(this.BuildCreate())
     }
 
-    public async ShowDetail(row: ClientListRow): Promise<void>
-    {
-        this.mode = ClientsMode.Detail
-        this.detailRow = row
-        const dto: ClientDto = { id: row.id, displayName: row.displayName, subscriptionRef: row.subscriptionRef, createdAt: row.createdAt }
-        let tenants: TenantDto[]
-        let fleet: FleetHiveDto[]
-        try
-        {
-            [tenants, fleet] = await Promise.all([this.client.ListTenants(row.id), this.client.ListFleet()])
-        }
-        catch
-        {
-            if (this.mode !== ClientsMode.Detail || this.detailRow !== row)
-            {
-                return
-            }
-            this.mode = ClientsMode.List
-            this.detailRow = undefined
-            this.listMounted = true
-            this.host = new ScreenHost(ClientsView.Inputs(false, true, true))
-            this.Swap(this.host)
-            return
-        }
-        if (this.mode !== ClientsMode.Detail || this.detailRow !== row)
-        {
-            return
-        }
-        this.listMounted = false
-        this.Swap(new ClientDetailView(new ClientDetailViewModel(dto, tenants, fleet), () => void this.ShowList()))
-    }
-
-    private static Inputs(loading: boolean, error: boolean, isEmpty: boolean, content?: () => Visual, onRetry?: () => void): ScreenHostInputs
+    protected Labels(): SectionLabels
     {
         return {
-            loading,
-            allowed: true,
-            error,
-            isEmpty,
-            empty: { title: ClientsView.EmptyTitle },
-            errorConfig: { title: ClientsView.ErrorTitle, onRetry },
-            content,
+            listBreadcrumb: ClientsView.ListBreadcrumb,
+            listTitle: ClientsView.ListTitle,
+            emptyTitle: ClientsView.EmptyTitle,
+            errorTitle: ClientsView.ErrorTitle,
+            tableEmptyText: ClientsView.TableEmptyText,
         }
     }
 
-    private CreateAct(): Act
+    protected SearchText(row: ClientListRow): string
+    {
+        return row.displayName + ClientsView.SearchSeparator + row.id
+    }
+
+    protected async LoadRows(): Promise<readonly ClientListRow[]>
+    {
+        const [clients, tenants, fleet] = await Promise.all([
+            this.client.ListClients(), this.client.ListTenants(), this.client.ListFleet(),
+        ])
+        if (this.model === undefined)
+        {
+            this.model = new ClientsViewModel(clients, tenants, fleet)
+        }
+        else
+        {
+            this.model.Update(clients, tenants, fleet)
+        }
+        return this.model.Rows
+    }
+
+    protected async BuildDetail(row: ClientListRow): Promise<Visual | undefined>
+    {
+        const dto: ClientDto = { id: row.id, displayName: row.displayName, subscriptionRef: row.subscriptionRef, createdAt: row.createdAt }
+        const [tenants, fleet] = await Promise.all([this.client.ListTenants(row.id), this.client.ListFleet()])
+        return new ClientDetailView(new ClientDetailViewModel(dto, tenants, fleet), () => void this.ShowList())
+    }
+
+    // Called on every render and an Act holds one parent, so build a fresh Act each time.
+    protected ListPrimaryAction(): Act | undefined
     {
         this.createAction = new Act(this.operator.MutatingAct(ClientsView.CreateActionLabel, () => this.ShowCreate()))
         return this.createAction
-    }
-
-    private LoadedInputs(model: ClientsViewModel): ScreenHostInputs
-    {
-        return {
-            loading: false,
-            allowed: true,
-            error: false,
-            isEmpty: model.Rows.length === 0,
-            empty: { title: ClientsView.EmptyTitle, action: this.CreateAct() },
-            errorConfig: { title: ClientsView.ErrorTitle, onRetry: () => void this.Refresh() },
-            content: () => this.BuildList(model),
-        }
-    }
-
-    private Swap(screen: Visual): void
-    {
-        for (const child of [...this.content.Children])
-        {
-            this.content.RemoveChild(child)
-        }
-        this.content.AddChild(screen)
-    }
-
-    private BuildList(model: ClientsViewModel): Visual
-    {
-        const root = new StackPanel()
-        root.Orientation = Orientation.Vertical
-        root.AddChild(new PageHeader({
-            breadcrumb: ClientsView.ListBreadcrumb,
-            title: ClientsView.ListTitle,
-            primaryAction: this.CreateAct(),
-        }))
-        // Fresh slot per render: the previous one is still parented to the previous root.
-        this.listSlot = new StackPanel()
-        this.listSlot.Orientation = Orientation.Vertical
-        this.listSlot.AddChild(new DataTable<ClientListRow>({
-            columns: ClientsView.Columns(),
-            rows: model.Rows,
-            density: TableDensity.Dense,
-            searchText: r => r.displayName + ClientsView.SearchSeparator + r.id,
-            onOpen: r => void this.ShowDetail(r),
-            emptyText: ClientsView.TableEmptyText,
-        }))
-        root.AddChild(this.listSlot)
-        return root
     }
 
     private BuildCreate(): Visual
@@ -330,7 +197,7 @@ export class ClientsView extends StackPanel implements IPortalView
         await this.ShowList()
     }
 
-    private static Columns(): TableColumn<ClientListRow>[]
+    protected Columns(): TableColumn<ClientListRow>[]
     {
         return [
             {
