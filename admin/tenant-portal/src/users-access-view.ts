@@ -1,4 +1,5 @@
-import { Orientation, StackPanel, TextBlock, TextBox } from '@pragmatic-tech-ai/mural/basic'
+import { Border, Orientation, StackPanel, TextBlock, TextBox } from '@pragmatic-tech-ai/mural/basic'
+import { Thickness } from '@pragmatic-tech-ai/mural/runtime'
 import type { AccountRow } from './account-row.js'
 import { ConfirmDialog, ConfirmTone, PillKind, StatusPill } from './kit/index.js'
 import { TenantRole } from './tenant-types.js'
@@ -24,6 +25,10 @@ export class UsersAccessView extends TenantViewBase
     public static readonly DisableTitle = 'Disable account'
     public static readonly DisableActionLabel = 'Disable account'
     public static readonly YouTag = 'You'
+    public static readonly DisablingPrefix = 'Disabling '
+    public static readonly DisablingSuffix = '.'
+    private static readonly ChipPadding = 4
+    private static readonly ChipRadius = 4
     public static readonly ConfirmRevokeLabel = 'Confirm revoke'
     public static readonly RevokeLabel = 'Revoke'
     public static readonly GrantLabel = 'Grant'
@@ -44,6 +49,7 @@ export class UsersAccessView extends TenantViewBase
     private readonly rowByPrincipal = new Map<string, StackPanel>()
     private dialog: ConfirmDialog | undefined
     private dialogIsPending = false
+    private readonly dialogHost = new StackPanel()
     private readonly emailBox = new TextBox()
     private readonly principalBox = new TextBox()
     private readonly passwordBox = new TextBox()
@@ -55,6 +61,7 @@ export class UsersAccessView extends TenantViewBase
         this.vm = new UsersAccessViewModel(source, currentPrincipalId)
         this.accountList.Orientation = Orientation.Vertical
         this.BuildForm()
+        this.AddChild(this.dialogHost)
         const rerender = (): void => this.Render()
         this.vm.PropertyChanged(UsersAccessViewModel.RowsProperty).subscribe(rerender)
         this.vm.PropertyChanged(UsersAccessViewModel.EnvironmentsProperty).subscribe(rerender)
@@ -100,7 +107,10 @@ export class UsersAccessView extends TenantViewBase
         this.SyncPendingDialog()
         for (const child of [...this.Children])
         {
-            this.RemoveChild(child)
+            if (child !== this.dialogHost)
+            {
+                this.RemoveChild(child)
+            }
         }
         const vm = this.vm
         this.AddChild(this.MakeEnvironmentStrip())
@@ -133,9 +143,24 @@ export class UsersAccessView extends TenantViewBase
         {
             this.AddChild(this.MakeSelectedSection(vm.SelectedPrincipalId))
         }
+        this.SyncDialogHost()
+    }
+
+    // The dialog lives in a host that is a permanent child, outside the rebuilt subtree.
+    private SyncDialogHost(): void
+    {
+        const hosted = [...this.dialogHost.Children]
+        if (hosted.length === 1 && hosted[0] === this.dialog)
+        {
+            return
+        }
+        for (const child of hosted)
+        {
+            this.dialogHost.RemoveChild(child)
+        }
         if (this.dialog !== undefined)
         {
-            this.AddChild(this.dialog)
+            this.dialogHost.AddChild(this.dialog)
         }
     }
 
@@ -174,14 +199,23 @@ export class UsersAccessView extends TenantViewBase
         panel.AddChild(this.MakeButton(row.Email, () => this.vm.SelectAccount(row.PrincipalId)))
         for (const role of row.Roles)
         {
-            panel.AddChild(this.Text(role))
+            panel.AddChild(this.MakeChip(role))
         }
         if (row.PrincipalId === this.vm.CurrentPrincipalId)
         {
-            panel.AddChild(this.Text(UsersAccessView.YouTag))
+            panel.AddChild(this.MakeChip(UsersAccessView.YouTag))
         }
         panel.AddChild(new StatusPill(row.Disabled ? PillKind.Disabled : PillKind.Active))
         return panel
+    }
+
+    private MakeChip(text: string): Border
+    {
+        const chip = new Border()
+        chip.Padding = new Thickness(UsersAccessView.ChipPadding)
+        chip.CornerRadius = UsersAccessView.ChipRadius
+        chip.SetChild(this.Text(text))
+        return chip
     }
 
     // Keeps the hosted dialog in step with the VM's DisableSelf pending state.
@@ -204,7 +238,7 @@ export class UsersAccessView extends TenantViewBase
     {
         const dialog: ConfirmDialog = new ConfirmDialog({
             title: UsersAccessView.DisableTitle,
-            body: selfLockout ? UsersAccessView.SelfDisableWarning : undefined,
+            body: this.DisableBody(principalId, selfLockout),
             consequences: [...UsersAccessView.DisableConsequences],
             actionLabel: UsersAccessView.DisableActionLabel,
             tone: ConfirmTone.Danger,
@@ -213,6 +247,13 @@ export class UsersAccessView extends TenantViewBase
         })
         this.dialog = dialog
         this.dialogIsPending = selfLockout
+    }
+
+    private DisableBody(principalId: string, selfLockout: boolean): string
+    {
+        const row = this.vm.Rows.find(r => r.PrincipalId === principalId)
+        const named = UsersAccessView.DisablingPrefix + (row?.Email ?? principalId) + UsersAccessView.DisablingSuffix
+        return selfLockout ? named + UsersAccessView.GrantSeparator + UsersAccessView.SelfDisableWarning : named
     }
 
     private CloseDialog(dialog: ConfirmDialog): void
@@ -233,16 +274,17 @@ export class UsersAccessView extends TenantViewBase
 
     private RequestDisable(principalId: string): void
     {
+        if (this.dialog !== undefined)
+        {
+            return
+        }
         if (principalId === this.vm.CurrentPrincipalId)
         {
             void this.Act(() => this.vm.RequestDisable(principalId))
             return
         }
-        if (this.dialog === undefined)
-        {
-            this.OpenDisableDialog(principalId, false)
-            this.Render()
-        }
+        this.OpenDisableDialog(principalId, false)
+        this.Render()
     }
 
     // Runs a view-model call; failures surface through ShowError (401 drops to login).
@@ -265,9 +307,18 @@ export class UsersAccessView extends TenantViewBase
         for (const name of this.vm.Environments)
         {
             const label = name === this.vm.SelectedEnvironment ? UsersAccessView.SelectedMark + name : name
-            strip.AddChild(this.MakeButton(label, () => { void this.Act(() => this.vm.SelectEnvironment(name)) }))
+            strip.AddChild(this.MakeButton(label, () => this.PickEnvironment(name)))
         }
         return strip
+    }
+
+    // No-op while a dialog is open so a pending confirm cannot land in another environment.
+    private PickEnvironment(name: string): void
+    {
+        if (this.dialog === undefined)
+        {
+            void this.Act(() => this.vm.SelectEnvironment(name))
+        }
     }
 
     private async Create(): Promise<void>

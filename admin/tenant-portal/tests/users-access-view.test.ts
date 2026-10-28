@@ -24,8 +24,12 @@ class Fixtures
 
     public static Texts(node: unknown): string[]
     {
-        const n = node as { Text?: unknown; Children?: Iterable<unknown>; Content?: unknown }
+        const n = node as { Text?: unknown; Children?: Iterable<unknown>; Content?: unknown; ContentChild?: unknown }
         const out: string[] = []
+        if (n.ContentChild !== undefined)
+        {
+            out.push(...Fixtures.Texts(n.ContentChild))
+        }
         if (typeof n.Text === 'string')
         {
             out.push(n.Text)
@@ -106,7 +110,12 @@ class Fixtures
         {
             out.push(node)
         }
-        for (const c of (node as { Children?: Iterable<unknown> }).Children ?? [])
+        const n = node as { Children?: Iterable<unknown>; ContentChild?: unknown }
+        if (n.ContentChild !== undefined)
+        {
+            Fixtures.Find(n.ContentChild, ctor, out)
+        }
+        for (const c of n.Children ?? [])
         {
             Fixtures.Find(c, ctor, out)
         }
@@ -481,7 +490,7 @@ describe('UsersAccessView', () =>
         await Fixtures.Settle()
         const first = view.ActiveConfirm
         assert.ok(first)
-        assert.ok(first.Lines.includes(UsersAccessView.SelfDisableWarning))
+        assert.ok(first.Lines.some(l => l.includes(UsersAccessView.SelfDisableWarning)))
         assert.deepEqual(src.disabled, [])
         first.Cancel()
         await Fixtures.Settle()
@@ -495,6 +504,64 @@ describe('UsersAccessView', () =>
         await Fixtures.Settle()
         assert.deepEqual(src.disabled, ['me'])
         assert.equal(view.ActiveConfirm, undefined)
+    })
+
+    it('names the target account in the disable dialog', async () =>
+    {
+        const { view } = await Harness.Make()
+        Fixtures.Click(view, 'bob@x.io')
+        await Fixtures.Settle()
+        Fixtures.Click(view, 'Disable')
+        assert.ok(view.ActiveConfirm?.Lines.some(l => l.includes('bob@x.io')))
+        view.ActiveConfirm?.Cancel()
+        Fixtures.Click(view, 'me@x.io')
+        await Fixtures.Settle()
+        Fixtures.Click(view, 'Disable')
+        await Fixtures.Settle()
+        assert.ok(view.ActiveConfirm?.Lines.some(l => l.includes('me@x.io') && l.includes(UsersAccessView.SelfDisableWarning)))
+    })
+
+    it('does not switch environment or open a second dialog while a dialog is open', async () =>
+    {
+        const { src, view } = await Harness.Make()
+        Fixtures.Click(view, 'bob@x.io')
+        await Fixtures.Settle()
+        Fixtures.Click(view, 'Disable')
+        const dialog = view.ActiveConfirm
+        assert.ok(dialog)
+        Fixtures.Click(view, 'prod')
+        await Fixtures.Settle()
+        assert.deepEqual(src.snapshotCalls, ['dev'])
+        Fixtures.Click(view, 'Disable')
+        assert.equal(view.ActiveConfirm, dialog)
+        dialog.Confirm()
+        await Fixtures.Settle()
+        await Fixtures.Settle()
+        assert.deepEqual(src.disabled, ['bob'])
+    })
+
+    it('keeps the dialog hosted across a re-render', async () =>
+    {
+        const { view } = await Harness.Make()
+        Fixtures.Click(view, 'bob@x.io')
+        await Fixtures.Settle()
+        Fixtures.Click(view, 'Disable')
+        const dialog = view.ActiveConfirm
+        view.Render()
+        assert.equal(view.ActiveConfirm, dialog)
+        assert.equal(Fixtures.Find(view, ConfirmDialog).length, 1)
+    })
+
+    it('Dispose clears an open dialog without throwing', async () =>
+    {
+        const { view } = await Harness.Make()
+        Fixtures.Click(view, 'bob@x.io')
+        await Fixtures.Settle()
+        Fixtures.Click(view, 'Disable')
+        assert.ok(view.ActiveConfirm)
+        view.Dispose()
+        assert.equal(view.ActiveConfirm, undefined)
+        view.Dispose()
     })
 
     it('grants the picked role to the selected account', async () =>
