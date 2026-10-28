@@ -4,6 +4,7 @@ import { TextBlock } from '@pragmatic-tech-ai/mural/basic'
 import { Key, Application } from '@pragmatic-tech-ai/mural/runtime'
 import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pragmatic'
 import { KeyActivatedButton, PillKind, PillKinds, StatusPill } from '../src/kit/index.js'
+import { IconCatalog, KitGlyph } from '../src/kit/icon-catalog.js'
 
 class Fixtures
 {
@@ -89,5 +90,15 @@ describe('kit foundations', () =>
         assert.equal(count, 2)
         Fixtures.Press(b, Key.Space)
         assert.equal(count, 3)
+    })
+
+    it('resolves a definition for every nav and top-bar glyph', () =>
+    {
+        const glyphs = [KitGlyph.Server, KitGlyph.Building, KitGlyph.Users, KitGlyph.HardDrive, KitGlyph.Package, KitGlyph.Shield, KitGlyph.Layers, KitGlyph.Settings, KitGlyph.Home, KitGlyph.User, KitGlyph.Sun, KitGlyph.Moon]
+        for (const g of glyphs)
+        {
+            const def = IconCatalog.Definition(g)
+            assert.ok(def !== undefined, String(g))
+        }
     })
 })

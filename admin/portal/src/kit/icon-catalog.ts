@@ -19,6 +19,18 @@ export enum KitGlyph
     Search = 'search',
     ChevronUp = 'chevron-up',
     ChevronDown = 'chevron-down',
+    Server = 'server',
+    Building = 'building-2',
+    Users = 'users',
+    HardDrive = 'hard-drive',
+    Package = 'package',
+    Shield = 'shield',
+    Layers = 'layers',
+    Settings = 'settings',
+    Home = 'home',
+    User = 'user',
+    Sun = 'sun',
+    Moon = 'moon',
 }
 
 // A single SVG element descriptor: [tag, attributes].
@@ -121,6 +133,73 @@ export class IconCatalog
         ],
         [KitGlyph.ChevronDown]: [
             ['path', { d:'m6 9 6 6 6-6' }],
+        ],
+        [KitGlyph.Server]: [
+            ['rect', { width:'20',height:'8',x:'2',y:'2',rx:'2',ry:'2' }],
+            ['rect', { width:'20',height:'8',x:'2',y:'14',rx:'2',ry:'2' }],
+            ['line', { x1:'6',x2:'6.01',y1:'6',y2:'6' }],
+            ['line', { x1:'6',x2:'6.01',y1:'18',y2:'18' }],
+        ],
+        [KitGlyph.Building]: [
+            ['path', { d:'M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z' }],
+            ['path', { d:'M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2' }],
+            ['path', { d:'M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2' }],
+            ['path', { d:'M10 6h4' }],
+            ['path', { d:'M10 10h4' }],
+            ['path', { d:'M10 14h4' }],
+            ['path', { d:'M10 18h4' }],
+        ],
+        [KitGlyph.Users]: [
+            ['path', { d:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2' }],
+            ['path', { d:'M16 3.128a4 4 0 0 1 0 7.744' }],
+            ['path', { d:'M22 21v-2a4 4 0 0 0-3-3.87' }],
+            ['circle', { cx:'9',cy:'7',r:'4' }],
+        ],
+        [KitGlyph.HardDrive]: [
+            ['path', { d:'M10 16h.01' }],
+            ['path', { d:'M2.212 11.577a2 2 0 0 0-.212.896V18a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-5.527a2 2 0 0 0-.212-.896L18.55 5.11A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z' }],
+            ['path', { d:'M21.946 12.013H2.054' }],
+            ['path', { d:'M6 16h.01' }],
+        ],
+        [KitGlyph.Package]: [
+            ['path', { d:'M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z' }],
+            ['path', { d:'M12 22V12' }],
+            ['polyline', { points:'3.29 7 12 12 20.71 7' }],
+            ['path', { d:'m7.5 4.27 9 5.15' }],
+        ],
+        [KitGlyph.Shield]: [
+            ['path', { d:'M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z' }],
+        ],
+        [KitGlyph.Layers]: [
+            ['path', { d:'M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z' }],
+            ['path', { d:'M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12' }],
+            ['path', { d:'M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17' }],
+        ],
+        [KitGlyph.Settings]: [
+            ['path', { d:'M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915' }],
+            ['circle', { cx:'12',cy:'12',r:'3' }],
+        ],
+        [KitGlyph.Home]: [
+            ['path', { d:'M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8' }],
+            ['path', { d:'M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z' }],
+        ],
+        [KitGlyph.User]: [
+            ['path', { d:'M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2' }],
+            ['circle', { cx:'12',cy:'7',r:'4' }],
+        ],
+        [KitGlyph.Sun]: [
+            ['circle', { cx:'12',cy:'12',r:'4' }],
+            ['path', { d:'M12 2v2' }],
+            ['path', { d:'M12 20v2' }],
+            ['path', { d:'m4.93 4.93 1.41 1.41' }],
+            ['path', { d:'m17.66 17.66 1.41 1.41' }],
+            ['path', { d:'M2 12h2' }],
+            ['path', { d:'M20 12h2' }],
+            ['path', { d:'m6.34 17.66-1.41 1.41' }],
+            ['path', { d:'m19.07 4.93-1.41 1.41' }],
+        ],
+        [KitGlyph.Moon]: [
+            ['path', { d:'M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z' }],
         ],
     }
 
