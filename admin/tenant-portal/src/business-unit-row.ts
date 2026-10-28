@@ -1,7 +1,8 @@
 import type { SecurityModelViewModel } from './security-model-view-model.js'
 import type { BusinessUnitDto } from './tenant-types.js'
 
-// One business unit row: reads a snapshot taken at Refresh, edits through the view-model.
+// One business unit row. Holds a LIVE reference to the draft's DTO and is rebuilt fresh on every
+// Refresh(), so reads stay current; edits go through the view-model.
 export class BusinessUnitRow
 {
     public constructor(

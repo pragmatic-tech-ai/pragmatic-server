@@ -20,7 +20,7 @@ class Make
             businessUnits: [{ id: 'bu1', name: 'Root' } as never],
             teams: [{ id: 't1', name: 'Team One', owningBusinessUnit: 'bu1' }],
             membership: { claimsMapping: [], overrides: [] },
-            ownershipRules: [{ concept: 'Order' } as never],
+            ownershipRules: [{ concept: 'Order', owningBusinessUnit: { kind: 'claim', value: 'dept' } }],
             fieldSecurity: {
                 securedFields: [{ concept: 'Customer', field: 'ssn' }],
                 profiles: [
@@ -333,13 +333,69 @@ describe('SecurityModelViewModel', () =>
         assert.equal(vm.Dirty, false)
     })
 
-    it('RecordSharingRows reflects the selected role', async () =>
+    it('RecordSharingRows reflects the selected role with exact scope text', async () =>
+    {
+        const src = new FakeSource()
+        src.Model = Make.Model()
+        src.Model.roles = [
+            { id: 'r1', name: 'Admin', privileges: [{ action: PrivilegeAction.Read, concept: 'Customer', level: AccessLevel.User }] },
+            { id: 'r2', name: 'Viewer', privileges: [
+                { action: PrivilegeAction.Read, concept: 'Customer', level: AccessLevel.Organization },
+                { action: PrivilegeAction.Read, concept: 'Order', level: AccessLevel.BusinessUnit }
+            ] }
+        ]
+        const vm = await Fixture.Loaded(src)
+        assert.deepEqual(vm.RecordSharingRows.map(r => [r.concept, r.scopeText]), [['Customer', 'only records they own (user)']])
+        vm.SelectRole('r2')
+        assert.deepEqual(vm.RecordSharingRows.map(r => [r.concept, r.scopeText]), [
+            ['Customer', 'all records in the organization'],
+            ['Order', 'records in their business unit (records owned per the ownership rules)']
+        ])
+    })
+
+    it('ResetDraft (environment switch to no model) clears every org array', async () =>
+    {
+        const src = new FakeSource()
+        const vm = await Fixture.Loaded(src)
+        vm.AddMembershipRule()
+        vm.AddMembershipOverride()
+        assert.ok(vm.BusinessUnitRows.length > 0 && vm.TeamRows.length > 0 && vm.OwnershipRuleRows.length > 0)
+        src.GetError = new Error('gone')
+        await vm.SelectEnvironment('envB')
+        assert.deepEqual(vm.BusinessUnitRows, [])
+        assert.deepEqual(vm.TeamRows, [])
+        assert.deepEqual(vm.MembershipRuleRows, [])
+        assert.deepEqual(vm.MembershipOverrideRows, [])
+        assert.deepEqual(vm.OwnershipRuleRows, [])
+        assert.deepEqual(vm.RecordSharingRows, [])
+    })
+
+    it('ownership source edits surface through the row and flip Dirty', async () =>
     {
         const vm = await Fixture.Loaded()
-        const admin = vm.RecordSharingRows.find(r => r.concept === 'Customer')
-        assert.ok(admin !== undefined)
-        vm.SelectRole('r2')
-        const viewer = vm.RecordSharingRows.find(r => r.concept === 'Customer')
-        assert.notEqual(viewer?.scopeText, admin.scopeText)
+        const row = vm.OwnershipRuleRows[0]
+        assert.equal(row.OwningKind, 'claim')
+        assert.equal(row.OwningValue, 'dept')
+        assert.equal(vm.Dirty, false)
+        vm.SetOwningSourceKind('Order', 'fixed')
+        vm.SetOwningSourceValue('Order', 'bu1')
+        assert.equal(vm.OwnershipRuleRows[0].OwningKind, 'fixed')
+        assert.equal(vm.OwnershipRuleRows[0].OwningValue, 'bu1')
+        assert.equal(vm.Dirty, true)
+    })
+
+    it('RemoveMembershipRule keeps remaining row indices correct', async () =>
+    {
+        const vm = await Fixture.Loaded()
+        vm.AddMembershipRule()
+        vm.AddMembershipRule()
+        vm.MembershipRuleRows[0].SetClaim('first')
+        vm.MembershipRuleRows[1].SetClaim('second')
+        vm.MembershipRuleRows[0].Remove()
+        assert.equal(vm.MembershipRuleRows.length, 1)
+        assert.equal(vm.MembershipRuleRows[0].Claim, 'second')
+        vm.MembershipRuleRows[0].SetValue('v')
+        assert.equal(vm.MembershipRuleRows[0].Claim, 'second')
+        assert.equal(vm.MembershipRuleRows[0].Value, 'v')
     })
 })

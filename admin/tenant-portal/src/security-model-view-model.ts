@@ -51,6 +51,7 @@ export class SecurityModelViewModel extends Observable
     public static readonly DirtyProperty = 'Dirty'
 
     private static readonly NoMessage = ''
+    private static readonly NoRoleId = ''
 
     private environments: readonly string[] = []
     private selectedEnvironment: string | undefined
@@ -682,7 +683,7 @@ export class SecurityModelViewModel extends Observable
         this.membershipRuleRows = org.Membership.claimsMapping.map((r, i) => new MembershipRuleRow(r, i, this))
         this.membershipOverrideRows = org.Membership.overrides.map((o, i) => new MembershipOverrideRow(o, i, this))
         this.ownershipRuleRows = org.OwnershipRules.map(r => new OwnershipRuleRow(r, this))
-        this.recordSharingRows = draft.RecordSharingFor(this.selectedRoleId ?? SecurityModelViewModel.NoMessage)
+        this.recordSharingRows = draft.RecordSharingFor(this.selectedRoleId ?? SecurityModelViewModel.NoRoleId)
         this.RaisePropertyChanged(SecurityModelViewModel.RolesProperty, oldRoles, this.roles)
         this.RaisePropertyChanged(SecurityModelViewModel.SelectedRoleIdProperty, oldRole, this.selectedRoleId)
         this.RaisePropertyChanged(SecurityModelViewModel.PrivilegeRowsProperty, oldPrivilegeRows, this.privilegeRows)
