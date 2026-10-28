@@ -59,7 +59,7 @@ export class SecurityModelOrg
     public SetBusinessUnitParent(id: string, parent: string | undefined): void
     {
         const unit = this.model.businessUnits.find(u => u.id === id)
-        if (unit === undefined || this.WouldCycle(id, parent))
+        if (unit === undefined || this.UnknownUnit(parent) || this.WouldCycle(id, parent))
         {
             return
         }
@@ -115,6 +115,7 @@ export class SecurityModelOrg
         {
             if (SecurityModelOrg.References(rule.owningBusinessUnit, id))
             {
+                // The empty kind/value pair is the unset sentinel the editor surfaces.
                 rule.owningBusinessUnit = { kind: SecurityModelOrg.EmptyString, value: SecurityModelOrg.EmptyString }
             }
             if (SecurityModelOrg.References(rule.owner, id))
@@ -148,7 +149,7 @@ export class SecurityModelOrg
     public SetTeamOwningBusinessUnit(id: string, businessUnitId: string | undefined): void
     {
         const team = this.model.teams.find(t => t.id === id)
-        if (team === undefined)
+        if (team === undefined || this.UnknownUnit(businessUnitId))
         {
             return
         }
@@ -180,7 +181,22 @@ export class SecurityModelOrg
         {
             SecurityModelOrg.Without(override.teams, id)
         }
+        const roleAssignment = this.model.roleAssignment
+        if (roleAssignment !== undefined)
+        {
+            roleAssignment.teamRoles = roleAssignment.teamRoles.filter(g => g.teamId !== id)
+        }
+        const profileAssignment = this.model.fieldSecurity?.profileAssignment
+        if (profileAssignment !== undefined)
+        {
+            profileAssignment.teamProfiles = profileAssignment.teamProfiles.filter(g => g.teamId !== id)
+        }
         this.dirty = true
+    }
+
+    private UnknownUnit(id: string | undefined): boolean
+    {
+        return id !== undefined && !this.model.businessUnits.some(u => u.id === id)
     }
 
     private WouldCycle(id: string, parent: string | undefined): boolean

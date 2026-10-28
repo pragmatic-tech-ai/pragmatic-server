@@ -22,8 +22,8 @@ class Fixtures
             },
             ownershipRules: [{ concept: 'Order', owningBusinessUnit: { kind: 'fixed', value: 'bu1' }, owner: { kind: 'fixed', value: 'bu1' } }],
             roles: [{ id: 'r1', name: 'Admin', privileges: [] }],
-            roleAssignment: { claimsMapping: [], overrides: [{ principalId: 'u1', roles: ['r1'] }], teamRoles: [] },
-            fieldSecurity: { securedFields: [{ concept: 'Mid', field: 'x' }], profiles: [], profileAssignment: { claimsMapping: [], overrides: [], teamProfiles: [] } }
+            roleAssignment: { claimsMapping: [], overrides: [{ principalId: 'u1', roles: ['r1'] }], teamRoles: [{ teamId: 't1', roles: ['r1'] }, { teamId: 't2', roles: ['r1'] }] },
+            fieldSecurity: { securedFields: [{ concept: 'Mid', field: 'x' }], profiles: [], profileAssignment: { claimsMapping: [], overrides: [], teamProfiles: [{ teamId: 't1', profiles: ['p'] }, { teamId: 't2', profiles: ['p'] }] } }
         }
     }
 }
@@ -71,6 +71,7 @@ describe('SecurityModelOrg', () =>
         const org = new SecurityModelOrg(model)
         org.RemoveBusinessUnit('bu1')
         assert.deepEqual(org.BusinessUnits.map(u => u.id), ['bu2'])
+        assert.equal(model.businessUnits[0].parent, undefined)
         assert.equal(model.teams[0].owningBusinessUnit, undefined)
         assert.equal(model.teams[1].owningBusinessUnit, 'bu2')
         assert.equal(model.membership.claimsMapping[0].homeBusinessUnit, undefined)
@@ -78,6 +79,84 @@ describe('SecurityModelOrg', () =>
         assert.deepEqual(model.ownershipRules[0].owningBusinessUnit, { kind: '', value: '' })
         assert.equal(model.ownershipRules[0].owner, undefined)
         assert.equal(org.Dirty, true)
+    })
+
+    it('RemoveBusinessUnit resets only the matching ownership source', () =>
+    {
+        const model = Fixtures.Referenced()
+        model.ownershipRules = [
+            { concept: 'A', owningBusinessUnit: { kind: 'fixed', value: 'bu1' } },
+            { concept: 'B', owningBusinessUnit: { kind: 'fixed', value: 'bu2' }, owner: { kind: 'field', value: 'bu1' } }
+        ]
+        new SecurityModelOrg(model).RemoveBusinessUnit('bu1')
+        assert.deepEqual(model.ownershipRules[0].owningBusinessUnit, { kind: '', value: '' })
+        assert.deepEqual(model.ownershipRules[1].owningBusinessUnit, { kind: 'fixed', value: 'bu2' })
+        assert.equal(model.ownershipRules[1].owner, undefined)
+    })
+
+    it('rejects self-parenting, deep cycles and survives a pre-existing cycle', () =>
+    {
+        const model = Fixtures.Empty()
+        model.businessUnits = [{ id: 'a', name: 'A' }, { id: 'b', name: 'B', parent: 'a' }, { id: 'c', name: 'C', parent: 'b' },
+            { id: 'x', name: 'X', parent: 'y' }, { id: 'y', name: 'Y', parent: 'x' }, { id: 'z', name: 'Z' }]
+        const org = new SecurityModelOrg(model)
+        org.SetBusinessUnitParent('a', 'a')
+        org.SetBusinessUnitParent('a', 'c')
+        assert.equal(model.businessUnits[0].parent, undefined)
+        assert.equal(org.Dirty, false)
+        org.SetBusinessUnitParent('z', 'x')
+        assert.equal(model.businessUnits[5].parent, 'x')
+    })
+
+    it('ignores unknown parent and unknown owning business unit', () =>
+    {
+        const model = Fixtures.Referenced()
+        const org = new SecurityModelOrg(model)
+        org.SetBusinessUnitParent('bu2', 'nope')
+        org.SetTeamOwningBusinessUnit('t1', 'nope')
+        assert.equal(model.businessUnits[1].parent, 'bu1')
+        assert.equal(model.teams[0].owningBusinessUnit, 'bu1')
+        assert.equal(org.Dirty, false)
+    })
+
+    it('Dirty flips after each mutation kind and not on unknown ids', () =>
+    {
+        const noop = new SecurityModelOrg(Fixtures.Referenced())
+        noop.RenameBusinessUnit('nope', 'x')
+        noop.SetBusinessUnitParent('nope', undefined)
+        noop.RemoveBusinessUnit('nope')
+        noop.RenameTeam('nope', 'x')
+        noop.SetTeamOwningBusinessUnit('nope', undefined)
+        noop.RemoveTeam('nope')
+        assert.equal(noop.Dirty, false)
+        const mutations: ((o: SecurityModelOrg) => void)[] = [
+            o => o.AddBusinessUnit('n'),
+            o => o.RenameBusinessUnit('bu1', 'n'),
+            o => o.SetBusinessUnitParent('bu2', undefined),
+            o => o.RemoveBusinessUnit('bu2'),
+            o => o.AddTeam('n'),
+            o => o.RenameTeam('t1', 'n'),
+            o => o.SetTeamOwningBusinessUnit('t1', 'bu2'),
+            o => o.RemoveTeam('t1')
+        ]
+        for (const mutate of mutations)
+        {
+            const org = new SecurityModelOrg(Fixtures.Referenced())
+            assert.equal(org.Dirty, false)
+            mutate(org)
+            assert.equal(org.Dirty, true)
+        }
+    })
+
+    it('RemoveTeam also drops team role and profile grants', () =>
+    {
+        const model = Fixtures.Referenced()
+        const draft = SecurityModelDraft.From(model)
+        draft.Org.RemoveTeam('t1')
+        const out = draft.ToDto()
+        assert.deepEqual(out.roleAssignment?.teamRoles.map(g => g.teamId), ['t2'])
+        assert.deepEqual(out.fieldSecurity?.profileAssignment.teamProfiles.map(g => g.teamId), ['t2'])
+        assert.equal(JSON.stringify(out).includes('"t1"'), false)
     })
 
     it('team operations behave and RemoveTeam clears membership references', () =>
