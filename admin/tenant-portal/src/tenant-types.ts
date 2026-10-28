@@ -63,6 +63,8 @@ export type EnvironmentDto = {
     createdAt: string
     httpUrl: string
     wsUrl: string
+    uiBundle?: { appName: string; appVersion: string }
+    idpBaseDomain?: string
 }
 
 export type CreateEnvironmentParams = { name: string; template: Template; type: EnvType }

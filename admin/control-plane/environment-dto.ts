@@ -14,6 +14,10 @@ export type EnvironmentDto = {
     createdAt: string
     httpUrl: string
     wsUrl: string
+    /** Identity of the deployed UI bundle; never its registry coordinates or digest. */
+    uiBundle?: { appName: string; appVersion: string }
+    /** Base domain of the federated sign-in host, when the environment is federated to its tenant IdP. */
+    idpBaseDomain?: string
 }
 
 /**
@@ -26,7 +30,7 @@ export class EnvironmentDtoMapper
     public static ToDto(r: EnvironmentRecord): EnvironmentDto
     {
         const stored = r.endpoint
-        return {
+        const dto: EnvironmentDto = {
             name: r.name,
             template: r.template,
             type: r.type,
@@ -39,5 +43,14 @@ export class EnvironmentDtoMapper
             httpUrl: stored?.httpUrl ?? LocalhostUrls.Http(r.hostPort as number),
             wsUrl: stored?.wsUrl ?? LocalhostUrls.Ws(r.hostPort as number, r.environmentId)
         }
+        if (r.appDeployment !== undefined)
+        {
+            dto.uiBundle = { appName: r.appDeployment.appName, appVersion: r.appDeployment.appVersion }
+        }
+        if (r.idpBaseDomain !== undefined)
+        {
+            dto.idpBaseDomain = r.idpBaseDomain
+        }
+        return dto
     }
 }
