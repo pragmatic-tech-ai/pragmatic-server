@@ -1,27 +1,16 @@
 import { Orientation, StackPanel, TextBlock, TextBox } from '@pragmatic-tech-ai/mural/basic'
-import { GridLength, GridUnitType } from '@pragmatic-tech-ai/mural/basic/panels/grid.js'
-import { DataGrid } from '@pragmatic-tech-ai/mural/framework/data-grid/data-grid.js'
-import { DataGridTextColumn } from '@pragmatic-tech-ai/mural/framework/data-grid/data-grid-column.js'
-import { SelectionMode } from '@pragmatic-tech-ai/mural/framework/list/selector.js'
 import type { AccountRow } from './account-row.js'
+import { ConfirmDialog, ConfirmTone, PillKind, StatusPill } from './kit/index.js'
 import { TenantRole } from './tenant-types.js'
 import type { GrantDto, IUsersAccessSource } from './tenant-types.js'
 import { TenantViewBase } from './tenant-view-base.js'
 import { PendingKind, UsersAccessState, UsersAccessViewModel } from './users-access-view-model.js'
 
-// Tenant admin "Users & Access": environment picker, accounts DataGrid, create-account form,
+// Tenant admin "Users & Access": environment picker, accounts row list, create-account form,
 // and a selected-account section (disable, grants, grant/revoke role).
 export class UsersAccessView extends TenantViewBase
 {
-    public static readonly EmailHeader = 'Email'
-    public static readonly PrincipalHeader = 'Principal'
-    public static readonly StatusHeader = 'Status'
-    public static readonly RolesHeader = 'Roles'
-    public static readonly EmailPath = 'Email'
-    public static readonly PrincipalPath = 'PrincipalId'
-    public static readonly StatusPath = 'Status'
-    public static readonly RolesPath = 'RolesText'
-    public static readonly SelectedMark = '● '
+    public static readonly SelectedMark = '\u25CF '
     public static readonly LoadingText = 'Loading accounts...'
     public static readonly EmptyText = 'No accounts yet.'
     public static readonly NoEnvironmentText = 'No environments available.'
@@ -32,9 +21,10 @@ export class UsersAccessView extends TenantViewBase
     public static readonly CreateHeading = 'Create account'
     public static readonly SelectedHeading = 'Selected account: '
     public static readonly DisableLabel = 'Disable'
-    public static readonly ConfirmDisableLabel = 'Confirm disable'
+    public static readonly DisableTitle = 'Disable account'
+    public static readonly DisableActionLabel = 'Disable account'
+    public static readonly YouTag = 'You'
     public static readonly ConfirmRevokeLabel = 'Confirm revoke'
-    public static readonly CancelLabel = 'Cancel'
     public static readonly RevokeLabel = 'Revoke'
     public static readonly GrantLabel = 'Grant'
     public static readonly GrantsHeading = 'Grants'
@@ -43,30 +33,30 @@ export class UsersAccessView extends TenantViewBase
     public static readonly SelfRevokeWarning = 'This is your own grant; revoking it may reduce your access.'
     public static readonly GrantSeparator = ' '
     public static readonly PathSeparator = '/'
+    public static readonly CancelLabel = 'Cancel'
+    public static readonly DisableConsequences: readonly string[] = [
+        "They are signed out everywhere and can't sign in.",
+        'Their records and history stay. Their tokens stop working.',
+    ]
 
     private readonly vm: UsersAccessViewModel
-    private readonly grid = new DataGrid()
+    private readonly accountList = new StackPanel()
+    private readonly rowByPrincipal = new Map<string, StackPanel>()
+    private dialog: ConfirmDialog | undefined
+    private dialogIsPending = false
     private readonly emailBox = new TextBox()
     private readonly principalBox = new TextBox()
     private readonly passwordBox = new TextBox()
     private readonly form = new StackPanel()
-    private suppressSelection = false
-    private readonly selectionListener = (): void =>
-    {
-        if (!this.suppressSelection)
-        {
-            this.vm.SelectAccount((this.grid.SelectedItem as AccountRow | undefined)?.PrincipalId)
-        }
-    }
 
     public constructor(source: IUsersAccessSource, currentPrincipalId: string)
     {
         super()
         this.vm = new UsersAccessViewModel(source, currentPrincipalId)
-        this.BuildGrid()
+        this.accountList.Orientation = Orientation.Vertical
         this.BuildForm()
         const rerender = (): void => this.Render()
-        this.vm.PropertyChanged(UsersAccessViewModel.RowsProperty).subscribe(() => this.UpdateGrid())
+        this.vm.PropertyChanged(UsersAccessViewModel.RowsProperty).subscribe(rerender)
         this.vm.PropertyChanged(UsersAccessViewModel.EnvironmentsProperty).subscribe(rerender)
         this.vm.PropertyChanged(UsersAccessViewModel.SelectedEnvironmentProperty).subscribe(rerender)
         this.vm.PropertyChanged(UsersAccessViewModel.StateProperty).subscribe(rerender)
@@ -77,10 +67,22 @@ export class UsersAccessView extends TenantViewBase
         this.Render()
     }
 
-    // Test seam: the accounts grid.
-    public get Grid(): DataGrid
+    // Test seam: the vertical list of account rows.
+    public get AccountRows(): StackPanel
     {
-        return this.grid
+        return this.accountList
+    }
+
+    // Test seam: the account row for a principal.
+    public RowFor(principalId: string): StackPanel | undefined
+    {
+        return this.rowByPrincipal.get(principalId)
+    }
+
+    // Test seam: the hosted confirm dialog, if one is open.
+    public get ActiveConfirm(): ConfirmDialog | undefined
+    {
+        return this.dialog
     }
 
     public async Refresh(): Promise<void>
@@ -90,12 +92,12 @@ export class UsersAccessView extends TenantViewBase
 
     public Dispose(): void
     {
-        this.grid.RemoveSelectionChangedListener(this.selectionListener)
-        this.grid.dispose()
+        this.dialog = undefined
     }
 
     public Render(): void
     {
+        this.SyncPendingDialog()
         for (const child of [...this.Children])
         {
             this.RemoveChild(child)
@@ -107,7 +109,9 @@ export class UsersAccessView extends TenantViewBase
         switch (vm.State)
         {
             case UsersAccessState.Ready:
-                this.AddChild(this.grid)
+                // Removing a child tears its subtree down, so the list is rebuilt on every render.
+                this.UpdateRows()
+                this.AddChild(this.accountList)
                 break
             case UsersAccessState.Loading:
                 this.AddChild(this.Text(UsersAccessView.LoadingText))
@@ -129,25 +133,10 @@ export class UsersAccessView extends TenantViewBase
         {
             this.AddChild(this.MakeSelectedSection(vm.SelectedPrincipalId))
         }
-    }
-
-    private BuildGrid(): void
-    {
-        this.AddColumn(UsersAccessView.EmailHeader, UsersAccessView.EmailPath, new GridLength(2, GridUnitType.Star))
-        this.AddColumn(UsersAccessView.PrincipalHeader, UsersAccessView.PrincipalPath, new GridLength(2, GridUnitType.Star))
-        this.AddColumn(UsersAccessView.StatusHeader, UsersAccessView.StatusPath, GridLength.Auto)
-        this.AddColumn(UsersAccessView.RolesHeader, UsersAccessView.RolesPath, new GridLength(3, GridUnitType.Star))
-        this.grid.SelectionMode = SelectionMode.Single
-        this.grid.AddSelectionChangedListener(this.selectionListener)
-    }
-
-    private AddColumn(header: string, path: string, width: GridLength): void
-    {
-        const col = new DataGridTextColumn()
-        col.Header = header
-        col.BindingPath = path
-        col.Width = width
-        this.grid.Columns.Add(col)
+        if (this.dialog !== undefined)
+        {
+            this.AddChild(this.dialog)
+        }
     }
 
     private BuildForm(): void
@@ -163,19 +152,96 @@ export class UsersAccessView extends TenantViewBase
         this.form.AddChild(this.MakeButton(UsersAccessView.CreateLabel, () => { void this.Act(() => this.Create()) }))
     }
 
-    private UpdateGrid(): void
+    private UpdateRows(): void
     {
-        // Replacing ItemsSource resets the grid selection; re-select the VM's account without echoing back.
-        this.suppressSelection = true
-        try
+        for (const child of [...this.accountList.Children])
         {
-            this.grid.ItemsSource = [...this.vm.Rows]
-            const selected = this.vm.SelectedPrincipalId
-            this.grid.SelectedItem = selected === undefined ? undefined : this.vm.Rows.find(r => r.PrincipalId === selected)
+            this.accountList.RemoveChild(child)
         }
-        finally
+        this.rowByPrincipal.clear()
+        for (const row of this.vm.Rows)
         {
-            this.suppressSelection = false
+            const panel = this.MakeAccountRow(row)
+            this.rowByPrincipal.set(row.PrincipalId, panel)
+            this.accountList.AddChild(panel)
+        }
+    }
+
+    private MakeAccountRow(row: AccountRow): StackPanel
+    {
+        const panel = new StackPanel()
+        panel.Orientation = Orientation.Horizontal
+        panel.AddChild(this.MakeButton(row.Email, () => this.vm.SelectAccount(row.PrincipalId)))
+        for (const role of row.Roles)
+        {
+            panel.AddChild(this.Text(role))
+        }
+        if (row.PrincipalId === this.vm.CurrentPrincipalId)
+        {
+            panel.AddChild(this.Text(UsersAccessView.YouTag))
+        }
+        panel.AddChild(new StatusPill(row.Disabled ? PillKind.Disabled : PillKind.Active))
+        return panel
+    }
+
+    // Keeps the hosted dialog in step with the VM's DisableSelf pending state.
+    private SyncPendingDialog(): void
+    {
+        const pending = this.vm.Pending
+        const wanted = pending !== undefined && pending.kind === PendingKind.DisableSelf
+        if (wanted && this.dialog === undefined)
+        {
+            this.OpenDisableDialog(this.vm.CurrentPrincipalId, true)
+        }
+        else if (!wanted && this.dialogIsPending && this.dialog !== undefined)
+        {
+            this.dialog = undefined
+            this.dialogIsPending = false
+        }
+    }
+
+    private OpenDisableDialog(principalId: string, selfLockout: boolean): void
+    {
+        const dialog: ConfirmDialog = new ConfirmDialog({
+            title: UsersAccessView.DisableTitle,
+            body: selfLockout ? UsersAccessView.SelfDisableWarning : undefined,
+            consequences: [...UsersAccessView.DisableConsequences],
+            actionLabel: UsersAccessView.DisableActionLabel,
+            tone: ConfirmTone.Danger,
+            onConfirm: () => { void this.Act(() => selfLockout ? this.vm.ConfirmPending() : this.vm.DisableAccount(principalId)) },
+            onClose: () => this.CloseDialog(dialog),
+        })
+        this.dialog = dialog
+        this.dialogIsPending = selfLockout
+    }
+
+    private CloseDialog(dialog: ConfirmDialog): void
+    {
+        if (this.dialog !== dialog)
+        {
+            return
+        }
+        const wasPending = this.dialogIsPending
+        this.dialog = undefined
+        this.dialogIsPending = false
+        if (wasPending)
+        {
+            this.vm.CancelPending()
+        }
+        this.Render()
+    }
+
+    private RequestDisable(principalId: string): void
+    {
+        if (principalId === this.vm.CurrentPrincipalId)
+        {
+            void this.Act(() => this.vm.RequestDisable(principalId))
+            return
+        }
+        if (this.dialog === undefined)
+        {
+            this.OpenDisableDialog(principalId, false)
+            this.Render()
         }
     }
 
@@ -222,16 +288,7 @@ export class UsersAccessView extends TenantViewBase
         const vm = this.vm
         const section = new StackPanel()
         section.AddChild(this.Text(UsersAccessView.SelectedHeading + principalId))
-        const pending = vm.Pending
-        if (pending !== undefined && pending.kind === PendingKind.DisableSelf)
-        {
-            section.AddChild(this.Text(UsersAccessView.SelfDisableWarning))
-            section.AddChild(this.MakeConfirmStrip(UsersAccessView.ConfirmDisableLabel))
-        }
-        else
-        {
-            section.AddChild(this.MakeButton(UsersAccessView.DisableLabel, () => { void this.Act(() => vm.RequestDisable(principalId)) }))
-        }
+        section.AddChild(this.MakeButton(UsersAccessView.DisableLabel, () => this.RequestDisable(principalId)))
         section.AddChild(this.Text(UsersAccessView.GrantsHeading))
         const grants = vm.SelectedGrants
         if (grants.length === 0)

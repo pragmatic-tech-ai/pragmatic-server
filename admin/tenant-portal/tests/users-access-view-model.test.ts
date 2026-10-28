@@ -499,4 +499,9 @@ describe('UsersAccessViewModel', () =>
         assert.equal(vm.Rows.length, 0)
         assert.equal(vm.State, UsersAccessState.Error)
     })
+
+    it('CurrentPrincipalId returns the injected id', () =>
+    {
+        assert.equal(new UsersAccessViewModel(new FakeSource(), 'me').CurrentPrincipalId, 'me')
+    })
 })

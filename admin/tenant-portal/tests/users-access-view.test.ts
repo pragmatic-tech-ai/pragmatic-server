@@ -1,16 +1,27 @@
-import { describe, it } from 'node:test'
+import { beforeEach, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { Button } from '@pragmatic-tech-ai/mural/framework'
-import { DataGridTextColumn } from '@pragmatic-tech-ai/mural/framework/data-grid/data-grid-column.js'
-import { SelectionMode } from '@pragmatic-tech-ai/mural/framework/list/selector.js'
-import { AccountRow } from '../src/account-row.js'
+import { Button, ButtonVariant } from '@pragmatic-tech-ai/mural/framework'
+import { ConfirmDialog, PillKind, StatusPill } from '../src/kit/index.js'
 import { TenantApiError } from '../src/tenant-api-client.js'
-import { GridLength, GridUnitType } from '@pragmatic-tech-ai/mural/basic/panels/grid.js'
 import type { AdminSnapshotDto, CreateAccountParams, EnvironmentDto, GrantMutationDto, ITenantNavigator, IUsersAccessSource } from '../src/tenant-types.js'
+import { Application } from '@pragmatic-tech-ai/mural/runtime'
+import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pragmatic'
 import { UsersAccessView } from '../src/users-access-view.js'
 
 class Fixtures
 {
+    private static app: Application | undefined
+
+    public static InitApp(): void
+    {
+        if (Fixtures.app === undefined)
+        {
+            Fixtures.app = new Application()
+            Fixtures.app.initialize({ theme: Pragmatic, scheme: PragmaticLight })
+        }
+        Application.current = Fixtures.app
+    }
+
     public static Texts(node: unknown): string[]
     {
         const n = node as { Text?: unknown; Children?: Iterable<unknown>; Content?: unknown }
@@ -87,6 +98,19 @@ class Fixtures
         {
             h({})
         }
+    }
+
+    public static Find<T>(node: unknown, ctor: new (...a: never[]) => T, out: T[] = []): T[]
+    {
+        if (node instanceof ctor)
+        {
+            out.push(node)
+        }
+        for (const c of (node as { Children?: Iterable<unknown> }).Children ?? [])
+        {
+            Fixtures.Find(c, ctor, out)
+        }
+        return out
     }
 
     public static async Settle(): Promise<void>
@@ -227,24 +251,13 @@ class Harness
 
 describe('UsersAccessView', () =>
 {
-    it('configures four columns, single selection and rows from the snapshot', async () =>
-    {
-        const { view } = await Harness.Make()
-        const grid = view.Grid
-        const cols = [...grid.Columns] as DataGridTextColumn[]
-        assert.equal(cols.length, 4)
-        assert.ok(cols.every(c => c instanceof DataGridTextColumn))
-        assert.deepEqual(cols.map(c => c.BindingPath), ['Email', 'PrincipalId', 'Status', 'RolesText'])
-        assert.equal(grid.SelectionMode, SelectionMode.Single)
-        const rows = grid.ItemsSource as AccountRow[]
-        assert.deepEqual(rows.map(r => [r.Email, r.Status, r.RolesText]), [['me@x.io', 'Active', 'Owner'], ['bob@x.io', 'Disabled', 'Viewer']])
-    })
+    beforeEach(() => Fixtures.InitApp())
 
     it('renders one env button per environment and reloads on pick', async () =>
     {
         const { src, view } = await Harness.Make()
         const labels = Fixtures.Labels(view)
-        assert.ok(labels.includes('● dev'))
+        assert.ok(labels.includes('\u25CF dev'))
         assert.ok(labels.includes('prod'))
         Fixtures.Click(view, 'prod')
         await Fixtures.Settle()
@@ -302,45 +315,26 @@ describe('UsersAccessView', () =>
         const view = new UsersAccessView(src, 'me')
         view.AttachNavigator(nav)
         await view.Refresh()
-        view.Grid.SelectedItem = (view.Grid.ItemsSource as AccountRow[])[1]
+        Fixtures.Click(view, 'bob@x.io')
         await Fixtures.Settle()
         src.mutationError = new TenantApiError(401, 'expired')
         Fixtures.Click(view, 'Disable')
+        view.ActiveConfirm?.Confirm()
         await Fixtures.Settle()
         await Fixtures.Settle()
         assert.equal(nav.logins, 1)
     })
 
-    it('uses the expected column widths', async () =>
-    {
-        const { view } = await Harness.Make()
-        const w = ([...view.Grid.Columns] as DataGridTextColumn[]).map(c => c.Width)
-        assert.deepEqual(w.map(x => [x.Value, x.UnitType]), [[2, GridUnitType.Star], [2, GridUnitType.Star], [GridLength.Auto.Value, GridUnitType.Auto], [3, GridUnitType.Star]])
-    })
-
-    it('Dispose removes the selection listener and disposes the grid', async () =>
-    {
-        const { view } = await Harness.Make()
-        const grid = view.Grid as unknown as { RemoveSelectionChangedListener: (l: () => void) => void; dispose: () => void }
-        const calls: string[] = []
-        const rm = grid.RemoveSelectionChangedListener.bind(grid)
-        const ds = grid.dispose.bind(grid)
-        grid.RemoveSelectionChangedListener = l => { calls.push('remove'); rm(l) }
-        grid.dispose = () => { calls.push('dispose'); ds() }
-        view.Dispose()
-        assert.deepEqual(calls, ['remove', 'dispose'])
-    })
-
     it('confirms self-revoke and revokes non-self directly', async () =>
     {
         const { src, view } = await Harness.Make()
-        view.Grid.SelectedItem = (view.Grid.ItemsSource as AccountRow[])[1]
+        Fixtures.Click(view, 'bob@x.io')
         await Fixtures.Settle()
         Fixtures.Click(view, 'Revoke')
         await Fixtures.Settle()
         await Fixtures.Settle()
         assert.deepEqual(src.revoked.map(r => r.subject), ['bob'])
-        view.Grid.SelectedItem = (view.Grid.ItemsSource as AccountRow[])[0]
+        Fixtures.Click(view, 'me@x.io')
         await Fixtures.Settle()
         Fixtures.Click(view, 'Revoke')
         await Fixtures.Settle()
@@ -362,7 +356,7 @@ describe('UsersAccessView', () =>
         const src = new FakeSource()
         src.snapshot.grants.push({ subject: 'me', role: 'Owner', resourceKind: 'Environment', resourcePath: ['prod'] })
         const { view } = await Harness.Make(src)
-        view.Grid.SelectedItem = (view.Grid.ItemsSource as AccountRow[])[0]
+        Fixtures.Click(view, 'me@x.io')
         await Fixtures.Settle()
         Fixtures.Click(view, 'Revoke')
         await Fixtures.Settle()
@@ -373,22 +367,21 @@ describe('UsersAccessView', () =>
     it('keeps the selected-account section across a reload', async () =>
     {
         const { src, view } = await Harness.Make()
-        const before = view.Grid.ItemsSource as AccountRow[]
-        view.Grid.SelectedItem = before[1]
+        const before = [...view.AccountRows.Children].length
+        Fixtures.Click(view, 'bob@x.io')
         await Fixtures.Settle()
         Fixtures.Click(view, 'Grant')
         await Fixtures.Settle()
         await Fixtures.Settle()
         assert.equal(src.granted.length, 1)
-        assert.notEqual(view.Grid.ItemsSource, before)
+        assert.equal([...view.AccountRows.Children].length, before)
         assert.ok(Fixtures.Texts(view).includes(UsersAccessView.SelectedHeading + 'bob'))
     })
 
-    it('adapts grid selection to the view model', async () =>
+    it('adapts row clicks to the view model', async () =>
     {
         const { view } = await Harness.Make()
-        const rows = view.Grid.ItemsSource as AccountRow[]
-        view.Grid.SelectedItem = rows[1]
+        Fixtures.Click(view, 'bob@x.io')
         await Fixtures.Settle()
         assert.ok(Fixtures.Texts(view).includes(UsersAccessView.SelectedHeading + 'bob'))
     })
@@ -396,8 +389,7 @@ describe('UsersAccessView', () =>
     it('shows the selected-account section with grants, revoke and disable', async () =>
     {
         const { src, view } = await Harness.Make()
-        const rows = view.Grid.ItemsSource as AccountRow[]
-        view.Grid.SelectedItem = rows[1]
+        Fixtures.Click(view, 'bob@x.io')
         await Fixtures.Settle()
         assert.ok(Fixtures.Texts(view).includes('Viewer dev'))
         const labels = Fixtures.Labels(view)
@@ -405,37 +397,110 @@ describe('UsersAccessView', () =>
         assert.ok(labels.includes('Disable'))
         Fixtures.Click(view, 'Disable')
         await Fixtures.Settle()
-        assert.deepEqual(src.disabled, ['bob'])
-        assert.ok(!Fixtures.Labels(view).includes('Confirm disable'))
+        assert.deepEqual(src.disabled, [])
+        assert.ok(view.ActiveConfirm)
     })
 
-    it('confirms disable only for the current operator', async () =>
+    it('lists one row per account with email, roles and status', async () =>
+    {
+        const { view } = await Harness.Make()
+        assert.equal([...view.AccountRows.Children].length, 2)
+        assert.ok(Fixtures.Texts(view.RowFor('me')).includes('me@x.io'))
+        assert.ok(Fixtures.Texts(view.RowFor('bob')).includes('Viewer'))
+        assert.equal(view.RowFor('nobody'), undefined)
+    })
+
+    it('an account row shows a status pill, role chips and no You tag for others', async () =>
+    {
+        const src = new FakeSource()
+        src.snapshot.grants.push({ subject: 'bob', role: 'Editor', resourceKind: 'Environment', resourcePath: ['dev'] })
+        src.snapshot.accounts[1].disabled = false
+        const { view } = await Harness.Make(src)
+        const row = view.RowFor('bob')
+        const pills = Fixtures.Find(row, StatusPill)
+        assert.equal(pills.length, 1)
+        assert.equal(pills[0].Kind, PillKind.Active)
+        const texts = Fixtures.Texts(row)
+        assert.ok(texts.includes('Viewer'))
+        assert.ok(texts.includes('Editor'))
+        assert.ok(!texts.includes('You'))
+    })
+
+    it('the signed-in admin own row carries the You tag', async () =>
+    {
+        const { view } = await Harness.Make()
+        assert.ok(Fixtures.Texts(view.RowFor('me')).includes('You'))
+    })
+
+    it('a disabled account shows the Disabled pill', async () =>
+    {
+        const { view } = await Harness.Make()
+        assert.equal(Fixtures.Find(view.RowFor('bob'), StatusPill)[0].Kind, PillKind.Disabled)
+        assert.equal(Fixtures.Find(view.RowFor('me'), StatusPill)[0].Kind, PillKind.Active)
+    })
+
+    it('disabling another account opens a ConfirmDialog with the consequences copy', async () =>
     {
         const { src, view } = await Harness.Make()
-        const rows = view.Grid.ItemsSource as AccountRow[]
-        view.Grid.SelectedItem = rows[0]
+        Fixtures.Click(view, 'bob@x.io')
         await Fixtures.Settle()
         Fixtures.Click(view, 'Disable')
         await Fixtures.Settle()
-        assert.ok(Fixtures.Labels(view).includes('Confirm disable'))
-        assert.ok(Fixtures.Labels(view).includes('Cancel'))
+        const dialog = view.ActiveConfirm
+        assert.ok(dialog)
+        assert.ok(dialog.Lines.some(l => l.includes("They are signed out everywhere and can't sign in.")))
+        assert.ok(dialog.Lines.some(l => l.includes('Their records and history stay. Their tokens stop working.')))
+        assert.equal(dialog.Actions?.[1]?.Variant, ButtonVariant.Danger)
+        assert.equal(dialog.ConfirmEnabled, true)
         assert.deepEqual(src.disabled, [])
-        Fixtures.Click(view, 'Cancel')
+        dialog.Confirm()
         await Fixtures.Settle()
-        assert.ok(Fixtures.Labels(view).includes('Disable'))
+        await Fixtures.Settle()
+        assert.deepEqual(src.disabled, ['bob'])
+        assert.equal(view.ActiveConfirm, undefined)
+    })
+
+    it('cancelling the disable dialog does not disable', async () =>
+    {
+        const { src, view } = await Harness.Make()
+        Fixtures.Click(view, 'bob@x.io')
+        await Fixtures.Settle()
+        Fixtures.Click(view, 'Disable')
+        view.ActiveConfirm?.Cancel()
+        await Fixtures.Settle()
+        assert.equal(view.ActiveConfirm, undefined)
+        assert.deepEqual(src.disabled, [])
+    })
+
+    it('self-disable routes through the self-lockout confirm', async () =>
+    {
+        const { src, view } = await Harness.Make()
+        Fixtures.Click(view, 'me@x.io')
+        await Fixtures.Settle()
         Fixtures.Click(view, 'Disable')
         await Fixtures.Settle()
-        Fixtures.Click(view, 'Confirm disable')
+        const first = view.ActiveConfirm
+        assert.ok(first)
+        assert.ok(first.Lines.includes(UsersAccessView.SelfDisableWarning))
+        assert.deepEqual(src.disabled, [])
+        first.Cancel()
+        await Fixtures.Settle()
+        assert.equal(view.ActiveConfirm, undefined)
+        assert.deepEqual(src.disabled, [])
+        Fixtures.Click(view, 'Disable')
+        await Fixtures.Settle()
+        const second = view.ActiveConfirm as ConfirmDialog | undefined
+        second?.Confirm()
         await Fixtures.Settle()
         await Fixtures.Settle()
         assert.deepEqual(src.disabled, ['me'])
+        assert.equal(view.ActiveConfirm, undefined)
     })
 
     it('grants the picked role to the selected account', async () =>
     {
         const { src, view } = await Harness.Make()
-        const rows = view.Grid.ItemsSource as AccountRow[]
-        view.Grid.SelectedItem = rows[1]
+        Fixtures.Click(view, 'bob@x.io')
         await Fixtures.Settle()
         Fixtures.Click(view, 'Editor')
         Fixtures.Click(view, 'Grant')

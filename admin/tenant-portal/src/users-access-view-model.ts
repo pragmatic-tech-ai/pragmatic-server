@@ -104,6 +104,11 @@ export class UsersAccessViewModel extends Observable
         return this.pendingGrant
     }
 
+    public get CurrentPrincipalId(): string
+    {
+        return this.currentPrincipalId
+    }
+
     public get Pending(): PendingAction | undefined
     {
         return this.pending

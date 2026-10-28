@@ -10,6 +10,7 @@ export class AccountRow
     public readonly Email: string
     public readonly PrincipalId: string
     public readonly Status: string
+    public readonly Roles: readonly string[]
     public readonly RolesText: string
     public readonly Disabled: boolean
 
@@ -20,7 +21,8 @@ export class AccountRow
         this.Disabled = account.disabled
         this.Status = account.disabled ? AccountRow.DisabledStatus : AccountRow.ActiveStatus
         const roles = grants.filter(g => g.subject === account.principalId).map(g => g.role)
-        this.RolesText = Array.from(new Set(roles)).join(AccountRow.RoleSeparator)
+        this.Roles = Array.from(new Set(roles))
+        this.RolesText = this.Roles.join(AccountRow.RoleSeparator)
     }
 
     public static FromSnapshot(snapshot: AdminSnapshotDto): AccountRow[]
