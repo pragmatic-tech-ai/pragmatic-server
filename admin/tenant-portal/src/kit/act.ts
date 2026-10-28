@@ -1,5 +1,6 @@
-import { Button, ButtonVariant, ToolTipService } from '@pragmatic-tech-ai/mural/framework'
+import { ButtonVariant, ToolTipService } from '@pragmatic-tech-ai/mural/framework'
 import { TextBlock } from '@pragmatic-tech-ai/mural/basic'
+import { KeyActivatedButton } from './key-activated-button.js'
 
 export enum ActVariant
 {
@@ -20,7 +21,7 @@ export interface ActInputs
 
 // Permission-gated action button. When the caller lacks permission it stays
 // VISIBLE but disabled, carrying the needed-role hint as its tooltip; it never hides.
-export class Act extends Button
+export class Act extends KeyActivatedButton
 {
     private static readonly NeedTemplate = 'Requires role: '
     private static readonly OpenParen = ' ('
@@ -43,7 +44,6 @@ export class Act extends Button
         {
             ToolTipService.SetToolTip(this, this.reason)
         }
-        this.AddClickHandler(() => this.Fire())
     }
 
     // Test seam: whether the action is currently available.
@@ -60,6 +60,11 @@ export class Act extends Button
 
     // Test seam: simulate activation (gated exactly like a real click).
     public Press(): void
+    {
+        this.Fire()
+    }
+
+    protected override Activate(): void
     {
         this.Fire()
     }

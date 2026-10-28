@@ -93,6 +93,8 @@ export class FakeTenantControlPlane
     public readonly CreatedEnvironments: string[] = []
     // When set, the next environments list reports alpha-env with this status.
     public AlphaStatusOverride: string | undefined
+    // When true the environments list is empty (drives the honest empty state).
+    public EmptyEnvironments = false
     public readonly Accounts: AccountDto[] =
     [
         { principalId: 'owner-1', email: 'owner@example.com', disabled: false },
@@ -267,6 +269,10 @@ export class FakeTenantControlPlane
 
     private Environments(): EnvironmentDto[]
     {
+        if (this.EmptyEnvironments)
+        {
+            return []
+        }
         return [
             this.Env(FakeTenantControlPlane.EnvOneName, FakeTenantControlPlane.HiveOneId, this.AlphaStatusOverride ?? FakeTenantControlPlane.RunningStatus),
             this.Env(FakeTenantControlPlane.EnvTwoName, FakeTenantControlPlane.HiveTwoId, FakeTenantControlPlane.StoppedStatus),

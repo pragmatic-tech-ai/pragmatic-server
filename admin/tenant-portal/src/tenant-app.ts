@@ -114,6 +114,7 @@ export class TenantApp extends StackPanel implements ITenantNavigator
         this.activitySub?.dispose()
         this.activitySub = this.activityLog.PropertyChanged(ActivityLog.EntriesProperty).subscribe(() => this.RefreshActivity())
         this.ShowSection(NavSection.Overview)
+        this.navRail.FocusActive()
     }
 
     public ShowLogin(): void

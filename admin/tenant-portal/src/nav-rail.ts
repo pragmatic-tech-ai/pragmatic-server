@@ -1,8 +1,8 @@
 import { Icon, Orientation, StackPanel, TextBlock } from '@pragmatic-tech-ai/mural/basic'
-import { Button } from '@pragmatic-tech-ai/mural/framework'
 import { Application } from '@pragmatic-tech-ai/mural/runtime'
 import type { Brush } from '@pragmatic-tech-ai/mural/visual-engine'
 import { IconCatalog } from './kit/icon-catalog.js'
+import { KeyActivatedButton } from './kit/key-activated-button.js'
 import { NavItem, NavModel, NavSection } from './nav-model.js'
 
 // Paper sidebar: brand header, six selectable section rows, footer note.
@@ -20,7 +20,7 @@ export class NavRail extends StackPanel
     public static readonly SurfaceKey = 'Bg0'
 
     private readonly onSelect: (section: NavSection) => void
-    private readonly rows = new Map<NavSection, Button>()
+    private readonly rows = new Map<NavSection, KeyActivatedButton>()
     private active: NavSection | undefined
 
     public constructor(onSelect: (section: NavSection) => void, active?: NavSection)
@@ -58,6 +58,15 @@ export class NavRail extends StackPanel
         this.onSelect(section)
     }
 
+    // Initial keyboard focus: Mural enters its Tab order only from a focused control, so the boot path focuses the active row.
+    public FocusActive(): void
+    {
+        if (this.active !== undefined)
+        {
+            this.rows.get(this.active)?.Focus()
+        }
+    }
+
     public SetActive(section: NavSection): void
     {
         this.active = NavModel.ActiveFor(section)
@@ -83,7 +92,7 @@ export class NavRail extends StackPanel
         this.AddChild(footer)
     }
 
-    private MakeRow(item: NavItem): Button
+    private MakeRow(item: NavItem): KeyActivatedButton
     {
         const content = new StackPanel()
         content.Orientation = Orientation.Horizontal
@@ -94,9 +103,13 @@ export class NavRail extends StackPanel
         text.Text = item.Label
         content.AddChild(icon)
         content.AddChild(text)
-        const button = new Button()
+        // Mural Buttons do not take focus on click, so activation moves focus here: the keyboard stays on the row it chose.
+        const button: KeyActivatedButton = new KeyActivatedButton(() =>
+        {
+            this.Select(item.Section)
+            button.Focus()
+        })
         button.Content = content
-        button.AddClickHandler(() => this.Select(item.Section))
         return button
     }
 }

@@ -1,6 +1,7 @@
 import { Orientation, StackPanel, TextBlock } from '@pragmatic-tech-ai/mural/basic'
-import { Button, ButtonVariant } from '@pragmatic-tech-ai/mural/framework'
+import { ButtonVariant } from '@pragmatic-tech-ai/mural/framework'
 import type { Visual } from '@pragmatic-tech-ai/mural/runtime'
+import { KeyActivatedButton } from './key-activated-button.js'
 
 export interface DrawerInputs
 {
@@ -69,12 +70,11 @@ export class Drawer extends StackPanel
         const title = new TextBlock()
         title.Text = this.inputs.title
         header.AddChild(title)
-        const close = new Button()
+        const close = new KeyActivatedButton(() => this.inputs.onClose())
         const caption = new TextBlock()
         caption.Text = this.inputs.closeLabel
         close.Content = caption
         close.Variant = ButtonVariant.Secondary
-        close.AddClickHandler(() => this.inputs.onClose())
         header.AddChild(close)
         this.bodyHost.AddChild(this.inputs.body)
         this.AddChild(header)
