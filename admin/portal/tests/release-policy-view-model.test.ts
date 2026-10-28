@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { FleetViewModel } from '../src/fleet-view-model.js'
 import { ReleasePolicyViewModel } from '../src/release-policy-view-model.js'
 import type { ClientDto, FleetHiveDto, GatingDto, SelectionDto, TenantDto } from '../src/portal-types.js'
 
@@ -98,8 +99,16 @@ describe('ReleasePolicyViewModel', () =>
         vm.Update([Fx.Gate('t2', '3.0', '2026-03-01'), Fx.Gate('t1', '3.1', '2026-03-01')], [], tenants, clients, [])
         assert.equal(vm.GatedRows.length, 2)
         assert.equal(vm.TargetRows.length, 0)
-        assert.ok(raised.includes(ReleasePolicyViewModel.GatedRowsProperty))
-        assert.ok(raised.includes(ReleasePolicyViewModel.TargetRowsProperty))
+        assert.deepEqual(
+            [...raised].sort(),
+            [ReleasePolicyViewModel.GatedRowsProperty, ReleasePolicyViewModel.TargetRowsProperty].sort())
+    })
+
+    it('keeps the unknown-hive owner label in sync with FleetViewModel', () =>
+    {
+        const ownerless = { ...Fx.Hive('h1', 'H'), client: null, tenant: null } as unknown as FleetHiveDto
+        const vm = new ReleasePolicyViewModel([], [Fx.Sel('gone', '2.0', '2026-02-03')], tenants, clients, [])
+        assert.equal(FleetViewModel.OwnerLabel(ownerless), vm.TargetRows[0].ownerLabel)
     })
 
     it('orders gated by owner then version and targets by hive', () =>
