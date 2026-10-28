@@ -70,6 +70,8 @@ export type GraphLoadedDto =
 export type OperatorDto =
 {
     email: string
+    principalId: string
+    role: string
 }
 
 // Navigation contract the App implements and the views call into.
