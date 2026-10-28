@@ -17,6 +17,7 @@ import type { IPortalNavigator, IPortalView, OperatorDto } from './portal-types.
 
 import { ComingSoonView } from './coming-soon-view.js'
 import { FleetView } from './fleet-view.js'
+import { ClientsView } from './clients-view.js'
 import { NavModel, PaSection } from './nav-model.js'
 import { NavRail } from './nav-rail.js'
 import { TopBar } from './top-bar.js'
@@ -121,6 +122,15 @@ export class App extends StackPanel implements IPortalNavigator
         if (section === PaSection.Fleet)
         {
             this.Mount(new FleetView(this.client))
+            return
+        }
+        if (section === PaSection.Clients)
+        {
+            const operator = this.operator
+            if (operator !== undefined)
+            {
+                this.Mount(new ClientsView(this.client, operator))
+            }
             return
         }
         const label = NavModel.LabelFor(section)

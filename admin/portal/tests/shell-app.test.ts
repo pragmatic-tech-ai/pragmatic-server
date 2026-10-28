@@ -6,6 +6,7 @@ import { App } from '../src/app.js'
 import { Banner } from '../src/kit/index.js'
 import { ClientListView } from '../src/client-list-view.js'
 import { ComingSoonView } from '../src/coming-soon-view.js'
+import { ClientsView } from '../src/clients-view.js'
 import { FleetView } from '../src/fleet-view.js'
 import { LoginView } from '../src/login-view.js'
 import { PaSection } from '../src/nav-model.js'
@@ -98,16 +99,25 @@ describe('PA shell app', () =>
         assert.equal(app.Nav.Rows.size, 9)
     })
 
-    it('routes Fleet to FleetView and every other section to a placeholder', async () =>
+    it('routes Fleet to FleetView, Clients to ClientsView and every other section to a placeholder', async () =>
     {
         const app = Fixtures.Make({ email: 'op@example.com', principalId: 'p1', role: 'full' })
         await app.Boot()
         for (const section of Object.values(PaSection))
         {
             app.ShowSection(section)
-            assert.ok(section === PaSection.Fleet
-                ? app.CurrentView instanceof FleetView
-                : app.CurrentView instanceof ComingSoonView)
+            if (section === PaSection.Fleet)
+            {
+                assert.ok(app.CurrentView instanceof FleetView)
+            }
+            else if (section === PaSection.Clients)
+            {
+                assert.ok(app.CurrentView instanceof ClientsView)
+            }
+            else
+            {
+                assert.ok(app.CurrentView instanceof ComingSoonView)
+            }
             assert.equal(app.ActiveSection, section)
             assert.equal(app.Nav?.Active, section)
         }
