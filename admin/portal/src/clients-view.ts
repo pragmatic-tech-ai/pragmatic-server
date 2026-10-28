@@ -41,7 +41,6 @@ export class ClientsView extends StackPanel implements IPortalView
     private static readonly SearchSeparator = ' '
     private static readonly NoneText = '-'
     private static readonly BlankText = ''
-    private static readonly DateLength = 10
     private static readonly ClientKey = 'client'
     private static readonly TenantsKey = 'tenants'
     private static readonly HivesKey = 'hives'
@@ -153,7 +152,7 @@ export class ClientsView extends StackPanel implements IPortalView
         }
         catch
         {
-            this.host.Update(ClientsView.Inputs(false, true, true))
+            this.host.Update(ClientsView.Inputs(false, true, true, undefined, () => void this.Refresh()))
             return
         }
         if (this.mode !== ClientsMode.List)
@@ -161,7 +160,7 @@ export class ClientsView extends StackPanel implements IPortalView
             return
         }
         const model = this.model
-        this.host.Update(ClientsView.Inputs(false, false, model.Rows.length === 0, () => this.BuildList(model)))
+        this.host.Update(this.LoadedInputs(model))
     }
 
     public ShowCreate(): void
@@ -203,7 +202,7 @@ export class ClientsView extends StackPanel implements IPortalView
         this.Swap(new ClientDetailView(new ClientDetailViewModel(dto, tenants, fleet), () => void this.ShowList()))
     }
 
-    private static Inputs(loading: boolean, error: boolean, isEmpty: boolean, content?: () => Visual): ScreenHostInputs
+    private static Inputs(loading: boolean, error: boolean, isEmpty: boolean, content?: () => Visual, onRetry?: () => void): ScreenHostInputs
     {
         return {
             loading,
@@ -211,8 +210,27 @@ export class ClientsView extends StackPanel implements IPortalView
             error,
             isEmpty,
             empty: { title: ClientsView.EmptyTitle },
-            errorConfig: { title: ClientsView.ErrorTitle },
+            errorConfig: { title: ClientsView.ErrorTitle, onRetry },
             content,
+        }
+    }
+
+    private CreateAct(): Act
+    {
+        this.createAction = new Act(this.operator.MutatingAct(ClientsView.CreateActionLabel, () => this.ShowCreate()))
+        return this.createAction
+    }
+
+    private LoadedInputs(model: ClientsViewModel): ScreenHostInputs
+    {
+        return {
+            loading: false,
+            allowed: true,
+            error: false,
+            isEmpty: model.Rows.length === 0,
+            empty: { title: ClientsView.EmptyTitle, action: this.CreateAct() },
+            errorConfig: { title: ClientsView.ErrorTitle, onRetry: () => void this.Refresh() },
+            content: () => this.BuildList(model),
         }
     }
 
@@ -229,11 +247,10 @@ export class ClientsView extends StackPanel implements IPortalView
     {
         const root = new StackPanel()
         root.Orientation = Orientation.Vertical
-        this.createAction = new Act(this.operator.MutatingAct(ClientsView.CreateActionLabel, () => this.ShowCreate()))
         root.AddChild(new PageHeader({
             breadcrumb: ClientsView.ListBreadcrumb,
             title: ClientsView.ListTitle,
-            primaryAction: this.createAction,
+            primaryAction: this.CreateAct(),
         }))
         // Fresh slot per render: the previous one is still parented to the previous root.
         this.listSlot = new StackPanel()
@@ -337,7 +354,7 @@ export class ClientsView extends StackPanel implements IPortalView
             {
                 key: ClientsView.SinceKey,
                 header: ClientsView.SinceHeader,
-                cell: r => r.createdAt.slice(0, ClientsView.DateLength),
+                cell: r => ClientDetailViewModel.ClientSinceLabel(r.createdAt),
             },
         ]
     }

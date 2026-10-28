@@ -170,4 +170,16 @@ describe('ClientsView', () =>
         assert.equal(view.Mode, ClientsMode.List)
         assert.equal(view.Host.State, ScreenState.Error)
     })
+
+    it('survives a second refresh in detail mode', async () =>
+    {
+        const view = Fixtures.View([Fixtures.Client('a')])
+        await view.ShowList()
+        view.Table?.FocusRow(0)
+        view.Table?.ActivateFocused()
+        await new Promise(r => setTimeout(r, 0))
+        assert.equal(view.Mode, ClientsMode.Detail)
+        await view.Refresh()
+        assert.equal(view.Mode, ClientsMode.Detail)
+    })
 })
