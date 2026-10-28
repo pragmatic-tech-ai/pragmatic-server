@@ -21,7 +21,6 @@ export class ConnectionStatusViewModel extends Observable
     public static readonly ErrorProperty = 'Error'
 
     private static readonly NoMessage = ''
-    private static readonly QuietStatus = 503
     private static readonly ConnectedDetail = 'The hive answered the rollout probe: Pragmatic is reachable.'
     private static readonly QuietDetail = 'The hive did not answer the rollout probe (service unavailable): Pragmatic is not reachable right now.'
 
@@ -53,6 +52,7 @@ export class ConnectionStatusViewModel extends Observable
     public async Load(): Promise<void>
     {
         const token = ++this.loadToken
+        this.SetError(ConnectionStatusViewModel.NoMessage)
         this.SetState(ConnectionState.Loading)
         try
         {
@@ -68,6 +68,7 @@ export class ConnectionStatusViewModel extends Observable
                 this.SetState(ConnectionState.NoHive)
                 return
             }
+            // A tenant has exactly one hive (same resolution as Overview/Releases).
             const rollout = await this.source.GetRollout(hives[0].id)
             if (token !== this.loadToken)
             {
@@ -136,7 +137,7 @@ export class ConnectionStatusViewModel extends Observable
 
     private static IsQuiet(e: unknown): boolean
     {
-        return e instanceof TenantApiError && e.Status === ConnectionStatusViewModel.QuietStatus
+        return e instanceof TenantApiError && e.Status === TenantApiError.UnavailableStatus
     }
 
     private SetStatus(value: ConnectionStatus | undefined): void

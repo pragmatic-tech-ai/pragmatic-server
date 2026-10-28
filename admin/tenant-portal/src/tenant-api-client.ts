@@ -6,6 +6,7 @@ export class TenantApiError extends Error
 {
     public static readonly UnauthorizedStatus = 401
     public static readonly ForbiddenStatus = 403
+    public static readonly UnavailableStatus = 503
 
     public readonly Status: number
 
