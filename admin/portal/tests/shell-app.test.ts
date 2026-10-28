@@ -9,6 +9,7 @@ import { ComingSoonView } from '../src/coming-soon-view.js'
 import { ClientsView } from '../src/clients-view.js'
 import { TenantsView } from '../src/tenants-view.js'
 import { HivesView } from '../src/hives-view.js'
+import { ReleasesView } from '../src/releases-view.js'
 import { FleetView } from '../src/fleet-view.js'
 import { LoginView } from '../src/login-view.js'
 import { PaSection } from '../src/nav-model.js'
@@ -101,7 +102,7 @@ describe('PA shell app', () =>
         assert.equal(app.Nav.Rows.size, 9)
     })
 
-    it('routes Fleet to FleetView, Clients to ClientsView, Tenants to TenantsView, Hives to HivesView and every other section to a placeholder', async () =>
+    it('routes Fleet to FleetView, Clients to ClientsView, Tenants to TenantsView, Hives to HivesView, Registry to ReleasesView and every other section to a placeholder', async () =>
     {
         const app = Fixtures.Make({ email: 'op@example.com', principalId: 'p1', role: 'full' })
         await app.Boot()
@@ -123,6 +124,10 @@ describe('PA shell app', () =>
             else if (section === PaSection.Hives)
             {
                 assert.ok(app.CurrentView instanceof HivesView)
+            }
+            else if (section === PaSection.Registry)
+            {
+                assert.ok(app.CurrentView instanceof ReleasesView)
             }
             else
             {

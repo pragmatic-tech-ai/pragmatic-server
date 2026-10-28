@@ -20,6 +20,7 @@ import { FleetView } from './fleet-view.js'
 import { ClientsView } from './clients-view.js'
 import { TenantsView } from './tenants-view.js'
 import { HivesView } from './hives-view.js'
+import { ReleasesView } from './releases-view.js'
 import { NavModel, PaSection } from './nav-model.js'
 import { NavRail } from './nav-rail.js'
 import { TopBar } from './top-bar.js'
@@ -143,6 +144,11 @@ export class App extends StackPanel implements IPortalNavigator
         if (section === PaSection.Hives)
         {
             this.Mount(new HivesView(this.client))
+            return
+        }
+        if (section === PaSection.Registry)
+        {
+            this.Mount(new ReleasesView(this.client))
             return
         }
         const label = NavModel.LabelFor(section)
