@@ -1,6 +1,6 @@
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import type { FleetHiveDto, ManifestDto } from './portal-types.js'
-import { FleetPresentation } from './fleet-presentation.js'
+import { FleetViewModel } from './fleet-view-model.js'
 import { PortalDates } from './portal-dates.js'
 import { BannerTone } from './kit/index.js'
 import type { KeyValueItem } from './kit/index.js'
@@ -71,7 +71,7 @@ export class ReleaseDetailViewModel extends Observable
         const rows: ReleaseAdoptionRow[] = []
         for (const hive of this.fleet)
         {
-            const ownerLabel = FleetPresentation.OwnerLabel(hive)
+            const ownerLabel = FleetViewModel.OwnerLabel(hive)
             for (const env of hive.environments)
             {
                 if (env.image !== undefined && env.image === this.manifest.image)

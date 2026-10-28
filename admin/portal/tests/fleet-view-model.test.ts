@@ -103,4 +103,16 @@ describe('FleetViewModel', () =>
         const row = Fx.Vm([dto]).Rows[0]
         assert.ok(row.ownerLabel.length > 0)
     })
+
+    it('OwnerLabel joins client and tenant, falls back to the present one, then unassigned', () =>
+    {
+        const hive = (client: string | null, tenant: string | null): FleetHiveDto => ({
+            client: client ? { id: 'c', displayName: client } : null,
+            tenant: tenant ? { id: 't', displayName: tenant } : null,
+        }) as FleetHiveDto
+        assert.equal(FleetViewModel.OwnerLabel(hive('Client', 'Tenant')), 'Client / Tenant')
+        assert.equal(FleetViewModel.OwnerLabel(hive('Client', null)), 'Client')
+        assert.equal(FleetViewModel.OwnerLabel(hive(null, 'Tenant')), 'Tenant')
+        assert.equal(FleetViewModel.OwnerLabel(hive(null, null)), '(unassigned)')
+    })
 })

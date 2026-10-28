@@ -1,6 +1,5 @@
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import type { FleetHiveDto } from './portal-types.js'
-import { FleetPresentation } from './fleet-presentation.js'
 
 export enum FleetConnection
 {
@@ -52,6 +51,8 @@ export class FleetViewModel extends Observable
     private static readonly HourMs = 60 * 60 * 1000
     private static readonly DayMs = 24 * 60 * 60 * 1000
     private static readonly NeverLabel = 'Never dialled in'
+    private static readonly UnassignedLabel = '(unassigned)'
+    private static readonly OwnerSeparator = ' / '
     private static readonly JustNowLabel = 'Last check-in just now'
     private static readonly AgoTemplate = 'Last check-in {n} {unit} ago'
     private static readonly CountToken = '{n}'
@@ -215,9 +216,10 @@ export class FleetViewModel extends Observable
         }
     }
 
-    private static OwnerLabel(d: FleetHiveDto): string
+    public static OwnerLabel(d: FleetHiveDto): string
     {
-        return FleetPresentation.OwnerLabel(d)
+        const parts = [d.client?.displayName, d.tenant?.displayName].filter((p): p is string => !!p)
+        return parts.length > 0 ? parts.join(FleetViewModel.OwnerSeparator) : FleetViewModel.UnassignedLabel
     }
 
     private static RelativeLabel(ageMs: number): string
