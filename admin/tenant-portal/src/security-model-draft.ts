@@ -1,3 +1,4 @@
+import { SecurityModelOrg } from './security-model-org.js'
 import type { FieldGrantDto, FieldProfileDto, FieldSecurityDto, PrivilegeDto, RoleConfigDto, SecuredFieldDto, SecurityModelDto } from './tenant-types.js'
 
 export enum PrivilegeAction
@@ -68,6 +69,7 @@ export class SecurityModelDraft
     private static readonly FallbackProfileSlug = 'profile'
 
     private readonly model: SecurityModelDto
+    private readonly org: SecurityModelOrg
     private readonly addedConcepts = new Set<string>()
     private readonly rolesAbsent: boolean
     private readonly fieldSecurityAbsent: boolean
@@ -79,6 +81,7 @@ export class SecurityModelDraft
     private constructor(model: SecurityModelDto)
     {
         this.model = model
+        this.org = new SecurityModelOrg(this.model)
         this.rolesAbsent = model.roles === undefined
         this.model.roles = this.model.roles ?? []
         this.SelectedRoleId = this.model.roles[0]?.id
@@ -127,9 +130,14 @@ export class SecurityModelDraft
         return this.model.roles ?? []
     }
 
+    public get Org(): SecurityModelOrg
+    {
+        return this.org
+    }
+
     public get Dirty(): boolean
     {
-        return this.dirty
+        return this.dirty || this.org.Dirty
     }
 
     public get Concepts(): readonly string[]
