@@ -111,6 +111,17 @@ describe('ReleaseDetailView', () =>
         assert.equal(banner.Text, vm.WithdrawnBanner.text)
     })
 
+    it('withdrawn release with running environments shows status, banner and adoption rows', () =>
+    {
+        const vm = Fixtures.Vm({ withdrawn: true })
+        const view = new ReleaseDetailView(vm, () => undefined)
+        const banner = Fixtures.Collect(view).find(n => n instanceof Banner) as Banner
+        assert.ok(banner)
+        assert.equal(banner.Text, vm.WithdrawnBanner.text)
+        assert.equal(vm.Profile.find(i => i.key === 'Status')?.value, 'Withdrawn')
+        assert.equal(view.AdoptionTable?.Rows.length, 2)
+    })
+
     it('published release renders no banner', () =>
     {
         const view = new ReleaseDetailView(Fixtures.Vm(), () => undefined)
