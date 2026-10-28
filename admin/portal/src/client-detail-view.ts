@@ -41,7 +41,6 @@ export class ClientDetailView extends StackPanel
         this.vm = vm
         this.onBack = onBack
         this.Orientation = Orientation.Vertical
-        this.tableSlot.Orientation = Orientation.Vertical
         this.host = new ScreenHost(this.Inputs())
         this.AddChild(this.host)
     }
