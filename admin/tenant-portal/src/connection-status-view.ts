@@ -211,7 +211,7 @@ export class ConnectionStatusView extends TenantViewBase
         {
             return
         }
-        this.banner = new Banner({ tone: BannerTone.Warning, text: ConnectionStatusView.QuietBannerText })
+        this.banner = new Banner({ tone: BannerTone.Info, text: ConnectionStatusView.QuietBannerText })
         this.bannerSlot.AddChild(this.banner)
     }
 
@@ -249,11 +249,11 @@ export class ConnectionStatusView extends TenantViewBase
         const list = new StackPanel()
         list.Orientation = Orientation.Vertical
         const status = this.vm.Status
-        if (this.vm.State === ConnectionState.Quiet || status === undefined)
+        if (this.vm.State === ConnectionState.Quiet)
         {
             list.AddChild(ConnectionStatusView.Text(ConnectionStatusView.QuietUnavailable))
         }
-        else
+        else if (status !== undefined)
         {
             list.AddChild(ConnectionStatusView.Text(status.targetVersion === undefined
                 ? ConnectionStatusView.NoTarget
@@ -267,7 +267,7 @@ export class ConnectionStatusView extends TenantViewBase
                 const row = new StackPanel()
                 row.Orientation = Orientation.Horizontal
                 row.AddChild(ConnectionStatusView.Text(env.name + ConnectionStatusView.RunningSeparator + (env.runningImage ?? ConnectionStatusView.NoImage)))
-                row.AddChild(new StatusPill(env.ready ? PillKind.Running : PillKind.Pending))
+                row.AddChild(new StatusPill(env.ready ? PillKind.Healthy : PillKind.Degraded))
                 list.AddChild(row)
             }
         }

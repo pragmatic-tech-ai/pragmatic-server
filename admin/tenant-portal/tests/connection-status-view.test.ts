@@ -4,7 +4,7 @@ import { Application } from '@pragmatic-tech-ai/mural/runtime'
 import type { Visual } from '@pragmatic-tech-ai/mural/runtime'
 import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pragmatic'
 import { ConnectionStatusView } from '../src/connection-status-view.js'
-import { PillKind, ScreenState } from '../src/kit/index.js'
+import { BannerTone, PillKind, ScreenState, StatusPill } from '../src/kit/index.js'
 import { TenantApiError } from '../src/tenant-api-client.js'
 import type { HiveDto, HiveRolloutDto, IConnectionSource } from '../src/tenant-types.js'
 
@@ -107,7 +107,8 @@ describe('ConnectionStatusView', () =>
         assert.equal(view.HeroPill?.Kind, PillKind.Quiet)
         assert.equal(view.HeroText, ConnectionStatusView.QuietText)
         assert.ok(view.QuietBanner !== undefined)
-        assert.ok(view.QuietBanner.Text.includes('keep running'))
+        assert.equal(view.QuietBanner.Tone, BannerTone.Info)
+        assert.ok(view.QuietBanner.Text === ConnectionStatusView.QuietBannerText)
         assert.ok(Fixtures.Joined(view.Diagram).includes(ConnectionStatusView.NodeLink))
         assert.ok(Fixtures.Joined(view.RunningList).includes(ConnectionStatusView.QuietUnavailable))
     })
@@ -118,6 +119,7 @@ describe('ConnectionStatusView', () =>
         src.Failure = new Error('boom')
         const view = await Harness.Make(src)
         assert.equal(view.StateHost.State, ScreenState.Error)
+        assert.ok(Fixtures.Joined(view.StateHost).includes('boom'))
     })
 
     it('NoHive shows the empty state', async () =>
@@ -143,12 +145,27 @@ describe('ConnectionStatusView', () =>
         assert.ok(ConnectionStatusView.OutboundOnlyText.includes('never initiates a connection into your hive'))
     })
 
+    it('ready and not-ready environments map to distinct honest pills', async () =>
+    {
+        const src = new FakeSource()
+        src.Rollout = { targetVersion: '1', environments: [
+            { environmentName: 'a', runningImage: 'i:a', obsolete: false, ready: true },
+            { environmentName: 'b', runningImage: undefined, obsolete: false, ready: false },
+        ] }
+        const view = await Harness.Make(src)
+        const kinds = Fixtures.Collect(view.RunningList).filter((v): v is StatusPill => v instanceof StatusPill).map(p => p.Kind)
+        assert.deepEqual(kinds, [PillKind.Healthy, PillKind.Degraded])
+        assert.ok(Fixtures.Joined(view.RunningList).includes(ConnectionStatusView.NoImage))
+    })
+
     it('Dispose tears down subscriptions so later VM changes do not re-render', async () =>
     {
-        const view = await Harness.Make()
+        const src = new FakeSource()
+        const view = await Harness.Make(src)
         view.Dispose()
-        const before = Fixtures.Joined(view.RunningList)
+        src.Failure = new TenantApiError(TenantApiError.UnavailableStatus, 'down')
         await view.Vm.Load()
-        assert.equal(Fixtures.Joined(view.RunningList), before)
+        assert.equal(view.HeroPill?.Kind, PillKind.Connected)
+        assert.equal(view.QuietBanner, undefined)
     })
 })
