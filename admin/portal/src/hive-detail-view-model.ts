@@ -3,7 +3,8 @@ import type { FleetHiveDto } from './portal-types.js'
 import { FleetConnection, FleetViewModel } from './fleet-view-model.js'
 import type { FleetRow } from './fleet-view-model.js'
 import type { ObservedEnvRow } from './observed-env-table.js'
-import { BannerTone } from './kit/index.js'
+import { FleetPresentation } from './fleet-presentation.js'
+import { BannerTone, PillKinds } from './kit/index.js'
 import type { KeyValueItem } from './kit/index.js'
 
 export interface HiveBannerState
@@ -44,8 +45,9 @@ export class HiveDetailViewModel extends Observable
         this.row = new FleetViewModel([hive], now, quietThresholdMs).Rows[0]
         this.cluster = hive.clusterBackend + HiveDetailViewModel.ClusterSeparator + hive.clusterMode
         this.banner = this.DeriveBanner()
+        const connectionLabel = PillKinds.For(FleetPresentation.ConnectionKind(this.row.connection)).label
         this.homeChannel = [
-            { key: HiveDetailViewModel.KeyConnection, value: this.row.lastSeenLabel },
+            { key: HiveDetailViewModel.KeyConnection, value: connectionLabel },
             { key: HiveDetailViewModel.KeyLastCheckIn, value: this.row.lastSeenLabel },
             { key: HiveDetailViewModel.KeyCluster, value: this.cluster },
             { key: HiveDetailViewModel.KeyEnvironments, value: String(this.row.envCount) },

@@ -2,7 +2,8 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { HiveDetailViewModel } from '../src/hive-detail-view-model.js'
 import { FleetConnection } from '../src/fleet-view-model.js'
-import { BannerTone } from '../src/kit/index.js'
+import { BannerTone, PillKinds } from '../src/kit/index.js'
+import { FleetPresentation } from '../src/fleet-presentation.js'
 import type { FleetHiveDto } from '../src/portal-types.js'
 
 class Fx
@@ -46,6 +47,9 @@ describe('HiveDetailViewModel', () =>
         assert.ok(vm.Banner.text.includes('Hive One'))
         assert.ok(vm.Banner.text.includes('nothing to retry'))
         assert.deepEqual(vm.HomeChannel.map(i => i.key), ['Connection', 'Last check-in', 'Cluster', 'Environments observed'])
+        const quietLabel = PillKinds.For(FleetPresentation.ConnectionKind(FleetConnection.Quiet)).label
+        assert.equal(vm.HomeChannel[0].value, quietLabel)
+        assert.notEqual(vm.HomeChannel[0].value, vm.HomeChannel[1].value)
     })
 
     it('shows an info banner and no envs for an awaiting hive', () =>
@@ -69,5 +73,7 @@ describe('HiveDetailViewModel', () =>
         assert.equal(vm.EnvRows[0].ready, false)
         assert.equal(vm.EnvRows[1].image, '-')
         assert.equal(vm.Cluster, 'k8s / managed')
+        const connectedLabel = PillKinds.For(FleetPresentation.ConnectionKind(FleetConnection.Connected)).label
+        assert.equal(vm.HomeChannel[0].value, connectedLabel)
     })
 })
