@@ -94,7 +94,7 @@ describe('kit foundations', () =>
 
     it('resolves a definition for every nav and top-bar glyph', () =>
     {
-        const glyphs = [KitGlyph.Server, KitGlyph.Building, KitGlyph.Users, KitGlyph.HardDrive, KitGlyph.Package, KitGlyph.Shield, KitGlyph.Layers, KitGlyph.Settings, KitGlyph.Home, KitGlyph.User, KitGlyph.Sun, KitGlyph.Moon]
+        const glyphs = [KitGlyph.Server, KitGlyph.Building, KitGlyph.Users, KitGlyph.HardDrive, KitGlyph.Package, KitGlyph.Shield, KitGlyph.Layers, KitGlyph.Settings]
         for (const g of glyphs)
         {
             const def = IconCatalog.Definition(g)

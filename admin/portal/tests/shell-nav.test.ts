@@ -53,4 +53,17 @@ describe('platform admin nav', () =>
         rail.Select(PaSection.Tenants)
         assert.deepEqual(selected, [PaSection.Tenants])
     })
+
+    it('FocusActive targets the active row and is a no-op with no active row', () =>
+    {
+        // Mural exposes no headless focus-state seam, so this pins that FocusActive resolves to the
+        // active row's button and runs without error (the keyboard-focus effect itself is an e2e concern).
+        const idle = new NavRail(() => {})
+        assert.equal(idle.Active, undefined)
+        idle.FocusActive()
+        const rail = new NavRail(() => {}, PaSection.Settings)
+        assert.equal(rail.Active, PaSection.Settings)
+        assert.ok(rail.Rows.get(PaSection.Settings) !== undefined)
+        rail.FocusActive()
+    })
 })

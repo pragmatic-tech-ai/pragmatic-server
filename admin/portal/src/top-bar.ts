@@ -5,26 +5,33 @@ import type { Brush } from '@pragmatic-tech-ai/mural/visual-engine'
 import { Act, ActVariant } from './kit/act.js'
 import { NavModel, PaSection } from './nav-model.js'
 
+export enum ThemeScheme
+{
+    Light,
+    Dark,
+}
+
 export interface TopBarInputs
 {
     context: string
     onJump: (section: PaSection) => void
     onLogout: () => void
+    onLegacy: () => void
     operatorEmail: string
 }
 
-// Vertical host: the bar row (context label, destination search, theme toggle, operator email + Logout)
-// above an empty BannerSlot. Bar surface: Bg1. The search box sets SubmitsOnEnter so a plain Enter
-// bubbles unhandled to this bar's KeyDown listener, which jumps to the first matching destination.
+// Vertical host: the bar row (context label, destination search, theme toggle, operator email, Logout,
+// and the dev-only legacy-tools entry) above an empty BannerSlot. Bar surface: Bg1. The search box leaves
+// AcceptsReturn false (the default), so a plain Enter bubbles unhandled to this bar's KeyDown listener,
+// which jumps to the first matching destination.
 export class TopBar extends StackPanel
 {
     public static readonly SurfaceKey = 'Bg1'
     public static readonly LogoutLabel = 'Logout'
+    public static readonly LegacyLabel = 'Legacy environment tools (dev)'
     public static readonly SearchPlaceholder = 'Jump to...'
     public static readonly ThemeToggleLabel = 'Toggle theme'
     private static readonly KeyDownEvent = 'KeyDown'
-    private static readonly Light = 'light'
-    private static readonly Dark = 'dark'
 
     private readonly bar = new StackPanel()
     private readonly spacer = new StackPanel()
@@ -34,7 +41,8 @@ export class TopBar extends StackPanel
     private readonly emailLabel = new TextBlock()
     private readonly themeToggle: Act
     private readonly logoutButton: Act
-    private scheme: 'light' | 'dark' = TopBar.Light
+    private readonly legacyButton: Act
+    private scheme: ThemeScheme = ThemeScheme.Light
 
     public constructor(private readonly inputs: TopBarInputs)
     {
@@ -47,7 +55,6 @@ export class TopBar extends StackPanel
         this.bar.AddChild(this.contextLabel)
 
         this.searchBox.Placeholder = TopBar.SearchPlaceholder
-        this.searchBox.SubmitsOnEnter = true
         this.bar.AddChild(this.searchBox)
         this.bar.AddChild(this.spacer)
 
@@ -58,6 +65,10 @@ export class TopBar extends StackPanel
         this.bar.AddChild(this.emailLabel)
         this.logoutButton = new Act({ can: true, label: TopBar.LogoutLabel, variant: ActVariant.Secondary, onClick: () => this.Logout() })
         this.bar.AddChild(this.logoutButton)
+        // Dev-only entry into the demoted legacy environment/graph tooling: sits in the operator-menu
+        // region of the top bar, never in the primary nav. Keyboard-reachable (Act -> KeyActivatedButton).
+        this.legacyButton = new Act({ can: true, label: TopBar.LegacyLabel, variant: ActVariant.Secondary, onClick: () => this.Legacy() })
+        this.bar.AddChild(this.legacyButton)
 
         this.AddChild(this.bar)
         this.AddChild(this.bannerSlot)
@@ -110,7 +121,7 @@ export class TopBar extends StackPanel
         return undefined
     }
 
-    public get CurrentScheme(): 'light' | 'dark'
+    public get CurrentScheme(): ThemeScheme
     {
         return this.scheme
     }
@@ -118,8 +129,8 @@ export class TopBar extends StackPanel
     // Flips light <-> dark and performs a real runtime scheme swap.
     public ToggleTheme(): void
     {
-        const toDark = this.scheme === TopBar.Light
-        this.scheme = toDark ? TopBar.Dark : TopBar.Light
+        const toDark = this.scheme === ThemeScheme.Light
+        this.scheme = toDark ? ThemeScheme.Dark : ThemeScheme.Light
         ThemeManager.ApplyScheme(toDark ? PragmaticDark.instance : PragmaticLight.instance)
     }
 
@@ -131,6 +142,11 @@ export class TopBar extends StackPanel
     public Logout(): void
     {
         this.inputs.onLogout()
+    }
+
+    public Legacy(): void
+    {
+        this.inputs.onLegacy()
     }
 
     public get BannerSlot(): StackPanel

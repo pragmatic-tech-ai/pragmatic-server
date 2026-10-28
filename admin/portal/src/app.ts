@@ -1,4 +1,4 @@
-import { Orientation, StackPanel, TextBlock } from '@pragmatic-tech-ai/mural/basic'
+import { Orientation, StackPanel } from '@pragmatic-tech-ai/mural/basic'
 import type { Visual } from '@pragmatic-tech-ai/mural/visual-engine'
 import { ControlPlaneClient } from './api-client.js'
 import { EnvironmentDetailView } from './environment-detail-view.js'
@@ -16,7 +16,6 @@ import { CreateHiveView } from './create-hive-view.js'
 import type { IPortalNavigator, IPortalView } from './portal-types.js'
 
 import { ComingSoonView } from './coming-soon-view.js'
-import { KeyActivatedButton } from './kit/key-activated-button.js'
 import { NavModel, PaSection } from './nav-model.js'
 import { NavRail } from './nav-rail.js'
 import { TopBar } from './top-bar.js'
@@ -30,14 +29,12 @@ export class App extends StackPanel implements IPortalNavigator
     public static readonly TitleText = 'Pragmatic Admin'
     public static readonly LogoutLabel = 'Logout'
     private static readonly ContextText = 'Platform'
-    private static readonly LegacyLabel = 'Legacy environment tools (dev)'
 
     private readonly client: ControlPlaneClient
     private readonly navColumn = new StackPanel()
     private readonly rightColumn = new StackPanel()
     private readonly topHost = new StackPanel()
     private readonly contentHost = new StackPanel()
-    private readonly legacyButton: KeyActivatedButton
     private navRail: NavRail | undefined
     private topBar: TopBar | undefined
     private shellShown = false
@@ -51,10 +48,6 @@ export class App extends StackPanel implements IPortalNavigator
         this.Orientation = Orientation.Horizontal
         this.navColumn.Orientation = Orientation.Vertical
         this.rightColumn.Orientation = Orientation.Vertical
-        const legacyText = new TextBlock()
-        legacyText.Text = App.LegacyLabel
-        this.legacyButton = new KeyActivatedButton(() => this.ShowList())
-        this.legacyButton.Content = legacyText
         this.rightColumn.AddChild(this.topHost)
         this.rightColumn.AddChild(this.contentHost)
         this.AddChild(this.rightColumn)
@@ -166,10 +159,10 @@ export class App extends StackPanel implements IPortalNavigator
             context: App.ContextText,
             onJump: s => this.ShowSection(s),
             onLogout: () => { void this.Logout() },
+            onLegacy: () => this.ShowList(),
             operatorEmail,
         })
         this.navColumn.AddChild(this.navRail)
-        this.navColumn.AddChild(this.legacyButton)
         this.topHost.AddChild(this.topBar)
         // Nav sits left of the right column: rebuild the root children in order.
         this.RemoveChild(this.rightColumn)

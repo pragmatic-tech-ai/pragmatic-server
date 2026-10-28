@@ -58,7 +58,7 @@ export class PageHeader extends StackPanel
     {
         this.tabControls.forEach((tab, i) =>
         {
-            tab.Tag = i === index ? PageHeader.CurrentRole : undefined
+            tab.Tag = i === index ? PageHeader.CurrentRole : null
         })
     }
 

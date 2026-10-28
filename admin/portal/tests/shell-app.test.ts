@@ -80,6 +80,8 @@ describe('PA shell app', () =>
         assert.ok(app.CurrentView instanceof ComingSoonView)
         assert.equal(app.ActiveSection, PaSection.Fleet)
         assert.equal(app.Nav.Active, PaSection.Fleet)
+        // The legacy entry lives in the top bar, never in the primary nav: exactly the nine designed rows.
+        assert.equal(app.Nav.Rows.size, 9)
     })
 
     it('routes every section to a placeholder', async () =>
