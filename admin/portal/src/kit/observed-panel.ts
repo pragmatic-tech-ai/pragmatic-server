@@ -12,6 +12,13 @@ export interface ObservedPanelInputs
 
 // A read-only panel of data observed from a hive's last check-in. Trust boundary:
 // observe, never command - this primitive adds NO interactive control of its own.
+//
+// Deliberate deferrals (not dead code): this kit primitive is a mandated PA-4 Goal built ahead of its
+// first production consumer - the Fleet home is an aggregate (counts + table), so the first per-hive
+// observed-inventory rendering lands with Hive/Tenant detail (PA-7/PA-6). The dashed/outlined container
+// the design describes is also deferred: Mural exposes no border theme token and inventing a hex border
+// would break theme-token discipline, so the "observed" semantics are carried by the pill + note +
+// no-actions contract; the dashed visual is PA-15 polish.
 export class ObservedPanel extends StackPanel
 {
     private static readonly DefaultNote = "Read from the hive's last check-in. No break-glass."

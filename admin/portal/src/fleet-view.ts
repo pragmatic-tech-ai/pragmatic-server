@@ -4,7 +4,7 @@ import type { ControlPlaneClient } from './api-client.js'
 import { FleetConnection, FleetSegment, FleetViewModel } from './fleet-view-model.js'
 import type { FleetRow } from './fleet-view-model.js'
 import {
-    DataTable, KeyActivatedButton, PageHeader, PillKind, PillKinds, PillTone, ScreenHost, Section,
+    DataTable, KeyActivatedButton, PageHeader, PillKind, PillKinds, PillTone, ScreenHost, Section, TableDensity,
 } from './kit/index.js'
 import type { ScreenHostInputs, TableColumn } from './kit/index.js'
 import type { IPortalNavigator, IPortalView } from './portal-types.js'
@@ -43,13 +43,17 @@ export class FleetView extends StackPanel implements IPortalView
     private static readonly SegmentAttentionLabel = 'Needs attention'
     private static readonly SegmentNotCheckingLabel = 'Not checking in'
     private static readonly HivesTitle = 'Hives'
+    // Trust boundary: this data is read from each hive's last check-in, never commanded. The caption makes the "observed" framing explicit.
+    private static readonly ObservedCaption = "Observed from each hive's last check-in."
     private static readonly TableEmptyText = 'No hives match.'
     private static readonly EmptyTitle = 'No hives yet. Hives appear here once they are registered and dial in.'
     private static readonly ErrorTitle = 'Could not load the fleet.'
 
     private readonly client: ControlPlaneClient
     private readonly host: ScreenHost
-    private readonly tableSlot = new StackPanel()
+    // Rebuilt fresh on every BuildContent: a Visual may hold only one parent, so reusing one slot across
+    // renders (the environments-changed live-refresh path) would double-parent it and throw.
+    private tableSlot = new StackPanel()
     private model: FleetViewModel | undefined
     private nav: IPortalNavigator | undefined
 
@@ -144,8 +148,12 @@ export class FleetView extends StackPanel implements IPortalView
         root.AddChild(new PageHeader({ breadcrumb: FleetView.Breadcrumb, title: FleetView.TitleText, sub: FleetView.SubText }))
         root.AddChild(this.BuildTiles(model))
         root.AddChild(this.BuildAttention(model))
+        // Fresh slot per render: the previous one is still parented to the previous Section.
+        this.tableSlot = new StackPanel()
+        this.tableSlot.Orientation = Orientation.Vertical
         root.AddChild(new Section({
             title: FleetView.HivesTitle,
+            sub: FleetView.ObservedCaption,
             actions: this.BuildSegments(model),
             body: this.tableSlot,
         }))
@@ -235,6 +243,7 @@ export class FleetView extends StackPanel implements IPortalView
         this.tableSlot.AddChild(new DataTable<FleetRow>({
             columns: FleetView.Columns(),
             rows: model.Visible(),
+            density: TableDensity.Dense,
             searchText: r => r.displayName + FleetView.SearchSeparator + r.ownerLabel,
             emptyText: FleetView.TableEmptyText,
         }))

@@ -82,6 +82,16 @@ describe('FleetView', () =>
         assert.equal(view.Model?.Visible().length, 1)
     })
 
+    it('survives a second refresh (the environments-changed live path)', async () =>
+    {
+        const now = new Date().toISOString()
+        const view = Fixtures.View([Fixtures.Hive('a', now, true), Fixtures.Hive('b', null, true)])
+        await view.Refresh()
+        await view.Refresh()
+        assert.equal(view.Host.State, ScreenState.Populated)
+        assert.equal(view.Table?.Rows.length, 2)
+    })
+
     it('is empty when there are no hives', async () =>
     {
         const view = Fixtures.View([])
