@@ -7,7 +7,8 @@ import { ScreenState } from '../src/kit/screen-host.js'
 import { DeniedStatePanel } from '../src/kit/state-panels.js'
 import { TenantApiError } from '../src/tenant-api-client.js'
 import type { AdminCapabilitiesDto, AdminSnapshotDto, EnvironmentDto, IssueTokenParams, ITenantNavigator, ITokensSource, IUsersAccessSource, SecurityModelDto, ServiceTokenSummaryDto, TokenIssuedDto } from '../src/tenant-types.js'
-import type { IRolesPrivilegesSource } from '../src/roles-privileges-view-model.js'
+import type { ISecurityModelEnvSource } from '../src/security-model-view-model.js'
+import { SecurityModelView } from '../src/security-model-view.js'
 import { UsersAccessPageView } from '../src/users-access-page-view.js'
 
 class Fixtures
@@ -66,7 +67,7 @@ class Fixtures
     }
 }
 
-class FakeSource implements IUsersAccessSource, IRolesPrivilegesSource, ITokensSource
+class FakeSource implements IUsersAccessSource, ISecurityModelEnvSource, ITokensSource
 {
     public snapshotCalls: string[] = []
     public tokenCalls: string[] = []
@@ -126,8 +127,6 @@ class FakeNav implements ITenantNavigator
     public ShowEnvironmentDetail(): void {}
     public ShowUsersAccess(): void {}
     public ShowServiceTokens(): void {}
-    public ShowRolesPrivileges(): void {}
-    public ShowFieldSecurity(): void {}
     public ShowSection(_section: unknown): void {}
     public get Profile(): undefined { return undefined }
     public get Capabilities(): AdminCapabilitiesDto | undefined { return this.Caps }
@@ -155,6 +154,7 @@ describe('UsersAccessPageView', () =>
         assert.deepEqual(Fixtures.TabLabels(page), ['Users', 'Roles & permissions', 'Tokens'])
         assert.ok(Fixtures.Collect(page).includes(page.Tabs))
         assert.equal(page.Tabs.ActiveContent, page.Users)
+        assert.ok(page.Roles instanceof SecurityModelView)
     })
 
     it('shows the denied state instead of the tabs when access is withheld', () =>

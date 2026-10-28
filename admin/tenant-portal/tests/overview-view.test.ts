@@ -111,8 +111,6 @@ class Nav implements ITenantNavigator
     public ShowEnvironmentDetail(env: EnvironmentDto): void { this.Opened.push(env) }
     public ShowUsersAccess(): void {}
     public ShowServiceTokens(): void {}
-    public ShowRolesPrivileges(): void {}
-    public ShowFieldSecurity(): void {}
     public ShowSection(section: unknown): void { this.Sections.push(section) }
     public get Profile(): undefined { return undefined }
     public get Capabilities(): AdminCapabilitiesDto | undefined { return this.Caps }

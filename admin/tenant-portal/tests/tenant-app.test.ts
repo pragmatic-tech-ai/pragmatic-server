@@ -11,8 +11,6 @@ import type { TenantApiClient } from '../src/tenant-api-client.js'
 import { EnvStatus, EnvType, Template, TenantEventType } from '../src/tenant-types.js'
 import type { HiveRolloutDto, ManifestDto, EnvironmentDto, TenantProfileDto, HiveDto, HiveHealthDto, ITenantNavigator, ITenantView, ServiceTokenSummaryDto, SessionDto, TenantEvent } from '../src/tenant-types.js'
 import { ServiceTokensView } from '../src/service-tokens-view.js'
-import { RolesPrivilegesView } from '../src/roles-privileges-view.js'
-import { FieldSecurityView } from '../src/field-security-view.js'
 import { UsersAccessPageView } from '../src/users-access-page-view.js'
 import { EnvironmentDetailView } from '../src/environment-detail-view.js'
 import { ComingSoonView } from '../src/coming-soon-view.js'
@@ -434,16 +432,12 @@ describe('TenantApp', () =>
         assert.equal(texts.filter(t => t === 'Users & Access').length, 1)
     })
 
-    it('the token/role/field navigator methods still show their views', async () =>
+    it('the token navigator method still shows its view', async () =>
     {
         const { app } = Fixtures.Make(Session)
         await app.Boot()
         app.ShowServiceTokens()
         assert.ok(Fixtures.CurrentOf(app) instanceof ServiceTokensView)
-        app.ShowRolesPrivileges()
-        assert.ok(Fixtures.CurrentOf(app) instanceof RolesPrivilegesView)
-        app.ShowFieldSecurity()
-        assert.ok(Fixtures.CurrentOf(app) instanceof FieldSecurityView)
     })
 
     it('OnTenantEvent and Teardown do not throw with no environments pane', async () =>

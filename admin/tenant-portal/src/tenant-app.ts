@@ -17,8 +17,6 @@ import type { AdminCapabilitiesDto, EnvironmentDto, HiveDto, ITenantNavigator, I
 import { TopBar } from './top-bar.js'
 import { UserMenu } from './user-menu.js'
 import { ServiceTokensView } from './service-tokens-view.js'
-import { RolesPrivilegesView } from './roles-privileges-view.js'
-import { FieldSecurityView } from './field-security-view.js'
 import { UsersAccessPageView } from './users-access-page-view.js'
 
 // Root shell: auth-gated boot; a nav rail on the left, and on the right a top bar over the section content host.
@@ -159,16 +157,6 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     public ShowServiceTokens(): void
     {
         this.Show(new ServiceTokensView(this.client))
-    }
-
-    public ShowRolesPrivileges(): void
-    {
-        this.Show(new RolesPrivilegesView(this.client))
-    }
-
-    public ShowFieldSecurity(): void
-    {
-        this.Show(new FieldSecurityView(this.client))
     }
 
     public get ActiveSection(): NavSection

@@ -1,8 +1,8 @@
 import { Orientation } from '@pragmatic-tech-ai/mural/basic'
 import { ScreenHost } from './kit/screen-host.js'
 import { Tabs } from './kit/tabs.js'
-import { RolesPrivilegesView } from './roles-privileges-view.js'
-import type { IRolesPrivilegesSource } from './roles-privileges-view-model.js'
+import { SecurityModelView } from './security-model-view.js'
+import type { ISecurityModelEnvSource } from './security-model-view-model.js'
 import { ServiceTokensView } from './service-tokens-view.js'
 import type { ITenantNavigator, ITokensSource, IUsersAccessSource } from './tenant-types.js'
 import { TenantViewBase } from './tenant-view-base.js'
@@ -19,17 +19,17 @@ export class UsersAccessPageView extends TenantViewBase
     private static readonly DeniedNeed = 'the Manage users & access permission'
 
     private readonly users: UsersAccessView
-    private readonly roles: RolesPrivilegesView
+    private readonly roles: SecurityModelView
     private readonly tokens: ServiceTokensView
     private readonly tabs: Tabs
     private readonly loaded = new Set<number>()
     private denied: ScreenHost | undefined
 
-    public constructor(source: IUsersAccessSource & IRolesPrivilegesSource & ITokensSource, currentPrincipalId: string)
+    public constructor(source: IUsersAccessSource & ISecurityModelEnvSource & ITokensSource, currentPrincipalId: string)
     {
         super()
         this.users = new UsersAccessView(source, currentPrincipalId)
-        this.roles = new RolesPrivilegesView(source)
+        this.roles = new SecurityModelView(source)
         this.tokens = new ServiceTokensView(source)
         this.tabs = new Tabs({
             entries: [
@@ -56,7 +56,7 @@ export class UsersAccessPageView extends TenantViewBase
     }
 
     // Test seam: the embedded Roles & permissions view.
-    public get Roles(): RolesPrivilegesView
+    public get Roles(): SecurityModelView
     {
         return this.roles
     }
@@ -118,7 +118,7 @@ export class UsersAccessPageView extends TenantViewBase
         await this.ViewAt(index).Refresh()
     }
 
-    private ViewAt(index: number): UsersAccessView | RolesPrivilegesView | ServiceTokensView
+    private ViewAt(index: number): UsersAccessView | SecurityModelView | ServiceTokensView
     {
         const views = [this.users, this.roles, this.tokens]
         return views[index]

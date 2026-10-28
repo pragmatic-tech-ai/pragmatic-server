@@ -127,8 +127,6 @@ export interface ITenantNavigator
     ShowEnvironmentDetail(env: EnvironmentDto): void
     ShowUsersAccess(): void
     ShowServiceTokens(): void
-    ShowRolesPrivileges(): void
-    ShowFieldSecurity(): void
     ShowSection(section: NavSection): void
     get Profile(): TenantProfileDto | undefined
     get Capabilities(): AdminCapabilitiesDto | undefined
