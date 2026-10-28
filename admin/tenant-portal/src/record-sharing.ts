@@ -25,6 +25,7 @@ export class RecordSharingDeriver
         [AccessLevel.Organization, RecordSharingDeriver.OrganizationScope]
     ])
     private static readonly NoDirectAccess = 'no direct record access'
+    private static readonly Unset = ''
     private static readonly OwnershipClause = ' (records owned per the ownership rules)'
 
     public static Rows(role: RoleConfigDto | undefined, ownershipRules: readonly OwnershipRuleDto[]): readonly RecordSharingRowData[]
@@ -40,14 +41,14 @@ export class RecordSharingDeriver
             list.push(p)
             byConcept.set(p.concept, list)
         }
-        const owned = new Set<string>(ownershipRules.map(r => r.concept))
+        const owned = new Set<string>(ownershipRules.filter(r => r.owningBusinessUnit.value !== RecordSharingDeriver.Unset).map(r => r.concept))
         const rows: RecordSharingRowData[] = []
         for (const concept of [...byConcept.keys()].sort())
         {
             const privileges = byConcept.get(concept) ?? []
             rows.push({
                 concept,
-                scopeText: RecordSharingDeriver.ScopeText(privileges) + (owned.has(concept) ? RecordSharingDeriver.OwnershipClause : ''),
+                scopeText: RecordSharingDeriver.ScopeText(privileges) + (owned.has(concept) ? RecordSharingDeriver.OwnershipClause : RecordSharingDeriver.Unset),
                 canShare: RecordSharingDeriver.Grants(privileges, PrivilegeAction.Share),
                 canAssign: RecordSharingDeriver.Grants(privileges, PrivilegeAction.Assign)
             })

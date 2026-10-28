@@ -576,5 +576,22 @@ describe('SecurityModelView Roles / Organization', () =>
         combos[1].SelectedIndex = 0
         assert.equal(view.Vm.BusinessUnitRows[1].Parent, undefined)
     })
-})
 
+    it('a unit is not offered its own descendants as a parent choice', async () =>
+    {
+        const src = new FakeSource()
+        src.Model!.businessUnits = [
+            { id: 'a', name: 'A' },
+            { id: 'b', name: 'B', parent: 'a' },
+            { id: 'c', name: 'C', parent: 'b' },
+            { id: 'd', name: 'D' },
+        ]
+        const view = await Harness.Make(src)
+        view.Mode.Select(1)
+        const combos = OrgFixtures.Combos(view.BusinessUnitHost)
+        const itemsOf = (i: number): string[] => [...(combos[i].Items as unknown as string[])]
+        assert.deepEqual(itemsOf(0), [SecurityModelView.NoneChoice, 'D'])
+        assert.deepEqual(itemsOf(1), [SecurityModelView.NoneChoice, 'A', 'D'])
+        assert.deepEqual(itemsOf(3), [SecurityModelView.NoneChoice, 'A', 'B', 'C'])
+    })
+})

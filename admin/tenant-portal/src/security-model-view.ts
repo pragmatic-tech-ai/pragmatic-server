@@ -885,13 +885,15 @@ export class SecurityModelView extends TenantViewBase
         }
         const labels = this.UnitLabels()
         const byId = new Map<string, BusinessUnitRow>(rows.map(r => [r.Id, r]))
+        const children = this.ChildMap(rows)
         for (const row of rows)
         {
             const strip = this.Strip()
             const indent = this.Text(this.IndentFor(row, byId))
             strip.AddChild(indent)
             strip.AddChild(this.MakeTextEdit(() => row.Name, text => row.Rename(text), SecurityModelView.BusinessUnitPlaceholder))
-            const others = rows.filter(r => r.Id !== row.Id).map(r => r.Id)
+            const excluded = this.DescendantsOf(row.Id, children)
+            const others = rows.filter(r => r.Id !== row.Id && !excluded.has(r.Id)).map(r => r.Id)
             strip.AddChild(this.MakeUnitChoice(labels, others, () => row.Parent, id =>
             {
                 row.SetParent(id)
@@ -1102,6 +1104,36 @@ export class SecurityModelView extends TenantViewBase
             labels.set(r.Id, dup ? r.Name + SecurityModelView.IdOpen + r.Id + SecurityModelView.IdClose : r.Name)
         }
         return labels
+    }
+
+    private ChildMap(rows: readonly BusinessUnitRow[]): ReadonlyMap<string, readonly string[]>
+    {
+        const children = new Map<string, string[]>()
+        for (const r of rows)
+        {
+            if (r.Parent !== undefined)
+            {
+                children.set(r.Parent, [...(children.get(r.Parent) ?? []), r.Id])
+            }
+        }
+        return children
+    }
+
+    // Every unit below id (a cycle-safe walk); these cannot be offered as id's parent.
+    private DescendantsOf(id: string, children: ReadonlyMap<string, readonly string[]>): ReadonlySet<string>
+    {
+        const found = new Set<string>()
+        const pending = [...(children.get(id) ?? [])]
+        while (pending.length > 0)
+        {
+            const next = pending.pop() as string
+            if (!found.has(next))
+            {
+                found.add(next)
+                pending.push(...(children.get(next) ?? []))
+            }
+        }
+        return found
     }
 
     // Indent by depth along the Parent chain (bounded, so a bad cycle cannot loop).

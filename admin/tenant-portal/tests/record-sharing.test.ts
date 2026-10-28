@@ -91,6 +91,18 @@ describe('RecordSharingDeriver', () =>
         assert.match(rows[1].scopeText, /owned per the ownership rules/)
     })
 
+    it('does not claim ownership for a rule whose owning source is unset', () =>
+    {
+        const role = Fixtures.Role([
+            Fixtures.P(PrivilegeAction.Read, 'Account', AccessLevel.User),
+            Fixtures.P(PrivilegeAction.Read, 'Zeta', AccessLevel.User)
+        ])
+        const blank: OwnershipRuleDto = { concept: 'Account', owningBusinessUnit: { kind: '', value: '' } }
+        const rows = RecordSharingDeriver.Rows(role, [blank, Fixtures.Rule('Zeta')])
+        assert.doesNotMatch(rows[0].scopeText, /ownership rules/)
+        assert.match(rows[1].scopeText, /owned per the ownership rules/)
+    })
+
     it('sorts rows by concept', () =>
     {
         const rows = RecordSharingDeriver.Rows(Fixtures.Role([
