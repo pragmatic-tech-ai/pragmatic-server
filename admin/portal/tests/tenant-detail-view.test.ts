@@ -4,7 +4,7 @@ import { Application, Key } from '@pragmatic-tech-ai/mural/runtime'
 import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pragmatic'
 import { TenantDetailView } from '../src/tenant-detail-view.js'
 import { TenantDetailViewModel } from '../src/tenant-detail-view-model.js'
-import { KeyActivatedButton, ScreenState } from '../src/kit/index.js'
+import { KeyActivatedButton, ObservedPanel, ScreenState } from '../src/kit/index.js'
 import type { ClientDto, FleetHiveDto, TenantDto } from '../src/portal-types.js'
 
 class Fixtures
@@ -51,6 +51,8 @@ class Fixtures
 
 describe('TenantDetailView', () =>
 {
+    const EnvironmentsTitle = 'Environments'
+
     let previous: Application | null
 
     before(() =>
@@ -88,5 +90,12 @@ describe('TenantDetailView', () =>
         assert.ok(button)
         ;(button as unknown as { OnKeyDown(a: unknown): void }).OnKeyDown({ Key: Key.Return, Handled: false })
         assert.equal(calls, 1)
+    })
+
+    it('wraps the environments table in an ObservedPanel', () =>
+    {
+        const view = new TenantDetailView(Fixtures.Model(true), () => undefined)
+        const nodes = Fixtures.Collect(view)
+        assert.ok(nodes.some(n => n instanceof ObservedPanel && n.Title === EnvironmentsTitle))
     })
 })
