@@ -1,7 +1,7 @@
 import { afterEach, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { ControlPlaneClient } from '../src/api-client.js'
-import type { HiveDto, TenantDto } from '../src/portal-types.js'
+import type { HiveDto, ManifestDto, TenantDto } from '../src/portal-types.js'
 
 type Recorded = { route: string; init: RequestInit | undefined }
 
@@ -128,5 +128,18 @@ describe('ControlPlaneClient platform records', () =>
         await new ControlPlaneClient().DeleteHive('h1')
         assert.equal(FetchStub.Calls[0]!.route, '/api/hives/h1')
         assert.equal(FetchStub.Calls[0]!.init?.method, 'DELETE')
+    })
+
+    it('ListManifests GETs /api/manifests and returns the parsed array', async () =>
+    {
+        const payload: ManifestDto[] = [{ id: 'v1', image: 'img1', publishedAt: '2026-01-01T00:00:00.000Z' }]
+        FetchStub.Install(payload)
+        const manifests = await new ControlPlaneClient().ListManifests()
+        const call = FetchStub.Calls[0]!
+        assert.equal(call.route, '/api/manifests')
+        assert.equal(call.init?.method, undefined)
+        assert.equal(call.init?.body, undefined)
+        assert.equal(call.init?.credentials, 'same-origin')
+        assert.deepEqual(manifests, payload)
     })
 })

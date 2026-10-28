@@ -1,4 +1,4 @@
-import type { ClientDto, EnvironmentDto, HiveDto, FleetHiveDto, TenantDto, GraphDto, GraphLoadedDto, OperatorDto, PromotionResultDto } from './portal-types.js'
+import type { ClientDto, EnvironmentDto, HiveDto, FleetHiveDto, ManifestDto, TenantDto, GraphDto, GraphLoadedDto, OperatorDto, PromotionResultDto } from './portal-types.js'
 
 // Thrown for non-2xx control-plane responses; Message carries the server's error text.
 export class ApiError extends Error
@@ -22,6 +22,7 @@ export class ControlPlaneClient
     private static readonly TenantsRoute = '/api/tenants'
     private static readonly HivesRoute = '/api/hives'
     private static readonly FleetRoute = '/api/fleet'
+    private static readonly ManifestsRoute = '/api/manifests'
     private static readonly LoginRoute = '/api/login'
     private static readonly LogoutRoute = '/api/logout'
     private static readonly SessionRoute = '/api/session'
@@ -103,6 +104,11 @@ export class ControlPlaneClient
     public async ListFleet(): Promise<FleetHiveDto[]>
     {
         return await this.Send<FleetHiveDto[]>(ControlPlaneClient.FleetRoute, undefined)
+    }
+
+    public async ListManifests(): Promise<ManifestDto[]>
+    {
+        return await this.Send<ManifestDto[]>(ControlPlaneClient.ManifestsRoute, undefined)
     }
 
     public async CreateHive(input: HiveDto): Promise<HiveDto>

@@ -100,6 +100,8 @@ export interface IPortalView
     Refresh(): Promise<void>
 }
 
+export type ManifestDto = { id: string; image: string; notes?: string; publishedAt: string; withdrawn?: boolean }
+
 export type FleetEnvDto = { name: string; ready: boolean; image?: string; detail: string }
 
 export type FleetHiveDto = {
