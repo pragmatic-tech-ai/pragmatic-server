@@ -1,5 +1,6 @@
 import { StackPanel, TextBlock } from '@pragmatic-tech-ai/mural/basic'
 import { Button } from '@pragmatic-tech-ai/mural/framework'
+import { KeyActivatedButton } from './kit/key-activated-button.js'
 import { TenantApiError } from './tenant-api-client.js'
 import type { ITenantNavigator, ITenantView } from './tenant-types.js'
 
@@ -19,9 +20,8 @@ export abstract class TenantViewBase extends StackPanel implements ITenantView
     {
         const text = new TextBlock()
         text.Text = label
-        const button = new Button()
+        const button = new KeyActivatedButton(onClick)
         button.Content = text
-        button.AddClickHandler(onClick)
         return button
     }
 

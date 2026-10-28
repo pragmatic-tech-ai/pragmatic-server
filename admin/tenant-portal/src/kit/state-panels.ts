@@ -3,6 +3,7 @@ import { Button } from '@pragmatic-tech-ai/mural/framework'
 import { Thickness } from '@pragmatic-tech-ai/mural/runtime'
 import type { Visual } from '@pragmatic-tech-ai/mural/runtime'
 import { IconCatalog, KitGlyph } from './icon-catalog.js'
+import { KeyActivatedButton } from './key-activated-button.js'
 import { PillTone, Tones } from './tones.js'
 
 export enum SkeletonKind
@@ -217,12 +218,8 @@ export class ErrorStatePanel extends StatePanelBase
         super()
         this.config = config
         this.Tag = ErrorStatePanel.AlertRole
-        this.retryButton = new Button(this.Text(ErrorStatePanel.RetryLabel))
-        if (config.onRetry !== undefined)
-        {
-            const retry = config.onRetry
-            this.retryButton.AddClickHandler(() => retry())
-        }
+        this.retryButton = new KeyActivatedButton(config.onRetry)
+        this.retryButton.Content = this.Text(ErrorStatePanel.RetryLabel)
         this.Build()
     }
 

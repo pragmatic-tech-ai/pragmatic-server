@@ -307,7 +307,7 @@ describe('EnvironmentDetailView', () =>
         assert.equal(list.Rows.length, 2)
         assert.equal(list.IsEmpty, false)
         const panel = host.visualChildren[0]
-        assert.deepEqual([...panel.visualChildren].map(c => c.constructor.name), ['TextBlock', 'Section', 'Button'])
+        assert.deepEqual([...panel.visualChildren].map(c => c.constructor.name), ['TextBlock', 'Section', 'KeyActivatedButton'])
         assert.equal(Fixtures.Collect(host).filter(x => x instanceof Section).length, 1)
     })
 
