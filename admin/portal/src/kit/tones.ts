@@ -22,7 +22,7 @@ export class Tones
         [PillTone.Neutral]: 'Fg2',
     }
 
-    public static readonly MissingBrushMessage = 'Tones: theme brush resource not found: '
+    private static readonly MissingBrushMessage = 'Tones: theme brush resource not found: '
 
     private static readonly SoftKeys: Readonly<Record<PillTone, string>> = {
         [PillTone.Success]: 'StateSuccessSoft',

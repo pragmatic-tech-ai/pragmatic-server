@@ -8,7 +8,7 @@ export interface KeyValueItem
 
 export interface KeyValueGridInputs
 {
-    items: KeyValueItem[]
+    items: readonly KeyValueItem[]
 }
 
 // Key/value pairs: a vertical stack of cells, each a key above its value.

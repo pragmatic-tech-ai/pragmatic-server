@@ -27,10 +27,13 @@ interface BannerStyle
 // Inline status banner: tone glyph + tone label + text, and an optional action visual.
 export class Banner extends StackPanel
 {
+    private static readonly InfoLabel = 'Info: '
+    private static readonly WarningLabel = 'Warning: '
+    private static readonly DangerLabel = 'Error: '
     private static readonly Styles: Readonly<Record<BannerTone, BannerStyle>> = {
-        [BannerTone.Info]: { glyph: KitGlyph.CircleAlert, label: 'Info: ', tone: PillTone.Info },
-        [BannerTone.Warning]: { glyph: KitGlyph.TriangleAlert, label: 'Warning: ', tone: PillTone.Warning },
-        [BannerTone.Danger]: { glyph: KitGlyph.CircleX, label: 'Error: ', tone: PillTone.Danger },
+        [BannerTone.Info]: { glyph: KitGlyph.CircleAlert, label: Banner.InfoLabel, tone: PillTone.Info },
+        [BannerTone.Warning]: { glyph: KitGlyph.TriangleAlert, label: Banner.WarningLabel, tone: PillTone.Warning },
+        [BannerTone.Danger]: { glyph: KitGlyph.CircleX, label: Banner.DangerLabel, tone: PillTone.Danger },
     }
 
     private readonly inputs: BannerInputs
