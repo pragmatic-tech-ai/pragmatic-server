@@ -4,6 +4,7 @@ import { Application } from '@pragmatic-tech-ai/mural/runtime'
 import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pragmatic'
 import type { ControlPlaneClient } from '../src/api-client.js'
 import { ReleasesMode, ReleasesView } from '../src/releases-view.js'
+import type { ReleaseListRow } from '../src/releases-view-model.js'
 import { ReleaseDetailView } from '../src/release-detail-view.js'
 import { ErrorStatePanel, ScreenState } from '../src/kit/index.js'
 import type { FleetHiveDto, ManifestDto } from '../src/portal-types.js'
@@ -37,8 +38,49 @@ class FakeClient
     }
 }
 
+class ScriptedClient
+{
+    private readonly script: Array<(() => Promise<ManifestDto[]>) | undefined> = []
+
+    public constructor(private readonly manifests: ManifestDto[])
+    {
+    }
+
+    // Queue the behavior of the next ListManifests calls in order; undefined = default resolve.
+    public Queue(...steps: Array<(() => Promise<ManifestDto[]>) | undefined>): void
+    {
+        this.script.push(...steps)
+    }
+
+    public ListManifests(): Promise<ManifestDto[]>
+    {
+        const step = this.script.shift()
+        return step === undefined ? Promise.resolve(this.manifests) : step()
+    }
+
+    public ListFleet(): Promise<FleetHiveDto[]>
+    {
+        return Promise.resolve([])
+    }
+}
+
 class Fixtures
 {
+    public static Retry(view: ReleasesView): void
+    {
+        const panel = Fixtures.Walk(view).find(n => n instanceof ErrorStatePanel) as ErrorStatePanel
+        assert.ok(panel)
+        for (const h of (panel.RetryButton as unknown as { _clickHandlers: Array<(a: unknown) => void> })._clickHandlers)
+        {
+            h({})
+        }
+    }
+
+    public static ScriptedView(client: ScriptedClient): ReleasesView
+    {
+        return new ReleasesView(client as unknown as ControlPlaneClient)
+    }
+
     public static Walk(root: unknown): unknown[]
     {
         const out: unknown[] = [root]
@@ -162,5 +204,63 @@ describe('ReleasesView', () =>
         await view.Refresh()
         assert.equal(view.Host.State, ScreenState.Populated)
         assert.equal(view.Table?.Rows.length, 2)
+    })
+
+    it('detail fetch rejection shows a retryable error that recovers', async () =>
+    {
+        const client = new ScriptedClient([Fixtures.Manifest('1.0')])
+        const view = Fixtures.ScriptedView(client)
+        await view.Refresh()
+        client.Queue(() => Promise.reject(new Error('boom')))
+        await Fixtures.Open(view)
+        assert.equal(view.Host.State, ScreenState.Error)
+        Fixtures.Retry(view)
+        await new Promise(r => setTimeout(r, 0))
+        assert.equal(view.Mode, ReleasesMode.List)
+        assert.equal(view.Host.State, ScreenState.Populated)
+        assert.equal(view.Table?.Rows.length, 1)
+    })
+
+    it('detail not-found shows a retryable list error', async () =>
+    {
+        const client = new ScriptedClient([Fixtures.Manifest('1.0')])
+        const view = Fixtures.ScriptedView(client)
+        await view.Refresh()
+        client.Queue(() => Promise.resolve([]))
+        await Fixtures.Open(view)
+        assert.equal(view.Mode, ReleasesMode.List)
+        assert.equal(view.Host.State, ScreenState.Error)
+        Fixtures.Retry(view)
+        await new Promise(r => setTimeout(r, 0))
+        assert.equal(view.Host.State, ScreenState.Populated)
+    })
+
+    it('a stale list rejection does not clobber a mounted detail view', async () =>
+    {
+        const client = new ScriptedClient([Fixtures.Manifest('1.0')])
+        const view = Fixtures.ScriptedView(client)
+        await view.Refresh()
+        const row: ReleaseListRow = { id: '1.0', image: 'registry/app:1.0', withdrawn: false, publishedLabel: '', observedEnvCount: 0 }
+        let rejectList: (e: Error) => void = () => undefined
+        client.Queue(() => new Promise<ManifestDto[]>((_, rej) => { rejectList = rej }))
+        const pendingList = view.ShowList()
+        await view.ShowDetail(row)
+        assert.equal(view.Mode, ReleasesMode.Detail)
+        rejectList(new Error('late'))
+        await pendingList
+        assert.equal(view.Mode, ReleasesMode.Detail)
+        assert.ok(Fixtures.Walk(view).some(n => n instanceof ReleaseDetailView))
+        assert.ok(!Fixtures.Walk(view).some(n => n instanceof ErrorStatePanel))
+    })
+
+    it('a second detail refresh re-renders without throwing', async () =>
+    {
+        const view = Fixtures.View(new FakeClient([Fixtures.Manifest('1.0')]))
+        await view.Refresh()
+        await Fixtures.Open(view)
+        await view.Refresh()
+        await view.Refresh()
+        assert.equal(view.Mode, ReleasesMode.Detail)
+        assert.ok(Fixtures.Walk(view).some(n => n instanceof ReleaseDetailView))
     })
 })
