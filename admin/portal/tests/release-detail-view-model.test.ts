@@ -76,4 +76,9 @@ describe('ReleaseDetailViewModel', () =>
         const fleet = [Fx.Hive('1', 'Hive A', [{ name: 'prod', ready: true, image: 'other', detail: '' }])]
         assert.equal(new ReleaseDetailViewModel(Fx.Manifest(), fleet).AdoptionRows.length, 0)
     })
+
+    it('Version returns the manifest id', () =>
+    {
+        assert.equal(new ReleaseDetailViewModel(Fx.Manifest(), []).Version, '1.2.0')
+    })
 })

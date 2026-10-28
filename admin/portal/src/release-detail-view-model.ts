@@ -43,6 +43,11 @@ export class ReleaseDetailViewModel extends Observable
         super()
     }
 
+    public get Version(): string
+    {
+        return this.manifest.id
+    }
+
     public get Profile(): readonly KeyValueItem[]
     {
         const m = this.manifest
