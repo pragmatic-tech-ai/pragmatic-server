@@ -8,6 +8,10 @@ import { PillKind } from './kit/pill-kinds.js'
 import { Section } from './kit/section.js'
 import { StatusPill } from './kit/status-pill.js'
 import { Tabs } from './kit/tabs.js'
+import { AssignmentSide } from './assignment-side.js'
+import type { AssignmentClaimRow } from './assignment-claim-row.js'
+import type { AssignmentPrincipalRow } from './assignment-principal-row.js'
+import type { AssignmentTeamRow } from './assignment-team-row.js'
 import type { BusinessUnitRow } from './business-unit-row.js'
 import type { MembershipOverrideRow } from './membership-override-row.js'
 import type { MembershipRuleRow } from './membership-rule-row.js'
@@ -31,6 +35,25 @@ export class SecurityModelView extends TenantViewBase
     public static readonly WhatTheyCanDoLabel = 'What they can do'
     public static readonly FieldsLabel = 'Fields'
     public static readonly RecordSharingLabel = 'Record sharing'
+    public static readonly PeopleLabel = 'People'
+    public static readonly NoOneAssignedText = 'No one is assigned this role yet. Add people, claim rules or teams below.'
+    public static readonly NoOneHasProfileText = 'No one has this profile yet. Add people, claim rules or teams below.'
+    public static readonly WhoHasProfileTitle = 'Who has this profile'
+    public static readonly ByPersonTitle = 'By person'
+    public static readonly ByClaimTitle = 'By claim'
+    public static readonly ByTeamTitle = 'By team'
+    public static readonly AddPersonLabel = 'Add person'
+    public static readonly AddClaimGrantLabel = 'Add claim'
+    public static readonly AddTeamGrantLabel = 'Add team'
+    public static readonly PickTeamChoice = '(pick a team)'
+    public static readonly DirectSuffix = ' direct'
+    public static readonly AssignedDirectlySuffix = ' assigned directly'
+    private static readonly AlsoGrantedPrefix = ', also granted by '
+    private static readonly ClaimRuleOne = ' claim rule'
+    private static readonly ClaimRuleMany = ' claim rules'
+    private static readonly TeamOne = ' team'
+    private static readonly TeamMany = ' teams'
+    private static readonly AssignmentPrincipalPlaceholder = 'Person (principal id)'
     public static readonly RolesModeLabel = 'Roles'
     public static readonly OrganizationModeLabel = 'Organization'
     public static readonly BusinessUnitsLabel = 'Business units'
@@ -198,6 +221,11 @@ export class SecurityModelView extends TenantViewBase
     private readonly rolesPane = new StackPanel()
     private readonly orgPane = new StackPanel()
     private readonly recordHost = new StackPanel()
+    private readonly peopleHost = new StackPanel()
+    private readonly addRolePrincipalBox = new TextBox()
+    private readonly addProfilePrincipalBox = new TextBox()
+    private readonly addRolePrincipalStrip = new StackPanel()
+    private readonly addProfilePrincipalStrip = new StackPanel()
     private readonly businessUnitHost = new StackPanel()
     private readonly teamHost = new StackPanel()
     private readonly membershipHost = new StackPanel()
@@ -251,7 +279,7 @@ export class SecurityModelView extends TenantViewBase
         this.businessUnitBox.Placeholder = SecurityModelView.BusinessUnitPlaceholder
         this.teamBox.Placeholder = SecurityModelView.TeamPlaceholder
         this.ownershipBox.Placeholder = SecurityModelView.OwnershipConceptPlaceholder
-        for (const panel of [this.rolesPane, this.orgPane, this.recordHost, this.businessUnitHost, this.teamHost, this.membershipHost, this.ownershipHost])
+        for (const panel of [this.rolesPane, this.orgPane, this.recordHost, this.peopleHost, this.businessUnitHost, this.teamHost, this.membershipHost, this.ownershipHost])
         {
             panel.Orientation = Orientation.Vertical
         }
@@ -260,6 +288,7 @@ export class SecurityModelView extends TenantViewBase
                 { label: SecurityModelView.WhatTheyCanDoLabel, content: this.privilegeHost },
                 { label: SecurityModelView.FieldsLabel, content: this.fieldHost },
                 { label: SecurityModelView.RecordSharingLabel, content: this.recordHost },
+                { label: SecurityModelView.PeopleLabel, content: this.peopleHost },
             ],
         })
         this.orgTabs = new Tabs({
@@ -303,6 +332,13 @@ export class SecurityModelView extends TenantViewBase
         this.subscriptions.push(this.vm.PropertyChanged(vmType.MembershipOverrideRowsProperty).subscribe(rerender))
         this.subscriptions.push(this.vm.PropertyChanged(vmType.OwnershipRuleRowsProperty).subscribe(rerender))
         this.subscriptions.push(this.vm.PropertyChanged(vmType.RecordSharingRowsProperty).subscribe(rerender))
+        // Add/remove of an assignment replaces the row arrays (rebuild); a scalar claim edit uses RefreshDirty and raises none of these.
+        this.subscriptions.push(this.vm.PropertyChanged(vmType.RoleClaimRowsProperty).subscribe(rerender))
+        this.subscriptions.push(this.vm.PropertyChanged(vmType.RolePrincipalRowsProperty).subscribe(rerender))
+        this.subscriptions.push(this.vm.PropertyChanged(vmType.RoleTeamRowsProperty).subscribe(rerender))
+        this.subscriptions.push(this.vm.PropertyChanged(vmType.ProfileClaimRowsProperty).subscribe(rerender))
+        this.subscriptions.push(this.vm.PropertyChanged(vmType.ProfilePrincipalRowsProperty).subscribe(rerender))
+        this.subscriptions.push(this.vm.PropertyChanged(vmType.ProfileTeamRowsProperty).subscribe(rerender))
         this.subscriptions.push(this.vm.PropertyChanged(vmType.StateProperty).subscribe(rerender))
         this.subscriptions.push(this.vm.PropertyChanged(vmType.ErrorProperty).subscribe(rerender))
         // Dirty and Busy only restyle the save bar, so a cell is never torn down under its own click.
@@ -388,6 +424,12 @@ export class SecurityModelView extends TenantViewBase
     public get RecordHost(): StackPanel
     {
         return this.recordHost
+    }
+
+    // Test seam: the People tab content.
+    public get PeopleHost(): StackPanel
+    {
+        return this.peopleHost
     }
 
     // Test seam: the Business units sub-editor body.
@@ -496,7 +538,7 @@ export class SecurityModelView extends TenantViewBase
     public Render(): void
     {
         this.DisposeRowSubscriptions()
-        this.Clear(this, this.body, this.rolesPane, this.privilegeHost, this.fieldHost, this.recordHost, this.businessUnitHost, this.teamHost, this.membershipHost, this.ownershipHost, this.ruleBody, this.overrideBody)
+        this.Clear(this, this.body, this.rolesPane, this.privilegeHost, this.fieldHost, this.recordHost, this.peopleHost, this.businessUnitHost, this.teamHost, this.membershipHost, this.ownershipHost, this.ruleBody, this.overrideBody)
         const vm = this.vm
         this.message.Text = vm.State === SecurityModelState.Error ? TenantViewBase.NoMessage : vm.Error
         this.AddChild(this.MakeEnvironmentStrip())
@@ -555,6 +597,7 @@ export class SecurityModelView extends TenantViewBase
         this.BuildPrivilegeHost()
         this.BuildFieldHost()
         this.BuildRecordHost()
+        this.BuildPeopleHost()
         this.BuildBusinessUnitHost()
         this.BuildTeamHost()
         this.BuildMembershipHost()
@@ -709,6 +752,168 @@ export class SecurityModelView extends TenantViewBase
             host.AddChild(strip)
         }
         host.AddChild(this.addFieldStrip)
+        host.AddChild(this.Text(SecurityModelView.WhoHasProfileTitle))
+        if (this.vm.ProfileClaimRows.length + this.vm.ProfilePrincipalRows.length + this.vm.ProfileTeamRows.length === 0)
+        {
+            host.AddChild(this.Text(SecurityModelView.NoOneHasProfileText))
+        }
+        this.AddAssignmentEditors(host, AssignmentSide.Profile)
+    }
+
+    private BuildPeopleHost(): void
+    {
+        const host = this.peopleHost
+        const roleId = this.vm.SelectedRoleId
+        if (roleId === undefined)
+        {
+            host.AddChild(this.Text(SecurityModelView.NoRoleSelectedText))
+            return
+        }
+        const holders = this.vm.RoleHolders
+        const claims = holders.byClaim.length
+        const teams = holders.byTeam.length
+        if (holders.directCount === 0 && claims === 0 && teams === 0)
+        {
+            host.AddChild(this.Text(SecurityModelView.NoOneAssignedText))
+        }
+        else
+        {
+            host.AddChild(this.Text(this.HeadlineFor(holders.directCount, claims, teams)))
+        }
+        this.AddAssignmentEditors(host, AssignmentSide.Role)
+    }
+
+    // Counts only: they change on add/remove (a rebuild), so they never go stale on a claim-text edit.
+    private HeadlineFor(direct: number, claims: number, teams: number): string
+    {
+        let text = direct + SecurityModelView.AssignedDirectlySuffix
+        const parts: string[] = []
+        if (claims > 0)
+        {
+            parts.push(claims + (claims === 1 ? SecurityModelView.ClaimRuleOne : SecurityModelView.ClaimRuleMany))
+        }
+        if (teams > 0)
+        {
+            parts.push(teams + (teams === 1 ? SecurityModelView.TeamOne : SecurityModelView.TeamMany))
+        }
+        if (parts.length > 0)
+        {
+            text += SecurityModelView.AlsoGrantedPrefix + parts.join(SecurityModelView.AndWord)
+        }
+        return text
+    }
+
+    // The three assignment editors (by person / by claim / by team) for the selected role or profile.
+    private AddAssignmentEditors(host: StackPanel, side: AssignmentSide): void
+    {
+        const role = side === AssignmentSide.Role
+        const claims = role ? this.vm.RoleClaimRows : this.vm.ProfileClaimRows
+        const principals = role ? this.vm.RolePrincipalRows : this.vm.ProfilePrincipalRows
+        const teams = role ? this.vm.RoleTeamRows : this.vm.ProfileTeamRows
+        host.AddChild(this.Text(SecurityModelView.ByPersonTitle))
+        for (const row of principals)
+        {
+            host.AddChild(this.MakePrincipalRow(row))
+        }
+        host.AddChild(role ? this.addRolePrincipalStrip : this.addProfilePrincipalStrip)
+        host.AddChild(this.Text(SecurityModelView.ByClaimTitle))
+        for (const row of claims)
+        {
+            host.AddChild(this.MakeClaimGrantRow(row))
+        }
+        host.AddChild(this.MakeButton(SecurityModelView.AddClaimGrantLabel, () => this.WhenIdle(() => this.AddClaimGrant(side))))
+        host.AddChild(this.Text(SecurityModelView.ByTeamTitle))
+        for (const row of teams)
+        {
+            host.AddChild(this.MakeTeamGrantRow(row))
+        }
+        host.AddChild(this.MakeTeamPicker(side, teams))
+    }
+
+    private AddClaimGrant(side: AssignmentSide): void
+    {
+        if (side === AssignmentSide.Role)
+        {
+            this.vm.AddRoleClaimGrant()
+        }
+        else
+        {
+            this.vm.AddProfileClaimGrant()
+        }
+    }
+
+    private AddPrincipalGrant(side: AssignmentSide, principalId: string): void
+    {
+        if (side === AssignmentSide.Role)
+        {
+            this.vm.AddRolePrincipalGrant(principalId)
+        }
+        else
+        {
+            this.vm.AddProfilePrincipalGrant(principalId)
+        }
+    }
+
+    private AddTeamGrant(side: AssignmentSide, teamId: string): void
+    {
+        if (side === AssignmentSide.Role)
+        {
+            this.vm.AddRoleTeamGrant(teamId)
+        }
+        else
+        {
+            this.vm.AddProfileTeamGrant(teamId)
+        }
+    }
+
+    private MakePrincipalRow(row: AssignmentPrincipalRow): StackPanel
+    {
+        const strip = this.Strip()
+        strip.AddChild(this.Text(row.PrincipalId))
+        strip.AddChild(this.MakeButton(SecurityModelView.RemoveLabel, () => this.WhenIdle(() => row.Remove())))
+        return strip
+    }
+
+    // The rows are immutable snapshots (rebuilt on Refresh), so each box tracks its own last-applied
+    // text; an in-place edit only restyles the save bar and never rebuilds the focused box.
+    private MakeClaimGrantRow(row: AssignmentClaimRow): StackPanel
+    {
+        const strip = this.Strip()
+        let claim = row.Claim
+        let value = row.Value
+        strip.AddChild(this.MakeTextEdit(() => claim, text => { claim = text; row.SetClaim(text) }, SecurityModelView.ClaimPlaceholder))
+        strip.AddChild(this.MakeTextEdit(() => value, text => { value = text; row.SetValue(text) }, SecurityModelView.ClaimValuePlaceholder))
+        strip.AddChild(this.MakeButton(SecurityModelView.RemoveLabel, () => this.WhenIdle(() => row.Remove())))
+        return strip
+    }
+
+    private MakeTeamGrantRow(row: AssignmentTeamRow): StackPanel
+    {
+        const strip = this.Strip()
+        strip.AddChild(this.Text(row.TeamName))
+        strip.AddChild(this.MakeButton(SecurityModelView.RemoveLabel, () => this.WhenIdle(() => row.Remove())))
+        return strip
+    }
+
+    // A picker over existing teams not yet granted (never free-text ids); index 0 is the prompt.
+    private MakeTeamPicker(side: AssignmentSide, granted: readonly AssignmentTeamRow[]): StackPanel
+    {
+        const strip = this.Strip()
+        const taken = new Set<string>(granted.map(g => g.TeamId))
+        const teams = this.vm.TeamRows.filter(t => !taken.has(t.Id))
+        const box = new ComboBox()
+        box.Items = [SecurityModelView.PickTeamChoice, ...teams.map(t => t.Name)]
+        box.SelectedIndex = 0
+        strip.AddChild(box)
+        strip.AddChild(this.MakeButton(SecurityModelView.AddTeamGrantLabel, () => this.WhenIdle(() =>
+        {
+            const picked = box.SelectedIndex - 1
+            if (picked >= 0 && picked < teams.length)
+            {
+                this.AddTeamGrant(side, teams[picked].Id)
+            }
+        })))
+        return strip
     }
 
     // A pointer click flips IsChecked before the handler runs, so the handler reads the new value.
@@ -772,6 +977,7 @@ export class SecurityModelView extends TenantViewBase
         {
             const label = role.id === this.vm.SelectedRoleId ? SecurityModelView.SelectedMark + role.name : role.name
             strip.AddChild(this.MakeButton(label, () => this.WhenIdle(() => this.vm.SelectRole(role.id))))
+            strip.AddChild(this.Text(this.vm.DirectHolderCountFor(role.id) + SecurityModelView.DirectSuffix))
         }
         const selected = this.vm.SelectedRoleId
         if (selected !== undefined)
@@ -828,6 +1034,28 @@ export class SecurityModelView extends TenantViewBase
             {
                 this.vm.AddProfile(this.profileBox.Text)
                 this.profileBox.Text = TenantViewBase.NoMessage
+            })
+        }))
+        this.addRolePrincipalBox.Placeholder = SecurityModelView.AssignmentPrincipalPlaceholder
+        this.addProfilePrincipalBox.Placeholder = SecurityModelView.AssignmentPrincipalPlaceholder
+        this.addRolePrincipalStrip.Orientation = Orientation.Horizontal
+        this.addRolePrincipalStrip.AddChild(this.addRolePrincipalBox)
+        this.addRolePrincipalStrip.AddChild(this.MakeButton(SecurityModelView.AddPersonLabel, () =>
+        {
+            this.WhenIdle(() =>
+            {
+                this.AddPrincipalGrant(AssignmentSide.Role, this.addRolePrincipalBox.Text)
+                this.addRolePrincipalBox.Text = TenantViewBase.NoMessage
+            })
+        }))
+        this.addProfilePrincipalStrip.Orientation = Orientation.Horizontal
+        this.addProfilePrincipalStrip.AddChild(this.addProfilePrincipalBox)
+        this.addProfilePrincipalStrip.AddChild(this.MakeButton(SecurityModelView.AddPersonLabel, () =>
+        {
+            this.WhenIdle(() =>
+            {
+                this.AddPrincipalGrant(AssignmentSide.Profile, this.addProfilePrincipalBox.Text)
+                this.addProfilePrincipalBox.Text = TenantViewBase.NoMessage
             })
         }))
         this.addFieldStrip.Orientation = Orientation.Horizontal

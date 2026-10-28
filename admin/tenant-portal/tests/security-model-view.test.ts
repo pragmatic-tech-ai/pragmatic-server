@@ -175,12 +175,12 @@ class Harness
 
 describe('SecurityModelView', () =>
 {
-    it('renders a role list and three sub-tabs (What they can do / Fields / Record sharing)', async () =>
+    it('renders a role list and four sub-tabs (What they can do / Fields / Record sharing / People)', async () =>
     {
         const view = await Harness.Make()
         const strip = [...view.RoleTabs.Children][0]
         const labels = Fixtures.Buttons(strip).map(b => Fixtures.Texts(b).join(''))
-        assert.deepEqual(labels, [SecurityModelView.WhatTheyCanDoLabel, SecurityModelView.FieldsLabel, SecurityModelView.RecordSharingLabel])
+        assert.deepEqual(labels, [SecurityModelView.WhatTheyCanDoLabel, SecurityModelView.FieldsLabel, SecurityModelView.RecordSharingLabel, SecurityModelView.PeopleLabel])
         const all = Fixtures.Texts(view)
         assert.ok(all.includes(SecurityModelView.SelectedMark + 'Admin'))
         assert.ok(all.includes('Viewer'))
@@ -396,12 +396,12 @@ describe('SecurityModelView Roles / Organization', () =>
         assert.deepEqual(OrgFixtures.Labels(view.Mode), [SecurityModelView.RolesModeLabel, SecurityModelView.OrganizationModeLabel])
     })
 
-    it('the Roles pane shows the role list and three per-role tabs ending in Record sharing', async () =>
+    it('the Roles pane shows the role list and four per-role tabs ending in People', async () =>
     {
         const view = await Harness.Make()
         const labels = OrgFixtures.Labels(view.RoleTabs)
-        assert.equal(labels.length, 3)
-        assert.equal(labels[2], SecurityModelView.RecordSharingLabel)
+        assert.equal(labels.length, 4)
+        assert.equal(labels[3], SecurityModelView.PeopleLabel)
         assert.ok(Fixtures.Texts(view.RolesPane).includes('Viewer'))
     })
 
@@ -593,5 +593,140 @@ describe('SecurityModelView Roles / Organization', () =>
         assert.deepEqual(itemsOf(0), [SecurityModelView.NoneChoice, 'D'])
         assert.deepEqual(itemsOf(1), [SecurityModelView.NoneChoice, 'A', 'D'])
         assert.deepEqual(itemsOf(3), [SecurityModelView.NoneChoice, 'A', 'B', 'C'])
+    })
+})
+
+class PeopleFixtures
+{
+    public static Source(): FakeSource
+    {
+        const src = new FakeSource()
+        src.Model!.teams = [{ id: 't1', name: 'Ops' }, { id: 't2', name: 'Sales' }]
+        src.Model!.roleAssignment = {
+            claimsMapping: [{ claim: 'dept', value: 'eng', roles: ['r1'] }],
+            overrides: [{ principalId: 'alice', roles: ['r1'] }],
+            teamRoles: [{ teamId: 't1', roles: ['r1'] }],
+        }
+        return src
+    }
+}
+
+describe('SecurityModelView People / Who-has-this-profile', () =>
+{
+    it('the People tab shows a counts headline and the three editors for the selected role', async () =>
+    {
+        const view = await Harness.Make(PeopleFixtures.Source())
+        const texts = Fixtures.Texts(view.PeopleHost)
+        assert.ok(texts.includes('1' + SecurityModelView.AssignedDirectlySuffix + ', also granted by 1 claim rule and 1 team'))
+        assert.ok(texts.includes(SecurityModelView.ByPersonTitle))
+        assert.ok(texts.includes(SecurityModelView.ByClaimTitle))
+        assert.ok(texts.includes(SecurityModelView.ByTeamTitle))
+        assert.ok(texts.includes('alice'))
+        assert.ok(texts.includes('Ops'))
+        const boxes = OrgFixtures.Boxes(view.PeopleHost).map(b => b.Text)
+        assert.ok(boxes.includes('dept') && boxes.includes('eng'))
+    })
+
+    it('an unassigned role shows an honest empty state and the add affordances', async () =>
+    {
+        const view = await Harness.Make(PeopleFixtures.Source())
+        view.Vm.SelectRole('r2')
+        const texts = Fixtures.Texts(view.PeopleHost)
+        assert.ok(texts.includes(SecurityModelView.NoOneAssignedText))
+        assert.ok(!texts.some(t => t.includes(SecurityModelView.AssignedDirectlySuffix)))
+        const labels = Fixtures.Buttons(view.PeopleHost).map(b => Fixtures.Texts(b).join(''))
+        assert.ok(labels.includes(SecurityModelView.AddPersonLabel))
+        assert.ok(labels.includes(SecurityModelView.AddClaimGrantLabel))
+        assert.ok(labels.includes(SecurityModelView.AddTeamGrantLabel))
+    })
+
+    it('adding a person rebuilds and updates the count; removing returns to the empty state', async () =>
+    {
+        const view = await Harness.Make(PeopleFixtures.Source())
+        view.Vm.SelectRole('r2')
+        OrgFixtures.Boxes(view.PeopleHost)[0].Text = 'bob'
+        Fixtures.Click(view.PeopleHost, SecurityModelView.AddPersonLabel)
+        assert.ok(Fixtures.Texts(view.PeopleHost).includes('bob'))
+        assert.ok(Fixtures.Texts(view.PeopleHost).includes('1' + SecurityModelView.AssignedDirectlySuffix))
+        assert.equal(view.Vm.Dirty, true)
+        Fixtures.Click(view.PeopleHost, SecurityModelView.RemoveLabel)
+        assert.ok(Fixtures.Texts(view.PeopleHost).includes(SecurityModelView.NoOneAssignedText))
+    })
+
+    it('the team add control is a picker over teams not yet granted', async () =>
+    {
+        const view = await Harness.Make(PeopleFixtures.Source())
+        const combos = OrgFixtures.Combos(view.PeopleHost)
+        assert.equal(combos.length, 1)
+        assert.deepEqual([...(combos[0].Items as unknown as string[])], [SecurityModelView.PickTeamChoice, 'Sales'])
+        combos[0].SelectedIndex = 1
+        Fixtures.Click(view.PeopleHost, SecurityModelView.AddTeamGrantLabel)
+        assert.deepEqual(view.Vm.RoleTeamRows.map(r => r.TeamId), ['t1', 't2'])
+        assert.ok(Fixtures.Texts(view.PeopleHost).includes('Sales'))
+    })
+
+    it('an in-place claim edit does not rebuild and stays correct on repeated edits', async () =>
+    {
+        const view = await Harness.Make(PeopleFixtures.Source())
+        const box = OrgFixtures.Boxes(view.PeopleHost).find(b => b.Text === 'dept')!
+        box.Text = 'team'
+        assert.ok(OrgFixtures.Contains(view.PeopleHost, box))
+        assert.equal(view.Vm.Dirty, true)
+        box.Text = 'dept'
+        assert.ok(OrgFixtures.Contains(view.PeopleHost, box))
+        box.Text = 'x'
+        assert.equal(view.Vm.RoleClaimRows.length, 1)
+        assert.ok(OrgFixtures.Contains(view.PeopleHost, box))
+    })
+
+    it('with no role selected the People tab shows the no-role text', async () =>
+    {
+        const src = new FakeSource()
+        src.Model!.roles = []
+        const view = await Harness.Make(src)
+        assert.ok(Fixtures.Texts(view.PeopleHost).includes(SecurityModelView.NoRoleSelectedText))
+    })
+
+    it('the role list shows each role direct count', async () =>
+    {
+        const view = await Harness.Make(PeopleFixtures.Source())
+        const texts = Fixtures.Texts(view.RolesPane)
+        assert.ok(texts.includes('1' + SecurityModelView.DirectSuffix))
+        assert.ok(texts.includes('0' + SecurityModelView.DirectSuffix))
+    })
+
+    it('the Fields tab shows a Who-has-this-profile section with the three editors', async () =>
+    {
+        const src = PeopleFixtures.Source()
+        src.Model!.fieldSecurity!.profileAssignment = {
+            claimsMapping: [],
+            overrides: [{ principalId: 'carol', profiles: ['p1'] }],
+            teamProfiles: [],
+        } as never
+        const view = await Harness.Make(src)
+        const texts = Fixtures.Texts(view.FieldHost)
+        assert.ok(texts.includes(SecurityModelView.WhoHasProfileTitle))
+        assert.ok(texts.includes('carol'))
+        assert.ok(texts.includes(SecurityModelView.ByClaimTitle))
+        assert.ok(texts.includes(SecurityModelView.ByTeamTitle))
+        view.Vm.SelectProfile('p2')
+        assert.ok(Fixtures.Texts(view.FieldHost).includes(SecurityModelView.NoOneHasProfileText))
+        const labels = Fixtures.Buttons(view.FieldHost).map(b => Fixtures.Texts(b).join(''))
+        assert.ok(labels.includes(SecurityModelView.AddPersonLabel))
+    })
+
+    it('the subscription count stays flat across assignment renders and Dispose clears it', async () =>
+    {
+        const view = await Harness.Make(PeopleFixtures.Source())
+        view.Vm.SelectRole('r2')
+        const before = view.SubscriptionCount
+        for (let i = 0; i < 3; i++)
+        {
+            Fixtures.Click(view.PeopleHost, SecurityModelView.AddClaimGrantLabel)
+            Fixtures.Click(view.PeopleHost, SecurityModelView.RemoveLabel)
+        }
+        assert.equal(view.SubscriptionCount, before)
+        view.Dispose()
+        assert.equal(view.SubscriptionCount, 0)
     })
 })
