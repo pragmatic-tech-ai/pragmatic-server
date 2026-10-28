@@ -47,7 +47,7 @@ export class SecurityModelView extends TenantViewBase
     public static readonly AddTeamGrantLabel = 'Add team'
     public static readonly PickTeamChoice = '(pick a team)'
     public static readonly DirectSuffix = ' direct'
-    private static readonly DirectSeparator = '  ·  '
+    private static readonly DirectSeparator = '  \u00b7  '
     public static readonly AssignedDirectlySuffix = ' assigned directly'
     private static readonly AlsoGrantedPrefix = ', also granted by '
     private static readonly ClaimRuleOne = ' claim rule'
