@@ -277,4 +277,69 @@ describe('SecurityModelViewModel', () =>
         await assert.rejects(vm.Save(), (e: unknown) => e instanceof TenantApiError && e.Status === TenantApiError.UnauthorizedStatus)
         assert.equal(vm.Busy, false)
     })
+
+    it('adding a business unit raises BusinessUnitRowsProperty and the row appears', async () =>
+    {
+        const vm = await Fixture.Loaded()
+        let raised = 0
+        vm.PropertyChanged(SecurityModelViewModel.BusinessUnitRowsProperty).subscribe(() => { raised++ })
+        vm.AddBusinessUnit('Sales')
+        assert.equal(raised, 1)
+        assert.deepEqual(vm.BusinessUnitRows.map(r => r.Name), ['Root', 'Sales'])
+        assert.equal(vm.Dirty, true)
+    })
+
+    it('a membership rule claim edit surfaces through its row and marks Dirty', async () =>
+    {
+        const vm = await Fixture.Loaded()
+        vm.AddMembershipRule()
+        await vm.Save()
+        assert.equal(vm.Dirty, false)
+        vm.MembershipRuleRows[0].SetClaim('group')
+        assert.equal(vm.MembershipRuleRows[0].Claim, 'group')
+        assert.equal(vm.Dirty, true)
+    })
+
+    it('row view-models forward edits for teams, overrides and ownership', async () =>
+    {
+        const vm = await Fixture.Loaded()
+        vm.TeamRows[0].Rename('Renamed')
+        assert.equal(vm.TeamRows[0].Name, 'Renamed')
+        vm.AddMembershipOverride()
+        vm.MembershipOverrideRows[0].SetPrincipal('alice')
+        vm.MembershipOverrideRows[0].ToggleTeam('t1')
+        assert.equal(vm.MembershipOverrideRows[0].PrincipalId, 'alice')
+        assert.deepEqual([...vm.MembershipOverrideRows[0].Teams], ['t1'])
+        vm.OwnershipRuleRows[0].SetOwnerKind('claim')
+        assert.equal(vm.OwnershipRuleRows[0].OwnerKind, 'claim')
+        assert.equal(vm.OwnershipRuleRows[0].OwnerValue, '')
+        vm.OwnershipRuleRows[0].Remove()
+        assert.equal(vm.OwnershipRuleRows.length, 0)
+    })
+
+    it('ONE Save persists a role privilege edit AND an org edit together', async () =>
+    {
+        const src = new FakeSource()
+        const vm = await Fixture.Loaded(src)
+        vm.PrivilegeRows[0].Cycle(PrivilegeAction.Create)
+        vm.AddBusinessUnit('X')
+        vm.RefreshDirty()
+        await vm.Save()
+        assert.equal(src.Saved.length, 1)
+        const saved = src.Saved[0].model
+        const admin = saved.roles?.find(r => r.id === 'r1')
+        assert.ok(admin?.privileges.some(p => p.concept === 'Customer' && p.action === PrivilegeAction.Create))
+        assert.ok(saved.businessUnits.some(u => u.name === 'X'))
+        assert.equal(vm.Dirty, false)
+    })
+
+    it('RecordSharingRows reflects the selected role', async () =>
+    {
+        const vm = await Fixture.Loaded()
+        const admin = vm.RecordSharingRows.find(r => r.concept === 'Customer')
+        assert.ok(admin !== undefined)
+        vm.SelectRole('r2')
+        const viewer = vm.RecordSharingRows.find(r => r.concept === 'Customer')
+        assert.notEqual(viewer?.scopeText, admin.scopeText)
+    })
 })

@@ -1,7 +1,13 @@
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
+import { BusinessUnitRow } from './business-unit-row.js'
 import { FieldGrantRow } from './field-grant-row.js'
+import { MembershipOverrideRow } from './membership-override-row.js'
+import { MembershipRuleRow } from './membership-rule-row.js'
+import { OwnershipRuleRow } from './ownership-rule-row.js'
 import { PrivilegeRow } from './privilege-row.js'
+import type { RecordSharingRowData } from './record-sharing.js'
 import { SecurityModelDraft } from './security-model-draft.js'
+import { TeamRow } from './team-row.js'
 import { TenantApiError } from './tenant-api-client.js'
 import type { EnvironmentDto, FieldProfileDto, ISecurityModelSource, RoleConfigDto } from './tenant-types.js'
 
@@ -33,6 +39,12 @@ export class SecurityModelViewModel extends Observable
     public static readonly ProfilesProperty = 'Profiles'
     public static readonly SelectedProfileIdProperty = 'SelectedProfileId'
     public static readonly FieldRowsProperty = 'FieldRows'
+    public static readonly BusinessUnitRowsProperty = 'BusinessUnitRows'
+    public static readonly TeamRowsProperty = 'TeamRows'
+    public static readonly MembershipRuleRowsProperty = 'MembershipRuleRows'
+    public static readonly MembershipOverrideRowsProperty = 'MembershipOverrideRows'
+    public static readonly OwnershipRuleRowsProperty = 'OwnershipRuleRows'
+    public static readonly RecordSharingRowsProperty = 'RecordSharingRows'
     public static readonly BusyProperty = 'Busy'
     public static readonly ErrorProperty = 'Error'
     public static readonly StateProperty = 'State'
@@ -48,6 +60,12 @@ export class SecurityModelViewModel extends Observable
     private profiles: readonly FieldProfileDto[] = []
     private fieldRows: readonly FieldGrantRow[] = []
     private selectedProfileId: string | undefined
+    private businessUnitRows: readonly BusinessUnitRow[] = []
+    private teamRows: readonly TeamRow[] = []
+    private membershipRuleRows: readonly MembershipRuleRow[] = []
+    private membershipOverrideRows: readonly MembershipOverrideRow[] = []
+    private ownershipRuleRows: readonly OwnershipRuleRow[] = []
+    private recordSharingRows: readonly RecordSharingRowData[] = []
     private draft: SecurityModelDraft | undefined
     private busyCount = 0
     private error = SecurityModelViewModel.NoMessage
@@ -98,6 +116,36 @@ export class SecurityModelViewModel extends Observable
     public get FieldRows(): readonly FieldGrantRow[]
     {
         return this.fieldRows
+    }
+
+    public get BusinessUnitRows(): readonly BusinessUnitRow[]
+    {
+        return this.businessUnitRows
+    }
+
+    public get TeamRows(): readonly TeamRow[]
+    {
+        return this.teamRows
+    }
+
+    public get MembershipRuleRows(): readonly MembershipRuleRow[]
+    {
+        return this.membershipRuleRows
+    }
+
+    public get MembershipOverrideRows(): readonly MembershipOverrideRow[]
+    {
+        return this.membershipOverrideRows
+    }
+
+    public get OwnershipRuleRows(): readonly OwnershipRuleRow[]
+    {
+        return this.ownershipRuleRows
+    }
+
+    public get RecordSharingRows(): readonly RecordSharingRowData[]
+    {
+        return this.recordSharingRows
     }
 
     public get Busy(): boolean
@@ -293,6 +341,256 @@ export class SecurityModelViewModel extends Observable
         this.Refresh()
     }
 
+    public AddBusinessUnit(name: string): void
+    {
+        if (this.draft === undefined)
+        {
+            return
+        }
+        this.draft.Org.AddBusinessUnit(name)
+        this.Refresh()
+    }
+
+    public RenameBusinessUnit(id: string, name: string): void
+    {
+        if (this.draft === undefined)
+        {
+            return
+        }
+        this.draft.Org.RenameBusinessUnit(id, name)
+        this.Refresh()
+    }
+
+    public SetBusinessUnitParent(id: string, parent?: string): void
+    {
+        if (this.draft === undefined)
+        {
+            return
+        }
+        this.draft.Org.SetBusinessUnitParent(id, parent)
+        this.Refresh()
+    }
+
+    public RemoveBusinessUnit(id: string): void
+    {
+        if (this.draft === undefined)
+        {
+            return
+        }
+        this.draft.Org.RemoveBusinessUnit(id)
+        this.Refresh()
+    }
+
+    public AddTeam(name: string): void
+    {
+        if (this.draft === undefined)
+        {
+            return
+        }
+        this.draft.Org.AddTeam(name)
+        this.Refresh()
+    }
+
+    public RenameTeam(id: string, name: string): void
+    {
+        if (this.draft === undefined)
+        {
+            return
+        }
+        this.draft.Org.RenameTeam(id, name)
+        this.Refresh()
+    }
+
+    public SetTeamOwningBusinessUnit(id: string, businessUnitId?: string): void
+    {
+        if (this.draft === undefined)
+        {
+            return
+        }
+        this.draft.Org.SetTeamOwningBusinessUnit(id, businessUnitId)
+        this.Refresh()
+    }
+
+    public RemoveTeam(id: string): void
+    {
+        if (this.draft === undefined)
+        {
+            return
+        }
+        this.draft.Org.RemoveTeam(id)
+        this.Refresh()
+    }
+
+    public AddMembershipRule(): void
+    {
+        if (this.draft === undefined)
+        {
+            return
+        }
+        this.draft.Org.AddMembershipRule()
+        this.Refresh()
+    }
+
+    public SetMembershipRuleClaim(index: number, claim: string): void
+    {
+        if (this.draft === undefined)
+        {
+            return
+        }
+        this.draft.Org.SetMembershipRuleClaim(index, claim)
+        this.Refresh()
+    }
+
+    public SetMembershipRuleValue(index: number, value: string): void
+    {
+        if (this.draft === undefined)
+        {
+            return
+        }
+        this.draft.Org.SetMembershipRuleValue(index, value)
+        this.Refresh()
+    }
+
+    public SetMembershipRuleHomeBusinessUnit(index: number, businessUnitId?: string): void
+    {
+        if (this.draft === undefined)
+        {
+            return
+        }
+        this.draft.Org.SetMembershipRuleHomeBusinessUnit(index, businessUnitId)
+        this.Refresh()
+    }
+
+    public ToggleMembershipRuleTeam(index: number, teamId: string): void
+    {
+        if (this.draft === undefined)
+        {
+            return
+        }
+        this.draft.Org.ToggleMembershipRuleTeam(index, teamId)
+        this.Refresh()
+    }
+
+    public RemoveMembershipRule(index: number): void
+    {
+        if (this.draft === undefined)
+        {
+            return
+        }
+        this.draft.Org.RemoveMembershipRule(index)
+        this.Refresh()
+    }
+
+    public AddMembershipOverride(): void
+    {
+        if (this.draft === undefined)
+        {
+            return
+        }
+        this.draft.Org.AddMembershipOverride()
+        this.Refresh()
+    }
+
+    public SetMembershipOverridePrincipal(index: number, principalId: string): void
+    {
+        if (this.draft === undefined)
+        {
+            return
+        }
+        this.draft.Org.SetMembershipOverridePrincipal(index, principalId)
+        this.Refresh()
+    }
+
+    public SetMembershipOverrideHomeBusinessUnit(index: number, businessUnitId?: string): void
+    {
+        if (this.draft === undefined)
+        {
+            return
+        }
+        this.draft.Org.SetMembershipOverrideHomeBusinessUnit(index, businessUnitId)
+        this.Refresh()
+    }
+
+    public ToggleMembershipOverrideTeam(index: number, teamId: string): void
+    {
+        if (this.draft === undefined)
+        {
+            return
+        }
+        this.draft.Org.ToggleMembershipOverrideTeam(index, teamId)
+        this.Refresh()
+    }
+
+    public RemoveMembershipOverride(index: number): void
+    {
+        if (this.draft === undefined)
+        {
+            return
+        }
+        this.draft.Org.RemoveMembershipOverride(index)
+        this.Refresh()
+    }
+
+    public AddOwnershipRule(concept: string): void
+    {
+        if (this.draft === undefined)
+        {
+            return
+        }
+        this.draft.Org.AddOwnershipRule(concept)
+        this.Refresh()
+    }
+
+    public SetOwningSourceKind(concept: string, kind: string): void
+    {
+        if (this.draft === undefined)
+        {
+            return
+        }
+        this.draft.Org.SetOwningSourceKind(concept, kind)
+        this.Refresh()
+    }
+
+    public SetOwningSourceValue(concept: string, value: string): void
+    {
+        if (this.draft === undefined)
+        {
+            return
+        }
+        this.draft.Org.SetOwningSourceValue(concept, value)
+        this.Refresh()
+    }
+
+    public SetOwnerSourceKind(concept: string, kind: string): void
+    {
+        if (this.draft === undefined)
+        {
+            return
+        }
+        this.draft.Org.SetOwnerSourceKind(concept, kind)
+        this.Refresh()
+    }
+
+    public SetOwnerSourceValue(concept: string, value: string): void
+    {
+        if (this.draft === undefined)
+        {
+            return
+        }
+        this.draft.Org.SetOwnerSourceValue(concept, value)
+        this.Refresh()
+    }
+
+    public RemoveOwnershipRule(concept: string): void
+    {
+        if (this.draft === undefined)
+        {
+            return
+        }
+        this.draft.Org.RemoveOwnershipRule(concept)
+        this.Refresh()
+    }
+
     // Cell edits go straight to the draft through PrivilegeRow / FieldGrantRow; the view calls this afterwards.
     public RefreshDirty(): void
     {
@@ -366,18 +664,37 @@ export class SecurityModelViewModel extends Observable
         const oldProfiles = this.profiles
         const oldFieldRows = this.fieldRows
         const oldProfile = this.selectedProfileId
+        const oldBusinessUnitRows = this.businessUnitRows
+        const oldTeamRows = this.teamRows
+        const oldMembershipRuleRows = this.membershipRuleRows
+        const oldMembershipOverrideRows = this.membershipOverrideRows
+        const oldOwnershipRuleRows = this.ownershipRuleRows
+        const oldRecordSharingRows = this.recordSharingRows
         this.roles = [...draft.Roles]
         this.privilegeRows = draft.Concepts.map(c => new PrivilegeRow(c, draft))
         this.selectedRoleId = draft.SelectedRoleId
         this.profiles = [...draft.Profiles]
         this.fieldRows = draft.SecuredFields.map(f => new FieldGrantRow(f.concept, f.field, draft))
         this.selectedProfileId = draft.SelectedProfileId
+        const org = draft.Org
+        this.businessUnitRows = org.BusinessUnits.map(u => new BusinessUnitRow(u, this))
+        this.teamRows = org.Teams.map(t => new TeamRow(t, this))
+        this.membershipRuleRows = org.Membership.claimsMapping.map((r, i) => new MembershipRuleRow(r, i, this))
+        this.membershipOverrideRows = org.Membership.overrides.map((o, i) => new MembershipOverrideRow(o, i, this))
+        this.ownershipRuleRows = org.OwnershipRules.map(r => new OwnershipRuleRow(r, this))
+        this.recordSharingRows = draft.RecordSharingFor(this.selectedRoleId ?? SecurityModelViewModel.NoMessage)
         this.RaisePropertyChanged(SecurityModelViewModel.RolesProperty, oldRoles, this.roles)
         this.RaisePropertyChanged(SecurityModelViewModel.SelectedRoleIdProperty, oldRole, this.selectedRoleId)
         this.RaisePropertyChanged(SecurityModelViewModel.PrivilegeRowsProperty, oldPrivilegeRows, this.privilegeRows)
         this.RaisePropertyChanged(SecurityModelViewModel.ProfilesProperty, oldProfiles, this.profiles)
         this.RaisePropertyChanged(SecurityModelViewModel.SelectedProfileIdProperty, oldProfile, this.selectedProfileId)
         this.RaisePropertyChanged(SecurityModelViewModel.FieldRowsProperty, oldFieldRows, this.fieldRows)
+        this.RaisePropertyChanged(SecurityModelViewModel.BusinessUnitRowsProperty, oldBusinessUnitRows, this.businessUnitRows)
+        this.RaisePropertyChanged(SecurityModelViewModel.TeamRowsProperty, oldTeamRows, this.teamRows)
+        this.RaisePropertyChanged(SecurityModelViewModel.MembershipRuleRowsProperty, oldMembershipRuleRows, this.membershipRuleRows)
+        this.RaisePropertyChanged(SecurityModelViewModel.MembershipOverrideRowsProperty, oldMembershipOverrideRows, this.membershipOverrideRows)
+        this.RaisePropertyChanged(SecurityModelViewModel.OwnershipRuleRowsProperty, oldOwnershipRuleRows, this.ownershipRuleRows)
+        this.RaisePropertyChanged(SecurityModelViewModel.RecordSharingRowsProperty, oldRecordSharingRows, this.recordSharingRows)
         this.SetDirty(draft.Dirty)
         const empty = this.roles.length === 0 && this.profiles.length === 0
         this.SetState(empty ? SecurityModelState.Empty : SecurityModelState.Ready)
@@ -392,18 +709,36 @@ export class SecurityModelViewModel extends Observable
         const oldProfiles = this.profiles
         const oldFieldRows = this.fieldRows
         const oldProfile = this.selectedProfileId
+        const oldBusinessUnitRows = this.businessUnitRows
+        const oldTeamRows = this.teamRows
+        const oldMembershipRuleRows = this.membershipRuleRows
+        const oldMembershipOverrideRows = this.membershipOverrideRows
+        const oldOwnershipRuleRows = this.ownershipRuleRows
+        const oldRecordSharingRows = this.recordSharingRows
         this.roles = []
         this.privilegeRows = []
         this.selectedRoleId = undefined
         this.profiles = []
         this.fieldRows = []
         this.selectedProfileId = undefined
+        this.businessUnitRows = []
+        this.teamRows = []
+        this.membershipRuleRows = []
+        this.membershipOverrideRows = []
+        this.ownershipRuleRows = []
+        this.recordSharingRows = []
         this.RaisePropertyChanged(SecurityModelViewModel.RolesProperty, oldRoles, this.roles)
         this.RaisePropertyChanged(SecurityModelViewModel.SelectedRoleIdProperty, oldRole, undefined)
         this.RaisePropertyChanged(SecurityModelViewModel.PrivilegeRowsProperty, oldPrivilegeRows, this.privilegeRows)
         this.RaisePropertyChanged(SecurityModelViewModel.ProfilesProperty, oldProfiles, this.profiles)
         this.RaisePropertyChanged(SecurityModelViewModel.SelectedProfileIdProperty, oldProfile, undefined)
         this.RaisePropertyChanged(SecurityModelViewModel.FieldRowsProperty, oldFieldRows, this.fieldRows)
+        this.RaisePropertyChanged(SecurityModelViewModel.BusinessUnitRowsProperty, oldBusinessUnitRows, this.businessUnitRows)
+        this.RaisePropertyChanged(SecurityModelViewModel.TeamRowsProperty, oldTeamRows, this.teamRows)
+        this.RaisePropertyChanged(SecurityModelViewModel.MembershipRuleRowsProperty, oldMembershipRuleRows, this.membershipRuleRows)
+        this.RaisePropertyChanged(SecurityModelViewModel.MembershipOverrideRowsProperty, oldMembershipOverrideRows, this.membershipOverrideRows)
+        this.RaisePropertyChanged(SecurityModelViewModel.OwnershipRuleRowsProperty, oldOwnershipRuleRows, this.ownershipRuleRows)
+        this.RaisePropertyChanged(SecurityModelViewModel.RecordSharingRowsProperty, oldRecordSharingRows, this.recordSharingRows)
         this.SetDirty(false)
     }
 
