@@ -1,3 +1,5 @@
+import { RecordSharingDeriver } from './record-sharing.js'
+import type { RecordSharingRowData } from './record-sharing.js'
 import { SecurityModelOrg } from './security-model-org.js'
 import type { FieldGrantDto, FieldProfileDto, FieldSecurityDto, PrivilegeDto, RoleConfigDto, SecuredFieldDto, SecurityModelDto } from './tenant-types.js'
 
@@ -337,6 +339,12 @@ export class SecurityModelDraft
             profile.grants = profile.grants.filter((g: FieldGrantDto) => !(g.concept === concept && g.field === field))
         }
         this.dirty = true
+    }
+
+    public RecordSharingFor(roleId: string): readonly RecordSharingRowData[]
+    {
+        const role = this.Roles.find(r => r.id === roleId)
+        return RecordSharingDeriver.Rows(role, this.model.ownershipRules ?? [])
     }
 
     public ToDto(): SecurityModelDto
