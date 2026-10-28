@@ -53,6 +53,8 @@ describe('TenantDetailViewModel', () =>
         assert.equal(vm.Binding.hasHive, true)
         assert.equal(vm.Binding.hiveName, 'Hive h1')
         assert.equal(vm.Binding.cluster, 'k8s / managed')
+        assert.equal(vm.Binding.connection, FleetConnection.Connected)
+        assert.ok(vm.Binding.lastSeenLabel.length > 0)
         assert.equal(vm.ClientName, 'Acme')
     })
 
