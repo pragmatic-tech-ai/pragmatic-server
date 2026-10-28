@@ -121,7 +121,7 @@ describe('top bar', () =>
     {
         const plate = new IdentityPlate({ tenant: 'Prod', hive: 'hive-1' })
         const menu = new UserMenu({ email: 'a@b.c', onLogout: () => {} })
-        const bar = new TopBar({ plate, userMenu: menu })
+        const bar = new TopBar({ plate, userMenu: menu, onActivity: () => {} })
         const all = Walk.Collect(bar)
         assert.ok(all.includes(plate))
         assert.ok(all.includes(menu))

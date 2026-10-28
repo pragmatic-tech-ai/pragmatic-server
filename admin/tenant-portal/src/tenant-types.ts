@@ -1,3 +1,4 @@
+import type { ActivityLog } from './activity-log.js'
 import type { NavSection } from './nav-model.js'
 
 // Wire shapes of the 7a tenant surface (/tenant-auth/* + /tenant-api/*), kept verbatim.
@@ -133,6 +134,8 @@ export interface ITenantNavigator
     get Profile(): TenantProfileDto | undefined
     get Capabilities(): AdminCapabilitiesDto | undefined
     get OwnerContact(): string | undefined
+    get Activity(): ActivityLog
+    OpenActivityDrawer(): void
 }
 
 export interface ITenantView

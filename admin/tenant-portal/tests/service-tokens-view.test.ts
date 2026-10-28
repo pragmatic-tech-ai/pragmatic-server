@@ -177,6 +177,8 @@ class Nav implements ITenantNavigator
     public capabilities: AdminCapabilitiesDto | undefined
     public get Capabilities(): AdminCapabilitiesDto | undefined { return this.capabilities }
     public get OwnerContact(): undefined { return undefined }
+    public get Activity(): never { throw new Error('unused') }
+    public OpenActivityDrawer(): void {}
 }
 
 class Harness

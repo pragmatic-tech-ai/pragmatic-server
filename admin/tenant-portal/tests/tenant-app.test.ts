@@ -21,6 +21,7 @@ import { OverviewView } from '../src/overview-view.js'
 import { NavRail } from '../src/nav-rail.js'
 import { NavModel, NavSection } from '../src/nav-model.js'
 import { UserMenu } from '../src/user-menu.js'
+import { TopBar } from '../src/top-bar.js'
 
 class FakeClient
 {
@@ -547,5 +548,58 @@ describe('TenantApp', () =>
         await app.Boot()
         assert.equal(client.UnsubCalls, 1)
         assert.equal(client.Calls.filter(c => c === 'onevent').length, 2)
+    })
+
+    it('an observed event is recorded in the activity log and reflected in the drawer list', async () =>
+    {
+        const { app, client } = Fixtures.Make(Session)
+        await app.Boot()
+        const before = app.Activity.Entries.length
+        client.Handler!({ type: TenantEventType.EnvironmentChanged, environmentName: 'x' })
+        assert.equal(app.Activity.Entries.length, before + 1)
+        assert.equal(app.ActivityListControl.Rows.length, app.Activity.Entries.length)
+        assert.equal(app.ActivityListControl.IsEmpty, false)
+    })
+
+    it('OpenActivityDrawer opens the drawer, which starts closed', async () =>
+    {
+        const { app } = Fixtures.Make(Session)
+        await app.Boot()
+        assert.equal(app.ActivityDrawer.Open, false)
+        app.OpenActivityDrawer()
+        assert.equal(app.ActivityDrawer.Open, true)
+    })
+
+    it('recording while a non-environments section is shown still updates the drawer', async () =>
+    {
+        const { app, client } = Fixtures.Make(Session)
+        await app.Boot()
+        app.ShowSection(NavSection.Settings)
+        client.Handler!({ type: TenantEventType.EnvironmentChanged, environmentName: 'y' })
+        assert.equal(app.Activity.Count, 1)
+        assert.equal(app.ActivityListControl.Rows.length, 1)
+    })
+
+    it('the top-bar activity count tracks Activity.Count and the toggle toggles the drawer', async () =>
+    {
+        const { app, client } = Fixtures.Make(Session)
+        await app.Boot()
+        const bar = Fixtures.Find(app, TopBar)!
+        assert.equal(bar.ActivityCountText, '0')
+        client.Handler!({ type: TenantEventType.EnvironmentChanged, environmentName: 'x' })
+        assert.equal(bar.ActivityCountText, String(app.Activity.Count))
+        bar.ActivityToggle.Press()
+        assert.equal(app.ActivityDrawer.Open, true)
+        bar.ActivityToggle.Press()
+        assert.equal(app.ActivityDrawer.Open, false)
+    })
+
+    it('Teardown disposes the log subscription', async () =>
+    {
+        const { app, client } = Fixtures.Make(Session)
+        await app.Boot()
+        app.ShowLogin()
+        client.Handler!({ type: TenantEventType.EnvironmentChanged, environmentName: 'x' })
+        assert.equal(app.ActivityListControl.Rows.length, 0)
     })
 })

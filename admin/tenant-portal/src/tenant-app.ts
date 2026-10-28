@@ -1,4 +1,5 @@
 import { Orientation, StackPanel } from '@pragmatic-tech-ai/mural/basic'
+import { ActivityLog } from './activity-log.js'
 import { ComingSoonView } from './coming-soon-view.js'
 import { ConnectionStatusView } from './connection-status-view.js'
 import { CreateEnvironmentDialog } from './create-environment-dialog.js'
@@ -18,6 +19,8 @@ import { TenantEventType } from './tenant-types.js'
 import type { AdminCapabilitiesDto, EnvironmentDto, HiveDto, ITenantNavigator, ITenantView, SessionDto, TenantEvent, TenantProfileDto } from './tenant-types.js'
 import { TopBar } from './top-bar.js'
 import { UserMenu } from './user-menu.js'
+import { ActivityList } from './kit/activity-list.js'
+import { Drawer } from './kit/drawer.js'
 import { ServiceTokensView } from './service-tokens-view.js'
 import { UsersAccessPageView } from './users-access-page-view.js'
 
@@ -27,6 +30,9 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     public static readonly TitleText = 'Pragmatic Tenant Admin'
     // Fallback hive label when the profile is absent or carries no hive; the plate shows the profile hive name otherwise.
     public static readonly HivePlaceholder = '(this hive)'
+    public static readonly ActivityTitle = 'Activity'
+    public static readonly ActivityCloseLabel = 'Close'
+    public static readonly ActivityEmptyText = 'No activity observed yet this session.'
 
     private readonly client: TenantApiClient
     private readonly navRail: NavRail
@@ -46,6 +52,11 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     // Live-event host: set only while the environments list is the shown view.
     private environments: EnvironmentsView | undefined
     private eventUnsub: (() => void) | undefined
+    private readonly activityLog = new ActivityLog()
+    private readonly activityList: ActivityList
+    private readonly drawer: Drawer
+    private activitySub: { dispose(): void } | undefined
+    private topBar: TopBar | undefined
 
     public constructor(client: TenantApiClient = new TenantApiClient())
     {
@@ -57,6 +68,15 @@ export class TenantApp extends StackPanel implements ITenantNavigator
         this.rightColumn.AddChild(this.topHost)
         this.rightColumn.AddChild(this.dialogHost)
         this.rightColumn.AddChild(this.detailHost)
+        this.activityList = new ActivityList({ entries: this.activityLog.Entries, emptyText: TenantApp.ActivityEmptyText })
+        this.drawer = new Drawer({
+            title: TenantApp.ActivityTitle,
+            body: this.activityList,
+            open: false,
+            closeLabel: TenantApp.ActivityCloseLabel,
+            onClose: () => this.drawer.SetOpen(false)
+        })
+        this.rightColumn.AddChild(this.drawer)
         this.AddChild(this.navRail)
         this.AddChild(this.rightColumn)
     }
@@ -90,6 +110,8 @@ export class TenantApp extends StackPanel implements ITenantNavigator
         this.BuildTopBar(session)
         this.eventUnsub?.()
         this.eventUnsub = this.client.OnEvent(ev => this.OnTenantEvent(ev))
+        this.activitySub?.dispose()
+        this.activitySub = this.activityLog.PropertyChanged(ActivityLog.EntriesProperty).subscribe(() => this.RefreshActivity())
         this.ShowSection(NavSection.Overview)
     }
 
@@ -167,6 +189,27 @@ export class TenantApp extends StackPanel implements ITenantNavigator
         this.Show(new ServiceTokensView(this.client))
     }
 
+    public get Activity(): ActivityLog
+    {
+        return this.activityLog
+    }
+
+    public OpenActivityDrawer(): void
+    {
+        this.drawer.SetOpen(true)
+    }
+
+    // Test seams.
+    public get ActivityDrawer(): Drawer
+    {
+        return this.drawer
+    }
+
+    public get ActivityListControl(): ActivityList
+    {
+        return this.activityList
+    }
+
     public get ActiveSection(): NavSection
     {
         return this.active
@@ -196,7 +239,15 @@ export class TenantApp extends StackPanel implements ITenantNavigator
             onLogout: () => { void this.Logout() }
         })
         this.Clear(this.topHost)
-        this.topHost.AddChild(new TopBar({ plate, userMenu }))
+        this.topBar = new TopBar({ plate, userMenu, onActivity: () => this.drawer.Toggle() })
+        this.topBar.SetActivityCount(this.activityLog.Count)
+        this.topHost.AddChild(this.topBar)
+    }
+
+    private RefreshActivity(): void
+    {
+        this.activityList.Update({ entries: this.activityLog.Entries, emptyText: TenantApp.ActivityEmptyText })
+        this.topBar?.SetActivityCount(this.activityLog.Count)
     }
 
     private async ShowOverview(): Promise<void>
@@ -291,12 +342,16 @@ export class TenantApp extends StackPanel implements ITenantNavigator
         this.CloseDialog()
         this.eventUnsub?.()
         this.eventUnsub = undefined
+        this.activitySub?.dispose()
+        this.activitySub = undefined
+        this.topBar = undefined
         this.Clear(this.topHost)
         this.currentPrincipalId = ''
     }
 
     private OnTenantEvent(ev: TenantEvent): void
     {
+        this.activityLog.Record(ev)
         if (this.environments !== undefined)
         {
             // The environments list is the active view: ApplyEvent is its one refresh path (no extra Refresh).

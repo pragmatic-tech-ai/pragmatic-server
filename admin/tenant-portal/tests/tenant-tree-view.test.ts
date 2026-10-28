@@ -36,6 +36,8 @@ class Nav implements ITenantNavigator
     public get Profile(): undefined { return undefined }
     public get Capabilities(): undefined { return undefined }
     public get OwnerContact(): undefined { return undefined }
+    public get Activity(): never { throw new Error('unused') }
+    public OpenActivityDrawer(): void {}
 }
 
 describe('TenantTreeView', () =>

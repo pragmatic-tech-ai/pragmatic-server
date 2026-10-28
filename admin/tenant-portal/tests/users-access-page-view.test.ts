@@ -131,6 +131,8 @@ class FakeNav implements ITenantNavigator
     public get Profile(): undefined { return undefined }
     public get Capabilities(): AdminCapabilitiesDto | undefined { return this.Caps }
     public get OwnerContact(): string | undefined { return this.Owner }
+    public get Activity(): never { throw new Error('unused') }
+    public OpenActivityDrawer(): void {}
 }
 
 class Harness
