@@ -1,5 +1,6 @@
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import type { ClientDto, FleetHiveDto, TenantDto } from './portal-types.js'
+import { PortalDates } from './portal-dates.js'
 import { FleetConnection, FleetViewModel } from './fleet-view-model.js'
 import type { FleetRow } from './fleet-view-model.js'
 import type { KeyValueItem } from './kit/index.js'
@@ -22,10 +23,8 @@ export class ClientDetailViewModel extends Observable
     private static readonly SubscriptionRefKey = 'Subscription ref'
     private static readonly ClientSinceKey = 'Client since'
     private static readonly NoneLabel = '(none)'
-    private static readonly UnknownLabel = 'Unknown'
     private static readonly NoHiveLabel = 'No hive yet'
     private static readonly AwaitingLabel = 'Awaiting first dial-in'
-    private static readonly DateLength = 10
 
     private readonly profile: readonly KeyValueItem[]
     private readonly rows: readonly ClientTenantRow[]
@@ -65,11 +64,7 @@ export class ClientDetailViewModel extends Observable
 
     public static ClientSinceLabel(iso: string): string
     {
-        if (!iso || Number.isNaN(new Date(iso).getTime()))
-        {
-            return ClientDetailViewModel.UnknownLabel
-        }
-        return new Date(iso).toISOString().slice(0, ClientDetailViewModel.DateLength)
+        return PortalDates.Label(iso)
     }
 
     private static DeriveProfile(client: ClientDto): KeyValueItem[]

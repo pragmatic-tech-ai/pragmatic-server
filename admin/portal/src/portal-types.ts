@@ -31,6 +31,7 @@ export type TenantDto =
     id: string
     clientId: string
     displayName: string
+    createdAt?: string
 }
 
 export type HiveClusterBackend = 'aks' | 'eks' | 'gke' | 'private' | 'local'
