@@ -15,6 +15,8 @@ export type TenantProfileDto = {
     hive?: { id: string; displayName: string }
     capabilities: AdminCapabilitiesDto
     ownerContact?: string
+    // The tenant's IdP by reference only: base URL + presence flags, never ref strings or secrets.
+    idp?: { baseUrl?: string; signingCaConfigured: boolean; adminTokenConfigured: boolean }
 }
 
 export type HiveDto = {

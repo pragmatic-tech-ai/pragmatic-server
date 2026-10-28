@@ -13,6 +13,8 @@ export type TenantProfileDto = {
     hive?: { id: string; displayName: string }
     capabilities: AdminCapabilitiesDto
     ownerContact?: string
+    /** The tenant's own IdP coordinates BY REFERENCE ONLY: base URL + presence flags. Never the ref strings or any secret material. */
+    idp?: { baseUrl?: string; signingCaConfigured: boolean; adminTokenConfigured: boolean }
 }
 
 export class TenantProfileMapper
@@ -46,6 +48,18 @@ export class TenantProfileMapper
         if (tenant?.ownerEmail !== undefined)
         {
             dto.ownerContact = tenant.ownerEmail
+        }
+        if (tenant !== undefined && (tenant.idpBaseUrl !== undefined || tenant.idpCaRef !== undefined || tenant.idpAdminTokenRef !== undefined))
+        {
+            const idp: NonNullable<TenantProfileDto['idp']> = {
+                signingCaConfigured: tenant.idpCaRef !== undefined,
+                adminTokenConfigured: tenant.idpAdminTokenRef !== undefined,
+            }
+            if (tenant.idpBaseUrl !== undefined)
+            {
+                idp.baseUrl = tenant.idpBaseUrl
+            }
+            dto.idp = idp
         }
         return dto
     }

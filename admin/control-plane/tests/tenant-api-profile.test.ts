@@ -31,6 +31,10 @@ class ResRecorder
 
 class Fx
 {
+    public static readonly IdpBaseUrl = 'https://idp.example.test'
+    public static readonly IdpCaRefSentinel = 'secret-ref://ca-SENTINEL-9f3a'
+    public static readonly IdpTokenRefSentinel = 'secret-ref://token-SENTINEL-7c1b'
+
     public static Tenant(extra: Partial<TenantRecord>): TenantRecord
     {
         return { id: 't1', clientId: 'c1', displayName: 'Tenant One', createdAt: '2026-01-01T00:00:00Z', ...extra }
@@ -97,5 +101,40 @@ describe('GET /tenant-api/profile', () =>
     {
         const { dto } = await Fx.Get(Fx.Tenant({}), undefined, Fx.Session('p1'), [])
         assert.equal('hive' in dto, false)
+    })
+
+    it('exposes the IdP base URL and configured flags, never the raw refs', async () =>
+    {
+        const { res, dto } = await Fx.Get(Fx.Tenant({ idpBaseUrl: Fx.IdpBaseUrl, idpCaRef: Fx.IdpCaRefSentinel, idpAdminTokenRef: Fx.IdpTokenRefSentinel }), undefined, Fx.Session('p1'))
+        assert.equal(dto.idp?.baseUrl, Fx.IdpBaseUrl)
+        assert.equal(dto.idp?.signingCaConfigured, true)
+        assert.equal(dto.idp?.adminTokenConfigured, true)
+        assert.equal(res.body.includes(Fx.IdpCaRefSentinel), false)
+        assert.equal(res.body.includes(Fx.IdpTokenRefSentinel), false)
+        assert.equal(JSON.stringify(dto).includes(Fx.IdpCaRefSentinel), false)
+        assert.equal(JSON.stringify(dto).includes(Fx.IdpTokenRefSentinel), false)
+    })
+
+    it('omits idp when the tenant has no IdP coordinates', async () =>
+    {
+        const { dto } = await Fx.Get(Fx.Tenant({}), undefined, Fx.Session('p1'))
+        assert.equal(dto.idp, undefined)
+        assert.equal('idp' in dto, false)
+    })
+
+    it('reports only the base URL with both flags false when no refs are set', async () =>
+    {
+        const { dto } = await Fx.Get(Fx.Tenant({ idpBaseUrl: Fx.IdpBaseUrl }), undefined, Fx.Session('p1'))
+        assert.equal(dto.idp?.baseUrl, Fx.IdpBaseUrl)
+        assert.equal(dto.idp?.signingCaConfigured, false)
+        assert.equal(dto.idp?.adminTokenConfigured, false)
+    })
+
+    it('omits baseUrl but reports flags when only refs are set', async () =>
+    {
+        const { dto } = await Fx.Get(Fx.Tenant({ idpCaRef: Fx.IdpCaRefSentinel }), undefined, Fx.Session('p1'))
+        assert.equal('baseUrl' in (dto.idp ?? {}), false)
+        assert.equal(dto.idp?.signingCaConfigured, true)
+        assert.equal(dto.idp?.adminTokenConfigured, false)
     })
 })
