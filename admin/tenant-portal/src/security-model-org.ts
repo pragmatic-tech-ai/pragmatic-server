@@ -1,4 +1,4 @@
-import type { BusinessUnitDto, OwnershipSourceDto, SecurityModelDto, TeamDto } from './tenant-types.js'
+import type { BusinessUnitDto, MembershipDto, OwnershipRuleDto, OwnershipSourceDto, SecurityModelDto, TeamDto } from './tenant-types.js'
 
 // Edits the organization-structure sections (business units, teams) of a live
 // SecurityModelDto and keeps every dependent reference consistent on removal.
@@ -192,6 +192,250 @@ export class SecurityModelOrg
             profileAssignment.teamProfiles = profileAssignment.teamProfiles.filter(g => g.teamId !== id)
         }
         this.dirty = true
+    }
+
+    public get Membership(): MembershipDto
+    {
+        return this.model.membership
+    }
+
+    public get OwnershipRules(): readonly OwnershipRuleDto[]
+    {
+        return this.model.ownershipRules
+    }
+
+    public AddMembershipRule(): void
+    {
+        this.model.membership.claimsMapping.push({ claim: SecurityModelOrg.EmptyString, value: SecurityModelOrg.EmptyString })
+        this.dirty = true
+    }
+
+    public SetMembershipRuleClaim(index: number, claim: string): void
+    {
+        const rule = this.model.membership.claimsMapping[index]
+        if (rule === undefined)
+        {
+            return
+        }
+        rule.claim = claim
+        this.dirty = true
+    }
+
+    public SetMembershipRuleValue(index: number, value: string): void
+    {
+        const rule = this.model.membership.claimsMapping[index]
+        if (rule === undefined)
+        {
+            return
+        }
+        rule.value = value
+        this.dirty = true
+    }
+
+    public SetMembershipRuleHomeBusinessUnit(index: number, businessUnitId: string | undefined): void
+    {
+        const rule = this.model.membership.claimsMapping[index]
+        if (rule === undefined)
+        {
+            return
+        }
+        if (businessUnitId === undefined)
+        {
+            delete rule.homeBusinessUnit
+        }
+        else
+        {
+            rule.homeBusinessUnit = businessUnitId
+        }
+        this.dirty = true
+    }
+
+    public ToggleMembershipRuleTeam(index: number, teamId: string): void
+    {
+        const rule = this.model.membership.claimsMapping[index]
+        if (rule === undefined)
+        {
+            return
+        }
+        SecurityModelOrg.ToggleTeam(rule, teamId)
+        this.dirty = true
+    }
+
+    public RemoveMembershipRule(index: number): void
+    {
+        if (this.model.membership.claimsMapping[index] === undefined)
+        {
+            return
+        }
+        this.model.membership.claimsMapping.splice(index, 1)
+        this.dirty = true
+    }
+
+    public AddMembershipOverride(): void
+    {
+        this.model.membership.overrides.push({ principalId: SecurityModelOrg.EmptyString })
+        this.dirty = true
+    }
+
+    public SetMembershipOverridePrincipal(index: number, principalId: string): void
+    {
+        const override = this.model.membership.overrides[index]
+        if (override === undefined)
+        {
+            return
+        }
+        override.principalId = principalId
+        this.dirty = true
+    }
+
+    public SetMembershipOverrideHomeBusinessUnit(index: number, businessUnitId: string | undefined): void
+    {
+        const override = this.model.membership.overrides[index]
+        if (override === undefined)
+        {
+            return
+        }
+        if (businessUnitId === undefined)
+        {
+            delete override.homeBusinessUnit
+        }
+        else
+        {
+            override.homeBusinessUnit = businessUnitId
+        }
+        this.dirty = true
+    }
+
+    public ToggleMembershipOverrideTeam(index: number, teamId: string): void
+    {
+        const override = this.model.membership.overrides[index]
+        if (override === undefined)
+        {
+            return
+        }
+        SecurityModelOrg.ToggleTeam(override, teamId)
+        this.dirty = true
+    }
+
+    public RemoveMembershipOverride(index: number): void
+    {
+        if (this.model.membership.overrides[index] === undefined)
+        {
+            return
+        }
+        this.model.membership.overrides.splice(index, 1)
+        this.dirty = true
+    }
+
+    public AddOwnershipRule(concept: string): void
+    {
+        if (this.FindOwnershipRule(concept) !== undefined)
+        {
+            return
+        }
+        this.model.ownershipRules.push({
+            concept,
+            owningBusinessUnit: { kind: SecurityModelOrg.EmptyString, value: SecurityModelOrg.EmptyString }
+        })
+        this.dirty = true
+    }
+
+    public SetOwningSourceKind(concept: string, kind: string): void
+    {
+        const rule = this.FindOwnershipRule(concept)
+        if (rule === undefined)
+        {
+            return
+        }
+        rule.owningBusinessUnit.kind = kind
+        this.dirty = true
+    }
+
+    public SetOwningSourceValue(concept: string, value: string): void
+    {
+        const rule = this.FindOwnershipRule(concept)
+        if (rule === undefined)
+        {
+            return
+        }
+        rule.owningBusinessUnit.value = value
+        this.dirty = true
+    }
+
+    public SetOwnerSourceKind(concept: string, kind: string): void
+    {
+        const rule = this.FindOwnershipRule(concept)
+        if (rule === undefined)
+        {
+            return
+        }
+        const owner = rule.owner ?? { kind: SecurityModelOrg.EmptyString, value: SecurityModelOrg.EmptyString }
+        owner.kind = kind
+        SecurityModelOrg.StoreOwner(rule, owner)
+        this.dirty = true
+    }
+
+    public SetOwnerSourceValue(concept: string, value: string): void
+    {
+        const rule = this.FindOwnershipRule(concept)
+        if (rule === undefined)
+        {
+            return
+        }
+        const owner = rule.owner ?? { kind: SecurityModelOrg.EmptyString, value: SecurityModelOrg.EmptyString }
+        owner.value = value
+        SecurityModelOrg.StoreOwner(rule, owner)
+        this.dirty = true
+    }
+
+    public RemoveOwnershipRule(concept: string): void
+    {
+        const i = this.model.ownershipRules.findIndex(r => r.concept === concept)
+        if (i < 0)
+        {
+            return
+        }
+        this.model.ownershipRules.splice(i, 1)
+        this.dirty = true
+    }
+
+    private FindOwnershipRule(concept: string): OwnershipRuleDto | undefined
+    {
+        return this.model.ownershipRules.find(r => r.concept === concept)
+    }
+
+    private static StoreOwner(rule: OwnershipRuleDto, owner: OwnershipSourceDto): void
+    {
+        if (owner.kind === SecurityModelOrg.EmptyString && owner.value === SecurityModelOrg.EmptyString)
+        {
+            delete rule.owner
+        }
+        else
+        {
+            rule.owner = owner
+        }
+    }
+
+    private static ToggleTeam(target: { teams?: string[] }, teamId: string): void
+    {
+        const teams = target.teams ?? []
+        const i = teams.indexOf(teamId)
+        if (i >= 0)
+        {
+            teams.splice(i, 1)
+        }
+        else
+        {
+            teams.push(teamId)
+        }
+        if (teams.length === 0)
+        {
+            delete target.teams
+        }
+        else
+        {
+            target.teams = teams
+        }
     }
 
     private UnknownUnit(id: string | undefined): boolean

@@ -180,6 +180,164 @@ describe('SecurityModelOrg', () =>
     })
 })
 
+describe('SecurityModelOrg membership', () =>
+{
+    it('edits a claim rule and toggles a team on and off', () =>
+    {
+        const model = Fixtures.Empty()
+        const org = new SecurityModelOrg(model)
+        org.AddMembershipRule()
+        assert.deepEqual(model.membership.claimsMapping, [{ claim: '', value: '' }])
+        org.SetMembershipRuleClaim(0, 'dept')
+        org.SetMembershipRuleValue(0, 'eng')
+        org.SetMembershipRuleHomeBusinessUnit(0, 'bu1')
+        org.ToggleMembershipRuleTeam(0, 't1')
+        assert.deepEqual(org.Membership.claimsMapping[0], { claim: 'dept', value: 'eng', homeBusinessUnit: 'bu1', teams: ['t1'] })
+        org.SetMembershipRuleHomeBusinessUnit(0, undefined)
+        org.ToggleMembershipRuleTeam(0, 't1')
+        assert.equal(model.membership.claimsMapping[0].homeBusinessUnit, undefined)
+        assert.equal(model.membership.claimsMapping[0].teams, undefined)
+        org.RemoveMembershipRule(0)
+        assert.equal(model.membership.claimsMapping.length, 0)
+        assert.equal(org.Dirty, true)
+    })
+
+    it('edits an override and toggles a team on and off', () =>
+    {
+        const model = Fixtures.Empty()
+        const org = new SecurityModelOrg(model)
+        org.AddMembershipOverride()
+        assert.deepEqual(model.membership.overrides, [{ principalId: '' }])
+        org.SetMembershipOverridePrincipal(0, 'u9')
+        org.SetMembershipOverrideHomeBusinessUnit(0, 'bu2')
+        org.ToggleMembershipOverrideTeam(0, 't1')
+        org.ToggleMembershipOverrideTeam(0, 't2')
+        assert.deepEqual(model.membership.overrides[0], { principalId: 'u9', homeBusinessUnit: 'bu2', teams: ['t1', 't2'] })
+        org.ToggleMembershipOverrideTeam(0, 't1')
+        org.ToggleMembershipOverrideTeam(0, 't2')
+        assert.equal(model.membership.overrides[0].teams, undefined)
+        org.SetMembershipOverrideHomeBusinessUnit(0, undefined)
+        assert.equal(model.membership.overrides[0].homeBusinessUnit, undefined)
+        org.RemoveMembershipOverride(0)
+        assert.equal(model.membership.overrides.length, 0)
+    })
+
+    it('out-of-range membership indices are no-ops and not dirty', () =>
+    {
+        const model = Fixtures.Referenced()
+        const before = JSON.stringify(model)
+        const org = new SecurityModelOrg(model)
+        org.SetMembershipRuleClaim(5, 'x')
+        org.SetMembershipRuleValue(-1, 'x')
+        org.SetMembershipRuleHomeBusinessUnit(5, 'bu1')
+        org.ToggleMembershipRuleTeam(5, 't1')
+        org.RemoveMembershipRule(5)
+        org.SetMembershipOverridePrincipal(5, 'x')
+        org.SetMembershipOverrideHomeBusinessUnit(5, 'bu1')
+        org.ToggleMembershipOverrideTeam(-1, 't1')
+        org.RemoveMembershipOverride(5)
+        assert.equal(JSON.stringify(model), before)
+        assert.equal(org.Dirty, false)
+    })
+
+    it('every membership mutation flips Dirty', () =>
+    {
+        const mutations: ((o: SecurityModelOrg) => void)[] = [
+            o => o.AddMembershipRule(),
+            o => o.SetMembershipRuleClaim(0, 'n'),
+            o => o.SetMembershipRuleValue(0, 'n'),
+            o => o.SetMembershipRuleHomeBusinessUnit(0, 'bu2'),
+            o => o.ToggleMembershipRuleTeam(0, 't2'),
+            o => o.RemoveMembershipRule(0),
+            o => o.AddMembershipOverride(),
+            o => o.SetMembershipOverridePrincipal(0, 'n'),
+            o => o.SetMembershipOverrideHomeBusinessUnit(0, 'bu2'),
+            o => o.ToggleMembershipOverrideTeam(0, 't2'),
+            o => o.RemoveMembershipOverride(0)
+        ]
+        for (const mutate of mutations)
+        {
+            const org = new SecurityModelOrg(Fixtures.Referenced())
+            mutate(org)
+            assert.equal(org.Dirty, true)
+        }
+    })
+
+    it('a membership-only edit leaves every other section unchanged', () =>
+    {
+        const input = Fixtures.Referenced()
+        const draft = SecurityModelDraft.From(input)
+        draft.Org.AddMembershipRule()
+        draft.Org.SetMembershipRuleClaim(1, 'grp')
+        const out = draft.ToDto()
+        assert.equal(draft.Dirty, true)
+        assert.equal(out.membership.claimsMapping.length, 2)
+        assert.deepEqual(out.businessUnits, input.businessUnits)
+        assert.deepEqual(out.teams, input.teams)
+        assert.deepEqual(out.ownershipRules, input.ownershipRules)
+        assert.deepEqual(out.roles, input.roles)
+        assert.deepEqual(out.roleAssignment, input.roleAssignment)
+    })
+})
+
+describe('SecurityModelOrg ownership rules', () =>
+{
+    it('adds a rule once per concept with an empty owning source', () =>
+    {
+        const model = Fixtures.Empty()
+        const org = new SecurityModelOrg(model)
+        org.AddOwnershipRule('Order')
+        assert.deepEqual(org.OwnershipRules, [{ concept: 'Order', owningBusinessUnit: { kind: '', value: '' } }])
+        assert.equal(org.Dirty, true)
+        const again = new SecurityModelOrg(model)
+        again.AddOwnershipRule('Order')
+        assert.equal(model.ownershipRules.length, 1)
+        assert.equal(again.Dirty, false)
+    })
+
+    it('sets owning source kind and value', () =>
+    {
+        const model = Fixtures.Empty()
+        const org = new SecurityModelOrg(model)
+        org.AddOwnershipRule('Order')
+        org.SetOwningSourceKind('Order', 'fixed')
+        org.SetOwningSourceValue('Order', 'bu1')
+        assert.deepEqual(model.ownershipRules[0].owningBusinessUnit, { kind: 'fixed', value: 'bu1' })
+    })
+
+    it('creates owner on first set and removes it when both parts are blank', () =>
+    {
+        const model = Fixtures.Empty()
+        const org = new SecurityModelOrg(model)
+        org.AddOwnershipRule('Order')
+        assert.equal(model.ownershipRules[0].owner, undefined)
+        org.SetOwnerSourceKind('Order', 'field')
+        assert.deepEqual(model.ownershipRules[0].owner, { kind: 'field', value: '' })
+        org.SetOwnerSourceValue('Order', 'owner')
+        assert.deepEqual(model.ownershipRules[0].owner, { kind: 'field', value: 'owner' })
+        org.SetOwnerSourceKind('Order', '')
+        assert.notEqual(model.ownershipRules[0].owner, undefined)
+        org.SetOwnerSourceValue('Order', '')
+        assert.equal(model.ownershipRules[0].owner, undefined)
+    })
+
+    it('unknown concept is a no-op and RemoveOwnershipRule removes', () =>
+    {
+        const model = Fixtures.Referenced()
+        const noop = new SecurityModelOrg(model)
+        noop.SetOwningSourceKind('Nope', 'x')
+        noop.SetOwningSourceValue('Nope', 'x')
+        noop.SetOwnerSourceKind('Nope', 'x')
+        noop.SetOwnerSourceValue('Nope', 'x')
+        noop.RemoveOwnershipRule('Nope')
+        assert.equal(noop.Dirty, false)
+        const org = new SecurityModelOrg(model)
+        org.RemoveOwnershipRule('Order')
+        assert.equal(model.ownershipRules.length, 0)
+        assert.equal(org.Dirty, true)
+    })
+})
+
 describe('SecurityModelDraft org wiring', () =>
 {
     it('Dirty aggregates org edits and other sections round-trip', () =>
