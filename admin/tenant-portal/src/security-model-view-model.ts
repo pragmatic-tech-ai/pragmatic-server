@@ -1,10 +1,15 @@
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
+import { AssignmentClaimRow } from './assignment-claim-row.js'
+import { AssignmentPrincipalRow } from './assignment-principal-row.js'
+import { AssignmentSide } from './assignment-side.js'
+import { AssignmentTeamRow } from './assignment-team-row.js'
 import { BusinessUnitRow } from './business-unit-row.js'
 import { FieldGrantRow } from './field-grant-row.js'
 import { MembershipOverrideRow } from './membership-override-row.js'
 import { MembershipRuleRow } from './membership-rule-row.js'
 import { OwnershipRuleRow } from './ownership-rule-row.js'
 import { PrivilegeRow } from './privilege-row.js'
+import type { RoleHolderData } from './role-holders.js'
 import type { RecordSharingRowData } from './record-sharing.js'
 import { SecurityModelDraft } from './security-model-draft.js'
 import { TeamRow } from './team-row.js'
@@ -45,6 +50,13 @@ export class SecurityModelViewModel extends Observable
     public static readonly MembershipOverrideRowsProperty = 'MembershipOverrideRows'
     public static readonly OwnershipRuleRowsProperty = 'OwnershipRuleRows'
     public static readonly RecordSharingRowsProperty = 'RecordSharingRows'
+    public static readonly RoleClaimRowsProperty = 'RoleClaimRows'
+    public static readonly RolePrincipalRowsProperty = 'RolePrincipalRows'
+    public static readonly RoleTeamRowsProperty = 'RoleTeamRows'
+    public static readonly RoleHoldersProperty = 'RoleHolders'
+    public static readonly ProfileClaimRowsProperty = 'ProfileClaimRows'
+    public static readonly ProfilePrincipalRowsProperty = 'ProfilePrincipalRows'
+    public static readonly ProfileTeamRowsProperty = 'ProfileTeamRows'
     public static readonly BusyProperty = 'Busy'
     public static readonly ErrorProperty = 'Error'
     public static readonly StateProperty = 'State'
@@ -52,6 +64,7 @@ export class SecurityModelViewModel extends Observable
 
     private static readonly NoMessage = ''
     private static readonly NoRoleId = ''
+    private static readonly NoHolders: RoleHolderData = { byPrincipal: [], byClaim: [], byTeam: [], directCount: 0 }
 
     private environments: readonly string[] = []
     private selectedEnvironment: string | undefined
@@ -67,6 +80,13 @@ export class SecurityModelViewModel extends Observable
     private membershipOverrideRows: readonly MembershipOverrideRow[] = []
     private ownershipRuleRows: readonly OwnershipRuleRow[] = []
     private recordSharingRows: readonly RecordSharingRowData[] = []
+    private roleClaimRows: readonly AssignmentClaimRow[] = []
+    private rolePrincipalRows: readonly AssignmentPrincipalRow[] = []
+    private roleTeamRows: readonly AssignmentTeamRow[] = []
+    private profileClaimRows: readonly AssignmentClaimRow[] = []
+    private profilePrincipalRows: readonly AssignmentPrincipalRow[] = []
+    private profileTeamRows: readonly AssignmentTeamRow[] = []
+    private roleHolders: RoleHolderData = SecurityModelViewModel.NoHolders
     private draft: SecurityModelDraft | undefined
     private busyCount = 0
     private error = SecurityModelViewModel.NoMessage
@@ -147,6 +167,46 @@ export class SecurityModelViewModel extends Observable
     public get RecordSharingRows(): readonly RecordSharingRowData[]
     {
         return this.recordSharingRows
+    }
+
+    public get RoleClaimRows(): readonly AssignmentClaimRow[]
+    {
+        return this.roleClaimRows
+    }
+
+    public get RolePrincipalRows(): readonly AssignmentPrincipalRow[]
+    {
+        return this.rolePrincipalRows
+    }
+
+    public get RoleTeamRows(): readonly AssignmentTeamRow[]
+    {
+        return this.roleTeamRows
+    }
+
+    public get ProfileClaimRows(): readonly AssignmentClaimRow[]
+    {
+        return this.profileClaimRows
+    }
+
+    public get ProfilePrincipalRows(): readonly AssignmentPrincipalRow[]
+    {
+        return this.profilePrincipalRows
+    }
+
+    public get ProfileTeamRows(): readonly AssignmentTeamRow[]
+    {
+        return this.profileTeamRows
+    }
+
+    public get RoleHolders(): RoleHolderData
+    {
+        return this.roleHolders
+    }
+
+    public DirectHolderCountFor(roleId: string): number
+    {
+        return this.draft?.DirectHolderCount(roleId) ?? 0
     }
 
     public get Busy(): boolean
@@ -592,6 +652,182 @@ export class SecurityModelViewModel extends Observable
         this.Refresh()
     }
 
+    public AddRoleClaimGrant(): void
+    {
+        const id = this.selectedRoleId
+        if (this.draft === undefined || id === undefined)
+        {
+            return
+        }
+        this.draft.RoleAssignment.AddClaimGrant(id)
+        this.Refresh()
+    }
+
+    public SetRoleClaimGrantClaim(index: number, claim: string): void
+    {
+        const id = this.selectedRoleId
+        if (this.draft === undefined || id === undefined)
+        {
+            return
+        }
+        this.draft.RoleAssignment.SetClaim(index, claim)
+        this.RefreshDirty()
+    }
+
+    public SetRoleClaimGrantValue(index: number, value: string): void
+    {
+        const id = this.selectedRoleId
+        if (this.draft === undefined || id === undefined)
+        {
+            return
+        }
+        this.draft.RoleAssignment.SetValue(index, value)
+        this.RefreshDirty()
+    }
+
+    public RemoveRoleClaimGrant(index: number): void
+    {
+        const id = this.selectedRoleId
+        if (this.draft === undefined || id === undefined)
+        {
+            return
+        }
+        this.draft.RoleAssignment.RemoveClaimGrant(id, index)
+        this.Refresh()
+    }
+
+    public AddRolePrincipalGrant(principalId: string): void
+    {
+        const id = this.selectedRoleId
+        if (this.draft === undefined || id === undefined)
+        {
+            return
+        }
+        this.draft.RoleAssignment.AddPrincipalGrant(id, principalId)
+        this.Refresh()
+    }
+
+    public RemoveRolePrincipalGrant(principalId: string): void
+    {
+        const id = this.selectedRoleId
+        if (this.draft === undefined || id === undefined)
+        {
+            return
+        }
+        this.draft.RoleAssignment.RemovePrincipalGrant(id, principalId)
+        this.Refresh()
+    }
+
+    public AddRoleTeamGrant(teamId: string): void
+    {
+        const id = this.selectedRoleId
+        if (this.draft === undefined || id === undefined)
+        {
+            return
+        }
+        this.draft.RoleAssignment.AddTeamGrant(id, teamId)
+        this.Refresh()
+    }
+
+    public RemoveRoleTeamGrant(teamId: string): void
+    {
+        const id = this.selectedRoleId
+        if (this.draft === undefined || id === undefined)
+        {
+            return
+        }
+        this.draft.RoleAssignment.RemoveTeamGrant(id, teamId)
+        this.Refresh()
+    }
+
+    public AddProfileClaimGrant(): void
+    {
+        const id = this.selectedProfileId
+        if (this.draft === undefined || id === undefined)
+        {
+            return
+        }
+        this.draft.ProfileAssignment.AddClaimGrant(id)
+        this.Refresh()
+    }
+
+    public SetProfileClaimGrantClaim(index: number, claim: string): void
+    {
+        const id = this.selectedProfileId
+        if (this.draft === undefined || id === undefined)
+        {
+            return
+        }
+        this.draft.ProfileAssignment.SetClaim(index, claim)
+        this.RefreshDirty()
+    }
+
+    public SetProfileClaimGrantValue(index: number, value: string): void
+    {
+        const id = this.selectedProfileId
+        if (this.draft === undefined || id === undefined)
+        {
+            return
+        }
+        this.draft.ProfileAssignment.SetValue(index, value)
+        this.RefreshDirty()
+    }
+
+    public RemoveProfileClaimGrant(index: number): void
+    {
+        const id = this.selectedProfileId
+        if (this.draft === undefined || id === undefined)
+        {
+            return
+        }
+        this.draft.ProfileAssignment.RemoveClaimGrant(id, index)
+        this.Refresh()
+    }
+
+    public AddProfilePrincipalGrant(principalId: string): void
+    {
+        const id = this.selectedProfileId
+        if (this.draft === undefined || id === undefined)
+        {
+            return
+        }
+        this.draft.ProfileAssignment.AddPrincipalGrant(id, principalId)
+        this.Refresh()
+    }
+
+    public RemoveProfilePrincipalGrant(principalId: string): void
+    {
+        const id = this.selectedProfileId
+        if (this.draft === undefined || id === undefined)
+        {
+            return
+        }
+        this.draft.ProfileAssignment.RemovePrincipalGrant(id, principalId)
+        this.Refresh()
+    }
+
+    public AddProfileTeamGrant(teamId: string): void
+    {
+        const id = this.selectedProfileId
+        if (this.draft === undefined || id === undefined)
+        {
+            return
+        }
+        this.draft.ProfileAssignment.AddTeamGrant(id, teamId)
+        this.Refresh()
+    }
+
+    public RemoveProfileTeamGrant(teamId: string): void
+    {
+        const id = this.selectedProfileId
+        if (this.draft === undefined || id === undefined)
+        {
+            return
+        }
+        this.draft.ProfileAssignment.RemoveTeamGrant(id, teamId)
+        this.Refresh()
+    }
+
     // Live derivation of the selected role's record-sharing rows (RecordSharingRows only updates on Refresh).
     public CurrentRecordSharing(): readonly RecordSharingRowData[]
     {
@@ -677,6 +913,7 @@ export class SecurityModelViewModel extends Observable
         const oldMembershipOverrideRows = this.membershipOverrideRows
         const oldOwnershipRuleRows = this.ownershipRuleRows
         const oldRecordSharingRows = this.recordSharingRows
+        const oldAssignment = this.AssignmentSnapshot()
         this.roles = [...draft.Roles]
         this.privilegeRows = draft.Concepts.map(c => new PrivilegeRow(c, draft))
         this.selectedRoleId = draft.SelectedRoleId
@@ -701,7 +938,17 @@ export class SecurityModelViewModel extends Observable
         this.RaisePropertyChanged(SecurityModelViewModel.MembershipRuleRowsProperty, oldMembershipRuleRows, this.membershipRuleRows)
         this.RaisePropertyChanged(SecurityModelViewModel.MembershipOverrideRowsProperty, oldMembershipOverrideRows, this.membershipOverrideRows)
         this.RaisePropertyChanged(SecurityModelViewModel.OwnershipRuleRowsProperty, oldOwnershipRuleRows, this.ownershipRuleRows)
+        const ra = draft.RoleAssignment
+        const pa = draft.ProfileAssignment
+        this.roleClaimRows = SecurityModelViewModel.ClaimRows(AssignmentSide.Role, ra, this.selectedRoleId, this)
+        this.rolePrincipalRows = SecurityModelViewModel.PrincipalRows(AssignmentSide.Role, ra, this.selectedRoleId, this)
+        this.roleTeamRows = SecurityModelViewModel.TeamGrantRows(AssignmentSide.Role, ra, this.selectedRoleId, draft, this)
+        this.roleHolders = this.selectedRoleId === undefined ? SecurityModelViewModel.NoHolders : draft.RoleHoldersFor(this.selectedRoleId)
+        this.profileClaimRows = SecurityModelViewModel.ClaimRows(AssignmentSide.Profile, pa, this.selectedProfileId, this)
+        this.profilePrincipalRows = SecurityModelViewModel.PrincipalRows(AssignmentSide.Profile, pa, this.selectedProfileId, this)
+        this.profileTeamRows = SecurityModelViewModel.TeamGrantRows(AssignmentSide.Profile, pa, this.selectedProfileId, draft, this)
         this.RaisePropertyChanged(SecurityModelViewModel.RecordSharingRowsProperty, oldRecordSharingRows, this.recordSharingRows)
+        this.RaiseAssignmentChanged(oldAssignment)
         this.SetDirty(draft.Dirty)
         const empty = this.roles.length === 0 && this.profiles.length === 0
         this.SetState(empty ? SecurityModelState.Empty : SecurityModelState.Ready)
@@ -722,6 +969,7 @@ export class SecurityModelViewModel extends Observable
         const oldMembershipOverrideRows = this.membershipOverrideRows
         const oldOwnershipRuleRows = this.ownershipRuleRows
         const oldRecordSharingRows = this.recordSharingRows
+        const oldAssignment = this.AssignmentSnapshot()
         this.roles = []
         this.privilegeRows = []
         this.selectedRoleId = undefined
@@ -745,8 +993,53 @@ export class SecurityModelViewModel extends Observable
         this.RaisePropertyChanged(SecurityModelViewModel.MembershipRuleRowsProperty, oldMembershipRuleRows, this.membershipRuleRows)
         this.RaisePropertyChanged(SecurityModelViewModel.MembershipOverrideRowsProperty, oldMembershipOverrideRows, this.membershipOverrideRows)
         this.RaisePropertyChanged(SecurityModelViewModel.OwnershipRuleRowsProperty, oldOwnershipRuleRows, this.ownershipRuleRows)
+        this.roleClaimRows = []
+        this.rolePrincipalRows = []
+        this.roleTeamRows = []
+        this.roleHolders = SecurityModelViewModel.NoHolders
+        this.profileClaimRows = []
+        this.profilePrincipalRows = []
+        this.profileTeamRows = []
         this.RaisePropertyChanged(SecurityModelViewModel.RecordSharingRowsProperty, oldRecordSharingRows, this.recordSharingRows)
+        this.RaiseAssignmentChanged(oldAssignment)
         this.SetDirty(false)
+    }
+
+    private static ClaimRows(side: AssignmentSide, section: { ClaimGrants(id: string): readonly { index: number; claim: string; value: string }[] }, id: string | undefined, vm: SecurityModelViewModel): AssignmentClaimRow[]
+    {
+        return id === undefined ? [] : section.ClaimGrants(id).map(r => new AssignmentClaimRow(side, r.index, r.claim, r.value, vm))
+    }
+
+    private static PrincipalRows(side: AssignmentSide, section: { PrincipalGrants(id: string): readonly string[] }, id: string | undefined, vm: SecurityModelViewModel): AssignmentPrincipalRow[]
+    {
+        return id === undefined ? [] : section.PrincipalGrants(id).map(p => new AssignmentPrincipalRow(side, p, vm))
+    }
+
+    private static TeamGrantRows(side: AssignmentSide, section: { TeamGrants(id: string): readonly string[] }, id: string | undefined, draft: SecurityModelDraft, vm: SecurityModelViewModel): AssignmentTeamRow[]
+    {
+        if (id === undefined)
+        {
+            return []
+        }
+        const teams = draft.Org.Teams
+        return section.TeamGrants(id).map(t => new AssignmentTeamRow(side, t, teams.find(x => x.id === t)?.name ?? t, vm))
+    }
+
+    private AssignmentSnapshot(): readonly unknown[]
+    {
+        return [this.roleClaimRows, this.rolePrincipalRows, this.roleTeamRows, this.roleHolders,
+            this.profileClaimRows, this.profilePrincipalRows, this.profileTeamRows]
+    }
+
+    private RaiseAssignmentChanged(old: readonly unknown[]): void
+    {
+        const now = this.AssignmentSnapshot()
+        const names = [
+            SecurityModelViewModel.RoleClaimRowsProperty, SecurityModelViewModel.RolePrincipalRowsProperty,
+            SecurityModelViewModel.RoleTeamRowsProperty, SecurityModelViewModel.RoleHoldersProperty,
+            SecurityModelViewModel.ProfileClaimRowsProperty, SecurityModelViewModel.ProfilePrincipalRowsProperty,
+            SecurityModelViewModel.ProfileTeamRowsProperty]
+        names.forEach((n, i) => this.RaisePropertyChanged(n, old[i], now[i]))
     }
 
     // A 401 is not a displayable error: it propagates so the view can route to login.

@@ -398,4 +398,111 @@ describe('SecurityModelViewModel', () =>
         assert.equal(vm.MembershipRuleRows[0].Claim, 'second')
         assert.equal(vm.MembershipRuleRows[0].Value, 'v')
     })
+
+    it('adding a role claim grant raises RoleClaimRowsProperty and the row appears for the selected role', async () =>
+    {
+        const vm = await Fixture.Loaded()
+        let raised = 0
+        vm.PropertyChanged(SecurityModelViewModel.RoleClaimRowsProperty).subscribe(() => { raised++ })
+        vm.AddRoleClaimGrant()
+        assert.equal(raised, 1)
+        assert.equal(vm.RoleClaimRows.length, 1)
+        assert.equal(vm.Dirty, true)
+        vm.SelectRole('r2')
+        assert.equal(vm.RoleClaimRows.length, 0)
+        vm.SelectRole('r1')
+        assert.equal(vm.RoleClaimRows.length, 1)
+    })
+
+    it('a scalar role claim edit flips Dirty without rebuilding the rows', async () =>
+    {
+        const vm = await Fixture.Loaded()
+        vm.AddRoleClaimGrant()
+        await vm.Save()
+        assert.equal(vm.Dirty, false)
+        const row = vm.RoleClaimRows[0]
+        vm.RoleClaimRows[0].SetClaim('group')
+        vm.RoleClaimRows[0].SetValue('admins')
+        assert.equal(vm.Dirty, true)
+        assert.equal(vm.RoleClaimRows[0], row)
+        const fresh = await Fixture.Loaded()
+        fresh.AddRoleClaimGrant()
+        fresh.SetRoleClaimGrantClaim(0, 'g')
+        assert.equal(fresh.Dirty, true)
+    })
+
+    it('role principal and team grants surface as rows, holders and direct count', async () =>
+    {
+        const vm = await Fixture.Loaded()
+        assert.equal(vm.DirectHolderCountFor('r1'), 0)
+        vm.AddRolePrincipalGrant('alice')
+        vm.AddRoleTeamGrant('t1')
+        assert.deepEqual(vm.RolePrincipalRows.map(r => r.PrincipalId), ['alice'])
+        assert.deepEqual(vm.RoleTeamRows.map(r => [r.TeamId, r.TeamName]), [['t1', 'Team One']])
+        assert.equal(vm.DirectHolderCountFor('r1'), 1)
+        assert.equal(vm.DirectHolderCountFor('r2'), 0)
+        assert.deepEqual([...vm.RoleHolders.byPrincipal], ['alice'])
+        vm.SelectRole('r2')
+        assert.deepEqual([...vm.RoleHolders.byPrincipal], [])
+        assert.equal(vm.RolePrincipalRows.length, 0)
+        vm.SelectRole('r1')
+        vm.RolePrincipalRows[0].Remove()
+        vm.RoleTeamRows[0].Remove()
+        assert.equal(vm.RolePrincipalRows.length, 0)
+        assert.equal(vm.RoleTeamRows.length, 0)
+        assert.equal(vm.DirectHolderCountFor('r1'), 0)
+    })
+
+    it('the profile side mirrors for the selected profile', async () =>
+    {
+        const vm = await Fixture.Loaded()
+        let raised = 0
+        vm.PropertyChanged(SecurityModelViewModel.ProfileClaimRowsProperty).subscribe(() => { raised++ })
+        vm.AddProfileClaimGrant()
+        assert.equal(raised, 1)
+        const row = vm.ProfileClaimRows[0]
+        row.SetClaim('dept')
+        row.SetValue('hr')
+        assert.equal(vm.ProfileClaimRows[0], row)
+        assert.equal(vm.ProfileClaimRows[0].Claim, '')
+        vm.AddProfilePrincipalGrant('bob')
+        vm.AddProfileTeamGrant('t1')
+        assert.deepEqual(vm.ProfilePrincipalRows.map(r => r.PrincipalId), ['bob'])
+        assert.deepEqual(vm.ProfileTeamRows.map(r => r.TeamName), ['Team One'])
+        vm.SelectProfile('p2')
+        assert.equal(vm.ProfileClaimRows.length, 0)
+        assert.equal(vm.ProfilePrincipalRows.length, 0)
+        vm.SelectProfile('p1')
+        vm.ProfileClaimRows[0].Remove()
+        vm.ProfilePrincipalRows[0].Remove()
+        vm.ProfileTeamRows[0].Remove()
+        assert.equal(vm.ProfileClaimRows.length + vm.ProfilePrincipalRows.length + vm.ProfileTeamRows.length, 0)
+    })
+
+    it('ONE Save persists a privilege edit, an org edit AND a role-assignment grant', async () =>
+    {
+        const src = new FakeSource()
+        const vm = await Fixture.Loaded(src)
+        vm.PrivilegeRows[0].Cycle(PrivilegeAction.Create)
+        vm.AddBusinessUnit('X')
+        vm.AddRolePrincipalGrant('alice')
+        await vm.Save()
+        assert.equal(src.Saved.length, 1)
+        const saved = src.Saved[0].model
+        const admin = saved.roles?.find(r => r.id === 'r1')
+        assert.ok(admin?.privileges.some(p => p.concept === 'Customer' && p.action === PrivilegeAction.Create))
+        assert.ok(saved.businessUnits.some(u => u.name === 'X'))
+        assert.ok(saved.roleAssignment?.overrides.some(o => o.principalId === 'alice' && o.roles.includes('r1')))
+        assert.equal(vm.Dirty, false)
+        assert.equal(vm.RolePrincipalRows.length, 1)
+    })
+
+    it('a 401 on Save with assignment edits still rethrows', async () =>
+    {
+        const src = new FakeSource()
+        const vm = await Fixture.Loaded(src)
+        vm.AddRolePrincipalGrant('alice')
+        src.SetError = new TenantApiError(TenantApiError.UnauthorizedStatus, 'no')
+        await assert.rejects(vm.Save(), (e: unknown) => e instanceof TenantApiError)
+    })
 })
