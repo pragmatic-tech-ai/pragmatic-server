@@ -9,6 +9,7 @@ import { MembershipOverrideRow } from './membership-override-row.js'
 import { MembershipRuleRow } from './membership-rule-row.js'
 import { OwnershipRuleRow } from './ownership-rule-row.js'
 import { PrivilegeRow } from './privilege-row.js'
+import type { ProfileAssignmentSection, RoleAssignmentSection } from './security-model-assignment.js'
 import type { RoleHolderData } from './role-holders.js'
 import type { RecordSharingRowData } from './record-sharing.js'
 import { SecurityModelDraft } from './security-model-draft.js'
@@ -25,6 +26,8 @@ export enum SecurityModelState
     NoEnvironment,
     Forbidden,
 }
+
+type AssignmentSection = RoleAssignmentSection | ProfileAssignmentSection
 
 export interface ISecurityModelEnvSource extends ISecurityModelSource
 {
@@ -943,6 +946,7 @@ export class SecurityModelViewModel extends Observable
         this.roleClaimRows = SecurityModelViewModel.ClaimRows(AssignmentSide.Role, ra, this.selectedRoleId, this)
         this.rolePrincipalRows = SecurityModelViewModel.PrincipalRows(AssignmentSide.Role, ra, this.selectedRoleId, this)
         this.roleTeamRows = SecurityModelViewModel.TeamGrantRows(AssignmentSide.Role, ra, this.selectedRoleId, draft, this)
+        // byClaim goes stale after a scalar claim edit (RefreshDirty only) until the next Refresh(), like CurrentRecordSharing.
         this.roleHolders = this.selectedRoleId === undefined ? SecurityModelViewModel.NoHolders : draft.RoleHoldersFor(this.selectedRoleId)
         this.profileClaimRows = SecurityModelViewModel.ClaimRows(AssignmentSide.Profile, pa, this.selectedProfileId, this)
         this.profilePrincipalRows = SecurityModelViewModel.PrincipalRows(AssignmentSide.Profile, pa, this.selectedProfileId, this)
@@ -1005,17 +1009,17 @@ export class SecurityModelViewModel extends Observable
         this.SetDirty(false)
     }
 
-    private static ClaimRows(side: AssignmentSide, section: { ClaimGrants(id: string): readonly { index: number; claim: string; value: string }[] }, id: string | undefined, vm: SecurityModelViewModel): AssignmentClaimRow[]
+    private static ClaimRows(side: AssignmentSide, section: AssignmentSection, id: string | undefined, vm: SecurityModelViewModel): AssignmentClaimRow[]
     {
         return id === undefined ? [] : section.ClaimGrants(id).map(r => new AssignmentClaimRow(side, r.index, r.claim, r.value, vm))
     }
 
-    private static PrincipalRows(side: AssignmentSide, section: { PrincipalGrants(id: string): readonly string[] }, id: string | undefined, vm: SecurityModelViewModel): AssignmentPrincipalRow[]
+    private static PrincipalRows(side: AssignmentSide, section: AssignmentSection, id: string | undefined, vm: SecurityModelViewModel): AssignmentPrincipalRow[]
     {
         return id === undefined ? [] : section.PrincipalGrants(id).map(p => new AssignmentPrincipalRow(side, p, vm))
     }
 
-    private static TeamGrantRows(side: AssignmentSide, section: { TeamGrants(id: string): readonly string[] }, id: string | undefined, draft: SecurityModelDraft, vm: SecurityModelViewModel): AssignmentTeamRow[]
+    private static TeamGrantRows(side: AssignmentSide, section: AssignmentSection, id: string | undefined, draft: SecurityModelDraft, vm: SecurityModelViewModel): AssignmentTeamRow[]
     {
         if (id === undefined)
         {

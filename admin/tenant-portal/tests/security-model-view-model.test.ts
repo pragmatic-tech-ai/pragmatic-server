@@ -414,21 +414,69 @@ describe('SecurityModelViewModel', () =>
         assert.equal(vm.RoleClaimRows.length, 1)
     })
 
-    it('a scalar role claim edit flips Dirty without rebuilding the rows', async () =>
+    it('a scalar role claim edit flips Dirty without a rebuild and persists on Save', async () =>
     {
-        const vm = await Fixture.Loaded()
+        const src = new FakeSource()
+        const vm = await Fixture.Loaded(src)
         vm.AddRoleClaimGrant()
         await vm.Save()
         assert.equal(vm.Dirty, false)
         const row = vm.RoleClaimRows[0]
-        vm.RoleClaimRows[0].SetClaim('group')
-        vm.RoleClaimRows[0].SetValue('admins')
+        row.SetClaim('group')
+        row.SetValue('admins')
         assert.equal(vm.Dirty, true)
         assert.equal(vm.RoleClaimRows[0], row)
-        const fresh = await Fixture.Loaded()
-        fresh.AddRoleClaimGrant()
-        fresh.SetRoleClaimGrantClaim(0, 'g')
-        assert.equal(fresh.Dirty, true)
+        await vm.Save()
+        const grants = src.Saved[1].model.roleAssignment?.claimsMapping ?? []
+        assert.ok(grants.some(g => g.claim === 'group' && g.value === 'admins' && g.roles.includes('r1')))
+    })
+
+    it('after removing the first role claim grant, an edit through the survivor hits the right rule', async () =>
+    {
+        const src = new FakeSource()
+        const vm = await Fixture.Loaded(src)
+        vm.AddRoleClaimGrant()
+        vm.AddRoleClaimGrant()
+        vm.RoleClaimRows[0].SetClaim('first')
+        vm.RoleClaimRows[1].SetClaim('second')
+        vm.RoleClaimRows[0].Remove()
+        assert.equal(vm.RoleClaimRows.length, 1)
+        vm.RoleClaimRows[0].SetValue('v')
+        await vm.Save()
+        const grants = src.Saved[0].model.roleAssignment?.claimsMapping ?? []
+        assert.deepEqual(grants.map(g => [g.claim, g.value]), [['second', 'v']])
+    })
+
+    it('role holders expose claim rules, resolved team names and the id fallback', async () =>
+    {
+        const vm = await Fixture.Loaded()
+        vm.AddRoleClaimGrant()
+        vm.SetRoleClaimGrantClaim(0, 'group')
+        vm.SetRoleClaimGrantValue(0, 'admins')
+        vm.AddRoleTeamGrant('t1')
+        vm.AddRoleTeamGrant('ghost')
+        assert.ok(vm.RoleHolders.byClaim.some(c => c.claim === 'group' && c.value === 'admins'))
+        assert.ok(vm.RoleHolders.byTeam.some(t => t.teamId === 't1' && t.teamName === 'Team One'))
+        assert.deepEqual(vm.RoleTeamRows.map(r => [r.TeamId, r.TeamName]), [['t1', 'Team One'], ['ghost', 'ghost']])
+    })
+
+    it('role-side edits leave profile rows untouched and the reverse', async () =>
+    {
+        const vm = await Fixture.Loaded()
+        vm.AddRoleClaimGrant()
+        vm.AddRolePrincipalGrant('alice')
+        vm.AddRoleTeamGrant('t1')
+        assert.equal(vm.ProfileClaimRows.length + vm.ProfilePrincipalRows.length + vm.ProfileTeamRows.length, 0)
+        vm.AddProfileClaimGrant()
+        vm.AddProfilePrincipalGrant('bob')
+        vm.AddProfileTeamGrant('t1')
+        assert.equal(vm.RoleClaimRows.length, 1)
+        assert.deepEqual(vm.RolePrincipalRows.map(r => r.PrincipalId), ['alice'])
+        assert.equal(vm.RoleTeamRows.length, 1)
+        vm.ProfilePrincipalRows[0].Remove()
+        assert.deepEqual(vm.RolePrincipalRows.map(r => r.PrincipalId), ['alice'])
+        assert.equal(vm.ProfileClaimRows.length, 1)
+        assert.equal(vm.ProfileTeamRows.length, 1)
     })
 
     it('role principal and team grants surface as rows, holders and direct count', async () =>
@@ -455,7 +503,8 @@ describe('SecurityModelViewModel', () =>
 
     it('the profile side mirrors for the selected profile', async () =>
     {
-        const vm = await Fixture.Loaded()
+        const src = new FakeSource()
+        const vm = await Fixture.Loaded(src)
         let raised = 0
         vm.PropertyChanged(SecurityModelViewModel.ProfileClaimRowsProperty).subscribe(() => { raised++ })
         vm.AddProfileClaimGrant()
@@ -464,7 +513,9 @@ describe('SecurityModelViewModel', () =>
         row.SetClaim('dept')
         row.SetValue('hr')
         assert.equal(vm.ProfileClaimRows[0], row)
-        assert.equal(vm.ProfileClaimRows[0].Claim, '')
+        await vm.Save()
+        const pg = src.Saved[0].model.fieldSecurity?.profileAssignment.claimsMapping ?? []
+        assert.ok(pg.some(g => g.claim === 'dept' && g.value === 'hr'))
         vm.AddProfilePrincipalGrant('bob')
         vm.AddProfileTeamGrant('t1')
         assert.deepEqual(vm.ProfilePrincipalRows.map(r => r.PrincipalId), ['bob'])
