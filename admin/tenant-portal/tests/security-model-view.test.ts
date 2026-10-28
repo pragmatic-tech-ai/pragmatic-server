@@ -11,7 +11,7 @@ import { AccessLevel, FieldPermission, LevelCycle, PrivilegeAction, SecurityMode
 import { SecurityModelView } from '../src/security-model-view.js'
 import { TenantApiError } from '../src/tenant-api-client.js'
 import type { ISecurityModelEnvSource } from '../src/security-model-view-model.js'
-import type { EnvironmentDto, ITenantNavigator, SecurityModelDto } from '../src/tenant-types.js'
+import type { EnvironmentDto, FieldProfileAssignmentDto, ITenantNavigator, SecurityModelDto } from '../src/tenant-types.js'
 
 class Fixtures
 {
@@ -623,8 +623,9 @@ describe('SecurityModelView People / Who-has-this-profile', () =>
         assert.ok(texts.includes(SecurityModelView.ByTeamTitle))
         assert.ok(texts.includes('alice'))
         assert.ok(texts.includes('Ops'))
-        const boxes = OrgFixtures.Boxes(view.PeopleHost).map(b => b.Text)
-        assert.ok(boxes.includes('dept') && boxes.includes('eng'))
+        const claimRow = [...view.PeopleHost.Children].find(c => OrgFixtures.Boxes(c).some(b => b.Text === 'dept'))
+        assert.ok(claimRow)
+        assert.deepEqual(OrgFixtures.Boxes(claimRow).map(b => b.Text), ['dept', 'eng'])
     })
 
     it('an unassigned role shows an honest empty state and the add affordances', async () =>
@@ -691,18 +692,19 @@ describe('SecurityModelView People / Who-has-this-profile', () =>
     {
         const view = await Harness.Make(PeopleFixtures.Source())
         const texts = Fixtures.Texts(view.RolesPane)
-        assert.ok(texts.includes('1' + SecurityModelView.DirectSuffix))
-        assert.ok(texts.includes('0' + SecurityModelView.DirectSuffix))
+        assert.ok(texts.some(t => t.endsWith('1' + SecurityModelView.DirectSuffix)))
+        assert.ok(texts.some(t => t.endsWith('0' + SecurityModelView.DirectSuffix)))
     })
 
     it('the Fields tab shows a Who-has-this-profile section with the three editors', async () =>
     {
         const src = PeopleFixtures.Source()
-        src.Model!.fieldSecurity!.profileAssignment = {
+        const assignment: FieldProfileAssignmentDto = {
             claimsMapping: [],
             overrides: [{ principalId: 'carol', profiles: ['p1'] }],
             teamProfiles: [],
-        } as never
+        }
+        src.Model!.fieldSecurity!.profileAssignment = assignment
         const view = await Harness.Make(src)
         const texts = Fixtures.Texts(view.FieldHost)
         assert.ok(texts.includes(SecurityModelView.WhoHasProfileTitle))

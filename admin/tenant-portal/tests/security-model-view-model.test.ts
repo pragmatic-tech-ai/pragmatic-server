@@ -556,4 +556,19 @@ describe('SecurityModelViewModel', () =>
         src.SetError = new TenantApiError(TenantApiError.UnauthorizedStatus, 'no')
         await assert.rejects(vm.Save(), (e: unknown) => e instanceof TenantApiError)
     })
+
+    it('empty or whitespace-only person grants are no-ops on both sides', async () =>
+    {
+        const vm = await Fixture.Loaded()
+        for (const blank of ['', '   '])
+        {
+            vm.AddRolePrincipalGrant(blank)
+            vm.AddProfilePrincipalGrant(blank)
+        }
+        assert.equal(vm.RolePrincipalRows.length, 0)
+        assert.equal(vm.ProfilePrincipalRows.length, 0)
+        assert.equal(vm.Dirty, false)
+        vm.AddRolePrincipalGrant('  alice ')
+        assert.deepEqual(vm.RolePrincipalRows.map(r => r.PrincipalId), ['alice'])
+    })
 })

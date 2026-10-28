@@ -701,12 +701,17 @@ export class SecurityModelViewModel extends Observable
 
     public AddRolePrincipalGrant(principalId: string): void
     {
+        const trimmed = principalId.trim()
+        if (trimmed.length === 0)
+        {
+            return
+        }
         const id = this.selectedRoleId
         if (this.draft === undefined || id === undefined)
         {
             return
         }
-        this.draft.RoleAssignment.AddPrincipalGrant(id, principalId)
+        this.draft.RoleAssignment.AddPrincipalGrant(id, trimmed)
         this.Refresh()
     }
 
@@ -789,12 +794,17 @@ export class SecurityModelViewModel extends Observable
 
     public AddProfilePrincipalGrant(principalId: string): void
     {
+        const trimmed = principalId.trim()
+        if (trimmed.length === 0)
+        {
+            return
+        }
         const id = this.selectedProfileId
         if (this.draft === undefined || id === undefined)
         {
             return
         }
-        this.draft.ProfileAssignment.AddPrincipalGrant(id, principalId)
+        this.draft.ProfileAssignment.AddPrincipalGrant(id, trimmed)
         this.Refresh()
     }
 

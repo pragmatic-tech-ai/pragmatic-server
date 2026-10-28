@@ -47,6 +47,7 @@ export class SecurityModelView extends TenantViewBase
     public static readonly AddTeamGrantLabel = 'Add team'
     public static readonly PickTeamChoice = '(pick a team)'
     public static readonly DirectSuffix = ' direct'
+    private static readonly DirectSeparator = '  ·  '
     public static readonly AssignedDirectlySuffix = ' assigned directly'
     private static readonly AlsoGrantedPrefix = ', also granted by '
     private static readonly ClaimRuleOne = ' claim rule'
@@ -977,7 +978,7 @@ export class SecurityModelView extends TenantViewBase
         {
             const label = role.id === this.vm.SelectedRoleId ? SecurityModelView.SelectedMark + role.name : role.name
             strip.AddChild(this.MakeButton(label, () => this.WhenIdle(() => this.vm.SelectRole(role.id))))
-            strip.AddChild(this.Text(this.vm.DirectHolderCountFor(role.id) + SecurityModelView.DirectSuffix))
+            strip.AddChild(this.Text(SecurityModelView.DirectSeparator + this.vm.DirectHolderCountFor(role.id) + SecurityModelView.DirectSuffix))
         }
         const selected = this.vm.SelectedRoleId
         if (selected !== undefined)
