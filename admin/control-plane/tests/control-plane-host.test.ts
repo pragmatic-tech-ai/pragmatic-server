@@ -41,6 +41,8 @@ class FakeOperator implements IOperatorIdentity
     public readonly Dead = new Set<string>()
     public readonly Throwing = new Set<string>()
     public ValidateCalls = 0
+    public Role: OperatorRole = OperatorRole.Full
+    public PrincipalId = 'p1'
     public HoldCall = -1
     public Release: (() => void) | undefined
 
@@ -65,7 +67,7 @@ class FakeOperator implements IOperatorIdentity
             throw new Error('validator down')
         }
         const known = token === FakeOperator.Token || this.Extra.has(token)
-        return known && !this.Dead.has(token) ? { email: FakeOperator.Email, principalId: 'p1', role: OperatorRole.Full } : null
+        return known && !this.Dead.has(token) ? { email: FakeOperator.Email, principalId: this.PrincipalId, role: this.Role } : null
     }
 
     public async CreateOperator(_email: string, _password: string, _role: OperatorRole): Promise<void>
@@ -659,8 +661,20 @@ describe('ControlPlaneHost', () =>
     {
         const ok = await Harness.Anon(host, 'GET', '/api/session', undefined, { cookie: Harness.AuthCookie })
         assert.equal(ok.status, 200)
-        assert.deepEqual(JSON.parse(ok.body), { email: FakeOperator.Email })
+        assert.deepEqual(JSON.parse(ok.body), { email: FakeOperator.Email, principalId: 'p1', role: 'full' })
         assert.equal((await Harness.Anon(host, 'GET', '/api/session')).status, 401)
+    })
+
+    it('reports a read-only operator role and leaks nothing else', async () =>
+    {
+        operator.Role = OperatorRole.ReadOnly
+        operator.PrincipalId = 'p2'
+        const ok = await Harness.Anon(host, 'GET', '/api/session', undefined, { cookie: Harness.AuthCookie })
+        assert.equal(ok.status, 200)
+        const body = JSON.parse(ok.body)
+        assert.deepEqual(body, { email: FakeOperator.Email, principalId: 'p2', role: 'readonly' })
+        assert.ok(!('token' in body))
+        assert.ok(!('password' in body))
     })
 
     it('logs out: revokes and clears the cookie', async () =>

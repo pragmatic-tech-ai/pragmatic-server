@@ -169,7 +169,9 @@ export class ControlPlaneHost
     private static readonly MinOperatorPasswordLength = 12
     private static readonly EmailAt = '@'
     private static readonly OperatorFieldsMessage = 'a valid email, a password of at least ' + ControlPlaneHost.MinOperatorPasswordLength + ' characters and a role (full|readonly) are required'
-    private static readonly OperatorRoles: ReadonlyMap<string, OperatorRole> = new Map([['full', OperatorRole.Full], ['readonly', OperatorRole.ReadOnly]])
+    private static readonly RoleFullWire = 'full'
+    private static readonly RoleReadOnlyWire = 'readonly'
+    private static readonly OperatorRoles: ReadonlyMap<string, OperatorRole> = new Map([[ControlPlaneHost.RoleFullWire, OperatorRole.Full], [ControlPlaneHost.RoleReadOnlyWire, OperatorRole.ReadOnly]])
     private static readonly UnsupportedMediaMessage = 'Content-Type must be application/json'
     private static readonly BadNameMessage = 'Invalid environment name in path'
     private static readonly NotListeningMessage = 'ControlPlaneHost is not listening'
@@ -217,6 +219,11 @@ export class ControlPlaneHost
     private static readonly ClusterInvalidMessage = 'cluster must be { backend, mode } with valid values; backend one of: '
     private static readonly RegistryInvalidMessage = 'registry must be { mode, endpoint?, credentialRef? } with a valid mode; mode one of: '
     private static readonly LoginPath = '/api/login'
+    private static RoleWire(role: OperatorRole): string
+    {
+        return role === OperatorRole.Full ? ControlPlaneHost.RoleFullWire : ControlPlaneHost.RoleReadOnlyWire
+    }
+
     private static readonly SessionPath = '/api/session'
     private static readonly EventsTicketPath = '/api/events-ticket'
     private static readonly ProtocolHeader = 'sec-websocket-protocol'
@@ -614,7 +621,7 @@ export class ControlPlaneHost
             }
             else
             {
-                PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { email: who.email })
+                PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { email: who.email, principalId: who.principalId, role: ControlPlaneHost.RoleWire(who.role) })
             }
             return true
         }
