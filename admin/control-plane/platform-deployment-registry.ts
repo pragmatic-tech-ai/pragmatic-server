@@ -122,7 +122,7 @@ export class PlatformDeploymentRegistry
 
     public async SetChannels(tenantId: string, channels: Channel[]): Promise<ReleasePolicyRecord>
     {
-        return this.SavePolicy(tenantId, { ...this.PolicyBase(tenantId), channels })
+        return this.SavePolicy(tenantId, { ...this.PolicyBase(tenantId), channels: [...channels] })
     }
 
     public async SetMinVersion(tenantId: string, version: string): Promise<ReleasePolicyRecord>

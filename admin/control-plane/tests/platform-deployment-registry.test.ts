@@ -8,7 +8,7 @@ import { ManifestRegistry } from '../manifest-record.js'
 import { GatingRegistry } from '../gating-record.js'
 import { SelectionRegistry } from '../selection-record.js'
 import { RolloutRegistrationRegistry } from '../rollout-registration-record.js'
-import { AgentUnauthorizedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, UnknownHiveError, UnknownManifestError } from '../rollout-errors.js'
+import { AgentUnauthorizedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, PolicyStoreUnavailableError, UnknownHiveError, UnknownManifestError } from '../rollout-errors.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
 import type { HiveRecord } from '../platform-records.js'
 import { UnsupportedBackendError } from '../hive-orchestrator.js'
@@ -480,6 +480,19 @@ class PolicyFx
         }
     }
 }
+
+test('without a policy store AllPolicies is empty and every mutation rejects', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        assert.deepEqual(reg.AllPolicies(), [])
+        await assert.rejects(reg.SetChannels(PolicyFx.Tenant, [Channel.Stable]), PolicyStoreUnavailableError)
+        await assert.rejects(reg.SetMinVersion(PolicyFx.Tenant, PolicyFx.Floor), PolicyStoreUnavailableError)
+        await assert.rejects(reg.ClearMinVersion(PolicyFx.Tenant), PolicyStoreUnavailableError)
+        await assert.rejects(reg.SetHold(PolicyFx.Tenant, PolicyFx.Reason, PolicyFx.Actor), PolicyStoreUnavailableError)
+        await assert.rejects(reg.ClearHold(PolicyFx.Tenant), PolicyStoreUnavailableError)
+    })
+})
 
 test('SetChannels is reflected by AllPolicies', async () =>
 {
