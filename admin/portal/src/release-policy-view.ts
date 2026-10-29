@@ -196,7 +196,8 @@ export class ReleasePolicyView extends StackPanel implements IPortalView
             rows: model.RolloutRows,
             density: TableDensity.Dense,
             searchText: r => r.hiveName + ReleasePolicyView.SearchSeparator + r.ownerLabel
-                + ReleasePolicyView.SearchSeparator + r.envName + ReleasePolicyView.SearchSeparator + r.statusLabel,
+                + ReleasePolicyView.SearchSeparator + r.envName + ReleasePolicyView.SearchSeparator + r.targetLabel
+                + ReleasePolicyView.SearchSeparator + r.runningLabel + ReleasePolicyView.SearchSeparator + r.statusLabel,
             emptyText: ReleasePolicyView.RolloutEmptyText,
         }))
         root.AddChild(new Section({ title: ReleasePolicyView.GatedTitle, body: this.gatedSlot }))
