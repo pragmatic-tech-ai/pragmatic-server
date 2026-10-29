@@ -1,3 +1,4 @@
+import { Orientation, StackPanel, TextBlock, TextBox } from '@pragmatic-tech-ai/mural/basic'
 import type { Visual } from '@pragmatic-tech-ai/mural/runtime'
 import type { ControlPlaneClient } from './api-client.js'
 import { ReleaseDetailView } from './release-detail-view.js'
@@ -6,20 +7,33 @@ import { ReleasesViewModel } from './releases-view-model.js'
 import type { ReleaseListRow } from './releases-view-model.js'
 import { SectionContainerView, SectionState } from './section-container-view.js'
 import type { SectionLabels } from './section-container-view.js'
-import { PillKind, PillKinds } from './kit/index.js'
+import { CreateManifestViewModel } from './create-manifest-view-model.js'
+import { OperatorContext } from './operator-context.js'
+import { Act, ActVariant, KeyActivatedButton, PageHeader, PillKind, PillKinds, Section } from './kit/index.js'
 import type { PillEntry, TableColumn } from './kit/index.js'
 
 export enum ReleasesMode
 {
     List,
     Detail,
+    Publish,
 }
 
-// Registry section: a self-routing container (list / detail). Read-only.
+// Registry section: a self-routing container (list / detail). Full operators can publish a new version.
 export class ReleasesView extends SectionContainerView<ReleaseListRow>
 {
     private static readonly ListBreadcrumb: readonly string[] = ['Releases', 'Registry & Releases']
     private static readonly ListTitle = 'Registry & Releases'
+    private static readonly PublishBreadcrumb: readonly string[] = ['Registry & Releases', 'Publish version']
+    private static readonly PublishTitle = 'Publish version'
+    private static readonly PublishActionLabel = 'Publish version'
+    private static readonly SubmitLabel = 'Publish'
+    private static readonly CancelLabel = 'Cancel'
+    private static readonly VersionPlaceholder = 'Version'
+    private static readonly ImagePlaceholder = 'Image'
+    private static readonly NotesPlaceholder = 'Notes (optional)'
+    private static readonly FormTitle = 'Version details'
+    private static readonly BlankText = ''
     private static readonly EmptyTitle = 'No versions published yet.'
     private static readonly ErrorTitle = 'Could not load the releases.'
     private static readonly TableEmptyText = 'No versions match.'
@@ -38,15 +52,111 @@ export class ReleasesView extends SectionContainerView<ReleaseListRow>
     private static readonly RunningHeader = 'Running'
 
     private model: ReleasesViewModel | undefined = undefined
+    private publishAction: Act | undefined
+    private submitAction: Act | undefined
+    private errorText: TextBlock | undefined
+    private readonly createModel: CreateManifestViewModel
 
-    public constructor(private readonly client: ControlPlaneClient)
+    public constructor(private readonly client: ControlPlaneClient, private readonly operator: OperatorContext)
     {
         super()
+        this.createModel = new CreateManifestViewModel(client)
     }
 
     public get Mode(): ReleasesMode
     {
-        return this.State === SectionState.Detail ? ReleasesMode.Detail : ReleasesMode.List
+        return this.State === SectionState.Custom
+            ? ReleasesMode.Publish
+            : this.State === SectionState.Detail ? ReleasesMode.Detail : ReleasesMode.List
+    }
+
+    // Test seam: the list's publish action.
+    public get PublishAction(): Act | undefined
+    {
+        return this.publishAction
+    }
+
+    // Test seam: the publish form's submit action.
+    public get SubmitAction(): Act | undefined
+    {
+        return this.submitAction
+    }
+
+    public ShowPublish(): void
+    {
+        this.EnterCustom()
+        this.SwapScreen(this.BuildPublish())
+    }
+
+    // Called on every render and an Act holds one parent, so build a fresh Act each time.
+    protected ListPrimaryAction(): Act | undefined
+    {
+        this.publishAction = new Act(this.operator.MutatingAct(ReleasesView.PublishActionLabel, () => this.ShowPublish()))
+        return this.publishAction
+    }
+
+    private BuildPublish(): Visual
+    {
+        const root = new StackPanel()
+        root.Orientation = Orientation.Vertical
+        root.AddChild(new PageHeader({ breadcrumb: ReleasesView.PublishBreadcrumb, title: ReleasesView.PublishTitle }))
+        const versionBox = ReleasesView.Box(ReleasesView.VersionPlaceholder)
+        const imageBox = ReleasesView.Box(ReleasesView.ImagePlaceholder)
+        const notesBox = ReleasesView.Box(ReleasesView.NotesPlaceholder)
+        const errorText = new TextBlock()
+        this.errorText = errorText
+        const submit = new Act(this.operator.MutatingAct(
+            ReleasesView.SubmitLabel,
+            () => void this.Submit(versionBox.Text, imageBox.Text, notesBox.Text),
+            ActVariant.Primary,
+        ))
+        this.submitAction = submit
+        const cancel = new KeyActivatedButton(() => void this.ShowList())
+        const cancelText = new TextBlock()
+        cancelText.Text = ReleasesView.CancelLabel
+        cancel.Content = cancelText
+        const body = new StackPanel()
+        body.Orientation = Orientation.Vertical
+        body.AddChild(versionBox)
+        body.AddChild(imageBox)
+        body.AddChild(notesBox)
+        body.AddChild(errorText)
+        body.AddChild(submit)
+        body.AddChild(cancel)
+        root.AddChild(new Section({ title: ReleasesView.FormTitle, body }))
+        return root
+    }
+
+    private static Box(placeholder: string): TextBox
+    {
+        const box = new TextBox()
+        box.Placeholder = placeholder
+        return box
+    }
+
+    private async Submit(version: string, image: string, notes: string): Promise<void>
+    {
+        if (this.errorText !== undefined)
+        {
+            this.errorText.Text = ReleasesView.BlankText
+        }
+        if (!this.createModel.CanSubmit(version, image))
+        {
+            return
+        }
+        try
+        {
+            await this.createModel.Submit(version, image, notes)
+        }
+        catch (e)
+        {
+            if (this.errorText !== undefined)
+            {
+                this.errorText.Text = e instanceof Error ? e.message : String(e)
+            }
+            return
+        }
+        await this.ShowList()
     }
 
     protected Labels(): SectionLabels

@@ -6,6 +6,8 @@ import type { ControlPlaneClient } from '../src/api-client.js'
 import { ReleasesMode, ReleasesView } from '../src/releases-view.js'
 import type { ReleaseListRow } from '../src/releases-view-model.js'
 import { ReleaseDetailView } from '../src/release-detail-view.js'
+import { OperatorContext } from '../src/operator-context.js'
+import { TextBox } from '@pragmatic-tech-ai/mural/basic'
 import { ErrorStatePanel, ScreenState } from '../src/kit/index.js'
 import type { FleetHiveDto, ManifestDto } from '../src/portal-types.js'
 
@@ -35,6 +37,14 @@ class FakeClient
     public ListFleet(): Promise<FleetHiveDto[]>
     {
         return Promise.resolve([])
+    }
+
+    public published: Array<[string, string, string | undefined]> = []
+
+    public PublishManifest(version: string, image: string, notes?: string): Promise<ManifestDto>
+    {
+        this.published.push([version, image, notes])
+        return Promise.resolve({ id: version, image, publishedAt: '2026-01-02T03:04:05Z' })
     }
 }
 
@@ -78,7 +88,7 @@ class Fixtures
 
     public static ScriptedView(client: ScriptedClient): ReleasesView
     {
-        return new ReleasesView(client as unknown as ControlPlaneClient)
+        return new ReleasesView(client as unknown as ControlPlaneClient, OperatorContext.FromWire('full'))
     }
 
     public static Walk(root: unknown): unknown[]
@@ -99,7 +109,7 @@ class Fixtures
 
     public static View(client: FakeClient): ReleasesView
     {
-        return new ReleasesView(client as unknown as ControlPlaneClient)
+        return new ReleasesView(client as unknown as ControlPlaneClient, OperatorContext.FromWire('full'))
     }
 
     public static async Open(view: ReleasesView): Promise<void>
@@ -259,5 +269,49 @@ describe('ReleasesView', () =>
         assert.equal(view.Mode, ReleasesMode.Detail)
         assert.ok(Fixtures.Walk(view).some(n => n instanceof ReleaseDetailView))
         assert.equal(Fixtures.Walk(view).filter(n => n instanceof ReleaseDetailView).length, 1)
+    })
+
+    it('exposes a publish action', async () =>
+    {
+        const view = Fixtures.View(new FakeClient([Fixtures.Manifest('1.0')]))
+        await view.Refresh()
+        assert.ok(view.PublishAction)
+        assert.equal(view.PublishAction?.Enabled, true)
+    })
+
+    it('disables the publish action for an observer', async () =>
+    {
+        const view = new ReleasesView(new FakeClient([Fixtures.Manifest('1.0')]) as unknown as ControlPlaneClient, OperatorContext.FromWire('read'))
+        await view.Refresh()
+        assert.equal(view.PublishAction?.Enabled, false)
+        assert.ok((view.PublishAction?.DisabledHint ?? '').length > 0)
+    })
+
+    it('publishes a version and returns to the list', async () =>
+    {
+        const client = new FakeClient([Fixtures.Manifest('1.0')])
+        const view = Fixtures.View(client)
+        await view.Refresh()
+        view.ShowPublish()
+        const boxes = Fixtures.Walk(view).filter(n => n instanceof TextBox) as TextBox[]
+        assert.equal(boxes.length, 3)
+        boxes[0].Text = '2.0'
+        boxes[1].Text = 'registry/app:2.0'
+        const before = client.manifestCalls
+        view.SubmitAction?.Press()
+        await new Promise(r => setTimeout(r, 20))
+        assert.deepEqual(client.published, [['2.0', 'registry/app:2.0', undefined]])
+        assert.ok(client.manifestCalls > before)
+        assert.equal(view.Mode, ReleasesMode.List)
+    })
+
+    it('open, cancel and re-open the publish form does not throw', async () =>
+    {
+        const view = Fixtures.View(new FakeClient([Fixtures.Manifest('1.0')]))
+        await view.Refresh()
+        view.ShowPublish()
+        await view.ShowList()
+        view.ShowPublish()
+        assert.equal(view.Mode, ReleasesMode.Publish)
     })
 })
