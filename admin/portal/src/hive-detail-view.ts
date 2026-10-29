@@ -6,7 +6,7 @@ import type { ObservedEnvRow } from './observed-env-table.js'
 import {
     Banner, DataTable, TableDensity, KeyActivatedButton, KeyValueGrid, ObservedPanel, PageHeader, ScreenHost, Section,
 } from './kit/index.js'
-import type { ScreenHostInputs, TableColumn } from './kit/index.js'
+import type { ScreenHostInputs, KeyValueItem, TableColumn } from './kit/index.js'
 
 // Hive detail: optional connection banner, the home channel summary, and the environments observed from
 // the last check-in (read-only, inside an ObservedPanel). The view-model arrives already loaded.
@@ -19,6 +19,10 @@ export class HiveDetailView extends StackPanel
     private static readonly HistoryTitle = 'Observed history'
     private static readonly HistoryEmptyText = 'No observations recorded yet.'
     private static readonly LedgerTitle = 'Version history'
+    private static readonly PolicyTitle = 'Release policy'
+    private static readonly PolicyChannelsKey = 'Channels'
+    private static readonly PolicyMinVersionKey = 'Minimum version'
+    private static readonly PolicyHoldKey = 'Hold'
     private static readonly LedgerEmptyText = 'No version changes recorded yet.'
     private static readonly ActionKey = 'action'
     private static readonly VersionKey = 'version'
@@ -102,6 +106,7 @@ export class HiveDetailView extends StackPanel
             title: HiveDetailView.HomeChannelTitle,
             body: new KeyValueGrid({ items: [...this.vm.HomeChannel] }),
         }))
+        root.AddChild(new Section({ title: HiveDetailView.PolicyTitle, body: new KeyValueGrid({ items: this.BuildPolicyItems() }) }))
         this.tableSlot = new StackPanel()
         this.tableSlot.Orientation = Orientation.Vertical
         root.AddChild(new ObservedPanel({ title: HiveDetailView.ObservedTitle, body: this.tableSlot }))
@@ -115,6 +120,16 @@ export class HiveDetailView extends StackPanel
         this.ledgerSlot.AddChild(this.BuildLedgerTable())
         root.AddChild(new Section({ title: HiveDetailView.LedgerTitle, body: this.ledgerSlot }))
         return root
+    }
+
+    private BuildPolicyItems(): KeyValueItem[]
+    {
+        const policy = this.vm.HivePolicy
+        return [
+            { key: HiveDetailView.PolicyChannelsKey, value: policy.channelsLabel },
+            { key: HiveDetailView.PolicyMinVersionKey, value: policy.minVersionLabel },
+            { key: HiveDetailView.PolicyHoldKey, value: policy.heldLabel },
+        ]
     }
 
     private BuildHistoryTable(): DataTable<ObservationHistoryRow>

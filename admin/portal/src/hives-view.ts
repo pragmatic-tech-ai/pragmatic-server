@@ -90,11 +90,13 @@ export class HivesView extends SectionContainerView<HiveListRow>
         {
             return undefined
         }
-        const [observations, ledger] = await Promise.all([
+        const [observations, ledger, policies] = await Promise.all([
             this.client.ListHiveObservations(hive.id),
             this.client.ListHiveLedger(hive.id),
+            this.client.ListPolicies(),
         ])
-        const vm = new HiveDetailViewModel(hive, undefined, undefined, observations, ledger)
+        const policy = policies.find(p => p.hiveId === hive.id)
+        const vm = new HiveDetailViewModel(hive, undefined, undefined, observations, ledger, policy)
         return new HiveDetailView(vm, () => void this.ShowList())
     }
 

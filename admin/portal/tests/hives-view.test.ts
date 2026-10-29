@@ -6,7 +6,7 @@ import type { ControlPlaneClient } from '../src/api-client.js'
 import { HivesMode, HivesView } from '../src/hives-view.js'
 import { HiveDetailView } from '../src/hive-detail-view.js'
 import { ScreenState } from '../src/kit/index.js'
-import type { FleetHiveDto, LedgerDto, ObservationDto } from '../src/portal-types.js'
+import type { FleetHiveDto, LedgerDto, ObservationDto, PolicyDto } from '../src/portal-types.js'
 
 class FakeClient
 {
@@ -35,6 +35,11 @@ class FakeClient
     }
 
     public ListHiveLedger(): Promise<LedgerDto[]>
+    {
+        return Promise.resolve([])
+    }
+
+    public ListPolicies(): Promise<PolicyDto[]>
     {
         return Promise.resolve([])
     }

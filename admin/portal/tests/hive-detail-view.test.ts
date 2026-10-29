@@ -1,5 +1,6 @@
 import { after, before, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { TextBlock } from '@pragmatic-tech-ai/mural/basic'
 import { Application, Key } from '@pragmatic-tech-ai/mural/runtime'
 import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pragmatic'
 import { HiveDetailView } from '../src/hive-detail-view.js'
@@ -45,6 +46,11 @@ class Fixtures
     public static Awaiting(): HiveDetailViewModel
     {
         return new HiveDetailViewModel(Fixtures.Hive(null, []))
+    }
+
+    public static Texts(view: unknown): string[]
+    {
+        return Fixtures.Collect(view).filter(n => n instanceof TextBlock).map(n => (n as TextBlock).Text)
     }
 
     public static Collect(node: unknown, out: unknown[] = []): unknown[]
@@ -131,6 +137,29 @@ describe('HiveDetailView', () =>
         ]
         const vm = new HiveDetailViewModel(Fixtures.Hive(null, []), undefined, undefined, [], ledger)
         assert.equal(new HiveDetailView(vm, () => undefined).LedgerTable?.Rows.length, 2)
+    })
+
+    it('renders the release-policy section with the hive policy labels', () =>
+    {
+        const policy = { tenantId: 't1', hiveId: 'h1', channels: ['stable' as const], minVersion: '1.2.0', hold: { reason: 'r', actor: 'a', at: new Date().toISOString() } }
+        const vm = new HiveDetailViewModel(Fixtures.Hive(null, []), undefined, undefined, [], [], policy)
+        const hp = vm.HivePolicy
+        const texts = Fixtures.Texts(new HiveDetailView(vm, () => undefined))
+        for (const expected of ['Release policy', 'Channels', 'Minimum version', 'Hold', hp.channelsLabel, '1.2.0', hp.heldLabel])
+        {
+            assert.ok(texts.includes(expected), expected)
+        }
+    })
+
+    it('shows default release-policy labels when the hive has no policy', () =>
+    {
+        const vm = Fixtures.Connected()
+        const hp = vm.HivePolicy
+        const texts = Fixtures.Texts(new HiveDetailView(vm, () => undefined))
+        for (const expected of ['Release policy', hp.channelsLabel, hp.minVersionLabel, hp.heldLabel])
+        {
+            assert.ok(texts.includes(expected), expected)
+        }
     })
 
     it('shows an empty version-history table when there is no ledger', () =>
