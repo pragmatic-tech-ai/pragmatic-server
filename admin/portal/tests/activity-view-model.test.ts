@@ -44,6 +44,17 @@ describe('ActivityViewModel', () =>
         assert.deepEqual(rows.map(r => r.tone), [PillTone.Warning, PillTone.Warning, PillTone.Warning])
     })
 
+    it('labels the body-keyed operator mutation routes (no id in the path)', () =>
+    {
+        const rows = new ActivityViewModel([
+            Fx.Entry('POST', '/api/operators/role', 200),
+            Fx.Entry('POST', '/api/operators/password-reset', 200),
+            Fx.Entry('POST', '/api/operators/disabled', 200),
+            Fx.Entry('POST', '/api/operators/revoke-sessions', 200),
+        ]).Rows
+        assert.deepEqual(rows.map(r => r.actionLabel), ['Changed an operator role', 'Reset a password', 'Enabled or disabled an operator', 'Revoked sessions'])
+    })
+
     it('falls back to the raw method and path when unmatched', () =>
     {
         assert.equal(new ActivityViewModel([Fx.Entry('PATCH', '/api/x', 200)]).Rows[0].actionLabel, 'PATCH /api/x')

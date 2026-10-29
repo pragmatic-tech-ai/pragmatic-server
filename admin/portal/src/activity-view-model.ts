@@ -42,10 +42,10 @@ export class ActivityViewModel extends Observable
         { method: 'POST', test: /^\/api\/tenants\/[^/]+\/policy\/hold\/?$/, label: 'Held a tenant' },
         { method: 'DELETE', test: /^\/api\/tenants\/[^/]+\/policy\/hold\/?$/, label: 'Released a tenant' },
         { method: 'POST', test: /^\/api\/operators\/?$/, label: 'Invited an operator' },
-        { method: 'POST', test: /^\/api\/operators\/[^/]+\/role\/?$/, label: 'Changed an operator role' },
-        { method: 'POST', test: /^\/api\/operators\/[^/]+\/password-reset\/?$/, label: 'Reset a password' },
-        { method: 'POST', test: /^\/api\/operators\/[^/]+\/disabled\/?$/, label: 'Enabled or disabled an operator' },
-        { method: 'POST', test: /^\/api\/operators\/[^/]+\/revoke-sessions\/?$/, label: 'Revoked sessions' },
+        { method: 'POST', test: /^\/api\/operators\/role\/?$/, label: 'Changed an operator role' },
+        { method: 'POST', test: /^\/api\/operators\/password-reset\/?$/, label: 'Reset a password' },
+        { method: 'POST', test: /^\/api\/operators\/disabled\/?$/, label: 'Enabled or disabled an operator' },
+        { method: 'POST', test: /^\/api\/operators\/revoke-sessions\/?$/, label: 'Revoked sessions' },
         { method: 'POST', test: /^\/api\/provision\/?$/, label: 'Provisioned' },
         { method: 'POST', test: /^\/api\/clients\/?$/, label: 'Created a client' },
         { method: 'DELETE', test: /^\/api\/clients\/[^/]+\/?$/, label: 'Deleted a client' },
@@ -96,7 +96,7 @@ export class ActivityViewModel extends Observable
                 return rule.label
             }
         }
-        return method + ActivityViewModel.FallbackSeparator + path
+        return method + ActivityViewModel.FallbackSeparator + bare
     }
 
     private static ToneFor(status: number): PillTone
