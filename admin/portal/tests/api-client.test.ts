@@ -120,3 +120,73 @@ describe('ControlPlaneClient provisioning', () =>
         assert.deepEqual(dto, result)
     })
 })
+
+describe('ControlPlaneClient release policy', () =>
+{
+    afterEach(() => { FetchStub.Restore() })
+
+    it('ListPolicies GETs /api/policies', async () =>
+    {
+        FetchStub.Install([{ tenantId: 't1' }])
+        const out = await new ControlPlaneClient().ListPolicies()
+        assert.equal(FetchStub.Calls[0]!.route, '/api/policies')
+        assert.equal(FetchStub.Calls[0]!.init?.method, undefined)
+        assert.deepEqual(out, [{ tenantId: 't1' }])
+    })
+
+    it('SetTenantChannels PUTs channels', async () =>
+    {
+        FetchStub.Install({ tenantId: 't1', channels: ['stable', 'early'] })
+        const out = await new ControlPlaneClient().SetTenantChannels('t1', ['stable', 'early'])
+        const call = FetchStub.Calls[0]!
+        assert.equal(call.route, '/api/tenants/t1/policy/channels')
+        assert.equal(call.init?.method, 'PUT')
+        assert.deepEqual(JSON.parse(call.init?.body as string), { channels: ['stable', 'early'] })
+        assert.deepEqual(out, { tenantId: 't1', channels: ['stable', 'early'] })
+    })
+
+    it('SetTenantMinVersion PUTs version', async () =>
+    {
+        FetchStub.Install({ tenantId: 't1', minVersion: '1.2.0' })
+        const out = await new ControlPlaneClient().SetTenantMinVersion('t1', '1.2.0')
+        const call = FetchStub.Calls[0]!
+        assert.equal(call.route, '/api/tenants/t1/policy/min-version')
+        assert.equal(call.init?.method, 'PUT')
+        assert.deepEqual(JSON.parse(call.init?.body as string), { version: '1.2.0' })
+        assert.deepEqual(out, { tenantId: 't1', minVersion: '1.2.0' })
+    })
+
+    it('ClearTenantMinVersion DELETEs without body', async () =>
+    {
+        FetchStub.Install({ tenantId: 't1' })
+        const out = await new ControlPlaneClient().ClearTenantMinVersion('t1')
+        const call = FetchStub.Calls[0]!
+        assert.equal(call.route, '/api/tenants/t1/policy/min-version')
+        assert.equal(call.init?.method, 'DELETE')
+        assert.equal(call.init?.body, undefined)
+        assert.deepEqual(out, { tenantId: 't1' })
+    })
+
+    it('SetTenantHold POSTs reason', async () =>
+    {
+        const hold = { reason: 'incident', actor: 'a', at: 'now' }
+        FetchStub.Install({ tenantId: 't1', hold })
+        const out = await new ControlPlaneClient().SetTenantHold('t1', 'incident')
+        const call = FetchStub.Calls[0]!
+        assert.equal(call.route, '/api/tenants/t1/policy/hold')
+        assert.equal(call.init?.method, 'POST')
+        assert.deepEqual(JSON.parse(call.init?.body as string), { reason: 'incident' })
+        assert.deepEqual(out, { tenantId: 't1', hold })
+    })
+
+    it('ClearTenantHold DELETEs without body', async () =>
+    {
+        FetchStub.Install({ tenantId: 't1' })
+        const out = await new ControlPlaneClient().ClearTenantHold('t1')
+        const call = FetchStub.Calls[0]!
+        assert.equal(call.route, '/api/tenants/t1/policy/hold')
+        assert.equal(call.init?.method, 'DELETE')
+        assert.equal(call.init?.body, undefined)
+        assert.deepEqual(out, { tenantId: 't1' })
+    })
+})

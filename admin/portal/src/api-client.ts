@@ -1,4 +1,4 @@
-import type { ClientDto, EnvironmentDto, HiveDto, FleetHiveDto, ManifestDto, OperatorSummaryDto, GatingDto, SelectionDto, HiveRolloutDto, TenantDto, GraphDto, GraphLoadedDto, OperatorDto, PromotionResultDto, ProvisionInputDto, ProvisionResultDto } from './portal-types.js'
+import type { ClientDto, EnvironmentDto, HiveDto, FleetHiveDto, ManifestDto, OperatorSummaryDto, GatingDto, SelectionDto, HiveRolloutDto, TenantDto, GraphDto, GraphLoadedDto, OperatorDto, PromotionResultDto, ProvisionInputDto, ProvisionResultDto, PolicyDto } from './portal-types.js'
 
 // Thrown for non-2xx control-plane responses; Message carries the server's error text.
 export class ApiError extends Error
@@ -57,6 +57,13 @@ export class ControlPlaneClient
     private static readonly DisabledKey = 'disabled'
     private static readonly MethodPost = 'POST'
     private static readonly MethodDelete = 'DELETE'
+    private static readonly MethodPut = 'PUT'
+    private static readonly PoliciesRoute = '/api/policies'
+    private static readonly PolicySegment = 'policy'
+    private static readonly ChannelsSegment = 'channels'
+    private static readonly MinVersionSegment = 'min-version'
+    private static readonly HoldSegment = 'hold'
+    private static readonly ChannelsKey = 'channels'
     private static readonly ContentTypeHeader = 'content-type'
     private static readonly JsonType = 'application/json'
     private static readonly EmptyBody = '{}'
@@ -235,6 +242,41 @@ export class ControlPlaneClient
     private ManifestWithdrawnRoute(version: string): string
     {
         return this.ItemRoute(ControlPlaneClient.ManifestsRoute, version) + ControlPlaneClient.PathSeparator + ControlPlaneClient.WithdrawnSegment
+    }
+
+    private TenantPolicyRoute(tenantId: string, action: string): string
+    {
+        return this.ItemRoute(ControlPlaneClient.TenantsRoute, tenantId) + ControlPlaneClient.PathSeparator + ControlPlaneClient.PolicySegment + ControlPlaneClient.PathSeparator + action
+    }
+
+    public async ListPolicies(): Promise<PolicyDto[]>
+    {
+        return await this.Send<PolicyDto[]>(ControlPlaneClient.PoliciesRoute, undefined)
+    }
+
+    public async SetTenantChannels(tenantId: string, channels: string[]): Promise<PolicyDto>
+    {
+        return await this.Send<PolicyDto>(this.TenantPolicyRoute(tenantId, ControlPlaneClient.ChannelsSegment), { method: ControlPlaneClient.MethodPut, body: JSON.stringify({ [ControlPlaneClient.ChannelsKey]: channels }) })
+    }
+
+    public async SetTenantMinVersion(tenantId: string, version: string): Promise<PolicyDto>
+    {
+        return await this.Send<PolicyDto>(this.TenantPolicyRoute(tenantId, ControlPlaneClient.MinVersionSegment), { method: ControlPlaneClient.MethodPut, body: JSON.stringify({ [ControlPlaneClient.VersionKey]: version }) })
+    }
+
+    public async ClearTenantMinVersion(tenantId: string): Promise<PolicyDto>
+    {
+        return await this.Send<PolicyDto>(this.TenantPolicyRoute(tenantId, ControlPlaneClient.MinVersionSegment), { method: ControlPlaneClient.MethodDelete })
+    }
+
+    public async SetTenantHold(tenantId: string, reason: string): Promise<PolicyDto>
+    {
+        return await this.Send<PolicyDto>(this.TenantPolicyRoute(tenantId, ControlPlaneClient.HoldSegment), { method: ControlPlaneClient.MethodPost, body: JSON.stringify({ [ControlPlaneClient.ReasonKey]: reason }) })
+    }
+
+    public async ClearTenantHold(tenantId: string): Promise<PolicyDto>
+    {
+        return await this.Send<PolicyDto>(this.TenantPolicyRoute(tenantId, ControlPlaneClient.HoldSegment), { method: ControlPlaneClient.MethodDelete })
     }
 
     private TenantGatingRoute(tenantId: string): string

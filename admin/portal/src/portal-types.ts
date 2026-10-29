@@ -130,3 +130,5 @@ export type ProvisionInputDto =
 export type ProvisionSecretsDto = { ownerEmail: string; ownerPassword: string; agentToken: string }
 
 export type ProvisionResultDto = { client: ClientDto; tenant: TenantDto; hive: HiveDto; secrets: ProvisionSecretsDto }
+
+export type PolicyDto = { tenantId: string; channels?: ('stable' | 'early')[]; minVersion?: string; hold?: { reason: string; actor: string; at: string } }
