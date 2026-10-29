@@ -11,6 +11,7 @@ import { TenantsView } from '../src/tenants-view.js'
 import { HivesView } from '../src/hives-view.js'
 import { ReleasesView } from '../src/releases-view.js'
 import { ReleasePolicyView } from '../src/release-policy-view.js'
+import { SettingsView } from '../src/settings-view.js'
 import { FleetView } from '../src/fleet-view.js'
 import { LoginView } from '../src/login-view.js'
 import { PaSection } from '../src/nav-model.js'
@@ -133,6 +134,10 @@ describe('PA shell app', () =>
             else if (section === PaSection.ReleasePolicy)
             {
                 assert.ok(app.CurrentView instanceof ReleasePolicyView)
+            }
+            else if (section === PaSection.Settings)
+            {
+                assert.ok(app.CurrentView instanceof SettingsView)
             }
             else
             {

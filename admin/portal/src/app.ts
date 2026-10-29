@@ -18,6 +18,7 @@ import type { IPortalNavigator, IPortalView, OperatorDto } from './portal-types.
 import { ComingSoonView } from './coming-soon-view.js'
 import { FleetView } from './fleet-view.js'
 import { ClientsView } from './clients-view.js'
+import { SettingsView } from './settings-view.js'
 import { TenantsView } from './tenants-view.js'
 import { HivesView } from './hives-view.js'
 import { ReleasesView } from './releases-view.js'
@@ -48,6 +49,7 @@ export class App extends StackPanel implements IPortalNavigator
     private topBar: TopBar | undefined
     private shellShown = false
     private operator: OperatorContext | undefined
+    private operatorEmail = ''
     private active: PaSection | undefined
     private current: (Visual & IPortalView) | undefined
 
@@ -157,6 +159,15 @@ export class App extends StackPanel implements IPortalNavigator
             this.Mount(new ReleasePolicyView(this.client))
             return
         }
+        if (section === PaSection.Settings)
+        {
+            const operator = this.operator
+            if (operator !== undefined)
+            {
+                this.Mount(new SettingsView(this.client, operator, this.operatorEmail))
+                return
+            }
+        }
         const label = NavModel.LabelFor(section)
         const heading = App.HeadingFor(section)
         const breadcrumb = heading === undefined ? [label] : [heading, label]
@@ -205,6 +216,7 @@ export class App extends StackPanel implements IPortalNavigator
     {
         this.UnmountShell()
         this.operator = operator
+        this.operatorEmail = operatorEmail
         this.navRail = new NavRail(s => this.ShowSection(s), this.active)
         this.topBar = new TopBar({
             context: App.ContextText,
