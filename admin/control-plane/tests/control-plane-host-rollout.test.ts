@@ -446,6 +446,49 @@ describe('ControlPlaneHost rollout routes', () =>
         assert.equal((await Harness.Send(host, 'GET', '/api/policies')).status, 200)
     })
 
+    it('sets and clears a per-hive channels, floor and hold through the hive policy routes', async () =>
+    {
+        const base = '/api/hives/local1/policy/'
+        type Row = { tenantId: string; hiveId?: string; channels?: string[]; minVersion?: string; hold?: { reason: string; actor: string } }
+        const row = async (): Promise<Row | undefined> =>
+            (JSON.parse((await Harness.Send(host, 'GET', '/api/policies')).body) as Row[]).find(p => p.hiveId === 'local1')
+        assert.equal((await Harness.Send(host, 'PUT', base + 'channels', { channels: ['early'] })).status, 200)
+        assert.deepEqual((await row())!.channels, ['early'])
+        assert.equal((await row())!.tenantId, 't1')
+        assert.equal((await Harness.Send(host, 'PUT', base + 'min-version', { version: '1.2.0' })).status, 200)
+        assert.equal((await row())!.minVersion, '1.2.0')
+        const hold = await Harness.Send(host, 'POST', base + 'hold', { reason: ' incident ' })
+        assert.equal(hold.status, 200)
+        assert.equal((await row())!.hold!.reason, 'incident')
+        assert.equal((await row())!.hold!.actor, 'op@example.com')
+        assert.equal((await Harness.Send(host, 'DELETE', base + 'min-version')).status, 200)
+        assert.equal((await row())!.minVersion, undefined)
+        assert.equal((await Harness.Send(host, 'DELETE', base + 'hold')).status, 200)
+        assert.equal((await row())?.hold, undefined)
+    })
+
+    it('answers a hive policy route for an unknown hive with 404', async () =>
+    {
+        assert.equal((await Harness.Send(host, 'PUT', '/api/hives/nope/policy/channels', { channels: ['stable'] })).status, 404)
+        assert.equal((await Harness.Send(host, 'POST', '/api/hives/nope/policy/hold', { reason: 'x' })).status, 404)
+    })
+
+    it('rejects invalid hive channels and a blank hive hold reason with 400', async () =>
+    {
+        assert.equal((await Harness.Send(host, 'PUT', '/api/hives/local1/policy/channels', { channels: ['bogus'] })).status, 400)
+        assert.equal((await Harness.Send(host, 'POST', '/api/hives/local1/policy/hold', { reason: '  ' })).status, 400)
+    })
+
+    it('answers every mutating hive policy route with 403 for a ReadOnly operator', async () =>
+    {
+        operator.Role = OperatorRole.ReadOnly
+        assert.equal((await Harness.Send(host, 'PUT', '/api/hives/local1/policy/channels', { channels: ['stable'] })).status, 403)
+        assert.equal((await Harness.Send(host, 'PUT', '/api/hives/local1/policy/min-version', { version: '1.0.0' })).status, 403)
+        assert.equal((await Harness.Send(host, 'DELETE', '/api/hives/local1/policy/min-version')).status, 403)
+        assert.equal((await Harness.Send(host, 'POST', '/api/hives/local1/policy/hold', { reason: 'x' })).status, 403)
+        assert.equal((await Harness.Send(host, 'DELETE', '/api/hives/local1/policy/hold')).status, 403)
+    })
+
     it('omits a policy-blocked gated version from the tenant manifest listing', async () =>
     {
         await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })

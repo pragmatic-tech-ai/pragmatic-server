@@ -249,6 +249,9 @@ export class ControlPlaneHost
     private static readonly TenantPolicyPathPattern = new RegExp(
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.TenantsSegment + '/([^/]+)/' + ControlPlaneHost.PolicySegment + '/(' +
         [ControlPlaneHost.ChannelsSegment, ControlPlaneHost.MinVersionSegment, ControlPlaneHost.HoldSegment].join('|') + ')$')
+    private static readonly HivePolicyPathPattern = new RegExp(
+        '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/([^/]+)/' + ControlPlaneHost.PolicySegment + '/(' +
+        [ControlPlaneHost.ChannelsSegment, ControlPlaneHost.MinVersionSegment, ControlPlaneHost.HoldSegment].join('|') + ')$')
     private static readonly VersionRequiredMessage = 'version (non-empty string) is required'
     private static readonly ImageRequiredMessage = 'image (non-empty string) is required'
     private static readonly NotesInvalidMessage = 'notes must be a string'
@@ -870,6 +873,11 @@ export class ControlPlaneHost
         {
             return await this.RouteTenantPolicy(req, res, method, tpm)
         }
+        const hpm = ControlPlaneHost.HivePolicyPathPattern.exec(path)
+        if (hpm !== null)
+        {
+            return await this.RouteHivePolicy(req, res, method, hpm)
+        }
         if (path === ControlPlaneHost.PoliciesAllPath && method === PlaneHttp.MethodGet)
         {
             PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, [...this.deployments.AllPolicies()])
@@ -1210,6 +1218,77 @@ export class ControlPlaneHost
         if (action === ControlPlaneHost.HoldSegment && method === PlaneHttp.MethodDelete)
         {
             PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, await this.deployments.ClearHold(id))
+            return true
+        }
+        return false
+    }
+
+    /** Serves /api/hives/ID/policy/(channels PUT | min-version PUT,DELETE | hold POST,DELETE); the owning tenant is resolved from the directory. */
+    private async RouteHivePolicy(req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
+    {
+        const id = ControlPlaneHost.Decode(m[1] as string)
+        if (id === undefined)
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+            return true
+        }
+        const hive = this.directory.GetHive(id)
+        if (hive === undefined)
+        {
+            PlaneHttp.WriteNotFound(res)
+            return true
+        }
+        const action = m[2]
+        if (action === ControlPlaneHost.ChannelsSegment && method === PlaneHttp.MethodPut)
+        {
+            const body = await this.ReadJsonObject(req, res)
+            if (body === undefined)
+            {
+                return true
+            }
+            if (!Array.isArray(body.channels) || !body.channels.every(c => ControlPlaneHost.ChannelValues.includes(c as string)))
+            {
+                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ChannelsInvalidMessage })
+                return true
+            }
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, await this.deployments.SetChannelsForHive(hive.tenantId, id, body.channels as Channel[]))
+            return true
+        }
+        if (action === ControlPlaneHost.MinVersionSegment && method === PlaneHttp.MethodPut)
+        {
+            const v = await this.ReadVersion(req, res)
+            if (v === undefined)
+            {
+                return true
+            }
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, await this.deployments.SetMinVersionForHive(hive.tenantId, id, v))
+            return true
+        }
+        if (action === ControlPlaneHost.MinVersionSegment && method === PlaneHttp.MethodDelete)
+        {
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, await this.deployments.ClearMinVersionForHive(hive.tenantId, id))
+            return true
+        }
+        if (action === ControlPlaneHost.HoldSegment && method === PlaneHttp.MethodPost)
+        {
+            const body = await this.ReadJsonObject(req, res)
+            if (body === undefined)
+            {
+                return true
+            }
+            if (typeof body.reason !== 'string' || body.reason.trim().length === 0)
+            {
+                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ReasonRequiredMessage })
+                return true
+            }
+            const who = await this.Principal(req)
+            const actor = who?.email ?? who?.principalId ?? ''
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, await this.deployments.SetHoldForHive(hive.tenantId, id, body.reason.trim(), actor))
+            return true
+        }
+        if (action === ControlPlaneHost.HoldSegment && method === PlaneHttp.MethodDelete)
+        {
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, await this.deployments.ClearHoldForHive(hive.tenantId, id))
             return true
         }
         return false
