@@ -130,6 +130,11 @@ export class SettingsView extends StackPanel implements IPortalView
 
     public async Refresh(): Promise<void>
     {
+        // An open invite form is left untouched: rebuilding it would discard what the operator is typing.
+        if (this.mode !== SettingsMode.Normal)
+        {
+            return
+        }
         // Only an operator may read the roster; an observer never triggers the fetch.
         if (this.operator.CanMutate)
         {

@@ -367,16 +367,28 @@ describe('ReleasePolicyView', () =>
         assert.equal(view.Mode, GatingMode.Gate)
     })
 
-    it('a second Refresh with a form open rebuilds cleanly', async () =>
+    it('a Refresh with a form open leaves it intact, then fetching resumes in normal mode', async () =>
     {
-        const view = Fixtures.View(Fixtures.Populated())
+        const client = Fixtures.Populated()
+        const view = Fixtures.View(client)
         await view.Refresh()
         Fixtures.ActByLabel(view, 'Gate version').Press()
+        const boxes = Fixtures.FormBoxes(view)
+        boxes[0].Text = 'tenant-x'
+        boxes[1].Text = '9.9.9'
+        const before = client.Calls
         await view.Refresh()
-        await view.Refresh()
-        assert.equal(view.Host.State, ScreenState.Populated)
         assert.equal(view.Mode, GatingMode.Gate)
-        assert.equal(Fixtures.FormBoxes(view).length, 2)
+        assert.equal(client.Calls, before)
+        const after = Fixtures.FormBoxes(view)
+        assert.equal(after.length, 2)
+        assert.strictEqual(after[0], boxes[0])
+        assert.strictEqual(after[1], boxes[1])
+        assert.equal(after[0].Text, 'tenant-x')
+        assert.equal(after[1].Text, '9.9.9')
+        view.EnterMode(GatingMode.Normal)
+        await view.Refresh()
+        assert.ok(client.Calls > before)
     })
 
     it('an empty policy is still actionable for a full operator', async () =>

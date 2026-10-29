@@ -260,20 +260,32 @@ describe('SettingsView', () =>
         assert.equal(view.Mode, SettingsMode.Invite)
     })
 
-    it('rebuilds cleanly on Refresh with the form open and cancel returns to normal', async () =>
+    it('leaves the open invite form intact across an auto-refresh, then resumes fetching', async () =>
     {
-        const view = Fixtures.View(Fixtures.Client(), 'full')
+        const client = Fixtures.Client()
+        const view = Fixtures.View(client, 'full')
         await view.Refresh()
         view.EnterMode(SettingsMode.Invite)
+        const boxes = Fixtures.Boxes(view)
+        boxes[0].Text = 'new@example.com'
+        boxes[1].Text = 'secret'
+        const before = client.Calls
         await view.Refresh()
-        assert.equal(view.Host.State, ScreenState.Populated)
         assert.equal(view.Mode, SettingsMode.Invite)
-        assert.equal(Fixtures.Boxes(view).length, 2)
+        assert.equal(client.Calls, before)
+        const after = Fixtures.Boxes(view)
+        assert.equal(after.length, 2)
+        assert.strictEqual(after[0], boxes[0])
+        assert.strictEqual(after[1], boxes[1])
+        assert.equal(after[0].Text, 'new@example.com')
+        assert.equal(after[1].Text, 'secret')
         const cancel = Fixtures.Walk(view).find(n => n instanceof KeyActivatedButton && !(n instanceof Act)
             && (n.Content as TextBlock | undefined)?.Text === 'Cancel')
         Fixtures.Click(cancel)
         assert.equal(view.Mode, SettingsMode.Normal)
         assert.equal(Fixtures.Boxes(view).length, 0)
+        await view.Refresh()
+        assert.ok(client.Calls > before)
     })
 
     it('maps the Full role option to the full wire role on submit', async () =>
@@ -291,12 +303,11 @@ describe('SettingsView', () =>
         assert.deepEqual(client.Created, [['boss@example.com', 'pw', 'full']])
     })
 
-    it('resets to normal mode when a refresh fails to load', async () =>
+    it('shows the error state in normal mode when a refresh fails to load', async () =>
     {
         const client = Fixtures.Client()
         const view = Fixtures.View(client, 'full')
         await view.Refresh()
-        view.EnterMode(SettingsMode.Invite)
         client.Fail = true
         await view.Refresh()
         assert.equal(view.Host.State, ScreenState.Error)

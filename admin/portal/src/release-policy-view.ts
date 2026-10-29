@@ -147,6 +147,11 @@ export class ReleasePolicyView extends StackPanel implements IPortalView
 
     public async Refresh(): Promise<void>
     {
+        // An open gating form is left untouched: rebuilding it would discard what the operator is typing.
+        if (this.mode !== GatingMode.Normal && this.model !== undefined)
+        {
+            return
+        }
         if (this.model === undefined)
         {
             this.host.Update(this.Inputs(true, false, true))
@@ -258,7 +263,7 @@ export class ReleasePolicyView extends StackPanel implements IPortalView
         actions.AddChild(new Act(this.operator.MutatingAct(ReleasePolicyView.GateLabel, () => this.EnterMode(GatingMode.Gate))))
         actions.AddChild(new Act(this.operator.MutatingAct(ReleasePolicyView.UngateLabel, () => this.EnterMode(GatingMode.Ungate), ActVariant.Danger)))
         root.AddChild(actions)
-        // A Refresh() while the form is open rebuilds fresh fields, so typed input is intentionally discarded
+        // A Refresh() while the form is open is skipped, so the live fields keep their typed input
         // (same fresh-slot cost as the Clients create form).
         this.formSlot = new StackPanel()
         this.formSlot.Orientation = Orientation.Vertical
