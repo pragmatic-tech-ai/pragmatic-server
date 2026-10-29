@@ -282,10 +282,29 @@ describe('ReleasePolicyViewModel policy rows and blocked annotations', () =>
     {
         const vm = Make.Vm(
             [Fx.Gate('t1', '1.0', 'x'), Fx.Gate('t1', '2.0', 'x'), Fx.Gate('t1', '3.0', 'x')],
-            [Fx.Policy('t1', ['stable'], '1.2.0')])
+            [Fx.Policy('t1', ['stable'], '1.0')])
         assert.equal(vm.GatedRows[0].blockedLabel, undefined)
         assert.ok(vm.GatedRows[1].blockedLabel?.includes('channel'))
         assert.ok(vm.GatedRows[2].blockedLabel?.includes('withdrawn'))
+    })
+
+    it('tags a version below the policy floor as below floor', () =>
+    {
+        const vm = Make.Vm([Fx.Gate('t1', '1.0', 'x')], [Fx.Policy('t1', undefined, '1.2.0')])
+        assert.equal(vm.GatedRows[0].blockedLabel, 'Blocked: below floor')
+    })
+
+    it('leaves versions at or above the floor unblocked', () =>
+    {
+        const vm = Make.Vm([Fx.Gate('t1', '1.0', 'x'), Fx.Gate('t1', '2.0', 'x')], [Fx.Policy('t1', undefined, '1.0')])
+        assert.equal(vm.GatedRows[0].blockedLabel, undefined)
+        assert.equal(vm.GatedRows[1].blockedLabel, undefined)
+    })
+
+    it('lists withdrawn, channel and held ahead of the floor reason', () =>
+    {
+        const vm = Make.Vm([Fx.Gate('t1', '3.0', 'x')], [Fx.Policy('t1', ['early'], '9.0', 'incident')])
+        assert.equal(vm.GatedRows[0].blockedLabel, 'Blocked: withdrawn, channel, held, below floor')
     })
 
     it('marks gated rows of a held tenant as held', () =>

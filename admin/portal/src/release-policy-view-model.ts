@@ -3,6 +3,7 @@ import type { ClientDto, EnvRolloutDto, FleetHiveDto, GatingDto, HiveRolloutDto,
 import { PortalDates } from './portal-dates.js'
 import { FleetViewModel } from './fleet-view-model.js'
 import { PillTone } from './kit/tones.js'
+import { VersionOrder } from './version-order.js'
 
 export interface GatedRow
 {
@@ -78,6 +79,7 @@ export class ReleasePolicyViewModel extends Observable
     private static readonly WithdrawnReason = 'withdrawn'
     private static readonly ChannelReason = 'channel'
     private static readonly HeldReason = 'held'
+    private static readonly FloorReason = 'below floor'
     private static readonly DefaultChannel = 'stable'
     private static readonly NoHoldReason = ''
 
@@ -162,13 +164,13 @@ export class ReleasePolicyViewModel extends Observable
             ownerLabel: ReleasePolicyViewModel.GateOwner(g.tenantId, tenantById, clientById),
             version: g.version,
             gatedLabel: PortalDates.Label(g.gatedAt),
-            blockedLabel: ReleasePolicyViewModel.BlockedLabel(manifestById.get(g.version), policyByTenant.get(g.tenantId)),
+            blockedLabel: ReleasePolicyViewModel.BlockedLabel(g.version, manifestById.get(g.version), policyByTenant.get(g.tenantId)),
         }))
         // Array.prototype.sort is stable.
         return rows.sort((a, b) => a.ownerLabel.localeCompare(b.ownerLabel) || a.version.localeCompare(b.version))
     }
 
-    private static BlockedLabel(manifest: ManifestDto | undefined, policy: PolicyDto | undefined): string | undefined
+    private static BlockedLabel(version: string, manifest: ManifestDto | undefined, policy: PolicyDto | undefined): string | undefined
     {
         const reasons: string[] = []
         if (manifest?.withdrawn === true)
@@ -184,6 +186,10 @@ export class ReleasePolicyViewModel extends Observable
         if (policy?.hold !== undefined)
         {
             reasons.push(ReleasePolicyViewModel.HeldReason)
+        }
+        if (policy?.minVersion !== undefined && VersionOrder.Compare(version, policy.minVersion) < 0)
+        {
+            reasons.push(ReleasePolicyViewModel.FloorReason)
         }
         return reasons.length === 0
             ? undefined
