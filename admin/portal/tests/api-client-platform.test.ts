@@ -1,7 +1,7 @@
 import { afterEach, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { ControlPlaneClient } from '../src/api-client.js'
-import type { GatingDto, HiveDto, ManifestDto, OperatorSummaryDto, SelectionDto, TenantDto } from '../src/portal-types.js'
+import type { GatingDto, HiveDto, HiveRolloutDto, ManifestDto, OperatorSummaryDto, SelectionDto, TenantDto } from '../src/portal-types.js'
 
 type Recorded = { route: string; init: RequestInit | undefined }
 
@@ -180,5 +180,18 @@ describe('ControlPlaneClient platform records', () =>
         assert.equal(call.init?.body, undefined)
         assert.equal(call.init?.credentials, 'same-origin')
         assert.deepEqual(selections, payload)
+    })
+
+    it('ListRollouts GETs /api/rollouts and returns the parsed array', async () =>
+    {
+        const payload: HiveRolloutDto[] = [{ hiveId: 'h1', targetVersion: 'v1', environments: [{ environmentName: 'prod', runningImage: 'img:1', obsolete: false, ready: true }] }]
+        FetchStub.Install(payload)
+        const rollouts = await new ControlPlaneClient().ListRollouts()
+        const call = FetchStub.Calls[0]!
+        assert.equal(call.route, '/api/rollouts')
+        assert.equal(call.init?.method, undefined)
+        assert.equal(call.init?.body, undefined)
+        assert.equal(call.init?.credentials, 'same-origin')
+        assert.deepEqual(rollouts, payload)
     })
 })
