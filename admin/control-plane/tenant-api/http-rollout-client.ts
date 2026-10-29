@@ -1,5 +1,6 @@
 import type { ManifestRecord } from '../manifest-record.js'
 import type { HiveRolloutStatus } from '../platform-deployment-registry.js'
+import type { LedgerAction } from '../adoption-ledger-record.js'
 import { RolloutAdoptionRefusedError, RolloutUnavailableError, type AdoptionLedgerDto, type IRolloutClient } from './rollout-client.js'
 
 /**
@@ -18,6 +19,8 @@ export class HttpRolloutClient implements IRolloutClient
     private static readonly LimitParam = 'limit'
     private static readonly ActionKey = 'action'
     private static readonly AtKey = 'at'
+    private static readonly HiveIdKey = 'hiveId'
+    private static readonly LedgerActions: ReadonlySet<string> = new Set(['gated', 'ungated', 'withdrawn', 'restored', 'selected', 'adopted'])
     private static readonly AuthorizationHeader = 'Authorization'
     private static readonly BearerPrefix = 'Bearer '
     private static readonly ContentTypeHeader = 'Content-Type'
@@ -74,13 +77,19 @@ export class HttpRolloutClient implements IRolloutClient
     public async LedgerFor(hiveId: string, limit: number): Promise<readonly AdoptionLedgerDto[]>
     {
         this.AssertBoundHive(hiveId)
-        const response = await this.Send(HttpRolloutClient.MethodGet, `${HttpRolloutClient.LedgerSegment}?${HttpRolloutClient.LimitParam}=${limit}`)
+        const safeLimit = Number.isFinite(limit) ? Math.max(0, Math.trunc(limit)) : 0
+        const response = await this.Send(HttpRolloutClient.MethodGet, `${HttpRolloutClient.LedgerSegment}?${HttpRolloutClient.LimitParam}=${safeLimit}`)
         const body = await this.ReadJson(response)
         if (!Array.isArray(body) || !body.every(e => HttpRolloutClient.IsLedgerDto(e)))
         {
             throw new RolloutUnavailableError(HttpRolloutClient.MalformedMessage)
         }
-        return body as AdoptionLedgerDto[]
+        return (body as Array<Record<string, unknown>>).map(e => ({
+            version: e[HttpRolloutClient.VersionKey] as string,
+            action: e[HttpRolloutClient.ActionKey] as LedgerAction,
+            at: e[HttpRolloutClient.AtKey] as string,
+            hiveId: e[HttpRolloutClient.HiveIdKey] as string | undefined
+        }))
     }
 
     /** The channel is per-hive: a call for any other hive would silently act on the wrong one, so it is refused. */
@@ -104,7 +113,12 @@ export class HttpRolloutClient implements IRolloutClient
             return false
         }
         const o = e as Record<string, unknown>
-        return typeof o[HttpRolloutClient.VersionKey] === 'string' && typeof o[HttpRolloutClient.ActionKey] === 'string' && typeof o[HttpRolloutClient.AtKey] === 'string'
+        const action = o[HttpRolloutClient.ActionKey]
+        const hive = o[HttpRolloutClient.HiveIdKey]
+        return typeof o[HttpRolloutClient.VersionKey] === 'string'
+            && typeof action === 'string' && HttpRolloutClient.LedgerActions.has(action)
+            && typeof o[HttpRolloutClient.AtKey] === 'string'
+            && (hive === undefined || typeof hive === 'string')
     }
 
     private static IsStatus(b: unknown): b is HiveRolloutStatus

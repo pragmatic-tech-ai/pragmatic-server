@@ -54,6 +54,12 @@ class Names
     public static readonly LedgerPayload = '[{"version":"1.0.0","action":"adopted","at":"2026-01-01T00:00:00.000Z"}]'
     public static readonly LedgerMissingVersion = '[{"action":"adopted","at":"x"}]'
     public static readonly LedgerLimit = 5
+    public static readonly LedgerLeakyPayload = '[{"version":"1.0.0","action":"adopted","at":"x","tenantId":"t9","id":"r1"}]'
+    public static readonly LedgerBadAction = '[{"version":"1.0.0","action":"bogus","at":"x"}]'
+    public static readonly LedgerBadHive = '[{"version":"1.0.0","action":"adopted","at":"x","hiveId":7}]'
+    public static readonly TenantKey = 'tenantId'
+    public static readonly IdKey = 'id'
+    public static readonly LedgerClampPath = '/agent/hives/h1/ledger?limit=0'
 }
 
 /** A canned channel that records requests and answers a fixed status. */
@@ -251,7 +257,7 @@ describe('HttpRolloutClient LedgerFor', () =>
 
     it('rejects a non-array or element-missing-version body with RolloutUnavailableError', async () =>
     {
-        for (const payload of [Names.MalformedPayload, Names.LedgerMissingVersion])
+        for (const payload of [Names.MalformedPayload, Names.LedgerMissingVersion, Names.LedgerBadAction, Names.LedgerBadHive])
         {
             const stub = new StubChannel(Names.Status200, payload)
             const base = await stub.Start()
@@ -276,6 +282,39 @@ describe('HttpRolloutClient LedgerFor', () =>
             const c = new HttpRolloutClient(base, Names.Secret, Names.PlainHive)
             await assert.rejects(() => c.LedgerFor(Names.OtherHive, Names.LedgerLimit))
             assert.equal(stub.Seen.length, 0)
+        }
+        finally
+        {
+            await stub.Stop()
+        }
+    })
+
+    it('reprojects each element, dropping any extra server fields such as tenantId', async () =>
+    {
+        const stub = new StubChannel(Names.Status200, Names.LedgerLeakyPayload)
+        const base = await stub.Start()
+        try
+        {
+            const c = new HttpRolloutClient(base, Names.Secret, Names.PlainHive)
+            const result = await c.LedgerFor(Names.PlainHive, Names.LedgerLimit)
+            assert.equal(result.length, 1)
+            assert.ok(result.every(r => !(Names.TenantKey in r) && !(Names.IdKey in r)))
+        }
+        finally
+        {
+            await stub.Stop()
+        }
+    })
+
+    it('clamps a NaN limit to a non-negative integer in the URL', async () =>
+    {
+        const stub = new StubChannel(Names.Status200, Names.LedgerPayload)
+        const base = await stub.Start()
+        try
+        {
+            const c = new HttpRolloutClient(base, Names.Secret, Names.PlainHive)
+            await c.LedgerFor(Names.PlainHive, Number.NaN)
+            assert.equal(stub.Seen[0]!.url, Names.LedgerClampPath)
         }
         finally
         {
