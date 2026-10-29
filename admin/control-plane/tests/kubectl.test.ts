@@ -179,3 +179,10 @@ test('NodeExecFile honours a custom timeout', async () =>
     await assert.rejects(() => exec.Run(process.execPath, ['-e', 'setTimeout(() => {}, 10000)']))
     assert.ok(Date.now() - started < 5000)
 })
+
+test('ScaleStatefulSet args', async () =>
+{
+    const f = new KubectlFixture()
+    await f.Cli.ScaleStatefulSet('ns', 'db', 1)
+    assert.deepEqual(f.Last.args, ['--context', 'kind-hive', 'scale', 'statefulset/db', '--replicas=1', '-n', 'ns'])
+})

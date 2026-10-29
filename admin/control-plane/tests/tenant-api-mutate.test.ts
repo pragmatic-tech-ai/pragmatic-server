@@ -143,6 +143,10 @@ class FakeOrchestrator implements IHiveOrchestrator
     {
     }
 
+    public async ScaleDatabase(_w: EnvironmentWorkload, _replicas: number): Promise<void>
+    {
+    }
+
     public async Scale(_w: EnvironmentWorkload, _replicas: number): Promise<void>
     {
     }

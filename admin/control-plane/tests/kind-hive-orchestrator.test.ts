@@ -62,6 +62,11 @@ class FakeInner implements IHiveOrchestrator
         this.calls.push('Roll')
     }
 
+    public async ScaleDatabase(_w: EnvironmentWorkload, _replicas: number): Promise<void>
+    {
+        this.calls.push('ScaleDatabase')
+    }
+
     public async Scale(_w: EnvironmentWorkload, _replicas: number): Promise<void>
     {
         this.calls.push('Scale')
@@ -204,4 +209,12 @@ test('A LoadImage failure stops Apply before the inner Apply', async () =>
     }
     await assert.rejects(() => f.sut.Apply(Fixture.Workload), /load failed/)
     assert.ok(!f.inner.calls.includes('Apply'))
+})
+
+test('ScaleDatabase delegates to inner without ensuring the cluster', async () =>
+{
+    const f = new Fixture()
+    await f.sut.ScaleDatabase(Fixture.Workload, 1)
+    assert.deepEqual(f.inner.calls, ['ScaleDatabase'])
+    assert.deepEqual(f.kind.created, [])
 })

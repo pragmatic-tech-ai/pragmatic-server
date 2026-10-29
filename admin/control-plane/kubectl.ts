@@ -11,6 +11,7 @@ export interface IKubectl
     RolloutStatus(namespace: string, deployment: string): Promise<void>
     SetImage(namespace: string, deployment: string, container: string, image: string): Promise<void>
     Scale(namespace: string, deployment: string, replicas: number): Promise<void>
+    ScaleStatefulSet(namespace: string, statefulSet: string, replicas: number): Promise<void>
     RolloutRestart(namespace: string, deployment: string): Promise<void>
     Get(namespace: string, resource: string): Promise<string>
     DeleteNamespace(namespace: string): Promise<void>
@@ -100,6 +101,7 @@ export class KubectlCli implements IKubectl
     private static readonly IgnoreNotFound = '--ignore-not-found'
     private static readonly NamespaceFlag = '-n'
     private static readonly DeploymentPrefix = 'deployment/'
+    private static readonly StatefulSetPrefix = 'statefulset/'
     private static readonly Assign = '='
 
     public constructor(private readonly context: string, private readonly exec: IExecFile = new NodeExecFile())
@@ -129,6 +131,11 @@ export class KubectlCli implements IKubectl
     public async Scale(namespace: string, deployment: string, replicas: number): Promise<void>
     {
         await this.Invoke([KubectlCli.ScaleVerb, KubectlCli.DeploymentPrefix + deployment, KubectlCli.ReplicasFlag + String(replicas), KubectlCli.NamespaceFlag, namespace])
+    }
+
+    public async ScaleStatefulSet(namespace: string, statefulSet: string, replicas: number): Promise<void>
+    {
+        await this.Invoke([KubectlCli.ScaleVerb, KubectlCli.StatefulSetPrefix + statefulSet, KubectlCli.ReplicasFlag + String(replicas), KubectlCli.NamespaceFlag, namespace])
     }
 
     public async RolloutRestart(namespace: string, deployment: string): Promise<void>

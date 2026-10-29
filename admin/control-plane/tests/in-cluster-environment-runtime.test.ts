@@ -22,6 +22,7 @@ class Fx
 {
     public static readonly Secret = 'kubectl stderr SECRET-VALUE'
     public static readonly Workload = { environmentName: 'e1', hiveId: 'h1', serverPort: 8080 } as unknown as EnvironmentWorkload
+    public static readonly DbWorkload = { ...Fx.Workload, database: { image: 'postgres:16', user: 'u', database: 'd', passwordRef: 'p' } } as unknown as EnvironmentWorkload
     public static readonly Hive = { id: 'h1' } as unknown as HiveRecord
     public static readonly Def = { name: 'e1', environmentId: 'env-1' } as unknown as EnvDefinition
 }
@@ -58,6 +59,7 @@ class FakeOrchestrator implements IHiveOrchestrator
     public FailWith: Error | undefined
     public Ready = true
     public readonly ScaleReplicas: number[] = []
+    public readonly DbReplicas: number[] = []
 
     private Rec(m: string, w: EnvironmentWorkload): void
     {
@@ -74,6 +76,7 @@ class FakeOrchestrator implements IHiveOrchestrator
     public async Health(w: EnvironmentWorkload): Promise<WorkloadHealth> { this.Rec('Health', w); return { ready: this.Ready, runningImage: undefined, detail: '' } }
     public async Roll(w: EnvironmentWorkload, _image: string): Promise<void> { this.Rec('Roll', w) }
     public async Scale(w: EnvironmentWorkload, replicas: number): Promise<void> { this.Rec('Scale', w); this.ScaleReplicas.push(replicas) }
+    public async ScaleDatabase(w: EnvironmentWorkload, replicas: number): Promise<void> { this.Rec('ScaleDatabase', w); this.DbReplicas.push(replicas) }
     public async Teardown(w: EnvironmentWorkload): Promise<void> { this.Rec('Teardown', w) }
 }
 
@@ -272,4 +275,42 @@ test('BringUp never projects data/<record.name> when it differs from def.environ
         const tree = JSON.parse(Buffer.from(seed.data[EnvServerSeedSource.SeedKey], 'base64').toString('utf8')) as Record<string, string>
         assert.ok(!Object.keys(tree).includes('wrong.txt'))
     }
+})
+
+test('Stop of an env with a database scales the server and the DB StatefulSet to 0', async () =>
+{
+    const h = new Harness(true, Fx.DbWorkload)
+    await h.Runtime.Stop(h.Ctx)
+    assert.deepEqual(h.Orchestrator.ScaleReplicas, [0])
+    assert.deepEqual(h.Orchestrator.DbReplicas, [0])
+    assert.ok(!h.Orchestrator.Order.includes('Teardown'))
+})
+
+test('Start of an env with a database brings the DB up (awaited) before the server is applied or scaled', async () =>
+{
+    const h = new Harness(true, Fx.DbWorkload)
+    await h.Runtime.Prepare(h.Ctx)
+    writeFileSync(join(h.BundleDir, 'provisioned-secrets.json'), '{"p":"pw"}')
+    await h.Runtime.Start(h.Ctx)
+    assert.deepEqual(h.Orchestrator.DbReplicas, [1])
+    assert.deepEqual(h.Orchestrator.Order.filter(m => m !== 'KubectlApply'), ['ScaleDatabase', 'Apply', 'WaitHealthy'])
+})
+
+test('A DB-less env never touches the DB StatefulSet on Stop or Start', async () =>
+{
+    const h = new Harness()
+    await h.Runtime.Prepare(h.Ctx)
+    await h.Runtime.Stop(h.Ctx)
+    await h.Runtime.Start(h.Ctx)
+    assert.deepEqual(h.Orchestrator.DbReplicas, [])
+    assert.ok(!h.Orchestrator.Order.includes('ScaleDatabase'))
+})
+
+test('A DB that never becomes ready stops Start before the server is applied, with the generic error', async () =>
+{
+    const h = new Harness(true, Fx.DbWorkload)
+    await h.Runtime.Prepare(h.Ctx)
+    h.Orchestrator.FailWith = new Error(Fx.Secret)
+    await assert.rejects(() => h.Runtime.Start(h.Ctx), (e: Error) => e instanceof InClusterOperationFailedError && !e.message.includes('SECRET'))
+    assert.ok(!h.Orchestrator.Order.includes('Apply'))
 })

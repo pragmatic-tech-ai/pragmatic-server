@@ -25,6 +25,7 @@ class FakeKubectl implements IKubectl
     public RolloutStatus(n: string, d: string) { return this.Record('RolloutStatus', [n, d]) }
     public SetImage(n: string, d: string, c: string, i: string) { return this.Record('SetImage', [n, d, c, i]) }
     public Scale(n: string, d: string, r: number) { return this.Record('Scale', [n, d, String(r)]) }
+    public ScaleStatefulSet(n: string, d: string, r: number) { return this.Record('ScaleStatefulSet', [n, d, String(r)]) }
     public RolloutRestart(n: string, d: string) { return this.Record('RolloutRestart', [n, d]) }
     public async Get(n: string, r: string)
     {
@@ -122,6 +123,21 @@ describe('KubectlHiveOrchestrator', () =>
         const { o, k } = Fixture.Make()
         await o.Scale(Fixture.Workload(false), 0)
         assert.deepEqual(k.calls, [['Scale', Fixture.Ns, Fixture.Dep, '0']])
+    })
+
+    it('ScaleDatabase to 0 scales the StatefulSet and does not wait', async () =>
+    {
+        const { o, k } = Fixture.Make()
+        await o.ScaleDatabase(Fixture.Workload(true), 0)
+        assert.deepEqual(k.calls, [['ScaleStatefulSet', Fixture.Ns, K8sManifestBuilder.DatabaseOf('dev1'), '0']])
+    })
+
+    it('ScaleDatabase to 1 scales the StatefulSet then waits until a replica is ready', async () =>
+    {
+        const { o, k } = Fixture.Make()
+        k.getResponses = [JSON.stringify({ status: { readyReplicas: 0 } }), JSON.stringify({ status: { readyReplicas: 1 } })]
+        await o.ScaleDatabase(Fixture.Workload(true), 1)
+        assert.deepEqual(k.calls.map(c => c[0]), ['ScaleStatefulSet', 'Get', 'Get'])
     })
 
     it('Roll verifies the effective image before SetImage', async () =>

@@ -93,6 +93,17 @@ export class KubectlHiveOrchestrator implements IHiveOrchestrator
         await this.kubectl.Scale(ns, deployment, replicas)
     }
 
+    public async ScaleDatabase(workload: EnvironmentWorkload, replicas: number): Promise<void>
+    {
+        const ns = K8sManifestBuilder.NamespaceOf(workload.environmentName)
+        const statefulSet = K8sManifestBuilder.DatabaseOf(workload.environmentName)
+        await this.kubectl.ScaleStatefulSet(ns, statefulSet, replicas)
+        if (replicas > 0)
+        {
+            await this.WaitDatabase(ns, statefulSet)
+        }
+    }
+
     public Teardown(w: EnvironmentWorkload): Promise<void>
     {
         return this.kubectl.DeleteNamespace(K8sManifestBuilder.NamespaceOf(w.environmentName))

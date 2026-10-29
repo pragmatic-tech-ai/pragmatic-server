@@ -72,6 +72,7 @@ export class InClusterEnvironmentRuntime implements IEnvironmentRuntime
     private static readonly PortSeparator = ':'
     private static readonly EnvironmentQuery = '/?environment='
     private static readonly StoppedReplicas = 0
+    private static readonly StartedReplicas = 1
 
     public constructor(
         private readonly orchestrators: HiveOrchestratorFactory,
@@ -134,16 +135,27 @@ export class InClusterEnvironmentRuntime implements IEnvironmentRuntime
 
     public async Start(ctx: EnvRuntimeContext): Promise<EnvEndpoint>
     {
+        // Readiness-first: the DB StatefulSet is brought up and awaited BEFORE the server is applied/scaled, so the
+        // server never starts against an unready database. DB-less envs skip this entirely.
+        const { orchestrator, workload } = this.Resolve(ctx)
+        if (workload.database !== undefined)
+        {
+            await InClusterEnvironmentRuntime.Guard(() => orchestrator.ScaleDatabase(workload, InClusterEnvironmentRuntime.StartedReplicas))
+        }
         const endpoint = await this.BringUp(ctx)
         await this.WaitHealthy(ctx)
         return endpoint
     }
 
-    /** Scale-to-zero only: the namespace, PVC and Secrets are retained so Start can bring the same data back. NEVER Teardown. */
+    /** Scale-to-zero only (server Deployment, then the DB StatefulSet when present): the namespace, PVC and Secrets are retained so Start can bring the same data back. NEVER Teardown. */
     public async Stop(ctx: EnvRuntimeContext): Promise<void>
     {
         const { orchestrator, workload } = this.Resolve(ctx)
         await InClusterEnvironmentRuntime.Guard(() => orchestrator.Scale(workload, InClusterEnvironmentRuntime.StoppedReplicas))
+        if (workload.database !== undefined)
+        {
+            await InClusterEnvironmentRuntime.Guard(() => orchestrator.ScaleDatabase(workload, InClusterEnvironmentRuntime.StoppedReplicas))
+        }
     }
 
     public async Teardown(ctx: EnvRuntimeContext, _removeData: boolean): Promise<void>

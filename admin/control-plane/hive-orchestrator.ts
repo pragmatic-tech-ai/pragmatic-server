@@ -12,6 +12,8 @@ export interface IHiveOrchestrator
     Health(w: EnvironmentWorkload): Promise<WorkloadHealth>
     Roll(w: EnvironmentWorkload, image: string): Promise<void>
     Scale(workload: EnvironmentWorkload, replicas: number): Promise<void>
+    /** Scales the workload's database StatefulSet. Scaling UP resolves only once a replica is ready; scaling to zero does not wait. */
+    ScaleDatabase(workload: EnvironmentWorkload, replicas: number): Promise<void>
     Teardown(w: EnvironmentWorkload): Promise<void>
 }
 

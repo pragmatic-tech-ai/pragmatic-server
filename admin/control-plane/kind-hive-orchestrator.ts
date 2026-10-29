@@ -60,6 +60,11 @@ export class KindHiveOrchestrator implements IHiveOrchestrator
         return this.inner.Scale(workload, replicas)
     }
 
+    public async ScaleDatabase(workload: EnvironmentWorkload, replicas: number): Promise<void>
+    {
+        return this.inner.ScaleDatabase(workload, replicas)
+    }
+
     /** Namespace-scoped: removes the workload only, never the cluster. */
     public async Teardown(w: EnvironmentWorkload): Promise<void>
     {
