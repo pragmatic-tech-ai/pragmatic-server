@@ -198,6 +198,15 @@ describe('ReleaseDetailView', () =>
         assert.ok((a.DisabledHint ?? '').length > 0)
     })
 
+    it('observer activation never reaches the callback', () =>
+    {
+        let calls = 0
+        const spy = (_w: boolean): Promise<void> => { calls++; return Promise.resolve() }
+        const view = new ReleaseDetailView(Fixtures.Vm(), () => undefined, OperatorContext.FromWire('read'), spy)
+        Fixtures.Action(view).Press()
+        assert.equal(calls, 0)
+    })
+
     it('full operator activation calls the callback with the negated state', () =>
     {
         const seen: boolean[] = []
@@ -213,9 +222,8 @@ describe('ReleaseDetailView', () =>
     {
         const view = new ReleaseDetailView(Fixtures.Vm(), () => undefined, Fixtures.Full(), () => Promise.reject(new Error('boom')))
         assert.equal(view.ErrorLine, '')
-        Fixtures.Action(view).Press()
-        await new Promise(r => setTimeout(r, 0))
-        assert.ok(view.ErrorLine.length > 0)
+        await assert.doesNotReject((view as unknown as { Toggle(): Promise<void> }).Toggle())
+        assert.equal(view.ErrorLine, 'Could not change the version state. Please try again.')
     })
 
     it('re-rendering builds a fresh action without a double-parent', () =>
