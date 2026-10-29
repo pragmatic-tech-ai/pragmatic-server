@@ -1,16 +1,20 @@
 import { after, before, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { TextBlock } from '@pragmatic-tech-ai/mural/basic'
+import { TextBlock, TextBox } from '@pragmatic-tech-ai/mural/basic'
 import { Application } from '@pragmatic-tech-ai/mural/runtime'
 import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pragmatic'
 import type { ControlPlaneClient } from '../src/api-client.js'
-import { ReleasePolicyView } from '../src/release-policy-view.js'
-import { Banner, ErrorStatePanel, PageHeader, ScreenState, Section } from '../src/kit/index.js'
+import { GatingMode, ReleasePolicyView } from '../src/release-policy-view.js'
+import { OperatorContext } from '../src/operator-context.js'
+import { Act, Banner, ErrorStatePanel, PageHeader, ScreenState, Section } from '../src/kit/index.js'
 import type { ClientDto, FleetHiveDto, GatingDto, HiveRolloutDto, SelectionDto, TenantDto } from '../src/portal-types.js'
 
 class FakeClient
 {
     public Calls = 0
+    public Gated: string[][] = []
+    public Ungated: string[][] = []
+    public FailGate = false
 
     public constructor(
         private readonly gating: GatingDto[],
@@ -31,6 +35,22 @@ class FakeClient
             return Promise.reject(new Error('boom'))
         }
         return Promise.resolve(this.gating)
+    }
+
+    public Gate(t: string, v: string): Promise<void>
+    {
+        if (this.FailGate)
+        {
+            return Promise.reject(new Error('no'))
+        }
+        this.Gated.push([t, v])
+        return Promise.resolve()
+    }
+
+    public Ungate(t: string, v: string): Promise<void>
+    {
+        this.Ungated.push([t, v])
+        return Promise.resolve()
     }
 
     public ListSelections(): Promise<SelectionDto[]>
@@ -109,9 +129,20 @@ class Fixtures
             [Fixtures.Tenant()], [Fixtures.Client()], [Fixtures.Hive('h1')], failFirst, Fixtures.Rollouts())
     }
 
-    public static View(client: FakeClient): ReleasePolicyView
+    public static View(client: FakeClient, wire = 'full'): ReleasePolicyView
     {
-        return new ReleasePolicyView(client as unknown as ControlPlaneClient)
+        return new ReleasePolicyView(client as unknown as ControlPlaneClient, OperatorContext.FromWire(wire))
+    }
+
+    public static FormBoxes(view: unknown): TextBox[]
+    {
+        const forms = ['Tenant id', 'Version']
+        return Fixtures.Walk(view).filter(n => n instanceof TextBox && forms.includes(n.Placeholder)) as TextBox[]
+    }
+
+    public static ActByLabel(view: unknown, label: string): Act
+    {
+        return Fixtures.Walk(view).find(n => n instanceof Act && (n.Content as TextBlock).Text === label) as Act
     }
 }
 
@@ -241,5 +272,102 @@ describe('ReleasePolicyView', () =>
         assert.equal(view.TargetTable?.Rows.length, 1)
         assert.equal(view.RolloutTable?.Rows.length, 1)
         assert.equal(Fixtures.Walk(view).filter(n => n instanceof Section).length, 3)
+    })
+
+    it('renders Gate version and Ungate version actions', async () =>
+    {
+        const view = Fixtures.View(Fixtures.Populated())
+        await view.Refresh()
+        assert.ok(Fixtures.ActByLabel(view, 'Gate version'))
+        assert.ok(Fixtures.ActByLabel(view, 'Ungate version'))
+    })
+
+    it('disables both actions with a hint for an observer', async () =>
+    {
+        const view = Fixtures.View(Fixtures.Populated(), 'read')
+        await view.Refresh()
+        for (const label of ['Gate version', 'Ungate version'])
+        {
+            const act = Fixtures.ActByLabel(view, label)
+            assert.equal(act.Enabled, false)
+            assert.ok((act.DisabledHint ?? '').length > 0)
+        }
+    })
+
+    it('gates a version, re-fetches and returns to normal', async () =>
+    {
+        const client = Fixtures.Populated()
+        const view = Fixtures.View(client)
+        await view.Refresh()
+        Fixtures.ActByLabel(view, 'Gate version').Press()
+        assert.equal(view.Mode, GatingMode.Gate)
+        const boxes = Fixtures.FormBoxes(view)
+        boxes[0].Text = 't'
+        boxes[1].Text = 'v'
+        const before = client.Calls
+        Fixtures.ActByLabel(view, 'Gate').Press()
+        await new Promise(r => setTimeout(r, 20))
+        assert.deepEqual(client.Gated, [['t', 'v']])
+        assert.ok(client.Calls > before)
+        assert.equal(view.Mode, GatingMode.Normal)
+    })
+
+    it('ungates a version, re-fetches and returns to normal', async () =>
+    {
+        const client = Fixtures.Populated()
+        const view = Fixtures.View(client)
+        await view.Refresh()
+        Fixtures.ActByLabel(view, 'Ungate version').Press()
+        assert.equal(view.Mode, GatingMode.Ungate)
+        const boxes = Fixtures.FormBoxes(view)
+        boxes[0].Text = 't'
+        boxes[1].Text = 'v'
+        const before = client.Calls
+        Fixtures.ActByLabel(view, 'Ungate').Press()
+        await new Promise(r => setTimeout(r, 20))
+        assert.deepEqual(client.Ungated, [['t', 'v']])
+        assert.ok(client.Calls > before)
+        assert.equal(view.Mode, GatingMode.Normal)
+    })
+
+    it('blank fields make no call, show an error and stay in the mode', async () =>
+    {
+        const client = Fixtures.Populated()
+        const view = Fixtures.View(client)
+        await view.Refresh()
+        Fixtures.ActByLabel(view, 'Gate version').Press()
+        Fixtures.ActByLabel(view, 'Gate').Press()
+        await new Promise(r => setTimeout(r, 20))
+        assert.equal(client.Gated.length, 0)
+        assert.ok(view.ErrorLine.length > 0)
+        assert.equal(view.Mode, GatingMode.Gate)
+    })
+
+    it('a failed gate shows an error and stays in the mode', async () =>
+    {
+        const client = Fixtures.Populated()
+        client.FailGate = true
+        const view = Fixtures.View(client)
+        await view.Refresh()
+        Fixtures.ActByLabel(view, 'Gate version').Press()
+        const boxes = Fixtures.FormBoxes(view)
+        boxes[0].Text = 't'
+        boxes[1].Text = 'v'
+        Fixtures.ActByLabel(view, 'Gate').Press()
+        await new Promise(r => setTimeout(r, 20))
+        assert.ok(view.ErrorLine.length > 0)
+        assert.equal(view.Mode, GatingMode.Gate)
+    })
+
+    it('a second Refresh with a form open rebuilds cleanly', async () =>
+    {
+        const view = Fixtures.View(Fixtures.Populated())
+        await view.Refresh()
+        Fixtures.ActByLabel(view, 'Gate version').Press()
+        await view.Refresh()
+        await view.Refresh()
+        assert.equal(view.Host.State, ScreenState.Populated)
+        assert.equal(view.Mode, GatingMode.Gate)
+        assert.equal(Fixtures.FormBoxes(view).length, 2)
     })
 })

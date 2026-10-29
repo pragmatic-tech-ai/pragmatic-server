@@ -160,7 +160,11 @@ export class App extends StackPanel implements IPortalNavigator
         }
         if (section === PaSection.ReleasePolicy)
         {
-            this.Mount(new ReleasePolicyView(this.client))
+            const operator = this.operator
+            if (operator !== undefined)
+            {
+                this.Mount(new ReleasePolicyView(this.client, operator))
+            }
             return
         }
         if (section === PaSection.Settings)

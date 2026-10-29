@@ -1,13 +1,21 @@
-import { Orientation, StackPanel } from '@pragmatic-tech-ai/mural/basic'
+import { Orientation, StackPanel, TextBlock, TextBox } from '@pragmatic-tech-ai/mural/basic'
 import type { Visual } from '@pragmatic-tech-ai/mural/runtime'
 import type { ControlPlaneClient } from './api-client.js'
-import { Banner, BannerTone, DataTable, PageHeader, ScreenHost, Section, TableDensity } from './kit/index.js'
+import { Act, ActVariant, Banner, BannerTone, DataTable, KeyActivatedButton, PageHeader, ScreenHost, Section, TableDensity } from './kit/index.js'
 import type { ScreenHostInputs, TableColumn } from './kit/index.js'
+import type { OperatorContext } from './operator-context.js'
 import type { IPortalNavigator, IPortalView } from './portal-types.js'
 import { ReleasePolicyViewModel } from './release-policy-view-model.js'
 import type { GatedRow, RolloutRow, TargetRow } from './release-policy-view-model.js'
 
-// Release policy: the current gating allowlist, per-hive target selections, and the actual rollout status per environment. Read-only; observes only.
+export enum GatingMode
+{
+    Normal,
+    Gate,
+    Ungate,
+}
+
+// Release policy: the current gating allowlist, per-hive target selections, and the actual rollout status per environment. Full operators can gate or ungate a version for a tenant.
 export class ReleasePolicyView extends StackPanel implements IPortalView
 {
     private static readonly Breadcrumb: readonly string[] = ['Releases', 'Release Policy']
@@ -40,21 +48,38 @@ export class ReleasePolicyView extends StackPanel implements IPortalView
     private static readonly TargetsEmptyText = 'No hive has a target selected yet.'
     private static readonly EmptyTitle = 'No release policy yet. Gated versions, hive targets, and rollout status appear here once set.'
     private static readonly ErrorTitle = 'Could not load the release policy.'
+    private static readonly GateLabel = 'Gate version'
+    private static readonly UngateLabel = 'Ungate version'
+    private static readonly GateFormTitle = 'Gate a version for a tenant'
+    private static readonly UngateFormTitle = 'Ungate a version for a tenant'
+    private static readonly GateSubmitLabel = 'Gate'
+    private static readonly UngateSubmitLabel = 'Ungate'
+    private static readonly CancelLabel = 'Cancel'
+    private static readonly TenantPlaceholder = 'Tenant id'
+    private static readonly VersionPlaceholder = 'Version'
+    private static readonly BlankText = ''
+    private static readonly RequiredText = 'Tenant id and version are required.'
+    private static readonly FailedText = 'The change could not be saved. Check the values and try again.'
 
     private readonly client: ControlPlaneClient
+    private readonly operator: OperatorContext
     private readonly host: ScreenHost
     // Rebuilt fresh on every BuildContent: a Visual may hold only one parent, so reusing slots across
     // renders would double-parent them and throw on a second Refresh.
     private gatedSlot = new StackPanel()
     private targetSlot = new StackPanel()
     private rolloutSlot = new StackPanel()
+    private formSlot = new StackPanel()
+    private mode = GatingMode.Normal
+    private errorText: TextBlock | undefined
     private model: ReleasePolicyViewModel | undefined
     private nav: IPortalNavigator | undefined
 
-    public constructor(client: ControlPlaneClient)
+    public constructor(client: ControlPlaneClient, operator: OperatorContext)
     {
         super()
         this.client = client
+        this.operator = operator
         this.Orientation = Orientation.Vertical
         this.host = new ScreenHost(this.Inputs(true, false, true))
         this.AddChild(this.host)
@@ -70,6 +95,28 @@ export class ReleasePolicyView extends StackPanel implements IPortalView
     public get Navigator(): IPortalNavigator | undefined
     {
         return this.nav
+    }
+
+    // Test seam: the current gating mode.
+    public get Mode(): GatingMode
+    {
+        return this.mode
+    }
+
+    // Test seam: the open gating form's error line.
+    public get ErrorLine(): string
+    {
+        return this.errorText?.Text ?? ReleasePolicyView.BlankText
+    }
+
+    // Re-renders from the held model with no network fetch.
+    public EnterMode(mode: GatingMode): void
+    {
+        this.mode = mode
+        if (this.model !== undefined)
+        {
+            this.ShowModel(this.model)
+        }
     }
 
     // Test seam: the currently shown gated-versions table (populated state only).
@@ -150,6 +197,9 @@ export class ReleasePolicyView extends StackPanel implements IPortalView
         this.gatedSlot = new StackPanel()
         this.targetSlot = new StackPanel()
         this.rolloutSlot = new StackPanel()
+        this.formSlot = new StackPanel()
+        this.errorText = undefined
+        this.mode = GatingMode.Normal
     }
 
     private ShowModel(model: ReleasePolicyViewModel): void
@@ -203,7 +253,96 @@ export class ReleasePolicyView extends StackPanel implements IPortalView
         root.AddChild(new Section({ title: ReleasePolicyView.GatedTitle, body: this.gatedSlot }))
         root.AddChild(new Section({ title: ReleasePolicyView.TargetsTitle, body: this.targetSlot }))
         root.AddChild(new Section({ title: ReleasePolicyView.RolloutTitle, body: this.rolloutSlot }))
+        const actions = new StackPanel()
+        actions.Orientation = Orientation.Horizontal
+        actions.AddChild(new Act(this.operator.MutatingAct(ReleasePolicyView.GateLabel, () => this.EnterMode(GatingMode.Gate))))
+        actions.AddChild(new Act(this.operator.MutatingAct(ReleasePolicyView.UngateLabel, () => this.EnterMode(GatingMode.Ungate), ActVariant.Danger)))
+        root.AddChild(actions)
+        this.formSlot = new StackPanel()
+        this.formSlot.Orientation = Orientation.Vertical
+        this.errorText = undefined
+        if (this.mode !== GatingMode.Normal)
+        {
+            const gate = this.mode === GatingMode.Gate
+            this.formSlot.AddChild(this.BuildGatingForm(gate))
+            root.AddChild(new Section({
+                title: gate ? ReleasePolicyView.GateFormTitle : ReleasePolicyView.UngateFormTitle,
+                body: this.formSlot,
+            }))
+        }
         return root
+    }
+
+    // One form for both modes: tenant + version + submit + cancel + error line.
+    private BuildGatingForm(gate: boolean): Visual
+    {
+        const tenantBox = ReleasePolicyView.Box(ReleasePolicyView.TenantPlaceholder)
+        const versionBox = ReleasePolicyView.Box(ReleasePolicyView.VersionPlaceholder)
+        const errorText = new TextBlock()
+        this.errorText = errorText
+        const submit = new Act(this.operator.MutatingAct(
+            gate ? ReleasePolicyView.GateSubmitLabel : ReleasePolicyView.UngateSubmitLabel,
+            () => void this.Submit(tenantBox.Text, versionBox.Text),
+            ActVariant.Primary,
+        ))
+        const cancel = new KeyActivatedButton(() => this.EnterMode(GatingMode.Normal))
+        const cancelText = new TextBlock()
+        cancelText.Text = ReleasePolicyView.CancelLabel
+        cancel.Content = cancelText
+        const body = new StackPanel()
+        body.Orientation = Orientation.Vertical
+        body.AddChild(tenantBox)
+        body.AddChild(versionBox)
+        body.AddChild(errorText)
+        body.AddChild(submit)
+        body.AddChild(cancel)
+        return body
+    }
+
+    private static Box(placeholder: string): TextBox
+    {
+        const box = new TextBox()
+        box.Placeholder = placeholder
+        return box
+    }
+
+    private async Submit(tenantId: string, version: string): Promise<void>
+    {
+        if (this.errorText !== undefined)
+        {
+            this.errorText.Text = ReleasePolicyView.BlankText
+        }
+        const tenant = tenantId.trim()
+        const ver = version.trim()
+        if (tenant === ReleasePolicyView.BlankText || ver === ReleasePolicyView.BlankText)
+        {
+            if (this.errorText !== undefined)
+            {
+                this.errorText.Text = ReleasePolicyView.RequiredText
+            }
+            return
+        }
+        try
+        {
+            if (this.mode === GatingMode.Gate)
+            {
+                await this.client.Gate(tenant, ver)
+            }
+            else
+            {
+                await this.client.Ungate(tenant, ver)
+            }
+        }
+        catch
+        {
+            if (this.errorText !== undefined)
+            {
+                this.errorText.Text = ReleasePolicyView.FailedText
+            }
+            return
+        }
+        this.mode = GatingMode.Normal
+        await this.Refresh()
     }
 
     private static GatedColumns(): TableColumn<GatedRow>[]
