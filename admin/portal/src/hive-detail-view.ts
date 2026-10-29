@@ -1,6 +1,6 @@
 import { Orientation, StackPanel, TextBlock } from '@pragmatic-tech-ai/mural/basic'
 import type { Visual } from '@pragmatic-tech-ai/mural/runtime'
-import type { HiveDetailViewModel, ObservationHistoryRow } from './hive-detail-view-model.js'
+import type { HiveDetailViewModel, LedgerRow, ObservationHistoryRow } from './hive-detail-view-model.js'
 import { ObservedEnvTable } from './observed-env-table.js'
 import type { ObservedEnvRow } from './observed-env-table.js'
 import {
@@ -18,6 +18,12 @@ export class HiveDetailView extends StackPanel
     private static readonly ObservedTitle = 'Observed environments'
     private static readonly HistoryTitle = 'Observed history'
     private static readonly HistoryEmptyText = 'No observations recorded yet.'
+    private static readonly LedgerTitle = 'Version history'
+    private static readonly LedgerEmptyText = 'No version changes recorded yet.'
+    private static readonly ActionKey = 'action'
+    private static readonly VersionKey = 'version'
+    private static readonly ActionHeader = 'Action'
+    private static readonly VersionHeader = 'Version'
     private static readonly WhenKey = 'when'
     private static readonly SummaryKey = 'summary'
     private static readonly WhenHeader = 'When'
@@ -29,6 +35,7 @@ export class HiveDetailView extends StackPanel
     // Rebuilt fresh on every BuildContent: a Visual may hold only one parent.
     private tableSlot = new StackPanel()
     private historySlot = new StackPanel()
+    private ledgerSlot = new StackPanel()
 
     public constructor(vm: HiveDetailViewModel, onBack: () => void)
     {
@@ -51,6 +58,13 @@ export class HiveDetailView extends StackPanel
     {
         const child = [...this.tableSlot.Children][0]
         return child instanceof DataTable ? child as DataTable<ObservedEnvRow> : undefined
+    }
+
+    // Test seam: the currently shown version-history table.
+    public get LedgerTable(): DataTable<LedgerRow> | undefined
+    {
+        const child = [...this.ledgerSlot.Children][0]
+        return child instanceof DataTable ? child as DataTable<LedgerRow> : undefined
     }
 
     // Test seam: the currently shown observed-history table.
@@ -96,6 +110,10 @@ export class HiveDetailView extends StackPanel
         this.historySlot.Orientation = Orientation.Vertical
         this.historySlot.AddChild(this.BuildHistoryTable())
         root.AddChild(new Section({ title: HiveDetailView.HistoryTitle, body: this.historySlot }))
+        this.ledgerSlot = new StackPanel()
+        this.ledgerSlot.Orientation = Orientation.Vertical
+        this.ledgerSlot.AddChild(this.BuildLedgerTable())
+        root.AddChild(new Section({ title: HiveDetailView.LedgerTitle, body: this.ledgerSlot }))
         return root
     }
 
@@ -110,6 +128,21 @@ export class HiveDetailView extends StackPanel
             rows: [...this.vm.ObservationHistory],
             density: TableDensity.Dense,
             emptyText: HiveDetailView.HistoryEmptyText,
+        })
+    }
+
+    private BuildLedgerTable(): DataTable<LedgerRow>
+    {
+        const columns: TableColumn<LedgerRow>[] = [
+            { key: HiveDetailView.WhenKey, header: HiveDetailView.WhenHeader, cell: r => r.whenLabel },
+            { key: HiveDetailView.ActionKey, header: HiveDetailView.ActionHeader, cell: r => r.actionLabel },
+            { key: HiveDetailView.VersionKey, header: HiveDetailView.VersionHeader, cell: r => r.version },
+        ]
+        return new DataTable<LedgerRow>({
+            columns,
+            rows: [...this.vm.LedgerHistory],
+            density: TableDensity.Dense,
+            emptyText: HiveDetailView.LedgerEmptyText,
         })
     }
 

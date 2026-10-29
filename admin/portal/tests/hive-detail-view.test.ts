@@ -123,6 +123,22 @@ describe('HiveDetailView', () =>
         assert.equal(new HiveDetailView(vm, () => undefined).HistoryTable?.Rows.length, 2)
     })
 
+    it('renders the version-history rows', () =>
+    {
+        const ledger = [
+            { id: 'l2', version: '1.1.0', action: 'adopted', at: new Date().toISOString() },
+            { id: 'l1', version: '1.0.0', action: 'gated', at: new Date().toISOString() },
+        ]
+        const vm = new HiveDetailViewModel(Fixtures.Hive(null, []), undefined, undefined, [], ledger)
+        assert.equal(new HiveDetailView(vm, () => undefined).LedgerTable?.Rows.length, 2)
+    })
+
+    it('shows an empty version-history table when there is no ledger', () =>
+    {
+        const view = new HiveDetailView(Fixtures.Connected(), () => undefined)
+        assert.equal(view.LedgerTable?.Rows.length, 0)
+    })
+
     it('shows an empty history table when there are no observations', () =>
     {
         const view = new HiveDetailView(Fixtures.Connected(), () => undefined)

@@ -93,6 +93,27 @@ describe('HiveDetailViewModel', () =>
         assert.equal(vm.ObservationHistory[0].whenLabel, PortalDates.Label(obs[0].reportedAt))
     })
 
+    it('derives ledger rows newest-first with friendly action labels', () =>
+    {
+        const ledger = [
+            { id: 'l3', version: '1.2.0', action: 'gated', at: Fx.Ago(Fx.HourMs) },
+            { id: 'l2', version: '1.1.0', action: 'adopted', at: Fx.Ago(2 * Fx.HourMs) },
+            { id: 'l1', version: '1.0.0', action: 'mystery', at: Fx.Ago(3 * Fx.HourMs) },
+        ]
+        const vm = new HiveDetailViewModel(Fx.Hive(null, []), () => Fx.Now, undefined, [], ledger)
+        assert.equal(vm.LedgerHistory.length, 3)
+        assert.equal(vm.LedgerHistory[0].actionLabel, 'Gated')
+        assert.equal(vm.LedgerHistory[0].version, '1.2.0')
+        assert.equal(vm.LedgerHistory[0].whenLabel, PortalDates.Label(ledger[0].at))
+        assert.equal(vm.LedgerHistory[1].actionLabel, 'Adopted')
+        assert.equal(vm.LedgerHistory[2].actionLabel, 'mystery')
+    })
+
+    it('has empty ledger history by default', () =>
+    {
+        assert.equal(Fx.Vm(Fx.Hive(null, [])).LedgerHistory.length, 0)
+    })
+
     it('has empty observation history by default', () =>
     {
         assert.equal(Fx.Vm(Fx.Hive(null, [])).ObservationHistory.length, 0)
