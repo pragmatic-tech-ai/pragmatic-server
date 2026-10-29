@@ -1,21 +1,33 @@
 import { after, before, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { TextBlock } from '@pragmatic-tech-ai/mural/basic'
+import { TextBlock, TextBox } from '@pragmatic-tech-ai/mural/basic'
 import { Application } from '@pragmatic-tech-ai/mural/runtime'
 import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pragmatic'
 import type { ControlPlaneClient } from '../src/api-client.js'
 import { OperatorContext } from '../src/operator-context.js'
-import { SettingsView } from '../src/settings-view.js'
-import { DataTable, DeniedStatePanel, ErrorStatePanel, KeyValueGrid, ScreenState } from '../src/kit/index.js'
+import { SettingsMode, SettingsView } from '../src/settings-view.js'
+import { Act, DataTable, DeniedStatePanel, KeyActivatedButton, ErrorStatePanel, KeyValueGrid, ScreenState } from '../src/kit/index.js'
 import type { OperatorSummaryDto } from '../src/portal-types.js'
 
 class FakeClient
 {
     public Calls = 0
     public Fail = false
+    public Created: Array<[string, string, string]> = []
+    public CreateError: Error | undefined
 
     public constructor(private readonly roster: OperatorSummaryDto[])
     {
+    }
+
+    public CreateOperator(email: string, password: string, role: string): Promise<void>
+    {
+        if (this.CreateError !== undefined)
+        {
+            return Promise.reject(this.CreateError)
+        }
+        this.Created.push([email, password, role])
+        return Promise.resolve()
     }
 
     public ListOperators(): Promise<OperatorSummaryDto[]>
@@ -55,6 +67,29 @@ class Fixtures
     public static View(client: FakeClient, wireRole: string): SettingsView
     {
         return new SettingsView(client as unknown as ControlPlaneClient, OperatorContext.FromWire(wireRole), Fixtures.Email)
+    }
+
+    public static Click(node: unknown): void
+    {
+        for (const h of (node as unknown as { _clickHandlers: Array<(a: unknown) => void> })._clickHandlers)
+        {
+            h({})
+        }
+    }
+
+    public static ActByLabel(view: unknown, label: string): Act
+    {
+        return Fixtures.Walk(view).find(n => n instanceof Act && (n.Content as TextBlock).Text === label) as Act
+    }
+
+    public static Boxes(view: unknown): TextBox[]
+    {
+        return Fixtures.Walk(view).filter(n => n instanceof TextBox && ['Email', 'Password'].includes(n.Placeholder)) as TextBox[]
+    }
+
+    public static async Tick(): Promise<void>
+    {
+        await new Promise(r => setTimeout(r, 0))
     }
 
     public static Texts(view: SettingsView): string[]
@@ -157,5 +192,93 @@ describe('SettingsView', () =>
         await view.Refresh()
         await view.Refresh()
         assert.equal(view.Host.State, ScreenState.Populated)
+    })
+
+    it('offers the invite action to a full operator only', async () =>
+    {
+        const full = Fixtures.View(Fixtures.Client(), 'full')
+        await full.Refresh()
+        assert.ok(full.InviteAct)
+        assert.ok(Fixtures.ActByLabel(full, 'Invite operator'))
+        const obs = Fixtures.View(Fixtures.Client(), 'readonly')
+        await obs.Refresh()
+        assert.equal(obs.InviteAct, undefined)
+        assert.equal(Fixtures.ActByLabel(obs, 'Invite operator'), undefined)
+    })
+
+    it('shows the invite form with a masked password and a least-privilege role default', async () =>
+    {
+        const client = Fixtures.Client()
+        const view = Fixtures.View(client, 'full')
+        await view.Refresh()
+        Fixtures.Click(Fixtures.ActByLabel(view, 'Invite operator'))
+        assert.equal(view.Mode, SettingsMode.Invite)
+        assert.equal(client.Calls, 1)
+        const boxes = Fixtures.Boxes(view)
+        assert.equal(boxes.length, 2)
+        assert.equal(boxes[1].IsPassword, true)
+        assert.equal((view.RoleBox?.SelectedItem as { Value: string }).Value, 'readonly')
+    })
+
+    it('creates the operator, refetches the roster and returns to normal', async () =>
+    {
+        const client = Fixtures.Client()
+        const view = Fixtures.View(client, 'full')
+        await view.Refresh()
+        view.EnterMode(SettingsMode.Invite)
+        const boxes = Fixtures.Boxes(view)
+        boxes[0].Text = 'new@example.com'
+        boxes[1].Text = 'pw-123'
+        Fixtures.Click(Fixtures.ActByLabel(view, 'Create operator'))
+        await Fixtures.Tick()
+        assert.deepEqual(client.Created, [['new@example.com', 'pw-123', 'readonly']])
+        assert.equal(client.Calls, 2)
+        assert.equal(view.Mode, SettingsMode.Normal)
+        assert.equal(Fixtures.Boxes(view).length, 0)
+    })
+
+    it('does nothing on a blank submit but shows a required-field line', async () =>
+    {
+        const client = Fixtures.Client()
+        const view = Fixtures.View(client, 'full')
+        await view.Refresh()
+        view.EnterMode(SettingsMode.Invite)
+        Fixtures.Click(Fixtures.ActByLabel(view, 'Create operator'))
+        await Fixtures.Tick()
+        assert.equal(client.Created.length, 0)
+        assert.notEqual(view.ErrorLine, '')
+        assert.equal(view.Mode, SettingsMode.Invite)
+    })
+
+    it('shows the server message and stays in invite mode when create fails', async () =>
+    {
+        const client = Fixtures.Client()
+        client.CreateError = new Error('email already exists')
+        const view = Fixtures.View(client, 'full')
+        await view.Refresh()
+        view.EnterMode(SettingsMode.Invite)
+        const boxes = Fixtures.Boxes(view)
+        boxes[0].Text = 'a@b.c'
+        boxes[1].Text = 'pw'
+        Fixtures.Click(Fixtures.ActByLabel(view, 'Create operator'))
+        await Fixtures.Tick()
+        assert.equal(view.ErrorLine, 'email already exists')
+        assert.equal(view.Mode, SettingsMode.Invite)
+    })
+
+    it('rebuilds cleanly on Refresh with the form open and cancel returns to normal', async () =>
+    {
+        const view = Fixtures.View(Fixtures.Client(), 'full')
+        await view.Refresh()
+        view.EnterMode(SettingsMode.Invite)
+        await view.Refresh()
+        assert.equal(view.Host.State, ScreenState.Populated)
+        assert.equal(view.Mode, SettingsMode.Invite)
+        assert.equal(Fixtures.Boxes(view).length, 2)
+        const cancel = Fixtures.Walk(view).find(n => n instanceof KeyActivatedButton && !(n instanceof Act)
+            && (n.Content as TextBlock | undefined)?.Text === 'Cancel')
+        Fixtures.Click(cancel)
+        assert.equal(view.Mode, SettingsMode.Normal)
+        assert.equal(Fixtures.Boxes(view).length, 0)
     })
 })
