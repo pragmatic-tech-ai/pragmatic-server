@@ -132,6 +132,19 @@ test('Publish then ManifestsFor only after Gate; Ungate removes; duplicate rejec
     })
 })
 
+test('ledger records only an actual gate/ungate change, not a re-gate or a no-op ungate', async () =>
+{
+    await Fx.Run(async (reg, _registrations, _rolls, ledger) =>
+    {
+        await reg.Publish(Fx.V1, Fx.Image(Fx.V1))
+        await reg.Gate(Fx.TenantA, Fx.V1)
+        await reg.Gate(Fx.TenantA, Fx.V1)
+        await reg.Ungate(Fx.TenantA, Fx.V2)
+        await reg.Ungate(Fx.TenantA, Fx.V1)
+        assert.deepEqual(ledger.ForTenant(Fx.TenantA, 50).map(e => e.action), ['ungated', 'gated'])
+    })
+})
+
 test('SetWithdrawn flags and restores a published version, surfacing on the gated tenant listing', async () =>
 {
     await Fx.Run(async reg =>

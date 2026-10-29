@@ -194,14 +194,22 @@ export class PlatformDeploymentRegistry
         {
             throw new UnknownManifestError(version)
         }
+        const existed = this.gating.Get(this.GateId(tenantId, version)) !== undefined
         await this.gating.Put({ id: this.GateId(tenantId, version), tenantId, version, gatedAt: new Date().toISOString() })
-        await this.RecordLedger({ tenantId, version, action: 'gated' })
+        if (!existed)
+        {
+            await this.RecordLedger({ tenantId, version, action: 'gated' })
+        }
     }
 
     public async Ungate(tenantId: string, version: string): Promise<void>
     {
+        const existed = this.gating.Get(this.GateId(tenantId, version)) !== undefined
         await this.gating.Remove(this.GateId(tenantId, version))
-        await this.RecordLedger({ tenantId, version, action: 'ungated' })
+        if (existed)
+        {
+            await this.RecordLedger({ tenantId, version, action: 'ungated' })
+        }
     }
 
     /** Records the selection (after the gating check) and pushes the roll to the hive's orchestrator. */
