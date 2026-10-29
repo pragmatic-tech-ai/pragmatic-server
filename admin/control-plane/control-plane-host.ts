@@ -23,6 +23,7 @@ import type { TenantProvisioningService } from './tenant-provisioning-service.js
 import { InvalidEnvironmentNameError } from './template-catalog.js'
 import { LastOperatorError, OperatorExistsError, OperatorNotFoundError, OperatorProtectedError, OperatorRole, OperatorSelfLockoutError, type IOperatorIdentity, type OperatorPrincipal } from './operator-identity.js'
 import { OperatorAuthorization } from './operator-authorization.js'
+import type { AuditRegistry } from './audit-record.js'
 import { Channel } from './channel.js'
 import { SessionCookie } from './session-cookie.js'
 import { EventsTicketStore } from './events-ticket-store.js'
@@ -204,6 +205,11 @@ export class ControlPlaneHost
     private static readonly CloseEvent = 'close'
     private static readonly LogPrefix = '[control-plane] request failed:'
     private static readonly ApiPrefix = '/api/'
+    private static readonly ActivityAllPath = '/api/activity'
+    private static readonly ActivityLimitMax = 200
+    private static readonly ActivityLimitParam = 'limit'
+    private static readonly AnonymousActor = '(anonymous)'
+    private static readonly AuditFailureFallback = 'AuditError'
     private static readonly PingPath = '/api/ping'
     private static readonly EnvironmentsPath = '/api/environments'
     private static readonly EventsPath = '/api/events'
@@ -379,7 +385,8 @@ export class ControlPlaneHost
         private readonly registry: OperatorSocketRegistry<WebSocket> = new OperatorSocketRegistry<WebSocket>(),
         private readonly revalidateIntervalMs: number = ControlPlaneHost.RevalidateIntervalMs,
         allowedHosts: readonly string[] = [],
-        private readonly authorization: OperatorAuthorization = new OperatorAuthorization())
+        private readonly authorization: OperatorAuthorization = new OperatorAuthorization(),
+        private readonly audit?: AuditRegistry)
     {
         this.allowedHosts = new Set([...ControlPlaneHost.DefaultAllowedHosts, ...allowedHosts.map(h => h.toLowerCase())])
         this.staticRootAbs = resolve(staticRoot)
@@ -613,6 +620,8 @@ export class ControlPlaneHost
                 return
             }
             const path = new URL(req.url ?? PlaneHttp.RootPath, ControlPlaneHost.BaseUrl).pathname
+            const method = req.method ?? PlaneHttp.MethodGet
+            let who: OperatorPrincipal | null = null
             if (path.startsWith(ControlPlaneHost.ApiPrefix))
             {
                 if (PlaneHttp.IsMutating(req) && !this.OriginAllowed(req))
@@ -623,22 +632,34 @@ export class ControlPlaneHost
                 }
                 if (!ControlPlaneHost.IsPublicApi(path))
                 {
-                    const who = await this.Principal(req)
+                    who = await this.Principal(req)
                     if (who === null)
                     {
                         req.resume()
+                        if (PlaneHttp.IsMutating(req))
+                        {
+                            await this.RecordAudit(ControlPlaneHost.AnonymousActor, method, path, ControlPlaneHost.StatusUnauthorized)
+                        }
                         PlaneHttp.WriteJson(res, ControlPlaneHost.StatusUnauthorized, { error: ControlPlaneHost.UnauthenticatedMessage })
                         return
                     }
-                    if (!this.authorization.Authorize(who.role, req.method ?? PlaneHttp.MethodGet, path))
+                    if (!this.authorization.Authorize(who.role, method, path))
                     {
                         req.resume()
+                        if (PlaneHttp.IsMutating(req))
+                        {
+                            await this.RecordAudit(who.email ?? who.principalId ?? '', method, path, ControlPlaneHost.StatusForbidden)
+                        }
                         PlaneHttp.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.ForbiddenRoleMessage })
                         return
                     }
                 }
             }
             const handled = await this.RouteApi(req, res, path)
+            if (who !== null && PlaneHttp.IsMutating(req) && path.startsWith(ControlPlaneHost.ApiPrefix) && !ControlPlaneHost.IsPublicApi(path))
+            {
+                await this.RecordAudit(who.email ?? who.principalId ?? '', method, path, res.statusCode)
+            }
             if (!handled)
             {
                 await PlaneHttp.ServeStatic(req, res, path, this.staticRootAbs)
@@ -650,6 +671,30 @@ export class ControlPlaneHost
         }
     }
 
+    /** Best-effort audit append: never throws, never alters the response. */
+    private async RecordAudit(actor: string, method: string, path: string, status: number): Promise<void>
+    {
+        if (this.audit === undefined)
+        {
+            return
+        }
+        try
+        {
+            await this.audit.Append({ actor, method, path, status, at: new Date().toISOString() })
+        }
+        catch (err)
+        {
+            console.error(ControlPlaneHost.LogPrefix, err instanceof Error ? err.name : ControlPlaneHost.AuditFailureFallback)
+        }
+    }
+
+    private ActivityLimit(req: IncomingMessage): number
+    {
+        const raw = new URL(req.url ?? PlaneHttp.RootPath, ControlPlaneHost.BaseUrl).searchParams.get(ControlPlaneHost.ActivityLimitParam)
+        const n = raw === null ? NaN : Number.parseInt(raw, 10)
+        return Number.isFinite(n) ? Math.min(Math.max(n, 1), ControlPlaneHost.ActivityLimitMax) : ControlPlaneHost.ActivityLimitMax
+    }
+
     /** Returns false when the request does not match any API route (falls through to static). */
     private async RouteApi(req: IncomingMessage, res: ServerResponse, path: string): Promise<boolean>
     {
@@ -657,6 +702,11 @@ export class ControlPlaneHost
         if (path === ControlPlaneHost.PingPath && method === PlaneHttp.MethodGet)
         {
             PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ok: true })
+            return true
+        }
+        if (path === ControlPlaneHost.ActivityAllPath && method === PlaneHttp.MethodGet)
+        {
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, [...(this.audit?.Recent(this.ActivityLimit(req)) ?? [])])
             return true
         }
         if (path === ControlPlaneHost.LoginPath && method === PlaneHttp.MethodPost)
