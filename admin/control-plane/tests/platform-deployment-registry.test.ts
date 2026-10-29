@@ -630,6 +630,23 @@ test('policy: floor excludes lower versions, boundary passes', async () =>
     })
 })
 
+test('policy: precedence held before channel before floor', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        await reg.Publish(Fx.V1, Fx.Image(Fx.V1), undefined, Channel.EarlyAccess)
+        await reg.Gate(Fx.TenantA, Fx.V1)
+        await reg.SetMinVersion(Fx.TenantA, Fx.V2)
+        await reg.SetChannels(Fx.TenantA, [Channel.Stable])
+        await reg.SetHold(Fx.TenantA, 'freeze', Fx.Operator)
+        await assert.rejects(reg.RecordAdoption(Fx.HiveA, Fx.V1), TenantOnHoldError)
+        await reg.ClearHold(Fx.TenantA)
+        await assert.rejects(reg.RecordAdoption(Fx.HiveA, Fx.V1), ChannelNotSubscribedError)
+        await reg.SetChannels(Fx.TenantA, [Channel.Stable, Channel.EarlyAccess])
+        await assert.rejects(reg.RecordAdoption(Fx.HiveA, Fx.V1), VersionBelowFloorError)
+    })
+})
+
 test('policy: reported equals enforced over a mixed set', async () =>
 {
     await Fx.Run(async reg =>
