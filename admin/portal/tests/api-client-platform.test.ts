@@ -143,6 +143,52 @@ describe('ControlPlaneClient platform records', () =>
         assert.deepEqual(manifests, payload)
     })
 
+    it('PublishManifest POSTs version, image and notes', async () =>
+    {
+        FetchStub.Install({ id: '1.2.0', image: 'img:1.2.0', publishedAt: '2026-01-01T00:00:00.000Z' })
+        const dto = await new ControlPlaneClient().PublishManifest('1.2.0', 'img:1.2.0', 'note')
+        const call = FetchStub.Calls[0]!
+        assert.equal(call.route, '/api/manifests')
+        assert.equal(call.init?.method, 'POST')
+        assert.deepEqual(JSON.parse(call.init?.body as string), { version: '1.2.0', image: 'img:1.2.0', notes: 'note' })
+        assert.equal(dto.id, '1.2.0')
+    })
+
+    it('PublishManifest omits absent or blank notes', async () =>
+    {
+        FetchStub.Install({ id: '1.2.0', image: 'img:1.2.0', publishedAt: '2026-01-01T00:00:00.000Z' })
+        const client = new ControlPlaneClient()
+        await client.PublishManifest('1.2.0', 'img:1.2.0')
+        await client.PublishManifest('1.2.0', 'img:1.2.0', '')
+        assert.deepEqual(JSON.parse(FetchStub.Calls[0]!.init?.body as string), { version: '1.2.0', image: 'img:1.2.0' })
+        assert.deepEqual(JSON.parse(FetchStub.Calls[1]!.init?.body as string), { version: '1.2.0', image: 'img:1.2.0' })
+    })
+
+    it('Gate POSTs the version to the tenant gating route', async () =>
+    {
+        FetchStub.Install({})
+        await new ControlPlaneClient().Gate('t1', '1.2.0')
+        const call = FetchStub.Calls[0]!
+        assert.equal(call.route, '/api/tenants/t1/gating')
+        assert.equal(call.init?.method, 'POST')
+        assert.deepEqual(JSON.parse(call.init?.body as string), { version: '1.2.0' })
+    })
+
+    it('Ungate DELETEs the gating item route', async () =>
+    {
+        FetchStub.Install({})
+        await new ControlPlaneClient().Ungate('t1', '1.2.0')
+        assert.equal(FetchStub.Calls[0]!.route, '/api/tenants/t1/gating/1.2.0')
+        assert.equal(FetchStub.Calls[0]!.init?.method, 'DELETE')
+    })
+
+    it('Ungate path-encodes the version', async () =>
+    {
+        FetchStub.Install({})
+        await new ControlPlaneClient().Ungate('t1', 'a/b+c')
+        assert.equal(FetchStub.Calls[0]!.route, '/api/tenants/t1/gating/a%2Fb%2Bc')
+    })
+
     it('ListOperators GETs /api/operators and returns the parsed array', async () =>
     {
         const payload: OperatorSummaryDto[] = [{ email: 'a@b.c', role: 'full' }, { email: 'd@e.f', role: 'readonly' }]

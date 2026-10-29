@@ -37,6 +37,10 @@ export class ControlPlaneClient
     private static readonly GraphsLeaf = 'graphs'
     private static readonly PromoteLeaf = 'promote'
     private static readonly LoadedGraphLeaf = 'loaded-graph'
+    private static readonly GatingSegment = 'gating'
+    private static readonly VersionKey = 'version'
+    private static readonly ImageKey = 'image'
+    private static readonly NotesKey = 'notes'
     private static readonly MethodPost = 'POST'
     private static readonly MethodDelete = 'DELETE'
     private static readonly ContentTypeHeader = 'content-type'
@@ -143,6 +147,36 @@ export class ControlPlaneClient
     public async DeleteHive(id: string): Promise<void>
     {
         await this.Send<unknown>(this.ItemRoute(ControlPlaneClient.HivesRoute, id), { method: ControlPlaneClient.MethodDelete })
+    }
+
+    public async PublishManifest(version: string, image: string, notes?: string): Promise<ManifestDto>
+    {
+        const body: Record<string, unknown> = { [ControlPlaneClient.VersionKey]: version, [ControlPlaneClient.ImageKey]: image }
+        if (notes !== undefined && notes.length > 0)
+        {
+            body[ControlPlaneClient.NotesKey] = notes
+        }
+        return await this.Send<ManifestDto>(ControlPlaneClient.ManifestsRoute, { method: ControlPlaneClient.MethodPost, body: JSON.stringify(body) })
+    }
+
+    public async Gate(tenantId: string, version: string): Promise<void>
+    {
+        await this.Send<unknown>(this.TenantGatingRoute(tenantId), { method: ControlPlaneClient.MethodPost, body: JSON.stringify({ [ControlPlaneClient.VersionKey]: version }) })
+    }
+
+    public async Ungate(tenantId: string, version: string): Promise<void>
+    {
+        await this.Send<unknown>(this.TenantGatingItemRoute(tenantId, version), { method: ControlPlaneClient.MethodDelete })
+    }
+
+    private TenantGatingRoute(tenantId: string): string
+    {
+        return this.ItemRoute(ControlPlaneClient.TenantsRoute, tenantId) + ControlPlaneClient.PathSeparator + ControlPlaneClient.GatingSegment
+    }
+
+    private TenantGatingItemRoute(tenantId: string, version: string): string
+    {
+        return this.TenantGatingRoute(tenantId) + ControlPlaneClient.PathSeparator + encodeURIComponent(version)
     }
 
     private ItemRoute(collection: string, id: string): string
