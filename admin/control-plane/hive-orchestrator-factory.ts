@@ -1,4 +1,4 @@
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { CryptoImageVerifier } from './image-verifier.js'
 import { DockerImageDigest } from './image-digest.js'
 import { EffectiveRegistry } from './effective-registry.js'
@@ -20,7 +20,7 @@ export class HiveOrchestratorFactory
 {
     private static readonly DefaultLocalContext = 'docker-desktop'
 
-    private static readonly DefaultDataRoot = '.pragmatic-data/control-plane'
+    private static readonly DefaultDataRoot = resolve('.pragmatic-data/control-plane')
     private static readonly SignaturesFileName = 'signatures.json'
     private static readonly KeysDirName = 'keys'
 

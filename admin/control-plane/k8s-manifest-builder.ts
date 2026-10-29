@@ -1,4 +1,5 @@
 import { UiArtifact } from './ui-artifact.js'
+import { DockerEnv } from '../../environments/seed/docker.js'
 import type { EnvironmentWorkload, WorkloadAppDeployment, WorkloadDatabase } from './environment-workload.js'
 import { EnvServerSeedSource } from './env-server-seed.js'
 import { InClusterRegistry } from './in-cluster-registry.js'
@@ -92,7 +93,6 @@ export class K8sManifestBuilder
     private static readonly ServerSuffix = 'server'
     private static readonly DatabaseSuffix = 'postgres'
     /** Same path DockerEnv.WaitHealthy polls. */
-    private static readonly HealthPath = '/healthz'
     private static readonly PostgresPort = 5432
     private static readonly PostgresDataPath = '/var/lib/postgresql/data'
     private static readonly PostgresUserVar = 'POSTGRES_USER'
@@ -771,7 +771,7 @@ export class K8sManifestBuilder
             ],
             [K8sManifestBuilder.ReadinessProbeKey]: {
                 [K8sManifestBuilder.HttpGetKey]: {
-                    [K8sManifestBuilder.PathKey]: K8sManifestBuilder.HealthPath,
+                    [K8sManifestBuilder.PathKey]: DockerEnv.HealthPath,
                     [K8sManifestBuilder.PortKey]: spec.port,
                     [K8sManifestBuilder.SchemeKey]: K8sManifestBuilder.HttpsScheme,
                 },
@@ -1179,7 +1179,7 @@ export class K8sManifestBuilder
                             [K8sManifestBuilder.VolumeMountsKey]: volumeMounts,
                             [K8sManifestBuilder.ReadinessProbeKey]: {
                                 [K8sManifestBuilder.HttpGetKey]: {
-                                    [K8sManifestBuilder.PathKey]: K8sManifestBuilder.HealthPath,
+                                    [K8sManifestBuilder.PathKey]: DockerEnv.HealthPath,
                                     [K8sManifestBuilder.PortKey]: workload.serverPort,
                                 },
                             },

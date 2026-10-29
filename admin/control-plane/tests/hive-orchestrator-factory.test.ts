@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { isAbsolute } from 'node:path'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import { UnsupportedBackendError } from '../hive-orchestrator.js'
 import { KubectlHiveOrchestrator } from '../kubectl-hive-orchestrator.js'
@@ -90,4 +91,10 @@ test('two hives with different ids get different cluster names', () =>
     assert.notEqual(a.ClusterName, b.ClusterName)
     assert.equal(a.ClusterName, KindClusterName.For('hive-a'))
     assert.equal(b.ClusterName, KindClusterName.For('hive-b'))
+})
+
+test('the default data root is absolute (independent of cwd)', () =>
+{
+    const factory = new HiveOrchestratorFactory() as unknown as { dataRoot: string }
+    assert.ok(isAbsolute(factory.dataRoot))
 })

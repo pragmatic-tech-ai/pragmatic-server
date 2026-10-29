@@ -63,9 +63,11 @@ describe('EffectiveRegistry', () =>
         assert.equal(reg.ImageRef(HiveFactory.Image), 'pragmatic-server:dev')
     })
 
-    it('pulls IfNotPresent', () =>
+    it('trims one trailing slash so ImageRef composes a single separator', () =>
     {
-        const reg = EffectiveRegistry.For(HiveFactory.Make({ mode: InfraMode.Provision }))
-        assert.equal(reg.PullPolicy, 'IfNotPresent')
+        const slashed = EffectiveRegistry.For(HiveFactory.Make({ mode: InfraMode.Attach, endpoint: 'ghcr.io/org/' }))
+        const plain = EffectiveRegistry.For(HiveFactory.Make({ mode: InfraMode.Attach, endpoint: 'ghcr.io/org' }))
+        assert.equal(slashed.ImageRef('img'), 'ghcr.io/org/img')
+        assert.equal(plain.ImageRef('img'), 'ghcr.io/org/img')
     })
 })

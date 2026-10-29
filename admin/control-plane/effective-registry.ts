@@ -4,12 +4,12 @@ import type { HiveRecord } from './platform-records.js'
 /**
  * Resolves a hive's RegistrySpec to a concrete registry endpoint and rewrites image
  * references to pull from it. An explicitly empty endpoint string means "no registry"
- * (shared-store fast path): images are left unchanged.
+ * (shared-store fast path): images are left unchanged. Pull policy is not modelled here;
+ * K8sManifestBuilder renders it.
  */
 export class EffectiveRegistry
 {
     private static readonly DefaultProvisionEndpoint = 'localhost:5000'
-    private static readonly DefaultPullPolicy = 'IfNotPresent'
     private static readonly PathSeparator = '/'
 
     private constructor(
@@ -30,6 +30,10 @@ export class EffectiveRegistry
         {
             endpoint = undefined
         }
+        if (endpoint !== undefined && endpoint.endsWith(EffectiveRegistry.PathSeparator))
+        {
+            endpoint = endpoint.slice(0, -EffectiveRegistry.PathSeparator.length)
+        }
         return new EffectiveRegistry(endpoint, spec.mode)
     }
 
@@ -41,11 +45,6 @@ export class EffectiveRegistry
     public get Mode(): InfraMode
     {
         return this.mode
-    }
-
-    public get PullPolicy(): string
-    {
-        return EffectiveRegistry.DefaultPullPolicy
     }
 
     public ImageRef(baseImage: string): string

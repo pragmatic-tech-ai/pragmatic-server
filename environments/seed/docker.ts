@@ -95,7 +95,7 @@ export class DockerEnv
     private static readonly DataMount = '/data'
     private static readonly DataSeedMount = '/data-seed'
     private static readonly SeedMount = '/seed'
-    private static readonly HealthPath = '/healthz'
+    public static readonly HealthPath = '/healthz'
     private static readonly LocalHost = '127.0.0.1'
     private static readonly HealthTimeoutMs = 60000
     private static readonly HealthIntervalMs = 1000
