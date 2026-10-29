@@ -78,6 +78,23 @@ class FakeOperator implements IOperatorIdentity
         return this.Roster
     }
 
+    public async SetOperatorRole(_email: string, _role: OperatorRole, _actorPrincipalId: string): Promise<void>
+    {
+    }
+
+    public async ResetOperatorPassword(_email: string): Promise<string>
+    {
+        return ''
+    }
+
+    public async SetOperatorDisabled(_email: string, _disabled: boolean, _actorPrincipalId: string): Promise<void>
+    {
+    }
+
+    public async RevokeOperatorSessions(_email: string): Promise<void>
+    {
+    }
+
     public async CreateOperator(_email: string, _password: string, _role: OperatorRole): Promise<void>
     {
     }
@@ -688,8 +705,8 @@ describe('ControlPlaneHost', () =>
     it('serves the operator roster as email+role only to a Full operator', async () =>
     {
         operator.Roster = [
-            { email: 'admin@example.com', role: OperatorRole.Full },
-            { email: 'viewer@example.com', role: OperatorRole.ReadOnly }
+            { email: 'admin@example.com', role: OperatorRole.Full, disabled: false },
+            { email: 'viewer@example.com', role: OperatorRole.ReadOnly, disabled: false }
         ]
         const r = await Harness.Send(host, 'GET', '/api/operators')
         assert.equal(r.status, 200)
@@ -707,7 +724,7 @@ describe('ControlPlaneHost', () =>
 
     it('denies the operator roster to a read-only operator without leaking it', async () =>
     {
-        operator.Roster = [{ email: 'admin@example.com', role: OperatorRole.Full }]
+        operator.Roster = [{ email: 'admin@example.com', role: OperatorRole.Full, disabled: false }]
         operator.Role = OperatorRole.ReadOnly
         const r = await Harness.Send(host, 'GET', '/api/operators')
         assert.equal(r.status, 403)
@@ -716,7 +733,7 @@ describe('ControlPlaneHost', () =>
 
     it('rejects the operator roster when unauthenticated', async () =>
     {
-        operator.Roster = [{ email: 'admin@example.com', role: OperatorRole.Full }]
+        operator.Roster = [{ email: 'admin@example.com', role: OperatorRole.Full, disabled: false }]
         const r = await Harness.Anon(host, 'GET', '/api/operators')
         assert.equal(r.status, 401)
         assert.ok(!r.body.includes('admin@example.com'))

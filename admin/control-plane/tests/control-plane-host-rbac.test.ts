@@ -38,6 +38,23 @@ class RoleOperator implements IOperatorIdentity
         return []
     }
 
+    public async SetOperatorRole(_email: string, _role: OperatorRole, _actorPrincipalId: string): Promise<void>
+    {
+    }
+
+    public async ResetOperatorPassword(_email: string): Promise<string>
+    {
+        return ''
+    }
+
+    public async SetOperatorDisabled(_email: string, _disabled: boolean, _actorPrincipalId: string): Promise<void>
+    {
+    }
+
+    public async RevokeOperatorSessions(_email: string): Promise<void>
+    {
+    }
+
     public async CreateOperator(email: string, _password: string, role: OperatorRole): Promise<void>
     {
         if (this.Created.some(c => c.email === email))

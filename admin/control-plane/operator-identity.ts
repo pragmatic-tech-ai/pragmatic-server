@@ -16,7 +16,7 @@ export enum OperatorRole
 }
 
 /** Public roster entry: email and role only; never ids, secret refs, or grants. */
-export type OperatorSummary = { email: string; role: OperatorRole }
+export type OperatorSummary = { email: string; role: OperatorRole; disabled: boolean }
 
 export type OperatorPrincipal = { email: string; principalId: string; role: OperatorRole }
 
@@ -27,6 +27,10 @@ export interface IOperatorIdentity
     Revoke(token: string): Promise<void>
     CreateOperator(email: string, password: string, role: OperatorRole): Promise<void>
     ListOperators(): Promise<readonly OperatorSummary[]>
+    SetOperatorRole(email: string, role: OperatorRole, actorPrincipalId: string): Promise<void>
+    ResetOperatorPassword(email: string): Promise<string>
+    SetOperatorDisabled(email: string, disabled: boolean, actorPrincipalId: string): Promise<void>
+    RevokeOperatorSessions(email: string): Promise<void>
 }
 
 export type OperatorComposeOptions = { identityRoot: string; masterKeyFile: string; operatorEmail: string; initialPassword?: string }
@@ -55,6 +59,54 @@ export class OperatorExistsError extends Error
     }
 }
 
+export class OperatorNotFoundError extends Error
+{
+    private static readonly ErrorName = 'OperatorNotFoundError'
+    private static readonly DefaultMessage = 'No operator with that email exists'
+
+    public constructor(message: string = OperatorNotFoundError.DefaultMessage)
+    {
+        super(message)
+        this.name = OperatorNotFoundError.ErrorName
+    }
+}
+
+export class OperatorSelfLockoutError extends Error
+{
+    private static readonly ErrorName = 'OperatorSelfLockoutError'
+    private static readonly DefaultMessage = 'An operator cannot lock themselves out'
+
+    public constructor(message: string = OperatorSelfLockoutError.DefaultMessage)
+    {
+        super(message)
+        this.name = OperatorSelfLockoutError.ErrorName
+    }
+}
+
+export class LastOperatorError extends Error
+{
+    private static readonly ErrorName = 'LastOperatorError'
+    private static readonly DefaultMessage = 'The last full-access operator cannot be demoted or disabled'
+
+    public constructor(message: string = LastOperatorError.DefaultMessage)
+    {
+        super(message)
+        this.name = LastOperatorError.ErrorName
+    }
+}
+
+export class OperatorProtectedError extends Error
+{
+    private static readonly ErrorName = 'OperatorProtectedError'
+    private static readonly DefaultMessage = 'The bootstrap administrator account is protected from this change'
+
+    public constructor(message: string = OperatorProtectedError.DefaultMessage)
+    {
+        super(message)
+        this.name = OperatorProtectedError.ErrorName
+    }
+}
+
 export class MasterKeyError extends Error
 {
     private static readonly ErrorName = 'MasterKeyError'
@@ -74,6 +126,8 @@ export class OperatorIdentity implements IOperatorIdentity
     private static readonly AdminPasswordRef = 'control-plane-admin-pw'
     private static readonly EmailClaim = 'email'
     private static readonly MasterKeyBytes = 32
+    private static readonly GeneratedPasswordBytes = 24
+    private static readonly PasswordEncoding = 'base64url'
     private static readonly KeyFileMode = 0o600
     private static readonly SecretDirMode = 0o700
     private static readonly BadMasterKeyMessage = 'Master key file must contain exactly 32 bytes'
@@ -173,7 +227,7 @@ export class OperatorIdentity implements IOperatorIdentity
         await this.pack.Grants.Save(new Grant(principalId, grantRole, new ResourceRef(ResourceKind.Tenant, this.tenant.Id, [])))
     }
 
-    /** Active operator roster (email + role only). The bootstrap admin appears exactly once, under the configured operator email. */
+    /** Operator roster (including disabled accounts) (email + role only). The bootstrap admin appears exactly once, under the configured operator email. */
     public async ListOperators(): Promise<readonly OperatorSummary[]>
     {
         const accounts = await this.pack.Accounts.ListAccounts(this.tenant)
@@ -181,17 +235,13 @@ export class OperatorIdentity implements IOperatorIdentity
         let sawAdmin = false
         for (const account of accounts)
         {
-            if (account.Disabled !== false)
-            {
-                continue
-            }
             const isAdmin = account.PrincipalId === OperatorIdentity.AdminPrincipalId
             sawAdmin = sawAdmin || isAdmin
-            summaries.push({ email: isAdmin ? this.operatorEmail : account.Email, role: await this.RoleFor(account.PrincipalId) })
+            summaries.push({ email: isAdmin ? this.operatorEmail : account.Email, role: await this.RoleFor(account.PrincipalId), disabled: account.Disabled !== false })
         }
         if (!sawAdmin)
         {
-            summaries.unshift({ email: this.operatorEmail, role: OperatorRole.Full })
+            summaries.unshift({ email: this.operatorEmail, role: OperatorRole.Full, disabled: false })
         }
         const seen = new Set<string>()
         return summaries.filter(s =>
@@ -203,6 +253,118 @@ export class OperatorIdentity implements IOperatorIdentity
             seen.add(s.email)
             return true
         })
+    }
+
+    /** Changes an operator's role. Save is append-only, so the old role grant is revoked first. Guards run before any state change. */
+    public async SetOperatorRole(email: string, role: OperatorRole, actorPrincipalId: string): Promise<void>
+    {
+        const principalId = await this.ResolvePrincipal(email)
+        this.RejectIfProtected(principalId)
+        if (role === OperatorRole.ReadOnly)
+        {
+            if (principalId === actorPrincipalId)
+            {
+                throw new OperatorSelfLockoutError()
+            }
+            await this.RejectIfLastFull(principalId)
+        }
+        if ((await this.RoleFor(principalId)) === role)
+        {
+            return
+        }
+        const grants = await this.pack.Grants.GrantsFor(principalId, this.tenant)
+        for (const g of grants)
+        {
+            const onRoot = g.Resource.Kind === ResourceKind.Tenant && g.Resource.TenantId === this.tenant.Id
+            if (onRoot && (g.Role === Role.Owner || g.Role === Role.Viewer))
+            {
+                await this.pack.Grants.Revoke(g)
+            }
+        }
+        const grantRole = role === OperatorRole.Full ? Role.Owner : Role.Viewer
+        await this.pack.Grants.Save(new Grant(principalId, grantRole, new ResourceRef(ResourceKind.Tenant, this.tenant.Id, [])))
+    }
+
+    /** Rotates the operator's password to a generated one and returns it; this return value is the only place it is exposed. */
+    public async ResetOperatorPassword(email: string): Promise<string>
+    {
+        const principalId = await this.ResolvePrincipal(email)
+        const password = randomBytes(OperatorIdentity.GeneratedPasswordBytes).toString(OperatorIdentity.PasswordEncoding)
+        const presented = new PresentedSecret(password)
+        try
+        {
+            await this.pack.Registrar.RotatePasswordIfChanged(this.tenant, principalId, presented)
+        }
+        finally
+        {
+            presented.Clear()
+        }
+        return password
+    }
+
+    public async SetOperatorDisabled(email: string, disabled: boolean, actorPrincipalId: string): Promise<void>
+    {
+        const principalId = await this.ResolvePrincipal(email)
+        this.RejectIfProtected(principalId)
+        if (disabled)
+        {
+            if (principalId === actorPrincipalId)
+            {
+                throw new OperatorSelfLockoutError()
+            }
+            await this.RejectIfLastFull(principalId)
+            await this.pack.Accounts.Disable(this.tenant, principalId)
+        }
+        else
+        {
+            await this.pack.Accounts.Enable(this.tenant, principalId)
+        }
+    }
+
+    public async RevokeOperatorSessions(email: string): Promise<void>
+    {
+        const principalId = await this.ResolvePrincipal(email)
+        await this.pack.Sessions.RevokeAllFor(principalId)
+    }
+
+    private async ResolvePrincipal(email: string): Promise<string>
+    {
+        const account = await this.pack.Accounts.FindByEmail(this.tenant, email)
+        if (account === null)
+        {
+            throw new OperatorNotFoundError()
+        }
+        return account.PrincipalId
+    }
+
+    private RejectIfProtected(principalId: string): void
+    {
+        if (principalId === OperatorIdentity.AdminPrincipalId)
+        {
+            throw new OperatorProtectedError()
+        }
+    }
+
+    /** Blocks removing Full access from the only active Full operator. */
+    private async RejectIfLastFull(principalId: string): Promise<void>
+    {
+        if ((await this.RoleFor(principalId)) !== OperatorRole.Full)
+        {
+            return
+        }
+        const accounts = await this.pack.Accounts.ListAccounts(this.tenant)
+        let otherFull = 0
+        for (const account of accounts)
+        {
+            if (account.Disabled === false && account.PrincipalId !== principalId && (await this.RoleFor(account.PrincipalId)) === OperatorRole.Full)
+            {
+                otherFull++
+            }
+        }
+        if (otherFull === 0)
+        {
+            throw new LastOperatorError()
+        }
     }
 
     /** Deny-by-default: Full only when an Owner grant on this tenant exists; anything else is ReadOnly. */

@@ -14,7 +14,7 @@ class OperatorIdentityFixture
     public static readonly NewPassword = 'pw-new-operator'
     public static readonly OtherPassword = 'pw-DIFFERENT'
     public static readonly BadKeyBytes = 16
-    public static readonly SummaryKeys = ['email', 'role']
+    public static readonly SummaryKeys = ['disabled', 'email', 'role']
     private static readonly TempPrefix = 'op-'
     private static readonly IdentityDir = 'identity'
     public static readonly KeyFile = 'master.key'
@@ -168,7 +168,7 @@ describe('OperatorIdentity', () =>
         })
     })
 
-    it('excludes disabled accounts from the roster', async () =>
+    it('includes disabled accounts in the roster flagged disabled', async () =>
     {
         await OperatorIdentityFixture.WithRoot(async root =>
         {
@@ -180,8 +180,9 @@ describe('OperatorIdentity', () =>
             const tenant = identity['tenant']
             const account = await pack.Accounts.FindByEmail(tenant, OperatorIdentityFixture.ReadEmail)
             await pack.Accounts.Disable(tenant, account!.PrincipalId)
-            const emails = (await identity.ListOperators()).map(o => o.email).sort()
-            assert.deepEqual(emails, [OperatorIdentityFixture.FullEmail, OperatorIdentityFixture.Email].sort())
+            const roster = await identity.ListOperators()
+            assert.deepEqual(roster.map(o => o.email).sort(), [OperatorIdentityFixture.ReadEmail, OperatorIdentityFixture.FullEmail, OperatorIdentityFixture.Email].sort())
+            assert.deepEqual(roster.filter(o => o.disabled).map(o => o.email), [OperatorIdentityFixture.ReadEmail])
         })
     })
 })
