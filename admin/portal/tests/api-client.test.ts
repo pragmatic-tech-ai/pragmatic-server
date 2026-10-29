@@ -190,3 +190,39 @@ describe('ControlPlaneClient release policy', () =>
         assert.deepEqual(out, { tenantId: 't1' })
     })
 })
+
+describe('ControlPlaneClient activity and history', () =>
+{
+    afterEach(() => { FetchStub.Restore() })
+
+    it('ListActivity GETs /api/activity with and without a limit', async () =>
+    {
+        FetchStub.Install([{ id: 'a1', actor: 'x', method: 'POST', path: '/p', status: 200, at: 't' }])
+        const rows = await new ControlPlaneClient().ListActivity()
+        assert.equal(FetchStub.Calls[0]!.route, '/api/activity')
+        assert.equal(FetchStub.Calls[0]!.init?.method, undefined)
+        assert.equal(rows[0]!.actor, 'x')
+        await new ControlPlaneClient().ListActivity(25)
+        assert.equal(FetchStub.Calls[1]!.route, '/api/activity?limit=25')
+    })
+
+    it('ListHiveObservations GETs the hive observations route', async () =>
+    {
+        FetchStub.Install([{ id: 'o1', hiveId: 'h 1', environments: [], reportedAt: 't' }])
+        const rows = await new ControlPlaneClient().ListHiveObservations('h 1')
+        assert.equal(FetchStub.Calls[0]!.route, '/api/hives/h%201/observations')
+        assert.equal(rows[0]!.id, 'o1')
+        await new ControlPlaneClient().ListHiveObservations('h1', 5)
+        assert.equal(FetchStub.Calls[1]!.route, '/api/hives/h1/observations?limit=5')
+    })
+
+    it('ListHiveLedger GETs the hive ledger route', async () =>
+    {
+        FetchStub.Install([{ id: 'l1', version: '1.0.0', action: 'adopt', at: 't' }])
+        const rows = await new ControlPlaneClient().ListHiveLedger('h1')
+        assert.equal(FetchStub.Calls[0]!.route, '/api/hives/h1/ledger')
+        assert.equal(rows[0]!.version, '1.0.0')
+        await new ControlPlaneClient().ListHiveLedger('h1', 10)
+        assert.equal(FetchStub.Calls[1]!.route, '/api/hives/h1/ledger?limit=10')
+    })
+})

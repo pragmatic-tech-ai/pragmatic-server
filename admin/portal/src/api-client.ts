@@ -1,4 +1,4 @@
-import type { ClientDto, EnvironmentDto, HiveDto, FleetHiveDto, ManifestDto, OperatorSummaryDto, GatingDto, SelectionDto, HiveRolloutDto, TenantDto, GraphDto, GraphLoadedDto, OperatorDto, PromotionResultDto, ProvisionInputDto, ProvisionResultDto, PolicyDto } from './portal-types.js'
+import type { ClientDto, EnvironmentDto, HiveDto, FleetHiveDto, ManifestDto, OperatorSummaryDto, GatingDto, SelectionDto, HiveRolloutDto, TenantDto, GraphDto, GraphLoadedDto, OperatorDto, PromotionResultDto, ProvisionInputDto, ProvisionResultDto, PolicyDto, ActivityDto, ObservationDto, LedgerDto } from './portal-types.js'
 
 // Thrown for non-2xx control-plane responses; Message carries the server's error text.
 export class ApiError extends Error
@@ -58,6 +58,10 @@ export class ControlPlaneClient
     private static readonly MethodPost = 'POST'
     private static readonly MethodDelete = 'DELETE'
     private static readonly MethodPut = 'PUT'
+    private static readonly ActivityRoute = '/api/activity'
+    private static readonly ObservationsSegment = 'observations'
+    private static readonly LedgerSegment = 'ledger'
+    private static readonly LimitParam = 'limit'
     private static readonly PoliciesRoute = '/api/policies'
     private static readonly PolicySegment = 'policy'
     private static readonly ChannelsSegment = 'channels'
@@ -247,6 +251,31 @@ export class ControlPlaneClient
     private TenantPolicyRoute(tenantId: string, action: string): string
     {
         return this.ItemRoute(ControlPlaneClient.TenantsRoute, tenantId) + ControlPlaneClient.PathSeparator + ControlPlaneClient.PolicySegment + ControlPlaneClient.PathSeparator + action
+    }
+
+    public async ListActivity(limit?: number): Promise<ActivityDto[]>
+    {
+        return await this.Send<ActivityDto[]>(this.WithLimit(ControlPlaneClient.ActivityRoute, limit), undefined)
+    }
+
+    public async ListHiveObservations(hiveId: string, limit?: number): Promise<ObservationDto[]>
+    {
+        return await this.Send<ObservationDto[]>(this.WithLimit(this.HiveSubRoute(hiveId, ControlPlaneClient.ObservationsSegment), limit), undefined)
+    }
+
+    public async ListHiveLedger(hiveId: string, limit?: number): Promise<LedgerDto[]>
+    {
+        return await this.Send<LedgerDto[]>(this.WithLimit(this.HiveSubRoute(hiveId, ControlPlaneClient.LedgerSegment), limit), undefined)
+    }
+
+    private HiveSubRoute(hiveId: string, segment: string): string
+    {
+        return this.ItemRoute(ControlPlaneClient.HivesRoute, hiveId) + ControlPlaneClient.PathSeparator + segment
+    }
+
+    private WithLimit(route: string, limit?: number): string
+    {
+        return limit === undefined ? route : route + '?' + ControlPlaneClient.LimitParam + '=' + String(limit)
     }
 
     public async ListPolicies(): Promise<PolicyDto[]>
