@@ -10,6 +10,8 @@ class AuthorizationFixture
     public static readonly ResourcePaths: readonly string[] = ['/api/clients', '/api/operators', '/api/environments/x/start', '/api/manifests']
     public static readonly ReadPath = '/api/environments'
     public static readonly Logout = '/api/logout'
+    public static readonly OperatorsRead = '/api/operators'
+    public static readonly FleetRead = '/api/fleet'
 }
 
 describe('OperatorAuthorization', () =>
@@ -49,5 +51,18 @@ describe('OperatorAuthorization', () =>
                 assert.equal(authz.Authorize(OperatorRole.Full, method, path), true, `${method} ${path}`)
             }
         }
+    })
+
+    it('denies ReadOnly the operator roster read but allows Full', () =>
+    {
+        assert.equal(authz.Authorize(OperatorRole.ReadOnly, 'GET', AuthorizationFixture.OperatorsRead), false)
+        assert.equal(authz.Authorize(OperatorRole.Full, 'GET', AuthorizationFixture.OperatorsRead), true)
+    })
+
+    it('does not over-broaden: ReadOnly still reads other safe routes, logs out, and is denied mutations', () =>
+    {
+        assert.equal(authz.Authorize(OperatorRole.ReadOnly, 'GET', AuthorizationFixture.FleetRead), true)
+        assert.equal(authz.Authorize(OperatorRole.ReadOnly, 'POST', OperatorAuthorization.LogoutPath), true)
+        assert.equal(authz.Authorize(OperatorRole.ReadOnly, 'POST', AuthorizationFixture.FleetRead), false)
     })
 })
