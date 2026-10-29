@@ -6,6 +6,9 @@ import { ReleaseDetailView } from '../src/release-detail-view.js'
 import { ReleaseDetailViewModel } from '../src/release-detail-view-model.js'
 import { TextBlock } from '@pragmatic-tech-ai/mural/basic'
 import { Banner, KeyActivatedButton, KeyValueGrid, ObservedPanel, PageHeader, ScreenState } from '../src/kit/index.js'
+import { OperatorContext } from '../src/operator-context.js'
+import { ButtonVariant } from '@pragmatic-tech-ai/mural/framework'
+import { Act } from '../src/kit/index.js'
 import type { FleetHiveDto, ManifestDto } from '../src/portal-types.js'
 
 class Fixtures
@@ -38,6 +41,23 @@ class Fixtures
     public static Vm(over: object = {}, fleet: FleetHiveDto[] = Fixtures.Fleet()): ReleaseDetailViewModel
     {
         return new ReleaseDetailViewModel(Fixtures.Manifest(over), fleet)
+    }
+
+    public static Full(): OperatorContext
+    {
+        return OperatorContext.FromWire('full')
+    }
+
+    public static NoToggle(): (withdraw: boolean) => Promise<void>
+    {
+        return () => Promise.resolve()
+    }
+
+    public static Action(view: ReleaseDetailView): Act
+    {
+        const a = view.WithdrawAction
+        assert.ok(a)
+        return a
     }
 
     public static Collect(node: unknown, out: unknown[] = []): unknown[]
@@ -76,7 +96,7 @@ describe('ReleaseDetailView', () =>
 
     it('populated view has header, release grid, where-it-runs panel and adoption rows', () =>
     {
-        const view = new ReleaseDetailView(Fixtures.Vm(), () => undefined)
+        const view = new ReleaseDetailView(Fixtures.Vm(), () => undefined, Fixtures.Full(), Fixtures.NoToggle())
         assert.equal(view.Host.State, ScreenState.Populated)
         assert.equal(view.AdoptionTable?.Rows.length, 2)
         const nodes = Fixtures.Collect(view)
@@ -87,7 +107,7 @@ describe('ReleaseDetailView', () =>
 
     it('release grid keys are exactly the five profile keys', () =>
     {
-        const view = new ReleaseDetailView(Fixtures.Vm(), () => undefined)
+        const view = new ReleaseDetailView(Fixtures.Vm(), () => undefined, Fixtures.Full(), Fixtures.NoToggle())
         const grid = Fixtures.Collect(view).find(n => n instanceof KeyValueGrid) as KeyValueGrid
         assert.ok(grid)
         assert.deepEqual(Fixtures.Vm().Profile.map(i => i.key), ['Version', 'Image', 'Published', 'Status', "What's new"])
@@ -104,7 +124,7 @@ describe('ReleaseDetailView', () =>
     it('withdrawn release renders a banner', () =>
     {
         const vm = Fixtures.Vm({ withdrawn: true })
-        const view = new ReleaseDetailView(vm, () => undefined)
+        const view = new ReleaseDetailView(vm, () => undefined, Fixtures.Full(), Fixtures.NoToggle())
         const banner = Fixtures.Collect(view).find(n => n instanceof Banner) as Banner
         assert.ok(banner)
         assert.ok(vm.WithdrawnBanner.text.length > 0)
@@ -114,7 +134,7 @@ describe('ReleaseDetailView', () =>
     it('withdrawn release with running environments shows status, banner and adoption rows', () =>
     {
         const vm = Fixtures.Vm({ withdrawn: true })
-        const view = new ReleaseDetailView(vm, () => undefined)
+        const view = new ReleaseDetailView(vm, () => undefined, Fixtures.Full(), Fixtures.NoToggle())
         const banner = Fixtures.Collect(view).find(n => n instanceof Banner) as Banner
         assert.ok(banner)
         assert.equal(banner.Text, vm.WithdrawnBanner.text)
@@ -124,19 +144,19 @@ describe('ReleaseDetailView', () =>
 
     it('published release renders no banner', () =>
     {
-        const view = new ReleaseDetailView(Fixtures.Vm(), () => undefined)
+        const view = new ReleaseDetailView(Fixtures.Vm(), () => undefined, Fixtures.Full(), Fixtures.NoToggle())
         assert.ok(!Fixtures.Collect(view).some(n => n instanceof Banner))
     })
 
     it('empty adoption rows render an empty table without throwing', () =>
     {
-        const view = new ReleaseDetailView(Fixtures.Vm({}, []), () => undefined)
+        const view = new ReleaseDetailView(Fixtures.Vm({}, []), () => undefined, Fixtures.Full(), Fixtures.NoToggle())
         assert.equal(view.AdoptionTable?.Rows.length, 0)
     })
 
     it('a second render through the host builds a fresh slot without a double-parent', () =>
     {
-        const view = new ReleaseDetailView(Fixtures.Vm(), () => undefined)
+        const view = new ReleaseDetailView(Fixtures.Vm(), () => undefined, Fixtures.Full(), Fixtures.NoToggle())
         const first = view.AdoptionTable
         const inputs = (view as unknown as { Inputs(): never }).Inputs()
         assert.doesNotThrow(() => view.Host.Update(inputs))
@@ -147,10 +167,63 @@ describe('ReleaseDetailView', () =>
     it('the back button invokes onBack', () =>
     {
         let calls = 0
-        const view = new ReleaseDetailView(Fixtures.Vm(), () => { calls++ })
+        const view = new ReleaseDetailView(Fixtures.Vm(), () => { calls++ }, Fixtures.Full(), Fixtures.NoToggle())
         const button = Fixtures.Collect(view).find(n => n instanceof KeyActivatedButton) as KeyActivatedButton
         assert.ok(button)
         ;(button as unknown as { OnKeyDown(a: unknown): void }).OnKeyDown({ Key: Key.Return, Handled: false })
         assert.equal(calls, 1)
+    })
+
+    it('published manifest renders a Danger Withdraw action', () =>
+    {
+        const view = new ReleaseDetailView(Fixtures.Vm(), () => undefined, Fixtures.Full(), Fixtures.NoToggle())
+        const a = Fixtures.Action(view)
+        assert.equal((a.Content as TextBlock).Text, 'Withdraw version')
+        assert.equal(a.Variant, ButtonVariant.Danger)
+    })
+
+    it('withdrawn manifest renders a Secondary Restore action', () =>
+    {
+        const view = new ReleaseDetailView(Fixtures.Vm({ withdrawn: true }), () => undefined, Fixtures.Full(), Fixtures.NoToggle())
+        const a = Fixtures.Action(view)
+        assert.equal((a.Content as TextBlock).Text, 'Restore version')
+        assert.equal(a.Variant, ButtonVariant.Secondary)
+    })
+
+    it('observer gets a disabled action with a hint', () =>
+    {
+        const view = new ReleaseDetailView(Fixtures.Vm(), () => undefined, OperatorContext.FromWire('read'), Fixtures.NoToggle())
+        const a = Fixtures.Action(view)
+        assert.equal(a.Enabled, false)
+        assert.ok((a.DisabledHint ?? '').length > 0)
+    })
+
+    it('full operator activation calls the callback with the negated state', () =>
+    {
+        const seen: boolean[] = []
+        const spy = (w: boolean): Promise<void> => { seen.push(w); return Promise.resolve() }
+        const pub = new ReleaseDetailView(Fixtures.Vm(), () => undefined, Fixtures.Full(), spy)
+        Fixtures.Action(pub).Press()
+        const wd = new ReleaseDetailView(Fixtures.Vm({ withdrawn: true }), () => undefined, Fixtures.Full(), spy)
+        Fixtures.Action(wd).Press()
+        assert.deepEqual(seen, [true, false])
+    })
+
+    it('a rejecting callback leaves an error line and does not throw', async () =>
+    {
+        const view = new ReleaseDetailView(Fixtures.Vm(), () => undefined, Fixtures.Full(), () => Promise.reject(new Error('boom')))
+        assert.equal(view.ErrorLine, '')
+        Fixtures.Action(view).Press()
+        await new Promise(r => setTimeout(r, 0))
+        assert.ok(view.ErrorLine.length > 0)
+    })
+
+    it('re-rendering builds a fresh action without a double-parent', () =>
+    {
+        const view = new ReleaseDetailView(Fixtures.Vm(), () => undefined, Fixtures.Full(), Fixtures.NoToggle())
+        const first = view.WithdrawAction
+        const inputs = (view as unknown as { Inputs(): never }).Inputs()
+        assert.doesNotThrow(() => view.Host.Update(inputs))
+        assert.notEqual(view.WithdrawAction, first)
     })
 })

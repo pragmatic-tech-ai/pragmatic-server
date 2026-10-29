@@ -208,7 +208,16 @@ export class ReleasesView extends SectionContainerView<ReleaseListRow>
         {
             return undefined
         }
-        return new ReleaseDetailView(new ReleaseDetailViewModel(manifest, fleet), () => void this.ShowList())
+        return new ReleaseDetailView(
+            new ReleaseDetailViewModel(manifest, fleet),
+            () => void this.ShowList(),
+            this.operator,
+            async (withdraw: boolean) =>
+            {
+                await this.client.SetManifestWithdrawn(row.id, withdraw)
+                await this.ShowDetail(row)
+            },
+        )
     }
 
     private static StatusPill(r: ReleaseListRow): PillEntry

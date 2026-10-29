@@ -1,8 +1,9 @@
 import { Orientation, StackPanel, TextBlock } from '@pragmatic-tech-ai/mural/basic'
 import type { Visual } from '@pragmatic-tech-ai/mural/runtime'
 import type { ReleaseAdoptionRow, ReleaseDetailViewModel } from './release-detail-view-model.js'
+import { OperatorContext } from './operator-context.js'
 import {
-    Banner, DataTable, KeyActivatedButton, KeyValueGrid, ObservedPanel, PageHeader, PillKind, PillKinds, PillTone,
+    Act, ActVariant, Banner, DataTable, KeyActivatedButton, KeyValueGrid, ObservedPanel, PageHeader, PillKind, PillKinds, PillTone,
     ScreenHost, Section, TableDensity,
 } from './kit/index.js'
 import type { ScreenHostInputs, TableColumn } from './kit/index.js'
@@ -16,6 +17,10 @@ export class ReleaseDetailView extends StackPanel
     private static readonly ReleaseTitle = 'Release'
     private static readonly WhereTitle = 'Where it runs'
     private static readonly EmptyText = 'No running environment observed on this version.'
+    private static readonly WithdrawLabel = 'Withdraw version'
+    private static readonly RestoreLabel = 'Restore version'
+    private static readonly FailedText = 'Could not change the version state. Please try again.'
+    private static readonly BlankText = ''
     private static readonly HiveKey = 'hive'
     private static readonly OwnerKey = 'owner'
     private static readonly EnvKey = 'environment'
@@ -27,15 +32,27 @@ export class ReleaseDetailView extends StackPanel
 
     private readonly vm: ReleaseDetailViewModel
     private readonly onBack: () => void
+    private readonly operator: OperatorContext
+    private readonly onToggleWithdrawn: (withdraw: boolean) => Promise<void>
     private readonly host: ScreenHost
+    // Rebuilt fresh on every BuildContent: a Visual may hold only one parent.
+    private withdrawAction: Act | undefined
+    private errorText: TextBlock | undefined
     // Rebuilt fresh on every BuildContent: a Visual may hold only one parent.
     private tableSlot = new StackPanel()
 
-    public constructor(vm: ReleaseDetailViewModel, onBack: () => void)
+    public constructor(
+        vm: ReleaseDetailViewModel,
+        onBack: () => void,
+        operator: OperatorContext,
+        onToggleWithdrawn: (withdraw: boolean) => Promise<void>,
+    )
     {
         super()
         this.vm = vm
         this.onBack = onBack
+        this.operator = operator
+        this.onToggleWithdrawn = onToggleWithdrawn
         this.Orientation = Orientation.Vertical
         this.host = new ScreenHost(this.Inputs())
         this.AddChild(this.host)
@@ -52,6 +69,33 @@ export class ReleaseDetailView extends StackPanel
     {
         const child = [...this.tableSlot.Children][0]
         return child instanceof DataTable ? child as DataTable<ReleaseAdoptionRow> : undefined
+    }
+
+    // Test seam: the withdraw / restore action.
+    public get WithdrawAction(): Act | undefined
+    {
+        return this.withdrawAction
+    }
+
+    // Test seam: the current action error line.
+    public get ErrorLine(): string
+    {
+        return this.errorText?.Text ?? ReleaseDetailView.BlankText
+    }
+
+    private async Toggle(): Promise<void>
+    {
+        try
+        {
+            await this.onToggleWithdrawn(!this.vm.Withdrawn)
+        }
+        catch
+        {
+            if (this.errorText !== undefined)
+            {
+                this.errorText.Text = ReleaseDetailView.FailedText
+            }
+        }
     }
 
     private Inputs(): ScreenHostInputs
@@ -79,6 +123,16 @@ export class ReleaseDetailView extends StackPanel
         {
             root.AddChild(new Banner({ tone: banner.tone, text: banner.text }))
         }
+        const withdrawn = this.vm.Withdrawn
+        this.withdrawAction = new Act(this.operator.MutatingAct(
+            withdrawn ? ReleaseDetailView.RestoreLabel : ReleaseDetailView.WithdrawLabel,
+            () => void this.Toggle(),
+            withdrawn ? ActVariant.Secondary : ActVariant.Danger,
+        ))
+        root.AddChild(this.withdrawAction)
+        this.errorText = new TextBlock()
+        this.errorText.Text = ReleaseDetailView.BlankText
+        root.AddChild(this.errorText)
         root.AddChild(new Section({
             title: ReleaseDetailView.ReleaseTitle,
             body: new KeyValueGrid({ items: [...this.vm.Profile] }),

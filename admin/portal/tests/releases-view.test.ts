@@ -39,6 +39,14 @@ class FakeClient
         return Promise.resolve([])
     }
 
+    public withdrawCalls: Array<[string, boolean]> = []
+
+    public SetManifestWithdrawn(version: string, withdraw: boolean): Promise<ManifestDto>
+    {
+        this.withdrawCalls.push([version, withdraw])
+        return Promise.resolve({ id: version, image: 'registry/app:' + version, publishedAt: '2026-01-02T03:04:05Z', withdrawn: withdraw })
+    }
+
     public failPublish = false
     public published: Array<[string, string, string | undefined]> = []
 
@@ -274,6 +282,22 @@ describe('ReleasesView', () =>
         assert.equal(view.Mode, ReleasesMode.Detail)
         assert.ok(Fixtures.Walk(view).some(n => n instanceof ReleaseDetailView))
         assert.equal(Fixtures.Walk(view).filter(n => n instanceof ReleaseDetailView).length, 1)
+    })
+
+    it('withdraw from the detail calls the client and re-fetches the detail', async () =>
+    {
+        const client = new FakeClient([Fixtures.Manifest('1.0')])
+        const view = Fixtures.View(client)
+        await view.Refresh()
+        await Fixtures.Open(view)
+        const detail = Fixtures.Walk(view).find(n => n instanceof ReleaseDetailView) as ReleaseDetailView
+        assert.ok(detail.WithdrawAction)
+        const before = client.manifestCalls
+        detail.WithdrawAction?.Press()
+        await new Promise(r => setTimeout(r, 20))
+        assert.deepEqual(client.withdrawCalls, [['1.0', true]])
+        assert.ok(client.manifestCalls > before)
+        assert.equal(view.Mode, ReleasesMode.Detail)
     })
 
     it('exposes a publish action', async () =>

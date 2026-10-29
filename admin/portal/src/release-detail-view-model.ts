@@ -48,6 +48,11 @@ export class ReleaseDetailViewModel extends Observable
         return this.manifest.id
     }
 
+    public get Withdrawn(): boolean
+    {
+        return this.manifest.withdrawn === true
+    }
+
     public get Profile(): readonly KeyValueItem[]
     {
         const m = this.manifest

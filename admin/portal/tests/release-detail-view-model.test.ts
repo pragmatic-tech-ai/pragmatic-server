@@ -81,4 +81,11 @@ describe('ReleaseDetailViewModel', () =>
     {
         assert.equal(new ReleaseDetailViewModel(Fx.Manifest(), []).Version, '1.2.0')
     })
+
+    it('Withdrawn reflects the manifest flag', () =>
+    {
+        assert.equal(new ReleaseDetailViewModel(Fx.Manifest({ withdrawn: true }), []).Withdrawn, true)
+        assert.equal(new ReleaseDetailViewModel(Fx.Manifest(), []).Withdrawn, false)
+        assert.equal(new ReleaseDetailViewModel(Fx.Manifest({ withdrawn: false }), []).Withdrawn, false)
+    })
 })
