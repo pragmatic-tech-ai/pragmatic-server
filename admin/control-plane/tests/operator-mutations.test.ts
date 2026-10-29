@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { OperatorIdentity, OperatorRole, OperatorNotFoundError, OperatorSelfLockoutError, LastOperatorError, OperatorProtectedError } from '../operator-identity.js'
+import { OperatorIdentity, OperatorRole, OperatorNotFoundError, OperatorSelfLockoutError, OperatorProtectedError } from '../operator-identity.js'
 
 class MutationFixture
 {
@@ -125,6 +125,30 @@ describe('OperatorIdentity mutations', () =>
         })
     })
 
+    it('disabling an operator drops their live session', async () =>
+    {
+        await MutationFixture.WithIdentity(async id =>
+        {
+            await id.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
+            const session = await id.Authenticate(MutationFixture.RoEmail, MutationFixture.OperatorPassword)
+            assert.ok(session)
+            assert.ok(await id.ValidateToken(session.token))
+            await id.SetOperatorDisabled(MutationFixture.RoEmail, true, MutationFixture.ActorSentinel)
+            assert.equal(await id.ValidateToken(session.token), null)
+        })
+    })
+
+    it('demoting an already-ReadOnly self is a no-op, not a lockout', async () =>
+    {
+        await MutationFixture.WithIdentity(async id =>
+        {
+            await id.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
+            const self = await MutationFixture.PrincipalOf(id, MutationFixture.RoEmail, MutationFixture.OperatorPassword)
+            await id.SetOperatorRole(MutationFixture.RoEmail, OperatorRole.ReadOnly, self)
+            assert.equal(await MutationFixture.RoleOf(id, MutationFixture.RoEmail), OperatorRole.ReadOnly)
+        })
+    })
+
     it('revoke sessions invalidates previously issued tokens', async () =>
     {
         await MutationFixture.WithIdentity(async id =>
@@ -167,7 +191,7 @@ describe('OperatorIdentity mutations', () =>
             await id.SetOperatorRole(MutationFixture.FullEmail, OperatorRole.ReadOnly, MutationFixture.ActorSentinel)
             await id.SetOperatorDisabled(MutationFixture.FullEmail, true, MutationFixture.ActorSentinel)
             assert.equal(await MutationFixture.RoleOf(id, MutationFixture.AdminEmail), OperatorRole.Full)
-            assert.notEqual(new LastOperatorError().name, new OperatorProtectedError().name)
+            assert.ok((await id.ListOperators()).some(o => o.role === OperatorRole.Full && !o.disabled))
         })
     })
 

@@ -15,7 +15,7 @@ export enum OperatorRole
     ReadOnly
 }
 
-/** Public roster entry: email and role only; never ids, secret refs, or grants. */
+/** Public roster entry: email, role and disabled flag; never ids, secret refs, or grants. */
 export type OperatorSummary = { email: string; role: OperatorRole; disabled: boolean }
 
 export type OperatorPrincipal = { email: string; principalId: string; role: OperatorRole }
@@ -227,7 +227,7 @@ export class OperatorIdentity implements IOperatorIdentity
         await this.pack.Grants.Save(new Grant(principalId, grantRole, new ResourceRef(ResourceKind.Tenant, this.tenant.Id, [])))
     }
 
-    /** Operator roster (including disabled accounts) (email + role only). The bootstrap admin appears exactly once, under the configured operator email. */
+    /** Operator roster: email, role and disabled flag; includes disabled accounts. The bootstrap admin appears exactly once, under the configured operator email. */
     public async ListOperators(): Promise<readonly OperatorSummary[]>
     {
         const accounts = await this.pack.Accounts.ListAccounts(this.tenant)
@@ -260,6 +260,10 @@ export class OperatorIdentity implements IOperatorIdentity
     {
         const principalId = await this.ResolvePrincipal(email)
         this.RejectIfProtected(principalId)
+        if ((await this.RoleFor(principalId)) === role)
+        {
+            return
+        }
         if (role === OperatorRole.ReadOnly)
         {
             if (principalId === actorPrincipalId)
@@ -267,10 +271,6 @@ export class OperatorIdentity implements IOperatorIdentity
                 throw new OperatorSelfLockoutError()
             }
             await this.RejectIfLastFull(principalId)
-        }
-        if ((await this.RoleFor(principalId)) === role)
-        {
-            return
         }
         const grants = await this.pack.Grants.GrantsFor(principalId, this.tenant)
         for (const g of grants)
@@ -302,6 +302,7 @@ export class OperatorIdentity implements IOperatorIdentity
         return password
     }
 
+    /** Disables or re-enables an operator. Disabling also drops the operator's live sessions. Guards run before any state change. */
     public async SetOperatorDisabled(email: string, disabled: boolean, actorPrincipalId: string): Promise<void>
     {
         const principalId = await this.ResolvePrincipal(email)
@@ -314,6 +315,7 @@ export class OperatorIdentity implements IOperatorIdentity
             }
             await this.RejectIfLastFull(principalId)
             await this.pack.Accounts.Disable(this.tenant, principalId)
+            await this.pack.Sessions.RevokeAllFor(this.tenant, principalId)
         }
         else
         {
@@ -321,10 +323,11 @@ export class OperatorIdentity implements IOperatorIdentity
         }
     }
 
+    /** Drops every live session of the operator, forcing a fresh login. */
     public async RevokeOperatorSessions(email: string): Promise<void>
     {
         const principalId = await this.ResolvePrincipal(email)
-        await this.pack.Sessions.RevokeAllFor(principalId)
+        await this.pack.Sessions.RevokeAllFor(this.tenant, principalId)
     }
 
     private async ResolvePrincipal(email: string): Promise<string>
