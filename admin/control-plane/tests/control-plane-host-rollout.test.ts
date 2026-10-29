@@ -22,6 +22,8 @@ class FakeOperator implements IOperatorIdentity
 {
     public static readonly Token = 'valid-token'
 
+    public Role: OperatorRole = OperatorRole.Full
+
     public async Authenticate(_email: string, _password: string): Promise<OperatorSession | null>
     {
         return { token: FakeOperator.Token, expiresAt: new Date(Date.now() + 3600000) }
@@ -29,7 +31,7 @@ class FakeOperator implements IOperatorIdentity
 
     public async ValidateToken(token: string): Promise<OperatorPrincipal | null>
     {
-        return token === FakeOperator.Token ? { email: 'op@example.com', principalId: 'p1', role: OperatorRole.Full } : null
+        return token === FakeOperator.Token ? { email: 'op@example.com', principalId: 'p1', role: this.Role } : null
     }
 
     public async ListOperators(): Promise<readonly OperatorSummary[]>
@@ -75,6 +77,7 @@ describe('ControlPlaneHost rollout routes', () =>
     let host: ControlPlaneHost
     let parent: string
     let deployments: PlatformDeploymentRegistry
+    let operator: FakeOperator
 
     beforeEach(async () =>
     {
@@ -91,9 +94,10 @@ describe('ControlPlaneHost rollout routes', () =>
         await directory.CreateClient({ id: 'acme', displayName: 'Acme' })
         await directory.CreateTenant({ id: 't1', clientId: 'acme', displayName: 'T' })
         await directory.CreateHive({ id: 'local1', tenantId: 't1', displayName: 'L', cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
+        operator = new FakeOperator()
         const factory = new HiveOrchestratorFactory()
         deployments = await RolloutFixture.Create(parent, directory, factory)
-        host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, deployments, new FakeProvisioning(directory).AsService(), RolloutFixture.Observations(parent))
+        host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, operator, false, directory, deployments, new FakeProvisioning(directory).AsService(), RolloutFixture.Observations(parent))
         await host.Listen(0, '127.0.0.1')
     })
 
@@ -187,6 +191,64 @@ describe('ControlPlaneHost rollout routes', () =>
     {
         assert.equal((await Harness.Send(host, 'GET', '/api/gating', undefined, false)).status, 401)
         assert.equal((await Harness.Send(host, 'GET', '/api/selections', undefined, false)).status, 401)
+    })
+
+    it('reports global rollout status on GET /api/rollouts, flagging an env running a stale image obsolete', async () =>
+    {
+        await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        await Harness.Send(host, 'POST', '/api/tenants/t1/gating', { version: '1.0.0' })
+        await deployments.SelectTarget('local1', '1.0.0')
+        await deployments.ReportSnapshot('local1', [{ environmentName: 'prod', runningImage: 'img:0', ready: true, detail: 'ok' }])
+        const reply = await Harness.Send(host, 'GET', '/api/rollouts')
+        assert.equal(reply.status, 200)
+        const all = JSON.parse(reply.body) as { hiveId: string; targetVersion?: string; environments: { environmentName: string; obsolete: boolean }[] }[]
+        const entry = all.find(e => e.hiveId === 'local1')!
+        assert.equal(entry.targetVersion, '1.0.0')
+        assert.equal(entry.environments[0]!.environmentName, 'prod')
+        assert.equal(entry.environments[0]!.obsolete, true)
+    })
+
+    it('reports an env running the target image and ready as not obsolete', async () =>
+    {
+        await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        await Harness.Send(host, 'POST', '/api/tenants/t1/gating', { version: '1.0.0' })
+        await deployments.SelectTarget('local1', '1.0.0')
+        await deployments.ReportSnapshot('local1', [{ environmentName: 'prod', runningImage: 'img:1', ready: true, detail: 'ok' }])
+        const all = JSON.parse((await Harness.Send(host, 'GET', '/api/rollouts')).body) as { hiveId: string; environments: { obsolete: boolean; ready: boolean }[] }[]
+        const env = all.find(e => e.hiveId === 'local1')!.environments[0]!
+        assert.equal(env.obsolete, false)
+        assert.equal(env.ready, true)
+    })
+
+    it('reports a hive with no selected target without a targetVersion and with no obsolete env', async () =>
+    {
+        await deployments.ReportSnapshot('local1', [{ environmentName: 'prod', runningImage: 'img:0', ready: false, detail: 'x' }])
+        const reply = await Harness.Send(host, 'GET', '/api/rollouts')
+        const all = JSON.parse(reply.body) as { hiveId: string; targetVersion?: string; environments: { obsolete: boolean }[] }[]
+        const entry = all.find(e => e.hiveId === 'local1')!
+        assert.equal(entry.targetVersion, undefined)
+        assert.ok(!('targetVersion' in entry))
+        assert.equal(entry.environments[0]!.obsolete, false)
+    })
+
+    it('exposes exactly the documented keys on GET /api/rollouts and leaks nothing else', async () =>
+    {
+        await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        await Harness.Send(host, 'POST', '/api/tenants/t1/gating', { version: '1.0.0' })
+        await deployments.SelectTarget('local1', '1.0.0')
+        await deployments.ReportSnapshot('local1', [{ environmentName: 'prod', runningImage: 'img:1', ready: true, detail: 'secret-detail' }])
+        const all = JSON.parse((await Harness.Send(host, 'GET', '/api/rollouts')).body) as Record<string, unknown>[]
+        const entry = all.find(e => e.hiveId === 'local1')!
+        assert.deepEqual(Object.keys(entry).sort(), ['environments', 'hiveId', 'targetVersion'])
+        const env = (entry.environments as Record<string, unknown>[])[0]!
+        assert.deepEqual(Object.keys(env).sort(), ['environmentName', 'obsolete', 'ready', 'runningImage'])
+    })
+
+    it('serves GET /api/rollouts to a ReadOnly operator (not Full-gated) and challenges anonymous with 401', async () =>
+    {
+        operator.Role = OperatorRole.ReadOnly
+        assert.equal((await Harness.Send(host, 'GET', '/api/rollouts')).status, 200)
+        assert.equal((await Harness.Send(host, 'GET', '/api/rollouts', undefined, false)).status, 401)
     })
 
     it('answers a withdrawn toggle for an unknown version with 404', async () =>

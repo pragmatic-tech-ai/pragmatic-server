@@ -241,6 +241,7 @@ export class ControlPlaneHost
     private static readonly FleetPath = '/api/fleet'
     private static readonly GatingAllPath = '/api/gating'
     private static readonly SelectionsAllPath = '/api/selections'
+    private static readonly RolloutsAllPath = '/api/rollouts'
     private static readonly EventsTicketPath = '/api/events-ticket'
     private static readonly ProtocolHeader = 'sec-websocket-protocol'
     private static readonly ProtocolSeparator = ','
@@ -711,6 +712,16 @@ export class ControlPlaneHost
         if (path === ControlPlaneHost.SelectionsAllPath && method === PlaneHttp.MethodGet)
         {
             PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, [...this.deployments.AllSelections()])
+            return true
+        }
+        if (path === ControlPlaneHost.RolloutsAllPath && method === PlaneHttp.MethodGet)
+        {
+            const rollouts = this.directory.ListHives().map(h =>
+            {
+                const s = this.deployments.StatusFor(h.id)
+                return { hiveId: h.id, targetVersion: s.targetVersion, environments: s.environments }
+            })
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, rollouts)
             return true
         }
         if (path === ControlPlaneHost.FleetPath && method === PlaneHttp.MethodGet)
