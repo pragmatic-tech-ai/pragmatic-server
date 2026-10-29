@@ -225,7 +225,7 @@ describe('ControlPlaneHost operator action audit', () =>
         assert.equal(res.status, 401)
         const recent = audit.Recent(10)
         assert.equal(recent.length, 1)
-        assert.equal(recent[0]!.actor, '(anonymous)')
+        assert.equal(recent[0]!.actor, AuditRegistry.AnonymousActor)
         assert.equal(recent[0]!.status, 401)
     })
 
