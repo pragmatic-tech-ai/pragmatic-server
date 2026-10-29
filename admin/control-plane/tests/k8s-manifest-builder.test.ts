@@ -64,6 +64,25 @@ describe('K8sManifestBuilder', () =>
         assert.deepEqual(Fixture.Items(false).map(i => i.kind), ['Namespace', 'Deployment', 'Service', 'PersistentVolumeClaim'])
     })
 
+    it('renders an RFC-1123 secretKeyRef name for a slash-bearing passwordRef, without collisions', () =>
+    {
+        const render = (ref: string): string =>
+        {
+            const w = Fixture.Workload(true)
+            w.database!.passwordRef = ref
+            const items = JSON.parse(new K8sManifestBuilder().Render(w)).items as K8sObject[]
+            const sts = items.find(i => i.kind === 'StatefulSet')!
+            return sts.spec.template.spec.containers[0].env.find((e: any) => e.valueFrom).valueFrom.secretKeyRef.name
+        }
+        const rfc1123 = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
+        const a = render('Tenant_A/appdb/password')
+        const b = render('tenant-a/appdb/password')
+        assert.match(a, rfc1123)
+        assert.match(b, rfc1123)
+        assert.notEqual(a, b)
+        assert.equal(render('db-pass-ref'), 'db-pass-ref')
+    })
+
     it('labels the namespace', () =>
     {
         const ns = Fixture.Items(false)[0]!

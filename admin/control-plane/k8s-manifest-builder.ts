@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { UiArtifact } from './ui-artifact.js'
 import { DockerEnv } from '../../environments/seed/docker.js'
 import type { EnvironmentWorkload, WorkloadAppDeployment, WorkloadDatabase } from './environment-workload.js'
@@ -99,6 +100,16 @@ export class K8sManifestBuilder
     private static readonly PostgresDbVar = 'POSTGRES_DB'
     private static readonly PostgresPasswordVar = 'POSTGRES_PASSWORD'
     private static readonly PasswordSecretKey = 'password'
+    private static readonly Rfc1123Name = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
+    private static readonly NonNameChars = /[^a-z0-9]+/g
+    private static readonly EdgeDashes = /^-+|-+$/g
+    private static readonly NameDash = '-'
+    private static readonly Empty = ''
+    private static readonly NameFallback = 'secret'
+    private static readonly NameBaseMax = 200
+    private static readonly NameHashAlgorithm = 'sha256'
+    private static readonly NameHashEncoding = 'hex'
+    private static readonly NameHashLength = 10
     private static readonly DataVolumeName = 'data'
     private static readonly DataVolumeSize = '1Gi'
     private static readonly SingleReplica = 1
@@ -1075,6 +1086,26 @@ export class K8sManifestBuilder
         }
     }
 
+    /**
+     * Maps a secret ref (which may carry a store path such as `<tenant>/appdb/password`) to a valid
+     * RFC-1123 object name. A ref that is already valid is kept verbatim; otherwise the sanitised
+     * form gets a hash of the ORIGINAL ref appended so distinct refs never collapse to one name.
+     */
+    public static SecretNameOf(ref: string): string
+    {
+        if (K8sManifestBuilder.Rfc1123Name.test(ref) && ref.length <= K8sManifestBuilder.NameBaseMax)
+        {
+            return ref
+        }
+        const base = ref.toLowerCase()
+            .replace(K8sManifestBuilder.NonNameChars, K8sManifestBuilder.NameDash)
+            .replace(K8sManifestBuilder.EdgeDashes, K8sManifestBuilder.Empty)
+            .slice(0, K8sManifestBuilder.NameBaseMax)
+            .replace(K8sManifestBuilder.EdgeDashes, K8sManifestBuilder.Empty)
+        const hash = createHash(K8sManifestBuilder.NameHashAlgorithm).update(ref).digest(K8sManifestBuilder.NameHashEncoding).slice(0, K8sManifestBuilder.NameHashLength)
+        return (base.length > 0 ? base : K8sManifestBuilder.NameFallback) + K8sManifestBuilder.NameDash + hash
+    }
+
     private DatabaseNameOf(workload: EnvironmentWorkload): string
     {
         return K8sManifestBuilder.DatabaseOf(workload.environmentName)
@@ -1357,7 +1388,7 @@ export class K8sManifestBuilder
                                     [K8sManifestBuilder.NameKey]: K8sManifestBuilder.PostgresPasswordVar,
                                     [K8sManifestBuilder.ValueFromKey]: {
                                         [K8sManifestBuilder.SecretKeyRefKey]: {
-                                            [K8sManifestBuilder.NameKey]: db.passwordRef,
+                                            [K8sManifestBuilder.NameKey]: K8sManifestBuilder.SecretNameOf(db.passwordRef),
                                             [K8sManifestBuilder.KeyKey]: K8sManifestBuilder.PasswordSecretKey,
                                         },
                                     },

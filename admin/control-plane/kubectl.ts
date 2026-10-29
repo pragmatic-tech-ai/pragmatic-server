@@ -20,7 +20,13 @@ export interface IKubectl
 export class KubectlError extends Error
 {
     private static readonly Redacted = '[REDACTED]'
-    private static readonly SecretPattern = /(password|passwd|token|secret)\s*[=:]\s*\S+|[A-Za-z0-9+/_=-]{32,}/gi
+    /**
+     * Matches, in order: a labelled value (optionally JSON-quoted key; quoted value may hold spaces),
+     * a Bearer/Basic credential of any length, and a long opaque run (>= 32 base64-ish chars).
+     */
+    private static readonly SecretPattern = /["']?(?:password|passwd|token|secret|api[-_]?key|authorization)["']?\s*[=:]\s*(?:(?:Bearer|Basic)\s+)?(?:"[^"]*"|'[^']*'|\S+)|\b(?:Bearer|Basic)\s+\S+|[A-Za-z0-9+/_=-]{32,}/gi
+    /** A long run that is really a lowercase resource name or a filesystem path, not a credential. */
+    private static readonly BenignRun = /^(?:[a-z0-9]+(?:-[a-z0-9]+)+|\/[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*)$/
     private static readonly Prefix = 'kubectl failed: '
     private static readonly ErrorName = 'KubectlError'
 
@@ -32,7 +38,8 @@ export class KubectlError extends Error
 
     public static Redact(text: string): string
     {
-        return text.replace(KubectlError.SecretPattern, KubectlError.Redacted)
+        return text.replace(KubectlError.SecretPattern, match =>
+            KubectlError.BenignRun.test(match) ? match : KubectlError.Redacted)
     }
 }
 
@@ -41,14 +48,18 @@ export class NodeExecFile implements IExecFile
 {
     private static readonly MaxBuffer = 16 * 1024 * 1024
     /** Upper bound on one kubectl invocation, so a wedged `rollout status` cannot hang forever. */
-    private static readonly TimeoutMs = 300000
+    public static readonly DefaultTimeoutMs = 300000
     private static readonly ErrorEvent = 'error'
+
+    public constructor(private readonly timeoutMs: number = NodeExecFile.DefaultTimeoutMs)
+    {
+    }
 
     public Run(file: string, args: readonly string[], stdin?: string): Promise<{ stdout: string; stderr: string }>
     {
         return new Promise((resolve, reject) =>
         {
-            const child = execFile(file, [...args], { maxBuffer: NodeExecFile.MaxBuffer, timeout: NodeExecFile.TimeoutMs }, (err, stdout, stderr) =>
+            const child = execFile(file, [...args], { maxBuffer: NodeExecFile.MaxBuffer, timeout: this.timeoutMs }, (err, stdout, stderr) =>
             {
                 if (err)
                 {
