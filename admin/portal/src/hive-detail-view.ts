@@ -66,13 +66,13 @@ export class HiveDetailView extends StackPanel
     private readonly vm: HiveDetailViewModel
     private readonly onBack: () => void
     private readonly host: ScreenHost
-    // Rebuilt fresh on every BuildContent: a Visual may hold only one parent.
     private readonly client: ControlPlaneClient | undefined
     private readonly operator: OperatorContext | undefined
     private readonly onPolicyChanged: (() => Promise<void>) | undefined
     private pendingChannels = new Set<string>()
     private mode = HivePolicyMode.Normal
     private errorText: TextBlock | undefined
+    // Rebuilt fresh on every BuildContent: a Visual may hold only one parent.
     private tableSlot = new StackPanel()
     private historySlot = new StackPanel()
     private ledgerSlot = new StackPanel()
@@ -178,7 +178,7 @@ export class HiveDetailView extends StackPanel
         }))
         root.AddChild(new Section({ title: HiveDetailView.PolicyTitle, body: new KeyValueGrid({ items: this.BuildPolicyItems() }) }))
         this.errorText = undefined
-        if (this.CanEdit && this.operator !== undefined)
+        if (this.CanEdit && this.operator !== undefined && this.client !== undefined)
         {
             const actions = new StackPanel()
             actions.Orientation = Orientation.Horizontal
@@ -188,7 +188,7 @@ export class HiveDetailView extends StackPanel
             root.AddChild(actions)
             if (this.mode !== HivePolicyMode.Normal)
             {
-                root.AddChild(new Section({ title: this.FormTitle(), body: this.BuildPolicyForm(this.operator) }))
+                root.AddChild(new Section({ title: this.FormTitle(), body: this.BuildPolicyForm(this.client, this.operator) }))
             }
         }
         this.tableSlot = new StackPanel()
@@ -220,9 +220,8 @@ export class HiveDetailView extends StackPanel
     }
 
     // Inline policy forms: mode-specific inputs, apply/clear actions and cancel. The hive id is the page's hive.
-    private BuildPolicyForm(operator: OperatorContext): Visual
+    private BuildPolicyForm(client: ControlPlaneClient, operator: OperatorContext): Visual
     {
-        const client = this.client as ControlPlaneClient
         const errorText = new TextBlock()
         this.errorText = errorText
         const body = new StackPanel()

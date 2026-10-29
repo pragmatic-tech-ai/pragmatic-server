@@ -363,4 +363,28 @@ describe('HiveDetailView', () =>
         assert.equal(e.View.Mode, HivePolicyMode.Normal)
         assert.equal(e.Client.Calls.length, 0)
     })
+
+    it('a read-only operator has every submit action gated in each form', async () =>
+    {
+        const e = new Edit('readonly')
+        const submits = [
+            [HivePolicyMode.SetChannels, ['Apply']],
+            [HivePolicyMode.SetMinVersion, ['Apply', 'Clear']],
+            [HivePolicyMode.Hold, ['Hold', 'Release']],
+        ] as const
+        for (const [mode, labels] of submits)
+        {
+            e.View.EnterMode(mode)
+            for (const label of labels)
+            {
+                const act = e.Act(label)
+                assert.ok(act, label)
+                assert.equal(act.Enabled, false, label)
+                act.Press()
+            }
+        }
+        await Edit.Settle()
+        assert.equal(e.Client.Calls.length, 0)
+        assert.equal(e.Reloads, 0)
+    })
 })
