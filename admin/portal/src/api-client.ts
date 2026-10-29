@@ -6,11 +6,13 @@ export class ApiError extends Error
     public static readonly UnauthorizedStatus = 401
 
     public readonly Status: number
+    public readonly rollback?: { rolledBack: string[]; residue: string[] }
 
-    public constructor(status: number, message: string)
+    public constructor(status: number, message: string, rollback?: { rolledBack: string[]; residue: string[] })
     {
         super(message)
         this.Status = status
+        this.rollback = rollback
     }
 }
 
@@ -392,8 +394,8 @@ export class ControlPlaneClient
         }
         if (!response.ok)
         {
-            const message = (payload as { error?: string } | undefined)?.error
-            throw new ApiError(response.status, message ?? ControlPlaneClient.RequestFailed + String(response.status))
+            const body = payload as { error?: string; rollback?: { rolledBack: string[]; residue: string[] } } | undefined
+            throw new ApiError(response.status, body?.error ?? ControlPlaneClient.RequestFailed + String(response.status), body?.rollback)
         }
         return payload as T
     }
