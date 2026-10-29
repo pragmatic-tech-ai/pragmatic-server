@@ -401,7 +401,7 @@ export class ControlPlaneServer
     public static ManifestSignerOf(env: NodeJS.ProcessEnv, dataRoot: string): IManifestSigner | undefined
     {
         const ref = env[ControlPlaneServer.SigningKeyRefEnvVar]
-        if (typeof ref !== 'string' || ref === '')
+        if (typeof ref !== 'string' || ref.trim() === '')
         {
             return undefined
         }
