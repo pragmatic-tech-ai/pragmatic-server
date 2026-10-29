@@ -11,7 +11,8 @@ export enum OperatorRole
 // server) to what the UI may offer. Unknown or missing roles are Observer.
 export class OperatorContext
 {
-    private static readonly FullWireRole = 'full'
+    public static readonly FullWireRole = 'full'
+    public static readonly ReadOnlyWireRole = 'readonly'
     private static readonly OperatorLabel = 'Operator'
     private static readonly ObserverLabel = 'Observer'
     private static readonly NeededRole = 'Operator'

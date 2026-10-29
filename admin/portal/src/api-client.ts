@@ -42,6 +42,9 @@ export class ControlPlaneClient
     private static readonly VersionKey = 'version'
     private static readonly ImageKey = 'image'
     private static readonly NotesKey = 'notes'
+    private static readonly EmailKey = 'email'
+    private static readonly PasswordKey = 'password'
+    private static readonly RoleKey = 'role'
     private static readonly MethodPost = 'POST'
     private static readonly MethodDelete = 'DELETE'
     private static readonly ContentTypeHeader = 'content-type'
@@ -123,6 +126,12 @@ export class ControlPlaneClient
     public async ListOperators(): Promise<OperatorSummaryDto[]>
     {
         return await this.Send<OperatorSummaryDto[]>(ControlPlaneClient.OperatorsRoute, undefined)
+    }
+
+    public async CreateOperator(email: string, password: string, role: string): Promise<void>
+    {
+        const body = { [ControlPlaneClient.EmailKey]: email, [ControlPlaneClient.PasswordKey]: password, [ControlPlaneClient.RoleKey]: role }
+        await this.Send<unknown>(ControlPlaneClient.OperatorsRoute, { method: ControlPlaneClient.MethodPost, body: JSON.stringify(body) })
     }
 
     public async ListGating(): Promise<GatingDto[]>

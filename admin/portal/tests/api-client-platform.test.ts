@@ -57,6 +57,16 @@ describe('ControlPlaneClient platform records', () =>
         assert.deepEqual(JSON.parse(FetchStub.Calls[0]!.init?.body as string), { id: 'c1', displayName: 'Acme' })
     })
 
+    it('CreateOperator POSTs email, password and role', async () =>
+    {
+        FetchStub.Install({ email: 'a@x.test' })
+        await new ControlPlaneClient().CreateOperator('a@x.test', 'pw', 'readonly')
+        const call = FetchStub.Calls[0]!
+        assert.equal(call.route, '/api/operators')
+        assert.equal(call.init?.method, 'POST')
+        assert.deepEqual(JSON.parse(call.init?.body as string), { email: 'a@x.test', password: 'pw', role: 'readonly' })
+    })
+
     it('DeleteClient DELETEs the item route', async () =>
     {
         FetchStub.Install({ ok: true })
