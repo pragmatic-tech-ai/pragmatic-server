@@ -2,6 +2,7 @@ import { Orientation, StackPanel, TextBlock, TextBox } from '@pragmatic-tech-ai/
 import { ComboBox } from '@pragmatic-tech-ai/mural/framework'
 import { ApiError } from './api-client.js'
 import type { ControlPlaneClient } from './api-client.js'
+import { CreateHiveViewModel } from './create-hive-view-model.js'
 import type { OperatorContext } from './operator-context.js'
 import type { HiveClusterBackend, HiveProvisionMode } from './portal-types.js'
 import { ProvisionWizardViewModel, WizardStep } from './provision-wizard-view-model.js'
@@ -42,8 +43,6 @@ export class ProvisionWizardView extends StackPanel
     private static readonly LastStep = WizardStep.Hive
     private static readonly FirstStep = WizardStep.Client
     private static readonly LabelPath = 'Label'
-    private static readonly Backends: readonly string[] = ['local', 'aks', 'eks', 'gke']
-    private static readonly Modes: readonly string[] = ['attach', 'provision']
     private static readonly ClientIdPlaceholder = 'Client id'
     private static readonly ClientNamePlaceholder = 'Client display name'
     private static readonly SubscriptionRefPlaceholder = 'Subscription ref (optional)'
@@ -168,10 +167,10 @@ export class ProvisionWizardView extends StackPanel
             default:
                 this.AddText(panel, ProvisionWizardView.HiveIdPlaceholder, () => vm.HiveId, v => { vm.HiveId = v })
                 this.AddText(panel, ProvisionWizardView.HiveNamePlaceholder, () => vm.HiveDisplayName, v => { vm.HiveDisplayName = v })
-                this.AddPicker(panel, ProvisionWizardView.BackendPlaceholder, ProvisionWizardView.Backends, () => vm.Backend, v => { vm.Backend = v as HiveClusterBackend })
-                this.AddPicker(panel, ProvisionWizardView.ClusterModePlaceholder, ProvisionWizardView.Modes, () => vm.ClusterMode, v => { vm.ClusterMode = v as HiveProvisionMode })
+                this.AddPicker(panel, ProvisionWizardView.BackendPlaceholder, CreateHiveViewModel.Backends, () => vm.Backend, v => { vm.Backend = v as HiveClusterBackend })
+                this.AddPicker(panel, ProvisionWizardView.ClusterModePlaceholder, CreateHiveViewModel.Modes, () => vm.ClusterMode, v => { vm.ClusterMode = v as HiveProvisionMode })
                 this.AddText(panel, ProvisionWizardView.ConfigRefPlaceholder, () => vm.ConfigRef, v => { vm.ConfigRef = v })
-                this.AddPicker(panel, ProvisionWizardView.RegistryModePlaceholder, ProvisionWizardView.Modes, () => vm.RegistryMode, v => { vm.RegistryMode = v as HiveProvisionMode })
+                this.AddPicker(panel, ProvisionWizardView.RegistryModePlaceholder, CreateHiveViewModel.Modes, () => vm.RegistryMode, v => { vm.RegistryMode = v as HiveProvisionMode })
                 this.AddText(panel, ProvisionWizardView.EndpointPlaceholder, () => vm.Endpoint, v => { vm.Endpoint = v })
                 this.AddText(panel, ProvisionWizardView.CredentialRefPlaceholder, () => vm.CredentialRef, v => { vm.CredentialRef = v })
                 this.AddText(panel, ProvisionWizardView.TrustRootRefPlaceholder, () => vm.TrustRootRef, v => { vm.TrustRootRef = v })
