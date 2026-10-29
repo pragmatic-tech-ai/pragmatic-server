@@ -10,6 +10,13 @@ import type { IPortalNavigator, IPortalView } from './portal-types.js'
 import { SettingsViewModel } from './settings-view-model.js'
 import type { OperatorRow } from './settings-view-model.js'
 
+enum ManageArm
+{
+    None,
+    Reset,
+    Revoke,
+}
+
 export enum SettingsMode
 {
     Normal,
@@ -57,6 +64,9 @@ export class SettingsView extends StackPanel implements IPortalView
     private static readonly DisableLabel = 'Disable operator'
     private static readonly EnableLabel = 'Enable operator'
     private static readonly RevokeLabel = 'Revoke sessions'
+    private static readonly ConfirmResetLabel = 'Confirm reset password'
+    private static readonly ConfirmRevokeLabel = 'Confirm revoke sessions'
+    private static readonly DisarmLabel = 'Keep as is'
     private static readonly ManageFailedText = 'The action failed.'
     private static readonly RevealTitle = 'New password'
     private static readonly RevealSecretLabel = 'Temporary password (shown once)'
@@ -83,6 +93,8 @@ export class SettingsView extends StackPanel implements IPortalView
     private toggleAct: Act | undefined
     private revokeAct: Act | undefined
     private reveal: OnceSecret | undefined
+    private armed = ManageArm.None
+    private disarmButton: KeyActivatedButton | undefined
     private readonly createModel: CreateOperatorViewModel
     private nav: IPortalNavigator | undefined
 
@@ -181,6 +193,11 @@ export class SettingsView extends StackPanel implements IPortalView
     }
 
     // Test seam: the one-time password reveal (present only in Reveal mode).
+    public get DisarmButton(): KeyActivatedButton | undefined
+    {
+        return this.disarmButton
+    }
+
     public get Reveal(): OnceSecret | undefined
     {
         return this.reveal
@@ -189,6 +206,15 @@ export class SettingsView extends StackPanel implements IPortalView
     // Re-renders from the held model with no network fetch. Manage needs an operator email; Reveal is internal only.
     public EnterMode(mode: SettingsMode, email?: string): void
     {
+        // A shown one-time password (or an open invite form) is never navigated away from by a stray click.
+        if (this.mode === SettingsMode.Reveal && (mode === SettingsMode.Manage || mode === SettingsMode.Invite))
+        {
+            return
+        }
+        if (this.mode === SettingsMode.Invite && mode === SettingsMode.Manage)
+        {
+            return
+        }
         let next = mode
         if (!this.operator.CanMutate || mode === SettingsMode.Reveal)
         {
@@ -201,6 +227,7 @@ export class SettingsView extends StackPanel implements IPortalView
         this.mode = next
         this.manageEmail = next === SettingsMode.Manage ? email : undefined
         this.reveal = undefined
+        this.armed = ManageArm.None
         this.host.Update(this.Inputs(false, false, () => this.BuildContent(this.model)))
     }
 
@@ -261,6 +288,7 @@ export class SettingsView extends StackPanel implements IPortalView
         this.resetAct = undefined
         this.toggleAct = undefined
         this.revokeAct = undefined
+        this.disarmButton = undefined
     }
 
     private BuildContent(model: SettingsViewModel): Visual
@@ -382,12 +410,35 @@ export class SettingsView extends StackPanel implements IPortalView
         const email = row.email
         this.changeRoleAct = new Act(this.operator.MutatingAct(SettingsView.ChangeRoleLabel, () => void this.RunManage(
             () => this.client.SetOperatorRole(email, (roleBox.SelectedItem as ComboOption | undefined)?.Value ?? row.role))))
-        this.resetAct = new Act(this.operator.MutatingAct(SettingsView.ResetPasswordLabel, () => void this.ResetPassword(email)))
+        this.resetAct = new Act(this.operator.MutatingAct(
+            this.armed === ManageArm.Reset ? SettingsView.ConfirmResetLabel : SettingsView.ResetPasswordLabel,
+            () =>
+            {
+                if (this.armed === ManageArm.Reset)
+                {
+                    void this.ResetPassword(email)
+                }
+                else
+                {
+                    this.Arm(ManageArm.Reset)
+                }
+            }))
         this.toggleAct = new Act(this.operator.MutatingAct(
             row.disabled ? SettingsView.EnableLabel : SettingsView.DisableLabel,
             () => void this.RunManage(() => this.client.SetOperatorDisabled(email, !row.disabled))))
-        this.revokeAct = new Act(this.operator.MutatingAct(SettingsView.RevokeLabel, () => void this.RunManage(
-            () => this.client.RevokeOperatorSessions(email))))
+        this.revokeAct = new Act(this.operator.MutatingAct(
+            this.armed === ManageArm.Revoke ? SettingsView.ConfirmRevokeLabel : SettingsView.RevokeLabel,
+            () =>
+            {
+                if (this.armed === ManageArm.Revoke)
+                {
+                    void this.RunManage(() => this.client.RevokeOperatorSessions(email))
+                }
+                else
+                {
+                    this.Arm(ManageArm.Revoke)
+                }
+            }))
         const back = new KeyActivatedButton(() => this.EnterMode(SettingsMode.Normal))
         const backText = new TextBlock()
         backText.Text = SettingsView.BackLabel
@@ -398,8 +449,24 @@ export class SettingsView extends StackPanel implements IPortalView
         body.AddChild(this.toggleAct)
         body.AddChild(this.revokeAct)
         body.AddChild(errorText)
+        if (this.armed !== ManageArm.None)
+        {
+            const disarm = new KeyActivatedButton(() => this.Arm(ManageArm.None))
+            const disarmText = new TextBlock()
+            disarmText.Text = SettingsView.DisarmLabel
+            disarm.Content = disarmText
+            this.disarmButton = disarm
+            body.AddChild(disarm)
+        }
         body.AddChild(back)
         return body
+    }
+
+    // Arms (or disarms) a destructive action: the next click on its button performs it.
+    private Arm(arm: ManageArm): void
+    {
+        this.armed = arm
+        this.host.Update(this.Inputs(false, false, () => this.BuildContent(this.model)))
     }
 
     // Runs one Manage mutation; success returns to Normal and re-fetches, failure shows the server's reason and keeps the panel open.
@@ -420,6 +487,7 @@ export class SettingsView extends StackPanel implements IPortalView
         }
         this.mode = SettingsMode.Normal
         this.manageEmail = undefined
+        this.armed = ManageArm.None
         await this.Refresh()
     }
 
@@ -448,6 +516,7 @@ export class SettingsView extends StackPanel implements IPortalView
         })
         this.mode = SettingsMode.Reveal
         this.manageEmail = undefined
+        this.armed = ManageArm.None
         this.host.Update(this.Inputs(false, false, () => this.BuildContent(this.model)))
     }
 
