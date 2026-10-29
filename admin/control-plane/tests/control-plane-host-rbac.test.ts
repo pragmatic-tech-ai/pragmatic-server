@@ -72,6 +72,14 @@ class RbacFixture
     public static readonly ShortBody = JSON.stringify({ email: 'a@x.test', password: 'short', role: 'full' })
     public static readonly BadEmailBody = JSON.stringify({ email: 'not-an-email', password: RbacFixture.Password, role: 'full' })
     public static readonly BadRoleBody = JSON.stringify({ email: 'a@x.test', password: 'p', role: 'god' })
+    public static readonly Manifests = '/api/manifests'
+    public static readonly TenantGating = '/api/tenants/t1/gating'
+    public static readonly TenantUngate = '/api/tenants/t1/gating/1.0.0'
+    public static readonly Post = 'POST'
+    public static readonly Delete = 'DELETE'
+    public static readonly PublishBody = JSON.stringify({ version: '1.0.0', image: 'img:1' })
+    public static readonly GateBody = JSON.stringify({ version: '1.0.0' })
+    public static readonly EmptyBody = ''
 
     public static Send(host: ControlPlaneHost, method: string, path: string, token: string, body: string): Promise<{ status: number; text: string }>
     {
@@ -121,6 +129,20 @@ describe('ControlPlaneHost operator RBAC', () =>
             assert.equal(r.status, RbacFixture.Forbidden, path)
         }
         assert.equal(operator.Created.length, 0)
+    })
+
+    it('403s a ReadOnly operator on the registry-write routes', async () =>
+    {
+        const cases: Array<{ method: string; path: string; body: string }> = [
+            { method: RbacFixture.Post, path: RbacFixture.Manifests, body: RbacFixture.PublishBody },
+            { method: RbacFixture.Post, path: RbacFixture.TenantGating, body: RbacFixture.GateBody },
+            { method: RbacFixture.Delete, path: RbacFixture.TenantUngate, body: RbacFixture.EmptyBody },
+        ]
+        for (const c of cases)
+        {
+            const r = await RbacFixture.Send(host, c.method, c.path, RoleOperator.ReadToken, c.body)
+            assert.equal(r.status, RbacFixture.Forbidden, c.method + ' ' + c.path)
+        }
     })
 
     it('lets a ReadOnly operator GET a resource and log out', async () =>
