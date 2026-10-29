@@ -26,7 +26,7 @@ export class HiveObservationRegistry extends JsonRecordStore<HiveObservationReco
         const excess = ascending.length - HiveObservationRegistry.MaxPerHive
         for (let i = 0; i < excess; i++)
         {
-            await this.Remove((ascending[i] as HiveObservationRecord).id)
+            await this.Remove((ascending[i]!).id)
         }
     }
 
