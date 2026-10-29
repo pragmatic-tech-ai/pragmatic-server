@@ -1,5 +1,5 @@
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
-import type { ClientDto, FleetHiveDto, GatingDto, HiveRolloutDto, SelectionDto, TenantDto } from './portal-types.js'
+import type { ClientDto, EnvRolloutDto, FleetHiveDto, GatingDto, HiveRolloutDto, SelectionDto, TenantDto } from './portal-types.js'
 import { PortalDates } from './portal-dates.js'
 import { FleetViewModel } from './fleet-view-model.js'
 import { PillTone } from './kit/tones.js'
@@ -27,7 +27,8 @@ export enum RolloutStatus
     NoTarget,
 }
 
-export type RolloutRow = {
+export interface RolloutRow
+{
     hiveName: string
     ownerLabel: string
     envName: string
@@ -182,7 +183,7 @@ export class ReleasePolicyViewModel extends Observable
     }
 
     // Authoritative: only the server's targetVersion / obsolete / ready decide the status.
-    private static StatusOf(rollout: HiveRolloutDto, env: HiveRolloutDto['environments'][number]): RolloutStatus
+    private static StatusOf(rollout: HiveRolloutDto, env: EnvRolloutDto): RolloutStatus
     {
         if (rollout.targetVersion === undefined)
         {

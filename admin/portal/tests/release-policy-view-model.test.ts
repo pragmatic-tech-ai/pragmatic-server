@@ -202,6 +202,12 @@ describe('ReleasePolicyViewModel rollout rows', () =>
         assert.deepEqual(vm.RolloutRows.map(r => r.hiveName + '/' + r.envName), ['Alpha/m', 'Hive One/a', 'Hive One/z'])
     })
 
+    it('orders envs of the same hive by env name', () =>
+    {
+        const vm = Make.Vm([Fx.Rollout('h1', '2.0', [Fx.Env('prod', false, true, 'i'), Fx.Env('canary', false, true, 'i')])])
+        assert.deepEqual(vm.RolloutRows.map(r => r.envName), ['canary', 'prod'])
+    })
+
     it('is empty with no rollouts, and the 5-arg ctor/Update still work', () =>
     {
         const vm = new ReleasePolicyViewModel([], [], [], [], [])
