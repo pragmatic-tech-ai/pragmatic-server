@@ -1,4 +1,5 @@
 import { Orientation, StackPanel, TextBlock, TextBox } from '@pragmatic-tech-ai/mural/basic'
+import { ComboBox } from '@pragmatic-tech-ai/mural/framework'
 import type { Visual } from '@pragmatic-tech-ai/mural/runtime'
 import type { ControlPlaneClient } from './api-client.js'
 import { ReleaseDetailView } from './release-detail-view.js'
@@ -9,7 +10,7 @@ import { SectionContainerView, SectionState } from './section-container-view.js'
 import type { SectionLabels } from './section-container-view.js'
 import { CreateManifestViewModel } from './create-manifest-view-model.js'
 import { OperatorContext } from './operator-context.js'
-import { Act, ActVariant, KeyActivatedButton, PageHeader, PillKind, PillKinds, Section } from './kit/index.js'
+import { Act, ActVariant, ComboOption, KeyActivatedButton, PageHeader, PillKind, PillKinds, Section } from './kit/index.js'
 import type { PillEntry, TableColumn } from './kit/index.js'
 
 export enum ReleasesMode
@@ -23,6 +24,11 @@ export enum ReleasesMode
 export class ReleasesView extends SectionContainerView<ReleaseListRow>
 {
     private static readonly ListBreadcrumb: readonly string[] = ['Releases', 'Registry & Releases']
+    private static readonly ChannelLabelPath = 'Label'
+    private static readonly ChannelStable = 'stable'
+    private static readonly ChannelEarly = 'early'
+    private static readonly ChannelStableLabel = 'Stable'
+    private static readonly ChannelEarlyLabel = 'Early access'
     private static readonly ListTitle = 'Registry & Releases'
     private static readonly PublishBreadcrumb: readonly string[] = ['Registry & Releases', 'Publish version']
     private static readonly PublishTitle = 'Publish version'
@@ -110,11 +116,12 @@ export class ReleasesView extends SectionContainerView<ReleaseListRow>
         const versionBox = ReleasesView.Box(ReleasesView.VersionPlaceholder)
         const imageBox = ReleasesView.Box(ReleasesView.ImagePlaceholder)
         const notesBox = ReleasesView.Box(ReleasesView.NotesPlaceholder)
+        const channelBox = ReleasesView.ChannelBox()
         const errorText = new TextBlock()
         this.errorText = errorText
         const submit = new Act(this.operator.MutatingAct(
             ReleasesView.SubmitLabel,
-            () => void this.Submit(versionBox.Text, imageBox.Text, notesBox.Text),
+            () => void this.Submit(versionBox.Text, imageBox.Text, notesBox.Text, ReleasesView.ChannelOf(channelBox)),
             ActVariant.Primary,
         ))
         this.submitAction = submit
@@ -127,11 +134,29 @@ export class ReleasesView extends SectionContainerView<ReleaseListRow>
         body.AddChild(versionBox)
         body.AddChild(imageBox)
         body.AddChild(notesBox)
+        body.AddChild(channelBox)
         body.AddChild(errorText)
         body.AddChild(submit)
         body.AddChild(cancel)
         root.AddChild(new Section({ title: ReleasesView.FormTitle, body }))
         return root
+    }
+
+    private static ChannelBox(): ComboBox
+    {
+        const box = new ComboBox()
+        box.DisplayMemberPath = ReleasesView.ChannelLabelPath
+        box.ItemsSource = [
+            new ComboOption(ReleasesView.ChannelStableLabel, ReleasesView.ChannelStable),
+            new ComboOption(ReleasesView.ChannelEarlyLabel, ReleasesView.ChannelEarly),
+        ]
+        box.SelectedIndex = 0
+        return box
+    }
+
+    private static ChannelOf(box: ComboBox): string
+    {
+        return (box.SelectedItem as ComboOption | undefined)?.Value ?? ReleasesView.ChannelStable
     }
 
     private static Box(placeholder: string): TextBox
@@ -141,7 +166,7 @@ export class ReleasesView extends SectionContainerView<ReleaseListRow>
         return box
     }
 
-    private async Submit(version: string, image: string, notes: string): Promise<void>
+    private async Submit(version: string, image: string, notes: string, channel: string): Promise<void>
     {
         if (this.errorText !== undefined)
         {
@@ -157,7 +182,7 @@ export class ReleasesView extends SectionContainerView<ReleaseListRow>
         }
         try
         {
-            await this.createModel.Submit(version, image, notes)
+            await this.createModel.Submit(version, image, notes, channel)
         }
         catch (e)
         {

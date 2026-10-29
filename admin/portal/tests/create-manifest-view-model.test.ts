@@ -8,9 +8,9 @@ class FakeClient
     public Calls: unknown[][] = []
     public Fail: Error | undefined
 
-    public async PublishManifest(version: string, image: string, notes?: string): Promise<ManifestDto>
+    public async PublishManifest(version: string, image: string, notes?: string, channel?: string): Promise<ManifestDto>
     {
-        this.Calls.push(['PublishManifest', version, image, notes])
+        this.Calls.push(['PublishManifest', version, image, notes, channel])
         if (this.Fail)
         {
             throw this.Fail
@@ -35,9 +35,9 @@ describe('CreateManifestViewModel', () =>
         const fake = new FakeClient()
         const vm = new CreateManifestViewModel(fake)
         await vm.Submit(' 1.0 ', ' img ', '  ')
-        assert.deepEqual(fake.Calls, [['PublishManifest', '1.0', 'img', undefined]])
+        assert.deepEqual(fake.Calls, [['PublishManifest', '1.0', 'img', undefined, undefined]])
         await vm.Submit('1.1', 'img', ' n ')
-        assert.deepEqual(fake.Calls[1], ['PublishManifest', '1.1', 'img', 'n'])
+        assert.deepEqual(fake.Calls[1], ['PublishManifest', '1.1', 'img', 'n', undefined])
         assert.equal(vm.Busy, false)
         assert.equal(vm.ErrorMessage, '')
     })
@@ -50,5 +50,16 @@ describe('CreateManifestViewModel', () =>
         await assert.rejects(() => vm.Submit('1.0', 'img', ''), /boom/)
         assert.equal(vm.ErrorMessage, 'boom')
         assert.equal(vm.Busy, false)
+    })
+})
+
+describe('CreateManifestViewModel channel', () =>
+{
+    it('Submit passes the channel through', async () =>
+    {
+        const fake = new FakeClient()
+        const vm = new CreateManifestViewModel(fake)
+        await vm.Submit('1.0', 'img', '', ' early ')
+        assert.deepEqual(fake.Calls[0], ['PublishManifest', '1.0', 'img', undefined, 'early'])
     })
 })

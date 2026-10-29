@@ -1,3 +1,4 @@
+import { ComboBox } from '@pragmatic-tech-ai/mural/framework'
 import { after, before, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { Application } from '@pragmatic-tech-ai/mural/runtime'
@@ -55,15 +56,15 @@ class FakeClient
     }
 
     public failPublish = false
-    public published: Array<[string, string, string | undefined]> = []
+    public published: Array<[string, string, string | undefined, string | undefined]> = []
 
-    public PublishManifest(version: string, image: string, notes?: string): Promise<ManifestDto>
+    public PublishManifest(version: string, image: string, notes?: string, channel?: string): Promise<ManifestDto>
     {
         if (this.failPublish)
         {
             return Promise.reject(new Error('publish boom'))
         }
-        this.published.push([version, image, notes])
+        this.published.push([version, image, notes, channel])
         return Promise.resolve({ id: version, image, publishedAt: '2026-01-02T03:04:05Z' })
     }
 }
@@ -352,9 +353,27 @@ describe('ReleasesView', () =>
         const before = client.manifestCalls
         view.SubmitAction?.Press()
         await new Promise(r => setTimeout(r, 20))
-        assert.deepEqual(client.published, [['2.0', 'registry/app:2.0', undefined]])
+        assert.deepEqual(client.published, [['2.0', 'registry/app:2.0', undefined, 'stable']])
         assert.ok(client.manifestCalls > before)
         assert.equal(view.Mode, ReleasesMode.List)
+    })
+
+    it('publish form has a channel picker defaulting to Stable and passes the choice', async () =>
+    {
+        const client = new FakeClient([])
+        const view = Fixtures.View(client)
+        await view.Refresh()
+        view.ShowPublish()
+        const combos = Fixtures.Walk(view).filter(n => n instanceof ComboBox) as ComboBox[]
+        assert.equal(combos.length, 1)
+        assert.equal((combos[0].SelectedItem as { Value: string }).Value, 'stable')
+        combos[0].SelectedIndex = 1
+        const boxes = Fixtures.Walk(view).filter(n => n instanceof TextBox) as TextBox[]
+        boxes[0].Text = '3.0'
+        boxes[1].Text = 'registry/app:3.0'
+        view.SubmitAction?.Press()
+        await new Promise(r => setTimeout(r, 20))
+        assert.equal(client.published[0][3], 'early')
     })
 
     it('open, cancel and re-open builds a fresh blank publish form', async () =>

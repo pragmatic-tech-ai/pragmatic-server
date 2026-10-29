@@ -21,6 +21,10 @@ export enum PillKind
     Pending = 'pending',
     Failed = 'failed',
     Observed = 'observed',
+    Stable = 'stable',
+    EarlyAccess = 'early-access',
+    Signed = 'signed',
+    Unsigned = 'unsigned',
 }
 
 export interface PillEntry
@@ -52,6 +56,10 @@ export class PillKinds
     private static readonly LabelPending = 'Pending'
     private static readonly LabelFailed = 'Failed'
     private static readonly LabelObserved = 'Observed'
+    private static readonly LabelStable = 'Stable'
+    private static readonly LabelEarlyAccess = 'Early access'
+    private static readonly LabelSigned = 'Signed'
+    private static readonly LabelUnsigned = 'Unsigned'
 
     private static readonly Registry: ReadonlyMap<PillKind, PillEntry> = new Map<PillKind, PillEntry>([
         [PillKind.Connected, { glyph: KitGlyph.RadioTower, label: PillKinds.LabelConnected, tone: PillTone.Success }],
@@ -72,6 +80,10 @@ export class PillKinds
         [PillKind.Pending, { glyph: KitGlyph.Hourglass, label: PillKinds.LabelPending, tone: PillTone.Info }],
         [PillKind.Failed, { glyph: KitGlyph.CircleX, label: PillKinds.LabelFailed, tone: PillTone.Danger }],
         [PillKind.Observed, { glyph: KitGlyph.Eye, label: PillKinds.LabelObserved, tone: PillTone.Neutral }],
+        [PillKind.Stable, { glyph: KitGlyph.CircleCheck, label: PillKinds.LabelStable, tone: PillTone.Neutral }],
+        [PillKind.EarlyAccess, { glyph: KitGlyph.CircleDashed, label: PillKinds.LabelEarlyAccess, tone: PillTone.Info }],
+        [PillKind.Signed, { glyph: KitGlyph.Shield, label: PillKinds.LabelSigned, tone: PillTone.Success }],
+        [PillKind.Unsigned, { glyph: KitGlyph.TriangleAlert, label: PillKinds.LabelUnsigned, tone: PillTone.Warning }],
     ])
 
     public static For(kind: PillKind): PillEntry

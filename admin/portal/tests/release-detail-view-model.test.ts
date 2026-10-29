@@ -1,3 +1,4 @@
+import { PillKind } from '../src/kit/index.js'
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { ReleaseDetailViewModel } from '../src/release-detail-view-model.js'
@@ -87,5 +88,27 @@ describe('ReleaseDetailViewModel', () =>
         assert.equal(new ReleaseDetailViewModel(Fx.Manifest({ withdrawn: true }), []).Withdrawn, true)
         assert.equal(new ReleaseDetailViewModel(Fx.Manifest(), []).Withdrawn, false)
         assert.equal(new ReleaseDetailViewModel(Fx.Manifest({ withdrawn: false }), []).Withdrawn, false)
+    })
+})
+
+describe('ReleaseDetailViewModel channel, signed and digest', () =>
+{
+    const make = (over: object): ReleaseDetailViewModel => new ReleaseDetailViewModel(
+        { id: '1', image: 'i', publishedAt: '2026-10-01T00:00:00.000Z', ...over } as ManifestDto, [])
+
+    it('shows a shortened digest row only when present', () =>
+    {
+        const withDigest = make({ digest: 'sha256:abcdef0123456789' })
+        assert.equal(withDigest.Profile.find(r => r.key === 'Digest')?.value, 'sha256:abcde')
+        assert.equal(make({}).Profile.find(r => r.key === 'Digest'), undefined)
+    })
+
+    it('maps channel and signed to pill kinds', () =>
+    {
+        assert.equal(make({}).ChannelPill, PillKind.Stable)
+        assert.equal(make({ channel: 'early' }).ChannelPill, PillKind.EarlyAccess)
+        assert.equal(make({}).SignedPill, PillKind.Unsigned)
+        assert.equal(make({ signed: false }).SignedPill, PillKind.Unsigned)
+        assert.equal(make({ signed: true }).SignedPill, PillKind.Signed)
     })
 })

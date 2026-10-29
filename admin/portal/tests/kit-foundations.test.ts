@@ -58,7 +58,7 @@ describe('kit foundations', () =>
     it('PillKinds.For covers every PillKind with a glyph and non-empty label', () =>
     {
         const kinds = Object.values(PillKind)
-        assert.equal(kinds.length, 18)
+        assert.equal(kinds.length, 22)
         for (const kind of kinds)
         {
             const entry = PillKinds.For(kind)

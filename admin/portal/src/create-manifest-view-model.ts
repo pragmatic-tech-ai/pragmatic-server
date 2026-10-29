@@ -4,7 +4,7 @@ import type { ManifestDto } from './portal-types.js'
 // The slice of ControlPlaneClient the publish-manifest form needs.
 export interface ICreateManifestSink
 {
-    PublishManifest(version: string, image: string, notes?: string): Promise<ManifestDto>
+    PublishManifest(version: string, image: string, notes?: string, channel?: string): Promise<ManifestDto>
 }
 
 // Publish-version form submit: validation, busy flag, error message.
@@ -37,14 +37,15 @@ export class CreateManifestViewModel extends Observable
         return version.trim().length > 0 && image.trim().length > 0
     }
 
-    public async Submit(version: string, image: string, notes: string): Promise<ManifestDto>
+    public async Submit(version: string, image: string, notes: string, channel?: string): Promise<ManifestDto>
     {
         const trimmedNotes = notes.trim()
+        const trimmedChannel = channel === undefined ? '' : channel.trim()
         this.SetError(CreateManifestViewModel.Empty)
         this.SetBusy(true)
         try
         {
-            return await this.sink.PublishManifest(version.trim(), image.trim(), trimmedNotes.length > 0 ? trimmedNotes : undefined)
+            return await this.sink.PublishManifest(version.trim(), image.trim(), trimmedNotes.length > 0 ? trimmedNotes : undefined, trimmedChannel.length > 0 ? trimmedChannel : undefined)
         }
         catch (e)
         {

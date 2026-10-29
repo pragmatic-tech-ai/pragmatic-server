@@ -5,7 +5,7 @@ import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pr
 import { ReleaseDetailView } from '../src/release-detail-view.js'
 import { ReleaseDetailViewModel } from '../src/release-detail-view-model.js'
 import { TextBlock } from '@pragmatic-tech-ai/mural/basic'
-import { Banner, KeyActivatedButton, KeyValueGrid, ObservedPanel, PageHeader, ScreenState } from '../src/kit/index.js'
+import { StatusPill, PillKind, Banner, KeyActivatedButton, KeyValueGrid, ObservedPanel, PageHeader, ScreenState } from '../src/kit/index.js'
 import { OperatorContext } from '../src/operator-context.js'
 import { ButtonVariant } from '@pragmatic-tech-ai/mural/framework'
 import { Act } from '../src/kit/index.js'
@@ -115,10 +115,20 @@ describe('ReleaseDetailView', () =>
         assert.equal(nodes.filter(n => n instanceof KeyValueGrid).length, 1)
         const texts = nodes.filter(n => n instanceof TextBlock).map(n => (n as TextBlock).Text.toLowerCase())
         assert.ok(texts.length > 0)
-        for (const forbidden of ['sign', 'channel', 'digest', 'provenance', 'token', 'credential'])
+        for (const forbidden of ['provenance', 'token', 'credential'])
         {
             assert.ok(!texts.some(t => t.includes(forbidden)), forbidden)
         }
+    })
+
+    it('renders channel and signed pills; absent fields read Stable and Unsigned', () =>
+    {
+        const kinds = (over: object): PillKind[] => Fixtures.Collect(
+            new ReleaseDetailView(Fixtures.Vm(over), () => undefined, Fixtures.Full(), Fixtures.NoToggle()))
+            .filter(n => n instanceof StatusPill).map(n => (n as StatusPill).Kind).slice(0, 2)
+        assert.deepEqual(kinds({}), [PillKind.Stable, PillKind.Unsigned])
+        assert.deepEqual(kinds({ channel: 'early', signed: true }), [PillKind.EarlyAccess, PillKind.Signed])
+        assert.deepEqual(kinds({ channel: 'stable', signed: false }), [PillKind.Stable, PillKind.Unsigned])
     })
 
     it('withdrawn release renders a banner', () =>

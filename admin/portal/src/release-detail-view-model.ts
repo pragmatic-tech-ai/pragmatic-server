@@ -2,6 +2,7 @@ import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import type { FleetHiveDto, ManifestDto } from './portal-types.js'
 import { FleetViewModel } from './fleet-view-model.js'
 import { PortalDates } from './portal-dates.js'
+import { PillKind } from './kit/index.js'
 import { BannerTone } from './kit/index.js'
 import type { KeyValueItem } from './kit/index.js'
 
@@ -25,6 +26,9 @@ export class ReleaseDetailViewModel extends Observable
 {
     private static readonly KeyVersion = 'Version'
     private static readonly KeyImage = 'Image'
+    private static readonly KeyDigest = 'Digest'
+    private static readonly DigestLength = 12
+    private static readonly ChannelEarly = 'early'
     private static readonly KeyPublished = 'Published'
     private static readonly KeyStatus = 'Status'
     private static readonly KeyWhatsNew = "What's new"
@@ -53,18 +57,35 @@ export class ReleaseDetailViewModel extends Observable
         return this.manifest.withdrawn === true
     }
 
+    public get ChannelPill(): PillKind
+    {
+        return this.manifest.channel === ReleaseDetailViewModel.ChannelEarly ? PillKind.EarlyAccess : PillKind.Stable
+    }
+
+    public get SignedPill(): PillKind
+    {
+        return this.manifest.signed === true ? PillKind.Signed : PillKind.Unsigned
+    }
+
     public get Profile(): readonly KeyValueItem[]
     {
         const m = this.manifest
         const notes = m.notes && m.notes.length > 0 ? m.notes : ReleaseDetailViewModel.NoNotes
         const status = m.withdrawn === true ? ReleaseDetailViewModel.StatusWithdrawn : ReleaseDetailViewModel.StatusPublished
-        return [
+        const rows: KeyValueItem[] = [
             { key: ReleaseDetailViewModel.KeyVersion, value: m.id },
             { key: ReleaseDetailViewModel.KeyImage, value: m.image },
+        ]
+        if (m.digest !== undefined && m.digest.length > 0)
+        {
+            rows.push({ key: ReleaseDetailViewModel.KeyDigest, value: m.digest.slice(0, ReleaseDetailViewModel.DigestLength) })
+        }
+        rows.push(
             { key: ReleaseDetailViewModel.KeyPublished, value: PortalDates.Label(m.publishedAt) },
             { key: ReleaseDetailViewModel.KeyStatus, value: status },
             { key: ReleaseDetailViewModel.KeyWhatsNew, value: notes },
-        ]
+        )
+        return rows
     }
 
     public get WithdrawnBanner(): ReleaseBannerState

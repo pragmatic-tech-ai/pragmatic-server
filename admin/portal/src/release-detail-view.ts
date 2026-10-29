@@ -4,7 +4,7 @@ import type { ReleaseAdoptionRow, ReleaseDetailViewModel } from './release-detai
 import { OperatorContext } from './operator-context.js'
 import {
     Act, ActVariant, Banner, DataTable, KeyActivatedButton, KeyValueGrid, ObservedPanel, PageHeader, PillKind, PillKinds, PillTone,
-    ScreenHost, Section, TableDensity,
+    ScreenHost, Section, StatusPill, TableDensity,
 } from './kit/index.js'
 import type { ScreenHostInputs, TableColumn } from './kit/index.js'
 
@@ -122,6 +122,11 @@ export class ReleaseDetailView extends StackPanel
             breadcrumb: [ReleaseDetailView.BreadcrumbRoot, this.vm.Version],
             title: this.vm.Version,
         }))
+        const pills = new StackPanel()
+        pills.Orientation = Orientation.Horizontal
+        pills.AddChild(new StatusPill(this.vm.ChannelPill))
+        pills.AddChild(new StatusPill(this.vm.SignedPill))
+        root.AddChild(pills)
         const banner = this.vm.WithdrawnBanner
         if (banner.show)
         {
