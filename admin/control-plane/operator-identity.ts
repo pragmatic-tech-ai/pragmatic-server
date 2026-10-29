@@ -15,6 +15,9 @@ export enum OperatorRole
     ReadOnly
 }
 
+/** Public roster entry: email and role only; never ids, secret refs, or grants. */
+export type OperatorSummary = { email: string; role: OperatorRole }
+
 export type OperatorPrincipal = { email: string; principalId: string; role: OperatorRole }
 
 export interface IOperatorIdentity
@@ -23,6 +26,7 @@ export interface IOperatorIdentity
     ValidateToken(token: string): Promise<OperatorPrincipal | null>
     Revoke(token: string): Promise<void>
     CreateOperator(email: string, password: string, role: OperatorRole): Promise<void>
+    ListOperators(): Promise<readonly OperatorSummary[]>
 }
 
 export type OperatorComposeOptions = { identityRoot: string; masterKeyFile: string; operatorEmail: string; initialPassword?: string }
@@ -167,6 +171,38 @@ export class OperatorIdentity implements IOperatorIdentity
         }
         const grantRole = role === OperatorRole.Full ? Role.Owner : Role.Viewer
         await this.pack.Grants.Save(new Grant(principalId, grantRole, new ResourceRef(ResourceKind.Tenant, this.tenant.Id, [])))
+    }
+
+    /** Active operator roster (email + role only). The bootstrap admin appears exactly once, under the configured operator email. */
+    public async ListOperators(): Promise<readonly OperatorSummary[]>
+    {
+        const accounts = await this.pack.Accounts.ListAccounts(this.tenant)
+        const summaries: OperatorSummary[] = []
+        let sawAdmin = false
+        for (const account of accounts)
+        {
+            if (account.Disabled !== false)
+            {
+                continue
+            }
+            const isAdmin = account.PrincipalId === OperatorIdentity.AdminPrincipalId
+            sawAdmin = sawAdmin || isAdmin
+            summaries.push({ email: isAdmin ? this.operatorEmail : account.Email, role: await this.RoleFor(account.PrincipalId) })
+        }
+        if (!sawAdmin)
+        {
+            summaries.unshift({ email: this.operatorEmail, role: OperatorRole.Full })
+        }
+        const seen = new Set<string>()
+        return summaries.filter(s =>
+        {
+            if (seen.has(s.email))
+            {
+                return false
+            }
+            seen.add(s.email)
+            return true
+        })
     }
 
     /** Deny-by-default: Full only when an Owner grant on this tenant exists; anything else is ReadOnly. */
