@@ -207,6 +207,7 @@ export class ControlPlaneHost
     private static readonly ApiPrefix = '/api/'
     private static readonly ActivityAllPath = '/api/activity'
     private static readonly ActivityLimitMax = 200
+    private static readonly MaxAuditPathLength = 256
     private static readonly ActivityLimitParam = 'limit'
     private static readonly AnonymousActor = '(anonymous)'
     private static readonly AuditFailureFallback = 'AuditError'
@@ -636,21 +637,21 @@ export class ControlPlaneHost
                     if (who === null)
                     {
                         req.resume()
+                        PlaneHttp.WriteJson(res, ControlPlaneHost.StatusUnauthorized, { error: ControlPlaneHost.UnauthenticatedMessage })
                         if (PlaneHttp.IsMutating(req))
                         {
                             await this.RecordAudit(ControlPlaneHost.AnonymousActor, method, path, ControlPlaneHost.StatusUnauthorized)
                         }
-                        PlaneHttp.WriteJson(res, ControlPlaneHost.StatusUnauthorized, { error: ControlPlaneHost.UnauthenticatedMessage })
                         return
                     }
                     if (!this.authorization.Authorize(who.role, method, path))
                     {
                         req.resume()
+                        PlaneHttp.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.ForbiddenRoleMessage })
                         if (PlaneHttp.IsMutating(req))
                         {
-                            await this.RecordAudit(who.email ?? who.principalId ?? '', method, path, ControlPlaneHost.StatusForbidden)
+                            await this.RecordAudit(ControlPlaneHost.ActorOf(who), method, path, ControlPlaneHost.StatusForbidden)
                         }
-                        PlaneHttp.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.ForbiddenRoleMessage })
                         return
                     }
                 }
@@ -658,7 +659,7 @@ export class ControlPlaneHost
             const handled = await this.RouteApi(req, res, path)
             if (who !== null && PlaneHttp.IsMutating(req) && path.startsWith(ControlPlaneHost.ApiPrefix) && !ControlPlaneHost.IsPublicApi(path))
             {
-                await this.RecordAudit(who.email ?? who.principalId ?? '', method, path, res.statusCode)
+                await this.RecordAudit(ControlPlaneHost.ActorOf(who), method, path, res.statusCode)
             }
             if (!handled)
             {
@@ -680,12 +681,18 @@ export class ControlPlaneHost
         }
         try
         {
-            await this.audit.Append({ actor, method, path, status, at: new Date().toISOString() })
+            const safePath = path.length > ControlPlaneHost.MaxAuditPathLength ? path.slice(0, ControlPlaneHost.MaxAuditPathLength) : path
+            await this.audit.Append({ actor, method, path: safePath, status, at: new Date().toISOString() })
         }
         catch (err)
         {
             console.error(ControlPlaneHost.LogPrefix, err instanceof Error ? err.name : ControlPlaneHost.AuditFailureFallback)
         }
+    }
+
+    private static ActorOf(who: OperatorPrincipal): string
+    {
+        return who.email ?? who.principalId ?? ''
     }
 
     private ActivityLimit(req: IncomingMessage): number

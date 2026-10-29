@@ -96,7 +96,7 @@ class Harness
         })
     }
 
-    public static async Build(parent: string, operator: FakeOperator, audit: AuditRegistry): Promise<ControlPlaneHost>
+    public static async Build(parent: string, operator: FakeOperator, audit: AuditRegistry | undefined): Promise<ControlPlaneHost>
     {
         const root = join(parent, 'static')
         mkdirSync(root, { recursive: true })
@@ -114,6 +114,48 @@ class Harness
         return host
     }
 }
+
+describe('ControlPlaneHost audit edge cases', () =>
+{
+    let host: ControlPlaneHost
+    let parent: string
+    let operator: FakeOperator
+
+    beforeEach(async () =>
+    {
+        parent = mkdtempSync(join(tmpdir(), 'cp-activity-edge-'))
+        operator = new FakeOperator()
+    })
+
+    afterEach(async () =>
+    {
+        await host.Close()
+        rmSync(parent, { recursive: true, force: true })
+    })
+
+    it('returns [] from GET /api/activity when no audit registry is configured', async () =>
+    {
+        host = await Harness.Build(parent, operator, undefined)
+        const res = await Harness.Send(host, 'GET', '/api/activity')
+        assert.equal(res.status, 200)
+        assert.deepEqual(JSON.parse(res.body), [])
+    })
+
+    it('rejects an unauthenticated GET /api/activity with 401', async () =>
+    {
+        host = await Harness.Build(parent, operator, new AuditRegistry(join(parent, 'audit.json')))
+        const res = await Harness.Send(host, 'GET', '/api/activity', undefined, false)
+        assert.equal(res.status, 401)
+    })
+
+    it('still returns 403 when the audit throws on a denied mutation', async () =>
+    {
+        operator.Role = OperatorRole.ReadOnly
+        host = await Harness.Build(parent, operator, new ThrowingAudit(join(parent, 'audit-throw.json')))
+        const res = await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        assert.equal(res.status, 403)
+    })
+})
 
 describe('ControlPlaneHost operator action audit', () =>
 {
