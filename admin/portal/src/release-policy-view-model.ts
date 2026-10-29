@@ -1,5 +1,5 @@
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
-import type { ClientDto, EnvRolloutDto, FleetHiveDto, GatingDto, HiveRolloutDto, SelectionDto, TenantDto } from './portal-types.js'
+import type { ClientDto, EnvRolloutDto, FleetHiveDto, GatingDto, HiveRolloutDto, ManifestDto, PolicyDto, SelectionDto, TenantDto } from './portal-types.js'
 import { PortalDates } from './portal-dates.js'
 import { FleetViewModel } from './fleet-view-model.js'
 import { PillTone } from './kit/tones.js'
@@ -9,6 +9,18 @@ export interface GatedRow
     ownerLabel: string
     version: string
     gatedLabel: string
+    blockedLabel?: string
+}
+
+export interface PolicyRow
+{
+    ownerLabel: string
+    tenantId: string
+    channelsLabel: string
+    minVersionLabel: string
+    heldLabel: string
+    held: boolean
+    holdReason: string
 }
 
 export interface TargetRow
@@ -44,6 +56,7 @@ export class ReleasePolicyViewModel extends Observable
     public static readonly GatedRowsProperty = 'GatedRows'
     public static readonly TargetRowsProperty = 'TargetRows'
     public static readonly RolloutRowsProperty = 'RolloutRows'
+    public static readonly PolicyRowsProperty = 'PolicyRows'
 
     private static readonly OwnerSeparator = ' / '
     private static readonly UnknownOwnerLabel = '(unknown)'
@@ -55,10 +68,23 @@ export class ReleasePolicyViewModel extends Observable
     private static readonly OnTargetLabel = 'On target'
     private static readonly BehindTargetLabel = 'Behind target'
     private static readonly NotReadyLabel = 'Not ready'
+    private static readonly ChannelSeparator = ', '
+    private static readonly AllChannelsLabel = 'All channels'
+    private static readonly NoFloorLabel = 'No floor'
+    private static readonly HeldLabel = 'Held'
+    private static readonly NotHeldLabel = 'Active'
+    private static readonly BlockedPrefix = 'Blocked: '
+    private static readonly ReasonSeparator = ', '
+    private static readonly WithdrawnReason = 'withdrawn'
+    private static readonly ChannelReason = 'channel'
+    private static readonly HeldReason = 'held'
+    private static readonly DefaultChannel = 'stable'
+    private static readonly NoHoldReason = ''
 
     private gatedRows: readonly GatedRow[] = []
     private targetRows: readonly TargetRow[] = []
     private rolloutRows: readonly RolloutRow[] = []
+    private policyRows: readonly PolicyRow[] = []
 
     public constructor(
         gating: readonly GatingDto[],
@@ -66,12 +92,15 @@ export class ReleasePolicyViewModel extends Observable
         tenants: readonly TenantDto[],
         clients: readonly ClientDto[],
         fleet: readonly FleetHiveDto[],
-        rollouts: readonly HiveRolloutDto[] = [])
+        rollouts: readonly HiveRolloutDto[] = [],
+        policies: readonly PolicyDto[] = [],
+        manifests: readonly ManifestDto[] = [])
     {
         super()
-        this.gatedRows = ReleasePolicyViewModel.DeriveGated(gating, tenants, clients)
+        this.gatedRows = ReleasePolicyViewModel.DeriveGated(gating, tenants, clients, policies, manifests)
         this.targetRows = ReleasePolicyViewModel.DeriveTargets(selections, fleet)
         this.rolloutRows = ReleasePolicyViewModel.DeriveRollouts(rollouts, fleet)
+        this.policyRows = ReleasePolicyViewModel.DerivePolicies(policies, tenants, clients)
     }
 
     public get GatedRows(): readonly GatedRow[]
@@ -89,39 +118,101 @@ export class ReleasePolicyViewModel extends Observable
         return this.rolloutRows
     }
 
+    public get PolicyRows(): readonly PolicyRow[]
+    {
+        return this.policyRows
+    }
+
     public Update(
         gating: readonly GatingDto[],
         selections: readonly SelectionDto[],
         tenants: readonly TenantDto[],
         clients: readonly ClientDto[],
         fleet: readonly FleetHiveDto[],
-        rollouts: readonly HiveRolloutDto[] = []): void
+        rollouts: readonly HiveRolloutDto[] = [],
+        policies: readonly PolicyDto[] = [],
+        manifests: readonly ManifestDto[] = []): void
     {
         const oldGated = this.gatedRows
         const oldTargets = this.targetRows
         const oldRollouts = this.rolloutRows
-        this.gatedRows = ReleasePolicyViewModel.DeriveGated(gating, tenants, clients)
+        const oldPolicies = this.policyRows
+        this.gatedRows = ReleasePolicyViewModel.DeriveGated(gating, tenants, clients, policies, manifests)
         this.targetRows = ReleasePolicyViewModel.DeriveTargets(selections, fleet)
         this.rolloutRows = ReleasePolicyViewModel.DeriveRollouts(rollouts, fleet)
+        this.policyRows = ReleasePolicyViewModel.DerivePolicies(policies, tenants, clients)
         this.RaisePropertyChanged(ReleasePolicyViewModel.GatedRowsProperty, oldGated, this.gatedRows)
         this.RaisePropertyChanged(ReleasePolicyViewModel.TargetRowsProperty, oldTargets, this.targetRows)
         this.RaisePropertyChanged(ReleasePolicyViewModel.RolloutRowsProperty, oldRollouts, this.rolloutRows)
+        this.RaisePropertyChanged(ReleasePolicyViewModel.PolicyRowsProperty, oldPolicies, this.policyRows)
     }
 
     private static DeriveGated(
         gating: readonly GatingDto[],
         tenants: readonly TenantDto[],
-        clients: readonly ClientDto[]): GatedRow[]
+        clients: readonly ClientDto[],
+        policies: readonly PolicyDto[],
+        manifests: readonly ManifestDto[]): GatedRow[]
     {
+        const policyByTenant = new Map<string, PolicyDto>(policies.map(p => [p.tenantId, p]))
+        const manifestById = new Map<string, ManifestDto>(manifests.map(m => [m.id, m]))
         const tenantById = new Map<string, TenantDto>(tenants.map(t => [t.id, t]))
         const clientById = new Map<string, ClientDto>(clients.map(c => [c.id, c]))
         const rows: GatedRow[] = gating.map(g => ({
             ownerLabel: ReleasePolicyViewModel.GateOwner(g.tenantId, tenantById, clientById),
             version: g.version,
             gatedLabel: PortalDates.Label(g.gatedAt),
+            blockedLabel: ReleasePolicyViewModel.BlockedLabel(manifestById.get(g.version), policyByTenant.get(g.tenantId)),
         }))
         // Array.prototype.sort is stable.
         return rows.sort((a, b) => a.ownerLabel.localeCompare(b.ownerLabel) || a.version.localeCompare(b.version))
+    }
+
+    private static BlockedLabel(manifest: ManifestDto | undefined, policy: PolicyDto | undefined): string | undefined
+    {
+        const reasons: string[] = []
+        if (manifest?.withdrawn === true)
+        {
+            reasons.push(ReleasePolicyViewModel.WithdrawnReason)
+        }
+        const channels = policy?.channels
+        if (channels !== undefined && channels.length > 0
+            && !channels.includes(manifest?.channel ?? ReleasePolicyViewModel.DefaultChannel))
+        {
+            reasons.push(ReleasePolicyViewModel.ChannelReason)
+        }
+        if (policy?.hold !== undefined)
+        {
+            reasons.push(ReleasePolicyViewModel.HeldReason)
+        }
+        return reasons.length === 0
+            ? undefined
+            : ReleasePolicyViewModel.BlockedPrefix + reasons.join(ReleasePolicyViewModel.ReasonSeparator)
+    }
+
+    private static DerivePolicies(
+        policies: readonly PolicyDto[],
+        tenants: readonly TenantDto[],
+        clients: readonly ClientDto[]): PolicyRow[]
+    {
+        const tenantById = new Map<string, TenantDto>(tenants.map(t => [t.id, t]))
+        const clientById = new Map<string, ClientDto>(clients.map(c => [c.id, c]))
+        const rows: PolicyRow[] = policies.map(p =>
+        {
+            const held = p.hold !== undefined
+            return {
+                ownerLabel: ReleasePolicyViewModel.GateOwner(p.tenantId, tenantById, clientById),
+                tenantId: p.tenantId,
+                channelsLabel: p.channels !== undefined && p.channels.length > 0
+                    ? p.channels.join(ReleasePolicyViewModel.ChannelSeparator)
+                    : ReleasePolicyViewModel.AllChannelsLabel,
+                minVersionLabel: p.minVersion !== undefined ? p.minVersion : ReleasePolicyViewModel.NoFloorLabel,
+                heldLabel: held ? ReleasePolicyViewModel.HeldLabel : ReleasePolicyViewModel.NotHeldLabel,
+                held,
+                holdReason: p.hold?.reason ?? ReleasePolicyViewModel.NoHoldReason,
+            }
+        })
+        return rows.sort((a, b) => a.ownerLabel.localeCompare(b.ownerLabel) || a.tenantId.localeCompare(b.tenantId))
     }
 
     private static GateOwner(

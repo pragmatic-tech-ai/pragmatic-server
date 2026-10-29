@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { FleetViewModel } from '../src/fleet-view-model.js'
 import { ReleasePolicyViewModel } from '../src/release-policy-view-model.js'
 import { PillTone } from '../src/kit/tones.js'
-import type { ClientDto, EnvRolloutDto, FleetHiveDto, GatingDto, HiveRolloutDto, SelectionDto, TenantDto } from '../src/portal-types.js'
+import type { ClientDto, EnvRolloutDto, FleetHiveDto, GatingDto, HiveRolloutDto, ManifestDto, PolicyDto, SelectionDto, TenantDto } from '../src/portal-types.js'
 
 class Fx
 {
@@ -35,6 +35,17 @@ class Fx
     public static Rollout(hiveId: string, targetVersion: string | undefined, environments: EnvRolloutDto[]): HiveRolloutDto
     {
         return { hiveId, targetVersion, environments }
+    }
+
+    public static Policy(tenantId: string, channels?: ('stable' | 'early')[], minVersion?: string, holdReason?: string): PolicyDto
+    {
+        const hold = holdReason !== undefined ? { reason: holdReason, actor: 'op', at: '2026-01-01T00:00:00Z' } : undefined
+        return { tenantId, channels, minVersion, hold }
+    }
+
+    public static Manifest(id: string, channel?: 'stable' | 'early', withdrawn?: boolean): ManifestDto
+    {
+        return { id, image: 'img:' + id, publishedAt: '2026-01-01T00:00:00Z', channel, withdrawn }
     }
 
     public static Hive(id: string, displayName: string): FleetHiveDto
@@ -223,6 +234,81 @@ describe('ReleasePolicyViewModel rollout rows', () =>
         vm.PropertyChanged(ReleasePolicyViewModel.RolloutRowsProperty).subscribe(() => { raised++ })
         vm.Update([], [], [], [], hives, [Fx.Rollout('h1', '2.0', [Fx.Env('prod', false, true, 'i')])])
         assert.equal(vm.RolloutRows.length, 1)
+        assert.equal(raised, 1)
+    })
+})
+
+describe('ReleasePolicyViewModel policy rows and blocked annotations', () =>
+{
+    const clients = [Fx.Client('c1', 'Client')]
+    const tenants = [Fx.Tenant('t1', 'c1', 'Tenant'), Fx.Tenant('t2', 'c1', 'Other'), Fx.Tenant('t3', 'c1', 'Free')]
+    const manifests = [Fx.Manifest('1.0', 'stable'), Fx.Manifest('2.0', 'early'), Fx.Manifest('3.0', 'stable', true)]
+
+    class Make
+    {
+        public static Vm(gating: GatingDto[], policies: PolicyDto[]): ReleasePolicyViewModel
+        {
+            return new ReleasePolicyViewModel(gating, [], tenants, clients, [], [], policies, manifests)
+        }
+    }
+
+    it('builds a policy row with channel and floor labels', () =>
+    {
+        const vm = Make.Vm([], [Fx.Policy('t1', ['stable'], '1.2.0')])
+        assert.equal(vm.PolicyRows.length, 1)
+        assert.equal(vm.PolicyRows[0].ownerLabel, 'Client / Tenant')
+        assert.equal(vm.PolicyRows[0].tenantId, 't1')
+        assert.equal(vm.PolicyRows[0].channelsLabel, 'stable')
+        assert.equal(vm.PolicyRows[0].minVersionLabel, '1.2.0')
+        assert.equal(vm.PolicyRows[0].held, false)
+        assert.equal(vm.PolicyRows[0].holdReason, '')
+    })
+
+    it('labels absent or empty channels as All channels and a missing floor as No floor', () =>
+    {
+        const vm = Make.Vm([], [Fx.Policy('t1'), Fx.Policy('t2', [])])
+        assert.deepEqual(vm.PolicyRows.map(r => r.channelsLabel), ['All channels', 'All channels'])
+        assert.equal(vm.PolicyRows[0].minVersionLabel, 'No floor')
+    })
+
+    it('marks a held policy row with its reason', () =>
+    {
+        const vm = Make.Vm([], [Fx.Policy('t1', undefined, undefined, 'incident')])
+        assert.equal(vm.PolicyRows[0].held, true)
+        assert.equal(vm.PolicyRows[0].holdReason, 'incident')
+    })
+
+    it('annotates early and withdrawn gated rows as blocked', () =>
+    {
+        const vm = Make.Vm(
+            [Fx.Gate('t1', '1.0', 'x'), Fx.Gate('t1', '2.0', 'x'), Fx.Gate('t1', '3.0', 'x')],
+            [Fx.Policy('t1', ['stable'], '1.2.0')])
+        assert.equal(vm.GatedRows[0].blockedLabel, undefined)
+        assert.ok(vm.GatedRows[1].blockedLabel?.includes('channel'))
+        assert.ok(vm.GatedRows[2].blockedLabel?.includes('withdrawn'))
+    })
+
+    it('marks gated rows of a held tenant as held', () =>
+    {
+        const vm = Make.Vm([Fx.Gate('t1', '1.0', 'x')], [Fx.Policy('t1', undefined, undefined, 'incident')])
+        assert.ok(vm.GatedRows[0].blockedLabel?.includes('held'))
+    })
+
+    it('leaves a tenant with no policy record unblocked unless withdrawn', () =>
+    {
+        const vm = Make.Vm([Fx.Gate('t3', '2.0', 'x'), Fx.Gate('t3', '3.0', 'x')], [])
+        assert.equal(vm.PolicyRows.length, 0)
+        assert.equal(vm.GatedRows[0].blockedLabel, undefined)
+        assert.ok(vm.GatedRows[1].blockedLabel?.includes('withdrawn'))
+    })
+
+    it('Update recomputes policy rows and raises PolicyRows', () =>
+    {
+        const vm = Make.Vm([], [])
+        let raised = 0
+        vm.PropertyChanged(ReleasePolicyViewModel.PolicyRowsProperty).subscribe(() => { raised++ })
+        vm.Update([], [], tenants, clients, [], [], [Fx.Policy('t1')], manifests)
+        assert.equal(vm.PolicyRows.length, 1)
         assert.equal(raised, 1)
     })
 })
