@@ -73,6 +73,7 @@ class RbacFixture
     public static readonly BadEmailBody = JSON.stringify({ email: 'not-an-email', password: RbacFixture.Password, role: 'full' })
     public static readonly BadRoleBody = JSON.stringify({ email: 'a@x.test', password: 'p', role: 'god' })
     public static readonly Manifests = '/api/manifests'
+    public static readonly ManifestWithdrawn = '/api/manifests/1.0.0/withdrawn'
     public static readonly TenantGating = '/api/tenants/t1/gating'
     public static readonly TenantUngate = '/api/tenants/t1/gating/1.0.0'
     public static readonly Post = 'POST'
@@ -137,6 +138,8 @@ describe('ControlPlaneHost operator RBAC', () =>
             { method: RbacFixture.Post, path: RbacFixture.Manifests, body: RbacFixture.PublishBody },
             { method: RbacFixture.Post, path: RbacFixture.TenantGating, body: RbacFixture.GateBody },
             { method: RbacFixture.Delete, path: RbacFixture.TenantUngate, body: RbacFixture.EmptyBody },
+            { method: RbacFixture.Post, path: RbacFixture.ManifestWithdrawn, body: RbacFixture.EmptyBody },
+            { method: RbacFixture.Delete, path: RbacFixture.ManifestWithdrawn, body: RbacFixture.EmptyBody },
         ]
         for (const c of cases)
         {
