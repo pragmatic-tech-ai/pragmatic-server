@@ -119,3 +119,14 @@ export type FleetHiveDto = {
     lastSeen: string | null
     environments: FleetEnvDto[]
 }
+
+export type ProvisionInputDto =
+{
+    client: { id: string; displayName: string; subscriptionRef?: string }
+    tenant: { id: string; displayName: string; ownerEmail: string }
+    hive: { id: string; displayName: string; cluster: HiveDto['cluster']; registry: HiveDto['registry']; trustRootRef?: string }
+}
+
+export type ProvisionSecretsDto = { ownerEmail: string; ownerPassword: string; agentToken: string }
+
+export type ProvisionResultDto = { client: ClientDto; tenant: TenantDto; hive: HiveDto; secrets: ProvisionSecretsDto }

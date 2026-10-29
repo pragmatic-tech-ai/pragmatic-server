@@ -1,5 +1,6 @@
 import { afterEach, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import type { ProvisionInputDto, ProvisionResultDto } from '../src/portal-types.js'
 import { ControlPlaneClient } from '../src/api-client.js'
 
 type Recorded = { route: string; init: RequestInit | undefined }
@@ -86,5 +87,36 @@ describe('ControlPlaneClient promotion', () =>
     {
         FetchStub.Install(null)
         assert.equal(await new ControlPlaneClient().GetLoadedGraph('rt1'), null)
+    })
+})
+
+describe('ControlPlaneClient provisioning', () =>
+{
+    afterEach(() => { FetchStub.Restore() })
+
+    it('Provision POSTs the composed input to /api/provision and returns the result with secrets', async () =>
+    {
+        const input: ProvisionInputDto =
+        {
+            client: { id: 'c1', displayName: 'Client 1' },
+            tenant: { id: 't1', displayName: 'Tenant 1', ownerEmail: 'owner@example.com' },
+            hive: { id: 'h1', displayName: 'Hive 1', cluster: { backend: 'local', mode: 'attach' }, registry: { mode: 'attach', endpoint: 'reg.example.com' } }
+        }
+        const result: ProvisionResultDto =
+        {
+            client: { id: 'c1', displayName: 'Client 1', createdAt: '2026-10-29T00:00:00Z' },
+            tenant: { id: 't1', clientId: 'c1', displayName: 'Tenant 1' },
+            hive: { id: 'h1', tenantId: 't1', displayName: 'Hive 1', cluster: { backend: 'local', mode: 'attach' }, registry: { mode: 'attach', endpoint: 'reg.example.com' } },
+            secrets: { ownerEmail: 'owner@example.com', ownerPassword: 'pw-123', agentToken: 'tok-456' }
+        }
+        FetchStub.Install(result)
+        const dto = await new ControlPlaneClient().Provision(input)
+        const call = FetchStub.Calls[0]!
+        assert.ok(call.route.endsWith('/api/provision'))
+        assert.equal(call.init?.method, 'POST')
+        assert.deepEqual(JSON.parse(call.init?.body as string), input)
+        assert.equal(dto.secrets.ownerPassword, 'pw-123')
+        assert.equal(dto.secrets.agentToken, 'tok-456')
+        assert.deepEqual(dto, result)
     })
 })
