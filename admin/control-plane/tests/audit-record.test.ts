@@ -15,11 +15,17 @@ class AuditFixture
     public static readonly Path = '/admin/x'
     public static readonly Cap = 1000
     public static readonly Extra = 5
+    public static readonly Anon = '(anonymous)'
     public static readonly BaseMs = Date.UTC(2026, 0, 1)
 
     public static Entry(n: number): Omit<AuditRecord, 'id'>
     {
         return { actor: AuditFixture.Actor, method: AuditFixture.Method, path: AuditFixture.Path, status: 200, at: new Date(AuditFixture.BaseMs + n * 1000).toISOString() }
+    }
+
+    public static Anonymous(n: number): Omit<AuditRecord, 'id'>
+    {
+        return { ...AuditFixture.Entry(n), actor: AuditFixture.Anon }
     }
 
     public static async Make(): Promise<{ reg: AuditRegistry; dir: string }>
@@ -108,6 +114,89 @@ test('eviction drops the oldest by timestamp, not by insertion order', async () 
         assert.equal(reg.List().length, AuditFixture.Cap)
         assert.ok(!ats.has(AuditFixture.Entry(-1).at))
         assert.ok(ats.has(AuditFixture.Entry(1).at))
+    }
+    finally
+    {
+        await rm(dir, { recursive: true, force: true })
+    }
+})
+
+test('anonymous flood never evicts authored history', async () =>
+{
+    const { reg, dir } = await AuditFixture.Make()
+    try
+    {
+        await reg.Append(AuditFixture.Entry(0))
+        for (let n = 1; n <= AuditFixture.Cap; n++)
+        {
+            await reg.Append(AuditFixture.Anonymous(n))
+        }
+        const ats = new Set(reg.List().map(r => r.at))
+        assert.equal(reg.List().length, AuditFixture.Cap)
+        assert.ok(ats.has(AuditFixture.Entry(0).at))
+        assert.ok(!ats.has(AuditFixture.Entry(1).at))
+    }
+    finally
+    {
+        await rm(dir, { recursive: true, force: true })
+    }
+})
+
+test('mixed overflow keeps every authored entry and drops oldest anonymous first', async () =>
+{
+    const { reg, dir } = await AuditFixture.Make()
+    try
+    {
+        const total = AuditFixture.Cap + AuditFixture.Extra
+        const authored: number[] = []
+        for (let n = 0; n < total; n++)
+        {
+            if (n % 10 === 0)
+            {
+                authored.push(n)
+                await reg.Append(AuditFixture.Entry(n))
+            }
+            else
+            {
+                await reg.Append(AuditFixture.Anonymous(n))
+            }
+        }
+        const ats = new Set(reg.List().map(r => r.at))
+        assert.equal(reg.List().length, AuditFixture.Cap)
+        for (const n of authored)
+        {
+            assert.ok(ats.has(AuditFixture.Entry(n).at))
+        }
+        // The oldest anonymous entries (n = 1..5) are the ones dropped.
+        for (let n = 1; n <= AuditFixture.Extra; n++)
+        {
+            assert.ok(!ats.has(AuditFixture.Entry(n).at))
+        }
+        assert.ok(ats.has(AuditFixture.Entry(total - 1).at))
+    }
+    finally
+    {
+        await rm(dir, { recursive: true, force: true })
+    }
+})
+
+test('all-authored overflow stays bounded, dropping the oldest', async () =>
+{
+    const { reg, dir } = await AuditFixture.Make()
+    try
+    {
+        const total = AuditFixture.Cap + AuditFixture.Extra
+        for (let n = 0; n < total; n++)
+        {
+            await reg.Append(AuditFixture.Entry(n))
+        }
+        const ats = new Set(reg.List().map(r => r.at))
+        assert.equal(reg.List().length, AuditFixture.Cap)
+        for (let n = 0; n < AuditFixture.Extra; n++)
+        {
+            assert.ok(!ats.has(AuditFixture.Entry(n).at))
+        }
+        assert.ok(ats.has(AuditFixture.Entry(total - 1).at))
     }
     finally
     {

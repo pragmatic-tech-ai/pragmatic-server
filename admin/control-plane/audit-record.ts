@@ -15,6 +15,9 @@ export class AuditRegistry extends JsonRecordStore<AuditRecord>
     private static readonly RootKey = 'audit'
     private static readonly MaxEntries = 1000
 
+    // Audit-domain sentinel for an unauthenticated / pre-principal actor.
+    public static readonly AnonymousActor = '(anonymous)'
+
     public constructor(filePath: string)
     {
         super(filePath, AuditRegistry.RootKey)
@@ -30,7 +33,12 @@ export class AuditRegistry extends JsonRecordStore<AuditRecord>
             return
         }
         const excess = all.length - AuditRegistry.MaxEntries
-        const oldest = [...all].sort((a, b) => a.at.localeCompare(b.at)).slice(0, excess)
+        // Anonymous entries are evicted first so an unauthenticated flood cannot push out
+        // authored history; authored entries go only once no anonymous entry remains.
+        const byAge = [...all].sort((a, b) => a.at.localeCompare(b.at))
+        const anonymous = byAge.filter(r => r.actor === AuditRegistry.AnonymousActor)
+        const authored = byAge.filter(r => r.actor !== AuditRegistry.AnonymousActor)
+        const oldest = [...anonymous, ...authored].slice(0, excess)
         for (const rec of oldest)
         {
             await this.Remove(rec.id)
