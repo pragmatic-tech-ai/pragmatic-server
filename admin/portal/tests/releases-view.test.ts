@@ -39,10 +39,15 @@ class FakeClient
         return Promise.resolve([])
     }
 
+    public failPublish = false
     public published: Array<[string, string, string | undefined]> = []
 
     public PublishManifest(version: string, image: string, notes?: string): Promise<ManifestDto>
     {
+        if (this.failPublish)
+        {
+            return Promise.reject(new Error('publish boom'))
+        }
         this.published.push([version, image, notes])
         return Promise.resolve({ id: version, image, publishedAt: '2026-01-02T03:04:05Z' })
     }
@@ -305,13 +310,57 @@ describe('ReleasesView', () =>
         assert.equal(view.Mode, ReleasesMode.List)
     })
 
-    it('open, cancel and re-open the publish form does not throw', async () =>
+    it('open, cancel and re-open builds a fresh blank publish form', async () =>
     {
         const view = Fixtures.View(new FakeClient([Fixtures.Manifest('1.0')]))
         await view.Refresh()
         view.ShowPublish()
+        const first = Fixtures.Walk(view).filter(n => n instanceof TextBox) as TextBox[]
+        first[0].Text = 'typed'
+        first[1].Text = 'typed'
+        first[2].Text = 'typed'
         await view.ShowList()
         view.ShowPublish()
+        assert.equal(view.Mode, ReleasesMode.Publish)
+        const second = Fixtures.Walk(view).filter(n => n instanceof TextBox) as TextBox[]
+        assert.equal(second.length, 3)
+        for (const box of second)
+        {
+            assert.ok(!first.includes(box))
+            assert.equal(box.Text, '')
+        }
+    })
+
+    it('a failed publish shows one error line and stays on the form', async () =>
+    {
+        const client = new FakeClient([Fixtures.Manifest('1.0')])
+        client.failPublish = true
+        const view = Fixtures.View(client)
+        await view.Refresh()
+        view.ShowPublish()
+        const boxes = Fixtures.Walk(view).filter(n => n instanceof TextBox) as TextBox[]
+        boxes[0].Text = '2.0'
+        boxes[1].Text = 'registry/app:2.0'
+        const before = client.manifestCalls
+        view.SubmitAction?.Press()
+        await new Promise(r => setTimeout(r, 20))
+        assert.equal(view.ErrorLine, 'publish boom')
+        assert.equal(view.Mode, ReleasesMode.Publish)
+        assert.equal(client.manifestCalls, before)
+    })
+
+    it('a blank field does not publish and shows the required error', async () =>
+    {
+        const client = new FakeClient([Fixtures.Manifest('1.0')])
+        const view = Fixtures.View(client)
+        await view.Refresh()
+        view.ShowPublish()
+        const boxes = Fixtures.Walk(view).filter(n => n instanceof TextBox) as TextBox[]
+        boxes[0].Text = '2.0'
+        view.SubmitAction?.Press()
+        await new Promise(r => setTimeout(r, 20))
+        assert.equal(client.published.length, 0)
+        assert.ok(view.ErrorLine.length > 0)
         assert.equal(view.Mode, ReleasesMode.Publish)
     })
 })

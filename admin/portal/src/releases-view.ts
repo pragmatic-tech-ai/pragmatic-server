@@ -34,6 +34,7 @@ export class ReleasesView extends SectionContainerView<ReleaseListRow>
     private static readonly NotesPlaceholder = 'Notes (optional)'
     private static readonly FormTitle = 'Version details'
     private static readonly BlankText = ''
+    private static readonly RequiredText = 'Version and image are required.'
     private static readonly EmptyTitle = 'No versions published yet.'
     private static readonly ErrorTitle = 'Could not load the releases.'
     private static readonly TableEmptyText = 'No versions match.'
@@ -80,6 +81,12 @@ export class ReleasesView extends SectionContainerView<ReleaseListRow>
     public get SubmitAction(): Act | undefined
     {
         return this.submitAction
+    }
+
+    // Test seam: the publish form's current error line.
+    public get ErrorLine(): string
+    {
+        return this.errorText?.Text ?? ReleasesView.BlankText
     }
 
     public ShowPublish(): void
@@ -142,6 +149,10 @@ export class ReleasesView extends SectionContainerView<ReleaseListRow>
         }
         if (!this.createModel.CanSubmit(version, image))
         {
+            if (this.errorText !== undefined)
+            {
+                this.errorText.Text = ReleasesView.RequiredText
+            }
             return
         }
         try
