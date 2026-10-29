@@ -6,13 +6,17 @@ import type { ScreenHostInputs, TableColumn } from './kit/index.js'
 import type { OperatorContext } from './operator-context.js'
 import type { IPortalNavigator, IPortalView } from './portal-types.js'
 import { ReleasePolicyViewModel } from './release-policy-view-model.js'
-import type { GatedRow, RolloutRow, TargetRow } from './release-policy-view-model.js'
+import type { GatedRow, PolicyRow, RolloutRow, TargetRow } from './release-policy-view-model.js'
+import { ReleaseChannel } from './release-channel.js'
 
 export enum GatingMode
 {
     Normal,
     Gate,
     Ungate,
+    SetChannels,
+    SetMinVersion,
+    Hold,
 }
 
 // Release policy: the current gating allowlist, per-hive target selections, and the actual rollout status per environment. Full operators can gate or ungate a version for a tenant.
@@ -20,10 +24,37 @@ export class ReleasePolicyView extends StackPanel implements IPortalView
 {
     private static readonly Breadcrumb: readonly string[] = ['Releases', 'Release Policy']
     private static readonly TitleText = 'Release Policy'
-    private static readonly CurrentModelNote = 'This is the current gating and selection model: the versions each tenant may adopt, the target each hive is set to, and the actual rollout status reported by each environment. Scoped rules, channels, minimum versions, holds, and the adoption ledger are not yet available.'
+    private static readonly CurrentModelNote = 'This is the current gating and selection model: the versions each tenant may adopt, the target each hive is set to, and the actual rollout status reported by each environment. Per-tenant policy is live: set a tenant subscribed channels, a minimum-version floor, or a hold, and blocked tags show why a gated version cannot be adopted. The adoption ledger is still pending.'
     private static readonly GatedTitle = 'Gated versions'
     private static readonly TargetsTitle = 'Selected targets'
     private static readonly RolloutTitle = 'Rollout status'
+    private static readonly PolicyTitle = 'Tenant policy'
+    private static readonly PolicyEmptyText = 'No tenant has a policy set yet.'
+    private static readonly ChannelsKey = 'channels'
+    private static readonly FloorKey = 'floor'
+    private static readonly HeldKey = 'held'
+    private static readonly BlockedKey = 'blocked'
+    private static readonly ChannelsHeader = 'Channels'
+    private static readonly FloorHeader = 'Minimum version'
+    private static readonly HeldHeader = 'Hold'
+    private static readonly BlockedHeader = 'Blocked'
+    private static readonly HoldSeparator = ': '
+    private static readonly SetChannelsLabel = 'Set channels'
+    private static readonly SetMinVersionLabel = 'Set floor'
+    private static readonly HoldLabel = 'Hold'
+    private static readonly SetChannelsFormTitle = 'Set the subscribed channels of a tenant'
+    private static readonly SetMinVersionFormTitle = 'Set or clear the minimum version of a tenant'
+    private static readonly HoldFormTitle = 'Hold or release a tenant'
+    private static readonly ApplyLabel = 'Apply'
+    private static readonly ClearLabel = 'Clear'
+    private static readonly ReleaseLabel = 'Release'
+    private static readonly SelectedPrefix = '[x] '
+    private static readonly UnselectedPrefix = '[ ] '
+    private static readonly ReasonPlaceholder = 'Reason'
+    private static readonly TenantRequiredText = 'Tenant id is required.'
+    private static readonly ChannelRequiredText = 'Tenant id and at least one channel are required.'
+    private static readonly VersionRequiredText = 'Tenant id and version are required.'
+    private static readonly ReasonRequiredText = 'Tenant id and reason are required.'
     private static readonly EnvKey = 'env'
     private static readonly RunningKey = 'running'
     private static readonly StatusKey = 'status'
@@ -70,6 +101,8 @@ export class ReleasePolicyView extends StackPanel implements IPortalView
     private targetSlot = new StackPanel()
     private rolloutSlot = new StackPanel()
     private formSlot = new StackPanel()
+    private policySlot = new StackPanel()
+    private pendingChannels = new Set<string>()
     private mode = GatingMode.Normal
     private errorText: TextBlock | undefined
     private model: ReleasePolicyViewModel | undefined
@@ -113,6 +146,7 @@ export class ReleasePolicyView extends StackPanel implements IPortalView
     public EnterMode(mode: GatingMode): void
     {
         this.mode = mode
+        this.pendingChannels = new Set<string>()
         if (this.model !== undefined)
         {
             this.ShowModel(this.model)
@@ -158,21 +192,23 @@ export class ReleasePolicyView extends StackPanel implements IPortalView
         }
         try
         {
-            const [gating, selections, tenants, clients, fleet, rollouts] = await Promise.all([
+            const [gating, selections, tenants, clients, fleet, rollouts, policies, manifests] = await Promise.all([
                 this.client.ListGating(),
                 this.client.ListSelections(),
                 this.client.ListTenants(),
                 this.client.ListClients(),
                 this.client.ListFleet(),
                 this.client.ListRollouts(),
+                this.client.ListPolicies(),
+                this.client.ListManifests(),
             ])
             if (this.model === undefined)
             {
-                this.model = new ReleasePolicyViewModel(gating, selections, tenants, clients, fleet, rollouts)
+                this.model = new ReleasePolicyViewModel(gating, selections, tenants, clients, fleet, rollouts, policies, manifests)
             }
             else
             {
-                this.model.Update(gating, selections, tenants, clients, fleet, rollouts)
+                this.model.Update(gating, selections, tenants, clients, fleet, rollouts, policies, manifests)
             }
         }
         catch
@@ -203,6 +239,7 @@ export class ReleasePolicyView extends StackPanel implements IPortalView
         this.targetSlot = new StackPanel()
         this.rolloutSlot = new StackPanel()
         this.formSlot = new StackPanel()
+        this.policySlot = new StackPanel()
         this.errorText = undefined
         this.mode = GatingMode.Normal
     }
@@ -210,7 +247,7 @@ export class ReleasePolicyView extends StackPanel implements IPortalView
     private ShowModel(model: ReleasePolicyViewModel): void
     {
         const isEmpty = model.GatedRows.length === 0 && model.TargetRows.length === 0
-            && model.RolloutRows.length === 0 && !this.operator.CanMutate
+            && model.RolloutRows.length === 0 && model.PolicyRows.length === 0 && !this.operator.CanMutate
         if (isEmpty)
         {
             this.ClearSlots()
@@ -234,6 +271,15 @@ export class ReleasePolicyView extends StackPanel implements IPortalView
             searchText: r => r.ownerLabel + ReleasePolicyView.SearchSeparator + r.version,
             emptyText: ReleasePolicyView.GatedEmptyText,
         }))
+        this.policySlot = new StackPanel()
+        this.policySlot.Orientation = Orientation.Vertical
+        this.policySlot.AddChild(new DataTable<PolicyRow>({
+            columns: ReleasePolicyView.PolicyColumns(),
+            rows: model.PolicyRows,
+            density: TableDensity.Dense,
+            searchText: r => r.ownerLabel + ReleasePolicyView.SearchSeparator + r.channelsLabel,
+            emptyText: ReleasePolicyView.PolicyEmptyText,
+        }))
         this.targetSlot = new StackPanel()
         this.targetSlot.Orientation = Orientation.Vertical
         this.targetSlot.AddChild(new DataTable<TargetRow>({
@@ -256,12 +302,16 @@ export class ReleasePolicyView extends StackPanel implements IPortalView
             emptyText: ReleasePolicyView.RolloutEmptyText,
         }))
         root.AddChild(new Section({ title: ReleasePolicyView.GatedTitle, body: this.gatedSlot }))
+        root.AddChild(new Section({ title: ReleasePolicyView.PolicyTitle, body: this.policySlot }))
         root.AddChild(new Section({ title: ReleasePolicyView.TargetsTitle, body: this.targetSlot }))
         root.AddChild(new Section({ title: ReleasePolicyView.RolloutTitle, body: this.rolloutSlot }))
         const actions = new StackPanel()
         actions.Orientation = Orientation.Horizontal
         actions.AddChild(new Act(this.operator.MutatingAct(ReleasePolicyView.GateLabel, () => this.EnterMode(GatingMode.Gate))))
         actions.AddChild(new Act(this.operator.MutatingAct(ReleasePolicyView.UngateLabel, () => this.EnterMode(GatingMode.Ungate), ActVariant.Danger)))
+        actions.AddChild(new Act(this.operator.MutatingAct(ReleasePolicyView.SetChannelsLabel, () => this.EnterMode(GatingMode.SetChannels))))
+        actions.AddChild(new Act(this.operator.MutatingAct(ReleasePolicyView.SetMinVersionLabel, () => this.EnterMode(GatingMode.SetMinVersion))))
+        actions.AddChild(new Act(this.operator.MutatingAct(ReleasePolicyView.HoldLabel, () => this.EnterMode(GatingMode.Hold), ActVariant.Danger)))
         root.AddChild(actions)
         // A Refresh() while the form is open is skipped (see Refresh), so the live fields keep their typed input.
         this.formSlot = new StackPanel()
@@ -270,13 +320,138 @@ export class ReleasePolicyView extends StackPanel implements IPortalView
         if (this.mode !== GatingMode.Normal)
         {
             const gate = this.mode === GatingMode.Gate
-            this.formSlot.AddChild(this.BuildGatingForm(gate))
+            const policyForm = this.mode === GatingMode.SetChannels || this.mode === GatingMode.SetMinVersion
+                || this.mode === GatingMode.Hold
+            this.formSlot.AddChild(policyForm ? this.BuildPolicyForm() : this.BuildGatingForm(gate))
             root.AddChild(new Section({
-                title: gate ? ReleasePolicyView.GateFormTitle : ReleasePolicyView.UngateFormTitle,
+                title: this.FormTitle(gate),
                 body: this.formSlot,
             }))
         }
         return root
+    }
+
+    private FormTitle(gate: boolean): string
+    {
+        switch (this.mode)
+        {
+            case GatingMode.SetChannels:
+                return ReleasePolicyView.SetChannelsFormTitle
+            case GatingMode.SetMinVersion:
+                return ReleasePolicyView.SetMinVersionFormTitle
+            case GatingMode.Hold:
+                return ReleasePolicyView.HoldFormTitle
+            default:
+                return gate ? ReleasePolicyView.GateFormTitle : ReleasePolicyView.UngateFormTitle
+        }
+    }
+
+    // Inline policy forms: tenant id + mode-specific inputs, apply/clear actions and cancel.
+    private BuildPolicyForm(): Visual
+    {
+        const tenantBox = ReleasePolicyView.Box(ReleasePolicyView.TenantPlaceholder)
+        const errorText = new TextBlock()
+        this.errorText = errorText
+        const body = new StackPanel()
+        body.Orientation = Orientation.Vertical
+        body.AddChild(tenantBox)
+        if (this.mode === GatingMode.SetChannels)
+        {
+            for (const channel of [ReleaseChannel.Stable, ReleaseChannel.Early])
+            {
+                body.AddChild(this.ChannelToggle(channel))
+            }
+            body.AddChild(errorText)
+            body.AddChild(new Act(this.operator.MutatingAct(ReleasePolicyView.ApplyLabel, () => void this.ApplyPolicy(
+                tenantBox.Text, this.pendingChannels.size > 0, ReleasePolicyView.ChannelRequiredText,
+                t => this.client.SetTenantChannels(t, [...this.pendingChannels])), ActVariant.Primary)))
+        }
+        else if (this.mode === GatingMode.SetMinVersion)
+        {
+            const versionBox = ReleasePolicyView.Box(ReleasePolicyView.VersionPlaceholder)
+            body.AddChild(versionBox)
+            body.AddChild(errorText)
+            body.AddChild(new Act(this.operator.MutatingAct(ReleasePolicyView.ApplyLabel, () => void this.ApplyPolicy(
+                tenantBox.Text, versionBox.Text.trim() !== ReleasePolicyView.BlankText, ReleasePolicyView.VersionRequiredText,
+                t => this.client.SetTenantMinVersion(t, versionBox.Text.trim())), ActVariant.Primary)))
+            body.AddChild(new Act(this.operator.MutatingAct(ReleasePolicyView.ClearLabel, () => void this.ApplyPolicy(
+                tenantBox.Text, true, ReleasePolicyView.TenantRequiredText,
+                t => this.client.ClearTenantMinVersion(t)))))
+        }
+        else
+        {
+            const reasonBox = ReleasePolicyView.Box(ReleasePolicyView.ReasonPlaceholder)
+            body.AddChild(reasonBox)
+            body.AddChild(errorText)
+            body.AddChild(new Act(this.operator.MutatingAct(ReleasePolicyView.HoldLabel, () => void this.ApplyPolicy(
+                tenantBox.Text, reasonBox.Text.trim() !== ReleasePolicyView.BlankText, ReleasePolicyView.ReasonRequiredText,
+                t => this.client.SetTenantHold(t, reasonBox.Text.trim())), ActVariant.Danger)))
+            body.AddChild(new Act(this.operator.MutatingAct(ReleasePolicyView.ReleaseLabel, () => void this.ApplyPolicy(
+                tenantBox.Text, true, ReleasePolicyView.TenantRequiredText,
+                t => this.client.ClearTenantHold(t)))))
+        }
+        const cancel = new KeyActivatedButton(() => this.EnterMode(GatingMode.Normal))
+        const cancelText = new TextBlock()
+        cancelText.Text = ReleasePolicyView.CancelLabel
+        cancel.Content = cancelText
+        body.AddChild(cancel)
+        return body
+    }
+
+    // A toggle that adds or removes the channel from the pending selection and reflects it in its label.
+    private ChannelToggle(channel: string): KeyActivatedButton
+    {
+        const label = new TextBlock()
+        const show = (): void =>
+        {
+            label.Text = (this.pendingChannels.has(channel) ? ReleasePolicyView.SelectedPrefix : ReleasePolicyView.UnselectedPrefix) + channel
+        }
+        const button = new KeyActivatedButton(() =>
+        {
+            if (this.pendingChannels.has(channel))
+            {
+                this.pendingChannels.delete(channel)
+            }
+            else
+            {
+                this.pendingChannels.add(channel)
+            }
+            show()
+        })
+        show()
+        button.Content = label
+        return button
+    }
+
+    private async ApplyPolicy(tenantId: string, valid: boolean, requiredText: string, call: (tenant: string) => Promise<unknown>): Promise<void>
+    {
+        if (this.errorText !== undefined)
+        {
+            this.errorText.Text = ReleasePolicyView.BlankText
+        }
+        const tenant = tenantId.trim()
+        if (tenant === ReleasePolicyView.BlankText || !valid)
+        {
+            if (this.errorText !== undefined)
+            {
+                this.errorText.Text = requiredText
+            }
+            return
+        }
+        try
+        {
+            await call(tenant)
+        }
+        catch
+        {
+            if (this.errorText !== undefined)
+            {
+                this.errorText.Text = ReleasePolicyView.FailedText
+            }
+            return
+        }
+        this.mode = GatingMode.Normal
+        await this.Refresh()
     }
 
     // One form for both modes: tenant + version + submit + cancel + error line.
@@ -357,6 +532,17 @@ export class ReleasePolicyView extends StackPanel implements IPortalView
             { key: ReleasePolicyView.OwnerKey, header: ReleasePolicyView.OwnerHeader, cell: r => r.ownerLabel },
             { key: ReleasePolicyView.VersionKey, header: ReleasePolicyView.VersionHeader, cell: r => r.version },
             { key: ReleasePolicyView.GatedKey, header: ReleasePolicyView.GatedHeader, cell: r => r.gatedLabel },
+            { key: ReleasePolicyView.BlockedKey, header: ReleasePolicyView.BlockedHeader, cell: r => r.blockedLabel ?? ReleasePolicyView.BlankText },
+        ]
+    }
+
+    private static PolicyColumns(): TableColumn<PolicyRow>[]
+    {
+        return [
+            { key: ReleasePolicyView.OwnerKey, header: ReleasePolicyView.OwnerHeader, cell: r => r.ownerLabel },
+            { key: ReleasePolicyView.ChannelsKey, header: ReleasePolicyView.ChannelsHeader, cell: r => r.channelsLabel },
+            { key: ReleasePolicyView.FloorKey, header: ReleasePolicyView.FloorHeader, cell: r => r.minVersionLabel },
+            { key: ReleasePolicyView.HeldKey, header: ReleasePolicyView.HeldHeader, cell: r => r.held ? r.heldLabel + ReleasePolicyView.HoldSeparator + r.holdReason : r.heldLabel },
         ]
     }
 
