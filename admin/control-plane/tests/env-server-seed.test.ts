@@ -57,10 +57,25 @@ describe('EnvServerSeedSource', () =>
         assert.equal(prov[Fixture.DbRef], Fixture.DbPassword)
     })
 
-    it('renders the postgres Secret named by the db ref with the same password', () =>
+    it('renders the postgres Secret under the same sanitised RFC-1123 name the StatefulSet references', () =>
     {
         const objs = new EnvServerSeedSource(dir, Fixture.Env, Fixture.DbRef).SecretSet().RenderManifest()
-        const pg = objs.find(o => (o.metadata as { name: string }).name === Fixture.DbRef)!
+        const secretNames = objs.map(o => (o.metadata as { name: string }).name)
+        const refName = K8sManifestBuilder.SecretNameOf(Fixture.DbRef)
+        assert.match(refName, /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/)
+        assert.ok(secretNames.includes(refName))
+        assert.ok(!secretNames.includes(Fixture.DbRef))
+        const workload = { environmentName: Fixture.Env, environmentId: 'env-1', hiveId: 'h', image: 'i', serverPort: 8080, env: {}, secretRefs: [], database: { image: 'postgres:16', user: 'u', database: 'd', passwordRef: Fixture.DbRef } }
+        const sts = (JSON.parse(new K8sManifestBuilder().Render(workload)).items as any[]).find(i => i.kind === 'StatefulSet')
+        const refd = sts.spec.template.spec.containers[0].env.find((e: any) => e.valueFrom).valueFrom.secretKeyRef.name
+        assert.equal(refd, refName)
+        assert.ok(secretNames.includes(refd))
+    })
+
+    it('renders the postgres Secret with the same password (value lookup stays on the raw ref)', () =>
+    {
+        const objs = new EnvServerSeedSource(dir, Fixture.Env, Fixture.DbRef).SecretSet().RenderManifest()
+        const pg = objs.find(o => (o.metadata as { name: string }).name === K8sManifestBuilder.SecretNameOf(Fixture.DbRef))!
         assert.equal(pg.kind, 'Secret')
         assert.equal(Buffer.from((pg.data as Record<string, string>)['password'], 'base64').toString('utf8'), Fixture.DbPassword)
     })

@@ -93,7 +93,6 @@ export class K8sManifestBuilder
     private static readonly NamespacePrefix = 'pragmatic-env-'
     private static readonly ServerSuffix = 'server'
     private static readonly DatabaseSuffix = 'postgres'
-    /** Same path DockerEnv.WaitHealthy polls. */
     private static readonly PostgresPort = 5432
     private static readonly PostgresDataPath = '/var/lib/postgresql/data'
     private static readonly PostgresUserVar = 'POSTGRES_USER'

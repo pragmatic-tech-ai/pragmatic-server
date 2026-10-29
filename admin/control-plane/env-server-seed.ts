@@ -177,10 +177,10 @@ export class EnvServerSeedSource
         return `${environmentName}${EnvServerSeedSource.SeedSecretNameSuffix}`
     }
 
-    /** Name of the postgres password Secret: the db password ref itself (what DatabaseStatefulSet consumes). */
+    /** Name of the postgres password Secret: the db password ref sanitised exactly as DatabaseStatefulSet's secretKeyRef.name (the secrets-map KEY stays raw). */
     public static DbSecretNameOf(dbPasswordRef: string): string
     {
-        return dbPasswordRef
+        return K8sManifestBuilder.SecretNameOf(dbPasswordRef)
     }
 
     /** The non-secret tenants ConfigMap (data key `tenants.json` = the file text). */
