@@ -3,15 +3,8 @@ import { ComboBox } from '@pragmatic-tech-ai/mural/framework'
 import type { ControlPlaneClient } from './api-client.js'
 import { CreateTenantViewModel } from './create-tenant-view-model.js'
 import type { ClientDto, IPortalNavigator } from './portal-types.js'
+import { ComboOption } from './kit/index.js'
 import { PortalViewBase } from './portal-view-base.js'
-
-// ComboBox item: the collapsed selection renders Label; Id is the client id.
-export class ClientOption
-{
-    public constructor(public readonly Label: string, public readonly Id: string)
-    {
-    }
-}
 
 // Create-tenant form: client dropdown (from ListClients), id, display name.
 export class CreateTenantView extends PortalViewBase
@@ -57,9 +50,9 @@ export class CreateTenantView extends PortalViewBase
             this.ShowError(e)
             return
         }
-        const options = this.vm.Clients.map((c: ClientDto) => new ClientOption(c.displayName, c.id))
+        const options = this.vm.Clients.map((c: ClientDto) => new ComboOption(c.displayName, c.id))
         this.clientBox.ItemsSource = options
-        const index = options.findIndex(o => o.Id === this.vm.ClientId)
+        const index = options.findIndex(o => o.Value === this.vm.ClientId)
         if (index >= 0)
         {
             this.clientBox.SelectedIndex = index
@@ -80,13 +73,13 @@ export class CreateTenantView extends PortalViewBase
 
     private async Submit(): Promise<void>
     {
-        const selected = this.clientBox.SelectedItem as ClientOption | undefined
+        const selected = this.clientBox.SelectedItem as ComboOption | undefined
         if (selected === undefined)
         {
             this.message.Text = PortalViewBase.ErrorPrefix + CreateTenantView.NoClient
             return
         }
-        this.vm.ClientId = selected.Id
+        this.vm.ClientId = selected.Value
         this.vm.Id = this.idBox.Text
         this.vm.DisplayName = this.nameBox.Text
         try
@@ -98,6 +91,6 @@ export class CreateTenantView extends PortalViewBase
             this.ShowError(e)
             return
         }
-        this.nav.ShowTenants(selected.Id)
+        this.nav.ShowTenants(selected.Value)
     }
 }

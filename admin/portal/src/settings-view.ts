@@ -3,20 +3,12 @@ import { ComboBox } from '@pragmatic-tech-ai/mural/framework'
 import type { Visual } from '@pragmatic-tech-ai/mural/runtime'
 import type { ControlPlaneClient } from './api-client.js'
 import { CreateOperatorViewModel } from './create-operator-view-model.js'
-import { Act, DataTable, DeniedStatePanel, KeyActivatedButton, KeyValueGrid, PageHeader, ScreenHost, Section, TableDensity } from './kit/index.js'
+import { Act, ComboOption, DataTable, DeniedStatePanel, KeyActivatedButton, KeyValueGrid, PageHeader, ScreenHost, Section, TableDensity } from './kit/index.js'
 import type { ScreenHostInputs, TableColumn } from './kit/index.js'
 import { OperatorContext } from './operator-context.js'
 import type { IPortalNavigator, IPortalView } from './portal-types.js'
 import { SettingsViewModel } from './settings-view-model.js'
 import type { OperatorRow } from './settings-view-model.js'
-
-// ComboBox item: the collapsed selection renders Label; Value is the wire role.
-class RoleOption
-{
-    public constructor(public readonly Label: string, public readonly Value: string)
-    {
-    }
-}
 
 export enum SettingsMode
 {
@@ -236,14 +228,14 @@ export class SettingsView extends StackPanel implements IPortalView
         roleBox.Placeholder = SettingsView.RolePlaceholder
         roleBox.DisplayMemberPath = SettingsView.LabelPath
         const wires = [OperatorContext.FullWireRole, OperatorContext.ReadOnlyWireRole]
-        roleBox.ItemsSource = wires.map(w => new RoleOption(OperatorContext.RoleLabel(w), w))
+        roleBox.ItemsSource = wires.map(w => new ComboOption(OperatorContext.RoleLabel(w), w))
         roleBox.SelectedIndex = wires.indexOf(OperatorContext.ReadOnlyWireRole)
         this.roleBox = roleBox
         const errorText = new TextBlock()
         this.errorText = errorText
         const submit = new Act(this.operator.MutatingAct(
             SettingsView.InviteSubmitLabel,
-            () => void this.Submit(emailBox.Text, passwordBox.Text, (roleBox.SelectedItem as RoleOption | undefined)?.Value ?? SettingsView.BlankText),
+            () => void this.Submit(emailBox.Text, passwordBox.Text, (roleBox.SelectedItem as ComboOption | undefined)?.Value ?? SettingsView.BlankText),
         ))
         const cancel = new KeyActivatedButton(() => this.EnterMode(SettingsMode.Normal))
         const cancelText = new TextBlock()

@@ -3,15 +3,8 @@ import { ComboBox } from '@pragmatic-tech-ai/mural/framework'
 import type { ControlPlaneClient } from './api-client.js'
 import { CreateHiveViewModel } from './create-hive-view-model.js'
 import type { HiveClusterBackend, HiveProvisionMode, IPortalNavigator } from './portal-types.js'
+import { ComboOption } from './kit/index.js'
 import { PortalViewBase } from './portal-view-base.js'
-
-// ComboBox item: the collapsed selection renders Label; Value is the picked option.
-export class HiveOption
-{
-    public constructor(public readonly Label: string, public readonly Value: string)
-    {
-    }
-}
 
 // Create-hive form: cluster + registry pickers, reference-name inputs only (no secrets).
 export class CreateHiveView extends PortalViewBase
@@ -74,14 +67,14 @@ export class CreateHiveView extends PortalViewBase
     {
         box.Placeholder = placeholder
         box.DisplayMemberPath = CreateHiveView.LabelPath
-        box.ItemsSource = values.map(v => new HiveOption(v, v))
+        box.ItemsSource = values.map(v => new ComboOption(v, v))
         box.SelectedIndex = values.indexOf(selected)
         this.AddChild(box)
     }
 
     private Picked(box: ComboBox): string | undefined
     {
-        return (box.SelectedItem as HiveOption | undefined)?.Value
+        return (box.SelectedItem as ComboOption | undefined)?.Value
     }
 
     private async Submit(): Promise<void>
