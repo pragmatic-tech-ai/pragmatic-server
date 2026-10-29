@@ -19,6 +19,7 @@ import type { EnvironmentWorkload } from '../environment-workload.js'
 import type { HiveHealthDto } from '../hive-health-producer.js'
 import { RolloutFixture } from './rollout-fixture.js'
 import { Channel } from '../channel.js'
+import type { PlatformDirectory } from '../platform-directory.js'
 import type { IManifestSigner } from '../manifest-signer.js'
 
 class Fx
@@ -453,5 +454,71 @@ test('an old record with no new fields still loads and withdraws', async () =>
         assert.equal(w.withdrawn, true)
         assert.equal(w.channel, undefined)
         assert.equal(w.withdrawal!.actor, Fx.Operator)
+    })
+})
+
+class PolicyFx
+{
+    public static readonly Prefix = 'policy-reg-'
+    public static readonly Tenant = 'tenant-p'
+    public static readonly Floor = '1.2.0'
+    public static readonly Reason = 'freeze'
+    public static readonly Actor = 'op@x'
+
+    public static async Run(body: (reg: PlatformDeploymentRegistry) => Promise<void>): Promise<void>
+    {
+        const dir = await mkdtemp(join(tmpdir(), PolicyFx.Prefix))
+        try
+        {
+            const directory = { GetHive: () => undefined, List: () => [] } as unknown as PlatformDirectory
+            const factory = {} as unknown as HiveOrchestratorFactory
+            await body(await RolloutFixture.Create(dir, directory, factory))
+        }
+        finally
+        {
+            await rm(dir, { recursive: true, force: true })
+        }
+    }
+}
+
+test('SetChannels is reflected by AllPolicies', async () =>
+{
+    await PolicyFx.Run(async reg =>
+    {
+        const r = await reg.SetChannels(PolicyFx.Tenant, [Channel.Stable])
+        assert.equal(r.id, PolicyFx.Tenant)
+        assert.equal(r.tenantId, PolicyFx.Tenant)
+        assert.deepEqual(reg.AllPolicies().map(p => p.channels), [[Channel.Stable]])
+    })
+})
+
+test('SetMinVersion and SetHold merge into one record', async () =>
+{
+    await PolicyFx.Run(async reg =>
+    {
+        await reg.SetMinVersion(PolicyFx.Tenant, PolicyFx.Floor)
+        const r = await reg.SetHold(PolicyFx.Tenant, PolicyFx.Reason, PolicyFx.Actor)
+        assert.equal(r.id, PolicyFx.Tenant)
+        assert.equal(r.minVersion, PolicyFx.Floor)
+        assert.equal(r.hold!.reason, PolicyFx.Reason)
+        assert.equal(r.hold!.actor, PolicyFx.Actor)
+        assert.equal(reg.AllPolicies().length, 1)
+    })
+})
+
+test('ClearMinVersion removes only minVersion; ClearHold removes only hold', async () =>
+{
+    await PolicyFx.Run(async reg =>
+    {
+        await reg.SetMinVersion(PolicyFx.Tenant, PolicyFx.Floor)
+        await reg.SetHold(PolicyFx.Tenant, PolicyFx.Reason, PolicyFx.Actor)
+        const a = await reg.ClearMinVersion(PolicyFx.Tenant)
+        assert.ok(!('minVersion' in a))
+        assert.equal(a.id, PolicyFx.Tenant)
+        assert.equal(a.hold!.reason, PolicyFx.Reason)
+        const b = await reg.ClearHold(PolicyFx.Tenant)
+        assert.ok(!('hold' in b))
+        assert.ok(!('minVersion' in b))
+        assert.equal(b.id, PolicyFx.Tenant)
     })
 })

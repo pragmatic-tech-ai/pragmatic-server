@@ -13,7 +13,9 @@ import type { EnvironmentRecord } from './environment-record.js'
 import type { EnvironmentWorkload } from './environment-workload.js'
 import { Channel } from './channel.js'
 import type { IManifestSigner } from './manifest-signer.js'
-import { AgentUnauthorizedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, UnknownHiveError, UnknownManifestError } from './rollout-errors.js'
+import { ReleasePolicyRegistry } from './release-policy-record.js'
+import type { ReleasePolicyRecord } from './release-policy-record.js'
+import { PolicyStoreUnavailableError, AgentUnauthorizedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, UnknownHiveError, UnknownManifestError } from './rollout-errors.js'
 
 export interface IHiveLookup
 {
@@ -49,7 +51,8 @@ export class PlatformDeploymentRegistry
         private readonly environments: IEnvironmentLookup,
         private readonly placement: IWorkloadPlacement,
         private readonly observations: HiveObservationRegistry,
-        private readonly signer?: IManifestSigner)
+        private readonly signer?: IManifestSigner,
+        private readonly policies?: ReleasePolicyRegistry)
     {
     }
 
@@ -108,6 +111,55 @@ export class PlatformDeploymentRegistry
             ? { ...rest, withdrawn, withdrawal: { reason: reason!, actor: actor!, at: new Date().toISOString() } }
             : { ...rest, withdrawn }
         await this.manifests.Put(updated)
+        return updated
+    }
+
+    /** Every per-tenant release-policy record. */
+    public AllPolicies(): readonly ReleasePolicyRecord[]
+    {
+        return this.policies?.List() ?? []
+    }
+
+    public async SetChannels(tenantId: string, channels: Channel[]): Promise<ReleasePolicyRecord>
+    {
+        return this.SavePolicy(tenantId, { ...this.PolicyBase(tenantId), channels })
+    }
+
+    public async SetMinVersion(tenantId: string, version: string): Promise<ReleasePolicyRecord>
+    {
+        return this.SavePolicy(tenantId, { ...this.PolicyBase(tenantId), minVersion: version })
+    }
+
+    public async ClearMinVersion(tenantId: string): Promise<ReleasePolicyRecord>
+    {
+        const { minVersion: _removed, ...rest } = this.PolicyBase(tenantId)
+        return this.SavePolicy(tenantId, rest)
+    }
+
+    public async SetHold(tenantId: string, reason: string, actor: string): Promise<ReleasePolicyRecord>
+    {
+        return this.SavePolicy(tenantId, { ...this.PolicyBase(tenantId), hold: { reason, actor, at: new Date().toISOString() } })
+    }
+
+    public async ClearHold(tenantId: string): Promise<ReleasePolicyRecord>
+    {
+        const { hold: _removed, ...rest } = this.PolicyBase(tenantId)
+        return this.SavePolicy(tenantId, rest)
+    }
+
+    private PolicyBase(tenantId: string): ReleasePolicyRecord
+    {
+        if (this.policies === undefined)
+        {
+            throw new PolicyStoreUnavailableError(tenantId)
+        }
+        return this.policies.Get(tenantId) ?? { id: tenantId, tenantId }
+    }
+
+    private async SavePolicy(tenantId: string, record: ReleasePolicyRecord): Promise<ReleasePolicyRecord>
+    {
+        const updated: ReleasePolicyRecord = { ...record, id: tenantId, tenantId }
+        await this.policies!.Put(updated)
         return updated
     }
 

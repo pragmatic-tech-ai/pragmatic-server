@@ -130,3 +130,15 @@ export class VersionBelowFloorError extends Error
         this.name = VersionBelowFloorError.ErrorName
     }
 }
+
+export class PolicyStoreUnavailableError extends Error
+{
+    private static readonly ErrorName = 'PolicyStoreUnavailableError'
+    private static readonly MessagePrefix = 'Release policy store unavailable for tenant: '
+
+    public constructor(id: string)
+    {
+        super(PolicyStoreUnavailableError.MessagePrefix + id)
+        this.name = PolicyStoreUnavailableError.ErrorName
+    }
+}
