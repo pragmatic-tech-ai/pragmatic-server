@@ -2,6 +2,7 @@ import { Orientation, StackPanel, TextBlock, TextBox } from '@pragmatic-tech-ai/
 import { ComboBox } from '@pragmatic-tech-ai/mural/framework'
 import type { Visual } from '@pragmatic-tech-ai/mural/runtime'
 import type { ControlPlaneClient } from './api-client.js'
+import { ReleaseChannel } from './release-channel.js'
 import { ReleaseDetailView } from './release-detail-view.js'
 import { ReleaseDetailViewModel } from './release-detail-view-model.js'
 import { ReleasesViewModel } from './releases-view-model.js'
@@ -25,8 +26,6 @@ export class ReleasesView extends SectionContainerView<ReleaseListRow>
 {
     private static readonly ListBreadcrumb: readonly string[] = ['Releases', 'Registry & Releases']
     private static readonly ChannelLabelPath = 'Label'
-    private static readonly ChannelStable = 'stable'
-    private static readonly ChannelEarly = 'early'
     private static readonly ChannelStableLabel = 'Stable'
     private static readonly ChannelEarlyLabel = 'Early access'
     private static readonly ListTitle = 'Registry & Releases'
@@ -147,8 +146,8 @@ export class ReleasesView extends SectionContainerView<ReleaseListRow>
         const box = new ComboBox()
         box.DisplayMemberPath = ReleasesView.ChannelLabelPath
         box.ItemsSource = [
-            new ComboOption(ReleasesView.ChannelStableLabel, ReleasesView.ChannelStable),
-            new ComboOption(ReleasesView.ChannelEarlyLabel, ReleasesView.ChannelEarly),
+            new ComboOption(ReleasesView.ChannelStableLabel, ReleaseChannel.Stable),
+            new ComboOption(ReleasesView.ChannelEarlyLabel, ReleaseChannel.Early),
         ]
         box.SelectedIndex = 0
         return box
@@ -156,7 +155,7 @@ export class ReleasesView extends SectionContainerView<ReleaseListRow>
 
     private static ChannelOf(box: ComboBox): string
     {
-        return (box.SelectedItem as ComboOption | undefined)?.Value ?? ReleasesView.ChannelStable
+        return (box.SelectedItem as ComboOption | undefined)?.Value ?? ReleaseChannel.Stable
     }
 
     private static Box(placeholder: string): TextBox

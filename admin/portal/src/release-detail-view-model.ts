@@ -2,8 +2,8 @@ import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import type { FleetHiveDto, ManifestDto } from './portal-types.js'
 import { FleetViewModel } from './fleet-view-model.js'
 import { PortalDates } from './portal-dates.js'
-import { PillKind } from './kit/index.js'
-import { BannerTone } from './kit/index.js'
+import { BannerTone, PillKind } from './kit/index.js'
+import { ReleaseChannel } from './release-channel.js'
 import type { KeyValueItem } from './kit/index.js'
 
 export interface ReleaseAdoptionRow
@@ -28,7 +28,7 @@ export class ReleaseDetailViewModel extends Observable
     private static readonly KeyImage = 'Image'
     private static readonly KeyDigest = 'Digest'
     private static readonly DigestLength = 12
-    private static readonly ChannelEarly = 'early'
+    private static readonly DigestSeparator = ':'
     private static readonly KeyPublished = 'Published'
     private static readonly KeyStatus = 'Status'
     private static readonly KeyWhatsNew = "What's new"
@@ -59,7 +59,7 @@ export class ReleaseDetailViewModel extends Observable
 
     public get ChannelPill(): PillKind
     {
-        return this.manifest.channel === ReleaseDetailViewModel.ChannelEarly ? PillKind.EarlyAccess : PillKind.Stable
+        return this.manifest.channel === ReleaseChannel.Early ? PillKind.EarlyAccess : PillKind.Stable
     }
 
     public get SignedPill(): PillKind
@@ -78,7 +78,7 @@ export class ReleaseDetailViewModel extends Observable
         ]
         if (m.digest !== undefined && m.digest.length > 0)
         {
-            rows.push({ key: ReleaseDetailViewModel.KeyDigest, value: m.digest.slice(0, ReleaseDetailViewModel.DigestLength) })
+            rows.push({ key: ReleaseDetailViewModel.KeyDigest, value: m.digest.slice(m.digest.lastIndexOf(ReleaseDetailViewModel.DigestSeparator) + 1).slice(0, ReleaseDetailViewModel.DigestLength) })
         }
         rows.push(
             { key: ReleaseDetailViewModel.KeyPublished, value: PortalDates.Label(m.publishedAt) },

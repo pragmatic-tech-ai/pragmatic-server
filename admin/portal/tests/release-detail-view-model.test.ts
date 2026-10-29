@@ -98,8 +98,8 @@ describe('ReleaseDetailViewModel channel, signed and digest', () =>
 
     it('shows a shortened digest row only when present', () =>
     {
-        const withDigest = make({ digest: 'sha256:abcdef0123456789' })
-        assert.equal(withDigest.Profile.find(r => r.key === 'Digest')?.value, 'sha256:abcde')
+        const withDigest = make({ digest: 'sha256:abcdef0123456789ff' })
+        assert.equal(withDigest.Profile.find(r => r.key === 'Digest')?.value, 'abcdef012345')
         assert.equal(make({}).Profile.find(r => r.key === 'Digest'), undefined)
     })
 
