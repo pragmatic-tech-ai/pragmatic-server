@@ -91,3 +91,26 @@ test('eviction keeps the newest MaxEntries', async () =>
         await rm(dir, { recursive: true, force: true })
     }
 })
+
+test('eviction drops the oldest by timestamp, not by insertion order', async () =>
+{
+    const { reg, dir } = await AuditFixture.Make()
+    try
+    {
+        for (let n = 1; n <= AuditFixture.Cap; n++)
+        {
+            await reg.Append(AuditFixture.Entry(n))
+        }
+        // Append one entry whose `at` is older than every stored entry, last. At the cap this
+        // triggers eviction of the OLDEST-by-at (this new one), whereas FIFO would drop Entry(1).
+        await reg.Append(AuditFixture.Entry(-1))
+        const ats = new Set(reg.List().map(r => r.at))
+        assert.equal(reg.List().length, AuditFixture.Cap)
+        assert.ok(!ats.has(AuditFixture.Entry(-1).at))
+        assert.ok(ats.has(AuditFixture.Entry(1).at))
+    }
+    finally
+    {
+        await rm(dir, { recursive: true, force: true })
+    }
+})
