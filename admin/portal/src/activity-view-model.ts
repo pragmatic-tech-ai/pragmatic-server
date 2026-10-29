@@ -26,6 +26,7 @@ export class ActivityViewModel extends Observable
 
     private static readonly SuccessMin = 200
     private static readonly SuccessMax = 299
+    private static readonly ServerErrorMin = 500
     private static readonly FallbackSeparator = ' '
     private static readonly QueryMark = '?'
 
@@ -101,8 +102,10 @@ export class ActivityViewModel extends Observable
 
     private static ToneFor(status: number): PillTone
     {
-        return status >= ActivityViewModel.SuccessMin && status <= ActivityViewModel.SuccessMax
-            ? PillTone.Success
-            : PillTone.Warning
+        if (status >= ActivityViewModel.SuccessMin && status <= ActivityViewModel.SuccessMax)
+        {
+            return PillTone.Success
+        }
+        return status >= ActivityViewModel.ServerErrorMin ? PillTone.Danger : PillTone.Warning
     }
 }

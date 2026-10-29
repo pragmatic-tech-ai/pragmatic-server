@@ -34,14 +34,14 @@ describe('ActivityViewModel', () =>
         assert.equal(rows[1].actionLabel, 'Released a tenant')
     })
 
-    it('tones denied and anonymous attempts as warning', () =>
+    it('tones denied and anonymous attempts as warning and server errors as danger', () =>
     {
         const rows = new ActivityViewModel([
             Fx.Entry('POST', '/api/manifests', 403),
             Fx.Entry('POST', '/api/manifests', 401),
             Fx.Entry('POST', '/api/manifests', 500),
         ]).Rows
-        assert.deepEqual(rows.map(r => r.tone), [PillTone.Warning, PillTone.Warning, PillTone.Warning])
+        assert.deepEqual(rows.map(r => r.tone), [PillTone.Warning, PillTone.Warning, PillTone.Danger])
     })
 
     it('labels the body-keyed operator mutation routes (no id in the path)', () =>
