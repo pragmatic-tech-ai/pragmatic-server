@@ -23,7 +23,8 @@ import type { TenantProvisioningService } from './tenant-provisioning-service.js
 import { InvalidEnvironmentNameError } from './template-catalog.js'
 import { LastOperatorError, OperatorExistsError, OperatorNotFoundError, OperatorProtectedError, OperatorRole, OperatorSelfLockoutError, type IOperatorIdentity, type OperatorPrincipal } from './operator-identity.js'
 import { OperatorAuthorization } from './operator-authorization.js'
-import type { AuditRegistry } from './audit-record.js'
+import { AuditRegistry } from './audit-record.js'
+import type { AuditThrottle } from './audit-throttle.js'
 import { Channel } from './channel.js'
 import { SessionCookie } from './session-cookie.js'
 import { EventsTicketStore } from './events-ticket-store.js'
@@ -209,7 +210,7 @@ export class ControlPlaneHost
     private static readonly ActivityLimitMax = 200
     private static readonly MaxAuditPathLength = 256
     private static readonly ActivityLimitParam = 'limit'
-    private static readonly AnonymousActor = '(anonymous)'
+    private static readonly AuditUnsetValue = ''
     private static readonly AuditFailureFallback = 'AuditError'
     private static readonly PingPath = '/api/ping'
     private static readonly EnvironmentsPath = '/api/environments'
@@ -291,6 +292,7 @@ export class ControlPlaneHost
     private static readonly ForwardedForHeader = 'x-forwarded-for'
     private static readonly ForwardedSeparator = ','
     private static readonly MsPerSecond = 1000
+    private static readonly TooManyRequestsMessage = 'Too many requests'
     private static readonly TooManyAttemptsMessage = 'Too many login attempts; try again later'
     private static readonly UnknownClientIp = ''
     private static readonly InvalidCredentialsMessage = 'Invalid email or password'
@@ -393,7 +395,8 @@ export class ControlPlaneHost
         private readonly revalidateIntervalMs: number = ControlPlaneHost.RevalidateIntervalMs,
         allowedHosts: readonly string[] = [],
         private readonly authorization: OperatorAuthorization = new OperatorAuthorization(),
-        private readonly audit?: AuditRegistry)
+        private readonly audit?: AuditRegistry,
+        private readonly auditThrottle?: AuditThrottle)
     {
         this.allowedHosts = new Set([...ControlPlaneHost.DefaultAllowedHosts, ...allowedHosts.map(h => h.toLowerCase())])
         this.staticRootAbs = resolve(staticRoot)
@@ -613,6 +616,11 @@ export class ControlPlaneHost
 
     private async Handle(req: IncomingMessage, res: ServerResponse): Promise<void>
     {
+        // Set only once an authorized, non-public mutation reaches dispatch; the single emit site is the
+        // finally below, so a handler that returns OR throws is audited exactly once on the final status.
+        let auditActor: string | null = null
+        let auditMethod = ControlPlaneHost.AuditUnsetValue
+        let auditPath = ControlPlaneHost.AuditUnsetValue
         try
         {
             if (!this.HostAllowed(req))
@@ -634,9 +642,18 @@ export class ControlPlaneHost
                 if (PlaneHttp.IsMutating(req) && !this.OriginAllowed(req))
                 {
                     req.resume()
+                    // Audited as (anonymous) (no actor yet), but under per-ip throttle + the anonymous quota
+                    // so an unauthenticated cross-origin caller cannot flood or evict the capped log.
+                    const ip = this.ClientIp(req)
+                    if (this.WriteIfThrottled(res, ip))
+                    {
+                        return
+                    }
+                    // Hit counted synchronously BEFORE the awaited audit write, so a back-to-back or parallel burst
+                    // cannot slip past the gate while earlier audit appends are still in flight.
+                    this.auditThrottle?.RecordHit(ip)
                     PlaneHttp.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.BadOriginMessage })
-                    // Deliberately NOT audited: this transport guard fires before Principal, so it has no actor,
-                    // and auditing it would let an unauthenticated cross-origin caller flood the capped log.
+                    await this.RecordAudit(AuditRegistry.AnonymousActor, method, path, ControlPlaneHost.StatusForbidden)
                     return
                 }
                 if (!ControlPlaneHost.IsPublicApi(path))
@@ -645,10 +662,20 @@ export class ControlPlaneHost
                     if (who === null)
                     {
                         req.resume()
-                        PlaneHttp.WriteJson(res, ControlPlaneHost.StatusUnauthorized, { error: ControlPlaneHost.UnauthenticatedMessage })
-                        if (PlaneHttp.IsMutating(req))
+                        const mutating = PlaneHttp.IsMutating(req)
+                        const ip = this.ClientIp(req)
+                        if (mutating && this.WriteIfThrottled(res, ip))
                         {
-                            await this.RecordAudit(ControlPlaneHost.AnonymousActor, method, path, ControlPlaneHost.StatusUnauthorized)
+                            return
+                        }
+                        if (mutating)
+                        {
+                            this.auditThrottle?.RecordHit(ip)
+                        }
+                        PlaneHttp.WriteJson(res, ControlPlaneHost.StatusUnauthorized, { error: ControlPlaneHost.UnauthenticatedMessage })
+                        if (mutating)
+                        {
+                            await this.RecordAudit(AuditRegistry.AnonymousActor, method, path, ControlPlaneHost.StatusUnauthorized)
                         }
                         return
                     }
@@ -664,22 +691,44 @@ export class ControlPlaneHost
                     }
                 }
             }
+            if (who !== null && PlaneHttp.IsMutating(req) && path.startsWith(ControlPlaneHost.ApiPrefix) && !ControlPlaneHost.IsPublicApi(path))
+            {
+                auditActor = ControlPlaneHost.ActorOf(who)
+                auditMethod = method
+                auditPath = path
+            }
             const handled = await this.RouteApi(req, res, path)
             if (!handled)
             {
                 await PlaneHttp.ServeStatic(req, res, path, this.staticRootAbs)
-            }
-            // Audited after the response is fully written, so res.statusCode is the FINAL outcome
-            // (an unrouted /api mutation falls through to a 404 here, not an optimistic 200).
-            if (who !== null && PlaneHttp.IsMutating(req) && path.startsWith(ControlPlaneHost.ApiPrefix) && !ControlPlaneHost.IsPublicApi(path))
-            {
-                await this.RecordAudit(ControlPlaneHost.ActorOf(who), method, path, res.statusCode)
             }
         }
         catch (err)
         {
             this.WriteError(res, err)
         }
+        finally
+        {
+            // Runs after the response (or the WriteError 500) is written, so res.statusCode is the FINAL
+            // outcome (an unrouted /api mutation is a 404 here; a thrown handler is a 500).
+            if (auditActor !== null)
+            {
+                await this.RecordAudit(auditActor, auditMethod, auditPath, res.statusCode)
+            }
+        }
+    }
+
+    /** Writes a 429 + Retry-After and returns true when the pre-auth throttle has locked this ip. */
+    private WriteIfThrottled(res: ServerResponse, ip: string): boolean
+    {
+        const decision = this.auditThrottle?.CheckAllowed(ip)
+        if (decision === undefined || decision.allowed)
+        {
+            return false
+        }
+        res.setHeader(ControlPlaneHost.RetryAfterHeader, String(Math.ceil(decision.retryAfterMs / ControlPlaneHost.MsPerSecond)))
+        PlaneHttp.WriteJson(res, ControlPlaneHost.StatusTooManyRequests, { error: ControlPlaneHost.TooManyRequestsMessage })
+        return true
     }
 
     /** Best-effort audit append: never throws, never alters the response. */

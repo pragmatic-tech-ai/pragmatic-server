@@ -9,6 +9,7 @@ import { ControlPlaneHost, type IEnvironmentService, type IGraphService } from '
 import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSession, type OperatorSummary } from '../operator-identity.js'
 import { OperatorAuthorization } from '../operator-authorization.js'
 import { AuditRegistry, type AuditRecord } from '../audit-record.js'
+import { AuditThrottle } from '../audit-throttle.js'
 import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
@@ -16,7 +17,7 @@ import { PlatformDirectory } from '../platform-directory.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import { RolloutFixture } from './rollout-fixture.js'
 
-type Reply = { status: number; body: string }
+type Reply = { status: number; body: string; headers: Record<string, string | string[] | undefined> }
 
 class FakeOperator implements IOperatorIdentity
 {
@@ -75,9 +76,9 @@ class ThrowingAudit extends AuditRegistry
 
 class Harness
 {
-    public static Send(host: ControlPlaneHost, method: string, path: string, body?: unknown, authed: boolean = true): Promise<Reply>
+    public static Send(host: ControlPlaneHost, method: string, path: string, body?: unknown, authed: boolean = true, extraHeaders: Record<string, string> = {}): Promise<Reply>
     {
-        const headers: Record<string, string> = { 'content-type': 'application/json' }
+        const headers: Record<string, string> = { 'content-type': 'application/json', ...extraHeaders }
         if (authed)
         {
             headers.cookie = 'cp_session=' + FakeOperator.Token
@@ -89,14 +90,14 @@ class Harness
             {
                 const chunks: Buffer[] = []
                 res.on('data', c => chunks.push(c as Buffer))
-                res.on('end', () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf8') }))
+                res.on('end', () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf8'), headers: res.headers }))
             })
             req.on('error', reject)
             req.end(body === undefined ? undefined : JSON.stringify(body))
         })
     }
 
-    public static async Build(parent: string, operator: FakeOperator, audit: AuditRegistry | undefined): Promise<ControlPlaneHost>
+    public static async Build(parent: string, operator: FakeOperator, audit: AuditRegistry | undefined, auditThrottle?: AuditThrottle): Promise<ControlPlaneHost>
     {
         const root = join(parent, 'static')
         mkdirSync(root, { recursive: true })
@@ -109,7 +110,7 @@ class Harness
         await directory.Load()
         const deployments = await RolloutFixture.Create(parent, directory, new HiveOrchestratorFactory())
         const host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, operator, false, directory, deployments, new FakeProvisioning(directory).AsService(), RolloutFixture.Observations(parent),
-            undefined, undefined, undefined, undefined, undefined, undefined, new OperatorAuthorization(), audit)
+            undefined, undefined, undefined, undefined, undefined, undefined, new OperatorAuthorization(), audit, auditThrottle)
         await host.Listen(0, '127.0.0.1')
         return host
     }
@@ -228,6 +229,35 @@ describe('ControlPlaneHost operator action audit', () =>
         assert.equal(recent[0]!.status, 401)
     })
 
+    it('audits a handler throw as a 500 with the real actor, exactly once', async () =>
+    {
+        const res = await Harness.Send(host, 'POST', '/api/environments/e1/graphs', { name: 'g', description: 'd' })
+        assert.equal(res.status, 500)
+        const recent = audit.Recent(10)
+        assert.equal(recent.length, 1)
+        assert.equal(recent[0]!.status, 500)
+        assert.equal(recent[0]!.actor, 'op@example.com')
+        assert.equal(recent[0]!.method, 'POST')
+        assert.equal(recent[0]!.path, '/api/environments/e1/graphs')
+    })
+
+    it('audits a successful mutation exactly once', async () =>
+    {
+        const res = await Harness.Send(host, 'POST', '/api/manifests', { version: '3.0.0', image: 'img:3' })
+        assert.equal(res.status, 201)
+        assert.equal(audit.Recent(10).length, 1)
+    })
+
+    it('audits a bad-origin 403 as (anonymous)', async () =>
+    {
+        const res = await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' }, true, { origin: 'http://evil.example' })
+        assert.equal(res.status, 403)
+        const recent = audit.Recent(10)
+        assert.equal(recent.length, 1)
+        assert.equal(recent[0]!.actor, AuditRegistry.AnonymousActor)
+        assert.equal(recent[0]!.status, 403)
+    })
+
     it('serves GET /api/activity newest-first and honors limit', async () =>
     {
         await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
@@ -260,5 +290,68 @@ describe('ControlPlaneHost operator action audit', () =>
         host = await Harness.Build(join(parent, 'b'), operator, throwing)
         const res = await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
         assert.equal(res.status, 201)
+    })
+})
+
+describe('ControlPlaneHost pre-auth audit throttle', () =>
+{
+    let host: ControlPlaneHost
+    let parent: string
+    let audit: AuditRegistry
+
+    beforeEach(async () =>
+    {
+        parent = mkdtempSync(join(tmpdir(), 'cp-activity-throttle-'))
+        audit = new AuditRegistry(join(parent, 'audit.json'))
+        await audit.Load()
+    })
+
+    afterEach(async () =>
+    {
+        await host.Close()
+        rmSync(parent, { recursive: true, force: true })
+    })
+
+    it('trips to 429 with Retry-After after maxHits anonymous mutations', async () =>
+    {
+        host = await Harness.Build(parent, new FakeOperator(), audit, new AuditThrottle({ maxHits: 1 }))
+        const body = { version: '1.0.0', image: 'img:1' }
+        const first = await Harness.Send(host, 'POST', '/api/manifests', body, false)
+        const second = await Harness.Send(host, 'POST', '/api/manifests', body, false)
+        const third = await Harness.Send(host, 'POST', '/api/manifests', body, false)
+        assert.equal(first.status, 401)
+        assert.equal(second.status, 401)
+        assert.equal(third.status, 429)
+        assert.ok(Number(third.headers['retry-after']) > 0)
+        const anonymous = audit.Recent(10).filter(r => r.actor === AuditRegistry.AnonymousActor && r.path === '/api/manifests')
+        assert.equal(anonymous.length, 2)
+    })
+
+    it('never throttles an authorized operator', async () =>
+    {
+        host = await Harness.Build(parent, new FakeOperator(), audit, new AuditThrottle({ maxHits: 1 }))
+        await Harness.Send(host, 'POST', '/api/manifests', {}, false)
+        const res = await Harness.Send(host, 'POST', '/api/manifests', {})
+        assert.equal(res.status, 400)
+    })
+
+    it('does not throttle an anonymous GET', async () =>
+    {
+        host = await Harness.Build(parent, new FakeOperator(), audit, new AuditThrottle({ maxHits: 1 }))
+        for (let i = 0; i < 3; i++)
+        {
+            const res = await Harness.Send(host, 'GET', '/api/manifests', undefined, false)
+            assert.equal(res.status, 401)
+        }
+    })
+
+    it('without a throttle an anonymous mutation stays 401', async () =>
+    {
+        host = await Harness.Build(parent, new FakeOperator(), audit)
+        for (let i = 0; i < 5; i++)
+        {
+            const res = await Harness.Send(host, 'POST', '/api/manifests', {}, false)
+            assert.equal(res.status, 401)
+        }
     })
 })
