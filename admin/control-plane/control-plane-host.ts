@@ -673,6 +673,12 @@ export class ControlPlaneHost
             PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ok: true })
             return true
         }
+        if (path === ControlPlaneHost.OperatorsPath && method === PlaneHttp.MethodGet)
+        {
+            const roster = await this.operator.ListOperators()
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, roster.map(o => ({ email: o.email, role: ControlPlaneHost.RoleWire(o.role) })))
+            return true
+        }
         if (path === ControlPlaneHost.OperatorsPath && method === PlaneHttp.MethodPost)
         {
             await this.HandleCreateOperator(req, res)
