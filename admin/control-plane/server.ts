@@ -29,6 +29,10 @@ import { OciRegistryClient } from './oci-registry-client.js'
 import { InClusterRegistry } from './in-cluster-registry.js'
 import { UiArtifactSigner } from './ui-artifact-signer.js'
 import { FileKeyStore } from './key-store.js'
+import { ManifestSigner, type IManifestSigner } from './manifest-signer.js'
+import { DockerImageDigest } from './image-digest.js'
+import { ImageSigner } from './image-signer.js'
+import { FileSignatureStore } from './signature-store.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import { EnvironmentService } from './environment-service.js'
 import { GraphService } from './graph-service.js'
@@ -71,6 +75,8 @@ export class ControlPlaneServer
     private static readonly DataDir = 'data'
     public static readonly RegistryFile = 'registry.json'
     private static readonly KeysDirName = 'keys'
+    private static readonly SigningKeyRefEnvVar = 'PRAGMATIC_ADMIN_SIGNING_KEY_REF'
+    private static readonly SignaturesFileName = 'signatures.json'
     private static readonly HttpScheme = 'http://'
     private static readonly ClientsFile = 'clients.json'
     private static readonly TenantsFile = 'tenants.json'
@@ -166,7 +172,7 @@ export class ControlPlaneServer
         const registrations = new RolloutRegistrationRegistry(join(dataRoot, ControlPlaneServer.RegistrationsFile))
         const adminClientRegistry = new TenantAdminClientRegistry(join(dataRoot, ControlPlaneServer.TenantAdminClientsFile))
         await Promise.all([manifests.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load(), adminClientRegistry.Load()])
-        const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, placement, observations)
+        const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, placement, observations, ControlPlaneServer.ManifestSignerOf(process.env, dataRoot))
         const provisioning = new TenantProvisioningService(idpService, directory, conn => new IdpAdminClient(conn))
         const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations, new LoginThrottle(), opts.trustedProxy, undefined, undefined, undefined, opts.allowedHosts)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
@@ -389,6 +395,20 @@ export class ControlPlaneServer
     {
         const keys = new FileKeyStore(join(dataRoot, ControlPlaneServer.KeysDirName))
         return new UiDeployActuator(new OciRegistryClient(ControlPlaneServer.HttpScheme + InClusterRegistry.PushBase()), new UiArtifactSigner(keys), keys, orchestrators, new K8sManifestBuilder(), registry)
+    }
+
+    /** The registry manifest signer, composed only when a platform signing key ref is configured; otherwise publishes stay unsigned. */
+    public static ManifestSignerOf(env: NodeJS.ProcessEnv, dataRoot: string): IManifestSigner | undefined
+    {
+        const ref = env[ControlPlaneServer.SigningKeyRefEnvVar]
+        if (typeof ref !== 'string' || ref === '')
+        {
+            return undefined
+        }
+        const digests = new DockerImageDigest()
+        const store = new FileSignatureStore(join(dataRoot, ControlPlaneServer.SignaturesFileName))
+        const keys = new FileKeyStore(join(dataRoot, ControlPlaneServer.KeysDirName))
+        return new ManifestSigner(digests, new ImageSigner(digests, store, keys), store, ref)
     }
 
     private static ResolvePort(raw: string | undefined): number
