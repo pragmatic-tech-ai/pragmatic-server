@@ -27,6 +27,10 @@ export class ControlPlaneClient
     private static readonly FleetRoute = '/api/fleet'
     private static readonly ManifestsRoute = '/api/manifests'
     private static readonly OperatorsRoute = '/api/operators'
+    private static readonly OperatorRoleRoute = '/api/operators/role'
+    private static readonly OperatorPasswordResetRoute = '/api/operators/password-reset'
+    private static readonly OperatorDisabledRoute = '/api/operators/disabled'
+    private static readonly OperatorRevokeSessionsRoute = '/api/operators/revoke-sessions'
     private static readonly GatingRoute = '/api/gating'
     private static readonly SelectionsRoute = '/api/selections'
     private static readonly RolloutsRoute = '/api/rollouts'
@@ -50,6 +54,7 @@ export class ControlPlaneClient
     private static readonly EmailKey = 'email'
     private static readonly PasswordKey = 'password'
     private static readonly RoleKey = 'role'
+    private static readonly DisabledKey = 'disabled'
     private static readonly MethodPost = 'POST'
     private static readonly MethodDelete = 'DELETE'
     private static readonly ContentTypeHeader = 'content-type'
@@ -139,6 +144,26 @@ export class ControlPlaneClient
         await this.Send<unknown>(ControlPlaneClient.OperatorsRoute, { method: ControlPlaneClient.MethodPost, body: JSON.stringify(body) })
     }
 
+    public async SetOperatorRole(email: string, role: string): Promise<void>
+    {
+        await this.Send<unknown>(ControlPlaneClient.OperatorRoleRoute, this.PostBody({ [ControlPlaneClient.EmailKey]: email, [ControlPlaneClient.RoleKey]: role }))
+    }
+
+    public async ResetOperatorPassword(email: string): Promise<{ password: string }>
+    {
+        return await this.Send<{ password: string }>(ControlPlaneClient.OperatorPasswordResetRoute, this.PostBody({ [ControlPlaneClient.EmailKey]: email }))
+    }
+
+    public async SetOperatorDisabled(email: string, disabled: boolean): Promise<void>
+    {
+        await this.Send<unknown>(ControlPlaneClient.OperatorDisabledRoute, this.PostBody({ [ControlPlaneClient.EmailKey]: email, [ControlPlaneClient.DisabledKey]: disabled }))
+    }
+
+    public async RevokeOperatorSessions(email: string): Promise<void>
+    {
+        await this.Send<unknown>(ControlPlaneClient.OperatorRevokeSessionsRoute, this.PostBody({ [ControlPlaneClient.EmailKey]: email }))
+    }
+
     public async ListGating(): Promise<GatingDto[]>
     {
         return await this.Send<GatingDto[]>(ControlPlaneClient.GatingRoute, undefined)
@@ -200,6 +225,11 @@ export class ControlPlaneClient
             return await this.Send<ManifestDto>(this.ManifestWithdrawnRoute(version), { method: ControlPlaneClient.MethodDelete })
         }
         return await this.Send<ManifestDto>(this.ManifestWithdrawnRoute(version), { method: ControlPlaneClient.MethodPost, body: JSON.stringify({ [ControlPlaneClient.ReasonKey]: reason }) })
+    }
+
+    private PostBody(body: Record<string, unknown>): { method: string; body: string }
+    {
+        return { method: ControlPlaneClient.MethodPost, body: JSON.stringify(body) }
     }
 
     private ManifestWithdrawnRoute(version: string): string

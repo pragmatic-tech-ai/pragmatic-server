@@ -102,7 +102,7 @@ export interface IPortalView
 
 export type GatingDto = { tenantId: string; version: string; gatedAt: string }
 export type SelectionDto = { hiveId: string; targetVersion: string; selectedAt: string }
-export type OperatorSummaryDto = { email: string; role: string }
+export type OperatorSummaryDto = { email: string; role: string; disabled?: boolean }
 export type ManifestDto = { id: string; image: string; notes?: string; publishedAt: string; withdrawn?: boolean; channel?: 'stable' | 'early'; digest?: string; signed?: boolean; withdrawal?: { reason: string; actor: string; at: string } }
 export type EnvRolloutDto = { environmentName: string; runningImage?: string; obsolete: boolean; ready: boolean }
 export type HiveRolloutDto = { hiveId: string; targetVersion?: string; environments: EnvRolloutDto[] }

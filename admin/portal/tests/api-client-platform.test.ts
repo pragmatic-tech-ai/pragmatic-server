@@ -67,6 +67,47 @@ describe('ControlPlaneClient platform records', () =>
         assert.deepEqual(JSON.parse(call.init?.body as string), { email: 'a@x.test', password: 'pw', role: 'readonly' })
     })
 
+    it('SetOperatorRole POSTs email and role to the role route', async () =>
+    {
+        FetchStub.Install({ ok: true })
+        await new ControlPlaneClient().SetOperatorRole('a@x.test', 'full')
+        const call = FetchStub.Calls[0]!
+        assert.equal(call.route, '/api/operators/role')
+        assert.equal(call.init?.method, 'POST')
+        assert.deepEqual(JSON.parse(call.init?.body as string), { email: 'a@x.test', role: 'full' })
+    })
+
+    it('ResetOperatorPassword POSTs email and returns the parsed password', async () =>
+    {
+        FetchStub.Install({ password: 'one-time-pw' })
+        const result = await new ControlPlaneClient().ResetOperatorPassword('a@x.test')
+        const call = FetchStub.Calls[0]!
+        assert.equal(call.route, '/api/operators/password-reset')
+        assert.equal(call.init?.method, 'POST')
+        assert.deepEqual(JSON.parse(call.init?.body as string), { email: 'a@x.test' })
+        assert.deepEqual(result, { password: 'one-time-pw' })
+    })
+
+    it('SetOperatorDisabled POSTs email and the boolean', async () =>
+    {
+        FetchStub.Install({ ok: true })
+        await new ControlPlaneClient().SetOperatorDisabled('a@x.test', true)
+        const call = FetchStub.Calls[0]!
+        assert.equal(call.route, '/api/operators/disabled')
+        assert.equal(call.init?.method, 'POST')
+        assert.deepEqual(JSON.parse(call.init?.body as string), { email: 'a@x.test', disabled: true })
+    })
+
+    it('RevokeOperatorSessions POSTs email to the revoke route', async () =>
+    {
+        FetchStub.Install({ ok: true })
+        await new ControlPlaneClient().RevokeOperatorSessions('a@x.test')
+        const call = FetchStub.Calls[0]!
+        assert.equal(call.route, '/api/operators/revoke-sessions')
+        assert.equal(call.init?.method, 'POST')
+        assert.deepEqual(JSON.parse(call.init?.body as string), { email: 'a@x.test' })
+    })
+
     it('DeleteClient DELETEs the item route', async () =>
     {
         FetchStub.Install({ ok: true })
