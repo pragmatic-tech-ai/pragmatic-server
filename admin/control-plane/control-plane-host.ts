@@ -635,6 +635,8 @@ export class ControlPlaneHost
                 {
                     req.resume()
                     PlaneHttp.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.BadOriginMessage })
+                    // Deliberately NOT audited: this transport guard fires before Principal, so it has no actor,
+                    // and auditing it would let an unauthenticated cross-origin caller flood the capped log.
                     return
                 }
                 if (!ControlPlaneHost.IsPublicApi(path))
@@ -663,13 +665,15 @@ export class ControlPlaneHost
                 }
             }
             const handled = await this.RouteApi(req, res, path)
-            if (who !== null && PlaneHttp.IsMutating(req) && path.startsWith(ControlPlaneHost.ApiPrefix) && !ControlPlaneHost.IsPublicApi(path))
-            {
-                await this.RecordAudit(ControlPlaneHost.ActorOf(who), method, path, res.statusCode)
-            }
             if (!handled)
             {
                 await PlaneHttp.ServeStatic(req, res, path, this.staticRootAbs)
+            }
+            // Audited after the response is fully written, so res.statusCode is the FINAL outcome
+            // (an unrouted /api mutation falls through to a 404 here, not an optimistic 200).
+            if (who !== null && PlaneHttp.IsMutating(req) && path.startsWith(ControlPlaneHost.ApiPrefix) && !ControlPlaneHost.IsPublicApi(path))
+            {
+                await this.RecordAudit(ControlPlaneHost.ActorOf(who), method, path, res.statusCode)
             }
         }
         catch (err)

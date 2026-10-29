@@ -145,6 +145,20 @@ test('ledger records only an actual gate/ungate change, not a re-gate or a no-op
     })
 })
 
+test('ledger records a withdraw/restore only on an actual change, not a repeat', async () =>
+{
+    await Fx.Run(async (reg, _registrations, _rolls, ledger) =>
+    {
+        await reg.Publish(Fx.V1, Fx.Image(Fx.V1))
+        await reg.SetWithdrawn(Fx.V1, true, 'bad', Fx.Operator)
+        await reg.SetWithdrawn(Fx.V1, true, 'bad', Fx.Operator)
+        await reg.SetWithdrawn(Fx.V1, false)
+        await reg.SetWithdrawn(Fx.V1, false)
+        const actions = ledger.List().filter(e => e.version === Fx.V1).map(e => e.action)
+        assert.deepEqual(actions, ['withdrawn', 'restored'])
+    })
+})
+
 test('SetWithdrawn flags and restores a published version, surfacing on the gated tenant listing', async () =>
 {
     await Fx.Run(async reg =>

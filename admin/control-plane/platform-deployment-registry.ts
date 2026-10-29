@@ -112,12 +112,16 @@ export class PlatformDeploymentRegistry
         {
             throw new UnknownManifestError(version)
         }
+        const changed = (manifest.withdrawn === true) !== withdrawn
         const { withdrawal: _previous, ...rest } = manifest
         const updated: ManifestRecord = withdrawn
             ? { ...rest, withdrawn, withdrawal: { reason: reason!, actor: actor!, at: new Date().toISOString() } }
             : { ...rest, withdrawn }
         await this.manifests.Put(updated)
-        await this.RecordLedger({ version, action: withdrawn ? 'withdrawn' : 'restored' })
+        if (changed)
+        {
+            await this.RecordLedger({ version, action: withdrawn ? 'withdrawn' : 'restored' })
+        }
         return updated
     }
 
