@@ -87,11 +87,27 @@ describe('SettingsView', () =>
         await view.Refresh()
         assert.equal(view.Host.State, ScreenState.Populated)
         assert.ok(Fixtures.Walk(view).some(n => n instanceof KeyValueGrid))
-        const texts = Fixtures.Texts(view)
-        assert.ok(texts.includes(Fixtures.Email))
-        assert.ok(texts.includes('Operator'))
+        const grid = Fixtures.Walk(view).find(n => n instanceof KeyValueGrid)
+        const sessionTexts = Fixtures.Walk(grid).filter(n => n instanceof TextBlock).map(n => (n as TextBlock).Text)
+        assert.ok(sessionTexts.includes(Fixtures.Email))
+        assert.ok(sessionTexts.includes('Operator'))
         assert.equal(view.Table?.Rows.length, 2)
         assert.equal(client.Calls, 1)
+    })
+
+    it('renders the roster table rows in sorted email order', async () =>
+    {
+        const client = new FakeClient([
+            { email: 'zoe@x', role: 'full' },
+            { email: 'amy@x', role: 'readonly' },
+        ])
+        const view = Fixtures.View(client, 'full')
+        await view.Refresh()
+        const texts = Fixtures.Walk(view.Table).filter(n => n instanceof TextBlock).map(n => (n as TextBlock).Text)
+        const amy = texts.indexOf('amy@x')
+        const zoe = texts.indexOf('zoe@x')
+        assert.ok(amy >= 0 && zoe >= 0)
+        assert.ok(amy < zoe)
     })
 
     it('shows the session and a denied note for an observer, without fetching', async () =>
