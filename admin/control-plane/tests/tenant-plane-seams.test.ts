@@ -11,7 +11,7 @@ import { HiveBackend, InfraMode } from '../platform-records.js'
 import type { HiveRecord, TenantRecord } from '../platform-records.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
-import { RolloutAdoptionRefusedError, type IRolloutClient } from '../tenant-api/rollout-client.js'
+import { RolloutAdoptionRefusedError, type AdoptionLedgerDto, type IRolloutClient } from '../tenant-api/rollout-client.js'
 import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
 import { TenantApiEndpoint } from '../tenant-api/tenant-api-endpoint.js'
 import { TenantHostResolver } from '../tenant-auth/tenant-host-resolver.js'
@@ -58,6 +58,11 @@ class FakeRolloutClient implements IRolloutClient
     public async AdoptTarget(hiveId: string, version: string): Promise<void>
     {
         this.Adopted.push({ hiveId, version })
+    }
+
+    public async LedgerFor(_hiveId: string, _limit: number): Promise<readonly AdoptionLedgerDto[]>
+    {
+        return []
     }
 }
 

@@ -50,6 +50,10 @@ class Names
     public static readonly Status204 = 204
     public static readonly Status500 = 500
     public static readonly Status200 = 200
+    public static readonly LedgerPath = '/agent/hives/h1/ledger?limit=5'
+    public static readonly LedgerPayload = '[{"version":"1.0.0","action":"adopted","at":"2026-01-01T00:00:00.000Z"}]'
+    public static readonly LedgerMissingVersion = '[{"action":"adopted","at":"x"}]'
+    public static readonly LedgerLimit = 5
 }
 
 /** A canned channel that records requests and answers a fixed status. */
@@ -217,6 +221,61 @@ describe('HttpRolloutClient request shape', () =>
             const c = new HttpRolloutClient(base, Names.Secret, Names.PlainHive)
             await assert.rejects(() => c.ManifestsFor(Names.Tenant), RolloutUnavailableError)
             await assert.rejects(() => c.StatusFor(Names.PlainHive), RolloutUnavailableError)
+        }
+        finally
+        {
+            await stub.Stop()
+        }
+    })
+})
+
+describe('HttpRolloutClient LedgerFor', () =>
+{
+    it('parses a well-formed ledger array and requests it with the limit', async () =>
+    {
+        const stub = new StubChannel(Names.Status200, Names.LedgerPayload)
+        const base = await stub.Start()
+        try
+        {
+            const c = new HttpRolloutClient(base, Names.Secret, Names.PlainHive)
+            const dtos = await c.LedgerFor(Names.PlainHive, Names.LedgerLimit)
+            assert.deepEqual(dtos.map(d => d.version), [Names.Version])
+            assert.equal(stub.Seen[0]!.method, Names.MethodGet)
+            assert.equal(stub.Seen[0]!.url, Names.LedgerPath)
+        }
+        finally
+        {
+            await stub.Stop()
+        }
+    })
+
+    it('rejects a non-array or element-missing-version body with RolloutUnavailableError', async () =>
+    {
+        for (const payload of [Names.MalformedPayload, Names.LedgerMissingVersion])
+        {
+            const stub = new StubChannel(Names.Status200, payload)
+            const base = await stub.Start()
+            try
+            {
+                const c = new HttpRolloutClient(base, Names.Secret, Names.PlainHive)
+                await assert.rejects(() => c.LedgerFor(Names.PlainHive, Names.LedgerLimit), RolloutUnavailableError)
+            }
+            finally
+            {
+                await stub.Stop()
+            }
+        }
+    })
+
+    it('refuses a ledger call for a different hive than the bound one', async () =>
+    {
+        const stub = new StubChannel(Names.Status200, Names.LedgerPayload)
+        const base = await stub.Start()
+        try
+        {
+            const c = new HttpRolloutClient(base, Names.Secret, Names.PlainHive)
+            await assert.rejects(() => c.LedgerFor(Names.OtherHive, Names.LedgerLimit))
+            assert.equal(stub.Seen.length, 0)
         }
         finally
         {

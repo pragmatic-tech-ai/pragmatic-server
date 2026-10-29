@@ -1,6 +1,6 @@
 import type { HiveRolloutStatus } from '../platform-deployment-registry.js'
 import type { ManifestRecord } from '../manifest-record.js'
-import { RolloutUnavailableError, type IRolloutClient } from './rollout-client.js'
+import { RolloutUnavailableError, type AdoptionLedgerDto, type IRolloutClient } from './rollout-client.js'
 
 /**
  * Placeholder rollout client for a standalone tenant-admin process that has no operator link yet: every
@@ -21,6 +21,11 @@ export class UnconfiguredRolloutClient implements IRolloutClient
     }
 
     public AdoptTarget(_hiveId: string, _version: string): Promise<void>
+    {
+        return Promise.reject(new RolloutUnavailableError(UnconfiguredRolloutClient.Message))
+    }
+
+    public LedgerFor(_hiveId: string, _limit: number): Promise<readonly AdoptionLedgerDto[]>
     {
         return Promise.reject(new RolloutUnavailableError(UnconfiguredRolloutClient.Message))
     }

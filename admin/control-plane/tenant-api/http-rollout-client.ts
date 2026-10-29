@@ -1,6 +1,6 @@
 import type { ManifestRecord } from '../manifest-record.js'
 import type { HiveRolloutStatus } from '../platform-deployment-registry.js'
-import { RolloutAdoptionRefusedError, RolloutUnavailableError, type IRolloutClient } from './rollout-client.js'
+import { RolloutAdoptionRefusedError, RolloutUnavailableError, type AdoptionLedgerDto, type IRolloutClient } from './rollout-client.js'
 
 /**
  * The tenant-admin container's rollout seam over the hive-initiated agent channel: reads the adoptable versions and the
@@ -14,6 +14,10 @@ export class HttpRolloutClient implements IRolloutClient
     private static readonly AdoptableSegment = '/adoptable'
     private static readonly StatusSegment = '/status'
     private static readonly AdoptSegment = '/adopt'
+    private static readonly LedgerSegment = '/ledger'
+    private static readonly LimitParam = 'limit'
+    private static readonly ActionKey = 'action'
+    private static readonly AtKey = 'at'
     private static readonly AuthorizationHeader = 'Authorization'
     private static readonly BearerPrefix = 'Bearer '
     private static readonly ContentTypeHeader = 'Content-Type'
@@ -67,6 +71,18 @@ export class HttpRolloutClient implements IRolloutClient
         await this.Send(HttpRolloutClient.MethodPost, HttpRolloutClient.AdoptSegment, JSON.stringify({ [HttpRolloutClient.VersionKey]: version }))
     }
 
+    public async LedgerFor(hiveId: string, limit: number): Promise<readonly AdoptionLedgerDto[]>
+    {
+        this.AssertBoundHive(hiveId)
+        const response = await this.Send(HttpRolloutClient.MethodGet, `${HttpRolloutClient.LedgerSegment}?${HttpRolloutClient.LimitParam}=${limit}`)
+        const body = await this.ReadJson(response)
+        if (!Array.isArray(body) || !body.every(e => HttpRolloutClient.IsLedgerDto(e)))
+        {
+            throw new RolloutUnavailableError(HttpRolloutClient.MalformedMessage)
+        }
+        return body as AdoptionLedgerDto[]
+    }
+
     /** The channel is per-hive: a call for any other hive would silently act on the wrong one, so it is refused. */
     private AssertBoundHive(hiveId: string): void
     {
@@ -79,6 +95,16 @@ export class HttpRolloutClient implements IRolloutClient
     private static IsManifest(m: unknown): boolean
     {
         return m !== null && typeof m === 'object' && typeof (m as Record<string, unknown>)[HttpRolloutClient.IdKey] === 'string'
+    }
+
+    private static IsLedgerDto(e: unknown): boolean
+    {
+        if (e === null || typeof e !== 'object')
+        {
+            return false
+        }
+        const o = e as Record<string, unknown>
+        return typeof o[HttpRolloutClient.VersionKey] === 'string' && typeof o[HttpRolloutClient.ActionKey] === 'string' && typeof o[HttpRolloutClient.AtKey] === 'string'
     }
 
     private static IsStatus(b: unknown): b is HiveRolloutStatus

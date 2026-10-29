@@ -34,6 +34,11 @@ class FakeRolloutClient implements IRolloutClient
     {
         return Promise.resolve()
     }
+
+    public async LedgerFor(): Promise<never[]>
+    {
+        return []
+    }
 }
 
 class Names
