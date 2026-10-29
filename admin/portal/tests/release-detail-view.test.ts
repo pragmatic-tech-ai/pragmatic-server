@@ -48,7 +48,7 @@ class Fixtures
         return OperatorContext.FromWire('full')
     }
 
-    public static NoToggle(): (withdraw: boolean) => Promise<void>
+    public static NoToggle(): (withdraw: boolean, reason?: string) => Promise<void>
     {
         return () => Promise.resolve()
     }
@@ -223,6 +223,8 @@ describe('ReleaseDetailView', () =>
         const spy = (w: boolean): Promise<void> => { seen.push(w); return Promise.resolve() }
         const pub = new ReleaseDetailView(Fixtures.Vm(), () => undefined, Fixtures.Full(), spy)
         Fixtures.Action(pub).Press()
+        pub.ReasonBox!.Text = 'why'
+        pub.ConfirmAction!.Press()
         const wd = new ReleaseDetailView(Fixtures.Vm({ withdrawn: true }), () => undefined, Fixtures.Full(), spy)
         Fixtures.Action(wd).Press()
         assert.deepEqual(seen, [true, false])
@@ -243,5 +245,67 @@ describe('ReleaseDetailView', () =>
         const inputs = (view as unknown as { Inputs(): never }).Inputs()
         assert.doesNotThrow(() => view.Host.Update(inputs))
         assert.notEqual(view.WithdrawAction, first)
+    })
+
+    it('pressing Withdraw reveals the reason panel without calling the callback', () =>
+    {
+        const calls: unknown[][] = []
+        const view = new ReleaseDetailView(Fixtures.Vm(), () => undefined, Fixtures.Full(), (...a) => { calls.push(a); return Promise.resolve() })
+        assert.equal(view.ReasonPanelOpen, false)
+        assert.equal(view.ReasonBox, undefined)
+        Fixtures.Action(view).Press()
+        assert.equal(view.ReasonPanelOpen, true)
+        assert.ok(view.ReasonBox)
+        assert.ok(view.ConfirmAction)
+        assert.deepEqual(calls, [])
+    })
+
+    it('confirm does nothing while the reason is blank, then passes the trimmed reason', async () =>
+    {
+        const calls: unknown[][] = []
+        const view = new ReleaseDetailView(Fixtures.Vm(), () => undefined, Fixtures.Full(), (...a) => { calls.push(a); return Promise.resolve() })
+        Fixtures.Action(view).Press()
+        view.ConfirmAction!.Press()
+        view.ReasonBox!.Text = '   '
+        view.ConfirmAction!.Press()
+        assert.deepEqual(calls, [])
+        view.ReasonBox!.Text = '  bad image  '
+        view.ConfirmAction!.Press()
+        await Promise.resolve()
+        assert.deepEqual(calls, [[true, 'bad image']])
+    })
+
+    it('cancel hides the panel and makes no call', () =>
+    {
+        const calls: unknown[][] = []
+        const view = new ReleaseDetailView(Fixtures.Vm(), () => undefined, Fixtures.Full(), (...a) => { calls.push(a); return Promise.resolve() })
+        Fixtures.Action(view).Press()
+        view.CancelButton!.Press()
+        assert.equal(view.ReasonPanelOpen, false)
+        assert.equal(view.ReasonBox, undefined)
+        assert.deepEqual(calls, [])
+    })
+
+    it('restore calls the callback directly with no reason panel', () =>
+    {
+        const calls: unknown[][] = []
+        const view = new ReleaseDetailView(Fixtures.Vm({ withdrawn: true }), () => undefined, Fixtures.Full(), (...a) => { calls.push(a); return Promise.resolve() })
+        Fixtures.Action(view).Press()
+        assert.equal(view.ReasonPanelOpen, false)
+        assert.equal(calls.length, 1)
+        assert.equal(calls[0][0], false)
+    })
+
+    it('withdrawal provenance shows in the banner, generic copy remains for old records', () =>
+    {
+        const withdrawal = { reason: 'bad image', actor: 'op@x', at: '2026-10-02T00:00:00.000Z' }
+        const vm = Fixtures.Vm({ withdrawn: true, withdrawal })
+        const view = new ReleaseDetailView(vm, () => undefined, Fixtures.Full(), Fixtures.NoToggle())
+        const banner = Fixtures.Collect(view).find(n => n instanceof Banner) as Banner
+        assert.ok(banner.Text.includes('bad image'))
+        assert.ok(banner.Text.includes('op@x'))
+        const old = Fixtures.Vm({ withdrawn: true })
+        assert.ok(old.WithdrawnBanner.text.startsWith('This version is withdrawn.'))
+        assert.ok(!old.WithdrawnBanner.text.includes('Reason:'))
     })
 })

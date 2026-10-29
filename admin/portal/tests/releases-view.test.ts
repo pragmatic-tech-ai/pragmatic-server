@@ -42,15 +42,15 @@ class FakeClient
     }
 
     public failWithdraw = false
-    public withdrawCalls: Array<[string, boolean]> = []
+    public withdrawCalls: Array<[string, boolean, string | undefined]> = []
 
-    public SetManifestWithdrawn(version: string, withdraw: boolean): Promise<ManifestDto>
+    public SetManifestWithdrawn(version: string, withdraw: boolean, reason?: string): Promise<ManifestDto>
     {
         if (this.failWithdraw)
         {
             return Promise.reject(new Error('withdraw boom'))
         }
-        this.withdrawCalls.push([version, withdraw])
+        this.withdrawCalls.push([version, withdraw, reason])
         this.manifests = this.manifests.map(m => m.id === version ? { ...m, withdrawn: withdraw } : m)
         return Promise.resolve({ id: version, image: 'registry/app:' + version, publishedAt: '2026-01-02T03:04:05Z', withdrawn: withdraw })
     }
@@ -299,8 +299,10 @@ describe('ReleasesView', () =>
         assert.ok(detail.WithdrawAction)
         const before = client.manifestCalls
         detail.WithdrawAction?.Press()
+        detail.ReasonBox!.Text = 'bad image'
+        detail.ConfirmAction!.Press()
         await new Promise(r => setTimeout(r, 20))
-        assert.deepEqual(client.withdrawCalls, [['1.0', true]])
+        assert.deepEqual(client.withdrawCalls, [['1.0', true, 'bad image']])
         assert.ok(client.manifestCalls > before)
         assert.equal(view.Mode, ReleasesMode.Detail)
         const after = Fixtures.Walk(view).find(n => n instanceof ReleaseDetailView) as ReleaseDetailView
@@ -318,6 +320,8 @@ describe('ReleasesView', () =>
         const detail = Fixtures.Walk(view).find(n => n instanceof ReleaseDetailView) as ReleaseDetailView
         const before = client.manifestCalls
         detail.WithdrawAction?.Press()
+        detail.ReasonBox!.Text = 'bad image'
+        detail.ConfirmAction!.Press()
         await new Promise(r => setTimeout(r, 20))
         assert.equal(client.manifestCalls, before)
         assert.ok(detail.ErrorLine.length > 0)

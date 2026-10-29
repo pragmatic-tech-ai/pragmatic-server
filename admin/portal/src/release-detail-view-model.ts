@@ -36,6 +36,10 @@ export class ReleaseDetailViewModel extends Observable
     private static readonly StatusWithdrawn = 'Withdrawn'
     private static readonly NoNotes = '(none)'
     private static readonly NoText = ''
+    private static readonly WithdrawalPrefix = ' Reason: '
+    private static readonly WithdrawalBy = ' (withdrawn by '
+    private static readonly WithdrawalOn = ' on '
+    private static readonly WithdrawalSuffix = ').'
     private static readonly WithdrawnText =
         'This version is withdrawn. Hives stop seeing it as adoptable after their next check-in. Environments already running it keep running it until their tenant adopts another version.'
 
@@ -88,11 +92,23 @@ export class ReleaseDetailViewModel extends Observable
         return rows
     }
 
+    // Withdrawal provenance (reason, actor, date); empty for old records without it.
+    public get WithdrawalLine(): string
+    {
+        const w = this.manifest.withdrawal
+        if (this.manifest.withdrawn !== true || w === undefined)
+        {
+            return ReleaseDetailViewModel.NoText
+        }
+        return ReleaseDetailViewModel.WithdrawalPrefix + w.reason + ReleaseDetailViewModel.WithdrawalBy + w.actor
+            + ReleaseDetailViewModel.WithdrawalOn + PortalDates.Label(w.at) + ReleaseDetailViewModel.WithdrawalSuffix
+    }
+
     public get WithdrawnBanner(): ReleaseBannerState
     {
         if (this.manifest.withdrawn === true)
         {
-            return { show: true, tone: BannerTone.Warning, text: ReleaseDetailViewModel.WithdrawnText }
+            return { show: true, tone: BannerTone.Warning, text: ReleaseDetailViewModel.WithdrawnText + this.WithdrawalLine }
         }
         return { show: false, tone: BannerTone.Warning, text: ReleaseDetailViewModel.NoText }
     }

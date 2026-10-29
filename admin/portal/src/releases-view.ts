@@ -236,9 +236,9 @@ export class ReleasesView extends SectionContainerView<ReleaseListRow>
             new ReleaseDetailViewModel(manifest, fleet),
             () => void this.ShowList(),
             this.operator,
-            async (withdraw: boolean) =>
+            async (withdraw: boolean, reason?: string) =>
             {
-                await this.client.SetManifestWithdrawn(row.id, withdraw)
+                await this.client.SetManifestWithdrawn(row.id, withdraw, reason)
                 await this.ShowDetail(row)
             },
         )

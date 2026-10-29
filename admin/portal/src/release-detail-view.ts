@@ -1,4 +1,4 @@
-import { Orientation, StackPanel, TextBlock } from '@pragmatic-tech-ai/mural/basic'
+import { Orientation, StackPanel, TextBlock, TextBox } from '@pragmatic-tech-ai/mural/basic'
 import type { Visual } from '@pragmatic-tech-ai/mural/runtime'
 import type { ReleaseAdoptionRow, ReleaseDetailViewModel } from './release-detail-view-model.js'
 import { OperatorContext } from './operator-context.js'
@@ -21,6 +21,10 @@ export class ReleaseDetailView extends StackPanel
     private static readonly RestoreLabel = 'Restore version'
     private static readonly FailedText = 'Could not change the version state. Please try again.'
     private static readonly BlankText = ''
+    private static readonly ReasonPlaceholder = 'Why are you withdrawing this version?'
+    private static readonly ConsequenceText = 'Environments listed below keep running this version until their tenant adopts another.'
+    private static readonly ConfirmLabel = 'Confirm withdraw'
+    private static readonly CancelLabel = 'Cancel'
     private static readonly HiveKey = 'hive'
     private static readonly OwnerKey = 'owner'
     private static readonly EnvKey = 'environment'
@@ -33,11 +37,16 @@ export class ReleaseDetailView extends StackPanel
     private readonly vm: ReleaseDetailViewModel
     private readonly onBack: () => void
     private readonly operator: OperatorContext
-    private readonly onToggleWithdrawn: (withdraw: boolean) => Promise<void>
+    private readonly onToggleWithdrawn: (withdraw: boolean, reason?: string) => Promise<void>
     private readonly host: ScreenHost
     // Rebuilt fresh on every BuildContent: a Visual may hold only one parent.
     private withdrawAction: Act | undefined
     private errorText: TextBlock | undefined
+    // View-local state of the inline reason sub-panel; fresh visuals per build.
+    private reasonOpen = false
+    private reasonBox: TextBox | undefined
+    private confirmAction: Act | undefined
+    private cancelButton: KeyActivatedButton | undefined
     // Rebuilt fresh on every BuildContent: a Visual may hold only one parent.
     private tableSlot = new StackPanel()
 
@@ -45,7 +54,7 @@ export class ReleaseDetailView extends StackPanel
         vm: ReleaseDetailViewModel,
         onBack: () => void,
         operator: OperatorContext,
-        onToggleWithdrawn: (withdraw: boolean) => Promise<void>,
+        onToggleWithdrawn: (withdraw: boolean, reason?: string) => Promise<void>,
     )
     {
         super()
@@ -83,7 +92,75 @@ export class ReleaseDetailView extends StackPanel
         return this.errorText?.Text ?? ReleaseDetailView.BlankText
     }
 
-    private async Toggle(): Promise<void>
+    // Test seam: whether the inline reason panel is showing.
+    public get ReasonPanelOpen(): boolean
+    {
+        return this.reasonOpen
+    }
+
+    // Test seam: the reason input (only while the panel is open).
+    public get ReasonBox(): TextBox | undefined
+    {
+        return this.reasonBox
+    }
+
+    // Test seam: the confirm-withdraw action (only while the panel is open).
+    public get ConfirmAction(): Act | undefined
+    {
+        return this.confirmAction
+    }
+
+    // Test seam: the cancel button of the reason panel (only while open).
+    public get CancelButton(): KeyActivatedButton | undefined
+    {
+        return this.cancelButton
+    }
+
+    private SetReasonOpen(open: boolean): void
+    {
+        this.reasonOpen = open
+        this.host.Update(this.Inputs())
+    }
+
+    private async Confirm(): Promise<void>
+    {
+        const reason = (this.reasonBox?.Text ?? ReleaseDetailView.BlankText).trim()
+        if (reason.length === 0)
+        {
+            return
+        }
+        this.reasonOpen = false
+        await this.Toggle(true, reason)
+    }
+
+    private BuildReasonPanel(): Visual
+    {
+        const box = new TextBox()
+        box.Placeholder = ReleaseDetailView.ReasonPlaceholder
+        this.reasonBox = box
+        const consequence = new TextBlock()
+        consequence.Text = ReleaseDetailView.ConsequenceText
+        const confirm = new Act(this.operator.MutatingAct(
+            ReleaseDetailView.ConfirmLabel,
+            () => void this.Confirm(),
+            ActVariant.Danger,
+        ))
+        this.confirmAction = confirm
+        const cancel = new KeyActivatedButton(() => this.SetReasonOpen(false))
+        const cancelText = new TextBlock()
+        cancelText.Text = ReleaseDetailView.CancelLabel
+        cancel.Content = cancelText
+        this.cancelButton = cancel
+        const body = new StackPanel()
+        body.Orientation = Orientation.Vertical
+        body.AddChild(box)
+        body.AddChild(consequence)
+        body.AddChild(confirm)
+        body.AddChild(cancel)
+        return body
+    }
+
+    private async Toggle(withdraw: boolean, reason?: string): Promise<void>
     {
         if (this.errorText !== undefined)
         {
@@ -91,7 +168,7 @@ export class ReleaseDetailView extends StackPanel
         }
         try
         {
-            await this.onToggleWithdrawn(!this.vm.Withdrawn)
+            await this.onToggleWithdrawn(withdraw, reason)
         }
         catch
         {
@@ -135,10 +212,17 @@ export class ReleaseDetailView extends StackPanel
         const withdrawn = this.vm.Withdrawn
         this.withdrawAction = new Act(this.operator.MutatingAct(
             withdrawn ? ReleaseDetailView.RestoreLabel : ReleaseDetailView.WithdrawLabel,
-            () => void this.Toggle(),
+            () => (withdrawn ? void this.Toggle(false) : this.SetReasonOpen(true)),
             withdrawn ? ActVariant.Secondary : ActVariant.Danger,
         ))
         root.AddChild(this.withdrawAction)
+        this.reasonBox = undefined
+        this.confirmAction = undefined
+        this.cancelButton = undefined
+        if (this.reasonOpen && !withdrawn)
+        {
+            root.AddChild(this.BuildReasonPanel())
+        }
         this.errorText = new TextBlock()
         this.errorText.Text = ReleaseDetailView.BlankText
         root.AddChild(this.errorText)

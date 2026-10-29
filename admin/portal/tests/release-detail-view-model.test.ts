@@ -2,6 +2,7 @@ import { PillKind } from '../src/kit/index.js'
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { ReleaseDetailViewModel } from '../src/release-detail-view-model.js'
+import { PortalDates } from '../src/portal-dates.js'
 import { BannerTone } from '../src/kit/index.js'
 import type { FleetHiveDto, ManifestDto } from '../src/portal-types.js'
 
@@ -110,5 +111,15 @@ describe('ReleaseDetailViewModel channel, signed and digest', () =>
         assert.equal(make({}).SignedPill, PillKind.Unsigned)
         assert.equal(make({ signed: false }).SignedPill, PillKind.Unsigned)
         assert.equal(make({ signed: true }).SignedPill, PillKind.Signed)
+    })
+
+    it('withdrawal provenance extends the banner with reason, actor and date', () =>
+    {
+        const vm = new ReleaseDetailViewModel(Fx.Manifest({ withdrawn: true, withdrawal: { reason: 'bad image', actor: 'op@x', at: '2026-10-02T00:00:00.000Z' } }), [])
+        assert.ok(vm.WithdrawnBanner.text.startsWith(Fx.WithdrawnText))
+        assert.ok(vm.WithdrawnBanner.text.includes('bad image'))
+        assert.ok(vm.WithdrawnBanner.text.includes('op@x'))
+        assert.ok(vm.WithdrawalLine.includes(PortalDates.Label('2026-10-02T00:00:00.000Z')))
+        assert.equal(new ReleaseDetailViewModel(Fx.Manifest({ withdrawn: true }), []).WithdrawalLine, '')
     })
 })
