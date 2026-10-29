@@ -504,6 +504,7 @@ class PolicyFx
 {
     public static readonly Prefix = 'policy-reg-'
     public static readonly Tenant = 'tenant-p'
+    public static readonly Hive = 'hive-p'
     public static readonly Floor = '1.2.0'
     public static readonly Reason = 'freeze'
     public static readonly Actor = 'op@x'
@@ -820,4 +821,65 @@ test('a throwing ledger store does not break Gate or RecordAdoption', async () =
     {
         await rm(dir, { recursive: true, force: true })
     }
+})
+
+test('hive hold, floor and channels are stored under h:<hiveId> with hiveId and tenantId', async () =>
+{
+    await PolicyFx.Run(async reg =>
+    {
+        const hold = await reg.SetHoldForHive(PolicyFx.Tenant, PolicyFx.Hive, PolicyFx.Reason, PolicyFx.Actor)
+        assert.equal(hold.id, 'h:' + PolicyFx.Hive)
+        assert.equal(hold.hiveId, PolicyFx.Hive)
+        assert.equal(hold.tenantId, PolicyFx.Tenant)
+        assert.equal(hold.hold!.reason, PolicyFx.Reason)
+        const floor = await reg.SetMinVersionForHive(PolicyFx.Tenant, PolicyFx.Hive, PolicyFx.Floor)
+        assert.equal(floor.minVersion, PolicyFx.Floor)
+        const ch = await reg.SetChannelsForHive(PolicyFx.Tenant, PolicyFx.Hive, [Channel.Stable])
+        assert.deepEqual(ch.channels, [Channel.Stable])
+        const rows = reg.AllPolicies().filter(p => p.hiveId === PolicyFx.Hive)
+        assert.equal(rows.length, 1)
+        assert.equal(rows[0].hold!.actor, PolicyFx.Actor)
+        assert.equal(rows[0].minVersion, PolicyFx.Floor)
+    })
+})
+
+test('tenant and hive policy rows are distinct and do not alter each other', async () =>
+{
+    await PolicyFx.Run(async reg =>
+    {
+        await reg.SetMinVersion(PolicyFx.Tenant, PolicyFx.Floor)
+        await reg.SetHoldForHive(PolicyFx.Tenant, PolicyFx.Hive, PolicyFx.Reason, PolicyFx.Actor)
+        let all = reg.AllPolicies()
+        assert.equal(all.length, 2)
+        const tenantRow = all.find(p => p.id === PolicyFx.Tenant)!
+        const hiveRow = all.find(p => p.id === 'h:' + PolicyFx.Hive)!
+        assert.equal(tenantRow.hiveId, undefined)
+        assert.equal(tenantRow.hold, undefined)
+        assert.equal(hiveRow.hiveId, PolicyFx.Hive)
+        assert.equal(hiveRow.minVersion, undefined)
+        await reg.ClearHold(PolicyFx.Tenant)
+        await reg.SetMinVersionForHive(PolicyFx.Tenant, PolicyFx.Hive, PolicyFx.Floor)
+        all = reg.AllPolicies()
+        assert.notEqual(all.find(p => p.id === 'h:' + PolicyFx.Hive)!.hold, undefined)
+        assert.equal(all.find(p => p.id === PolicyFx.Tenant)!.hiveId, undefined)
+    })
+})
+
+test('hive clears remove only the named field and need a policy store', async () =>
+{
+    await PolicyFx.Run(async reg =>
+    {
+        await reg.SetHoldForHive(PolicyFx.Tenant, PolicyFx.Hive, PolicyFx.Reason, PolicyFx.Actor)
+        await reg.SetMinVersionForHive(PolicyFx.Tenant, PolicyFx.Hive, PolicyFx.Floor)
+        const noFloor = await reg.ClearMinVersionForHive(PolicyFx.Tenant, PolicyFx.Hive)
+        assert.equal(noFloor.minVersion, undefined)
+        assert.notEqual(noFloor.hold, undefined)
+        const noHold = await reg.ClearHoldForHive(PolicyFx.Tenant, PolicyFx.Hive)
+        assert.equal(noHold.hold, undefined)
+        assert.equal(noHold.hiveId, PolicyFx.Hive)
+    })
+    await Fx.Run(async reg =>
+    {
+        await assert.rejects(reg.SetHoldForHive(PolicyFx.Tenant, PolicyFx.Hive, PolicyFx.Reason, PolicyFx.Actor), PolicyStoreUnavailableError)
+    }, false, undefined, false)
 })

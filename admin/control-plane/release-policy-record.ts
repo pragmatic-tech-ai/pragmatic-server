@@ -4,6 +4,7 @@ import type { Channel } from './channel.js'
 export type ReleasePolicyRecord = {
     id: string
     tenantId: string
+    hiveId?: string
     channels?: Channel[]
     minVersion?: string
     hold?: { reason: string; actor: string; at: string }

@@ -44,6 +44,7 @@ export class PlatformDeploymentRegistry
     private static readonly HashAlgorithm = 'sha256'
     private static readonly HashEncoding = 'hex'
     private static readonly KeySeparator = ':'
+    private static readonly HiveKeyPrefix = 'h:'
     private static readonly LedgerFailureMessage = 'adoption ledger append failed:'
 
     public constructor(
@@ -170,6 +171,54 @@ export class PlatformDeploymentRegistry
     private async SavePolicy(tenantId: string, record: ReleasePolicyRecord): Promise<ReleasePolicyRecord>
     {
         const updated: ReleasePolicyRecord = { ...record, id: tenantId, tenantId }
+        await this.policies!.Put(updated)
+        return updated
+    }
+
+    public async SetChannelsForHive(tenantId: string, hiveId: string, channels: Channel[]): Promise<ReleasePolicyRecord>
+    {
+        return this.SaveHivePolicy(tenantId, hiveId, { ...this.PolicyBaseForHive(tenantId, hiveId), channels: [...channels] })
+    }
+
+    public async SetMinVersionForHive(tenantId: string, hiveId: string, version: string): Promise<ReleasePolicyRecord>
+    {
+        return this.SaveHivePolicy(tenantId, hiveId, { ...this.PolicyBaseForHive(tenantId, hiveId), minVersion: version })
+    }
+
+    public async ClearMinVersionForHive(tenantId: string, hiveId: string): Promise<ReleasePolicyRecord>
+    {
+        const { minVersion: _removed, ...rest } = this.PolicyBaseForHive(tenantId, hiveId)
+        return this.SaveHivePolicy(tenantId, hiveId, rest)
+    }
+
+    public async SetHoldForHive(tenantId: string, hiveId: string, reason: string, actor: string): Promise<ReleasePolicyRecord>
+    {
+        return this.SaveHivePolicy(tenantId, hiveId, { ...this.PolicyBaseForHive(tenantId, hiveId), hold: { reason, actor, at: new Date().toISOString() } })
+    }
+
+    public async ClearHoldForHive(tenantId: string, hiveId: string): Promise<ReleasePolicyRecord>
+    {
+        const { hold: _removed, ...rest } = this.PolicyBaseForHive(tenantId, hiveId)
+        return this.SaveHivePolicy(tenantId, hiveId, rest)
+    }
+
+    private PolicyKeyForHive(hiveId: string): string
+    {
+        return PlatformDeploymentRegistry.HiveKeyPrefix + hiveId
+    }
+
+    private PolicyBaseForHive(tenantId: string, hiveId: string): ReleasePolicyRecord
+    {
+        if (this.policies === undefined)
+        {
+            throw new PolicyStoreUnavailableError(tenantId)
+        }
+        return this.policies.Get(this.PolicyKeyForHive(hiveId)) ?? { id: this.PolicyKeyForHive(hiveId), tenantId, hiveId }
+    }
+
+    private async SaveHivePolicy(tenantId: string, hiveId: string, record: ReleasePolicyRecord): Promise<ReleasePolicyRecord>
+    {
+        const updated: ReleasePolicyRecord = { ...record, id: this.PolicyKeyForHive(hiveId), tenantId, hiveId }
         await this.policies!.Put(updated)
         return updated
     }
