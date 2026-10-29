@@ -146,7 +146,6 @@ export class SettingsView extends StackPanel implements IPortalView
             catch
             {
                 this.ClearSlots()
-                this.mode = SettingsMode.Normal
                 this.host.Update(this.Inputs(false, true))
                 return
             }
