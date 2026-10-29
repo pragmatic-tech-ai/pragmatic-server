@@ -90,7 +90,7 @@ class Fx
         try
         {
             const registrations = new RolloutRegistrationRegistry(join(dir, 'x.json'))
-            const hives = new Map([[Fx.HiveA, Fx.Hive(Fx.HiveA, Fx.TenantA)]])
+            const hives = new Map([[Fx.HiveA, Fx.Hive(Fx.HiveA, Fx.TenantA)], [Fx.HiveB, Fx.Hive(Fx.HiveB, Fx.TenantA)]])
             const rolls: string[] = []
             const orchestrator: IHiveOrchestrator = { Roll: async (w: EnvironmentWorkload, image: string) => { rolls.push((w as unknown as { name: string }).name + '@' + image) } } as unknown as IHiveOrchestrator
             const factory = { For: () => { if (unreachable) { throw new UnsupportedBackendError(HiveBackend.Aks, InfraMode.Attach) } return orchestrator } } as unknown as HiveOrchestratorFactory
@@ -778,13 +778,13 @@ test('LedgerForHive is empty for an unknown hive', async () =>
     await Fx.Run(async (reg) =>
     {
         await Fx.PublishGated(reg, [Fx.V1])
-        assert.deepEqual(reg.LedgerForHive(Fx.HiveB, 50), [])
+        assert.deepEqual(reg.LedgerForHive(Fx.NoHive, 50), [])
     })
 })
 
 test('LedgerForHive is empty when no ledger is configured', async () =>
 {
-    const hives = new Map([[Fx.HiveA, Fx.Hive(Fx.HiveA, Fx.TenantA)]])
+    const hives = new Map([[Fx.HiveA, Fx.Hive(Fx.HiveA, Fx.TenantA)], [Fx.HiveB, Fx.Hive(Fx.HiveB, Fx.TenantA)]])
     const reg = new PlatformDeploymentRegistry(undefined as unknown as ManifestRegistry, undefined as unknown as GatingRegistry, undefined as unknown as SelectionRegistry, undefined as unknown as RolloutRegistrationRegistry, { GetHive: id => hives.get(id) }, undefined as unknown as HiveOrchestratorFactory, { List: () => [] }, { WorkloadFor: e => e as unknown as EnvironmentWorkload }, undefined as unknown as HiveObservationRegistry)
     assert.deepEqual(reg.LedgerForHive(Fx.HiveA, 50), [])
 })
@@ -882,4 +882,137 @@ test('hive clears remove only the named field and need a policy store', async ()
     {
         await assert.rejects(reg.SetHoldForHive(PolicyFx.Tenant, PolicyFx.Hive, PolicyFx.Reason, PolicyFx.Actor), PolicyStoreUnavailableError)
     }, false, undefined, false)
+})
+
+class HiveFx
+{
+    public static readonly Reason = 'hive freeze'
+    public static readonly Actor = 'op@x'
+    public static readonly Floor1 = '1.0.0'
+    public static readonly Floor2 = '2.0.0'
+    public static readonly Mid = '1.5.0'
+    public static readonly Ten = '1.10.0'
+    public static readonly Nine = '1.9.0'
+
+    public static async PublishChannel(reg: PlatformDeploymentRegistry, v: string, channel: Channel): Promise<void>
+    {
+        await reg.Publish(v, Fx.Image(v), undefined, channel)
+        await reg.Gate(Fx.TenantA, v)
+    }
+
+    public static async AdoptsOn(reg: PlatformDeploymentRegistry, hiveId: string, v: string): Promise<boolean>
+    {
+        try
+        {
+            await reg.RecordAdoption(hiveId, v)
+            return true
+        }
+        catch
+        {
+            return false
+        }
+    }
+}
+
+test('hive policy: a hive hold isolates that hive and leaves siblings and the tenant list alone', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        await Fx.PublishGated(reg, [Fx.V1, Fx.V2])
+        await reg.SetHoldForHive(Fx.TenantA, Fx.HiveA, HiveFx.Reason, HiveFx.Actor)
+        assert.deepEqual(reg.AdoptableFor(Fx.HiveA), [])
+        await assert.rejects(reg.RecordAdoption(Fx.HiveA, Fx.V1), TenantOnHoldError)
+        assert.deepEqual(EnforceFx.Ids(reg.AdoptableFor(Fx.HiveB)), [Fx.V1, Fx.V2])
+        assert.deepEqual(EnforceFx.Ids(reg.AdoptableForTenant(Fx.TenantA)), [Fx.V1, Fx.V2])
+        await reg.RecordAdoption(Fx.HiveB, Fx.V1)
+    })
+})
+
+test('hive policy: a hive hold with no tenant policy still blocks that hive', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        await Fx.PublishGated(reg, [Fx.V1])
+        await reg.SetHoldForHive(Fx.TenantA, Fx.HiveA, HiveFx.Reason, HiveFx.Actor)
+        assert.equal(await HiveFx.AdoptsOn(reg, Fx.HiveA, Fx.V1), false)
+        assert.deepEqual(reg.AdoptableFor(Fx.HiveA), [])
+    })
+})
+
+test('hive policy: a higher hive floor tightens only that hive', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        await Fx.PublishGated(reg, [HiveFx.Mid, Fx.V2])
+        await reg.SetMinVersion(Fx.TenantA, HiveFx.Floor1)
+        await reg.SetMinVersionForHive(Fx.TenantA, Fx.HiveA, HiveFx.Floor2)
+        assert.deepEqual(EnforceFx.Ids(reg.AdoptableFor(Fx.HiveA)), [Fx.V2])
+        await assert.rejects(reg.RecordAdoption(Fx.HiveA, HiveFx.Mid), VersionBelowFloorError)
+        await reg.RecordAdoption(Fx.HiveA, Fx.V2)
+        assert.deepEqual(EnforceFx.Ids(reg.AdoptableFor(Fx.HiveB)), [HiveFx.Mid, Fx.V2])
+        await reg.RecordAdoption(Fx.HiveB, HiveFx.Mid)
+    })
+})
+
+test('hive policy: a lower hive floor cannot loosen the tenant floor', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        await Fx.PublishGated(reg, [HiveFx.Mid, Fx.V2])
+        await reg.SetMinVersion(Fx.TenantA, HiveFx.Floor2)
+        await reg.SetMinVersionForHive(Fx.TenantA, Fx.HiveA, HiveFx.Floor1)
+        assert.deepEqual(EnforceFx.Ids(reg.AdoptableFor(Fx.HiveA)), [Fx.V2])
+        await assert.rejects(reg.RecordAdoption(Fx.HiveA, HiveFx.Mid), VersionBelowFloorError)
+    })
+})
+
+test('hive policy: floor comparison uses version order, not string order', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        await Fx.PublishGated(reg, [HiveFx.Nine, HiveFx.Ten])
+        await reg.SetMinVersionForHive(Fx.TenantA, Fx.HiveA, HiveFx.Ten)
+        assert.deepEqual(EnforceFx.Ids(reg.AdoptableFor(Fx.HiveA)), [HiveFx.Ten])
+    })
+})
+
+test('hive policy: channels intersect and a hive channel the tenant excludes yields nothing', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        await HiveFx.PublishChannel(reg, Fx.V1, Channel.Stable)
+        await HiveFx.PublishChannel(reg, Fx.V2, Channel.EarlyAccess)
+        await reg.SetChannels(Fx.TenantA, [Channel.Stable, Channel.EarlyAccess])
+        await reg.SetChannelsForHive(Fx.TenantA, Fx.HiveA, [Channel.Stable])
+        assert.deepEqual(EnforceFx.Ids(reg.AdoptableFor(Fx.HiveA)), [Fx.V1])
+        await assert.rejects(reg.RecordAdoption(Fx.HiveA, Fx.V2), ChannelNotSubscribedError)
+        assert.deepEqual(EnforceFx.Ids(reg.AdoptableFor(Fx.HiveB)), [Fx.V1, Fx.V2])
+        assert.deepEqual(EnforceFx.Ids(reg.AdoptableForTenant(Fx.TenantA)), [Fx.V1, Fx.V2])
+        await reg.SetChannels(Fx.TenantA, [Channel.Stable])
+        await reg.SetChannelsForHive(Fx.TenantA, Fx.HiveA, [Channel.EarlyAccess])
+        assert.deepEqual(reg.AdoptableFor(Fx.HiveA), [])
+    })
+})
+
+test('hive policy: no hive policy behaves exactly as tenant-only', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        await Fx.PublishGated(reg, [HiveFx.Nine, HiveFx.Ten])
+        await reg.SetMinVersion(Fx.TenantA, HiveFx.Ten)
+        assert.deepEqual(EnforceFx.Ids(reg.AdoptableFor(Fx.HiveA)), [HiveFx.Ten])
+        assert.deepEqual(EnforceFx.Ids(reg.AdoptableFor(Fx.HiveB)), [HiveFx.Ten])
+        assert.deepEqual(EnforceFx.Ids(reg.AdoptableForTenant(Fx.TenantA)), [HiveFx.Ten])
+    })
+})
+
+test('hive policy: the tenant offered list ignores hive policies', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        await Fx.PublishGated(reg, [Fx.V1, Fx.V2])
+        await reg.SetHoldForHive(Fx.TenantA, Fx.HiveA, HiveFx.Reason, HiveFx.Actor)
+        await reg.SetMinVersionForHive(Fx.TenantA, Fx.HiveB, Fx.V2)
+        assert.deepEqual(EnforceFx.Ids(reg.AdoptableForTenant(Fx.TenantA)), [Fx.V1, Fx.V2])
+    })
 })

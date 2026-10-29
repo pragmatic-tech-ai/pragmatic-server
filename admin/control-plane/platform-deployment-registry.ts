@@ -286,17 +286,17 @@ export class PlatformDeploymentRegistry
         {
             throw new UnknownHiveError(hiveId)
         }
-        return this.AdoptableForTenant(hive.tenantId)
+        return this.ManifestsFor(hive.tenantId).filter(m => this.BlockReasonFor(hive.tenantId, hive.id, m) === undefined)
     }
 
     /** Gated versions that also pass every release-policy rule (withdrawn, hold, channels, floor). */
     public AdoptableForTenant(tenantId: string): readonly ManifestRecord[]
     {
-        return this.ManifestsFor(tenantId).filter(m => this.BlockReasonFor(tenantId, m) === undefined)
+        return this.ManifestsFor(tenantId).filter(m => this.BlockReasonFor(tenantId, undefined, m) === undefined)
     }
 
     /** First failing rule in fixed order, or undefined when the version may be adopted. */
-    private BlockReasonFor(tenantId: string, manifest: ManifestRecord): PolicyBlock | undefined
+    private BlockReasonFor(tenantId: string, hiveId: string | undefined, manifest: ManifestRecord): PolicyBlock | undefined
     {
         const gate = this.gating.Get(this.GateId(tenantId, manifest.id))
         if (gate === undefined || gate.tenantId !== tenantId)
@@ -307,24 +307,45 @@ export class PlatformDeploymentRegistry
         {
             return 'withdrawn'
         }
-        const policy = this.policies?.Get(tenantId)
-        if (policy === undefined)
+        const tenantPolicy = this.policies?.Get(tenantId)
+        const hivePolicy = hiveId === undefined ? undefined : this.policies?.Get(this.PolicyKeyForHive(hiveId))
+        if (tenantPolicy === undefined && hivePolicy === undefined)
         {
             return undefined
         }
-        if (policy.hold !== undefined)
+        if (tenantPolicy?.hold !== undefined || hivePolicy?.hold !== undefined)
         {
             return 'held'
         }
-        if (policy.channels !== undefined && policy.channels.length > 0 && !policy.channels.includes(manifest.channel ?? Channel.Stable))
+        const channel = manifest.channel ?? Channel.Stable
+        if (PlatformDeploymentRegistry.ChannelExcludes(tenantPolicy, channel) || PlatformDeploymentRegistry.ChannelExcludes(hivePolicy, channel))
         {
             return 'channel'
         }
-        if (policy.minVersion !== undefined && VersionOrder.Compare(manifest.id, policy.minVersion) < 0)
+        const floor = PlatformDeploymentRegistry.MaxFloor(tenantPolicy?.minVersion, hivePolicy?.minVersion)
+        if (floor !== undefined && VersionOrder.Compare(manifest.id, floor) < 0)
         {
             return 'floor'
         }
         return undefined
+    }
+
+    private static ChannelExcludes(policy: ReleasePolicyRecord | undefined, channel: Channel): boolean
+    {
+        return policy?.channels !== undefined && policy.channels.length > 0 && !policy.channels.includes(channel)
+    }
+
+    private static MaxFloor(a: string | undefined, b: string | undefined): string | undefined
+    {
+        if (a === undefined)
+        {
+            return b
+        }
+        if (b === undefined)
+        {
+            return a
+        }
+        return VersionOrder.Compare(a, b) >= 0 ? a : b
     }
 
     private BlockError(reason: PolicyBlock, version: string): Error
@@ -357,7 +378,7 @@ export class PlatformDeploymentRegistry
         {
             throw new UnknownManifestError(version)
         }
-        const reason = this.BlockReasonFor(hive.tenantId, manifest)
+        const reason = this.BlockReasonFor(hive.tenantId, hiveId, manifest)
         if (reason !== undefined)
         {
             throw this.BlockError(reason, version)
