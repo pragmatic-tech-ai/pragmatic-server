@@ -21,7 +21,7 @@ import { InvalidTenantIdError } from './idp-service.js'
 import { PortUnavailableError } from './port-allocator.js'
 import type { TenantProvisioningService } from './tenant-provisioning-service.js'
 import { InvalidEnvironmentNameError } from './template-catalog.js'
-import { OperatorExistsError, OperatorRole, type IOperatorIdentity, type OperatorPrincipal } from './operator-identity.js'
+import { LastOperatorError, OperatorExistsError, OperatorNotFoundError, OperatorProtectedError, OperatorRole, OperatorSelfLockoutError, type IOperatorIdentity, type OperatorPrincipal } from './operator-identity.js'
 import { OperatorAuthorization } from './operator-authorization.js'
 import { Channel } from './channel.js'
 import { SessionCookie } from './session-cookie.js'
@@ -181,6 +181,13 @@ export class ControlPlaneHost
     private static readonly ForbiddenHostMessage = 'Host not allowed'
     private static readonly ForbiddenRoleMessage = 'Operator role does not permit this action'
     private static readonly OperatorsPath = '/api/operators'
+    private static readonly OperatorRolePath = '/api/operators/role'
+    private static readonly OperatorPasswordResetPath = '/api/operators/password-reset'
+    private static readonly OperatorDisabledPath = '/api/operators/disabled'
+    private static readonly OperatorRevokeSessionsPath = '/api/operators/revoke-sessions'
+    private static readonly OperatorEmailMessage = 'email (non-empty string) is required'
+    private static readonly OperatorRoleMessage = 'role (full|readonly) is required'
+    private static readonly OperatorDisabledMessage = 'disabled (boolean) is required'
     private static readonly ProvisionPath = '/api/provision'
     private static readonly SubObjectRequiredMessage = 'client, tenant and hive (objects) are required'
     private static readonly MinOperatorPasswordLength = 12
@@ -299,6 +306,10 @@ export class ControlPlaneHost
         [EnvironmentNotFoundError, PlaneHttp.StatusNotFound],
         [EnvironmentExistsError, ControlPlaneHost.StatusConflict],
         [OperatorExistsError, ControlPlaneHost.StatusConflict],
+        [OperatorSelfLockoutError, ControlPlaneHost.StatusConflict],
+        [LastOperatorError, ControlPlaneHost.StatusConflict],
+        [OperatorProtectedError, ControlPlaneHost.StatusConflict],
+        [OperatorNotFoundError, PlaneHttp.StatusNotFound],
         [PortUnavailableError, ControlPlaneHost.StatusConflict],
         [ImageMissingError, ControlPlaneHost.StatusConflict],
         [DockerUnavailableError, ControlPlaneHost.StatusUnavailable],
@@ -685,12 +696,17 @@ export class ControlPlaneHost
         if (path === ControlPlaneHost.OperatorsPath && method === PlaneHttp.MethodGet)
         {
             const roster = await this.operator.ListOperators()
-            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, roster.map(o => ({ email: o.email, role: ControlPlaneHost.RoleWire(o.role) })))
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, roster.map(o => ({ email: o.email, role: ControlPlaneHost.RoleWire(o.role), disabled: o.disabled })))
             return true
         }
         if (path === ControlPlaneHost.OperatorsPath && method === PlaneHttp.MethodPost)
         {
             await this.HandleCreateOperator(req, res)
+            return true
+        }
+        if (method === PlaneHttp.MethodPost && ControlPlaneHost.IsOperatorMutationPath(path))
+        {
+            await this.HandleOperatorMutation(path, req, res)
             return true
         }
         if (path === ControlPlaneHost.ProvisionPath && method === PlaneHttp.MethodPost)
@@ -1422,6 +1438,66 @@ export class ControlPlaneHost
         }
         await this.operator.CreateOperator(body.email, body.password, role)
         PlaneHttp.WriteJson(res, ControlPlaneHost.StatusCreated, { email: body.email })
+    }
+
+    private static IsOperatorMutationPath(path: string): boolean
+    {
+        return path === ControlPlaneHost.OperatorRolePath || path === ControlPlaneHost.OperatorPasswordResetPath
+            || path === ControlPlaneHost.OperatorDisabledPath || path === ControlPlaneHost.OperatorRevokeSessionsPath
+    }
+
+    /** Full-only (the central RBAC gate has already run). Validates the body, then applies one operator mutation as the session actor. */
+    private async HandleOperatorMutation(path: string, req: IncomingMessage, res: ServerResponse): Promise<void>
+    {
+        const body = await this.ReadJsonObject(req, res)
+        if (body === undefined)
+        {
+            return
+        }
+        if (typeof body.email !== 'string' || body.email.trim().length === 0)
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.OperatorEmailMessage })
+            return
+        }
+        const email = body.email
+        if (path === ControlPlaneHost.OperatorPasswordResetPath)
+        {
+            const password = await this.operator.ResetOperatorPassword(email)
+            res.setHeader(ControlPlaneHost.CacheControlHeader, ControlPlaneHost.NoStore)
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { password })
+            return
+        }
+        if (path === ControlPlaneHost.OperatorRevokeSessionsPath)
+        {
+            await this.operator.RevokeOperatorSessions(email)
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, {})
+            return
+        }
+        if (path === ControlPlaneHost.OperatorRolePath)
+        {
+            const role = typeof body.role === 'string' ? ControlPlaneHost.OperatorRoles.get(body.role) : undefined
+            if (role === undefined)
+            {
+                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.OperatorRoleMessage })
+                return
+            }
+            await this.operator.SetOperatorRole(email, role, await this.ActorId(req))
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, {})
+            return
+        }
+        if (typeof body.disabled !== 'boolean')
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.OperatorDisabledMessage })
+            return
+        }
+        await this.operator.SetOperatorDisabled(email, body.disabled, await this.ActorId(req))
+        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, {})
+    }
+
+    private async ActorId(req: IncomingMessage): Promise<string>
+    {
+        const who = await this.Principal(req)
+        return who === null ? '' : who.principalId
     }
 
     /** Minimal shape check: exactly one '@' with a non-empty local part and domain. */

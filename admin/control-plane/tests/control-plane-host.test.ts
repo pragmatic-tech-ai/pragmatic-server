@@ -714,11 +714,11 @@ describe('ControlPlaneHost', () =>
         assert.equal(body.length, 2)
         for (const el of body)
         {
-            assert.deepEqual(Object.keys(el).sort(), ['email', 'role'])
+            assert.deepEqual(Object.keys(el).sort(), ['disabled', 'email', 'role'])
         }
         assert.deepEqual(body, [
-            { email: 'admin@example.com', role: 'full' },
-            { email: 'viewer@example.com', role: 'readonly' }
+            { email: 'admin@example.com', role: 'full', disabled: false },
+            { email: 'viewer@example.com', role: 'readonly', disabled: false }
         ])
     })
 
