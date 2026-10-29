@@ -98,9 +98,11 @@ export class ClientsView extends SectionContainerView<ClientListRow>
         return this.wizardScreen
     }
 
-    // Wizard completion / cancel: back to the list.
+    // Wizard completion / cancel: drop the finished wizard (it held the one-time secrets in its
+    // reveal Visuals) before returning to the list.
     public ReturnFromWizard(): void
     {
+        this.wizardScreen = undefined
         void this.ShowList()
     }
 

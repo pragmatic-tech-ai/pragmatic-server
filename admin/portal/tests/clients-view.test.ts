@@ -258,5 +258,7 @@ describe('ClientsView', () =>
         view.ReturnFromWizard()
         await new Promise(r => setTimeout(r, 0))
         assert.equal(view.Mode, ClientsMode.List)
+        // The finished wizard (which held the one-time secrets) is dropped on return.
+        assert.equal(view.WizardScreen, undefined)
     })
 })
