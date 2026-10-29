@@ -22,11 +22,11 @@ describe('platform admin nav', () =>
         Application.current = previous
     })
 
-    it('flattens to the nine sections in order', () =>
+    it('flattens to the ten sections in order', () =>
     {
         const flat = NavModel.Groups.flatMap(g => g.items.map(i => i.Section))
         assert.deepEqual(flat, [
-            PaSection.Fleet, PaSection.Clients, PaSection.Tenants, PaSection.Hives, PaSection.Registry,
+            PaSection.Fleet, PaSection.Activity, PaSection.Clients, PaSection.Tenants, PaSection.Hives, PaSection.Registry,
             PaSection.ReleasePolicy, PaSection.AgentChannel, PaSection.PlatformComponents, PaSection.Settings,
         ])
     })
@@ -43,7 +43,7 @@ describe('platform admin nav', () =>
     {
         const selected: PaSection[] = []
         const rail = new NavRail(s => selected.push(s))
-        assert.equal(rail.Rows.size, 9)
+        assert.equal(rail.Rows.size, 10)
         rail.SetActive(PaSection.Clients)
         assert.equal(rail.Active, PaSection.Clients)
         for (const [section, button] of rail.Rows)

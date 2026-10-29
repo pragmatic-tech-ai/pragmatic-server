@@ -10,6 +10,7 @@ import { ClientsView } from '../src/clients-view.js'
 import { TenantsView } from '../src/tenants-view.js'
 import { HivesView } from '../src/hives-view.js'
 import { ReleasesView } from '../src/releases-view.js'
+import { ActivityView } from '../src/activity-view.js'
 import { ReleasePolicyView } from '../src/release-policy-view.js'
 import { SettingsView } from '../src/settings-view.js'
 import { FleetView } from '../src/fleet-view.js'
@@ -100,8 +101,8 @@ describe('PA shell app', () =>
         assert.ok(app.CurrentView instanceof FleetView)
         assert.equal(app.ActiveSection, PaSection.Fleet)
         assert.equal(app.Nav.Active, PaSection.Fleet)
-        // The legacy entry lives in the top bar, never in the primary nav: exactly the nine designed rows.
-        assert.equal(app.Nav.Rows.size, 9)
+        // The legacy entry lives in the top bar, never in the primary nav: exactly the ten designed rows.
+        assert.equal(app.Nav.Rows.size, 10)
     })
 
     it('routes Fleet to FleetView, Clients to ClientsView, Tenants to TenantsView, Hives to HivesView, Registry to ReleasesView, Release Policy to ReleasePolicyView and every other section to a placeholder', async () =>
@@ -134,6 +135,10 @@ describe('PA shell app', () =>
             else if (section === PaSection.ReleasePolicy)
             {
                 assert.ok(app.CurrentView instanceof ReleasePolicyView)
+            }
+            else if (section === PaSection.Activity)
+            {
+                assert.ok(app.CurrentView instanceof ActivityView)
             }
             else if (section === PaSection.Settings)
             {

@@ -22,6 +22,7 @@ import { SettingsView } from './settings-view.js'
 import { TenantsView } from './tenants-view.js'
 import { HivesView } from './hives-view.js'
 import { ReleasesView } from './releases-view.js'
+import { ActivityView } from './activity-view.js'
 import { ReleasePolicyView } from './release-policy-view.js'
 import { NavModel, PaSection } from './nav-model.js'
 import { NavRail } from './nav-rail.js'
@@ -165,6 +166,11 @@ export class App extends StackPanel implements IPortalNavigator
             {
                 this.Mount(new ReleasePolicyView(this.client, operator))
             }
+            return
+        }
+        if (section === PaSection.Activity)
+        {
+            this.Mount(new ActivityView(this.client))
             return
         }
         if (section === PaSection.Settings)

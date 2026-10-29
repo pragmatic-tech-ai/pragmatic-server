@@ -10,6 +10,7 @@ export enum PaSection
     ReleasePolicy = 'release-policy',
     AgentChannel = 'agent-channel',
     PlatformComponents = 'platform-components',
+    Activity = 'activity',
     Settings = 'settings',
 }
 
@@ -37,6 +38,7 @@ export class NavModel
     private static readonly ReleasePolicyLabel = 'Release Policy'
     private static readonly AgentChannelLabel = 'Agent Channel'
     private static readonly PlatformComponentsLabel = 'Platform Components'
+    private static readonly ActivityLabel = 'Activity'
     private static readonly SettingsLabel = 'Settings'
     private static readonly ProvisioningHeading = 'Provisioning'
     private static readonly ReleasesHeading = 'Releases'
@@ -44,7 +46,10 @@ export class NavModel
 
     public static readonly Groups: readonly NavGroup[] = [
         {
-            items: [{ Label: NavModel.FleetLabel, Glyph: KitGlyph.Server, Section: PaSection.Fleet }],
+            items: [
+                { Label: NavModel.FleetLabel, Glyph: KitGlyph.Server, Section: PaSection.Fleet },
+                { Label: NavModel.ActivityLabel, Glyph: KitGlyph.Hourglass, Section: PaSection.Activity },
+            ],
         },
         {
             heading: NavModel.ProvisioningHeading,
