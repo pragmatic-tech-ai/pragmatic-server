@@ -19,6 +19,8 @@ import type { EnvironmentWorkload } from '../environment-workload.js'
 import type { HiveHealthDto } from '../hive-health-producer.js'
 import { RolloutFixture } from './rollout-fixture.js'
 import { Channel } from '../channel.js'
+import { ReleasePolicyRegistry } from '../release-policy-record.js'
+import { ManifestWithdrawnError, TenantOnHoldError, ChannelNotSubscribedError, VersionBelowFloorError } from '../rollout-errors.js'
 import type { PlatformDirectory } from '../platform-directory.js'
 import type { IManifestSigner } from '../manifest-signer.js'
 
@@ -72,7 +74,7 @@ class Fx
         return { id, tenantId, displayName: id, cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Attach }, agentTokenRef: Fx.TokenRef, createdAt: '2026-10-22T00:00:00.000Z' }
     }
 
-    public static async Run(body: (reg: PlatformDeploymentRegistry, registrations: RolloutRegistrationRegistry, rolls: string[]) => Promise<void>, unreachable: boolean = false, signer?: IManifestSigner): Promise<void>
+    public static async Run(body: (reg: PlatformDeploymentRegistry, registrations: RolloutRegistrationRegistry, rolls: string[]) => Promise<void>, unreachable: boolean = false, signer?: IManifestSigner, withPolicies: boolean = true): Promise<void>
     {
         const dir = await mkdtemp(join(tmpdir(), Fx.Prefix))
         try
@@ -83,7 +85,9 @@ class Fx
             const orchestrator: IHiveOrchestrator = { Roll: async (w: EnvironmentWorkload, image: string) => { rolls.push((w as unknown as { name: string }).name + '@' + image) } } as unknown as IHiveOrchestrator
             const factory = { For: () => { if (unreachable) { throw new UnsupportedBackendError(HiveBackend.Aks, InfraMode.Attach) } return orchestrator } } as unknown as HiveOrchestratorFactory
             const envs = [Fx.EnvRecord(Fx.EnvNames[0], Fx.HiveA), Fx.EnvRecord(Fx.EnvNames[1], Fx.HiveA), Fx.EnvRecord(Fx.EnvNames[2], Fx.HiveB)]
-            const reg = new PlatformDeploymentRegistry(new ManifestRegistry(join(dir, 'm.json')), new GatingRegistry(join(dir, 'g.json')), new SelectionRegistry(join(dir, 's.json')), registrations, { GetHive: id => hives.get(id) }, factory, { List: () => envs }, { WorkloadFor: e => e as unknown as EnvironmentWorkload }, RolloutFixture.Observations(dir), signer)
+            const policies = new ReleasePolicyRegistry(join(dir, 'p.json'))
+            await policies.Load()
+            const reg = new PlatformDeploymentRegistry(new ManifestRegistry(join(dir, 'm.json')), new GatingRegistry(join(dir, 'g.json')), new SelectionRegistry(join(dir, 's.json')), registrations, { GetHive: id => hives.get(id) }, factory, { List: () => envs }, { WorkloadFor: e => e as unknown as EnvironmentWorkload }, RolloutFixture.Observations(dir), signer, withPolicies ? policies : undefined)
             await body(reg, registrations, rolls)
         }
         finally
@@ -491,7 +495,7 @@ test('without a policy store AllPolicies is empty and every mutation rejects', a
         await assert.rejects(reg.ClearMinVersion(PolicyFx.Tenant), PolicyStoreUnavailableError)
         await assert.rejects(reg.SetHold(PolicyFx.Tenant, PolicyFx.Reason, PolicyFx.Actor), PolicyStoreUnavailableError)
         await assert.rejects(reg.ClearHold(PolicyFx.Tenant), PolicyStoreUnavailableError)
-    })
+    }, false, undefined, false)
 })
 
 test('SetChannels is reflected by AllPolicies', async () =>
@@ -533,5 +537,128 @@ test('ClearMinVersion removes only minVersion; ClearHold removes only hold', asy
         assert.ok(!('hold' in b))
         assert.ok(!('minVersion' in b))
         assert.equal(b.id, PolicyFx.Tenant)
+    })
+})
+
+class EnforceFx
+{
+    public static Ids(list: readonly { id: string }[]): string[]
+    {
+        return list.map(m => m.id).sort()
+    }
+
+    public static async Adopts(reg: PlatformDeploymentRegistry, v: string): Promise<boolean>
+    {
+        try
+        {
+            await reg.RecordAdoption(Fx.HiveA, v)
+            return true
+        }
+        catch
+        {
+            return false
+        }
+    }
+}
+
+test('policy: plain gated version is offered and adoptable', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        await Fx.PublishGated(reg, [Fx.V1])
+        assert.deepEqual(EnforceFx.Ids(reg.AdoptableFor(Fx.HiveA)), [Fx.V1])
+        await reg.RecordAdoption(Fx.HiveA, Fx.V1)
+    })
+})
+
+test('policy: withdrawn is excluded and rejected, restore re-enables', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        await Fx.PublishGated(reg, [Fx.V1])
+        await reg.SetWithdrawn(Fx.V1, true, 'bad', Fx.Operator)
+        assert.deepEqual(reg.AdoptableFor(Fx.HiveA), [])
+        await assert.rejects(reg.RecordAdoption(Fx.HiveA, Fx.V1), ManifestWithdrawnError)
+        await reg.SetWithdrawn(Fx.V1, false)
+        assert.deepEqual(EnforceFx.Ids(reg.AdoptableFor(Fx.HiveA)), [Fx.V1])
+        await reg.RecordAdoption(Fx.HiveA, Fx.V1)
+    })
+})
+
+test('policy: hold blocks everything until cleared', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        await Fx.PublishGated(reg, [Fx.V1, Fx.V2])
+        await reg.SetHold(Fx.TenantA, 'freeze', Fx.Operator)
+        assert.deepEqual(reg.AdoptableFor(Fx.HiveA), [])
+        await assert.rejects(reg.RecordAdoption(Fx.HiveA, Fx.V1), TenantOnHoldError)
+        await reg.ClearHold(Fx.TenantA)
+        assert.deepEqual(EnforceFx.Ids(reg.AdoptableFor(Fx.HiveA)), [Fx.V1, Fx.V2])
+        await reg.RecordAdoption(Fx.HiveA, Fx.V1)
+    })
+})
+
+test('policy: channels filter; absent or empty means all allowed', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        await reg.Publish(Fx.V1, Fx.Image(Fx.V1), undefined, Channel.EarlyAccess)
+        await reg.Gate(Fx.TenantA, Fx.V1)
+        await reg.Publish(Fx.V2, Fx.Image(Fx.V2), undefined, Channel.Stable)
+        await reg.Gate(Fx.TenantA, Fx.V2)
+        await reg.RecordAdoption(Fx.HiveA, Fx.V1)
+        await reg.SetChannels(Fx.TenantA, [Channel.Stable])
+        assert.deepEqual(EnforceFx.Ids(reg.AdoptableFor(Fx.HiveA)), [Fx.V2])
+        await assert.rejects(reg.RecordAdoption(Fx.HiveA, Fx.V1), ChannelNotSubscribedError)
+        await reg.RecordAdoption(Fx.HiveA, Fx.V2)
+        await reg.SetChannels(Fx.TenantA, [])
+        assert.deepEqual(EnforceFx.Ids(reg.AdoptableFor(Fx.HiveA)), [Fx.V1, Fx.V2])
+        await reg.RecordAdoption(Fx.HiveA, Fx.V1)
+    })
+})
+
+test('policy: floor excludes lower versions, boundary passes', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        await Fx.PublishGated(reg, ['1.9.0', '1.10.0'])
+        await reg.SetMinVersion(Fx.TenantA, '1.10.0')
+        assert.deepEqual(EnforceFx.Ids(reg.AdoptableFor(Fx.HiveA)), ['1.10.0'])
+        await assert.rejects(reg.RecordAdoption(Fx.HiveA, '1.9.0'), VersionBelowFloorError)
+        await reg.RecordAdoption(Fx.HiveA, '1.10.0')
+    })
+})
+
+test('policy: reported equals enforced over a mixed set', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        await Fx.PublishGated(reg, ['1.9.0', '1.10.0', Fx.V2, Fx.V3])
+        await reg.Publish('9.0.0', Fx.Image('9.0.0'))
+        await reg.SetWithdrawn(Fx.V2, true, 'bad', Fx.Operator)
+        await reg.SetMinVersion(Fx.TenantA, '1.10.0')
+        const offered = EnforceFx.Ids(reg.AdoptableForTenant(Fx.TenantA))
+        const adoptable: string[] = []
+        for (const v of ['1.9.0', '1.10.0', Fx.V2, Fx.V3, '9.0.0'])
+        {
+            if (await EnforceFx.Adopts(reg, v))
+            {
+                adoptable.push(v)
+            }
+        }
+        assert.deepEqual(offered, adoptable.sort())
+        assert.deepEqual(offered, ['1.10.0', Fx.V3])
+    })
+})
+
+test('policy: withdrawn takes precedence over floor', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        await Fx.PublishGated(reg, [Fx.V1])
+        await reg.SetWithdrawn(Fx.V1, true, 'bad', Fx.Operator)
+        await reg.SetMinVersion(Fx.TenantA, Fx.V2)
+        await assert.rejects(reg.RecordAdoption(Fx.HiveA, Fx.V1), ManifestWithdrawnError)
     })
 })

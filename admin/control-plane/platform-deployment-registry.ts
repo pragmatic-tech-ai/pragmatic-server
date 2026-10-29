@@ -15,7 +15,10 @@ import { Channel } from './channel.js'
 import type { IManifestSigner } from './manifest-signer.js'
 import { ReleasePolicyRegistry } from './release-policy-record.js'
 import type { ReleasePolicyRecord } from './release-policy-record.js'
-import { PolicyStoreUnavailableError, AgentUnauthorizedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, UnknownHiveError, UnknownManifestError } from './rollout-errors.js'
+import { PolicyStoreUnavailableError, AgentUnauthorizedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, UnknownHiveError, UnknownManifestError, ManifestWithdrawnError, TenantOnHoldError, ChannelNotSubscribedError, VersionBelowFloorError } from './rollout-errors.js'
+import { VersionOrder } from './version-order.js'
+
+type PolicyBlock = 'not-gated' | 'withdrawn' | 'held' | 'channel' | 'floor'
 
 export interface IHiveLookup
 {
@@ -216,7 +219,62 @@ export class PlatformDeploymentRegistry
         {
             throw new UnknownHiveError(hiveId)
         }
-        return this.ManifestsFor(hive.tenantId)
+        return this.AdoptableForTenant(hive.tenantId)
+    }
+
+    /** Gated versions that also pass every release-policy rule (withdrawn, hold, channels, floor). */
+    public AdoptableForTenant(tenantId: string): readonly ManifestRecord[]
+    {
+        return this.ManifestsFor(tenantId).filter(m => this.BlockReasonFor(tenantId, m) === undefined)
+    }
+
+    /** First failing rule in fixed order, or undefined when the version may be adopted. */
+    private BlockReasonFor(tenantId: string, manifest: ManifestRecord): PolicyBlock | undefined
+    {
+        const gate = this.gating.Get(this.GateId(tenantId, manifest.id))
+        if (gate === undefined || gate.tenantId !== tenantId)
+        {
+            return 'not-gated'
+        }
+        if (manifest.withdrawn === true)
+        {
+            return 'withdrawn'
+        }
+        const policy = this.policies?.Get(tenantId)
+        if (policy === undefined)
+        {
+            return undefined
+        }
+        if (policy.hold !== undefined)
+        {
+            return 'held'
+        }
+        if (policy.channels !== undefined && policy.channels.length > 0 && !policy.channels.includes(manifest.channel ?? Channel.Stable))
+        {
+            return 'channel'
+        }
+        if (policy.minVersion !== undefined && VersionOrder.Compare(manifest.id, policy.minVersion) < 0)
+        {
+            return 'floor'
+        }
+        return undefined
+    }
+
+    private BlockError(reason: PolicyBlock, version: string): Error
+    {
+        switch (reason)
+        {
+            case 'not-gated':
+                return new ManifestNotGatedError(version)
+            case 'withdrawn':
+                return new ManifestWithdrawnError(version)
+            case 'held':
+                return new TenantOnHoldError(version)
+            case 'channel':
+                return new ChannelNotSubscribedError(version)
+            case 'floor':
+                return new VersionBelowFloorError(version)
+        }
     }
 
     /** Validates hive, published and gated-for-the-hive's-tenant, then writes the selection; returns what a push needs. */
@@ -232,10 +290,10 @@ export class PlatformDeploymentRegistry
         {
             throw new UnknownManifestError(version)
         }
-        const gate = this.gating.Get(this.GateId(hive.tenantId, version))
-        if (gate === undefined || gate.tenantId !== hive.tenantId)
+        const reason = this.BlockReasonFor(hive.tenantId, manifest)
+        if (reason !== undefined)
         {
-            throw new ManifestNotGatedError(version)
+            throw this.BlockError(reason, version)
         }
         await this.selections.Put({ id: hiveId, hiveId, targetVersion: version, selectedAt: new Date().toISOString() })
         return { hive, image: manifest.image }
