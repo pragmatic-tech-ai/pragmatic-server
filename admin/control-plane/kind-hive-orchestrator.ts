@@ -31,6 +31,8 @@ export class KindHiveOrchestrator implements IHiveOrchestrator
     public async Apply(w: EnvironmentWorkload): Promise<void>
     {
         await this.EnsureCluster()
+        // kind nodes cannot pull a locally built image; load it into the node first (repeatable, so re-Apply is safe).
+        await this.kind.LoadImage(w.image, this.clusterName)
         await this.inner.Apply(w)
     }
 

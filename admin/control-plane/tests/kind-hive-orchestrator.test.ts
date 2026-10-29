@@ -169,3 +169,39 @@ test('concurrent Apply on a fresh cluster creates it once', async () =>
     await Promise.all([f.sut.Apply(Fixture.Workload), f.sut.Apply(Fixture.Workload)])
     assert.deepEqual(f.kind.created, [Fixture.Cluster])
 })
+
+test('Apply loads the workload image into the cluster before delegating Apply', async () =>
+{
+    const f = new Fixture()
+    const order: string[] = []
+    f.kind.LoadImage = async (image: string, clusterName: string) =>
+    {
+        order.push('LoadImage:' + image + '@' + clusterName)
+    }
+    f.inner.Apply = async () =>
+    {
+        order.push('Apply')
+    }
+    await f.sut.Apply(Fixture.Workload)
+    assert.deepEqual(order, ['LoadImage:pragmatic-server:dev@' + Fixture.Cluster, 'Apply'])
+})
+
+test('Apply is repeatable: a second Apply loads the image again without failing', async () =>
+{
+    const f = new Fixture()
+    f.kind.clusters = [Fixture.Cluster]
+    await f.sut.Apply(Fixture.Workload)
+    await f.sut.Apply(Fixture.Workload)
+    assert.equal(f.kind.loaded.length, 2)
+})
+
+test('A LoadImage failure stops Apply before the inner Apply', async () =>
+{
+    const f = new Fixture()
+    f.kind.LoadImage = async () =>
+    {
+        throw new Error('load failed')
+    }
+    await assert.rejects(() => f.sut.Apply(Fixture.Workload), /load failed/)
+    assert.ok(!f.inner.calls.includes('Apply'))
+})
