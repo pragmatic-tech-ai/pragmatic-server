@@ -240,5 +240,6 @@ describe('ControlPlaneHost hive health route', () =>
         const fleet = JSON.parse((await Harness.Get(host, '/api/fleet')).body)
         assert.equal(fleet.find((h: { id: string }) => h.id === 'local1').environments[0].detail, 'second')
         assert.equal((await Harness.Get(host, '/api/hives/nope/observations')).status, 404)
+        assert.equal((await Harness.Get(host, '/api/hives/local1/observations', false)).status, 401)
     })
 })
