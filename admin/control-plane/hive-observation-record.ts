@@ -48,6 +48,9 @@ export class HiveObservationRegistry extends JsonRecordStore<HiveObservationReco
     /** This hive's records oldest-first; ties keep insertion order (stable sort). */
     private AscendingFor(hiveId: string): HiveObservationRecord[]
     {
-        return this.List().filter(r => r.hiveId === hiveId).sort((a, b) => a.reportedAt.localeCompare(b.reportedAt))
+        return [...this.Values()]
+            .filter(r => r.hiveId === hiveId)
+            .sort((a, b) => a.reportedAt.localeCompare(b.reportedAt))
+            .map(r => structuredClone(r))
     }
 }

@@ -67,3 +67,91 @@ test('evicts only the overflowing hive oldest snapshots', async () =>
         assert.equal(registry.HistoryFor(SeriesFixture.HiveB, 10).length, 1)
     })
 })
+
+class ReadPathFixture
+{
+    public static readonly H1 = 'h1'
+    public static readonly H2 = 'h2'
+    public static readonly Extra = 'extra'
+    public static readonly ManyOther = 40
+    public static readonly FewOwn = 3
+    public static readonly Ten = 10
+
+    public static async CountClonesDuring(read: () => void): Promise<number>
+    {
+        const original = globalThis.structuredClone
+        let count = 0
+        globalThis.structuredClone = ((value: unknown, options?: StructuredSerializeOptions) =>
+        {
+            count++
+            return original(value, options)
+        }) as typeof structuredClone
+        try
+        {
+            read()
+        }
+        finally
+        {
+            globalThis.structuredClone = original
+        }
+        return count
+    }
+}
+
+test('latest record and history are defensive copies', async () =>
+{
+    await SeriesFixture.WithStore(async registry =>
+    {
+        await registry.RecordSnapshot(ReadPathFixture.H1, SeriesFixture.Snap('one'))
+        const first = registry.LatestRecord(ReadPathFixture.H1)!
+        first.environments.push(...SeriesFixture.Snap(ReadPathFixture.Extra))
+        first.environments[0]!.detail = ReadPathFixture.Extra
+        const second = registry.LatestRecord(ReadPathFixture.H1)!
+        assert.equal(second.environments.length, 1)
+        assert.equal(second.environments[0]!.detail, 'one')
+        const history = registry.HistoryFor(ReadPathFixture.H1, ReadPathFixture.Ten)
+        history[0]!.environments[0]!.detail = ReadPathFixture.Extra
+        assert.equal(registry.HistoryFor(ReadPathFixture.H1, ReadPathFixture.Ten)[0]!.environments[0]!.detail, 'one')
+    })
+})
+
+test('reads are isolated across hives', async () =>
+{
+    await SeriesFixture.WithStore(async registry =>
+    {
+        await registry.RecordSnapshot(ReadPathFixture.H1, SeriesFixture.Snap('a'))
+        await registry.RecordSnapshot(ReadPathFixture.H2, SeriesFixture.Snap('b'))
+        assert.deepEqual(registry.LatestFor(ReadPathFixture.H1).map(e => e.detail), ['a'])
+        assert.equal(registry.LatestRecord(ReadPathFixture.H2)!.environments[0]!.detail, 'b')
+    })
+})
+
+test('history is newest-first and latest is the newest', async () =>
+{
+    await SeriesFixture.WithStore(async registry =>
+    {
+        for (const detail of ['x', 'y', 'z'])
+        {
+            await registry.RecordSnapshot(ReadPathFixture.H1, SeriesFixture.Snap(detail))
+        }
+        assert.deepEqual(registry.HistoryFor(ReadPathFixture.H1, ReadPathFixture.Ten).map(r => r.environments[0]!.detail), ['z', 'y', 'x'])
+        assert.equal(registry.LatestRecord(ReadPathFixture.H1)!.environments[0]!.detail, 'z')
+    })
+})
+
+test('a per-hive read does not clone other hives records', async () =>
+{
+    await SeriesFixture.WithStore(async registry =>
+    {
+        for (let i = 0; i < ReadPathFixture.ManyOther; i++)
+        {
+            await registry.RecordSnapshot(ReadPathFixture.H2, SeriesFixture.Snap(String(i)))
+        }
+        for (let i = 0; i < ReadPathFixture.FewOwn; i++)
+        {
+            await registry.RecordSnapshot(ReadPathFixture.H1, SeriesFixture.Snap(String(i)))
+        }
+        const clones = await ReadPathFixture.CountClonesDuring(() => { registry.LatestRecord(ReadPathFixture.H1) })
+        assert.ok(clones <= ReadPathFixture.FewOwn, `cloned ${clones} records`)
+    })
+})

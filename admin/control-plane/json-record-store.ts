@@ -44,6 +44,12 @@ export abstract class JsonRecordStore<TRecord extends { id: string }>
         return [...this.records.values()].map(r => structuredClone(r))
     }
 
+    /** Internal, read-only: the live records (no clone); callers must not mutate them. */
+    protected Values(): IterableIterator<TRecord>
+    {
+        return this.records.values()
+    }
+
     public Get(id: string): TRecord | undefined
     {
         const record = this.records.get(id)
