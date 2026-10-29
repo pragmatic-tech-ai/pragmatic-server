@@ -2,6 +2,7 @@ export class VersionOrder
 {
     private static readonly Separator = '.'
     private static readonly DigitsOnly = /^[0-9]+$/
+    private static readonly LeadingZeros = /^0+(?=.)/
 
     public static Compare(a: string, b: string): -1 | 0 | 1
     {
@@ -22,8 +23,8 @@ export class VersionOrder
         if (y === undefined) return 1
         if (VersionOrder.DigitsOnly.test(x) && VersionOrder.DigitsOnly.test(y))
         {
-            const nx = x.replace(/^0+(?=.)/, '')
-            const ny = y.replace(/^0+(?=.)/, '')
+            const nx = x.replace(VersionOrder.LeadingZeros, '')
+            const ny = y.replace(VersionOrder.LeadingZeros, '')
             if (nx.length !== ny.length) return nx.length < ny.length ? -1 : 1
             return VersionOrder.CompareText(nx, ny)
         }
