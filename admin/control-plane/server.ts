@@ -10,6 +10,7 @@ import { ControlPlaneHost } from './control-plane-host.js'
 import { LoginThrottle } from './login-throttle.js'
 import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import { ManifestRegistry } from './manifest-record.js'
+import { AdoptionLedgerRegistry } from './adoption-ledger-record.js'
 import { GatingRegistry } from './gating-record.js'
 import { SelectionRegistry } from './selection-record.js'
 import { AgentChannelHost } from './agent-channel-host.js'
@@ -91,6 +92,7 @@ export class ControlPlaneServer
     private static readonly HiveObservationsFile = 'hive-observations.json'
     private static readonly RegistrationsFile = 'rollout-registrations.json'
     private static readonly ReleasePoliciesFile = 'release-policies.json'
+    private static readonly AdoptionLedgerFile = 'adoption-ledger.json'
     public static readonly ParentSegment = '..'
     private static readonly PortalSegment = 'portal'
     public static readonly DistSegment = 'dist'
@@ -177,9 +179,10 @@ export class ControlPlaneServer
         const observations = new HiveObservationRegistry(join(dataRoot, ControlPlaneServer.HiveObservationsFile))
         const registrations = new RolloutRegistrationRegistry(join(dataRoot, ControlPlaneServer.RegistrationsFile))
         const policies = new ReleasePolicyRegistry(join(dataRoot, ControlPlaneServer.ReleasePoliciesFile))
+        const ledger = new AdoptionLedgerRegistry(join(dataRoot, ControlPlaneServer.AdoptionLedgerFile))
         const adminClientRegistry = new TenantAdminClientRegistry(join(dataRoot, ControlPlaneServer.TenantAdminClientsFile))
-        await Promise.all([manifests.Load(), audit.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load(), policies.Load(), adminClientRegistry.Load()])
-        const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, placement, observations, ControlPlaneServer.ManifestSignerOf(process.env, dataRoot), policies)
+        await Promise.all([manifests.Load(), audit.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load(), policies.Load(), ledger.Load(), adminClientRegistry.Load()])
+        const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, placement, observations, ControlPlaneServer.ManifestSignerOf(process.env, dataRoot), policies, ledger)
         const provisioning = new TenantProvisioningService(idpService, directory, conn => new IdpAdminClient(conn))
         const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations, new LoginThrottle(), opts.trustedProxy, undefined, undefined, undefined, opts.allowedHosts, new OperatorAuthorization(), audit)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])

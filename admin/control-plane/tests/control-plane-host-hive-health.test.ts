@@ -11,6 +11,7 @@ import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
 import { PlatformDirectory } from '../platform-directory.js'
+import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
 import { RolloutFixture } from './rollout-fixture.js'
 import { HiveObservationRegistry } from '../hive-observation-record.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
@@ -154,6 +155,7 @@ describe('ControlPlaneHost hive health route', () =>
 {
     let host: ControlPlaneHost
     let observations: HiveObservationRegistry
+    let deployments: PlatformDeploymentRegistry
     let parent: string
 
     beforeEach(async () =>
@@ -175,7 +177,8 @@ describe('ControlPlaneHost hive health route', () =>
         observations = new HiveObservationRegistry(join(parent, 'observations.json'))
         await observations.Load()
         const factory = new FakeFactory()
-        host = new ControlPlaneHost(new FakeService() as unknown as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, await RolloutFixture.Create(parent, directory, factory), new FakeProvisioning(directory).AsService(), observations)
+        deployments = await RolloutFixture.Create(parent, directory, factory)
+        host = new ControlPlaneHost(new FakeService() as unknown as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, deployments, new FakeProvisioning(directory).AsService(), observations)
         await host.Listen(0, '127.0.0.1')
     })
 
@@ -241,5 +244,26 @@ describe('ControlPlaneHost hive health route', () =>
         assert.equal(fleet.find((h: { id: string }) => h.id === 'local1').environments[0].detail, 'second')
         assert.equal((await Harness.Get(host, '/api/hives/nope/observations')).status, 404)
         assert.equal((await Harness.Get(host, '/api/hives/local1/observations', false)).status, 401)
+    })
+
+    it('serves the hive ledger newest-first with limit, 404 unknown hive, 401 unauthenticated', async () =>
+    {
+        await deployments.Publish('1.0.0', 'img:1')
+        await deployments.Publish('2.0.0', 'img:2')
+        await deployments.Gate('t1', '1.0.0')
+        await deployments.Gate('t1', '2.0.0')
+        await deployments.RecordAdoption('local1', '1.0.0')
+        await new Promise(r => setTimeout(r, 3))
+        await deployments.RecordAdoption('local1', '2.0.0')
+        const r = await Harness.Get(host, '/api/hives/local1/ledger')
+        assert.equal(r.status, 200)
+        const arr = JSON.parse(r.body)
+        assert.deepEqual(arr.map((e: { version: string }) => e.version), ['2.0.0', '1.0.0'])
+        assert.equal(arr[0].action, 'adopted')
+        assert.equal(arr[0].tenantId, 't1')
+        assert.equal(JSON.parse((await Harness.Get(host, '/api/hives/local1/ledger?limit=1')).body).length, 1)
+        assert.deepEqual(JSON.parse((await Harness.Get(host, '/api/hives/cloud1/ledger')).body), [])
+        assert.equal((await Harness.Get(host, '/api/hives/nope/ledger')).status, 404)
+        assert.equal((await Harness.Get(host, '/api/hives/local1/ledger', false)).status, 401)
     })
 })

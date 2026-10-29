@@ -224,6 +224,9 @@ export class ControlPlaneHost
     private static readonly HiveHealthPathPattern = new RegExp(
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/([^/]+)/' + ControlPlaneHost.HealthSegment + '$')
     private static readonly ObservationsSegment = 'observations'
+    private static readonly LedgerSegment = 'ledger'
+    private static readonly HiveLedgerPathPattern = new RegExp(
+        '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/([^/]+)/' + ControlPlaneHost.LedgerSegment + '$')
     private static readonly HiveObservationsPathPattern = new RegExp(
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/([^/]+)/' + ControlPlaneHost.ObservationsSegment + '$')
     private static readonly ManifestsSegment = 'manifests'
@@ -854,6 +857,11 @@ export class ControlPlaneHost
         {
             return await this.RouteHiveObservations(req, res, method, hom)
         }
+        const hlm = ControlPlaneHost.HiveLedgerPathPattern.exec(path)
+        if (hlm !== null)
+        {
+            return await this.RouteHiveLedger(req, res, method, hlm)
+        }
         const plm = ControlPlaneHost.PlatformPathPattern.exec(path)
         if (plm !== null)
         {
@@ -972,6 +980,28 @@ export class ControlPlaneHost
             return true
         }
         PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, [...this.observations.HistoryFor(id, this.ActivityLimit(req))])
+        return true
+    }
+
+    /** Serves GET /api/hives/ID/ledger: the hive's version-change timeline, newest first; false for any other method. */
+    private async RouteHiveLedger(req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
+    {
+        if (method !== PlaneHttp.MethodGet)
+        {
+            return false
+        }
+        const id = ControlPlaneHost.Decode(m[1] as string)
+        if (id === undefined)
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+            return true
+        }
+        if (this.directory.GetHive(id) === undefined)
+        {
+            PlaneHttp.WriteNotFound(res)
+            return true
+        }
+        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, [...this.deployments.LedgerFor(id, this.ActivityLimit(req))])
         return true
     }
 

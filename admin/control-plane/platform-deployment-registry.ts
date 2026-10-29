@@ -16,6 +16,7 @@ import type { IManifestSigner } from './manifest-signer.js'
 import { ReleasePolicyRegistry } from './release-policy-record.js'
 import type { ReleasePolicyRecord } from './release-policy-record.js'
 import { PolicyStoreUnavailableError, AgentUnauthorizedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, UnknownHiveError, UnknownManifestError, ManifestWithdrawnError, TenantOnHoldError, ChannelNotSubscribedError, VersionBelowFloorError } from './rollout-errors.js'
+import type { AdoptionLedgerRegistry, AdoptionLedgerRecord, LedgerAction } from './adoption-ledger-record.js'
 import { VersionOrder } from './version-order.js'
 
 type PolicyBlock = 'not-gated' | 'withdrawn' | 'held' | 'channel' | 'floor'
@@ -43,6 +44,7 @@ export class PlatformDeploymentRegistry
     private static readonly HashAlgorithm = 'sha256'
     private static readonly HashEncoding = 'hex'
     private static readonly KeySeparator = ':'
+    private static readonly LedgerFailureMessage = 'adoption ledger append failed:'
 
     public constructor(
         private readonly manifests: ManifestRegistry,
@@ -55,7 +57,8 @@ export class PlatformDeploymentRegistry
         private readonly placement: IWorkloadPlacement,
         private readonly observations: HiveObservationRegistry,
         private readonly signer?: IManifestSigner,
-        private readonly policies?: ReleasePolicyRegistry)
+        private readonly policies?: ReleasePolicyRegistry,
+        private readonly ledger?: AdoptionLedgerRegistry)
     {
     }
 
@@ -114,6 +117,7 @@ export class PlatformDeploymentRegistry
             ? { ...rest, withdrawn, withdrawal: { reason: reason!, actor: actor!, at: new Date().toISOString() } }
             : { ...rest, withdrawn }
         await this.manifests.Put(updated)
+        await this.RecordLedger({ version, action: withdrawn ? 'withdrawn' : 'restored' })
         return updated
     }
 
@@ -191,24 +195,26 @@ export class PlatformDeploymentRegistry
             throw new UnknownManifestError(version)
         }
         await this.gating.Put({ id: this.GateId(tenantId, version), tenantId, version, gatedAt: new Date().toISOString() })
+        await this.RecordLedger({ tenantId, version, action: 'gated' })
     }
 
     public async Ungate(tenantId: string, version: string): Promise<void>
     {
         await this.gating.Remove(this.GateId(tenantId, version))
+        await this.RecordLedger({ tenantId, version, action: 'ungated' })
     }
 
     /** Records the selection (after the gating check) and pushes the roll to the hive's orchestrator. */
     public async SelectTarget(hiveId: string, version: string): Promise<void>
     {
-        const recorded = await this.Record(hiveId, version)
+        const recorded = await this.Record(hiveId, version, 'selected')
         await this.Push(recorded.hive, recorded.image)
     }
 
     /** Records the selection after the same gating check as SelectTarget but does NOT push: the hive's own agent rolls locally by polling the target. */
     public async RecordAdoption(hiveId: string, version: string): Promise<void>
     {
-        await this.Record(hiveId, version)
+        await this.Record(hiveId, version, 'adopted')
     }
 
     /** The versions gated for the tenant that owns the hive. */
@@ -278,7 +284,7 @@ export class PlatformDeploymentRegistry
     }
 
     /** Validates hive, published and gated-for-the-hive's-tenant, then writes the selection; returns what a push needs. */
-    private async Record(hiveId: string, version: string): Promise<{ hive: HiveRecord; image: string }>
+    private async Record(hiveId: string, version: string, source: LedgerAction): Promise<{ hive: HiveRecord; image: string }>
     {
         const hive = this.hives.GetHive(hiveId)
         if (hive === undefined)
@@ -296,7 +302,31 @@ export class PlatformDeploymentRegistry
             throw this.BlockError(reason, version)
         }
         await this.selections.Put({ id: hiveId, hiveId, targetVersion: version, selectedAt: new Date().toISOString() })
+        await this.RecordLedger({ hiveId, tenantId: hive.tenantId, version, action: source })
         return { hive, image: manifest.image }
+    }
+
+    /** The hive's version-change timeline, newest first; empty when no ledger is configured. */
+    public LedgerFor(hiveId: string, limit: number): readonly AdoptionLedgerRecord[]
+    {
+        return this.ledger?.ForHive(hiveId, limit) ?? []
+    }
+
+    /** Best-effort: a ledger failure never breaks the operation that already succeeded. */
+    private async RecordLedger(entry: { tenantId?: string; hiveId?: string; version: string; action: LedgerAction }): Promise<void>
+    {
+        if (this.ledger === undefined)
+        {
+            return
+        }
+        try
+        {
+            await this.ledger.Append(entry)
+        }
+        catch (error)
+        {
+            console.error(PlatformDeploymentRegistry.LedgerFailureMessage, (error as Error).name)
+        }
     }
 
     /** Rolls every environment bound to the hive; an unreachable backend leaves the recorded selection for the pull agent. */
