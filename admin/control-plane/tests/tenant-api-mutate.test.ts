@@ -19,6 +19,7 @@ import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environ
 import { HiveBackend, InfraMode, type HiveRecord } from '../platform-records.js'
 import { InProcessRolloutClient } from '../tenant-api/in-process-rollout-client.js'
 import { RolloutFixture } from './rollout-fixture.js'
+import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
 import { TenantApiEndpoint, TenantEnvAction } from '../tenant-api/tenant-api-endpoint.js'
 import type { IEnvironmentService } from '../control-plane-host.js'
 import type { TenantSession } from '../tenant-auth/tenant-session.js'
@@ -208,6 +209,7 @@ describe('TenantApiEndpoint mutation routes', () =>
     let deployments: RecordingDeployments
     let service: FakeService
     let endpoint: TenantApiEndpoint
+    let real: PlatformDeploymentRegistry
 
     beforeEach(async () =>
     {
@@ -232,7 +234,7 @@ describe('TenantApiEndpoint mutation routes', () =>
         ]
         service = new FakeService(records)
         const orchestrators = new FakeFactory()
-        const real = await RolloutFixture.Create(parent, directory, orchestrators)
+        real = await RolloutFixture.Create(parent, directory, orchestrators)
         await real.Publish('v1', 'registry/img:1')
         await real.Publish('v2', 'registry/img:2')
         await real.Gate(TenantA, 'v1')
@@ -287,6 +289,27 @@ describe('TenantApiEndpoint mutation routes', () =>
         assert.equal(res.status, 409)
         assert.doesNotMatch(res.body, /v2/)
         assert.deepEqual(deployments.Targets, [{ hiveId: 'hive-a', version: 'v2' }])
+    })
+
+    it('409s a roll to a policy-withdrawn version with the generic body, not a 500, and does not echo the version or rule', async () =>
+    {
+        await real.SetWithdrawn('v1', true, 'bad-release-reason', 'actor')
+        const res = await Handle(Fixtures.PostJson({ version: 'v1' }), '/tenant-api/hives/hive-a/target', Fixtures.Session(TenantA))
+        assert.equal(res.status, 409)
+        assert.doesNotMatch(res.body, /v1|withdrawn|bad-release-reason/i)
+        assert.deepEqual(res.Json(), { error: 'Requested version is not available for this hive' })
+    })
+
+    it('omits a policy-withdrawn version from the tenant manifest list but keeps adoptable ones', async () =>
+    {
+        await real.Publish('v3', 'registry/img:3')
+        await real.Gate(TenantA, 'v3')
+        await real.SetWithdrawn('v1', true, 'bad-release-reason', 'actor')
+        const res = new ResRecorder()
+        const req = { method: 'GET' } as unknown as IncomingMessage
+        assert.equal(await endpoint.Handle(req, res as unknown as ServerResponse, '/tenant-api/manifests', Fixtures.Session(TenantA)), true)
+        assert.equal(res.status, 200)
+        assert.deepEqual((res.Json() as Array<{ id: string }>).map(m => m.id), ['v3'])
     })
 
     it('404s a roll to an unknown version with a generic body', async () =>

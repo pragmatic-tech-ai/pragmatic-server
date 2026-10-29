@@ -10,7 +10,7 @@ import type { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import { RolloutAdoptionRefusedError, RolloutUnavailableError, type IRolloutClient } from './rollout-client.js'
 import type { ITenantDirectory } from './tenant-directory.js'
 import type { EnvironmentRecord } from '../environment-record.js'
-import { ManifestNotGatedError, UnknownHiveError, UnknownManifestError } from '../rollout-errors.js'
+import { ChannelNotSubscribedError, ManifestNotGatedError, ManifestWithdrawnError, TenantOnHoldError, UnknownHiveError, UnknownManifestError, VersionBelowFloorError } from '../rollout-errors.js'
 import type { ITenantApiEndpoint } from '../tenant-auth/tenant-plane.js'
 import type { TenantSession } from '../tenant-auth/tenant-session.js'
 import { AdminProxyError, AdminProxyErrorKind } from '../admin-proxy.js'
@@ -306,7 +306,7 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         {
             return this.WriteRolloutError(res, err)
         }
-        if (err instanceof ManifestNotGatedError || err instanceof RolloutAdoptionRefusedError)
+        if (err instanceof ManifestNotGatedError || err instanceof RolloutAdoptionRefusedError || err instanceof ManifestWithdrawnError || err instanceof TenantOnHoldError || err instanceof ChannelNotSubscribedError || err instanceof VersionBelowFloorError)
         {
             this.WriteJson(res, TenantApiEndpoint.StatusConflict, { [TenantApiEndpoint.ErrorKey]: TenantApiEndpoint.TargetUnavailableMessage })
             return true

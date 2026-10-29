@@ -11,7 +11,7 @@ export class InProcessRolloutClient implements IRolloutClient
 
     public ManifestsFor(tenantId: string): Promise<readonly ManifestRecord[]>
     {
-        return Promise.resolve(this.deployments.ManifestsFor(tenantId))
+        return Promise.resolve(this.deployments.AdoptableForTenant(tenantId))
     }
 
     public StatusFor(hiveId: string): Promise<HiveRolloutStatus>
