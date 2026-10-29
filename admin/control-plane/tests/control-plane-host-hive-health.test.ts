@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import { FakeProvisioning } from './fake-provisioning.js'
 import { ControlPlaneHost, type IEnvironmentService, type IGraphService } from '../control-plane-host.js'
-import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSession } from '../operator-identity.js'
+import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSession, type OperatorSummary } from '../operator-identity.js'
 import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
@@ -36,6 +36,11 @@ class FakeOperator implements IOperatorIdentity
     public async ValidateToken(token: string): Promise<OperatorPrincipal | null>
     {
         return token === FakeOperator.Token ? { email: 'op@example.com', principalId: 'p1', role: OperatorRole.Full } : null
+    }
+
+    public async ListOperators(): Promise<readonly OperatorSummary[]>
+    {
+        return []
     }
 
     public async CreateOperator(_email: string, _password: string, _role: OperatorRole): Promise<void>

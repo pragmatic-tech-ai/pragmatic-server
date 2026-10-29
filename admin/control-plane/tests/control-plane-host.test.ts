@@ -25,7 +25,7 @@ import { HiveBackend, InfraMode } from '../platform-records.js'
 
 import { EnvironmentNotDevelopmentError, EnvironmentNotRuntimeError } from '../environment-service.js'
 import { GraphExistsError, GraphNotFoundError } from '../graph-service.js'
-import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSession } from '../operator-identity.js'
+import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSession, type OperatorSummary } from '../operator-identity.js'
 import { EventsTicketStore } from '../events-ticket-store.js'
 import { OperatorSocketRegistry } from '../operator-socket-registry.js'
 import { LoginThrottle } from '../login-throttle.js'
@@ -69,6 +69,11 @@ class FakeOperator implements IOperatorIdentity
         }
         const known = token === FakeOperator.Token || this.Extra.has(token)
         return known && !this.Dead.has(token) ? { email: FakeOperator.Email, principalId: this.PrincipalId, role: this.Role } : null
+    }
+
+    public async ListOperators(): Promise<readonly OperatorSummary[]>
+    {
+        return []
     }
 
     public async CreateOperator(_email: string, _password: string, _role: OperatorRole): Promise<void>

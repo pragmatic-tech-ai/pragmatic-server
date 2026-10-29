@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import { ControlPlaneHost } from '../control-plane-host.js'
 import type { IEnvironmentService, IGraphService } from '../control-plane-host.js'
-import { OperatorExistsError, OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSession } from '../operator-identity.js'
+import { OperatorExistsError, OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSession, type OperatorSummary } from '../operator-identity.js'
 import type { PlatformDirectory } from '../platform-directory.js'
 import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
 import type { TenantProvisioningService } from '../tenant-provisioning-service.js'
@@ -31,6 +31,11 @@ class RoleOperator implements IOperatorIdentity
             return { email: 'f@x.test', principalId: 'f', role: OperatorRole.Full }
         }
         return token === RoleOperator.ReadToken ? { email: 'r@x.test', principalId: 'r', role: OperatorRole.ReadOnly } : null
+    }
+
+    public async ListOperators(): Promise<readonly OperatorSummary[]>
+    {
+        return []
     }
 
     public async CreateOperator(email: string, _password: string, role: OperatorRole): Promise<void>

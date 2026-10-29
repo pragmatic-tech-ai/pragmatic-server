@@ -8,7 +8,7 @@ import { ControlPlaneHost } from '../control-plane-host.js'
 import type { IEnvironmentService, IGraphService } from '../control-plane-host.js'
 import { LoginThrottle } from '../login-throttle.js'
 import type { LoginThrottleDecision } from '../login-throttle.js'
-import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSession } from '../operator-identity.js'
+import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSession, type OperatorSummary } from '../operator-identity.js'
 import type { PlatformDirectory } from '../platform-directory.js'
 import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
 import type { TenantProvisioningService } from '../tenant-provisioning-service.js'
@@ -30,6 +30,11 @@ class CountingOperator implements IOperatorIdentity
     public async ValidateToken(_token: string): Promise<OperatorPrincipal | null>
     {
         return null
+    }
+
+    public async ListOperators(): Promise<readonly OperatorSummary[]>
+    {
+        return []
     }
 
     public async CreateOperator(_email: string, _password: string, _role: OperatorRole): Promise<void>
