@@ -150,7 +150,7 @@ describe('ControlPlaneHost rollout routes', () =>
         assert.equal(withdrawn.status, 200)
         assert.equal((JSON.parse(withdrawn.body) as { withdrawn: boolean }).withdrawn, true)
         const listed = JSON.parse((await Harness.Send(host, 'GET', '/api/tenants/t1/manifests')).body) as { id: string; withdrawn?: boolean }[]
-        assert.equal(listed[0]!.withdrawn, true)
+        assert.deepEqual(listed, [])
         const restored = await Harness.Send(host, 'DELETE', '/api/manifests/1.0.0/withdrawn')
         assert.equal(restored.status, 200)
         assert.equal((JSON.parse(restored.body) as { withdrawn: boolean }).withdrawn, false)
@@ -391,5 +391,65 @@ describe('ControlPlaneHost rollout routes', () =>
     it('rejects a malformed publish body with 400', async () =>
     {
         assert.equal((await Harness.Send(host, 'POST', '/api/manifests', { version: '3.0.0' })).status, 400)
+    })
+
+    it('lists release policies on GET /api/policies and persists channels set through the operator route', async () =>
+    {
+        const put = await Harness.Send(host, 'PUT', '/api/tenants/t1/policy/channels', { channels: ['stable', 'early'] })
+        assert.equal(put.status, 200)
+        assert.deepEqual((JSON.parse(put.body) as { channels: string[] }).channels, ['stable', 'early'])
+        const all = JSON.parse((await Harness.Send(host, 'GET', '/api/policies')).body) as { tenantId: string; channels: string[] }[]
+        assert.deepEqual(all.find(p => p.tenantId === 't1')!.channels, ['stable', 'early'])
+    })
+
+    it('rejects an invalid channels body with 400', async () =>
+    {
+        assert.equal((await Harness.Send(host, 'PUT', '/api/tenants/t1/policy/channels', { channels: ['stable', 'bogus'] })).status, 400)
+        assert.equal((await Harness.Send(host, 'PUT', '/api/tenants/t1/policy/channels', { channels: 'stable' })).status, 400)
+        assert.equal((await Harness.Send(host, 'PUT', '/api/tenants/t1/policy/channels', {})).status, 400)
+    })
+
+    it('sets and clears the min-version floor, rejecting an empty version', async () =>
+    {
+        const set = await Harness.Send(host, 'PUT', '/api/tenants/t1/policy/min-version', { version: '1.2.0' })
+        assert.equal(set.status, 200)
+        assert.equal((JSON.parse(set.body) as { minVersion?: string }).minVersion, '1.2.0')
+        assert.equal((await Harness.Send(host, 'PUT', '/api/tenants/t1/policy/min-version', { version: '' })).status, 400)
+        const cleared = await Harness.Send(host, 'DELETE', '/api/tenants/t1/policy/min-version')
+        assert.equal(cleared.status, 200)
+        assert.equal((JSON.parse(cleared.body) as { minVersion?: string }).minVersion, undefined)
+    })
+
+    it('sets a hold with the session actor, clears it, and rejects a blank reason', async () =>
+    {
+        const set = await Harness.Send(host, 'POST', '/api/tenants/t1/policy/hold', { reason: ' incident ' })
+        assert.equal(set.status, 200)
+        const hold = (JSON.parse(set.body) as { hold?: { reason: string; actor: string } }).hold
+        assert.equal(hold!.reason, 'incident')
+        assert.equal(hold!.actor, 'op@example.com')
+        assert.equal((await Harness.Send(host, 'POST', '/api/tenants/t1/policy/hold', { reason: '   ' })).status, 400)
+        const cleared = await Harness.Send(host, 'DELETE', '/api/tenants/t1/policy/hold')
+        assert.equal(cleared.status, 200)
+        assert.equal((JSON.parse(cleared.body) as { hold?: unknown }).hold, undefined)
+    })
+
+    it('answers every mutating policy route with 403 for a ReadOnly operator', async () =>
+    {
+        operator.Role = OperatorRole.ReadOnly
+        assert.equal((await Harness.Send(host, 'PUT', '/api/tenants/t1/policy/channels', { channels: ['stable'] })).status, 403)
+        assert.equal((await Harness.Send(host, 'PUT', '/api/tenants/t1/policy/min-version', { version: '1.0.0' })).status, 403)
+        assert.equal((await Harness.Send(host, 'DELETE', '/api/tenants/t1/policy/min-version')).status, 403)
+        assert.equal((await Harness.Send(host, 'POST', '/api/tenants/t1/policy/hold', { reason: 'x' })).status, 403)
+        assert.equal((await Harness.Send(host, 'DELETE', '/api/tenants/t1/policy/hold')).status, 403)
+        assert.equal((await Harness.Send(host, 'GET', '/api/policies')).status, 200)
+    })
+
+    it('omits a policy-blocked gated version from the tenant manifest listing', async () =>
+    {
+        await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        await Harness.Send(host, 'POST', '/api/tenants/t1/gating', { version: '1.0.0' })
+        assert.equal((JSON.parse((await Harness.Send(host, 'GET', '/api/tenants/t1/manifests')).body) as unknown[]).length, 1)
+        await Harness.Send(host, 'POST', '/api/manifests/1.0.0/withdrawn', { reason: 'bad' })
+        assert.deepEqual(JSON.parse((await Harness.Send(host, 'GET', '/api/tenants/t1/manifests')).body), [])
     })
 })

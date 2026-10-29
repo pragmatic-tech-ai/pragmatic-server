@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net'
 import { PlaneHttp } from './plane-http.js'
 import type { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
 import type { HiveHealthDto } from './hive-health-producer.js'
-import { AgentUnauthorizedError, BodyTooLargeError, HiveNotRegisteredError, ManifestNotGatedError, UnknownHiveError, UnknownManifestError } from './rollout-errors.js'
+import { AgentUnauthorizedError, BodyTooLargeError, ChannelNotSubscribedError, HiveNotRegisteredError, ManifestNotGatedError, ManifestWithdrawnError, TenantOnHoldError, UnknownHiveError, UnknownManifestError, VersionBelowFloorError } from './rollout-errors.js'
 
 /** The dedicated public listener for the hive agent channel: five bearer-authenticated routes (target, snapshot, adoptable, status, adopt), nothing else. */
 export class AgentChannelHost
@@ -315,8 +315,9 @@ export class AgentChannelHost
             PlaneHttp.WriteJson(res, AgentChannelHost.StatusUnauthorized, { error: AgentChannelHost.UnauthorizedMessage })
             return
         }
-        // Intentionally route-agnostic: only the adopt route can raise these (RecordAdoption's gating check).
-        if (err instanceof ManifestNotGatedError || err instanceof UnknownManifestError)
+        // Intentionally route-agnostic: only the adopt route can raise a gating refusal or a release-policy refusal; the agent never learns which rule failed.
+        if (err instanceof ManifestNotGatedError || err instanceof UnknownManifestError || err instanceof ManifestWithdrawnError ||
+            err instanceof TenantOnHoldError || err instanceof ChannelNotSubscribedError || err instanceof VersionBelowFloorError)
         {
             PlaneHttp.WriteJson(res, AgentChannelHost.StatusForbidden, { error: AgentChannelHost.AdoptRefusedMessage })
             return

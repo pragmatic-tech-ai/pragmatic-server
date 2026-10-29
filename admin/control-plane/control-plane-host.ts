@@ -45,7 +45,7 @@ import { UnsupportedBackendError } from './hive-orchestrator.js'
 import { KubectlError } from './kubectl.js'
 import type { HiveRolloutStatus, PlatformDeploymentRegistry } from './platform-deployment-registry.js'
 import type { ManifestRecord } from './manifest-record.js'
-import { BodyTooLargeError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, UnknownHiveError, UnknownManifestError } from './rollout-errors.js'
+import { BodyTooLargeError, ChannelNotSubscribedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, ManifestWithdrawnError, PolicyStoreUnavailableError, TenantOnHoldError, UnknownHiveError, UnknownManifestError, VersionBelowFloorError } from './rollout-errors.js'
 import type { ClientRecord, ClusterSpec, HiveRecord, RegistrySpec, TenantRecord } from './platform-records.js'
 import type { CreateAccountParams, GraphLoadedDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto, ServiceTokenSummaryDto, IssueTokenParams } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { LoginThrottle } from './login-throttle.js'
@@ -228,6 +228,13 @@ export class ControlPlaneHost
         '^' + ControlPlaneHost.ApiPrefix + '(' + ControlPlaneHost.TenantsSegment + '|' + ControlPlaneHost.HivesSegment + ')/([^/]+)/(' +
         [ControlPlaneHost.ManifestsSegment, ControlPlaneHost.GatingSegment, ControlPlaneHost.RolloutSegment, ControlPlaneHost.RolloutRegistrationSegment].join('|') +
         ')(?:/([^/]+))?$')
+    private static readonly PolicySegment = 'policy'
+    private static readonly ChannelsSegment = 'channels'
+    private static readonly MinVersionSegment = 'min-version'
+    private static readonly HoldSegment = 'hold'
+    private static readonly TenantPolicyPathPattern = new RegExp(
+        '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.TenantsSegment + '/([^/]+)/' + ControlPlaneHost.PolicySegment + '/(' +
+        [ControlPlaneHost.ChannelsSegment, ControlPlaneHost.MinVersionSegment, ControlPlaneHost.HoldSegment].join('|') + ')$')
     private static readonly VersionRequiredMessage = 'version (non-empty string) is required'
     private static readonly ImageRequiredMessage = 'image (non-empty string) is required'
     private static readonly NotesInvalidMessage = 'notes must be a string'
@@ -253,6 +260,7 @@ export class ControlPlaneHost
     private static readonly SessionPath = '/api/session'
     private static readonly FleetPath = '/api/fleet'
     private static readonly GatingAllPath = '/api/gating'
+    private static readonly PoliciesAllPath = '/api/policies'
     private static readonly SelectionsAllPath = '/api/selections'
     private static readonly RolloutsAllPath = '/api/rollouts'
     private static readonly EventsTicketPath = '/api/events-ticket'
@@ -333,6 +341,12 @@ export class ControlPlaneHost
         // The tenant is not authorized to that version (it was never gated to it): forbidden, not missing.
         [ManifestNotGatedError, ControlPlaneHost.StatusForbidden],
         [UnknownManifestError, PlaneHttp.StatusNotFound],
+        // Release-policy refusals: state conflicts are 409; a channel the tenant is not subscribed to is forbidden; an unreadable policy store fails closed as 500.
+        [ManifestWithdrawnError, ControlPlaneHost.StatusConflict],
+        [TenantOnHoldError, ControlPlaneHost.StatusConflict],
+        [ChannelNotSubscribedError, ControlPlaneHost.StatusForbidden],
+        [VersionBelowFloorError, ControlPlaneHost.StatusConflict],
+        [PolicyStoreUnavailableError, ControlPlaneHost.StatusInternal],
         [ManifestExistsError, ControlPlaneHost.StatusConflict],
         [HiveNotRegisteredError, PlaneHttp.StatusNotFound],
         [UnknownHiveError, PlaneHttp.StatusNotFound],
@@ -733,6 +747,16 @@ export class ControlPlaneHost
         {
             return await this.RouteRollout(req, res, method, rom)
         }
+        const tpm = ControlPlaneHost.TenantPolicyPathPattern.exec(path)
+        if (tpm !== null)
+        {
+            return await this.RouteTenantPolicy(req, res, method, tpm)
+        }
+        if (path === ControlPlaneHost.PoliciesAllPath && method === PlaneHttp.MethodGet)
+        {
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, [...this.deployments.AllPolicies()])
+            return true
+        }
         if (path === ControlPlaneHost.GatingAllPath && method === PlaneHttp.MethodGet)
         {
             PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, [...this.deployments.AllGating()])
@@ -954,6 +978,72 @@ export class ControlPlaneHost
         return true
     }
 
+    /** Serves /api/tenants/ID/policy/(channels PUT | min-version PUT,DELETE | hold POST,DELETE); false for any other (action, method). */
+    private async RouteTenantPolicy(req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
+    {
+        const id = ControlPlaneHost.Decode(m[1] as string)
+        if (id === undefined)
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+            return true
+        }
+        const action = m[2]
+        if (action === ControlPlaneHost.ChannelsSegment && method === PlaneHttp.MethodPut)
+        {
+            const body = await this.ReadJsonObject(req, res)
+            if (body === undefined)
+            {
+                return true
+            }
+            const valid = Object.values(Channel) as unknown[]
+            if (!Array.isArray(body.channels) || !body.channels.every(c => valid.includes(c)))
+            {
+                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ChannelInvalidMessage })
+                return true
+            }
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, await this.deployments.SetChannels(id, body.channels as Channel[]))
+            return true
+        }
+        if (action === ControlPlaneHost.MinVersionSegment && method === PlaneHttp.MethodPut)
+        {
+            const v = await this.ReadVersion(req, res)
+            if (v === undefined)
+            {
+                return true
+            }
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, await this.deployments.SetMinVersion(id, v))
+            return true
+        }
+        if (action === ControlPlaneHost.MinVersionSegment && method === PlaneHttp.MethodDelete)
+        {
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, await this.deployments.ClearMinVersion(id))
+            return true
+        }
+        if (action === ControlPlaneHost.HoldSegment && method === PlaneHttp.MethodPost)
+        {
+            const body = await this.ReadJsonObject(req, res)
+            if (body === undefined)
+            {
+                return true
+            }
+            if (typeof body.reason !== 'string' || body.reason.trim().length === 0)
+            {
+                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ReasonRequiredMessage })
+                return true
+            }
+            const who = await this.Principal(req)
+            const actor = who?.email ?? who?.principalId ?? ''
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, await this.deployments.SetHold(id, body.reason.trim(), actor))
+            return true
+        }
+        if (action === ControlPlaneHost.HoldSegment && method === PlaneHttp.MethodDelete)
+        {
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, await this.deployments.ClearHold(id))
+            return true
+        }
+        return false
+    }
+
     /** Dispatches /api/(tenants|hives)/ID/(manifests|gating[/VERSION]|rollout|rollout-registration); false for an unknown (resource, sub, method) combination. */
     private async RouteRollout(req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
     {
@@ -976,7 +1066,7 @@ export class ControlPlaneHost
         }
         if (sub === ControlPlaneHost.ManifestsSegment && method === PlaneHttp.MethodGet)
         {
-            const manifests: ManifestDto[] = [...this.deployments.ManifestsFor(id)]
+            const manifests: ManifestDto[] = [...this.deployments.AdoptableForTenant(id)]
             PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, manifests)
             return true
         }

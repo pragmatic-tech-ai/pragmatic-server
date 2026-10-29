@@ -253,6 +253,18 @@ describe('AgentChannelHost', () =>
         assert.equal(deployments.TargetFor(Harness.HiveId), undefined)
     })
 
+    it('refuses a withdrawn-but-gated version with the generic 403, not 500', async () =>
+    {
+        await deployments.Publish(GatedVersion, GatedImage)
+        await deployments.Gate(TenantId, GatedVersion)
+        await deployments.SetWithdrawn(GatedVersion, true, 'bad build', 'op')
+        const reply = await Harness.Send(host, PlaneHttp.MethodPost, AdoptPath, Harness.BearerPrefix + token, { version: GatedVersion })
+        assert.equal(reply.status, 403)
+        assert.ok(!reply.body.includes('withdrawn'))
+        assert.ok(!reply.body.includes('bad build'))
+        assert.equal(deployments.TargetFor(Harness.HiveId), undefined)
+    })
+
     it('rejects a malformed adopt body with 400 and records nothing', async () =>
     {
         await deployments.Publish(GatedVersion, GatedImage)
