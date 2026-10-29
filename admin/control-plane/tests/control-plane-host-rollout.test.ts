@@ -129,7 +129,7 @@ describe('ControlPlaneHost rollout routes', () =>
     {
         await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
         await Harness.Send(host, 'POST', '/api/tenants/t1/gating', { version: '1.0.0' })
-        const withdrawn = await Harness.Send(host, 'POST', '/api/manifests/1.0.0/withdrawn')
+        const withdrawn = await Harness.Send(host, 'POST', '/api/manifests/1.0.0/withdrawn', { reason: 'bad build' })
         assert.equal(withdrawn.status, 200)
         assert.equal((JSON.parse(withdrawn.body) as { withdrawn: boolean }).withdrawn, true)
         const listed = JSON.parse((await Harness.Send(host, 'GET', '/api/tenants/t1/manifests')).body) as { id: string; withdrawn?: boolean }[]
@@ -146,7 +146,7 @@ describe('ControlPlaneHost rollout routes', () =>
         assert.deepEqual(JSON.parse(empty.body), [])
         await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
         await Harness.Send(host, 'POST', '/api/manifests', { version: '2.0.0', image: 'img:2' })
-        await Harness.Send(host, 'POST', '/api/manifests/2.0.0/withdrawn')
+        await Harness.Send(host, 'POST', '/api/manifests/2.0.0/withdrawn', { reason: 'r' })
         const listed = await Harness.Send(host, 'GET', '/api/manifests')
         assert.equal(listed.status, 200)
         const all = JSON.parse(listed.body) as { id: string; withdrawn?: boolean }[]
@@ -251,9 +251,62 @@ describe('ControlPlaneHost rollout routes', () =>
         assert.equal((await Harness.Send(host, 'GET', '/api/rollouts', undefined, false)).status, 401)
     })
 
+    it('publish accepts a channel and passes it through', async () =>
+    {
+        const r = await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1', channel: 'early' })
+        assert.equal(r.status, 201)
+        const all = JSON.parse((await Harness.Send(host, 'GET', '/api/manifests')).body) as { id: string; channel?: string }[]
+        assert.equal(all.find(m => m.id === '1.0.0')!.channel, 'early')
+    })
+
+    it('publish rejects an invalid channel', async () =>
+    {
+        const r = await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1', channel: 'beta' })
+        assert.equal(r.status, 400)
+        assert.deepEqual(JSON.parse((await Harness.Send(host, 'GET', '/api/manifests')).body), [])
+    })
+
+    it('publish without a channel defaults to stable', async () =>
+    {
+        await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        const all = JSON.parse((await Harness.Send(host, 'GET', '/api/manifests')).body) as { channel?: string }[]
+        assert.equal(all[0]!.channel, 'stable')
+    })
+
+    it('withdraw requires a non-empty reason', async () =>
+    {
+        await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        assert.equal((await Harness.Send(host, 'POST', '/api/manifests/1.0.0/withdrawn')).status, 400)
+        assert.equal((await Harness.Send(host, 'POST', '/api/manifests/1.0.0/withdrawn', {})).status, 400)
+        assert.equal((await Harness.Send(host, 'POST', '/api/manifests/1.0.0/withdrawn', { reason: '  ' })).status, 400)
+        const all = JSON.parse((await Harness.Send(host, 'GET', '/api/manifests')).body) as { withdrawn?: boolean }[]
+        assert.notEqual(all[0]!.withdrawn, true)
+    })
+
+    it('withdraw records the reason and the session actor, and restore clears it', async () =>
+    {
+        await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        const w = await Harness.Send(host, 'POST', '/api/manifests/1.0.0/withdrawn', { reason: 'bad build' })
+        assert.equal(w.status, 200)
+        const rec = JSON.parse(w.body) as { withdrawal?: { reason: string; actor: string } }
+        assert.equal(rec.withdrawal!.reason, 'bad build')
+        assert.equal(rec.withdrawal!.actor, 'op@example.com')
+        const restored = await Harness.Send(host, 'DELETE', '/api/manifests/1.0.0/withdrawn')
+        assert.equal(restored.status, 200)
+        assert.equal((JSON.parse(restored.body) as { withdrawal?: unknown }).withdrawal, undefined)
+    })
+
+    it('a non-Full operator is still 403 on publish and withdraw', async () =>
+    {
+        await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        operator.Role = OperatorRole.ReadOnly
+        assert.equal((await Harness.Send(host, 'POST', '/api/manifests', { version: '2.0.0', image: 'img:2' })).status, 403)
+        assert.equal((await Harness.Send(host, 'POST', '/api/manifests/1.0.0/withdrawn', { reason: 'x' })).status, 403)
+    })
+
     it('answers a withdrawn toggle for an unknown version with 404', async () =>
     {
-        assert.equal((await Harness.Send(host, 'POST', '/api/manifests/9.9.9/withdrawn')).status, 404)
+        assert.equal((await Harness.Send(host, 'POST', '/api/manifests/9.9.9/withdrawn', { reason: 'r' })).status, 404)
     })
 
     it('no longer selects a target from the operator plane, and reports the rollout status', async () =>

@@ -23,6 +23,7 @@ import type { TenantProvisioningService } from './tenant-provisioning-service.js
 import { InvalidEnvironmentNameError } from './template-catalog.js'
 import { OperatorExistsError, OperatorRole, type IOperatorIdentity, type OperatorPrincipal } from './operator-identity.js'
 import { OperatorAuthorization } from './operator-authorization.js'
+import { Channel } from './channel.js'
 import { SessionCookie } from './session-cookie.js'
 import { EventsTicketStore } from './events-ticket-store.js'
 import { OperatorSocketRegistry } from './operator-socket-registry.js'
@@ -223,6 +224,8 @@ export class ControlPlaneHost
     private static readonly VersionRequiredMessage = 'version (non-empty string) is required'
     private static readonly ImageRequiredMessage = 'image (non-empty string) is required'
     private static readonly NotesInvalidMessage = 'notes must be a string'
+    private static readonly ChannelInvalidMessage = 'channel must be one of: stable, early'
+    private static readonly ReasonRequiredMessage = 'reason (non-empty string) is required'
     private static readonly StatusNoContent = 204
     private static readonly IdRequiredMessage = 'id (non-empty string) is required'
     private static readonly DisplayNameRequiredMessage = 'displayName (string) is required'
@@ -893,7 +896,13 @@ export class ControlPlaneHost
             PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.NotesInvalidMessage })
             return true
         }
-        const manifest: ManifestDto = await this.deployments.Publish(body.version as string, body.image as string, body.notes as string | undefined)
+        const channel = body.channel
+        if (channel !== undefined && !Object.values(Channel).includes(channel as Channel))
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ChannelInvalidMessage })
+            return true
+        }
+        const manifest: ManifestDto = await this.deployments.Publish(body.version as string, body.image as string, body.notes as string | undefined, channel as Channel | undefined)
         PlaneHttp.WriteJson(res, ControlPlaneHost.StatusCreated, manifest)
         return true
     }
@@ -907,7 +916,24 @@ export class ControlPlaneHost
             return false
         }
         const version = decodeURIComponent(m[1] as string)
-        const manifest: ManifestDto = await this.deployments.SetWithdrawn(version, withdraw)
+        if (!withdraw)
+        {
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, await this.deployments.SetWithdrawn(version, false))
+            return true
+        }
+        const body = await this.ReadJsonObject(req, res)
+        if (body === undefined)
+        {
+            return true
+        }
+        if (typeof body.reason !== 'string' || body.reason.trim().length === 0)
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ReasonRequiredMessage })
+            return true
+        }
+        const who = await this.Principal(req)
+        const actor = who?.email ?? who?.principalId ?? ''
+        const manifest: ManifestDto = await this.deployments.SetWithdrawn(version, true, (body.reason as string).trim(), actor)
         PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, manifest)
         return true
     }
