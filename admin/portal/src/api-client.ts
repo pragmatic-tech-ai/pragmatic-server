@@ -38,6 +38,7 @@ export class ControlPlaneClient
     private static readonly PromoteLeaf = 'promote'
     private static readonly LoadedGraphLeaf = 'loaded-graph'
     private static readonly GatingSegment = 'gating'
+    private static readonly WithdrawnSegment = 'withdrawn'
     private static readonly VersionKey = 'version'
     private static readonly ImageKey = 'image'
     private static readonly NotesKey = 'notes'
@@ -167,6 +168,16 @@ export class ControlPlaneClient
     public async Ungate(tenantId: string, version: string): Promise<void>
     {
         await this.Send<unknown>(this.TenantGatingItemRoute(tenantId, version), { method: ControlPlaneClient.MethodDelete })
+    }
+
+    public async SetManifestWithdrawn(version: string, withdraw: boolean): Promise<ManifestDto>
+    {
+        return await this.Send<ManifestDto>(this.ManifestWithdrawnRoute(version), { method: withdraw ? ControlPlaneClient.MethodPost : ControlPlaneClient.MethodDelete })
+    }
+
+    private ManifestWithdrawnRoute(version: string): string
+    {
+        return this.ItemRoute(ControlPlaneClient.ManifestsRoute, version) + ControlPlaneClient.PathSeparator + ControlPlaneClient.WithdrawnSegment
     }
 
     private TenantGatingRoute(tenantId: string): string

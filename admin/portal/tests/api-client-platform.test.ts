@@ -189,6 +189,32 @@ describe('ControlPlaneClient platform records', () =>
         assert.equal(FetchStub.Calls[0]!.route, '/api/tenants/t1/gating/a%2Fb%2Bc')
     })
 
+    it('SetManifestWithdrawn(true) POSTs the withdrawn route with no body', async () =>
+    {
+        FetchStub.Install({ id: '1.0.0', image: 'img:1.0.0', publishedAt: '2026-01-01T00:00:00.000Z' })
+        const dto = await new ControlPlaneClient().SetManifestWithdrawn('1.0.0', true)
+        const call = FetchStub.Calls[0]!
+        assert.equal(call.route, '/api/manifests/1.0.0/withdrawn')
+        assert.equal(call.init?.method, 'POST')
+        assert.equal(call.init?.body, undefined)
+        assert.equal(dto.id, '1.0.0')
+    })
+
+    it('SetManifestWithdrawn(false) DELETEs the withdrawn route', async () =>
+    {
+        FetchStub.Install({ id: '1.0.0', image: 'img:1.0.0', publishedAt: '2026-01-01T00:00:00.000Z' })
+        await new ControlPlaneClient().SetManifestWithdrawn('1.0.0', false)
+        assert.equal(FetchStub.Calls[0]!.route, '/api/manifests/1.0.0/withdrawn')
+        assert.equal(FetchStub.Calls[0]!.init?.method, 'DELETE')
+    })
+
+    it('SetManifestWithdrawn path-encodes the version', async () =>
+    {
+        FetchStub.Install({ id: 'a/b', image: 'i', publishedAt: '2026-01-01T00:00:00.000Z' })
+        await new ControlPlaneClient().SetManifestWithdrawn('a/b', true)
+        assert.equal(FetchStub.Calls[0]!.route, '/api/manifests/a%2Fb/withdrawn')
+    })
+
     it('ListOperators GETs /api/operators and returns the parsed array', async () =>
     {
         const payload: OperatorSummaryDto[] = [{ email: 'a@b.c', role: 'full' }, { email: 'd@e.f', role: 'readonly' }]
