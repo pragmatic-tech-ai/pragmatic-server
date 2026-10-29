@@ -2,7 +2,8 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { FleetViewModel } from '../src/fleet-view-model.js'
 import { ReleasePolicyViewModel } from '../src/release-policy-view-model.js'
-import type { ClientDto, FleetHiveDto, GatingDto, SelectionDto, TenantDto } from '../src/portal-types.js'
+import { PillTone } from '../src/kit/tones.js'
+import type { ClientDto, EnvRolloutDto, FleetHiveDto, GatingDto, HiveRolloutDto, SelectionDto, TenantDto } from '../src/portal-types.js'
 
 class Fx
 {
@@ -24,6 +25,16 @@ class Fx
     public static Sel(hiveId: string, targetVersion: string, selectedAt: string): SelectionDto
     {
         return { hiveId, targetVersion, selectedAt } as SelectionDto
+    }
+
+    public static Env(environmentName: string, obsolete: boolean, ready: boolean, runningImage?: string): EnvRolloutDto
+    {
+        return { environmentName, obsolete, ready, runningImage }
+    }
+
+    public static Rollout(hiveId: string, targetVersion: string | undefined, environments: EnvRolloutDto[]): HiveRolloutDto
+    {
+        return { hiveId, targetVersion, environments }
     }
 
     public static Hive(id: string, displayName: string): FleetHiveDto
@@ -119,5 +130,93 @@ describe('ReleasePolicyViewModel', () =>
             tenants, clients, [Fx.Hive('a', 'Alpha'), Fx.Hive('b', 'Beta')])
         assert.deepEqual(vm.GatedRows.map(r => r.ownerLabel + '@' + r.version), ['Client / Tenant@1.0', 'Client / Tenant@2.0', 'Orphan@1.0'])
         assert.deepEqual(vm.TargetRows.map(r => r.hiveName), ['Alpha', 'Beta'])
+    })
+})
+
+describe('ReleasePolicyViewModel rollout rows', () =>
+{
+    const hives = [Fx.Hive('h1', 'Hive One'), Fx.Hive('h2', 'Alpha')]
+
+    class Make
+    {
+        public static Vm(rollouts: HiveRolloutDto[]): ReleasePolicyViewModel
+        {
+            return new ReleasePolicyViewModel([], [], [], [], hives, rollouts)
+        }
+    }
+
+    it('marks an obsolete env as Behind target (Warning)', () =>
+    {
+        const vm = Make.Vm([Fx.Rollout('h1', '2.0', [Fx.Env('prod', true, true, 'img:1')])])
+        assert.equal(vm.RolloutRows[0].statusLabel, 'Behind target')
+        assert.equal(vm.RolloutRows[0].statusTone, PillTone.Warning)
+        assert.equal(vm.RolloutRows[0].hiveName, 'Hive One')
+        assert.equal(vm.RolloutRows[0].ownerLabel, 'Client / Tenant')
+        assert.equal(vm.RolloutRows[0].envName, 'prod')
+        assert.equal(vm.RolloutRows[0].targetLabel, '2.0')
+        assert.equal(vm.RolloutRows[0].runningLabel, 'img:1')
+    })
+
+    it('marks a current ready env as On target (Success)', () =>
+    {
+        const vm = Make.Vm([Fx.Rollout('h1', '2.0', [Fx.Env('prod', false, true, 'i')])])
+        assert.equal(vm.RolloutRows[0].statusLabel, 'On target')
+        assert.equal(vm.RolloutRows[0].statusTone, PillTone.Success)
+    })
+
+    it('marks a current but unready env as Not ready (Warning)', () =>
+    {
+        const vm = Make.Vm([Fx.Rollout('h1', '2.0', [Fx.Env('prod', false, false, 'i')])])
+        assert.equal(vm.RolloutRows[0].statusLabel, 'Not ready')
+        assert.equal(vm.RolloutRows[0].statusTone, PillTone.Warning)
+    })
+
+    it('marks No target (Neutral) regardless of env flags', () =>
+    {
+        const vm = Make.Vm([Fx.Rollout('h1', undefined, [Fx.Env('a', true, false, 'i'), Fx.Env('b', false, true, 'i')])])
+        assert.deepEqual(vm.RolloutRows.map(r => r.statusLabel), ['No target', 'No target'])
+        assert.deepEqual(vm.RolloutRows.map(r => r.statusTone), [PillTone.Neutral, PillTone.Neutral])
+        assert.equal(vm.RolloutRows[0].targetLabel, 'No target')
+    })
+
+    it('labels a missing running image as Not reported', () =>
+    {
+        const vm = Make.Vm([Fx.Rollout('h1', '2.0', [Fx.Env('prod', false, true)])])
+        assert.equal(vm.RolloutRows[0].runningLabel, 'Not reported')
+    })
+
+    it('keeps a rollout whose hive is not in the fleet', () =>
+    {
+        const vm = Make.Vm([Fx.Rollout('gone', '2.0', [Fx.Env('prod', false, true, 'i')])])
+        assert.equal(vm.RolloutRows.length, 1)
+        assert.equal(vm.RolloutRows[0].hiveName, '(unknown hive)')
+        assert.equal(vm.RolloutRows[0].ownerLabel, '(unassigned)')
+    })
+
+    it('flattens envs to rows sorted by hive then env', () =>
+    {
+        const vm = Make.Vm([
+            Fx.Rollout('h1', '2.0', [Fx.Env('z', false, true, 'i'), Fx.Env('a', false, true, 'i')]),
+            Fx.Rollout('h2', '2.0', [Fx.Env('m', false, true, 'i')]),
+        ])
+        assert.deepEqual(vm.RolloutRows.map(r => r.hiveName + '/' + r.envName), ['Alpha/m', 'Hive One/a', 'Hive One/z'])
+    })
+
+    it('is empty with no rollouts, and the 5-arg ctor/Update still work', () =>
+    {
+        const vm = new ReleasePolicyViewModel([], [], [], [], [])
+        assert.equal(vm.RolloutRows.length, 0)
+        vm.Update([], [], [], [], [])
+        assert.equal(vm.RolloutRows.length, 0)
+    })
+
+    it('Update replaces rollout rows and raises RolloutRows', () =>
+    {
+        const vm = Make.Vm([])
+        let raised = 0
+        vm.PropertyChanged(ReleasePolicyViewModel.RolloutRowsProperty).subscribe(() => { raised++ })
+        vm.Update([], [], [], [], hives, [Fx.Rollout('h1', '2.0', [Fx.Env('prod', false, true, 'i')])])
+        assert.equal(vm.RolloutRows.length, 1)
+        assert.equal(raised, 1)
     })
 })
