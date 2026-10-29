@@ -285,7 +285,7 @@ export class ReleasePolicyView extends StackPanel implements IPortalView
         const submit = new Act(this.operator.MutatingAct(
             gate ? ReleasePolicyView.GateSubmitLabel : ReleasePolicyView.UngateSubmitLabel,
             () => void this.Submit(tenantBox.Text, versionBox.Text),
-            ActVariant.Primary,
+            gate ? ActVariant.Primary : ActVariant.Danger,
         ))
         const cancel = new KeyActivatedButton(() => this.EnterMode(GatingMode.Normal))
         const cancelText = new TextBlock()
