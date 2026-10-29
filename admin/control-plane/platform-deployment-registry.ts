@@ -236,6 +236,11 @@ export class PlatformDeploymentRegistry
         return token
     }
 
+    public async DeregisterHive(hiveId: string): Promise<void>
+    {
+        await this.registrations.Remove(hiveId)
+    }
+
     public async VerifyAgentToken(hiveId: string, presentedToken: string): Promise<void>
     {
         const registration = this.registrations.Get(hiveId)

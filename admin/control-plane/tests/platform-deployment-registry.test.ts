@@ -273,6 +273,18 @@ test('machine token is hashed, verified, and never leaked in errors', async () =
     })
 })
 
+test('DeregisterHive removes a prior registration so VerifyAgentToken then fails', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        const token = await reg.RegisterHive(Fx.HiveA)
+        await reg.VerifyAgentToken(Fx.HiveA, token)
+        await reg.DeregisterHive(Fx.HiveA)
+        await assert.rejects(reg.VerifyAgentToken(Fx.HiveA, token), HiveNotRegisteredError)
+        await assert.doesNotReject(reg.DeregisterHive(Fx.NoHive))
+    })
+})
+
 test('SelectTarget on an unknown hive throws UnknownHiveError', async () =>
 {
     await Fx.Run(async reg =>
