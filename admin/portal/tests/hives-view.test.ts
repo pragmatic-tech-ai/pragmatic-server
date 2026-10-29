@@ -4,7 +4,9 @@ import { Application } from '@pragmatic-tech-ai/mural/runtime'
 import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pragmatic'
 import type { ControlPlaneClient } from '../src/api-client.js'
 import { HivesMode, HivesView } from '../src/hives-view.js'
-import { HiveDetailView } from '../src/hive-detail-view.js'
+import { HiveDetailView, HivePolicyMode } from '../src/hive-detail-view.js'
+import { OperatorContext } from '../src/operator-context.js'
+import { Act } from '../src/kit/index.js'
 import { ScreenState } from '../src/kit/index.js'
 import type { FleetHiveDto, LedgerDto, ObservationDto, PolicyDto } from '../src/portal-types.js'
 
@@ -72,9 +74,19 @@ class Fixtures
         } as FleetHiveDto
     }
 
-    public static View(fleet: FleetHiveDto[], fail = false, failDetail = false): HivesView
+    public static View(fleet: FleetHiveDto[], fail = false, failDetail = false, wire = 'full'): HivesView
     {
-        return new HivesView(new FakeClient(fleet, fail, failDetail) as unknown as ControlPlaneClient)
+        return new HivesView(new FakeClient(fleet, fail, failDetail) as unknown as ControlPlaneClient, OperatorContext.FromWire(wire))
+    }
+
+    public static async Detail(wire: string): Promise<HiveDetailView>
+    {
+        const view = Fixtures.View([Fixtures.Hive('a')], false, false, wire)
+        await view.Refresh()
+        view.Table?.FocusRow(0)
+        view.Table?.ActivateFocused()
+        await new Promise(r => setTimeout(r, 0))
+        return Fixtures.Walk(view).find(n => n instanceof HiveDetailView) as HiveDetailView
     }
 }
 
@@ -137,7 +149,7 @@ describe('HivesView', () =>
         const full = [Fixtures.Hive('a')]
         let calls = 0
         const client = { ListFleet: () => Promise.resolve(calls++ === 0 ? full : []) }
-        const view = new HivesView(client as unknown as ControlPlaneClient)
+        const view = new HivesView(client as unknown as ControlPlaneClient, OperatorContext.FromWire('full'))
         await view.ShowList()
         view.Table?.FocusRow(0)
         view.Table?.ActivateFocused()
@@ -163,5 +175,27 @@ describe('HivesView', () =>
         await view.Refresh()
         await view.Refresh()
         assert.equal(view.Host.State, ScreenState.Populated)
+    })
+
+    it('built with a Full operator, the detail can enter an edit mode', async () =>
+    {
+        const detail = await Fixtures.Detail('full')
+        assert.ok(detail)
+        detail.EnterMode(HivePolicyMode.SetMinVersion)
+        assert.equal(detail.Mode, HivePolicyMode.SetMinVersion)
+    })
+
+    it('built with a ReadOnly operator, the detail edit actions are gated', async () =>
+    {
+        const detail = await Fixtures.Detail('readonly')
+        assert.ok(detail)
+        const acts = Fixtures.Walk(detail).filter(n => n instanceof Act) as Act[]
+        const gated = acts.filter(a => a.Enabled === false)
+        assert.ok(gated.length >= 3)
+        for (const a of gated)
+        {
+            a.Press()
+        }
+        assert.equal(detail.Mode, HivePolicyMode.Normal)
     })
 })

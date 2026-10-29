@@ -4,6 +4,7 @@ import { FleetPresentation } from './fleet-presentation.js'
 import { FleetConnection } from './fleet-view-model.js'
 import { HiveDetailView } from './hive-detail-view.js'
 import { HiveDetailViewModel } from './hive-detail-view-model.js'
+import { OperatorContext } from './operator-context.js'
 import { HivesViewModel } from './hives-view-model.js'
 import type { HiveListRow } from './hives-view-model.js'
 import { SectionContainerView, SectionState } from './section-container-view.js'
@@ -42,7 +43,7 @@ export class HivesView extends SectionContainerView<HiveListRow>
 
     private model: HivesViewModel | undefined = undefined
 
-    public constructor(private readonly client: ControlPlaneClient)
+    public constructor(private readonly client: ControlPlaneClient, private readonly operator: OperatorContext)
     {
         super()
     }
@@ -97,7 +98,7 @@ export class HivesView extends SectionContainerView<HiveListRow>
         ])
         const policy = policies.find(p => p.hiveId === hive.id)
         const vm = new HiveDetailViewModel(hive, undefined, undefined, observations, ledger, policy)
-        return new HiveDetailView(vm, () => void this.ShowList())
+        return new HiveDetailView(vm, () => void this.ShowList(), this.client, this.operator, () => this.Refresh())
     }
 
     private static ConnectionPill(r: HiveListRow): PillEntry

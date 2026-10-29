@@ -147,7 +147,11 @@ export class App extends StackPanel implements IPortalNavigator
         }
         if (section === PaSection.Hives)
         {
-            this.Mount(new HivesView(this.client))
+            const operator = this.operator
+            if (operator !== undefined)
+            {
+                this.Mount(new HivesView(this.client, operator))
+            }
             return
         }
         if (section === PaSection.Registry)
