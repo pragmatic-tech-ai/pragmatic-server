@@ -41,7 +41,12 @@ export class OperatorContext
 
     public get RoleLabel(): string
     {
-        return this.CanMutate ? OperatorContext.OperatorLabel : OperatorContext.ObserverLabel
+        return OperatorContext.RoleLabel(this.CanMutate ? OperatorContext.FullWireRole : '')
+    }
+
+    public static RoleLabel(wireRole: string): string
+    {
+        return wireRole === OperatorContext.FullWireRole ? OperatorContext.OperatorLabel : OperatorContext.ObserverLabel
     }
 
     public get NeededRoleLabel(): string

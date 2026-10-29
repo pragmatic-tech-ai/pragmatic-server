@@ -22,6 +22,13 @@ describe('OperatorContext', () =>
         Application.current = previous
     })
 
+    it('RoleLabel maps wire roles to labels', () =>
+    {
+        assert.equal(OperatorContext.RoleLabel('full'), 'Operator')
+        assert.equal(OperatorContext.RoleLabel('readonly'), 'Observer')
+        assert.equal(OperatorContext.RoleLabel('anything'), 'Observer')
+    })
+
     it('full maps to Operator and may mutate', () =>
     {
         const ctx = OperatorContext.FromWire('full')

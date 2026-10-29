@@ -1,7 +1,7 @@
 import { afterEach, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { ControlPlaneClient } from '../src/api-client.js'
-import type { GatingDto, HiveDto, ManifestDto, SelectionDto, TenantDto } from '../src/portal-types.js'
+import type { GatingDto, HiveDto, ManifestDto, OperatorSummaryDto, SelectionDto, TenantDto } from '../src/portal-types.js'
 
 type Recorded = { route: string; init: RequestInit | undefined }
 
@@ -141,6 +141,19 @@ describe('ControlPlaneClient platform records', () =>
         assert.equal(call.init?.body, undefined)
         assert.equal(call.init?.credentials, 'same-origin')
         assert.deepEqual(manifests, payload)
+    })
+
+    it('ListOperators GETs /api/operators and returns the parsed array', async () =>
+    {
+        const payload: OperatorSummaryDto[] = [{ email: 'a@b.c', role: 'full' }, { email: 'd@e.f', role: 'readonly' }]
+        FetchStub.Install(payload)
+        const operators = await new ControlPlaneClient().ListOperators()
+        const call = FetchStub.Calls[0]!
+        assert.equal(call.route, '/api/operators')
+        assert.equal(call.init?.method, undefined)
+        assert.equal(call.init?.body, undefined)
+        assert.equal(call.init?.credentials, 'same-origin')
+        assert.deepEqual(operators, payload)
     })
 
     it('ListGating GETs /api/gating and returns the parsed array', async () =>

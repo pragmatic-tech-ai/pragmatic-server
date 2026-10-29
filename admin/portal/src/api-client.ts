@@ -1,4 +1,4 @@
-import type { ClientDto, EnvironmentDto, HiveDto, FleetHiveDto, ManifestDto, GatingDto, SelectionDto, TenantDto, GraphDto, GraphLoadedDto, OperatorDto, PromotionResultDto } from './portal-types.js'
+import type { ClientDto, EnvironmentDto, HiveDto, FleetHiveDto, ManifestDto, OperatorSummaryDto, GatingDto, SelectionDto, TenantDto, GraphDto, GraphLoadedDto, OperatorDto, PromotionResultDto } from './portal-types.js'
 
 // Thrown for non-2xx control-plane responses; Message carries the server's error text.
 export class ApiError extends Error
@@ -23,6 +23,7 @@ export class ControlPlaneClient
     private static readonly HivesRoute = '/api/hives'
     private static readonly FleetRoute = '/api/fleet'
     private static readonly ManifestsRoute = '/api/manifests'
+    private static readonly OperatorsRoute = '/api/operators'
     private static readonly GatingRoute = '/api/gating'
     private static readonly SelectionsRoute = '/api/selections'
     private static readonly LoginRoute = '/api/login'
@@ -111,6 +112,11 @@ export class ControlPlaneClient
     public async ListManifests(): Promise<ManifestDto[]>
     {
         return await this.Send<ManifestDto[]>(ControlPlaneClient.ManifestsRoute, undefined)
+    }
+
+    public async ListOperators(): Promise<OperatorSummaryDto[]>
+    {
+        return await this.Send<OperatorSummaryDto[]>(ControlPlaneClient.OperatorsRoute, undefined)
     }
 
     public async ListGating(): Promise<GatingDto[]>
