@@ -324,6 +324,17 @@ export class PlatformDeploymentRegistry
         return this.ledger?.ForHive(hiveId, limit) ?? []
     }
 
+    /** The hive's tenant adoption timeline (tenant events plus version-scoped withdraw/restore); empty for an unknown hive or no ledger. */
+    public LedgerForHive(hiveId: string, limit: number): readonly AdoptionLedgerRecord[]
+    {
+        const hive = this.hives.GetHive(hiveId)
+        if (hive === undefined || this.ledger === undefined)
+        {
+            return []
+        }
+        return this.ledger.ForTenantIncludingVersionEvents(hive.tenantId, limit)
+    }
+
     /** Best-effort: a ledger failure never breaks the operation that already succeeded. */
     private async RecordLedger(entry: { tenantId?: string; hiveId?: string; version: string; action: LedgerAction }): Promise<void>
     {

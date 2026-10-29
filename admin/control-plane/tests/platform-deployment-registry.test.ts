@@ -16,6 +16,7 @@ import type { IHiveOrchestrator } from '../hive-orchestrator.js'
 import type { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import type { EnvironmentRecord } from '../environment-record.js'
 import type { EnvironmentWorkload } from '../environment-workload.js'
+import type { HiveObservationRegistry } from '../hive-observation-record.js'
 import type { HiveHealthDto } from '../hive-health-producer.js'
 import { RolloutFixture } from './rollout-fixture.js'
 import { AdoptionLedgerRegistry } from '../adoption-ledger-record.js'
@@ -754,6 +755,37 @@ test('ledger records selected and adopted with hive, tenant and version, newest 
         assert.equal(series[0]?.tenantId, Fx.TenantA)
         assert.equal(ledger.ForHive(Fx.HiveA, 1).length, 1)
     })
+})
+
+test('LedgerForHive returns the hive tenant union including version-scoped withdraw, newest first', async () =>
+{
+    await Fx.Run(async (reg) =>
+    {
+        await Fx.PublishGated(reg, [Fx.V1])
+        await new Promise(r => setTimeout(r, 3))
+        await reg.RecordAdoption(Fx.HiveA, Fx.V1)
+        await new Promise(r => setTimeout(r, 3))
+        await reg.SetWithdrawn(Fx.V1, true, 'bad', Fx.Operator)
+        const series = reg.LedgerForHive(Fx.HiveA, 50)
+        assert.deepEqual(series.map(r => r.action), ['withdrawn', 'adopted', 'gated'])
+        assert.equal(reg.LedgerFor(Fx.HiveA, 50).some(r => r.action === 'withdrawn'), false)
+    })
+})
+
+test('LedgerForHive is empty for an unknown hive', async () =>
+{
+    await Fx.Run(async (reg) =>
+    {
+        await Fx.PublishGated(reg, [Fx.V1])
+        assert.deepEqual(reg.LedgerForHive(Fx.HiveB, 50), [])
+    })
+})
+
+test('LedgerForHive is empty when no ledger is configured', async () =>
+{
+    const hives = new Map([[Fx.HiveA, Fx.Hive(Fx.HiveA, Fx.TenantA)]])
+    const reg = new PlatformDeploymentRegistry(undefined as unknown as ManifestRegistry, undefined as unknown as GatingRegistry, undefined as unknown as SelectionRegistry, undefined as unknown as RolloutRegistrationRegistry, { GetHive: id => hives.get(id) }, undefined as unknown as HiveOrchestratorFactory, { List: () => [] }, { WorkloadFor: e => e as unknown as EnvironmentWorkload }, undefined as unknown as HiveObservationRegistry)
+    assert.deepEqual(reg.LedgerForHive(Fx.HiveA, 50), [])
 })
 
 test('a policy-blocked adopt or select appends nothing to the ledger', async () =>
