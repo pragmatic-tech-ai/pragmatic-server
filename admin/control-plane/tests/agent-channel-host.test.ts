@@ -66,6 +66,7 @@ describe('AgentChannelHost', () =>
     const AdoptablePath = '/agent/hives/' + Harness.HiveId + '/adoptable'
     const StatusPath = '/agent/hives/' + Harness.HiveId + '/status'
     const AdoptPath = '/agent/hives/' + Harness.HiveId + '/adopt'
+    const LedgerPath = '/agent/hives/' + Harness.HiveId + '/ledger'
     const OtherPath = '/agent/hives/' + Harness.HiveId + '/other'
     const LegacyPath = '/api/hives/' + Harness.HiveId + '/agent/target'
     const UnregisteredPath = '/agent/hives/ghost/snapshot'
@@ -302,5 +303,41 @@ describe('AgentChannelHost', () =>
         assert.equal((await Harness.Send(host, PlaneHttp.MethodPost, AdoptablePath, auth, {})).status, 404)
         assert.equal((await Harness.Send(host, PlaneHttp.MethodPost, StatusPath, auth, {})).status, 404)
         assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, AdoptPath, auth)).status, 404)
+    })
+
+    it('serves the tenant ledger as tenant-safe DTOs to a correct bearer', async () =>
+    {
+        await deployments.Publish(GatedVersion, GatedImage)
+        await deployments.Gate(TenantId, GatedVersion)
+        await deployments.SetWithdrawn(GatedVersion, true, 'bad build', 'op')
+        const reply = await Harness.Send(host, PlaneHttp.MethodGet, LedgerPath, Harness.BearerPrefix + token)
+        assert.equal(reply.status, 200)
+        const rows = JSON.parse(reply.body) as Array<Record<string, unknown>>
+        assert.ok(rows.length >= 2)
+        assert.ok(rows.every(r => !('tenantId' in r)))
+        assert.ok(rows.every(r => r.version === GatedVersion))
+        assert.equal(rows.length, deployments.LedgerForHive(Harness.HiveId, 200).length)
+    })
+
+    it('caps the ledger with ?limit=', async () =>
+    {
+        await deployments.Publish(GatedVersion, GatedImage)
+        await deployments.Gate(TenantId, GatedVersion)
+        await deployments.SetWithdrawn(GatedVersion, true, 'bad build', 'op')
+        const reply = await Harness.Send(host, PlaneHttp.MethodGet, LedgerPath + '?limit=1', Harness.BearerPrefix + token)
+        assert.equal(reply.status, 200)
+        assert.equal((JSON.parse(reply.body) as unknown[]).length, 1)
+    })
+
+    it('rejects a missing or wrong bearer on the ledger route with 401, and a POST with 404', async () =>
+    {
+        assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, LedgerPath)).status, 401)
+        assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, LedgerPath, Harness.BearerPrefix + WrongToken)).status, 401)
+        assert.equal((await Harness.Send(host, PlaneHttp.MethodPost, LedgerPath, Harness.BearerPrefix + token, {})).status, 404)
+    })
+
+    it('answers 401 for the ledger of an unregistered hive', async () =>
+    {
+        assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, '/agent/hives/ghost/ledger', Harness.BearerPrefix + token)).status, 401)
     })
 })

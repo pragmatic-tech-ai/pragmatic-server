@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server as HttpServer, type Ser
 import type { AddressInfo } from 'node:net'
 import { PlaneHttp } from './plane-http.js'
 import type { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
+import { AdoptionLedgerDtoMapper } from './tenant-api/rollout-client.js'
 import type { HiveHealthDto } from './hive-health-producer.js'
 import { AgentUnauthorizedError, BodyTooLargeError, ChannelNotSubscribedError, HiveNotRegisteredError, ManifestNotGatedError, ManifestWithdrawnError, TenantOnHoldError, UnknownHiveError, UnknownManifestError, VersionBelowFloorError } from './rollout-errors.js'
 
@@ -10,18 +11,24 @@ export class AgentChannelHost
 {
     private static readonly AuthorizationHeader = 'authorization'
     private static readonly BearerPattern = /^Bearer (\S+)$/
-    private static readonly RoutePattern = /^\/agent\/hives\/([^/]+)\/(target|snapshot|adoptable|status|adopt)$/
+    private static readonly RoutePattern = /^\/agent\/hives\/([^/]+)\/(target|snapshot|adoptable|status|adopt|ledger)$/
     private static readonly TargetSegment = 'target'
     private static readonly SnapshotSegment = 'snapshot'
     private static readonly AdoptableSegment = 'adoptable'
     private static readonly StatusSegment = 'status'
     private static readonly AdoptSegment = 'adopt'
+    private static readonly LedgerSegment = 'ledger'
+    private static readonly LimitParam = 'limit'
+    private static readonly DefaultLedgerLimit = 200
+    private static readonly BaseUrl = 'http://localhost'
+    private static readonly RootPath = '/'
     private static readonly SegmentMethods: ReadonlyMap<string, string> = new Map([
         [AgentChannelHost.TargetSegment, PlaneHttp.MethodGet],
         [AgentChannelHost.SnapshotSegment, PlaneHttp.MethodPost],
         [AgentChannelHost.AdoptableSegment, PlaneHttp.MethodGet],
         [AgentChannelHost.StatusSegment, PlaneHttp.MethodGet],
-        [AgentChannelHost.AdoptSegment, PlaneHttp.MethodPost]
+        [AgentChannelHost.AdoptSegment, PlaneHttp.MethodPost],
+        [AgentChannelHost.LedgerSegment, PlaneHttp.MethodGet]
     ])
     private static readonly StatusNoContent = 204
     private static readonly StatusBadRequest = 400
@@ -138,12 +145,23 @@ export class AgentChannelHost
             case AgentChannelHost.StatusSegment:
                 PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, this.deployments.StatusFor(id))
                 return
+            case AgentChannelHost.LedgerSegment:
+                PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, AdoptionLedgerDtoMapper.ToDtos(this.deployments.LedgerForHive(id, AgentChannelHost.LedgerLimit(req))))
+                return
             case AgentChannelHost.AdoptSegment:
                 await this.ReceiveAdoption(req, res, id)
                 return
             default:
                 await this.ReceiveSnapshot(req, res, id)
         }
+    }
+
+    /** The ?limit= of a ledger request, clamped to [0, DefaultLedgerLimit]; the default when absent or not a number. */
+    private static LedgerLimit(req: IncomingMessage): number
+    {
+        const raw = new URL(req.url ?? AgentChannelHost.RootPath, AgentChannelHost.BaseUrl).searchParams.get(AgentChannelHost.LimitParam)
+        const n = raw === null ? Number.NaN : Number.parseInt(raw, 10)
+        return Number.isFinite(n) ? Math.min(Math.max(n, 0), AgentChannelHost.DefaultLedgerLimit) : AgentChannelHost.DefaultLedgerLimit
     }
 
     private ServeTarget(res: ServerResponse, id: string): void
