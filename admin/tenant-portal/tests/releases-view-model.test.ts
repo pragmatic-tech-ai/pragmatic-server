@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { AdoptOutcome, EnvStepKind, ReleasesViewModel } from '../src/releases-view-model.js'
 import { TenantApiError } from '../src/tenant-api-client.js'
 import { EnvStatus, EnvType, Template, TenantEventType } from '../src/tenant-types.js'
-import type { EnvironmentDto, HiveRolloutDto, IReleasesSource, ManifestDto } from '../src/tenant-types.js'
+import type { AdoptionLedgerDto, EnvironmentDto, HiveRolloutDto, IReleasesSource, ManifestDto } from '../src/tenant-types.js'
 
 class Make
 {
@@ -33,6 +33,7 @@ class FakeSource implements IReleasesSource
     public Selected: Array<[string, string]> = []
     public RolloutCalls = 0
     public Failure: Error | undefined
+    public Ledger: AdoptionLedgerDto[] = []
 
     public async ListManifests(): Promise<ManifestDto[]>
     {
@@ -48,6 +49,11 @@ class FakeSource implements IReleasesSource
     public async ListEnvironments(): Promise<EnvironmentDto[]>
     {
         return this.Envs
+    }
+
+    public async ListLedger(): Promise<readonly AdoptionLedgerDto[]>
+    {
+        return this.Ledger
     }
 
     public async SelectTarget(hiveId: string, version: string): Promise<void>
@@ -183,5 +189,33 @@ describe('ReleasesViewModel', () =>
         const vm = await Fx.Vm(src)
         assert.equal(await vm.ApplyEvent({ type: TenantEventType.EnvironmentChanged, environmentName: 'zz' }), false)
         assert.equal(await vm.ApplyEvent({ type: TenantEventType.EnvironmentChanged, environmentName: 'e1' }), true)
+    })
+})
+
+describe('ReleasesViewModel ledger', () =>
+{
+    it('maps all six actions to friendly labels with a non-empty when', async () =>
+    {
+        const src = new FakeSource()
+        const actions = ['gated', 'ungated', 'withdrawn', 'restored', 'selected', 'adopted']
+        src.Ledger = actions.map((action, i) => ({ version: 'v' + i, action, at: '2026-05-0' + (i + 1) + 'T10:30:00.000Z' }))
+        const vm = await Fx.Vm(src)
+        assert.deepEqual(vm.LedgerRows.map(r => r.actionLabel), ['Gated', 'Ungated', 'Withdrawn', 'Restored', 'Selected as target', 'Adopted'])
+        assert.deepEqual(vm.LedgerRows.map(r => r.version), ['v0', 'v1', 'v2', 'v3', 'v4', 'v5'])
+        assert.ok(vm.LedgerRows.every(r => r.whenLabel !== ''))
+    })
+
+    it('falls back to the raw action when unmapped', async () =>
+    {
+        const src = new FakeSource()
+        src.Ledger = [{ version: 'v1', action: 'quarantined', at: '2026-05-01T10:30:00.000Z' }]
+        const vm = await Fx.Vm(src)
+        assert.equal(vm.LedgerRows[0]!.actionLabel, 'quarantined')
+    })
+
+    it('has no rows for an empty ledger', async () =>
+    {
+        const vm = await Fx.Vm(new FakeSource())
+        assert.equal(vm.LedgerRows.length, 0)
     })
 })

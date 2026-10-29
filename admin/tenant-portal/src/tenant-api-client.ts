@@ -1,5 +1,5 @@
 import { TenantEventType } from './tenant-types.js'
-import type { AdminSnapshotDto, CreateAccountParams, CreateEnvironmentParams, EnvironmentDto, GrantMutationDto, HiveDto, HiveHealthDto, HiveRolloutDto, IssueTokenParams, ISecurityModelSource, ITokensSource, IUsersAccessSource, IWebSocketFactory, IWebSocketLike, ManifestDto, SecurityModelDto, ServiceTokenSummaryDto, SessionDto, TenantEvent, TenantProfileDto, TokenIssuedDto } from './tenant-types.js'
+import type { AdminSnapshotDto, AdoptionLedgerDto, CreateAccountParams, CreateEnvironmentParams, EnvironmentDto, GrantMutationDto, HiveDto, HiveHealthDto, HiveRolloutDto, IReleasesSource, IssueTokenParams, ISecurityModelSource, ITokensSource, IUsersAccessSource, IWebSocketFactory, IWebSocketLike, ManifestDto, SecurityModelDto, ServiceTokenSummaryDto, SessionDto, TenantEvent, TenantProfileDto, TokenIssuedDto } from './tenant-types.js'
 
 // Thrown for non-2xx tenant-surface responses; Message carries the server's error text.
 export class TenantApiError extends Error
@@ -55,7 +55,7 @@ export class BrowserWebSocketFactory implements IWebSocketFactory
 }
 
 // fetch wrapper over the tenant REST surface plus the events and log-follow sockets.
-export class TenantApiClient implements IUsersAccessSource, ITokensSource, ISecurityModelSource
+export class TenantApiClient implements IReleasesSource, IUsersAccessSource, ITokensSource, ISecurityModelSource
 {
     private static readonly SessionRoute = '/tenant-auth/session'
     private static readonly ProfileRoute = '/tenant-api/profile'
@@ -67,6 +67,7 @@ export class TenantApiClient implements IUsersAccessSource, ITokensSource, ISecu
     private static readonly EventsRoute = '/tenant-api/events'
     private static readonly RolloutLeaf = 'rollout'
     private static readonly HealthLeaf = 'health'
+    private static readonly LedgerLeaf = 'ledger'
     private static readonly TargetLeaf = 'target'
     private static readonly LogStreamLeaf = 'logs/stream'
     private static readonly StartAction = 'start'
@@ -164,6 +165,16 @@ export class TenantApiClient implements IUsersAccessSource, ITokensSource, ISecu
     public async GetHealth(hiveId: string): Promise<HiveHealthDto[]>
     {
         return await this.Send<HiveHealthDto[]>(this.HiveRoute(hiveId, TenantApiClient.HealthLeaf), undefined)
+    }
+
+    public async ListHiveLedger(hiveId: string): Promise<readonly AdoptionLedgerDto[]>
+    {
+        return await this.Send<AdoptionLedgerDto[]>(this.HiveRoute(hiveId, TenantApiClient.LedgerLeaf), undefined)
+    }
+
+    public async ListLedger(hiveId: string): Promise<readonly AdoptionLedgerDto[]>
+    {
+        return await this.ListHiveLedger(hiveId)
     }
 
     public async SelectTarget(hiveId: string, version: string): Promise<void>

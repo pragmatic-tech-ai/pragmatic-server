@@ -9,7 +9,7 @@ import { Act, ActVariant, KeyValueGrid, KitGlyph, PillKind, PillTone, ScreenHost
 import type { ScreenHostInputs } from './kit/index.js'
 import { AdoptWizard } from './adopt-wizard.js'
 import { ReleasesViewModel } from './releases-view-model.js'
-import type { MatrixRow, Offer } from './releases-view-model.js'
+import type { LedgerRow, MatrixRow, Offer } from './releases-view-model.js'
 import { TenantApiError } from './tenant-api-client.js'
 import { VersionBadge } from './tenant-types.js'
 import type { IReleasesSource, ITenantNavigator, TenantEvent } from './tenant-types.js'
@@ -33,14 +33,21 @@ export class ReleasesView extends TenantViewBase
     public static readonly NotOnKey = 'Environments not on this version'
     public static readonly CurrentSuffix = ' (current)'
     public static readonly NoText = ''
+    public static readonly HistoryTitle = 'Version history'
+    public static readonly HistoryVersionHeader = 'Version'
+    public static readonly HistoryActionHeader = 'Action'
+    public static readonly HistoryWhenHeader = 'When'
+    public static readonly HistoryEmptyText = 'No version history yet.'
 
     private readonly vm: ReleasesViewModel
     private readonly subscriptions: IDisposable[] = []
     private readonly body = new StackPanel()
     private readonly cards = new StackPanel()
     private readonly matrixSlot = new StackPanel()
+    private readonly historySlot = new StackPanel()
     private readonly dialogHost = new StackPanel()
     private grid: DataGrid | undefined
+    private historyGrid: DataGrid | undefined
     private host: ScreenHost | undefined
     private wizard: AdoptWizard | undefined
     private adoptActs: Act[] = []
@@ -52,14 +59,16 @@ export class ReleasesView extends TenantViewBase
         super()
         this.vm = new ReleasesViewModel(source, hiveId)
         this.Orientation = Orientation.Vertical
-        for (const panel of [this.body, this.cards, this.matrixSlot, this.dialogHost])
+        for (const panel of [this.body, this.cards, this.matrixSlot, this.historySlot, this.dialogHost])
         {
             panel.Orientation = Orientation.Vertical
         }
         this.body.AddChild(this.dialogHost)
         this.body.AddChild(this.cards)
         this.body.AddChild(this.matrixSlot)
+        this.body.AddChild(this.historySlot)
         this.subscriptions.push(this.vm.PropertyChanged(ReleasesViewModel.VersionsProperty).subscribe(() => this.Rebuild()))
+        this.subscriptions.push(this.vm.PropertyChanged(ReleasesViewModel.LedgerRowsProperty).subscribe(() => this.Rebuild()))
         this.host = new ScreenHost(this.Inputs())
         this.AddChild(new Section({ title: ReleasesView.Title, sub: ReleasesView.Sub, body: this.host }))
         this.Rebuild()
@@ -127,6 +136,8 @@ export class ReleasesView extends TenantViewBase
         this.CloseAdopt()
         this.grid?.dispose()
         this.grid = undefined
+        this.historyGrid?.dispose()
+        this.historyGrid = undefined
     }
 
     private get CanAdopt(): boolean
@@ -165,6 +176,7 @@ export class ReleasesView extends TenantViewBase
     {
         this.RebuildCards()
         this.RebuildMatrix()
+        this.RebuildHistory()
         this.host?.Update(this.Inputs())
     }
 
@@ -250,6 +262,38 @@ export class ReleasesView extends TenantViewBase
         grid.ItemsSource = [...matrix.rows]
         this.grid = grid
         this.matrixSlot.AddChild(new Section({ title: ReleasesView.MatrixTitle, body: grid }))
+    }
+
+    private RebuildHistory(): void
+    {
+        for (const child of [...this.historySlot.Children])
+        {
+            this.historySlot.RemoveChild(child)
+        }
+        this.historyGrid?.dispose()
+        this.historyGrid = undefined
+        const rows = this.vm.LedgerRows
+        if (rows.length === 0)
+        {
+            this.historySlot.AddChild(new Section({ title: ReleasesView.HistoryTitle, body: ReleasesView.Muted(ReleasesView.HistoryEmptyText) }))
+            return
+        }
+        const grid = new DataGrid()
+        grid.Columns.Add(this.LedgerColumn(ReleasesView.HistoryVersionHeader, r => r.version))
+        grid.Columns.Add(this.LedgerColumn(ReleasesView.HistoryActionHeader, r => r.actionLabel))
+        grid.Columns.Add(this.LedgerColumn(ReleasesView.HistoryWhenHeader, r => r.whenLabel))
+        grid.ItemsSource = [...rows]
+        this.historyGrid = grid
+        this.historySlot.AddChild(new Section({ title: ReleasesView.HistoryTitle, body: grid }))
+    }
+
+    private LedgerColumn(header: string, text: (row: LedgerRow) => string): DataGridTemplateColumn
+    {
+        const col = new DataGridTemplateColumn()
+        col.Header = header
+        col.Width = new GridLength(1, GridUnitType.Star)
+        col.CellTemplate = new DataTemplate(data => ReleasesView.Plain(text(data as LedgerRow)))
+        return col
     }
 
     private TemplateColumn(header: string, width: GridLength, cell: (row: MatrixRow) => Visual): DataGridTemplateColumn

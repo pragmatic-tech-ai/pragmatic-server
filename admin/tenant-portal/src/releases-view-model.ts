@@ -1,6 +1,6 @@
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import { EnvStatus, TenantEventType, VersionBadge } from './tenant-types.js'
-import type { HiveRolloutDto, IReleasesSource, ManifestDto, TenantEvent } from './tenant-types.js'
+import type { AdoptionLedgerDto, HiveRolloutDto, IReleasesSource, ManifestDto, TenantEvent } from './tenant-types.js'
 import { TenantApiError } from './tenant-api-client.js'
 
 export enum AdoptOutcome
@@ -25,12 +25,14 @@ export type MatrixCell = { version: string; running: boolean }
 export type MatrixRow = { environmentName: string; status: EnvStatus; cells: readonly MatrixCell[] }
 export type MatrixModel = { columns: readonly MatrixColumn[]; rows: readonly MatrixRow[] }
 export type EnvStepInfo = { environmentName: string; status: EnvStatus; kind: EnvStepKind; label: string }
+export type LedgerRow = { version: string; actionLabel: string; whenLabel: string }
 export type AdoptResult = { outcome: AdoptOutcome; message: string | undefined }
 
 // Offers, the runs-what matrix, per-environment wizard info, and the hive-wide adopt flow.
 export class ReleasesViewModel extends Observable
 {
     public static readonly VersionsProperty = 'Versions'
+    public static readonly LedgerRowsProperty = 'LedgerRows'
 
     public static readonly LabelOnVersion = 'Already on this version'
     public static readonly LabelWillRestart = 'Will restart'
@@ -39,11 +41,24 @@ export class ReleasesViewModel extends Observable
     private static readonly ImpactPrefix = 'Rolling to '
     private static readonly ImpactMiddle = ' restarts: '
     private static readonly ImpactNoEnvironments = ' (no environments are bound to this hive)'
+    private static readonly ActionLabels: Readonly<Record<string, string>> = {
+        gated: 'Gated',
+        ungated: 'Ungated',
+        withdrawn: 'Withdrawn',
+        restored: 'Restored',
+        selected: 'Selected as target',
+        adopted: 'Adopted',
+    }
+    private static readonly IsoSeparator = 'T'
+    private static readonly DateTimeSeparator = ' '
+    private static readonly UtcSuffix = ' UTC'
+    private static readonly DateTimeLength = 16
     private static readonly NameSeparator = ', '
     private static readonly ConflictStatus = 409
     private static readonly UnavailableStatus = 503
 
     private versions: readonly VersionRow[] = []
+    private ledgerRows: readonly LedgerRow[] = []
     private rollout: HiveRolloutDto = { targetVersion: undefined, environments: [] }
     private statuses = new Map<string, EnvStatus>()
     private running: string | undefined
@@ -60,6 +75,12 @@ export class ReleasesViewModel extends Observable
         return this.versions
     }
 
+    // The hive's adoption history, newest first (the server's order).
+    public get LedgerRows(): readonly LedgerRow[]
+    {
+        return this.ledgerRows
+    }
+
     public get RunningVersion(): string | undefined
     {
         return this.running
@@ -74,10 +95,11 @@ export class ReleasesViewModel extends Observable
     public async Load(): Promise<void>
     {
         const generation = ++this.generation
-        const [manifests, rollout, environments] = await Promise.all([
+        const [manifests, rollout, environments, ledger] = await Promise.all([
             this.source.ListManifests(),
             this.source.GetRollout(this.hiveId),
             this.source.ListEnvironments(),
+            this.source.ListLedger(this.hiveId),
         ])
         if (generation !== this.generation)
         {
@@ -101,6 +123,9 @@ export class ReleasesViewModel extends Observable
         this.running = currentIndex >= 0 ? sorted[currentIndex]!.id : undefined
         this.rollout = rollout
         this.statuses = new Map(environments.map(e => [e.name, e.status]))
+        const oldLedger = this.ledgerRows
+        this.ledgerRows = ledger.map(e => ReleasesViewModel.RowOf(e))
+        this.RaisePropertyChanged(ReleasesViewModel.LedgerRowsProperty, oldLedger, this.ledgerRows)
         this.RaisePropertyChanged(ReleasesViewModel.VersionsProperty, old, this.versions)
     }
 
@@ -201,6 +226,26 @@ export class ReleasesViewModel extends Observable
             }
         }
         return { outcome: AdoptOutcome.Unknown, message }
+    }
+
+    private static RowOf(entry: AdoptionLedgerDto): LedgerRow
+    {
+        return {
+            version: entry.version,
+            actionLabel: ReleasesViewModel.ActionLabels[entry.action] ?? entry.action,
+            whenLabel: ReleasesViewModel.WhenOf(entry.at),
+        }
+    }
+
+    // UTC "YYYY-MM-DD HH:MM" for a parseable timestamp; the raw text otherwise.
+    private static WhenOf(at: string): string
+    {
+        const ms = Date.parse(at)
+        if (Number.isNaN(ms))
+        {
+            return at
+        }
+        return new Date(ms).toISOString().replace(ReleasesViewModel.IsoSeparator, ReleasesViewModel.DateTimeSeparator).slice(0, ReleasesViewModel.DateTimeLength) + ReleasesViewModel.UtcSuffix
     }
 
     private static LabelFor(kind: EnvStepKind): string

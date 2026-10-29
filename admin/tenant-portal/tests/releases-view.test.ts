@@ -8,7 +8,7 @@ import { AdoptWizard } from '../src/adopt-wizard.js'
 import { ReleasesView } from '../src/releases-view.js'
 import { ScreenState } from '../src/kit/index.js'
 import { EnvStatus, EnvType, Template } from '../src/tenant-types.js'
-import type { AdminCapabilitiesDto, EnvironmentDto, HiveRolloutDto, IReleasesSource, ITenantNavigator, ManifestDto } from '../src/tenant-types.js'
+import type { AdminCapabilitiesDto, AdoptionLedgerDto, EnvironmentDto, HiveRolloutDto, IReleasesSource, ITenantNavigator, ManifestDto } from '../src/tenant-types.js'
 
 class Fixtures
 {
@@ -71,6 +71,7 @@ class FakeSource implements IReleasesSource
     public async GetRollout(_hiveId: string): Promise<HiveRolloutDto> { return this.Rollout }
     public async ListEnvironments(): Promise<EnvironmentDto[]> { return this.Rollout.environments.map(e => Fixtures.Env(e.environmentName)) }
     public async SelectTarget(_hiveId: string, _version: string): Promise<void> { }
+    public async ListLedger(_hiveId: string): Promise<readonly AdoptionLedgerDto[]> { return [] }
 }
 
 class Nav implements ITenantNavigator

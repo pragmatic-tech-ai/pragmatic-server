@@ -85,6 +85,9 @@ export type RolloutEnvDto = { environmentName: string; runningImage: string | un
 
 export type HiveRolloutDto = { targetVersion: string | undefined; environments: RolloutEnvDto[] }
 
+// One adoption-ledger entry as the tenant surface returns it (newest first); action is a plain string on the wire.
+export type AdoptionLedgerDto = { version: string; action: string; at: string; hiveId?: string }
+
 // The slice of TenantApiClient the Releases page and Adopt wizard need.
 export interface IReleasesSource
 {
@@ -92,6 +95,7 @@ export interface IReleasesSource
     GetRollout(hiveId: string): Promise<HiveRolloutDto>
     ListEnvironments(): Promise<EnvironmentDto[]>
     SelectTarget(hiveId: string, version: string): Promise<void>
+    ListLedger(hiveId: string): Promise<readonly AdoptionLedgerDto[]>
 }
 
 // The slice of TenantApiClient the Overview home needs.

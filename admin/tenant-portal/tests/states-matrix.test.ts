@@ -16,7 +16,7 @@ import type { ISettingsSource } from '../src/settings-view-model.js'
 import type { ISecurityModelEnvSource } from '../src/security-model-view-model.js'
 import { TenantApiError } from '../src/tenant-api-client.js'
 import { EnvStatus, EnvType, Template } from '../src/tenant-types.js'
-import type { AdminCapabilitiesDto, CreateEnvironmentParams, EnvironmentDto, HiveDto, HiveHealthDto, HiveRolloutDto, IConnectionSource, IEnvironmentsSource, IOverviewSource, IReleasesSource, ITenantNavigator, ManifestDto, SecurityModelDto, TenantProfileDto } from '../src/tenant-types.js'
+import type { AdminCapabilitiesDto, AdoptionLedgerDto, CreateEnvironmentParams, EnvironmentDto, HiveDto, HiveHealthDto, HiveRolloutDto, IConnectionSource, IEnvironmentsSource, IOverviewSource, IReleasesSource, ITenantNavigator, ManifestDto, SecurityModelDto, TenantProfileDto } from '../src/tenant-types.js'
 
 // Drives every ScreenHost-backed full-page view through each ScreenState it genuinely reaches.
 class Fixtures
@@ -139,6 +139,7 @@ class ReleasesSource implements IReleasesSource
     public async GetRollout(_hiveId: string): Promise<HiveRolloutDto> { return this.Rollout }
     public async ListEnvironments(): Promise<EnvironmentDto[]> { return this.Rollout.environments.map(e => Fixtures.Env(e.environmentName)) }
     public async SelectTarget(_hiveId: string, _version: string): Promise<void> { }
+    public async ListLedger(_hiveId: string): Promise<readonly AdoptionLedgerDto[]> { return [] }
 }
 
 class ConnectionSource implements IConnectionSource
