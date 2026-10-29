@@ -17,6 +17,8 @@ export class AdoptionLedgerRegistry extends JsonRecordStore<AdoptionLedgerRecord
 {
     private static readonly RootKey = 'adoptionLedger'
     private static readonly MaxEntries = 2000
+    private static readonly WithdrawnAction: LedgerAction = 'withdrawn'
+    private static readonly RestoredAction: LedgerAction = 'restored'
 
     public constructor(filePath: string)
     {
@@ -47,6 +49,18 @@ export class AdoptionLedgerRegistry extends JsonRecordStore<AdoptionLedgerRecord
     public ForTenant(tenantId: string, limit: number): readonly AdoptionLedgerRecord[]
     {
         return this.Newest(r => r.tenantId === tenantId, limit)
+    }
+
+    /** Tenant-scoped events plus global withdrawn/restored events, only for versions this tenant encountered. */
+    public ForTenantIncludingVersionEvents(tenantId: string, limit: number): readonly AdoptionLedgerRecord[]
+    {
+        const all = this.List()
+        const tenantRecs = all.filter(r => r.tenantId === tenantId)
+        const tenantVersions = new Set(tenantRecs.map(r => r.version))
+        const versionRecs = all.filter(r => r.tenantId === undefined
+            && (r.action === AdoptionLedgerRegistry.WithdrawnAction || r.action === AdoptionLedgerRegistry.RestoredAction)
+            && tenantVersions.has(r.version))
+        return [...tenantRecs, ...versionRecs].sort((a, b) => b.at.localeCompare(a.at)).slice(0, limit)
     }
 
     private Newest(match: (r: AdoptionLedgerRecord) => boolean, limit: number): readonly AdoptionLedgerRecord[]

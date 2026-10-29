@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { AdoptionLedgerRegistry } from '../adoption-ledger-record.js'
+import { AdoptionLedgerRegistry, type AdoptionLedgerRecord } from '../adoption-ledger-record.js'
 
 class Fx
 {
@@ -13,6 +13,9 @@ class Fx
     public static readonly TenantA = 'tenant-a'
     public static readonly TenantB = 'tenant-b'
     public static readonly TickMs = 2
+    public static readonly Epoch = '2026-02-01T00:00:00.000Z'
+    public static readonly SeedStepMs = 1000
+    public static readonly Limit = 50
 
     public static async Run(body: (ledger: AdoptionLedgerRegistry, dir: string) => Promise<void>): Promise<void>
     {
@@ -27,6 +30,12 @@ class Fx
         {
             await rm(dir, { recursive: true, force: true })
         }
+    }
+
+    public static async Seed(ledger: AdoptionLedgerRegistry, seq: number, rec: Omit<AdoptionLedgerRecord, 'id' | 'at'>): Promise<void>
+    {
+        const at = new Date(Date.parse(Fx.Epoch) + seq * Fx.SeedStepMs).toISOString()
+        await ledger.Put({ ...rec, id: 'seed-' + seq, at })
     }
 
     public static Tick(): Promise<void>
@@ -87,5 +96,63 @@ test('Append evicts the oldest entries beyond the cap', async () =>
         assert.equal(ledger.Get('seed-0'), undefined)
         assert.ok(ledger.Get('seed-1') !== undefined)
         assert.equal(ledger.ForHive(Fx.HiveA, 1)[0]?.version, 'newest')
+    })
+})
+
+test('ForTenantIncludingVersionEvents never returns another tenant records', async () =>
+{
+    await Fx.Run(async ledger =>
+    {
+        await Fx.Seed(ledger, 1, { tenantId: Fx.TenantA, version: 'v1', action: 'gated' })
+        await Fx.Seed(ledger, 2, { tenantId: Fx.TenantB, version: 'v2', action: 'gated' })
+        const got = ledger.ForTenantIncludingVersionEvents(Fx.TenantA, Fx.Limit)
+        assert.deepEqual(got.map(r => r.version), ['v1'])
+    })
+})
+
+test('ForTenantIncludingVersionEvents includes global withdraws only for versions the tenant saw', async () =>
+{
+    await Fx.Run(async ledger =>
+    {
+        await Fx.Seed(ledger, 1, { tenantId: Fx.TenantA, version: 'v1', action: 'adopted' })
+        await Fx.Seed(ledger, 2, { version: 'v1', action: 'withdrawn' })
+        await Fx.Seed(ledger, 3, { version: 'v9', action: 'withdrawn' })
+        const got = ledger.ForTenantIncludingVersionEvents(Fx.TenantA, Fx.Limit)
+        assert.deepEqual(got.map(r => r.version + ':' + r.action), ['v1:withdrawn', 'v1:adopted'])
+    })
+})
+
+test('ForTenantIncludingVersionEvents includes restored events', async () =>
+{
+    await Fx.Run(async ledger =>
+    {
+        await Fx.Seed(ledger, 1, { tenantId: Fx.TenantA, version: 'v1', action: 'adopted' })
+        await Fx.Seed(ledger, 2, { version: 'v1', action: 'restored' })
+        const got = ledger.ForTenantIncludingVersionEvents(Fx.TenantA, Fx.Limit)
+        assert.ok(got.some(r => r.action === 'restored' && r.version === 'v1'))
+    })
+})
+
+test('ForTenantIncludingVersionEvents is newest-first and honors the limit', async () =>
+{
+    await Fx.Run(async ledger =>
+    {
+        await Fx.Seed(ledger, 1, { tenantId: Fx.TenantA, version: 'v1', action: 'gated' })
+        await Fx.Seed(ledger, 2, { version: 'v1', action: 'withdrawn' })
+        await Fx.Seed(ledger, 3, { tenantId: Fx.TenantA, version: 'v1', action: 'adopted' })
+        await Fx.Seed(ledger, 4, { version: 'v1', action: 'restored' })
+        const all = ledger.ForTenantIncludingVersionEvents(Fx.TenantA, Fx.Limit)
+        assert.deepEqual(all.map(r => r.action), ['restored', 'adopted', 'withdrawn', 'gated'])
+        const two = ledger.ForTenantIncludingVersionEvents(Fx.TenantA, 2)
+        assert.deepEqual(two.map(r => r.action), ['restored', 'adopted'])
+    })
+})
+
+test('ForTenantIncludingVersionEvents returns empty for an unknown tenant', async () =>
+{
+    await Fx.Run(async ledger =>
+    {
+        await Fx.Seed(ledger, 1, { version: 'v1', action: 'withdrawn' })
+        assert.deepEqual(ledger.ForTenantIncludingVersionEvents('nobody', Fx.Limit), [])
     })
 })
