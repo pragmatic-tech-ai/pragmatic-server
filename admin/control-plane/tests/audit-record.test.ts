@@ -15,7 +15,7 @@ class AuditFixture
     public static readonly Path = '/admin/x'
     public static readonly Cap = 1000
     public static readonly Extra = 5
-    public static readonly Anon = '(anonymous)'
+    public static readonly Anon = AuditRegistry.AnonymousActor
     public static readonly BaseMs = Date.UTC(2026, 0, 1)
 
     public static Entry(n: number): Omit<AuditRecord, 'id'>
