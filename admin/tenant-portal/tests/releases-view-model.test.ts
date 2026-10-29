@@ -213,6 +213,31 @@ describe('ReleasesViewModel ledger', () =>
         assert.equal(vm.LedgerRows[0]!.actionLabel, 'quarantined')
     })
 
+    it('falls back to the raw text for an unparseable timestamp', async () =>
+    {
+        const src = new FakeSource()
+        src.Ledger = [{ version: 'v1', action: 'adopted', at: 'not-a-date' }]
+        const vm = await Fx.Vm(src)
+        assert.equal(vm.LedgerRows[0]!.whenLabel, 'not-a-date')
+    })
+
+    it('raises LedgerRowsProperty on Load', async () =>
+    {
+        const vm = new ReleasesViewModel(new FakeSource(), 'h1')
+        let fired = 0
+        vm.PropertyChanged(ReleasesViewModel.LedgerRowsProperty).subscribe(() => { fired++ })
+        await vm.Load()
+        assert.equal(fired, 1)
+    })
+
+    it('preserves the server order', async () =>
+    {
+        const src = new FakeSource()
+        src.Ledger = ['3', '2', '1'].map(version => ({ version, action: 'adopted', at: '2026-05-01T10:30:00.000Z' }))
+        const vm = await Fx.Vm(src)
+        assert.deepEqual(vm.LedgerRows.map(r => r.version), ['3', '2', '1'])
+    })
+
     it('has no rows for an empty ledger', async () =>
     {
         const vm = await Fx.Vm(new FakeSource())

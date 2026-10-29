@@ -68,7 +68,6 @@ export class ReleasesView extends TenantViewBase
         this.body.AddChild(this.matrixSlot)
         this.body.AddChild(this.historySlot)
         this.subscriptions.push(this.vm.PropertyChanged(ReleasesViewModel.VersionsProperty).subscribe(() => this.Rebuild()))
-        this.subscriptions.push(this.vm.PropertyChanged(ReleasesViewModel.LedgerRowsProperty).subscribe(() => this.Rebuild()))
         this.host = new ScreenHost(this.Inputs())
         this.AddChild(new Section({ title: ReleasesView.Title, sub: ReleasesView.Sub, body: this.host }))
         this.Rebuild()
