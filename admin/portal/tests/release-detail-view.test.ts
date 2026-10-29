@@ -234,7 +234,11 @@ describe('ReleaseDetailView', () =>
     {
         const view = new ReleaseDetailView(Fixtures.Vm(), () => undefined, Fixtures.Full(), () => Promise.reject(new Error('boom')))
         assert.equal(view.ErrorLine, '')
-        await assert.doesNotReject((view as unknown as { Toggle(): Promise<void> }).Toggle())
+        Fixtures.Action(view).Press()
+        view.ReasonBox!.Text = 'x'
+        await assert.doesNotReject((view as unknown as { Confirm(): Promise<void> }).Confirm())
+        assert.equal(view.ReasonPanelOpen, true)
+        assert.equal(view.ReasonBox?.Text, 'x')
         assert.equal(view.ErrorLine, 'Could not change the version state. Please try again.')
     })
 
@@ -294,6 +298,7 @@ describe('ReleaseDetailView', () =>
         assert.equal(view.ReasonPanelOpen, false)
         assert.equal(calls.length, 1)
         assert.equal(calls[0][0], false)
+        assert.equal(calls[0][1], undefined)
     })
 
     it('withdrawal provenance shows in the banner, generic copy remains for old records', () =>
@@ -307,5 +312,17 @@ describe('ReleaseDetailView', () =>
         const old = Fixtures.Vm({ withdrawn: true })
         assert.ok(old.WithdrawnBanner.text.startsWith('This version is withdrawn.'))
         assert.ok(!old.WithdrawnBanner.text.includes('Reason:'))
+    })
+
+    it('a double confirm fires the callback once while in flight', async () =>
+    {
+        let calls = 0
+        const view = new ReleaseDetailView(Fixtures.Vm(), () => undefined, Fixtures.Full(), () => { calls++; return new Promise<void>(r => setTimeout(r, 10)) })
+        Fixtures.Action(view).Press()
+        view.ReasonBox!.Text = 'x'
+        view.ConfirmAction!.Press()
+        view.ConfirmAction!.Press()
+        await new Promise(r => setTimeout(r, 30))
+        assert.equal(calls, 1)
     })
 })

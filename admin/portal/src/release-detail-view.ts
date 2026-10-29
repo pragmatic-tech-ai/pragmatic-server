@@ -44,6 +44,7 @@ export class ReleaseDetailView extends StackPanel
     private errorText: TextBlock | undefined
     // View-local state of the inline reason sub-panel; fresh visuals per build.
     private reasonOpen = false
+    private withdrawing = false
     private reasonBox: TextBox | undefined
     private confirmAction: Act | undefined
     private cancelButton: KeyActivatedButton | undefined
@@ -129,8 +130,19 @@ export class ReleaseDetailView extends StackPanel
         {
             return
         }
-        this.reasonOpen = false
-        await this.Toggle(true, reason)
+        if (this.withdrawing)
+        {
+            return
+        }
+        this.withdrawing = true
+        try
+        {
+            await this.Toggle(true, reason)
+        }
+        finally
+        {
+            this.withdrawing = false
+        }
     }
 
     private BuildReasonPanel(): Visual
