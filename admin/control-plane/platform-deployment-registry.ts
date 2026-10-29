@@ -1,5 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
+import { InfraMode } from './platform-records.js'
 import type { HiveRecord } from './platform-records.js'
+import { KindHiveOrchestrator } from './kind-hive-orchestrator.js'
 import type { ManifestRecord, ManifestRegistry } from './manifest-record.js'
 import type { GatingRecord, GatingRegistry } from './gating-record.js'
 import type { SelectionRecord, SelectionRegistry } from './selection-record.js'
@@ -419,6 +421,36 @@ export class PlatformDeploymentRegistry
         catch (error)
         {
             console.error(PlatformDeploymentRegistry.LedgerFailureMessage, (error as Error).name)
+        }
+    }
+
+    /**
+     * Hive-scoped teardown of the hive's cluster, for the delete path. Only a Provision-mode kind hive has a cluster to
+     * destroy; Attach-mode, unknown hives and unsupported backends are no-ops. A destroy failure propagates (fail-closed).
+     */
+    public async DestroyHiveCluster(hiveId: string): Promise<void>
+    {
+        const hive = this.hives.GetHive(hiveId)
+        if (hive === undefined || hive.cluster.mode !== InfraMode.Provision)
+        {
+            return
+        }
+        let orchestrator
+        try
+        {
+            orchestrator = this.orchestrators.For(hive)
+        }
+        catch (error)
+        {
+            if (error instanceof UnsupportedBackendError)
+            {
+                return
+            }
+            throw error
+        }
+        if (orchestrator instanceof KindHiveOrchestrator)
+        {
+            await orchestrator.DestroyCluster()
         }
     }
 

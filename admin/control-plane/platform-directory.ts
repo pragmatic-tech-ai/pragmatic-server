@@ -221,11 +221,17 @@ export class PlatformDirectory
 
     public async DeleteHive(id: string): Promise<void>
     {
+        this.AssertHiveDeletable(id)
+        await this.hives.Remove(id)
+    }
+
+    /** Throws HiveHasEnvironmentsError while any environment is still placed on the hive. */
+    public AssertHiveDeletable(id: string): void
+    {
         if (this.environments.List().some(e => e.hiveId === id))
         {
             throw new HiveHasEnvironmentsError(id)
         }
-        await this.hives.Remove(id)
     }
 
     public ValidateHivePlacement(tenantId: string, hiveId: string): void

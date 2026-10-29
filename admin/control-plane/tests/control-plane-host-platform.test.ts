@@ -8,6 +8,10 @@ import { FakeProvisioning } from './fake-provisioning.js'
 import { ControlPlaneHost, type IEnvironmentService, type IGraphService } from '../control-plane-host.js'
 import { RolloutFixture } from './rollout-fixture.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
+import { KindHiveOrchestrator } from '../kind-hive-orchestrator.js'
+import type { IHiveOrchestrator } from '../hive-orchestrator.js'
+import type { IKind } from '../kind.js'
+import type { HiveRecord } from '../platform-records.js'
 import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSession, type OperatorSummary } from '../operator-identity.js'
 import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
@@ -102,11 +106,33 @@ class Harness
     }
 }
 
+class FakeKindFactory extends HiveOrchestratorFactory
+{
+    public readonly Deleted: string[] = []
+    public FailWith: Error | undefined
+
+    public override For(hive: HiveRecord): IHiveOrchestrator
+    {
+        const kind = {
+            DeleteCluster: async (name: string) =>
+            {
+                if (this.FailWith)
+                {
+                    throw this.FailWith
+                }
+                this.Deleted.push(name)
+            }
+        } as unknown as IKind
+        return new KindHiveOrchestrator(kind, 'hive-' + hive.id, undefined as unknown as IHiveOrchestrator)
+    }
+}
+
 describe('ControlPlaneHost platform routes', () =>
 {
     let host: ControlPlaneHost
     let fake: FakeProvisioning
     let parent: string
+    let factory: FakeKindFactory
 
     beforeEach(async () =>
     {
@@ -120,7 +146,7 @@ describe('ControlPlaneHost platform routes', () =>
             new HiveRegistry(join(parent, 'hives.json')),
             { List: () => [] })
         await directory.Load()
-        const factory = new HiveOrchestratorFactory()
+        factory = new FakeKindFactory()
         host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, await RolloutFixture.Create(parent, directory, factory), (fake = new FakeProvisioning(directory)).AsService(), RolloutFixture.Observations(parent))
         await host.Listen(0, '127.0.0.1')
     })
@@ -191,6 +217,30 @@ describe('ControlPlaneHost platform routes', () =>
         assert.equal((await Harness.Send(host, 'DELETE', '/api/hives/h1')).status, 200)
         assert.equal((await Harness.Send(host, 'GET', '/api/hives/h1')).status, 404)
         assert.equal((await Harness.Send(host, 'POST', '/api/hives', { ...hive, cluster: { backend: 'bogus', mode: 'provision' } })).status, 400)
+    })
+
+    it('deleting a Provision-mode hive destroys its cluster; a destroy failure leaves the record', async () =>
+    {
+        await Harness.Send(host, 'POST', '/api/clients', { id: 'acme', displayName: 'Acme' })
+        await Harness.Send(host, 'POST', '/api/tenants', { id: 't1', clientId: 'acme', displayName: 'T', ownerEmail: 'o@x.test' })
+        const hive = { id: 'h1', tenantId: 't1', displayName: 'H', cluster: { backend: 'local', mode: 'provision' }, registry: { mode: 'provision' } }
+        await Harness.Send(host, 'POST', '/api/hives', hive)
+        factory.FailWith = new Error('kind down')
+        assert.equal((await Harness.Send(host, 'DELETE', '/api/hives/h1')).status, 500)
+        assert.equal((await Harness.Send(host, 'GET', '/api/hives/h1')).status, 200)
+        factory.FailWith = undefined
+        assert.equal((await Harness.Send(host, 'DELETE', '/api/hives/h1')).status, 200)
+        assert.deepEqual(factory.Deleted, ['hive-h1'])
+        assert.equal((await Harness.Send(host, 'GET', '/api/hives/h1')).status, 404)
+    })
+
+    it('deleting an Attach-mode hive never destroys a cluster', async () =>
+    {
+        await Harness.Send(host, 'POST', '/api/clients', { id: 'acme', displayName: 'Acme' })
+        await Harness.Send(host, 'POST', '/api/tenants', { id: 't1', clientId: 'acme', displayName: 'T', ownerEmail: 'o@x.test' })
+        await Harness.Send(host, 'POST', '/api/hives', { id: 'h2', tenantId: 't1', displayName: 'H', cluster: { backend: 'local', mode: 'attach' }, registry: { mode: 'attach' } })
+        assert.equal((await Harness.Send(host, 'DELETE', '/api/hives/h2')).status, 200)
+        assert.deepEqual(factory.Deleted, [])
     })
 
     it('POST /api/provision as Full operator -> 201 with records and both secrets', async () =>

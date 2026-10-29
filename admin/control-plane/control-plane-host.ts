@@ -1423,6 +1423,10 @@ export class ControlPlaneHost
                 await this.directory.DeleteTenant(id)
                 break
             default:
+                // Fail-closed: destroy the cluster first so a failure leaves the record for retry. The environments guard
+                // runs before the destroy so a non-empty hive never loses its cluster.
+                this.directory.AssertHiveDeletable(id)
+                await this.deployments.DestroyHiveCluster(id)
                 await this.directory.DeleteHive(id)
                 break
         }
