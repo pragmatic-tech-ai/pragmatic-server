@@ -5,7 +5,7 @@ import { Banner, BannerTone, DataTable, PageHeader, ScreenHost, Section, TableDe
 import type { ScreenHostInputs, TableColumn } from './kit/index.js'
 import type { IPortalNavigator, IPortalView } from './portal-types.js'
 import { ReleasePolicyViewModel } from './release-policy-view-model.js'
-import type { GatedRow, TargetRow } from './release-policy-view-model.js'
+import type { GatedRow, RolloutRow, TargetRow } from './release-policy-view-model.js'
 
 // Release policy: the current gating allowlist and per-hive target selections. Read-only; observes only.
 export class ReleasePolicyView extends StackPanel implements IPortalView
@@ -15,6 +15,14 @@ export class ReleasePolicyView extends StackPanel implements IPortalView
     private static readonly CurrentModelNote = 'This is the current gating and selection model: the versions each tenant may adopt, and the target each hive is set to. Scoped rules, channels, minimum versions, holds, and the adoption ledger are not yet available.'
     private static readonly GatedTitle = 'Gated versions'
     private static readonly TargetsTitle = 'Selected targets'
+    private static readonly RolloutTitle = 'Rollout status'
+    private static readonly EnvKey = 'env'
+    private static readonly RunningKey = 'running'
+    private static readonly StatusKey = 'status'
+    private static readonly EnvHeader = 'Environment'
+    private static readonly RunningHeader = 'Running'
+    private static readonly StatusHeader = 'Status'
+    private static readonly RolloutEmptyText = 'No rollout information yet.'
     private static readonly OwnerKey = 'owner'
     private static readonly VersionKey = 'version'
     private static readonly GatedKey = 'gated'
@@ -39,6 +47,7 @@ export class ReleasePolicyView extends StackPanel implements IPortalView
     // renders would double-parent them and throw on a second Refresh.
     private gatedSlot = new StackPanel()
     private targetSlot = new StackPanel()
+    private rolloutSlot = new StackPanel()
     private model: ReleasePolicyViewModel | undefined
     private nav: IPortalNavigator | undefined
 
@@ -70,6 +79,13 @@ export class ReleasePolicyView extends StackPanel implements IPortalView
         return child instanceof DataTable ? child as DataTable<GatedRow> : undefined
     }
 
+    // Test seam: the currently shown rollout-status table (populated state only).
+    public get RolloutTable(): DataTable<RolloutRow> | undefined
+    {
+        const child = [...this.rolloutSlot.Children][0]
+        return child instanceof DataTable ? child as DataTable<RolloutRow> : undefined
+    }
+
     // Test seam: the currently shown selected-targets table (populated state only).
     public get TargetTable(): DataTable<TargetRow> | undefined
     {
@@ -90,20 +106,21 @@ export class ReleasePolicyView extends StackPanel implements IPortalView
         }
         try
         {
-            const [gating, selections, tenants, clients, fleet] = await Promise.all([
+            const [gating, selections, tenants, clients, fleet, rollouts] = await Promise.all([
                 this.client.ListGating(),
                 this.client.ListSelections(),
                 this.client.ListTenants(),
                 this.client.ListClients(),
                 this.client.ListFleet(),
+                this.client.ListRollouts(),
             ])
             if (this.model === undefined)
             {
-                this.model = new ReleasePolicyViewModel(gating, selections, tenants, clients, fleet)
+                this.model = new ReleasePolicyViewModel(gating, selections, tenants, clients, fleet, rollouts)
             }
             else
             {
-                this.model.Update(gating, selections, tenants, clients, fleet)
+                this.model.Update(gating, selections, tenants, clients, fleet, rollouts)
             }
         }
         catch
@@ -132,11 +149,13 @@ export class ReleasePolicyView extends StackPanel implements IPortalView
     {
         this.gatedSlot = new StackPanel()
         this.targetSlot = new StackPanel()
+        this.rolloutSlot = new StackPanel()
     }
 
     private ShowModel(model: ReleasePolicyViewModel): void
     {
         const isEmpty = model.GatedRows.length === 0 && model.TargetRows.length === 0
+            && model.RolloutRows.length === 0
         if (isEmpty)
         {
             this.ClearSlots()
@@ -170,8 +189,19 @@ export class ReleasePolicyView extends StackPanel implements IPortalView
                 + ReleasePolicyView.SearchSeparator + r.targetVersion,
             emptyText: ReleasePolicyView.TargetsEmptyText,
         }))
+        this.rolloutSlot = new StackPanel()
+        this.rolloutSlot.Orientation = Orientation.Vertical
+        this.rolloutSlot.AddChild(new DataTable<RolloutRow>({
+            columns: ReleasePolicyView.RolloutColumns(),
+            rows: model.RolloutRows,
+            density: TableDensity.Dense,
+            searchText: r => r.hiveName + ReleasePolicyView.SearchSeparator + r.ownerLabel
+                + ReleasePolicyView.SearchSeparator + r.envName + ReleasePolicyView.SearchSeparator + r.statusLabel,
+            emptyText: ReleasePolicyView.RolloutEmptyText,
+        }))
         root.AddChild(new Section({ title: ReleasePolicyView.GatedTitle, body: this.gatedSlot }))
         root.AddChild(new Section({ title: ReleasePolicyView.TargetsTitle, body: this.targetSlot }))
+        root.AddChild(new Section({ title: ReleasePolicyView.RolloutTitle, body: this.rolloutSlot }))
         return root
     }
 
@@ -191,6 +221,18 @@ export class ReleasePolicyView extends StackPanel implements IPortalView
             { key: ReleasePolicyView.OwnerKey, header: ReleasePolicyView.OwnerHeader, cell: r => r.ownerLabel },
             { key: ReleasePolicyView.TargetKey, header: ReleasePolicyView.TargetHeader, cell: r => r.targetVersion },
             { key: ReleasePolicyView.SelectedKey, header: ReleasePolicyView.SelectedHeader, cell: r => r.selectedLabel },
+        ]
+    }
+
+    private static RolloutColumns(): TableColumn<RolloutRow>[]
+    {
+        return [
+            { key: ReleasePolicyView.HiveKey, header: ReleasePolicyView.HiveHeader, cell: r => r.hiveName, sort: (a, b) => a.hiveName.localeCompare(b.hiveName) },
+            { key: ReleasePolicyView.OwnerKey, header: ReleasePolicyView.OwnerHeader, cell: r => r.ownerLabel },
+            { key: ReleasePolicyView.EnvKey, header: ReleasePolicyView.EnvHeader, cell: r => r.envName },
+            { key: ReleasePolicyView.TargetKey, header: ReleasePolicyView.TargetHeader, cell: r => r.targetLabel },
+            { key: ReleasePolicyView.RunningKey, header: ReleasePolicyView.RunningHeader, cell: r => r.runningLabel },
+            { key: ReleasePolicyView.StatusKey, header: ReleasePolicyView.StatusHeader, cell: r => r.statusLabel, tone: r => r.statusTone },
         ]
     }
 }
