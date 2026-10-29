@@ -154,6 +154,8 @@ describe('ControlPlaneHost rollout routes', () =>
         const restored = await Harness.Send(host, 'DELETE', '/api/manifests/1.0.0/withdrawn')
         assert.equal(restored.status, 200)
         assert.equal((JSON.parse(restored.body) as { withdrawn: boolean }).withdrawn, false)
+        const relisted = JSON.parse((await Harness.Send(host, 'GET', '/api/tenants/t1/manifests')).body) as { id: string }[]
+        assert.deepEqual(relisted.map(m => m.id), ['1.0.0'])
     })
 
     it('lists every published manifest on GET /api/manifests, including withdrawn, and [] when none', async () =>

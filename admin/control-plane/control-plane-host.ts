@@ -239,6 +239,8 @@ export class ControlPlaneHost
     private static readonly ImageRequiredMessage = 'image (non-empty string) is required'
     private static readonly NotesInvalidMessage = 'notes must be a string'
     private static readonly ChannelInvalidMessage = 'channel must be one of: stable, early'
+    private static readonly ChannelsInvalidMessage = 'channels must be an array of: stable, early'
+    private static readonly ChannelValues: readonly string[] = Object.values(Channel)
     private static readonly ReasonRequiredMessage = 'reason (non-empty string) is required'
     private static readonly StatusNoContent = 204
     private static readonly IdRequiredMessage = 'id (non-empty string) is required'
@@ -937,7 +939,7 @@ export class ControlPlaneHost
             return true
         }
         const channel = body.channel
-        if (channel !== undefined && !Object.values(Channel).includes(channel as Channel))
+        if (channel !== undefined && !ControlPlaneHost.ChannelValues.includes(channel as string))
         {
             PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ChannelInvalidMessage })
             return true
@@ -995,10 +997,9 @@ export class ControlPlaneHost
             {
                 return true
             }
-            const valid = Object.values(Channel) as unknown[]
-            if (!Array.isArray(body.channels) || !body.channels.every(c => valid.includes(c)))
+            if (!Array.isArray(body.channels) || !body.channels.every(c => ControlPlaneHost.ChannelValues.includes(c as string)))
             {
-                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ChannelInvalidMessage })
+                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ChannelsInvalidMessage })
                 return true
             }
             PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, await this.deployments.SetChannels(id, body.channels as Channel[]))
