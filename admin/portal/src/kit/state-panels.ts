@@ -116,6 +116,7 @@ export interface EmptyStateConfig
     glyph?: KitGlyph
     title: string
     action?: Visual
+    secondaryAction?: Visual
 }
 
 export interface ErrorStateConfig
@@ -183,6 +184,10 @@ export class EmptyStatePanel extends StatePanelBase
         if (this.config.action !== undefined)
         {
             this.AddChild(this.config.action)
+        }
+        if (this.config.secondaryAction !== undefined)
+        {
+            this.AddChild(this.config.secondaryAction)
         }
     }
 }

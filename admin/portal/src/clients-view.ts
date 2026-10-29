@@ -10,6 +10,7 @@ import { Act, ActVariant, KeyActivatedButton, PageHeader, Section } from './kit/
 import type { TableColumn } from './kit/index.js'
 import { OperatorContext } from './operator-context.js'
 import type { ClientDto } from './portal-types.js'
+import { ProvisionWizardView } from './provision-wizard-view.js'
 import { SectionContainerView, SectionState } from './section-container-view.js'
 import type { SectionLabels } from './section-container-view.js'
 
@@ -29,6 +30,7 @@ export class ClientsView extends SectionContainerView<ClientListRow>
     private static readonly ListTitle = 'Clients'
     private static readonly CreateTitle = 'New client'
     private static readonly CreateActionLabel = 'Create client'
+    private static readonly ProvisionActionLabel = 'Provision customer'
     private static readonly SubmitLabel = 'Create'
     private static readonly CancelLabel = 'Cancel'
     private static readonly IdPlaceholder = 'Client id'
@@ -54,6 +56,8 @@ export class ClientsView extends SectionContainerView<ClientListRow>
 
     private model: ClientsViewModel | undefined
     private createAction: Act | undefined
+    private provisionAction: Act | undefined
+    private wizardScreen: ProvisionWizardView | undefined
     private errorText: TextBlock | undefined
     private submitAction: Act | undefined
     private readonly createModel: CreateClientViewModel
@@ -80,6 +84,24 @@ export class ClientsView extends SectionContainerView<ClientListRow>
     public get SubmitAction(): Act | undefined
     {
         return this.submitAction
+    }
+
+    // Test seam: the Provision customer action (visible-but-disabled for an Observer).
+    public get ProvisionAction(): Act | undefined
+    {
+        return this.provisionAction
+    }
+
+    // Test seam: the provisioning wizard while it is the swapped-in screen.
+    public get WizardScreen(): ProvisionWizardView | undefined
+    {
+        return this.wizardScreen
+    }
+
+    // Wizard completion / cancel: back to the list.
+    public ReturnFromWizard(): void
+    {
+        void this.ShowList()
     }
 
     public ShowCreate(): void
@@ -132,6 +154,19 @@ export class ClientsView extends SectionContainerView<ClientListRow>
     {
         this.createAction = new Act(this.operator.MutatingAct(ClientsView.CreateActionLabel, () => this.ShowCreate()))
         return this.createAction
+    }
+
+    protected ListSecondaryAction(): Act | undefined
+    {
+        this.provisionAction = new Act(this.operator.MutatingAct(ClientsView.ProvisionActionLabel, () => this.ShowProvision()))
+        return this.provisionAction
+    }
+
+    private ShowProvision(): void
+    {
+        this.EnterCustom()
+        this.wizardScreen = new ProvisionWizardView(this.client, this.operator, () => this.ReturnFromWizard())
+        this.SwapScreen(this.wizardScreen)
     }
 
     private BuildCreate(): Visual

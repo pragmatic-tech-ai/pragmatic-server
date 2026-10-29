@@ -62,6 +62,11 @@ export abstract class SectionContainerView<TRow> extends StackPanel implements I
         return undefined
     }
 
+    protected ListSecondaryAction(): Act | undefined
+    {
+        return undefined
+    }
+
     // Test seam: the list screen's host.
     public get Host(): ScreenHost
     {
@@ -216,7 +221,7 @@ export abstract class SectionContainerView<TRow> extends StackPanel implements I
             allowed: true,
             error: false,
             isEmpty: this.rows.length === 0,
-            empty: { title: labels.emptyTitle, action: this.ListPrimaryAction() },
+            empty: { title: labels.emptyTitle, action: this.ListPrimaryAction(), secondaryAction: this.ListSecondaryAction() },
             errorConfig: { title: labels.errorTitle, onRetry: () => void this.Refresh() },
             content: () => this.BuildList(),
         }
@@ -231,6 +236,7 @@ export abstract class SectionContainerView<TRow> extends StackPanel implements I
             breadcrumb: labels.listBreadcrumb,
             title: labels.listTitle,
             primaryAction: this.ListPrimaryAction(),
+            secondaryAction: this.ListSecondaryAction(),
         }))
         // Fresh slot per render: the previous one is still parented to the previous root.
         this.listSlot = new StackPanel()

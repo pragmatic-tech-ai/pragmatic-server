@@ -4,6 +4,7 @@ import { Application } from '@pragmatic-tech-ai/mural/runtime'
 import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pragmatic'
 import type { ControlPlaneClient } from '../src/api-client.js'
 import { ClientsMode, ClientsView } from '../src/clients-view.js'
+import { ProvisionWizardView } from '../src/provision-wizard-view.js'
 import { OperatorContext } from '../src/operator-context.js'
 import { ErrorStatePanel, ScreenState } from '../src/kit/index.js'
 import type { ClientDto, FleetHiveDto, TenantDto } from '../src/portal-types.js'
@@ -218,5 +219,44 @@ describe('ClientsView', () =>
         assert.equal(view.Mode, ClientsMode.List)
         assert.equal(view.Host.State, ScreenState.Populated)
         assert.equal(view.Table?.Rows.length, 1)
+    })
+
+    it('offers Provision customer to a full operator', async () =>
+    {
+        const view = Fixtures.View([Fixtures.Client('a')], 'full')
+        await view.Refresh()
+        assert.ok(view.ProvisionAction)
+        assert.equal(view.ProvisionAction.Enabled, true)
+    })
+
+    it('shows Provision customer disabled for an observer and ignores a press', async () =>
+    {
+        const view = Fixtures.View([Fixtures.Client('a')], 'readonly')
+        await view.Refresh()
+        assert.ok(view.ProvisionAction)
+        assert.equal(view.ProvisionAction.Enabled, false)
+        view.ProvisionAction.Press()
+        assert.equal(view.WizardScreen, undefined)
+        assert.equal(view.Mode, ClientsMode.List)
+    })
+
+    it('opens the provisioning wizard when a full operator activates Provision customer', async () =>
+    {
+        const view = Fixtures.View([Fixtures.Client('a')], 'full')
+        await view.Refresh()
+        view.ProvisionAction?.Press()
+        assert.ok(view.WizardScreen instanceof ProvisionWizardView)
+        assert.equal(view.Mode, ClientsMode.Create)
+        assert.ok(Fixtures.Walk(view).includes(view.WizardScreen))
+    })
+
+    it('returns to the list when the wizard completes', async () =>
+    {
+        const view = Fixtures.View([Fixtures.Client('a')], 'full')
+        await view.Refresh()
+        view.ProvisionAction?.Press()
+        view.ReturnFromWizard()
+        await new Promise(r => setTimeout(r, 0))
+        assert.equal(view.Mode, ClientsMode.List)
     })
 })

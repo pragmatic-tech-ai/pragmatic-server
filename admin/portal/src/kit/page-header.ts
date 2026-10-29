@@ -14,6 +14,7 @@ export interface PageHeaderInputs
     title: string
     sub?: string
     primaryAction?: Act
+    secondaryAction?: Act
     tabs?: readonly PageTab[]
 }
 
@@ -74,6 +75,10 @@ export class PageHeader extends StackPanel
         if (this.inputs.primaryAction !== undefined)
         {
             titleRow.AddChild(this.inputs.primaryAction)
+        }
+        if (this.inputs.secondaryAction !== undefined)
+        {
+            titleRow.AddChild(this.inputs.secondaryAction)
         }
         this.AddChild(titleRow)
         if (this.inputs.sub !== undefined && this.inputs.sub !== '')
