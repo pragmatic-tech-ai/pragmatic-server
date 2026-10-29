@@ -5,7 +5,9 @@ import type { OperatorSummaryDto } from './portal-types.js'
 export interface OperatorRow
 {
     email: string
+    role: string
     roleLabel: string
+    disabled: boolean
 }
 
 // Settings screen: the signed-in operator's session plus the (role-gated) operator roster.
@@ -48,7 +50,7 @@ export class SettingsViewModel extends Observable
 
     private static Derive(summaries: readonly OperatorSummaryDto[]): OperatorRow[]
     {
-        const rows: OperatorRow[] = summaries.map(s => ({ email: s.email, roleLabel: OperatorContext.RoleLabel(s.role) }))
+        const rows: OperatorRow[] = summaries.map(s => ({ email: s.email, role: s.role, roleLabel: OperatorContext.RoleLabel(s.role), disabled: s.disabled === true }))
         // Array.prototype.sort is stable.
         return rows.sort((a, b) => a.email.localeCompare(b.email))
     }

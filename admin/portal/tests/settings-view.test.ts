@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { TextBlock, TextBox } from '@pragmatic-tech-ai/mural/basic'
 import { Application } from '@pragmatic-tech-ai/mural/runtime'
 import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pragmatic'
+import { ApiError } from '../src/api-client.js'
 import type { ControlPlaneClient } from '../src/api-client.js'
 import { OperatorContext } from '../src/operator-context.js'
 import { SettingsMode, SettingsView } from '../src/settings-view.js'
@@ -15,6 +16,35 @@ class FakeClient
     public Fail = false
     public Created: Array<[string, string, string]> = []
     public CreateError: Error | undefined
+    public Ops: string[] = []
+    public OpError: Error | undefined
+
+    public SetOperatorRole(email: string, role: string): Promise<void>
+    {
+        return this.Op(`role:${email}:${role}`)
+    }
+
+    public SetOperatorDisabled(email: string, disabled: boolean): Promise<void>
+    {
+        return this.Op(`disabled:${email}:${disabled}`)
+    }
+
+    public RevokeOperatorSessions(email: string): Promise<void>
+    {
+        return this.Op(`revoke:${email}`)
+    }
+
+    public ResetOperatorPassword(email: string): Promise<{ password: string }>
+    {
+        this.Ops.push(`reset:${email}`)
+        return this.OpError !== undefined ? Promise.reject(this.OpError) : Promise.resolve({ password: 'Temp-Secret-42' })
+    }
+
+    private Op(s: string): Promise<void>
+    {
+        this.Ops.push(s)
+        return this.OpError !== undefined ? Promise.reject(this.OpError) : Promise.resolve()
+    }
 
     public constructor(private readonly roster: OperatorSummaryDto[])
     {
@@ -320,5 +350,102 @@ describe('SettingsView', () =>
         await view.Refresh()
         view.EnterMode(SettingsMode.Invite)
         assert.equal(view.Mode, SettingsMode.Normal)
+    })
+
+    it('opens Manage for a roster operator and shows identity and status', async () =>
+    {
+        const client = new FakeClient([{ email: 'amy@example.com', role: 'full' }, { email: 'dan@example.com', role: 'readonly', disabled: true }])
+        const view = Fixtures.View(client, 'full')
+        await view.Refresh()
+        const texts = Fixtures.Texts(view)
+        assert.ok(texts.includes('Disabled') && texts.includes('Active'))
+        view.Table!.FocusRow(1)
+        view.Table!.ActivateFocused()
+        assert.equal(view.Mode, SettingsMode.Manage)
+        assert.equal(view.ManagedEmail, 'dan@example.com')
+        assert.ok(Fixtures.ActByLabel(view, 'Enable operator'))
+        assert.equal(Fixtures.ActByLabel(view, 'Disable operator'), undefined)
+    })
+
+    it('never opens Manage for an observer and makes no calls', async () =>
+    {
+        const client = Fixtures.Client()
+        const view = Fixtures.View(client, 'readonly')
+        await view.Refresh()
+        view.EnterMode(SettingsMode.Manage, 'amy@example.com')
+        assert.equal(view.Mode, SettingsMode.Normal)
+        assert.equal(view.ChangeRoleAct, undefined)
+        assert.equal(client.Calls, 0)
+        assert.deepEqual(client.Ops, [])
+    })
+
+    it('changes role, returns to normal and re-fetches', async () =>
+    {
+        const client = Fixtures.Client()
+        const view = Fixtures.View(client, 'full')
+        await view.Refresh()
+        view.EnterMode(SettingsMode.Manage, 'amy@example.com')
+        view.ManageRoleBox!.SelectedIndex = 1
+        Fixtures.Click(view.ChangeRoleAct)
+        await Fixtures.Tick()
+        assert.deepEqual(client.Ops, ['role:amy@example.com:readonly'])
+        assert.equal(view.Mode, SettingsMode.Normal)
+        assert.equal(client.Calls, 2)
+    })
+
+    it('reveals a reset password once, keeps it out of rows, and dismisses', async () =>
+    {
+        const client = Fixtures.Client()
+        const view = Fixtures.View(client, 'full')
+        await view.Refresh()
+        view.EnterMode(SettingsMode.Manage, 'amy@example.com')
+        Fixtures.Click(view.ResetPasswordAct)
+        await Fixtures.Tick()
+        assert.deepEqual(client.Ops, ['reset:amy@example.com'])
+        assert.equal(view.Mode, SettingsMode.Reveal)
+        assert.equal(view.Reveal?.Value, 'Temp-Secret-42')
+        assert.equal(Fixtures.Walk(view.Table).some(n => n instanceof TextBlock && n.Text.includes('Temp-Secret-42')), false)
+        const calls = client.Calls
+        await view.Refresh()
+        assert.equal(view.Mode, SettingsMode.Reveal)
+        assert.equal(client.Calls, calls)
+        view.Reveal!.ConfirmButton.Press()
+        await Fixtures.Tick()
+        assert.equal(view.Mode, SettingsMode.Normal)
+        assert.equal(view.Reveal, undefined)
+        assert.equal(Fixtures.Texts(view).includes('Temp-Secret-42'), false)
+        assert.equal(client.Calls, calls + 1)
+    })
+
+    it('toggles disabled and revokes sessions', async () =>
+    {
+        const client = Fixtures.Client()
+        const view = Fixtures.View(client, 'full')
+        await view.Refresh()
+        view.EnterMode(SettingsMode.Manage, 'zed@example.com')
+        Fixtures.Click(view.ToggleDisabledAct)
+        await Fixtures.Tick()
+        view.EnterMode(SettingsMode.Manage, 'zed@example.com')
+        Fixtures.Click(view.RevokeSessionsAct)
+        await Fixtures.Tick()
+        assert.deepEqual(client.Ops, ['disabled:zed@example.com:true', 'revoke:zed@example.com'])
+        assert.equal(view.Mode, SettingsMode.Normal)
+    })
+
+    it('shows a server 409 reason inline and keeps the panel open', async () =>
+    {
+        const client = Fixtures.Client()
+        client.OpError = new ApiError(409, 'cannot disable the last admin')
+        const view = Fixtures.View(client, 'full')
+        await view.Refresh()
+        view.EnterMode(SettingsMode.Manage, 'amy@example.com')
+        Fixtures.Click(view.ToggleDisabledAct)
+        await Fixtures.Tick()
+        assert.equal(view.ManageErrorLine, 'cannot disable the last admin')
+        assert.equal(view.Mode, SettingsMode.Manage)
+        Fixtures.Click(view.ResetPasswordAct)
+        await Fixtures.Tick()
+        assert.equal(view.Mode, SettingsMode.Manage)
+        assert.equal(view.ManageErrorLine, 'cannot disable the last admin')
     })
 })

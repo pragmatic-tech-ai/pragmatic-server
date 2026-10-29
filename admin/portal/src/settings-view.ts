@@ -3,7 +3,7 @@ import { ComboBox } from '@pragmatic-tech-ai/mural/framework'
 import type { Visual } from '@pragmatic-tech-ai/mural/runtime'
 import type { ControlPlaneClient } from './api-client.js'
 import { CreateOperatorViewModel } from './create-operator-view-model.js'
-import { Act, ComboOption, DataTable, DeniedStatePanel, KeyActivatedButton, KeyValueGrid, PageHeader, ScreenHost, Section, TableDensity } from './kit/index.js'
+import { Act, ComboOption, DataTable, DeniedStatePanel, KeyActivatedButton, KeyValueGrid, OnceSecret, PageHeader, PillTone, ScreenHost, Section, TableDensity } from './kit/index.js'
 import type { ScreenHostInputs, TableColumn } from './kit/index.js'
 import { OperatorContext } from './operator-context.js'
 import type { IPortalNavigator, IPortalView } from './portal-types.js'
@@ -14,6 +14,8 @@ export enum SettingsMode
 {
     Normal,
     Invite,
+    Manage,
+    Reveal,
 }
 
 // Settings: the signed-in operator's session and, for operators only, the operator roster and a Full-gated invite action.
@@ -44,6 +46,21 @@ export class SettingsView extends StackPanel implements IPortalView
     private static readonly RequiredText = 'Email, password and role are required.'
     private static readonly FailedText = 'Could not create the operator.'
     private static readonly BlankText = ''
+    private static readonly StatusKey = 'status'
+    private static readonly StatusHeader = 'Status'
+    private static readonly ActiveText = 'Active'
+    private static readonly DisabledText = 'Disabled'
+    private static readonly ManageTitle = 'Manage operator'
+    private static readonly BackLabel = 'Back'
+    private static readonly ChangeRoleLabel = 'Change role'
+    private static readonly ResetPasswordLabel = 'Reset password'
+    private static readonly DisableLabel = 'Disable operator'
+    private static readonly EnableLabel = 'Enable operator'
+    private static readonly RevokeLabel = 'Revoke sessions'
+    private static readonly ManageFailedText = 'The action failed.'
+    private static readonly RevealTitle = 'New password'
+    private static readonly RevealSecretLabel = 'Temporary password (shown once)'
+    private static readonly RevealConfirmLabel = 'I have saved the password'
     private static readonly LabelPath = 'Label'
 
     private readonly client: ControlPlaneClient
@@ -58,6 +75,14 @@ export class SettingsView extends StackPanel implements IPortalView
     private errorText: TextBlock | undefined
     private roleBox: ComboBox | undefined
     private inviteAct: Act | undefined
+    private manageEmail: string | undefined
+    private manageRoleBox: ComboBox | undefined
+    private manageError: TextBlock | undefined
+    private changeRoleAct: Act | undefined
+    private resetAct: Act | undefined
+    private toggleAct: Act | undefined
+    private revokeAct: Act | undefined
+    private reveal: OnceSecret | undefined
     private readonly createModel: CreateOperatorViewModel
     private nav: IPortalNavigator | undefined
 
@@ -116,10 +141,66 @@ export class SettingsView extends StackPanel implements IPortalView
         return this.inviteAct
     }
 
-    // Re-renders from the held model with no network fetch.
-    public EnterMode(mode: SettingsMode): void
+    // Test seam: the operator the Manage panel is open for.
+    public get ManagedEmail(): string | undefined
     {
-        this.mode = mode === SettingsMode.Invite && !this.operator.CanMutate ? SettingsMode.Normal : mode
+        return this.manageEmail
+    }
+
+    // Test seam: the role picker of the open Manage panel.
+    public get ManageRoleBox(): ComboBox | undefined
+    {
+        return this.manageRoleBox
+    }
+
+    // Test seam: the Manage panel's inline error line.
+    public get ManageErrorLine(): string
+    {
+        return this.manageError?.Text ?? SettingsView.BlankText
+    }
+
+    // Test seams: the four Manage actions (absent outside Manage mode).
+    public get ChangeRoleAct(): Act | undefined
+    {
+        return this.changeRoleAct
+    }
+
+    public get ResetPasswordAct(): Act | undefined
+    {
+        return this.resetAct
+    }
+
+    public get ToggleDisabledAct(): Act | undefined
+    {
+        return this.toggleAct
+    }
+
+    public get RevokeSessionsAct(): Act | undefined
+    {
+        return this.revokeAct
+    }
+
+    // Test seam: the one-time password reveal (present only in Reveal mode).
+    public get Reveal(): OnceSecret | undefined
+    {
+        return this.reveal
+    }
+
+    // Re-renders from the held model with no network fetch. Manage needs an operator email; Reveal is internal only.
+    public EnterMode(mode: SettingsMode, email?: string): void
+    {
+        let next = mode
+        if (!this.operator.CanMutate || mode === SettingsMode.Reveal)
+        {
+            next = SettingsMode.Normal
+        }
+        else if (mode === SettingsMode.Manage && (email === undefined || !this.model.Rows.some(r => r.email === email)))
+        {
+            next = SettingsMode.Normal
+        }
+        this.mode = next
+        this.manageEmail = next === SettingsMode.Manage ? email : undefined
+        this.reveal = undefined
         this.host.Update(this.Inputs(false, false, () => this.BuildContent(this.model)))
     }
 
@@ -174,6 +255,12 @@ export class SettingsView extends StackPanel implements IPortalView
         this.errorText = undefined
         this.roleBox = undefined
         this.inviteAct = undefined
+        this.manageRoleBox = undefined
+        this.manageError = undefined
+        this.changeRoleAct = undefined
+        this.resetAct = undefined
+        this.toggleAct = undefined
+        this.revokeAct = undefined
     }
 
     private BuildContent(model: SettingsViewModel): Visual
@@ -197,8 +284,9 @@ export class SettingsView extends StackPanel implements IPortalView
                 columns: SettingsView.Columns(),
                 rows: model.Rows,
                 density: TableDensity.Dense,
-                searchText: r => r.email + SettingsView.SearchSeparator + r.roleLabel,
+                searchText: r => r.email + SettingsView.SearchSeparator + r.roleLabel + SettingsView.SearchSeparator + SettingsView.StatusText(r),
                 emptyText: SettingsView.OperatorsEmptyText,
+                onOpen: r => this.EnterMode(SettingsMode.Manage, r.email),
             }))
             this.inviteAct = new Act(this.operator.MutatingAct(SettingsView.InviteLabel, () => this.EnterMode(SettingsMode.Invite)))
             this.operatorsSlot.AddChild(this.inviteAct)
@@ -207,6 +295,16 @@ export class SettingsView extends StackPanel implements IPortalView
             {
                 this.formSlot.AddChild(this.BuildInviteForm())
                 this.operatorsSlot.AddChild(new Section({ title: SettingsView.InviteFormTitle, body: this.formSlot }))
+            }
+            else if (this.mode === SettingsMode.Manage)
+            {
+                this.formSlot.AddChild(this.BuildManagePanel())
+                this.operatorsSlot.AddChild(new Section({ title: SettingsView.ManageTitle, body: this.formSlot }))
+            }
+            else if (this.mode === SettingsMode.Reveal && this.reveal !== undefined)
+            {
+                this.formSlot.AddChild(this.reveal)
+                this.operatorsSlot.AddChild(new Section({ title: SettingsView.RevealTitle, body: this.formSlot }))
             }
         }
         else
@@ -256,6 +354,123 @@ export class SettingsView extends StackPanel implements IPortalView
         return body
     }
 
+    private BuildManagePanel(): Visual
+    {
+        const row = this.model.Rows.find(r => r.email === this.manageEmail)
+        const body = new StackPanel()
+        body.Orientation = Orientation.Vertical
+        if (row === undefined)
+        {
+            return body
+        }
+        body.AddChild(new KeyValueGrid({
+            items: [
+                { key: SettingsView.EmailLabel, value: row.email },
+                { key: SettingsView.RoleLabelText, value: row.roleLabel },
+                { key: SettingsView.StatusHeader, value: SettingsView.StatusText(row) },
+            ],
+        }))
+        const roleBox = new ComboBox()
+        roleBox.Placeholder = SettingsView.RolePlaceholder
+        roleBox.DisplayMemberPath = SettingsView.LabelPath
+        const wires = [OperatorContext.FullWireRole, OperatorContext.ReadOnlyWireRole]
+        roleBox.ItemsSource = wires.map(w => new ComboOption(OperatorContext.RoleLabel(w), w))
+        roleBox.SelectedIndex = wires.indexOf(row.role)
+        this.manageRoleBox = roleBox
+        const errorText = new TextBlock()
+        this.manageError = errorText
+        const email = row.email
+        this.changeRoleAct = new Act(this.operator.MutatingAct(SettingsView.ChangeRoleLabel, () => void this.RunManage(
+            () => this.client.SetOperatorRole(email, (roleBox.SelectedItem as ComboOption | undefined)?.Value ?? row.role))))
+        this.resetAct = new Act(this.operator.MutatingAct(SettingsView.ResetPasswordLabel, () => void this.ResetPassword(email)))
+        this.toggleAct = new Act(this.operator.MutatingAct(
+            row.disabled ? SettingsView.EnableLabel : SettingsView.DisableLabel,
+            () => void this.RunManage(() => this.client.SetOperatorDisabled(email, !row.disabled))))
+        this.revokeAct = new Act(this.operator.MutatingAct(SettingsView.RevokeLabel, () => void this.RunManage(
+            () => this.client.RevokeOperatorSessions(email))))
+        const back = new KeyActivatedButton(() => this.EnterMode(SettingsMode.Normal))
+        const backText = new TextBlock()
+        backText.Text = SettingsView.BackLabel
+        back.Content = backText
+        body.AddChild(roleBox)
+        body.AddChild(this.changeRoleAct)
+        body.AddChild(this.resetAct)
+        body.AddChild(this.toggleAct)
+        body.AddChild(this.revokeAct)
+        body.AddChild(errorText)
+        body.AddChild(back)
+        return body
+    }
+
+    // Runs one Manage mutation; success returns to Normal and re-fetches, failure shows the server's reason and keeps the panel open.
+    private async RunManage(action: () => Promise<unknown>): Promise<void>
+    {
+        if (!this.operator.CanMutate)
+        {
+            return
+        }
+        try
+        {
+            await action()
+        }
+        catch (e)
+        {
+            this.ShowManageError(e)
+            return
+        }
+        this.mode = SettingsMode.Normal
+        this.manageEmail = undefined
+        await this.Refresh()
+    }
+
+    // The new password goes straight from the response into the OnceSecret Visual; nothing else keeps it.
+    private async ResetPassword(email: string): Promise<void>
+    {
+        if (!this.operator.CanMutate)
+        {
+            return
+        }
+        let result: { password: string }
+        try
+        {
+            result = await this.client.ResetOperatorPassword(email)
+        }
+        catch (e)
+        {
+            this.ShowManageError(e)
+            return
+        }
+        this.reveal = new OnceSecret({
+            label: SettingsView.RevealSecretLabel,
+            value: result.password,
+            confirmLabel: SettingsView.RevealConfirmLabel,
+            onConfirm: () => void this.DismissReveal(),
+        })
+        this.mode = SettingsMode.Reveal
+        this.manageEmail = undefined
+        this.host.Update(this.Inputs(false, false, () => this.BuildContent(this.model)))
+    }
+
+    private async DismissReveal(): Promise<void>
+    {
+        this.reveal = undefined
+        this.mode = SettingsMode.Normal
+        await this.Refresh()
+    }
+
+    private ShowManageError(e: unknown): void
+    {
+        if (this.manageError !== undefined)
+        {
+            this.manageError.Text = e instanceof Error && e.message.length > 0 ? e.message : SettingsView.ManageFailedText
+        }
+    }
+
+    private static StatusText(r: OperatorRow): string
+    {
+        return r.disabled ? SettingsView.DisabledText : SettingsView.ActiveText
+    }
+
     private async Submit(email: string, password: string, role: string): Promise<void>
     {
         if (this.errorText !== undefined)
@@ -296,6 +511,12 @@ export class SettingsView extends StackPanel implements IPortalView
                 sort: (a, b) => a.email.localeCompare(b.email),
             },
             { key: SettingsView.RoleKey, header: SettingsView.RoleHeader, cell: r => r.roleLabel },
+            {
+                key: SettingsView.StatusKey,
+                header: SettingsView.StatusHeader,
+                cell: r => SettingsView.StatusText(r),
+                tone: r => r.disabled ? PillTone.Danger : undefined,
+            },
         ]
     }
 }
