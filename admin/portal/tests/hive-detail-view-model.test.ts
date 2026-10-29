@@ -128,12 +128,12 @@ describe('HiveDetailViewModel', () =>
 
     it('defaults the hive policy when none is supplied', () =>
     {
-        assert.deepEqual(Fx.Vm(Fx.Hive(null, [])).HivePolicy, { channelsLabel: 'All channels', minVersionLabel: 'No floor', heldLabel: 'Active', held: false })
+        assert.deepEqual(Fx.Vm(Fx.Hive(null, [])).HivePolicy, { channelsLabel: 'Inherits tenant', minVersionLabel: 'Inherits tenant', heldLabel: 'No per-hive hold', held: false })
     })
 
     it('labels an empty channel set as all channels', () =>
     {
         const vm = new HiveDetailViewModel(Fx.Hive(null, []), () => Fx.Now, undefined, [], [], { tenantId: 't1', hiveId: 'h1', channels: [] })
-        assert.equal(vm.HivePolicy.channelsLabel, 'All channels')
+        assert.equal(vm.HivePolicy.channelsLabel, 'Inherits tenant')
     })
 })

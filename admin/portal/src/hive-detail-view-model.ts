@@ -41,10 +41,9 @@ export class HiveDetailViewModel extends Observable
     private static readonly SummaryTemplate = '{ready}/{total} ready'
     private static readonly ReadyToken = '{ready}'
     private static readonly TotalToken = '{total}'
-    private static readonly AllChannelsLabel = 'All channels'
-    private static readonly NoFloorLabel = 'No floor'
+    private static readonly InheritsTenantLabel = 'Inherits tenant'
     private static readonly HeldLabel = 'Held'
-    private static readonly NotHeldLabel = 'Active'
+    private static readonly NoHoldLabel = 'No per-hive hold'
     private static readonly ChannelSeparator = ', '
     private static readonly KeyOwner = 'Client / tenant'
     private static readonly KeyConnection = 'Connection'
@@ -162,9 +161,9 @@ export class HiveDetailViewModel extends Observable
         const held = this.policy?.hold !== undefined
         const channels = this.policy?.channels
         return {
-            channelsLabel: channels !== undefined && channels.length > 0 ? channels.join(HiveDetailViewModel.ChannelSeparator) : HiveDetailViewModel.AllChannelsLabel,
-            minVersionLabel: this.policy?.minVersion ?? HiveDetailViewModel.NoFloorLabel,
-            heldLabel: held ? HiveDetailViewModel.HeldLabel : HiveDetailViewModel.NotHeldLabel,
+            channelsLabel: channels !== undefined && channels.length > 0 ? channels.join(HiveDetailViewModel.ChannelSeparator) : HiveDetailViewModel.InheritsTenantLabel,
+            minVersionLabel: this.policy?.minVersion ?? HiveDetailViewModel.InheritsTenantLabel,
+            heldLabel: held ? HiveDetailViewModel.HeldLabel : HiveDetailViewModel.NoHoldLabel,
             held,
         }
     }

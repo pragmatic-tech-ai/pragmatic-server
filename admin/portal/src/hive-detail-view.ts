@@ -19,7 +19,7 @@ export class HiveDetailView extends StackPanel
     private static readonly HistoryTitle = 'Observed history'
     private static readonly HistoryEmptyText = 'No observations recorded yet.'
     private static readonly LedgerTitle = 'Version history'
-    private static readonly PolicyTitle = 'Release policy'
+    private static readonly PolicyTitle = 'Per-hive policy'
     private static readonly PolicyChannelsKey = 'Channels'
     private static readonly PolicyMinVersionKey = 'Minimum version'
     private static readonly PolicyHoldKey = 'Hold'

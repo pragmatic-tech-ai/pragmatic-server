@@ -145,7 +145,7 @@ describe('HiveDetailView', () =>
         const vm = new HiveDetailViewModel(Fixtures.Hive(null, []), undefined, undefined, [], [], policy)
         const hp = vm.HivePolicy
         const texts = Fixtures.Texts(new HiveDetailView(vm, () => undefined))
-        for (const expected of ['Release policy', 'Channels', 'Minimum version', 'Hold', hp.channelsLabel, '1.2.0', hp.heldLabel])
+        for (const expected of ['Per-hive policy', 'Channels', 'Minimum version', 'Hold', hp.channelsLabel, '1.2.0', hp.heldLabel])
         {
             assert.ok(texts.includes(expected), expected)
         }
@@ -156,7 +156,7 @@ describe('HiveDetailView', () =>
         const vm = Fixtures.Connected()
         const hp = vm.HivePolicy
         const texts = Fixtures.Texts(new HiveDetailView(vm, () => undefined))
-        for (const expected of ['Release policy', hp.channelsLabel, hp.minVersionLabel, hp.heldLabel])
+        for (const expected of ['Per-hive policy', hp.channelsLabel, hp.minVersionLabel, hp.heldLabel])
         {
             assert.ok(texts.includes(expected), expected)
         }
