@@ -320,6 +320,7 @@ describe('ControlPlaneHost operator RBAC', () =>
             operator.ThrowNext = err
             const r = await RbacFixture.Send(host, RbacFixture.Post, RbacFixture.DisabledPath, RoleOperator.FullToken, RbacFixture.DisabledOkBody)
             assert.equal(r.status, status, err.name)
+            assert.ok(!r.text.includes(RbacFixture.Target), err.name)
         }
     })
 

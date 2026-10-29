@@ -1460,6 +1460,12 @@ export class ControlPlaneHost
             return
         }
         const email = body.email
+        const who = await this.Principal(req)
+        if (who === null)
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusUnauthorized, { error: ControlPlaneHost.UnauthenticatedMessage })
+            return
+        }
         if (path === ControlPlaneHost.OperatorPasswordResetPath)
         {
             const password = await this.operator.ResetOperatorPassword(email)
@@ -1481,23 +1487,22 @@ export class ControlPlaneHost
                 PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.OperatorRoleMessage })
                 return
             }
-            await this.operator.SetOperatorRole(email, role, await this.ActorId(req))
+            await this.operator.SetOperatorRole(email, role, who.principalId)
             PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, {})
             return
         }
-        if (typeof body.disabled !== 'boolean')
+        if (path === ControlPlaneHost.OperatorDisabledPath)
         {
-            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.OperatorDisabledMessage })
+            if (typeof body.disabled !== 'boolean')
+            {
+                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.OperatorDisabledMessage })
+                return
+            }
+            await this.operator.SetOperatorDisabled(email, body.disabled, who.principalId)
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, {})
             return
         }
-        await this.operator.SetOperatorDisabled(email, body.disabled, await this.ActorId(req))
-        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, {})
-    }
-
-    private async ActorId(req: IncomingMessage): Promise<string>
-    {
-        const who = await this.Principal(req)
-        return who === null ? '' : who.principalId
+        PlaneHttp.WriteNotFound(res)
     }
 
     /** Minimal shape check: exactly one '@' with a non-empty local part and domain. */
