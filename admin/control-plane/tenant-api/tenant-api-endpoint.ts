@@ -44,6 +44,8 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     private static readonly ManifestsSegment = 'manifests'
     private static readonly RolloutSegment = 'rollout'
     private static readonly HealthSegment = 'health'
+    private static readonly LedgerSegment = 'ledger'
+    private static readonly LedgerLimit = 200
     private static readonly TargetSegment = 'target'
     private static readonly ProfileSegment = 'profile'
     private static readonly ProfilePath = TenantApiEndpoint.Prefix + TenantApiEndpoint.ProfileSegment
@@ -52,7 +54,7 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     private static readonly ManifestsPath = TenantApiEndpoint.Prefix + TenantApiEndpoint.ManifestsSegment
     private static readonly HiveSubPathPattern = new RegExp(
         '^' + TenantApiEndpoint.Prefix + TenantApiEndpoint.HivesSegment + '/([^/]+)/(' +
-        TenantApiEndpoint.RolloutSegment + '|' + TenantApiEndpoint.HealthSegment + ')$')
+        TenantApiEndpoint.RolloutSegment + '|' + TenantApiEndpoint.HealthSegment + '|' + TenantApiEndpoint.LedgerSegment + ')$')
     private static readonly HiveTargetPathPattern = new RegExp(
         '^' + TenantApiEndpoint.Prefix + TenantApiEndpoint.HivesSegment + '/([^/]+)/' + TenantApiEndpoint.TargetSegment + '$')
     private static readonly EnvActionPathPattern = new RegExp(
@@ -260,6 +262,11 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
             {
                 return this.WriteRolloutError(res, err)
             }
+            return true
+        }
+        if (sub === TenantApiEndpoint.LedgerSegment)
+        {
+            this.WriteJson(res, TenantApiEndpoint.StatusOk, [...await this.rolloutClient.LedgerFor(hive.id, TenantApiEndpoint.LedgerLimit)])
             return true
         }
         this.WriteJson(res, TenantApiEndpoint.StatusOk, await this.health.Produce(hive))

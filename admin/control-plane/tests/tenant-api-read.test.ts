@@ -120,6 +120,18 @@ class FakeFactory extends HiveOrchestratorFactory
     }
 }
 
+/** Wraps the real in-process client, recording every LedgerFor call so a test can prove the ownership guard short-circuits. */
+class SpyRolloutClient extends InProcessRolloutClient
+{
+    public readonly LedgerCalls: string[] = []
+
+    public override LedgerFor(hiveId: string, limit: number): ReturnType<InProcessRolloutClient['LedgerFor']>
+    {
+        this.LedgerCalls.push(hiveId)
+        return super.LedgerFor(hiveId, limit)
+    }
+}
+
 class Fixtures
 {
     public static Env(name: string, hiveId: string | undefined, tenantId: string | undefined): EnvironmentRecord
@@ -275,6 +287,32 @@ describe('TenantApiEndpoint read routes', () =>
     {
         assert.equal((await Get('/tenant-api/hives/nope/rollout', Fixtures.Session(TenantA))).status, 404)
         assert.equal((await Get('/tenant-api/hives/nope/health', Fixtures.Session(TenantA))).status, 404)
+    })
+
+    it('serves the own hive ledger and asks the client for that hive only', async () =>
+    {
+        const spy = new SpyRolloutClient(deployments)
+        endpoint = new TenantApiEndpoint(new FakeService([]) as unknown as IEnvironmentService, directory, spy, new FakeFactory(), new EnvironmentPlacement(directory))
+        const res = await Get('/tenant-api/hives/hive-a/ledger', Fixtures.Session(TenantA))
+        assert.equal(res.status, 200)
+        assert.deepEqual(res.Json(), JSON.parse(JSON.stringify(await spy.LedgerFor('hive-a', 200))))
+        assert.equal(spy.LedgerCalls[0], 'hive-a')
+    })
+
+    it('returns an empty array for a hive with an empty ledger', async () =>
+    {
+        const res = await Get('/tenant-api/hives/hive-a/ledger', Fixtures.Session(TenantA))
+        assert.equal(res.status, 200)
+        assert.ok(Array.isArray(res.Json()))
+    })
+
+    it('404s (not 403) another tenant hive ledger and never calls LedgerFor', async () =>
+    {
+        const spy = new SpyRolloutClient(deployments)
+        endpoint = new TenantApiEndpoint(new FakeService([]) as unknown as IEnvironmentService, directory, spy, new FakeFactory(), new EnvironmentPlacement(directory))
+        assert.equal((await Get('/tenant-api/hives/hive-b/ledger', Fixtures.Session(TenantA))).status, 404)
+        assert.equal((await Get('/tenant-api/hives/nope/ledger', Fixtures.Session(TenantA))).status, 404)
+        assert.deepEqual(spy.LedgerCalls, [])
     })
 
     it('404s an unknown tenant-api path and still reports it handled', async () =>
