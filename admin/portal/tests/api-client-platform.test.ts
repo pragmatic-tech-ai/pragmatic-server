@@ -199,15 +199,27 @@ describe('ControlPlaneClient platform records', () =>
         assert.equal(FetchStub.Calls[0]!.route, '/api/tenants/t1/gating/a%2Fb%2Bc')
     })
 
-    it('SetManifestWithdrawn(true) POSTs the withdrawn route with no body', async () =>
+    it('SetManifestWithdrawn(true, reason) POSTs the withdrawn route with a reason body', async () =>
     {
         FetchStub.Install({ id: '1.0.0', image: 'img:1.0.0', publishedAt: '2026-01-01T00:00:00.000Z' })
-        const dto = await new ControlPlaneClient().SetManifestWithdrawn('1.0.0', true)
+        const dto = await new ControlPlaneClient().SetManifestWithdrawn('1.0.0', true, 'bad build')
         const call = FetchStub.Calls[0]!
         assert.equal(call.route, '/api/manifests/1.0.0/withdrawn')
         assert.equal(call.init?.method, 'POST')
-        assert.equal(call.init?.body, undefined)
+        assert.deepEqual(JSON.parse(call.init?.body as string), { reason: 'bad build' })
         assert.equal(dto.id, '1.0.0')
+    })
+
+    it('PublishManifest includes channel when given and omits it otherwise', async () =>
+    {
+        FetchStub.Install({ id: '1.2.0', image: 'img:1.2.0', publishedAt: '2026-01-01T00:00:00.000Z' })
+        const client = new ControlPlaneClient()
+        await client.PublishManifest('1.2.0', 'img:1.2.0', undefined, 'early')
+        await client.PublishManifest('1.2.0', 'img:1.2.0', undefined, '')
+        await client.PublishManifest('1.2.0', 'img:1.2.0')
+        assert.deepEqual(JSON.parse(FetchStub.Calls[0]!.init?.body as string), { version: '1.2.0', image: 'img:1.2.0', channel: 'early' })
+        assert.deepEqual(JSON.parse(FetchStub.Calls[1]!.init?.body as string), { version: '1.2.0', image: 'img:1.2.0' })
+        assert.deepEqual(JSON.parse(FetchStub.Calls[2]!.init?.body as string), { version: '1.2.0', image: 'img:1.2.0' })
     })
 
     it('SetManifestWithdrawn(false) DELETEs the withdrawn route', async () =>
@@ -216,6 +228,7 @@ describe('ControlPlaneClient platform records', () =>
         await new ControlPlaneClient().SetManifestWithdrawn('1.0.0', false)
         assert.equal(FetchStub.Calls[0]!.route, '/api/manifests/1.0.0/withdrawn')
         assert.equal(FetchStub.Calls[0]!.init?.method, 'DELETE')
+        assert.equal(FetchStub.Calls[0]!.init?.body, undefined)
     })
 
     it('SetManifestWithdrawn path-encodes the version', async () =>

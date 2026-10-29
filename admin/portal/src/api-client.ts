@@ -45,6 +45,8 @@ export class ControlPlaneClient
     private static readonly VersionKey = 'version'
     private static readonly ImageKey = 'image'
     private static readonly NotesKey = 'notes'
+    private static readonly ChannelKey = 'channel'
+    private static readonly ReasonKey = 'reason'
     private static readonly EmailKey = 'email'
     private static readonly PasswordKey = 'password'
     private static readonly RoleKey = 'role'
@@ -167,12 +169,16 @@ export class ControlPlaneClient
         await this.Send<unknown>(this.ItemRoute(ControlPlaneClient.HivesRoute, id), { method: ControlPlaneClient.MethodDelete })
     }
 
-    public async PublishManifest(version: string, image: string, notes?: string): Promise<ManifestDto>
+    public async PublishManifest(version: string, image: string, notes?: string, channel?: string): Promise<ManifestDto>
     {
         const body: Record<string, unknown> = { [ControlPlaneClient.VersionKey]: version, [ControlPlaneClient.ImageKey]: image }
         if (notes !== undefined && notes.length > 0)
         {
             body[ControlPlaneClient.NotesKey] = notes
+        }
+        if (channel !== undefined && channel.length > 0)
+        {
+            body[ControlPlaneClient.ChannelKey] = channel
         }
         return await this.Send<ManifestDto>(ControlPlaneClient.ManifestsRoute, { method: ControlPlaneClient.MethodPost, body: JSON.stringify(body) })
     }
@@ -187,9 +193,13 @@ export class ControlPlaneClient
         await this.Send<unknown>(this.TenantGatingItemRoute(tenantId, version), { method: ControlPlaneClient.MethodDelete })
     }
 
-    public async SetManifestWithdrawn(version: string, withdraw: boolean): Promise<ManifestDto>
+    public async SetManifestWithdrawn(version: string, withdraw: boolean, reason?: string): Promise<ManifestDto>
     {
-        return await this.Send<ManifestDto>(this.ManifestWithdrawnRoute(version), { method: withdraw ? ControlPlaneClient.MethodPost : ControlPlaneClient.MethodDelete })
+        if (!withdraw)
+        {
+            return await this.Send<ManifestDto>(this.ManifestWithdrawnRoute(version), { method: ControlPlaneClient.MethodDelete })
+        }
+        return await this.Send<ManifestDto>(this.ManifestWithdrawnRoute(version), { method: ControlPlaneClient.MethodPost, body: JSON.stringify({ [ControlPlaneClient.ReasonKey]: reason }) })
     }
 
     private ManifestWithdrawnRoute(version: string): string
