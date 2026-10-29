@@ -28,10 +28,7 @@ class Fixtures
 
     public static Click(b: KeyActivatedButton): void
     {
-        for (const h of (b as unknown as { _clickHandlers: Array<(a: unknown) => void> })._clickHandlers)
-        {
-            h({})
-        }
+        b.Press()
     }
 
     public static Press(b: KeyActivatedButton, key: Key): void

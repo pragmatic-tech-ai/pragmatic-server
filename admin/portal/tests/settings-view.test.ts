@@ -71,10 +71,7 @@ class Fixtures
 
     public static Click(node: unknown): void
     {
-        for (const h of (node as unknown as { _clickHandlers: Array<(a: unknown) => void> })._clickHandlers)
-        {
-            h({})
-        }
+        (node as KeyActivatedButton).Press()
     }
 
     public static ActByLabel(view: unknown, label: string): Act
@@ -168,10 +165,7 @@ describe('SettingsView', () =>
         client.Fail = false
         const panel = Fixtures.Walk(view).find(n => n instanceof ErrorStatePanel) as ErrorStatePanel
         assert.ok(panel)
-        for (const h of (panel.RetryButton as unknown as { _clickHandlers: Array<(a: unknown) => void> })._clickHandlers)
-        {
-            h({})
-        }
+        panel.RetryButton.Press()
         await new Promise(r => setTimeout(r, 0))
         assert.equal(view.Host.State, ScreenState.Populated)
         assert.equal(view.Table?.Rows.length, 2)

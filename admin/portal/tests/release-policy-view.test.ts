@@ -148,10 +148,7 @@ class Fixtures
     {
         const btn = Fixtures.Walk(view).find(n => n instanceof KeyActivatedButton && !(n instanceof Act)
             && (n.Content as TextBlock | undefined)?.Text === 'Cancel') as KeyActivatedButton
-        for (const h of (btn as unknown as { _clickHandlers: Array<(a: unknown) => void> })._clickHandlers)
-        {
-            h({})
-        }
+        btn.Press()
     }
 
     public static ActByLabel(view: unknown, label: string): Act
@@ -208,10 +205,7 @@ describe('ReleasePolicyView', () =>
         assert.equal(view.Host.State, ScreenState.Error)
         const panel = Fixtures.Walk(view).find(n => n instanceof ErrorStatePanel) as ErrorStatePanel
         assert.ok(panel)
-        for (const h of (panel.RetryButton as unknown as { _clickHandlers: Array<(a: unknown) => void> })._clickHandlers)
-        {
-            h({})
-        }
+        panel.RetryButton.Press()
         await new Promise(r => setTimeout(r, 0))
         assert.equal(view.Host.State, ScreenState.Populated)
     })

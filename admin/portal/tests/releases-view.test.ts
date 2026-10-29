@@ -100,10 +100,7 @@ class Fixtures
     {
         const panel = Fixtures.Walk(view).find(n => n instanceof ErrorStatePanel) as ErrorStatePanel
         assert.ok(panel)
-        for (const h of (panel.RetryButton as unknown as { _clickHandlers: Array<(a: unknown) => void> })._clickHandlers)
-        {
-            h({})
-        }
+        panel.RetryButton.Press()
     }
 
     public static ScriptedView(client: ScriptedClient): ReleasesView
