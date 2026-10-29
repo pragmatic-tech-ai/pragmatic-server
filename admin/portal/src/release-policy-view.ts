@@ -7,12 +7,12 @@ import type { IPortalNavigator, IPortalView } from './portal-types.js'
 import { ReleasePolicyViewModel } from './release-policy-view-model.js'
 import type { GatedRow, RolloutRow, TargetRow } from './release-policy-view-model.js'
 
-// Release policy: the current gating allowlist and per-hive target selections. Read-only; observes only.
+// Release policy: the current gating allowlist, per-hive target selections, and the actual rollout status per environment. Read-only; observes only.
 export class ReleasePolicyView extends StackPanel implements IPortalView
 {
     private static readonly Breadcrumb: readonly string[] = ['Releases', 'Release Policy']
     private static readonly TitleText = 'Release Policy'
-    private static readonly CurrentModelNote = 'This is the current gating and selection model: the versions each tenant may adopt, and the target each hive is set to. Scoped rules, channels, minimum versions, holds, and the adoption ledger are not yet available.'
+    private static readonly CurrentModelNote = 'This is the current gating and selection model: the versions each tenant may adopt, the target each hive is set to, and the actual rollout status reported by each environment. Scoped rules, channels, minimum versions, holds, and the adoption ledger are not yet available.'
     private static readonly GatedTitle = 'Gated versions'
     private static readonly TargetsTitle = 'Selected targets'
     private static readonly RolloutTitle = 'Rollout status'
@@ -38,7 +38,7 @@ export class ReleasePolicyView extends StackPanel implements IPortalView
     private static readonly SearchSeparator = ' '
     private static readonly GatedEmptyText = 'No versions are gated yet.'
     private static readonly TargetsEmptyText = 'No hive has a target selected yet.'
-    private static readonly EmptyTitle = 'No release policy yet. Gated versions and hive targets appear here once set.'
+    private static readonly EmptyTitle = 'No release policy yet. Gated versions, hive targets, and rollout status appear here once set.'
     private static readonly ErrorTitle = 'Could not load the release policy.'
 
     private readonly client: ControlPlaneClient
