@@ -214,7 +214,6 @@ test('Apply is repeatable: a second Apply loads the image again without failing'
     assert.equal(f.kind.loaded.length, 2)
 })
 
-
 test('ScaleDatabase delegates to inner without ensuring the cluster', async () =>
 {
     const f = new Fixture()
