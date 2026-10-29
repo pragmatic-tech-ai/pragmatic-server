@@ -82,3 +82,51 @@ export class BodyTooLargeError extends Error
         this.name = BodyTooLargeError.ErrorName
     }
 }
+
+export class ManifestWithdrawnError extends Error
+{
+    private static readonly ErrorName = 'ManifestWithdrawnError'
+    private static readonly MessagePrefix = 'Manifest withdrawn: '
+
+    public constructor(id: string)
+    {
+        super(ManifestWithdrawnError.MessagePrefix + id)
+        this.name = ManifestWithdrawnError.ErrorName
+    }
+}
+
+export class TenantOnHoldError extends Error
+{
+    private static readonly ErrorName = 'TenantOnHoldError'
+    private static readonly MessagePrefix = 'Tenant on hold: '
+
+    public constructor(id: string)
+    {
+        super(TenantOnHoldError.MessagePrefix + id)
+        this.name = TenantOnHoldError.ErrorName
+    }
+}
+
+export class ChannelNotSubscribedError extends Error
+{
+    private static readonly ErrorName = 'ChannelNotSubscribedError'
+    private static readonly MessagePrefix = 'Channel not subscribed: '
+
+    public constructor(id: string)
+    {
+        super(ChannelNotSubscribedError.MessagePrefix + id)
+        this.name = ChannelNotSubscribedError.ErrorName
+    }
+}
+
+export class VersionBelowFloorError extends Error
+{
+    private static readonly ErrorName = 'VersionBelowFloorError'
+    private static readonly MessagePrefix = 'Version below floor: '
+
+    public constructor(id: string)
+    {
+        super(VersionBelowFloorError.MessagePrefix + id)
+        this.name = VersionBelowFloorError.ErrorName
+    }
+}
