@@ -223,4 +223,22 @@ describe('ControlPlaneHost hive health route', () =>
     {
         assert.equal((await Harness.Get(host, '/api/hives/local1/health', false)).status, 401)
     })
+
+    it('serves the observation series newest-first and the fleet still reports the latest', async () =>
+    {
+        const one = [{ environmentName: 'dev-x', ready: true, runningImage: 'img:1', detail: 'first' }]
+        const two = [{ environmentName: 'dev-x', ready: false, runningImage: 'img:2', detail: 'second' }]
+        await observations.RecordSnapshot('local1', one)
+        await observations.RecordSnapshot('local1', two)
+        const r = await Harness.Get(host, '/api/hives/local1/observations')
+        assert.equal(r.status, 200)
+        const arr = JSON.parse(r.body)
+        assert.equal(arr.length, 2)
+        assert.deepEqual(arr[0].environments, two)
+        assert.deepEqual(arr[1].environments, one)
+        assert.equal(JSON.parse((await Harness.Get(host, '/api/hives/local1/observations?limit=1')).body).length, 1)
+        const fleet = JSON.parse((await Harness.Get(host, '/api/fleet')).body)
+        assert.equal(fleet.find((h: { id: string }) => h.id === 'local1').environments[0].detail, 'second')
+        assert.equal((await Harness.Get(host, '/api/hives/nope/observations')).status, 404)
+    })
 })

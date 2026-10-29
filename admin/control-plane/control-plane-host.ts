@@ -223,6 +223,9 @@ export class ControlPlaneHost
     private static readonly HealthSegment = 'health'
     private static readonly HiveHealthPathPattern = new RegExp(
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/([^/]+)/' + ControlPlaneHost.HealthSegment + '$')
+    private static readonly ObservationsSegment = 'observations'
+    private static readonly HiveObservationsPathPattern = new RegExp(
+        '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/([^/]+)/' + ControlPlaneHost.ObservationsSegment + '$')
     private static readonly ManifestsSegment = 'manifests'
     private static readonly ManifestsPath = ControlPlaneHost.ApiPrefix + ControlPlaneHost.ManifestsSegment
     private static readonly WithdrawnSegment = 'withdrawn'
@@ -846,6 +849,11 @@ export class ControlPlaneHost
         {
             return await this.RouteHiveHealth(res, method, hhm)
         }
+        const hom = ControlPlaneHost.HiveObservationsPathPattern.exec(path)
+        if (hom !== null)
+        {
+            return await this.RouteHiveObservations(req, res, method, hom)
+        }
         const plm = ControlPlaneHost.PlatformPathPattern.exec(path)
         if (plm !== null)
         {
@@ -931,7 +939,7 @@ export class ControlPlaneHost
         {
             const tenant = this.directory.GetTenant(hive.tenantId)
             const client = tenant === undefined ? undefined : this.directory.GetClient(tenant.clientId)
-            const obs = this.observations.Get(hive.id)
+            const obs = this.observations.LatestRecord(hive.id)
             return {
                 id: hive.id,
                 displayName: hive.displayName,
@@ -943,6 +951,28 @@ export class ControlPlaneHost
                 environments: (obs?.environments ?? []).map(h => ({ name: h.environmentName, ready: h.ready, image: h.runningImage, detail: h.detail }))
             }
         })
+    }
+
+    /** Serves GET /api/hives/ID/observations: the hive's bounded health time-series, newest first; false for any other method. */
+    private async RouteHiveObservations(req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
+    {
+        if (method !== PlaneHttp.MethodGet)
+        {
+            return false
+        }
+        const id = ControlPlaneHost.Decode(m[1] as string)
+        if (id === undefined)
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+            return true
+        }
+        if (this.directory.GetHive(id) === undefined)
+        {
+            PlaneHttp.WriteNotFound(res)
+            return true
+        }
+        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, [...this.observations.HistoryFor(id, this.ActivityLimit(req))])
+        return true
     }
 
     /** Serves GET /api/hives/ID/health: live workload health for each environment bound to the hive; false for any other method. */

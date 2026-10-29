@@ -99,7 +99,7 @@ test('stamps reportedAt as a parseable ISO-8601 string', async () =>
     await ObservationFixture.WithStore(async (_file, registry) =>
     {
         await registry.RecordSnapshot(ObservationFixture.HiveId, [])
-        const reportedAt = registry.Get(ObservationFixture.HiveId)!.reportedAt
+        const reportedAt = registry.LatestRecord(ObservationFixture.HiveId)!.reportedAt
         assert.ok(!Number.isNaN(Date.parse(reportedAt)))
         assert.equal(new Date(reportedAt).toISOString(), reportedAt)
     })
