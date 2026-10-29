@@ -3,7 +3,6 @@ import { ComboBox } from '@pragmatic-tech-ai/mural/framework'
 import type { Visual } from '@pragmatic-tech-ai/mural/runtime'
 import type { ControlPlaneClient } from './api-client.js'
 import { CreateOperatorViewModel } from './create-operator-view-model.js'
-import { HiveOption } from './create-hive-view.js'
 import { Act, DataTable, DeniedStatePanel, KeyActivatedButton, KeyValueGrid, PageHeader, ScreenHost, Section, TableDensity } from './kit/index.js'
 import type { ScreenHostInputs, TableColumn } from './kit/index.js'
 import { OperatorContext } from './operator-context.js'
@@ -11,13 +10,21 @@ import type { IPortalNavigator, IPortalView } from './portal-types.js'
 import { SettingsViewModel } from './settings-view-model.js'
 import type { OperatorRow } from './settings-view-model.js'
 
+// ComboBox item: the collapsed selection renders Label; Value is the wire role.
+class RoleOption
+{
+    public constructor(public readonly Label: string, public readonly Value: string)
+    {
+    }
+}
+
 export enum SettingsMode
 {
     Normal,
     Invite,
 }
 
-// Settings: the signed-in operator's session and, for operators only, the operator roster. Read-only.
+// Settings: the signed-in operator's session and, for operators only, the operator roster and a Full-gated invite action.
 export class SettingsView extends StackPanel implements IPortalView
 {
     private static readonly Breadcrumb: readonly string[] = ['Settings']
@@ -120,7 +127,7 @@ export class SettingsView extends StackPanel implements IPortalView
     // Re-renders from the held model with no network fetch.
     public EnterMode(mode: SettingsMode): void
     {
-        this.mode = mode
+        this.mode = mode === SettingsMode.Invite && !this.operator.CanMutate ? SettingsMode.Normal : mode
         this.host.Update(this.Inputs(false, false, () => this.BuildContent(this.model)))
     }
 
@@ -142,6 +149,7 @@ export class SettingsView extends StackPanel implements IPortalView
             catch
             {
                 this.ClearSlots()
+                this.mode = SettingsMode.Normal
                 this.host.Update(this.Inputs(false, true))
                 return
             }
@@ -170,7 +178,6 @@ export class SettingsView extends StackPanel implements IPortalView
         this.errorText = undefined
         this.roleBox = undefined
         this.inviteAct = undefined
-        this.mode = SettingsMode.Normal
     }
 
     private BuildContent(model: SettingsViewModel): Visual
@@ -179,10 +186,7 @@ export class SettingsView extends StackPanel implements IPortalView
         root.Orientation = Orientation.Vertical
         root.AddChild(new PageHeader({ breadcrumb: SettingsView.Breadcrumb, title: SettingsView.TitleText }))
         // Fresh slots per render: the previous ones are still parented to the previous Sections.
-        // ClearSlots resets the mode, so carry it across the rebuild.
-        const mode = this.mode
         this.ClearSlots()
-        this.mode = mode
         this.sessionSlot.Orientation = Orientation.Vertical
         this.sessionSlot.AddChild(new KeyValueGrid({
             items: [
@@ -232,14 +236,14 @@ export class SettingsView extends StackPanel implements IPortalView
         roleBox.Placeholder = SettingsView.RolePlaceholder
         roleBox.DisplayMemberPath = SettingsView.LabelPath
         const wires = [OperatorContext.FullWireRole, OperatorContext.ReadOnlyWireRole]
-        roleBox.ItemsSource = wires.map(w => new HiveOption(OperatorContext.RoleLabel(w), w))
+        roleBox.ItemsSource = wires.map(w => new RoleOption(OperatorContext.RoleLabel(w), w))
         roleBox.SelectedIndex = wires.indexOf(OperatorContext.ReadOnlyWireRole)
         this.roleBox = roleBox
         const errorText = new TextBlock()
         this.errorText = errorText
         const submit = new Act(this.operator.MutatingAct(
             SettingsView.InviteSubmitLabel,
-            () => void this.Submit(emailBox.Text, passwordBox.Text, (roleBox.SelectedItem as HiveOption | undefined)?.Value ?? SettingsView.BlankText),
+            () => void this.Submit(emailBox.Text, passwordBox.Text, (roleBox.SelectedItem as RoleOption | undefined)?.Value ?? SettingsView.BlankText),
         ))
         const cancel = new KeyActivatedButton(() => this.EnterMode(SettingsMode.Normal))
         const cancelText = new TextBlock()

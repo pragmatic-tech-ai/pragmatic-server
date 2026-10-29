@@ -281,4 +281,39 @@ describe('SettingsView', () =>
         assert.equal(view.Mode, SettingsMode.Normal)
         assert.equal(Fixtures.Boxes(view).length, 0)
     })
+
+    it('maps the Full role option to the full wire role on submit', async () =>
+    {
+        const client = Fixtures.Client()
+        const view = Fixtures.View(client, 'full')
+        await view.Refresh()
+        view.EnterMode(SettingsMode.Invite)
+        const boxes = Fixtures.Boxes(view)
+        boxes[0].Text = 'boss@example.com'
+        boxes[1].Text = 'pw'
+        view.RoleBox!.SelectedIndex = 0
+        Fixtures.Click(Fixtures.ActByLabel(view, 'Create operator'))
+        await Fixtures.Tick()
+        assert.deepEqual(client.Created, [['boss@example.com', 'pw', 'full']])
+    })
+
+    it('resets to normal mode when a refresh fails to load', async () =>
+    {
+        const client = Fixtures.Client()
+        const view = Fixtures.View(client, 'full')
+        await view.Refresh()
+        view.EnterMode(SettingsMode.Invite)
+        client.Fail = true
+        await view.Refresh()
+        assert.equal(view.Host.State, ScreenState.Error)
+        assert.equal(view.Mode, SettingsMode.Normal)
+    })
+
+    it('never opens the invite form for an observer', async () =>
+    {
+        const view = Fixtures.View(Fixtures.Client(), 'readonly')
+        await view.Refresh()
+        view.EnterMode(SettingsMode.Invite)
+        assert.equal(view.Mode, SettingsMode.Normal)
+    })
 })
