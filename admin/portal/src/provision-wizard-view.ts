@@ -82,6 +82,7 @@ export class ProvisionWizardView extends StackPanel
     private nextButton: KeyActivatedButton | undefined
     private reveals: OnceSecret[] = []
     private finishAct: Act | undefined
+    private submitting = false
 
     public constructor(client: ControlPlaneClient, private readonly operator: OperatorContext, private readonly onDone: () => void)
     {
@@ -261,6 +262,16 @@ export class ProvisionWizardView extends StackPanel
 
     private async Submit(): Promise<void>
     {
+        if (this.submitting)
+        {
+            return
+        }
+        this.submitting = true
+        const act = this.submitAct
+        if (act !== undefined)
+        {
+            act.IsEnabled = false
+        }
         this.SyncFields()
         this.ClearErrors()
         let result
@@ -270,9 +281,15 @@ export class ProvisionWizardView extends StackPanel
         }
         catch (e)
         {
+            this.submitting = false
+            if (act !== undefined)
+            {
+                act.IsEnabled = true
+            }
             this.ShowFailure(e)
             return
         }
+        this.submitting = false
         // The secrets go straight into the reveal Visuals; nothing on the view keeps them.
         this.mode = WizardViewMode.Reveal
         this.ClearContent()

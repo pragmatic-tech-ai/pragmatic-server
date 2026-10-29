@@ -13,10 +13,15 @@ class FakeClient
 {
     public Calls = 0
     public Error: Error | undefined
+    public Gate: Promise<void> | undefined
 
-    public Provision(input: ProvisionInputDto): Promise<ProvisionResultDto>
+    public async Provision(input: ProvisionInputDto): Promise<ProvisionResultDto>
     {
         this.Calls++
+        if (this.Gate !== undefined)
+        {
+            await this.Gate
+        }
         if (this.Error !== undefined)
         {
             return Promise.reject(this.Error)
@@ -118,6 +123,23 @@ describe('ProvisionWizardView', () =>
         assert.equal(view.FinishAct?.Enabled, true)
         view.FinishAct?.Press()
         assert.equal(done, 1)
+    })
+
+    it('a second press while a provision is in flight does not provision twice', async () =>
+    {
+        const client = new FakeClient()
+        let release: () => void = () => {}
+        client.Gate = new Promise<void>(r => { release = r })
+        const view = new ProvisionWizardView(client as unknown as ControlPlaneClient, OperatorContext.FromWire('full'), () => {})
+        Fixtures.Fill(view)
+        Fixtures.ToLastStep(view)
+        view.SubmitAct?.Press()
+        view.SubmitAct?.Press()
+        assert.equal(view.SubmitAct?.Enabled, false)
+        release()
+        await Fixtures.Tick()
+        assert.equal(client.Calls, 1)
+        assert.equal(view.Mode, WizardViewMode.Reveal)
     })
 
     it('an observer cannot submit', async () =>
