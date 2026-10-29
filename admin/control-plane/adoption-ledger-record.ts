@@ -57,7 +57,7 @@ export class AdoptionLedgerRegistry extends JsonRecordStore<AdoptionLedgerRecord
         const all = this.List()
         const tenantRecs = all.filter(r => r.tenantId === tenantId)
         const tenantVersions = new Set(tenantRecs.map(r => r.version))
-        const versionRecs = all.filter(r => r.tenantId === undefined
+        const versionRecs = all.filter(r => r.tenantId === undefined && r.hiveId === undefined
             && (r.action === AdoptionLedgerRegistry.WithdrawnAction || r.action === AdoptionLedgerRegistry.RestoredAction)
             && tenantVersions.has(r.version))
         return [...tenantRecs, ...versionRecs].sort((a, b) => b.at.localeCompare(a.at)).slice(0, limit)

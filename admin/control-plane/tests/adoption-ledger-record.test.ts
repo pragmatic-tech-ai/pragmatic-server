@@ -105,8 +105,11 @@ test('ForTenantIncludingVersionEvents never returns another tenant records', asy
     {
         await Fx.Seed(ledger, 1, { tenantId: Fx.TenantA, version: 'v1', action: 'gated' })
         await Fx.Seed(ledger, 2, { tenantId: Fx.TenantB, version: 'v2', action: 'gated' })
+        // Tenant B with the SAME version A encountered must still never leak: it carries B's tenantId.
+        await Fx.Seed(ledger, 3, { tenantId: Fx.TenantB, version: 'v1', action: 'adopted' })
         const got = ledger.ForTenantIncludingVersionEvents(Fx.TenantA, Fx.Limit)
         assert.deepEqual(got.map(r => r.version), ['v1'])
+        assert.ok(got.every(r => r.tenantId === Fx.TenantA))
     })
 })
 
