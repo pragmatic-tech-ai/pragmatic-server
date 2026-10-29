@@ -6,7 +6,7 @@ import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pr
 import type { ControlPlaneClient } from '../src/api-client.js'
 import { GatingMode, ReleasePolicyView } from '../src/release-policy-view.js'
 import { OperatorContext } from '../src/operator-context.js'
-import { Act, Banner, ErrorStatePanel, PageHeader, ScreenState, Section } from '../src/kit/index.js'
+import { Act, Banner, KeyActivatedButton, ErrorStatePanel, PageHeader, ScreenState, Section } from '../src/kit/index.js'
 import type { ClientDto, FleetHiveDto, GatingDto, HiveRolloutDto, SelectionDto, TenantDto } from '../src/portal-types.js'
 
 class FakeClient
@@ -49,6 +49,10 @@ class FakeClient
 
     public Ungate(t: string, v: string): Promise<void>
     {
+        if (this.FailGate)
+        {
+            return Promise.reject(new Error('no'))
+        }
         this.Ungated.push([t, v])
         return Promise.resolve()
     }
@@ -140,6 +144,16 @@ class Fixtures
         return Fixtures.Walk(view).filter(n => n instanceof TextBox && forms.includes(n.Placeholder)) as TextBox[]
     }
 
+    public static Cancel(view: unknown): void
+    {
+        const btn = Fixtures.Walk(view).find(n => n instanceof KeyActivatedButton && !(n instanceof Act)
+            && (n.Content as TextBlock | undefined)?.Text === 'Cancel') as KeyActivatedButton
+        for (const h of (btn as unknown as { _clickHandlers: Array<(a: unknown) => void> })._clickHandlers)
+        {
+            h({})
+        }
+    }
+
     public static ActByLabel(view: unknown, label: string): Act
     {
         return Fixtures.Walk(view).find(n => n instanceof Act && (n.Content as TextBlock).Text === label) as Act
@@ -178,9 +192,9 @@ describe('ReleasePolicyView', () =>
         assert.equal(header.Title, 'Release Policy')
     })
 
-    it('is empty when all five lists are empty', async () =>
+    it('is empty for an observer when all five lists are empty', async () =>
     {
-        const view = Fixtures.View(new FakeClient([], [], [], [], []))
+        const view = Fixtures.View(new FakeClient([], [], [], [], []), 'read')
         await view.Refresh()
         assert.equal(view.Host.State, ScreenState.Empty)
         assert.equal(view.GatedTable, undefined)
@@ -369,5 +383,69 @@ describe('ReleasePolicyView', () =>
         assert.equal(view.Host.State, ScreenState.Populated)
         assert.equal(view.Mode, GatingMode.Gate)
         assert.equal(Fixtures.FormBoxes(view).length, 2)
+    })
+
+    it('an empty policy is still actionable for a full operator', async () =>
+    {
+        const view = Fixtures.View(new FakeClient([], [], [], [], []))
+        await view.Refresh()
+        assert.notEqual(view.Host.State, ScreenState.Empty)
+        assert.ok(Fixtures.ActByLabel(view, 'Gate version'))
+        assert.ok(Fixtures.ActByLabel(view, 'Ungate version'))
+        view.EnterMode(GatingMode.Gate)
+        assert.equal(view.Mode, GatingMode.Gate)
+        assert.equal(Fixtures.FormBoxes(view).length, 2)
+    })
+
+    it('EnterMode does not fetch', async () =>
+    {
+        const client = Fixtures.Populated()
+        const view = Fixtures.View(client)
+        await view.Refresh()
+        const before = client.Calls
+        view.EnterMode(GatingMode.Gate)
+        view.EnterMode(GatingMode.Ungate)
+        assert.equal(client.Calls, before)
+    })
+
+    it('cancel returns to normal mode', async () =>
+    {
+        const view = Fixtures.View(Fixtures.Populated())
+        await view.Refresh()
+        view.EnterMode(GatingMode.Gate)
+        Fixtures.Cancel(view)
+        assert.equal(view.Mode, GatingMode.Normal)
+        assert.equal(Fixtures.FormBoxes(view).length, 0)
+    })
+
+    it('a failed ungate shows an error and stays in ungate mode', async () =>
+    {
+        const client = Fixtures.Populated()
+        client.FailGate = true
+        const view = Fixtures.View(client)
+        await view.Refresh()
+        view.EnterMode(GatingMode.Ungate)
+        const boxes = Fixtures.FormBoxes(view)
+        boxes[0].Text = 't'
+        boxes[1].Text = 'v'
+        Fixtures.ActByLabel(view, 'Ungate').Press()
+        await new Promise(r => setTimeout(r, 20))
+        assert.ok(view.ErrorLine.length > 0)
+        assert.equal(view.Mode, GatingMode.Ungate)
+        assert.equal(client.Ungated.length, 0)
+    })
+
+    it('blank ungate fields make no call and show the required error', async () =>
+    {
+        const client = Fixtures.Populated()
+        const view = Fixtures.View(client)
+        await view.Refresh()
+        view.EnterMode(GatingMode.Ungate)
+        Fixtures.FormBoxes(view)[0].Text = 't'
+        Fixtures.ActByLabel(view, 'Ungate').Press()
+        await new Promise(r => setTimeout(r, 20))
+        assert.equal(client.Ungated.length, 0)
+        assert.ok(view.ErrorLine.length > 0)
+        assert.equal(view.Mode, GatingMode.Ungate)
     })
 })

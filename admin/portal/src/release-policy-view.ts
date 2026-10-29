@@ -109,7 +109,7 @@ export class ReleasePolicyView extends StackPanel implements IPortalView
         return this.errorText?.Text ?? ReleasePolicyView.BlankText
     }
 
-    // Re-renders from the held model with no network fetch.
+    // Test seam: tests drive mode changes directly. Re-renders from the held model with no network fetch.
     public EnterMode(mode: GatingMode): void
     {
         this.mode = mode
@@ -205,7 +205,7 @@ export class ReleasePolicyView extends StackPanel implements IPortalView
     private ShowModel(model: ReleasePolicyViewModel): void
     {
         const isEmpty = model.GatedRows.length === 0 && model.TargetRows.length === 0
-            && model.RolloutRows.length === 0
+            && model.RolloutRows.length === 0 && !this.operator.CanMutate
         if (isEmpty)
         {
             this.ClearSlots()
@@ -258,6 +258,8 @@ export class ReleasePolicyView extends StackPanel implements IPortalView
         actions.AddChild(new Act(this.operator.MutatingAct(ReleasePolicyView.GateLabel, () => this.EnterMode(GatingMode.Gate))))
         actions.AddChild(new Act(this.operator.MutatingAct(ReleasePolicyView.UngateLabel, () => this.EnterMode(GatingMode.Ungate), ActVariant.Danger)))
         root.AddChild(actions)
+        // A Refresh() while the form is open rebuilds fresh fields, so typed input is intentionally discarded
+        // (same fresh-slot cost as the Clients create form).
         this.formSlot = new StackPanel()
         this.formSlot.Orientation = Orientation.Vertical
         this.errorText = undefined
