@@ -49,6 +49,15 @@ class Harness
 {
     public static readonly AuthCookie = 'cp_session=valid-token'
 
+    public static ProvisionBody(): { client: Record<string, unknown>; tenant: Record<string, unknown>; hive: Record<string, unknown> }
+    {
+        return {
+            client: { id: 'acme', displayName: 'Acme' },
+            tenant: { id: 't1', displayName: 'T', ownerEmail: 'o@x.test' },
+            hive: { id: 'h1', displayName: 'H', cluster: { backend: 'local', mode: 'provision' }, registry: { mode: 'provision' } }
+        }
+    }
+
     public static Send(host: ControlPlaneHost, method: string, path: string, body?: unknown, authed: boolean = true): Promise<Reply>
     {
         const text = body === undefined ? undefined : JSON.stringify(body)
@@ -165,5 +174,43 @@ describe('ControlPlaneHost platform routes', () =>
         assert.equal((await Harness.Send(host, 'DELETE', '/api/hives/h1')).status, 200)
         assert.equal((await Harness.Send(host, 'GET', '/api/hives/h1')).status, 404)
         assert.equal((await Harness.Send(host, 'POST', '/api/hives', { ...hive, cluster: { backend: 'bogus', mode: 'provision' } })).status, 400)
+    })
+
+    it('POST /api/provision as Full operator -> 201 with records and both secrets', async () =>
+    {
+        const r = await Harness.Send(host, 'POST', '/api/provision', Harness.ProvisionBody())
+        assert.equal(r.status, 201)
+        assert.equal(r.cacheControl, 'no-store')
+        const body = JSON.parse(r.body)
+        assert.equal(body.client.id, 'acme')
+        assert.equal(body.tenant.id, 't1')
+        assert.equal(body.hive.id, 'h1')
+        assert.ok(body.secrets.ownerPassword.length > 0)
+        assert.ok(body.secrets.agentToken.length > 0)
+        const fetched = await Harness.Send(host, 'GET', '/api/tenants/t1')
+        assert.equal(fetched.status, 200)
+        assert.ok(!fetched.body.includes(body.secrets.ownerPassword))
+        assert.ok(!fetched.body.includes(body.secrets.agentToken))
+    })
+
+    it('POST /api/provision with a duplicate client id -> 409 and no partial tenant/hive', async () =>
+    {
+        await Harness.Send(host, 'POST', '/api/clients', { id: 'acme', displayName: 'Acme' })
+        const r = await Harness.Send(host, 'POST', '/api/provision', Harness.ProvisionBody())
+        assert.equal(r.status, 409)
+        assert.equal(JSON.parse((await Harness.Send(host, 'GET', '/api/tenants')).body).length, 0)
+        assert.equal(JSON.parse((await Harness.Send(host, 'GET', '/api/hives')).body).length, 0)
+    })
+
+    it('POST /api/provision with an invalid cluster -> 400 and zero writes', async () =>
+    {
+        const bad = Harness.ProvisionBody()
+        bad.hive.cluster = { backend: 'bogus', mode: 'provision' }
+        const r = await Harness.Send(host, 'POST', '/api/provision', bad)
+        assert.equal(r.status, 400)
+        for (const path of ['/api/clients', '/api/tenants', '/api/hives'])
+        {
+            assert.equal(JSON.parse((await Harness.Send(host, 'GET', path)).body).length, 0, path)
+        }
     })
 })

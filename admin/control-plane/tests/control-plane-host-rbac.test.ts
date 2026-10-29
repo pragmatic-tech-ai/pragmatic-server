@@ -57,12 +57,15 @@ class RbacFixture
 {
     public static readonly Loopback = '127.0.0.1'
     public static readonly Forbidden = 403
+    public static readonly Unauthorized = 401
+    public static readonly NoToken = 'no-such-token'
     public static readonly Ok = 200
     public static readonly Created = 201
     public static readonly BadRequest = 400
     public static readonly TempPrefix = 'cp-rbac-'
     public static readonly Operators = '/api/operators'
     public static readonly Clients = '/api/clients'
+    public static readonly Provision = '/api/provision'
     public static readonly Environments = '/api/environments'
     public static readonly Logout = '/api/logout'
     public static readonly CookiePrefix = 'cp_session='
@@ -129,6 +132,15 @@ describe('ControlPlaneHost operator RBAC', () =>
             const r = await RbacFixture.Send(host, 'POST', path, RoleOperator.ReadToken, RbacFixture.NewBody)
             assert.equal(r.status, RbacFixture.Forbidden, path)
         }
+        assert.equal(operator.Created.length, 0)
+    })
+
+    it('403s a ReadOnly operator and 401s an unauthenticated caller on POST /api/provision, with zero writes', async () =>
+    {
+        const forbidden = await RbacFixture.Send(host, RbacFixture.Post, RbacFixture.Provision, RoleOperator.ReadToken, RbacFixture.NewBody)
+        assert.equal(forbidden.status, RbacFixture.Forbidden)
+        const anonymous = await RbacFixture.Send(host, RbacFixture.Post, RbacFixture.Provision, RbacFixture.NoToken, RbacFixture.NewBody)
+        assert.equal(anonymous.status, RbacFixture.Unauthorized)
         assert.equal(operator.Created.length, 0)
     })
 

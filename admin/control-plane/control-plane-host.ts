@@ -39,6 +39,7 @@ import {
 import { HivePlacementError } from './hive-placement-error.js'
 import { HiveBackend, InfraMode, InvalidRecordIdError } from './platform-records.js'
 import { PlaneHttp } from './plane-http.js'
+import { ProvisioningOrchestrator, ProvisionFailedError } from './provisioning-orchestrator.js'
 import { UnsupportedBackendError } from './hive-orchestrator.js'
 import { KubectlError } from './kubectl.js'
 import type { HiveRolloutStatus, PlatformDeploymentRegistry } from './platform-deployment-registry.js'
@@ -179,6 +180,8 @@ export class ControlPlaneHost
     private static readonly ForbiddenHostMessage = 'Host not allowed'
     private static readonly ForbiddenRoleMessage = 'Operator role does not permit this action'
     private static readonly OperatorsPath = '/api/operators'
+    private static readonly ProvisionPath = '/api/provision'
+    private static readonly SubObjectRequiredMessage = 'client, tenant and hive (objects) are required'
     private static readonly MinOperatorPasswordLength = 12
     private static readonly EmailAt = '@'
     private static readonly OperatorFieldsMessage = 'a valid email, a password of at least ' + ControlPlaneHost.MinOperatorPasswordLength + ' characters and a role (full|readonly) are required'
@@ -328,6 +331,7 @@ export class ControlPlaneHost
     private revalidateTimer: ReturnType<typeof setInterval> | undefined
     private readonly staticRootAbs: string
     private readonly allowedHosts: ReadonlySet<string>
+    private readonly orchestrator: ProvisioningOrchestrator
 
     public constructor(
         private readonly service: IEnvironmentService,
@@ -349,6 +353,7 @@ export class ControlPlaneHost
     {
         this.allowedHosts = new Set([...ControlPlaneHost.DefaultAllowedHosts, ...allowedHosts.map(h => h.toLowerCase())])
         this.staticRootAbs = resolve(staticRoot)
+        this.orchestrator = new ProvisioningOrchestrator(this.directory, this.provisioning, this.deployments)
     }
 
     public Listen(port: number, host: string): Promise<void>
@@ -683,6 +688,11 @@ export class ControlPlaneHost
         if (path === ControlPlaneHost.OperatorsPath && method === PlaneHttp.MethodPost)
         {
             await this.HandleCreateOperator(req, res)
+            return true
+        }
+        if (path === ControlPlaneHost.ProvisionPath && method === PlaneHttp.MethodPost)
+        {
+            await this.HandleProvision(req, res)
             return true
         }
         if (path === ControlPlaneHost.ManifestsPath)
@@ -1122,6 +1132,86 @@ export class ControlPlaneHost
             })
         }
         PlaneHttp.WriteJson(res, ControlPlaneHost.StatusCreated, created)
+    }
+
+    private async HandleProvision(req: IncomingMessage, res: ServerResponse): Promise<void>
+    {
+        const body = await this.ReadJsonObject(req, res)
+        if (body === undefined)
+        {
+            return
+        }
+        const client = body.client as Record<string, unknown> | undefined
+        const tenant = body.tenant as Record<string, unknown> | undefined
+        const hive = body.hive as Record<string, unknown> | undefined
+        if (!ControlPlaneHost.IsObject(client) || !ControlPlaneHost.IsObject(tenant) || !ControlPlaneHost.IsObject(hive))
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.SubObjectRequiredMessage })
+            return
+        }
+        const idsOk = ControlPlaneHost.NonEmpty(client.id) && ControlPlaneHost.NonEmpty(tenant.id) && ControlPlaneHost.NonEmpty(hive.id)
+        if (!idsOk)
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.IdRequiredMessage })
+            return
+        }
+        if (typeof client.displayName !== 'string' || typeof tenant.displayName !== 'string' || typeof hive.displayName !== 'string')
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.DisplayNameRequiredMessage })
+            return
+        }
+        if (!ControlPlaneHost.NonEmpty(tenant.ownerEmail))
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.OwnerEmailRequiredMessage })
+            return
+        }
+        if ((tenant.id as string).startsWith(ControlPlaneHost.ReservedIdPrefix))
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ReservedIdMessage })
+            return
+        }
+        const cluster = ControlPlaneHost.ParseCluster(hive.cluster)
+        if (cluster === undefined)
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ClusterInvalidMessage + Object.values(HiveBackend).join(', ') })
+            return
+        }
+        const registry = ControlPlaneHost.ParseRegistry(hive.registry)
+        if (registry === undefined)
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.RegistryInvalidMessage + Object.values(InfraMode).join(', ') })
+            return
+        }
+        if (!ControlPlaneHost.OptionalString(client.subscriptionRef) || !ControlPlaneHost.OptionalString(hive.trustRootRef))
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.OptionalStringMessage })
+            return
+        }
+        try
+        {
+            const result = await this.orchestrator.Provision({
+                client: { id: client.id as string, displayName: client.displayName, subscriptionRef: client.subscriptionRef as string | undefined },
+                tenant: { id: tenant.id as string, displayName: tenant.displayName, ownerEmail: tenant.ownerEmail as string },
+                hive: { id: hive.id as string, displayName: hive.displayName, cluster, registry, trustRootRef: hive.trustRootRef as string | undefined }
+            })
+            // Both one-time secrets are revealed exactly once here; never logged or stored.
+            res.setHeader(ControlPlaneHost.CacheControlHeader, ControlPlaneHost.NoStore)
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusCreated, { client: result.client, tenant: ControlPlaneHost.ToTenantDto(result.tenant), hive: result.hive, secrets: result.secrets })
+        }
+        catch (e)
+        {
+            if (e instanceof ProvisionFailedError)
+            {
+                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusInternal, { error: e.message, rollback: e.rollback })
+                return
+            }
+            throw e
+        }
+    }
+
+    private static IsObject(v: unknown): v is Record<string, unknown>
+    {
+        return typeof v === 'object' && v !== null && !Array.isArray(v)
     }
 
     private static OptionalString(v: unknown): boolean
