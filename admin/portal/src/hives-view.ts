@@ -90,7 +90,9 @@ export class HivesView extends SectionContainerView<HiveListRow>
         {
             return undefined
         }
-        return new HiveDetailView(new HiveDetailViewModel(hive), () => void this.ShowList())
+        const observations = await this.client.ListHiveObservations(hive.id)
+        const vm = new HiveDetailViewModel(hive, undefined, undefined, observations)
+        return new HiveDetailView(vm, () => void this.ShowList())
     }
 
     private static ConnectionPill(r: HiveListRow): PillEntry

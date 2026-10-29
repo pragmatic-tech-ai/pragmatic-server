@@ -1,12 +1,12 @@
 import { Orientation, StackPanel, TextBlock } from '@pragmatic-tech-ai/mural/basic'
 import type { Visual } from '@pragmatic-tech-ai/mural/runtime'
-import type { HiveDetailViewModel } from './hive-detail-view-model.js'
+import type { HiveDetailViewModel, ObservationHistoryRow } from './hive-detail-view-model.js'
 import { ObservedEnvTable } from './observed-env-table.js'
 import type { ObservedEnvRow } from './observed-env-table.js'
 import {
-    Banner, DataTable, KeyActivatedButton, KeyValueGrid, ObservedPanel, PageHeader, ScreenHost, Section,
+    Banner, DataTable, TableDensity, KeyActivatedButton, KeyValueGrid, ObservedPanel, PageHeader, ScreenHost, Section,
 } from './kit/index.js'
-import type { ScreenHostInputs } from './kit/index.js'
+import type { ScreenHostInputs, TableColumn } from './kit/index.js'
 
 // Hive detail: optional connection banner, the home channel summary, and the environments observed from
 // the last check-in (read-only, inside an ObservedPanel). The view-model arrives already loaded.
@@ -16,12 +16,19 @@ export class HiveDetailView extends StackPanel
     private static readonly BreadcrumbRoot = 'Hives'
     private static readonly HomeChannelTitle = 'Home channel'
     private static readonly ObservedTitle = 'Observed environments'
+    private static readonly HistoryTitle = 'Observed history'
+    private static readonly HistoryEmptyText = 'No observations recorded yet.'
+    private static readonly WhenKey = 'when'
+    private static readonly SummaryKey = 'summary'
+    private static readonly WhenHeader = 'When'
+    private static readonly SummaryHeader = 'Summary'
 
     private readonly vm: HiveDetailViewModel
     private readonly onBack: () => void
     private readonly host: ScreenHost
     // Rebuilt fresh on every BuildContent: a Visual may hold only one parent.
     private tableSlot = new StackPanel()
+    private historySlot = new StackPanel()
 
     public constructor(vm: HiveDetailViewModel, onBack: () => void)
     {
@@ -44,6 +51,13 @@ export class HiveDetailView extends StackPanel
     {
         const child = [...this.tableSlot.Children][0]
         return child instanceof DataTable ? child as DataTable<ObservedEnvRow> : undefined
+    }
+
+    // Test seam: the currently shown observed-history table.
+    public get HistoryTable(): DataTable<ObservationHistoryRow> | undefined
+    {
+        const child = [...this.historySlot.Children][0]
+        return child instanceof DataTable ? child as DataTable<ObservationHistoryRow> : undefined
     }
 
     private Inputs(): ScreenHostInputs
@@ -78,7 +92,25 @@ export class HiveDetailView extends StackPanel
         this.tableSlot.Orientation = Orientation.Vertical
         root.AddChild(new ObservedPanel({ title: HiveDetailView.ObservedTitle, body: this.tableSlot }))
         this.tableSlot.AddChild(ObservedEnvTable.Build([...this.vm.EnvRows]))
+        this.historySlot = new StackPanel()
+        this.historySlot.Orientation = Orientation.Vertical
+        this.historySlot.AddChild(this.BuildHistoryTable())
+        root.AddChild(new Section({ title: HiveDetailView.HistoryTitle, body: this.historySlot }))
         return root
+    }
+
+    private BuildHistoryTable(): DataTable<ObservationHistoryRow>
+    {
+        const columns: TableColumn<ObservationHistoryRow>[] = [
+            { key: HiveDetailView.WhenKey, header: HiveDetailView.WhenHeader, cell: r => r.whenLabel },
+            { key: HiveDetailView.SummaryKey, header: HiveDetailView.SummaryHeader, cell: r => r.summaryLabel },
+        ]
+        return new DataTable<ObservationHistoryRow>({
+            columns,
+            rows: [...this.vm.ObservationHistory],
+            density: TableDensity.Dense,
+            emptyText: HiveDetailView.HistoryEmptyText,
+        })
     }
 
     private BuildBack(): Visual

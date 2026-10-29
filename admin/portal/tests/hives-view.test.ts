@@ -6,7 +6,7 @@ import type { ControlPlaneClient } from '../src/api-client.js'
 import { HivesMode, HivesView } from '../src/hives-view.js'
 import { HiveDetailView } from '../src/hive-detail-view.js'
 import { ScreenState } from '../src/kit/index.js'
-import type { FleetHiveDto } from '../src/portal-types.js'
+import type { FleetHiveDto, ObservationDto } from '../src/portal-types.js'
 
 class FakeClient
 {
@@ -27,6 +27,11 @@ class FakeClient
             return Promise.reject(new Error('boom'))
         }
         return Promise.resolve(this.fleet)
+    }
+
+    public ListHiveObservations(): Promise<ObservationDto[]>
+    {
+        return Promise.resolve([])
     }
 }
 

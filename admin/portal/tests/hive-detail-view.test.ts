@@ -112,4 +112,20 @@ describe('HiveDetailView', () =>
         ;(button as unknown as { OnKeyDown(a: unknown): void }).OnKeyDown({ Key: Key.Return, Handled: false })
         assert.equal(calls, 1)
     })
+
+    it('renders the observed-history rows', () =>
+    {
+        const obs = [
+            { id: 'o2', hiveId: 'h1', reportedAt: new Date().toISOString(), environments: [{ environmentName: 'a', ready: true, detail: '' }] },
+            { id: 'o1', hiveId: 'h1', reportedAt: new Date().toISOString(), environments: [] },
+        ]
+        const vm = new HiveDetailViewModel(Fixtures.Hive(null, []), undefined, undefined, obs)
+        assert.equal(new HiveDetailView(vm, () => undefined).HistoryTable?.Rows.length, 2)
+    })
+
+    it('shows an empty history table when there are no observations', () =>
+    {
+        const view = new HiveDetailView(Fixtures.Connected(), () => undefined)
+        assert.equal(view.HistoryTable?.Rows.length, 0)
+    })
 })

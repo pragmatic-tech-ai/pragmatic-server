@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { HiveDetailViewModel } from '../src/hive-detail-view-model.js'
+import { PortalDates } from '../src/portal-dates.js'
 import { FleetConnection } from '../src/fleet-view-model.js'
 import { BannerTone, PillKinds } from '../src/kit/index.js'
 import { FleetPresentation } from '../src/fleet-presentation.js'
@@ -77,5 +78,23 @@ describe('HiveDetailViewModel', () =>
         assert.equal(vm.Cluster, 'k8s / managed')
         const connectedLabel = PillKinds.For(FleetPresentation.ConnectionKind(FleetConnection.Connected)).label
         assert.equal(vm.HomeChannel[1].value, connectedLabel)
+    })
+
+    it('derives observation history rows newest-first with a ready summary', () =>
+    {
+        const obs = [
+            { id: 'o2', hiveId: 'h1', reportedAt: Fx.Ago(Fx.HourMs), environments: [{ environmentName: 'a', ready: true, detail: '' }, { environmentName: 'b', ready: false, detail: '' }] },
+            { id: 'o1', hiveId: 'h1', reportedAt: Fx.Ago(2 * Fx.HourMs), environments: [{ environmentName: 'a', ready: true, detail: '' }] },
+        ]
+        const vm = new HiveDetailViewModel(Fx.Hive(null, []), () => Fx.Now, undefined, obs)
+        assert.equal(vm.ObservationHistory.length, 2)
+        assert.equal(vm.ObservationHistory[0].summaryLabel, '1/2 ready')
+        assert.equal(vm.ObservationHistory[1].summaryLabel, '1/1 ready')
+        assert.equal(vm.ObservationHistory[0].whenLabel, PortalDates.Label(obs[0].reportedAt))
+    })
+
+    it('has empty observation history by default', () =>
+    {
+        assert.equal(Fx.Vm(Fx.Hive(null, [])).ObservationHistory.length, 0)
     })
 })
