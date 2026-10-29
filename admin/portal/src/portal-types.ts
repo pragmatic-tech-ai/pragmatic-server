@@ -103,7 +103,6 @@ export interface IPortalView
 export type GatingDto = { tenantId: string; version: string; gatedAt: string }
 export type SelectionDto = { hiveId: string; targetVersion: string; selectedAt: string }
 export type OperatorSummaryDto = { email: string; role: string }
-
 export type ManifestDto = { id: string; image: string; notes?: string; publishedAt: string; withdrawn?: boolean }
 
 export type FleetEnvDto = { name: string; ready: boolean; image?: string; detail: string }
