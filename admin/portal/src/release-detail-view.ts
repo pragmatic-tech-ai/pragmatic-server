@@ -85,6 +85,10 @@ export class ReleaseDetailView extends StackPanel
 
     private async Toggle(): Promise<void>
     {
+        if (this.errorText !== undefined)
+        {
+            this.errorText.Text = ReleaseDetailView.BlankText
+        }
         try
         {
             await this.onToggleWithdrawn(!this.vm.Withdrawn)
