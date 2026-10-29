@@ -37,6 +37,7 @@ export class ProvisionFailedError extends Error
 class CompletedSteps
 {
     public client = false
+    public tenantAttempted = false
     public tenant = false
     public hive = false
     public registration = false
@@ -67,6 +68,7 @@ export class ProvisioningOrchestrator
         {
             const client = await this.directory.CreateClient(input.client)
             completed.client = true
+            completed.tenantAttempted = true
             const provisioned = await this.provisioning.Provision({
                 id: input.tenant.id,
                 clientId: input.client.id,
@@ -133,6 +135,9 @@ export class ProvisioningOrchestrator
         if (completed.tenant)
         {
             await this.Compensate(ProvisioningOrchestrator.TenantPrefix + input.tenant.id, () => this.directory.DeleteTenant(input.tenant.id), rolledBack, residue)
+        }
+        if (completed.tenantAttempted)
+        {
             residue.push(ProvisioningOrchestrator.IdpRealmPrefix + input.tenant.id)
         }
         if (completed.client)

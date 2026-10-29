@@ -18,6 +18,7 @@ class FaultyDirectory extends PlatformDirectory
 {
     public FailCreateHive = false
     public FailDeleteClient = false
+    public FailDeleteTenant = false
 
     public override async CreateHive(input: Parameters<PlatformDirectory['CreateHive']>[0]): Promise<HiveRecord>
     {
@@ -26,6 +27,15 @@ class FaultyDirectory extends PlatformDirectory
             throw new Error(OrchestratorFixture.UnsafeMessage)
         }
         return super.CreateHive(input)
+    }
+
+    public override async DeleteTenant(id: string): Promise<void>
+    {
+        if (this.FailDeleteTenant)
+        {
+            throw new Error(OrchestratorFixture.UnsafeMessage)
+        }
+        return super.DeleteTenant(id)
     }
 
     public override async DeleteClient(id: string): Promise<void>
@@ -229,4 +239,25 @@ test('ProvisionFailedError carries no secret', async () =>
     assert.ok(!blob.includes(FakeProvisioning.Password))
     assert.ok(!blob.includes(FakeDeployments.Token))
     assert.ok(!blob.includes(OrchestratorFixture.UnsafeMessage))
+})
+
+test('tenant provision failure rolls back the client and reports idp-realm residue', async () =>
+{
+    const f = await OrchestratorFixture.Create()
+    f.provisioning.FailWith = new Error(OrchestratorFixture.UnsafeMessage)
+    const err = await f.CaptureFailure()
+    assert.ok(err.rollback.rolledBack.includes('client:c1'))
+    assert.ok(err.rollback.residue.includes('idp-realm:t1'))
+    f.AssertStoresEmpty()
+})
+
+test('a failing DeleteTenant during rollback is reported in residue (with idp-realm)', async () =>
+{
+    const f = await OrchestratorFixture.Create()
+    f.directory.FailCreateHive = true
+    f.directory.FailDeleteTenant = true
+    const err = await f.CaptureFailure()
+    assert.ok(err.rollback.residue.includes('tenant:t1'))
+    assert.ok(err.rollback.residue.includes('idp-realm:t1'))
+    assert.ok(!err.rollback.rolledBack.includes('tenant:t1'))
 })
