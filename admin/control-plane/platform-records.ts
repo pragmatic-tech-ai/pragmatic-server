@@ -56,6 +56,11 @@ export type HiveRecord = {
     cluster: ClusterSpec
     registry: RegistrySpec
     trustRootRef?: string
+    /**
+     * Name of the agent-token Secret. Populated ONLY by the provisioned path
+     * (tenant-admin-bootstrap), when provisioning creates that Secret; a plain
+     * RegisterHive has no Secret name and leaves it unset.
+     */
     agentTokenRef?: string
     createdAt: string
 }

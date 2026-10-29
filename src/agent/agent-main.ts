@@ -1,5 +1,6 @@
 import { InClusterK8sApi } from './k8s-api.js'
 import { AgentWiring } from './agent-wiring.js'
+import { BoundedFetch } from './bounded-fetch.js'
 import { RolloutAgent } from './rollout-agent.js'
 import type { IEnvironmentState, IRolloutTarget, ISnapshotEnvironment } from './rollout-agent.js'
 import { StructuredLogger } from '../observability/logger.js'
@@ -94,44 +95,39 @@ class AgentMain
 
     private static async FetchTarget(url: string, token: string): Promise<IRolloutTarget | undefined>
     {
-        const response = await AgentMain.TimedFetch(url, { headers: { [AgentMain.AuthorizationHeader]: AgentMain.BearerPrefix + token } })
-        if (response.status === AgentMain.NotFound)
+        return await AgentMain.TimedFetch(url, { headers: { [AgentMain.AuthorizationHeader]: AgentMain.BearerPrefix + token } }, async response =>
         {
-            return undefined
-        }
-        if (!response.ok)
-        {
-            throw new Error(AgentMain.RegistryFailurePrefix + response.status)
-        }
-        return await response.json() as IRolloutTarget
+            if (response.status === AgentMain.NotFound)
+            {
+                return undefined
+            }
+            if (!response.ok)
+            {
+                throw new Error(AgentMain.RegistryFailurePrefix + response.status)
+            }
+            return await response.json() as IRolloutTarget
+        })
     }
 
     private static async ReportSnapshot(url: string, token: string, environments: ReadonlyArray<ISnapshotEnvironment>): Promise<void>
     {
-        const response = await AgentMain.TimedFetch(url, {
+        await AgentMain.TimedFetch(url, {
             method: AgentMain.PostMethod,
             headers: { [AgentMain.AuthorizationHeader]: AgentMain.BearerPrefix + token, [AgentMain.ContentTypeHeader]: AgentMain.JsonType },
             body: JSON.stringify({ [AgentMain.EnvironmentsKey]: environments }),
-        })
-        if (!response.ok)
+        }, async response =>
         {
-            throw new Error(AgentMain.RegistryFailurePrefix + response.status)
-        }
+            if (!response.ok)
+            {
+                throw new Error(AgentMain.RegistryFailurePrefix + response.status)
+            }
+        })
     }
 
-    /** fetch bounded by RequestTimeoutMs: an abort rejects (the loop's catch backs off) instead of hanging the single-threaded loop. */
-    private static async TimedFetch(url: string, init: RequestInit): Promise<Response>
+    /** fetch + body read bounded together by RequestTimeoutMs (see BoundedFetch). */
+    private static TimedFetch<T>(url: string, init: RequestInit, consume: (response: Response) => Promise<T>): Promise<T>
     {
-        const controller = new AbortController()
-        const timer = setTimeout(() => controller.abort(), AgentMain.RequestTimeoutMs)
-        try
-        {
-            return await fetch(url, { ...init, signal: controller.signal })
-        }
-        finally
-        {
-            clearTimeout(timer)
-        }
+        return BoundedFetch.Run(url, init, AgentMain.RequestTimeoutMs, consume)
     }
 
     private static PositiveInt(key: string, fallback: number): number
