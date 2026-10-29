@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { TextBlock } from '@pragmatic-tech-ai/mural/basic'
 import { Key, Application } from '@pragmatic-tech-ai/mural/runtime'
 import { Pragmatic, PragmaticLight } from '@pragmatic-tech-ai/mural/resources/pragmatic'
-import { KeyActivatedButton, PillKind, PillKinds, StatusPill } from '../src/kit/index.js'
+import { Act, KeyActivatedButton, PillKind, PillKinds, StatusPill } from '../src/kit/index.js'
 import { IconCatalog, KitGlyph } from '../src/kit/icon-catalog.js'
 
 class Fixtures
@@ -90,6 +90,36 @@ describe('kit foundations', () =>
         assert.equal(count, 2)
         Fixtures.Press(b, Key.Space)
         assert.equal(count, 3)
+    })
+
+    it('KeyActivatedButton.Press invokes onActivate exactly once', () =>
+    {
+        let count = 0
+        const b = new KeyActivatedButton(() => { count++ })
+        b.Press()
+        assert.equal(count, 1)
+    })
+
+    it('KeyActivatedButton.Press without onActivate does not throw', () =>
+    {
+        const b = new KeyActivatedButton()
+        assert.doesNotThrow(() => b.Press())
+    })
+
+    it('enabled Act.Press calls onClick once', () =>
+    {
+        let count = 0
+        const act = new Act({ can: true, label: 'Go', onClick: () => { count++ } })
+        act.Press()
+        assert.equal(count, 1)
+    })
+
+    it('disabled Act.Press does NOT call onClick (gate)', () =>
+    {
+        let count = 0
+        const act = new Act({ can: false, label: 'Go', onClick: () => { count++ } })
+        act.Press()
+        assert.equal(count, 0)
     })
 
     it('resolves a definition for every nav and top-bar glyph', () =>

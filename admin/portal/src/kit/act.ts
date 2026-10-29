@@ -60,12 +60,6 @@ export class Act extends KeyActivatedButton
         return this.reason
     }
 
-    // Test seam: simulate activation (gated exactly like a real click).
-    public Press(): void
-    {
-        this.Fire()
-    }
-
     protected override Activate(): void
     {
         this.Fire()

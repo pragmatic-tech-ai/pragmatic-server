@@ -16,6 +16,12 @@ export class KeyActivatedButton extends Button
         this.AddClickHandler(() => this.Activate())
     }
 
+    // Public activation: runs the same path a pointer click or Enter/Space uses (subclass gates apply).
+    public Press(): void
+    {
+        this.Activate()
+    }
+
     // The single activation path (pointer click and keyboard); subclasses may override.
     protected Activate(): void
     {
