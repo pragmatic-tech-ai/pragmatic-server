@@ -11,6 +11,8 @@ import { UnsupportedBackendError } from './hive-orchestrator.js'
 import type { IEnvironmentLookup } from './platform-directory.js'
 import type { EnvironmentRecord } from './environment-record.js'
 import type { EnvironmentWorkload } from './environment-workload.js'
+import { Channel } from './channel.js'
+import type { IManifestSigner } from './manifest-signer.js'
 import { AgentUnauthorizedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, UnknownHiveError, UnknownManifestError } from './rollout-errors.js'
 
 export interface IHiveLookup
@@ -46,20 +48,30 @@ export class PlatformDeploymentRegistry
         private readonly orchestrators: HiveOrchestratorFactory,
         private readonly environments: IEnvironmentLookup,
         private readonly placement: IWorkloadPlacement,
-        private readonly observations: HiveObservationRegistry)
+        private readonly observations: HiveObservationRegistry,
+        private readonly signer?: IManifestSigner)
     {
     }
 
-    public async Publish(version: string, image: string, notes?: string): Promise<ManifestRecord>
+    public async Publish(version: string, image: string, notes?: string, channel?: Channel): Promise<ManifestRecord>
     {
         if (this.manifests.Get(version) !== undefined)
         {
             throw new ManifestExistsError(version)
         }
-        const record: ManifestRecord = { id: version, image, publishedAt: new Date().toISOString() }
+        const record: ManifestRecord = { id: version, image, publishedAt: new Date().toISOString(), channel: channel ?? Channel.Stable }
         if (notes !== undefined)
         {
             record.notes = notes
+        }
+        if (this.signer !== undefined)
+        {
+            const { digest, signed } = await this.signer.SignForPublish(image)
+            if (digest !== undefined)
+            {
+                record.digest = digest
+            }
+            record.signed = signed
         }
         await this.manifests.Put(record)
         return record
@@ -84,14 +96,17 @@ export class PlatformDeploymentRegistry
     }
 
     /** Marks a published version withdrawn (or restores it). A withdrawn version stays published and gated but is flagged for the UI. */
-    public async SetWithdrawn(version: string, withdrawn: boolean): Promise<ManifestRecord>
+    public async SetWithdrawn(version: string, withdrawn: boolean, reason?: string, actor?: string): Promise<ManifestRecord>
     {
         const manifest = this.manifests.Get(version)
         if (manifest === undefined)
         {
             throw new UnknownManifestError(version)
         }
-        const updated: ManifestRecord = { ...manifest, withdrawn }
+        const { withdrawal: _previous, ...rest } = manifest
+        const updated: ManifestRecord = withdrawn
+            ? { ...rest, withdrawn, withdrawal: { reason: reason!, actor: actor!, at: new Date().toISOString() } }
+            : { ...rest, withdrawn }
         await this.manifests.Put(updated)
         return updated
     }

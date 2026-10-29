@@ -18,6 +18,8 @@ import type { EnvironmentRecord } from '../environment-record.js'
 import type { EnvironmentWorkload } from '../environment-workload.js'
 import type { HiveHealthDto } from '../hive-health-producer.js'
 import { RolloutFixture } from './rollout-fixture.js'
+import { Channel } from '../channel.js'
+import type { IManifestSigner } from '../manifest-signer.js'
 
 class Fx
 {
@@ -35,6 +37,15 @@ class Fx
     public static readonly NoHive = 'no-such-hive'
     public static readonly GarbageLength = 100000
     public static readonly GarbageChar = 'x'
+    public static readonly Digest = 'sha256:abc'
+    public static readonly BadBuild = 'bad build'
+    public static readonly Operator = 'op@x'
+    public static readonly LegacyAt = '2026-01-01T00:00:00.000Z'
+
+    public static Signer(digest: string | undefined, signed: boolean): IManifestSigner
+    {
+        return { SignForPublish: async () => (digest === undefined ? { signed } : { digest, signed }) }
+    }
 
     public static Image(version: string): string
     {
@@ -60,7 +71,7 @@ class Fx
         return { id, tenantId, displayName: id, cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Attach }, agentTokenRef: Fx.TokenRef, createdAt: '2026-10-22T00:00:00.000Z' }
     }
 
-    public static async Run(body: (reg: PlatformDeploymentRegistry, registrations: RolloutRegistrationRegistry, rolls: string[]) => Promise<void>, unreachable: boolean = false): Promise<void>
+    public static async Run(body: (reg: PlatformDeploymentRegistry, registrations: RolloutRegistrationRegistry, rolls: string[]) => Promise<void>, unreachable: boolean = false, signer?: IManifestSigner): Promise<void>
     {
         const dir = await mkdtemp(join(tmpdir(), Fx.Prefix))
         try
@@ -71,7 +82,7 @@ class Fx
             const orchestrator: IHiveOrchestrator = { Roll: async (w: EnvironmentWorkload, image: string) => { rolls.push((w as unknown as { name: string }).name + '@' + image) } } as unknown as IHiveOrchestrator
             const factory = { For: () => { if (unreachable) { throw new UnsupportedBackendError(HiveBackend.Aks, InfraMode.Attach) } return orchestrator } } as unknown as HiveOrchestratorFactory
             const envs = [Fx.EnvRecord(Fx.EnvNames[0], Fx.HiveA), Fx.EnvRecord(Fx.EnvNames[1], Fx.HiveA), Fx.EnvRecord(Fx.EnvNames[2], Fx.HiveB)]
-            const reg = new PlatformDeploymentRegistry(new ManifestRegistry(join(dir, 'm.json')), new GatingRegistry(join(dir, 'g.json')), new SelectionRegistry(join(dir, 's.json')), registrations, { GetHive: id => hives.get(id) }, factory, { List: () => envs }, { WorkloadFor: e => e as unknown as EnvironmentWorkload }, RolloutFixture.Observations(dir))
+            const reg = new PlatformDeploymentRegistry(new ManifestRegistry(join(dir, 'm.json')), new GatingRegistry(join(dir, 'g.json')), new SelectionRegistry(join(dir, 's.json')), registrations, { GetHive: id => hives.get(id) }, factory, { List: () => envs }, { WorkloadFor: e => e as unknown as EnvironmentWorkload }, RolloutFixture.Observations(dir), signer)
             await body(reg, registrations, rolls)
         }
         finally
@@ -366,5 +377,81 @@ test('AdoptableFor lists the versions gated for the hive tenant and rejects an u
         await reg.Gate(Fx.TenantB, Fx.V3)
         assert.deepEqual(reg.AdoptableFor(Fx.HiveA).map(m => m.id), [Fx.V1, Fx.V2])
         assert.throws(() => reg.AdoptableFor(Fx.NoHive), UnknownHiveError)
+    })
+})
+
+test('publish records the channel, defaulting to stable', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        const a = await reg.Publish(Fx.V1, Fx.Image(Fx.V1))
+        assert.equal(a.channel, Channel.Stable)
+        const b = await reg.Publish(Fx.V2, Fx.Image(Fx.V2), undefined, Channel.EarlyAccess)
+        assert.equal(b.channel, Channel.EarlyAccess)
+        assert.equal(reg.AllManifests().find(m => m.id === Fx.V2)!.channel, Channel.EarlyAccess)
+    })
+})
+
+test('publish records digest and signed from the signer', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        const m = await reg.Publish(Fx.V1, Fx.Image(Fx.V1))
+        assert.equal(m.digest, Fx.Digest)
+        assert.equal(m.signed, true)
+    }, false, Fx.Signer(Fx.Digest, true))
+})
+
+test('publish without a signer records channel only', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        const m = await reg.Publish(Fx.V1, Fx.Image(Fx.V1))
+        assert.equal(m.channel, Channel.Stable)
+        assert.equal(m.digest, undefined)
+        assert.ok(!m.signed)
+    })
+})
+
+test('publish succeeds and records unsigned when the signer cannot sign', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        const m = await reg.Publish(Fx.V1, Fx.Image(Fx.V1))
+        assert.equal(m.signed, false)
+        assert.equal(m.digest, undefined)
+        assert.ok(!('digest' in m))
+        assert.equal(reg.AllManifests().length, 1)
+    }, false, Fx.Signer(undefined, false))
+})
+
+test('withdraw records reason, actor and timestamp and sets the boolean; restore clears both', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        await reg.Publish(Fx.V1, Fx.Image(Fx.V1))
+        const w = await reg.SetWithdrawn(Fx.V1, true, Fx.BadBuild, Fx.Operator)
+        assert.equal(w.withdrawn, true)
+        assert.equal(w.withdrawal!.reason, Fx.BadBuild)
+        assert.equal(w.withdrawal!.actor, Fx.Operator)
+        assert.ok(!Number.isNaN(Date.parse(w.withdrawal!.at)))
+        const r = await reg.SetWithdrawn(Fx.V1, false)
+        assert.equal(r.withdrawn, false)
+        assert.equal(r.withdrawal, undefined)
+        assert.ok(!('withdrawal' in r))
+        assert.ok(!('withdrawal' in reg.AllManifests()[0]!))
+    })
+})
+
+test('an old record with no new fields still loads and withdraws', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        const manifests = (reg as unknown as { manifests: ManifestRegistry }).manifests
+        await manifests.Put({ id: Fx.V1, image: Fx.Image(Fx.V1), publishedAt: Fx.LegacyAt })
+        const w = await reg.SetWithdrawn(Fx.V1, true, Fx.BadBuild, Fx.Operator)
+        assert.equal(w.withdrawn, true)
+        assert.equal(w.channel, undefined)
+        assert.equal(w.withdrawal!.actor, Fx.Operator)
     })
 })
