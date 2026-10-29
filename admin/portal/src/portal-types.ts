@@ -131,7 +131,7 @@ export type ProvisionSecretsDto = { ownerEmail: string; ownerPassword: string; a
 
 export type ProvisionResultDto = { client: ClientDto; tenant: TenantDto; hive: HiveDto; secrets: ProvisionSecretsDto }
 
-export type PolicyDto = { tenantId: string; channels?: ('stable' | 'early')[]; minVersion?: string; hold?: { reason: string; actor: string; at: string } }
+export type PolicyDto = { tenantId: string; hiveId?: string; channels?: ('stable' | 'early')[]; minVersion?: string; hold?: { reason: string; actor: string; at: string } }
 
 export type ActivityDto = { id: string; actor: string; method: string; path: string; status: number; at: string }
 export type ObservationDto = { id: string; hiveId: string; environments: { environmentName: string; ready: boolean; runningImage?: string; detail: string }[]; reportedAt: string }

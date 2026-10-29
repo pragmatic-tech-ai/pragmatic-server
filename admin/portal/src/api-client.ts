@@ -268,6 +268,36 @@ export class ControlPlaneClient
         return await this.Send<LedgerDto[]>(this.WithLimit(this.HiveSubRoute(hiveId, ControlPlaneClient.LedgerSegment), limit), undefined)
     }
 
+    private HivePolicyRoute(hiveId: string, segment: string): string
+    {
+        return this.HiveSubRoute(hiveId, ControlPlaneClient.PolicySegment) + ControlPlaneClient.PathSeparator + segment
+    }
+
+    public async SetHiveChannels(hiveId: string, channels: string[]): Promise<PolicyDto>
+    {
+        return await this.Send<PolicyDto>(this.HivePolicyRoute(hiveId, ControlPlaneClient.ChannelsSegment), { method: ControlPlaneClient.MethodPut, body: JSON.stringify({ [ControlPlaneClient.ChannelsKey]: channels }) })
+    }
+
+    public async SetHiveMinVersion(hiveId: string, version: string): Promise<PolicyDto>
+    {
+        return await this.Send<PolicyDto>(this.HivePolicyRoute(hiveId, ControlPlaneClient.MinVersionSegment), { method: ControlPlaneClient.MethodPut, body: JSON.stringify({ [ControlPlaneClient.VersionKey]: version }) })
+    }
+
+    public async ClearHiveMinVersion(hiveId: string): Promise<PolicyDto>
+    {
+        return await this.Send<PolicyDto>(this.HivePolicyRoute(hiveId, ControlPlaneClient.MinVersionSegment), { method: ControlPlaneClient.MethodDelete })
+    }
+
+    public async SetHiveHold(hiveId: string, reason: string): Promise<PolicyDto>
+    {
+        return await this.Send<PolicyDto>(this.HivePolicyRoute(hiveId, ControlPlaneClient.HoldSegment), { method: ControlPlaneClient.MethodPost, body: JSON.stringify({ [ControlPlaneClient.ReasonKey]: reason }) })
+    }
+
+    public async ClearHiveHold(hiveId: string): Promise<PolicyDto>
+    {
+        return await this.Send<PolicyDto>(this.HivePolicyRoute(hiveId, ControlPlaneClient.HoldSegment), { method: ControlPlaneClient.MethodDelete })
+    }
+
     private HiveSubRoute(hiveId: string, segment: string): string
     {
         return this.ItemRoute(ControlPlaneClient.HivesRoute, hiveId) + ControlPlaneClient.PathSeparator + segment

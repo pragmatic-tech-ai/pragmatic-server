@@ -118,4 +118,22 @@ describe('HiveDetailViewModel', () =>
     {
         assert.equal(Fx.Vm(Fx.Hive(null, [])).ObservationHistory.length, 0)
     })
+
+    it('exposes the hive effective policy labels', () =>
+    {
+        const policy = { tenantId: 't1', hiveId: 'h1', channels: ['stable' as const], minVersion: '2.0.0', hold: { reason: 'r', actor: 'a', at: Fx.Now.toISOString() } }
+        const vm = new HiveDetailViewModel(Fx.Hive(null, []), () => Fx.Now, undefined, [], [], policy)
+        assert.deepEqual(vm.HivePolicy, { channelsLabel: 'stable', minVersionLabel: '2.0.0', heldLabel: 'Held', held: true })
+    })
+
+    it('defaults the hive policy when none is supplied', () =>
+    {
+        assert.deepEqual(Fx.Vm(Fx.Hive(null, [])).HivePolicy, { channelsLabel: 'All channels', minVersionLabel: 'No floor', heldLabel: 'Active', held: false })
+    })
+
+    it('labels an empty channel set as all channels', () =>
+    {
+        const vm = new HiveDetailViewModel(Fx.Hive(null, []), () => Fx.Now, undefined, [], [], { tenantId: 't1', hiveId: 'h1', channels: [] })
+        assert.equal(vm.HivePolicy.channelsLabel, 'All channels')
+    })
 })

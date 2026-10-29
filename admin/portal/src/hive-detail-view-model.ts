@@ -1,5 +1,5 @@
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
-import type { FleetHiveDto, LedgerDto, ObservationDto } from './portal-types.js'
+import type { FleetHiveDto, LedgerDto, ObservationDto, PolicyDto } from './portal-types.js'
 import { PortalDates } from './portal-dates.js'
 import { FleetConnection, FleetViewModel } from './fleet-view-model.js'
 import type { FleetRow } from './fleet-view-model.js'
@@ -41,6 +41,11 @@ export class HiveDetailViewModel extends Observable
     private static readonly SummaryTemplate = '{ready}/{total} ready'
     private static readonly ReadyToken = '{ready}'
     private static readonly TotalToken = '{total}'
+    private static readonly AllChannelsLabel = 'All channels'
+    private static readonly NoFloorLabel = 'No floor'
+    private static readonly HeldLabel = 'Held'
+    private static readonly NotHeldLabel = 'Active'
+    private static readonly ChannelSeparator = ', '
     private static readonly KeyOwner = 'Client / tenant'
     private static readonly KeyConnection = 'Connection'
     private static readonly KeyLastCheckIn = 'Last check-in'
@@ -70,6 +75,7 @@ export class HiveDetailViewModel extends Observable
         quietThresholdMs?: number,
         observations: readonly ObservationDto[] = [],
         ledger: readonly LedgerDto[] = [],
+        private readonly policy?: PolicyDto,
     )
     {
         super()
@@ -149,6 +155,18 @@ export class HiveDetailViewModel extends Observable
     public get LedgerHistory(): readonly LedgerRow[]
     {
         return this.ledgerRows
+    }
+
+    public get HivePolicy(): { channelsLabel: string; minVersionLabel: string; heldLabel: string; held: boolean }
+    {
+        const held = this.policy?.hold !== undefined
+        const channels = this.policy?.channels
+        return {
+            channelsLabel: channels !== undefined && channels.length > 0 ? channels.join(HiveDetailViewModel.ChannelSeparator) : HiveDetailViewModel.AllChannelsLabel,
+            minVersionLabel: this.policy?.minVersion ?? HiveDetailViewModel.NoFloorLabel,
+            heldLabel: held ? HiveDetailViewModel.HeldLabel : HiveDetailViewModel.NotHeldLabel,
+            held,
+        }
     }
 
     private static Summarize(o: ObservationDto): string
