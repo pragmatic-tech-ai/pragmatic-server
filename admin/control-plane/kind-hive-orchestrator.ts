@@ -31,9 +31,24 @@ export class KindHiveOrchestrator implements IHiveOrchestrator
     public async Apply(w: EnvironmentWorkload): Promise<void>
     {
         await this.EnsureCluster()
-        // kind nodes cannot pull a locally built image; load it into the node first (repeatable, so re-Apply is safe).
-        await this.kind.LoadImage(w.image, this.clusterName)
+        // Best-effort: load a locally built image into the node so kind can run it without a registry (repeatable,
+        // so re-Apply is safe). A registry-only image has no local copy to load; the node pulls it instead, so a
+        // load failure must not gate Apply - the workload's real reachability surfaces through Health.
+        await this.LoadImageBestEffort(w.image)
         await this.inner.Apply(w)
+    }
+
+    private async LoadImageBestEffort(image: string): Promise<void>
+    {
+        try
+        {
+            await this.kind.LoadImage(image, this.clusterName)
+        }
+        catch
+        {
+            // Distribution is an optimization for locally built images, not a gate: a registry-backed image is
+            // pulled by the node, and an unreachable image fails observably at Health rather than silently here.
+        }
     }
 
     public async WaitHealthy(w: EnvironmentWorkload): Promise<void>

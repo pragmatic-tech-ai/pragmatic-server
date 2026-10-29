@@ -12,6 +12,7 @@ class FakeKind implements IKind
     public created: string[] = []
     public deleted: string[] = []
     public loaded: { image: string; clusterName: string }[] = []
+    public failLoad = false
 
     public async CreateCluster(name: string, _config?: KindClusterConfig): Promise<void>
     {
@@ -31,6 +32,10 @@ class FakeKind implements IKind
 
     public async LoadImage(image: string, clusterName: string): Promise<void>
     {
+        if (this.failLoad)
+        {
+            throw new Error('load failed')
+        }
         this.loaded.push({ image, clusterName })
     }
 }
@@ -109,6 +114,15 @@ test('Apply does not recreate when the cluster already exists', async () =>
     f.kind.clusters = [Fixture.Cluster]
     await f.sut.Apply(Fixture.Workload)
     assert.deepEqual(f.kind.created, [])
+    assert.ok(f.inner.calls.includes('Apply'))
+})
+
+test('Apply still delegates when the image load fails (best-effort: a registry-only image is pulled by the node)', async () =>
+{
+    const f = new Fixture()
+    f.kind.failLoad = true
+    await f.sut.Apply(Fixture.Workload)
+    assert.deepEqual(f.kind.loaded, [])
     assert.ok(f.inner.calls.includes('Apply'))
 })
 
@@ -200,16 +214,6 @@ test('Apply is repeatable: a second Apply loads the image again without failing'
     assert.equal(f.kind.loaded.length, 2)
 })
 
-test('A LoadImage failure stops Apply before the inner Apply', async () =>
-{
-    const f = new Fixture()
-    f.kind.LoadImage = async () =>
-    {
-        throw new Error('load failed')
-    }
-    await assert.rejects(() => f.sut.Apply(Fixture.Workload), /load failed/)
-    assert.ok(!f.inner.calls.includes('Apply'))
-})
 
 test('ScaleDatabase delegates to inner without ensuring the cluster', async () =>
 {
