@@ -45,7 +45,6 @@ export class AuthorizeEndpoint
     private static readonly StatusTooManyRequests = 429;
     private static readonly MillisPerSecond = 1000;
     private static readonly TooManyAttemptsCode = 'too_many_attempts';
-    private static readonly TooManyAttemptsDescription = 'Too many failed attempts. Try again later.';
     private static readonly ErrorField = 'error';
     private static readonly DescriptionField = 'error_description';
     private static readonly InvalidRequest = 'invalid_request';
@@ -118,14 +117,16 @@ export class AuthorizeEndpoint
             return {
                 kind: 'error',
                 status: AuthorizeEndpoint.StatusTooManyRequests,
-                body: { [AuthorizeEndpoint.ErrorField]: AuthorizeEndpoint.TooManyAttemptsCode, [AuthorizeEndpoint.DescriptionField]: AuthorizeEndpoint.TooManyAttemptsDescription },
+                body: { [AuthorizeEndpoint.ErrorField]: AuthorizeEndpoint.TooManyAttemptsCode },
                 retryAfterSeconds: Math.ceil(decision.retryAfterMs / AuthorizeEndpoint.MillisPerSecond)
             };
         }
+        // Count the attempt at the gate, synchronously BEFORE the await: Authenticate yields (Argon2 + I/O), so a concurrent
+        // burst would otherwise all pass CheckAllowed before any failure was recorded. Success clears the optimistic count.
+        this.throttle.RecordFailure(tenantId, email, clientIp);
         const result = await realm.Authenticate(email, password);
         if (result === null)
         {
-            this.throttle.RecordFailure(tenantId, email, clientIp);
             return this.LoginPage(query, true);
         }
         this.throttle.Clear(tenantId, email, clientIp);

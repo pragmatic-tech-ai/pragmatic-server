@@ -52,6 +52,7 @@ class ThrottleFixture
             realm.RotatePassword = async (e: string, c: string, n: string) =>
             {
                 f.rotateCalls++;
+                await new Promise(resolve => setTimeout(resolve, 50));
                 return original(e, c, n);
             };
             const clients = new IdpClientStore();
@@ -110,6 +111,13 @@ test('rotation: 3 wrong current passwords lock; the 4th is 429 with Retry-After 
     assert.ok(Number(locked.retryAfter) > 0);
     assert.equal(f.rotateCalls, calls);
     assert.ok(!locked.text.includes(ThrottleFixture.Old));
+}));
+
+test('rotation: concurrent wrong guesses for one key: at most maxAttempts reach RotatePassword (count-at-gate)', () => ThrottleFixture.Run(async f =>
+{
+    const replies = await Promise.all(Array.from({ length: 8 }, () => f.Rotate('nope')));
+    assert.ok(f.rotateCalls <= 3, `RotatePassword reached ${f.rotateCalls} times`);
+    assert.equal(replies.filter(r => r.status === 429).length, 8 - f.rotateCalls);
 }));
 
 test('rotation: a correct rotation clears the counter', () => ThrottleFixture.Run(async f =>

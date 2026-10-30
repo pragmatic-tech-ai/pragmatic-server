@@ -374,13 +374,15 @@ export class IdpHost
             this.WriteJson(res, IdpHost.StatusTooManyRequests, { [IdpHost.ErrorField]: IdpHost.TooManyAttemptsCode }, this.RetryAfterHeaders(decision.retryAfterMs));
             return;
         }
+        // Count the attempt at the gate, synchronously BEFORE the await: RotatePassword yields (Argon2 + I/O), so a concurrent
+        // burst would otherwise all pass CheckAllowed before any failure was recorded. Success clears the optimistic count.
+        this.throttle.RecordFailure(tenantId, email, clientIp);
         if (await realm.RotatePassword(email, current, next))
         {
             this.throttle.Clear(tenantId, email, clientIp);
             this.WriteJson(res, IdpHost.StatusOk, IdpHost.EmptyObject, IdpHost.NoStoreHeaders);
             return;
         }
-        this.throttle.RecordFailure(tenantId, email, clientIp);
         this.WriteJson(res, IdpHost.StatusUnauthorized, { [IdpHost.ErrorField]: IdpHost.InvalidCredentialsCode }, IdpHost.NoStoreHeaders);
     }
 

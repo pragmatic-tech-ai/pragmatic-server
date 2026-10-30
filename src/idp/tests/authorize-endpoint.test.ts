@@ -47,6 +47,7 @@ class AuthorizeFixture
             realm.Authenticate = async (email: string, password: string) =>
             {
                 f.authenticateCalls++;
+                await new Promise(resolve => setTimeout(resolve, 10));
                 return original(email, password);
             };
             f.endpoint = new AuthorizeEndpoint(new IdpRealmSet([[AuthorizeFixture.TenantId, realm]]), clients, f.codes, f.sso, true, new IdpLoginThrottle());
@@ -246,6 +247,13 @@ test('a lock on one email does not lock another email from the same ip', () => A
     }
     assert.equal((await AuthorizeFixture.Attempt(f, AuthorizeFixture.OtherEmail, 'bad')).kind, 'loginPage');
     assert.equal((await AuthorizeFixture.Attempt(f, AuthorizeFixture.Email, 'bad', '10.0.0.2')).kind, 'loginPage');
+}));
+
+test('concurrent bad guesses for one key: at most maxAttempts reach Authenticate (count-at-gate)', () => AuthorizeFixture.Run(async f =>
+{
+    const results = await Promise.all(Array.from({ length: 8 }, () => AuthorizeFixture.Attempt(f, AuthorizeFixture.Email, 'bad')));
+    assert.ok(f.authenticateCalls <= 3, `authenticate reached ${f.authenticateCalls} times`);
+    assert.equal(results.filter(r => r.kind === 'error' && (r as { status: number }).status === 429).length, 8 - f.authenticateCalls);
 }));
 
 test('a malformed form (missing password) is not counted toward the lock', () => AuthorizeFixture.Run(async f =>
