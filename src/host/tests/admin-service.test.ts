@@ -3,12 +3,14 @@ import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
 import { Tenant, TenantKind, Role, ResourceKind, ResourceRef, IdentityConfig, DelegationDepth, AuditEventKind, PresentedSecret, LocalAccountNotFoundError } from '@pragmatic-tech-ai/todl-identity'
 import { Grant } from '@pragmatic-tech-ai/todl-identity'
+import type { ISessionManager } from '@pragmatic-tech-ai/todl-identity'
 import type { IAuditSink, AuditEvent, ITenantConfigStore, IRoleGrantStore, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { InMemoryRoleGrantStore, LocalAccountStore, ServiceTokenStore, LocalAccountRegistrar, EncryptedSecretStore, Argon2PasswordHasher } from '@pragmatic-tech-ai/todl-identity-local'
 import { AdminService, AdminTokenNotFoundError, AdminSelfLockoutError, LastAdministratorError, AdminConfigMissingError, ForeignTenantResourceError } from '../admin-service.js'
 import type { ISecurityModelReload } from '../cypher/read-filter-source.js'
 import { AdminEnums, AdminEnumError } from '../admin-enums.js'
 import type { IAdapterPackAdmin } from '../adapter-pack-admin.js'
+import type { IPrincipalInvalidator } from '../principal-connection-registry.js'
 
 class RecordingAuditSink implements IAuditSink
 {
@@ -88,6 +90,41 @@ class SpyGrantStore implements IRoleGrantStore
     }
 }
 
+class RecordingInvalidator implements IPrincipalInvalidator
+{
+    public readonly Calls: Array<[string, string]> = []
+
+    public InvalidatePrincipal(tenantId: string, principalId: string): void
+    {
+        this.Calls.push([tenantId, principalId])
+    }
+}
+
+class RecordingSessions implements ISessionManager
+{
+    public readonly Revoked: Array<[Tenant, string]> = []
+
+    public Issue(): never
+    {
+        throw new Error('unused')
+    }
+
+    public Validate(): never
+    {
+        throw new Error('unused')
+    }
+
+    public Revoke(): never
+    {
+        throw new Error('unused')
+    }
+
+    public async RevokeAllFor(tenant: Tenant, principalId: string): Promise<void>
+    {
+        this.Revoked.push([tenant, principalId])
+    }
+}
+
 class AdminFixture
 {
     public static readonly Secret = 'super-secret-value'
@@ -114,6 +151,11 @@ class AdminFixture
     public constructor()
     {
         this.Service = this.ServiceFor(this.Tenant, this.Audit, async () => { this.Config.Calls.push('evict') })
+    }
+
+    public WiredService(invalidator: IPrincipalInvalidator, sessions: ISessionManager): AdminService
+    {
+        return new AdminService(this.Grants, this.Audit, this.Config, this.Tenant, async () => undefined, this.Accounts, this.Registrar, this.Tokens, this.Packs, this.Reload, invalidator, sessions)
     }
 
     public ServiceFor(tenant: Tenant, audit: IAuditSink, evict: () => Promise<void>): AdminService
@@ -648,4 +690,53 @@ test('concurrent revokes via two AdminService instances on one tenant serialize:
     assert.equal(rejected.length, 1)
     assert.ok(rejected[0].reason instanceof LastAdministratorError)
     assert.equal((await racy.Inner.GrantsOn(root)).length, 1)
+})
+
+test('RevokeRole invalidates the subject live connections once', async () =>
+{
+    const f = new AdminFixture()
+    const inv = new RecordingInvalidator()
+    const svc = f.WiredService(inv, new RecordingSessions())
+    await f.Seed('u1', Role.Owner)
+    await f.Seed('u2', Role.Editor)
+    await svc.RevokeRole('u1', 'u2', Role.Editor, f.TenantRoot())
+    assert.deepEqual(inv.Calls, [[f.Tenant.Id, 'u2']])
+})
+
+test('RevokeToken invalidates the token principal live connections', async () =>
+{
+    const f = new AdminFixture()
+    const inv = new RecordingInvalidator()
+    const svc = f.WiredService(inv, new RecordingSessions())
+    const issued = await svc.IssueToken('u1', 'bob', ['read'], null)
+    assert.equal(inv.Calls.length, 0)
+    await svc.RevokeToken('u1', issued.Grant.TokenRef)
+    assert.deepEqual(inv.Calls, [[f.Tenant.Id, 'bob']])
+})
+
+test('DisableAccount revokes sessions and invalidates live connections', async () =>
+{
+    const f = new AdminFixture()
+    const inv = new RecordingInvalidator()
+    const sessions = new RecordingSessions()
+    const svc = f.WiredService(inv, sessions)
+    await svc.CreateAccount('u1', 'a@x.io', 'p9', new PresentedSecret('pw'))
+    await svc.DisableAccount('u1', 'p9')
+    assert.equal(sessions.Revoked.length, 1)
+    assert.equal(sessions.Revoked[0][0].Id, f.Tenant.Id)
+    assert.equal(sessions.Revoked[0][1], 'p9')
+    assert.deepEqual(inv.Calls, [[f.Tenant.Id, 'p9']])
+})
+
+test('revokes without invalidator or sessions still complete', async () =>
+{
+    const f = new AdminFixture()
+    await f.Seed('u1', Role.Owner)
+    await f.Seed('u2', Role.Editor)
+    await f.Service.RevokeRole('u1', 'u2', Role.Editor, f.TenantRoot())
+    const issued = await f.Service.IssueToken('u1', 'bob', ['read'], null)
+    await f.Service.RevokeToken('u1', issued.Grant.TokenRef)
+    await f.Service.CreateAccount('u1', 'a@x.io', 'p9', new PresentedSecret('pw'))
+    await f.Service.DisableAccount('u1', 'p9')
+    assert.equal((await f.Service.ListAccounts())[0].Disabled, true)
 })

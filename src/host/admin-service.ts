@@ -1,10 +1,11 @@
 import { Action, AuditEvent, AuditEventKind, Grant, ResourceRef, Role, RoleCapabilities, ResourceKind, IdentityConfig } from '@pragmatic-tech-ai/todl-identity'
-import type { LocalAccount, ServiceTokenSummary, PresentedSecret, IRoleGrantStore, IAuditSink, ITenantConfigStore, ILocalAccountStore, IServiceTokenStore, ServiceTokenGrant, Tenant, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
+import type { LocalAccount, ServiceTokenSummary, PresentedSecret, IRoleGrantStore, IAuditSink, ITenantConfigStore, ILocalAccountStore, IServiceTokenStore, ServiceTokenGrant, Tenant, ISecurityModelConfig, ISessionManager } from '@pragmatic-tech-ai/todl-identity'
 import type { LocalAccountRegistrar } from '@pragmatic-tech-ai/todl-identity-local'
 import { AccessDepthEvaluator } from '@pragmatic-tech-ai/todl-identity-engine'
 import { AdminEnums } from './admin-enums.js'
 import type { IAdapterPackAdmin } from './adapter-pack-admin.js'
 import type { ISecurityModelReload } from './cypher/read-filter-source.js'
+import type { IPrincipalInvalidator } from './principal-connection-registry.js'
 
 /** Raised when a caller tries to revoke their own tenant-Owner grant. */
 export class AdminSelfLockoutError extends Error
@@ -100,8 +101,10 @@ export class AdminService
     private readonly tokens: IServiceTokenStore
     private readonly packs: IAdapterPackAdmin
     private readonly securityModelReload: ISecurityModelReload
+    private readonly invalidator?: IPrincipalInvalidator
+    private readonly sessions?: ISessionManager
 
-    public constructor(grants: IRoleGrantStore, audit: IAuditSink, configStore: ITenantConfigStore, tenant: Tenant, evict: () => Promise<void>, accounts: ILocalAccountStore, registrar: LocalAccountRegistrar, tokens: IServiceTokenStore, packs: IAdapterPackAdmin, securityModelReload: ISecurityModelReload)
+    public constructor(grants: IRoleGrantStore, audit: IAuditSink, configStore: ITenantConfigStore, tenant: Tenant, evict: () => Promise<void>, accounts: ILocalAccountStore, registrar: LocalAccountRegistrar, tokens: IServiceTokenStore, packs: IAdapterPackAdmin, securityModelReload: ISecurityModelReload, invalidator?: IPrincipalInvalidator, sessions?: ISessionManager)
     {
         this.packs = packs
         this.grants = grants
@@ -113,6 +116,8 @@ export class AdminService
         this.registrar = registrar
         this.tokens = tokens
         this.securityModelReload = securityModelReload
+        this.invalidator = invalidator
+        this.sessions = sessions
     }
 
     public async ListGrants(subject: string): Promise<readonly Grant[]>
@@ -152,6 +157,7 @@ export class AdminService
             await this.grants.Revoke(new Grant(subject, role, resource))
             await this.Audit(subject, AdminService.GrantDetail(actor, AdminService.RevokeRoleAction, role, resource))
         })
+        this.invalidator?.InvalidatePrincipal(this.tenant.Id, subject)
     }
 
     public async GetConfig(): Promise<IdentityConfig>
@@ -230,12 +236,14 @@ export class AdminService
     public async DisableAccount(actor: string, principalId: string): Promise<void>
     {
         await this.accounts.Disable(this.tenant, principalId)
+        await this.sessions?.RevokeAllFor(this.tenant, principalId)
         const detail = new Map<string, string>([
             [AdminService.ActorKey, actor],
             [AdminService.ActionKey, AdminService.DisableAccountAction],
             [AdminService.PrincipalIdKey, principalId],
         ])
         await this.Audit(principalId, detail)
+        this.invalidator?.InvalidatePrincipal(this.tenant.Id, principalId)
     }
 
     public async ListTokens(): Promise<readonly ServiceTokenSummary[]>
@@ -260,7 +268,8 @@ export class AdminService
     public async RevokeToken(actor: string, tokenRef: string): Promise<void>
     {
         const existing = await this.tokens.List(this.tenant)
-        if (!existing.some(summary => summary.TokenRef === tokenRef))
+        const summary = existing.find(s => s.TokenRef === tokenRef)
+        if (summary === undefined)
         {
             throw new AdminTokenNotFoundError(tokenRef)
         }
@@ -271,6 +280,7 @@ export class AdminService
             [AdminService.TokenRefKey, tokenRef],
         ])
         await this.Audit(null, detail)
+        this.invalidator?.InvalidatePrincipal(this.tenant.Id, summary.PrincipalId)
     }
 
     public async InvalidatePack(actor: string, name: string): Promise<void>
