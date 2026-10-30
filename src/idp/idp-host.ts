@@ -141,6 +141,14 @@ export class IdpHost
     private static readonly JwksRest = 'jwks';
     private static readonly AuthorizeRest = 'authorize';
     private static readonly TokenRest = 'token';
+    private static readonly PasswordRest = 'password';
+    private static readonly EmailField = 'email';
+    private static readonly CurrentPasswordField = 'currentPassword';
+    private static readonly NewPasswordField = 'newPassword';
+    private static readonly StatusUnauthorized = 401;
+    private static readonly InvalidCredentialsCode = 'invalid_credentials';
+    private static readonly InvalidRequestCode = 'invalid_request';
+    private static readonly EmptyObject = {};
     private static readonly IssuerField = 'issuer';
     private static readonly AuthorizationEndpointField = 'authorization_endpoint';
     private static readonly TokenEndpointField = 'token_endpoint';
@@ -313,7 +321,49 @@ export class IdpHost
             await this.RouteToken(req, res, tenantId);
             return true;
         }
+        if (rest === IdpHost.PasswordRest && method === IdpHost.MethodPost)
+        {
+            await this.RoutePassword(req, res, tenantId);
+            return true;
+        }
         return false;
+    }
+
+    /** Self-service password change: verifies the current password, then rotates. Never echoes either password. */
+    private async RoutePassword(req: IncomingMessage, res: ServerResponse, tenantId: string): Promise<void>
+    {
+        const raw = await this.ReadBody(req);
+        if (raw === undefined)
+        {
+            this.WriteJson(res, IdpHost.StatusPayloadTooLarge, { [IdpHost.ErrorField]: IdpHost.PayloadTooLargeMessage }, IdpHost.NoStoreHeaders);
+            return;
+        }
+        let fields: Record<string, unknown> | undefined;
+        try
+        {
+            const parsed: unknown = JSON.parse(raw);
+            fields = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined;
+        }
+        catch
+        {
+            fields = undefined;
+        }
+        const email = fields?.[IdpHost.EmailField];
+        const current = fields?.[IdpHost.CurrentPasswordField];
+        const next = fields?.[IdpHost.NewPasswordField];
+        const realm = this.realms.For(tenantId);
+        if (realm === undefined || typeof email !== 'string' || typeof current !== 'string' || typeof next !== 'string'
+            || email.length === 0 || current.length === 0 || next.length === 0)
+        {
+            this.WriteJson(res, IdpHost.StatusBadRequest, { [IdpHost.ErrorField]: IdpHost.InvalidRequestCode }, IdpHost.NoStoreHeaders);
+            return;
+        }
+        if (await realm.RotatePassword(email, current, next))
+        {
+            this.WriteJson(res, IdpHost.StatusOk, IdpHost.EmptyObject, IdpHost.NoStoreHeaders);
+            return;
+        }
+        this.WriteJson(res, IdpHost.StatusUnauthorized, { [IdpHost.ErrorField]: IdpHost.InvalidCredentialsCode }, IdpHost.NoStoreHeaders);
     }
 
     private async RouteAdmin(req: IncomingMessage, res: ServerResponse, admin: IdpAdminEndpoint, method: string, segments: string[]): Promise<void>

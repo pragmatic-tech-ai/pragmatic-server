@@ -123,6 +123,49 @@ export class IdpRealm
         return { email: account.Email, name: (await this.profiles.Get(principalId)) ?? '' };
     }
 
+    /**
+     * Self-service rotation: verifies the CURRENT password first and only then stores the Argon2 hash of the new one.
+     * Returns false (secret untouched) on a wrong current password, unknown email, or empty new password.
+     */
+    public async RotatePassword(email: string, currentPassword: string, newPassword: string): Promise<boolean>
+    {
+        if (newPassword.length === 0)
+        {
+            return false;
+        }
+        const result = await this.Authenticate(email, currentPassword);
+        if (result === null)
+        {
+            return false;
+        }
+        await this.StoreSecret(result.Principal.Id, newPassword);
+        return true;
+    }
+
+    /**
+     * Admin-forced reset: sets a new password WITHOUT the current one. Reachable only behind the admin endpoint.
+     * Returns false (nothing changed) for an unknown principal or an empty password.
+     */
+    public async ResetPassword(principalId: string, newPassword: string): Promise<boolean>
+    {
+        if (newPassword.length === 0)
+        {
+            return false;
+        }
+        const existing = await this.stores.Accounts.FindByPrincipalId(this.tenant, principalId);
+        if (!existing)
+        {
+            return false;
+        }
+        await this.StoreSecret(principalId, newPassword);
+        return true;
+    }
+
+    private async StoreSecret(principalId: string, password: string): Promise<void>
+    {
+        await this.stores.Secrets.Put(IdpRealm.SecretRefFor(principalId), await this.hasher.Hash(password));
+    }
+
     public async Authenticate(email: string, password: string): Promise<AuthenticatedResult | null>
     {
         const result = await this.authenticator.Authenticate(new Credential(AuthMethod.Local, email), new PresentedSecret(password), this.tenant);

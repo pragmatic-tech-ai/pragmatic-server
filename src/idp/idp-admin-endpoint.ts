@@ -27,6 +27,10 @@ export class IdpAdminEndpoint
     private static readonly PostMethod = 'POST';
     private static readonly RealmPathLength = 2;
     private static readonly SubResourcePathLength = 3;
+    private static readonly PasswordResetPathLength = 5;
+    private static readonly PasswordSegment = 'password';
+    private static readonly PrincipalIndex = 3;
+    private static readonly PasswordIndex = 4;
     private static readonly RealmIndex = 0;
     private static readonly TenantIndex = 1;
     private static readonly SubResourceIndex = 2;
@@ -39,6 +43,7 @@ export class IdpAdminEndpoint
     private static readonly InvalidRealmCode = 'invalid_realm';
     private static readonly NotFoundCode = 'not_found';
     private static readonly UnknownRealmCode = 'unknown_realm';
+    private static readonly UnknownAccountCode = 'unknown_account';
     private static readonly ErrorField = 'error';
     private static readonly TenantIdField = 'tenantId';
     private static readonly PrincipalIdField = 'principalId';
@@ -88,6 +93,12 @@ export class IdpAdminEndpoint
                 {
                     return await this.PostClient(tenantId, body);
                 }
+            }
+            if (segments.length === IdpAdminEndpoint.PasswordResetPathLength && method === IdpAdminEndpoint.PostMethod
+                && segments[IdpAdminEndpoint.SubResourceIndex] === IdpAdminEndpoint.AccountsSegment
+                && segments[IdpAdminEndpoint.PasswordIndex] === IdpAdminEndpoint.PasswordSegment)
+            {
+                return await this.PostPasswordReset(tenantId, segments[IdpAdminEndpoint.PrincipalIndex]!, body);
             }
         }
         catch (err)
@@ -156,6 +167,26 @@ export class IdpAdminEndpoint
             return IdpAdminEndpoint.UnknownRealm();
         }
         await realm.SeedAccount(email, principalId, password, displayName);
+        return new AdminResult(IdpAdminEndpoint.OkStatus, { [IdpAdminEndpoint.PrincipalIdField]: principalId });
+    }
+
+    private async PostPasswordReset(tenantId: string, principalId: string, body: unknown): Promise<AdminResult>
+    {
+        const fields = IdpAdminEndpoint.AsRecord(body);
+        const password = fields === undefined ? undefined : IdpAdminEndpoint.NonEmptyString(fields[IdpAdminEndpoint.PasswordField]);
+        if (password === undefined)
+        {
+            return IdpAdminEndpoint.InvalidBody();
+        }
+        const realm = this.realms.For(tenantId);
+        if (realm === undefined)
+        {
+            return IdpAdminEndpoint.UnknownRealm();
+        }
+        if (!(await realm.ResetPassword(principalId, password)))
+        {
+            return IdpAdminEndpoint.Fail(IdpAdminEndpoint.NotFoundStatus, IdpAdminEndpoint.UnknownAccountCode);
+        }
         return new AdminResult(IdpAdminEndpoint.OkStatus, { [IdpAdminEndpoint.PrincipalIdField]: principalId });
     }
 

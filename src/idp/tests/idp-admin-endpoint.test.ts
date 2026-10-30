@@ -266,3 +266,51 @@ test('an empty token set rejects every request', async () =>
         assert.equal(r.Status, AdminFixture.Unauthorized);
     }
 });
+
+class ResetFixture
+{
+    public static readonly Password = 'reset-pw-Zq81';
+    public static readonly PasswordSegment = 'password';
+    public static readonly UnknownPrincipal = 'p-ghost';
+    public static readonly NoRealm = 'nope';
+
+    public static Reset(f: AdminFixture, principalId: string, body: unknown, auth: string | null = AdminFixture.Auth(), tenant: string = AdminFixture.Tenant): Promise<AdminResult>
+    {
+        return f.endpoint.Handle(AdminFixture.Post, [AdminFixture.Realms, tenant, AdminFixture.Accounts, principalId, ResetFixture.PasswordSegment], auth ?? undefined, body);
+    }
+}
+
+test('admin password reset sets the new password, old stops authenticating, and the result echoes no secret', async () =>
+{
+    const f = await AdminFixture.Create();
+    await f.PutRealm();
+    await f.PostAccount(f.AccountBody());
+    const r = await ResetFixture.Reset(f, AdminFixture.PrincipalId, { password: ResetFixture.Password });
+    assert.equal(r.Status, AdminFixture.OkStatus);
+    assert.ok(!JSON.stringify(r.Body).includes(ResetFixture.Password));
+    const realm = f.realms.For(AdminFixture.Tenant)!;
+    assert.notEqual(await realm.Authenticate(AdminFixture.Email, ResetFixture.Password), null);
+    assert.equal(await realm.Authenticate(AdminFixture.Email, AdminFixture.Password), null);
+});
+
+test('admin password reset without a valid admin token is 401 and changes nothing', async () =>
+{
+    const f = await AdminFixture.Create();
+    await f.PutRealm();
+    await f.PostAccount(f.AccountBody());
+    assert.equal((await ResetFixture.Reset(f, AdminFixture.PrincipalId, { password: ResetFixture.Password }, null)).Status, AdminFixture.Unauthorized);
+    assert.equal((await ResetFixture.Reset(f, AdminFixture.PrincipalId, { password: ResetFixture.Password }, AdminFixture.Auth(AdminFixture.SameLengthWrong))).Status, AdminFixture.Unauthorized);
+    const realm = f.realms.For(AdminFixture.Tenant)!;
+    assert.notEqual(await realm.Authenticate(AdminFixture.Email, AdminFixture.Password), null);
+});
+
+test('admin password reset: missing password is 400, unknown principal is 404, unknown realm is 404', async () =>
+{
+    const f = await AdminFixture.Create();
+    await f.PutRealm();
+    await f.PostAccount(f.AccountBody());
+    assert.equal((await ResetFixture.Reset(f, AdminFixture.PrincipalId, {})).Status, AdminFixture.BadRequest);
+    assert.equal((await ResetFixture.Reset(f, ResetFixture.UnknownPrincipal, { password: ResetFixture.Password })).Status, AdminFixture.NotFound);
+    const noRealm = await ResetFixture.Reset(f, AdminFixture.PrincipalId, { password: ResetFixture.Password }, AdminFixture.Auth(), ResetFixture.NoRealm);
+    assert.equal(noRealm.Status, AdminFixture.NotFound);
+});

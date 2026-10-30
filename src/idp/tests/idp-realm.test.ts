@@ -182,3 +182,76 @@ test('a principalId of __proto__ is stored like any other key', async () =>
         assert.equal((await realm.LookupProfile(ProfileFixture.ProtoPrincipal))?.name, ProfileFixture.ProfileName);
     });
 });
+
+class RotationFixture
+{
+    public static readonly NewPassword = 'pw-brand-new-9';
+    public static readonly AdminNewPassword = 'pw-admin-reset-7';
+    public static readonly UnknownPrincipal = 'p-ghost';
+    public static readonly Empty = '';
+
+    public static async StoredSecret(dir: string, key: Buffer): Promise<string>
+    {
+        const stores = await FileIdentityStores.Open(new NodeFsStorage(path.join(dir, RealmTestFixture.TenantId)), key);
+        return String(await stores.Secrets.Get(IdpRealm.SecretRefFor(RealmTestFixture.PrincipalId)));
+    }
+}
+
+test('self-service rotation with the correct current password rotates: new authenticates, old fails', async () =>
+{
+    await RealmTestFixture.WithRealm(async (realm, dir, key) =>
+    {
+        const before = await RotationFixture.StoredSecret(dir, key);
+        assert.equal(await realm.RotatePassword(RealmTestFixture.Email, RealmTestFixture.Password, RotationFixture.NewPassword), true);
+        assert.ok(await realm.Authenticate(RealmTestFixture.Email, RotationFixture.NewPassword) instanceof AuthenticatedResult);
+        assert.equal(await realm.Authenticate(RealmTestFixture.Email, RealmTestFixture.Password), null);
+        const after = await RotationFixture.StoredSecret(dir, key);
+        assert.notEqual(after, before);
+        assert.ok(after.startsWith(RealmTestFixture.Argon2Prefix));
+        assert.ok(!after.includes(RotationFixture.NewPassword));
+    });
+});
+
+test('self-service rotation with a wrong current password rejects and leaves the secret unchanged', async () =>
+{
+    await RealmTestFixture.WithRealm(async (realm, dir, key) =>
+    {
+        const before = await RotationFixture.StoredSecret(dir, key);
+        assert.equal(await realm.RotatePassword(RealmTestFixture.Email, RealmTestFixture.WrongPassword, RotationFixture.NewPassword), false);
+        assert.equal(await RotationFixture.StoredSecret(dir, key), before);
+        assert.ok(await realm.Authenticate(RealmTestFixture.Email, RealmTestFixture.Password) instanceof AuthenticatedResult);
+        assert.equal(await realm.Authenticate(RealmTestFixture.Email, RotationFixture.NewPassword), null);
+    });
+});
+
+test('self-service rotation for an unknown email or an empty new password is rejected', async () =>
+{
+    await RealmTestFixture.WithRealm(async (realm, dir, key) =>
+    {
+        const before = await RotationFixture.StoredSecret(dir, key);
+        assert.equal(await realm.RotatePassword(RealmTestFixture.GhostEmail, RealmTestFixture.Password, RotationFixture.NewPassword), false);
+        assert.equal(await realm.RotatePassword(RealmTestFixture.Email, RealmTestFixture.Password, RotationFixture.Empty), false);
+        assert.equal(await RotationFixture.StoredSecret(dir, key), before);
+    });
+});
+
+test('admin reset sets a new password without the current one: new authenticates, old fails', async () =>
+{
+    await RealmTestFixture.WithRealm(async (realm) =>
+    {
+        assert.equal(await realm.ResetPassword(RealmTestFixture.PrincipalId, RotationFixture.AdminNewPassword), true);
+        assert.ok(await realm.Authenticate(RealmTestFixture.Email, RotationFixture.AdminNewPassword) instanceof AuthenticatedResult);
+        assert.equal(await realm.Authenticate(RealmTestFixture.Email, RealmTestFixture.Password), null);
+    });
+});
+
+test('admin reset for an unknown principal or an empty password is rejected and changes nothing', async () =>
+{
+    await RealmTestFixture.WithRealm(async (realm, dir, key) =>
+    {
+        const before = await RotationFixture.StoredSecret(dir, key);
+        assert.equal(await realm.ResetPassword(RotationFixture.UnknownPrincipal, RotationFixture.AdminNewPassword), false);
+        assert.equal(await realm.ResetPassword(RealmTestFixture.PrincipalId, RotationFixture.Empty), false);
+        assert.equal(await RotationFixture.StoredSecret(dir, key), before);
+    });
+});

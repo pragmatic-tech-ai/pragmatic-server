@@ -188,3 +188,32 @@ test('a normal tenant route is unaffected when admin is configured', async () =>
         assert.equal(r.status, 200);
     });
 });
+
+class RotateFixture
+{
+    public static readonly PasswordPath = '/tenant-1/password';
+    public static readonly AccountBody = '{"email":"o@t","principalId":"p-9","displayName":"Owner","password":"old-pw-Aa1"}';
+    public static readonly GoodBody = '{"email":"o@t","currentPassword":"old-pw-Aa1","newPassword":"new-pw-Bb2"}';
+    public static readonly WrongCurrentBody = '{"email":"o@t","currentPassword":"nope","newPassword":"new-pw-Bb2"}';
+    public static readonly MissingBody = '{"email":"o@t","currentPassword":"old-pw-Aa1"}';
+    public static readonly OldPassword = 'old-pw-Aa1';
+    public static readonly NewPassword = 'new-pw-Bb2';
+}
+
+test('self-service password change on the realm host: correct current rotates, wrong current is 401 and changes nothing', async () =>
+{
+    await AdminFixture.WithHost(true, async (host, ca) =>
+    {
+        await AdminFixture.Send(host, ca, 'POST', AdminFixture.AccountsPath, RotateFixture.AccountBody);
+        const bad = await AdminFixture.Send(host, ca, 'POST', RotateFixture.PasswordPath, RotateFixture.WrongCurrentBody, false);
+        assert.equal(bad.status, 401);
+        assert.equal(bad.cacheControl, AdminFixture.NoStore);
+        const missing = await AdminFixture.Send(host, ca, 'POST', RotateFixture.PasswordPath, RotateFixture.MissingBody, false);
+        assert.equal(missing.status, 400);
+        const ok = await AdminFixture.Send(host, ca, 'POST', RotateFixture.PasswordPath, RotateFixture.GoodBody, false);
+        assert.equal(ok.status, 200);
+        assert.ok(!ok.text.includes(RotateFixture.NewPassword) && !ok.text.includes(RotateFixture.OldPassword));
+        const again = await AdminFixture.Send(host, ca, 'POST', RotateFixture.PasswordPath, RotateFixture.GoodBody, false);
+        assert.equal(again.status, 401);
+    });
+});
