@@ -489,3 +489,31 @@ test('ConnectForTenant returns a connection to an existing Running record via th
         rmSync(root, { recursive: true, force: true })
     }
 })
+
+test('ConnectForTenant relaunches an existing non-Running record via the launch path', async () =>
+{
+    const root = mkdtempSync(join(tmpdir(), 'idpsvc-conn-'))
+    try
+    {
+        const registry = new IdpRegistry(join(root, 'idps.json'))
+        await registry.Put({
+            tenantId: 't8', port: 8444, baseUrl: 'https://idp.svc:8444', containerName: 'c8', volumeName: 'v8',
+            caDir: 'ca-ref', adminTokenRef: 'admin-ref', createdAt: '2026-01-01T00:00:00.000Z', status: IdpStatus.Failed
+        })
+        await registry.Put({
+            tenantId: 'other', port: 8445, baseUrl: 'https://idp.svc:8445', containerName: 'c9', volumeName: 'v9',
+            caDir: 'ca-ref', adminTokenRef: 'admin-ref', createdAt: '2026-01-01T00:00:00.000Z', status: IdpStatus.Running
+        })
+        const driver = new FakeDriver()
+        const service = new IdpService(registry, driver)
+        const conn = await service.ConnectForTenant('t8')
+        assert.ok(conn !== undefined)
+        assert.equal(driver.Requests.length, 1)
+        assert.equal(driver.Requests[0]!.existing?.status, IdpStatus.Failed)
+        assert.ok(driver.Requests[0]!.takenPorts.includes(8445))
+    }
+    finally
+    {
+        rmSync(root, { recursive: true, force: true })
+    }
+})
