@@ -17,6 +17,7 @@ interface Reply
 {
     status: number;
     retryAfter: string | undefined;
+    cacheControl: string | undefined;
     text: string;
 }
 
@@ -77,7 +78,7 @@ class ThrottleFixture
             {
                 const chunks: Buffer[] = [];
                 res.on('data', (c: Buffer) => chunks.push(c));
-                res.on('end', () => resolve({ status: res.statusCode ?? 0, retryAfter: res.headers['retry-after'], text: Buffer.concat(chunks).toString('utf8') }));
+                res.on('end', () => resolve({ status: res.statusCode ?? 0, retryAfter: res.headers['retry-after'], cacheControl: res.headers['cache-control'], text: Buffer.concat(chunks).toString('utf8') }));
             });
             req.on('error', reject);
             req.end(payload);
@@ -122,6 +123,24 @@ test('rotation: a correct rotation clears the counter', () => ThrottleFixture.Ru
     assert.equal((await f.Rotate('nope')).status, 429);
 }));
 
+test('rotation: malformed bodies are not counted toward the lock', () => ThrottleFixture.Run(async f =>
+{
+    const bodies = [
+        { email: ThrottleFixture.Email, currentPassword: ThrottleFixture.Old },
+        { email: '', currentPassword: ThrottleFixture.Old, newPassword: ThrottleFixture.Next },
+        { email: ThrottleFixture.Email, currentPassword: '', newPassword: ThrottleFixture.Next },
+        { email: ThrottleFixture.Email, currentPassword: ThrottleFixture.Old, newPassword: '' }
+    ];
+    for (let i = 0; i < 2; i++)
+    {
+        for (const b of bodies)
+        {
+            assert.equal((await f.Post(ThrottleFixture.PasswordPath, 'application/json', JSON.stringify(b))).status, 400);
+        }
+    }
+    assert.equal((await f.Rotate(ThrottleFixture.Old)).status, 200);
+}));
+
 test('shared counter: failed rotation and failed logins lock the same key; login 429 carries Retry-After', () => ThrottleFixture.Run(async f =>
 {
     assert.equal((await f.Rotate('nope')).status, 401);
@@ -130,5 +149,6 @@ test('shared counter: failed rotation and failed logins lock the same key; login
     const login = await f.Login(ThrottleFixture.Old);
     assert.equal(login.status, 429);
     assert.ok(Number(login.retryAfter) > 0);
+    assert.equal(login.cacheControl, 'no-store');
     assert.equal((await f.Rotate(ThrottleFixture.Old)).status, 429);
 }));

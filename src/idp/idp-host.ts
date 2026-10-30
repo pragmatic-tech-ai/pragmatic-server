@@ -494,7 +494,7 @@ export class IdpHost
         {
             const headers = result.retryAfterSeconds === undefined
                 ? undefined
-                : { [IdpHost.RetryAfterHeader]: String(result.retryAfterSeconds) };
+                : { ...IdpHost.NoStoreHeaders, [IdpHost.RetryAfterHeader]: String(result.retryAfterSeconds) };
             this.WriteJson(res, result.status, result.body, headers);
         }
     }

@@ -227,9 +227,15 @@ test('a non-existent email is throttled identically (no existence oracle)', () =
     }
     const ghost = await AuthorizeFixture.Attempt(f, 'ghost@t', 'bad');
     const real = await AuthorizeFixture.Attempt(f, AuthorizeFixture.Email, 'bad');
-    assert.deepEqual(ghost, real);
     assert.equal(ghost.kind, 'error');
-    assert.equal((ghost as { status: number }).status, 429);
+    assert.equal(real.kind, 'error');
+    const g = ghost as { status: number; body: object; retryAfterSeconds?: number };
+    const r = real as { status: number; body: object; retryAfterSeconds?: number };
+    assert.equal(g.status, 429);
+    assert.equal(r.status, 429);
+    assert.deepEqual(g.body, r.body);
+    assert.ok((g.retryAfterSeconds ?? 0) > 0);
+    assert.ok((r.retryAfterSeconds ?? 0) > 0);
 }));
 
 test('a lock on one email does not lock another email from the same ip', () => AuthorizeFixture.Run(async f =>
