@@ -107,7 +107,7 @@ describe('TenantApiClient fetch', () =>
             principalId: 'p',
             email: 'a@b',
             roleLabel: 'Tenant owner',
-            tenant: { id: 't', displayName: 'T', organisation: 'Org' },
+            environment: { id: 't', displayName: 'T', organisation: 'Org' },
             hive: { id: 'h', displayName: 'H' },
             capabilities: { envs: true, adopt: true, access: true, settings: true },
             ownerContact: 'o@b'

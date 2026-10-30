@@ -162,7 +162,7 @@ class SettingsSource implements ISettingsSource
 {
     public Prof: TenantProfileDto | undefined = {
         principalId: 'p', roleLabel: 'Tenant Owner', ownerContact: 'owner@acme.test',
-        tenant: { id: 'tid-1', displayName: 'Acme Corp', organisation: 'Acme Org' },
+        environment: { id: 'tid-1', displayName: 'Acme Corp', organisation: 'Acme Org' },
         hive: { id: 'h1', displayName: 'Acme Hive' }, capabilities: {} as never,
         idp: { baseUrl: 'https://idp.acme.test', signingCaConfigured: true, adminTokenConfigured: false },
     }

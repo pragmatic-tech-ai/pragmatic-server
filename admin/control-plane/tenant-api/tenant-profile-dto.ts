@@ -9,7 +9,7 @@ export type TenantProfileDto = {
     principalId: string
     email?: string
     roleLabel: string
-    tenant: { id: string; displayName: string; organisation?: string }
+    environment: { id: string; displayName: string; organisation?: string }
     hive?: { id: string; displayName: string }
     capabilities: AdminCapabilitiesDto
     ownerContact?: string
@@ -26,7 +26,7 @@ export class TenantProfileMapper
         organisation: string | undefined,
         caps: AdminRoleCapabilities): TenantProfileDto
     {
-        const tenantPart: TenantProfileDto['tenant'] = { id: session.tenantId, displayName: tenant?.displayName ?? session.tenantId }
+        const tenantPart: TenantProfileDto['environment'] = { id: session.tenantId, displayName: tenant?.displayName ?? session.tenantId }
         if (organisation !== undefined)
         {
             tenantPart.organisation = organisation
@@ -34,7 +34,7 @@ export class TenantProfileMapper
         const dto: TenantProfileDto = {
             principalId: session.principalId,
             roleLabel: caps.roleLabel,
-            tenant: tenantPart,
+            environment: tenantPart,
             capabilities: { ...caps.capabilities },
         }
         if (hive !== undefined)

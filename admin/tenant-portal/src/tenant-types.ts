@@ -12,7 +12,7 @@ export type TenantProfileDto = {
     principalId: string
     email?: string
     roleLabel: string
-    tenant: { id: string; displayName: string; organisation?: string }
+    environment: { id: string; displayName: string; organisation?: string }
     hive?: { id: string; displayName: string }
     capabilities: AdminCapabilitiesDto
     ownerContact?: string

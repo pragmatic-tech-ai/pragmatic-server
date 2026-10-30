@@ -262,7 +262,7 @@ describe('TenantApp', () =>
             principalId: 'p',
             email: 'owner@nw.io',
             roleLabel: 'Tenant owner',
-            tenant: { id: 't1', displayName: 'Northwind Production', organisation: 'Northwind Group' },
+            environment: { id: 't1', displayName: 'Northwind Production', organisation: 'Northwind Group' },
             hive: { id: 'h1', displayName: 'hv-nw-eu1' },
             capabilities: { envs: true, adopt: true, access: true, settings: true }
         }
@@ -282,7 +282,7 @@ describe('TenantApp', () =>
         const profile: TenantProfileDto = {
             principalId: 'p',
             roleLabel: 'Tenant owner',
-            tenant: { id: 't1', displayName: 'Northwind Production' },
+            environment: { id: 't1', displayName: 'Northwind Production' },
             capabilities: { envs: true, adopt: true, access: true, settings: true }
         }
         const { app } = Fixtures.Make(Session, profile)

@@ -223,12 +223,12 @@ export class SettingsView extends TenantViewBase
             return
         }
         const items: KeyValueItem[] = [
-            { key: SettingsView.KeyTenantName, value: p.tenant.displayName },
-            { key: SettingsView.KeyTenantId, value: p.tenant.id },
+            { key: SettingsView.KeyTenantName, value: p.environment.displayName },
+            { key: SettingsView.KeyTenantId, value: p.environment.id },
         ]
-        if (p.tenant.organisation !== undefined)
+        if (p.environment.organisation !== undefined)
         {
-            items.push({ key: SettingsView.KeyOrganisation, value: p.tenant.organisation })
+            items.push({ key: SettingsView.KeyOrganisation, value: p.environment.organisation })
         }
         if (p.ownerContact !== undefined)
         {

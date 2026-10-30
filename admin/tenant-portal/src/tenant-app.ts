@@ -231,8 +231,8 @@ export class TenantApp extends StackPanel implements ITenantNavigator
     {
         const profile = this.profile
         const plate = new IdentityPlate({
-            org: profile?.tenant.organisation,
-            tenant: profile?.tenant.displayName ?? session.tenantId,
+            org: profile?.environment.organisation,
+            tenant: profile?.environment.displayName ?? session.tenantId,
             hive: profile?.hive?.displayName ?? TenantApp.HivePlaceholder
         })
         const userMenu = new UserMenu({

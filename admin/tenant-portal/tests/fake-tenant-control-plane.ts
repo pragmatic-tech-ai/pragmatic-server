@@ -336,7 +336,7 @@ export class FakeTenantControlPlane
                 principalId: FakeTenantControlPlane.PrincipalId,
                 email: FakeTenantControlPlane.UserEmail,
                 roleLabel: FakeTenantControlPlane.OwnerRoleLabel,
-                tenant: { id: FakeTenantControlPlane.TenantId, displayName: FakeTenantControlPlane.TenantDisplayName, organisation: FakeTenantControlPlane.OrganisationName },
+                environment: { id: FakeTenantControlPlane.TenantId, displayName: FakeTenantControlPlane.TenantDisplayName, organisation: FakeTenantControlPlane.OrganisationName },
                 hive: { id: FakeTenantControlPlane.HiveOneId, displayName: FakeTenantControlPlane.HiveDisplayName },
                 capabilities: { envs: true, adopt: true, access: true, settings: true },
                 ownerContact: FakeTenantControlPlane.OwnerContact

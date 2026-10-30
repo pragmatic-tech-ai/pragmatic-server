@@ -8,7 +8,7 @@ import type { HiveDto, TenantProfileDto } from '../src/tenant-types.js'
 class FakeSource implements ISettingsSource
 {
     public Prof: TenantProfileDto | undefined = {
-        principalId: 'p', roleLabel: 'Owner', tenant: { id: 't1', displayName: 'Acme' }, capabilities: {} as never,
+        principalId: 'p', roleLabel: 'Owner', environment: { id: 't1', displayName: 'Acme' }, capabilities: {} as never,
     }
     public Hives: HiveDto[] = [{ id: 'h1', tenantId: 't1', displayName: 'Hive', cluster: { backend: 'k', mode: 'm' }, registry: { mode: 'r' }, createdAt: '' }]
     public Failure: unknown
@@ -40,7 +40,7 @@ describe('SettingsViewModel', () =>
         const vm = new SettingsViewModel(new FakeSource())
         await vm.Load()
         assert.equal(vm.State, SettingsState.Ready)
-        assert.equal(vm.Profile?.tenant.displayName, 'Acme')
+        assert.equal(vm.Profile?.environment.displayName, 'Acme')
         assert.equal(vm.Hive?.id, 'h1')
     })
 
