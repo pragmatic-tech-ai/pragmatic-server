@@ -25,6 +25,8 @@ import type { IProvisionedSecretSource } from '../config/provisioned-secret-sour
 import type { AdapterPacksConfig, WsResilienceConfig } from '../config/server-config.js'
 import type { PragmaticServer } from '../pragmatic-server.js'
 import { ServerConnectionHandler } from './server-connection-handler.js'
+import { PrincipalConnectionRegistry } from './principal-connection-registry.js'
+import type { IRevocableConnection } from './principal-connection-registry.js'
 import { AdminService } from './admin-service.js'
 import { RateLimitGuard } from './rate-limit-guard.js'
 import { RateLimitScope } from './rate-limiter.js'
@@ -97,6 +99,7 @@ export class PragmaticServerHost
     private static readonly UpgradeEvent = 'upgrade'
     private static readonly RequestEvent = 'request'
     private static readonly CloseEvent = 'close'
+    private static readonly RevokedCloseCode = 1008
     private static readonly ListeningEvent = 'listening'
     private static readonly ErrorEvent = 'error'
     private static readonly AuthorizationHeader = 'authorization'
@@ -145,6 +148,7 @@ export class PragmaticServerHost
     private readonly browserAuth: BrowserSessionAuth
     private readonly audit: IAccessAuditSink
     private readonly handlers = new Set<ServerConnectionHandler>()
+    private readonly principalConnections = new PrincipalConnectionRegistry()
     private readonly address: WebSocketAddress
     private readonly idleTtlMs: number
     private readonly clientTls: boolean
@@ -471,7 +475,7 @@ export class PragmaticServerHost
                 AllowScripts: name => server.AllowAdapterPackScripts(name),
                 DenyScripts: name => server.DenyAdapterPackScripts(name),
                 ListScriptAllowlist: () => server.ListAdapterPackScripts(),
-            }, await server.SecurityModelReload())
+            }, await server.SecurityModelReload(), this.principalConnections, pack.Sessions)
             if (this.disposed)
             {
                 this.RejectRetryable(socket)
@@ -490,6 +494,15 @@ export class PragmaticServerHost
                     })
                     const handler = ServerConnectionHandler.Attach(socket, languageService, manager, context, () => server.Connectors(), ctx => server.Graph(ctx), this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, server.Purpose(), runtime.applications, runtime.appGraphProvider, runtime.appWriteProvider, runtime.shareProvider, runtime.unshareProvider, runtime.listSharesProvider, runtime.assignProvider, this.paging, fieldMasks, ctx => server.ConnectorReadAuthorizationFor(ctx), (ctx, target) => server.ConnectorWriteAuthorizationFor(ctx, target), (ctx, id) => server.ModelGraph(ctx, id), (ctx, id, request) => server.ExecuteCypher(ctx, id, request), runtime.deployProvider, development.devGraphService, runtime.environmentGraphHost)
                     this.handlers.add(handler)
+                    const revocable: IRevocableConnection =
+                    {
+                        Revoke: () =>
+                        {
+                            handler.Revoke()
+                            ws.close(PragmaticServerHost.RevokedCloseCode)
+                        },
+                    }
+                    this.principalConnections.Add(context.Tenant.Id, context.Principal.Id, revocable)
                     this.heartbeat.Watch(ws)
                     ws.on(PragmaticServerHost.CloseEvent, () =>
                     {
@@ -499,6 +512,7 @@ export class PragmaticServerHost
                         }
                         handler.Dispose()
                         this.handlers.delete(handler)
+                        this.principalConnections.Remove(revocable)
                         this.registry.Release(environmentId)
                     })
                     attached = true

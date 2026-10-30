@@ -13,6 +13,8 @@ import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import type { MasterKeyRef } from '../identity/master-key-resolver.js'
 import type { PragmaticServer } from '../pragmatic-server.js'
 import { ServerConnectionHandler } from '../host/server-connection-handler.js'
+import { PrincipalConnectionRegistry } from '../host/principal-connection-registry.js'
+import type { IRevocableConnection } from '../host/principal-connection-registry.js'
 import { AdminService } from '../host/admin-service.js'
 import { RateLimitGuard } from '../host/rate-limit-guard.js'
 import { RateLimitScope } from '../host/rate-limiter.js'
@@ -92,6 +94,7 @@ export class WorkerHost
     private static readonly UpgradeEvent = 'upgrade'
     private static readonly RequestEvent = 'request'
     private static readonly CloseEvent = 'close'
+    private static readonly RevokedCloseCode = 1008
     private static readonly ListeningEvent = 'listening'
     private static readonly ErrorEvent = 'error'
     private static readonly AuthorizationHeader = 'authorization'
@@ -142,6 +145,7 @@ export class WorkerHost
     private readonly browserAuth: BrowserSessionAuth
     private readonly audit: IAccessAuditSink
     private readonly handlers = new Set<ServerConnectionHandler>()
+    private readonly principalConnections = new PrincipalConnectionRegistry()
     private readonly address: WebSocketAddress
     private readonly idleTtlMs: number
     private readonly sweep: NodeJS.Timeout
@@ -534,7 +538,7 @@ export class WorkerHost
                 AllowScripts: name => server.AllowAdapterPackScripts(name),
                 DenyScripts: name => server.DenyAdapterPackScripts(name),
                 ListScriptAllowlist: () => server.ListAdapterPackScripts(),
-            }, await server.SecurityModelReload())
+            }, await server.SecurityModelReload(), this.principalConnections, pack.Sessions)
             if (this.disposed)
             {
                 this.RejectRetryable(socket)
@@ -552,6 +556,15 @@ export class WorkerHost
                     })
                     const handler = ServerConnectionHandler.Attach(socket, languageService, manager, context, () => server.Connectors(), ctx => server.Graph(ctx), this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, server.Purpose(), runtime.applications, runtime.appGraphProvider, runtime.appWriteProvider, runtime.shareProvider, runtime.unshareProvider, runtime.listSharesProvider, runtime.assignProvider, this.paging, fieldMasks, ctx => server.ConnectorReadAuthorizationFor(ctx), (ctx, target) => server.ConnectorWriteAuthorizationFor(ctx, target), (ctx, id) => server.ModelGraph(ctx, id), (ctx, id, request) => server.ExecuteCypher(ctx, id, request), runtime.deployProvider)
                     this.handlers.add(handler)
+                    const revocable: IRevocableConnection =
+                    {
+                        Revoke: () =>
+                        {
+                            handler.Revoke()
+                            ws.close(WorkerHost.RevokedCloseCode)
+                        },
+                    }
+                    this.principalConnections.Add(context.Tenant.Id, context.Principal.Id, revocable)
                     this.heartbeat.Watch(ws)
                     ws.on(WorkerHost.CloseEvent, () =>
                     {
@@ -561,6 +574,7 @@ export class WorkerHost
                         }
                         handler.Dispose()
                         this.handlers.delete(handler)
+                        this.principalConnections.Remove(revocable)
                         this.registry.Release(environmentId)
                     })
                     attached = true

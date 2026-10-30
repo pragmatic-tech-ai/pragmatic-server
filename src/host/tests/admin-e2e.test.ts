@@ -21,11 +21,16 @@ class AdminHostFixture
     private static readonly NewSubject = 'bob'
     private static readonly TenantDisplayName = 'Tenant One'
     public static readonly RoleEditorName = 'Editor'
+    public static readonly RoleViewerName = 'Viewer'
     public static readonly AccountEmail = 'dave@example.com'
     public static readonly AccountPrincipal = 'dave'
     public static readonly AccountPassword = 'e2e-pass-phrase-123'
     private static readonly WsOpenEvent = 'open'
     private static readonly WsErrorEvent = 'error'
+    private static readonly WsCloseEvent = 'close'
+    private static readonly NotClosedMessage = 'socket did not close in time'
+    public static readonly CloseTimeoutMs = 2000
+    public static readonly StayOpenMs = 400
 
     public readonly Dir = mkdtempSync(join(tmpdir(), 'ps-admin-e2e-'))
     public Host!: PragmaticServerHost
@@ -44,6 +49,11 @@ class AdminHostFixture
 
     public async ConnectAs(role: Role): Promise<MessageConnection>
     {
+        return (await this.ConnectAsWithSocket(role)).connection
+    }
+
+    public async ConnectAsWithSocket(role: Role): Promise<{ connection: MessageConnection, ws: WebSocket }>
+    {
         const subject = role === Role.Owner ? AdminHostFixture.OwnerSubject : AdminHostFixture.ViewerSubject
         const pack = await this.Host.IdentityPackForTest(AdminHostFixture.TenantId)
         await pack.Grants.Save(new Grant(subject, role, new ResourceRef(ResourceKind.Tenant, AdminHostFixture.TenantId, [])))
@@ -58,7 +68,30 @@ class AdminHostFixture
         const socket = new WsMessageSocket(ws)
         const connection = createMessageConnection(new WebSocketMessageReader(socket), new WebSocketMessageWriter(socket), NullLogger)
         connection.listen()
-        return connection
+        return { connection, ws }
+    }
+
+    public static ClosedWithin(ws: WebSocket, ms: number): Promise<void>
+    {
+        return new Promise<void>((resolve, reject) =>
+        {
+            const timer = setTimeout(() => reject(new Error(AdminHostFixture.NotClosedMessage)), ms)
+            ws.once(AdminHostFixture.WsCloseEvent, () =>
+            {
+                clearTimeout(timer)
+                resolve()
+            })
+        })
+    }
+
+    public static async StaysOpen(ws: WebSocket, ms: number): Promise<boolean>
+    {
+        return AdminHostFixture.ClosedWithin(ws, ms).then(() => false, () => true)
+    }
+
+    public static get ViewerName(): string
+    {
+        return AdminHostFixture.ViewerSubject
     }
 
     public async BobGrants(): Promise<readonly Grant[]>
@@ -173,6 +206,66 @@ test('a Viewer over a live host connection is denied the account and token metho
     finally
     {
         client.dispose()
+        await fx.DisposeAsync()
+    }
+})
+
+test('revoking a connected principal role force-closes its live connection', async () =>
+{
+    const fx = new AdminHostFixture()
+    await fx.StartAsync()
+    const owner = await fx.ConnectAs(Role.Owner)
+    const viewer = await fx.ConnectAsWithSocket(Role.Viewer)
+    try
+    {
+        await owner.sendRequest(AdminProtocol.RevokeRole, { subject: AdminHostFixture.ViewerName, role: AdminHostFixture.RoleViewerName })
+        await AdminHostFixture.ClosedWithin(viewer.ws, AdminHostFixture.CloseTimeoutMs)
+    }
+    finally
+    {
+        viewer.connection.dispose()
+        owner.dispose()
+        await fx.DisposeAsync()
+    }
+})
+
+test('revoking one principal leaves another principal connection usable', async () =>
+{
+    const fx = new AdminHostFixture()
+    await fx.StartAsync()
+    const ownerSide = await fx.ConnectAsWithSocket(Role.Owner)
+    const viewer = await fx.ConnectAsWithSocket(Role.Viewer)
+    try
+    {
+        await ownerSide.connection.sendRequest(AdminProtocol.RevokeRole, { subject: AdminHostFixture.ViewerName, role: AdminHostFixture.RoleViewerName })
+        await AdminHostFixture.ClosedWithin(viewer.ws, AdminHostFixture.CloseTimeoutMs)
+        assert.equal(await AdminHostFixture.StaysOpen(ownerSide.ws, AdminHostFixture.StayOpenMs), true)
+        assert.ok(Array.isArray(await ownerSide.connection.sendRequest(AdminProtocol.ListAccounts)))
+    }
+    finally
+    {
+        viewer.connection.dispose()
+        ownerSide.connection.dispose()
+        await fx.DisposeAsync()
+    }
+})
+
+test('disabling an account force-closes that principal live connection', async () =>
+{
+    const fx = new AdminHostFixture()
+    await fx.StartAsync()
+    const owner = await fx.ConnectAs(Role.Owner)
+    const viewer = await fx.ConnectAsWithSocket(Role.Viewer)
+    try
+    {
+        await owner.sendRequest(AdminProtocol.CreateAccount, { email: AdminHostFixture.AccountEmail, principalId: AdminHostFixture.ViewerName, password: AdminHostFixture.AccountPassword })
+        await owner.sendRequest(AdminProtocol.DisableAccount, { principalId: AdminHostFixture.ViewerName })
+        await AdminHostFixture.ClosedWithin(viewer.ws, AdminHostFixture.CloseTimeoutMs)
+    }
+    finally
+    {
+        viewer.connection.dispose()
+        owner.dispose()
         await fx.DisposeAsync()
     }
 })
