@@ -51,7 +51,7 @@ import { FilteredReadWriteTargetSource } from './host/filtered-read-write-target
 import { RuntimeAppWriter } from './host/runtime-app-writer.js'
 import { RuntimeWritePayloadValidator } from './host/runtime-write-payload-validator.js'
 import type { AppWriteOpDto, AppWriteResultDto, ShareParams, ShareResultDto, UnshareParams, UnshareResultDto, ListSharesParams, ListSharesResultDto, AssignParams, AssignResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { ResponseError, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { ResponseError, ErrorCodes, AppWriteOpKind, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ShareService } from './host/sharing/share-service.js'
 import { AssignService } from './host/sharing/assign-service.js'
 import { AccessPolicySetting } from './host/apps/access-policy-setting.js'
@@ -662,7 +662,32 @@ export class PragmaticServer implements IEnvironmentGraphHost
         const authorizer = shareIndex.IsEmpty() ? baseAuthorizer : new ShareWideningWriteAuthorizer(baseAuthorizer, shareIndex)
         const gate = await this.WriteInstanceGate(context, name)
         const writer = new RuntimeAppWriter(built.plan, built.nativeBase, catalog, services, authorizer, new RuntimeWritePayloadValidator(), gate)
-        return writer.Apply(operations)
+        const result = await writer.Apply(operations)
+        await this.RevokeSharesForDeletedRecords(name, operations, result)
+        return result
+    }
+
+    /** Removes the share grants of every record whose delete was applied, so a recreated id is not widened by stale grants. */
+    private async RevokeSharesForDeletedRecords(name: string, operations: readonly AppWriteOpDto[], result: AppWriteResultDto): Promise<void>
+    {
+        let store: ShareStore
+        try
+        {
+            store = this.AppShareStore(name)
+        }
+        catch
+        {
+            return
+        }
+        for (let index = 0; index < operations.length; index++)
+        {
+            const op = operations[index]
+            const outcome = result.results[index]
+            if (op.op === AppWriteOpKind.Delete && op.id !== undefined && op.id.length > 0 && outcome?.status === AppWriteStatus.Applied)
+            {
+                await store.RevokeAllForRecord(op.concept, op.id)
+            }
+        }
     }
 
     /** Resolves the query's labels to the connector-backed concept ids to prefetch; a wildcard selects every connector concept. */

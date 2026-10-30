@@ -337,3 +337,67 @@ test('write shares authorize by id though the record is unreadable: Update/Delet
         await fx.Dispose()
     }
 })
+
+test('an applied delete revokes the record shares so a recreated id is not stale-widened', async () =>
+{
+    const fx = new RecordSharingFixture()
+    try
+    {
+        const server = await fx.Setup()
+        const concept = 'shop.Widget'
+        const store = server.AppShareStore(RecordSharingFixture.Name)
+        const subject = { kind: ShareSubjectKind.Principal, id: RecordSharingFixture.Principal }
+        await store.Grant({ concept, recordId: 'rec-del', subject, rights: [PrivilegeAction.Read, PrivilegeAction.Delete] })
+        assert.equal((await store.ListForRecord(concept, 'rec-del')).length, 1)
+        const actor = PpSecurityHarness.Context(RecordSharingFixture.Principal)
+        const result = await server.WriteForPragmaticApp(actor, RecordSharingFixture.Name, [{ op: AppWriteOpKind.Delete, concept, id: 'rec-del' }])
+        assert.equal(result.results[0].status, AppWriteStatus.Applied)
+        assert.equal((await store.ListForRecord(concept, 'rec-del')).length, 0)
+    }
+    finally
+    {
+        await fx.Dispose()
+    }
+})
+
+test('a delete that is not applied keeps the record shares', async () =>
+{
+    const fx = new RecordSharingFixture()
+    try
+    {
+        const server = await fx.Setup()
+        const concept = 'shop.Widget'
+        const store = server.AppShareStore(RecordSharingFixture.Name)
+        const subject = { kind: ShareSubjectKind.Principal, id: RecordSharingFixture.Principal }
+        await store.Grant({ concept, recordId: 'rec-hidden', subject, rights: [PrivilegeAction.Read] })
+        const actor = PpSecurityHarness.Context(RecordSharingFixture.Principal)
+        const result = await server.WriteForPragmaticApp(actor, RecordSharingFixture.Name, [{ op: AppWriteOpKind.Delete, concept, id: 'rec-hidden' }])
+        assert.notEqual(result.results[0].status, AppWriteStatus.Applied)
+        assert.equal((await store.ListForRecord(concept, 'rec-hidden')).length, 1)
+    }
+    finally
+    {
+        await fx.Dispose()
+    }
+})
+
+test('an applied update does not revoke the record shares', async () =>
+{
+    const fx = new RecordSharingFixture()
+    try
+    {
+        const server = await fx.Setup()
+        const concept = 'shop.Widget'
+        const store = server.AppShareStore(RecordSharingFixture.Name)
+        const subject = { kind: ShareSubjectKind.Principal, id: RecordSharingFixture.Principal }
+        await store.Grant({ concept, recordId: 'rec-hidden', subject, rights: [PrivilegeAction.Update] })
+        const actor = PpSecurityHarness.Context(RecordSharingFixture.Principal)
+        const result = await server.WriteForPragmaticApp(actor, RecordSharingFixture.Name, [{ op: AppWriteOpKind.Update, concept, id: 'rec-hidden', fields: { label: 'changed' } }])
+        assert.equal(result.results[0].status, AppWriteStatus.Applied)
+        assert.equal((await store.ListForRecord(concept, 'rec-hidden')).length, 1)
+    }
+    finally
+    {
+        await fx.Dispose()
+    }
+})
