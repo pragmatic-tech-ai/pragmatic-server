@@ -75,6 +75,11 @@ class AdminHostFixture
     {
         return new Promise<void>((resolve, reject) =>
         {
+            if (ws.readyState === WebSocket.CLOSED)
+            {
+                resolve()
+                return
+            }
             const timer = setTimeout(() => reject(new Error(AdminHostFixture.NotClosedMessage)), ms)
             ws.once(AdminHostFixture.WsCloseEvent, () =>
             {

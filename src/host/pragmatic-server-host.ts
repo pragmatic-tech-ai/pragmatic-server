@@ -7,8 +7,7 @@ import type { TLSSocket } from 'node:tls'
 import type { Server as HttpServer, IncomingMessage, ServerResponse } from 'node:http'
 import type { Socket } from 'node:net'
 import type { AddressInfo } from 'node:net'
-import { WebSocketServer } from 'ws'
-import type { WebSocket } from 'ws'
+import { WebSocketServer, WebSocket } from 'ws'
 import { WsMessageSocket, HeartbeatMonitor, BackpressurePolicy, TransportCloseCode } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { AuthMethod } from '@pragmatic-tech-ai/todl-identity'
@@ -100,6 +99,7 @@ export class PragmaticServerHost
     private static readonly RequestEvent = 'request'
     private static readonly CloseEvent = 'close'
     private static readonly RevokedCloseCode = 1008
+    private static readonly RevokedTerminateGraceMs = 1000
     private static readonly ListeningEvent = 'listening'
     private static readonly ErrorEvent = 'error'
     private static readonly AuthorizationHeader = 'authorization'
@@ -500,6 +500,14 @@ export class PragmaticServerHost
                         {
                             handler.Revoke()
                             ws.close(PragmaticServerHost.RevokedCloseCode)
+                            const terminateTimer = setTimeout(() =>
+                            {
+                                if (ws.readyState !== WebSocket.CLOSED)
+                                {
+                                    ws.terminate()
+                                }
+                            }, PragmaticServerHost.RevokedTerminateGraceMs)
+                            terminateTimer.unref?.()
                         },
                     }
                     this.principalConnections.Add(context.Tenant.Id, context.Principal.Id, revocable)

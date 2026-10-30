@@ -6,8 +6,7 @@ import type { Server as PlainHttpServer, IncomingMessage, ServerResponse } from 
 import { randomUUID } from 'node:crypto'
 import type { Socket } from 'node:net'
 import type { AddressInfo } from 'node:net'
-import { WebSocketServer } from 'ws'
-import type { WebSocket } from 'ws'
+import { WebSocketServer, WebSocket } from 'ws'
 import { WsMessageSocket, HeartbeatMonitor, BackpressurePolicy, TransportCloseCode } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import type { MasterKeyRef } from '../identity/master-key-resolver.js'
@@ -95,6 +94,7 @@ export class WorkerHost
     private static readonly RequestEvent = 'request'
     private static readonly CloseEvent = 'close'
     private static readonly RevokedCloseCode = 1008
+    private static readonly RevokedTerminateGraceMs = 1000
     private static readonly ListeningEvent = 'listening'
     private static readonly ErrorEvent = 'error'
     private static readonly AuthorizationHeader = 'authorization'
@@ -562,6 +562,14 @@ export class WorkerHost
                         {
                             handler.Revoke()
                             ws.close(WorkerHost.RevokedCloseCode)
+                            const terminateTimer = setTimeout(() =>
+                            {
+                                if (ws.readyState !== WebSocket.CLOSED)
+                                {
+                                    ws.terminate()
+                                }
+                            }, WorkerHost.RevokedTerminateGraceMs)
+                            terminateTimer.unref?.()
                         },
                     }
                     this.principalConnections.Add(context.Tenant.Id, context.Principal.Id, revocable)
