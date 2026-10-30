@@ -25,12 +25,15 @@ export class IdpAdminEndpoint
     private static readonly ClientsSegment = 'clients';
     private static readonly PutMethod = 'PUT';
     private static readonly PostMethod = 'POST';
+    private static readonly DeleteMethod = 'DELETE';
     private static readonly RealmPathLength = 2;
     private static readonly SubResourcePathLength = 3;
     private static readonly PasswordResetPathLength = 5;
+    private static readonly ClientPathLength = 4;
     private static readonly PasswordSegment = 'password';
     private static readonly PrincipalIndex = 3;
     private static readonly PasswordIndex = 4;
+    private static readonly ClientIdIndex = 3;
     private static readonly RealmIndex = 0;
     private static readonly TenantIndex = 1;
     private static readonly SubResourceIndex = 2;
@@ -93,6 +96,11 @@ export class IdpAdminEndpoint
                 {
                     return await this.PostClient(tenantId, body);
                 }
+            }
+            if (segments.length === IdpAdminEndpoint.ClientPathLength && method === IdpAdminEndpoint.DeleteMethod
+                && segments[IdpAdminEndpoint.SubResourceIndex] === IdpAdminEndpoint.ClientsSegment)
+            {
+                return await this.DeleteClient(tenantId, segments[IdpAdminEndpoint.ClientIdIndex]!);
             }
             if (segments.length === IdpAdminEndpoint.PasswordResetPathLength && method === IdpAdminEndpoint.PostMethod
                 && segments[IdpAdminEndpoint.SubResourceIndex] === IdpAdminEndpoint.AccountsSegment
@@ -209,6 +217,13 @@ export class IdpAdminEndpoint
             return IdpAdminEndpoint.UnknownRealm();
         }
         await this.clients.Register(tenantId, clientId, redirectUris, secret);
+        return new AdminResult(IdpAdminEndpoint.OkStatus, { [IdpAdminEndpoint.ClientIdField]: clientId });
+    }
+
+    /** Idempotent teardown: 200 whether or not the client (or its realm) still exists, so a retried or late delete never fails. */
+    private async DeleteClient(tenantId: string, clientId: string): Promise<AdminResult>
+    {
+        this.clients.Remove(tenantId, clientId);
         return new AdminResult(IdpAdminEndpoint.OkStatus, { [IdpAdminEndpoint.ClientIdField]: clientId });
     }
 

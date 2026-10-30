@@ -314,3 +314,46 @@ test('admin password reset: missing password is 400, unknown principal is 404, u
     const noRealm = await ResetFixture.Reset(f, AdminFixture.PrincipalId, { password: ResetFixture.Password }, AdminFixture.Auth(), ResetFixture.NoRealm);
     assert.equal(noRealm.Status, AdminFixture.NotFound);
 });
+
+class DeleteFixture
+{
+    public static readonly UnknownClient = 'client-ghost';
+    public static readonly NoRealm = 'nope';
+
+    public static Delete(f: AdminFixture, clientId: string, auth: string | null = AdminFixture.Auth(), tenant: string = AdminFixture.Tenant): Promise<AdminResult>
+    {
+        return f.endpoint.Handle(AdminFixture.Delete, [AdminFixture.Realms, tenant, AdminFixture.Clients, clientId], auth ?? undefined, undefined);
+    }
+}
+
+test('admin DELETE client removes a registered client and echoes only its id', async () =>
+{
+    const f = await AdminFixture.Create();
+    await f.PutRealm();
+    await f.PostClient(f.ClientBody());
+    const r = await DeleteFixture.Delete(f, AdminFixture.ClientId);
+    assert.equal(r.Status, AdminFixture.OkStatus);
+    assert.deepEqual(r.Body, { clientId: AdminFixture.ClientId });
+    assert.equal(f.clients.Find(AdminFixture.Tenant, AdminFixture.ClientId), undefined);
+});
+
+test('admin DELETE client is idempotent: unknown client and unknown realm are 200', async () =>
+{
+    const f = await AdminFixture.Create();
+    await f.PutRealm();
+    assert.equal((await DeleteFixture.Delete(f, DeleteFixture.UnknownClient)).Status, AdminFixture.OkStatus);
+    const noRealm = await DeleteFixture.Delete(f, AdminFixture.ClientId, AdminFixture.Auth(), DeleteFixture.NoRealm);
+    assert.equal(noRealm.Status, AdminFixture.OkStatus);
+    assert.deepEqual(noRealm.Body, { clientId: AdminFixture.ClientId });
+});
+
+test('admin DELETE client without a valid admin token is 401 and removes nothing', async () =>
+{
+    const f = await AdminFixture.Create();
+    await f.PutRealm();
+    await f.PostClient(f.ClientBody());
+    assert.equal((await DeleteFixture.Delete(f, AdminFixture.ClientId, null)).Status, AdminFixture.Unauthorized);
+    assert.equal((await DeleteFixture.Delete(f, AdminFixture.ClientId, AdminFixture.Auth(''))).Status, AdminFixture.Unauthorized);
+    assert.equal((await DeleteFixture.Delete(f, AdminFixture.ClientId, AdminFixture.Auth(AdminFixture.SameLengthWrong))).Status, AdminFixture.Unauthorized);
+    assert.notEqual(f.clients.Find(AdminFixture.Tenant, AdminFixture.ClientId), undefined);
+});
