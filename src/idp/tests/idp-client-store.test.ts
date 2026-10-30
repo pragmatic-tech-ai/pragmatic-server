@@ -79,3 +79,28 @@ test('the same clientId under two tenants stays distinct', async () =>
     assert.equal(store.RedirectAllowed(ClientStoreFixture.OtherTenantId, ClientStoreFixture.ClientId, redirectB), true);
     assert.equal(store.RedirectAllowed(ClientStoreFixture.OtherTenantId, ClientStoreFixture.ClientId, redirectA), false);
 });
+
+test('Remove of a registered client returns true and the client is gone', async () =>
+{
+    const store = await ClientStoreFixture.Seeded();
+    assert.equal(store.Remove(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId), true);
+    assert.equal(store.Find(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId), undefined);
+});
+
+test('Remove of an unknown client returns false and changes nothing', async () =>
+{
+    const store = await ClientStoreFixture.Seeded();
+    assert.equal(store.Remove(ClientStoreFixture.TenantId, 'ghost'), false);
+    assert.equal(store.Remove(ClientStoreFixture.OtherTenantId, ClientStoreFixture.ClientId), false);
+    assert.notEqual(store.Find(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId), undefined);
+});
+
+test('Remove leaves another client of the same tenant intact', async () =>
+{
+    const store = await ClientStoreFixture.Seeded();
+    const otherClient = 'client-2';
+    await store.Register(ClientStoreFixture.TenantId, otherClient, [ClientStoreFixture.Redirect], ClientStoreFixture.Secret);
+    assert.equal(store.Remove(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId), true);
+    assert.equal(store.Find(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId), undefined);
+    assert.notEqual(store.Find(ClientStoreFixture.TenantId, otherClient), undefined);
+});
