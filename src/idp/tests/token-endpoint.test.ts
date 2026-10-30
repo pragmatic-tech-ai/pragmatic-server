@@ -69,12 +69,12 @@ class TokenFixture
         }
     }
 
-    public async IssueCode(): Promise<string>
+    public async IssueCode(name: string = TokenFixture.Name): Promise<string>
     {
         const challenge = createHash(TokenFixture.HashAlgorithm).update(TokenFixture.Verifier).digest(TokenFixture.Base64Url);
         return this.codes.Issue(new AuthorizationCodeBinding(TokenFixture.Sub, TokenFixture.TenantId, TokenFixture.ClientId,
             TokenFixture.RedirectUri, TokenFixture.Nonce, challenge, new Date(Date.now() + TokenFixture.CodeTtlMs),
-            TokenFixture.Email, TokenFixture.Name));
+            TokenFixture.Email, name));
     }
 
     public static Form(code: string, overrides: Record<string, string> = {}): URLSearchParams
@@ -173,5 +173,22 @@ test('a wrong client secret is rejected', async () =>
             TokenFixture.Form(await f.IssueCode(), { [TokenFixture.ClientSecretField]: TokenFixture.WrongSecret }));
         assert.equal(r.status, 401);
         assert.deepEqual(r.body, { error: TokenFixture.InvalidClient });
+    });
+});
+
+test('an account with no name still mints a valid id_token with email and no name claim', async () =>
+{
+    await TokenFixture.Run(async f =>
+    {
+        const r = await f.endpoint.Handle(TokenFixture.TenantId, TokenFixture.Form(await f.IssueCode('')));
+        assert.equal(r.status, 200);
+        const body = r.body as { id_token: string };
+        const { payload } = await jwtVerify(body.id_token, createLocalJWKSet(f.key.PublicJwks()), {
+            issuer: `${TokenFixture.BaseUrl}/${TokenFixture.TenantId}`,
+            audience: TokenFixture.ClientId,
+            algorithms: [TokenFixture.Rs256]
+        });
+        assert.equal(payload[TokenFixture.EmailClaim], TokenFixture.Email);
+        assert.equal(TokenFixture.NameClaim in payload, false);
     });
 });

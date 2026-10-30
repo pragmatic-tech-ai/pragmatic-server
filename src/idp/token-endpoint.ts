@@ -43,6 +43,7 @@ export class TokenEndpoint
     private static readonly ExpClaim = 'exp';
     private static readonly EmailClaim = 'email';
     private static readonly NameClaim = 'name';
+    private static readonly EmptyText = '';
 
     private readonly baseUrl: string;
 
@@ -83,16 +84,20 @@ export class TokenEndpoint
             return this.Fail(TokenEndpoint.StatusBadRequest, TokenEndpoint.InvalidGrant);
         }
         const iat = Math.floor(this.now().getTime() / TokenEndpoint.MillisPerSecond);
-        const idToken = await this.signingKey.Sign({
+        const claims: Record<string, unknown> = {
             [TokenEndpoint.IssClaim]: `${this.baseUrl}/${encodeURIComponent(tenantId)}`,
             [TokenEndpoint.AudClaim]: clientId,
             [TokenEndpoint.SubClaim]: binding.Sub,
             [TokenEndpoint.NonceClaim]: binding.Nonce,
             [TokenEndpoint.IatClaim]: iat,
             [TokenEndpoint.ExpClaim]: iat + TokenEndpoint.LifetimeSeconds,
-            [TokenEndpoint.EmailClaim]: binding.Email,
-            [TokenEndpoint.NameClaim]: binding.Name
-        });
+            [TokenEndpoint.EmailClaim]: binding.Email
+        };
+        if (binding.Name !== TokenEndpoint.EmptyText)
+        {
+            claims[TokenEndpoint.NameClaim] = binding.Name;
+        }
+        const idToken = await this.signingKey.Sign(claims);
         return {
             status: TokenEndpoint.StatusOk,
             body: {
