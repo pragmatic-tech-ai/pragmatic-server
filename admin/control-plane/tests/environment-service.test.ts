@@ -428,10 +428,22 @@ class ConnectingIdp implements IIdpService
     }
 }
 
+class RejectingConnectIdp extends ConnectingIdp
+{
+    public override async ConnectForTenant(_tenantId: string): Promise<IdpConnection | undefined>
+    {
+        this.ConnectCalls++
+        throw new Error('connect boom')
+    }
+}
+
 class ThrowingAdminClient extends IdpAdminClient
 {
+    public DeregisterAttempts = 0
+
     public override async DeregisterClient(_tenantId: string, _clientId: string): Promise<void>
     {
+        this.DeregisterAttempts++
         throw new Error('boom')
     }
 }
@@ -760,12 +772,16 @@ test('Delete is fail-open when the IdP deregister throws', async () =>
     await IdpFixture.With('plat-t1', async (conn) =>
     {
         const h = await Harness.Make()
+        const thrown: ThrowingAdminClient[] = []
         h.Idp = new ConnectingIdp(conn)
-        h.Service = new EnvironmentService(h.Registry, new FakeAllocator(h.Calls, false), SingleBackendResolver.Of(new DockerEnvironmentRuntime(h.Docker, h.Bundle), h.Directory, new HiveOrchestratorFactory()), h.Seeder, h.DataRoot, h.Proxy, h.Directory, h.Idp, c => new ThrowingAdminClient(c))
+        h.Service = new EnvironmentService(h.Registry, new FakeAllocator(h.Calls, false), SingleBackendResolver.Of(new DockerEnvironmentRuntime(h.Docker, h.Bundle), h.Directory, new HiveOrchestratorFactory()), h.Seeder, h.DataRoot, h.Proxy, h.Directory, h.Idp, c => { const t = new ThrowingAdminClient(c); thrown.push(t); return t })
         await h.Registry.Put({ ...Harness.Record('s1', EnvStatus.Running), tenantId: 'plat-t1' })
         const received: EnvironmentChange[] = []
         h.Service.OnChanged(change => received.push(change))
         await h.Service.Delete('s1')
+        assert.equal((h.Idp as ConnectingIdp).ConnectCalls, 1)
+        assert.equal(thrown.length, 1)
+        assert.equal(thrown[0].DeregisterAttempts, 1)
         assert.equal(h.Service.List().length, 0)
         assert.equal(received.length, 1)
         assert.equal(received[0].kind, EnvironmentChangeKind.Deleted)
@@ -1291,4 +1307,22 @@ test('DeployAppToEnvironment is unavailable without an actuator or a hive bindin
     await h.Registry.Put(Harness.Record('s1', EnvStatus.Running))
     const bundle = { config: { appName: 'a', appVersion: '1', entry: 'i', assets: [] }, files: [] }
     await assert.rejects(h.Service.DeployAppToEnvironment('s1', bundle), /UI deploy is unavailable/)
+})
+
+test('Delete is fail-open when the IdP connect rejects', async () =>
+{
+    await IdpFixture.With('plat-t1', async (conn) =>
+    {
+        const h = await Harness.Make()
+        const idp = new RejectingConnectIdp(conn)
+        h.UseIdp(idp)
+        await h.Registry.Put({ ...Harness.Record('s1', EnvStatus.Running), tenantId: 'plat-t1' })
+        const received: EnvironmentChange[] = []
+        h.Service.OnChanged(change => received.push(change))
+        await h.Service.Delete('s1')
+        assert.equal(idp.ConnectCalls, 1)
+        assert.equal(h.Service.List().length, 0)
+        assert.equal(received.length, 1)
+        assert.equal(received[0].kind, EnvironmentChangeKind.Deleted)
+    })
 })
