@@ -13,6 +13,28 @@ class FakeConnection implements IRevocableConnection
     }
 }
 
+class RemovingConnection implements IRevocableConnection
+{
+    public RevokeCount = 0
+    public Sibling: IRevocableConnection | undefined
+    private readonly registry: PrincipalConnectionRegistry
+
+    public constructor(registry: PrincipalConnectionRegistry)
+    {
+        this.registry = registry
+    }
+
+    public Revoke(): void
+    {
+        this.RevokeCount++
+        this.registry.Remove(this)
+        if (this.Sibling !== undefined)
+        {
+            this.registry.Remove(this.Sibling)
+        }
+    }
+}
+
 describe('PrincipalConnectionRegistry', () =>
 {
     it('revokes only the connections of the invalidated principal', () =>
@@ -59,5 +81,18 @@ describe('PrincipalConnectionRegistry', () =>
     {
         const registry = new PrincipalConnectionRegistry()
         assert.doesNotThrow(() => registry.InvalidatePrincipal('nope', 'nobody'))
+    })
+
+    it('revokes every connection even when Revoke removes itself during iteration', () =>
+    {
+        const registry = new PrincipalConnectionRegistry()
+        const first = new RemovingConnection(registry)
+        const second = new RemovingConnection(registry)
+        first.Sibling = second
+        registry.Add('t1', 'A', first)
+        registry.Add('t1', 'A', second)
+        registry.InvalidatePrincipal('t1', 'A')
+        assert.equal(first.RevokeCount, 1)
+        assert.equal(second.RevokeCount, 1)
     })
 })
