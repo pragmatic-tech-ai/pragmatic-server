@@ -68,6 +68,12 @@ export class InjectedIdpService implements IIdpService
     {
     }
 
+    public ConnectForTenant(tenantId: string): Promise<IdpConnection | undefined>
+    {
+        // Connection-only pod: the operator provisioned the IdP, so a lookup is the same injected connection.
+        return this.EnsureForTenant(tenantId, tenantId)
+    }
+
     public EnsureForTenant(_tenantId: string, _displayName: string): Promise<IdpConnection>
     {
         try

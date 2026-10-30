@@ -38,6 +38,15 @@ describe('InjectedIdpService', () =>
         assert.equal(conn.adminTokenRef, 'admin-token')
     })
 
+    it('ConnectForTenant returns the same injected connection as EnsureForTenant', async () =>
+    {
+        const svc = new InjectedIdpService({ browserBaseUrl: Names.Browser, baseUrl: Names.Internal, caFile: join(dir, 'ca.crt'), adminTokenFile: join(dir, 'admin-token') })
+        const conn = await svc.ConnectForTenant('acme')
+        assert.equal(conn?.browserBaseUrl, Names.Browser)
+        assert.equal(conn?.baseUrl, Names.Internal)
+        assert.equal(conn?.adminToken, Names.Token)
+    })
+
     it('FromEnv fails fast naming a missing companion var when the browser base is set', () =>
     {
         assert.throws(() => InjectedIdpService.FromEnv({ PRAGMATIC_IDP_BROWSER_BASE_URL: Names.Browser, PRAGMATIC_IDP_ADMIN_TOKEN_FILE: join(dir, 'admin-token') }), /PRAGMATIC_IDP_CA_FILE/)

@@ -76,6 +76,11 @@ class SmokeIdpService implements IIdpService
     {
     }
 
+    public async ConnectForTenant(_tenantId: string): Promise<IdpConnection | undefined>
+    {
+        return undefined
+    }
+
     public async TeardownForTenant(_tenantId: string): Promise<void>
     {
     }

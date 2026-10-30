@@ -447,3 +447,45 @@ test('TeardownForTenant keeps the record when the driver Discard fails (retryabl
         rmSync(root, { recursive: true, force: true })
     }
 })
+
+test('ConnectForTenant returns undefined for a tenant with no record and never creates or allocates', async () =>
+{
+    const root = mkdtempSync(join(tmpdir(), 'idpsvc-conn-'))
+    try
+    {
+        const registry = new IdpRegistry(join(root, 'idps.json'))
+        const driver = new FakeDriver()
+        const service = new IdpService(registry, driver)
+        assert.equal(await service.ConnectForTenant('ghost'), undefined)
+        assert.equal(driver.Requests.length, 0)
+        assert.equal(registry.Get('ghost'), undefined)
+    }
+    finally
+    {
+        rmSync(root, { recursive: true, force: true })
+    }
+})
+
+test('ConnectForTenant returns a connection to an existing Running record via the reuse path', async () =>
+{
+    const root = mkdtempSync(join(tmpdir(), 'idpsvc-conn-'))
+    try
+    {
+        const registry = new IdpRegistry(join(root, 'idps.json'))
+        await registry.Put({
+            tenantId: 't7', port: 8443, baseUrl: 'https://idp.svc:8443', containerName: 'c', volumeName: 'v',
+            caDir: 'ca-ref', adminTokenRef: 'admin-ref', createdAt: '2026-01-01T00:00:00.000Z', status: IdpStatus.Running
+        })
+        const driver = new FakeDriver()
+        driver.Reuse = true
+        const service = new IdpService(registry, driver)
+        const conn = await service.ConnectForTenant('t7')
+        assert.equal(conn?.baseUrl, 'https://idp.svc:8443')
+        assert.equal(driver.Requests.length, 1)
+        assert.deepEqual(driver.Requests[0]!.takenPorts, [])
+    }
+    finally
+    {
+        rmSync(root, { recursive: true, force: true })
+    }
+})

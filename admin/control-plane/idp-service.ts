@@ -9,6 +9,9 @@ export interface IIdpService
 {
     EnsureForTenant(tenantId: string, displayName: string): Promise<IdpConnection>
 
+    /** Non-creating lookup: a connection to the tenant's EXISTING IdP, or undefined when there is no record. Never creates a record or allocates a port. */
+    ConnectForTenant(tenantId: string): Promise<IdpConnection | undefined>
+
     /** Discards the tenant's per-tenant IdP and forgets its record; a tenant with no IdP record is a safe no-op. */
     TeardownForTenant(tenantId: string): Promise<void>
 }
@@ -45,6 +48,18 @@ export class IdpService implements IIdpService
             throw new InvalidTenantIdError(IdpService.InvalidTenantId)
         }
         return await this.Serialized(tenantId, () => this.EnsureLocked(tenantId, displayName))
+    }
+
+    public async ConnectForTenant(tenantId: string): Promise<IdpConnection | undefined>
+    {
+        await this.registry.Load()
+        if (this.registry.Get(tenantId) === undefined)
+        {
+            return undefined
+        }
+        // EnsureForTenant serializes itself, so it must not be nested inside Serialized here. The record carries no
+        // display name; it is only consulted when a stopped IdP must relaunch, which a Running record skips.
+        return await this.EnsureForTenant(tenantId, tenantId)
     }
 
     public async TeardownForTenant(tenantId: string): Promise<void>

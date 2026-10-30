@@ -139,6 +139,11 @@ class FakeIdpService implements IIdpService
         throw new Error('not used')
     }
 
+    public async ConnectForTenant(_tenantId: string): Promise<IdpConnection | undefined>
+    {
+        return undefined
+    }
+
     public async TeardownForTenant(tenantId: string): Promise<void>
     {
         if (this.Fail)

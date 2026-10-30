@@ -76,6 +76,11 @@ class UncontactedIdpService implements IIdpService
 {
     private static readonly Message = 'in-cluster create must not contact the IdP: federation is deferred in-cluster'
 
+    public async ConnectForTenant(_tenantId: string): Promise<IdpConnection | undefined>
+    {
+        return undefined
+    }
+
     public async TeardownForTenant(_tenantId: string): Promise<void>
     {
     }
