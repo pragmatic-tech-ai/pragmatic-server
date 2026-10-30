@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, cpSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { InMemoryMessageSocket, PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { InMemoryMessageSocket, PragmaticClient, ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
 import {
     Repository, Cardinality, toJSON, BlobPackageStore, StoragePackageSink,
@@ -61,7 +61,6 @@ class RuntimeSurfaceFixture
     public static readonly PrincipalId = 'p1'
     public static readonly TenantName = 'Tenant One'
     public static readonly Renamed = 'other-name'
-    public static readonly NotDevelopment = /operation requires a development tenant/
     public static readonly MalformedPolicyMessage = /internal error/
     public static readonly UnknownLabel = /unknown label/i
 
@@ -246,7 +245,7 @@ test('runtime e2e: runtime tenant rejects solution/open (cross-purpose)', async 
     await RuntimeSurfaceFixture.Run(async fx =>
     {
         const client = (await fx.Runtime())()
-        await assert.rejects(() => client.OpenSolution(fx.Packages), RuntimeSurfaceFixture.NotDevelopment)
+        await assert.rejects(() => client.OpenSolution(fx.Packages), (e: unknown) => e instanceof ResponseError && e.code === ErrorCodes.MethodNotFound)
     })
 })
 

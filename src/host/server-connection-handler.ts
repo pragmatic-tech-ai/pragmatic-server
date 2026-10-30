@@ -166,8 +166,11 @@ export class ServerConnectionHandler
             const solution = manager.ActiveSolution
             return solution === undefined ? [] : [solution.Name]
         }, audit)
-        this.RegisterLanguageHandlers()
-        this.RegisterSolutionHandlers()
+        if (this.IsDevelopment())
+        {
+            this.RegisterLanguageHandlers()
+            this.RegisterSolutionHandlers()
+        }
         this.RegisterModelHandlers()
         this.RegisterConnectorHandlers()
         this.RegisterCypherHandlers()
@@ -234,6 +237,11 @@ export class ServerConnectionHandler
         const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectorsFactory, graphProvider, instrumentation, parent, audit, rateLimit, admin, cypherLimits, purpose, applications, appGraphProvider, appWriteProvider, shareProvider, unshareProvider, listSharesProvider, assignProvider, paging, fieldMasks, connectorReadAuthorization, connectorWriteAuthorization, modelGraphProvider, cypherExecuteProvider, deployProvider, devGraphService, environmentGraphHost)
         connection.listen()
         return handler
+    }
+
+    private IsDevelopment(): boolean
+    {
+        return this.purpose === TenantPurpose.Development
     }
 
     /** Count of JSON-RPC requests currently executing on this connection (for drain). */
