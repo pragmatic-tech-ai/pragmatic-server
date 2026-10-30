@@ -517,3 +517,28 @@ test('ConnectForTenant relaunches an existing non-Running record via the launch 
         rmSync(root, { recursive: true, force: true })
     }
 })
+
+test('ConnectForTenant racing a TeardownForTenant never recreates the torn-down tenant', async () =>
+{
+    const root = mkdtempSync(join(tmpdir(), 'idpsvc-conn-'))
+    try
+    {
+        const registry = new IdpRegistry(join(root, 'idps.json'))
+        await registry.Put({
+            tenantId: 't6', port: 8446, baseUrl: 'https://idp.svc:8446', containerName: 'c6', volumeName: 'v6',
+            caDir: 'ca-ref', adminTokenRef: 'admin-ref', createdAt: '2026-01-01T00:00:00.000Z', status: IdpStatus.Running
+        })
+        const driver = new FakeDriver()
+        const service = new IdpService(registry, driver)
+        const teardown = service.TeardownForTenant('t6')
+        const connect = service.ConnectForTenant('t6')
+        await teardown
+        assert.equal(await connect, undefined)
+        assert.equal(driver.Requests.length, 0)
+        assert.equal(registry.Get('t6'), undefined)
+    }
+    finally
+    {
+        rmSync(root, { recursive: true, force: true })
+    }
+})

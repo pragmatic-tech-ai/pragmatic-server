@@ -52,14 +52,18 @@ export class IdpService implements IIdpService
 
     public async ConnectForTenant(tenantId: string): Promise<IdpConnection | undefined>
     {
-        await this.registry.Load()
-        if (this.registry.Get(tenantId) === undefined)
+        return await this.Serialized(tenantId, async () =>
         {
-            return undefined
-        }
-        // EnsureForTenant serializes itself, so it must not be nested inside Serialized here. The record carries no
-        // display name; it is only consulted when a stopped IdP must relaunch, which a Running record skips.
-        return await this.EnsureForTenant(tenantId, tenantId)
+            await this.registry.Load()
+            if (this.registry.Get(tenantId) === undefined)
+            {
+                return undefined
+            }
+            // Inside the lock a concurrent TeardownForTenant cannot interleave, so the record cannot vanish between
+            // this check and the connect. EnsureLocked reuses (Running) or relaunches (stopped) the EXISTING record;
+            // it never creates one for an absent tenant. The record has no display name, so the tenant id stands in.
+            return await this.EnsureLocked(tenantId, tenantId)
+        })
     }
 
     public async TeardownForTenant(tenantId: string): Promise<void>
