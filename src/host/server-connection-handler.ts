@@ -293,6 +293,7 @@ export class ServerConnectionHandler
 
     private Dispatch<R>(method: string, operation: () => R | Promise<R>): R | Promise<R>
     {
+        // Defense-in-depth: reject with the specific revoked code if a request slips through after Revoke() ran but before the transport fully closed.
         if (this.revoked)
         {
             throw new ResponseError(ServerConnectionHandler.RevokedCode, ServerConnectionHandler.RevokedMessage)
