@@ -1216,19 +1216,19 @@ export class ServerConnectionHandler
         const solution = this.manager.ActiveSolution
         if (solution === undefined)
         {
-            throw new Error(ServerConnectionHandler.NoActiveSolutionError)
+            throw new ResponseError(ErrorCodes.InvalidRequest, ServerConnectionHandler.NoActiveSolutionError)
         }
         const memberId = params?.memberId
         const member = solution.Members.ToArray().find(m => m.Ref.path === memberId)
         if (member === undefined || member.Storage === undefined)
         {
-            throw new Error(ServerConnectionHandler.UnknownMemberError)
+            throw new ResponseError(ErrorCodes.InvalidRequest, ServerConnectionHandler.UnknownMemberError)
         }
         PageRequest.ValidatePageSize(params)
         const view = await this.languageService.ModelView(member.Storage)
         if (view === undefined)
         {
-            throw new Error(ServerConnectionHandler.UnknownMemberError)
+            throw new ResponseError(ErrorCodes.InvalidRequest, ServerConnectionHandler.UnknownMemberError)
         }
         // read the revision only once the view is in hand: acquiring it may itself commit the first build
         const fingerprint = PageFingerprint.Of(ServerConnectionHandler.ModelViewFingerprintTag, memberId, String(this.languageService.GraphRevision))
@@ -1275,7 +1275,7 @@ export class ServerConnectionHandler
         const summary = this.ActiveSolutionOrNull()
         if (summary === null)
         {
-            throw new Error(ServerConnectionHandler.NoActiveSolutionError)
+            throw new ResponseError(ErrorCodes.InvalidRequest, ServerConnectionHandler.NoActiveSolutionError)
         }
         return summary
     }

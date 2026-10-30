@@ -13,6 +13,7 @@ import type { RequestInstrumentation } from '../../observability/request-instrum
 class Fixtures
 {
     public static readonly Secret = 'secret internal detail'
+    public static readonly NoActiveSolution = 'no active solution after open'
     public static readonly SyncSecret = 'secret sync detail'
 
     public static OwnerContext(): AccessContext
@@ -21,6 +22,41 @@ class Fixtures
         const principal = new Principal('p1', 't1', PrincipalKind.User, new Map(), [])
         const grants = [new Grant('p1', Role.Owner, new ResourceRef(ResourceKind.Tenant, 't1', []))]
         return new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
+    }
+
+    /** Requests a model view while no solution is open, returning the client-facing failure. */
+    public static async NoSolutionFailure(): Promise<{ code?: number, message?: string }>
+    {
+        const packages = mkdtempSync(join(tmpdir(), 'ps-pkgs-'))
+        const server = new PragmaticServer({ packagesRoot: packages })
+        await server.Start()
+        const languageService = await server.LanguageService()
+        const manager = await server.Manager()
+        const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
+        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, Fixtures.OwnerContext(), () => Promise.reject(new Error('no connectors')), () => Promise.reject(new Error('no graph')))
+        const client = PragmaticClient.CreateOverSocket(clientSocket)
+        try
+        {
+            let captured: unknown
+            try
+            {
+                await client.ModelView('missing/member')
+            }
+            catch (error)
+            {
+                captured = error
+            }
+            assert.ok(captured !== undefined, 'expected the request to reject')
+            return captured as { code?: number, message?: string }
+        }
+        finally
+        {
+            await client.DisposeAsync()
+            handler.Dispose()
+            await (languageService as SolutionLanguageService).WhenIdle()
+            await manager.CloseSolution()
+            await server.Dispose()
+        }
     }
 
     /** Drives Connectors() through the real dispatch path with a connector factory that rejects with the given error. */
@@ -91,4 +127,12 @@ test('a synchronous throw on the dispatch path is scrubbed too', async () =>
     assert.ok(!(failure.message ?? '').includes(Fixtures.SyncSecret))
     assert.ok(!failure.serialized.includes(Fixtures.SyncSecret))
     assert.ok((failure.message ?? '').includes('internal error'))
+})
+
+test('the no-active-solution condition reaches the client as an actionable InvalidRequest, not the generic scrub', async () =>
+{
+    const failure = await Fixtures.NoSolutionFailure()
+    assert.equal(failure.code, ErrorCodes.InvalidRequest)
+    assert.ok((failure.message ?? '').includes(Fixtures.NoActiveSolution))
+    assert.ok(!(failure.message ?? '').includes('internal error'))
 })
