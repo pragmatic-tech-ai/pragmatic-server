@@ -35,6 +35,12 @@ export class IdpClientStore
         return this.clients.get(IdpClientStore.KeyFor(tenantId, clientId));
     }
 
+    /** Removes the client; returns whether it existed. */
+    public Remove(tenantId: string, clientId: string): boolean
+    {
+        return this.clients.delete(IdpClientStore.KeyFor(tenantId, clientId));
+    }
+
     /** Uniform: an unknown client costs the same argon2 verify as a wrong secret and yields false. */
     public async VerifySecret(tenantId: string, clientId: string, presented: string): Promise<boolean>
     {
