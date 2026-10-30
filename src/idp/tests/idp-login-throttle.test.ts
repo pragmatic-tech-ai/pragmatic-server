@@ -128,3 +128,67 @@ test('defaults are 3 attempts / 15 min window / 30 min lockout', () =>
     f2.Fail(t2, 1);
     assert.equal(f2.Check(t2).allowed, true);
 });
+
+test('window holds just under windowMs: the last failure still locks', () =>
+{
+    const f = new IdpLoginThrottleTestFixture();
+    const t = f.Make();
+    f.Fail(t, IdpLoginThrottleTestFixture.DefaultAttempts - 1);
+    f.clock += IdpLoginThrottleTestFixture.DefaultWindowMs - 1;
+    f.Fail(t, 1);
+    assert.equal(f.Check(t).allowed, false);
+});
+
+test('window resets just over windowMs: the last failure does not lock', () =>
+{
+    const f = new IdpLoginThrottleTestFixture();
+    const t = f.Make();
+    f.Fail(t, IdpLoginThrottleTestFixture.DefaultAttempts - 1);
+    f.clock += IdpLoginThrottleTestFixture.DefaultWindowMs + 1;
+    f.Fail(t, 1);
+    assert.equal(f.Check(t).allowed, true);
+});
+
+test('email case and whitespace do not evade the lock', () =>
+{
+    const f = new IdpLoginThrottleTestFixture();
+    const t = f.Make();
+    const spaced = '  A@X.com ';
+    const plain = 'a@x.com';
+    f.Fail(t, 2, spaced);
+    f.Fail(t, 1, plain);
+    assert.equal(f.Check(t, spaced).allowed, false);
+    assert.equal(f.Check(t, plain).allowed, false);
+    assert.equal(t.Size(), 1);
+});
+
+test('when every entry is locked, a new key evicts the oldest locked one and is itself kept', () =>
+{
+    const f = new IdpLoginThrottleTestFixture();
+    const t = f.Make(3);
+    for (let i = 0; i < 3; i++)
+    {
+        f.Fail(t, IdpLoginThrottleTestFixture.DefaultAttempts, 'lock' + i + '@x');
+    }
+    assert.equal(t.Size(), 3);
+    f.Fail(t, 1, 'new@x');
+    assert.equal(t.Size(), 3);
+    assert.equal(f.Check(t, 'lock0@x').allowed, true);
+    assert.equal(f.Check(t, 'lock1@x').allowed, false);
+    assert.equal(f.Check(t, 'lock2@x').allowed, false);
+    f.Fail(t, IdpLoginThrottleTestFixture.DefaultAttempts - 1, 'new@x');
+    assert.equal(f.Check(t, 'new@x').allowed, false);
+});
+
+test('an unlocked victim is evicted before any locked entry', () =>
+{
+    const f = new IdpLoginThrottleTestFixture();
+    const t = f.Make(3);
+    f.Fail(t, IdpLoginThrottleTestFixture.DefaultAttempts, 'lock0@x');
+    f.Fail(t, 1, 'open@x');
+    f.Fail(t, IdpLoginThrottleTestFixture.DefaultAttempts, 'lock1@x');
+    f.Fail(t, 1, 'new@x');
+    assert.equal(t.Size(), 3);
+    assert.equal(f.Check(t, 'lock0@x').allowed, false);
+    assert.equal(f.Check(t, 'lock1@x').allowed, false);
+});
