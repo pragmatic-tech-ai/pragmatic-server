@@ -77,3 +77,33 @@ test('Create is not a share right: dropped from a mix, and a Create-only row is 
     assert.equal(all.length, 1)
     assert.deepEqual(all[0].rights, ['read'])
 })
+
+test('RevokeAllForRecord drops every grant for the record and nothing else', async () =>
+{
+    const session = new FakeSession()
+    const store = new ShareStore(session as never)
+    const rights = [PrivilegeAction.Read]
+    await store.Grant({ concept: 'shop.Order', recordId: 'r1', subject: { kind: ShareSubjectKind.Principal, id: 'u2' }, rights })
+    await store.Grant({ concept: 'shop.Order', recordId: 'r1', subject: { kind: ShareSubjectKind.Team, id: 't1' }, rights })
+    await store.Grant({ concept: 'shop.Order', recordId: 'r2', subject: { kind: ShareSubjectKind.Principal, id: 'u2' }, rights })
+    assert.equal(await store.RevokeAllForRecord('shop.Order', 'r1'), 2)
+    assert.equal((await store.ListForRecord('shop.Order', 'r1')).length, 0)
+    assert.equal((await store.ListForRecord('shop.Order', 'r2')).length, 1)
+})
+
+test('RevokeAllForRecord on a record with no grants returns 0', async () =>
+{
+    const store = new ShareStore(new FakeSession() as never)
+    assert.equal(await store.RevokeAllForRecord('shop.Order', 'nope'), 0)
+})
+
+test('RevokeAllForRecord matches on concept as well as record id', async () =>
+{
+    const session = new FakeSession()
+    const store = new ShareStore(session as never)
+    const rights = [PrivilegeAction.Read]
+    await store.Grant({ concept: 'shop.Order', recordId: 'r1', subject: { kind: ShareSubjectKind.Principal, id: 'u2' }, rights })
+    await store.Grant({ concept: 'shop.Invoice', recordId: 'r1', subject: { kind: ShareSubjectKind.Principal, id: 'u2' }, rights })
+    assert.equal(await store.RevokeAllForRecord('shop.Order', 'r1'), 1)
+    assert.equal((await store.ListForRecord('shop.Invoice', 'r1')).length, 1)
+})

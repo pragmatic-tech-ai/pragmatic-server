@@ -39,6 +39,16 @@ export class ShareStore
         return all.filter(g => g.concept === concept && g.recordId === recordId)
     }
 
+    public async RevokeAllForRecord(concept: string, recordId: string): Promise<number>
+    {
+        const grants = await this.ListForRecord(concept, recordId)
+        for (const grant of grants)
+        {
+            await this.Revoke(grant.concept, grant.recordId, grant.subject.kind, grant.subject.id)
+        }
+        return grants.length
+    }
+
     public async LoadAll(): Promise<readonly ShareGrantDto[]>
     {
         const rows = await this.session.Find(ShareStore.Collection, {})
