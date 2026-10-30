@@ -71,6 +71,8 @@ export class IdpAdminClient
     private static readonly ClientsSuffix = '/clients';
     private static readonly PutMethod = 'PUT';
     private static readonly PostMethod = 'POST';
+    private static readonly DeleteMethod = 'DELETE';
+    private static readonly PathSeparator = '/';
     private static readonly AuthorizationHeader = 'Authorization';
     private static readonly ContentTypeHeader = 'Content-Type';
     private static readonly ContentLengthHeader = 'Content-Length';
@@ -110,6 +112,12 @@ export class IdpAdminClient
             { clientId: client.clientId, redirectUris: client.redirectUris, secret: client.secret });
     }
 
+    public async DeregisterClient(tenantId: string, clientId: string): Promise<void>
+    {
+        await this.Request(IdpAdminClient.DeleteMethod,
+            this.RealmPath(tenantId) + IdpAdminClient.ClientsSuffix + IdpAdminClient.PathSeparator + encodeURIComponent(clientId), undefined);
+    }
+
     private RealmPath(tenantId: string): string
     {
         return IdpAdminClient.RealmsPath + encodeURIComponent(tenantId);
@@ -117,7 +125,13 @@ export class IdpAdminClient
 
     private Request(method: string, urlPath: string, body: unknown): Promise<void>
     {
-        const payload = Buffer.from(JSON.stringify(body), IdpAdminClient.Utf8);
+        const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body), IdpAdminClient.Utf8);
+        const headers: Record<string, string | number> = { [IdpAdminClient.AuthorizationHeader]: IdpAdminClient.BearerPrefix + this.opts.adminToken };
+        if (payload !== undefined)
+        {
+            headers[IdpAdminClient.ContentTypeHeader] = IdpAdminClient.JsonType;
+            headers[IdpAdminClient.ContentLengthHeader] = payload.length;
+        }
         return new Promise<void>((resolve, reject) =>
         {
             const req = https.request({
@@ -126,11 +140,7 @@ export class IdpAdminClient
                 port: Number(this.base.port) || IdpAdminClient.DefaultPort,
                 path: urlPath,
                 method,
-                headers: {
-                    [IdpAdminClient.AuthorizationHeader]: IdpAdminClient.BearerPrefix + this.opts.adminToken,
-                    [IdpAdminClient.ContentTypeHeader]: IdpAdminClient.JsonType,
-                    [IdpAdminClient.ContentLengthHeader]: payload.length
-                }
+                headers
             }, res =>
             {
                 const chunks: Buffer[] = [];
@@ -153,7 +163,14 @@ export class IdpAdminClient
                 reject(new IdpAdminTransportError(IdpAdminClient.TimeoutCode));
             });
             req.on('error', err => reject(IdpAdminTransportError.From(err)));
-            req.end(payload);
+            if (payload === undefined)
+            {
+                req.end();
+            }
+            else
+            {
+                req.end(payload);
+            }
         });
     }
 
