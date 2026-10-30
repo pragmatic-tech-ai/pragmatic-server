@@ -8,10 +8,12 @@ import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-s
 import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
+import type { RequestInstrumentation } from '../../observability/request-instrumentation.js'
 
 class Fixtures
 {
     public static readonly Secret = 'secret internal detail'
+    public static readonly SyncSecret = 'secret sync detail'
 
     public static OwnerContext(): AccessContext
     {
@@ -22,7 +24,7 @@ class Fixtures
     }
 
     /** Drives Connectors() through the real dispatch path with a connector factory that rejects with the given error. */
-    public static async Failure(thrown: unknown): Promise<{ code?: number, message?: string, data?: unknown, serialized: string }>
+    public static async Failure(thrown: unknown, instrumentation?: RequestInstrumentation): Promise<{ code?: number, message?: string, data?: unknown, serialized: string }>
     {
         const packages = mkdtempSync(join(tmpdir(), 'ps-pkgs-'))
         const server = new PragmaticServer({ packagesRoot: packages })
@@ -30,7 +32,7 @@ class Fixtures
         const languageService = await server.LanguageService()
         const manager = await server.Manager()
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, Fixtures.OwnerContext(), () => Promise.reject(thrown), () => Promise.reject(new Error('no graph')))
+        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, Fixtures.OwnerContext(), () => Promise.reject(thrown), () => Promise.reject(new Error('no graph')), instrumentation)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         try
         {
@@ -79,4 +81,14 @@ test('a ResponseError with a non-standard code passes through with its data', as
     assert.equal(failure.code, ServerConnectionHandler.RateLimitedCode)
     assert.ok((failure.message ?? '').includes('slow down'))
     assert.deepEqual(failure.data, { retryAfterMs: 5 })
+})
+
+test('a synchronous throw on the dispatch path is scrubbed too', async () =>
+{
+    const throwing = { Run: (): never => { throw new Error(Fixtures.SyncSecret) } } as unknown as RequestInstrumentation
+    const failure = await Fixtures.Failure(new Error('unused'), throwing)
+    assert.equal(failure.code, ErrorCodes.InternalError)
+    assert.ok(!(failure.message ?? '').includes(Fixtures.SyncSecret))
+    assert.ok(!failure.serialized.includes(Fixtures.SyncSecret))
+    assert.ok((failure.message ?? '').includes('internal error'))
 })
