@@ -8,6 +8,7 @@ import { InMemoryAuthorizationCodeStore } from '../authorization-code-store.js';
 import { AuthorizeEndpoint } from '../authorize-endpoint.js';
 import type { AuthorizeResult } from '../authorize-endpoint.js';
 import { IdpClientStore } from '../idp-client-store.js';
+import { IdpLoginThrottle } from '../idp-login-throttle.js';
 import { IdpRealmSet } from '../idp-host.js';
 import { IdpRealm } from '../idp-realm.js';
 import { IdpSsoCookie, IdpSsoSessionStore } from '../idp-sso-session.js';
@@ -24,10 +25,13 @@ class AuthorizeFixture
     public static readonly Challenge = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
     public static readonly State = 'st-1';
     public static readonly Nonce = 'no-1';
+    public static readonly Ip = '10.0.0.1';
+    public static readonly OtherEmail = 'b@t';
 
     public codes = new InMemoryAuthorizationCodeStore();
     public sso = new IdpSsoSessionStore();
     public endpoint!: AuthorizeEndpoint;
+    public authenticateCalls = 0;
 
     public static async Run(body: (f: AuthorizeFixture) => Promise<void>): Promise<void>
     {
@@ -39,7 +43,13 @@ class AuthorizeFixture
             const clients = new IdpClientStore();
             await clients.Register(AuthorizeFixture.TenantId, AuthorizeFixture.ClientId, [AuthorizeFixture.RedirectUri], 'secret');
             const f = new AuthorizeFixture();
-            f.endpoint = new AuthorizeEndpoint(new IdpRealmSet([[AuthorizeFixture.TenantId, realm]]), clients, f.codes, f.sso, true);
+            const original = realm.Authenticate.bind(realm);
+            realm.Authenticate = async (email: string, password: string) =>
+            {
+                f.authenticateCalls++;
+                return original(email, password);
+            };
+            f.endpoint = new AuthorizeEndpoint(new IdpRealmSet([[AuthorizeFixture.TenantId, realm]]), clients, f.codes, f.sso, true, new IdpLoginThrottle());
             await body(f);
         }
         finally
@@ -76,6 +86,11 @@ class AuthorizeFixture
         return new URLSearchParams({ email: AuthorizeFixture.Email, password });
     }
 
+    public static Attempt(f: AuthorizeFixture, email: string, password: string, ip: string = AuthorizeFixture.Ip): Promise<AuthorizeResult>
+    {
+        return f.endpoint.HandlePost(AuthorizeFixture.TenantId, AuthorizeFixture.Query(), undefined, new URLSearchParams({ email, password }), ip);
+    }
+
     public static Redirect(r: AuthorizeResult): { location: string; setCookie?: string }
     {
         assert.equal(r.kind, 'redirect');
@@ -94,7 +109,7 @@ test('a redirect_uri off the allowlist is rejected', () => AuthorizeFixture.Run(
     const q = AuthorizeFixture.Query({ redirect_uri: 'https://evil.example/cb' });
     const r = await f.endpoint.HandleGet(AuthorizeFixture.TenantId, q, undefined);
     assert.equal(r.kind, 'error');
-    const p = await f.endpoint.HandlePost(AuthorizeFixture.TenantId, q, undefined, AuthorizeFixture.Form(AuthorizeFixture.Password));
+    const p = await f.endpoint.HandlePost(AuthorizeFixture.TenantId, q, undefined, AuthorizeFixture.Form(AuthorizeFixture.Password), AuthorizeFixture.Ip);
     assert.equal(p.kind, 'error');
 }));
 
@@ -125,7 +140,7 @@ test('valid authorize with no SSO cookie returns the login page', () => Authoriz
 test('valid credentials set the SSO cookie and redirect with code and state', () => AuthorizeFixture.Run(async f =>
 {
     const r = AuthorizeFixture.Redirect(await f.endpoint.HandlePost(
-        AuthorizeFixture.TenantId, AuthorizeFixture.Query(), undefined, AuthorizeFixture.Form(AuthorizeFixture.Password)));
+        AuthorizeFixture.TenantId, AuthorizeFixture.Query(), undefined, AuthorizeFixture.Form(AuthorizeFixture.Password), AuthorizeFixture.Ip));
     assert.ok(r.setCookie?.startsWith(`${IdpSsoCookie.Name}=`));
     const url = new URL(r.location);
     assert.equal(url.origin + url.pathname, AuthorizeFixture.RedirectUri);
@@ -149,9 +164,9 @@ test('a valid SSO cookie skips the login page and redirects with a code', () => 
 
 test('bad credentials return the login page with a uniform error, no code issued', () => AuthorizeFixture.Run(async f =>
 {
-    const wrong = await f.endpoint.HandlePost(AuthorizeFixture.TenantId, AuthorizeFixture.Query(), undefined, AuthorizeFixture.Form('bad'));
+    const wrong = await f.endpoint.HandlePost(AuthorizeFixture.TenantId, AuthorizeFixture.Query(), undefined, AuthorizeFixture.Form('bad'), AuthorizeFixture.Ip);
     const ghost = await f.endpoint.HandlePost(AuthorizeFixture.TenantId, AuthorizeFixture.Query(), undefined,
-        new URLSearchParams({ email: 'ghost@t', password: 'bad' }));
+        new URLSearchParams({ email: 'ghost@t', password: 'bad' }), AuthorizeFixture.Ip);
     assert.equal(wrong.kind, 'loginPage');
     assert.equal(ghost.kind, 'loginPage');
     assert.equal((wrong as { html: string }).html, (ghost as { html: string }).html);
@@ -161,7 +176,7 @@ test('bad credentials return the login page with a uniform error, no code issued
 test('a fresh login issues a code whose binding carries email and name', () => AuthorizeFixture.Run(async f =>
 {
     const r = AuthorizeFixture.Redirect(await f.endpoint.HandlePost(
-        AuthorizeFixture.TenantId, AuthorizeFixture.Query(), undefined, AuthorizeFixture.Form(AuthorizeFixture.Password)));
+        AuthorizeFixture.TenantId, AuthorizeFixture.Query(), undefined, AuthorizeFixture.Form(AuthorizeFixture.Password), AuthorizeFixture.Ip));
     const binding = await f.codes.Take(new URL(r.location).searchParams.get('code')!);
     assert.equal(binding?.Email, AuthorizeFixture.Email);
     assert.equal(binding?.Name, AuthorizeFixture.DisplayName);
@@ -175,4 +190,64 @@ test('an SSO-cookie authorize issues a code whose binding carries email and name
     const binding = await f.codes.Take(new URL(r.location).searchParams.get('code')!);
     assert.equal(binding?.Email, AuthorizeFixture.Email);
     assert.equal(binding?.Name, AuthorizeFixture.DisplayName);
+}));
+
+test('the 4th bad login for one key is 429 with retryAfterSeconds and Authenticate is not called', () => AuthorizeFixture.Run(async f =>
+{
+    for (let i = 0; i < 3; i++)
+    {
+        assert.equal((await AuthorizeFixture.Attempt(f, AuthorizeFixture.Email, 'bad')).kind, 'loginPage');
+    }
+    const calls = f.authenticateCalls;
+    const locked = await AuthorizeFixture.Attempt(f, AuthorizeFixture.Email, AuthorizeFixture.Password);
+    assert.equal(locked.kind, 'error');
+    const err = locked as { status: number; body: object; retryAfterSeconds?: number };
+    assert.equal(err.status, 429);
+    assert.ok((err.retryAfterSeconds ?? 0) > 0);
+    assert.equal(f.authenticateCalls, calls);
+}));
+
+test('a correct login before the threshold succeeds and resets the counter', () => AuthorizeFixture.Run(async f =>
+{
+    await AuthorizeFixture.Attempt(f, AuthorizeFixture.Email, 'bad');
+    await AuthorizeFixture.Attempt(f, AuthorizeFixture.Email, 'bad');
+    assert.equal((await AuthorizeFixture.Attempt(f, AuthorizeFixture.Email, AuthorizeFixture.Password)).kind, 'redirect');
+    await AuthorizeFixture.Attempt(f, AuthorizeFixture.Email, 'bad');
+    await AuthorizeFixture.Attempt(f, AuthorizeFixture.Email, 'bad');
+    assert.equal((await AuthorizeFixture.Attempt(f, AuthorizeFixture.Email, 'bad')).kind, 'loginPage');
+    assert.equal((await AuthorizeFixture.Attempt(f, AuthorizeFixture.Email, 'bad')).kind, 'error');
+}));
+
+test('a non-existent email is throttled identically (no existence oracle)', () => AuthorizeFixture.Run(async f =>
+{
+    for (let i = 0; i < 3; i++)
+    {
+        await AuthorizeFixture.Attempt(f, 'ghost@t', 'bad');
+        await AuthorizeFixture.Attempt(f, AuthorizeFixture.Email, 'bad');
+    }
+    const ghost = await AuthorizeFixture.Attempt(f, 'ghost@t', 'bad');
+    const real = await AuthorizeFixture.Attempt(f, AuthorizeFixture.Email, 'bad');
+    assert.deepEqual(ghost, real);
+    assert.equal(ghost.kind, 'error');
+    assert.equal((ghost as { status: number }).status, 429);
+}));
+
+test('a lock on one email does not lock another email from the same ip', () => AuthorizeFixture.Run(async f =>
+{
+    for (let i = 0; i < 3; i++)
+    {
+        await AuthorizeFixture.Attempt(f, AuthorizeFixture.Email, 'bad');
+    }
+    assert.equal((await AuthorizeFixture.Attempt(f, AuthorizeFixture.OtherEmail, 'bad')).kind, 'loginPage');
+    assert.equal((await AuthorizeFixture.Attempt(f, AuthorizeFixture.Email, 'bad', '10.0.0.2')).kind, 'loginPage');
+}));
+
+test('a malformed form (missing password) is not counted toward the lock', () => AuthorizeFixture.Run(async f =>
+{
+    for (let i = 0; i < 5; i++)
+    {
+        await f.endpoint.HandlePost(AuthorizeFixture.TenantId, AuthorizeFixture.Query(), undefined,
+            new URLSearchParams({ email: AuthorizeFixture.Email }), AuthorizeFixture.Ip);
+    }
+    assert.equal((await AuthorizeFixture.Attempt(f, AuthorizeFixture.Email, AuthorizeFixture.Password)).kind, 'redirect');
 }));

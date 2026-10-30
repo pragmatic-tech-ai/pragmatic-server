@@ -8,6 +8,7 @@ import type { AuthorizeResult } from './authorize-endpoint.js';
 import { TokenEndpoint } from './token-endpoint.js';
 import type { IdpAdminEndpoint } from './idp-admin-endpoint.js';
 import type { IdpClientStore } from './idp-client-store.js';
+import { IdpLoginThrottle } from './idp-login-throttle.js';
 import type { IdpRealm } from './idp-realm.js';
 import type { IdpSigningKey } from './idp-signing-key.js';
 import type { IdpSsoSessionStore } from './idp-sso-session.js';
@@ -146,6 +147,11 @@ export class IdpHost
     private static readonly CurrentPasswordField = 'currentPassword';
     private static readonly NewPasswordField = 'newPassword';
     private static readonly StatusUnauthorized = 401;
+    private static readonly StatusTooManyRequests = 429;
+    private static readonly RetryAfterHeader = 'Retry-After';
+    private static readonly TooManyAttemptsCode = 'too_many_attempts';
+    private static readonly MillisPerSecond = 1000;
+    private static readonly NoClientIp = '';
     private static readonly InvalidCredentialsCode = 'invalid_credentials';
     private static readonly InvalidRequestCode = 'invalid_request';
     private static readonly EmptyObject = {};
@@ -168,6 +174,7 @@ export class IdpHost
     private readonly baseUrl: string;
     private readonly internalBaseUrl: string;
     private readonly authorize: AuthorizeEndpoint;
+    private readonly throttle: IdpLoginThrottle;
     private readonly token: TokenEndpoint;
 
     public constructor(
@@ -180,7 +187,8 @@ export class IdpHost
         private readonly tls: { key: Buffer; cert: Buffer },
         private readonly secureCookie: boolean,
         private readonly admin?: IdpAdminEndpoint,
-        internalBaseUrl?: string)
+        internalBaseUrl?: string,
+        throttle: IdpLoginThrottle = new IdpLoginThrottle())
     {
         if (new URL(baseUrl).protocol !== IdpHost.HttpsProtocol)
         {
@@ -188,7 +196,8 @@ export class IdpHost
         }
         this.baseUrl = baseUrl.replace(/\/+$/, '');
         this.internalBaseUrl = internalBaseUrl !== undefined && internalBaseUrl.trim().length > 0 ? internalBaseUrl.replace(/\/+$/, '') : this.baseUrl;
-        this.authorize = new AuthorizeEndpoint(realms, clients, codes, sso, secureCookie);
+        this.authorize = new AuthorizeEndpoint(realms, clients, codes, sso, secureCookie, throttle);
+        this.throttle = throttle;
         this.token = new TokenEndpoint(this.baseUrl, signingKey, codes, clients);
     }
 
@@ -358,11 +367,20 @@ export class IdpHost
             this.WriteJson(res, IdpHost.StatusBadRequest, { [IdpHost.ErrorField]: IdpHost.InvalidRequestCode }, IdpHost.NoStoreHeaders);
             return;
         }
+        const clientIp = req.socket.remoteAddress ?? IdpHost.NoClientIp;
+        const decision = this.throttle.CheckAllowed(tenantId, email, clientIp);
+        if (!decision.allowed)
+        {
+            this.WriteJson(res, IdpHost.StatusTooManyRequests, { [IdpHost.ErrorField]: IdpHost.TooManyAttemptsCode }, this.RetryAfterHeaders(decision.retryAfterMs));
+            return;
+        }
         if (await realm.RotatePassword(email, current, next))
         {
+            this.throttle.Clear(tenantId, email, clientIp);
             this.WriteJson(res, IdpHost.StatusOk, IdpHost.EmptyObject, IdpHost.NoStoreHeaders);
             return;
         }
+        this.throttle.RecordFailure(tenantId, email, clientIp);
         this.WriteJson(res, IdpHost.StatusUnauthorized, { [IdpHost.ErrorField]: IdpHost.InvalidCredentialsCode }, IdpHost.NoStoreHeaders);
     }
 
@@ -428,7 +446,7 @@ export class IdpHost
                 this.WriteJson(res, IdpHost.StatusPayloadTooLarge, { [IdpHost.ErrorField]: IdpHost.PayloadTooLargeMessage });
                 return;
             }
-            result = await this.authorize.HandlePost(tenantId, query, cookieHeader, new URLSearchParams(body));
+            result = await this.authorize.HandlePost(tenantId, query, cookieHeader, new URLSearchParams(body), req.socket.remoteAddress ?? IdpHost.NoClientIp);
         }
         else
         {
@@ -474,8 +492,16 @@ export class IdpHost
         }
         else
         {
-            this.WriteJson(res, result.status, result.body);
+            const headers = result.retryAfterSeconds === undefined
+                ? undefined
+                : { [IdpHost.RetryAfterHeader]: String(result.retryAfterSeconds) };
+            this.WriteJson(res, result.status, result.body, headers);
         }
+    }
+
+    private RetryAfterHeaders(retryAfterMs: number): Record<string, string>
+    {
+        return { ...IdpHost.NoStoreHeaders, [IdpHost.RetryAfterHeader]: String(Math.ceil(retryAfterMs / IdpHost.MillisPerSecond)) };
     }
 
     private Discovery(tenantId: string): Record<string, string>

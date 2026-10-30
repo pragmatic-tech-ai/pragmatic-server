@@ -1,6 +1,7 @@
 import { AuthorizationCodeBinding } from './authorization-code-store.js';
 import type { IAuthorizationCodeStore } from './authorization-code-store.js';
 import type { IdpClientStore } from './idp-client-store.js';
+import type { IdpLoginThrottle } from './idp-login-throttle.js';
 import type { IdpRealmSet } from './idp-host.js';
 import { IdpSsoCookie } from './idp-sso-session.js';
 import type { IdpSsoSessionStore } from './idp-sso-session.js';
@@ -8,7 +9,7 @@ import type { IdpSsoSessionStore } from './idp-sso-session.js';
 export type AuthorizeResult =
     | { kind: 'redirect'; location: string; setCookie?: string }
     | { kind: 'loginPage'; html: string }
-    | { kind: 'error'; status: number; body: object };
+    | { kind: 'error'; status: number; body: object; retryAfterSeconds?: number };
 
 /** The validated, trusted OIDC request parameters. */
 class AuthorizeRequest
@@ -41,6 +42,10 @@ export class AuthorizeEndpoint
     private static readonly PasswordField = 'password';
     private static readonly StatusBadRequest = 400;
     private static readonly StatusNotFound = 404;
+    private static readonly StatusTooManyRequests = 429;
+    private static readonly MillisPerSecond = 1000;
+    private static readonly TooManyAttemptsCode = 'too_many_attempts';
+    private static readonly TooManyAttemptsDescription = 'Too many failed attempts. Try again later.';
     private static readonly ErrorField = 'error';
     private static readonly DescriptionField = 'error_description';
     private static readonly InvalidRequest = 'invalid_request';
@@ -72,6 +77,7 @@ export class AuthorizeEndpoint
         private readonly codes: IAuthorizationCodeStore,
         private readonly sso: IdpSsoSessionStore,
         private readonly secureCookie: boolean,
+        private readonly throttle: IdpLoginThrottle,
         private readonly now: () => Date = () => new Date())
     {
     }
@@ -92,7 +98,7 @@ export class AuthorizeEndpoint
         return this.RedirectWithCode(tenantId, request, session.PrincipalId, undefined);
     }
 
-    public async HandlePost(tenantId: string, query: URLSearchParams, cookieHeader: string | undefined, form: URLSearchParams): Promise<AuthorizeResult>
+    public async HandlePost(tenantId: string, query: URLSearchParams, cookieHeader: string | undefined, form: URLSearchParams, clientIp: string): Promise<AuthorizeResult>
     {
         const request = this.Validate(tenantId, query);
         if (!(request instanceof AuthorizeRequest))
@@ -106,11 +112,23 @@ export class AuthorizeEndpoint
         {
             return this.LoginPage(query, true);
         }
+        const decision = this.throttle.CheckAllowed(tenantId, email, clientIp);
+        if (!decision.allowed)
+        {
+            return {
+                kind: 'error',
+                status: AuthorizeEndpoint.StatusTooManyRequests,
+                body: { [AuthorizeEndpoint.ErrorField]: AuthorizeEndpoint.TooManyAttemptsCode, [AuthorizeEndpoint.DescriptionField]: AuthorizeEndpoint.TooManyAttemptsDescription },
+                retryAfterSeconds: Math.ceil(decision.retryAfterMs / AuthorizeEndpoint.MillisPerSecond)
+            };
+        }
         const result = await realm.Authenticate(email, password);
         if (result === null)
         {
+            this.throttle.RecordFailure(tenantId, email, clientIp);
             return this.LoginPage(query, true);
         }
+        this.throttle.Clear(tenantId, email, clientIp);
         const issued = this.sso.Issue(result.Principal.Id, tenantId);
         const cookie = IdpSsoCookie.Build(issued.Id, issued.session.ExpiresAt, this.secureCookie);
         return this.RedirectWithCode(tenantId, request, result.Principal.Id, cookie);
