@@ -141,6 +141,8 @@ class CaptureFixture
     public static readonly ClientsPath = '/_admin/realms/tenant%2Fodd%201/clients';
     public static readonly Redirect = 'https://app.example.test/cb';
     public static readonly Secret = 'capture-client-secret';
+    public static readonly Authorization = 'authorization';
+    public static readonly BearerPrefix = 'Bearer ';
     public static readonly ContentLength = 'content-length';
     public static readonly ContentType = 'content-type';
     public static readonly JsonType = 'application/json';
@@ -198,6 +200,7 @@ test('DeregisterClient resolves on 200 and sends a bodyless DELETE with no Conte
         assert.equal(seen.length, 1);
         assert.equal(seen[0].method, CaptureFixture.Delete);
         assert.equal(seen[0].url, CaptureFixture.EncodedPath);
+        assert.equal(seen[0].headers[CaptureFixture.Authorization], CaptureFixture.BearerPrefix + CaptureFixture.Token);
         assert.equal(seen[0].headers[CaptureFixture.ContentLength], undefined);
         assert.equal(seen[0].headers[CaptureFixture.ContentType], undefined);
         assert.equal(seen[0].body.length, 0);

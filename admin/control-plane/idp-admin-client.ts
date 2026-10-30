@@ -115,7 +115,7 @@ export class IdpAdminClient
     public async DeregisterClient(tenantId: string, clientId: string): Promise<void>
     {
         await this.Request(IdpAdminClient.DeleteMethod,
-            this.RealmPath(tenantId) + IdpAdminClient.ClientsSuffix + IdpAdminClient.PathSeparator + encodeURIComponent(clientId), undefined);
+            this.RealmPath(tenantId) + IdpAdminClient.ClientsSuffix + IdpAdminClient.PathSeparator + encodeURIComponent(clientId));
     }
 
     private RealmPath(tenantId: string): string
@@ -123,7 +123,7 @@ export class IdpAdminClient
         return IdpAdminClient.RealmsPath + encodeURIComponent(tenantId);
     }
 
-    private Request(method: string, urlPath: string, body: unknown): Promise<void>
+    private Request(method: string, urlPath: string, body?: unknown): Promise<void>
     {
         const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body), IdpAdminClient.Utf8);
         const headers: Record<string, string | number> = { [IdpAdminClient.AuthorizationHeader]: IdpAdminClient.BearerPrefix + this.opts.adminToken };
