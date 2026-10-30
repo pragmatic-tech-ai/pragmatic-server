@@ -425,12 +425,33 @@ export class EnvironmentService
     public async Delete(name: string): Promise<void>
     {
         const rec = this.Require(name)
+        await this.DeregisterFederation(rec)
         const ctx = this.CtxOf(rec)
         const runtime = this.runtimes.For(rec)
         await runtime.Teardown(ctx, true)
         await runtime.RemoveVolume(ctx)
         await this.registry.Remove(name)
         this.NotifyChanged(EnvironmentChangeKind.Deleted, rec)
+    }
+
+    /** Best-effort: removes the env's OIDC client from its tenant IdP. Any failure is swallowed so the delete always proceeds; nothing is logged. */
+    private async DeregisterFederation(rec: EnvironmentRecord): Promise<void>
+    {
+        try
+        {
+            if (rec.tenantId !== undefined)
+            {
+                const conn = await this.idp.ConnectForTenant(rec.tenantId)
+                if (conn !== undefined)
+                {
+                    await this.adminClientFactory(conn).DeregisterClient(rec.tenantId, rec.environmentId)
+                }
+            }
+        }
+        catch
+        {
+            // best-effort: env-delete must proceed
+        }
     }
 
     public List(): readonly EnvironmentRecord[]

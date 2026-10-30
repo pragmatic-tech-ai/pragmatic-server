@@ -404,6 +404,38 @@ class FakeIdp implements IIdpService
     }
 }
 
+class ConnectingIdp implements IIdpService
+{
+    public ConnectCalls = 0
+
+    public constructor(private readonly conn: IdpConnection)
+    {
+    }
+
+    public async ConnectForTenant(_tenantId: string): Promise<IdpConnection | undefined>
+    {
+        this.ConnectCalls++
+        return this.conn
+    }
+
+    public async TeardownForTenant(_tenantId: string): Promise<void>
+    {
+    }
+
+    public async EnsureForTenant(_tenantId: string, _displayName: string): Promise<IdpConnection>
+    {
+        return this.conn
+    }
+}
+
+class ThrowingAdminClient extends IdpAdminClient
+{
+    public override async DeregisterClient(_tenantId: string, _clientId: string): Promise<void>
+    {
+        throw new Error('boom')
+    }
+}
+
 class IdpFixture
 {
     public static readonly Token = 'admin-token-for-env-tests'
@@ -690,6 +722,54 @@ test('Delete downs, removes volume, and unregisters', async () =>
     await h.Service.Delete('s1')
     assert.deepEqual(h.Calls, ['down', 'removeVolume'])
     assert.equal(h.Service.List().length, 0)
+})
+
+test('Delete of a federated env deregisters its OIDC client at the real IdP admin endpoint', async () =>
+{
+    await IdpFixture.With('plat-t1', async (conn, clients) =>
+    {
+        const h = await Harness.Make()
+        const idp = new ConnectingIdp(conn)
+        h.UseIdp(idp)
+        await new IdpAdminClient(conn).RegisterClient('plat-t1', { clientId: 'envfed', redirectUris: ['https://x/cb'], secret: 's' })
+        assert.notEqual(clients.Find('plat-t1', 'envfed'), undefined)
+        await h.Registry.Put({ ...Harness.Record('s1', EnvStatus.Running), tenantId: 'plat-t1', environmentId: 'envfed' })
+        await h.Service.Delete('s1')
+        assert.equal(idp.ConnectCalls, 1)
+        assert.equal(clients.Find('plat-t1', 'envfed'), undefined)
+        assert.equal(h.Service.List().length, 0)
+    })
+})
+
+test('Delete of an unbound env never contacts the IdP', async () =>
+{
+    await IdpFixture.With('plat-t1', async (conn) =>
+    {
+        const h = await Harness.Make()
+        const idp = new ConnectingIdp(conn)
+        h.UseIdp(idp)
+        await h.Registry.Put(Harness.Record('s1', EnvStatus.Running))
+        await h.Service.Delete('s1')
+        assert.equal(idp.ConnectCalls, 0)
+        assert.equal(h.Service.List().length, 0)
+    })
+})
+
+test('Delete is fail-open when the IdP deregister throws', async () =>
+{
+    await IdpFixture.With('plat-t1', async (conn) =>
+    {
+        const h = await Harness.Make()
+        h.Idp = new ConnectingIdp(conn)
+        h.Service = new EnvironmentService(h.Registry, new FakeAllocator(h.Calls, false), SingleBackendResolver.Of(new DockerEnvironmentRuntime(h.Docker, h.Bundle), h.Directory, new HiveOrchestratorFactory()), h.Seeder, h.DataRoot, h.Proxy, h.Directory, h.Idp, c => new ThrowingAdminClient(c))
+        await h.Registry.Put({ ...Harness.Record('s1', EnvStatus.Running), tenantId: 'plat-t1' })
+        const received: EnvironmentChange[] = []
+        h.Service.OnChanged(change => received.push(change))
+        await h.Service.Delete('s1')
+        assert.equal(h.Service.List().length, 0)
+        assert.equal(received.length, 1)
+        assert.equal(received[0].kind, EnvironmentChangeKind.Deleted)
+    })
 })
 
 test('user-supplied busy port propagates before any docker call', async () =>
