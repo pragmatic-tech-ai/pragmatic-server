@@ -5,7 +5,7 @@ import { Tenant, TenantKind, Role, ResourceKind, ResourceRef, IdentityConfig, De
 import { Grant } from '@pragmatic-tech-ai/todl-identity'
 import type { IAuditSink, AuditEvent, ITenantConfigStore, IRoleGrantStore, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { InMemoryRoleGrantStore, LocalAccountStore, ServiceTokenStore, LocalAccountRegistrar, EncryptedSecretStore, Argon2PasswordHasher } from '@pragmatic-tech-ai/todl-identity-local'
-import { AdminService, AdminTokenNotFoundError, AdminSelfLockoutError, LastAdministratorError, AdminConfigMissingError } from '../admin-service.js'
+import { AdminService, AdminTokenNotFoundError, AdminSelfLockoutError, LastAdministratorError, AdminConfigMissingError, ForeignTenantResourceError } from '../admin-service.js'
 import type { ISecurityModelReload } from '../cypher/read-filter-source.js'
 import { AdminEnums, AdminEnumError } from '../admin-enums.js'
 import type { IAdapterPackAdmin } from '../adapter-pack-admin.js'
@@ -560,4 +560,74 @@ test('SetSecurityModel persists a valid model, preserves other fields and fires 
     assert.equal(f.Config.Stored?.ProviderSettings.get('k'), 'v')
     assert.deepEqual(f.Reload.Invalidated, ['t1'])
     assert.equal(f.Audit.Events.length, 1)
+})
+
+test('GrantRole with a foreign-tenant resource is rejected before any store or audit call', async () =>
+{
+    const f = new AdminFixture()
+    const foreign = new ResourceRef(ResourceKind.Tenant, 'other-tenant', [])
+    await assert.rejects(f.Service.GrantRole('u1', 'u2', Role.Editor, foreign), ForeignTenantResourceError)
+    assert.equal(f.Grants.Touched, 0)
+    assert.equal(f.Audit.Events.length, 0)
+})
+
+test('RevokeRole with a foreign-tenant resource is rejected before any store or audit call', async () =>
+{
+    const f = new AdminFixture()
+    const foreign = new ResourceRef(ResourceKind.Tenant, 'other-tenant', [])
+    await f.Seed('u2', Role.Editor, foreign)
+    await assert.rejects(f.Service.RevokeRole('u1', 'u2', Role.Editor, foreign), ForeignTenantResourceError)
+    assert.equal(f.Grants.Touched, 0)
+    assert.equal(f.Audit.Events.length, 0)
+    assert.equal((await f.Grants.GrantsOn(foreign)).length, 1)
+})
+
+class RacyGrantStore implements IRoleGrantStore
+{
+    public readonly Inner = new InMemoryRoleGrantStore()
+
+    public async GrantsFor(subject: string, tenant: Tenant): Promise<readonly Grant[]>
+    {
+        await Promise.resolve()
+        return this.Inner.GrantsFor(subject, tenant)
+    }
+
+    public async GrantsOn(resource: ResourceRef): Promise<readonly Grant[]>
+    {
+        await Promise.resolve()
+        return this.Inner.GrantsOn(resource)
+    }
+
+    public async Save(grant: Grant): Promise<void>
+    {
+        await Promise.resolve()
+        await this.Inner.Save(grant)
+    }
+
+    public async Revoke(grant: Grant): Promise<void>
+    {
+        await Promise.resolve()
+        await this.Inner.Revoke(grant)
+    }
+}
+
+test('concurrent revokes of the last two administrators: exactly one succeeds, one administrator remains', async () =>
+{
+    const f = new AdminFixture()
+    const racy = new RacyGrantStore()
+    const root = f.TenantRoot()
+    await racy.Inner.Save(new Grant('u2', Role.Owner, root))
+    await racy.Inner.Save(new Grant('u3', Role.Owner, root))
+    const service = f.ServiceFor(f.Tenant, f.Audit, async () => undefined)
+    const racing = new AdminService(racy, f.Audit, f.Config, f.Tenant, async () => undefined, f.Accounts, f.Registrar, f.Tokens, f.Packs, f.Reload)
+    assert.ok(service)
+    const results = await Promise.allSettled([
+        racing.RevokeRole('u1', 'u2', Role.Owner, root),
+        racing.RevokeRole('u1', 'u3', Role.Owner, root),
+    ])
+    const rejected = results.filter(r => r.status === 'rejected') as PromiseRejectedResult[]
+    assert.equal(results.filter(r => r.status === 'fulfilled').length, 1)
+    assert.equal(rejected.length, 1)
+    assert.ok(rejected[0].reason instanceof LastAdministratorError)
+    assert.equal((await racy.Inner.GrantsOn(root)).length, 1)
 })

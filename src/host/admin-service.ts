@@ -46,6 +46,18 @@ export class AdminConfigMissingError extends Error
     }
 }
 
+/** Raised when a grant mutation targets a resource that belongs to a different tenant. */
+export class ForeignTenantResourceError extends Error
+{
+    private static readonly Message = 'resource does not belong to this tenant'
+
+    public constructor()
+    {
+        super(ForeignTenantResourceError.Message)
+        this.name = 'ForeignTenantResourceError'
+    }
+}
+
 /** RBAC-gated admin operations over the tenant's grant store, config store and audit sink.
  *  Every mutation is audited (awaited, fail-closed) with identifiers only, never secrets. */
 export class AdminService
@@ -76,6 +88,7 @@ export class AdminService
     private static readonly ScopesKey = 'scopes'
     private static readonly ScopeSeparator = ' '
 
+    private readonly locks = new Map<string, Promise<unknown>>()
     private readonly grants: IRoleGrantStore
     private readonly audit: IAuditSink
     private readonly configStore: ITenantConfigStore
@@ -109,27 +122,35 @@ export class AdminService
 
     public async GrantRole(actor: string, subject: string, role: Role, resource: ResourceRef): Promise<void>
     {
-        await this.grants.Save(new Grant(subject, role, resource))
-        await this.Audit(subject, AdminService.GrantDetail(actor, AdminService.GrantRoleAction, role, resource))
+        this.AssertOwnTenant(resource)
+        await this.Serialized(this.tenant.Id, async () =>
+        {
+            await this.grants.Save(new Grant(subject, role, resource))
+            await this.Audit(subject, AdminService.GrantDetail(actor, AdminService.GrantRoleAction, role, resource))
+        })
     }
 
     public async RevokeRole(actor: string, subject: string, role: Role, resource: ResourceRef): Promise<void>
     {
-        if (subject === actor && role === Role.Owner && resource.Kind === ResourceKind.Tenant && resource.Path.length === 0)
+        this.AssertOwnTenant(resource)
+        await this.Serialized(this.tenant.Id, async () =>
         {
-            throw new AdminSelfLockoutError()
-        }
-        if (resource.Kind === ResourceKind.Tenant && resource.Path.length === 0 && RoleCapabilities.Covers(role, Action.Administer))
-        {
-            const onRoot = await this.grants.GrantsOn(new ResourceRef(ResourceKind.Tenant, resource.TenantId, []))
-            const remaining = onRoot.filter(grant => RoleCapabilities.Covers(grant.Role, Action.Administer) && !(grant.Subject === subject && grant.Role === role))
-            if (remaining.length === 0)
+            if (subject === actor && role === Role.Owner && resource.Kind === ResourceKind.Tenant && resource.Path.length === 0)
             {
-                throw new LastAdministratorError()
+                throw new AdminSelfLockoutError()
             }
-        }
-        await this.grants.Revoke(new Grant(subject, role, resource))
-        await this.Audit(subject, AdminService.GrantDetail(actor, AdminService.RevokeRoleAction, role, resource))
+            if (resource.Kind === ResourceKind.Tenant && resource.Path.length === 0 && RoleCapabilities.Covers(role, Action.Administer))
+            {
+                const onRoot = await this.grants.GrantsOn(new ResourceRef(ResourceKind.Tenant, resource.TenantId, []))
+                const remaining = onRoot.filter(grant => RoleCapabilities.Covers(grant.Role, Action.Administer) && !(grant.Subject === subject && grant.Role === role))
+                if (remaining.length === 0)
+                {
+                    throw new LastAdministratorError()
+                }
+            }
+            await this.grants.Revoke(new Grant(subject, role, resource))
+            await this.Audit(subject, AdminService.GrantDetail(actor, AdminService.RevokeRoleAction, role, resource))
+        })
     }
 
     public async GetConfig(): Promise<IdentityConfig>
@@ -287,6 +308,32 @@ export class AdminService
     public async ListScriptAllowlist(): Promise<readonly string[]>
     {
         return this.packs.ListScriptAllowlist()
+    }
+
+    private AssertOwnTenant(resource: ResourceRef): void
+    {
+        if (resource.TenantId !== this.tenant.Id)
+        {
+            throw new ForeignTenantResourceError()
+        }
+    }
+
+    private async Serialized<T>(key: string, work: () => Promise<T>): Promise<T>
+    {
+        const previous = this.locks.get(key) ?? Promise.resolve()
+        const run = previous.catch(() => undefined).then(work)
+        this.locks.set(key, run)
+        try
+        {
+            return await run
+        }
+        finally
+        {
+            if (this.locks.get(key) === run)
+            {
+                this.locks.delete(key)
+            }
+        }
     }
 
     private async Audit(subject: string | null, detail: ReadonlyMap<string, string>): Promise<void>

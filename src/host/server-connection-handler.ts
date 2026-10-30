@@ -30,7 +30,7 @@ import { ModelReadFilter } from './model-read-filter.js'
 import { AllowAllFieldReadMaskSource } from './cypher/read-filter-source.js'
 import type { IFieldReadMaskSource } from './cypher/read-filter-source.js'
 import { AllowAllFieldReadMask, FieldMaskedGraphQuery } from './cypher/field-masked-graph-query.js'
-import { AdminService, AdminSelfLockoutError, LastAdministratorError, AdminConfigMissingError, AdminTokenNotFoundError } from './admin-service.js'
+import { AdminService, AdminSelfLockoutError, LastAdministratorError, AdminConfigMissingError, AdminTokenNotFoundError, ForeignTenantResourceError } from './admin-service.js'
 import { AdminEnums, AdminEnumError } from './admin-enums.js'
 import { TenantPurpose } from '../tenancy/tenant-purpose.js'
 import type { IDevGraphService } from './graphs/dev-graph-service.js'
@@ -911,7 +911,7 @@ export class ServerConnectionHandler
         }
         catch (error)
         {
-            if (error instanceof AdminSelfLockoutError || error instanceof LastAdministratorError || error instanceof AdminConfigMissingError || error instanceof LocalAccountNotFoundError || error instanceof AdminTokenNotFoundError)
+            if (error instanceof AdminSelfLockoutError || error instanceof LastAdministratorError || error instanceof AdminConfigMissingError || error instanceof LocalAccountNotFoundError || error instanceof AdminTokenNotFoundError || error instanceof ForeignTenantResourceError)
             {
                 throw new ResponseError(ErrorCodes.InvalidRequest, error.message)
             }
