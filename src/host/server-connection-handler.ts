@@ -92,6 +92,8 @@ export class ServerConnectionHandler
     private static readonly ApplicationsUnavailableMessage = 'pragmatic applications are not available on this connection'
     public static readonly RateLimitedCode = -32029
     public static readonly CypherTimeoutCode = -32030
+    public static readonly RevokedCode = -32031
+    private static readonly RevokedMessage = 'connection authorization has been revoked'
 
     private readonly connection: MessageConnection
     private readonly languageService: ILanguageService
@@ -126,6 +128,8 @@ export class ServerConnectionHandler
     private boundApp: PragmaticAppSummaryDto | undefined
     private inFlight = 0
     private draining = false
+    private revoked = false
+    private disposed = false
 
     private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, graphProvider: (context: AccessContext) => Promise<IGraphQuery>, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: TenantPurpose = TenantPurpose.Development, applications?: PragmaticAppsRegistry, appGraphProvider?: (context: AccessContext, name: string, labels: ReferencedLabelSet) => Promise<IGraphQuery>, appWriteProvider?: (context: AccessContext, name: string, operations: readonly AppWriteOpDto[]) => Promise<AppWriteResultDto>, shareProvider?: (context: AccessContext, name: string, params: ShareParams) => Promise<ShareResultDto>, unshareProvider?: (context: AccessContext, name: string, params: UnshareParams) => Promise<UnshareResultDto>, listSharesProvider?: (context: AccessContext, name: string, params: ListSharesParams) => Promise<ListSharesResultDto>, assignProvider?: (context: AccessContext, name: string, params: AssignParams) => Promise<AssignResultDto>, paging?: PagingLimits, fieldMasks?: IFieldReadMaskSource, connectorReadAuthorization?: (context: AccessContext) => Promise<IConnectorReadAuthorization>, connectorWriteAuthorization?: (context: AccessContext, target: IWriteTargetSource) => Promise<IHydrateAuthorization>, modelGraphProvider?: (context: AccessContext, modelId: string) => Promise<IGraphQuery>, cypherExecuteProvider?: (context: AccessContext, modelId: string, request: DevCypherRequest) => Promise<CypherExecuteResultDto>, deployProvider?: (params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>, devGraphService?: IDevGraphService, environmentGraphHost?: IEnvironmentGraphHost)
     {
@@ -243,8 +247,21 @@ export class ServerConnectionHandler
         this.draining = true
     }
 
+    /** Force-closes the connection because its authorization was revoked: later dispatches report the revoked code. */
+    public Revoke(): void
+    {
+        this.revoked = true
+        this.BeginDrain()
+        this.Dispose()
+    }
+
     public Dispose(): void
     {
+        if (this.disposed)
+        {
+            return
+        }
+        this.disposed = true
         this.graphSubscription.dispose()
         this.buildStateSubscription.dispose()
         this.connection.dispose()
@@ -276,6 +293,10 @@ export class ServerConnectionHandler
 
     private Dispatch<R>(method: string, operation: () => R | Promise<R>): R | Promise<R>
     {
+        if (this.revoked)
+        {
+            throw new ResponseError(ServerConnectionHandler.RevokedCode, ServerConnectionHandler.RevokedMessage)
+        }
         if (this.draining)
         {
             throw new ResponseError(DrainingError.Code, DrainingError.Message)
