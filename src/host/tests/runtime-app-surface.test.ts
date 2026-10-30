@@ -62,7 +62,7 @@ class RuntimeSurfaceFixture
     public static readonly TenantName = 'Tenant One'
     public static readonly Renamed = 'other-name'
     public static readonly NotDevelopment = /operation requires a development tenant/
-    public static readonly MalformedPolicyMessage = /Access policy is not valid JSON/
+    public static readonly MalformedPolicyMessage = /internal error/
     public static readonly UnknownLabel = /unknown label/i
 
     public readonly Packages = mkdtempSync(join(tmpdir(), RuntimeSurfaceFixture.PkgPrefix))

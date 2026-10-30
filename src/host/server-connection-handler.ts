@@ -51,6 +51,7 @@ import type { RequestInstrumentation } from '../observability/request-instrument
 /** One client connection: wires every JSON-RPC handler 1:1 to the engine services and pushes notifications. */
 export class ServerConnectionHandler
 {
+    private static readonly GenericInternalMessage = 'internal error'
     private static readonly NoActiveSolutionError = 'no active solution after open'
     private static readonly UnknownMemberError = 'unknown solution member'
     private static readonly DefaultResourceKind = 'Tenant'
@@ -288,7 +289,7 @@ export class ServerConnectionHandler
         const fail = (error: unknown): never =>
         {
             this.inFlight--
-            throw error
+            throw error instanceof ResponseError ? error : new ResponseError(ErrorCodes.InternalError, ServerConnectionHandler.GenericInternalMessage)
         }
         try
         {
