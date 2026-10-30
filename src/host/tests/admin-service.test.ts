@@ -618,12 +618,30 @@ test('concurrent revokes of the last two administrators: exactly one succeeds, o
     const root = f.TenantRoot()
     await racy.Inner.Save(new Grant('u2', Role.Owner, root))
     await racy.Inner.Save(new Grant('u3', Role.Owner, root))
-    const service = f.ServiceFor(f.Tenant, f.Audit, async () => undefined)
     const racing = new AdminService(racy, f.Audit, f.Config, f.Tenant, async () => undefined, f.Accounts, f.Registrar, f.Tokens, f.Packs, f.Reload)
-    assert.ok(service)
     const results = await Promise.allSettled([
         racing.RevokeRole('u1', 'u2', Role.Owner, root),
         racing.RevokeRole('u1', 'u3', Role.Owner, root),
+    ])
+    const rejected = results.filter(r => r.status === 'rejected') as PromiseRejectedResult[]
+    assert.equal(results.filter(r => r.status === 'fulfilled').length, 1)
+    assert.equal(rejected.length, 1)
+    assert.ok(rejected[0].reason instanceof LastAdministratorError)
+    assert.equal((await racy.Inner.GrantsOn(root)).length, 1)
+})
+
+test('concurrent revokes via two AdminService instances on one tenant serialize: one succeeds, one administrator remains', async () =>
+{
+    const f = new AdminFixture()
+    const racy = new RacyGrantStore()
+    const root = f.TenantRoot()
+    await racy.Inner.Save(new Grant('u2', Role.Owner, root))
+    await racy.Inner.Save(new Grant('u3', Role.Owner, root))
+    const first = new AdminService(racy, f.Audit, f.Config, f.Tenant, async () => undefined, f.Accounts, f.Registrar, f.Tokens, f.Packs, f.Reload)
+    const second = new AdminService(racy, f.Audit, f.Config, f.Tenant, async () => undefined, f.Accounts, f.Registrar, f.Tokens, f.Packs, f.Reload)
+    const results = await Promise.allSettled([
+        first.RevokeRole('u1', 'u2', Role.Owner, root),
+        second.RevokeRole('u1', 'u3', Role.Owner, root),
     ])
     const rejected = results.filter(r => r.status === 'rejected') as PromiseRejectedResult[]
     assert.equal(results.filter(r => r.status === 'fulfilled').length, 1)

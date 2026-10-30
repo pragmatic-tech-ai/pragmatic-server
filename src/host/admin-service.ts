@@ -62,6 +62,8 @@ export class ForeignTenantResourceError extends Error
  *  Every mutation is audited (awaited, fail-closed) with identifiers only, never secrets. */
 export class AdminService
 {
+    /** Process-shared per-tenant lock chain: every AdminService instance (one per connection) serializes through it. */
+    private static readonly Locks = new Map<string, Promise<unknown>>()
     private static readonly ActorKey = 'actor'
     private static readonly ActionKey = 'action'
     private static readonly RoleKey = 'role'
@@ -88,7 +90,6 @@ export class AdminService
     private static readonly ScopesKey = 'scopes'
     private static readonly ScopeSeparator = ' '
 
-    private readonly locks = new Map<string, Promise<unknown>>()
     private readonly grants: IRoleGrantStore
     private readonly audit: IAuditSink
     private readonly configStore: ITenantConfigStore
@@ -320,18 +321,18 @@ export class AdminService
 
     private async Serialized<T>(key: string, work: () => Promise<T>): Promise<T>
     {
-        const previous = this.locks.get(key) ?? Promise.resolve()
+        const previous = AdminService.Locks.get(key) ?? Promise.resolve()
         const run = previous.catch(() => undefined).then(work)
-        this.locks.set(key, run)
+        AdminService.Locks.set(key, run)
         try
         {
             return await run
         }
         finally
         {
-            if (this.locks.get(key) === run)
+            if (AdminService.Locks.get(key) === run)
             {
-                this.locks.delete(key)
+                AdminService.Locks.delete(key)
             }
         }
     }
