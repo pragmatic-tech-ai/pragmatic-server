@@ -347,6 +347,33 @@ test('admin DELETE client is idempotent: unknown client and unknown realm are 20
     assert.deepEqual(noRealm.Body, { clientId: AdminFixture.ClientId });
 });
 
+test('admin DELETE client in a never-registered realm is 200 and leaves a sibling realm client untouched', async () =>
+{
+    const f = await AdminFixture.Create();
+    await f.PutRealm();
+    await f.PostClient(f.ClientBody());
+    assert.equal(f.realms.For(DeleteFixture.NoRealm), undefined);
+    const r = await DeleteFixture.Delete(f, AdminFixture.ClientId, AdminFixture.Auth(), DeleteFixture.NoRealm);
+    assert.equal(r.Status, AdminFixture.OkStatus);
+    assert.deepEqual(r.Body, { clientId: AdminFixture.ClientId });
+    assert.notEqual(f.clients.Find(AdminFixture.Tenant, AdminFixture.ClientId), undefined);
+});
+
+test('admin DELETE client twice is idempotent: the second delete is still 200 and the client stays gone', async () =>
+{
+    const f = await AdminFixture.Create();
+    await f.PutRealm();
+    await f.PostClient(f.ClientBody());
+    const first = await DeleteFixture.Delete(f, AdminFixture.ClientId);
+    assert.equal(first.Status, AdminFixture.OkStatus);
+    assert.deepEqual(first.Body, { clientId: AdminFixture.ClientId });
+    const second = await DeleteFixture.Delete(f, AdminFixture.ClientId);
+    assert.equal(second.Status, AdminFixture.OkStatus);
+    assert.deepEqual(second.Body, { clientId: AdminFixture.ClientId });
+    assert.equal(f.clients.Find(AdminFixture.Tenant, AdminFixture.ClientId), undefined);
+    assert.equal(await f.clients.VerifySecret(AdminFixture.Tenant, AdminFixture.ClientId, AdminFixture.ClientSecret), false);
+});
+
 test('admin DELETE client without a valid admin token is 401 and removes nothing', async () =>
 {
     const f = await AdminFixture.Create();
