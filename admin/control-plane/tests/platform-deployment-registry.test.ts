@@ -54,6 +54,7 @@ class Fx
     public static readonly BadBuild = 'bad build'
     public static readonly Operator = 'op@x'
     public static readonly LegacyAt = '2026-01-01T00:00:00.000Z'
+    public static readonly RollBoom = 'roll failed'
 
     public static Signer(digest: string | undefined, signed: boolean): IManifestSigner
     {
@@ -84,7 +85,7 @@ class Fx
         return { id, tenantId, displayName: id, cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Attach }, agentTokenRef: Fx.TokenRef, createdAt: '2026-10-22T00:00:00.000Z' }
     }
 
-    public static async Run(body: (reg: PlatformDeploymentRegistry, registrations: RolloutRegistrationRegistry, rolls: string[], ledger: AdoptionLedgerRegistry) => Promise<void>, unreachable: boolean = false, signer?: IManifestSigner, withPolicies: boolean = true, ledgerOverride?: AdoptionLedgerRegistry): Promise<void>
+    public static async Run(body: (reg: PlatformDeploymentRegistry, registrations: RolloutRegistrationRegistry, rolls: string[], ledger: AdoptionLedgerRegistry) => Promise<void>, unreachable: boolean = false, signer?: IManifestSigner, withPolicies: boolean = true, ledgerOverride?: AdoptionLedgerRegistry, rollFailure?: Error): Promise<void>
     {
         const dir = await mkdtemp(join(tmpdir(), Fx.Prefix))
         try
@@ -92,7 +93,7 @@ class Fx
             const registrations = new RolloutRegistrationRegistry(join(dir, 'x.json'))
             const hives = new Map([[Fx.HiveA, Fx.Hive(Fx.HiveA, Fx.TenantA)], [Fx.HiveB, Fx.Hive(Fx.HiveB, Fx.TenantA)]])
             const rolls: string[] = []
-            const orchestrator: IHiveOrchestrator = { Roll: async (w: EnvironmentWorkload, image: string) => { rolls.push((w as unknown as { name: string }).name + '@' + image) } } as unknown as IHiveOrchestrator
+            const orchestrator: IHiveOrchestrator = { Roll: async (w: EnvironmentWorkload, image: string) => { if (rollFailure !== undefined) { throw rollFailure } rolls.push((w as unknown as { name: string }).name + '@' + image) } } as unknown as IHiveOrchestrator
             const factory = { For: () => { if (unreachable) { throw new UnsupportedBackendError(HiveBackend.Aks, InfraMode.Attach) } return orchestrator } } as unknown as HiveOrchestratorFactory
             const envs = [Fx.EnvRecord(Fx.EnvNames[0], Fx.HiveA), Fx.EnvRecord(Fx.EnvNames[1], Fx.HiveA), Fx.EnvRecord(Fx.EnvNames[2], Fx.HiveB)]
             const policies = new ReleasePolicyRegistry(join(dir, 'p.json'))
@@ -384,6 +385,18 @@ test('SelectTarget on an unreachable backend records the selection and does not 
         assert.equal(reg.TargetFor(Fx.HiveA)?.version, Fx.V2)
         assert.equal(rolls.length, 0)
     }, true)
+})
+
+test('SelectTarget propagates a Roll failure (not swallowed) but the selection stays recorded for the pull agent', async () =>
+{
+    const failure = new Error(Fx.RollBoom)
+    await Fx.Run(async (reg, _registrations, rolls) =>
+    {
+        await Fx.PublishGated(reg, [Fx.V2])
+        await assert.rejects(reg.SelectTarget(Fx.HiveA, Fx.V2), (err: unknown) => err === failure)
+        assert.equal(rolls.length, 0)
+        assert.equal(reg.TargetFor(Fx.HiveA)?.version, Fx.V2)
+    }, false, undefined, true, undefined, failure)
 })
 
 test('RecordAdoption records a gated version and does not push', async () =>

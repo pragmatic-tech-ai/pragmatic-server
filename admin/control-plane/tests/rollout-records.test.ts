@@ -4,6 +4,9 @@ import { mkdtemp, rm, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ManifestRegistry } from '../manifest-record.js'
+import { GatingRegistry } from '../gating-record.js'
+import { SelectionRegistry } from '../selection-record.js'
+import { RolloutRegistrationRegistry } from '../rollout-registration-record.js'
 import type { ManifestRecord } from '../manifest-record.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
 import type { HiveRecord } from '../platform-records.js'
@@ -17,6 +20,10 @@ class RolloutFixture
     public static readonly RootKey = 'manifests'
     public static readonly Unknown = 'nope'
     public static readonly TokenRef = 'secret://agent-token'
+    public static readonly GatingKey = 'gating'
+    public static readonly SelectionsKey = 'selections'
+    public static readonly RegistrationsKey = 'rolloutRegistrations'
+    public static readonly Stamp = '2026-10-22T00:00:00.000Z'
 
     public static Manifest(): ManifestRecord
     {
@@ -83,4 +90,32 @@ test('ManifestRegistry persists JSON under the manifests root key', async () =>
 test('HiveRecord may carry agentTokenRef', () =>
 {
     assert.equal(RolloutFixture.Hive().agentTokenRef, RolloutFixture.TokenRef)
+})
+
+test('GatingRegistry, SelectionRegistry and RolloutRegistrationRegistry persist under their own root keys', async () =>
+{
+    const dir = await mkdtemp(join(tmpdir(), RolloutFixture.Prefix))
+    try
+    {
+        const gatingFile = join(dir, 'gating.json')
+        const selectionsFile = join(dir, 'selections.json')
+        const registrationsFile = join(dir, 'registrations.json')
+        const gating = new GatingRegistry(gatingFile)
+        const selections = new SelectionRegistry(selectionsFile)
+        const registrations = new RolloutRegistrationRegistry(registrationsFile)
+        await gating.Put({ id: 't1:1.2.3', tenantId: 't1', version: '1.2.3', gatedAt: RolloutFixture.Stamp })
+        await selections.Put({ id: 'hive-1', hiveId: 'hive-1', targetVersion: '1.2.3', selectedAt: RolloutFixture.Stamp })
+        await registrations.Put({ id: 'hive-1', hiveId: 'hive-1', agentTokenHash: 'h', registeredAt: RolloutFixture.Stamp })
+        const cases: [string, string, string][] = [[gatingFile, RolloutFixture.GatingKey, 't1:1.2.3'], [selectionsFile, RolloutFixture.SelectionsKey, 'hive-1'], [registrationsFile, RolloutFixture.RegistrationsKey, 'hive-1']]
+        for (const [file, key, id] of cases)
+        {
+            const parsed = JSON.parse(await readFile(file, RolloutFixture.Encoding))
+            assert.deepEqual(Object.keys(parsed), [key])
+            assert.ok(id in parsed[key])
+        }
+    }
+    finally
+    {
+        await rm(dir, { recursive: true, force: true })
+    }
 })

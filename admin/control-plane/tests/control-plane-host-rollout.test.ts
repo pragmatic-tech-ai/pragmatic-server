@@ -142,6 +142,25 @@ describe('ControlPlaneHost rollout routes', () =>
         assert.deepEqual(JSON.parse((await Harness.Send(host, 'GET', '/api/tenants/t1/manifests')).body), [])
     })
 
+    it('DELETE of a version that is not gated is idempotent: 204 and the tenant listing is unchanged', async () =>
+    {
+        await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        const never = await Harness.Send(host, 'DELETE', '/api/tenants/t1/gating/1.0.0')
+        assert.equal(never.status, 204)
+        const unknown = await Harness.Send(host, 'DELETE', '/api/tenants/t1/gating/9.9.9')
+        assert.equal(unknown.status, 204)
+        assert.deepEqual(JSON.parse((await Harness.Send(host, 'GET', '/api/tenants/t1/manifests')).body), [])
+    })
+
+    it('lists [] with 200 for a tenant id that does not exist', async () =>
+    {
+        await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        await Harness.Send(host, 'POST', '/api/tenants/t1/gating', { version: '1.0.0' })
+        const reply = await Harness.Send(host, 'GET', '/api/tenants/no-such-tenant/manifests')
+        assert.equal(reply.status, 200)
+        assert.deepEqual(JSON.parse(reply.body), [])
+    })
+
     it('withdraws and restores a published version through the operator route, surfacing on the tenant listing', async () =>
     {
         await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
