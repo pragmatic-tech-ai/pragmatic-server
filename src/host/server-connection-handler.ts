@@ -92,7 +92,8 @@ export class ServerConnectionHandler
     private static readonly ApplicationsUnavailableMessage = 'pragmatic applications are not available on this connection'
     public static readonly RateLimitedCode = -32029
     public static readonly CypherTimeoutCode = -32030
-    public static readonly RevokedCode = -32031
+    // -32031 (protocol DrainingError) and -32032 (protocol wire error) are reserved; -32033 is the first free server-error code and stays distinct from the draining code Revoke() also sets.
+    public static readonly RevokedCode = -32033
     private static readonly RevokedMessage = 'connection authorization has been revoked'
 
     private readonly connection: MessageConnection

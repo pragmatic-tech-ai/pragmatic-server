@@ -78,7 +78,9 @@ test('after Revoke a dispatched request is rejected with the revoked code', asyn
         {
             assert.ok(error instanceof ResponseError)
             assert.equal(error.code, ServerConnectionHandler.RevokedCode)
-            assert.equal(error.code, -32031)
+            assert.equal(error.code, -32033)
+            // Pin the revoked guard independently of the draining guard (Revoke also drains, and the draining code -32031 differs from -32033): the message proves the revoked branch fired.
+            assert.equal(error.message, 'connection authorization has been revoked')
             return true
         })
     }
