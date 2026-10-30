@@ -740,3 +740,13 @@ test('revokes without invalidator or sessions still complete', async () =>
     await f.Service.DisableAccount('u1', 'p9')
     assert.equal((await f.Service.ListAccounts())[0].Disabled, true)
 })
+
+test('a blocked revoke does not invalidate live connections', async () =>
+{
+    const f = new AdminFixture()
+    const inv = new RecordingInvalidator()
+    const svc = f.WiredService(inv, new RecordingSessions())
+    await f.Seed('u1', Role.Owner)
+    await assert.rejects(svc.RevokeRole('u1', 'u1', Role.Owner, f.TenantRoot()), AdminSelfLockoutError)
+    assert.equal(inv.Calls.length, 0)
+})
