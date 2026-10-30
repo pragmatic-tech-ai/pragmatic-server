@@ -179,12 +179,18 @@ export class PlatformDirectory
         }
     }
 
-    public async DeleteTenant(id: string): Promise<void>
+    /** Throws TenantHasHivesError while the tenant still owns hives; the host runs this before any teardown. */
+    public AssertTenantDeletable(id: string): void
     {
         if (this.hives.List().some(h => h.tenantId === id))
         {
             throw new TenantHasHivesError(id)
         }
+    }
+
+    public async DeleteTenant(id: string): Promise<void>
+    {
+        this.AssertTenantDeletable(id)
         await this.tenants.Remove(id)
     }
 

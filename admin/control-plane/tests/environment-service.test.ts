@@ -384,6 +384,10 @@ class FakeIdp implements IIdpService
     {
     }
 
+    public async TeardownForTenant(_tenantId: string): Promise<void>
+    {
+    }
+
     public async EnsureForTenant(tenantId: string, displayName: string): Promise<IdpConnection>
     {
         this.Calls.push({ tenantId, displayName })

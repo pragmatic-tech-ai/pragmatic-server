@@ -376,3 +376,74 @@ test('reuse of an existing record neither re-Puts nor Discards', async () =>
         rmSync(root, { recursive: true, force: true })
     }
 })
+
+class TeardownCase
+{
+    public static readonly TenantId = 't9'
+    public static readonly Absent = 'nobody'
+    public static readonly DriverFailure = 'discard failed'
+    public static readonly DbFile = 'idps.json'
+    public static readonly Prefix = 'idpsvc-td-'
+}
+
+class FailingDiscardDriver extends FakeDriver
+{
+    public override async Discard(): Promise<void>
+    {
+        throw new Error(TeardownCase.DriverFailure)
+    }
+}
+
+test('TeardownForTenant discards the tenant IdP via the driver and forgets its record', async () =>
+{
+    const root = mkdtempSync(join(tmpdir(), TeardownCase.Prefix))
+    try
+    {
+        const registry = new IdpRegistry(join(root, TeardownCase.DbFile))
+        const driver = new FakeDriver()
+        const service = new IdpService(registry, driver)
+        await service.EnsureForTenant(TeardownCase.TenantId, 'T')
+        await service.TeardownForTenant(TeardownCase.TenantId)
+        assert.deepEqual(driver.Discarded, [TeardownCase.TenantId])
+        await registry.Load()
+        assert.equal(registry.Get(TeardownCase.TenantId), undefined)
+    }
+    finally
+    {
+        rmSync(root, { recursive: true, force: true })
+    }
+})
+
+test('TeardownForTenant with no IdP record is a safe no-op', async () =>
+{
+    const root = mkdtempSync(join(tmpdir(), TeardownCase.Prefix))
+    try
+    {
+        const driver = new FakeDriver()
+        const service = new IdpService(new IdpRegistry(join(root, TeardownCase.DbFile)), driver)
+        await service.TeardownForTenant(TeardownCase.Absent)
+        assert.deepEqual(driver.Discarded, [])
+    }
+    finally
+    {
+        rmSync(root, { recursive: true, force: true })
+    }
+})
+
+test('TeardownForTenant keeps the record when the driver Discard fails (retryable)', async () =>
+{
+    const root = mkdtempSync(join(tmpdir(), TeardownCase.Prefix))
+    try
+    {
+        const registry = new IdpRegistry(join(root, TeardownCase.DbFile))
+        await new IdpService(registry, new FakeDriver()).EnsureForTenant(TeardownCase.TenantId, 'T')
+        const failing = new IdpService(registry, new FailingDiscardDriver())
+        await assert.rejects(() => failing.TeardownForTenant(TeardownCase.TenantId), new RegExp(TeardownCase.DriverFailure))
+        await registry.Load()
+        assert.notEqual(registry.Get(TeardownCase.TenantId), undefined)
+    }
+    finally
+    {
+        rmSync(root, { recursive: true, force: true })
+    }
+})

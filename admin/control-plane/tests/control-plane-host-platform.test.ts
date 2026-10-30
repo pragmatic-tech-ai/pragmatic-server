@@ -17,6 +17,7 @@ import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
 import { InvalidTenantIdError } from '../idp-service.js'
+import type { IdpConnection, IIdpService } from '../idp-service.js'
 import { PlatformDirectory, RecordExistsError } from '../platform-directory.js'
 
 type Reply = { status: number; body: string; cacheControl?: string }
@@ -127,12 +128,34 @@ class FakeKindFactory extends HiveOrchestratorFactory
     }
 }
 
+class FakeIdpService implements IIdpService
+{
+    private static readonly Failure = 'idp teardown failed'
+    public TornDown: string[] = []
+    public Fail = false
+
+    public async EnsureForTenant(): Promise<IdpConnection>
+    {
+        throw new Error('not used')
+    }
+
+    public async TeardownForTenant(tenantId: string): Promise<void>
+    {
+        if (this.Fail)
+        {
+            throw new Error(FakeIdpService.Failure)
+        }
+        this.TornDown.push(tenantId)
+    }
+}
+
 describe('ControlPlaneHost platform routes', () =>
 {
     let host: ControlPlaneHost
     let fake: FakeProvisioning
     let parent: string
     let factory: FakeKindFactory
+    let idp: FakeIdpService
 
     beforeEach(async () =>
     {
@@ -147,7 +170,7 @@ describe('ControlPlaneHost platform routes', () =>
             { List: () => [] })
         await directory.Load()
         factory = new FakeKindFactory()
-        host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, await RolloutFixture.Create(parent, directory, factory), (fake = new FakeProvisioning(directory)).AsService(), RolloutFixture.Observations(parent))
+        host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, await RolloutFixture.Create(parent, directory, factory), (fake = new FakeProvisioning(directory)).AsService(), RolloutFixture.Observations(parent), undefined, false, undefined, undefined, undefined, [], undefined, undefined, undefined, (idp = new FakeIdpService()))
         await host.Listen(0, '127.0.0.1')
     })
 
@@ -217,6 +240,32 @@ describe('ControlPlaneHost platform routes', () =>
         assert.equal((await Harness.Send(host, 'DELETE', '/api/hives/h1')).status, 200)
         assert.equal((await Harness.Send(host, 'GET', '/api/hives/h1')).status, 404)
         assert.equal((await Harness.Send(host, 'POST', '/api/hives', { ...hive, cluster: { backend: 'bogus', mode: 'provision' } })).status, 400)
+    })
+
+    it('deleting a tenant tears down its IdP; the hives guard precedes; a teardown failure leaves the record', async () =>
+    {
+        await Harness.Send(host, 'POST', '/api/clients', { id: 'acme', displayName: 'Acme' })
+        await Harness.Send(host, 'POST', '/api/tenants', { id: 't1', clientId: 'acme', displayName: 'T', ownerEmail: 'o@x.test' })
+        const hive = { id: 'h1', tenantId: 't1', displayName: 'H', cluster: { backend: 'local', mode: 'provision' }, registry: { mode: 'provision' } }
+        await Harness.Send(host, 'POST', '/api/hives', hive)
+        assert.equal((await Harness.Send(host, 'DELETE', '/api/tenants/t1')).status, 409)
+        assert.deepEqual(idp.TornDown, [])
+        await Harness.Send(host, 'DELETE', '/api/hives/h1')
+        idp.Fail = true
+        assert.equal((await Harness.Send(host, 'DELETE', '/api/tenants/t1')).status, 500)
+        assert.equal((await Harness.Send(host, 'GET', '/api/tenants/t1')).status, 200)
+        idp.Fail = false
+        assert.equal((await Harness.Send(host, 'DELETE', '/api/tenants/t1')).status, 200)
+        assert.deepEqual(idp.TornDown, ['t1'])
+        assert.equal((await Harness.Send(host, 'GET', '/api/tenants/t1')).status, 404)
+    })
+
+    it('deleting a tenant with no IdP record is a no-op teardown and still succeeds', async () =>
+    {
+        await Harness.Send(host, 'POST', '/api/clients', { id: 'acme', displayName: 'Acme' })
+        await Harness.Send(host, 'POST', '/api/tenants', { id: 't2', clientId: 'acme', displayName: 'T', ownerEmail: 'o@x.test' })
+        assert.equal((await Harness.Send(host, 'DELETE', '/api/tenants/t2')).status, 200)
+        assert.deepEqual(idp.TornDown, ['t2'])
     })
 
     it('deleting a Provision-mode hive destroys its cluster; a destroy failure leaves the record', async () =>

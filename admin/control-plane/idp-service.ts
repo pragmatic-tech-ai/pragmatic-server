@@ -8,6 +8,9 @@ export type { IdpConnection } from './idp-workload-driver.js'
 export interface IIdpService
 {
     EnsureForTenant(tenantId: string, displayName: string): Promise<IdpConnection>
+
+    /** Discards the tenant's per-tenant IdP and forgets its record; a tenant with no IdP record is a safe no-op. */
+    TeardownForTenant(tenantId: string): Promise<void>
 }
 
 export class InvalidTenantIdError extends Error
@@ -41,8 +44,18 @@ export class IdpService implements IIdpService
         {
             throw new InvalidTenantIdError(IdpService.InvalidTenantId)
         }
+        return await this.Serialized(tenantId, () => this.EnsureLocked(tenantId, displayName))
+    }
+
+    public async TeardownForTenant(tenantId: string): Promise<void>
+    {
+        await this.Serialized(tenantId, () => this.TeardownLocked(tenantId))
+    }
+
+    private async Serialized<T>(tenantId: string, work: () => Promise<T>): Promise<T>
+    {
         const previous = this.locks.get(tenantId) ?? Promise.resolve()
-        const run = previous.catch(() => undefined).then(() => this.EnsureLocked(tenantId, displayName))
+        const run = previous.catch(() => undefined).then(work)
         this.locks.set(tenantId, run)
         try
         {
@@ -55,6 +68,19 @@ export class IdpService implements IIdpService
                 this.locks.delete(tenantId)
             }
         }
+    }
+
+    private async TeardownLocked(tenantId: string): Promise<void>
+    {
+        await this.registry.Load()
+        const record = this.registry.Get(tenantId)
+        if (record === undefined)
+        {
+            return
+        }
+        // Discard first: if it throws the record stays, so the delete can be retried (fail-closed).
+        await this.driver.Discard(record)
+        await this.registry.Delete(tenantId)
     }
 
     private async EnsureLocked(tenantId: string, displayName: string): Promise<IdpConnection>

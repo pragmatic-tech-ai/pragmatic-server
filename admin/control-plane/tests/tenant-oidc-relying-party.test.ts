@@ -100,6 +100,10 @@ class StubIdp implements IIdpService
     {
     }
 
+    public async TeardownForTenant(_tenantId: string): Promise<void>
+    {
+    }
+
     public async EnsureForTenant(): Promise<IdpConnection>
     {
         return this.conn

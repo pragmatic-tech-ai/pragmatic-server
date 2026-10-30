@@ -64,6 +64,10 @@ export class InjectedIdpService implements IIdpService
         return value
     }
 
+    public async TeardownForTenant(_tenantId: string): Promise<void>
+    {
+    }
+
     public EnsureForTenant(_tenantId: string, _displayName: string): Promise<IdpConnection>
     {
         try

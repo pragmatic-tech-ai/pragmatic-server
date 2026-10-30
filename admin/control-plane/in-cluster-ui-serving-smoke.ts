@@ -72,6 +72,10 @@ class UiSmokeIdpService implements IIdpService
     {
     }
 
+    public async TeardownForTenant(_tenantId: string): Promise<void>
+    {
+    }
+
     public EnsureForTenant(_tenantId: string, _displayName: string): Promise<IdpConnection>
     {
         return Promise.resolve(this.connection)

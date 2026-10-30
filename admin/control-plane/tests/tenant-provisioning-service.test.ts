@@ -26,6 +26,10 @@ class FakeIdp implements IIdpService
     {
     }
 
+    public async TeardownForTenant(_tenantId: string): Promise<void>
+    {
+    }
+
     public async EnsureForTenant(_tenantId: string, _displayName: string): Promise<IdpConnection>
     {
         if (this.conn instanceof Error)

@@ -18,6 +18,7 @@ import { EnvType, Template, type EnvironmentChange, type EnvironmentRecord } fro
 import { EnvironmentDtoMapper, type EnvironmentDto } from './environment-dto.js'
 import type { HiveObservationRegistry } from './hive-observation-record.js'
 import { InvalidTenantIdError } from './idp-service.js'
+import type { IIdpService } from './idp-service.js'
 import { PortUnavailableError } from './port-allocator.js'
 import type { TenantProvisioningService } from './tenant-provisioning-service.js'
 import { InvalidEnvironmentNameError } from './template-catalog.js'
@@ -399,7 +400,8 @@ export class ControlPlaneHost
         allowedHosts: readonly string[] = [],
         private readonly authorization: OperatorAuthorization = new OperatorAuthorization(),
         private readonly audit?: AuditRegistry,
-        private readonly auditThrottle?: AuditThrottle)
+        private readonly auditThrottle?: AuditThrottle,
+        private readonly idp?: IIdpService)
     {
         this.allowedHosts = new Set([...ControlPlaneHost.DefaultAllowedHosts, ...allowedHosts.map(h => h.toLowerCase())])
         this.staticRootAbs = resolve(staticRoot)
@@ -1420,6 +1422,10 @@ export class ControlPlaneHost
                 await this.directory.DeleteClient(id)
                 break
             case ControlPlaneHost.TenantsSegment:
+                // Fail-closed: the hives guard runs first, then the per-tenant IdP is torn down BEFORE the record is removed,
+                // so a teardown failure leaves the tenant record for retry rather than stranding a live IdP.
+                this.directory.AssertTenantDeletable(id)
+                await this.idp?.TeardownForTenant(id)
                 await this.directory.DeleteTenant(id)
                 break
             default:
