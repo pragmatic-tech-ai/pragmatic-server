@@ -49,11 +49,15 @@ export class IdpAdminEndpoint
     private static readonly RedirectUrisField = 'redirectUris';
     private static readonly SecretField = 'secret';
 
+    private readonly adminTokenDigests: readonly Buffer[];
+
+    /** `adminTokens` is the set of currently valid admin tokens (several during a rotation); an empty set rejects everything. */
     public constructor(
-        private readonly adminToken: string,
+        adminTokens: readonly string[],
         private readonly realms: IdpRealmSet,
         private readonly clients: IdpClientStore)
     {
+        this.adminTokenDigests = adminTokens.filter(t => t.length > 0).map(t => IdpAdminEndpoint.Digest(t));
     }
 
     public async Handle(method: string, segments: readonly string[], authorization: string | undefined, body: unknown): Promise<AdminResult>
@@ -108,7 +112,15 @@ export class IdpAdminEndpoint
         {
             return false;
         }
-        return timingSafeEqual(IdpAdminEndpoint.Digest(presented), IdpAdminEndpoint.Digest(this.adminToken));
+        const presentedDigest = IdpAdminEndpoint.Digest(presented);
+        // Constant work: compare against EVERY member, never short-circuit, so timing does not reveal which / how many matched.
+        let matched = false;
+        for (const digest of this.adminTokenDigests)
+        {
+            const equal = timingSafeEqual(presentedDigest, digest);
+            matched = matched || equal;
+        }
+        return matched;
     }
 
     private async PutRealm(tenantId: string, body: unknown): Promise<AdminResult>

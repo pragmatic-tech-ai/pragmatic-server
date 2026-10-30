@@ -446,7 +446,7 @@ export class IdpSsoSmoke
         const realmsDir = join(dir, S.RealmsDirName)
         const realms = new IdpRealmSet([], (tenantId, displayName) => IdpRealm.OpenFor(realmsDir, tenantId, displayName, masterKey))
         const clients = new IdpClientStore()
-        const adminEndpoint = new IdpAdminEndpoint(S.AdminToken, realms, clients)
+        const adminEndpoint = new IdpAdminEndpoint([S.AdminToken], realms, clients)
 
         const port = await FreePort.Find(S.Host)
         this.baseUrl = S.HttpsOrigin + S.Host + S.PortSeparator + port

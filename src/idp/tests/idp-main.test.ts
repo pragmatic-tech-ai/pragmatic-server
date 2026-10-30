@@ -67,6 +67,28 @@ class MainFixture
         }
     }
 
+    /** Composes with the token file holding `content`, PUTs the admin realm path with `presented`, returns the status. */
+    public static async StatusWithTokenFile(content: string, presented: string): Promise<number>
+    {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), MainFixture.DirPrefix));
+        fs.mkdirSync(path.join(dir, MainFixture.SecretsDir), { recursive: true });
+        fs.writeFileSync(path.join(dir, MainFixture.SecretsDir, MainFixture.AdminRef), content);
+        const env: NodeJS.ProcessEnv = { PRAGMATIC_IDP_DATA: dir, PRAGMATIC_IDP_BASE_URL: MainFixture.BaseUrl, PRAGMATIC_IDP_TENANTS: MainFixture.TenantId };
+        env[MainFixture.AdminRefEnv] = MainFixture.AdminRef;
+        const host = await IdpMain.Compose(env);
+        try
+        {
+            await host.Listen(0, MainFixture.Loopback);
+            const ca = fs.readFileSync(path.join(dir, MainFixture.TlsDir, MainFixture.CaFile), MainFixture.Utf8);
+            return await MainFixture.Put(host.Address().port, ca, MainFixture.AdminRealmPath, presented);
+        }
+        finally
+        {
+            await host.Close();
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    }
+
     public static Get(port: number, ca: string, urlPath: string): Promise<{ status: number; body: any }>
     {
         return new Promise((resolve, reject) =>
@@ -241,4 +263,17 @@ test('Compose with a traversal admin-token ref keeps admin disabled (404)', asyn
         await host.Close();
         fs.rmSync(dir, { recursive: true, force: true });
     }
+});
+
+test('a multi-line admin-token ref authenticates every member and rejects a non-member', async () =>
+{
+    const content = 'old-token-aaa\n\n  new-token-bbb  \r\n';
+    assert.equal(await MainFixture.StatusWithTokenFile(content, 'old-token-aaa'), 200);
+    assert.equal(await MainFixture.StatusWithTokenFile(content, 'new-token-bbb'), 200);
+    assert.equal(await MainFixture.StatusWithTokenFile(content, 'other-token-ccc'), 401);
+});
+
+test('a single-line admin-token ref still works', async () =>
+{
+    assert.equal(await MainFixture.StatusWithTokenFile('only-token-ddd', 'only-token-ddd'), 200);
 });

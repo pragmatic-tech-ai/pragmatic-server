@@ -49,7 +49,7 @@ class AdminFixture
     {
         const masterKey = randomBytes(AdminFixture.MasterKeyBytes);
         this.realms = new IdpRealmSet([], (t, d) => IdpRealm.OpenFor(root, t, d, masterKey));
-        this.endpoint = new IdpAdminEndpoint(AdminFixture.Token, this.realms, this.clients);
+        this.endpoint = new IdpAdminEndpoint([AdminFixture.Token], this.realms, this.clients);
     }
 
     public static async Create(): Promise<AdminFixture>
@@ -242,5 +242,27 @@ test('no 200 or 400 body contains the password or the client secret', async () =
         assert.ok(!text.includes(AdminFixture.Password));
         assert.ok(!text.includes(AdminFixture.ClientSecret));
         assert.ok(!text.includes(AdminFixture.Token));
+    }
+});
+
+test('any member of a multi-token set authenticates; a non-member is 401', async () =>
+{
+    const f = await AdminFixture.Create();
+    const multi = new IdpAdminEndpoint([AdminFixture.Token, AdminFixture.SameLengthWrong], f.realms, f.clients);
+    const put = (token: string): Promise<AdminResult> =>
+        multi.Handle(AdminFixture.Put, [AdminFixture.Realms, AdminFixture.Tenant], AdminFixture.Auth(token), { displayName: AdminFixture.Display });
+    assert.equal((await put(AdminFixture.Token)).Status, AdminFixture.OkStatus);
+    assert.equal((await put(AdminFixture.SameLengthWrong)).Status, AdminFixture.OkStatus);
+    assert.equal((await put('not-a-member-token')).Status, AdminFixture.Unauthorized);
+});
+
+test('an empty token set rejects every request', async () =>
+{
+    const f = await AdminFixture.Create();
+    const none = new IdpAdminEndpoint([], f.realms, f.clients);
+    for (const token of [AdminFixture.Token, '', 'x'])
+    {
+        const r = await none.Handle(AdminFixture.Put, [AdminFixture.Realms, AdminFixture.Tenant], AdminFixture.Auth(token), { displayName: AdminFixture.Display });
+        assert.equal(r.Status, AdminFixture.Unauthorized);
     }
 });

@@ -75,11 +75,11 @@ class AdminFixture
             let admin: IdpAdminEndpoint | undefined;
             if (withAdmin === AdminFixture.Throwing)
             {
-                admin = new ThrowingAdminEndpoint(AdminFixture.Token, realms, clients);
+                admin = new ThrowingAdminEndpoint([AdminFixture.Token], realms, clients);
             }
             else if (withAdmin)
             {
-                admin = new IdpAdminEndpoint(AdminFixture.Token, realms, clients);
+                admin = new IdpAdminEndpoint([AdminFixture.Token], realms, clients);
             }
             await realms.EnsureRealm(AdminFixture.TenantId, AdminFixture.DisplayName);
             host = new IdpHost(AdminFixture.BaseUrl, key, realms, clients, new InMemoryAuthorizationCodeStore(), new IdpSsoSessionStore(), tls, true, admin);

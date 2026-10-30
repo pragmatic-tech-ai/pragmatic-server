@@ -15,6 +15,7 @@ import { IdpSsoSessionStore } from './idp-sso-session.js';
 export class IdpMain
 {
     private static readonly PortEnvVar = 'PRAGMATIC_IDP_PORT';
+    private static readonly LineBreak = /\r?\n/;
     private static readonly BaseUrlEnvVar = 'PRAGMATIC_IDP_BASE_URL';
     private static readonly InternalUrlEnvVar = 'PRAGMATIC_IDP_INTERNAL_URL';
     private static readonly HostEnvVar = 'PRAGMATIC_IDP_HOST';
@@ -79,8 +80,8 @@ export class IdpMain
         const signingKey = await IdpSigningKey.LoadOrCreate(join(data, IdpMain.SigningKeyFile));
         const masterKey = IdpMain.LoadOrCreateMasterKey(join(data, IdpMain.MasterKeyFile));
         const realmsDir = join(data, IdpMain.RealmsDir);
-        const adminToken = IdpMain.LoadAdminToken(data, env[IdpMain.AdminTokenRefEnvVar]);
-        const factory: RealmFactory | undefined = adminToken === undefined
+        const adminTokens = IdpMain.LoadAdminTokens(data, env[IdpMain.AdminTokenRefEnvVar]);
+        const factory: RealmFactory | undefined = adminTokens === undefined
             ? undefined
             : (tenantId, displayName) => IdpRealm.OpenFor(realmsDir, tenantId, displayName, masterKey);
         const realms = new IdpRealmSet([], factory);
@@ -89,7 +90,7 @@ export class IdpMain
             realms.Add(tenantId, await IdpRealm.OpenFor(realmsDir, tenantId, tenantId, masterKey));
         }
         const clients = new IdpClientStore();
-        const admin = adminToken === undefined ? undefined : new IdpAdminEndpoint(adminToken, realms, clients);
+        const admin = adminTokens === undefined ? undefined : new IdpAdminEndpoint(adminTokens, realms, clients);
         const ca = DevCa.EnsureAt(join(data, IdpMain.TlsDir), new URL(baseUrl).hostname);
         const tls = IdpTlsMaterial.Load({ certFile: ca.certFile, keyFile: ca.keyFile });
         const secure = env[IdpMain.SecureCookieEnvVar];
@@ -105,10 +106,11 @@ export class IdpMain
     }
 
     /**
-     * Reads the admin token from `<data>/secrets/<ref>` (trimmed). Fail-closed: an unset ref, a missing file, or an
-     * empty token all mean admin is disabled (undefined). The token is never logged or put in an error.
+     * Reads the admin token SET from `<data>/secrets/<ref>`: newline-separated, each trimmed, blanks dropped (a single
+     * line is a set of one). Fail-closed: an unset ref, a missing file, or no non-blank token all mean admin is
+     * disabled (undefined). No token is ever logged or put in an error.
      */
-    private static LoadAdminToken(data: string, ref: string | undefined): string | undefined
+    private static LoadAdminTokens(data: string, ref: string | undefined): string[] | undefined
     {
         if (ref === undefined || ref === '')
         {
@@ -131,8 +133,8 @@ export class IdpMain
             }
             throw err;
         }
-        const token = raw.trim();
-        return token === '' ? undefined : token;
+        const tokens = raw.split(IdpMain.LineBreak).map(line => line.trim()).filter(line => line !== '');
+        return tokens.length === 0 ? undefined : tokens;
     }
 
     private static RequireHttps(baseUrl: string, message: string): void

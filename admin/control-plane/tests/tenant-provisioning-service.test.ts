@@ -103,7 +103,7 @@ class ProvFixture
             const realmsDir = path.join(dir, ProvFixture.RealmsDir);
             const realms = new IdpRealmSet([], (tenantId, displayName) => IdpRealm.OpenFor(realmsDir, tenantId, displayName, randomBytes(32)));
             const clients = new IdpClientStore();
-            const admin = new IdpAdminEndpoint(ProvFixture.Token, realms, clients);
+            const admin = new IdpAdminEndpoint([ProvFixture.Token], realms, clients);
             host = new IdpHost(ProvFixture.BaseUrl, key, realms, clients, new InMemoryAuthorizationCodeStore(), new IdpSsoSessionStore(), tls, true, admin);
             await host.Listen(0, ProvFixture.Loopback);
             const conn: IdpConnection = {

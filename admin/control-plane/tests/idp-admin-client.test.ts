@@ -51,7 +51,7 @@ class ClientFixture
             const realmsDir = path.join(dir, ClientFixture.RealmDirName);
             const realms = new IdpRealmSet([], (tenantId, displayName) => IdpRealm.OpenFor(realmsDir, tenantId, displayName, randomBytes(32)));
             const clients = new IdpClientStore();
-            const admin = new IdpAdminEndpoint(ClientFixture.Token, realms, clients);
+            const admin = new IdpAdminEndpoint([ClientFixture.Token], realms, clients);
             host = new IdpHost(ClientFixture.BaseUrl, key, realms, clients, new InMemoryAuthorizationCodeStore(), new IdpSsoSessionStore(), tls, true, admin);
             await host.Listen(0, ClientFixture.Loopback);
             await body(host, realms, clients, fs.readFileSync(ca.caFile, ClientFixture.Utf8));
