@@ -11,7 +11,7 @@ shell module ClientsModule [ Name = "Clients" ] {
         ClientsSectionService
     }
 
-    Capability [ Name = "Clients", ServiceKey = ClientsSectionService ]
+    Capability [ Name = "Clients", Icon = @ClientsIcon, ServiceKey = ClientsSectionService ]
 
     resources: {
         merge ClientsResources

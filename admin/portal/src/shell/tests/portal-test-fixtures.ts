@@ -6,7 +6,7 @@ import { DialogService, type DialogOptions } from '@pragmatic-tech-ai/mural/fram
 import { NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
 import type { ControlPlaneClient } from '../../api-client.js'
 import { OperatorContext } from '../../operator-context.js'
-import type { ClientDto, CreatedTenantDto, FleetHiveDto, HiveDto, HiveRolloutDto, LedgerDto, ObservationDto, PolicyDto, TenantDto } from '../../portal-types.js'
+import type { ActivityDto, ClientDto, CreatedTenantDto, FleetHiveDto, GatingDto, HiveDto, HiveRolloutDto, LedgerDto, ManifestDto, ObservationDto, OperatorSummaryDto, PolicyDto, TenantDto } from '../../portal-types.js'
 import type { IPageReloader } from '../page-reloader.js'
 import { PortalSessionService } from '../portal-session-service.js'
 
@@ -152,12 +152,23 @@ export class FakeControlPlane
     public Policies: PolicyDto[] = []
     public Ledger: LedgerDto[] = []
     public Observations: ObservationDto[] = []
+    public Manifests: ManifestDto[] = []
+    public Gating: GatingDto[] = []
+    public Activity: ActivityDto[] = []
+    public Operators: OperatorSummaryDto[] = []
     public OwnerPassword = 'fixture-owner-password'
     public Failure: Error | undefined
     public readonly CreatedClients: Array<[string, string, string | undefined]> = []
     public readonly CreatedTenants: Array<[string, string, string, string]> = []
     public readonly CreatedHives: HiveDto[] = []
     public readonly Deleted: string[] = []
+    public readonly Published: Array<[string, string, string | undefined, string | undefined]> = []
+    public readonly Withdrawals: Array<[string, boolean, string | undefined]> = []
+    public readonly GateCalls: Array<[string, string]> = []
+    public readonly UngateCalls: Array<[string, string]> = []
+    // Each policy write as 'Method id [argument]', in call order.
+    public readonly PolicyCalls: string[] = []
+    public readonly CreatedOperators: Array<[string, string, string]> = []
     private createGate: Promise<void> | undefined
     private releaseCreates: (() => void) | undefined
 
@@ -229,9 +240,151 @@ export class FakeControlPlane
         return [...this.Policies]
     }
 
-    public async ListHiveLedger(): Promise<LedgerDto[]>
+    // A hive's ledger: entries for that hive (entries without a hive count for every hive).
+    public async ListHiveLedger(hiveId: string): Promise<LedgerDto[]>
     {
-        return [...this.Ledger]
+        return this.Ledger.filter(l => l.hiveId === undefined || l.hiveId === hiveId)
+    }
+
+    // Seeds a published version (stable, signed, published on the given day).
+    public WithManifest(id: string, image: string, extra: Partial<ManifestDto> = {}): this
+    {
+        this.Manifests.push({ id, image, publishedAt: '2026-10-10T00:00:00.000Z', channel: 'stable', signed: true, ...extra })
+        return this
+    }
+
+    public async ListManifests(): Promise<ManifestDto[]>
+    {
+        return [...this.Manifests]
+    }
+
+    public async PublishManifest(version: string, image: string, notes?: string, channel?: string): Promise<ManifestDto>
+    {
+        this.ThrowIfFailing()
+        this.Published.push([version, image, notes, channel])
+        const manifest: ManifestDto = { id: version, image, notes, publishedAt: new Date().toISOString(), channel: channel as ManifestDto['channel'] }
+        this.Manifests.push(manifest)
+        return manifest
+    }
+
+    public async SetManifestWithdrawn(version: string, withdraw: boolean, reason?: string): Promise<ManifestDto>
+    {
+        this.ThrowIfFailing()
+        this.Withdrawals.push([version, withdraw, reason])
+        const manifest = this.Manifests.find(m => m.id === version)
+        if (manifest === undefined)
+        {
+            throw new Error('unknown version ' + version)
+        }
+        manifest.withdrawn = withdraw
+        manifest.withdrawal = withdraw ? { reason: reason ?? '', actor: 'op@example.test', at: '2026-10-20T00:00:00.000Z' } : undefined
+        return manifest
+    }
+
+    public async ListGating(): Promise<GatingDto[]>
+    {
+        return [...this.Gating]
+    }
+
+    public async Gate(tenantId: string, version: string): Promise<void>
+    {
+        this.ThrowIfFailing()
+        this.GateCalls.push([tenantId, version])
+        this.Gating.push({ tenantId, version, gatedAt: '2026-10-21T00:00:00.000Z' })
+    }
+
+    public async Ungate(tenantId: string, version: string): Promise<void>
+    {
+        this.ThrowIfFailing()
+        this.UngateCalls.push([tenantId, version])
+        this.Gating = this.Gating.filter(g => !(g.tenantId === tenantId && g.version === version))
+    }
+
+    public async SetTenantChannels(tenantId: string, channels: string[]): Promise<PolicyDto>
+    {
+        return this.WritePolicy('SetTenantChannels ' + tenantId + ' ' + channels.join(','), tenantId, undefined, p => { p.channels = channels as PolicyDto['channels'] })
+    }
+
+    public async SetTenantMinVersion(tenantId: string, version: string): Promise<PolicyDto>
+    {
+        return this.WritePolicy('SetTenantMinVersion ' + tenantId + ' ' + version, tenantId, undefined, p => { p.minVersion = version })
+    }
+
+    public async ClearTenantMinVersion(tenantId: string): Promise<PolicyDto>
+    {
+        return this.WritePolicy('ClearTenantMinVersion ' + tenantId, tenantId, undefined, p => { delete p.minVersion })
+    }
+
+    public async SetTenantHold(tenantId: string, reason: string): Promise<PolicyDto>
+    {
+        return this.WritePolicy('SetTenantHold ' + tenantId + ' ' + reason, tenantId, undefined, p => { p.hold = { reason, actor: 'op', at: '2026-10-22T00:00:00.000Z' } })
+    }
+
+    public async ClearTenantHold(tenantId: string): Promise<PolicyDto>
+    {
+        return this.WritePolicy('ClearTenantHold ' + tenantId, tenantId, undefined, p => { delete p.hold })
+    }
+
+    public async SetHiveChannels(hiveId: string, channels: string[]): Promise<PolicyDto>
+    {
+        return this.WritePolicy('SetHiveChannels ' + hiveId + ' ' + channels.join(','), this.TenantOfHive(hiveId), hiveId, p => { p.channels = channels as PolicyDto['channels'] })
+    }
+
+    public async SetHiveMinVersion(hiveId: string, version: string): Promise<PolicyDto>
+    {
+        return this.WritePolicy('SetHiveMinVersion ' + hiveId + ' ' + version, this.TenantOfHive(hiveId), hiveId, p => { p.minVersion = version })
+    }
+
+    public async ClearHiveMinVersion(hiveId: string): Promise<PolicyDto>
+    {
+        return this.WritePolicy('ClearHiveMinVersion ' + hiveId, this.TenantOfHive(hiveId), hiveId, p => { delete p.minVersion })
+    }
+
+    public async SetHiveHold(hiveId: string, reason: string): Promise<PolicyDto>
+    {
+        return this.WritePolicy('SetHiveHold ' + hiveId + ' ' + reason, this.TenantOfHive(hiveId), hiveId, p => { p.hold = { reason, actor: 'op', at: '2026-10-22T00:00:00.000Z' } })
+    }
+
+    public async ClearHiveHold(hiveId: string): Promise<PolicyDto>
+    {
+        return this.WritePolicy('ClearHiveHold ' + hiveId, this.TenantOfHive(hiveId), hiveId, p => { delete p.hold })
+    }
+
+    public async ListActivity(): Promise<ActivityDto[]>
+    {
+        return [...this.Activity]
+    }
+
+    public async ListOperators(): Promise<OperatorSummaryDto[]>
+    {
+        return [...this.Operators]
+    }
+
+    public async CreateOperator(email: string, password: string, role: string): Promise<void>
+    {
+        await this.createGate
+        this.ThrowIfFailing()
+        this.CreatedOperators.push([email, password, role])
+        this.Operators.push({ email, role })
+    }
+
+    private TenantOfHive(hiveId: string): string
+    {
+        return this.Hives.find(h => h.id === hiveId)?.tenantId ?? ''
+    }
+
+    private WritePolicy(call: string, tenantId: string, hiveId: string | undefined, change: (policy: PolicyDto) => void): PolicyDto
+    {
+        this.ThrowIfFailing()
+        this.PolicyCalls.push(call)
+        let policy = this.Policies.find(p => p.tenantId === tenantId && p.hiveId === hiveId)
+        if (policy === undefined)
+        {
+            policy = hiveId === undefined ? { tenantId } : { tenantId, hiveId }
+            this.Policies.push(policy)
+        }
+        change(policy)
+        return policy
     }
 
     public async ListHiveObservations(): Promise<ObservationDto[]>

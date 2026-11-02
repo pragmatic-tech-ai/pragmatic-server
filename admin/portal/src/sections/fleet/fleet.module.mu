@@ -10,7 +10,7 @@ shell module FleetModule [ Name = "Fleet" ] {
         FleetSectionService
     }
 
-    Capability [ Name = "Fleet", ServiceKey = FleetSectionService ]
+    Capability [ Name = "Fleet", Icon = @FleetIcon, ServiceKey = FleetSectionService ]
 
     resources: {
         merge FleetResources

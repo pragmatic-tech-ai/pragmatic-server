@@ -12,7 +12,7 @@ shell module HivesModule [ Name = "Hives" ] {
         HivesSectionService
     }
 
-    Capability [ Name = "Hives", ServiceKey = HivesSectionService ]
+    Capability [ Name = "Hives", Icon = @HivesIcon, ServiceKey = HivesSectionService ]
 
     resources: {
         merge HivesResources

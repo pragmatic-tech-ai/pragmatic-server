@@ -1,7 +1,7 @@
 import { TenantsSectionService } from "./tenants-section-service.js";
 import { TenantsResources } from "./tenants.resources.mu.js";
 import { Capability, ShellModule } from "@pragmatic-tech-ai/mural/framework/shell/module.js";
-import { ServiceProvider } from "@pragmatic-tech-ai/mural/runtime";
+import { DynamicResource, ServiceProvider } from "@pragmatic-tech-ai/mural/runtime";
 
 export const TenantsModule = (() => {
     const _shellModule0 = new ShellModule();
@@ -9,6 +9,7 @@ export const TenantsModule = (() => {
     _shellModule0.AddRegistration(ServiceProvider.tokenFor(TenantsSectionService), (p) => new TenantsSectionService(p), 'singleton');
     const _capability1 = new Capability();
     _capability1.set_property_value(Capability.NameKey, "Tenants");
+    _capability1.set_property_value(Capability.IconKey, DynamicResource(_capability1, "TenantsIcon"));
     _capability1.set_property_value(Capability.ServiceKeyKey, TenantsSectionService);
     _shellModule0.AddChild(_capability1);
     const _rd2 = _shellModule0.Resources;

@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Visual } from '@pragmatic-tech-ai/mural/runtime'
+import { Geometry } from '@pragmatic-tech-ai/mural/visual-engine'
 import { EditorShell } from '@pragmatic-tech-ai/mural/framework/shell/editor-shell.js'
 import { NavigationDestination, NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
 import { ClipboardService } from '@pragmatic-tech-ai/mural/framework/shell/services/clipboard-service.js'
@@ -31,9 +32,21 @@ describe('app.mu composition', () =>
     {
         const nav = (shell as EditorShell).Services.get(NavigationService.Key)
         assert.ok(nav instanceof PortalNavigationService)
-        assert.deepEqual(nav.Items.ToArray().map(i => (i as NavigationDestination).Label), ['Fleet', 'Clients', 'Tenants', 'Hives'])
+        assert.deepEqual(nav.Items.ToArray().map(i => (i as NavigationDestination).Label),
+            ['Fleet', 'Clients', 'Tenants', 'Hives', 'Registry & Releases', 'Release Policy', 'Activity', 'Settings'])
         assert.equal(nav.SidePaneVisible, false)
         assert.ok(nav.ActiveService instanceof FleetSectionService)
+    })
+
+    it('gives every rail entry an icon from the portal icon dictionary', () =>
+    {
+        const nav = (shell as EditorShell).Services.get(NavigationService.Key)
+        assert.ok(nav !== undefined)
+        for (const item of nav.Items.ToArray())
+        {
+            const destination = item as NavigationDestination
+            assert.ok(destination.Icon instanceof Geometry, destination.Label + ' has no icon')
+        }
     })
 
     it('registers the clipboard at the app root', () =>

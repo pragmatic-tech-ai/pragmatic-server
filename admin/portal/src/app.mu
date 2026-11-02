@@ -22,7 +22,12 @@ import FleetModule from "./sections/fleet/fleet.module.mu.js"
 import ClientsModule from "./sections/clients/clients.module.mu.js"
 import TenantsModule from "./sections/tenants/tenants.module.mu.js"
 import HivesModule from "./sections/hives/hives.module.mu.js"
+import ReleasesModule from "./sections/releases/releases.module.mu.js"
+import ReleasePolicyModule from "./sections/release-policy/release-policy.module.mu.js"
+import ActivityModule from "./sections/activity/activity.module.mu.js"
+import SettingsModule from "./sections/settings/settings.module.mu.js"
 import ShellResources from "./shell/shell.resources.mu.js"
+import PortalIcons from "./shell/portal-icons.mu.js"
 
 Application [ Theme = Pragmatic, Scheme = PragmaticLight ] {
     .services: {
@@ -45,10 +50,18 @@ Application [ Theme = Pragmatic, Scheme = PragmaticLight ] {
         ClientsModule
         TenantsModule
         HivesModule
+        ReleasesModule
+        ReleasePolicyModule
+        ActivityModule
+        SettingsModule
     }
 
     resources: {
         merge ShellResources
+
+        // Rail icons, merged app-global so each capability's
+        // `Icon = @<Key>` resolves.
+        merge PortalIcons
 
         EditorShell x:root [ HeaderContent = ContentControl [ Content = $service(PortalSessionService) ] ] { }
     }

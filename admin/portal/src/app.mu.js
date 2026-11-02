@@ -1,7 +1,12 @@
+import { ActivityModule } from "./sections/activity/activity.module.mu.js";
 import { ClientsModule } from "./sections/clients/clients.module.mu.js";
 import { FleetModule } from "./sections/fleet/fleet.module.mu.js";
 import { HivesModule } from "./sections/hives/hives.module.mu.js";
+import { ReleasePolicyModule } from "./sections/release-policy/release-policy.module.mu.js";
+import { ReleasesModule } from "./sections/releases/releases.module.mu.js";
+import { SettingsModule } from "./sections/settings/settings.module.mu.js";
 import { TenantsModule } from "./sections/tenants/tenants.module.mu.js";
+import { PortalIcons } from "./shell/portal-icons.mu.js";
 import { PortalNavigationService } from "./shell/portal-navigation-service.js";
 import { PortalSessionService } from "./shell/portal-session-service.js";
 import { ShellResources } from "./shell/shell.resources.mu.js";
@@ -24,8 +29,13 @@ export const app = (() => {
     _app0.AddModule(ClientsModule);
     _app0.AddModule(TenantsModule);
     _app0.AddModule(HivesModule);
+    _app0.AddModule(ReleasesModule);
+    _app0.AddModule(ReleasePolicyModule);
+    _app0.AddModule(ActivityModule);
+    _app0.AddModule(SettingsModule);
     const _rd1 = _app0.Resources;
     for (const [_k, _v] of ShellResources.Clone().Entries()) _rd1.Set(_k, _v);
+    for (const [_k, _v] of PortalIcons.Clone().Entries()) _rd1.Set(_k, _v);
     const _editorShell2 = new EditorShell();
     _editorShell2.SetNameScope(new NameScope());
     _editorShell2.set_property_value(EditorShell.HeaderContentKey, ((_e) => { _e.Content = ServiceBinding(_e, ServiceProvider.tokenFor(PortalSessionService), ""); return _e; })(new ContentControl()));

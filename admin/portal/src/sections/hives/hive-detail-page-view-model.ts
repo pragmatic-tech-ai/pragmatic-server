@@ -100,10 +100,15 @@ export class HiveLedgerRowViewModel extends Observable
         return PortalDates.Label(this.entry.at)
     }
 
-    // The action's label; an action this portal does not know shows as sent.
     public get ActionLabel(): string
     {
-        return HiveLedgerRowViewModel.ActionLabels.get(this.entry.action) ?? this.entry.action
+        return HiveLedgerRowViewModel.LabelFor(this.entry.action)
+    }
+
+    // A ledger action's label; an action this portal does not know shows as sent.
+    public static LabelFor(action: string): string
+    {
+        return HiveLedgerRowViewModel.ActionLabels.get(action) ?? action
     }
 
     public get Version(): string

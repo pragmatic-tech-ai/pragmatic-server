@@ -22,11 +22,14 @@ export interface INameConfirmRequest
     readonly Title: string
     readonly Message: string
     // Runs inside the dialog once the name matches; a refusal shows there.
-    readonly Action: () => Promise<void>
+    // Receives the trimmed reason when ReasonLabel asks for one.
+    readonly Action: (reason: string) => Promise<void>
     // Runs after the dialog closes confirmed (e.g. back to the list).
     readonly OnConfirmed: () => Promise<void>
     // The confirm button's label; Delete when omitted.
     readonly ConfirmLabel?: string
+    // When set, the dialog also requires a reason under this label.
+    readonly ReasonLabel?: string
 }
 
 // Base for every page view-model a section presents. Refresh() runs LoadCore()
@@ -204,7 +207,7 @@ export abstract class PortalPageViewModel extends Observable
     protected async ConfirmByName(dialogs: DialogService | undefined, request: INameConfirmRequest): Promise<void>
     {
         const confirm = new NameConfirmDialogViewModel(this.Session, PortalPageViewModel.RequireDialogs(dialogs),
-            request.Expected, request.Message, request.Action, request.ConfirmLabel)
+            request.Expected, request.Message, request.Action, request.ConfirmLabel, request.ReasonLabel)
         if (await confirm.Open(request.Title) === NameConfirmDialogViewModel.Confirmed)
         {
             await request.OnConfirmed()

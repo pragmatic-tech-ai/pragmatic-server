@@ -11,7 +11,7 @@ shell module TenantsModule [ Name = "Tenants" ] {
         TenantsSectionService
     }
 
-    Capability [ Name = "Tenants", ServiceKey = TenantsSectionService ]
+    Capability [ Name = "Tenants", Icon = @TenantsIcon, ServiceKey = TenantsSectionService ]
 
     resources: {
         merge TenantsResources
