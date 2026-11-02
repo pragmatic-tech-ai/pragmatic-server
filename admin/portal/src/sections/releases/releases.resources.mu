@@ -207,15 +207,15 @@ resources ReleasesResources {
             TextBlock [ Text = "The image is signed with the platform release key. Every hive verifies the signature and refuses an unsigned image.",
                         TextWrapping = Wrap, Foreground = @Fg2, Margin = (0,0,0,12) ]
             TextBlock [ Text = "Version", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            TextBox [ Text = $Version, Placeholder = "e.g. 4.2.0", Margin = (0,0,0,12) ]
+            TextBox [ UsesNativeInput = true, Text = $Version, Placeholder = "e.g. 4.2.0", Margin = (0,0,0,12) ]
             TextBlock [ Text = "Image", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            TextBox [ Text = $Image, Placeholder = "e.g. registry.example/apps/capability-maps:4.2.0", Margin = (0,0,0,12) ]
+            TextBox [ UsesNativeInput = true, Text = $Image, Placeholder = "e.g. registry.example/apps/capability-maps:4.2.0", Margin = (0,0,0,12) ]
             TextBlock [ Text = "Channel", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
             ComboBox [ ItemsSource = $Channels, SelectedItem = $SelectedChannel, HorizontalAlignment = Stretch, Margin = (0,0,0,4) ]
             TextBlock [ Text = "Release Policy decides which hives may adopt from each channel.", Style = @UiCaption,
                         Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,12) ]
             TextBlock [ Text = "What's new (shown to tenants, optional)", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            TextBox [ Text = $Notes, AcceptsReturn = true, TextWrapping = Wrap, Margin = (0,0,0,12) ]
+            TextBox [ UsesNativeInput = true, Text = $Notes, AcceptsReturn = true, TextWrapping = Wrap, Margin = (0,0,0,12) ]
             TextBlock [ Text = $ErrorText, Foreground = @StateDangerInk, TextWrapping = Wrap, Margin = (0,0,0,12),
                         Visibility = $ErrorText << ToVisibility ]
             StackPanel [ Orientation = Horizontal, HorizontalAlignment = Right ] {

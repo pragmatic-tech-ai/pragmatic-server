@@ -2,7 +2,7 @@ import { InviteOperatorDialogViewModel } from "./invite-operator-dialog-view-mod
 import { OperatorDetailPageViewModel } from "./operator-detail-page-view-model.js";
 import { OperatorPasswordRevealPageViewModel } from "./operator-password-reveal-page-view-model.js";
 import { OperatorRowViewModel, SettingsPageViewModel } from "./settings-page-view-model.js";
-import { Border, ColumnDefinition, DataTemplate, Dock, DockPanel, Grid, GridLength, Orientation, RowDefinition, StackPanel, TextBlock, TextBox, TextWrapping } from "@pragmatic-tech-ai/mural/basic";
+import { Border, ColumnDefinition, DataTemplate, Dock, DockPanel, Grid, GridLength, InputPurpose, Orientation, RowDefinition, StackPanel, TextBlock, TextBox, TextWrapping } from "@pragmatic-tech-ai/mural/basic";
 import { Button, ButtonVariant } from "@pragmatic-tech-ai/mural/framework/buttons/button.js";
 import { ComboBox } from "@pragmatic-tech-ai/mural/framework/list/combo-box.js";
 import { ListBox } from "@pragmatic-tech-ai/mural/framework/list/list-box.js";
@@ -511,6 +511,8 @@ export class SettingsResources extends ResourceDictionary {
             _textBlock106.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel104.AddChild(_textBlock106);
             const _textBox107 = new TextBox();
+            _textBox107.set_property_value(TextBox.UsesNativeInputKey, true);
+            _textBox107.set_property_value(TextBox.InputPurposeKey, InputPurpose.Email);
             _textBox107.set_property_value(TextBox.TextKey, DataContextBinding(_textBox107, "Email"));
             _textBox107.set_property_value(TextBox.PlaceholderKey, "e.g. sam@pragmatic.dev");
             _textBox107.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));
@@ -522,6 +524,8 @@ export class SettingsResources extends ResourceDictionary {
             _textBlock108.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel104.AddChild(_textBlock108);
             const _textBox109 = new TextBox();
+            _textBox109.set_property_value(TextBox.UsesNativeInputKey, true);
+            _textBox109.set_property_value(TextBox.InputPurposeKey, InputPurpose.NewPassword);
             _textBox109.set_property_value(TextBox.TextKey, DataContextBinding(_textBox109, "Password"));
             _textBox109.set_property_value(TextBox.IsPasswordKey, true);
             _textBox109.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));

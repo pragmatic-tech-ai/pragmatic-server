@@ -4,8 +4,9 @@
 // probe fails, with the reason in ErrorText); the shell (app.mu) is imported
 // only when there is one. LoginHostService owns the sign-in page view
 // model; a successful login reloads the page, which then boots the shell.
-// The password box masks its glyphs (TextBox.IsPassword); Text still binds
-// the real value TwoWay onto the page.
+// Both boxes edit through real browser inputs (TextBox.UsesNativeInput), so
+// password managers (InputPurpose), IME, mobile keyboards and screen readers
+// work; Text still binds the real value TwoWay onto the page.
 //
 // Enter-to-submit: a single-line TextBox leaves Return unhandled, so KeyDown
 // bubbles to the form's StackPanel, whose SubmitOnEnter style (a Style is the
@@ -34,10 +35,10 @@ Application [ Theme = Pragmatic, Scheme = PragmaticDark ] {
                     TextBlock [ Text = "Operator sign in", Style = @Body, Foreground = @Fg2, Margin = (0,4,0,16) ]
 
                     TextBlock [ Text = "Email", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-                    TextBox [ Text = $Email, Placeholder = "Email", SubmitsOnEnter = true, Margin = (0,0,0,12) ]
+                    TextBox [ UsesNativeInput = true, InputPurpose = Email, Text = $Email, Placeholder = "Email", SubmitsOnEnter = true, Margin = (0,0,0,12) ]
 
                     TextBlock [ Text = "Password", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-                    TextBox [ Text = $Password, Placeholder = "Password", IsPassword = true, SubmitsOnEnter = true, Margin = (0,0,0,16) ]
+                    TextBox [ UsesNativeInput = true, InputPurpose = CurrentPassword, Text = $Password, Placeholder = "Password", IsPassword = true, SubmitsOnEnter = true, Margin = (0,0,0,16) ]
 
                     Button [ Variant = Filled, Command = $LoginCommand, HorizontalAlignment = Left ] {
                         TextBlock [ Text = "Log in" ]

@@ -215,13 +215,13 @@ resources TenantsResources {
             ComboBox [ ItemsSource = $Clients, SelectedItem = $SelectedClient, Placeholder = "Choose client",
                        HorizontalAlignment = Stretch, Margin = (0,0,0,12) ]
             TextBlock [ Text = "Tenant id", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            TextBox [ Text = $Id, Placeholder = "Tenant id (lowercase a-z, 0-9, -)", Margin = (0,0,0,4) ]
+            TextBox [ UsesNativeInput = true, Text = $Id, Placeholder = "Tenant id (lowercase a-z, 0-9, -)", Margin = (0,0,0,4) ]
             TextBlock [ Text = $IdErrorText, Style = @UiCaption, Foreground = @StateDangerInk, Margin = (0,0,0,4),
                         Visibility = $IdErrorText << ToVisibility ]
             TextBlock [ Text = "Display name", Style = @UiCaption, Foreground = @Fg2, Margin = (0,8,0,4) ]
-            TextBox [ Text = $DisplayName, Placeholder = "e.g. Tailspin Production", Margin = (0,0,0,12) ]
+            TextBox [ UsesNativeInput = true, Text = $DisplayName, Placeholder = "e.g. Tailspin Production", Margin = (0,0,0,12) ]
             TextBlock [ Text = "Owner email", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            TextBox [ Text = $OwnerEmail, Placeholder = "owner@example.com", Margin = (0,0,0,12) ]
+            TextBox [ UsesNativeInput = true, InputPurpose = Email, Text = $OwnerEmail, Placeholder = "owner@example.com", Margin = (0,0,0,12) ]
             TextBlock [ Text = $ErrorText, Foreground = @StateDangerInk, TextWrapping = Wrap, Margin = (0,0,0,12),
                         Visibility = $ErrorText << ToVisibility ]
             StackPanel [ Orientation = Horizontal, HorizontalAlignment = Right ] {

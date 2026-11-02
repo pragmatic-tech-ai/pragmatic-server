@@ -524,6 +524,7 @@ export class ReleasesResources extends ResourceDictionary {
             _textBlock110.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel108.AddChild(_textBlock110);
             const _textBox111 = new TextBox();
+            _textBox111.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox111.set_property_value(TextBox.TextKey, DataContextBinding(_textBox111, "Version"));
             _textBox111.set_property_value(TextBox.PlaceholderKey, "e.g. 4.2.0");
             _textBox111.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));
@@ -535,6 +536,7 @@ export class ReleasesResources extends ResourceDictionary {
             _textBlock112.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel108.AddChild(_textBlock112);
             const _textBox113 = new TextBox();
+            _textBox113.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox113.set_property_value(TextBox.TextKey, DataContextBinding(_textBox113, "Image"));
             _textBox113.set_property_value(TextBox.PlaceholderKey, "e.g. registry.example/apps/capability-maps:4.2.0");
             _textBox113.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));
@@ -565,6 +567,7 @@ export class ReleasesResources extends ResourceDictionary {
             _textBlock117.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel108.AddChild(_textBlock117);
             const _textBox118 = new TextBox();
+            _textBox118.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox118.set_property_value(TextBox.TextKey, DataContextBinding(_textBox118, "Notes"));
             _textBox118.set_property_value(TextBox.AcceptsReturnKey, true);
             _textBox118.set_property_value(TextBox.TextWrappingKey, TextWrapping.Wrap);

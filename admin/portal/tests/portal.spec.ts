@@ -439,11 +439,10 @@ enum RailEntry
     Settings,
 }
 
-// Interaction helpers. Mural renders the whole app as SVG: a TextBox is a
-// surface with a hidden key sink (no <input>), and each control's hit rect
-// sits over its text, so clicks are forced through it. A TextBox's placeholder
-// follows its caption in document order, so the field is the placeholder's
-// last match. The rail is icon-only (its names are tooltips), so an entry is
+// Interaction helpers. Mural renders the whole app as SVG, and each control's
+// hit rect sits over its text, so clicks are forced through it. The portal's
+// TextBoxes are real browser inputs (TextBox.UsesNativeInput), found by their
+// placeholder attribute. The rail is icon-only (its names are tooltips), so an entry is
 // clicked at its position, derived from RailLayout below; every click then
 // asserts the entry's page title, so a layout drift fails loudly.
 class PortalSteps
@@ -455,9 +454,10 @@ class PortalSteps
     // the shell's title bar and the rail's header actions).
     private static readonly RailLayout = { CenterX: 24, FirstCenterY: 97, Pitch: 40 } as const
 
+    // Text boxes are real browser inputs (TextBox.UsesNativeInput): focus one by its placeholder.
     public static async TypeInto(page: Page, placeholder: string, text: string): Promise<void>
     {
-        await page.getByText(placeholder, { exact: true }).last().click({ force: true })
+        await page.locator('input[placeholder="' + placeholder + '"]').last().click()
         await page.keyboard.type(text)
     }
 

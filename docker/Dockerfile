@@ -69,6 +69,11 @@ RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     && cp -r dist ../../dist-tenant-admin/admin/tenant-portal/dist \
     && rm -rf node_modules dist
 
+# IdP sign-in app: the IdP daemon (dist/bin/pragmatic-idpd.js) serves idp-login/dist (the path IdpLoginPage resolves
+# relative to its own module) and refuses to start without it. Only the built dist is kept.
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
+    cd pragmatic-server/idp-login && npm install --no-audit --no-fund && npm run build && rm -rf node_modules
+
 # Slim the tree that gets baked into the runtime image: the entrypoint runs the
 # compiled dist with plain `node`, so dev dependencies (TypeScript, tsx, test tooling)
 # are not needed at runtime. Prune them workspace-wide; prod deps (incl. native argon2)

@@ -1,5 +1,5 @@
 import { LoginHostService } from "./shell/login-host-service.js";
-import { Border, Orientation, StackPanel, TextBlock, TextBox, TextWrapping } from "@pragmatic-tech-ai/mural/basic";
+import { Border, InputPurpose, Orientation, StackPanel, TextBlock, TextBox, TextWrapping } from "@pragmatic-tech-ai/mural/basic";
 import { Button, ButtonVariant } from "@pragmatic-tech-ai/mural/framework/buttons/button.js";
 import { Pragmatic, PragmaticDark } from "@pragmatic-tech-ai/mural/resources/pragmatic";
 import { Application, BeginStoryboardAction, DataContextBinding, DynamicResource, EventTrigger, HorizontalAlignment, InvokeCommandAction, NameScope, ServiceBinding, ServiceProvider, Storyboard, Style, Thickness, ToVisibility, VerticalAlignment } from "@pragmatic-tech-ai/mural/runtime";
@@ -45,6 +45,8 @@ export const app = (() => {
     _textBlock10.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
     _stackPanel7.AddChild(_textBlock10);
     const _textBox11 = new TextBox();
+    _textBox11.set_property_value(TextBox.UsesNativeInputKey, true);
+    _textBox11.set_property_value(TextBox.InputPurposeKey, InputPurpose.Email);
     _textBox11.set_property_value(TextBox.TextKey, DataContextBinding(_textBox11, "Email"));
     _textBox11.set_property_value(TextBox.PlaceholderKey, "Email");
     _textBox11.set_property_value(TextBox.SubmitsOnEnterKey, true);
@@ -57,6 +59,8 @@ export const app = (() => {
     _textBlock12.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
     _stackPanel7.AddChild(_textBlock12);
     const _textBox13 = new TextBox();
+    _textBox13.set_property_value(TextBox.UsesNativeInputKey, true);
+    _textBox13.set_property_value(TextBox.InputPurposeKey, InputPurpose.CurrentPassword);
     _textBox13.set_property_value(TextBox.TextKey, DataContextBinding(_textBox13, "Password"));
     _textBox13.set_property_value(TextBox.PlaceholderKey, "Password");
     _textBox13.set_property_value(TextBox.IsPasswordKey, true);

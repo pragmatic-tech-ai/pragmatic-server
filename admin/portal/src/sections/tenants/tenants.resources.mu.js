@@ -2,7 +2,7 @@ import { NewTenantDialogViewModel } from "./new-tenant-dialog-view-model.js";
 import { OwnerPasswordRevealPageViewModel } from "./owner-password-reveal-page-view-model.js";
 import { TenantDetailPageViewModel } from "./tenant-detail-page-view-model.js";
 import { TenantRowViewModel, TenantsPageViewModel } from "./tenants-page-view-model.js";
-import { Border, ColumnDefinition, DataTemplate, Dock, DockPanel, Grid, GridLength, Orientation, RowDefinition, StackPanel, TextBlock, TextBox, TextWrapping } from "@pragmatic-tech-ai/mural/basic";
+import { Border, ColumnDefinition, DataTemplate, Dock, DockPanel, Grid, GridLength, InputPurpose, Orientation, RowDefinition, StackPanel, TextBlock, TextBox, TextWrapping } from "@pragmatic-tech-ai/mural/basic";
 import { ContentControl } from "@pragmatic-tech-ai/mural/framework/base/content-control.js";
 import { Button, ButtonVariant } from "@pragmatic-tech-ai/mural/framework/buttons/button.js";
 import { ComboBox } from "@pragmatic-tech-ai/mural/framework/list/combo-box.js";
@@ -536,6 +536,7 @@ export class TenantsResources extends ResourceDictionary {
             _textBlock113.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel109.AddChild(_textBlock113);
             const _textBox114 = new TextBox();
+            _textBox114.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox114.set_property_value(TextBox.TextKey, DataContextBinding(_textBox114, "Id"));
             _textBox114.set_property_value(TextBox.PlaceholderKey, "Tenant id (lowercase a-z, 0-9, -)");
             _textBox114.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 4));
@@ -554,6 +555,7 @@ export class TenantsResources extends ResourceDictionary {
             _textBlock116.set_property_value(TextBlock.MarginKey, new Thickness(0, 8, 0, 4));
             _stackPanel109.AddChild(_textBlock116);
             const _textBox117 = new TextBox();
+            _textBox117.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox117.set_property_value(TextBox.TextKey, DataContextBinding(_textBox117, "DisplayName"));
             _textBox117.set_property_value(TextBox.PlaceholderKey, "e.g. Tailspin Production");
             _textBox117.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));
@@ -565,6 +567,8 @@ export class TenantsResources extends ResourceDictionary {
             _textBlock118.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel109.AddChild(_textBlock118);
             const _textBox119 = new TextBox();
+            _textBox119.set_property_value(TextBox.UsesNativeInputKey, true);
+            _textBox119.set_property_value(TextBox.InputPurposeKey, InputPurpose.Email);
             _textBox119.set_property_value(TextBox.TextKey, DataContextBinding(_textBox119, "OwnerEmail"));
             _textBox119.set_property_value(TextBox.PlaceholderKey, "owner@example.com");
             _textBox119.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));

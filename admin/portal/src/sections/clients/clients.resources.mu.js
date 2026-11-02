@@ -486,6 +486,7 @@ export class ClientsResources extends ResourceDictionary {
             _textBlock107.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel105.AddChild(_textBlock107);
             const _textBox108 = new TextBox();
+            _textBox108.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox108.set_property_value(TextBox.TextKey, DataContextBinding(_textBox108, "Id"));
             _textBox108.set_property_value(TextBox.PlaceholderKey, "e.g. tailspin");
             _textBox108.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));
@@ -497,6 +498,7 @@ export class ClientsResources extends ResourceDictionary {
             _textBlock109.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel105.AddChild(_textBlock109);
             const _textBox110 = new TextBox();
+            _textBox110.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox110.set_property_value(TextBox.TextKey, DataContextBinding(_textBox110, "DisplayName"));
             _textBox110.set_property_value(TextBox.PlaceholderKey, "e.g. Tailspin Holdings");
             _textBox110.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));
@@ -508,6 +510,7 @@ export class ClientsResources extends ResourceDictionary {
             _textBlock111.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel105.AddChild(_textBlock111);
             const _textBox112 = new TextBox();
+            _textBox112.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox112.set_property_value(TextBox.TextKey, DataContextBinding(_textBox112, "SubscriptionRef"));
             _textBox112.set_property_value(TextBox.PlaceholderKey, "e.g. MSA-2026-014");
             _textBox112.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));

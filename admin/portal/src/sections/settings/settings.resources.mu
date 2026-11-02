@@ -214,9 +214,9 @@ resources SettingsResources {
             TextBlock [ Text = "The new operator signs in with this email and the initial password you hand them. Observers can see everything and change nothing.",
                         TextWrapping = Wrap, Foreground = @Fg2, Margin = (0,0,0,12) ]
             TextBlock [ Text = "Email", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            TextBox [ Text = $Email, Placeholder = "e.g. sam@pragmatic.dev", Margin = (0,0,0,12) ]
+            TextBox [ UsesNativeInput = true, InputPurpose = Email, Text = $Email, Placeholder = "e.g. sam@pragmatic.dev", Margin = (0,0,0,12) ]
             TextBlock [ Text = "Initial password", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            TextBox [ Text = $Password, IsPassword = true, Margin = (0,0,0,12) ]
+            TextBox [ UsesNativeInput = true, InputPurpose = NewPassword, Text = $Password, IsPassword = true, Margin = (0,0,0,12) ]
             TextBlock [ Text = "Role", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
             ComboBox [ ItemsSource = $Roles, SelectedItem = $SelectedRole, HorizontalAlignment = Stretch, Margin = (0,0,0,12) ]
             TextBlock [ Text = $ErrorText, Foreground = @StateDangerInk, TextWrapping = Wrap, Margin = (0,0,0,12),

@@ -4,7 +4,7 @@ import { HiveInstallViewModel } from "./hive-install-view-model.js";
 import { HiveRowViewModel, HivesPageViewModel } from "./hives-page-view-model.js";
 import { NewHiveDialogViewModel } from "./new-hive-dialog-view-model.js";
 import { ProvisionStepViewModel, ProvisionWizardPageViewModel } from "./provision-wizard-page-view-model.js";
-import { Border, ColumnDefinition, DataTemplate, Dock, DockPanel, Grid, GridLength, ItemsPanelTemplate, Orientation, RowDefinition, StackPanel, TextBlock, TextBox, TextWrapping } from "@pragmatic-tech-ai/mural/basic";
+import { Border, ColumnDefinition, DataTemplate, Dock, DockPanel, Grid, GridLength, InputPurpose, ItemsPanelTemplate, Orientation, RowDefinition, StackPanel, TextBlock, TextBox, TextWrapping } from "@pragmatic-tech-ai/mural/basic";
 import { ContentControl } from "@pragmatic-tech-ai/mural/framework/base/content-control.js";
 import { ItemsControl } from "@pragmatic-tech-ai/mural/framework/base/items-control.js";
 import { Button, ButtonVariant } from "@pragmatic-tech-ai/mural/framework/buttons/button.js";
@@ -769,6 +769,7 @@ export class HivesResources extends ResourceDictionary {
             _textBlock164.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel159.AddChild(_textBlock164);
             const _textBox165 = new TextBox();
+            _textBox165.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox165.set_property_value(TextBox.TextKey, DataContextBinding(_textBox165, "Id"));
             _textBox165.set_property_value(TextBox.PlaceholderKey, "e.g. tailspin-hive");
             _textBox165.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));
@@ -780,6 +781,7 @@ export class HivesResources extends ResourceDictionary {
             _textBlock166.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel159.AddChild(_textBlock166);
             const _textBox167 = new TextBox();
+            _textBox167.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox167.set_property_value(TextBox.TextKey, DataContextBinding(_textBox167, "DisplayName"));
             _textBox167.set_property_value(TextBox.PlaceholderKey, "e.g. Tailspin hive");
             _textBox167.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));
@@ -831,6 +833,7 @@ export class HivesResources extends ResourceDictionary {
             _textBlock177.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel159.AddChild(_textBlock177);
             const _textBox178 = new TextBox();
+            _textBox178.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox178.set_property_value(TextBox.TextKey, DataContextBinding(_textBox178, "ConfigRef"));
             _textBox178.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));
             _stackPanel159.AddChild(_textBox178);
@@ -853,6 +856,7 @@ export class HivesResources extends ResourceDictionary {
             _textBlock181.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel159.AddChild(_textBlock181);
             const _textBox182 = new TextBox();
+            _textBox182.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox182.set_property_value(TextBox.TextKey, DataContextBinding(_textBox182, "Endpoint"));
             _textBox182.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));
             _stackPanel159.AddChild(_textBox182);
@@ -863,6 +867,7 @@ export class HivesResources extends ResourceDictionary {
             _textBlock183.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel159.AddChild(_textBlock183);
             const _textBox184 = new TextBox();
+            _textBox184.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox184.set_property_value(TextBox.TextKey, DataContextBinding(_textBox184, "CredentialRef"));
             _textBox184.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));
             _stackPanel159.AddChild(_textBox184);
@@ -873,6 +878,7 @@ export class HivesResources extends ResourceDictionary {
             _textBlock185.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel159.AddChild(_textBlock185);
             const _textBox186 = new TextBox();
+            _textBox186.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox186.set_property_value(TextBox.TextKey, DataContextBinding(_textBox186, "TrustRootRef"));
             _textBox186.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));
             _stackPanel159.AddChild(_textBox186);
@@ -1067,6 +1073,7 @@ export class HivesResources extends ResourceDictionary {
             _textBlock228.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel227.AddChild(_textBlock228);
             const _textBox229 = new TextBox();
+            _textBox229.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox229.set_property_value(TextBox.TextKey, DataContextBinding(_textBox229, "ClientId"));
             _textBox229.set_property_value(TextBox.PlaceholderKey, "e.g. tailspin");
             _textBox229.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));
@@ -1078,6 +1085,7 @@ export class HivesResources extends ResourceDictionary {
             _textBlock230.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel227.AddChild(_textBlock230);
             const _textBox231 = new TextBox();
+            _textBox231.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox231.set_property_value(TextBox.TextKey, DataContextBinding(_textBox231, "ClientDisplayName"));
             _textBox231.set_property_value(TextBox.PlaceholderKey, "e.g. Tailspin Toys");
             _textBox231.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));
@@ -1089,6 +1097,7 @@ export class HivesResources extends ResourceDictionary {
             _textBlock232.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel227.AddChild(_textBlock232);
             const _textBox233 = new TextBox();
+            _textBox233.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox233.set_property_value(TextBox.TextKey, DataContextBinding(_textBox233, "SubscriptionRef"));
             _stackPanel227.AddChild(_textBox233);
             _stackPanel222.AddChild(_stackPanel227);
@@ -1138,6 +1147,7 @@ export class HivesResources extends ResourceDictionary {
             _textBlock241.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel240.AddChild(_textBlock241);
             const _textBox242 = new TextBox();
+            _textBox242.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox242.set_property_value(TextBox.TextKey, DataContextBinding(_textBox242, "TenantId"));
             _textBox242.set_property_value(TextBox.PlaceholderKey, "e.g. tailspin-prod");
             _textBox242.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));
@@ -1149,6 +1159,7 @@ export class HivesResources extends ResourceDictionary {
             _textBlock243.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel240.AddChild(_textBlock243);
             const _textBox244 = new TextBox();
+            _textBox244.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox244.set_property_value(TextBox.TextKey, DataContextBinding(_textBox244, "TenantDisplayName"));
             _textBox244.set_property_value(TextBox.PlaceholderKey, "e.g. Tailspin Production");
             _textBox244.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));
@@ -1160,6 +1171,8 @@ export class HivesResources extends ResourceDictionary {
             _textBlock245.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel240.AddChild(_textBlock245);
             const _textBox246 = new TextBox();
+            _textBox246.set_property_value(TextBox.UsesNativeInputKey, true);
+            _textBox246.set_property_value(TextBox.InputPurposeKey, InputPurpose.Email);
             _textBox246.set_property_value(TextBox.TextKey, DataContextBinding(_textBox246, "OwnerEmail"));
             _textBox246.set_property_value(TextBox.PlaceholderKey, "e.g. owner@tailspin.example");
             _stackPanel240.AddChild(_textBox246);
@@ -1188,6 +1201,7 @@ export class HivesResources extends ResourceDictionary {
             _textBlock250.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel247.AddChild(_textBlock250);
             const _textBox251 = new TextBox();
+            _textBox251.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox251.set_property_value(TextBox.TextKey, DataContextBinding(_textBox251, "HiveId"));
             _textBox251.set_property_value(TextBox.PlaceholderKey, "e.g. tailspin-hive");
             _textBox251.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));
@@ -1199,6 +1213,7 @@ export class HivesResources extends ResourceDictionary {
             _textBlock252.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel247.AddChild(_textBlock252);
             const _textBox253 = new TextBox();
+            _textBox253.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox253.set_property_value(TextBox.TextKey, DataContextBinding(_textBox253, "HiveDisplayName"));
             _textBox253.set_property_value(TextBox.PlaceholderKey, "e.g. Tailspin hive");
             _textBox253.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));
@@ -1250,6 +1265,7 @@ export class HivesResources extends ResourceDictionary {
             _textBlock263.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel247.AddChild(_textBlock263);
             const _textBox264 = new TextBox();
+            _textBox264.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox264.set_property_value(TextBox.TextKey, DataContextBinding(_textBox264, "ConfigRef"));
             _textBox264.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));
             _stackPanel247.AddChild(_textBox264);
@@ -1272,6 +1288,7 @@ export class HivesResources extends ResourceDictionary {
             _textBlock267.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel247.AddChild(_textBlock267);
             const _textBox268 = new TextBox();
+            _textBox268.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox268.set_property_value(TextBox.TextKey, DataContextBinding(_textBox268, "Endpoint"));
             _textBox268.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));
             _stackPanel247.AddChild(_textBox268);
@@ -1282,6 +1299,7 @@ export class HivesResources extends ResourceDictionary {
             _textBlock269.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel247.AddChild(_textBlock269);
             const _textBox270 = new TextBox();
+            _textBox270.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox270.set_property_value(TextBox.TextKey, DataContextBinding(_textBox270, "CredentialRef"));
             _textBox270.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));
             _stackPanel247.AddChild(_textBox270);
@@ -1292,6 +1310,7 @@ export class HivesResources extends ResourceDictionary {
             _textBlock271.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel247.AddChild(_textBlock271);
             const _textBox272 = new TextBox();
+            _textBox272.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox272.set_property_value(TextBox.TextKey, DataContextBinding(_textBox272, "TrustRootRef"));
             _stackPanel247.AddChild(_textBox272);
             _stackPanel221.AddChild(_stackPanel247);

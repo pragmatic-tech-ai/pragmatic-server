@@ -104,11 +104,11 @@ resources ShellResources {
         StackPanel [ Orientation = Vertical, Margin = (0,4,0,0) ] {
             TextBlock [ Text = $Message, TextWrapping = Wrap, Foreground = @Fg1, Margin = (0,0,0,12) ]
             TextBlock [ Text = $PromptText, Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            TextBox [ Text = $Typed, Placeholder = $Expected, Margin = (0,0,0,12) ]
+            TextBox [ UsesNativeInput = true, Text = $Typed, Placeholder = $Expected, Margin = (0,0,0,12) ]
             // The reason, when the action records one (a withdrawal).
             StackPanel [ Orientation = Vertical, Visibility = $RequiresReason << ToVisibility ] {
                 TextBlock [ Text = $ReasonLabel, Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-                TextBox [ Text = $Reason, Margin = (0,0,0,12) ]
+                TextBox [ UsesNativeInput = true, Text = $Reason, Margin = (0,0,0,12) ]
             }
             TextBlock [ Text = $ErrorText, Foreground = @StateDangerInk, TextWrapping = Wrap, Margin = (0,0,0,12),
                         Visibility = $ErrorText << ToVisibility ]

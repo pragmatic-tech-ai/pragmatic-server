@@ -8,6 +8,7 @@ import type { AuthorizeResult } from './authorize-endpoint.js';
 import { TokenEndpoint } from './token-endpoint.js';
 import type { IdpAdminEndpoint } from './idp-admin-endpoint.js';
 import type { IdpClientStore } from './idp-client-store.js';
+import { IdpLoginPage } from './idp-login-page.js';
 import { IdpLoginThrottle } from './idp-login-throttle.js';
 import type { IdpRealm } from './idp-realm.js';
 import type { IdpSigningKey } from './idp-signing-key.js';
@@ -169,6 +170,13 @@ export class IdpHost
     private static readonly HealthPath = '/healthz';
     private static readonly HealthStatusField = 'status';
     private static readonly HealthOkValue = 'ok';
+    private static readonly NoSniffHeader = 'X-Content-Type-Options';
+    private static readonly NoSniff = 'nosniff';
+    // The sign-in page must never be framed (clickjacking); old browsers get the legacy header too.
+    private static readonly ContentSecurityPolicyHeader = 'Content-Security-Policy';
+    private static readonly NoFraming = "frame-ancestors 'none'";
+    private static readonly FrameOptionsHeader = 'X-Frame-Options';
+    private static readonly FrameDeny = 'DENY';
 
     private httpsServer: Server | undefined;
     private readonly baseUrl: string;
@@ -188,7 +196,9 @@ export class IdpHost
         private readonly secureCookie: boolean,
         private readonly admin?: IdpAdminEndpoint,
         internalBaseUrl?: string,
-        throttle: IdpLoginThrottle = new IdpLoginThrottle())
+        throttle: IdpLoginThrottle = new IdpLoginThrottle(),
+        /** The sign-in app; idp-main always passes the built one. The placeholder serves hosts composed without it. */
+        private readonly loginPage: IdpLoginPage = IdpLoginPage.Placeholder())
     {
         if (new URL(baseUrl).protocol !== IdpHost.HttpsProtocol)
         {
@@ -286,6 +296,10 @@ export class IdpHost
             }
             await this.RouteAdmin(req, res, this.admin, method, decoded);
             return true;
+        }
+        if (segments[0] === IdpLoginPage.AssetSegment)
+        {
+            return method === IdpHost.MethodGet && this.WriteLoginAsset(res, segments.slice(1).join(IdpHost.PathSeparator));
         }
         if (method === IdpHost.MethodGet && path === IdpHost.HealthPath)
         {
@@ -475,6 +489,23 @@ export class IdpHost
         return Buffer.concat(chunks).toString('utf8');
     }
 
+    /** Writes one of the sign-in app's assets (GET /_login/...); false (404 upstream) when there is none at that path. */
+    private WriteLoginAsset(res: ServerResponse, path: string): boolean
+    {
+        const asset = this.loginPage.ReadAsset(path);
+        if (asset === undefined)
+        {
+            return false;
+        }
+        res.writeHead(IdpHost.StatusOk, {
+            [IdpHost.ContentType]: asset.contentType,
+            [IdpHost.CacheControlHeader]: asset.cacheControl,
+            [IdpHost.NoSniffHeader]: IdpHost.NoSniff,
+        });
+        res.end(asset.bytes);
+        return true;
+    }
+
     private WriteAuthorize(res: ServerResponse, result: AuthorizeResult): void
     {
         if (result.kind === 'redirect')
@@ -489,8 +520,14 @@ export class IdpHost
         }
         else if (result.kind === 'loginPage')
         {
-            res.writeHead(IdpHost.StatusOk, { [IdpHost.ContentType]: IdpHost.HtmlType, [IdpHost.CacheControlHeader]: IdpHost.NoStore });
-            res.end(result.html);
+            res.writeHead(IdpHost.StatusOk, {
+                [IdpHost.ContentType]: IdpHost.HtmlType,
+                [IdpHost.CacheControlHeader]: IdpHost.NoStore,
+                [IdpHost.ContentSecurityPolicyHeader]: IdpHost.NoFraming,
+                [IdpHost.FrameOptionsHeader]: IdpHost.FrameDeny,
+                [IdpHost.NoSniffHeader]: IdpHost.NoSniff,
+            });
+            res.end(this.loginPage.Render(result.failed));
         }
         else
         {

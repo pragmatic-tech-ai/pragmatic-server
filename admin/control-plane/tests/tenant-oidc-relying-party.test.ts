@@ -235,7 +235,7 @@ test('Complete drives the real IdP login to a code and returns the seeded owner 
 
         const loginPage = await browser.Get(begin.Url)
         assert.equal(loginPage.Status, 200)
-        assert.ok(loginPage.Body.includes('<form'))
+        assert.ok(loginPage.Body.includes('<meta name="pragmatic-login"'))
 
         const redirect = await browser.PostForm(begin.Url, new Map([['email', IdpFixture.OwnerEmail], ['password', IdpFixture.OwnerPassword]]))
         assert.equal(redirect.Status, 302)

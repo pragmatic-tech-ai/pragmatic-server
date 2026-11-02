@@ -40,6 +40,7 @@ import { DevCa, IdpTlsMaterial } from '../../src/idp/dev-ca.js'
 import { IdpAdminEndpoint } from '../../src/idp/idp-admin-endpoint.js'
 import { IdpClientStore } from '../../src/idp/idp-client-store.js'
 import { IdpHost, IdpRealmSet } from '../../src/idp/idp-host.js'
+import { IdpLoginPage } from '../../src/idp/idp-login-page.js'
 import { IdpRealm } from '../../src/idp/idp-realm.js'
 import { IdpSigningKey } from '../../src/idp/idp-signing-key.js'
 import { IdpSsoSessionStore } from '../../src/idp/idp-sso-session.js'
@@ -339,7 +340,7 @@ export class IdpSsoSmoke
     private static readonly InvalidRequest = 'invalid_request'
     private static readonly ClaimMismatchDetail = 'email/name mismatch'
     private static readonly NoIdTokenDetail = 'no id_token captured'
-    private static readonly FormOpenTag = '<form'
+    private static readonly LoginPageMarker = IdpLoginPage.Marker
 
     private static readonly StatusOk = 200
     private static readonly StatusFound = 302
@@ -369,7 +370,7 @@ export class IdpSsoSmoke
     private static readonly SsoInfo = 'env A set an idp_sso cookie; env B reused it with no login page'
 
     private static readonly Labels = {
-        EnvALoginPage: 'env A: unauthenticated GET /authorize serves a 200 login page (HTML form)',
+        EnvALoginPage: 'env A: unauthenticated GET /authorize serves a 200 login page (the sign-in app)',
         EnvARedirect: 'env A: POST credentials -> 302 to env-a redirect_uri with code+state and an idp_sso cookie',
         EnvAAuthenticated: 'env A: real OidcAuthenticator returns AuthenticatedResult with the seeded sub',
         EnvBSso: 'env B: GET /authorize with the jar cookie -> 302 straight to env-b redirect_uri, NO login page',
@@ -471,7 +472,7 @@ export class IdpSsoSmoke
         const begin = await authenticator.BeginAuthorization(this.tenant)
 
         const loginPage = await this.browser.Get(begin.Url, undefined)
-        this.Check(S.Labels.EnvALoginPage, loginPage.Status === S.StatusOk && loginPage.Body.includes(S.FormOpenTag), S.StatusDetailPrefix + loginPage.Status)
+        this.Check(S.Labels.EnvALoginPage, loginPage.Status === S.StatusOk && loginPage.Body.includes(S.LoginPageMarker), S.StatusDetailPrefix + loginPage.Status)
 
         const form = new Map<string, string>([[S.EmailField, S.AccountEmail], [S.PasswordField, S.AccountPassword]])
         const redirect = await this.browser.PostForm(begin.Url, form, undefined)
@@ -496,7 +497,7 @@ export class IdpSsoSmoke
         const redirect = await this.browser.Get(begin.Url, this.jar.Value())
         const target = this.ParseRedirect(redirect.Location)
         const landedOnB = redirect.Status === S.StatusFound && this.SameEndpoint(target, S.RedirectUriB)
-        const noLoginPage = !redirect.Body.includes(S.FormOpenTag)
+        const noLoginPage = !redirect.Body.includes(S.LoginPageMarker)
         this.Check(S.Labels.EnvBSso, landedOnB && noLoginPage && this.HasCodeState(target), S.StatusDetailPrefix + redirect.Status)
         console.log(S.InfoTag + S.SsoInfo)
 

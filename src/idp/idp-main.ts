@@ -7,6 +7,8 @@ import { DevCa, IdpTlsMaterial } from './dev-ca.js';
 import { IdpAdminEndpoint } from './idp-admin-endpoint.js';
 import { IdpClientStore } from './idp-client-store.js';
 import { IdpHost, IdpRealmSet, type RealmFactory } from './idp-host.js';
+import { IdpLoginPage } from './idp-login-page.js';
+import { IdpLoginThrottle } from './idp-login-throttle.js';
 import { IdpRealm } from './idp-realm.js';
 import { IdpSigningKey } from './idp-signing-key.js';
 import { IdpSsoSessionStore } from './idp-sso-session.js';
@@ -23,6 +25,8 @@ export class IdpMain
     private static readonly SecureCookieEnvVar = 'PRAGMATIC_IDP_SECURE_COOKIE';
     private static readonly TenantsEnvVar = 'PRAGMATIC_IDP_TENANTS';
     private static readonly AdminTokenRefEnvVar = 'PRAGMATIC_IDP_ADMIN_TOKEN_REF';
+    // Where the built sign-in app lives; defaults to idp-login/dist beside this package.
+    private static readonly LoginDirEnvVar = 'PRAGMATIC_IDP_LOGIN_DIR';
     private static readonly SecretsDir = 'secrets';
     private static readonly CurrentDir = '.';
     private static readonly ParentDir = '..';
@@ -95,7 +99,9 @@ export class IdpMain
         const tls = IdpTlsMaterial.Load({ certFile: ca.certFile, keyFile: ca.keyFile });
         const secure = env[IdpMain.SecureCookieEnvVar];
         const secureCookie = secure !== IdpMain.ZeroToken && secure !== IdpMain.FalseToken;
-        return new IdpHost(baseUrl, signingKey, realms, clients, new InMemoryAuthorizationCodeStore(), new IdpSsoSessionStore(), tls, secureCookie, admin, internalBaseUrl);
+        // The built sign-in app is required: Load throws (the daemon refuses to start) when it is missing.
+        return new IdpHost(baseUrl, signingKey, realms, clients, new InMemoryAuthorizationCodeStore(), new IdpSsoSessionStore(), tls, secureCookie, admin, internalBaseUrl,
+            new IdpLoginThrottle(), IdpLoginPage.Load(env[IdpMain.LoginDirEnvVar] || IdpLoginPage.DefaultRoot()));
     }
 
     /** Prints a concise startup failure (message only, no stack) and sets a non-zero exit code. */

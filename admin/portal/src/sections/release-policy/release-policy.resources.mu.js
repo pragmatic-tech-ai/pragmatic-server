@@ -756,6 +756,7 @@ export class ReleasePolicyResources extends ResourceDictionary {
             _textBlock167.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel157.AddChild(_textBlock167);
             const _textBox168 = new TextBox();
+            _textBox168.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox168.set_property_value(TextBox.TextKey, DataContextBinding(_textBox168, "MinVersion"));
             _textBox168.set_property_value(TextBox.PlaceholderKey, "e.g. 4.1.0");
             _textBox168.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));
@@ -784,6 +785,7 @@ export class ReleasePolicyResources extends ResourceDictionary {
             _textBlock173.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel172.AddChild(_textBlock173);
             const _textBox174 = new TextBox();
+            _textBox174.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox174.set_property_value(TextBox.TextKey, DataContextBinding(_textBox174, "HoldReason"));
             _textBox174.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));
             _stackPanel172.AddChild(_textBox174);

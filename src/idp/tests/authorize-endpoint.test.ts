@@ -135,7 +135,7 @@ test('wrong response_type, missing state or nonce are rejected', () => Authorize
 test('valid authorize with no SSO cookie returns the login page', () => AuthorizeFixture.Run(async f =>
 {
     const r = await f.endpoint.HandleGet(AuthorizeFixture.TenantId, AuthorizeFixture.Query(), undefined);
-    assert.equal(r.kind, 'loginPage');
+    assert.deepEqual(r, { kind: 'loginPage', failed: false });
 }));
 
 test('valid credentials set the SSO cookie and redirect with code and state', () => AuthorizeFixture.Run(async f =>
@@ -170,8 +170,9 @@ test('bad credentials return the login page with a uniform error, no code issued
         new URLSearchParams({ email: 'ghost@t', password: 'bad' }), AuthorizeFixture.Ip);
     assert.equal(wrong.kind, 'loginPage');
     assert.equal(ghost.kind, 'loginPage');
-    assert.equal((wrong as { html: string }).html, (ghost as { html: string }).html);
-    assert.match((wrong as { html: string }).html, /Invalid email or password/);
+    // Uniform: an unknown account and a wrong password get the same flagged page.
+    assert.deepEqual(wrong, { kind: 'loginPage', failed: true });
+    assert.deepEqual(ghost, wrong);
 }));
 
 test('a fresh login issues a code whose binding carries email and name', () => AuthorizeFixture.Run(async f =>

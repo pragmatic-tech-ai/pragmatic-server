@@ -8,7 +8,7 @@ import type { IdpSsoSessionStore } from './idp-sso-session.js';
 
 export type AuthorizeResult =
     | { kind: 'redirect'; location: string; setCookie?: string }
-    | { kind: 'loginPage'; html: string }
+    | { kind: 'loginPage'; failed: boolean }
     | { kind: 'error'; status: number; body: object; retryAfterSeconds?: number };
 
 /** The validated, trusted OIDC request parameters. */
@@ -24,7 +24,10 @@ class AuthorizeRequest
     }
 }
 
-/** `/authorize`: fail-closed request validation, login form, SSO cookie, PKCE-bound code issue. */
+/**
+ * `/authorize`: fail-closed request validation, the sign-in page (rendered by the host from the sign-in app, flagged
+ * when a sign-in was just rejected), SSO cookie, PKCE-bound code issue. The page posts back the same email/password form.
+ */
 export class AuthorizeEndpoint
 {
     public static readonly CodeTtlMs = 60 * 1000;
@@ -56,18 +59,6 @@ export class AuthorizeEndpoint
     private static readonly BadRedirectDescription = 'redirect_uri is not registered for this client';
     private static readonly BadChallengeDescription = 'PKCE code_challenge with method S256 is required';
     private static readonly MissingStateNonceDescription = 'state and nonce are required';
-    private static readonly LoginErrorMessage = 'Invalid email or password.';
-    private static readonly ErrorPlaceholder = '{{error}}';
-    private static readonly ActionPlaceholder = '{{action}}';
-    private static readonly MessagePlaceholder = '{{message}}';
-    private static readonly ErrorTemplate = '<p role="alert">{{message}}</p>';
-    private static readonly LoginTemplate =
-        '<!doctype html><html><head><meta charset="utf-8"><title>Sign in</title></head><body>'
-        + '{{error}}<form method="post" action="{{action}}">'
-        + '<label>Email <input type="email" name="email" autocomplete="username" required></label>'
-        + '<label>Password <input type="password" name="password" autocomplete="current-password" required></label>'
-        + '<button type="submit">Sign in</button></form></body></html>';
-    private static readonly ActionPrefix = '?';
     private static readonly EmptyText = '';
 
     public constructor(
@@ -92,7 +83,7 @@ export class AuthorizeEndpoint
         const session = id === undefined ? null : this.sso.Validate(id, tenantId);
         if (session === null)
         {
-            return this.LoginPage(query, false);
+            return this.LoginPage(false);
         }
         return this.RedirectWithCode(tenantId, request, session.PrincipalId, undefined);
     }
@@ -109,7 +100,7 @@ export class AuthorizeEndpoint
         const password = form.get(AuthorizeEndpoint.PasswordField);
         if (realm === undefined || !email || !password)
         {
-            return this.LoginPage(query, true);
+            return this.LoginPage(true);
         }
         const decision = this.throttle.CheckAllowed(tenantId, email, clientIp);
         if (!decision.allowed)
@@ -127,7 +118,7 @@ export class AuthorizeEndpoint
         const result = await realm.Authenticate(email, password);
         if (result === null)
         {
-            return this.LoginPage(query, true);
+            return this.LoginPage(true);
         }
         this.throttle.Clear(tenantId, email, clientIp);
         const issued = this.sso.Issue(result.Principal.Id, tenantId);
@@ -184,25 +175,14 @@ export class AuthorizeEndpoint
             : { kind: 'redirect', location: target.toString(), setCookie };
     }
 
-    private LoginPage(query: URLSearchParams, failed: boolean): AuthorizeResult
+    // The page posts back to its own URL, so the validated OIDC query travels with the form unchanged.
+    private LoginPage(failed: boolean): AuthorizeResult
     {
-        const error = failed
-            ? AuthorizeEndpoint.ErrorTemplate.replace(AuthorizeEndpoint.MessagePlaceholder, AuthorizeEndpoint.LoginErrorMessage)
-            : AuthorizeEndpoint.EmptyText;
-        const action = AuthorizeEndpoint.EscapeHtml(AuthorizeEndpoint.ActionPrefix + query.toString());
-        const html = AuthorizeEndpoint.LoginTemplate
-            .replace(AuthorizeEndpoint.ErrorPlaceholder, () => error)
-            .replace(AuthorizeEndpoint.ActionPlaceholder, () => action);
-        return { kind: 'loginPage', html };
+        return { kind: 'loginPage', failed };
     }
 
     private Error(status: number, error: string, description: string): AuthorizeResult
     {
         return { kind: 'error', status, body: { [AuthorizeEndpoint.ErrorField]: error, [AuthorizeEndpoint.DescriptionField]: description } };
-    }
-
-    private static EscapeHtml(value: string): string
-    {
-        return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 }

@@ -286,14 +286,14 @@ resources ReleasePolicyResources {
             TextBlock [ Text = "Leave both unticked for no channel limit.", Style = @UiCaption, Foreground = @Fg2,
                         TextWrapping = Wrap, Margin = (0,0,0,12) ]
             TextBlock [ Text = "Minimum version (blank for none)", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            TextBox [ Text = $MinVersion, Placeholder = "e.g. 4.1.0", Margin = (0,0,0,12) ]
+            TextBox [ UsesNativeInput = true, Text = $MinVersion, Placeholder = "e.g. 4.1.0", Margin = (0,0,0,12) ]
             StackPanel [ Orientation = Horizontal, Margin = (0,0,0,8) ] {
                 Checkbox [ IsChecked = $IsHeld, VerticalAlignment = Center, Margin = (0,0,8,0) ]
                 TextBlock [ Text = "Hold all adoption (change freeze)", Foreground = @Fg0, VerticalAlignment = Center ]
             }
             StackPanel [ Orientation = Vertical, Visibility = $IsHeld << ToVisibility ] {
                 TextBlock [ Text = "Reason for the hold", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-                TextBox [ Text = $HoldReason, Margin = (0,0,0,12) ]
+                TextBox [ UsesNativeInput = true, Text = $HoldReason, Margin = (0,0,0,12) ]
             }
             TextBlock [ Text = "Hives receive the updated offers on their next check-in.", Style = @UiCaption,
                         Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,12) ]

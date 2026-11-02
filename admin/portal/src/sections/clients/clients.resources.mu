@@ -198,11 +198,11 @@ resources ClientsResources {
             TextBlock [ Text = "A client is the contracting organisation. Tenants and hives are added after.",
                         TextWrapping = Wrap, Foreground = @Fg2, Margin = (0,0,0,12) ]
             TextBlock [ Text = "Client id", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            TextBox [ Text = $Id, Placeholder = "e.g. tailspin", Margin = (0,0,0,12) ]
+            TextBox [ UsesNativeInput = true, Text = $Id, Placeholder = "e.g. tailspin", Margin = (0,0,0,12) ]
             TextBlock [ Text = "Display name", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            TextBox [ Text = $DisplayName, Placeholder = "e.g. Tailspin Holdings", Margin = (0,0,0,12) ]
+            TextBox [ UsesNativeInput = true, Text = $DisplayName, Placeholder = "e.g. Tailspin Holdings", Margin = (0,0,0,12) ]
             TextBlock [ Text = "Subscription reference (optional)", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            TextBox [ Text = $SubscriptionRef, Placeholder = "e.g. MSA-2026-014", Margin = (0,0,0,12) ]
+            TextBox [ UsesNativeInput = true, Text = $SubscriptionRef, Placeholder = "e.g. MSA-2026-014", Margin = (0,0,0,12) ]
             TextBlock [ Text = $ErrorText, Foreground = @StateDangerInk, TextWrapping = Wrap, Margin = (0,0,0,12),
                         Visibility = $ErrorText << ToVisibility ]
             StackPanel [ Orientation = Horizontal, HorizontalAlignment = Right ] {

@@ -18,11 +18,14 @@ jobs:
           printf '@pragmatic-tech-ai:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=${{ secrets.PACKAGES_TOKEN }}\n' > ~/.npmrc
       - name: Build siblings in dependency order
         run: |
-          for pkg in todl-runtime TODL pragmatic-protocol todl-identity todl-identity-local todl-identity-host todl-identity-cloud todl-identity-engine todl-connectors-host todl-platform-node todl-platform-cloud todl-identity-node pragmatic-server; do
+          for pkg in todl-runtime TODL Mural pragmatic-protocol todl-identity todl-identity-local todl-identity-host todl-identity-cloud todl-identity-engine todl-connectors-host todl-platform-node todl-platform-cloud todl-identity-node pragmatic-server; do
             (cd "../$pkg" && npm install --no-audit --no-fund && npm run build)
           done
       - name: Test
         run: cd ../pragmatic-server && npx tsx --test "src/**/*.test.ts"
+      - name: IdP sign-in app (unit tests + typecheck)
+        run: |
+          cd ../pragmatic-server/idp-login && npm install --no-audit --no-fund && npm test && npm run typecheck
       - name: Docker build
         run: |
           printf '@pragmatic-tech-ai:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=${{ secrets.PACKAGES_TOKEN }}\n' > "$RUNNER_TEMP/npmrc"

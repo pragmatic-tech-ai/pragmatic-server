@@ -327,9 +327,9 @@ resources HivesResources {
             ComboBox [ ItemsSource = $Tenants, SelectedItem = $SelectedTenant, Placeholder = "Choose tenant",
                        HorizontalAlignment = Stretch, Margin = (0,0,0,12) ]
             TextBlock [ Text = "Hive id", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            TextBox [ Text = $Id, Placeholder = "e.g. tailspin-hive", Margin = (0,0,0,12) ]
+            TextBox [ UsesNativeInput = true, Text = $Id, Placeholder = "e.g. tailspin-hive", Margin = (0,0,0,12) ]
             TextBlock [ Text = "Display name", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            TextBox [ Text = $DisplayName, Placeholder = "e.g. Tailspin hive", Margin = (0,0,0,12) ]
+            TextBox [ UsesNativeInput = true, Text = $DisplayName, Placeholder = "e.g. Tailspin hive", Margin = (0,0,0,12) ]
             Grid [ Margin = (0,0,0,12) ] {
                 ColumnDefinitions {
                     ColumnDefinition [ Width = GridLength.Star ]
@@ -345,15 +345,15 @@ resources HivesResources {
                 }
             }
             TextBlock [ Text = "Cluster config reference (optional)", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            TextBox [ Text = $ConfigRef, Margin = (0,0,0,12) ]
+            TextBox [ UsesNativeInput = true, Text = $ConfigRef, Margin = (0,0,0,12) ]
             TextBlock [ Text = "Registry mode", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
             ComboBox [ ItemsSource = $RegistryModes, SelectedItem = $SelectedRegistryMode, HorizontalAlignment = Stretch, Margin = (0,0,0,12) ]
             TextBlock [ Text = "Registry endpoint (optional)", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            TextBox [ Text = $Endpoint, Margin = (0,0,0,12) ]
+            TextBox [ UsesNativeInput = true, Text = $Endpoint, Margin = (0,0,0,12) ]
             TextBlock [ Text = "Registry credential reference (optional)", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            TextBox [ Text = $CredentialRef, Margin = (0,0,0,12) ]
+            TextBox [ UsesNativeInput = true, Text = $CredentialRef, Margin = (0,0,0,12) ]
             TextBlock [ Text = "Trust root reference (optional)", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            TextBox [ Text = $TrustRootRef, Margin = (0,0,0,12) ]
+            TextBox [ UsesNativeInput = true, Text = $TrustRootRef, Margin = (0,0,0,12) ]
             TextBlock [ Text = $ErrorText, Foreground = @StateDangerInk, TextWrapping = Wrap, Margin = (0,0,0,12),
                         Visibility = $ErrorText << ToVisibility ]
             StackPanel [ Orientation = Horizontal, HorizontalAlignment = Right ] {
@@ -435,11 +435,11 @@ resources HivesResources {
                         ComboBox [ ItemsSource = $Clients, SelectedItem = $SelectedClient, HorizontalAlignment = Stretch, Margin = (0,0,0,12) ]
                         StackPanel [ Orientation = Vertical, Visibility = $IsNewClient << ToVisibility ] {
                             TextBlock [ Text = "Client id", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-                            TextBox [ Text = $ClientId, Placeholder = "e.g. tailspin", Margin = (0,0,0,12) ]
+                            TextBox [ UsesNativeInput = true, Text = $ClientId, Placeholder = "e.g. tailspin", Margin = (0,0,0,12) ]
                             TextBlock [ Text = "Display name", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-                            TextBox [ Text = $ClientDisplayName, Placeholder = "e.g. Tailspin Toys", Margin = (0,0,0,12) ]
+                            TextBox [ UsesNativeInput = true, Text = $ClientDisplayName, Placeholder = "e.g. Tailspin Toys", Margin = (0,0,0,12) ]
                             TextBlock [ Text = "Subscription reference (optional)", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-                            TextBox [ Text = $SubscriptionRef ]
+                            TextBox [ UsesNativeInput = true, Text = $SubscriptionRef ]
                         }
                         TextBlock [ Text = $ErrorText, Foreground = @StateDangerInk, TextWrapping = Wrap, Margin = (0,12,0,0),
                                     Visibility = $ErrorText << ToVisibility ]
@@ -454,11 +454,11 @@ resources HivesResources {
                         ComboBox [ ItemsSource = $Tenants, SelectedItem = $SelectedTenant, HorizontalAlignment = Stretch, Margin = (0,0,0,12) ]
                         StackPanel [ Orientation = Vertical, Visibility = $IsNewTenant << ToVisibility ] {
                             TextBlock [ Text = "Tenant id", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-                            TextBox [ Text = $TenantId, Placeholder = "e.g. tailspin-prod", Margin = (0,0,0,12) ]
+                            TextBox [ UsesNativeInput = true, Text = $TenantId, Placeholder = "e.g. tailspin-prod", Margin = (0,0,0,12) ]
                             TextBlock [ Text = "Display name", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-                            TextBox [ Text = $TenantDisplayName, Placeholder = "e.g. Tailspin Production", Margin = (0,0,0,12) ]
+                            TextBox [ UsesNativeInput = true, Text = $TenantDisplayName, Placeholder = "e.g. Tailspin Production", Margin = (0,0,0,12) ]
                             TextBlock [ Text = "Owner email", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-                            TextBox [ Text = $OwnerEmail, Placeholder = "e.g. owner@tailspin.example" ]
+                            TextBox [ UsesNativeInput = true, InputPurpose = Email, Text = $OwnerEmail, Placeholder = "e.g. owner@tailspin.example" ]
                         }
                     }
 
@@ -468,9 +468,9 @@ resources HivesResources {
                         TextBlock [ Text = "References are names only; no secret value is entered here. Nothing is contacted.",
                                     Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,12) ]
                         TextBlock [ Text = "Hive id", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-                        TextBox [ Text = $HiveId, Placeholder = "e.g. tailspin-hive", Margin = (0,0,0,12) ]
+                        TextBox [ UsesNativeInput = true, Text = $HiveId, Placeholder = "e.g. tailspin-hive", Margin = (0,0,0,12) ]
                         TextBlock [ Text = "Display name", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-                        TextBox [ Text = $HiveDisplayName, Placeholder = "e.g. Tailspin hive", Margin = (0,0,0,12) ]
+                        TextBox [ UsesNativeInput = true, Text = $HiveDisplayName, Placeholder = "e.g. Tailspin hive", Margin = (0,0,0,12) ]
                         Grid [ Margin = (0,0,0,12) ] {
                             ColumnDefinitions {
                                 ColumnDefinition [ Width = GridLength.Star ]
@@ -486,15 +486,15 @@ resources HivesResources {
                             }
                         }
                         TextBlock [ Text = "Cluster config reference (optional)", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-                        TextBox [ Text = $ConfigRef, Margin = (0,0,0,12) ]
+                        TextBox [ UsesNativeInput = true, Text = $ConfigRef, Margin = (0,0,0,12) ]
                         TextBlock [ Text = "Registry mode", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
                         ComboBox [ ItemsSource = $RegistryModes, SelectedItem = $SelectedRegistryMode, HorizontalAlignment = Stretch, Margin = (0,0,0,12) ]
                         TextBlock [ Text = "Registry endpoint (optional)", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-                        TextBox [ Text = $Endpoint, Margin = (0,0,0,12) ]
+                        TextBox [ UsesNativeInput = true, Text = $Endpoint, Margin = (0,0,0,12) ]
                         TextBlock [ Text = "Registry credential reference (optional)", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-                        TextBox [ Text = $CredentialRef, Margin = (0,0,0,12) ]
+                        TextBox [ UsesNativeInput = true, Text = $CredentialRef, Margin = (0,0,0,12) ]
                         TextBlock [ Text = "Trust root reference (optional)", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-                        TextBox [ Text = $TrustRootRef ]
+                        TextBox [ UsesNativeInput = true, Text = $TrustRootRef ]
                     }
 
                     // Step 4: review, then stand it up.
