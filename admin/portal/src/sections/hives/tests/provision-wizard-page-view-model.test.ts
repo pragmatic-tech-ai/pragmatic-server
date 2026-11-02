@@ -1,0 +1,332 @@
+import { describe, it } from 'node:test'
+import assert from 'node:assert/strict'
+import { ApiError } from '../../../api-client.js'
+import { OperatorContext } from '../../../operator-context.js'
+import { FakeControlPlane, Inspect, PortalTestHost, TestRail, Tick } from '../../../shell/tests/portal-test-fixtures.js'
+import { TenantsPageViewModel } from '../../tenants/tenants-page-view-model.js'
+import { TenantsSectionService } from '../../tenants/tenants-section-service.js'
+import { HiveDetailPageViewModel } from '../hive-detail-page-view-model.js'
+import { HivesPageViewModel } from '../hives-page-view-model.js'
+import { HivesSectionService } from '../hives-section-service.js'
+import { ProvisionStep, ProvisionWizardPageViewModel } from '../provision-wizard-page-view-model.js'
+
+// The Hives and Tenants sections behind a real rail, over a fake control plane.
+class WizardFixture
+{
+    public readonly Api: FakeControlPlane
+    public readonly Host: PortalTestHost
+    public readonly Clipboard: string[]
+    public readonly Rail: TestRail
+
+    public constructor(wireRole: string = OperatorContext.FullWireRole)
+    {
+        this.Api = new FakeControlPlane()
+            .WithClient('acme', 'Acme')
+            .WithTenant('acme-prod', 'acme', 'Acme Production')
+            .WithHive('acme-hive', 'acme-prod')
+        this.Host = new PortalTestHost(this.Api.AsClient(), wireRole)
+        this.Host.UseDialogs()
+        this.Clipboard = this.Host.UseClipboard()
+        this.Host.Provider.register(HivesSectionService.Key, (p) => new HivesSectionService(p))
+        this.Host.Provider.register(TenantsSectionService.Key, (p) => new TenantsSectionService(p))
+        this.Rail = new TestRail(this.Host.Provider)
+        this.Rail.Add(HivesSectionService)
+        this.Rail.Add(TenantsSectionService)
+    }
+
+    public get Section(): HivesSectionService
+    {
+        return this.Host.Provider.getRequired(HivesSectionService.Key)
+    }
+
+    public get Content(): unknown
+    {
+        return this.Host.Host.Content
+    }
+
+    public async List(): Promise<HivesPageViewModel>
+    {
+        this.Rail.Select(HivesSectionService)
+        await Tick.Settle()
+        assert.ok(this.Content instanceof HivesPageViewModel)
+        return this.Content
+    }
+
+    // Opens the wizard from the hives list.
+    public async Wizard(): Promise<ProvisionWizardPageViewModel>
+    {
+        const list = await this.List()
+        list.StandUpCommand.Execute()
+        await Tick.Settle()
+        assert.ok(this.Content instanceof ProvisionWizardPageViewModel)
+        return this.Content
+    }
+
+    // Fills every step and stops on Review.
+    public async AtReview(): Promise<ProvisionWizardPageViewModel>
+    {
+        const wizard = await this.Wizard()
+        wizard.ClientId = 'initech'
+        wizard.ClientDisplayName = 'Initech'
+        wizard.NextCommand.Execute()
+        wizard.TenantId = 'initech-prod'
+        wizard.TenantDisplayName = 'Initech Production'
+        wizard.OwnerEmail = 'owner@initech.test'
+        wizard.NextCommand.Execute()
+        wizard.HiveId = 'initech-hive'
+        wizard.HiveDisplayName = 'Initech hive'
+        wizard.CredentialRef = 'registry-pull/initech'
+        wizard.NextCommand.Execute()
+        assert.equal(wizard.StepIndex, ProvisionStep.Review)
+        return wizard
+    }
+
+    // Provisions and stops on the Bootstrap reveal.
+    public async Revealed(): Promise<ProvisionWizardPageViewModel>
+    {
+        const wizard = await this.AtReview()
+        wizard.SubmitCommand.Execute()
+        await Tick.Settle()
+        assert.equal(wizard.StepIndex, ProvisionStep.Bootstrap)
+        return wizard
+    }
+}
+
+describe('Stand up a hive (provision wizard)', () =>
+{
+    it('Stand up a hive opens the wizard as a page of the Hives section', async () =>
+    {
+        const fx = new WizardFixture()
+        const wizard = await fx.Wizard()
+        assert.equal(fx.Section.Current, wizard)
+        assert.equal(wizard.StepIndex, ProvisionStep.Client)
+        assert.deepEqual(wizard.StepLabels, ['Client', 'Tenant', 'Hive', 'Review', 'Bootstrap'])
+        assert.deepEqual(wizard.Steps.ToArray().map(s => [s.Label, s.IsCurrent]), [
+            ['Client', true], ['Tenant', false], ['Hive', false], ['Review', false], ['Bootstrap', false],
+        ])
+    })
+
+    it('Next is disabled until the current step validates; Back steps back', async () =>
+    {
+        const fx = new WizardFixture()
+        const wizard = await fx.Wizard()
+        assert.equal(wizard.NextCommand.CanExecute(), false)
+        assert.equal(wizard.BackStepCommand.CanExecute(), false)
+        wizard.ClientId = 'initech'
+        assert.equal(wizard.NextCommand.CanExecute(), false)
+        wizard.ClientDisplayName = '   '
+        assert.equal(wizard.NextCommand.CanExecute(), false)
+        wizard.ClientDisplayName = 'Initech'
+        assert.equal(wizard.NextCommand.CanExecute(), true)
+        wizard.NextCommand.Execute()
+        assert.equal(wizard.StepIndex, ProvisionStep.Tenant)
+        assert.equal(wizard.IsTenantStep, true)
+        assert.equal(wizard.Steps.Get(1)?.IsCurrent, true)
+        assert.equal(wizard.NextCommand.CanExecute(), false)
+        wizard.NextCommand.Execute()
+        assert.equal(wizard.StepIndex, ProvisionStep.Tenant)
+        wizard.TenantId = 'initech-prod'
+        wizard.TenantDisplayName = 'Initech Production'
+        assert.equal(wizard.NextCommand.CanExecute(), false)
+        wizard.OwnerEmail = 'owner@initech.test'
+        assert.equal(wizard.NextCommand.CanExecute(), true)
+        assert.equal(wizard.BackStepCommand.CanExecute(), true)
+        wizard.BackStepCommand.Execute()
+        assert.equal(wizard.StepIndex, ProvisionStep.Client)
+        assert.equal(wizard.ClientId, 'initech')
+    })
+
+    it('Submit is offered on Review only, and the review summarises the input', async () =>
+    {
+        const wizard = await new WizardFixture().Wizard()
+        assert.equal(wizard.SubmitCommand.CanExecute(), false)
+        const atReview = await new WizardFixture().AtReview()
+        assert.equal(atReview.NextCommand.CanExecute(), false)
+        assert.equal(atReview.SubmitCommand.CanExecute(), true)
+        assert.equal(atReview.ClusterSummary, 'Local / Attach existing')
+        assert.equal(atReview.RegistrySummary, 'Attach existing')
+    })
+
+    it('Submit calls Provision once even when executed twice while in flight', async () =>
+    {
+        const fx = new WizardFixture()
+        const wizard = await fx.AtReview()
+        fx.Api.HoldCreates()
+        wizard.SubmitCommand.Execute()
+        wizard.SubmitCommand.Execute()
+        await Tick.Settle()
+        assert.equal(wizard.IsSubmitting, true)
+        assert.equal(wizard.SubmitCommand.CanExecute(), false)
+        assert.equal(wizard.BackStepCommand.CanExecute(), false)
+        fx.Api.Release()
+        await Tick.Settle()
+        assert.equal(fx.Api.ProvisionCalls, 1)
+        assert.equal(wizard.IsSubmitting, false)
+        assert.deepEqual(fx.Api.Provisioned, [{
+            client: { id: 'initech', displayName: 'Initech' },
+            tenant: { id: 'initech-prod', displayName: 'Initech Production', ownerEmail: 'owner@initech.test' },
+            hive: {
+                id: 'initech-hive', displayName: 'Initech hive',
+                cluster: { backend: 'local', mode: 'attach' },
+                registry: { mode: 'attach', credentialRef: 'registry-pull/initech' },
+            },
+        }])
+    })
+
+    it('on success the Bootstrap step holds both one-time values and Finish waits for both saved flags', async () =>
+    {
+        const fx = new WizardFixture()
+        const wizard = await fx.Revealed()
+        assert.equal(wizard.IsBootstrapStep, true)
+        assert.equal(wizard.ProvisionedHiveId, 'initech-hive')
+        assert.equal(wizard.OwnerPassword, fx.Api.OwnerPassword)
+        assert.equal(wizard.AgentToken, fx.Api.AgentToken)
+        assert.equal(wizard.BackStepCommand.CanExecute(), false)
+        assert.equal(wizard.CancelCommand.CanExecute(), false)
+        assert.equal(wizard.SubmitCommand.CanExecute(), false)
+        assert.equal(wizard.FinishCommand.CanExecute(), false)
+        wizard.OwnerSaved = true
+        assert.equal(wizard.FinishCommand.CanExecute(), false)
+        wizard.FinishCommand.Execute()
+        assert.equal(fx.Content, wizard)
+        assert.equal(wizard.OwnerPassword, fx.Api.OwnerPassword)
+        wizard.OwnerSaved = false
+        wizard.AgentSaved = true
+        assert.equal(wizard.FinishCommand.CanExecute(), false)
+        wizard.OwnerSaved = true
+        assert.equal(wizard.FinishCommand.CanExecute(), true)
+    })
+
+    it('each one-time value copies to the clipboard', async () =>
+    {
+        const fx = new WizardFixture()
+        const wizard = await fx.Revealed()
+        wizard.CopyOwnerPasswordCommand.Execute()
+        wizard.CopyAgentTokenCommand.Execute()
+        await Tick.Settle()
+        assert.deepEqual(fx.Clipboard, [fx.Api.OwnerPassword, fx.Api.AgentToken])
+        assert.equal(wizard.CopyStatus, 'Copied.')
+    })
+
+    it('Finish clears both values and presents the new hive; Back then shows a fresh list', async () =>
+    {
+        const fx = new WizardFixture()
+        const wizard = await fx.Revealed()
+        wizard.OwnerSaved = true
+        wizard.AgentSaved = true
+        wizard.FinishCommand.Execute()
+        await Tick.Settle()
+        assert.equal(wizard.OwnerPassword, '')
+        assert.equal(wizard.AgentToken, '')
+        // Everything the wizard holds, short of the fake control plane itself
+        // (which keeps the fixture's values) and the services leading to it.
+        const reachable = Inspect.ReachableStrings(wizard, [fx.Api, fx.Section, fx.Host.Session])
+        assert.ok(reachable.includes('initech-hive'))
+        assert.equal(reachable.includes(fx.Api.OwnerPassword), false)
+        assert.equal(reachable.includes(fx.Api.AgentToken), false)
+        const detail = fx.Content
+        assert.ok(detail instanceof HiveDetailPageViewModel)
+        assert.equal(fx.Section.Current, detail)
+        assert.equal(detail.Id, 'initech-hive')
+        detail.BackCommand.Execute()
+        await Tick.Settle()
+        const list = fx.Content
+        assert.ok(list instanceof HivesPageViewModel)
+        assert.deepEqual(list.Rows.ToArray().map(r => r.Id).sort(), ['acme-hive', 'initech-hive'])
+        assert.equal(fx.Section.BackCommand.CanExecute(), false)
+    })
+
+    it('a provision error keeps the operator on Review with ErrorText set and no value revealed', async () =>
+    {
+        const fx = new WizardFixture()
+        const wizard = await fx.AtReview()
+        fx.Api.Failure = new ApiError(409, 'client initech already exists', { rolledBack: ['tenant initech-prod'], residue: ['hive initech-hive'] })
+        wizard.SubmitCommand.Execute()
+        await Tick.Settle()
+        assert.equal(wizard.StepIndex, ProvisionStep.Review)
+        assert.match(wizard.ErrorText, /client initech already exists/)
+        assert.match(wizard.ErrorText, /Rolled back: tenant initech-prod/)
+        assert.match(wizard.ErrorText, /hive initech-hive/)
+        assert.equal(wizard.OwnerPassword, '')
+        assert.equal(wizard.AgentToken, '')
+        assert.equal(wizard.SubmitCommand.CanExecute(), true)
+        fx.Api.Failure = undefined
+        wizard.SubmitCommand.Execute()
+        await Tick.Settle()
+        assert.equal(wizard.ErrorText, '')
+        assert.equal(wizard.StepIndex, ProvisionStep.Bootstrap)
+    })
+
+    it('a 401 from Provision expires the session', async () =>
+    {
+        const fx = new WizardFixture()
+        const wizard = await fx.AtReview()
+        fx.Api.Failure = new ApiError(ApiError.UnauthorizedStatus, 'unauthorized')
+        wizard.SubmitCommand.Execute()
+        await Tick.Settle()
+        assert.equal(fx.Host.Reloader.Count, 1)
+    })
+
+    it('leaving through the rail before Finish keeps the wizard and its reveal as the current page', async () =>
+    {
+        const fx = new WizardFixture()
+        const wizard = await fx.Revealed()
+        fx.Rail.Select(TenantsSectionService)
+        await Tick.Settle()
+        assert.ok(fx.Content instanceof TenantsPageViewModel)
+        fx.Rail.Select(HivesSectionService)
+        assert.equal(fx.Content, wizard)
+        assert.equal(wizard.StepIndex, ProvisionStep.Bootstrap)
+        assert.equal(wizard.OwnerPassword, fx.Api.OwnerPassword)
+        assert.equal(wizard.AgentToken, fx.Api.AgentToken)
+    })
+
+    it('a live-update refresh keeps the wizard on its step with its values', async () =>
+    {
+        const fx = new WizardFixture()
+        const wizard = await fx.Revealed()
+        await fx.Section.RefreshCurrent()
+        assert.equal(fx.Content, wizard)
+        assert.equal(wizard.StepIndex, ProvisionStep.Bootstrap)
+        assert.equal(wizard.AgentToken, fx.Api.AgentToken)
+    })
+
+    it('Cancel returns to the hives list before anything is provisioned', async () =>
+    {
+        const fx = new WizardFixture()
+        const wizard = await fx.Wizard()
+        wizard.ClientId = 'initech'
+        assert.equal(wizard.CancelCommand.CanExecute(), true)
+        wizard.CancelCommand.Execute()
+        await Tick.Settle()
+        assert.ok(fx.Content instanceof HivesPageViewModel)
+        assert.equal(fx.Api.ProvisionCalls, 0)
+    })
+
+    it('Observer: Stand up a hive and Submit are disabled and never provision', async () =>
+    {
+        const fx = new WizardFixture(OperatorContext.ReadOnlyWireRole)
+        const list = await fx.List()
+        assert.equal(list.StandUpCommand.CanExecute(), false)
+        list.StandUpCommand.Execute()
+        await Tick.Settle()
+        assert.equal(fx.Content, list)
+        const wizard = new ProvisionWizardPageViewModel(fx.Host.Session, fx.Section)
+        assert.notEqual(wizard.DeniedReason, '')
+        wizard.ClientId = 'initech'
+        wizard.ClientDisplayName = 'Initech'
+        wizard.NextCommand.Execute()
+        wizard.TenantId = 'initech-prod'
+        wizard.TenantDisplayName = 'Initech Production'
+        wizard.OwnerEmail = 'owner@initech.test'
+        wizard.NextCommand.Execute()
+        wizard.HiveId = 'initech-hive'
+        wizard.HiveDisplayName = 'Initech hive'
+        wizard.NextCommand.Execute()
+        assert.equal(wizard.StepIndex, ProvisionStep.Review)
+        assert.equal(wizard.SubmitCommand.CanExecute(), false)
+        wizard.SubmitCommand.Execute()
+        await Tick.Settle()
+        assert.equal(fx.Api.ProvisionCalls, 0)
+    })
+})

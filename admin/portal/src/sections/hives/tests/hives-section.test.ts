@@ -162,11 +162,11 @@ describe('Hives section', () =>
         assert.equal(list.State, PageState.Empty)
     })
 
-    it('Stand up a hive is disabled until the provision wizard arrives', async () =>
+    it('Stand up a hive is enabled for a Full operator', async () =>
     {
         const fx = new HivesFixture()
         const list = await fx.List()
-        assert.equal(list.StandUpCommand.CanExecute(), false)
+        assert.equal(list.StandUpCommand.CanExecute(), true)
     })
 
     it('Observer: New, Stand up and Delete are disabled and never open a dialog', async () =>

@@ -6,7 +6,7 @@ import { DialogService, type DialogOptions } from '@pragmatic-tech-ai/mural/fram
 import { NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
 import { ApiError, type ControlPlaneClient } from '../../api-client.js'
 import { OperatorContext } from '../../operator-context.js'
-import type { ActivityDto, ClientDto, CreatedTenantDto, FleetHiveDto, GatingDto, HiveDto, HiveRolloutDto, LedgerDto, ManifestDto, ObservationDto, OperatorSummaryDto, PolicyDto, SelectionDto, TenantDto } from '../../portal-types.js'
+import type { ActivityDto, ClientDto, CreatedTenantDto, FleetHiveDto, GatingDto, HiveDto, HiveRolloutDto, LedgerDto, ManifestDto, ObservationDto, OperatorSummaryDto, PolicyDto, ProvisionInputDto, ProvisionResultDto, SelectionDto, TenantDto } from '../../portal-types.js'
 import type { IPageReloader } from '../page-reloader.js'
 import { PortalSessionService } from '../portal-session-service.js'
 
@@ -63,11 +63,12 @@ export class Inspect
 
     // Every string reachable from a view-model: its exposed properties, and,
     // recursively, the properties of any plain object or view-model they hold
-    // (functions and already-visited objects are skipped).
-    public static ReachableStrings(target: object): string[]
+    // (functions and already-visited objects are skipped). Objects in `skip`
+    // (e.g. a fake control plane holding fixture values) are not visited.
+    public static ReachableStrings(target: object, skip: object[] = []): string[]
     {
         const found: string[] = []
-        const seen = new Set<object>()
+        const seen = new Set<object>(skip)
         const visit = (value: unknown): void =>
         {
             if (typeof value === 'string')
@@ -159,6 +160,9 @@ export class FakeControlPlane
     public Selections: SelectionDto[] = []
     public OwnerPassword = 'fixture-owner-password'
     public ResetPassword = 'fixture-reset-password'
+    public AgentToken = 'fixture-agent-token'
+    public ProvisionCalls = 0
+    public readonly Provisioned: ProvisionInputDto[] = []
     public Failure: Error | undefined
     // The control plane serves the operator roster to Full operators only.
     public DenyOperators = false
@@ -491,6 +495,33 @@ export class FakeControlPlane
         await this.createGate
         this.ThrowIfFailing()
         this.CreatedHives.push(input)
+        this.AddHive(input)
+        return input
+    }
+
+    // Stands up a client, its tenant and the tenant's hive in one call, as
+    // the control plane's provision route does; answers the one-time Owner
+    // password and agent token. Held by HoldCreates, failed by Failure.
+    public async Provision(input: ProvisionInputDto): Promise<ProvisionResultDto>
+    {
+        this.ProvisionCalls++
+        await this.createGate
+        this.ThrowIfFailing()
+        this.Provisioned.push(input)
+        const client: ClientDto = { ...input.client, createdAt: '2026-10-25T00:00:00.000Z' }
+        this.Clients.push(client)
+        const tenant: TenantDto = { id: input.tenant.id, clientId: client.id, displayName: input.tenant.displayName }
+        this.Tenants.push(tenant)
+        const hive: HiveDto = { ...input.hive, tenantId: tenant.id }
+        this.AddHive(hive)
+        return {
+            client, tenant, hive,
+            secrets: { ownerEmail: input.tenant.ownerEmail, ownerPassword: this.OwnerPassword, agentToken: this.AgentToken },
+        }
+    }
+
+    private AddHive(input: HiveDto): void
+    {
         this.Hives.push(input)
         const tenant = this.Tenants.find(t => t.id === input.tenantId)
         const client = tenant === undefined ? undefined : this.Clients.find(c => c.id === tenant.clientId)
@@ -504,7 +535,6 @@ export class FakeControlPlane
             lastSeen: null,
             environments: [],
         })
-        return input
     }
 
     public async DeleteClient(id: string): Promise<void>

@@ -90,11 +90,10 @@ export class HiveRowViewModel extends Observable
 }
 
 // The Hives list. New hive registers a hive record through a dialog; Stand up
-// a hive (the provision wizard) arrives with Task 5 and is disabled until then.
+// a hive opens the provision wizard page.
 export class HivesPageViewModel extends PortalPageViewModel
 {
     private static readonly NewHiveTitle = 'Create hive'
-    private static readonly StandUpAvailable = false
 
     private readonly rows = new ObservableCollection<HiveRowViewModel>()
     private readonly openCommand: RelayCommand
@@ -106,7 +105,7 @@ export class HivesPageViewModel extends PortalPageViewModel
         super(session)
         this.openCommand = new RelayCommand(row => this.Open(row))
         this.newCommand = this.MutatingCommand(() => this.CreateHive())
-        this.standUpCommand = this.MutatingCommand(() => Promise.resolve(), () => HivesPageViewModel.StandUpAvailable)
+        this.standUpCommand = this.MutatingCommand(() => this.StandUp())
     }
 
     public get Rows(): ObservableCollection<HiveRowViewModel>
@@ -153,6 +152,12 @@ export class HivesPageViewModel extends PortalPageViewModel
         {
             this.section.OpenHive(row.Id)
         }
+    }
+
+    private StandUp(): Promise<void>
+    {
+        this.section.StandUp()
+        return Promise.resolve()
     }
 
     private CreateHive(): Promise<void>

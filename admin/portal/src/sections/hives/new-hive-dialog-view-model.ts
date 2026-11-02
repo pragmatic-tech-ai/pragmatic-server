@@ -4,26 +4,13 @@ import type { HiveClusterBackend, HiveDto, HiveProvisionMode } from '../../porta
 import { OptionViewModel } from '../../shell/option-view-model.js'
 import { PortalDialogViewModel } from '../../shell/portal-dialog-view-model.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
+import { HiveOptions } from './hive-options.js'
 
 // Create hive: registers a hive record for a tenant that has none yet (one
 // tenant, one hive). Cluster and registry settings take reference NAMES only;
 // no secret value is entered here.
 export class NewHiveDialogViewModel extends PortalDialogViewModel<HiveDto>
 {
-    private static readonly AksBackend: HiveClusterBackend = 'aks'
-    private static readonly EksBackend: HiveClusterBackend = 'eks'
-    private static readonly GkeBackend: HiveClusterBackend = 'gke'
-    private static readonly PrivateBackend: HiveClusterBackend = 'private'
-    private static readonly LocalBackend: HiveClusterBackend = 'local'
-    private static readonly ProvisionMode: HiveProvisionMode = 'provision'
-    private static readonly AttachMode: HiveProvisionMode = 'attach'
-    private static readonly AksLabel = 'AKS (Azure)'
-    private static readonly EksLabel = 'EKS (AWS)'
-    private static readonly GkeLabel = 'GKE (Google Cloud)'
-    private static readonly PrivateLabel = 'Private cluster'
-    private static readonly LocalLabel = 'Local'
-    private static readonly ProvisionLabel = 'Provision'
-    private static readonly AttachLabel = 'Attach existing'
     private static readonly SelectedTenantProperty = 'SelectedTenant'
     private static readonly HasNoFreeTenantProperty = 'HasNoFreeTenant'
     private static readonly IdProperty = 'Id'
@@ -56,16 +43,9 @@ export class NewHiveDialogViewModel extends PortalDialogViewModel<HiveDto>
     public constructor(session: PortalSessionService, dialogs: DialogService)
     {
         super(session, dialogs)
-        const C = NewHiveDialogViewModel
-        this.backends.Add(new OptionViewModel(C.LocalBackend, C.LocalLabel))
-        this.backends.Add(new OptionViewModel(C.AksBackend, C.AksLabel))
-        this.backends.Add(new OptionViewModel(C.EksBackend, C.EksLabel))
-        this.backends.Add(new OptionViewModel(C.GkeBackend, C.GkeLabel))
-        this.backends.Add(new OptionViewModel(C.PrivateBackend, C.PrivateLabel))
-        this.clusterModes.Add(new OptionViewModel(C.AttachMode, C.AttachLabel))
-        this.clusterModes.Add(new OptionViewModel(C.ProvisionMode, C.ProvisionLabel))
-        this.registryModes.Add(new OptionViewModel(C.AttachMode, C.AttachLabel))
-        this.registryModes.Add(new OptionViewModel(C.ProvisionMode, C.ProvisionLabel))
+        HiveOptions.Backends().forEach(o => this.backends.Add(o))
+        HiveOptions.Modes().forEach(o => this.clusterModes.Add(o))
+        HiveOptions.Modes().forEach(o => this.registryModes.Add(o))
         this.selectedBackend = this.backends.Get(0)
         this.selectedClusterMode = this.clusterModes.Get(0)
         this.selectedRegistryMode = this.registryModes.Get(0)
