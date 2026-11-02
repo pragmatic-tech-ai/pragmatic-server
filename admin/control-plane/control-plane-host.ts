@@ -43,6 +43,7 @@ import {
 } from './platform-directory.js'
 import { HivePlacementError } from './hive-placement-error.js'
 import { HiveBootstrapBundle } from './hive-bootstrap-bundle.js'
+import { AgentInstallInProgressError, AgentInstallUnavailableError, type HiveAgentInstaller, type InstallStatus } from './hive-agent-installer.js'
 import { HiveBackend, InfraMode, InvalidRecordIdError } from './platform-records.js'
 import { PlaneHttp } from './plane-http.js'
 import { ProvisioningOrchestrator, ProvisionFailedError } from './provisioning-orchestrator.js'
@@ -235,6 +236,10 @@ export class ControlPlaneHost
     private static readonly HiveBootstrapPathPattern = new RegExp(
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/([^/]+)/' + ControlPlaneHost.BootstrapSegment + '$')
     private static readonly AgentChannelOffMessage = 'The agent channel is not configured: start the control plane with PRAGMATIC_AGENT_CHANNEL_PORT so hives can dial home.'
+    private static readonly AgentInstallSegment = 'agent-install'
+    private static readonly HiveAgentInstallPathPattern = new RegExp(
+        '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/([^/]+)/' + ControlPlaneHost.AgentInstallSegment + '$')
+    private static readonly AutoInstallOffMessage = 'Automatic install is not available on this control plane. Install the agent manually.'
     private static readonly HiveObservationsPathPattern = new RegExp(
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/([^/]+)/' + ControlPlaneHost.ObservationsSegment + '$')
     private static readonly ManifestsSegment = 'manifests'
@@ -327,6 +332,7 @@ export class ControlPlaneHost
     private static readonly ChangedType = 'environments-changed'
     private static readonly MaxBodyBytes = 4096
     private static readonly StatusCreated = 201
+    private static readonly StatusAccepted = 202
     private static readonly StatusBadRequest = 400
     private static readonly StatusConflict = 409
     private static readonly StatusTooLarge = 413
@@ -379,6 +385,8 @@ export class ControlPlaneHost
         [ManifestExistsError, ControlPlaneHost.StatusConflict],
         [HiveNotRegisteredError, PlaneHttp.StatusNotFound],
         [UnknownHiveError, PlaneHttp.StatusNotFound],
+        [AgentInstallUnavailableError, ControlPlaneHost.StatusConflict],
+        [AgentInstallInProgressError, ControlPlaneHost.StatusConflict],
     ])
 
     private httpServer: HttpServer | undefined
@@ -411,7 +419,9 @@ export class ControlPlaneHost
         private readonly auditThrottle?: AuditThrottle,
         private readonly idp?: IIdpService,
         /** The pod-visible agent channel URL a hive's bootstrap points its agent at; undefined while the channel is off. */
-        private readonly agentChannelUrl?: string)
+        private readonly agentChannelUrl?: string,
+        /** Installs a Local hive's agent from the control plane itself; undefined disables the automatic path. */
+        private readonly agentInstaller?: HiveAgentInstaller)
     {
         this.allowedHosts = new Set([...ControlPlaneHost.DefaultAllowedHosts, ...allowedHosts.map(h => h.toLowerCase())])
         this.staticRootAbs = resolve(staticRoot)
@@ -940,6 +950,11 @@ export class ControlPlaneHost
         {
             return this.RouteHiveBootstrap(res, method, hbm)
         }
+        const him = ControlPlaneHost.HiveAgentInstallPathPattern.exec(path)
+        if (him !== null)
+        {
+            return this.RouteHiveAgentInstall(res, method, him)
+        }
         const plm = ControlPlaneHost.PlatformPathPattern.exec(path)
         if (plm !== null)
         {
@@ -1117,8 +1132,53 @@ export class ControlPlaneHost
             PlaneHttp.WriteJson(res, ControlPlaneHost.StatusConflict, { error: ControlPlaneHost.AgentChannelOffMessage })
             return true
         }
-        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, HiveBootstrapBundle.For(id, this.agentChannelUrl))
+        const hive = this.directory.GetHive(id)
+        const autoInstall = hive !== undefined && this.agentInstaller !== undefined && this.agentInstaller.Supports(hive)
+        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, HiveBootstrapBundle.For(id, this.agentChannelUrl, autoInstall))
         return true
+    }
+
+    /**
+     * Serves /api/hives/ID/agent-install: POST starts the automatic agent install (202 + its first status; 409 when it
+     * cannot run or one is already running), GET reads the latest install's status (404 when none has run). Neither
+     * response ever carries the agent token. False for any other method.
+     */
+    private RouteHiveAgentInstall(res: ServerResponse, method: string, m: RegExpExecArray): boolean
+    {
+        if (method !== PlaneHttp.MethodGet && method !== PlaneHttp.MethodPost)
+        {
+            return false
+        }
+        const id = this.KnownHiveId(res, m)
+        if (id === undefined)
+        {
+            return true
+        }
+        const installer = this.agentInstaller
+        if (method === PlaneHttp.MethodGet)
+        {
+            const status = installer?.StatusFor(id)
+            if (status === undefined)
+            {
+                PlaneHttp.WriteNotFound(res)
+                return true
+            }
+            this.WriteInstallStatus(res, PlaneHttp.StatusOk, status)
+            return true
+        }
+        if (installer === undefined)
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusConflict, { error: ControlPlaneHost.AutoInstallOffMessage })
+            return true
+        }
+        this.WriteInstallStatus(res, ControlPlaneHost.StatusAccepted, installer.Start(id))
+        return true
+    }
+
+    private WriteInstallStatus(res: ServerResponse, status: number, body: InstallStatus): void
+    {
+        res.setHeader(ControlPlaneHost.CacheControlHeader, ControlPlaneHost.NoStore)
+        PlaneHttp.WriteJson(res, status, body)
     }
 
     /** Serves GET /api/hives/ID/health: live workload health for each environment bound to the hive; false for any other method. */

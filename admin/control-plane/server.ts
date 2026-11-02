@@ -16,6 +16,7 @@ import { GatingRegistry } from './gating-record.js'
 import { SelectionRegistry } from './selection-record.js'
 import { AgentChannelHost } from './agent-channel-host.js'
 import { HiveObservationRegistry } from './hive-observation-record.js'
+import { HiveAgentInstaller } from './hive-agent-installer.js'
 import { RolloutRegistrationRegistry } from './rollout-registration-record.js'
 import { ReleasePolicyRegistry } from './release-policy-record.js'
 import { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
@@ -198,7 +199,9 @@ export class ControlPlaneServer
         {
             console.warn(ControlPlaneServer.AgentChannelUrlInvalidWarning + String(agentChannelUrlRaw))
         }
-        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations, new LoginThrottle(), opts.trustedProxy, undefined, undefined, undefined, opts.allowedHosts, new OperatorAuthorization(), audit, new AuditThrottle(), idpService, agentChannelUrl)
+        // Installs a Local hive's agent through the same cluster access the orchestrators already hold; off with the channel.
+        const agentInstaller = new HiveAgentInstaller(directory, orchestrators, deployments, observations, agentChannelUrl)
+        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations, new LoginThrottle(), opts.trustedProxy, undefined, undefined, undefined, opts.allowedHosts, new OperatorAuthorization(), audit, new AuditThrottle(), idpService, agentChannelUrl, agentInstaller)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
         const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie, service, new InProcessRolloutClient(deployments), orchestrators, placement,
             masterKey, adminClientRegistry, ControlPlaneServer.ParseSecretTtlHours(process.env[ControlPlaneServer.SecretTtlEnvVar]))
