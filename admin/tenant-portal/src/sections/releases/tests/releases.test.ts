@@ -246,6 +246,18 @@ describe('ReleasesPageViewModel', () =>
 
 describe('ReleasesSectionService.OpenAdopt', () =>
 {
+    it('selects nothing and says why when the requested version is no longer offered (never a silent rollback)', async () =>
+    {
+        const f = new Fixture(Fixture.StandardApi())
+        const wizard = await f.OpenWizard('1')
+        assert.equal(wizard.SelectedVersion, undefined)
+        assert.equal(wizard.UnofferedText, 'Version 1 is no longer offered. Choose another version.')
+        assert.equal(wizard.NextCommand.CanExecute(), false)
+        wizard.SelectedVersion = wizard.Versions.ToArray()[0]
+        assert.equal(wizard.UnofferedText, '')
+        assert.equal(wizard.NextCommand.CanExecute(), true)
+    })
+
     it('brings Releases to the front on the wizard with the version preselected', async () =>
     {
         const api = Fixture.StandardApi().WithManifest('4', 'reg/app:4')
