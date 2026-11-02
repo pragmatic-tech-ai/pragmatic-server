@@ -94,7 +94,7 @@
 - `abstract class PortalPageViewModel extends Observable`:
   - Constructor `(session: PortalSessionService)`.
   - `State: PageState`, `ErrorText: string`.
-  - `Refresh(): Promise<void>` sets Loading, awaits `protected abstract LoadCore(): Promise<boolean>` (true = has content → Populated, false → Empty), and catches errors.
+  - `Refresh(): Promise<void>` sets Loading, awaits `protected abstract LoadCore(): Promise<boolean>` (true = has content -> Populated, false -> Empty), and catches errors.
   - On a caught `ApiError` with `Status === ApiError.UnauthorizedStatus` it calls `session.Expire()`; otherwise it sets `Error` and `ErrorText`.
   - `protected Guard(action: () => Promise<void>): Promise<void>` applies the same 401/error handling to commands.
 - `abstract class PortalSectionService extends ServiceBase implements IActivatable` (no Key):
@@ -118,13 +118,13 @@
     - `Present(detail)`, then a different section's `OnActivated`, then this section's `OnActivated` again: Content is `detail` (Review Focus 1).
     - `Back()` from detail returns Content to the root. `Back()` at the root leaves it.
     - Page base:
-      - `LoadCore` returning false → `State === PageState.Empty`.
-      - `LoadCore` throwing `new ApiError(401, ...)` → the fake reloader's count is 1. Calling `Expire()` again keeps it at 1.
-      - A non-401 throw → `State === PageState.Error` and `ErrorText` equals the error message.
+      - `LoadCore` returning false -> `State === PageState.Empty`.
+      - `LoadCore` throwing `new ApiError(401, ...)` -> the fake reloader's count is 1. Calling `Expire()` again keeps it at 1.
+      - A non-401 throw -> `State === PageState.Error` and `ErrorText` equals the error message.
     - Session:
-      - `CanMutate` false → `DeniedReason !== ''` and `ReadOnlyNotice !== ''`.
-      - `CanMutate` true → both `''`.
-      - `LogoutCommand.Execute()` → the fake client's logout was called and the reloader fired once.
+      - `CanMutate` false -> `DeniedReason !== ''` and `ReadOnlyNotice !== ''`.
+      - `CanMutate` true -> both `''`.
+      - `LogoutCommand.Execute()` -> the fake client's logout was called and the reloader fired once.
     - Navigation: the subclass with two fake capabilities selects the first. After `SelectedItem` changes and after `onDestinationActivated` is invoked twice on the same destination, `SidePaneVisible === false`.
 - [ ] **Step 2: Run the tests; they fail.** Run `npm --prefix admin/portal test`. Expected: FAIL on missing modules.
 - [ ] **Step 3: Implement the shell classes to the interfaces above.**
@@ -132,7 +132,7 @@
   - In `package.json`, add `"compile:mu": "node scripts/compile-mu.mjs"` and make `dev`, `build`, `test` and `typecheck` run it first (prefix the commands or use `pre*` scripts).
   - `mu-modules.d.ts` declares `module '*.mu.js'` with `export const app: Application` (the type from `@pragmatic-tech-ai/mural/runtime`) and a default export of `unknown`.
 - [ ] **Step 4: Fleet section.**
-  - `fleet-page-view-model.test.ts` with a fake client returning two hives (one needing attention) asserts: State Populated, the summary count values, the needs-attention list length 1, and rows length 2. An empty fleet → State Empty.
+  - `fleet-page-view-model.test.ts` with a fake client returning two hives (one needing attention) asserts: State Populated, the summary count values, the needs-attention list length 1, and rows length 2. An empty fleet -> State Empty.
   - Implement `FleetPageViewModel` and `FleetSectionService`.
   - `fleet.module.mu`: `shell module FleetModule [ Name = "Fleet" ] { .services: { FleetSectionService } Capability [ Name = "Fleet", ServiceKey = FleetSectionService ] resources: { merge FleetResources } }`.
   - `fleet.resources.mu` provides:
@@ -165,7 +165,7 @@
 **Interfaces:**
 - Consumes (Task 1): `PortalSessionService`, `PortalSectionService.RefreshCurrent`, `PortalNavigationService.ActiveService`, `IPageReloader`.
 - Produces:
-  - `class LoginPageViewModel extends Observable`. Constructor `(client: ControlPlaneClient, reloader: IPageReloader)`. Members: `Email`, `Password`, `ErrorText`, `IsBusy`, `LoginCommand`. On success → `reloader.Reload()`. On failure → `ErrorText` = the error message, and the Password is cleared.
+  - `class LoginPageViewModel extends Observable`. Constructor `(client: ControlPlaneClient, reloader: IPageReloader)`. Members: `Email`, `Password`, `ErrorText`, `IsBusy`, `LoginCommand`. On success -> `reloader.Reload()`. On failure -> `ErrorText` = the error message, and the Password is cleared.
   - `class LoginHostService extends ServiceBase`, Key `'LoginHostService'`, exposing `Page: LoginPageViewModel` (constructed with a `new ControlPlaneClient()` and a `BrowserPageReloader`). `login.mu`'s root binds `DataContext = $service(LoginHostService).Page`.
   - `class LiveUpdateBridge`. Constructor `(nav: NavigationService)`. `OnChanged(): Promise<void>` calls `RefreshCurrent()` on `nav.ActiveService` when it is a `PortalSectionService`.
   - `class PortalBoot`, with static `Run(): Promise<void>` in `main.ts`, replacing `PortalMain`:
@@ -176,17 +176,17 @@
 
 - [ ] **Step 1: Failing tests.**
   - Login VM:
-    - Successful fake login → reloader count 1.
-    - Failing login → `ErrorText` is the error message, Password is `''`, reloader count 0.
+    - Successful fake login -> reloader count 1.
+    - Failing login -> `ErrorText` is the error message, Password is `''`, reloader count 0.
     - `LoginCommand.CanExecute()` is false while `IsBusy` or while Email/Password is empty.
-  - Bridge: the active service is a test `PortalSectionService` whose current page is a detail page VM. `OnChanged()` → that detail page's refresh count +1, an inactive section's page count unchanged, and Content still the detail page (Review Focus 5).
-  - Boot: make the session-probe decision a static method `PortalBoot.Decide(probe: () => Promise<unknown>): Promise<BootTarget>` with `enum BootTarget { Login, Shell }`. Assert a 401 probe → `Login`, a success → `Shell`, and a 500 rethrows.
+  - Bridge: the active service is a test `PortalSectionService` whose current page is a detail page VM. `OnChanged()` -> that detail page's refresh count +1, an inactive section's page count unchanged, and Content still the detail page (Review Focus 5).
+  - Boot: make the session-probe decision a static method `PortalBoot.Decide(probe: () => Promise<unknown>): Promise<BootTarget>` with `enum BootTarget { Login, Shell }`. Assert a 401 probe -> `Login`, a success -> `Shell`, and a 500 rethrows.
 - [ ] **Step 2: Run them; they fail.**
 - [ ] **Step 3: Implement.**
   - Header template in `shell.resources.mu`, `DataTemplate [DataType = PortalSessionService]`: "Platform Admin", `$Email`, `$RoleLabel`, `$ReadOnlyNotice` (collapsed when empty), and a "Log out" button bound to `$LogoutCommand`.
   - The login template: Email box, Password box (masked; use the stock password mode of `TextBox` if present, else BLOCKED), a "Log in" button bound to `$LoginCommand`, and `$ErrorText`.
   - Delete `src/login-view.ts` only in Task 7.
-- [ ] **Step 4: Gates pass.** Then manually start the control plane per `admin/README.md` and confirm login → shell with the Fleet section → Log out returns to login. Note the result in the report.
+- [ ] **Step 4: Gates pass.** Then manually start the control plane per `admin/README.md` and confirm login -> shell with the Fleet section -> Log out returns to login. Note the result in the report.
 - [ ] **Step 5: Commit:** `feat(portal): boot into mu login/shell, header, live updates`.
 
 ### Task 3: Clients, Tenants, Hives sections (with their create/delete flows)
@@ -205,14 +205,14 @@
   - **Clients:**
     - The list loads rows.
     - `OpenCommand(row)` presents `ClientDetailPageViewModel` for that id.
-    - `NewCommand` → `DialogService.Show` called with a `NewClientDialogViewModel`. On a scripted confirm, `CreateClient(id, displayName, subscriptionRef?)` is called and the list refreshes.
+    - `NewCommand` -> `DialogService.Show` called with a `NewClientDialogViewModel`. On a scripted confirm, `CreateClient(id, displayName, subscriptionRef?)` is called and the list refreshes.
   - **Tenants:**
     - New tenant passes `ownerEmail` through `CreateTenant(id, clientId, displayName, ownerEmail)`.
     - On success the section presents `OwnerPasswordRevealPageViewModel`, whose `Value` is the returned `owner.password` and whose `Email` is `owner.email`.
     - `ConfirmSavedCommand` is disabled until `Saved = true`. Executing it sets `Value` to `''` and presents the new tenant's detail (Review Focus 3).
     - The tenant detail shows the hive binding and the observed environments read-only (no commands on that panel's VM).
     - Rail round-trip keeps the tenant detail (Review Focus 1).
-  - **Hives:** list → detail. Credentials are exposed only as name/status (assert no property on the row VM holds a token value). New hive goes through a dialog.
+  - **Hives:** list -> detail. Credentials are exposed only as name/status (assert no property on the row VM holds a token value). New hive goes through a dialog.
   - **Delete (client, tenant, hive):** opens `NameConfirmDialogViewModel`. A mismatched `Typed` keeps the confirm disabled. A match calls the delete and returns to the list.
   - **Observer:** with `CanMutate=false`, every New/Delete command `CanExecute()` is false and executing does not call `DialogService.Show` (Review Focus 2).
 - [ ] **Step 2: Run them; they fail.**
@@ -235,11 +235,11 @@
 
 - [ ] **Step 1: Failing tests.**
   - **Releases:**
-    - List → detail.
+    - List -> detail.
     - Publish via dialog calls the existing publish client method with the dialog's fields.
     - Withdraw requires name-confirm and records the reason.
   - **Release Policy:** per-tenant view; edit via dialog saves through the existing policy client method; gate/ungate; the adoption ledger rows load.
-  - **Activity:** audit list → entry detail; Empty state when there are no entries.
+  - **Activity:** audit list -> entry detail; Empty state when there are no entries.
   - **Settings:** Profile shows the session email and role; the operator roster loads; Invite opens a dialog and calls the existing invite/create-operator client method.
   - **Observer:** Publish/Withdraw/Edit policy/Gate/Invite are all disabled and never open a dialog.
 - [ ] **Step 2: Run them; they fail.**
@@ -298,9 +298,9 @@
 - [ ] **Step 2: Rewrite `portal.spec.ts`** to drive the new structure against its existing fake/served setup:
   - log in
   - the Fleet page renders
-  - the Tenants rail entry → a tenant row → its detail → Back
+  - the Tenants rail entry -> a tenant row -> its detail -> Back
   - New client dialog opens and Cancel closes it
-  - Log out → the login page
+  - Log out -> the login page
   - Keep it gated exactly as today (not part of `npm test`). Run it if browsers are installed, and report the result either way.
 - [ ] **Step 3: Gates pass.** Rebuild the bundle, restart the control plane, and click through every section once in a browser. Note any section that fails to render in the report.
 - [ ] **Step 4: Commit:** `refactor(portal): remove hand-built shell and imperative screens`.
