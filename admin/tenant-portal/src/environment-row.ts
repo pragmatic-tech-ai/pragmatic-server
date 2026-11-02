@@ -1,6 +1,14 @@
-import { PillKind } from './kit/pill-kinds.js'
 import { EnvStatus } from './tenant-types.js'
 import type { EnvironmentDto, HiveHealthDto, Template } from './tenant-types.js'
+
+// How a status or health reads at a glance: the tone its pill is drawn in.
+export enum EnvironmentTone
+{
+    Success,
+    Warning,
+    Danger,
+    Neutral,
+}
 
 // Read-only projection of an environment plus its (optional) hive health entry.
 export class EnvironmentRow
@@ -8,13 +16,12 @@ export class EnvironmentRow
     private static readonly NoVersion = '\u2014'
     private static readonly TagSeparator = ':'
     private static readonly EmptyText = ''
-
-    private static readonly StatusPills: ReadonlyMap<EnvStatus, PillKind> = new Map<EnvStatus, PillKind>([
-        [EnvStatus.Running, PillKind.Running],
-        [EnvStatus.Stopped, PillKind.Stopped],
-        [EnvStatus.Failed, PillKind.Failed],
-        [EnvStatus.Unknown, PillKind.Unknown],
-    ])
+    private static readonly RunningLabel = 'Running'
+    private static readonly StoppedLabel = 'Stopped'
+    private static readonly FailedLabel = 'Failed'
+    private static readonly UnknownLabel = 'Unknown'
+    private static readonly HealthyLabel = 'Healthy'
+    private static readonly FailingLabel = 'Failing'
 
     public constructor(public readonly Dto: EnvironmentDto, private readonly health?: HiveHealthDto)
     {
@@ -40,18 +47,56 @@ export class EnvironmentRow
         return this.Dto.status
     }
 
-    public get StatusPill(): PillKind
+    // The hive's health entry for this environment; undefined when unknown.
+    public get Health(): HiveHealthDto | undefined
     {
-        return EnvironmentRow.StatusPills.get(this.Dto.status) ?? PillKind.Unknown
+        return this.health
     }
 
-    public get HealthPill(): PillKind
+    public get StatusLabel(): string
+    {
+        switch (this.Dto.status)
+        {
+            case EnvStatus.Running:
+                return EnvironmentRow.RunningLabel
+            case EnvStatus.Stopped:
+                return EnvironmentRow.StoppedLabel
+            case EnvStatus.Failed:
+                return EnvironmentRow.FailedLabel
+            default:
+                return EnvironmentRow.UnknownLabel
+        }
+    }
+
+    public get StatusTone(): EnvironmentTone
+    {
+        switch (this.Dto.status)
+        {
+            case EnvStatus.Running:
+                return EnvironmentTone.Success
+            case EnvStatus.Failed:
+                return EnvironmentTone.Danger
+            default:
+                return EnvironmentTone.Neutral
+        }
+    }
+
+    public get HealthLabel(): string
     {
         if (this.health === undefined)
         {
-            return PillKind.Unknown
+            return EnvironmentRow.UnknownLabel
         }
-        return this.health.ready ? PillKind.Healthy : PillKind.Failing
+        return this.health.ready ? EnvironmentRow.HealthyLabel : EnvironmentRow.FailingLabel
+    }
+
+    public get HealthTone(): EnvironmentTone
+    {
+        if (this.health === undefined)
+        {
+            return EnvironmentTone.Neutral
+        }
+        return this.health.ready ? EnvironmentTone.Success : EnvironmentTone.Danger
     }
 
     public static VersionOf(image: string | undefined): string
@@ -75,6 +120,11 @@ export class EnvironmentRow
         return EnvironmentRow.VersionOf(this.health?.runningImage)
     }
 
+    public get RunningImage(): string | undefined
+    {
+        return this.health?.runningImage
+    }
+
     public get Url(): string | undefined
     {
         return EnvironmentRow.UrlOf(this.Dto.status, this.Dto.httpUrl)
@@ -88,5 +138,15 @@ export class EnvironmentRow
     public get IsStopped(): boolean
     {
         return this.Dto.status === EnvStatus.Stopped
+    }
+
+    public get IsFailed(): boolean
+    {
+        return this.Dto.status === EnvStatus.Failed
+    }
+
+    public get IsUnknown(): boolean
+    {
+        return this.Dto.status === EnvStatus.Unknown
     }
 }
