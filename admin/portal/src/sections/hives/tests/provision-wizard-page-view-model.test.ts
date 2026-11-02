@@ -275,6 +275,82 @@ describe('Stand up a hive (provision wizard)', () =>
         assert.equal(wizard.AgentToken, fx.Api.AgentToken)
     })
 
+    it('a cross-section open of a hive while the provision is in flight keeps the wizard, which then reveals both values', async () =>
+    {
+        const fx = new WizardFixture()
+        const wizard = await fx.AtReview()
+        fx.Api.HoldCreates()
+        wizard.SubmitCommand.Execute()
+        await Tick.Settle()
+        assert.equal(wizard.IsSubmitting, true)
+        assert.equal(wizard.HasPendingSecret, true)
+        assert.equal(fx.Section.BackCommand.CanExecute(), false)
+        fx.Rail.Select(TenantsSectionService)
+        await Tick.Settle()
+        const tenants = fx.Content
+        assert.ok(tenants instanceof TenantsPageViewModel)
+        tenants.OpenCommand.Execute(tenants.Rows.ToArray().find(r => r.Id === 'acme-prod'))
+        await Tick.Settle()
+        const tenant = fx.Content
+        assert.ok(tenant instanceof TenantDetailPageViewModel)
+        tenant.OpenHiveCommand.Execute()
+        await Tick.Settle()
+        assert.equal(fx.Section.Current, wizard)
+        fx.Api.Release()
+        await Tick.Settle()
+        assert.equal(fx.Rail.Navigation.ActiveService, fx.Section)
+        assert.equal(fx.Section.Current, wizard)
+        assert.equal(fx.Content, wizard)
+        assert.equal(wizard.StepIndex, ProvisionStep.Bootstrap)
+        assert.equal(wizard.OwnerPassword, fx.Api.OwnerPassword)
+        assert.equal(wizard.AgentToken, fx.Api.AgentToken)
+    })
+
+    it('raises HasPendingSecret when a provision starts, and again when it fails', async () =>
+    {
+        const fx = new WizardFixture()
+        const wizard = await fx.AtReview()
+        const seen: Array<[unknown, unknown]> = []
+        wizard.PropertyChanged(PendingSecret.ChangedProperty).subscribe(e => seen.push([e.oldValue, e.newValue]))
+        fx.Api.Failure = new Error('refused')
+        wizard.SubmitCommand.Execute()
+        await Tick.Settle()
+        assert.deepEqual(seen, [[false, true], [true, false]])
+        assert.equal(wizard.HasPendingSecret, false)
+    })
+
+    it('a cross-section open of a hive keeps a half-filled wizard and lands on it', async () =>
+    {
+        const fx = new WizardFixture()
+        const wizard = await fx.Wizard()
+        wizard.ClientId = 'initech'
+        assert.equal(wizard.HasPendingWork, true)
+        fx.Rail.Select(TenantsSectionService)
+        await Tick.Settle()
+        const tenants = fx.Content
+        assert.ok(tenants instanceof TenantsPageViewModel)
+        tenants.OpenCommand.Execute(tenants.Rows.ToArray().find(r => r.Id === 'acme-prod'))
+        await Tick.Settle()
+        const tenant = fx.Content
+        assert.ok(tenant instanceof TenantDetailPageViewModel)
+        tenant.OpenHiveCommand.Execute()
+        await Tick.Settle()
+        assert.equal(fx.Rail.Navigation.ActiveService, fx.Section)
+        assert.equal(fx.Section.Current, wizard)
+        assert.equal(fx.Content, wizard)
+        assert.equal(wizard.ClientId, 'initech')
+    })
+
+    it('a cross-section open of a hive replaces an untouched wizard', async () =>
+    {
+        const fx = new WizardFixture()
+        const wizard = await fx.Wizard()
+        assert.equal(wizard.HasPendingWork, false)
+        fx.Section.ShowHive('acme-hive')
+        await Tick.Settle()
+        assert.ok(fx.Content instanceof HiveDetailPageViewModel)
+    })
+
     it('Finish clears both values and presents the new hive; Back then shows a fresh list', async () =>
     {
         const fx = new WizardFixture()

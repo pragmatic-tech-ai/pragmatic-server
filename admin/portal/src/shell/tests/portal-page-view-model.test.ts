@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import { ApiError } from '../../api-client.js'
 import { PageState, PortalPageViewModel } from '../portal-page-view-model.js'
 import type { PortalSessionService } from '../portal-session-service.js'
-import { PortalTestHost } from './portal-test-fixtures.js'
+import type { RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
+import { PortalTestHost, Tick } from './portal-test-fixtures.js'
 
 class ScriptedPage extends PortalPageViewModel
 {
@@ -15,6 +16,11 @@ class ScriptedPage extends PortalPageViewModel
     public RunGuarded(action: () => Promise<void>): Promise<void>
     {
         return this.Guard(action)
+    }
+
+    public Mutating(run: () => Promise<void>, enabled?: () => boolean): RelayCommand
+    {
+        return this.MutatingCommand(run, enabled)
     }
 
     protected override LoadCore(): Promise<boolean>
@@ -161,5 +167,78 @@ describe('PortalPageViewModel', () =>
         await page.RunGuarded(async () => { throw new ApiError(401, 'gone') })
         assert.equal(host.Reloader.Count, 1)
         assert.equal(page.CommandErrorText, '')
+    })
+
+    it('a reload of a Populated page stays Populated while it runs', async () =>
+    {
+        const loads = [new PendingLoad(), new PendingLoad()]
+        let next = 0
+        const page = new ScriptedPage(PortalTestHost.WithoutClient().Session, () => loads[next++].Promise)
+        const first = page.Refresh()
+        loads[0].Resolve(true)
+        await first
+        const states: PageState[] = []
+        page.PropertyChanged('State').subscribe(e => states.push(e.newValue as PageState))
+        const second = page.Refresh()
+        assert.equal(page.State, PageState.Populated)
+        assert.equal(page.IsLoading, false)
+        loads[1].Resolve(true)
+        await second
+        assert.equal(page.State, PageState.Populated)
+        assert.deepEqual(states, [])
+    })
+
+    it('a reload of a Populated page still switches to Empty or Error', async () =>
+    {
+        const outcomes: Array<() => Promise<boolean>> = [async () => true, async () => false, async () => true, async () => { throw new Error('down') }]
+        let next = 0
+        const page = new ScriptedPage(PortalTestHost.WithoutClient().Session, () => outcomes[next++]())
+        await page.Refresh()
+        await page.Refresh()
+        assert.equal(page.State, PageState.Empty)
+        await page.Refresh()
+        assert.equal(page.State, PageState.Populated)
+        await page.Refresh()
+        assert.equal(page.State, PageState.Error)
+        assert.equal(page.ErrorText, 'down')
+    })
+
+    it('a running mutating command disables every mutating command of the page until it settles', async () =>
+    {
+        const page = new ScriptedPage(PortalTestHost.WithoutClient().Session, async () => true)
+        const held = new PendingLoad()
+        let firstRuns = 0
+        let secondRuns = 0
+        const first = page.Mutating(async () => { firstRuns++; await held.Promise })
+        const second = page.Mutating(async () => { secondRuns++ })
+        let raised = 0
+        second.AddCanExecuteChangedListener(() => raised++)
+        first.Execute()
+        assert.equal(first.CanExecute(), false)
+        assert.equal(second.CanExecute(), false)
+        assert.equal(raised, 1)
+        first.Execute()
+        second.Execute()
+        await Tick.Settle()
+        assert.equal(firstRuns, 1)
+        assert.equal(secondRuns, 0)
+        held.Resolve(true)
+        await Tick.Settle()
+        assert.equal(first.CanExecute(), true)
+        assert.equal(second.CanExecute(), true)
+        assert.equal(raised, 2)
+        second.Execute()
+        await Tick.Settle()
+        assert.equal(secondRuns, 1)
+    })
+
+    it('a failed mutating command re-enables the page commands', async () =>
+    {
+        const page = new ScriptedPage(PortalTestHost.WithoutClient().Session, async () => true)
+        const command = page.Mutating(async () => { throw new Error('refused') })
+        command.Execute()
+        await Tick.Settle()
+        assert.equal(page.CommandErrorText, 'refused')
+        assert.equal(command.CanExecute(), true)
     })
 })

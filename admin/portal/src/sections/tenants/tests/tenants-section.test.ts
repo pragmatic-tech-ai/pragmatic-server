@@ -196,6 +196,50 @@ describe('Tenants section', () =>
         assert.ok(fx.Content instanceof TenantsPageViewModel)
     })
 
+    it('coming back through the rail shows tenants added elsewhere meanwhile', async () =>
+    {
+        const fx = new TenantsFixture()
+        const list = await fx.List()
+        assert.equal(list.Rows.Count, 2)
+        fx.Rail.Select(HivesSectionService)
+        await Tick.Settle()
+        fx.Api.WithTenant('globex-prod', 'acme', 'Globex Production')
+        fx.Rail.Select(TenantsSectionService)
+        await Tick.Settle()
+        assert.equal(fx.Content, list)
+        assert.equal(list.State, PageState.Populated)
+        assert.deepEqual(list.Rows.ToArray().map(r => r.Id).sort(), ['acme-dev', 'acme-prod', 'globex-prod'])
+    })
+
+    it('while a create is in flight New stays disabled, even after its dialog is dismissed; no Owner password is lost', async () =>
+    {
+        const fx = new TenantsFixture()
+        const list = await fx.List()
+        list.NewCommand.Execute()
+        await Tick.Settle()
+        const dialog = fx.Dialogs.Last as NewTenantDialogViewModel
+        dialog.SelectedClient = dialog.Clients.Get(0)
+        dialog.Id = 'initech-prod'
+        dialog.DisplayName = 'Initech Production'
+        dialog.OwnerEmail = 'owner@initech.test'
+        fx.Api.HoldCreates()
+        dialog.ConfirmCommand.Execute()
+        await Tick.Settle()
+        fx.Dialogs.Dismiss()
+        await Tick.Settle()
+        assert.equal(list.NewCommand.CanExecute(), false)
+        list.NewCommand.Execute()
+        await Tick.Settle()
+        assert.equal(fx.Dialogs.Shown.length, 1)
+        fx.Api.Release()
+        await Tick.Settle()
+        assert.deepEqual(fx.Api.CreatedTenants.map(t => t[0]), ['initech-prod'])
+        const reveal = fx.Content
+        assert.ok(reveal instanceof OwnerPasswordRevealPageViewModel)
+        assert.equal(reveal.Value, fx.Api.OwnerPassword)
+        assert.equal(list.NewCommand.CanExecute(), true)
+    })
+
     it('leaving through the rail before confirming keeps the reveal as the current page', async () =>
     {
         const fx = new TenantsFixture()

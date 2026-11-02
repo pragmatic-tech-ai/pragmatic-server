@@ -3,6 +3,7 @@ import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import { ApiError } from '../../api-client.js'
 import type { HiveClusterBackend, HiveDto, HiveProvisionMode, ProvisionInputDto } from '../../portal-types.js'
 import { PendingSecret, type IHoldsPendingSecret } from '../../shell/holds-pending-secret.js'
+import { PendingWork, type IHoldsPendingWork } from '../../shell/holds-pending-work.js'
 import type { OptionViewModel } from '../../shell/option-view-model.js'
 import { PortalPageViewModel } from '../../shell/portal-page-view-model.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
@@ -88,13 +89,14 @@ export class ProvisionStepViewModel extends Observable
 // first Owner) and the Tenant's Hive. A page of the Hives section, not a
 // dialog: it ends on the Bootstrap step, which shows the Owner password and
 // the agent token once. Finish needs both "I've saved it" flags, clears both
-// values and moves on to the new hive's detail. Until then the page holds a
-// pending secret: leaving through the rail keeps it as the section's current
-// page, and no section navigation (a cross-section open of a hive, say)
-// drops or covers it. The values are never logged and live nowhere else; the
+// values and moves on to the new hive's detail. From Submit until then the
+// page holds a pending secret: leaving through the rail keeps it as the
+// section's current page, and no section navigation (a cross-section open of
+// a hive, say) drops or covers it. A half-filled wizard holds pending work: a
+// cross-section open lands on it rather than discarding it. The values are never logged and live nowhere else; the
 // provision result itself is not kept. The form's validation and request
 // shape follow the legacy ProvisionWizardViewModel, which this replaces.
-export class ProvisionWizardPageViewModel extends PortalPageViewModel implements IHoldsPendingSecret
+export class ProvisionWizardPageViewModel extends PortalPageViewModel implements IHoldsPendingSecret, IHoldsPendingWork
 {
     private static readonly ClientLabel = 'Client'
     private static readonly TenantLabel = 'Tenant'
@@ -167,6 +169,7 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
         super(session)
         const C = ProvisionWizardPageViewModel
         PendingSecret.Register(this)
+        PendingWork.Register(this)
         this.stepLabels = [C.ClientLabel, C.TenantLabel, C.HiveLabel, C.ReviewLabel, C.BootstrapLabel]
         this.stepLabels.forEach((label, i) => this.steps.Add(new ProvisionStepViewModel(i as ProvisionStep, label)))
         HiveOptions.Backends().forEach(o => this.backends.Add(o))
@@ -493,11 +496,19 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
         return this.agentCopyStatus
     }
 
-    // True from a successful provision until Finish clears the values: the
-    // section keeps this page current meanwhile.
+    // True from the moment a provision is submitted (its response carries
+    // both values) until Finish clears them: the section keeps this page
+    // current meanwhile, so an in-flight provision's values can't be dropped.
     public get HasPendingSecret(): boolean
     {
-        return this.IsBootstrapStep && (this.ownerPassword.length > 0 || this.agentToken.length > 0)
+        return this.submitting || (this.IsBootstrapStep && (this.ownerPassword.length > 0 || this.agentToken.length > 0))
+    }
+
+    // True once any text field holds input: a half-filled wizard is not
+    // discarded by a cross-section open (its section lands on it instead).
+    public get HasPendingWork(): boolean
+    {
+        return Object.values(ProvisionField).some(f => this.Filled(f))
     }
 
     public get NextCommand(): RelayCommand
@@ -814,8 +825,10 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
         {
             return
         }
+        const wasPending = this.HasPendingSecret
         this.submitting = next
         this.RaisePropertyChanged(ProvisionWizardPageViewModel.IsSubmittingProperty, old, next)
+        this.RaisePendingSecretChanged(wasPending)
         this.RaiseCommandsChanged()
     }
 

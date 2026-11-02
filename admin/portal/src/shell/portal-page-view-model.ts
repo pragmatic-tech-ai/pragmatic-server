@@ -52,6 +52,8 @@ export abstract class PortalPageViewModel extends Observable
     private errorText = ''
     private commandErrorText = ''
     private loadGeneration = 0
+    private mutating = false
+    private readonly mutatingCommands: RelayCommand[] = []
 
     public constructor(session: PortalSessionService)
     {
@@ -110,12 +112,17 @@ export abstract class PortalPageViewModel extends Observable
     }
 
     // Loads the page. When a newer Refresh() starts before this one settles,
-    // this one's result or error is discarded.
+    // this one's result or error is discarded. A Populated page reloads
+    // quietly: it stays Populated (its content showing) until the load lands,
+    // and only then switches, to Empty or Error when the result says so.
     public async Refresh(): Promise<void>
     {
         const generation = ++this.loadGeneration
         this.SetErrorText('')
-        this.SetState(PageState.Loading)
+        if (this.state !== PageState.Populated)
+        {
+            this.SetState(PageState.Loading)
+        }
         try
         {
             const hasContent = await this.LoadCore()
@@ -170,17 +177,24 @@ export abstract class PortalPageViewModel extends Observable
     }
 
     // A mutating command: disabled, and a no-op when executed anyway, while the
-    // operator may not mutate or `enabled` says no. Its body runs through Guard.
+    // operator may not mutate, `enabled` says no, or any of this page's
+    // mutating commands is still running. Its body runs through Guard. The
+    // in-flight lock outlives a dismissed dialog: a submit still in flight
+    // after Escape keeps every mutating command of the page disabled until it
+    // settles, so a second action can never overtake (and drop) the first's
+    // one-time result.
     protected MutatingCommand(run: () => Promise<void>, enabled?: () => boolean): RelayCommand
     {
-        const can = (): boolean => this.Session.CanMutate && (enabled === undefined || enabled())
-        return new RelayCommand(() =>
+        const can = (): boolean => this.Session.CanMutate && !this.mutating && (enabled === undefined || enabled())
+        const command = new RelayCommand(() =>
         {
             if (can())
             {
-                void this.Guard(run)
+                void this.RunMutating(run)
             }
         }, can)
+        this.mutatingCommands.push(command)
+        return command
     }
 
     // Opens a create dialog (loading its choices first); when it produces a
@@ -211,6 +225,32 @@ export abstract class PortalPageViewModel extends Observable
         if (await confirm.Open(request.Title) === NameConfirmDialogViewModel.Confirmed)
         {
             await request.OnConfirmed()
+        }
+    }
+
+    private async RunMutating(run: () => Promise<void>): Promise<void>
+    {
+        this.SetMutating(true)
+        try
+        {
+            await this.Guard(run)
+        }
+        finally
+        {
+            this.SetMutating(false)
+        }
+    }
+
+    private SetMutating(next: boolean): void
+    {
+        if (this.mutating === next)
+        {
+            return
+        }
+        this.mutating = next
+        for (const command of this.mutatingCommands)
+        {
+            command.RaiseCanExecuteChanged()
         }
     }
 

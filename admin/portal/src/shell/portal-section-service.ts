@@ -7,6 +7,7 @@ import { NavigationDestination, NavigationService } from '@pragmatic-tech-ai/mur
 import type { IActivatable } from '@pragmatic-tech-ai/mural/framework/shell/services/activatable.js'
 import type { IDisposable, Observable } from '@pragmatic-tech-ai/todl-runtime'
 import { PendingSecret } from './holds-pending-secret.js'
+import { PendingWork } from './holds-pending-work.js'
 import { PortalPageViewModel } from './portal-page-view-model.js'
 import { PortalSessionService } from './portal-session-service.js'
 
@@ -40,6 +41,13 @@ export abstract class PortalSectionService extends ServiceBase implements IActiv
     private get HoldsPendingSecret(): boolean
     {
         return PendingSecret.IsHeldBy(this.Current)
+    }
+
+    // Whether any page above the root holds a pending one-time value or
+    // unsubmitted input (a stacked older reveal under a newer page, say).
+    private get HoldsPendingAboveRoot(): boolean
+    {
+        return this.pages.slice(1).some(p => PendingSecret.IsHeldBy(p) || PendingWork.IsHeldBy(p))
     }
 
     private get CanGoBack(): boolean
@@ -95,10 +103,13 @@ export abstract class PortalSectionService extends ServiceBase implements IActiv
     // Pushes a page and loads it when it is a portal page; shows it only while
     // this section is active (otherwise it shows on the next activation).
     // A no-op while the current page holds a pending one-time value (it is
-    // never covered); this applies to every navigation below as well.
+    // never covered); this applies to every navigation below as well. The one
+    // exception: a page arriving with its own pending one-time value is
+    // stacked over it rather than dropped, so neither value is ever lost
+    // (once the newer one is saved, Back lands on the older one).
     public Present(page: Observable): void
     {
-        if (this.HoldsPendingSecret)
+        if (this.HoldsPendingSecret && !PendingSecret.IsHeldBy(page))
         {
             return
         }
@@ -123,11 +134,13 @@ export abstract class PortalSectionService extends ServiceBase implements IActiv
 
     // Presents `page` directly over the root: pops anything above the root,
     // creating (and loading) the root first when the section has none yet.
-    // A cross-section open (then BringToFront) over a pending one-time value
-    // therefore lands on that value, not on `page`.
+    // A cross-section open (then BringToFront) over a pending one-time value,
+    // or over unsubmitted input (IHoldsPendingWork), therefore lands on the
+    // current page, not on `page`: no such page anywhere above the root is
+    // ever discarded by another section.
     public PresentOverRoot(page: Observable): void
     {
-        if (this.HoldsPendingSecret)
+        if (this.HoldsPendingAboveRoot)
         {
             return
         }
@@ -194,13 +207,19 @@ export abstract class PortalSectionService extends ServiceBase implements IActiv
     }
 
     // First activation presents the root; later ones re-view the current page
-    // (another section may have replaced the shared host's content meanwhile).
+    // (another section may have replaced the shared host's content meanwhile)
+    // and reload it, since the control plane only signals environment
+    // changes: a page left a while ago may be stale. The reload is quiet (a
+    // Populated page stays Populated), skipped while the page's first load is
+    // still running (a page just presented by a cross-section open), and a
+    // no-op for a non-portal page (a one-time reveal keeps its value).
     // Navigation is not resolved while presenting (the activating flag stands
     // in for IsActive); the watch starts once the presenting is done.
     public OnActivated(): void
     {
         this.SetActive(true)
         this.activating = true
+        let reload = false
         try
         {
             const current = this.Current
@@ -211,6 +230,7 @@ export abstract class PortalSectionService extends ServiceBase implements IActiv
             else
             {
                 this.Host.View(current)
+                reload = !(current instanceof PortalPageViewModel && current.IsLoading)
             }
         }
         finally
@@ -218,6 +238,10 @@ export abstract class PortalSectionService extends ServiceBase implements IActiv
             this.activating = false
         }
         this.WatchNavigation()
+        if (reload)
+        {
+            void this.RefreshCurrent()
+        }
     }
 
     public async RefreshCurrent(): Promise<void>

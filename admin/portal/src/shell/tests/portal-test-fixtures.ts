@@ -1,4 +1,4 @@
-import { ServiceProvider } from '@pragmatic-tech-ai/mural/runtime'
+import { ServiceProvider, type ServiceToken } from '@pragmatic-tech-ai/mural/runtime'
 import { Capability } from '@pragmatic-tech-ai/mural/framework/shell/module.js'
 import { ClipboardService } from '@pragmatic-tech-ai/mural/framework/shell/services/clipboard-service.js'
 import { ContentHostService } from '@pragmatic-tech-ai/mural/framework/shell/services/content-host-service.js'
@@ -399,8 +399,10 @@ export class FakeControlPlane
         this.OperatorCalls.push('RevokeOperatorSessions ' + email)
     }
 
+    // Held by HoldCreates, like a create.
     public async ResetOperatorPassword(email: string): Promise<{ password: string }>
     {
+        await this.createGate
         this.ThrowIfFailing()
         this.OperatorCalls.push('ResetOperatorPassword ' + email)
         return { password: this.ResetPassword }
@@ -457,7 +459,7 @@ export class FakeControlPlane
         return [...this.Observations]
     }
 
-    // Holds every create in flight until Release() is called.
+    // Holds every create (and password reset) in flight until Release() is called.
     public HoldCreates(): void
     {
         this.createGate = new Promise<void>(resolve => { this.releaseCreates = resolve })
@@ -630,19 +632,19 @@ export class TestRail
         provider.registerInstance(NavigationService.Key, this.Navigation)
     }
 
-    public Select(section: Function): void
+    public Select(section: ServiceToken<unknown>): void
     {
         const capability = new Capability()
-        capability.ServiceKey = section as never
+        capability.ServiceKey = section
         this.Navigation.SelectedItem = capability
     }
 
     // Adds a rail item for a section, as PopulateFromModules would; a section
     // can then bring itself to the front through it.
-    public Add(section: Function): Capability
+    public Add(section: ServiceToken<unknown>): Capability
     {
         const capability = new Capability()
-        capability.ServiceKey = section as never
+        capability.ServiceKey = section
         this.Navigation.Items.Add(capability)
         return capability
     }

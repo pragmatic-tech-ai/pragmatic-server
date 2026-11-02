@@ -243,6 +243,35 @@ describe('Settings section', () =>
         assert.equal(fx.Content, detail)
     })
 
+    it('while a reset is in flight every operator command stays disabled, even after its dialog is dismissed', async () =>
+    {
+        const fx = new SettingsFixture()
+        const detail = await fx.Operator('zed@example.test')
+        detail.ResetPasswordCommand.Execute()
+        await Tick.Settle()
+        const confirm = fx.Dialogs.Last as NameConfirmDialogViewModel
+        confirm.Typed = 'zed@example.test'
+        fx.Api.HoldCreates()
+        confirm.ConfirmCommand.Execute()
+        await Tick.Settle()
+        fx.Dialogs.Dismiss()
+        await Tick.Settle()
+        for (const command of [detail.ChangeRoleCommand, detail.ToggleDisabledCommand, detail.RevokeSessionsCommand, detail.ResetPasswordCommand])
+        {
+            assert.equal(command.CanExecute(), false)
+        }
+        detail.ResetPasswordCommand.Execute()
+        await Tick.Settle()
+        assert.equal(fx.Dialogs.Shown.length, 1)
+        fx.Api.Release()
+        await Tick.Settle()
+        assert.deepEqual(fx.Api.OperatorCalls, ['ResetOperatorPassword zed@example.test'])
+        const reveal = fx.Content
+        assert.ok(reveal instanceof OperatorPasswordRevealPageViewModel)
+        assert.equal(reveal.Value, fx.Api.ResetPassword)
+        assert.equal(detail.ResetPasswordCommand.CanExecute(), true)
+    })
+
     it('Observer: every operator-management command is disabled and opens no dialog', async () =>
     {
         const fx = new SettingsFixture(OperatorContext.ReadOnlyWireRole)

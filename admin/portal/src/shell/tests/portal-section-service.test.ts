@@ -5,6 +5,7 @@ import type { IServiceProvider, ServiceConstructor } from '@pragmatic-tech-ai/mu
 import { Capability } from '@pragmatic-tech-ai/mural/framework/shell/module.js'
 import { NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
 import { PendingSecret, type IHoldsPendingSecret } from '../holds-pending-secret.js'
+import { PendingWork, type IHoldsPendingWork } from '../holds-pending-work.js'
 import { PageState, PortalPageViewModel } from '../portal-page-view-model.js'
 import { PortalSectionService } from '../portal-section-service.js'
 import { PortalTestHost, Tick } from './portal-test-fixtures.js'
@@ -45,6 +46,23 @@ class PendingPage extends Observable implements IHoldsPendingSecret
     {
         this.held = false
         this.RaisePropertyChanged(PendingSecret.ChangedProperty, true, false)
+    }
+}
+
+// A form page with unsubmitted input once the operator has typed into it.
+class FormPage extends Observable implements IHoldsPendingWork
+{
+    public Dirty = false
+
+    public constructor()
+    {
+        super()
+        PendingWork.Register(this)
+    }
+
+    public get HasPendingWork(): boolean
+    {
+        return this.Dirty
     }
 }
 
@@ -313,6 +331,100 @@ describe('PortalSectionService', () =>
         assert.equal(rail.Navigation.ActiveService, rail.B)
         assert.equal(rail.B.Current, pending)
         assert.equal(rail.Host.Host.Content, pending)
+    })
+
+    it('re-activation through the rail reloads the current portal page', async () =>
+    {
+        const rail = new RailFixture()
+        rail.SelectA()
+        await Tick.Settle()
+        assert.equal(rail.A.Root?.Loads, 1)
+        rail.SelectB()
+        await Tick.Settle()
+        rail.SelectA()
+        await Tick.Settle()
+        assert.equal(rail.Host.Host.Content, rail.A.Root)
+        assert.equal(rail.A.Root?.Loads, 2)
+        assert.equal(rail.A.Root?.State, PageState.Populated)
+    })
+
+    it('re-activation re-views a pending reveal page untouched', async () =>
+    {
+        const rail = new RailFixture()
+        rail.SelectA()
+        const pending = new PendingPage()
+        rail.A.Present(pending)
+        rail.SelectB()
+        await Tick.Settle()
+        rail.SelectA()
+        await Tick.Settle()
+        assert.equal(rail.A.Current, pending)
+        assert.equal(rail.Host.Host.Content, pending)
+        assert.equal(pending.HasPendingSecret, true)
+    })
+
+    it('a cross-section open loads the presented page once', async () =>
+    {
+        const rail = new RailFixture()
+        rail.Navigation.Items.Add(RailFixture.CapabilityFor(SectionB))
+        rail.SelectB()
+        rail.SelectA()
+        await Tick.Settle()
+        const page = new StubPage(rail.Host.Session)
+        rail.B.PresentOverRoot(page)
+        rail.B.BringToFront()
+        await Tick.Settle()
+        assert.equal(rail.Host.Host.Content, page)
+        assert.equal(page.Loads, 1)
+    })
+
+    it('a page arriving with its own pending value is stacked over a pending page, never dropped', () =>
+    {
+        const host = PortalTestHost.WithoutClient()
+        const section = new TestSection(host.Provider)
+        section.OnActivated()
+        const first = new PendingPage()
+        const second = new PendingPage()
+        section.Present(first)
+        section.Present(second)
+        assert.equal(section.Current, second)
+        assert.equal(host.Host.Content, second)
+        section.Present(new DetailPage())
+        assert.equal(section.Current, second)
+        // The newer value saved, its page gives way; the older one stays
+        // below, and a cross-section open does not truncate it.
+        second.Clear()
+        const after = new DetailPage()
+        section.Replace(after)
+        section.PresentOverRoot(new DetailPage())
+        assert.equal(section.Current, after)
+        section.Back()
+        assert.equal(section.Current, first)
+        assert.equal(first.HasPendingSecret, true)
+    })
+
+    it('a cross-section open keeps a page holding unsubmitted input and lands on it', () =>
+    {
+        const rail = new RailFixture()
+        rail.Navigation.Items.Add(RailFixture.CapabilityFor(SectionB))
+        rail.SelectB()
+        const form = new FormPage()
+        rail.B.Present(form)
+        form.Dirty = true
+        rail.SelectA()
+        rail.B.PresentOverRoot(new DetailPage())
+        rail.B.BringToFront()
+        assert.equal(rail.B.Current, form)
+        assert.equal(rail.Host.Host.Content, form)
+        // A clean form gives way, as any page does; Back still leaves it.
+        form.Dirty = false
+        const detail = new DetailPage()
+        rail.B.PresentOverRoot(detail)
+        assert.equal(rail.B.Current, detail)
+        rail.B.Present(form)
+        form.Dirty = true
+        rail.B.Back()
+        assert.equal(rail.B.Current, detail)
     })
 
     it('BringToFront selects the rail item naming the section; false when none does', () =>
