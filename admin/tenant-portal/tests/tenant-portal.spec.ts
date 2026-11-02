@@ -31,6 +31,9 @@ class TenantText
     public static readonly Adopt = 'Adopt...'
     public static readonly ChooseVersion = 'Choose a version'
     public static readonly LogOut = 'Log out'
+    public static readonly SignIn = 'Sign in'
+    public static readonly UnreachablePrefix = "Can't reach the tenant admin service: "
+    public static readonly ServiceUnavailable = 503
     public static readonly ActivityOne = 'Activity (1)'
     public static readonly ActivityCreated = 'Environment gamma-env was created'
     public static readonly HiveDomainTab = 'Hive & domain'
@@ -244,6 +247,16 @@ test.describe('tenant admin portal', () =>
         fake.PushEvent({ type: TenantEventType.EnvironmentCreated, environmentName: TenantText.CreatedEnvironment })
         await TenantSteps.Click(page, TenantText.ActivityOne)
         await expect(TenantSteps.Visible(page, TenantText.ActivityCreated)).toBeVisible()
+    })
+
+    test('a failed session probe shows the sign-in page with the reason; Sign in goes to the identity provider', async ({ page }) =>
+    {
+        fake.SessionFailureStatus = TenantText.ServiceUnavailable
+        await page.goto(base)
+        await expect(TenantSteps.Visible(page, TenantText.UnreachablePrefix + FakeTenantControlPlane.SessionFailureMessage)).toBeVisible()
+        await TenantSteps.Click(page, TenantText.SignIn)
+        await expect(page.getByText(FakeTenantControlPlane.IdpPageText)).toBeVisible()
+        expect(fake.BeginLoginCalls).toBe(1)
     })
 
     test('Log out posts to the server and lands on the identity provider', async ({ page }) =>

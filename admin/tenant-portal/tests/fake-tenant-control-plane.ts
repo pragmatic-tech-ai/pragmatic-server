@@ -101,6 +101,9 @@ export class FakeTenantControlPlane
     public readonly TargetCalls: Array<{ subject: string; version: string }> = []
     // False: /tenant-auth/session answers 401 (the portal redirects to the IdP).
     public Authenticated = true
+    // When set, /tenant-auth/session fails with this status (not a 401).
+    public SessionFailureStatus: number | undefined
+    public static readonly SessionFailureMessage = 'session store unavailable'
     public LogoutCalls = 0
     public BeginLoginCalls = 0
     public readonly DeletedEnvironments: string[] = []
@@ -356,6 +359,11 @@ export class FakeTenantControlPlane
             this.BeginLoginCalls++
             res.writeHead(200, { [FakeTenantControlPlane.ContentTypeHeader]: FakeTenantControlPlane.HtmlType })
             res.end(FakeTenantControlPlane.IdpPage)
+            return
+        }
+        if (path === FakeTenantControlPlane.SessionPath && this.SessionFailureStatus !== undefined)
+        {
+            FakeTenantControlPlane.Json(res, this.SessionFailureStatus, { error: FakeTenantControlPlane.SessionFailureMessage })
             return
         }
         if (path === FakeTenantControlPlane.SessionPath && !this.Authenticated)
