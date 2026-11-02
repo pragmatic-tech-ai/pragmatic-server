@@ -38,15 +38,19 @@ class LateSettlingDialogs extends DialogService
 {
     public readonly Closes: unknown[] = []
     private settle: ((value: unknown) => void) | undefined
+    private superseded: ((value: unknown) => void) | undefined
 
     public override Show<T = unknown>(_options: DialogOptions): Promise<T | undefined>
     {
-        const previous = this.settle
-        if (previous !== undefined)
-        {
-            setImmediate(() => previous(undefined))
-        }
+        this.superseded = this.settle
         return new Promise<T | undefined>(resolve => { this.settle = resolve as (value: unknown) => void })
+    }
+
+    // Settles the superseded dialog's Show, on the test's cue.
+    public SettleSuperseded(): void
+    {
+        this.superseded?.(undefined)
+        this.superseded = undefined
     }
 
     public override Close(result?: unknown): void
@@ -65,14 +69,20 @@ describe('PortalDialogViewModel', () =>
         const host = PortalTestHost.WithoutClient()
         const dialogs = new LateSettlingDialogs(host.Provider)
         const first = new HeldDialog(host.Session, dialogs)
-        void first.Open('First')
+        const firstOpened = first.Open('First')
         first.ConfirmCommand.Execute()
         await Tick.Next()
         const second = new HeldDialog(host.Session, dialogs)
-        void second.Open('Second')
+        const secondOpened = second.Open('Second')
         first.Release()
-        await Tick.Next()
+        await Tick.Settle()
+        // The first submit has settled while its own Show is still unsettled.
         assert.deepEqual(dialogs.Closes, [])
+        dialogs.SettleSuperseded()
+        assert.equal(await firstOpened, 'done')
+        assert.deepEqual(dialogs.Closes, [])
+        dialogs.Close(undefined)
+        assert.equal(await secondOpened, undefined)
     })
 
     it('a submit settling while its own dialog is open closes it with the result', async () =>

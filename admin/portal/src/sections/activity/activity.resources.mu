@@ -43,7 +43,7 @@ resources ActivityResources {
                             ColumnDefinition [ Width = GridLength.Star ]
                         }
                         TextBlock [ Grid.Column = 0, Text = "When (UTC)", Style = @UiCaption, Foreground = @Fg2 ]
-                        TextBlock [ Grid.Column = 1, Text = "Action", Style = @UiCaption, Foreground = @Fg2, Margin = (18,0,0,0) ]
+                        TextBlock [ Grid.Column = 1, Text = "Action", Style = @PortalTableLinkHeader ]
                         TextBlock [ Grid.Column = 2, Text = "Operator", Style = @UiCaption, Foreground = @Fg2 ]
                         TextBlock [ Grid.Column = 3, Text = "Outcome", Style = @UiCaption, Foreground = @Fg2 ]
                     }

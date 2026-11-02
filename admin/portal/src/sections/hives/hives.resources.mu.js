@@ -130,9 +130,7 @@ export class HivesResources extends ResourceDictionary {
             const _textBlock25 = new TextBlock();
             _textBlock25.set_property_value(Grid.ColumnKey, 0);
             _textBlock25.set_property_value(TextBlock.TextKey, "Hive");
-            _textBlock25.set_property_value(TextBlock.StyleKey, DynamicResource(_textBlock25, "UiCaption"));
-            _textBlock25.set_property_value(TextBlock.ForegroundKey, DynamicResource(_textBlock25, "Fg2"));
-            _textBlock25.set_property_value(TextBlock.MarginKey, new Thickness(18, 0, 0, 0));
+            _textBlock25.set_property_value(TextBlock.StyleKey, DynamicResource(_textBlock25, "PortalTableLinkHeader"));
             _grid17.AddChild(_textBlock25);
             const _textBlock26 = new TextBlock();
             _textBlock26.set_property_value(Grid.ColumnKey, 1);

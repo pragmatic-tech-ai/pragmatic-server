@@ -168,7 +168,7 @@ resources ReleasePolicyResources {
                                 ColumnDefinition [ Width = GridLength.Star ]
                             }
                             TextBlock [ Grid.Column = 0, Text = "Recorded", Style = @UiCaption, Foreground = @Fg2 ]
-                            TextBlock [ Grid.Column = 1, Text = "Hive", Style = @UiCaption, Foreground = @Fg2, Margin = (18,0,0,0) ]
+                            TextBlock [ Grid.Column = 1, Text = "Hive", Style = @PortalTableLinkHeader ]
                             TextBlock [ Grid.Column = 2, Text = "Outcome", Style = @UiCaption, Foreground = @Fg2 ]
                             TextBlock [ Grid.Column = 3, Text = "Version", Style = @UiCaption, Foreground = @Fg2 ]
                         }

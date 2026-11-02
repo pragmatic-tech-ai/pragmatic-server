@@ -59,15 +59,24 @@ resources ShellResources {
         ItemContainerStyle = @PortalTableRow;
     }
 
-    // A table's Ghost link button (the row's name / action) sits inside its
-    // template padding: 16 plus the 2 focus-ring offset. The header cell over
-    // such a column carries Margin = (18,0,0,0) so its caption lines up with
-    // the link's text.
-    //
     // The one cell inset every table's header Grid and row Grid share
     // (Style = @PortalTableColumns), so their Star columns line up.
     Style x:key="PortalTableColumns" [ TargetType = Grid ] {
         Margin = (8,4,8,4);
+    }
+
+    // The header caption over a column whose rows hold a Ghost link button
+    // (the row's name / action). The button's template pads its text by 16
+    // plus the 2 focus-ring offset, so this caption (UiCaption, Fg2) is
+    // inset 18 to line up with the link's text. The one home of that number.
+    Style x:key="PortalTableLinkHeader" [ TargetType = TextBlock ] {
+        FontFamily = @FontSans;
+        FontWeight = @UiCaptionWeight;
+        FontSize = @UiCaptionSize;
+        LineHeight = @UiCaptionLineHeight;
+        LetterSpacing = @UiCaptionTracking;
+        Foreground = @Fg2;
+        Margin = (18,0,0,0);
     }
 
     DataTemplate [ DataType = PortalSessionService ] {

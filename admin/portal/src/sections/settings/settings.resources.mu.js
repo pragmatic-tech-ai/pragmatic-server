@@ -181,9 +181,7 @@ export class SettingsResources extends ResourceDictionary {
             const _textBlock36 = new TextBlock();
             _textBlock36.set_property_value(Grid.ColumnKey, 0);
             _textBlock36.set_property_value(TextBlock.TextKey, "Email");
-            _textBlock36.set_property_value(TextBlock.StyleKey, DynamicResource(_textBlock36, "UiCaption"));
-            _textBlock36.set_property_value(TextBlock.ForegroundKey, DynamicResource(_textBlock36, "Fg2"));
-            _textBlock36.set_property_value(TextBlock.MarginKey, new Thickness(18, 0, 0, 0));
+            _textBlock36.set_property_value(TextBlock.StyleKey, DynamicResource(_textBlock36, "PortalTableLinkHeader"));
             _grid31.AddChild(_textBlock36);
             const _textBlock37 = new TextBlock();
             _textBlock37.set_property_value(Grid.ColumnKey, 1);
