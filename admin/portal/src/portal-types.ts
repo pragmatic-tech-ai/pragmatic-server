@@ -34,6 +34,10 @@ export type TenantDto =
     createdAt?: string
 }
 
+// POST /api/tenants provisions the tenant's Owner and reveals its password exactly once in the response.
+export type TenantOwnerDto = { email: string; principalId: string; password: string }
+export type CreatedTenantDto = TenantDto & { owner: TenantOwnerDto }
+
 export type HiveClusterBackend = 'aks' | 'eks' | 'gke' | 'private' | 'local'
 export type HiveProvisionMode = 'provision' | 'attach'
 

@@ -134,13 +134,14 @@ describe('ControlPlaneClient platform records', () =>
 
     it('CreateTenant POSTs the body', async () =>
     {
-        FetchStub.Install({ id: 't1', clientId: 'c1', displayName: 'T1' })
-        const dto = await new ControlPlaneClient().CreateTenant('t1', 'c1', 'T1')
+        FetchStub.Install({ id: 't1', clientId: 'c1', displayName: 'T1', owner: { email: 'o@x.test', principalId: 'owner', password: 'pw-once' } })
+        const dto = await new ControlPlaneClient().CreateTenant('t1', 'c1', 'T1', 'o@x.test')
         const call = FetchStub.Calls[0]!
         assert.equal(call.route, '/api/tenants')
         assert.equal(call.init?.method, 'POST')
-        assert.deepEqual(JSON.parse(call.init?.body as string), { id: 't1', clientId: 'c1', displayName: 'T1' })
+        assert.deepEqual(JSON.parse(call.init?.body as string), { id: 't1', clientId: 'c1', displayName: 'T1', ownerEmail: 'o@x.test' })
         assert.equal(dto.clientId, 'c1')
+        assert.equal(dto.owner.password, 'pw-once')
     })
 
     it('DeleteTenant DELETEs the item route', async () =>

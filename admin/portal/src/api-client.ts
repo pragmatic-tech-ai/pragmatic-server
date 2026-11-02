@@ -1,4 +1,4 @@
-import type { ClientDto, EnvironmentDto, HiveDto, FleetHiveDto, ManifestDto, OperatorSummaryDto, GatingDto, SelectionDto, HiveRolloutDto, TenantDto, GraphDto, GraphLoadedDto, OperatorDto, PromotionResultDto, ProvisionInputDto, ProvisionResultDto, PolicyDto, ActivityDto, ObservationDto, LedgerDto } from './portal-types.js'
+import type { ClientDto, CreatedTenantDto, EnvironmentDto, HiveDto, FleetHiveDto, ManifestDto, OperatorSummaryDto, GatingDto, SelectionDto, HiveRolloutDto, TenantDto, GraphDto, GraphLoadedDto, OperatorDto, PromotionResultDto, ProvisionInputDto, ProvisionResultDto, PolicyDto, ActivityDto, ObservationDto, LedgerDto } from './portal-types.js'
 
 // Thrown for non-2xx control-plane responses; Message carries the server's error text.
 export class ApiError extends Error
@@ -117,9 +117,9 @@ export class ControlPlaneClient
         return clientId === undefined ? all : all.filter(t => t.clientId === clientId)
     }
 
-    public async CreateTenant(id: string, clientId: string, displayName: string): Promise<TenantDto>
+    public async CreateTenant(id: string, clientId: string, displayName: string, ownerEmail: string): Promise<CreatedTenantDto>
     {
-        return await this.Send<TenantDto>(ControlPlaneClient.TenantsRoute, { method: ControlPlaneClient.MethodPost, body: JSON.stringify({ id, clientId, displayName }) })
+        return await this.Send<CreatedTenantDto>(ControlPlaneClient.TenantsRoute, { method: ControlPlaneClient.MethodPost, body: JSON.stringify({ id, clientId, displayName, ownerEmail }) })
     }
 
     public async DeleteTenant(id: string): Promise<void>

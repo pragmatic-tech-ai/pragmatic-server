@@ -1,11 +1,11 @@
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
-import type { ClientDto, TenantDto } from './portal-types.js'
+import type { ClientDto, CreatedTenantDto } from './portal-types.js'
 
 // The slice of ControlPlaneClient the create-tenant form needs.
 export interface ICreateTenantSource
 {
     ListClients(): Promise<ClientDto[]>
-    CreateTenant(id: string, clientId: string, displayName: string): Promise<TenantDto>
+    CreateTenant(id: string, clientId: string, displayName: string, ownerEmail: string): Promise<CreatedTenantDto>
 }
 
 // Create-tenant form: the available clients, the chosen client id, and the fields.
@@ -15,12 +15,14 @@ export class CreateTenantViewModel extends Observable
     public static readonly ClientIdProperty = 'ClientId'
     public static readonly IdProperty = 'Id'
     public static readonly DisplayNameProperty = 'DisplayName'
+    public static readonly OwnerEmailProperty = 'OwnerEmail'
     private static readonly Empty = ''
 
     private clients: readonly ClientDto[] = []
     private clientId: string
     private id = CreateTenantViewModel.Empty
     private displayName = CreateTenantViewModel.Empty
+    private ownerEmail = CreateTenantViewModel.Empty
 
     public constructor(private readonly source: ICreateTenantSource, initialClientId: string = CreateTenantViewModel.Empty)
     {
@@ -69,6 +71,18 @@ export class CreateTenantViewModel extends Observable
         this.RaisePropertyChanged(CreateTenantViewModel.DisplayNameProperty, old, value)
     }
 
+    public get OwnerEmail(): string
+    {
+        return this.ownerEmail
+    }
+
+    public set OwnerEmail(value: string)
+    {
+        const old = this.ownerEmail
+        this.ownerEmail = value
+        this.RaisePropertyChanged(CreateTenantViewModel.OwnerEmailProperty, old, value)
+    }
+
     public async Load(): Promise<void>
     {
         const old = this.clients
@@ -76,8 +90,9 @@ export class CreateTenantViewModel extends Observable
         this.RaisePropertyChanged(CreateTenantViewModel.ClientsProperty, old, this.clients)
     }
 
-    public async Submit(): Promise<TenantDto>
+    // The result carries the Owner's one-time password; the caller reveals it and must not keep it.
+    public async Submit(): Promise<CreatedTenantDto>
     {
-        return await this.source.CreateTenant(this.id.trim(), this.clientId, this.displayName.trim())
+        return await this.source.CreateTenant(this.id.trim(), this.clientId, this.displayName.trim(), this.ownerEmail.trim())
     }
 }

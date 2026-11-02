@@ -4,7 +4,7 @@ import { CreateClientViewModel } from '../src/create-client-view-model.js'
 import { CreateTenantViewModel } from '../src/create-tenant-view-model.js'
 import { ClientListViewModel } from '../src/client-list-view-model.js'
 import { TenantListViewModel } from '../src/tenant-list-view-model.js'
-import type { ClientDto, TenantDto } from '../src/portal-types.js'
+import type { ClientDto, CreatedTenantDto, TenantDto } from '../src/portal-types.js'
 
 class FakeClient
 {
@@ -21,10 +21,10 @@ class FakeClient
         return [{ id: 'c1', displayName: 'One', createdAt: '2026-01-01T00:00:00.000Z' }, { id: 'c2', displayName: 'Two', createdAt: '2026-01-02T00:00:00.000Z' }]
     }
 
-    public async CreateTenant(id: string, clientId: string, displayName: string): Promise<TenantDto>
+    public async CreateTenant(id: string, clientId: string, displayName: string, ownerEmail: string): Promise<CreatedTenantDto>
     {
-        this.Calls.push(['CreateTenant', id, clientId, displayName])
-        return { id, clientId, displayName }
+        this.Calls.push(['CreateTenant', id, clientId, displayName, ownerEmail])
+        return { id, clientId, displayName, owner: { email: ownerEmail, principalId: 'owner', password: 'pw-once' } }
     }
 
     public async ListTenants(clientId?: string): Promise<TenantDto[]>
@@ -76,8 +76,10 @@ describe('client/tenant view-models', () =>
         vm.ClientId = 'c2'
         vm.Id = 't1'
         vm.DisplayName = 'Tenant One'
-        await vm.Submit()
-        assert.deepEqual(fake.Calls, [['CreateTenant', 't1', 'c2', 'Tenant One']])
+        vm.OwnerEmail = ' owner@acme.test '
+        const created = await vm.Submit()
+        assert.deepEqual(fake.Calls, [['CreateTenant', 't1', 'c2', 'Tenant One', 'owner@acme.test']])
+        assert.equal(created.owner.password, 'pw-once')
     })
 
     it('tenant-list VM filters by its client id', async () =>
