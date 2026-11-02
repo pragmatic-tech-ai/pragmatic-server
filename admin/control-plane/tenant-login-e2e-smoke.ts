@@ -198,12 +198,21 @@ export class TenantLoginE2eSmoke
     private static readonly SessionCookieName = 'pts_session'
     private static readonly RootPath = '/'
 
-    // Portal text the browser drives. Mirrors the portal's own constants (TenantTreeView.RootLabel,
-    // HiveDetailView.SetTargetLabel / ConfirmLabel); hoisted here so the smoke owns its literals without a
-    // cross-package import that may not resolve under tsx.
-    private static readonly RootLabel = 'My Hives'
-    private static readonly SetTargetLabel = 'Set as target'
-    private static readonly ConfirmLabel = 'Confirm'
+    // Portal text and geometry the browser drives (the Mural tenant portal: Overview first, Releases > Adopt).
+    // Mirrors the portal's markup and its e2e (admin/tenant-portal/tests); hoisted here so the smoke owns its
+    // literals without a cross-package import that may not resolve under tsx.
+    private static readonly RootLabel = 'Overview'
+    private static readonly ReleasesTitle = 'Releases'
+    private static readonly AdoptOfferLabel = 'Adopt...'
+    private static readonly NextLabel = 'Next'
+    private static readonly AdoptButtonPrefix = 'Adopt '
+    // The icon-only rail: entries 40px apart, the first centred at (24, 97); Releases is the fourth entry.
+    private static readonly RailCenterX = 24
+    private static readonly RailFirstCenterY = 97
+    private static readonly RailPitch = 40
+    private static readonly ReleasesRailIndex = 3
+    // Version, Environments, Review: Next twice reaches Review.
+    private static readonly StepsToReview = 2
 
     private static readonly TargetPathFragment = '/tenant-api/hives/'
     private static readonly TargetPathLeaf = '/target'
@@ -433,20 +442,27 @@ export class TenantLoginE2eSmoke
         }
     }
 
-    /** Navigates the tree to the hive, opens its detail, and drives set-target -> confirm to roll v1 -> v2. [roll posted] */
+    /**
+     * Opens Releases from the rail, starts Adopt on the offered version (the wizard preselects the newest, v2),
+     * steps to Review and adopts, which retargets the hive v1 -> v2. Mural renders as SVG with hit rects over
+     * the text, so clicks are forced. [roll posted]
+     */
     private async DriveRoll(page: import('playwright').Page): Promise<void>
     {
         const S = TenantLoginE2eSmoke
-        // The portal tree renders the hive node directly under the root (no manual expand needed), so clicking the
-        // display name opens the hive detail.
-        await page.getByText(S.HiveDisplayName, { exact: true }).click()
-        await page.getByText(S.SetTargetLabel, { exact: true }).click()
+        await page.mouse.click(S.RailCenterX, S.RailFirstCenterY + S.RailPitch * S.ReleasesRailIndex)
+        await page.getByText(S.ReleasesTitle, { exact: true }).first().waitFor({ timeout: S.PortalWaitMs })
+        await page.getByText(S.AdoptOfferLabel, { exact: true }).first().click({ force: true })
+        for (let step = 0; step < S.StepsToReview; step++)
+        {
+            await page.getByText(S.NextLabel, { exact: true }).first().click({ force: true })
+        }
         const posted = page.waitForResponse(
             resp => resp.request().method() === S.MethodPost
                 && resp.url().includes(S.TargetPathFragment)
                 && new URL(resp.url()).pathname.endsWith(S.TargetPathLeaf),
             { timeout: S.RollWaitMs })
-        await page.getByText(S.ConfirmLabel, { exact: true }).click()
+        await page.getByText(S.AdoptButtonPrefix + S.VersionV2, { exact: true }).first().click({ force: true })
         const response = await posted
         this.Check(S.M_RollPosted, response.status() === S.StatusNoContent, S.StatusDetail + String(response.status()))
     }
