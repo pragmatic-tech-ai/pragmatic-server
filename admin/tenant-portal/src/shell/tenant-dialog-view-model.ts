@@ -22,6 +22,7 @@ export abstract class TenantDialogViewModel<TResult> extends Observable
 {
     private static readonly ErrorTextProperty = 'ErrorText'
     private static readonly IsBusyProperty = 'IsBusy'
+    private static readonly NoErrorText = ''
     private static readonly DialogWidth = 480
     // The dialog each service was last asked to show, by identity: a newer
     // Open takes it over synchronously, before the older Show settles.
@@ -153,7 +154,7 @@ export abstract class TenantDialogViewModel<TResult> extends Observable
 
     private async Submit(): Promise<TResult | undefined>
     {
-        this.SetErrorText('')
+        this.SetErrorText(TenantDialogViewModel.NoErrorText)
         this.SetBusy(true)
         try
         {

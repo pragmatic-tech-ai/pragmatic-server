@@ -1,4 +1,5 @@
 import type { DialogService } from '@pragmatic-tech-ai/mural/framework/shell/services/dialog-service.js'
+import { ConsequenceList } from './consequence-list.js'
 import type { INameConfirmRequest } from './tenant-page-view-model.js'
 import { TenantDialogViewModel } from './tenant-dialog-view-model.js'
 import type { TenantSessionService } from './tenant-session-service.js'
@@ -17,8 +18,6 @@ export class NameConfirmDialogViewModel extends TenantDialogViewModel<boolean>
     private static readonly PromptTemplate = 'Type {name} to confirm.'
     private static readonly NameToken = '{name}'
     private static readonly DeleteLabel = 'Delete'
-    private static readonly ConsequencePrefix = '- '
-    private static readonly LineBreak = '\n'
 
     private typed = ''
 
@@ -45,8 +44,7 @@ export class NameConfirmDialogViewModel extends TenantDialogViewModel<boolean>
     // The consequences as one bulleted block; '' when there are none.
     public get ConsequencesText(): string
     {
-        const lines = this.request.Consequences ?? []
-        return lines.map(l => NameConfirmDialogViewModel.ConsequencePrefix + l).join(NameConfirmDialogViewModel.LineBreak)
+        return ConsequenceList.Text(this.request.Consequences)
     }
 
     public get Typed(): string

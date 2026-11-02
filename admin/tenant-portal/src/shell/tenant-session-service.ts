@@ -32,6 +32,7 @@ export class TenantSessionService extends ServiceBase
     private static readonly LogoutText = 'Log out'
     private static readonly ActivityTemplate = 'Activity ({count})'
     private static readonly CountToken = '{count}'
+    private static readonly NoText = ''
 
     private client: TenantApiClient | undefined
     private session: SessionDto | undefined
@@ -91,23 +92,23 @@ export class TenantSessionService extends ServiceBase
 
     public get PrincipalId(): string
     {
-        return this.session?.principalId ?? ''
+        return this.session?.principalId ?? TenantSessionService.NoText
     }
 
     public get Email(): string
     {
-        return this.profile?.email ?? this.session?.email ?? this.session?.tenantId ?? ''
+        return this.profile?.email ?? this.session?.email ?? this.session?.tenantId ?? TenantSessionService.NoText
     }
 
     public get RoleLabel(): string
     {
-        return this.profile?.roleLabel ?? ''
+        return this.profile?.roleLabel ?? TenantSessionService.NoText
     }
 
     // The identity plate: organisation / tenant / hive. Fixed; there is no switcher.
     public get OrganisationLabel(): string
     {
-        return this.profile?.environment.organisation ?? ''
+        return this.profile?.environment.organisation ?? TenantSessionService.NoText
     }
 
     public get HasOrganisation(): boolean
@@ -117,7 +118,7 @@ export class TenantSessionService extends ServiceBase
 
     public get TenantLabel(): string
     {
-        return this.profile?.environment.displayName ?? this.session?.tenantId ?? ''
+        return this.profile?.environment.displayName ?? this.session?.tenantId ?? TenantSessionService.NoText
     }
 
     public get HiveLabel(): string
@@ -145,7 +146,7 @@ export class TenantSessionService extends ServiceBase
         }
         if (this.Can(capability))
         {
-            return ''
+            return TenantSessionService.NoText
         }
         return TenantSessionService.DeniedTemplate
             .replace(TenantSessionService.NeedToken, AdminCapabilities.NameOf(capability))
@@ -214,7 +215,7 @@ export class TenantSessionService extends ServiceBase
             return
         }
         this.SetLoggingOut(true)
-        this.SetLogoutError('')
+        this.SetLogoutError(TenantSessionService.NoText)
         try
         {
             await this.Client.Logout()

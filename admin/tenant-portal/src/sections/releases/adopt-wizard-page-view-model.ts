@@ -1,3 +1,4 @@
+import { UtcText } from '../../shell/utc-text.js'
 import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import { TenantApiError } from '../../tenant-api-client.js'
@@ -6,7 +7,7 @@ import { PendingWork, type IHoldsPendingWork } from '../../shell/holds-pending-w
 import { OptionViewModel } from '../../shell/option-view-model.js'
 import { TenantPageViewModel } from '../../shell/tenant-page-view-model.js'
 import type { TenantSessionService } from '../../shell/tenant-session-service.js'
-import { ReleasesSnapshot, UtcText } from './releases-snapshot.js'
+import { ReleasesSnapshot } from './releases-snapshot.js'
 import type { EnvStepEntry, OfferEntry } from './releases-snapshot.js'
 
 // The adopt wizard's steps, in order.

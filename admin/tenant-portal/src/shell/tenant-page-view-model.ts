@@ -51,6 +51,7 @@ export abstract class TenantPageViewModel extends Observable
     private static readonly IsPopulatedProperty = 'IsPopulated'
     private static readonly IsErrorProperty = 'IsError'
     private static readonly IsDeniedProperty = 'IsDenied'
+    private static readonly NoErrorText = ''
     private static readonly NoDialogsMessage = 'Dialogs are not available yet. Try again once the page has finished loading.'
 
     protected readonly Session: TenantSessionService
@@ -60,6 +61,7 @@ export abstract class TenantPageViewModel extends Observable
     private loadGeneration = 0
     private mutating = false
     private readonly mutatingCommands: RelayCommand[] = []
+    private rowCommands: RelayCommand[] = []
 
     public constructor(session: TenantSessionService)
     {
@@ -95,7 +97,7 @@ export abstract class TenantPageViewModel extends Observable
     public get DeniedReason(): string
     {
         const capability = this.PageCapability
-        return capability === undefined ? '' : this.Session.DeniedReason(capability)
+        return capability === undefined ? TenantPageViewModel.NoErrorText : this.Session.DeniedReason(capability)
     }
 
     // Who to ask for access, for the Denied state's text.
@@ -134,10 +136,12 @@ export abstract class TenantPageViewModel extends Observable
     // this one's result or error is discarded. A Populated page reloads
     // quietly: it stays Populated (its content showing) until the load lands,
     // and only then switches, to Empty, Error or Denied when the result says so.
+    // A successful load also clears the last command's error: it reported a
+    // state of the page that the load has just replaced.
     public async Refresh(): Promise<void>
     {
         const generation = ++this.loadGeneration
-        this.SetErrorText('')
+        this.SetErrorText(TenantPageViewModel.NoErrorText)
         if (this.state !== PageState.Populated)
         {
             this.SetState(PageState.Loading)
@@ -149,6 +153,7 @@ export abstract class TenantPageViewModel extends Observable
             {
                 return
             }
+            this.SetCommandErrorText(TenantPageViewModel.NoErrorText)
             this.SetState(hasContent ? PageState.Populated : PageState.Empty)
         }
         catch (e)
@@ -186,7 +191,7 @@ export abstract class TenantPageViewModel extends Observable
     // CommandErrorText and leaves State as it was.
     protected async Guard(action: () => Promise<void>): Promise<void>
     {
-        this.SetCommandErrorText('')
+        this.SetCommandErrorText(TenantPageViewModel.NoErrorText)
         try
         {
             await action()
@@ -208,22 +213,32 @@ export abstract class TenantPageViewModel extends Observable
     // can never overtake (and drop) the first's one-time result.
     protected MutatingCommand(capability: AdminCapability, run: (parameter: unknown) => Promise<void>, enabled?: (parameter: unknown) => boolean): RelayCommand
     {
-        const can = (parameter?: unknown): boolean => this.Session.Can(capability) && !this.mutating && (enabled === undefined || enabled(parameter))
-        const command = new RelayCommand((parameter) =>
-        {
-            if (can(parameter))
-            {
-                void this.RunMutating(() => run(parameter))
-            }
-        }, can)
+        const command = this.CreateMutating(capability, run, enabled)
         this.mutatingCommands.push(command)
         return command
+    }
+
+    // A mutating command for one table row (Revoke on a token, say): the
+    // same gating and in-flight lock as MutatingCommand, but it lives only
+    // until the next ClearRowCommands, which a page calls when it rebuilds
+    // its rows, so reloads neither accumulate commands nor keep old rows.
+    protected RowMutatingCommand(capability: AdminCapability, run: (parameter: unknown) => Promise<void>, enabled?: (parameter: unknown) => boolean): RelayCommand
+    {
+        const command = this.CreateMutating(capability, run, enabled)
+        this.rowCommands.push(command)
+        return command
+    }
+
+    // Forgets the row commands of the rows a page is about to replace.
+    protected ClearRowCommands(): void
+    {
+        this.rowCommands = []
     }
 
     // Re-evaluates every mutating command (a field `enabled` reads changed).
     protected RaiseMutatingCommandsChanged(): void
     {
-        for (const command of this.mutatingCommands)
+        for (const command of [...this.mutatingCommands, ...this.rowCommands])
         {
             command.RaiseCanExecuteChanged()
         }
@@ -268,6 +283,18 @@ export abstract class TenantPageViewModel extends Observable
         {
             await request.OnConfirmed()
         }
+    }
+
+    private CreateMutating(capability: AdminCapability, run: (parameter: unknown) => Promise<void>, enabled?: (parameter: unknown) => boolean): RelayCommand
+    {
+        const can = (parameter?: unknown): boolean => this.Session.Can(capability) && !this.mutating && (enabled === undefined || enabled(parameter))
+        return new RelayCommand((parameter) =>
+        {
+            if (can(parameter))
+            {
+                void this.RunMutating(() => run(parameter))
+            }
+        }, can)
     }
 
     private async RunMutating(run: () => Promise<void>): Promise<void>

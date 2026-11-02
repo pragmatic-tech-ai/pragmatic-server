@@ -1,9 +1,10 @@
+import { UtcText } from '../../shell/utc-text.js'
 import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import { AdminCapability } from '../../shell/admin-capability.js'
 import { TenantPageViewModel } from '../../shell/tenant-page-view-model.js'
 import type { TenantSessionService } from '../../shell/tenant-session-service.js'
-import { ReleasesSnapshot, UtcText } from './releases-snapshot.js'
+import { ReleasesSnapshot } from './releases-snapshot.js'
 import type { LedgerEntry, OfferEntry, VersionEntry } from './releases-snapshot.js'
 import type { RolloutEnvDto } from '../../tenant-types.js'
 

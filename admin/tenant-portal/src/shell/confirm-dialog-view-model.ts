@@ -1,5 +1,6 @@
 import type { DialogService } from '@pragmatic-tech-ai/mural/framework/shell/services/dialog-service.js'
 import type { AdminCapability } from './admin-capability.js'
+import { ConsequenceList } from './consequence-list.js'
 import { TenantDialogViewModel } from './tenant-dialog-view-model.js'
 import type { TenantSessionService } from './tenant-session-service.js'
 
@@ -30,8 +31,7 @@ export class ConfirmDialogViewModel extends TenantDialogViewModel<boolean>
 {
     public static readonly Confirmed = true
 
-    private static readonly ConsequencePrefix = '- '
-    private static readonly LineBreak = '\n'
+    private static readonly NoText = ''
 
     public constructor(session: TenantSessionService, dialogs: DialogService, private readonly request: IConfirmRequest)
     {
@@ -45,13 +45,12 @@ export class ConfirmDialogViewModel extends TenantDialogViewModel<boolean>
 
     public get ConsequencesText(): string
     {
-        const lines = this.request.Consequences ?? []
-        return lines.map(l => ConfirmDialogViewModel.ConsequencePrefix + l).join(ConfirmDialogViewModel.LineBreak)
+        return ConsequenceList.Text(this.request.Consequences)
     }
 
     public get Warning(): string
     {
-        return this.request.Warning ?? ''
+        return this.request.Warning ?? ConfirmDialogViewModel.NoText
     }
 
     public get ConfirmLabel(): string

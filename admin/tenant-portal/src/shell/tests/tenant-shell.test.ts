@@ -258,6 +258,16 @@ describe('TenantPageViewModel', () =>
         assert.equal(page.ErrorText, 'boom')
     })
 
+    it('clears the last command error on a successful reload', async () =>
+    {
+        const f = new Fixture()
+        const page = f.A.Page('p')
+        await page.RunConfirm(undefined as unknown as FakeDialogService, async () => undefined)
+        assert.notEqual(page.CommandErrorText, '')
+        await page.Refresh()
+        assert.equal(page.CommandErrorText, '')
+    })
+
     it('discards a superseded load', async () =>
     {
         const f = new Fixture()
