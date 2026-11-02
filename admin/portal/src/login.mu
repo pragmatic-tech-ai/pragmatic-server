@@ -1,10 +1,16 @@
 // login.mu - the operator sign-in, a small application of its own.
 //
-// main.ts imports this only when there is no session; the shell (app.mu) is
-// imported only when there is one. LoginHostService owns the sign-in page view
+// PortalBoot imports this only when there is no session (or when the session
+// probe fails, with the reason in ErrorText); the shell (app.mu) is imported
+// only when there is one. LoginHostService owns the sign-in page view
 // model; a successful login reloads the page, which then boots the shell.
 // The password box masks its glyphs (TextBox.IsPassword); Text still binds
 // the real value TwoWay onto the page.
+//
+// Enter-to-submit: a single-line TextBox leaves Return unhandled, so KeyDown
+// bubbles to the form's StackPanel, whose SubmitOnEnter style (a Style is the
+// only place `on <Event>` is allowed) invokes SubmitKeyCommand with the key
+// args; the page logs in on Return only.
 
 import Pragmatic from "@pragmatic-tech-ai/mural/resources/pragmatic"
 import PragmaticLight from "@pragmatic-tech-ai/mural/resources/pragmatic"
@@ -16,18 +22,22 @@ Application [ Theme = Pragmatic, Scheme = PragmaticLight ] {
     }
 
     resources: {
+        Style x:key="SubmitOnEnter" [ TargetType = StackPanel ] {
+            on KeyDown { InvokeCommand [ Command = $SubmitKeyCommand ] }
+        }
+
         Border x:root [ Fill = @Bg1, DataContext = $service(LoginHostService).Page ] {
             Border [ Fill = @Bg0, Stroke = Pen [ Brush = @Border ], Padding = (24,24,24,24),
                      HorizontalAlignment = Center, VerticalAlignment = Center ] {
-                StackPanel [ Orientation = Vertical ] {
+                StackPanel [ Orientation = Vertical, Style = @SubmitOnEnter ] {
                     TextBlock [ Text = "Platform Admin", Style = @H3, Foreground = @Fg0 ]
                     TextBlock [ Text = "Operator sign in", Style = @Body, Foreground = @Fg2, Margin = (0,4,0,16) ]
 
                     TextBlock [ Text = "Email", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-                    TextBox [ Text = $Email, Placeholder = "Email", Margin = (0,0,0,12) ]
+                    TextBox [ Text = $Email, Placeholder = "Email", SubmitsOnEnter = true, Margin = (0,0,0,12) ]
 
                     TextBlock [ Text = "Password", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-                    TextBox [ Text = $Password, Placeholder = "Password", IsPassword = true, Margin = (0,0,0,16) ]
+                    TextBox [ Text = $Password, Placeholder = "Password", IsPassword = true, SubmitsOnEnter = true, Margin = (0,0,0,16) ]
 
                     Button [ Variant = Filled, Command = $LoginCommand, HorizontalAlignment = Left ] {
                         TextBlock [ Text = "Log in" ]

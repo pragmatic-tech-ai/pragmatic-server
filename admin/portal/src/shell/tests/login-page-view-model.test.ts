@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { Key } from '@pragmatic-tech-ai/mural/runtime'
 import { ApiError, type ControlPlaneClient } from '../../api-client.js'
 import { LoginPageViewModel } from '../login-page-view-model.js'
 import { FakeReloader, Tick } from './portal-test-fixtures.js'
@@ -104,5 +105,44 @@ describe('LoginPageViewModel', () =>
         assert.ok(changes > 0)
         await Tick.Next()
         assert.equal(f.Client.Calls, 1)
+    })
+
+    it('Return through SubmitKeyCommand logs in and marks the key handled', async () =>
+    {
+        const f = new LoginFixture()
+        f.Fill()
+        const args = { Key: Key.Return, Handled: false }
+        f.Page.SubmitKeyCommand.Execute(args)
+        await Tick.Next()
+        assert.equal(args.Handled, true)
+        assert.equal(f.Client.Calls, 1)
+        assert.equal(f.Reloader.Count, 1)
+    })
+
+    it('other keys through SubmitKeyCommand do nothing', async () =>
+    {
+        const f = new LoginFixture()
+        f.Fill()
+        const args = { Key: Key.A, Handled: false }
+        f.Page.SubmitKeyCommand.Execute(args)
+        await Tick.Next()
+        assert.equal(args.Handled, false)
+        assert.equal(f.Client.Calls, 0)
+    })
+
+    it('Return with an empty password does not log in', async () =>
+    {
+        const f = new LoginFixture()
+        f.Page.Email = LoginFixture.Email
+        f.Page.SubmitKeyCommand.Execute({ Key: Key.Return, Handled: false })
+        await Tick.Next()
+        assert.equal(f.Client.Calls, 0)
+    })
+
+    it('ShowError sets ErrorText', () =>
+    {
+        const f = new LoginFixture()
+        f.Page.ShowError(LoginFixture.Failure)
+        assert.equal(f.Page.ErrorText, LoginFixture.Failure)
     })
 })

@@ -41,6 +41,18 @@ class InactiveSection extends CountingSection
 {
 }
 
+// An active rail service that is not a portal section: it has a
+// RefreshCurrent of its own, which the bridge must not call.
+class PlainService
+{
+    public Refreshes = 0
+
+    public async RefreshCurrent(): Promise<void>
+    {
+        this.Refreshes++
+    }
+}
+
 describe('LiveUpdateBridge', () =>
 {
     it('refreshes only the active section current page and keeps it shown', async () =>
@@ -73,8 +85,20 @@ describe('LiveUpdateBridge', () =>
     it('does nothing when the active service is not a portal section', async () =>
     {
         const host = PortalTestHost.WithoutClient()
+        host.Provider.register(InactiveSection, (p) => new InactiveSection(p))
+        host.Provider.register(PlainService, () => new PlainService())
         const rail = new TestRail(host.Provider)
+        rail.Select(InactiveSection)
+        await Tick.Next()
+        const section = host.Provider.getRequired(InactiveSection)
+        const page = section.Root
+        rail.Select(PlainService)
+        const plain = host.Provider.getRequired(PlainService)
+        assert.equal(rail.Navigation.ActiveService, plain)
+
         await new LiveUpdateBridge(rail.Navigation).OnChanged()
-        assert.equal(rail.Navigation.ActiveService, undefined)
+
+        assert.equal(plain.Refreshes, 0)
+        assert.equal(page?.Loads, 1)
     })
 })

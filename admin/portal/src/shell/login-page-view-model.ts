@@ -1,11 +1,12 @@
-import { RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
+import { Key, RelayCommand, type KeyEventArgs } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import type { ControlPlaneClient } from '../api-client.js'
 import type { IPageReloader } from './page-reloader.js'
 
 // The operator sign-in form. A successful login reloads the page, which boots
 // into the shell with the new session cookie; a failed one shows why and
-// clears the password so it is not kept around.
+// clears the password so it is not kept around. Enter in either box submits:
+// the form's KeyDown trigger (login.mu) runs SubmitKeyCommand with the key args.
 export class LoginPageViewModel extends Observable
 {
     private static readonly EmailProperty = 'Email'
@@ -19,11 +20,13 @@ export class LoginPageViewModel extends Observable
     private errorText = ''
     private isBusy = false
     private readonly loginCommand: RelayCommand
+    private readonly submitKeyCommand: RelayCommand
 
     public constructor(private readonly client: ControlPlaneClient, private readonly reloader: IPageReloader)
     {
         super()
         this.loginCommand = new RelayCommand(() => { void this.Login() }, () => this.CanLogin, { Text: LoginPageViewModel.LoginText })
+        this.submitKeyCommand = new RelayCommand((args) => this.OnKey(args))
     }
 
     public get Email(): string
@@ -76,6 +79,19 @@ export class LoginPageViewModel extends Observable
         return this.loginCommand
     }
 
+    // Receives the form's KeyDown args: Return logs in (when LoginCommand
+    // could), any other key is left alone.
+    public get SubmitKeyCommand(): RelayCommand
+    {
+        return this.submitKeyCommand
+    }
+
+    // Shows why the page could not proceed, e.g. the session probe failed.
+    public ShowError(text: string): void
+    {
+        this.SetErrorText(text)
+    }
+
     // Signs in with the entered credentials. Busy stays set on success: the
     // page is about to reload, so the form must not submit twice.
     public async Login(): Promise<void>
@@ -98,6 +114,17 @@ export class LoginPageViewModel extends Observable
             return
         }
         this.reloader.Reload()
+    }
+
+    private OnKey(args: unknown): void
+    {
+        const key = args as Partial<KeyEventArgs> | undefined
+        if (key === undefined || key.Handled === true || key.Key !== Key.Return)
+        {
+            return
+        }
+        key.Handled = true
+        void this.Login()
     }
 
     private get CanLogin(): boolean

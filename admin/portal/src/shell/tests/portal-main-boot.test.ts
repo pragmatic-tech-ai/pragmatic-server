@@ -10,6 +10,7 @@ import { PageState, PortalPageViewModel } from '../portal-page-view-model.js'
 import { PortalSectionService } from '../portal-section-service.js'
 import { PortalSessionService } from '../portal-session-service.js'
 import { FakeReloader, TestRail, Tick } from './portal-test-fixtures.js'
+import { LoginHostService } from '../login-host-service.js'
 
 // A client with one list call plus the change-notification registration.
 class FakeShellClient
@@ -96,20 +97,21 @@ describe('PortalBoot.Decide', () =>
 {
     it('a 401 probe boots into login', async () =>
     {
-        const target = await PortalBoot.Decide(() => Promise.reject(new ApiError(ApiError.UnauthorizedStatus, 'unauthorized')))
-        assert.equal(target, BootTarget.Login)
+        const decision = await PortalBoot.Decide(() => Promise.reject(new ApiError(ApiError.UnauthorizedStatus, 'unauthorized')))
+        assert.equal(decision.Target, BootTarget.Login)
     })
 
     it('a probe with no session boots into login', async () =>
     {
-        const target = await PortalBoot.Decide(() => Promise.resolve(null))
-        assert.equal(target, BootTarget.Login)
+        const decision = await PortalBoot.Decide(() => Promise.resolve(null))
+        assert.equal(decision.Target, BootTarget.Login)
     })
 
     it('a successful probe boots into the shell', async () =>
     {
-        const target = await PortalBoot.Decide(() => Promise.resolve(ShellFixture.Operator))
-        assert.equal(target, BootTarget.Shell)
+        const decision = await PortalBoot.Decide(() => Promise.resolve(ShellFixture.Operator))
+        assert.equal(decision.Target, BootTarget.Shell)
+        assert.equal(decision.Target === BootTarget.Shell ? decision.Session : undefined, ShellFixture.Operator)
     })
 
     it('any other probe failure rethrows', async () =>
@@ -146,7 +148,7 @@ describe('PortalBoot.StartShell', () =>
         assert.equal(f.Client.Lists, 2)
     })
 
-    it('a session that expires on the first load reloads once', async () =>
+    it('a 401 on the post-initialize reload expires the session once', async () =>
     {
         const f = new ShellFixture()
         f.Client.ListFleet = () => Promise.reject(new ApiError(ApiError.UnauthorizedStatus, 'unauthorized'))
@@ -154,5 +156,16 @@ describe('PortalBoot.StartShell', () =>
         f.Client.Handlers[0]()
         await Tick.Next()
         assert.equal(f.Reloader.Count, 1)
+    })
+})
+
+describe('PortalBoot.ShowProbeFailure', () =>
+{
+    it('gives the login page an unreachable-control-plane error', () =>
+    {
+        const provider = new ServiceProvider()
+        provider.register(LoginHostService.Key, (p) => new LoginHostService(p))
+        PortalBoot.ShowProbeFailure(provider, new ApiError(500, 'boom'))
+        assert.equal(provider.getRequired(LoginHostService.Key).Page.ErrorText, "Can't reach the control plane: boom")
     })
 })
