@@ -1,8 +1,15 @@
+import { AppResources } from "./app.resources.mu.js";
 import { ConnectionModule } from "./sections/connection/connection.module.mu.js";
+import { EnvironmentsModule } from "./sections/environments/environments.module.mu.js";
+import { OverviewModule } from "./sections/overview/overview.module.mu.js";
+import { ReleasesModule } from "./sections/releases/releases.module.mu.js";
+import { SettingsModule } from "./sections/settings/settings.module.mu.js";
+import { UsersAccessModule } from "./sections/users-access/users-access.module.mu.js";
 import { ShellResources } from "./shell/shell.resources.mu.js";
 import { TenantIcons } from "./shell/tenant-icons.mu.js";
 import { TenantNavigationService } from "./shell/tenant-navigation-service.js";
 import { TenantSessionService } from "./shell/tenant-session-service.js";
+import { ContentControl } from "@pragmatic-tech-ai/mural/framework/base/content-control.js";
 import { NavigationItem } from "@pragmatic-tech-ai/mural/framework/navigation/navigation-item.js";
 import { EditorShell } from "@pragmatic-tech-ai/mural/framework/shell/editor-shell.js";
 import { ClipboardService } from "@pragmatic-tech-ai/mural/framework/shell/services/clipboard-service.js";
@@ -10,7 +17,7 @@ import { ContentHostService } from "@pragmatic-tech-ai/mural/framework/shell/ser
 import { NavigationService } from "@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js";
 import { ToolTipService } from "@pragmatic-tech-ai/mural/framework/tooltips/tooltip-service.js";
 import { Pragmatic, PragmaticDark } from "@pragmatic-tech-ai/mural/resources/pragmatic";
-import { Application, DataContextBinding, DynamicResource, NameScope, ServiceProvider, Setter, SetterFactory, Style } from "@pragmatic-tech-ai/mural/runtime";
+import { Application, DataContextBinding, DynamicResource, NameScope, ServiceBinding, ServiceProvider, Setter, SetterFactory, Style } from "@pragmatic-tech-ai/mural/runtime";
 
 export const app = (() => {
     const _app0 = new Application();
@@ -19,9 +26,15 @@ export const app = (() => {
     _app0.Services.register(ServiceProvider.tokenFor(ContentHostService), (p) => new ContentHostService(p), 'singleton');
     _app0.Services.register(ServiceProvider.tokenFor(NavigationService), (p) => new TenantNavigationService(p), 'singleton');
     _app0.Services.register(ServiceProvider.tokenFor(ClipboardService), (p) => new ClipboardService(p), 'singleton');
+    _app0.AddModule(OverviewModule);
+    _app0.AddModule(EnvironmentsModule);
+    _app0.AddModule(UsersAccessModule);
+    _app0.AddModule(ReleasesModule);
+    _app0.AddModule(SettingsModule);
     _app0.AddModule(ConnectionModule);
     const _rd1 = _app0.Resources;
     for (const [_k, _v] of ShellResources.Clone().Entries()) _rd1.Set(_k, _v);
+    for (const [_k, _v] of AppResources.Clone().Entries()) _rd1.Set(_k, _v);
     for (const [_k, _v] of TenantIcons.Clone().Entries()) _rd1.Set(_k, _v);
     const _setter2 = new Setter(NavigationItem, "Template", new SetterFactory((_t) => DynamicResource(_t, "ActivityBarItemTemplate")));
     const _setter3 = new Setter(ToolTipService, "ToolTip", new SetterFactory((_t) => DataContextBinding(_t, "Label")));
@@ -30,6 +43,7 @@ export const app = (() => {
     _rd1.Set("ActivityBarItem", _style5);
     const _editorShell6 = new EditorShell();
     _editorShell6.SetNameScope(new NameScope());
+    _editorShell6.set_property_value(EditorShell.HeaderContentKey, ((_e) => { _e.Content = ServiceBinding(_e, ServiceProvider.tokenFor(TenantSessionService), ""); return _e; })(new ContentControl()));
     _rd1.Root = _editorShell6;
     return _app0;
 })();
