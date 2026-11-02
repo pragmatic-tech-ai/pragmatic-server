@@ -4,10 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/*.test.ts",
+    "compile:mu": "node scripts/compile-mu.mjs",
+    "dev": "npm run compile:mu && vite",
+    "build": "npm run compile:mu && vite build",
+    "typecheck": "npm run compile:mu && tsc --noEmit",
+    "test": "npm run compile:mu && tsx --test tests/*.test.ts \"src/**/tests/*.test.ts\"",
     "test:e2e": "playwright test"
   },
   "dependencies": {
