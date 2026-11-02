@@ -5,7 +5,7 @@ import { AccessLevel, FieldPermission, LevelCycle, PrivilegeAction } from './sec
 import type { RecordSharingRowData } from './record-sharing.js'
 import { ProfileAssignmentSection, RoleAssignmentSection } from './security-model-assignment.js'
 import { SecurityModelOrg } from './security-model-org.js'
-import type { FieldGrantDto, FieldProfileDto, FieldSecurityDto, PrivilegeDto, RoleAssignmentDto, RoleConfigDto, SecuredFieldDto, SecurityModelDto } from './tenant-types.js'
+import type { FieldGrantDto, FieldProfileDto, FieldSecurityDto, PrivilegeDto, RoleAssignmentDto, RoleConfigDto, SecuredFieldDto, SecurityModelDto } from '../../../tenant-types.js'
 
 export * from './security-model-enums.js'
 

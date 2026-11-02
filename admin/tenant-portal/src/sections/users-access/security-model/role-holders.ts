@@ -1,4 +1,4 @@
-import type { RoleAssignmentDto, TeamDto } from './tenant-types.js'
+import type { RoleAssignmentDto, TeamDto } from '../../../tenant-types.js'
 
 export interface RoleHolderData
 {

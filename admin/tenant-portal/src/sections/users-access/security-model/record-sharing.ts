@@ -1,5 +1,5 @@
 import { AccessLevel, LevelCycle, PrivilegeAction } from './security-model-enums.js'
-import type { OwnershipRuleDto, PrivilegeDto, RoleConfigDto } from './tenant-types.js'
+import type { OwnershipRuleDto, PrivilegeDto, RoleConfigDto } from '../../../tenant-types.js'
 
 export interface RecordSharingRowData
 {

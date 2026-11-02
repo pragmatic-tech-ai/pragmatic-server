@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { AccessLevel, FieldPermission, PrivilegeAction, SecurityModelDraft } from '../src/security-model-draft.js'
-import type { SecurityModelDto } from '../src/tenant-types.js'
+import { AccessLevel, FieldPermission, PrivilegeAction, SecurityModelDraft } from '../security-model-draft.js'
+import type { SecurityModelDto } from '../../../../tenant-types.js'
 
 class Fixtures
 {

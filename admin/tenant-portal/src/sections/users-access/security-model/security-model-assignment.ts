@@ -1,7 +1,7 @@
 import type {
     FieldProfileAssignmentDto, FieldProfileClaimRuleDto, FieldProfileOverrideDto, FieldProfileTeamGrantDto, FieldSecurityDto,
     RoleAssignmentDto, RoleClaimRuleDto, RoleOverrideDto, SecurityModelDto, TeamRoleGrantDto
-} from './tenant-types.js'
+} from '../../../tenant-types.js'
 
 export interface AssignmentArrays<TClaim, TOverride, TTeam>
 {

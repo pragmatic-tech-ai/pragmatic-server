@@ -1,4 +1,4 @@
-import type { BusinessUnitDto, MembershipDto, OwnershipRuleDto, OwnershipSourceDto, SecurityModelDto, TeamDto } from './tenant-types.js'
+import type { BusinessUnitDto, MembershipDto, OwnershipRuleDto, OwnershipSourceDto, SecurityModelDto, TeamDto } from '../../../tenant-types.js'
 
 // Edits the organization-structure sections (business units, teams) of a live
 // SecurityModelDto and keeps every dependent reference consistent on removal.

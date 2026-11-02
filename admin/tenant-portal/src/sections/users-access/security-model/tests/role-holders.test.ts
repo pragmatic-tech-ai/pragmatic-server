@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { RoleHoldersDeriver } from '../src/role-holders.js'
-import type { RoleAssignmentDto, TeamDto } from '../src/tenant-types.js'
+import { RoleHoldersDeriver } from '../role-holders.js'
+import type { RoleAssignmentDto, TeamDto } from '../../../../tenant-types.js'
 
 class Fixtures
 {

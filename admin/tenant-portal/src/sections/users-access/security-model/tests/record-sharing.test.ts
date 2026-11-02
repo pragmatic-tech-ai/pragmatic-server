@@ -1,8 +1,8 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { AccessLevel, PrivilegeAction, SecurityModelDraft } from '../src/security-model-draft.js'
-import { RecordSharingDeriver } from '../src/record-sharing.js'
-import type { OwnershipRuleDto, PrivilegeDto, RoleConfigDto, SecurityModelDto } from '../src/tenant-types.js'
+import { AccessLevel, PrivilegeAction, SecurityModelDraft } from '../security-model-draft.js'
+import { RecordSharingDeriver } from '../record-sharing.js'
+import type { OwnershipRuleDto, PrivilegeDto, RoleConfigDto, SecurityModelDto } from '../../../../tenant-types.js'
 
 class Fixtures
 {
