@@ -9,7 +9,8 @@
 // skips its default when one is registered) so the side pane stays hidden.
 // Importing this module composes the shell and activates the first section
 // before any session exists; TenantBoot then initializes TenantSessionService
-// and refreshes the active section before it mounts the shell.
+// and rebuilds the active section (a fresh root page, built with the
+// session's permissions) before it mounts the shell.
 
 import EditorShell from "@pragmatic-tech-ai/mural/framework/shell/editor-shell.js"
 import NavigationService from "@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js"

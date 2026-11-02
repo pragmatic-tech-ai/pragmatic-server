@@ -1,4 +1,3 @@
-
 // Wire shapes of the 7a tenant surface (/tenant-auth/* + /tenant-api/*), kept verbatim.
 
 export type SessionDto = { tenantId: string; principalId: string; email?: string }
