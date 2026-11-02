@@ -122,6 +122,11 @@ export class ControlPlaneServer
     private static readonly AgentChannelPortEnvVar = 'PRAGMATIC_AGENT_CHANNEL_PORT'
     private static readonly AgentChannelBindEnvVar = 'PRAGMATIC_AGENT_CHANNEL_BIND'
     private static readonly DefaultAgentChannelBind = '0.0.0.0'
+    private static readonly AgentChannelUrlEnvVar = 'PRAGMATIC_AGENT_CHANNEL_URL'
+    private static readonly HttpProtocols: ReadonlySet<string> = new Set(['http:', 'https:'])
+    private static readonly AgentChannelUrlInvalidWarning = 'Ignoring invalid PRAGMATIC_AGENT_CHANNEL_URL (expected an absolute http(s) URL); hive install bundles are unavailable: '
+    // How a pod in Docker Desktop's Kubernetes reaches this machine; override with PRAGMATIC_AGENT_CHANNEL_URL elsewhere.
+    private static readonly DefaultAgentChannelUrlPrefix = 'http://host.docker.internal:'
     private static readonly AgentChannelListeningPrefix = 'Agent channel listening on '
     private static readonly AgentChannelInvalidPortWarning = 'Ignoring invalid PRAGMATIC_AGENT_CHANNEL_PORT (expected an integer 1-65535); agent channel not started: '
     private static readonly DefaultExternalScheme = 'https'
@@ -185,7 +190,15 @@ export class ControlPlaneServer
         await Promise.all([manifests.Load(), audit.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load(), policies.Load(), ledger.Load(), adminClientRegistry.Load()])
         const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, placement, observations, ControlPlaneServer.ManifestSignerOf(process.env, dataRoot), policies, ledger)
         const provisioning = new TenantProvisioningService(idpService, directory, conn => new IdpAdminClient(conn))
-        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations, new LoginThrottle(), opts.trustedProxy, undefined, undefined, undefined, opts.allowedHosts, new OperatorAuthorization(), audit, new AuditThrottle(), idpService)
+        const agentChannelRaw = process.env[ControlPlaneServer.AgentChannelPortEnvVar]
+        const agentChannelPort = ControlPlaneServer.ParseAgentChannelPort(agentChannelRaw)
+        const agentChannelUrlRaw = process.env[ControlPlaneServer.AgentChannelUrlEnvVar]
+        const agentChannelUrl = ControlPlaneServer.AgentChannelUrl(agentChannelPort, agentChannelUrlRaw)
+        if (agentChannelPort !== ControlPlaneServer.AgentChannelDisabled && agentChannelUrl === undefined)
+        {
+            console.warn(ControlPlaneServer.AgentChannelUrlInvalidWarning + String(agentChannelUrlRaw))
+        }
+        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations, new LoginThrottle(), opts.trustedProxy, undefined, undefined, undefined, opts.allowedHosts, new OperatorAuthorization(), audit, new AuditThrottle(), idpService, agentChannelUrl)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
         const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie, service, new InProcessRolloutClient(deployments), orchestrators, placement,
             masterKey, adminClientRegistry, ControlPlaneServer.ParseSecretTtlHours(process.env[ControlPlaneServer.SecretTtlEnvVar]))
@@ -211,8 +224,6 @@ export class ControlPlaneServer
         // The operator listener is structurally loopback-only: no tenant route is mounted on it.
         await host.Listen(port, ControlPlaneServer.BindHost)
         console.log(ControlPlaneServer.ListeningPrefix + String(port) + ControlPlaneServer.ListeningSuffix)
-        const agentChannelRaw = process.env[ControlPlaneServer.AgentChannelPortEnvVar]
-        const agentChannelPort = ControlPlaneServer.ParseAgentChannelPort(agentChannelRaw)
         if (agentChannelPort === ControlPlaneServer.AgentChannelDisabled && agentChannelRaw !== undefined && agentChannelRaw !== '')
         {
             console.warn(ControlPlaneServer.AgentChannelInvalidPortWarning + agentChannelRaw)
@@ -333,6 +344,36 @@ export class ControlPlaneServer
             return ControlPlaneServer.AgentChannelDisabled
         }
         return port
+    }
+
+    /**
+     * Pure: the pod-visible agent-channel URL hive bootstraps point at; undefined while the channel is disabled or when the
+     * override is not an absolute http(s) URL (hive pages then say the channel is not configured, rather than handing
+     * clients a bundle whose agent cannot dial).
+     */
+    public static AgentChannelUrl(port: number, raw: string | undefined): string | undefined
+    {
+        if (port === ControlPlaneServer.AgentChannelDisabled)
+        {
+            return undefined
+        }
+        if (raw === undefined || raw === '')
+        {
+            return ControlPlaneServer.DefaultAgentChannelUrlPrefix + String(port)
+        }
+        return ControlPlaneServer.IsHttpUrl(raw) ? raw : undefined
+    }
+
+    private static IsHttpUrl(raw: string): boolean
+    {
+        try
+        {
+            return ControlPlaneServer.HttpProtocols.has(new URL(raw).protocol)
+        }
+        catch
+        {
+            return false
+        }
     }
 
     /** Pure: the agent-channel bind address; defaults to all interfaces (the channel is the public, bearer-authenticated surface). */

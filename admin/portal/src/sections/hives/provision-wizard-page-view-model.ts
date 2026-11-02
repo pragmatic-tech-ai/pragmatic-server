@@ -7,6 +7,7 @@ import { PendingWork, type IHoldsPendingWork } from '../../shell/holds-pending-w
 import { OptionViewModel } from '../../shell/option-view-model.js'
 import { PortalPageViewModel } from '../../shell/portal-page-view-model.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
+import { HiveInstallMode, HiveInstallViewModel } from './hive-install-view-model.js'
 import { HiveOptions } from './hive-options.js'
 import type { HivesSectionService } from './hives-section-service.js'
 
@@ -177,6 +178,7 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
     private selectedClient: OptionViewModel<string> | undefined
     private selectedTenant: OptionViewModel<string> | undefined
     private revealsOwner = false
+    private readonly install: HiveInstallViewModel
     private readonly nextCommand: RelayCommand
     private readonly backStepCommand: RelayCommand
     private readonly cancelCommand: RelayCommand
@@ -216,6 +218,7 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
         this.tenants.Add(this.newTenant)
         this.selectedClient = this.newClient
         this.selectedTenant = this.newTenant
+        this.install = new HiveInstallViewModel(session, section, HiveInstallMode.FirstInstall)
         this.nextCommand = new RelayCommand(() => this.Next(), () => this.CanNext())
         this.backStepCommand = new RelayCommand(() => this.BackStep(), () => this.CanBackStep())
         this.cancelCommand = new RelayCommand(() => this.section.Back(), () => this.IsFormStep && !this.submitting)
@@ -588,6 +591,12 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
         return this.IsNewTenant ? this.Trimmed(ProvisionField.OwnerEmail) : ProvisionWizardPageViewModel.NoText
     }
 
+    // The Bootstrap step's install panel: the bundle and the commands that apply it with the agent token.
+    public get Install(): HiveInstallViewModel
+    {
+        return this.install
+    }
+
     // True when the provision created a new tenant, so Bootstrap also shows its Owner password.
     public get RevealsOwner(): boolean
     {
@@ -816,6 +825,7 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
             this.SetRevealsOwner(ownerPassword.length > 0)
             this.SetSecrets(ownerPassword, result.secrets.agentToken)
             this.SetStep(ProvisionStep.Bootstrap)
+            void this.install.Load(result.hive.id)
         }
         catch (e)
         {

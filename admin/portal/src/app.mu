@@ -18,6 +18,7 @@ import PragmaticDark from "@pragmatic-tech-ai/mural/resources/pragmatic"
 import PortalSessionService from "./shell/portal-session-service.js"
 import PortalNavigationService from "./shell/portal-navigation-service.js"
 import ClipboardService from "@pragmatic-tech-ai/mural/framework/shell/services/clipboard-service.js"
+import DownloadService from "./shell/download-service.js"
 import FleetModule from "./sections/fleet/fleet.module.mu.js"
 import ClientsModule from "./sections/clients/clients.module.mu.js"
 import TenantsModule from "./sections/tenants/tenants.module.mu.js"
@@ -43,6 +44,9 @@ Application [ Theme = Pragmatic, Scheme = PragmaticDark ] {
 
         // The system clipboard (the one-time reveal pages' Copy).
         ClipboardService
+
+        // Browser file downloads (a hive's agent install bundle).
+        DownloadService
     }
 
     .modules: {

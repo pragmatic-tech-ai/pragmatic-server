@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import { FakeProvisioning } from './fake-provisioning.js'
+import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
 import { ControlPlaneHost, type IEnvironmentService, type IGraphService } from '../control-plane-host.js'
 import { RolloutFixture } from './rollout-fixture.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
@@ -161,6 +162,7 @@ describe('ControlPlaneHost platform routes', () =>
     let parent: string
     let factory: FakeKindFactory
     let idp: FakeIdpService
+    let deployments: PlatformDeploymentRegistry
 
     beforeEach(async () =>
     {
@@ -175,7 +177,8 @@ describe('ControlPlaneHost platform routes', () =>
             { List: () => [] })
         await directory.Load()
         factory = new FakeKindFactory()
-        host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, await RolloutFixture.Create(parent, directory, factory), (fake = new FakeProvisioning(directory)).AsService(), RolloutFixture.Observations(parent), undefined, false, undefined, undefined, undefined, [], undefined, undefined, undefined, (idp = new FakeIdpService()))
+        deployments = await RolloutFixture.Create(parent, directory, factory)
+        host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, deployments, (fake = new FakeProvisioning(directory)).AsService(), RolloutFixture.Observations(parent), undefined, false, undefined, undefined, undefined, [], undefined, undefined, undefined, (idp = new FakeIdpService()))
         await host.Listen(0, '127.0.0.1')
     })
 
@@ -354,6 +357,33 @@ describe('ControlPlaneHost platform routes', () =>
         assert.equal(r.status, 400)
     })
 
+    it('GET /api/hives/ID/bootstrap while the agent channel is off -> 409 naming the setting', async () =>
+    {
+        await Harness.Send(host, 'POST', '/api/provision', Harness.ProvisionBody())
+        const r = await Harness.Send(host, 'GET', '/api/hives/h1/bootstrap')
+        assert.equal(r.status, 409)
+        assert.match(JSON.parse(r.body).error, /PRAGMATIC_AGENT_CHANNEL_PORT/)
+    })
+
+    it('POST /api/hives/ID/rollout-registration replaces the agent token: the new one verifies, the old one no longer does', async () =>
+    {
+        const provisioned = JSON.parse((await Harness.Send(host, 'POST', '/api/provision', Harness.ProvisionBody())).body)
+        const r = await Harness.Send(host, 'POST', '/api/hives/h1/rollout-registration')
+        assert.equal(r.status, 201)
+        assert.equal(r.cacheControl, 'no-store')
+        const token = JSON.parse(r.body).token as string
+        assert.ok(token.length > 0)
+        assert.notEqual(token, provisioned.secrets.agentToken)
+        await deployments.VerifyAgentToken('h1', token)
+        await assert.rejects(() => deployments.VerifyAgentToken('h1', provisioned.secrets.agentToken))
+    })
+
+    it('POST /api/hives/ID/rollout-registration for an unknown hive -> 404 and nothing registered', async () =>
+    {
+        assert.equal((await Harness.Send(host, 'POST', '/api/hives/nope/rollout-registration')).status, 404)
+        await assert.rejects(() => deployments.VerifyAgentToken('nope', 'x'))
+    })
+
     it('POST /api/provision with an invalid cluster -> 400 and zero writes', async () =>
     {
         const bad = Harness.ProvisionBody()
@@ -364,5 +394,52 @@ describe('ControlPlaneHost platform routes', () =>
         {
             assert.equal(JSON.parse((await Harness.Send(host, 'GET', path)).body).length, 0, path)
         }
+    })
+})
+
+describe('ControlPlaneHost hive bootstrap with the agent channel on', () =>
+{
+    let host: ControlPlaneHost
+    let parent: string
+
+    beforeEach(async () =>
+    {
+        parent = mkdtempSync(join(tmpdir(), 'cp-bootstrap-'))
+        const root = join(parent, 'static')
+        mkdirSync(root)
+        writeFileSync(join(root, 'index.html'), '<h1>portal</h1>')
+        const directory = new PlatformDirectory(
+            new ClientRegistry(join(parent, 'clients.json')),
+            new TenantRegistry(join(parent, 'tenants.json')),
+            new HiveRegistry(join(parent, 'hives.json')),
+            { List: () => [] })
+        await directory.Load()
+        host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, await RolloutFixture.Create(parent, directory, new FakeKindFactory()), new FakeProvisioning(directory).AsService(), RolloutFixture.Observations(parent), undefined, false, undefined, undefined, undefined, [], undefined, undefined, undefined, new FakeIdpService(), 'http://host.docker.internal:7001')
+        await host.Listen(0, '127.0.0.1')
+    })
+
+    afterEach(async () =>
+    {
+        await host.Close()
+        rmSync(parent, { recursive: true, force: true })
+    })
+
+    it('GET /api/hives/ID/bootstrap -> the secret-free bundle pointed at the channel', async () =>
+    {
+        const provisioned = JSON.parse((await Harness.Send(host, 'POST', '/api/provision', Harness.ProvisionBody())).body)
+        const r = await Harness.Send(host, 'GET', '/api/hives/h1/bootstrap')
+        assert.equal(r.status, 200)
+        const bundle = JSON.parse(r.body)
+        assert.equal(bundle.hiveId, 'h1')
+        assert.equal(bundle.channelUrl, 'http://host.docker.internal:7001')
+        assert.equal(bundle.tokenSecretName, 'pragmatic-hive-h1-agent-token')
+        assert.equal(bundle.hiveSelector, 'pragmatic/hive=h1')
+        assert.ok(!r.body.includes(provisioned.secrets.agentToken))
+    })
+
+    it('GET /api/hives/ID/bootstrap for an unknown hive -> 404, for a malformed id -> 400', async () =>
+    {
+        assert.equal((await Harness.Send(host, 'GET', '/api/hives/nope/bootstrap')).status, 404)
+        assert.equal((await Harness.Send(host, 'GET', '/api/hives/%E0%A4%A/bootstrap')).status, 400)
     })
 })

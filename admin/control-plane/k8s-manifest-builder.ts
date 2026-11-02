@@ -127,7 +127,7 @@ export class K8sManifestBuilder
     private static readonly AgentRegistryUrlVar = 'PRAGMATIC_AGENT_REGISTRY_URL'
     private static readonly AgentHiveIdVar = 'PRAGMATIC_AGENT_HIVE_ID'
     private static readonly AgentTokenVar = 'PRAGMATIC_AGENT_TOKEN'
-    private static readonly AgentTokenSecretKey = 'token'
+    public static readonly AgentTokenSecretKey = 'token'
     /** Namespace hosting the per-hive agent's ServiceAccount + Deployment (cluster-scoped RBAC has none). The Namespace object itself is emitted by RenderHiveAgent. */
     public static readonly SystemNamespace = 'pragmatic-system'
     private static readonly HiveAgentNamespace = K8sManifestBuilder.SystemNamespace
@@ -854,6 +854,12 @@ export class K8sManifestBuilder
     }
 
     /** Name of the Secret holding a hive's one-time agent bearer (key `token`). */
+    /** Selects every workload labelled for the hive (in pragmatic-system: its agent and, when installed, its tenant-admin pod). */
+    public static HiveLabelSelectorOf(hiveId: string): string
+    {
+        return `${K8sManifestBuilder.HiveLabel}=${hiveId}`
+    }
+
     public static AgentTokenSecretNameOf(hiveId: string): string
     {
         return `${K8sManifestBuilder.HiveAgentNameOf(hiveId)}${K8sManifestBuilder.AgentTokenSecretSuffix}`

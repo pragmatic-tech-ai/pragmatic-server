@@ -10,8 +10,13 @@
 //
 // ProvisionWizardPageViewModel (Stand up a hive) is a page too, not a
 // dialog: its step indicator, Back / Next and Submit live inside the page,
-// and its last step shows the Owner password and the agent token once, held
-// until both "I've saved it" boxes are ticked and Finish is pressed.
+// and its last step shows the agent token (and a new tenant's Owner password)
+// once, with the agent's install panel, held until every shown "I've saved
+// it" box is ticked and Finish is pressed.
+//
+// HiveInstallViewModel (the agent's install bundle and kubectl commands) is
+// shared by the wizard's Bootstrap step, the hive detail and the reissued
+// token's reveal (AgentTokenRevealPageViewModel, a page like the wizard).
 //
 // Table rows use keyed templates set as the ListBox's ItemTemplate: a ListBox
 // resolves implicit-by-type templates only for MuralBase items, and the row
@@ -28,6 +33,8 @@ import HiveCheckInRowViewModel from "./hive-detail-page-view-model.js"
 import NewHiveDialogViewModel from "./new-hive-dialog-view-model.js"
 import ProvisionWizardPageViewModel from "./provision-wizard-page-view-model.js"
 import ProvisionStepViewModel from "./provision-wizard-page-view-model.js"
+import HiveInstallViewModel from "./hive-install-view-model.js"
+import AgentTokenRevealPageViewModel from "./agent-token-reveal-page-view-model.js"
 
 resources HivesResources {
     DataTemplate [ DataType = HivesPageViewModel ] {
@@ -121,6 +128,9 @@ resources HivesResources {
                 Button [ DockPanel.Dock = Right, Variant = Danger, Command = $DeleteCommand, VerticalAlignment = Top ] {
                     TextBlock [ Text = "Delete hive" ]
                 }
+                Button [ DockPanel.Dock = Right, Variant = Secondary, Command = $ReissueTokenCommand, VerticalAlignment = Top, Margin = (0,0,8,0) ] {
+                    TextBlock [ Text = "Reissue agent token" ]
+                }
                 StackPanel [ Orientation = Vertical ] {
                     Button [ Variant = Ghost, Command = $BackCommand, HorizontalAlignment = Left, Margin = (0,0,0,8) ] {
                         TextBlock [ Text = "Back" ]
@@ -149,6 +159,12 @@ resources HivesResources {
                              Visibility = $HasBanner << ToVisibility ] {
                         TextBlock [ Text = $BannerText, Foreground = @StateWarningInk, TextWrapping = Wrap ]
                     }
+
+                    // The agent's install bundle: what the client applies so the hive dials home.
+                    TextBlock [ Text = "Agent install", Style = @UiLabel, Foreground = @Fg1, Margin = (0,0,0,2) ]
+                    TextBlock [ Text = "Neither the bundle nor the commands carry the agent token; it is typed in at the prompt. Reissue the token if it was lost.",
+                                Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,6) ]
+                    ContentControl [ Content = $Install, Margin = (0,0,0,16) ]
 
                     // Home channel: telemetry the hive sends, not a connection we open.
                     TextBlock [ Text = "Home channel", Style = @UiLabel, Foreground = @Fg1, Margin = (0,0,0,6) ]
@@ -573,11 +589,91 @@ resources HivesResources {
                         }
                         TextBlock [ Text = $AgentCopyStatus, Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,8),
                                     Visibility = $AgentCopyStatus << ToVisibility ]
-                        StackPanel [ Orientation = Horizontal, Margin = (0,0,0,8) ] {
+                        StackPanel [ Orientation = Horizontal, Margin = (0,0,0,16) ] {
                             Checkbox [ IsChecked = $AgentSaved, VerticalAlignment = Center, Margin = (0,0,8,0) ]
                             TextBlock [ Text = "I've saved the agent token", Foreground = @Fg0, VerticalAlignment = Center ]
                         }
+
+                        TextBlock [ Text = "Install the agent", Style = @UiLabel, Foreground = @Fg1, Margin = (0,0,0,2) ]
+                        TextBlock [ Text = "Send the bundle and these commands to the client's cluster administrator. Once applied, the hive dials home.",
+                                    Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,6) ]
+                        ContentControl [ Content = $Install ]
                     }
+                }
+            }
+        }
+    }
+
+    // The agent's install panel: bundle download, where the agent dials, and the commands.
+    DataTemplate [ DataType = HiveInstallViewModel ] {
+        StackPanel [ Orientation = Vertical ] {
+            TextBlock [ Text = "Loading the install bundle...", Foreground = @Fg2, Visibility = $IsLoading << ToVisibility ]
+            Border [ Fill = @StateWarningSoft, Padding = (12,10,12,10), Visibility = $ErrorText << ToVisibility ] {
+                TextBlock [ Text = $ErrorText, Foreground = @StateWarningInk, TextWrapping = Wrap ]
+            }
+            StackPanel [ Orientation = Vertical, Visibility = $HasBundle << ToVisibility ] {
+                Border [ Fill = @Bg1, Stroke = Pen [ Brush = @Border ], Padding = (12,10,12,10), Margin = (0,0,0,8) ] {
+                    DockPanel {
+                        Button [ DockPanel.Dock = Right, Variant = Secondary, Command = $DownloadCommand, Margin = (12,0,0,0) ] {
+                            TextBlock [ Text = "Download bundle" ]
+                        }
+                        StackPanel [ Orientation = Vertical, VerticalAlignment = Center ] {
+                            TextBlock [ Text = $FileName, Style = @Code, Foreground = @Fg0 ]
+                            StackPanel [ Orientation = Horizontal, Margin = (0,2,0,0) ] {
+                                TextBlock [ Text = "The agent dials", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,4,0) ]
+                                TextBlock [ Text = $ChannelUrl, Style = @UiCaption, Foreground = @Fg1 ]
+                            }
+                        }
+                    }
+                }
+                Border [ Fill = @Bg1, Stroke = Pen [ Brush = @Border ], Padding = (12,10,12,10), Margin = (0,0,0,4) ] {
+                    DockPanel {
+                        Button [ DockPanel.Dock = Right, Variant = Secondary, Command = $CopyCommandsCommand, VerticalAlignment = Top, Margin = (12,0,0,0) ] {
+                            TextBlock [ Text = "Copy commands" ]
+                        }
+                        TextBlock [ Text = $Commands, Style = @Code, Foreground = @Fg0, TextWrapping = Wrap ]
+                    }
+                }
+                TextBlock [ Text = $Status, Style = @UiCaption, Foreground = @Fg2, Visibility = $Status << ToVisibility ]
+            }
+        }
+    }
+
+    // A reissued agent token, shown once, with the commands that rotate it in.
+    DataTemplate [ DataType = AgentTokenRevealPageViewModel ] {
+        ScrollViewer [ HorizontalScrollEnabled = false ] {
+            StackPanel [ Orientation = Vertical, Margin = (24,20,24,20) ] {
+                TextBlock [ Text = "Agent token reissued", Style = @H3, Foreground = @Fg0 ]
+                StackPanel [ Orientation = Horizontal, Margin = (0,4,0,16) ] {
+                    TextBlock [ Text = "New one-time agent token for hive", Foreground = @Fg2, Margin = (0,0,4,0) ]
+                    TextBlock [ Text = $HiveId, Style = @Code, Foreground = @Fg0 ]
+                }
+                Border [ Fill = @StateWarningSoft, Padding = (12,10,12,10), Margin = (0,0,0,16) ] {
+                    TextBlock [ Text = "This token is shown once and the old one no longer works. Copy it now and pass it on over a secure channel. It cannot be shown again.",
+                                Foreground = @StateWarningInk, TextWrapping = Wrap ]
+                }
+                Border [ Fill = @Bg1, Stroke = Pen [ Brush = @Border ], Padding = (12,10,12,10), Margin = (0,0,0,8) ] {
+                    DockPanel {
+                        Button [ DockPanel.Dock = Right, Variant = Secondary, Command = $CopyCommand, Margin = (12,0,0,0) ] {
+                            TextBlock [ Text = "Copy" ]
+                        }
+                        TextBlock [ Text = $Value, Style = @Code, Foreground = @Fg0, VerticalAlignment = Center, TextWrapping = Wrap ]
+                    }
+                }
+                TextBlock [ Text = $CopyStatus, Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,12),
+                            Visibility = $CopyStatus << ToVisibility ]
+
+                TextBlock [ Text = "Rotate it in", Style = @UiLabel, Foreground = @Fg1, Margin = (0,0,0,2) ]
+                TextBlock [ Text = "Run these in the client's cluster: they replace the token Secret and restart the hive's agent (and its tenant-admin pod, if installed).",
+                            Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,6) ]
+                ContentControl [ Content = $Install, Margin = (0,0,0,16) ]
+
+                StackPanel [ Orientation = Horizontal, Margin = (0,0,0,16) ] {
+                    Checkbox [ IsChecked = $Saved, VerticalAlignment = Center, Margin = (0,0,8,0) ]
+                    TextBlock [ Text = "I've saved it", Foreground = @Fg0, VerticalAlignment = Center ]
+                }
+                Button [ Variant = Primary, Command = $ConfirmSavedCommand, HorizontalAlignment = Left ] {
+                    TextBlock [ Text = "Back to the hive" ]
                 }
             }
         }

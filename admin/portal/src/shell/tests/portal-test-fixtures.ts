@@ -6,7 +6,8 @@ import { DialogService, type DialogOptions } from '@pragmatic-tech-ai/mural/fram
 import { NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
 import { ApiError, type ControlPlaneClient } from '../../api-client.js'
 import { OperatorContext } from '../../operator-context.js'
-import type { ActivityDto, ClientDto, CreatedTenantDto, FleetHiveDto, GatingDto, HiveDto, HiveRolloutDto, LedgerDto, ManifestDto, ObservationDto, OperatorSummaryDto, PolicyDto, ProvisionInputDto, ProvisionResultDto, SelectionDto, TenantDto } from '../../portal-types.js'
+import type { ActivityDto, ClientDto, CreatedTenantDto, FleetHiveDto, GatingDto, HiveBootstrapDto, HiveDto, HiveRolloutDto, LedgerDto, ManifestDto, ObservationDto, OperatorSummaryDto, PolicyDto, ProvisionInputDto, ProvisionResultDto, SelectionDto, TenantDto } from '../../portal-types.js'
+import { DownloadService } from '../download-service.js'
 import type { IPageReloader } from '../page-reloader.js'
 import { PortalSessionService } from '../portal-session-service.js'
 
@@ -161,6 +162,10 @@ export class FakeControlPlane
     public OwnerPassword = 'fixture-owner-password'
     public ResetPassword = 'fixture-reset-password'
     public AgentToken = 'fixture-agent-token'
+    public ReissuedToken = 'fixture-reissued-token'
+    // While set, the bootstrap read fails with it (e.g. a 409 for an agent channel that is off).
+    public BootstrapFailure: Error | undefined
+    public readonly Reissued: string[] = []
     public ProvisionCalls = 0
     public readonly Provisioned: ProvisionInputDto[] = []
     public Failure: Error | undefined
@@ -572,6 +577,32 @@ export class FakeControlPlane
         this.Fleet = this.Fleet.filter(h => h.id !== id)
     }
 
+    public async GetHiveBootstrap(hiveId: string): Promise<HiveBootstrapDto>
+    {
+        if (this.BootstrapFailure !== undefined)
+        {
+            throw this.BootstrapFailure
+        }
+        return {
+            hiveId,
+            fileName: 'bootstrap-' + hiveId + '.json',
+            manifest: '{"apiVersion":"v1","kind":"List","items":[]}',
+            namespace: 'pragmatic-system',
+            agentName: 'pragmatic-hive-' + hiveId + '-agent',
+            hiveSelector: 'pragmatic/hive=' + hiveId,
+            tokenSecretName: 'pragmatic-hive-' + hiveId + '-agent-token',
+            tokenSecretKey: 'token',
+            channelUrl: 'http://host.docker.internal:7001',
+        }
+    }
+
+    public async ReissueAgentToken(hiveId: string): Promise<string>
+    {
+        this.ThrowIfFailing()
+        this.Reissued.push(hiveId)
+        return this.ReissuedToken
+    }
+
     public AsClient(): ControlPlaneClient
     {
         return this as unknown as ControlPlaneClient
@@ -620,6 +651,14 @@ export class PortalTestHost
         const dialogs = new FakeDialogService(this.Provider)
         this.Provider.registerInstance(DialogService.Key, dialogs)
         return dialogs
+    }
+
+    // Registers a DownloadService whose saves land in the returned array as [fileName, text].
+    public UseDownloads(): Array<[string, string]>
+    {
+        const saved: Array<[string, string]> = []
+        this.Provider.registerInstance(DownloadService.Key, new DownloadService(this.Provider, (fileName, text) => { saved.push([fileName, text]) }))
+        return saved
     }
 
     // Registers a ClipboardService whose writes land in the returned array.

@@ -42,6 +42,7 @@ import {
     type PlatformDirectory
 } from './platform-directory.js'
 import { HivePlacementError } from './hive-placement-error.js'
+import { HiveBootstrapBundle } from './hive-bootstrap-bundle.js'
 import { HiveBackend, InfraMode, InvalidRecordIdError } from './platform-records.js'
 import { PlaneHttp } from './plane-http.js'
 import { ProvisioningOrchestrator, ProvisionFailedError } from './provisioning-orchestrator.js'
@@ -230,6 +231,10 @@ export class ControlPlaneHost
     private static readonly LedgerSegment = 'ledger'
     private static readonly HiveLedgerPathPattern = new RegExp(
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/([^/]+)/' + ControlPlaneHost.LedgerSegment + '$')
+    private static readonly BootstrapSegment = 'bootstrap'
+    private static readonly HiveBootstrapPathPattern = new RegExp(
+        '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/([^/]+)/' + ControlPlaneHost.BootstrapSegment + '$')
+    private static readonly AgentChannelOffMessage = 'The agent channel is not configured: start the control plane with PRAGMATIC_AGENT_CHANNEL_PORT so hives can dial home.'
     private static readonly HiveObservationsPathPattern = new RegExp(
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/([^/]+)/' + ControlPlaneHost.ObservationsSegment + '$')
     private static readonly ManifestsSegment = 'manifests'
@@ -404,7 +409,9 @@ export class ControlPlaneHost
         private readonly authorization: OperatorAuthorization = new OperatorAuthorization(),
         private readonly audit?: AuditRegistry,
         private readonly auditThrottle?: AuditThrottle,
-        private readonly idp?: IIdpService)
+        private readonly idp?: IIdpService,
+        /** The pod-visible agent channel URL a hive's bootstrap points its agent at; undefined while the channel is off. */
+        private readonly agentChannelUrl?: string)
     {
         this.allowedHosts = new Set([...ControlPlaneHost.DefaultAllowedHosts, ...allowedHosts.map(h => h.toLowerCase())])
         this.staticRootAbs = resolve(staticRoot)
@@ -928,6 +935,11 @@ export class ControlPlaneHost
         {
             return await this.RouteHiveLedger(req, res, method, hlm)
         }
+        const hbm = ControlPlaneHost.HiveBootstrapPathPattern.exec(path)
+        if (hbm !== null)
+        {
+            return this.RouteHiveBootstrap(res, method, hbm)
+        }
         const plm = ControlPlaneHost.PlatformPathPattern.exec(path)
         if (plm !== null)
         {
@@ -1068,6 +1080,44 @@ export class ControlPlaneHost
             return true
         }
         PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, [...this.deployments.LedgerFor(id, this.ActivityLimit(req))])
+        return true
+    }
+
+    /** The hive id from a matched hive sub-route; writes 400 / 404 and returns undefined when it is bad or unknown. */
+    private KnownHiveId(res: ServerResponse, m: RegExpExecArray): string | undefined
+    {
+        const id = ControlPlaneHost.Decode(m[1] as string)
+        if (id === undefined)
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+            return undefined
+        }
+        if (this.directory.GetHive(id) === undefined)
+        {
+            PlaneHttp.WriteNotFound(res)
+            return undefined
+        }
+        return id
+    }
+
+    /** Serves GET /api/hives/ID/bootstrap: the agent's objects for the client's cluster. Secret-free; 409 while the agent channel is off. */
+    private RouteHiveBootstrap(res: ServerResponse, method: string, m: RegExpExecArray): boolean
+    {
+        if (method !== PlaneHttp.MethodGet)
+        {
+            return false
+        }
+        const id = this.KnownHiveId(res, m)
+        if (id === undefined)
+        {
+            return true
+        }
+        if (this.agentChannelUrl === undefined)
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusConflict, { error: ControlPlaneHost.AgentChannelOffMessage })
+            return true
+        }
+        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, HiveBootstrapBundle.For(id, this.agentChannelUrl))
         return true
     }
 

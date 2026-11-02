@@ -1,4 +1,4 @@
-import type { ClientDto, CreatedTenantDto, EnvironmentDto, HiveDto, FleetHiveDto, ManifestDto, OperatorSummaryDto, GatingDto, SelectionDto, HiveRolloutDto, TenantDto, GraphDto, GraphLoadedDto, OperatorDto, PromotionResultDto, ProvisionInputDto, ProvisionResultDto, PolicyDto, ActivityDto, ObservationDto, LedgerDto } from './portal-types.js'
+import type { ClientDto, CreatedTenantDto, EnvironmentDto, HiveDto, FleetHiveDto, ManifestDto, OperatorSummaryDto, GatingDto, SelectionDto, HiveRolloutDto, TenantDto, GraphDto, GraphLoadedDto, OperatorDto, PromotionResultDto, ProvisionInputDto, ProvisionResultDto, PolicyDto, ActivityDto, ObservationDto, LedgerDto, HiveBootstrapDto, RolloutRegistrationDto } from './portal-types.js'
 
 // Thrown for non-2xx control-plane responses; Message carries the server's error text.
 export class ApiError extends Error
@@ -61,6 +61,8 @@ export class ControlPlaneClient
     private static readonly ActivityRoute = '/api/activity'
     private static readonly ObservationsSegment = 'observations'
     private static readonly LedgerSegment = 'ledger'
+    private static readonly BootstrapSegment = 'bootstrap'
+    private static readonly RolloutRegistrationSegment = 'rollout-registration'
     private static readonly LimitParam = 'limit'
     private static readonly PoliciesRoute = '/api/policies'
     private static readonly PolicySegment = 'policy'
@@ -266,6 +268,19 @@ export class ControlPlaneClient
     public async ListHiveLedger(hiveId: string, limit?: number): Promise<LedgerDto[]>
     {
         return await this.Send<LedgerDto[]>(this.WithLimit(this.HiveSubRoute(hiveId, ControlPlaneClient.LedgerSegment), limit), undefined)
+    }
+
+    // The hive agent's secret-free install bundle; 409 while the control plane's agent channel is off.
+    public async GetHiveBootstrap(hiveId: string): Promise<HiveBootstrapDto>
+    {
+        return await this.Send<HiveBootstrapDto>(this.HiveSubRoute(hiveId, ControlPlaneClient.BootstrapSegment), undefined)
+    }
+
+    // Mints a new one-time agent token, replacing the old one at once; the reply is the only copy.
+    public async ReissueAgentToken(hiveId: string): Promise<string>
+    {
+        const reply = await this.Send<RolloutRegistrationDto>(this.HiveSubRoute(hiveId, ControlPlaneClient.RolloutRegistrationSegment), { method: ControlPlaneClient.MethodPost })
+        return reply.token
     }
 
     private HivePolicyRoute(hiveId: string, segment: string): string

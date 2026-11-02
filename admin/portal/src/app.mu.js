@@ -6,6 +6,7 @@ import { ReleasePolicyModule } from "./sections/release-policy/release-policy.mo
 import { ReleasesModule } from "./sections/releases/releases.module.mu.js";
 import { SettingsModule } from "./sections/settings/settings.module.mu.js";
 import { TenantsModule } from "./sections/tenants/tenants.module.mu.js";
+import { DownloadService } from "./shell/download-service.js";
 import { PortalIcons } from "./shell/portal-icons.mu.js";
 import { PortalNavigationService } from "./shell/portal-navigation-service.js";
 import { PortalSessionService } from "./shell/portal-session-service.js";
@@ -27,6 +28,7 @@ export const app = (() => {
     _app0.Services.register(ServiceProvider.tokenFor(ContentHostService), (p) => new ContentHostService(p), 'singleton');
     _app0.Services.register(ServiceProvider.tokenFor(NavigationService), (p) => new PortalNavigationService(p), 'singleton');
     _app0.Services.register(ServiceProvider.tokenFor(ClipboardService), (p) => new ClipboardService(p), 'singleton');
+    _app0.Services.register(ServiceProvider.tokenFor(DownloadService), (p) => new DownloadService(p), 'singleton');
     _app0.AddModule(FleetModule);
     _app0.AddModule(ClientsModule);
     _app0.AddModule(TenantsModule);

@@ -195,6 +195,12 @@ describe('ControlPlaneHost operator RBAC', () =>
         assert.equal(operator.Created.length, 0)
     })
 
+    it('403s a ReadOnly operator on reissuing a hive agent token (rollout-registration)', async () =>
+    {
+        const r = await RbacFixture.Send(host, RbacFixture.Post, '/api/hives/h1/rollout-registration', RoleOperator.ReadToken, RbacFixture.EmptyBody)
+        assert.equal(r.status, RbacFixture.Forbidden)
+    })
+
     it('403s a ReadOnly operator on the registry-write routes', async () =>
     {
         const cases: Array<{ method: string; path: string; body: string }> = [

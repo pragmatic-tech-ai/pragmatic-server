@@ -6,6 +6,7 @@ import { DialogService } from '@pragmatic-tech-ai/mural/framework/shell/services
 import { NavigationDestination, NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
 import type { IActivatable } from '@pragmatic-tech-ai/mural/framework/shell/services/activatable.js'
 import type { IDisposable, Observable } from '@pragmatic-tech-ai/todl-runtime'
+import { DownloadService } from './download-service.js'
 import { PendingSecret } from './holds-pending-secret.js'
 import { PendingWork } from './holds-pending-work.js'
 import { PortalPageViewModel } from './portal-page-view-model.js'
@@ -91,6 +92,13 @@ export abstract class PortalSectionService extends ServiceBase implements IActiv
     public get Clipboard(): ClipboardService | undefined
     {
         return this.Provider.get(ClipboardService.Key)
+    }
+
+    // The file-download seam (registered at the app root); undefined when
+    // none is registered.
+    public get Downloads(): DownloadService | undefined
+    {
+        return this.Provider.get(DownloadService.Key)
     }
 
     private get Host(): ContentHostService

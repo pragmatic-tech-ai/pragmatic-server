@@ -7,6 +7,7 @@ import { ObservedEnvironmentsViewModel } from '../../shell/observed-environments
 import { PortalPageViewModel } from '../../shell/portal-page-view-model.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
 import { FleetHiveRowViewModel } from '../fleet/fleet-page-view-model.js'
+import { HiveInstallMode, HiveInstallViewModel } from './hive-install-view-model.js'
 import type { HivesSectionService } from './hives-section-service.js'
 
 // A credential the hive references: its kind, its reference name and whether
@@ -168,6 +169,10 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
     private static readonly ChannelSeparator = ', '
     private static readonly DeleteTitle = 'Delete this hive?'
     private static readonly DeleteMessage = 'The hive record is removed. A hive that still reports environments cannot be deleted.'
+    private static readonly ReissueTitle = 'Reissue the agent token?'
+    private static readonly ReissueMessage = 'A new one-time token replaces the current one at once. The running agent (and the tenant-admin pod, if installed) is locked out until the new token is in its Secret and they restart.'
+    private static readonly ReissueLabel = 'Reissue'
+    private static readonly NoToken = ''
     private static readonly DisplayNameProperty = 'DisplayName'
     private static readonly OwnerLabelProperty = 'OwnerLabel'
     private static readonly ClusterLabelProperty = 'ClusterLabel'
@@ -198,11 +203,15 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
     private readonly ledgerRows = new ObservableCollection<HiveLedgerRowViewModel>()
     private readonly checkIns = new ObservableCollection<HiveCheckInRowViewModel>()
     private readonly deleteCommand: RelayCommand
+    private readonly reissueTokenCommand: RelayCommand
+    private readonly install: HiveInstallViewModel
 
     public constructor(session: PortalSessionService, private readonly section: HivesSectionService, public readonly Id: string)
     {
         super(session)
         this.deleteCommand = this.MutatingCommand(() => this.Delete())
+        this.reissueTokenCommand = this.MutatingCommand(() => this.ReissueToken())
+        this.install = new HiveInstallViewModel(session, section, HiveInstallMode.FirstInstall)
     }
 
     public get DisplayName(): string
@@ -343,10 +352,23 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
         return this.deleteCommand
     }
 
+    // Mints a new one-time agent token (confirmed by the hive id) and reveals it with the rotation commands.
+    public get ReissueTokenCommand(): RelayCommand
+    {
+        return this.reissueTokenCommand
+    }
+
+    // The agent's install bundle and the commands that apply it.
+    public get Install(): HiveInstallViewModel
+    {
+        return this.install
+    }
+
     protected override async LoadCore(): Promise<boolean>
     {
         const generation = this.LoadGeneration
         const api = this.Session.Client
+        void this.install.Load(this.Id)
         const [fleet, hives, rollouts, policies, ledger, observations] = await Promise.all([
             api.ListFleet(), api.ListHives(), api.ListRollouts(), api.ListPolicies(),
             api.ListHiveLedger(this.Id), api.ListHiveObservations(this.Id),
@@ -436,6 +458,19 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
         {
             target.Add(item)
         }
+    }
+
+    private ReissueToken(): Promise<void>
+    {
+        let token = HiveDetailPageViewModel.NoToken
+        return this.ConfirmByName(this.section.Dialogs, {
+            Expected: this.Id,
+            Title: HiveDetailPageViewModel.ReissueTitle,
+            Message: HiveDetailPageViewModel.ReissueMessage,
+            ConfirmLabel: HiveDetailPageViewModel.ReissueLabel,
+            Action: async () => { token = await this.Session.Client.ReissueAgentToken(this.Id) },
+            OnConfirmed: async () => { this.section.ShowAgentTokenReveal(this.Id, token) },
+        })
     }
 
     private Delete(): Promise<void>

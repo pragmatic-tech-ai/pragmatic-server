@@ -121,3 +121,21 @@ export type PolicyDto = { tenantId: string; hiveId?: string; channels?: ('stable
 export type ActivityDto = { id: string; actor: string; method: string; path: string; status: number; at: string }
 export type ObservationDto = { id: string; hiveId: string; environments: { environmentName: string; ready: boolean; runningImage?: string; detail: string }[]; reportedAt: string }
 export type LedgerDto = { id: string; tenantId?: string; hiveId?: string; version: string; action: string; at: string }
+
+// A hive agent's install bundle: the agent's Kubernetes objects (a v1 List, JSON) and where its token Secret goes. Never the token.
+export type HiveBootstrapDto =
+{
+    hiveId: string
+    fileName: string
+    manifest: string
+    namespace: string
+    agentName: string
+    // Selects the hive's deployments that read the token Secret (restart them after a reissue).
+    hiveSelector: string
+    tokenSecretName: string
+    tokenSecretKey: string
+    channelUrl: string
+}
+
+// A freshly minted one-time agent token (the rollout-registration route's reply).
+export type RolloutRegistrationDto = { token: string }

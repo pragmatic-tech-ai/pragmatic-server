@@ -49,6 +49,8 @@ class FakeControlPlane
     private static readonly ManifestsPath = '/api/manifests'
     private static readonly HiveLedgerPath = '/api/hives/hive-eu-1/ledger'
     private static readonly HiveObservationsPath = '/api/hives/hive-eu-1/observations'
+    private static readonly HiveBootstrapPath = '/api/hives/hive-eu-1/bootstrap'
+    public static readonly BootstrapFileName = 'bootstrap-hive-eu-1.json'
     private static readonly ApiPrefix = '/api/'
     private static readonly StableChannel = 'stable'
     private static readonly EarlyChannel = 'early'
@@ -215,6 +217,22 @@ class FakeControlPlane
         }]
     }
 
+    // The hive's secret-free agent install bundle.
+    private Bootstrap(): unknown
+    {
+        return {
+            hiveId: FakeControlPlane.HiveId,
+            fileName: FakeControlPlane.BootstrapFileName,
+            manifest: '{"apiVersion":"v1","kind":"List","items":[]}',
+            namespace: 'pragmatic-system',
+            agentName: 'pragmatic-hive-hive-eu-1-agent',
+            hiveSelector: 'pragmatic/hive=hive-eu-1',
+            tokenSecretName: 'pragmatic-hive-hive-eu-1-agent-token',
+            tokenSecretKey: 'token',
+            channelUrl: 'http://host.docker.internal:7001',
+        }
+    }
+
     private Manifests(): unknown[]
     {
         return [{
@@ -331,6 +349,9 @@ class FakeControlPlane
             case FakeControlPlane.ManifestsPath:
                 FakeControlPlane.Json(res, 200, this.Manifests())
                 return
+            case FakeControlPlane.HiveBootstrapPath:
+                FakeControlPlane.Json(res, 200, this.Bootstrap())
+                return
             default:
                 FakeControlPlane.Json(res, 200, [])
         }
@@ -395,6 +416,7 @@ class PortalText
         'Fleet', 'Clients', 'Tenants', 'Hives', 'Registry & Releases', 'Release Policy', 'Activity', 'Settings',
     ]
     public static readonly HiveDetailCaptions: readonly string[] = [
+        'Agent install', 'Download bundle', 'Reissue agent token',
         'Home channel', 'Credentials', 'Rollout', 'Per-hive policy', 'Version history', 'Recent check-ins',
     ]
     public static readonly ReleaseDetailCaptions: readonly string[] = [
@@ -529,6 +551,7 @@ test.describe('admin portal', () =>
             await expect(PortalSteps.Visible(page, caption)).toBeVisible()
         }
         await expect(PortalSteps.Visible(page, FakeControlPlane.HiveId)).toBeVisible()
+        await expect(PortalSteps.Visible(page, FakeControlPlane.BootstrapFileName)).toBeVisible()
         await expect(PortalSteps.Visible(page, FakeControlPlane.CredentialRef)).toBeVisible()
         await expect(PortalSteps.Visible(page, FakeControlPlane.Version)).toBeVisible()
         await expect(PortalSteps.Visible(page, FakeControlPlane.Image)).toBeVisible()

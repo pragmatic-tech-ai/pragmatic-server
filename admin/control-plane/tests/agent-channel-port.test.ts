@@ -31,4 +31,19 @@ describe('ControlPlaneServer.ParseAgentChannelPort', () =>
         assert.equal(ControlPlaneServer.ParseAgentChannelBind(''), DefaultBind)
         assert.equal(ControlPlaneServer.ParseAgentChannelBind(LoopbackBind), LoopbackBind)
     })
+
+    it('derives the pod-visible channel URL: none while disabled, host.docker.internal by default, an override wins', () =>
+    {
+        assert.equal(ControlPlaneServer.AgentChannelUrl(ControlPlaneServer.AgentChannelDisabled, 'http://x:1'), undefined)
+        assert.equal(ControlPlaneServer.AgentChannelUrl(7001, undefined), 'http://host.docker.internal:7001')
+        assert.equal(ControlPlaneServer.AgentChannelUrl(7001, ''), 'http://host.docker.internal:7001')
+        assert.equal(ControlPlaneServer.AgentChannelUrl(7001, 'https://agents.example.com'), 'https://agents.example.com')
+    })
+
+    it('refuses an override that is not an absolute http(s) URL', () =>
+    {
+        assert.equal(ControlPlaneServer.AgentChannelUrl(7001, 'agents.example.com:7001'), undefined)
+        assert.equal(ControlPlaneServer.AgentChannelUrl(7001, 'not a url'), undefined)
+        assert.equal(ControlPlaneServer.AgentChannelUrl(7001, 'ftp://agents.example.com'), undefined)
+    })
 })

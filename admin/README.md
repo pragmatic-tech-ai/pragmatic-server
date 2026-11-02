@@ -72,6 +72,20 @@ The operator account and master key persist in the gitignored admin/control-plan
 
 The gated smoke below logs in automatically with a built-in test operator composed over its temporary data directory.
 
+## Hive install (agent channel)
+
+A hive comes alive when its agent, running in the client's cluster, dials home with its one-time agent token. Agents call the agent channel, a separate bearer-authenticated listener. Turn it on with PRAGMATIC_AGENT_CHANNEL_PORT (for example 7001); PRAGMATIC_AGENT_CHANNEL_BIND sets its bind address (default all interfaces). Without it, hive pages say the channel is off and offer no install bundle.
+
+```
+PRAGMATIC_AGENT_CHANNEL_PORT=7001 npx tsx admin/control-plane/server.ts
+```
+
+Install bundles point the agent at PRAGMATIC_AGENT_CHANNEL_URL, which defaults to http://host.docker.internal:PORT (how a pod in Docker Desktop's Kubernetes reaches this machine). Set it to the channel's externally reachable URL anywhere else.
+
+The Stand up a hive wizard ends on its Bootstrap step with the bundle (Download bundle) and the commands that apply it: `kubectl apply -f bootstrap-HIVE.json`, a silent `read -rs PRAGMATIC_AGENT_TOKEN` prompt for the one-time agent token, then `kubectl -n pragmatic-system create secret generic ...` from that variable. Neither the bundle nor the commands carry the token, so it stays out of shell history; it is shown once on the page and the control plane keeps only its hash. A hive's page offers the same bundle at any time, and Reissue agent token (the rollout-registration route) mints a new one-time token, which stops the old one at once. Its commands replace the Secret and restart every deployment in pragmatic-system labelled for the hive: the agent and, when installed, the tenant-admin pod, which reads the same token. The first pull of pragmatic-server:dev into Docker Desktop's node can take a minute or two.
+
+An invalid PRAGMATIC_AGENT_CHANNEL_URL (not an absolute http or https URL) is ignored with a startup warning, and hive pages then report the channel as not configured.
+
 ## Create environments
 
 The Platform Admin portal no longer has environment screens; the /api/environments routes remain. Through them, create either a dev-blank environment (the name must be a lowercase slug, characters a-z, 0-9 and hyphen) or a demo-contoso environment (seeds the Contoso security model and four demo users). Each is a pragmatic-server:dev container on an allocated host port. Connect over HTTP at http://localhost:PORT and over WebSocket at ws://localhost:PORT/?environment=TENANT.
