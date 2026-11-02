@@ -103,7 +103,7 @@ resources ShellResources {
             TextBlock [ Text = $ConsequencesText, TextWrapping = Wrap, Foreground = @Fg2, Margin = (0,0,0,12),
                         Visibility = $ConsequencesText << ToVisibility ]
             TextBlock [ Text = $PromptText, Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            TextBox [ Text = $Typed, Placeholder = $Expected, Margin = (0,0,0,12) ]
+            TextBox [ UsesNativeInput = true, Text = $Typed, Placeholder = $Expected, Margin = (0,0,0,12) ]
             TextBlock [ Text = $ErrorText, Foreground = @StateDangerInk, TextWrapping = Wrap, Margin = (0,0,0,12),
                         Visibility = $ErrorText << ToVisibility ]
             StackPanel [ Orientation = Horizontal, HorizontalAlignment = Right ] {

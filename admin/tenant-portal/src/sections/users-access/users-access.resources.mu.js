@@ -5,7 +5,7 @@ import { TokenRevealPageViewModel } from "./token-reveal-page-view-model.js";
 import { TokenRowViewModel, TokensTabViewModel } from "./tokens-tab-view-model.js";
 import { UsersAccessPageViewModel } from "./users-access-page-view-model.js";
 import { AccountRowViewModel, UsersTabViewModel } from "./users-tab-view-model.js";
-import { Border, ColumnDefinition, DataTemplate, Dock, DockPanel, Grid, GridLength, Orientation, StackPanel, TextBlock, TextBox, TextWrapping } from "@pragmatic-tech-ai/mural/basic";
+import { Border, ColumnDefinition, DataTemplate, Dock, DockPanel, Grid, GridLength, InputPurpose, Orientation, StackPanel, TextBlock, TextBox, TextWrapping } from "@pragmatic-tech-ai/mural/basic";
 import { ContentControl } from "@pragmatic-tech-ai/mural/framework/base/content-control.js";
 import { SegmentedButton } from "@pragmatic-tech-ai/mural/framework/button-groups/segmented-button.js";
 import { Button, ButtonVariant } from "@pragmatic-tech-ai/mural/framework/buttons/button.js";
@@ -958,6 +958,8 @@ export class UsersAccessResources extends ResourceDictionary {
             _textBlock204.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel200.AddChild(_textBlock204);
             const _textBox205 = new TextBox();
+            _textBox205.set_property_value(TextBox.UsesNativeInputKey, true);
+            _textBox205.set_property_value(TextBox.InputPurposeKey, InputPurpose.Email);
             _textBox205.set_property_value(TextBox.TextKey, DataContextBinding(_textBox205, "Email"));
             _textBox205.set_property_value(TextBox.PlaceholderKey, "person@example.com");
             _textBox205.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));
@@ -969,6 +971,7 @@ export class UsersAccessResources extends ResourceDictionary {
             _textBlock206.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel200.AddChild(_textBlock206);
             const _textBox207 = new TextBox();
+            _textBox207.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox207.set_property_value(TextBox.TextKey, DataContextBinding(_textBox207, "PrincipalId"));
             _textBox207.set_property_value(TextBox.PlaceholderKey, "e.g. jane.doe");
             _textBox207.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));
@@ -980,6 +983,8 @@ export class UsersAccessResources extends ResourceDictionary {
             _textBlock208.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel200.AddChild(_textBlock208);
             const _textBox209 = new TextBox();
+            _textBox209.set_property_value(TextBox.UsesNativeInputKey, true);
+            _textBox209.set_property_value(TextBox.InputPurposeKey, InputPurpose.NewPassword);
             _textBox209.set_property_value(TextBox.TextKey, DataContextBinding(_textBox209, "Password"));
             _textBox209.set_property_value(TextBox.IsPasswordKey, true);
             _textBox209.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));
@@ -1030,6 +1035,7 @@ export class UsersAccessResources extends ResourceDictionary {
             _textBlock219.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel217.AddChild(_textBlock219);
             const _textBox220 = new TextBox();
+            _textBox220.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox220.set_property_value(TextBox.TextKey, DataContextBinding(_textBox220, "PrincipalId"));
             _textBox220.set_property_value(TextBox.PlaceholderKey, "e.g. ci-bot");
             _textBox220.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));
@@ -1041,6 +1047,7 @@ export class UsersAccessResources extends ResourceDictionary {
             _textBlock221.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel217.AddChild(_textBlock221);
             const _textBox222 = new TextBox();
+            _textBox222.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox222.set_property_value(TextBox.TextKey, DataContextBinding(_textBox222, "Scopes"));
             _textBox222.set_property_value(TextBox.PlaceholderKey, "e.g. read write");
             _textBox222.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 4));

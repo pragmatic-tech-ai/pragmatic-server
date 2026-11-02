@@ -92,7 +92,7 @@ resources SecurityModelResources {
                             ListBox [ Style = @TenantTableList, HorizontalAlignment = Stretch, ItemsSource = $Roles,
                                       SelectedItem = $SelectedRole, ItemTemplate = @SecurityModelRoleItemTemplate,
                                       Visibility = $HasRoles << ToVisibility ]
-                            TextBox [ Text = $NewRoleName, Placeholder = "New role name", IsEnabled = $CanEdit, Margin = (0,8,0,4) ]
+                            TextBox [ UsesNativeInput = true, Text = $NewRoleName, Placeholder = "New role name", IsEnabled = $CanEdit, Margin = (0,8,0,4) ]
                             StackPanel [ Orientation = Horizontal ] {
                                 Button [ Variant = Secondary, Command = $AddRoleCommand, Margin = (0,0,8,0) ] {
                                     TextBlock [ Text = "Add role" ]
@@ -145,7 +145,7 @@ resources SecurityModelResources {
                                             ColumnDefinition [ Width = GridLength.Star ]
                                             ColumnDefinition [ Width = GridLength.Auto ]
                                         }
-                                        TextBox [ Grid.Column = 0, Text = $NewConceptName, Placeholder = "New concept name", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
+                                        TextBox [ UsesNativeInput = true, Grid.Column = 0, Text = $NewConceptName, Placeholder = "New concept name", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
                                         Button [ Grid.Column = 1, Variant = Secondary, Command = $AddConceptCommand ] {
                                             TextBlock [ Text = "Add concept" ]
                                         }
@@ -167,7 +167,7 @@ resources SecurityModelResources {
                                         ColumnDefinition [ Width = GridLength.Auto ]
                                         ColumnDefinition [ Width = GridLength.Auto ]
                                     }
-                                    TextBox [ Grid.Column = 0, Text = $NewProfileName, Placeholder = "New profile name", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
+                                    TextBox [ UsesNativeInput = true, Grid.Column = 0, Text = $NewProfileName, Placeholder = "New profile name", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
                                     Button [ Grid.Column = 1, Variant = Secondary, Command = $AddProfileCommand, Margin = (0,0,8,0) ] {
                                         TextBlock [ Text = "Add profile" ]
                                     }
@@ -202,8 +202,8 @@ resources SecurityModelResources {
                                             ColumnDefinition [ Width = GridLength.Star ]
                                             ColumnDefinition [ Width = GridLength.Auto ]
                                         }
-                                        TextBox [ Grid.Column = 0, Text = $NewFieldConcept, Placeholder = "Concept", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
-                                        TextBox [ Grid.Column = 1, Text = $NewFieldName, Placeholder = "Field", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
+                                        TextBox [ UsesNativeInput = true, Grid.Column = 0, Text = $NewFieldConcept, Placeholder = "Concept", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
+                                        TextBox [ UsesNativeInput = true, Grid.Column = 1, Text = $NewFieldName, Placeholder = "Field", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
                                         Button [ Grid.Column = 2, Variant = Secondary, Command = $AddSecuredFieldCommand ] {
                                             TextBlock [ Text = "Add secured field" ]
                                         }
@@ -262,7 +262,7 @@ resources SecurityModelResources {
                                     ColumnDefinition [ Width = GridLength.Star ]
                                     ColumnDefinition [ Width = GridLength.Auto ]
                                 }
-                                TextBox [ Grid.Column = 0, Text = $NewBusinessUnitName, Placeholder = "New business unit name", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
+                                TextBox [ UsesNativeInput = true, Grid.Column = 0, Text = $NewBusinessUnitName, Placeholder = "New business unit name", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
                                 Button [ Grid.Column = 1, Variant = Secondary, Command = $AddBusinessUnitCommand ] {
                                     TextBlock [ Text = "Add business unit" ]
                                 }
@@ -289,7 +289,7 @@ resources SecurityModelResources {
                                     ColumnDefinition [ Width = GridLength.Star ]
                                     ColumnDefinition [ Width = GridLength.Auto ]
                                 }
-                                TextBox [ Grid.Column = 0, Text = $NewTeamName, Placeholder = "New team name", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
+                                TextBox [ UsesNativeInput = true, Grid.Column = 0, Text = $NewTeamName, Placeholder = "New team name", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
                                 Button [ Grid.Column = 1, Variant = Secondary, Command = $AddTeamCommand ] {
                                     TextBlock [ Text = "Add team" ]
                                 }
@@ -348,7 +348,7 @@ resources SecurityModelResources {
                                     ColumnDefinition [ Width = GridLength.Star ]
                                     ColumnDefinition [ Width = GridLength.Auto ]
                                 }
-                                TextBox [ Grid.Column = 0, Text = $NewOwnershipConcept, Placeholder = "Concept to own", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
+                                TextBox [ UsesNativeInput = true, Grid.Column = 0, Text = $NewOwnershipConcept, Placeholder = "Concept to own", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
                                 Button [ Grid.Column = 1, Variant = Secondary, Command = $AddOwnershipRuleCommand ] {
                                     TextBlock [ Text = "Add ownership rule" ]
                                 }
@@ -478,7 +478,7 @@ resources SecurityModelResources {
                     ColumnDefinition [ Width = GridLength.Star ]
                     ColumnDefinition [ Width = GridLength.Auto ]
                 }
-                TextBox [ Grid.Column = 0, Text = $NewPrincipal, Placeholder = "Person (principal id)", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
+                TextBox [ UsesNativeInput = true, Grid.Column = 0, Text = $NewPrincipal, Placeholder = "Person (principal id)", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
                 Button [ Grid.Column = 1, Variant = Secondary, Command = $AddPersonCommand ] {
                     TextBlock [ Text = "Add person" ]
                 }
@@ -528,8 +528,8 @@ resources SecurityModelResources {
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Auto ]
             }
-            TextBox [ Grid.Column = 0, Text = $Claim, Placeholder = "Claim", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
-            TextBox [ Grid.Column = 1, Text = $Value, Placeholder = "Value", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
+            TextBox [ UsesNativeInput = true, Grid.Column = 0, Text = $Claim, Placeholder = "Claim", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
+            TextBox [ UsesNativeInput = true, Grid.Column = 1, Text = $Value, Placeholder = "Value", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
             Button [ Grid.Column = 2, Variant = Ghost, Command = $RemoveCommand ] {
                 TextBlock [ Text = "Remove" ]
             }
@@ -560,7 +560,7 @@ resources SecurityModelResources {
             }
             DockPanel [ Grid.Column = 0, Margin = (0,0,8,0) ] {
                 TextBlock [ DockPanel.Dock = Left, Text = $Indent, VerticalAlignment = Center ]
-                TextBox [ Text = $Name, Placeholder = "Business unit name", IsEnabled = $CanEdit ]
+                TextBox [ UsesNativeInput = true, Text = $Name, Placeholder = "Business unit name", IsEnabled = $CanEdit ]
             }
             ComboBox [ Grid.Column = 1, ItemsSource = $ParentOptions, SelectedItem = $SelectedParent, IsEnabled = $CanEdit,
                        HorizontalAlignment = Stretch, Margin = (0,0,8,0) ]
@@ -577,7 +577,7 @@ resources SecurityModelResources {
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Auto ]
             }
-            TextBox [ Grid.Column = 0, Text = $Name, Placeholder = "Team name", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
+            TextBox [ UsesNativeInput = true, Grid.Column = 0, Text = $Name, Placeholder = "Team name", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
             ComboBox [ Grid.Column = 1, ItemsSource = $UnitOptions, SelectedItem = $SelectedUnit, IsEnabled = $CanEdit,
                        HorizontalAlignment = Stretch, Margin = (0,0,8,0) ]
             Button [ Grid.Column = 2, Variant = Ghost, Command = $RemoveCommand ] {
@@ -602,8 +602,8 @@ resources SecurityModelResources {
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Auto ]
             }
-            TextBox [ Grid.Column = 0, Text = $Claim, Placeholder = "Claim", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
-            TextBox [ Grid.Column = 1, Text = $Value, Placeholder = "Value", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
+            TextBox [ UsesNativeInput = true, Grid.Column = 0, Text = $Claim, Placeholder = "Claim", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
+            TextBox [ UsesNativeInput = true, Grid.Column = 1, Text = $Value, Placeholder = "Value", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
             ComboBox [ Grid.Column = 2, ItemsSource = $UnitOptions, SelectedItem = $SelectedHomeUnit, IsEnabled = $CanEdit,
                        HorizontalAlignment = Stretch, Margin = (0,0,8,0) ]
             ListBox [ Grid.Column = 3, Style = @TenantTableList, HorizontalAlignment = Stretch, ItemsSource = $TeamToggles,
@@ -622,7 +622,7 @@ resources SecurityModelResources {
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Auto ]
             }
-            TextBox [ Grid.Column = 0, Text = $PrincipalId, Placeholder = "Principal id", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
+            TextBox [ UsesNativeInput = true, Grid.Column = 0, Text = $PrincipalId, Placeholder = "Principal id", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
             ComboBox [ Grid.Column = 1, ItemsSource = $UnitOptions, SelectedItem = $SelectedHomeUnit, IsEnabled = $CanEdit,
                        HorizontalAlignment = Stretch, Margin = (0,0,8,0) ]
             ListBox [ Grid.Column = 2, Style = @TenantTableList, HorizontalAlignment = Stretch, ItemsSource = $TeamToggles,
@@ -644,10 +644,10 @@ resources SecurityModelResources {
                 ColumnDefinition [ Width = GridLength.Auto ]
             }
             TextBlock [ Grid.Column = 0, Text = $Concept, Style = @UiLabel, Foreground = @Fg0, VerticalAlignment = Center ]
-            TextBox [ Grid.Column = 1, Text = $OwningKind, Placeholder = "Source kind", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
-            TextBox [ Grid.Column = 2, Text = $OwningValue, Placeholder = "Source value", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
-            TextBox [ Grid.Column = 3, Text = $OwnerKind, Placeholder = "Source kind", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
-            TextBox [ Grid.Column = 4, Text = $OwnerValue, Placeholder = "Source value", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
+            TextBox [ UsesNativeInput = true, Grid.Column = 1, Text = $OwningKind, Placeholder = "Source kind", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
+            TextBox [ UsesNativeInput = true, Grid.Column = 2, Text = $OwningValue, Placeholder = "Source value", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
+            TextBox [ UsesNativeInput = true, Grid.Column = 3, Text = $OwnerKind, Placeholder = "Source kind", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
+            TextBox [ UsesNativeInput = true, Grid.Column = 4, Text = $OwnerValue, Placeholder = "Source value", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
             Button [ Grid.Column = 5, Variant = Ghost, Command = $RemoveCommand ] {
                 TextBlock [ Text = "Remove" ]
             }

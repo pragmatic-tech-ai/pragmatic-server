@@ -178,6 +178,7 @@ export class EnvironmentsResources extends ResourceDictionary {
             const _stackPanel33 = new StackPanel();
             _stackPanel33.set_property_value(StackPanel.OrientationKey, Orientation.Vertical);
             const _textBox34 = new TextBox();
+            _textBox34.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox34.set_property_value(TextBox.TextKey, DataContextBinding(_textBox34, "Filter"));
             _textBox34.set_property_value(TextBox.PlaceholderKey, "Filter environments");
             _textBox34.set_property_value(TextBox.HorizontalAlignmentKey, HorizontalAlignment.Stretch);
@@ -909,6 +910,7 @@ export class EnvironmentsResources extends ResourceDictionary {
             _textBlock188.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel186.AddChild(_textBlock188);
             const _textBox189 = new TextBox();
+            _textBox189.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox189.set_property_value(TextBox.TextKey, DataContextBinding(_textBox189, "Name"));
             _textBox189.set_property_value(TextBox.PlaceholderKey, "e.g. training-q4");
             _textBox189.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 4));

@@ -372,11 +372,11 @@ resources UsersAccessResources {
                 TextBlock [ Text = $Environment, Foreground = @Fg0 ]
             }
             TextBlock [ Text = "Email", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            TextBox [ Text = $Email, Placeholder = "person@example.com", Margin = (0,0,0,12) ]
+            TextBox [ UsesNativeInput = true, InputPurpose = Email, Text = $Email, Placeholder = "person@example.com", Margin = (0,0,0,12) ]
             TextBlock [ Text = "Principal id", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            TextBox [ Text = $PrincipalId, Placeholder = "e.g. jane.doe", Margin = (0,0,0,12) ]
+            TextBox [ UsesNativeInput = true, Text = $PrincipalId, Placeholder = "e.g. jane.doe", Margin = (0,0,0,12) ]
             TextBlock [ Text = "Password", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            TextBox [ Text = $Password, IsPassword = true, Margin = (0,0,0,12) ]
+            TextBox [ UsesNativeInput = true, InputPurpose = NewPassword, Text = $Password, IsPassword = true, Margin = (0,0,0,12) ]
             TextBlock [ Text = $ErrorText, Foreground = @StateDangerInk, TextWrapping = Wrap, Margin = (0,0,0,12),
                         Visibility = $ErrorText << ToVisibility ]
             StackPanel [ Orientation = Horizontal, HorizontalAlignment = Right ] {
@@ -396,9 +396,9 @@ resources UsersAccessResources {
             TextBlock [ Text = "The token acts as this principal. Its value is shown once, then only referenced by name.",
                         TextWrapping = Wrap, Foreground = @Fg2, Margin = (0,0,0,12) ]
             TextBlock [ Text = "Principal id", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            TextBox [ Text = $PrincipalId, Placeholder = "e.g. ci-bot", Margin = (0,0,0,12) ]
+            TextBox [ UsesNativeInput = true, Text = $PrincipalId, Placeholder = "e.g. ci-bot", Margin = (0,0,0,12) ]
             TextBlock [ Text = "Scopes (space- or comma-separated)", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            TextBox [ Text = $Scopes, Placeholder = "e.g. read write", Margin = (0,0,0,4) ]
+            TextBox [ UsesNativeInput = true, Text = $Scopes, Placeholder = "e.g. read write", Margin = (0,0,0,4) ]
             TextBlock [ Text = $ScopesErrorText, Style = @UiCaption, Foreground = @StateDangerInk, Margin = (0,0,0,4),
                         Visibility = $ScopesErrorText << ToVisibility ]
             TextBlock [ Text = "Expires after", Style = @UiCaption, Foreground = @Fg2, Margin = (0,8,0,4) ]

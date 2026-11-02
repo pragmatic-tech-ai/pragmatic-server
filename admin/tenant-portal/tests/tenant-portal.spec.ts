@@ -62,9 +62,9 @@ enum RailEntry
     Connection,
 }
 
-// Mural renders the whole app as SVG: a TextBox is a surface with a hidden key
-// sink (no <input>), so a field is typed into by clicking its placeholder; each
-// control's hit rect sits over its text, so clicks are forced through it. The
+// Mural renders the app as SVG, except TextBoxes, which are native <input>s
+// (typed into by their placeholder attribute); each control's hit rect sits
+// over its text, so clicks are forced through it. The
 // rail is icon-only (names are tooltips), so an entry is clicked at its
 // position; every click then asserts the entry's page title, so a layout drift
 // fails loudly.
@@ -75,6 +75,8 @@ class TenantSteps
     private static readonly RailCenterX = 24
     private static readonly RailFirstCenterY = 97
     private static readonly RailPitch = 40
+    private static readonly InputByPlaceholder = 'input[placeholder="{placeholder}"]'
+    private static readonly PlaceholderToken = '{placeholder}'
     // From a Checkbox's label back to the middle of the box before it.
     private static readonly BoxOffset = 16
     private static readonly NoLabelBox = 'no layout box for label: '
@@ -107,10 +109,11 @@ class TenantSteps
         await page.mouse.click(box.x - TenantSteps.BoxOffset, box.y + box.height / 2)
     }
 
+    // TextBoxes are native inputs (UsesNativeInput): the placeholder is the
+    // input's own attribute, so the field is found by it and filled.
     public static async TypeInto(page: Page, placeholder: string, text: string): Promise<void>
     {
-        await TenantSteps.Text(page, placeholder).last().click({ force: true })
-        await page.keyboard.type(text)
+        await page.locator(TenantSteps.InputByPlaceholder.replace(TenantSteps.PlaceholderToken, placeholder)).last().fill(text)
     }
 
     public static async OpenSection(page: Page, entry: RailEntry): Promise<void>

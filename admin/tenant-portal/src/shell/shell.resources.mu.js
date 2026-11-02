@@ -120,6 +120,7 @@ export class ShellResources extends ResourceDictionary {
             _textBlock42.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
             _stackPanel39.AddChild(_textBlock42);
             const _textBox43 = new TextBox();
+            _textBox43.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox43.set_property_value(TextBox.TextKey, DataContextBinding(_textBox43, "Typed"));
             _textBox43.set_property_value(TextBox.PlaceholderKey, DataContextBinding(_textBox43, "Expected"));
             _textBox43.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));

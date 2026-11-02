@@ -80,7 +80,7 @@ resources EnvironmentsResources {
             // Populated: filter, bulk actions over the selection, the table.
             ScrollViewer [ HorizontalScrollEnabled = false, Visibility = $IsPopulated << ToVisibility ] {
                 StackPanel [ Orientation = Vertical ] {
-                    TextBox [ Text = $Filter, Placeholder = "Filter environments", HorizontalAlignment = Stretch, Margin = (0,0,0,12) ]
+                    TextBox [ UsesNativeInput = true, Text = $Filter, Placeholder = "Filter environments", HorizontalAlignment = Stretch, Margin = (0,0,0,12) ]
                     Border [ Fill = @Bg1, Stroke = Pen [ Brush = @Border ], Padding = (12,6,12,6), Margin = (0,0,0,8),
                              Visibility = $HasSelection << ToVisibility ] {
                         StackPanel [ Orientation = Horizontal ] {
@@ -332,7 +332,7 @@ resources EnvironmentsResources {
             TextBlock [ Text = "Runs in your hive. It takes a few minutes; you can leave this page.",
                         TextWrapping = Wrap, Foreground = @Fg2, Margin = (0,0,0,12) ]
             TextBlock [ Text = "Name", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            TextBox [ Text = $Name, Placeholder = "e.g. training-q4", Margin = (0,0,0,4) ]
+            TextBox [ UsesNativeInput = true, Text = $Name, Placeholder = "e.g. training-q4", Margin = (0,0,0,4) ]
             TextBlock [ Text = "Lowercase letters, digits and hyphens.", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
             TextBlock [ Text = $NameErrorText, Style = @UiCaption, Foreground = @StateDangerInk, Margin = (0,0,0,4),
                         Visibility = $NameErrorText << ToVisibility ]

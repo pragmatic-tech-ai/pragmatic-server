@@ -175,6 +175,7 @@ export class SecurityModelResources extends ResourceDictionary {
             _listBox34.set_property_value(ListBox.VisibilityKey, DataContextBinding(_listBox34, "HasRoles", ToVisibility));
             _stackPanel31.AddChild(_listBox34);
             const _textBox35 = new TextBox();
+            _textBox35.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox35.set_property_value(TextBox.TextKey, DataContextBinding(_textBox35, "NewRoleName"));
             _textBox35.set_property_value(TextBox.PlaceholderKey, "New role name");
             _textBox35.set_property_value(TextBox.IsEnabledKey, DataContextBinding(_textBox35, "CanEdit"));
@@ -322,6 +323,7 @@ export class SecurityModelResources extends ResourceDictionary {
             _columnDefinition70.set_property_value(ColumnDefinition.WidthKey, GridLength.Auto);
             _grid68.ColumnDefinitions.Add(_columnDefinition70);
             const _textBox71 = new TextBox();
+            _textBox71.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox71.set_property_value(Grid.ColumnKey, 0);
             _textBox71.set_property_value(TextBox.TextKey, DataContextBinding(_textBox71, "NewConceptName"));
             _textBox71.set_property_value(TextBox.PlaceholderKey, "New concept name");
@@ -376,6 +378,7 @@ export class SecurityModelResources extends ResourceDictionary {
             _columnDefinition82.set_property_value(ColumnDefinition.WidthKey, GridLength.Auto);
             _grid79.ColumnDefinitions.Add(_columnDefinition82);
             const _textBox83 = new TextBox();
+            _textBox83.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox83.set_property_value(Grid.ColumnKey, 0);
             _textBox83.set_property_value(TextBox.TextKey, DataContextBinding(_textBox83, "NewProfileName"));
             _textBox83.set_property_value(TextBox.PlaceholderKey, "New profile name");
@@ -476,6 +479,7 @@ export class SecurityModelResources extends ResourceDictionary {
             _columnDefinition106.set_property_value(ColumnDefinition.WidthKey, GridLength.Auto);
             _grid103.ColumnDefinitions.Add(_columnDefinition106);
             const _textBox107 = new TextBox();
+            _textBox107.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox107.set_property_value(Grid.ColumnKey, 0);
             _textBox107.set_property_value(TextBox.TextKey, DataContextBinding(_textBox107, "NewFieldConcept"));
             _textBox107.set_property_value(TextBox.PlaceholderKey, "Concept");
@@ -483,6 +487,7 @@ export class SecurityModelResources extends ResourceDictionary {
             _textBox107.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 8, 0));
             _grid103.AddChild(_textBox107);
             const _textBox108 = new TextBox();
+            _textBox108.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox108.set_property_value(Grid.ColumnKey, 1);
             _textBox108.set_property_value(TextBox.TextKey, DataContextBinding(_textBox108, "NewFieldName"));
             _textBox108.set_property_value(TextBox.PlaceholderKey, "Field");
@@ -615,6 +620,7 @@ export class SecurityModelResources extends ResourceDictionary {
             _columnDefinition137.set_property_value(ColumnDefinition.WidthKey, GridLength.Auto);
             _grid135.ColumnDefinitions.Add(_columnDefinition137);
             const _textBox138 = new TextBox();
+            _textBox138.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox138.set_property_value(Grid.ColumnKey, 0);
             _textBox138.set_property_value(TextBox.TextKey, DataContextBinding(_textBox138, "NewBusinessUnitName"));
             _textBox138.set_property_value(TextBox.PlaceholderKey, "New business unit name");
@@ -676,6 +682,7 @@ export class SecurityModelResources extends ResourceDictionary {
             _columnDefinition152.set_property_value(ColumnDefinition.WidthKey, GridLength.Auto);
             _grid150.ColumnDefinitions.Add(_columnDefinition152);
             const _textBox153 = new TextBox();
+            _textBox153.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox153.set_property_value(Grid.ColumnKey, 0);
             _textBox153.set_property_value(TextBox.TextKey, DataContextBinding(_textBox153, "NewTeamName"));
             _textBox153.set_property_value(TextBox.PlaceholderKey, "New team name");
@@ -825,6 +832,7 @@ export class SecurityModelResources extends ResourceDictionary {
             _columnDefinition188.set_property_value(ColumnDefinition.WidthKey, GridLength.Auto);
             _grid186.ColumnDefinitions.Add(_columnDefinition188);
             const _textBox189 = new TextBox();
+            _textBox189.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox189.set_property_value(Grid.ColumnKey, 0);
             _textBox189.set_property_value(TextBox.TextKey, DataContextBinding(_textBox189, "NewOwnershipConcept"));
             _textBox189.set_property_value(TextBox.PlaceholderKey, "Concept to own");
@@ -1164,6 +1172,7 @@ export class SecurityModelResources extends ResourceDictionary {
             _columnDefinition269.set_property_value(ColumnDefinition.WidthKey, GridLength.Auto);
             _grid267.ColumnDefinitions.Add(_columnDefinition269);
             const _textBox270 = new TextBox();
+            _textBox270.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox270.set_property_value(Grid.ColumnKey, 0);
             _textBox270.set_property_value(TextBox.TextKey, DataContextBinding(_textBox270, "NewPrincipal"));
             _textBox270.set_property_value(TextBox.PlaceholderKey, "Person (principal id)");
@@ -1277,6 +1286,7 @@ export class SecurityModelResources extends ResourceDictionary {
             _columnDefinition296.set_property_value(ColumnDefinition.WidthKey, GridLength.Auto);
             _grid293.ColumnDefinitions.Add(_columnDefinition296);
             const _textBox297 = new TextBox();
+            _textBox297.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox297.set_property_value(Grid.ColumnKey, 0);
             _textBox297.set_property_value(TextBox.TextKey, DataContextBinding(_textBox297, "Claim"));
             _textBox297.set_property_value(TextBox.PlaceholderKey, "Claim");
@@ -1284,6 +1294,7 @@ export class SecurityModelResources extends ResourceDictionary {
             _textBox297.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 8, 0));
             _grid293.AddChild(_textBox297);
             const _textBox298 = new TextBox();
+            _textBox298.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox298.set_property_value(Grid.ColumnKey, 1);
             _textBox298.set_property_value(TextBox.TextKey, DataContextBinding(_textBox298, "Value"));
             _textBox298.set_property_value(TextBox.PlaceholderKey, "Value");
@@ -1348,6 +1359,7 @@ export class SecurityModelResources extends ResourceDictionary {
             _textBlock314.set_property_value(TextBlock.VerticalAlignmentKey, VerticalAlignment.Center);
             _dockPanel313.AddChild(_textBlock314);
             const _textBox315 = new TextBox();
+            _textBox315.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox315.set_property_value(TextBox.TextKey, DataContextBinding(_textBox315, "Name"));
             _textBox315.set_property_value(TextBox.PlaceholderKey, "Business unit name");
             _textBox315.set_property_value(TextBox.IsEnabledKey, DataContextBinding(_textBox315, "CanEdit"));
@@ -1385,6 +1397,7 @@ export class SecurityModelResources extends ResourceDictionary {
             _columnDefinition323.set_property_value(ColumnDefinition.WidthKey, GridLength.Auto);
             _grid320.ColumnDefinitions.Add(_columnDefinition323);
             const _textBox324 = new TextBox();
+            _textBox324.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox324.set_property_value(Grid.ColumnKey, 0);
             _textBox324.set_property_value(TextBox.TextKey, DataContextBinding(_textBox324, "Name"));
             _textBox324.set_property_value(TextBox.PlaceholderKey, "Team name");
@@ -1448,6 +1461,7 @@ export class SecurityModelResources extends ResourceDictionary {
             _columnDefinition338.set_property_value(ColumnDefinition.WidthKey, GridLength.Auto);
             _grid333.ColumnDefinitions.Add(_columnDefinition338);
             const _textBox339 = new TextBox();
+            _textBox339.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox339.set_property_value(Grid.ColumnKey, 0);
             _textBox339.set_property_value(TextBox.TextKey, DataContextBinding(_textBox339, "Claim"));
             _textBox339.set_property_value(TextBox.PlaceholderKey, "Claim");
@@ -1455,6 +1469,7 @@ export class SecurityModelResources extends ResourceDictionary {
             _textBox339.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 8, 0));
             _grid333.AddChild(_textBox339);
             const _textBox340 = new TextBox();
+            _textBox340.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox340.set_property_value(Grid.ColumnKey, 1);
             _textBox340.set_property_value(TextBox.TextKey, DataContextBinding(_textBox340, "Value"));
             _textBox340.set_property_value(TextBox.PlaceholderKey, "Value");
@@ -1504,6 +1519,7 @@ export class SecurityModelResources extends ResourceDictionary {
             _columnDefinition350.set_property_value(ColumnDefinition.WidthKey, GridLength.Auto);
             _grid346.ColumnDefinitions.Add(_columnDefinition350);
             const _textBox351 = new TextBox();
+            _textBox351.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox351.set_property_value(Grid.ColumnKey, 0);
             _textBox351.set_property_value(TextBox.TextKey, DataContextBinding(_textBox351, "PrincipalId"));
             _textBox351.set_property_value(TextBox.PlaceholderKey, "Principal id");
@@ -1566,6 +1582,7 @@ export class SecurityModelResources extends ResourceDictionary {
             _textBlock364.set_property_value(TextBlock.VerticalAlignmentKey, VerticalAlignment.Center);
             _grid357.AddChild(_textBlock364);
             const _textBox365 = new TextBox();
+            _textBox365.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox365.set_property_value(Grid.ColumnKey, 1);
             _textBox365.set_property_value(TextBox.TextKey, DataContextBinding(_textBox365, "OwningKind"));
             _textBox365.set_property_value(TextBox.PlaceholderKey, "Source kind");
@@ -1573,6 +1590,7 @@ export class SecurityModelResources extends ResourceDictionary {
             _textBox365.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 8, 0));
             _grid357.AddChild(_textBox365);
             const _textBox366 = new TextBox();
+            _textBox366.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox366.set_property_value(Grid.ColumnKey, 2);
             _textBox366.set_property_value(TextBox.TextKey, DataContextBinding(_textBox366, "OwningValue"));
             _textBox366.set_property_value(TextBox.PlaceholderKey, "Source value");
@@ -1580,6 +1598,7 @@ export class SecurityModelResources extends ResourceDictionary {
             _textBox366.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 8, 0));
             _grid357.AddChild(_textBox366);
             const _textBox367 = new TextBox();
+            _textBox367.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox367.set_property_value(Grid.ColumnKey, 3);
             _textBox367.set_property_value(TextBox.TextKey, DataContextBinding(_textBox367, "OwnerKind"));
             _textBox367.set_property_value(TextBox.PlaceholderKey, "Source kind");
@@ -1587,6 +1606,7 @@ export class SecurityModelResources extends ResourceDictionary {
             _textBox367.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 8, 0));
             _grid357.AddChild(_textBox367);
             const _textBox368 = new TextBox();
+            _textBox368.set_property_value(TextBox.UsesNativeInputKey, true);
             _textBox368.set_property_value(Grid.ColumnKey, 4);
             _textBox368.set_property_value(TextBox.TextKey, DataContextBinding(_textBox368, "OwnerValue"));
             _textBox368.set_property_value(TextBox.PlaceholderKey, "Source value");
