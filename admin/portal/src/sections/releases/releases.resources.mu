@@ -42,36 +42,40 @@ resources ReleasesResources {
             TextBlock [ DockPanel.Dock = Top, Text = $ErrorText, Foreground = @StateDangerInk,
                         TextWrapping = Wrap, Visibility = $IsError << ToVisibility ]
 
-            DockPanel [ Visibility = $IsPopulated << ToVisibility ] {
-                Grid [ DockPanel.Dock = Top, Margin = (8,0,8,6) ] {
-                    RowDefinitions {
-                        RowDefinition [ Height = GridLength.Auto ]
+            // The page scrolls header and rows together, so both get the
+            // same width.
+            ScrollViewer [ HorizontalScrollEnabled = false, Visibility = $IsPopulated << ToVisibility ] {
+                StackPanel [ Orientation = Vertical ] {
+                    Grid [ Style = @PortalTableColumns ] {
+                        RowDefinitions {
+                            RowDefinition [ Height = GridLength.Auto ]
+                        }
+                        ColumnDefinitions {
+                            ColumnDefinition [ Width = GridLength.Star ]
+                            ColumnDefinition [ Width = GridLength.Star ]
+                            ColumnDefinition [ Width = GridLength.Star ]
+                            ColumnDefinition [ Width = GridLength.Star ]
+                            ColumnDefinition [ Width = GridLength.Star ]
+                            ColumnDefinition [ Width = GridLength.Star ]
+                            ColumnDefinition [ Width = GridLength.Star ]
+                        }
+                        TextBlock [ Grid.Column = 0, Text = "Version", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 1, Text = "Channel", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 2, Text = "Signature", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 3, Text = "Status", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 4, Text = "Published", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 5, Text = "Adoption (observed)", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 6, Text = "Image", Style = @UiCaption, Foreground = @Fg2 ]
                     }
-                    ColumnDefinitions {
-                        ColumnDefinition [ Width = GridLength.Star ]
-                        ColumnDefinition [ Width = GridLength.Star ]
-                        ColumnDefinition [ Width = GridLength.Star ]
-                        ColumnDefinition [ Width = GridLength.Star ]
-                        ColumnDefinition [ Width = GridLength.Star ]
-                        ColumnDefinition [ Width = GridLength.Star ]
-                        ColumnDefinition [ Width = GridLength.Star ]
-                    }
-                    TextBlock [ Grid.Column = 0, Text = "Version", Style = @UiCaption, Foreground = @Fg2 ]
-                    TextBlock [ Grid.Column = 1, Text = "Channel", Style = @UiCaption, Foreground = @Fg2 ]
-                    TextBlock [ Grid.Column = 2, Text = "Signature", Style = @UiCaption, Foreground = @Fg2 ]
-                    TextBlock [ Grid.Column = 3, Text = "Status", Style = @UiCaption, Foreground = @Fg2 ]
-                    TextBlock [ Grid.Column = 4, Text = "Published", Style = @UiCaption, Foreground = @Fg2 ]
-                    TextBlock [ Grid.Column = 5, Text = "Adoption (observed)", Style = @UiCaption, Foreground = @Fg2 ]
-                    TextBlock [ Grid.Column = 6, Text = "Image", Style = @UiCaption, Foreground = @Fg2 ]
+                    ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $Rows, ItemTemplate = @ReleaseRowTemplate ]
                 }
-                ListBox [ Template = @PortalTable, HorizontalAlignment = Stretch, ItemsSource = $Rows, ItemTemplate = @ReleaseRowTemplate ]
             }
         }
     }
 
     // A releases-table row; the version opens its detail.
     DataTemplate x:key="ReleaseRowTemplate" [ DataType = ReleaseRowViewModel ] {
-        Grid [ Margin = (4,2,4,2) ] {
+        Grid [ Style = @PortalTableColumns ] {
             ColumnDefinitions {
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]

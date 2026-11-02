@@ -53,35 +53,38 @@ resources HivesResources {
             TextBlock [ DockPanel.Dock = Top, Text = $ErrorText, Foreground = @StateDangerInk,
                         TextWrapping = Wrap, Visibility = $IsError << ToVisibility ]
 
-            // Populated: the hives table.
-            DockPanel [ Visibility = $IsPopulated << ToVisibility ] {
-                Grid [ DockPanel.Dock = Top, Margin = (8,0,8,6) ] {
-                    RowDefinitions {
-                        RowDefinition [ Height = GridLength.Auto ]
+            // Populated: the hives table. The page scrolls header and rows
+            // together, so both get the same width.
+            ScrollViewer [ HorizontalScrollEnabled = false, Visibility = $IsPopulated << ToVisibility ] {
+                StackPanel [ Orientation = Vertical ] {
+                    Grid [ Style = @PortalTableColumns ] {
+                        RowDefinitions {
+                            RowDefinition [ Height = GridLength.Auto ]
+                        }
+                        ColumnDefinitions {
+                            ColumnDefinition [ Width = GridLength.Star ]
+                            ColumnDefinition [ Width = GridLength.Star ]
+                            ColumnDefinition [ Width = GridLength.Star ]
+                            ColumnDefinition [ Width = GridLength.Star ]
+                            ColumnDefinition [ Width = GridLength.Star ]
+                            ColumnDefinition [ Width = GridLength.Star ]
+                        }
+                        TextBlock [ Grid.Column = 0, Text = "Hive", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 1, Text = "Client / tenant", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 2, Text = "Cluster", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 3, Text = "Connection", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 4, Text = "Health", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 5, Text = "Registry credential", Style = @UiCaption, Foreground = @Fg2 ]
                     }
-                    ColumnDefinitions {
-                        ColumnDefinition [ Width = GridLength.Star ]
-                        ColumnDefinition [ Width = GridLength.Star ]
-                        ColumnDefinition [ Width = GridLength.Star ]
-                        ColumnDefinition [ Width = GridLength.Star ]
-                        ColumnDefinition [ Width = GridLength.Star ]
-                        ColumnDefinition [ Width = GridLength.Star ]
-                    }
-                    TextBlock [ Grid.Column = 0, Text = "Hive", Style = @UiCaption, Foreground = @Fg2 ]
-                    TextBlock [ Grid.Column = 1, Text = "Client / tenant", Style = @UiCaption, Foreground = @Fg2 ]
-                    TextBlock [ Grid.Column = 2, Text = "Cluster", Style = @UiCaption, Foreground = @Fg2 ]
-                    TextBlock [ Grid.Column = 3, Text = "Connection", Style = @UiCaption, Foreground = @Fg2 ]
-                    TextBlock [ Grid.Column = 4, Text = "Health", Style = @UiCaption, Foreground = @Fg2 ]
-                    TextBlock [ Grid.Column = 5, Text = "Registry credential", Style = @UiCaption, Foreground = @Fg2 ]
+                    ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $Rows, ItemTemplate = @HiveRowTemplate ]
                 }
-                ListBox [ Template = @PortalTable, HorizontalAlignment = Stretch, ItemsSource = $Rows, ItemTemplate = @HiveRowTemplate ]
             }
         }
     }
 
     // A hives-table row; the name opens the hive's detail.
     DataTemplate x:key="HiveRowTemplate" [ DataType = HiveRowViewModel ] {
-        Grid [ Margin = (4,2,4,2) ] {
+        Grid [ Style = @PortalTableColumns ] {
             ColumnDefinitions {
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]

@@ -202,6 +202,25 @@ describe('Release Policy section', () =>
         assert.deepEqual(dialog.Versions.ToArray().map(v => v.Value), ['1.5.0', '1.4.0'])
     })
 
+    it('changing tenant keeps the chosen version selected from the new list when still offered, else clears it', async () =>
+    {
+        const fx = new PolicyFixture()
+        fx.Api.WithManifest('1.5.0', 'img:new')
+        const page = await fx.Page()
+        page.GateCommand.Execute()
+        await Tick.Settle()
+        const dialog = fx.Dialogs.Last as GateDialogViewModel
+        dialog.SelectedTenant = dialog.Tenants.ToArray().find(t => t.Value === 'acme-dev')
+        dialog.SelectedVersion = dialog.Versions.ToArray().find(v => v.Value === '1.5.0')
+        dialog.SelectedTenant = dialog.Tenants.ToArray().find(t => t.Value === 'acme-prod')
+        assert.equal(dialog.SelectedVersion?.Value, '1.5.0')
+        assert.ok(dialog.Versions.ToArray().includes(dialog.SelectedVersion))
+        dialog.SelectedTenant = dialog.Tenants.ToArray().find(t => t.Value === 'acme-dev')
+        dialog.SelectedVersion = dialog.Versions.ToArray().find(v => v.Value === '1.4.0')
+        dialog.SelectedTenant = dialog.Tenants.ToArray().find(t => t.Value === 'acme-prod')
+        assert.equal(dialog.SelectedVersion, undefined)
+    })
+
     it('a partly failed policy save keeps what was written, so a retry does not resend it', async () =>
     {
         const fx = new PolicyFixture()

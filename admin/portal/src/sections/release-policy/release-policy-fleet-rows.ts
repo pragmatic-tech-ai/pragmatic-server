@@ -71,7 +71,7 @@ export class RolloutRowViewModel extends Observable
         [RolloutState.OnTarget, 'On target'],
         [RolloutState.BehindTarget, 'Behind target'],
         [RolloutState.NotReady, 'Not ready'],
-        [RolloutState.NoTarget, 'No target'],
+        [RolloutState.NoTarget, RolloutRowViewModel.NoTargetLabel],
     ])
 
     public readonly HiveLabel: string

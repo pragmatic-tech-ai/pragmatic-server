@@ -68,34 +68,38 @@ resources SettingsResources {
             TextBlock [ DockPanel.Dock = Top, Text = $ErrorText, Foreground = @StateDangerInk,
                         TextWrapping = Wrap, Visibility = $IsError << ToVisibility ]
 
-            DockPanel [ Visibility = $IsPopulated << ToVisibility ] {
-                // Denied, not hidden: an Observer is told why there is no roster.
-                StackPanel [ DockPanel.Dock = Top, Orientation = Vertical, Visibility = $IsRosterDenied << ToVisibility ] {
-                    TextBlock [ Text = "You can't see the operator list.", Foreground = @Fg0 ]
-                    TextBlock [ Text = $DeniedReason, Style = @UiCaption, Foreground = @StateWarningInk, Margin = (0,2,0,0) ]
-                }
-                TextBlock [ DockPanel.Dock = Top, Text = "No operators are listed.", Foreground = @Fg2,
-                            Visibility = $HasNoOperators << ToVisibility ]
-                Grid [ DockPanel.Dock = Top, Margin = (8,0,8,6), Visibility = $HasOperators << ToVisibility ] {
-                    RowDefinitions {
-                        RowDefinition [ Height = GridLength.Auto ]
+            // The page scrolls the roster's header and rows together, so both
+            // get the same width.
+            ScrollViewer [ HorizontalScrollEnabled = false, Visibility = $IsPopulated << ToVisibility ] {
+                StackPanel [ Orientation = Vertical ] {
+                    // Denied, not hidden: an Observer is told why there is no roster.
+                    StackPanel [ Orientation = Vertical, Visibility = $IsRosterDenied << ToVisibility ] {
+                        TextBlock [ Text = "You can't see the operator list.", Foreground = @Fg0 ]
+                        TextBlock [ Text = $DeniedReason, Style = @UiCaption, Foreground = @StateWarningInk, Margin = (0,2,0,0) ]
                     }
-                    ColumnDefinitions {
-                        ColumnDefinition [ Width = GridLength.Star ]
-                        ColumnDefinition [ Width = GridLength.Star ]
-                        ColumnDefinition [ Width = GridLength.Star ]
+                    TextBlock [ Text = "No operators are listed.", Foreground = @Fg2,
+                                Visibility = $HasNoOperators << ToVisibility ]
+                    Grid [ Style = @PortalTableColumns, Visibility = $HasOperators << ToVisibility ] {
+                        RowDefinitions {
+                            RowDefinition [ Height = GridLength.Auto ]
+                        }
+                        ColumnDefinitions {
+                            ColumnDefinition [ Width = GridLength.Star ]
+                            ColumnDefinition [ Width = GridLength.Star ]
+                            ColumnDefinition [ Width = GridLength.Star ]
+                        }
+                        TextBlock [ Grid.Column = 0, Text = "Email", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 1, Text = "Role", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 2, Text = "Status", Style = @UiCaption, Foreground = @Fg2 ]
                     }
-                    TextBlock [ Grid.Column = 0, Text = "Email", Style = @UiCaption, Foreground = @Fg2 ]
-                    TextBlock [ Grid.Column = 1, Text = "Role", Style = @UiCaption, Foreground = @Fg2 ]
-                    TextBlock [ Grid.Column = 2, Text = "Status", Style = @UiCaption, Foreground = @Fg2 ]
+                    ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $Operators, ItemTemplate = @OperatorRowTemplate ]
                 }
-                ListBox [ Template = @PortalTable, HorizontalAlignment = Stretch, ItemsSource = $Operators, ItemTemplate = @OperatorRowTemplate ]
             }
         }
     }
 
     DataTemplate x:key="OperatorRowTemplate" [ DataType = OperatorRowViewModel ] {
-        Grid [ Margin = (4,4,4,4) ] {
+        Grid [ Style = @PortalTableColumns ] {
             ColumnDefinitions {
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]

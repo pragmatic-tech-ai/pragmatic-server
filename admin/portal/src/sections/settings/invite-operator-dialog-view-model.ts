@@ -14,10 +14,11 @@ export class InviteOperatorDialogViewModel extends PortalDialogViewModel<string>
     private static readonly EmailProperty = 'Email'
     private static readonly PasswordProperty = 'Password'
     private static readonly SelectedRoleProperty = 'SelectedRole'
+    private static readonly NoText = ''
 
     private readonly roles = new ObservableCollection<OptionViewModel<string>>()
-    private email = ''
-    private password = ''
+    private email = InviteOperatorDialogViewModel.NoText
+    private password = InviteOperatorDialogViewModel.NoText
     private selectedRole: OptionViewModel<string> | undefined
 
     public constructor(session: PortalSessionService, dialogs: DialogService)
@@ -82,7 +83,7 @@ export class InviteOperatorDialogViewModel extends PortalDialogViewModel<string>
         }
         finally
         {
-            this.Password = ''
+            this.Password = InviteOperatorDialogViewModel.NoText
         }
         return email
     }

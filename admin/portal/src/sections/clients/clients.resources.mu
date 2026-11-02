@@ -45,35 +45,38 @@ resources ClientsResources {
             TextBlock [ DockPanel.Dock = Top, Text = $ErrorText, Foreground = @StateDangerInk,
                         TextWrapping = Wrap, Visibility = $IsError << ToVisibility ]
 
-            // Populated: the clients table.
-            DockPanel [ Visibility = $IsPopulated << ToVisibility ] {
-                Grid [ DockPanel.Dock = Top, Margin = (8,0,8,6) ] {
-                    RowDefinitions {
-                        RowDefinition [ Height = GridLength.Auto ]
+            // Populated: the clients table. The page scrolls header and rows
+            // together, so both get the same width.
+            ScrollViewer [ HorizontalScrollEnabled = false, Visibility = $IsPopulated << ToVisibility ] {
+                StackPanel [ Orientation = Vertical ] {
+                    Grid [ Style = @PortalTableColumns ] {
+                        RowDefinitions {
+                            RowDefinition [ Height = GridLength.Auto ]
+                        }
+                        ColumnDefinitions {
+                            ColumnDefinition [ Width = GridLength.Star ]
+                            ColumnDefinition [ Width = GridLength.Star ]
+                            ColumnDefinition [ Width = GridLength.Star ]
+                            ColumnDefinition [ Width = GridLength.Star ]
+                            ColumnDefinition [ Width = GridLength.Star ]
+                            ColumnDefinition [ Width = GridLength.Star ]
+                        }
+                        TextBlock [ Grid.Column = 0, Text = "Client", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 1, Text = "Subscription", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 2, Text = "Tenants", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 3, Text = "Hives", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 4, Text = "Connection", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 5, Text = "Client since", Style = @UiCaption, Foreground = @Fg2 ]
                     }
-                    ColumnDefinitions {
-                        ColumnDefinition [ Width = GridLength.Star ]
-                        ColumnDefinition [ Width = GridLength.Star ]
-                        ColumnDefinition [ Width = GridLength.Star ]
-                        ColumnDefinition [ Width = GridLength.Star ]
-                        ColumnDefinition [ Width = GridLength.Star ]
-                        ColumnDefinition [ Width = GridLength.Star ]
-                    }
-                    TextBlock [ Grid.Column = 0, Text = "Client", Style = @UiCaption, Foreground = @Fg2 ]
-                    TextBlock [ Grid.Column = 1, Text = "Subscription", Style = @UiCaption, Foreground = @Fg2 ]
-                    TextBlock [ Grid.Column = 2, Text = "Tenants", Style = @UiCaption, Foreground = @Fg2 ]
-                    TextBlock [ Grid.Column = 3, Text = "Hives", Style = @UiCaption, Foreground = @Fg2 ]
-                    TextBlock [ Grid.Column = 4, Text = "Connection", Style = @UiCaption, Foreground = @Fg2 ]
-                    TextBlock [ Grid.Column = 5, Text = "Client since", Style = @UiCaption, Foreground = @Fg2 ]
+                    ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $Rows, ItemTemplate = @ClientRowTemplate ]
                 }
-                ListBox [ Template = @PortalTable, HorizontalAlignment = Stretch, ItemsSource = $Rows, ItemTemplate = @ClientRowTemplate ]
             }
         }
     }
 
     // A clients-table row; the name opens the client's detail.
     DataTemplate x:key="ClientRowTemplate" [ DataType = ClientRowViewModel ] {
-        Grid [ Margin = (4,2,4,2) ] {
+        Grid [ Style = @PortalTableColumns ] {
             ColumnDefinitions {
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]
@@ -148,7 +151,7 @@ resources ClientsResources {
                     TextBlock [ Text = "No tenants yet. Create one in Tenants.", Foreground = @Fg2,
                                 Visibility = $HasNoTenants << ToVisibility ]
                     StackPanel [ Orientation = Vertical, Visibility = $HasTenants << ToVisibility ] {
-                        Grid [ Margin = (8,0,8,6) ] {
+                        Grid [ Style = @PortalTableColumns ] {
                             ColumnDefinitions {
                                 ColumnDefinition [ Width = GridLength.Star ]
                                 ColumnDefinition [ Width = GridLength.Star ]
@@ -162,7 +165,7 @@ resources ClientsResources {
                             TextBlock [ Grid.Column = 3, Text = "Last check-in", Style = @UiCaption, Foreground = @Fg2 ]
                             TextBlock [ Grid.Column = 4, Text = "Environments (observed)", Style = @UiCaption, Foreground = @Fg2 ]
                         }
-                        ListBox [ Template = @PortalTable, HorizontalAlignment = Stretch, ItemsSource = $Tenants, ItemTemplate = @ClientTenantRowTemplate ]
+                        ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $Tenants, ItemTemplate = @ClientTenantRowTemplate ]
                     }
                 }
             }
@@ -170,7 +173,7 @@ resources ClientsResources {
     }
 
     DataTemplate x:key="ClientTenantRowTemplate" [ DataType = ClientTenantRowViewModel ] {
-        Grid [ Margin = (4,4,4,4) ] {
+        Grid [ Style = @PortalTableColumns ] {
             ColumnDefinitions {
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]

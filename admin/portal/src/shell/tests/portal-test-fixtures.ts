@@ -262,9 +262,10 @@ export class FakeControlPlane
         return this
     }
 
+    // Copies, as the wire would: a page never sees a later write through a shared object.
     public async ListManifests(): Promise<ManifestDto[]>
     {
-        return [...this.Manifests]
+        return this.Manifests.map(m => ({ ...m }))
     }
 
     public async PublishManifest(version: string, image: string, notes?: string, channel?: string): Promise<ManifestDto>
@@ -371,7 +372,7 @@ export class FakeControlPlane
         {
             throw new ApiError(403, 'forbidden')
         }
-        return [...this.Operators]
+        return this.Operators.map(o => ({ ...o }))
     }
 
     public async SetOperatorRole(email: string, role: string): Promise<void>

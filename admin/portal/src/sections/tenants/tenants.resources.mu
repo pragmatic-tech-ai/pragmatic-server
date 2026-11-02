@@ -47,35 +47,38 @@ resources TenantsResources {
             TextBlock [ DockPanel.Dock = Top, Text = $ErrorText, Foreground = @StateDangerInk,
                         TextWrapping = Wrap, Visibility = $IsError << ToVisibility ]
 
-            // Populated: the tenants table.
-            DockPanel [ Visibility = $IsPopulated << ToVisibility ] {
-                Grid [ DockPanel.Dock = Top, Margin = (8,0,8,6) ] {
-                    RowDefinitions {
-                        RowDefinition [ Height = GridLength.Auto ]
+            // Populated: the tenants table. The page scrolls header and rows
+            // together, so both get the same width.
+            ScrollViewer [ HorizontalScrollEnabled = false, Visibility = $IsPopulated << ToVisibility ] {
+                StackPanel [ Orientation = Vertical ] {
+                    Grid [ Style = @PortalTableColumns ] {
+                        RowDefinitions {
+                            RowDefinition [ Height = GridLength.Auto ]
+                        }
+                        ColumnDefinitions {
+                            ColumnDefinition [ Width = GridLength.Star ]
+                            ColumnDefinition [ Width = GridLength.Star ]
+                            ColumnDefinition [ Width = GridLength.Star ]
+                            ColumnDefinition [ Width = GridLength.Star ]
+                            ColumnDefinition [ Width = GridLength.Star ]
+                            ColumnDefinition [ Width = GridLength.Star ]
+                        }
+                        TextBlock [ Grid.Column = 0, Text = "Tenant", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 1, Text = "Client", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 2, Text = "Hive (1:1)", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 3, Text = "Hive connection", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 4, Text = "Environments (observed)", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 5, Text = "Created", Style = @UiCaption, Foreground = @Fg2 ]
                     }
-                    ColumnDefinitions {
-                        ColumnDefinition [ Width = GridLength.Star ]
-                        ColumnDefinition [ Width = GridLength.Star ]
-                        ColumnDefinition [ Width = GridLength.Star ]
-                        ColumnDefinition [ Width = GridLength.Star ]
-                        ColumnDefinition [ Width = GridLength.Star ]
-                        ColumnDefinition [ Width = GridLength.Star ]
-                    }
-                    TextBlock [ Grid.Column = 0, Text = "Tenant", Style = @UiCaption, Foreground = @Fg2 ]
-                    TextBlock [ Grid.Column = 1, Text = "Client", Style = @UiCaption, Foreground = @Fg2 ]
-                    TextBlock [ Grid.Column = 2, Text = "Hive (1:1)", Style = @UiCaption, Foreground = @Fg2 ]
-                    TextBlock [ Grid.Column = 3, Text = "Hive connection", Style = @UiCaption, Foreground = @Fg2 ]
-                    TextBlock [ Grid.Column = 4, Text = "Environments (observed)", Style = @UiCaption, Foreground = @Fg2 ]
-                    TextBlock [ Grid.Column = 5, Text = "Created", Style = @UiCaption, Foreground = @Fg2 ]
+                    ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $Rows, ItemTemplate = @TenantRowTemplate ]
                 }
-                ListBox [ Template = @PortalTable, HorizontalAlignment = Stretch, ItemsSource = $Rows, ItemTemplate = @TenantRowTemplate ]
             }
         }
     }
 
     // A tenants-table row; the name opens the tenant's detail.
     DataTemplate x:key="TenantRowTemplate" [ DataType = TenantRowViewModel ] {
-        Grid [ Margin = (4,2,4,2) ] {
+        Grid [ Style = @PortalTableColumns ] {
             ColumnDefinitions {
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]

@@ -38,6 +38,7 @@ export class OperatorDetailPageViewModel extends PortalPageViewModel
     private readonly toggleDisabledCommand: RelayCommand
     private readonly revokeSessionsCommand: RelayCommand
     private readonly resetPasswordCommand: RelayCommand
+    private readonly backCommand: RelayCommand
 
     public constructor(session: PortalSessionService, private readonly section: SettingsSectionService, public readonly Email: string)
     {
@@ -50,6 +51,7 @@ export class OperatorDetailPageViewModel extends PortalPageViewModel
         this.toggleDisabledCommand = this.MutatingCommand(() => this.ToggleDisabled(), loaded)
         this.revokeSessionsCommand = this.MutatingCommand(() => this.RevokeSessions(), loaded)
         this.resetPasswordCommand = this.MutatingCommand(() => this.ResetPassword(), loaded)
+        this.backCommand = new RelayCommand(() => { void this.section.BackAndRefresh() })
     }
 
     public get RoleLabel(): string
@@ -94,9 +96,10 @@ export class OperatorDetailPageViewModel extends PortalPageViewModel
         this.changeRoleCommand.RaiseCanExecuteChanged()
     }
 
+    // Back to the roster, reloaded: a role or account change here changed it.
     public get BackCommand(): RelayCommand
     {
-        return this.section.BackCommand
+        return this.backCommand
     }
 
     public get ChangeRoleCommand(): RelayCommand

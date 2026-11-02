@@ -166,6 +166,20 @@ describe('Settings section', () =>
         assert.equal(detail.RoleLabel, 'Operator')
     })
 
+    it('after a role change, Back shows the roster reloaded with the new role', async () =>
+    {
+        const fx = new SettingsFixture()
+        const detail = await fx.Operator('zed@example.test')
+        detail.SelectedRole = detail.Roles.ToArray().find(r => r.Value === 'full')
+        detail.ChangeRoleCommand.Execute()
+        await Tick.Settle()
+        detail.BackCommand.Execute()
+        await Tick.Settle()
+        const page = fx.Content
+        assert.ok(page instanceof SettingsPageViewModel)
+        assert.equal(page.Operators.ToArray().find(o => o.Email === 'zed@example.test')?.RoleLabel, 'Operator')
+    })
+
     it('Disable / Enable toggles the account', async () =>
     {
         const fx = new SettingsFixture()

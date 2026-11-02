@@ -14,7 +14,9 @@
 // template's ScrollViewer scrolls both axes, so rows are measured at infinite
 // width and star-sized row Grids collapse to their content; this one scrolls
 // vertically only, so each row spans the table and its columns line up with
-// the header Grid above it.
+// the header Grid above it. PortalTableList (the style tables set) adds
+// PortalTableRow, a row container without the stock row's content padding,
+// and PortalTableColumns is the one inset both header and row Grids use.
 
 import PortalSessionService from "./portal-session-service.js"
 import NameConfirmDialogViewModel from "./name-confirm-dialog-view-model.js"
@@ -22,10 +24,45 @@ import ObservedEnvironmentsViewModel from "./observed-environments-view-model.js
 import ObservedEnvironmentRowViewModel from "./observed-environments-view-model.js"
 
 resources ShellResources {
+    // The table never scrolls by itself (a scroll bar would take a gutter
+    // from the rows but not from the header above them): the page's own
+    // ScrollViewer scrolls header and rows together.
     Template x:key="PortalTable" [ TargetType = ListBox ] {
-        ScrollViewer x:name="PART_Scroll" [ HorizontalScrollEnabled = false ] {
+        ScrollViewer x:name="PART_Scroll" [ HorizontalScrollEnabled = false, VerticalScrollEnabled = false ] {
             ItemsPresenter
         }
+    }
+
+    // A table row: the stock row's hover / selected / focus chrome with no
+    // content padding, so a row's cell Grid spans exactly the table's width.
+    Template x:key="PortalTableRowTemplate" [ TargetType = ListBoxItem ] {
+        Border x:name="PART_FocusRing" [ Fill = #00000000, CornerRadius = @RadiusMd ] {
+            Border x:name="PART_Border" [ Fill = #00000000, CornerRadius = @RadiusMd ] {
+                Border x:name="PART_Selected" [ Fill = #00000000, CornerRadius = @RadiusMd ] {
+                    ContentPresenter x:name="PART_HeadlineSlot" [ HorizontalAlignment = Stretch ]
+                }
+            }
+        }
+        when ( IsSelected ) { PART_Selected.Fill = @SurfaceSelected; }
+        when ( IsMouseOver ) { PART_Border.Fill = @RowHoverFill; }
+        when ( IsFocused ) { PART_FocusRing.Stroke = Pen [ Brush = @BorderFocus, Thickness = 2 ]; }
+    }
+
+    Style x:key="PortalTableRow" [ TargetType = ListBoxItem ] {
+        Template = @PortalTableRowTemplate;
+        TextBlock.Foreground = @Fg1;
+    }
+
+    // Every section table: Style = @PortalTableList on the ListBox.
+    Style x:key="PortalTableList" [ TargetType = ListBox ] {
+        Template = @PortalTable;
+        ItemContainerStyle = @PortalTableRow;
+    }
+
+    // The one cell inset every table's header Grid and row Grid share
+    // (Style = @PortalTableColumns), so their Star columns line up.
+    Style x:key="PortalTableColumns" [ TargetType = Grid ] {
+        Margin = (8,4,8,4);
     }
 
     DataTemplate [ DataType = PortalSessionService ] {

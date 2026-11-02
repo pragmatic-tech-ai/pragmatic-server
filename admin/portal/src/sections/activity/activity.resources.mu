@@ -28,30 +28,34 @@ resources ActivityResources {
             TextBlock [ DockPanel.Dock = Top, Text = $ErrorText, Foreground = @StateDangerInk,
                         TextWrapping = Wrap, Visibility = $IsError << ToVisibility ]
 
-            DockPanel [ Visibility = $IsPopulated << ToVisibility ] {
-                Grid [ DockPanel.Dock = Top, Margin = (8,0,8,6) ] {
-                    RowDefinitions {
-                        RowDefinition [ Height = GridLength.Auto ]
+            // The page scrolls header and rows together, so both get the same
+            // width whether or not a scroll bar shows.
+            ScrollViewer [ HorizontalScrollEnabled = false, Visibility = $IsPopulated << ToVisibility ] {
+                StackPanel [ Orientation = Vertical ] {
+                    Grid [ Style = @PortalTableColumns ] {
+                        RowDefinitions {
+                            RowDefinition [ Height = GridLength.Auto ]
+                        }
+                        ColumnDefinitions {
+                            ColumnDefinition [ Width = GridLength.Star ]
+                            ColumnDefinition [ Width = GridLength.Star ]
+                            ColumnDefinition [ Width = GridLength.Star ]
+                            ColumnDefinition [ Width = GridLength.Star ]
+                        }
+                        TextBlock [ Grid.Column = 0, Text = "When (UTC)", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 1, Text = "Action", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 2, Text = "Operator", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 3, Text = "Outcome", Style = @UiCaption, Foreground = @Fg2 ]
                     }
-                    ColumnDefinitions {
-                        ColumnDefinition [ Width = GridLength.Star ]
-                        ColumnDefinition [ Width = GridLength.Star ]
-                        ColumnDefinition [ Width = GridLength.Star ]
-                        ColumnDefinition [ Width = GridLength.Star ]
-                    }
-                    TextBlock [ Grid.Column = 0, Text = "When (UTC)", Style = @UiCaption, Foreground = @Fg2 ]
-                    TextBlock [ Grid.Column = 1, Text = "Action", Style = @UiCaption, Foreground = @Fg2 ]
-                    TextBlock [ Grid.Column = 2, Text = "Operator", Style = @UiCaption, Foreground = @Fg2 ]
-                    TextBlock [ Grid.Column = 3, Text = "Outcome", Style = @UiCaption, Foreground = @Fg2 ]
+                    ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $Rows, ItemTemplate = @ActivityRowTemplate ]
                 }
-                ListBox [ Template = @PortalTable, HorizontalAlignment = Stretch, ItemsSource = $Rows, ItemTemplate = @ActivityRowTemplate ]
             }
         }
     }
 
     // An audit-log row; the action opens the entry's detail.
     DataTemplate x:key="ActivityRowTemplate" [ DataType = ActivityRowViewModel ] {
-        Grid [ Margin = (4,2,4,2) ] {
+        Grid [ Style = @PortalTableColumns ] {
             ColumnDefinitions {
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]

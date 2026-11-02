@@ -87,7 +87,10 @@ resources FleetResources {
                 }
 
                 TextBlock [ DockPanel.Dock = Top, Text = "Hives", Style = @UiLabel, Foreground = @Fg1, Margin = (0,0,0,6) ]
-                ListBox [ Template = @PortalTable, HorizontalAlignment = Stretch, ItemsSource = $Rows, ItemTemplate = @FleetHiveRowTemplate ]
+                // Portal tables don't scroll themselves; this one has no header row.
+                ScrollViewer [ HorizontalScrollEnabled = false ] {
+                    ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $Rows, ItemTemplate = @FleetHiveRowTemplate ]
+                }
             }
         }
     }
@@ -106,7 +109,7 @@ resources FleetResources {
     // A hives-table row: name, owner, connection, last check-in, environments.
     // The name opens the hive's detail in the Hives section.
     DataTemplate x:key="FleetHiveRowTemplate" [ DataType = FleetHiveRowViewModel ] {
-        Grid [ Margin = (4,2,4,2) ] {
+        Grid [ Style = @PortalTableColumns ] {
             ColumnDefinitions {
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]

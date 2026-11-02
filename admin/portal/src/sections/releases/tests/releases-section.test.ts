@@ -156,6 +156,24 @@ describe('Registry & Releases section', () =>
         assert.equal(detail.RestoreCommand.CanExecute(), true)
     })
 
+    it('after a withdrawal, Back shows the list reloaded with the version withdrawn', async () =>
+    {
+        const fx = new ReleasesFixture()
+        const detail = await fx.Detail()
+        detail.WithdrawCommand.Execute()
+        await Tick.Settle()
+        const confirm = fx.Dialogs.Last as NameConfirmDialogViewModel
+        confirm.Typed = '1.4.0'
+        confirm.Reason = 'Broken'
+        confirm.ConfirmCommand.Execute()
+        await Tick.Settle()
+        detail.BackCommand.Execute()
+        await Tick.Settle()
+        const list = fx.Content
+        assert.ok(list instanceof ReleasesPageViewModel)
+        assert.equal(list.Rows.ToArray().find(r => r.Version === '1.4.0')?.StatusLabel, 'Withdrawn')
+    })
+
     it('Restore returns a withdrawn version to offers', async () =>
     {
         const fx = new ReleasesFixture()

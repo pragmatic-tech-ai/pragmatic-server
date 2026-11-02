@@ -51,7 +51,7 @@ resources ReleasePolicyResources {
                     // Policy rules: a tenant's applies to every hive of it; a
                     // hive's narrows it (unset values inherit the tenant's).
                     TextBlock [ Text = "Policy rules", Style = @UiLabel, Foreground = @Fg1, Margin = (0,0,0,6) ]
-                    Grid [ Margin = (8,0,8,6) ] {
+                    Grid [ Style = @PortalTableColumns ] {
                         RowDefinitions {
                             RowDefinition [ Height = GridLength.Auto ]
                         }
@@ -69,7 +69,7 @@ resources ReleasePolicyResources {
                         TextBlock [ Grid.Column = 3, Text = "Minimum version", Style = @UiCaption, Foreground = @Fg2 ]
                         TextBlock [ Grid.Column = 4, Text = "Hold", Style = @UiCaption, Foreground = @Fg2 ]
                     }
-                    ListBox [ Template = @PortalTable, HorizontalAlignment = Stretch, ItemsSource = $PolicyRows,
+                    ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $PolicyRows,
                               ItemTemplate = @PolicyRuleRowTemplate, Margin = (0,0,0,20) ]
 
                     // Gated versions: allowed for a tenant, subject to its rules.
@@ -77,7 +77,7 @@ resources ReleasePolicyResources {
                     TextBlock [ Text = "No version is gated for any tenant yet.", Foreground = @Fg2, Margin = (0,0,0,20),
                                 Visibility = $HasNoGated << ToVisibility ]
                     StackPanel [ Orientation = Vertical, Visibility = $HasGated << ToVisibility ] {
-                        Grid [ Margin = (8,0,8,6) ] {
+                        Grid [ Style = @PortalTableColumns ] {
                             RowDefinitions {
                                 RowDefinition [ Height = GridLength.Auto ]
                             }
@@ -93,7 +93,7 @@ resources ReleasePolicyResources {
                             TextBlock [ Grid.Column = 2, Text = "Gated", Style = @UiCaption, Foreground = @Fg2 ]
                             TextBlock [ Grid.Column = 3, Text = "Adoptable?", Style = @UiCaption, Foreground = @Fg2 ]
                         }
-                        ListBox [ Template = @PortalTable, HorizontalAlignment = Stretch, ItemsSource = $GatedRows,
+                        ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $GatedRows,
                                   ItemTemplate = @GatedVersionRowTemplate, Margin = (0,0,0,20) ]
                     }
 
@@ -102,7 +102,7 @@ resources ReleasePolicyResources {
                     TextBlock [ Text = "No hive has a target selected yet.", Foreground = @Fg2, Margin = (0,0,0,20),
                                 Visibility = $HasNoTargets << ToVisibility ]
                     StackPanel [ Orientation = Vertical, Visibility = $HasTargets << ToVisibility ] {
-                        Grid [ Margin = (8,0,8,6) ] {
+                        Grid [ Style = @PortalTableColumns ] {
                             RowDefinitions {
                                 RowDefinition [ Height = GridLength.Auto ]
                             }
@@ -117,7 +117,7 @@ resources ReleasePolicyResources {
                             TextBlock [ Grid.Column = 2, Text = "Target version", Style = @UiCaption, Foreground = @Fg2 ]
                             TextBlock [ Grid.Column = 3, Text = "Selected", Style = @UiCaption, Foreground = @Fg2 ]
                         }
-                        ListBox [ Template = @PortalTable, HorizontalAlignment = Stretch, ItemsSource = $TargetRows,
+                        ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $TargetRows,
                                   ItemTemplate = @SelectedTargetRowTemplate, Margin = (0,0,0,20) ]
                     }
 
@@ -129,7 +129,7 @@ resources ReleasePolicyResources {
                     TextBlock [ Text = "No rollout information yet.", Foreground = @Fg2, Margin = (0,0,0,20),
                                 Visibility = $HasNoRollouts << ToVisibility ]
                     StackPanel [ Orientation = Vertical, Visibility = $HasRollouts << ToVisibility ] {
-                        Grid [ Margin = (8,0,8,6) ] {
+                        Grid [ Style = @PortalTableColumns ] {
                             RowDefinitions {
                                 RowDefinition [ Height = GridLength.Auto ]
                             }
@@ -148,7 +148,7 @@ resources ReleasePolicyResources {
                             TextBlock [ Grid.Column = 4, Text = "Running", Style = @UiCaption, Foreground = @Fg2 ]
                             TextBlock [ Grid.Column = 5, Text = "Status", Style = @UiCaption, Foreground = @Fg2 ]
                         }
-                        ListBox [ Template = @PortalTable, HorizontalAlignment = Stretch, ItemsSource = $RolloutRows,
+                        ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $RolloutRows,
                                   ItemTemplate = @RolloutRowTemplate, Margin = (0,0,0,20) ]
                     }
 
@@ -157,7 +157,7 @@ resources ReleasePolicyResources {
                     TextBlock [ Text = "No adoptions recorded yet. When a tenant adopts a version, the hive reports the outcome here.",
                                 Foreground = @Fg2, TextWrapping = Wrap, Visibility = $HasNoLedger << ToVisibility ]
                     StackPanel [ Orientation = Vertical, Visibility = $HasLedger << ToVisibility ] {
-                        Grid [ Margin = (8,0,8,6) ] {
+                        Grid [ Style = @PortalTableColumns ] {
                             RowDefinitions {
                                 RowDefinition [ Height = GridLength.Auto ]
                             }
@@ -172,7 +172,7 @@ resources ReleasePolicyResources {
                             TextBlock [ Grid.Column = 2, Text = "Outcome", Style = @UiCaption, Foreground = @Fg2 ]
                             TextBlock [ Grid.Column = 3, Text = "Version", Style = @UiCaption, Foreground = @Fg2 ]
                         }
-                        ListBox [ Template = @PortalTable, HorizontalAlignment = Stretch, ItemsSource = $LedgerRows,
+                        ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $LedgerRows,
                                   ItemTemplate = @AdoptionLedgerRowTemplate ]
                     }
                 }
@@ -181,7 +181,7 @@ resources ReleasePolicyResources {
     }
 
     DataTemplate x:key="PolicyRuleRowTemplate" [ DataType = PolicyRuleRowViewModel ] {
-        Grid [ Margin = (4,2,4,2) ] {
+        Grid [ Style = @PortalTableColumns ] {
             ColumnDefinitions {
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]
@@ -202,7 +202,7 @@ resources ReleasePolicyResources {
     }
 
     DataTemplate x:key="GatedVersionRowTemplate" [ DataType = GatedVersionRowViewModel ] {
-        Grid [ Margin = (4,2,4,2) ] {
+        Grid [ Style = @PortalTableColumns ] {
             ColumnDefinitions {
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]
@@ -221,7 +221,7 @@ resources ReleasePolicyResources {
     }
 
     DataTemplate x:key="SelectedTargetRowTemplate" [ DataType = SelectedTargetRowViewModel ] {
-        Grid [ Margin = (4,4,4,4) ] {
+        Grid [ Style = @PortalTableColumns ] {
             ColumnDefinitions {
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]
@@ -236,7 +236,7 @@ resources ReleasePolicyResources {
     }
 
     DataTemplate x:key="RolloutRowTemplate" [ DataType = RolloutRowViewModel ] {
-        Grid [ Margin = (4,4,4,4) ] {
+        Grid [ Style = @PortalTableColumns ] {
             ColumnDefinitions {
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]
@@ -255,7 +255,7 @@ resources ReleasePolicyResources {
     }
 
     DataTemplate x:key="AdoptionLedgerRowTemplate" [ DataType = AdoptionLedgerRowViewModel ] {
-        Grid [ Margin = (4,2,4,2) ] {
+        Grid [ Style = @PortalTableColumns ] {
             ColumnDefinitions {
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]

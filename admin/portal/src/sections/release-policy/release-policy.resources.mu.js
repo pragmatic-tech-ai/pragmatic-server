@@ -98,7 +98,7 @@ export class ReleasePolicyResources extends ResourceDictionary {
             _textBlock15.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 6));
             _stackPanel14.AddChild(_textBlock15);
             const _grid16 = new Grid();
-            _grid16.set_property_value(Grid.MarginKey, new Thickness(8, 0, 8, 6));
+            _grid16.set_property_value(Grid.StyleKey, DynamicResource(_grid16, "PortalTableColumns"));
             const _rowDefinition17 = new RowDefinition();
             _rowDefinition17.set_property_value(RowDefinition.HeightKey, GridLength.Auto);
             _grid16.RowDefinitions.Add(_rowDefinition17);
@@ -152,7 +152,7 @@ export class ReleasePolicyResources extends ResourceDictionary {
             _grid16.AddChild(_textBlock28);
             _stackPanel14.AddChild(_grid16);
             const _listBox29 = new ListBox();
-            _listBox29.set_property_value(ListBox.TemplateKey, DynamicResource(_listBox29, "PortalTable"));
+            _listBox29.set_property_value(ListBox.StyleKey, DynamicResource(_listBox29, "PortalTableList"));
             _listBox29.set_property_value(ListBox.HorizontalAlignmentKey, HorizontalAlignment.Stretch);
             _listBox29.set_property_value(ListBox.ItemsSourceKey, DataContextBinding(_listBox29, "PolicyRows"));
             _listBox29.set_property_value(ListBox.ItemTemplateKey, DynamicResource(_listBox29, "PolicyRuleRowTemplate"));
@@ -174,7 +174,7 @@ export class ReleasePolicyResources extends ResourceDictionary {
             _stackPanel32.set_property_value(StackPanel.OrientationKey, Orientation.Vertical);
             _stackPanel32.set_property_value(StackPanel.VisibilityKey, DataContextBinding(_stackPanel32, "HasGated", ToVisibility));
             const _grid33 = new Grid();
-            _grid33.set_property_value(Grid.MarginKey, new Thickness(8, 0, 8, 6));
+            _grid33.set_property_value(Grid.StyleKey, DynamicResource(_grid33, "PortalTableColumns"));
             const _rowDefinition34 = new RowDefinition();
             _rowDefinition34.set_property_value(RowDefinition.HeightKey, GridLength.Auto);
             _grid33.RowDefinitions.Add(_rowDefinition34);
@@ -219,7 +219,7 @@ export class ReleasePolicyResources extends ResourceDictionary {
             _grid33.AddChild(_textBlock43);
             _stackPanel32.AddChild(_grid33);
             const _listBox44 = new ListBox();
-            _listBox44.set_property_value(ListBox.TemplateKey, DynamicResource(_listBox44, "PortalTable"));
+            _listBox44.set_property_value(ListBox.StyleKey, DynamicResource(_listBox44, "PortalTableList"));
             _listBox44.set_property_value(ListBox.HorizontalAlignmentKey, HorizontalAlignment.Stretch);
             _listBox44.set_property_value(ListBox.ItemsSourceKey, DataContextBinding(_listBox44, "GatedRows"));
             _listBox44.set_property_value(ListBox.ItemTemplateKey, DynamicResource(_listBox44, "GatedVersionRowTemplate"));
@@ -242,7 +242,7 @@ export class ReleasePolicyResources extends ResourceDictionary {
             _stackPanel47.set_property_value(StackPanel.OrientationKey, Orientation.Vertical);
             _stackPanel47.set_property_value(StackPanel.VisibilityKey, DataContextBinding(_stackPanel47, "HasTargets", ToVisibility));
             const _grid48 = new Grid();
-            _grid48.set_property_value(Grid.MarginKey, new Thickness(8, 0, 8, 6));
+            _grid48.set_property_value(Grid.StyleKey, DynamicResource(_grid48, "PortalTableColumns"));
             const _rowDefinition49 = new RowDefinition();
             _rowDefinition49.set_property_value(RowDefinition.HeightKey, GridLength.Auto);
             _grid48.RowDefinitions.Add(_rowDefinition49);
@@ -284,7 +284,7 @@ export class ReleasePolicyResources extends ResourceDictionary {
             _grid48.AddChild(_textBlock57);
             _stackPanel47.AddChild(_grid48);
             const _listBox58 = new ListBox();
-            _listBox58.set_property_value(ListBox.TemplateKey, DynamicResource(_listBox58, "PortalTable"));
+            _listBox58.set_property_value(ListBox.StyleKey, DynamicResource(_listBox58, "PortalTableList"));
             _listBox58.set_property_value(ListBox.HorizontalAlignmentKey, HorizontalAlignment.Stretch);
             _listBox58.set_property_value(ListBox.ItemsSourceKey, DataContextBinding(_listBox58, "TargetRows"));
             _listBox58.set_property_value(ListBox.ItemTemplateKey, DynamicResource(_listBox58, "SelectedTargetRowTemplate"));
@@ -317,7 +317,7 @@ export class ReleasePolicyResources extends ResourceDictionary {
             _stackPanel63.set_property_value(StackPanel.OrientationKey, Orientation.Vertical);
             _stackPanel63.set_property_value(StackPanel.VisibilityKey, DataContextBinding(_stackPanel63, "HasRollouts", ToVisibility));
             const _grid64 = new Grid();
-            _grid64.set_property_value(Grid.MarginKey, new Thickness(8, 0, 8, 6));
+            _grid64.set_property_value(Grid.StyleKey, DynamicResource(_grid64, "PortalTableColumns"));
             const _rowDefinition65 = new RowDefinition();
             _rowDefinition65.set_property_value(RowDefinition.HeightKey, GridLength.Auto);
             _grid64.RowDefinitions.Add(_rowDefinition65);
@@ -377,7 +377,7 @@ export class ReleasePolicyResources extends ResourceDictionary {
             _grid64.AddChild(_textBlock77);
             _stackPanel63.AddChild(_grid64);
             const _listBox78 = new ListBox();
-            _listBox78.set_property_value(ListBox.TemplateKey, DynamicResource(_listBox78, "PortalTable"));
+            _listBox78.set_property_value(ListBox.StyleKey, DynamicResource(_listBox78, "PortalTableList"));
             _listBox78.set_property_value(ListBox.HorizontalAlignmentKey, HorizontalAlignment.Stretch);
             _listBox78.set_property_value(ListBox.ItemsSourceKey, DataContextBinding(_listBox78, "RolloutRows"));
             _listBox78.set_property_value(ListBox.ItemTemplateKey, DynamicResource(_listBox78, "RolloutRowTemplate"));
@@ -400,7 +400,7 @@ export class ReleasePolicyResources extends ResourceDictionary {
             _stackPanel81.set_property_value(StackPanel.OrientationKey, Orientation.Vertical);
             _stackPanel81.set_property_value(StackPanel.VisibilityKey, DataContextBinding(_stackPanel81, "HasLedger", ToVisibility));
             const _grid82 = new Grid();
-            _grid82.set_property_value(Grid.MarginKey, new Thickness(8, 0, 8, 6));
+            _grid82.set_property_value(Grid.StyleKey, DynamicResource(_grid82, "PortalTableColumns"));
             const _rowDefinition83 = new RowDefinition();
             _rowDefinition83.set_property_value(RowDefinition.HeightKey, GridLength.Auto);
             _grid82.RowDefinitions.Add(_rowDefinition83);
@@ -442,7 +442,7 @@ export class ReleasePolicyResources extends ResourceDictionary {
             _grid82.AddChild(_textBlock91);
             _stackPanel81.AddChild(_grid82);
             const _listBox92 = new ListBox();
-            _listBox92.set_property_value(ListBox.TemplateKey, DynamicResource(_listBox92, "PortalTable"));
+            _listBox92.set_property_value(ListBox.StyleKey, DynamicResource(_listBox92, "PortalTableList"));
             _listBox92.set_property_value(ListBox.HorizontalAlignmentKey, HorizontalAlignment.Stretch);
             _listBox92.set_property_value(ListBox.ItemsSourceKey, DataContextBinding(_listBox92, "LedgerRows"));
             _listBox92.set_property_value(ListBox.ItemTemplateKey, DynamicResource(_listBox92, "AdoptionLedgerRowTemplate"));
@@ -455,7 +455,7 @@ export class ReleasePolicyResources extends ResourceDictionary {
         t.Set(ReleasePolicyPageViewModel, _tmpl0);
         const _tmpl93 = new DataTemplate((_data) => {
             const _grid94 = new Grid();
-            _grid94.set_property_value(Grid.MarginKey, new Thickness(4, 2, 4, 2));
+            _grid94.set_property_value(Grid.StyleKey, DynamicResource(_grid94, "PortalTableColumns"));
             const _columnDefinition95 = new ColumnDefinition();
             _columnDefinition95.set_property_value(ColumnDefinition.WidthKey, GridLength.Star);
             _grid94.ColumnDefinitions.Add(_columnDefinition95);
@@ -520,7 +520,7 @@ export class ReleasePolicyResources extends ResourceDictionary {
         t.Set("PolicyRuleRowTemplate", _tmpl93);
         const _tmpl108 = new DataTemplate((_data) => {
             const _grid109 = new Grid();
-            _grid109.set_property_value(Grid.MarginKey, new Thickness(4, 2, 4, 2));
+            _grid109.set_property_value(Grid.StyleKey, DynamicResource(_grid109, "PortalTableColumns"));
             const _columnDefinition110 = new ColumnDefinition();
             _columnDefinition110.set_property_value(ColumnDefinition.WidthKey, GridLength.Star);
             _grid109.ColumnDefinitions.Add(_columnDefinition110);
@@ -576,7 +576,7 @@ export class ReleasePolicyResources extends ResourceDictionary {
         t.Set("GatedVersionRowTemplate", _tmpl108);
         const _tmpl121 = new DataTemplate((_data) => {
             const _grid122 = new Grid();
-            _grid122.set_property_value(Grid.MarginKey, new Thickness(4, 4, 4, 4));
+            _grid122.set_property_value(Grid.StyleKey, DynamicResource(_grid122, "PortalTableColumns"));
             const _columnDefinition123 = new ColumnDefinition();
             _columnDefinition123.set_property_value(ColumnDefinition.WidthKey, GridLength.Star);
             _grid122.ColumnDefinitions.Add(_columnDefinition123);
@@ -616,7 +616,7 @@ export class ReleasePolicyResources extends ResourceDictionary {
         t.Set("SelectedTargetRowTemplate", _tmpl121);
         const _tmpl131 = new DataTemplate((_data) => {
             const _grid132 = new Grid();
-            _grid132.set_property_value(Grid.MarginKey, new Thickness(4, 4, 4, 4));
+            _grid132.set_property_value(Grid.StyleKey, DynamicResource(_grid132, "PortalTableColumns"));
             const _columnDefinition133 = new ColumnDefinition();
             _columnDefinition133.set_property_value(ColumnDefinition.WidthKey, GridLength.Star);
             _grid132.ColumnDefinitions.Add(_columnDefinition133);
@@ -674,7 +674,7 @@ export class ReleasePolicyResources extends ResourceDictionary {
         t.Set("RolloutRowTemplate", _tmpl131);
         const _tmpl145 = new DataTemplate((_data) => {
             const _grid146 = new Grid();
-            _grid146.set_property_value(Grid.MarginKey, new Thickness(4, 2, 4, 2));
+            _grid146.set_property_value(Grid.StyleKey, DynamicResource(_grid146, "PortalTableColumns"));
             const _columnDefinition147 = new ColumnDefinition();
             _columnDefinition147.set_property_value(ColumnDefinition.WidthKey, GridLength.Star);
             _grid146.ColumnDefinitions.Add(_columnDefinition147);

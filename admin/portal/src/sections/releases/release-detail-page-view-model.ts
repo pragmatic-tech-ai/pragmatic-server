@@ -82,12 +82,14 @@ export class ReleaseDetailPageViewModel extends PortalPageViewModel
     private readonly adoptionRows = new ObservableCollection<ReleaseAdoptionRowViewModel>()
     private readonly withdrawCommand: RelayCommand
     private readonly restoreCommand: RelayCommand
+    private readonly backCommand: RelayCommand
 
     public constructor(session: PortalSessionService, private readonly section: ReleasesSectionService, public readonly Version: string)
     {
         super(session)
         this.withdrawCommand = this.MutatingCommand(() => this.Withdraw(), () => this.manifest !== undefined && !this.IsWithdrawn)
         this.restoreCommand = this.MutatingCommand(() => this.Restore(), () => this.IsWithdrawn)
+        this.backCommand = new RelayCommand(() => { void this.section.BackAndRefresh() })
     }
 
     public get Image(): string
@@ -178,9 +180,10 @@ export class ReleaseDetailPageViewModel extends PortalPageViewModel
         return this.adoptionRows.Count === 0
     }
 
+    // Back to the list, reloaded: a withdraw or restore here changed it.
     public get BackCommand(): RelayCommand
     {
-        return this.section.BackCommand
+        return this.backCommand
     }
 
     public get WithdrawCommand(): RelayCommand

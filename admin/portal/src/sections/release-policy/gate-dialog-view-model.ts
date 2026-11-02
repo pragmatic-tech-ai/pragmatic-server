@@ -48,15 +48,15 @@ export class GateDialogViewModel extends PortalDialogViewModel<boolean>
     {
         const tenantId = this.selectedTenant?.Value
         const gated = new Set(this.gating.filter(g => g.tenantId === tenantId).map(g => g.version))
+        const chosen = this.selectedVersion?.Value
         this.versions.Clear()
         for (const version of this.offered.filter(v => !gated.has(v)))
         {
             this.versions.Add(new OptionViewModel(version, version))
         }
-        if (this.selectedVersion !== undefined && gated.has(this.selectedVersion.Value))
-        {
-            this.SelectedVersion = undefined
-        }
+        // Re-select by value from the new options (the old option object is
+        // gone); clear the choice when the version is no longer offered.
+        this.SelectedVersion = chosen === undefined ? undefined : this.versions.ToArray().find(v => v.Value === chosen)
     }
 
     public get Tenants(): ObservableCollection<OptionViewModel<string>>
