@@ -2,7 +2,6 @@ import { PublishDialogViewModel } from "./publish-dialog-view-model.js";
 import { ReleaseAdoptionRowViewModel, ReleaseDetailPageViewModel } from "./release-detail-page-view-model.js";
 import { ReleaseRowViewModel, ReleasesPageViewModel } from "./releases-page-view-model.js";
 import { Border, ColumnDefinition, DataTemplate, Dock, DockPanel, Grid, GridLength, Orientation, RowDefinition, StackPanel, TextBlock, TextBox, TextWrapping } from "@pragmatic-tech-ai/mural/basic";
-import { ItemsControl } from "@pragmatic-tech-ai/mural/framework/base/items-control.js";
 import { Button, ButtonVariant } from "@pragmatic-tech-ai/mural/framework/buttons/button.js";
 import { ComboBox } from "@pragmatic-tech-ai/mural/framework/list/combo-box.js";
 import { ListBox } from "@pragmatic-tech-ai/mural/framework/list/list-box.js";
@@ -455,10 +454,13 @@ export class ReleasesResources extends ResourceDictionary {
             _textBlock95.set_property_value(TextBlock.ForegroundKey, DynamicResource(_textBlock95, "Fg2"));
             _textBlock95.set_property_value(TextBlock.VisibilityKey, DataContextBinding(_textBlock95, "HasNoAdoption", ToVisibility));
             _stackPanel94.AddChild(_textBlock95);
-            const _itemsControl96 = new ItemsControl();
-            _itemsControl96.set_property_value(ItemsControl.ItemsSourceKey, DataContextBinding(_itemsControl96, "AdoptionRows"));
-            _itemsControl96.set_property_value(ItemsControl.VisibilityKey, DataContextBinding(_itemsControl96, "HasAdoption", ToVisibility));
-            _stackPanel94.AddChild(_itemsControl96);
+            const _listBox96 = new ListBox();
+            _listBox96.set_property_value(ListBox.StyleKey, DynamicResource(_listBox96, "PortalTableList"));
+            _listBox96.set_property_value(ListBox.HorizontalAlignmentKey, HorizontalAlignment.Stretch);
+            _listBox96.set_property_value(ListBox.ItemsSourceKey, DataContextBinding(_listBox96, "AdoptionRows"));
+            _listBox96.set_property_value(ListBox.ItemTemplateKey, DynamicResource(_listBox96, "ReleaseAdoptionRowTemplate"));
+            _listBox96.set_property_value(ListBox.VisibilityKey, DataContextBinding(_listBox96, "HasAdoption", ToVisibility));
+            _stackPanel94.AddChild(_listBox96);
             _border93.SetChild(_stackPanel94);
             _stackPanel69.AddChild(_border93);
             _scrollViewer68.Content = _stackPanel69;
@@ -504,7 +506,7 @@ export class ReleasesResources extends ResourceDictionary {
             _grid98.AddChild(_textBlock106);
             return _grid98;
         }, ReleaseAdoptionRowViewModel);
-        t.Set(ReleaseAdoptionRowViewModel, _tmpl97);
+        t.Set("ReleaseAdoptionRowTemplate", _tmpl97);
         const _tmpl107 = new DataTemplate((_data) => {
             const _stackPanel108 = new StackPanel();
             _stackPanel108.set_property_value(StackPanel.OrientationKey, Orientation.Vertical);
@@ -601,4 +603,6 @@ export class ReleasesResources extends ResourceDictionary {
     }
     get ReleaseRowTemplate() { return this.Resolve("ReleaseRowTemplate"); }
     set ReleaseRowTemplate(v) { this.Set("ReleaseRowTemplate", v); }
+    get ReleaseAdoptionRowTemplate() { return this.Resolve("ReleaseAdoptionRowTemplate"); }
+    set ReleaseAdoptionRowTemplate(v) { this.Set("ReleaseAdoptionRowTemplate", v); }
 }

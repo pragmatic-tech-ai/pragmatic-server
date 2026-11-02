@@ -416,9 +416,12 @@ export class HivesResources extends ResourceDictionary {
             _border87.set_property_value(Border.StrokeKey, ((_e) => { _e.Brush = DynamicResource(_e, "Border"); return _e; })(new Pen()));
             _border87.set_property_value(Border.PaddingKey, new Thickness(12, 10, 12, 10));
             _border87.set_property_value(Border.MarginKey, new Thickness(0, 0, 0, 16));
-            const _itemsControl88 = new ItemsControl();
-            _itemsControl88.set_property_value(ItemsControl.ItemsSourceKey, DataContextBinding(_itemsControl88, "Credentials"));
-            _border87.SetChild(_itemsControl88);
+            const _listBox88 = new ListBox();
+            _listBox88.set_property_value(ListBox.StyleKey, DynamicResource(_listBox88, "PortalTableList"));
+            _listBox88.set_property_value(ListBox.HorizontalAlignmentKey, HorizontalAlignment.Stretch);
+            _listBox88.set_property_value(ListBox.ItemsSourceKey, DataContextBinding(_listBox88, "Credentials"));
+            _listBox88.set_property_value(ListBox.ItemTemplateKey, DynamicResource(_listBox88, "HiveCredentialRowTemplate"));
+            _border87.SetChild(_listBox88);
             _stackPanel67.AddChild(_border87);
             const _textBlock89 = new TextBlock();
             _textBlock89.set_property_value(TextBlock.TextKey, "Rollout");
@@ -453,10 +456,13 @@ export class HivesResources extends ResourceDictionary {
             _textBlock95.set_property_value(TextBlock.ForegroundKey, DynamicResource(_textBlock95, "Fg2"));
             _textBlock95.set_property_value(TextBlock.VisibilityKey, DataContextBinding(_textBlock95, "HasNoRollout", ToVisibility));
             _stackPanel91.AddChild(_textBlock95);
-            const _itemsControl96 = new ItemsControl();
-            _itemsControl96.set_property_value(ItemsControl.ItemsSourceKey, DataContextBinding(_itemsControl96, "RolloutRows"));
-            _itemsControl96.set_property_value(ItemsControl.VisibilityKey, DataContextBinding(_itemsControl96, "HasRollout", ToVisibility));
-            _stackPanel91.AddChild(_itemsControl96);
+            const _listBox96 = new ListBox();
+            _listBox96.set_property_value(ListBox.StyleKey, DynamicResource(_listBox96, "PortalTableList"));
+            _listBox96.set_property_value(ListBox.HorizontalAlignmentKey, HorizontalAlignment.Stretch);
+            _listBox96.set_property_value(ListBox.ItemsSourceKey, DataContextBinding(_listBox96, "RolloutRows"));
+            _listBox96.set_property_value(ListBox.ItemTemplateKey, DynamicResource(_listBox96, "HiveRolloutRowTemplate"));
+            _listBox96.set_property_value(ListBox.VisibilityKey, DataContextBinding(_listBox96, "HasRollout", ToVisibility));
+            _stackPanel91.AddChild(_listBox96);
             _border90.SetChild(_stackPanel91);
             _stackPanel67.AddChild(_border90);
             const _textBlock97 = new TextBlock();
@@ -543,10 +549,13 @@ export class HivesResources extends ResourceDictionary {
             _textBlock116.set_property_value(TextBlock.ForegroundKey, DynamicResource(_textBlock116, "Fg2"));
             _textBlock116.set_property_value(TextBlock.VisibilityKey, DataContextBinding(_textBlock116, "HasNoLedger", ToVisibility));
             _stackPanel115.AddChild(_textBlock116);
-            const _itemsControl117 = new ItemsControl();
-            _itemsControl117.set_property_value(ItemsControl.ItemsSourceKey, DataContextBinding(_itemsControl117, "LedgerRows"));
-            _itemsControl117.set_property_value(ItemsControl.VisibilityKey, DataContextBinding(_itemsControl117, "HasLedger", ToVisibility));
-            _stackPanel115.AddChild(_itemsControl117);
+            const _listBox117 = new ListBox();
+            _listBox117.set_property_value(ListBox.StyleKey, DynamicResource(_listBox117, "PortalTableList"));
+            _listBox117.set_property_value(ListBox.HorizontalAlignmentKey, HorizontalAlignment.Stretch);
+            _listBox117.set_property_value(ListBox.ItemsSourceKey, DataContextBinding(_listBox117, "LedgerRows"));
+            _listBox117.set_property_value(ListBox.ItemTemplateKey, DynamicResource(_listBox117, "HiveLedgerRowTemplate"));
+            _listBox117.set_property_value(ListBox.VisibilityKey, DataContextBinding(_listBox117, "HasLedger", ToVisibility));
+            _stackPanel115.AddChild(_listBox117);
             _border114.SetChild(_stackPanel115);
             _stackPanel67.AddChild(_border114);
             const _textBlock118 = new TextBlock();
@@ -566,10 +575,13 @@ export class HivesResources extends ResourceDictionary {
             _textBlock121.set_property_value(TextBlock.ForegroundKey, DynamicResource(_textBlock121, "Fg2"));
             _textBlock121.set_property_value(TextBlock.VisibilityKey, DataContextBinding(_textBlock121, "HasNoCheckIns", ToVisibility));
             _stackPanel120.AddChild(_textBlock121);
-            const _itemsControl122 = new ItemsControl();
-            _itemsControl122.set_property_value(ItemsControl.ItemsSourceKey, DataContextBinding(_itemsControl122, "CheckIns"));
-            _itemsControl122.set_property_value(ItemsControl.VisibilityKey, DataContextBinding(_itemsControl122, "HasCheckIns", ToVisibility));
-            _stackPanel120.AddChild(_itemsControl122);
+            const _listBox122 = new ListBox();
+            _listBox122.set_property_value(ListBox.StyleKey, DynamicResource(_listBox122, "PortalTableList"));
+            _listBox122.set_property_value(ListBox.HorizontalAlignmentKey, HorizontalAlignment.Stretch);
+            _listBox122.set_property_value(ListBox.ItemsSourceKey, DataContextBinding(_listBox122, "CheckIns"));
+            _listBox122.set_property_value(ListBox.ItemTemplateKey, DynamicResource(_listBox122, "HiveCheckInRowTemplate"));
+            _listBox122.set_property_value(ListBox.VisibilityKey, DataContextBinding(_listBox122, "HasCheckIns", ToVisibility));
+            _stackPanel120.AddChild(_listBox122);
             _border119.SetChild(_stackPanel120);
             _stackPanel67.AddChild(_border119);
             _scrollViewer66.Content = _stackPanel67;
@@ -607,7 +619,7 @@ export class HivesResources extends ResourceDictionary {
             _grid124.AddChild(_textBlock130);
             return _grid124;
         }, HiveCredentialViewModel);
-        t.Set(HiveCredentialViewModel, _tmpl123);
+        t.Set("HiveCredentialRowTemplate", _tmpl123);
         const _tmpl131 = new DataTemplate((_data) => {
             const _grid132 = new Grid();
             _grid132.set_property_value(Grid.MarginKey, new Thickness(0, 2, 0, 2));
@@ -638,7 +650,7 @@ export class HivesResources extends ResourceDictionary {
             _grid132.AddChild(_textBlock138);
             return _grid132;
         }, HiveRolloutRowViewModel);
-        t.Set(HiveRolloutRowViewModel, _tmpl131);
+        t.Set("HiveRolloutRowTemplate", _tmpl131);
         const _tmpl139 = new DataTemplate((_data) => {
             const _grid140 = new Grid();
             _grid140.set_property_value(Grid.MarginKey, new Thickness(0, 2, 0, 2));
@@ -669,7 +681,7 @@ export class HivesResources extends ResourceDictionary {
             _grid140.AddChild(_textBlock146);
             return _grid140;
         }, HiveLedgerRowViewModel);
-        t.Set(HiveLedgerRowViewModel, _tmpl139);
+        t.Set("HiveLedgerRowTemplate", _tmpl139);
         const _tmpl147 = new DataTemplate((_data) => {
             const _grid148 = new Grid();
             _grid148.set_property_value(Grid.MarginKey, new Thickness(0, 2, 0, 2));
@@ -691,7 +703,7 @@ export class HivesResources extends ResourceDictionary {
             _grid148.AddChild(_textBlock152);
             return _grid148;
         }, HiveCheckInRowViewModel);
-        t.Set(HiveCheckInRowViewModel, _tmpl147);
+        t.Set("HiveCheckInRowTemplate", _tmpl147);
         const _tmpl153 = new DataTemplate((_data) => {
             const _stackPanel154 = new StackPanel();
             _stackPanel154.set_property_value(StackPanel.OrientationKey, Orientation.Vertical);
@@ -1504,6 +1516,14 @@ export class HivesResources extends ResourceDictionary {
     }
     get HiveRowTemplate() { return this.Resolve("HiveRowTemplate"); }
     set HiveRowTemplate(v) { this.Set("HiveRowTemplate", v); }
+    get HiveCredentialRowTemplate() { return this.Resolve("HiveCredentialRowTemplate"); }
+    set HiveCredentialRowTemplate(v) { this.Set("HiveCredentialRowTemplate", v); }
+    get HiveRolloutRowTemplate() { return this.Resolve("HiveRolloutRowTemplate"); }
+    set HiveRolloutRowTemplate(v) { this.Set("HiveRolloutRowTemplate", v); }
+    get HiveLedgerRowTemplate() { return this.Resolve("HiveLedgerRowTemplate"); }
+    set HiveLedgerRowTemplate(v) { this.Set("HiveLedgerRowTemplate", v); }
+    get HiveCheckInRowTemplate() { return this.Resolve("HiveCheckInRowTemplate"); }
+    set HiveCheckInRowTemplate(v) { this.Set("HiveCheckInRowTemplate", v); }
     get ProvisionStepsPanel() { return this.Resolve("ProvisionStepsPanel"); }
     set ProvisionStepsPanel(v) { this.Set("ProvisionStepsPanel", v); }
 }

@@ -211,6 +211,7 @@ export class ReleaseDetailPageViewModel extends PortalPageViewModel
             throw new Error(ReleaseDetailPageViewModel.NotFoundTemplate.replace(ReleaseDetailPageViewModel.IdToken, this.Version))
         }
         this.Apply(manifest)
+        const hadAdoption = this.HasAdoption
         this.adoptionRows.Clear()
         for (const hive of fleet)
         {
@@ -222,6 +223,9 @@ export class ReleaseDetailPageViewModel extends PortalPageViewModel
                 }
             }
         }
+        // Raised only once the rows are in: the flags read the row count.
+        this.RaisePropertyChanged(ReleaseDetailPageViewModel.HasAdoptionProperty, hadAdoption, this.HasAdoption)
+        this.RaisePropertyChanged(ReleaseDetailPageViewModel.HasNoAdoptionProperty, !hadAdoption, this.HasNoAdoption)
         return true
     }
 
@@ -233,7 +237,6 @@ export class ReleaseDetailPageViewModel extends PortalPageViewModel
             this.PublishedLabel, this.NotesLabel, this.WithdrawnText] as const
         const wasWithdrawn = this.IsWithdrawn
         const wasPublished = this.IsPublished
-        const hadAdoption = this.HasAdoption
         // A private copy: what was shown stays as it was until the next Apply.
         this.manifest = { ...manifest }
         this.RaisePropertyChanged(P.ImageProperty, before[0], this.Image)
@@ -246,8 +249,6 @@ export class ReleaseDetailPageViewModel extends PortalPageViewModel
         this.RaisePropertyChanged(P.WithdrawnTextProperty, before[7], this.WithdrawnText)
         this.RaisePropertyChanged(P.IsWithdrawnProperty, wasWithdrawn, this.IsWithdrawn)
         this.RaisePropertyChanged(P.IsPublishedProperty, wasPublished, this.IsPublished)
-        this.RaisePropertyChanged(P.HasAdoptionProperty, hadAdoption, this.HasAdoption)
-        this.RaisePropertyChanged(P.HasNoAdoptionProperty, !hadAdoption, this.HasNoAdoption)
         this.withdrawCommand.RaiseCanExecuteChanged()
         this.restoreCommand.RaiseCanExecuteChanged()
     }

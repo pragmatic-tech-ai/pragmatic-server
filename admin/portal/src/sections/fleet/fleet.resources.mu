@@ -83,7 +83,7 @@ resources FleetResources {
                 StackPanel [ DockPanel.Dock = Top, Orientation = Vertical, Margin = (0,0,0,16),
                              Visibility = $HasNeedsAttention << ToVisibility ] {
                     TextBlock [ Text = "Needs attention", Style = @UiLabel, Foreground = @Fg1, Margin = (0,0,0,6) ]
-                    ItemsControl [ ItemsSource = $NeedsAttention ]
+                    ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $NeedsAttention, ItemTemplate = @FleetAttentionItemTemplate ]
                 }
 
                 TextBlock [ DockPanel.Dock = Top, Text = "Hives", Style = @UiLabel, Foreground = @Fg1, Margin = (0,0,0,6) ]
@@ -96,7 +96,7 @@ resources FleetResources {
     }
 
     // A Needs-attention entry: the hive, its owner and what is wrong.
-    DataTemplate [ DataType = FleetAttentionItemViewModel ] {
+    DataTemplate x:key="FleetAttentionItemTemplate" [ DataType = FleetAttentionItemViewModel ] {
         Border [ Fill = @StateWarningSoft, Padding = (10,6,10,6), Margin = (0,0,0,4) ] {
             StackPanel [ Orientation = Vertical ] {
                 TextBlock [ Text = $DisplayName, Style = @UiLabel, Foreground = @Fg0 ]

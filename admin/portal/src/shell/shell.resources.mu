@@ -147,13 +147,13 @@ resources ShellResources {
                         TextBlock [ Grid.Column = 2, Text = "Image", Style = @PortalTableHeader ]
                         TextBlock [ Grid.Column = 3, Text = "Detail", Style = @PortalTableHeader ]
                     }
-                    ItemsControl [ ItemsSource = $Rows ]
+                    ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $Rows, ItemTemplate = @ObservedEnvironmentRowTemplate ]
                 }
             }
         }
     }
 
-    DataTemplate [ DataType = ObservedEnvironmentRowViewModel ] {
+    DataTemplate x:key="ObservedEnvironmentRowTemplate" [ DataType = ObservedEnvironmentRowViewModel ] {
         Grid [ Margin = (4,2,4,2) ] {
             ColumnDefinitions {
                 ColumnDefinition [ Width = GridLength.Star ]

@@ -94,6 +94,19 @@ describe('Registry & Releases section', () =>
         assert.ok(fx.Content instanceof ReleasesPageViewModel)
     })
 
+    it('loading the detail raises HasAdoption and HasNoAdoption once the adoption rows are filled', async () =>
+    {
+        const fx = new ReleasesFixture()
+        await fx.List()
+        const detail = new ReleaseDetailPageViewModel(fx.Host.Session, fx.Section, '1.4.0')
+        const seen: Array<[string, unknown]> = []
+        detail.PropertyChanged('HasAdoption').subscribe(e => seen.push(['HasAdoption', e.newValue]))
+        detail.PropertyChanged('HasNoAdoption').subscribe(e => seen.push(['HasNoAdoption', e.newValue]))
+        await detail.Refresh()
+        assert.equal(detail.AdoptionRows.Count, 1)
+        assert.deepEqual(seen, [['HasAdoption', true], ['HasNoAdoption', false]])
+    })
+
     it('Publish goes through a dialog and calls PublishManifest with its fields', async () =>
     {
         const fx = new ReleasesFixture()

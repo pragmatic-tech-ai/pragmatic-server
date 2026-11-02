@@ -177,7 +177,8 @@ resources ReleasesResources {
                         StackPanel [ Orientation = Vertical ] {
                             TextBlock [ Text = "No environment runs this version yet.", Foreground = @Fg2,
                                         Visibility = $HasNoAdoption << ToVisibility ]
-                            ItemsControl [ ItemsSource = $AdoptionRows, Visibility = $HasAdoption << ToVisibility ]
+                            ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $AdoptionRows, ItemTemplate = @ReleaseAdoptionRowTemplate,
+                                      Visibility = $HasAdoption << ToVisibility ]
                         }
                     }
                 }
@@ -185,7 +186,7 @@ resources ReleasesResources {
         }
     }
 
-    DataTemplate [ DataType = ReleaseAdoptionRowViewModel ] {
+    DataTemplate x:key="ReleaseAdoptionRowTemplate" [ DataType = ReleaseAdoptionRowViewModel ] {
         Grid [ Margin = (0,2,0,2) ] {
             ColumnDefinitions {
                 ColumnDefinition [ Width = GridLength.Star ]

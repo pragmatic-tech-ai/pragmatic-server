@@ -24,11 +24,35 @@ class FakeControlPlane
     public static readonly TenantName = 'Tailspin Production'
     public static readonly HiveId = 'hive-eu-1'
     public static readonly HiveName = 'EU Hive 1'
+    public static readonly SilentHiveId = 'hive-us-1'
+    public static readonly SilentHiveName = 'US Hive 1'
+    public static readonly Version = '4.2.0'
+    public static readonly PreviousVersion = '4.1.0'
+    public static readonly Image = 'registry.example/apps/maps:4.2.0'
+    public static readonly Digest = 'sha256:0f3a9c'
+    // The digest as the release detail shows it (the hash, algorithm dropped).
+    public static readonly DigestLabel = '0f3a9c'
+    public static readonly Notes = 'Faster capability maps.'
+    public static readonly CredentialRef = 'registry-pull/tailspin'
+    public static readonly FontExt = '.woff2'
     private static readonly SessionPath = '/api/session'
     private static readonly ClientsPath = '/api/clients'
     private static readonly TenantsPath = '/api/tenants'
     private static readonly FleetPath = '/api/fleet'
+    private static readonly HivesPath = '/api/hives'
+    private static readonly RolloutsPath = '/api/rollouts'
+    private static readonly PoliciesPath = '/api/policies'
+    private static readonly ManifestsPath = '/api/manifests'
+    private static readonly HiveLedgerPath = '/api/hives/hive-eu-1/ledger'
+    private static readonly HiveObservationsPath = '/api/hives/hive-eu-1/observations'
     private static readonly ApiPrefix = '/api/'
+    private static readonly StableChannel = 'stable'
+    private static readonly EarlyChannel = 'early'
+    private static readonly AdoptAction = 'adopt'
+    private static readonly LedgerId = 'l-1'
+    private static readonly ObservationId = 'o-1'
+    private static readonly PublishedAt = '2026-10-10T00:00:00.000Z'
+    private static readonly AdoptedAt = '2026-10-12T00:00:00.000Z'
     private static readonly FullRole = 'full'
     private static readonly PrincipalId = 'p-1'
     private static readonly CreatedAt = '2026-01-01T00:00:00.000Z'
@@ -59,9 +83,14 @@ class FakeControlPlane
         [FakeControlPlane.JsExt]: 'text/javascript',
         [FakeControlPlane.CssExt]: 'text/css',
         [FakeControlPlane.SvgExt]: 'image/svg+xml',
+        [FakeControlPlane.FontExt]: 'font/woff2',
     }
 
     public readonly Calls: Call[] = []
+    // Every static file requested but not found in dist/ (fonts included).
+    public readonly NotFound: string[] = []
+    // Every theme font served.
+    public readonly FontsServed: string[] = []
     public Authenticated = true
     private readonly root = fileURLToPath(new URL('../dist/', import.meta.url))
     private server: Server | undefined
@@ -116,7 +145,82 @@ class FakeControlPlane
             clusterBackend: FakeControlPlane.ClusterBackend,
             clusterMode: FakeControlPlane.ClusterMode,
             lastSeen: new Date().toISOString(),
-            environments: [{ name: FakeControlPlane.EnvName, ready: true, detail: FakeControlPlane.EnvDetail }],
+            environments: [{ name: FakeControlPlane.EnvName, ready: true, image: FakeControlPlane.Image, detail: FakeControlPlane.EnvDetail }],
+        }, {
+            // Never checked in: listed under Needs attention.
+            id: FakeControlPlane.SilentHiveId,
+            displayName: FakeControlPlane.SilentHiveName,
+            tenant: null,
+            client: null,
+            clusterBackend: FakeControlPlane.ClusterBackend,
+            clusterMode: FakeControlPlane.ClusterMode,
+            lastSeen: null,
+            environments: [],
+        }]
+    }
+
+    private Hives(): unknown[]
+    {
+        return [{
+            id: FakeControlPlane.HiveId,
+            tenantId: FakeControlPlane.TenantId,
+            displayName: FakeControlPlane.HiveName,
+            cluster: { backend: FakeControlPlane.ClusterBackend, mode: FakeControlPlane.ClusterMode },
+            registry: { mode: FakeControlPlane.ClusterMode, credentialRef: FakeControlPlane.CredentialRef },
+        }]
+    }
+
+    private Rollouts(): unknown[]
+    {
+        return [{
+            hiveId: FakeControlPlane.HiveId,
+            targetVersion: FakeControlPlane.Version,
+            environments: [{ environmentName: FakeControlPlane.EnvName, runningImage: FakeControlPlane.Image, obsolete: false, ready: true }],
+        }]
+    }
+
+    private Policies(): unknown[]
+    {
+        return [{
+            tenantId: FakeControlPlane.TenantId,
+            hiveId: FakeControlPlane.HiveId,
+            channels: [FakeControlPlane.StableChannel, FakeControlPlane.EarlyChannel],
+            minVersion: FakeControlPlane.PreviousVersion,
+        }]
+    }
+
+    private Ledger(): unknown[]
+    {
+        return [{
+            id: FakeControlPlane.LedgerId,
+            tenantId: FakeControlPlane.TenantId,
+            hiveId: FakeControlPlane.HiveId,
+            version: FakeControlPlane.Version,
+            action: FakeControlPlane.AdoptAction,
+            at: FakeControlPlane.AdoptedAt,
+        }]
+    }
+
+    private Observations(): unknown[]
+    {
+        return [{
+            id: FakeControlPlane.ObservationId,
+            hiveId: FakeControlPlane.HiveId,
+            environments: [{ environmentName: FakeControlPlane.EnvName, ready: true, runningImage: FakeControlPlane.Image, detail: FakeControlPlane.EnvDetail }],
+            reportedAt: new Date().toISOString(),
+        }]
+    }
+
+    private Manifests(): unknown[]
+    {
+        return [{
+            id: FakeControlPlane.Version,
+            image: FakeControlPlane.Image,
+            notes: FakeControlPlane.Notes,
+            publishedAt: FakeControlPlane.PublishedAt,
+            channel: FakeControlPlane.StableChannel,
+            digest: FakeControlPlane.Digest,
+            signed: true,
         }]
     }
 
@@ -205,6 +309,24 @@ class FakeControlPlane
             case FakeControlPlane.FleetPath:
                 FakeControlPlane.Json(res, 200, this.Fleet())
                 return
+            case FakeControlPlane.HivesPath:
+                FakeControlPlane.Json(res, 200, this.Hives())
+                return
+            case FakeControlPlane.RolloutsPath:
+                FakeControlPlane.Json(res, 200, this.Rollouts())
+                return
+            case FakeControlPlane.PoliciesPath:
+                FakeControlPlane.Json(res, 200, this.Policies())
+                return
+            case FakeControlPlane.HiveLedgerPath:
+                FakeControlPlane.Json(res, 200, this.Ledger())
+                return
+            case FakeControlPlane.HiveObservationsPath:
+                FakeControlPlane.Json(res, 200, this.Observations())
+                return
+            case FakeControlPlane.ManifestsPath:
+                FakeControlPlane.Json(res, 200, this.Manifests())
+                return
             default:
                 FakeControlPlane.Json(res, 200, [])
         }
@@ -215,6 +337,7 @@ class FakeControlPlane
         const rel = path === FakeControlPlane.RootPath ? FakeControlPlane.IndexFile : normalize(path).slice(1)
         if (rel.startsWith(FakeControlPlane.ParentSegment))
         {
+            this.NotFound.push(path)
             res.writeHead(404)
             res.end()
             return
@@ -224,9 +347,14 @@ class FakeControlPlane
             const body = await readFile(join(this.root, rel))
             res.writeHead(200, { [FakeControlPlane.ContentTypeHeader]: FakeControlPlane.Types[extname(rel)] ?? FakeControlPlane.DefaultType })
             res.end(body)
+            if (extname(rel) === FakeControlPlane.FontExt)
+            {
+                this.FontsServed.push(path)
+            }
         }
         catch
         {
+            this.NotFound.push(path)
             res.writeHead(404)
             res.end()
         }
@@ -250,6 +378,19 @@ class PortalText
     // A single-line dialog caption: wrapped text renders as one SVG text per line.
     public static readonly NewClientCaption = 'Subscription reference (optional)'
     public static readonly CancelLabel = 'Cancel'
+    public static readonly NeedsAttentionCaption = 'Needs attention'
+    // Each rail section's page title (its H3), in RailEntry order.
+    public static readonly SectionTitles: readonly string[] = [
+        'Fleet', 'Clients', 'Tenants', 'Hives', 'Registry & Releases', 'Release Policy', 'Activity', 'Settings',
+    ]
+    public static readonly HiveDetailCaptions: readonly string[] = [
+        'Home channel', 'Credentials', 'Rollout', 'Per-hive policy', 'Version history', 'Recent check-ins',
+    ]
+    public static readonly ReleaseDetailCaptions: readonly string[] = [
+        'Manifest', 'What\'s new', 'Where it runs',
+    ]
+    // Text a template shows only when a binding or a label formatter failed.
+    public static readonly BrokenBinding = /undefined|\[object Object\]|NaN/
 }
 
 // The rail's entries, in the order app.mu lists the section modules.
@@ -270,12 +411,16 @@ enum RailEntry
 // sits over its text, so clicks are forced through it. A TextBox's placeholder
 // follows its caption in document order, so the field is the placeholder's
 // last match. The rail is icon-only (its names are tooltips), so an entry is
-// clicked at its position: the header, then one fixed-pitch row per entry.
+// clicked at its position, derived from RailLayout below; every click then
+// asserts the entry's page title, so a layout drift fails loudly.
 class PortalSteps
 {
-    private static readonly RailX = 24
-    private static readonly RailFirstY = 97
-    private static readonly RailPitch = 40
+    // The rail's geometry in CSS px at the default viewport, the one place
+    // the spec knows it. Mural's ActivityBarRail template is 48 wide (so its
+    // icons centre at x=24); its entries are fixed-pitch ActivityBarItems 40
+    // apart (32 high + the item padding), the first centred at y=97 (below
+    // the shell's title bar and the rail's header actions).
+    private static readonly RailLayout = { CenterX: 24, FirstCenterY: 97, Pitch: 40 } as const
 
     public static async TypeInto(page: Page, placeholder: string, text: string): Promise<void>
     {
@@ -293,9 +438,24 @@ class PortalSteps
         await PortalSteps.Text(page, text).first().click({ force: true })
     }
 
+    // Clicks a rail entry and waits for that section's page title.
     public static async OpenSection(page: Page, entry: RailEntry): Promise<void>
     {
-        await page.mouse.click(PortalSteps.RailX, PortalSteps.RailFirstY + PortalSteps.RailPitch * entry)
+        const layout = PortalSteps.RailLayout
+        await page.mouse.click(layout.CenterX, layout.FirstCenterY + layout.Pitch * entry)
+        await expect(PortalSteps.Visible(page, PortalText.SectionTitles[entry]!)).toBeVisible()
+    }
+
+    // The first visible exact match (tooltips and offscreen copies excluded).
+    public static Visible(page: Page, text: string): Locator
+    {
+        return PortalSteps.Text(page, text).filter({ visible: true }).first()
+    }
+
+    // Asserts no rendered text shows a broken binding.
+    public static async ExpectNoBrokenText(page: Page): Promise<void>
+    {
+        await expect(page.getByText(PortalText.BrokenBinding)).toHaveCount(0)
     }
 }
 
@@ -310,10 +470,74 @@ test.describe('admin portal', () =>
     {
         fake.Authenticated = true
         fake.Calls.length = 0
+        fake.NotFound.length = 0
+        fake.FontsServed.length = 0
     })
     test.afterEach(() =>
     {
         expect(fake.Mutations).toEqual([])
+        expect(fake.NotFound).toEqual([])
+    })
+
+    test('the theme fonts are served from the build', async ({ page }) =>
+    {
+        await page.goto(base)
+        await expect(PortalSteps.Text(page, PortalText.FleetSubtitle)).toBeVisible()
+        await expect.poll(() => fake.FontsServed.length).toBeGreaterThan(0)
+        expect(fake.NotFound).toEqual([])
+    })
+
+    test('every rail entry opens its section', async ({ page }) =>
+    {
+        await page.goto(base)
+        await expect(PortalSteps.Text(page, PortalText.FleetSubtitle)).toBeVisible()
+        for (const entry of [RailEntry.Clients, RailEntry.Tenants, RailEntry.Hives, RailEntry.Releases,
+            RailEntry.ReleasePolicy, RailEntry.Activity, RailEntry.Settings, RailEntry.Fleet])
+        {
+            await PortalSteps.OpenSection(page, entry)
+        }
+    })
+
+    test('Fleet: a hive that never checked in is listed under Needs attention', async ({ page }) =>
+    {
+        await page.goto(base)
+        await expect(PortalSteps.Text(page, PortalText.FleetSubtitle)).toBeVisible()
+        await expect(PortalSteps.Visible(page, PortalText.NeedsAttentionCaption)).toBeVisible()
+        // Once in the Needs-attention list, once in the hives table.
+        await expect(PortalSteps.Text(page, FakeControlPlane.SilentHiveName).filter({ visible: true })).toHaveCount(2)
+        await PortalSteps.ExpectNoBrokenText(page)
+    })
+
+    test('Fleet: a hive row opens the hive detail with every section rendered', async ({ page }) =>
+    {
+        await page.goto(base)
+        await expect(PortalSteps.Text(page, PortalText.FleetSubtitle)).toBeVisible()
+        await PortalSteps.Click(page, FakeControlPlane.HiveName)
+        for (const caption of PortalText.HiveDetailCaptions)
+        {
+            await expect(PortalSteps.Visible(page, caption)).toBeVisible()
+        }
+        await expect(PortalSteps.Visible(page, FakeControlPlane.HiveId)).toBeVisible()
+        await expect(PortalSteps.Visible(page, FakeControlPlane.CredentialRef)).toBeVisible()
+        await expect(PortalSteps.Visible(page, FakeControlPlane.Version)).toBeVisible()
+        await expect(PortalSteps.Visible(page, FakeControlPlane.Image)).toBeVisible()
+        await PortalSteps.ExpectNoBrokenText(page)
+    })
+
+    test('Releases: a version row opens the release detail with every section rendered', async ({ page }) =>
+    {
+        await page.goto(base)
+        await expect(PortalSteps.Text(page, PortalText.FleetSubtitle)).toBeVisible()
+        await PortalSteps.OpenSection(page, RailEntry.Releases)
+        await PortalSteps.Click(page, FakeControlPlane.Version)
+        for (const caption of PortalText.ReleaseDetailCaptions)
+        {
+            await expect(PortalSteps.Visible(page, caption)).toBeVisible()
+        }
+        await expect(PortalSteps.Visible(page, FakeControlPlane.DigestLabel)).toBeVisible()
+        await expect(PortalSteps.Visible(page, FakeControlPlane.Notes)).toBeVisible()
+        await expect(PortalSteps.Visible(page, FakeControlPlane.HiveName)).toBeVisible()
+        await PortalSteps.ExpectNoBrokenText(page)
     })
 
     test('logging in posts the credentials and then shows the Fleet page', async ({ page }) =>
@@ -338,7 +562,6 @@ test.describe('admin portal', () =>
         await page.goto(base)
         await expect(PortalSteps.Text(page, PortalText.FleetSubtitle)).toBeVisible()
         await PortalSteps.OpenSection(page, RailEntry.Tenants)
-        await expect(PortalSteps.Text(page, PortalText.TenantsSubtitle)).toBeVisible()
         await PortalSteps.Click(page, FakeControlPlane.TenantName)
         await expect(PortalSteps.Text(page, PortalText.TenantDetailCaption)).toBeVisible()
         await PortalSteps.Click(page, PortalText.BackLabel)

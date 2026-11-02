@@ -179,7 +179,7 @@ resources HivesResources {
                     TextBlock [ Text = "Referenced by name. No secret value is shown here.",
                                 Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,6) ]
                     Border [ Fill = @Bg1, Stroke = Pen [ Brush = @Border ], Padding = (12,10,12,10), Margin = (0,0,0,16) ] {
-                        ItemsControl [ ItemsSource = $Credentials ]
+                        ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $Credentials, ItemTemplate = @HiveCredentialRowTemplate ]
                     }
 
                     // Rollout: the target version and each environment against it.
@@ -192,7 +192,8 @@ resources HivesResources {
                             }
                             TextBlock [ Text = "No rollout reported yet.", Foreground = @Fg2,
                                         Visibility = $HasNoRollout << ToVisibility ]
-                            ItemsControl [ ItemsSource = $RolloutRows, Visibility = $HasRollout << ToVisibility ]
+                            ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $RolloutRows, ItemTemplate = @HiveRolloutRowTemplate,
+                                      Visibility = $HasRollout << ToVisibility ]
                         }
                     }
 
@@ -229,7 +230,8 @@ resources HivesResources {
                         StackPanel [ Orientation = Vertical ] {
                             TextBlock [ Text = "No version changes recorded yet.", Foreground = @Fg2,
                                         Visibility = $HasNoLedger << ToVisibility ]
-                            ItemsControl [ ItemsSource = $LedgerRows, Visibility = $HasLedger << ToVisibility ]
+                            ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $LedgerRows, ItemTemplate = @HiveLedgerRowTemplate,
+                                      Visibility = $HasLedger << ToVisibility ]
                         }
                     }
 
@@ -239,7 +241,8 @@ resources HivesResources {
                         StackPanel [ Orientation = Vertical ] {
                             TextBlock [ Text = "No check-ins recorded yet.", Foreground = @Fg2,
                                         Visibility = $HasNoCheckIns << ToVisibility ]
-                            ItemsControl [ ItemsSource = $CheckIns, Visibility = $HasCheckIns << ToVisibility ]
+                            ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $CheckIns, ItemTemplate = @HiveCheckInRowTemplate,
+                                      Visibility = $HasCheckIns << ToVisibility ]
                         }
                     }
                 }
@@ -247,7 +250,7 @@ resources HivesResources {
         }
     }
 
-    DataTemplate [ DataType = HiveCredentialViewModel ] {
+    DataTemplate x:key="HiveCredentialRowTemplate" [ DataType = HiveCredentialViewModel ] {
         Grid [ Margin = (0,2,0,2) ] {
             ColumnDefinitions {
                 ColumnDefinition [ Width = GridLength.Star ]
@@ -260,7 +263,7 @@ resources HivesResources {
         }
     }
 
-    DataTemplate [ DataType = HiveRolloutRowViewModel ] {
+    DataTemplate x:key="HiveRolloutRowTemplate" [ DataType = HiveRolloutRowViewModel ] {
         Grid [ Margin = (0,2,0,2) ] {
             ColumnDefinitions {
                 ColumnDefinition [ Width = GridLength.Star ]
@@ -273,7 +276,7 @@ resources HivesResources {
         }
     }
 
-    DataTemplate [ DataType = HiveLedgerRowViewModel ] {
+    DataTemplate x:key="HiveLedgerRowTemplate" [ DataType = HiveLedgerRowViewModel ] {
         Grid [ Margin = (0,2,0,2) ] {
             ColumnDefinitions {
                 ColumnDefinition [ Width = GridLength.Star ]
@@ -286,7 +289,7 @@ resources HivesResources {
         }
     }
 
-    DataTemplate [ DataType = HiveCheckInRowViewModel ] {
+    DataTemplate x:key="HiveCheckInRowTemplate" [ DataType = HiveCheckInRowViewModel ] {
         Grid [ Margin = (0,2,0,2) ] {
             ColumnDefinitions {
                 ColumnDefinition [ Width = GridLength.Star ]

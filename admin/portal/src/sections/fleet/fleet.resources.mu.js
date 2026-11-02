@@ -1,7 +1,6 @@
 import { PortalSectionService } from "../../shell/portal-section-service.js";
 import { FleetAttentionItemViewModel, FleetHiveRowViewModel, FleetPageViewModel } from "./fleet-page-view-model.js";
 import { Border, ColumnDefinition, DataTemplate, Dock, DockPanel, Grid, GridLength, Orientation, RowDefinition, StackPanel, TextBlock, TextWrapping } from "@pragmatic-tech-ai/mural/basic";
-import { ItemsControl } from "@pragmatic-tech-ai/mural/framework/base/items-control.js";
 import { Button, ButtonVariant } from "@pragmatic-tech-ai/mural/framework/buttons/button.js";
 import { ListBox } from "@pragmatic-tech-ai/mural/framework/list/list-box.js";
 import { ScrollViewer } from "@pragmatic-tech-ai/mural/framework/surfaces/scroll-viewer.js";
@@ -173,9 +172,12 @@ export class FleetResources extends ResourceDictionary {
             _textBlock34.set_property_value(TextBlock.ForegroundKey, DynamicResource(_textBlock34, "Fg1"));
             _textBlock34.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 6));
             _stackPanel33.AddChild(_textBlock34);
-            const _itemsControl35 = new ItemsControl();
-            _itemsControl35.set_property_value(ItemsControl.ItemsSourceKey, DataContextBinding(_itemsControl35, "NeedsAttention"));
-            _stackPanel33.AddChild(_itemsControl35);
+            const _listBox35 = new ListBox();
+            _listBox35.set_property_value(ListBox.StyleKey, DynamicResource(_listBox35, "PortalTableList"));
+            _listBox35.set_property_value(ListBox.HorizontalAlignmentKey, HorizontalAlignment.Stretch);
+            _listBox35.set_property_value(ListBox.ItemsSourceKey, DataContextBinding(_listBox35, "NeedsAttention"));
+            _listBox35.set_property_value(ListBox.ItemTemplateKey, DynamicResource(_listBox35, "FleetAttentionItemTemplate"));
+            _stackPanel33.AddChild(_listBox35);
             _dockPanel10.AddChild(_stackPanel33);
             const _textBlock36 = new TextBlock();
             _textBlock36.set_property_value(DockPanel.DockKey, Dock.Top);
@@ -222,7 +224,7 @@ export class FleetResources extends ResourceDictionary {
             _border40.SetChild(_stackPanel41);
             return _border40;
         }, FleetAttentionItemViewModel);
-        t.Set(FleetAttentionItemViewModel, _tmpl39);
+        t.Set("FleetAttentionItemTemplate", _tmpl39);
         const _tmpl45 = new DataTemplate((_data) => {
             const _grid46 = new Grid();
             _grid46.set_property_value(Grid.StyleKey, DynamicResource(_grid46, "PortalTableColumns"));
@@ -280,6 +282,8 @@ export class FleetResources extends ResourceDictionary {
         t.Set("FleetHiveRowTemplate", _tmpl45);
         return t;
     }
+    get FleetAttentionItemTemplate() { return this.Resolve("FleetAttentionItemTemplate"); }
+    set FleetAttentionItemTemplate(v) { this.Set("FleetAttentionItemTemplate", v); }
     get FleetHiveRowTemplate() { return this.Resolve("FleetHiveRowTemplate"); }
     set FleetHiveRowTemplate(v) { this.Set("FleetHiveRowTemplate", v); }
 }

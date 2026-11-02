@@ -2,7 +2,6 @@ import { NameConfirmDialogViewModel } from "./name-confirm-dialog-view-model.js"
 import { ObservedEnvironmentRowViewModel, ObservedEnvironmentsViewModel } from "./observed-environments-view-model.js";
 import { PortalSessionService } from "./portal-session-service.js";
 import { Border, ColumnDefinition, ContentPresenter, ControlTemplate, DataTemplate, Dock, DockPanel, Grid, GridLength, ItemsPresenter, Orientation, StackPanel, TargetedSetter, TemplatePropertyTrigger, TextBlock, TextBox, TextWrapping } from "@pragmatic-tech-ai/mural/basic";
-import { ItemsControl } from "@pragmatic-tech-ai/mural/framework/base/items-control.js";
 import { Button, ButtonVariant } from "@pragmatic-tech-ai/mural/framework/buttons/button.js";
 import { ListBox, ListBoxItem } from "@pragmatic-tech-ai/mural/framework/list/list-box.js";
 import { ScrollViewer } from "@pragmatic-tech-ai/mural/framework/surfaces/scroll-viewer.js";
@@ -267,9 +266,12 @@ export class ShellResources extends ResourceDictionary {
             _textBlock68.set_property_value(TextBlock.StyleKey, _style23);
             _grid60.AddChild(_textBlock68);
             _stackPanel59.AddChild(_grid60);
-            const _itemsControl69 = new ItemsControl();
-            _itemsControl69.set_property_value(ItemsControl.ItemsSourceKey, DataContextBinding(_itemsControl69, "Rows"));
-            _stackPanel59.AddChild(_itemsControl69);
+            const _listBox69 = new ListBox();
+            _listBox69.set_property_value(ListBox.StyleKey, _style19);
+            _listBox69.set_property_value(ListBox.HorizontalAlignmentKey, HorizontalAlignment.Stretch);
+            _listBox69.set_property_value(ListBox.ItemsSourceKey, DataContextBinding(_listBox69, "Rows"));
+            _listBox69.set_property_value(ListBox.ItemTemplateKey, DynamicResource(_listBox69, "ObservedEnvironmentRowTemplate"));
+            _stackPanel59.AddChild(_listBox69);
             _stackPanel54.AddChild(_stackPanel59);
             _border53.SetChild(_stackPanel54);
             return _border53;
@@ -314,7 +316,7 @@ export class ShellResources extends ResourceDictionary {
             _grid71.AddChild(_textBlock79);
             return _grid71;
         }, ObservedEnvironmentRowViewModel);
-        t.Set(ObservedEnvironmentRowViewModel, _tmpl70);
+        t.Set("ObservedEnvironmentRowTemplate", _tmpl70);
         return t;
     }
     get PortalTable() { return this.Resolve("PortalTable"); }
@@ -331,4 +333,6 @@ export class ShellResources extends ResourceDictionary {
     set PortalTableHeader(v) { this.Set("PortalTableHeader", v); }
     get PortalTableLinkHeader() { return this.Resolve("PortalTableLinkHeader"); }
     set PortalTableLinkHeader(v) { this.Set("PortalTableLinkHeader", v); }
+    get ObservedEnvironmentRowTemplate() { return this.Resolve("ObservedEnvironmentRowTemplate"); }
+    set ObservedEnvironmentRowTemplate(v) { this.Set("ObservedEnvironmentRowTemplate", v); }
 }
