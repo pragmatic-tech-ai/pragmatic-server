@@ -2,7 +2,8 @@
 //
 // ReleasePolicyPageViewModel is presented full-width in the shell's content
 // region, matched implicitly by type: the policy rules (one per tenant and per
-// hive), the versions gated for each tenant, and the adoption ledger. The
+// hive), the versions gated for each tenant, each hive's selected target, the
+// fleet-wide rollout status (observed) and the adoption ledger. The
 // rule editor (PolicyEditDialogViewModel) and Gate a version
 // (GateDialogViewModel) render inside the shell's DialogService surface with
 // their own buttons.
@@ -15,6 +16,8 @@ import ReleasePolicyPageViewModel from "./release-policy-page-view-model.js"
 import PolicyRuleRowViewModel from "./release-policy-page-view-model.js"
 import GatedVersionRowViewModel from "./release-policy-page-view-model.js"
 import AdoptionLedgerRowViewModel from "./release-policy-page-view-model.js"
+import SelectedTargetRowViewModel from "./release-policy-fleet-rows.js"
+import RolloutRowViewModel from "./release-policy-fleet-rows.js"
 import PolicyEditDialogViewModel from "./policy-edit-dialog-view-model.js"
 import GateDialogViewModel from "./gate-dialog-view-model.js"
 
@@ -58,7 +61,7 @@ resources ReleasePolicyResources {
                             ColumnDefinition [ Width = GridLength.Star ]
                             ColumnDefinition [ Width = GridLength.Star ]
                             ColumnDefinition [ Width = GridLength.Star ]
-                            ColumnDefinition [ Width = GridLength.Auto ]
+                            ColumnDefinition [ Width = GridLength.Star ]
                         }
                         TextBlock [ Grid.Column = 0, Text = "Applies to", Style = @UiCaption, Foreground = @Fg2 ]
                         TextBlock [ Grid.Column = 1, Text = "Scope", Style = @UiCaption, Foreground = @Fg2 ]
@@ -83,7 +86,7 @@ resources ReleasePolicyResources {
                                 ColumnDefinition [ Width = GridLength.Star ]
                                 ColumnDefinition [ Width = GridLength.Star ]
                                 ColumnDefinition [ Width = GridLength.Star ]
-                                ColumnDefinition [ Width = GridLength.Auto ]
+                                ColumnDefinition [ Width = GridLength.Star ]
                             }
                             TextBlock [ Grid.Column = 0, Text = "Client / tenant", Style = @UiCaption, Foreground = @Fg2 ]
                             TextBlock [ Grid.Column = 1, Text = "Version", Style = @UiCaption, Foreground = @Fg2 ]
@@ -92,6 +95,61 @@ resources ReleasePolicyResources {
                         }
                         ListBox [ Template = @PortalTable, HorizontalAlignment = Stretch, ItemsSource = $GatedRows,
                                   ItemTemplate = @GatedVersionRowTemplate, Margin = (0,0,0,20) ]
+                    }
+
+                    // Selected targets: the version each hive's tenant chose.
+                    TextBlock [ Text = "Selected targets", Style = @UiLabel, Foreground = @Fg1, Margin = (0,0,0,6) ]
+                    TextBlock [ Text = "No hive has a target selected yet.", Foreground = @Fg2, Margin = (0,0,0,20),
+                                Visibility = $HasNoTargets << ToVisibility ]
+                    StackPanel [ Orientation = Vertical, Visibility = $HasTargets << ToVisibility ] {
+                        Grid [ Margin = (8,0,8,6) ] {
+                            RowDefinitions {
+                                RowDefinition [ Height = GridLength.Auto ]
+                            }
+                            ColumnDefinitions {
+                                ColumnDefinition [ Width = GridLength.Star ]
+                                ColumnDefinition [ Width = GridLength.Star ]
+                                ColumnDefinition [ Width = GridLength.Star ]
+                                ColumnDefinition [ Width = GridLength.Star ]
+                            }
+                            TextBlock [ Grid.Column = 0, Text = "Hive", Style = @UiCaption, Foreground = @Fg2 ]
+                            TextBlock [ Grid.Column = 1, Text = "Client / tenant", Style = @UiCaption, Foreground = @Fg2 ]
+                            TextBlock [ Grid.Column = 2, Text = "Target version", Style = @UiCaption, Foreground = @Fg2 ]
+                            TextBlock [ Grid.Column = 3, Text = "Selected", Style = @UiCaption, Foreground = @Fg2 ]
+                        }
+                        ListBox [ Template = @PortalTable, HorizontalAlignment = Stretch, ItemsSource = $TargetRows,
+                                  ItemTemplate = @SelectedTargetRowTemplate, Margin = (0,0,0,20) ]
+                    }
+
+                    // Rollout status: every hive environment against its target (observed).
+                    StackPanel [ Orientation = Horizontal, Margin = (0,0,0,6) ] {
+                        TextBlock [ Text = "Rollout status", Style = @UiLabel, Foreground = @Fg1, Margin = (0,0,8,0) ]
+                        TextBlock [ Text = "Observed - read-only", Style = @UiCaption, Foreground = @Fg2, VerticalAlignment = Center ]
+                    }
+                    TextBlock [ Text = "No rollout information yet.", Foreground = @Fg2, Margin = (0,0,0,20),
+                                Visibility = $HasNoRollouts << ToVisibility ]
+                    StackPanel [ Orientation = Vertical, Visibility = $HasRollouts << ToVisibility ] {
+                        Grid [ Margin = (8,0,8,6) ] {
+                            RowDefinitions {
+                                RowDefinition [ Height = GridLength.Auto ]
+                            }
+                            ColumnDefinitions {
+                                ColumnDefinition [ Width = GridLength.Star ]
+                                ColumnDefinition [ Width = GridLength.Star ]
+                                ColumnDefinition [ Width = GridLength.Star ]
+                                ColumnDefinition [ Width = GridLength.Star ]
+                                ColumnDefinition [ Width = GridLength.Star ]
+                                ColumnDefinition [ Width = GridLength.Star ]
+                            }
+                            TextBlock [ Grid.Column = 0, Text = "Hive", Style = @UiCaption, Foreground = @Fg2 ]
+                            TextBlock [ Grid.Column = 1, Text = "Client / tenant", Style = @UiCaption, Foreground = @Fg2 ]
+                            TextBlock [ Grid.Column = 2, Text = "Environment", Style = @UiCaption, Foreground = @Fg2 ]
+                            TextBlock [ Grid.Column = 3, Text = "Target", Style = @UiCaption, Foreground = @Fg2 ]
+                            TextBlock [ Grid.Column = 4, Text = "Running", Style = @UiCaption, Foreground = @Fg2 ]
+                            TextBlock [ Grid.Column = 5, Text = "Status", Style = @UiCaption, Foreground = @Fg2 ]
+                        }
+                        ListBox [ Template = @PortalTable, HorizontalAlignment = Stretch, ItemsSource = $RolloutRows,
+                                  ItemTemplate = @RolloutRowTemplate, Margin = (0,0,0,20) ]
                     }
 
                     // The adoption ledger: what each hive did, newest first.
@@ -130,14 +188,14 @@ resources ReleasePolicyResources {
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]
-                ColumnDefinition [ Width = GridLength.Auto ]
+                ColumnDefinition [ Width = GridLength.Star ]
             }
             TextBlock [ Grid.Column = 0, Text = $AppliesToLabel, Style = @UiLabel, Foreground = @Fg0, VerticalAlignment = Center ]
             TextBlock [ Grid.Column = 1, Text = $ScopeLabel, Foreground = @Fg2, VerticalAlignment = Center ]
             TextBlock [ Grid.Column = 2, Text = $ChannelsLabel, Foreground = @Fg1, VerticalAlignment = Center ]
             TextBlock [ Grid.Column = 3, Text = $MinVersionLabel, Foreground = @Fg1, VerticalAlignment = Center ]
             TextBlock [ Grid.Column = 4, Text = $HoldLabel, Foreground = @Fg1, TextWrapping = Wrap, VerticalAlignment = Center ]
-            Button [ Grid.Column = 5, Variant = Ghost, Command = $EditCommand ] {
+            Button [ Grid.Column = 5, Variant = Ghost, Command = $EditCommand, HorizontalAlignment = Left ] {
                 TextBlock [ Text = "Edit" ]
             }
         }
@@ -150,15 +208,49 @@ resources ReleasePolicyResources {
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]
-                ColumnDefinition [ Width = GridLength.Auto ]
+                ColumnDefinition [ Width = GridLength.Star ]
             }
             TextBlock [ Grid.Column = 0, Text = $OwnerLabel, Foreground = @Fg0, VerticalAlignment = Center ]
             TextBlock [ Grid.Column = 1, Text = $Version, Style = @Code, Foreground = @Fg1, VerticalAlignment = Center ]
             TextBlock [ Grid.Column = 2, Text = $GatedLabel, Style = @Code, Foreground = @Fg2, VerticalAlignment = Center ]
             TextBlock [ Grid.Column = 3, Text = $BlockedLabel, Foreground = @Fg1, VerticalAlignment = Center ]
-            Button [ Grid.Column = 4, Variant = Ghost, Command = $UngateCommand ] {
+            Button [ Grid.Column = 4, Variant = Ghost, Command = $UngateCommand, HorizontalAlignment = Left ] {
                 TextBlock [ Text = "Ungate" ]
             }
+        }
+    }
+
+    DataTemplate x:key="SelectedTargetRowTemplate" [ DataType = SelectedTargetRowViewModel ] {
+        Grid [ Margin = (4,4,4,4) ] {
+            ColumnDefinitions {
+                ColumnDefinition [ Width = GridLength.Star ]
+                ColumnDefinition [ Width = GridLength.Star ]
+                ColumnDefinition [ Width = GridLength.Star ]
+                ColumnDefinition [ Width = GridLength.Star ]
+            }
+            TextBlock [ Grid.Column = 0, Text = $HiveLabel, Foreground = @Fg0 ]
+            TextBlock [ Grid.Column = 1, Text = $OwnerLabel, Foreground = @Fg1 ]
+            TextBlock [ Grid.Column = 2, Text = $TargetVersion, Style = @Code, Foreground = @Fg1 ]
+            TextBlock [ Grid.Column = 3, Text = $SelectedLabel, Style = @Code, Foreground = @Fg2 ]
+        }
+    }
+
+    DataTemplate x:key="RolloutRowTemplate" [ DataType = RolloutRowViewModel ] {
+        Grid [ Margin = (4,4,4,4) ] {
+            ColumnDefinitions {
+                ColumnDefinition [ Width = GridLength.Star ]
+                ColumnDefinition [ Width = GridLength.Star ]
+                ColumnDefinition [ Width = GridLength.Star ]
+                ColumnDefinition [ Width = GridLength.Star ]
+                ColumnDefinition [ Width = GridLength.Star ]
+                ColumnDefinition [ Width = GridLength.Star ]
+            }
+            TextBlock [ Grid.Column = 0, Text = $HiveLabel, Foreground = @Fg0 ]
+            TextBlock [ Grid.Column = 1, Text = $OwnerLabel, Foreground = @Fg1 ]
+            TextBlock [ Grid.Column = 2, Text = $Environment, Style = @Code, Foreground = @Fg1 ]
+            TextBlock [ Grid.Column = 3, Text = $TargetLabel, Style = @Code, Foreground = @Fg1 ]
+            TextBlock [ Grid.Column = 4, Text = $RunningLabel, Style = @Code, Foreground = @Fg2, TextWrapping = Wrap ]
+            TextBlock [ Grid.Column = 5, Text = $StatusLabel, Foreground = @Fg1 ]
         }
     }
 

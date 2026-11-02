@@ -64,6 +64,7 @@ describe('Registry & Releases section', () =>
             ['1.4.0', 'Stable', 'Signed', 'Published', '2026-10-12', '1 environment'],
             ['1.3.0', 'Early access', 'Unsigned', 'Published', '2026-10-01', 'Not running anywhere'],
         ])
+        assert.deepEqual(list.Rows.ToArray().map(r => r.Image), ['img:0', 'img:old'])
     })
 
     it('no versions -> Empty', async () =>
@@ -166,7 +167,19 @@ describe('Registry & Releases section', () =>
         assert.equal(detail.IsWithdrawn, false)
     })
 
-    it('Observer: Publish, Withdraw and Restore are disabled and never open a dialog', async () =>
+    it('a published version offers Withdraw; a withdrawn one offers Restore instead', async () =>
+    {
+        const fx = new ReleasesFixture()
+        fx.Api.Manifests[1].withdrawn = true
+        const published = await fx.Detail(0)
+        assert.equal(published.IsPublished, true)
+        published.BackCommand.Execute()
+        const withdrawn = await fx.Detail(1)
+        assert.equal(withdrawn.IsPublished, false)
+        assert.equal(withdrawn.IsWithdrawn, true)
+    })
+
+    it('Observer: Publish and Withdraw (published) are disabled and never open a dialog', async () =>
     {
         const fx = new ReleasesFixture(OperatorContext.ReadOnlyWireRole)
         const list = await fx.List()
@@ -175,11 +188,21 @@ describe('Registry & Releases section', () =>
         list.PublishCommand.Execute()
         const detail = await fx.Detail()
         assert.equal(detail.WithdrawCommand.CanExecute(), false)
-        assert.equal(detail.RestoreCommand.CanExecute(), false)
         detail.WithdrawCommand.Execute()
-        detail.RestoreCommand.Execute()
         await Tick.Settle()
         assert.equal(fx.Dialogs.Shown.length, 0)
+        assert.deepEqual(fx.Api.Withdrawals, [])
+    })
+
+    it('Observer: Restore of a withdrawn version is disabled and does nothing', async () =>
+    {
+        const fx = new ReleasesFixture(OperatorContext.ReadOnlyWireRole)
+        fx.Api.Manifests[0].withdrawn = true
+        const detail = await fx.Detail()
+        assert.equal(detail.IsWithdrawn, true)
+        assert.equal(detail.RestoreCommand.CanExecute(), false)
+        detail.RestoreCommand.Execute()
+        await Tick.Settle()
         assert.deepEqual(fx.Api.Withdrawals, [])
     })
 })

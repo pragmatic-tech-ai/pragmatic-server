@@ -72,6 +72,8 @@ export class ReleaseDetailPageViewModel extends PortalPageViewModel
     private static readonly PublishedLabelProperty = 'PublishedLabel'
     private static readonly NotesLabelProperty = 'NotesLabel'
     private static readonly IsWithdrawnProperty = 'IsWithdrawn'
+    private static readonly IsPublishedProperty = 'IsPublished'
+    private static readonly NoText = ''
     private static readonly WithdrawnTextProperty = 'WithdrawnText'
     private static readonly HasAdoptionProperty = 'HasAdoption'
     private static readonly HasNoAdoptionProperty = 'HasNoAdoption'
@@ -90,7 +92,7 @@ export class ReleaseDetailPageViewModel extends PortalPageViewModel
 
     public get Image(): string
     {
-        return this.manifest?.image ?? ''
+        return this.manifest?.image ?? ReleaseDetailPageViewModel.NoText
     }
 
     // The image digest's first characters; '-' when the registry recorded none.
@@ -111,17 +113,17 @@ export class ReleaseDetailPageViewModel extends PortalPageViewModel
 
     public get SignatureLabel(): string
     {
-        return this.manifest === undefined ? '' : ReleaseLabels.Signature(this.manifest)
+        return this.manifest === undefined ? ReleaseDetailPageViewModel.NoText : ReleaseLabels.Signature(this.manifest)
     }
 
     public get StatusLabel(): string
     {
-        return this.manifest === undefined ? '' : ReleaseLabels.Status(this.manifest)
+        return this.manifest === undefined ? ReleaseDetailPageViewModel.NoText : ReleaseLabels.Status(this.manifest)
     }
 
     public get PublishedLabel(): string
     {
-        return this.manifest === undefined ? '' : PortalDates.Label(this.manifest.publishedAt)
+        return this.manifest === undefined ? ReleaseDetailPageViewModel.NoText : PortalDates.Label(this.manifest.publishedAt)
     }
 
     public get NotesLabel(): string
@@ -135,13 +137,19 @@ export class ReleaseDetailPageViewModel extends PortalPageViewModel
         return this.manifest?.withdrawn === true
     }
 
+    // Loaded and not withdrawn: the page offers Withdraw (Restore otherwise).
+    public get IsPublished(): boolean
+    {
+        return this.manifest !== undefined && !this.IsWithdrawn
+    }
+
     // The withdrawn notice with its provenance; '' while published.
     public get WithdrawnText(): string
     {
         const manifest = this.manifest
         if (manifest?.withdrawn !== true)
         {
-            return ''
+            return ReleaseDetailPageViewModel.NoText
         }
         const w = manifest.withdrawal
         if (w === undefined)
@@ -221,6 +229,7 @@ export class ReleaseDetailPageViewModel extends PortalPageViewModel
         const before = [this.Image, this.DigestLabel, this.ChannelLabel, this.SignatureLabel, this.StatusLabel,
             this.PublishedLabel, this.NotesLabel, this.WithdrawnText] as const
         const wasWithdrawn = this.IsWithdrawn
+        const wasPublished = this.IsPublished
         const hadAdoption = this.HasAdoption
         // A private copy: what was shown stays as it was until the next Apply.
         this.manifest = { ...manifest }
@@ -233,6 +242,7 @@ export class ReleaseDetailPageViewModel extends PortalPageViewModel
         this.RaisePropertyChanged(P.NotesLabelProperty, before[6], this.NotesLabel)
         this.RaisePropertyChanged(P.WithdrawnTextProperty, before[7], this.WithdrawnText)
         this.RaisePropertyChanged(P.IsWithdrawnProperty, wasWithdrawn, this.IsWithdrawn)
+        this.RaisePropertyChanged(P.IsPublishedProperty, wasPublished, this.IsPublished)
         this.RaisePropertyChanged(P.HasAdoptionProperty, hadAdoption, this.HasAdoption)
         this.RaisePropertyChanged(P.HasNoAdoptionProperty, !hadAdoption, this.HasNoAdoption)
         this.withdrawCommand.RaiseCanExecuteChanged()

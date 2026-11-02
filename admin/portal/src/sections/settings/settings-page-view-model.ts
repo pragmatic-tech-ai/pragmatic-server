@@ -12,9 +12,18 @@ export class OperatorRowViewModel extends Observable
     private static readonly ActiveLabel = 'Active'
     private static readonly DisabledLabel = 'Disabled'
 
-    public constructor(private readonly row: OperatorRow)
+    private readonly openCommand: RelayCommand
+
+    public constructor(private readonly row: OperatorRow, open: RelayCommand)
     {
         super()
+        this.openCommand = new RelayCommand(() => open.Execute(this))
+    }
+
+    // Opens the operator's detail.
+    public get OpenCommand(): RelayCommand
+    {
+        return this.openCommand
     }
 
     public get Email(): string
@@ -34,7 +43,8 @@ export class OperatorRowViewModel extends Observable
 }
 
 // Settings: the signed-in operator's profile (from the session) and the
-// operator roster. Invite operator opens a dialog (Operator-only).
+// operator roster; a row opens the operator's detail. Invite operator opens a
+// dialog (Operator-only).
 export class SettingsPageViewModel extends PortalPageViewModel
 {
     private static readonly InviteTitle = 'Invite operator'
@@ -43,11 +53,13 @@ export class SettingsPageViewModel extends PortalPageViewModel
 
     private readonly operators = new ObservableCollection<OperatorRowViewModel>()
     private readonly inviteCommand: RelayCommand
+    private readonly openCommand: RelayCommand
 
     public constructor(session: PortalSessionService, private readonly section: SettingsSectionService)
     {
         super(session)
         this.inviteCommand = this.MutatingCommand(() => this.Invite())
+        this.openCommand = new RelayCommand(row => this.Open(row))
     }
 
     public get Email(): string
@@ -65,14 +77,21 @@ export class SettingsPageViewModel extends PortalPageViewModel
         return this.operators
     }
 
+    // The roster is Operator-only (the control plane refuses it to an
+    // Observer, even to read): an Observer sees it denied, with the reason.
+    public get IsRosterDenied(): boolean
+    {
+        return !this.Session.CanMutate
+    }
+
     public get HasOperators(): boolean
     {
-        return this.operators.Count > 0
+        return !this.IsRosterDenied && this.operators.Count > 0
     }
 
     public get HasNoOperators(): boolean
     {
-        return this.operators.Count === 0
+        return !this.IsRosterDenied && this.operators.Count === 0
     }
 
     public get InviteCommand(): RelayCommand
@@ -80,9 +99,20 @@ export class SettingsPageViewModel extends PortalPageViewModel
         return this.inviteCommand
     }
 
-    // The profile always has content, so the page is Populated even with an empty roster.
+    // Opens a roster row's operator detail; the parameter is the OperatorRowViewModel.
+    public get OpenCommand(): RelayCommand
+    {
+        return this.openCommand
+    }
+
+    // The profile always has content, so the page is Populated even with an
+    // empty or denied roster. An Observer's roster is not fetched.
     protected override async LoadCore(): Promise<boolean>
     {
+        if (this.IsRosterDenied)
+        {
+            return true
+        }
         const generation = this.LoadGeneration
         const summaries = await this.Session.Client.ListOperators()
         if (generation !== this.LoadGeneration)
@@ -95,11 +125,19 @@ export class SettingsPageViewModel extends PortalPageViewModel
         this.operators.Clear()
         for (const row of roster.Rows)
         {
-            this.operators.Add(new OperatorRowViewModel(row))
+            this.operators.Add(new OperatorRowViewModel(row, this.openCommand))
         }
         this.RaisePropertyChanged(SettingsPageViewModel.HasOperatorsProperty, had, this.HasOperators)
         this.RaisePropertyChanged(SettingsPageViewModel.HasNoOperatorsProperty, !had, this.HasNoOperators)
         return true
+    }
+
+    private Open(row: unknown): void
+    {
+        if (row instanceof OperatorRowViewModel)
+        {
+            this.section.OpenOperator(row.Email)
+        }
     }
 
     private Invite(): Promise<void>

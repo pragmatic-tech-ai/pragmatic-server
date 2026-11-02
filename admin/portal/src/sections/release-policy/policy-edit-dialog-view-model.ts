@@ -18,12 +18,15 @@ export class PolicyEditDialogViewModel extends PortalDialogViewModel<boolean>
     private static readonly IsHeldProperty = 'IsHeld'
     private static readonly HoldReasonProperty = 'HoldReason'
     private static readonly Saved = true
+    private static readonly NoText = ''
 
-    private readonly initialStable: boolean
-    private readonly initialEarly: boolean
-    private readonly initialMinVersion: string
-    private readonly initialHeld: boolean
-    private readonly initialReason: string
+    // What the control plane holds: the rule as loaded, advanced past each
+    // write that succeeds (see SubmitCore).
+    private initialStable: boolean
+    private initialEarly: boolean
+    private initialMinVersion: string
+    private initialHeld: boolean
+    private initialReason: string
     private stable: boolean
     private earlyAccess: boolean
     private minVersion: string
@@ -36,9 +39,9 @@ export class PolicyEditDialogViewModel extends PortalDialogViewModel<boolean>
         const channels: readonly string[] = current?.channels ?? []
         this.initialStable = channels.includes(ReleaseChannel.Stable)
         this.initialEarly = channels.includes(ReleaseChannel.Early)
-        this.initialMinVersion = current?.minVersion ?? ''
+        this.initialMinVersion = current?.minVersion ?? PolicyEditDialogViewModel.NoText
         this.initialHeld = current?.hold !== undefined
-        this.initialReason = current?.hold?.reason ?? ''
+        this.initialReason = current?.hold?.reason ?? PolicyEditDialogViewModel.NoText
         this.stable = this.initialStable
         this.earlyAccess = this.initialEarly
         this.minVersion = this.initialMinVersion
@@ -113,26 +116,39 @@ export class PolicyEditDialogViewModel extends PortalDialogViewModel<boolean>
         return !this.isHeld || this.holdReason.trim().length > 0
     }
 
+    // The control plane has no multi-field policy write, so a save is up to
+    // three separate writes and is not atomic. Each write that succeeds
+    // advances the matching initial value, so when a later write is refused
+    // the dialog stays open and a retry sends only what is still unsaved.
     protected override async SubmitCore(): Promise<boolean>
     {
         const api = this.Session.Client
         if (this.stable !== this.initialStable || this.earlyAccess !== this.initialEarly)
         {
+            const stable = this.stable
+            const early = this.earlyAccess
             await this.target.SetChannels(api, this.Channels())
+            this.initialStable = stable
+            this.initialEarly = early
         }
         const minVersion = this.minVersion.trim()
         if (minVersion !== this.initialMinVersion)
         {
             await (minVersion.length > 0 ? this.target.SetMinVersion(api, minVersion) : this.target.ClearMinVersion(api))
+            this.initialMinVersion = minVersion
         }
         const reason = this.holdReason.trim()
         if (this.isHeld && (!this.initialHeld || reason !== this.initialReason))
         {
             await this.target.SetHold(api, reason)
+            this.initialHeld = true
+            this.initialReason = reason
         }
         else if (!this.isHeld && this.initialHeld)
         {
             await this.target.ClearHold(api)
+            this.initialHeld = false
+            this.initialReason = PolicyEditDialogViewModel.NoText
         }
         return PolicyEditDialogViewModel.Saved
     }

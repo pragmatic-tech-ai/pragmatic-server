@@ -4,9 +4,9 @@ import { ClipboardService } from '@pragmatic-tech-ai/mural/framework/shell/servi
 import { ContentHostService } from '@pragmatic-tech-ai/mural/framework/shell/services/content-host-service.js'
 import { DialogService, type DialogOptions } from '@pragmatic-tech-ai/mural/framework/shell/services/dialog-service.js'
 import { NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
-import type { ControlPlaneClient } from '../../api-client.js'
+import { ApiError, type ControlPlaneClient } from '../../api-client.js'
 import { OperatorContext } from '../../operator-context.js'
-import type { ActivityDto, ClientDto, CreatedTenantDto, FleetHiveDto, GatingDto, HiveDto, HiveRolloutDto, LedgerDto, ManifestDto, ObservationDto, OperatorSummaryDto, PolicyDto, TenantDto } from '../../portal-types.js'
+import type { ActivityDto, ClientDto, CreatedTenantDto, FleetHiveDto, GatingDto, HiveDto, HiveRolloutDto, LedgerDto, ManifestDto, ObservationDto, OperatorSummaryDto, PolicyDto, SelectionDto, TenantDto } from '../../portal-types.js'
 import type { IPageReloader } from '../page-reloader.js'
 import { PortalSessionService } from '../portal-session-service.js'
 
@@ -156,8 +156,17 @@ export class FakeControlPlane
     public Gating: GatingDto[] = []
     public Activity: ActivityDto[] = []
     public Operators: OperatorSummaryDto[] = []
+    public Selections: SelectionDto[] = []
     public OwnerPassword = 'fixture-owner-password'
+    public ResetPassword = 'fixture-reset-password'
     public Failure: Error | undefined
+    // The control plane serves the operator roster to Full operators only.
+    public DenyOperators = false
+    public OperatorListCalls = 0
+    // While set, a policy write whose call text starts with this fails.
+    public FailPolicyCall: string | undefined
+    // Each operator-management write as 'Method email [argument]', in call order.
+    public readonly OperatorCalls: string[] = []
     public readonly CreatedClients: Array<[string, string, string | undefined]> = []
     public readonly CreatedTenants: Array<[string, string, string, string]> = []
     public readonly CreatedHives: HiveDto[] = []
@@ -357,7 +366,54 @@ export class FakeControlPlane
 
     public async ListOperators(): Promise<OperatorSummaryDto[]>
     {
+        this.OperatorListCalls++
+        if (this.DenyOperators)
+        {
+            throw new ApiError(403, 'forbidden')
+        }
         return [...this.Operators]
+    }
+
+    public async SetOperatorRole(email: string, role: string): Promise<void>
+    {
+        this.ThrowIfFailing()
+        this.OperatorCalls.push('SetOperatorRole ' + email + ' ' + role)
+        this.Operator(email).role = role
+    }
+
+    public async SetOperatorDisabled(email: string, disabled: boolean): Promise<void>
+    {
+        this.ThrowIfFailing()
+        this.OperatorCalls.push('SetOperatorDisabled ' + email + ' ' + String(disabled))
+        this.Operator(email).disabled = disabled
+    }
+
+    public async RevokeOperatorSessions(email: string): Promise<void>
+    {
+        this.ThrowIfFailing()
+        this.OperatorCalls.push('RevokeOperatorSessions ' + email)
+    }
+
+    public async ResetOperatorPassword(email: string): Promise<{ password: string }>
+    {
+        this.ThrowIfFailing()
+        this.OperatorCalls.push('ResetOperatorPassword ' + email)
+        return { password: this.ResetPassword }
+    }
+
+    public async ListSelections(): Promise<SelectionDto[]>
+    {
+        return [...this.Selections]
+    }
+
+    private Operator(email: string): OperatorSummaryDto
+    {
+        const found = this.Operators.find(o => o.email === email)
+        if (found === undefined)
+        {
+            throw new Error('unknown operator ' + email)
+        }
+        return found
     }
 
     public async CreateOperator(email: string, password: string, role: string): Promise<void>
@@ -376,6 +432,10 @@ export class FakeControlPlane
     private WritePolicy(call: string, tenantId: string, hiveId: string | undefined, change: (policy: PolicyDto) => void): PolicyDto
     {
         this.ThrowIfFailing()
+        if (this.FailPolicyCall !== undefined && call.startsWith(this.FailPolicyCall))
+        {
+            throw new Error('refused: ' + call)
+        }
         this.PolicyCalls.push(call)
         let policy = this.Policies.find(p => p.tenantId === tenantId && p.hiveId === hiveId)
         if (policy === undefined)

@@ -11,12 +11,14 @@ import { PortalNavigationService } from "./shell/portal-navigation-service.js";
 import { PortalSessionService } from "./shell/portal-session-service.js";
 import { ShellResources } from "./shell/shell.resources.mu.js";
 import { ContentControl } from "@pragmatic-tech-ai/mural/framework/base/content-control.js";
+import { NavigationItem } from "@pragmatic-tech-ai/mural/framework/navigation/navigation-item.js";
 import { EditorShell } from "@pragmatic-tech-ai/mural/framework/shell/editor-shell.js";
 import { ClipboardService } from "@pragmatic-tech-ai/mural/framework/shell/services/clipboard-service.js";
 import { ContentHostService } from "@pragmatic-tech-ai/mural/framework/shell/services/content-host-service.js";
 import { NavigationService } from "@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js";
+import { ToolTipService } from "@pragmatic-tech-ai/mural/framework/tooltips/tooltip-service.js";
 import { Pragmatic, PragmaticLight } from "@pragmatic-tech-ai/mural/resources/pragmatic";
-import { Application, NameScope, ServiceBinding, ServiceProvider } from "@pragmatic-tech-ai/mural/runtime";
+import { Application, DataContextBinding, DynamicResource, NameScope, ServiceBinding, ServiceProvider, Setter, SetterFactory, Style } from "@pragmatic-tech-ai/mural/runtime";
 
 export const app = (() => {
     const _app0 = new Application();
@@ -36,9 +38,14 @@ export const app = (() => {
     const _rd1 = _app0.Resources;
     for (const [_k, _v] of ShellResources.Clone().Entries()) _rd1.Set(_k, _v);
     for (const [_k, _v] of PortalIcons.Clone().Entries()) _rd1.Set(_k, _v);
-    const _editorShell2 = new EditorShell();
-    _editorShell2.SetNameScope(new NameScope());
-    _editorShell2.set_property_value(EditorShell.HeaderContentKey, ((_e) => { _e.Content = ServiceBinding(_e, ServiceProvider.tokenFor(PortalSessionService), ""); return _e; })(new ContentControl()));
-    _rd1.Root = _editorShell2;
+    const _setter2 = new Setter(NavigationItem, "Template", new SetterFactory((_t) => DynamicResource(_t, "ActivityBarItemTemplate")));
+    const _setter3 = new Setter(ToolTipService, "ToolTip", new SetterFactory((_t) => DataContextBinding(_t, "Label")));
+    const _setter4 = new Setter(ToolTipService, "ToolTipPlacement", "Right");
+    const _style5 = new Style(NavigationItem, [_setter2, _setter3, _setter4], undefined, [], []);
+    _rd1.Set("ActivityBarItem", _style5);
+    const _editorShell6 = new EditorShell();
+    _editorShell6.SetNameScope(new NameScope());
+    _editorShell6.set_property_value(EditorShell.HeaderContentKey, ((_e) => { _e.Content = ServiceBinding(_e, ServiceProvider.tokenFor(PortalSessionService), ""); return _e; })(new ContentControl()));
+    _rd1.Root = _editorShell6;
     return _app0;
 })();

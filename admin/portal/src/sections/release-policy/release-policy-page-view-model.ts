@@ -1,7 +1,7 @@
 import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import { PortalDates } from '../../portal-dates.js'
-import type { GatingDto, HiveDto, LedgerDto, ManifestDto, PolicyDto } from '../../portal-types.js'
+import type { GatingDto, HiveDto, HiveRolloutDto, LedgerDto, ManifestDto, PolicyDto, SelectionDto } from '../../portal-types.js'
 import { ReleaseChannel } from '../../release-channel.js'
 import { PortalPageViewModel } from '../../shell/portal-page-view-model.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
@@ -11,6 +11,7 @@ import { GateDialogViewModel } from './gate-dialog-view-model.js'
 import { PolicyEditDialogViewModel } from './policy-edit-dialog-view-model.js'
 import { PolicyOwnerLabels } from './policy-owner-labels.js'
 import { HivePolicyTarget, TenantPolicyTarget, type PolicyTarget } from './policy-target.js'
+import { PolicyHiveNames, RolloutRowViewModel, SelectedTargetRowViewModel } from './release-policy-fleet-rows.js'
 import type { ReleasePolicySectionService } from './release-policy-section-service.js'
 
 // One release-policy rule: a tenant's (every hive of it) or one hive's.
@@ -150,9 +151,15 @@ export class ReleasePolicyPageViewModel extends PortalPageViewModel
     private static readonly HasNoGatedProperty = 'HasNoGated'
     private static readonly HasLedgerProperty = 'HasLedger'
     private static readonly HasNoLedgerProperty = 'HasNoLedger'
+    private static readonly HasTargetsProperty = 'HasTargets'
+    private static readonly HasNoTargetsProperty = 'HasNoTargets'
+    private static readonly HasRolloutsProperty = 'HasRollouts'
+    private static readonly HasNoRolloutsProperty = 'HasNoRollouts'
 
     private readonly policyRows = new ObservableCollection<PolicyRuleRowViewModel>()
     private readonly gatedRows = new ObservableCollection<GatedVersionRowViewModel>()
+    private readonly targetRows = new ObservableCollection<SelectedTargetRowViewModel>()
+    private readonly rolloutRows = new ObservableCollection<RolloutRowViewModel>()
     private readonly ledgerRows = new ObservableCollection<AdoptionLedgerRowViewModel>()
     private readonly gateCommand: RelayCommand
 
@@ -182,6 +189,38 @@ export class ReleasePolicyPageViewModel extends PortalPageViewModel
         return this.gatedRows.Count === 0
     }
 
+    // Each hive's selected target version.
+    public get TargetRows(): ObservableCollection<SelectedTargetRowViewModel>
+    {
+        return this.targetRows
+    }
+
+    public get HasTargets(): boolean
+    {
+        return this.targetRows.Count > 0
+    }
+
+    public get HasNoTargets(): boolean
+    {
+        return this.targetRows.Count === 0
+    }
+
+    // Every hive's environments against its target, fleet-wide.
+    public get RolloutRows(): ObservableCollection<RolloutRowViewModel>
+    {
+        return this.rolloutRows
+    }
+
+    public get HasRollouts(): boolean
+    {
+        return this.rolloutRows.Count > 0
+    }
+
+    public get HasNoRollouts(): boolean
+    {
+        return this.rolloutRows.Count === 0
+    }
+
     public get LedgerRows(): ObservableCollection<AdoptionLedgerRowViewModel>
     {
         return this.ledgerRows
@@ -206,29 +245,68 @@ export class ReleasePolicyPageViewModel extends PortalPageViewModel
     {
         const generation = this.LoadGeneration
         const api = this.Session.Client
-        const [tenants, clients, hives, policies, gating, manifests] = await Promise.all([
+        const [tenants, clients, hives, policies, gating, manifests, selections, rollouts, fleet] = await Promise.all([
             api.ListTenants(), api.ListClients(), api.ListHives(), api.ListPolicies(), api.ListGating(), api.ListManifests(),
+            api.ListSelections(), api.ListRollouts(), api.ListFleet(),
         ])
         if (generation !== this.LoadGeneration)
         {
             return false
         }
+        // The control plane keeps the ledger per hive (no fleet-wide route),
+        // so this is one request per hive, all in parallel. Fine at today's
+        // fleet size; a fleet-wide ledger route would replace it at scale.
         const ledgers = await Promise.all(hives.map(h => api.ListHiveLedger(h.id)))
         if (generation !== this.LoadGeneration)
         {
             return false
         }
+        const P = ReleasePolicyPageViewModel
         const hadGated = this.HasGated
+        const hadTargets = this.HasTargets
+        const hadRollouts = this.HasRollouts
         const hadLedger = this.HasLedger
         const owners = new PolicyOwnerLabels(tenants, clients)
+        const names = new PolicyHiveNames(fleet)
         this.FillPolicies(owners, tenants.map(t => t.id), hives, policies)
         this.FillGated(owners, gating, policies, manifests)
+        this.FillTargets(names, selections)
+        this.FillRollouts(names, rollouts)
         this.FillLedger(hives, ledgers)
-        this.RaisePropertyChanged(ReleasePolicyPageViewModel.HasGatedProperty, hadGated, this.HasGated)
-        this.RaisePropertyChanged(ReleasePolicyPageViewModel.HasNoGatedProperty, !hadGated, this.HasNoGated)
-        this.RaisePropertyChanged(ReleasePolicyPageViewModel.HasLedgerProperty, hadLedger, this.HasLedger)
-        this.RaisePropertyChanged(ReleasePolicyPageViewModel.HasNoLedgerProperty, !hadLedger, this.HasNoLedger)
-        return this.policyRows.Count > 0 || this.gatedRows.Count > 0 || this.ledgerRows.Count > 0
+        this.RaisePropertyChanged(P.HasGatedProperty, hadGated, this.HasGated)
+        this.RaisePropertyChanged(P.HasNoGatedProperty, !hadGated, this.HasNoGated)
+        this.RaisePropertyChanged(P.HasTargetsProperty, hadTargets, this.HasTargets)
+        this.RaisePropertyChanged(P.HasNoTargetsProperty, !hadTargets, this.HasNoTargets)
+        this.RaisePropertyChanged(P.HasRolloutsProperty, hadRollouts, this.HasRollouts)
+        this.RaisePropertyChanged(P.HasNoRolloutsProperty, !hadRollouts, this.HasNoRollouts)
+        this.RaisePropertyChanged(P.HasLedgerProperty, hadLedger, this.HasLedger)
+        this.RaisePropertyChanged(P.HasNoLedgerProperty, !hadLedger, this.HasNoLedger)
+        return this.policyRows.Count > 0 || this.gatedRows.Count > 0 || this.targetRows.Count > 0
+            || this.rolloutRows.Count > 0 || this.ledgerRows.Count > 0
+    }
+
+    // By hive name.
+    private FillTargets(names: PolicyHiveNames, selections: readonly SelectionDto[]): void
+    {
+        this.targetRows.Clear()
+        const rows = selections.map(s => new SelectedTargetRowViewModel(s, names))
+        rows.sort((a, b) => a.HiveLabel.localeCompare(b.HiveLabel))
+        for (const row of rows)
+        {
+            this.targetRows.Add(row)
+        }
+    }
+
+    // By hive name, then environment.
+    private FillRollouts(names: PolicyHiveNames, rollouts: readonly HiveRolloutDto[]): void
+    {
+        this.rolloutRows.Clear()
+        const rows = rollouts.flatMap(r => r.environments.map(e => new RolloutRowViewModel(r, e, names)))
+        rows.sort((a, b) => a.HiveLabel.localeCompare(b.HiveLabel) || a.Environment.localeCompare(b.Environment))
+        for (const row of rows)
+        {
+            this.rolloutRows.Add(row)
+        }
     }
 
     // Each tenant's rule (by owner label), each followed by its hives' rules.
@@ -316,11 +394,14 @@ export class ReleasePolicyPageViewModel extends PortalPageViewModel
         return reasons.length === 0 ? P.AdoptableLabel : P.BlockedPrefix + reasons.join(P.ReasonSeparator)
     }
 
-    private Edit(target: PolicyTarget, policy: PolicyDto | undefined): Promise<void>
+    // Reloads however the editor closes: a save that was refused part-way and
+    // then cancelled has still changed the rule.
+    private async Edit(target: PolicyTarget, policy: PolicyDto | undefined): Promise<void>
     {
         const title = ReleasePolicyPageViewModel.EditTitleTemplate.replace(ReleasePolicyPageViewModel.NameToken, target.Label)
-        return this.OpenCreate(this.section.Dialogs, dialogs => new PolicyEditDialogViewModel(this.Session, dialogs, target, policy),
-            title, () => this.Refresh())
+        await this.OpenCreate(this.section.Dialogs, dialogs => new PolicyEditDialogViewModel(this.Session, dialogs, target, policy),
+            title, () => Promise.resolve())
+        await this.Refresh()
     }
 
     private Gate(): Promise<void>

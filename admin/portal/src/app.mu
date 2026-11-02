@@ -63,6 +63,15 @@ Application [ Theme = Pragmatic, Scheme = PragmaticLight ] {
         // `Icon = @<Key>` resolves.
         merge PortalIcons
 
+        // The rail item: Mural's icon-only activity-bar item, plus a tooltip
+        // naming the section (shadows the framework's ActivityBarItem key).
+        Style x:key="ActivityBarItem" [TargetType = NavigationItem]
+        {
+            Template = @ActivityBarItemTemplate;
+            ToolTipService.ToolTip = $Label;
+            ToolTipService.ToolTipPlacement = "Right";
+        }
+
         EditorShell x:root [ HeaderContent = ContentControl [ Content = $service(PortalSessionService) ] ] { }
     }
 }

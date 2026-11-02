@@ -1,6 +1,8 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import type { Visual } from '@pragmatic-tech-ai/mural/runtime'
+import { Style, type Visual } from '@pragmatic-tech-ai/mural/runtime'
+import { NavigationItem } from '@pragmatic-tech-ai/mural/framework/navigation/navigation-item.js'
+import { ToolTipService } from '@pragmatic-tech-ai/mural/framework/tooltips/tooltip-service.js'
 import { Geometry } from '@pragmatic-tech-ai/mural/visual-engine'
 import { EditorShell } from '@pragmatic-tech-ai/mural/framework/shell/editor-shell.js'
 import { NavigationDestination, NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
@@ -47,6 +49,15 @@ describe('app.mu composition', () =>
             const destination = item as NavigationDestination
             assert.ok(destination.Icon instanceof Geometry, destination.Label + ' has no icon')
         }
+    })
+
+    it('overrides the rail item style so each rail entry has its section name as a tooltip', () =>
+    {
+        const style = app.Resources.Get('ActivityBarItem')
+        assert.ok(style instanceof Style)
+        assert.equal(style.TargetType, NavigationItem)
+        const tooltip = style.Setters.find(s => s.owner === ToolTipService && s.property === 'ToolTip')
+        assert.ok(tooltip !== undefined, 'no ToolTip setter')
     })
 
     it('registers the clipboard at the app root', () =>

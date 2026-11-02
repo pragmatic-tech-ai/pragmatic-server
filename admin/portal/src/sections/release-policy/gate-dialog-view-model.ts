@@ -1,5 +1,6 @@
 import { ObservableCollection } from '@pragmatic-tech-ai/mural/runtime'
 import type { DialogService } from '@pragmatic-tech-ai/mural/framework/shell/services/dialog-service.js'
+import type { GatingDto } from '../../portal-types.js'
 import { OptionViewModel } from '../../shell/option-view-model.js'
 import { PortalDialogViewModel } from '../../shell/portal-dialog-view-model.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
@@ -7,8 +8,8 @@ import { VersionOrder } from '../../version-order.js'
 import { PolicyOwnerLabels } from './policy-owner-labels.js'
 
 // Gate a version for a tenant: allows the tenant's hives to adopt it, subject
-// to the tenant's release policy. Offers every tenant and every version that
-// is not withdrawn, newest first.
+// to the tenant's release policy. Offers every tenant and, newest first, every
+// version that is not withdrawn and not already gated for the chosen tenant.
 export class GateDialogViewModel extends PortalDialogViewModel<boolean>
 {
     private static readonly SelectedTenantProperty = 'SelectedTenant'
@@ -19,6 +20,8 @@ export class GateDialogViewModel extends PortalDialogViewModel<boolean>
     private readonly versions = new ObservableCollection<OptionViewModel<string>>()
     private selectedTenant: OptionViewModel<string> | undefined
     private selectedVersion: OptionViewModel<string> | undefined
+    private offered: string[] = []
+    private gating: readonly GatingDto[] = []
 
     public constructor(session: PortalSessionService, dialogs: DialogService)
     {
@@ -28,18 +31,31 @@ export class GateDialogViewModel extends PortalDialogViewModel<boolean>
     public override async Load(): Promise<void>
     {
         const api = this.Session.Client
-        const [tenants, clients, manifests] = await Promise.all([api.ListTenants(), api.ListClients(), api.ListManifests()])
+        const [tenants, clients, manifests, gating] = await Promise.all([api.ListTenants(), api.ListClients(), api.ListManifests(), api.ListGating()])
         const labels = new PolicyOwnerLabels(tenants, clients)
         this.tenants.Clear()
         for (const tenant of [...tenants].sort((a, b) => labels.For(a.id).localeCompare(labels.For(b.id))))
         {
             this.tenants.Add(new OptionViewModel(tenant.id, labels.For(tenant.id)))
         }
+        this.offered = manifests.filter(m => m.withdrawn !== true).map(m => m.id).sort((a, b) => VersionOrder.Compare(b, a))
+        this.gating = gating
+        this.FillVersions()
+    }
+
+    // The offered versions, less those already gated for the chosen tenant.
+    private FillVersions(): void
+    {
+        const tenantId = this.selectedTenant?.Value
+        const gated = new Set(this.gating.filter(g => g.tenantId === tenantId).map(g => g.version))
         this.versions.Clear()
-        const adoptable = manifests.filter(m => m.withdrawn !== true).sort((a, b) => VersionOrder.Compare(b.id, a.id))
-        for (const manifest of adoptable)
+        for (const version of this.offered.filter(v => !gated.has(v)))
         {
-            this.versions.Add(new OptionViewModel(manifest.id, manifest.id))
+            this.versions.Add(new OptionViewModel(version, version))
+        }
+        if (this.selectedVersion !== undefined && gated.has(this.selectedVersion.Value))
+        {
+            this.SelectedVersion = undefined
         }
     }
 
@@ -56,6 +72,7 @@ export class GateDialogViewModel extends PortalDialogViewModel<boolean>
     public set SelectedTenant(value: OptionViewModel<string> | undefined)
     {
         this.SetField(GateDialogViewModel.SelectedTenantProperty, this.selectedTenant, value, v => { this.selectedTenant = v })
+        this.FillVersions()
     }
 
     public get Versions(): ObservableCollection<OptionViewModel<string>>

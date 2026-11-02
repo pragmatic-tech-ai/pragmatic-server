@@ -54,6 +54,7 @@ resources ReleasesResources {
                         ColumnDefinition [ Width = GridLength.Star ]
                         ColumnDefinition [ Width = GridLength.Star ]
                         ColumnDefinition [ Width = GridLength.Star ]
+                        ColumnDefinition [ Width = GridLength.Star ]
                     }
                     TextBlock [ Grid.Column = 0, Text = "Version", Style = @UiCaption, Foreground = @Fg2 ]
                     TextBlock [ Grid.Column = 1, Text = "Channel", Style = @UiCaption, Foreground = @Fg2 ]
@@ -61,6 +62,7 @@ resources ReleasesResources {
                     TextBlock [ Grid.Column = 3, Text = "Status", Style = @UiCaption, Foreground = @Fg2 ]
                     TextBlock [ Grid.Column = 4, Text = "Published", Style = @UiCaption, Foreground = @Fg2 ]
                     TextBlock [ Grid.Column = 5, Text = "Adoption (observed)", Style = @UiCaption, Foreground = @Fg2 ]
+                    TextBlock [ Grid.Column = 6, Text = "Image", Style = @UiCaption, Foreground = @Fg2 ]
                 }
                 ListBox [ Template = @PortalTable, HorizontalAlignment = Stretch, ItemsSource = $Rows, ItemTemplate = @ReleaseRowTemplate ]
             }
@@ -77,6 +79,7 @@ resources ReleasesResources {
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]
+                ColumnDefinition [ Width = GridLength.Star ]
             }
             Button [ Grid.Column = 0, Variant = Ghost, Command = $OpenCommand, HorizontalAlignment = Left ] {
                 TextBlock [ Text = $Version, Style = @UiLabel ]
@@ -86,6 +89,7 @@ resources ReleasesResources {
             TextBlock [ Grid.Column = 3, Text = $StatusLabel, Foreground = @Fg1, VerticalAlignment = Center ]
             TextBlock [ Grid.Column = 4, Text = $PublishedLabel, Style = @Code, Foreground = @Fg2, VerticalAlignment = Center ]
             TextBlock [ Grid.Column = 5, Text = $AdoptionLabel, Foreground = @Fg1, VerticalAlignment = Center ]
+            TextBlock [ Grid.Column = 6, Text = $Image, Style = @Code, Foreground = @Fg2, TextWrapping = Wrap, VerticalAlignment = Center ]
         }
     }
 
@@ -98,7 +102,7 @@ resources ReleasesResources {
                     TextBlock [ Text = "Restore version" ]
                 }
                 Button [ DockPanel.Dock = Right, Variant = Danger, Command = $WithdrawCommand, VerticalAlignment = Top,
-                         Visibility = $IsPopulated << ToVisibility ] {
+                         Visibility = $IsPublished << ToVisibility ] {
                     TextBlock [ Text = "Withdraw version" ]
                 }
                 StackPanel [ Orientation = Vertical ] {

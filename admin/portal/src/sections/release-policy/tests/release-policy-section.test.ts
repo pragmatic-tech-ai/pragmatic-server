@@ -188,6 +188,78 @@ describe('Release Policy section', () =>
         assert.equal(page.GatedRows.Count, 2)
     })
 
+    it('the Gate dialog offers only versions not yet gated for the chosen tenant', async () =>
+    {
+        const fx = new PolicyFixture()
+        fx.Api.WithManifest('1.5.0', 'img:new')
+        const page = await fx.Page()
+        page.GateCommand.Execute()
+        await Tick.Settle()
+        const dialog = fx.Dialogs.Last as GateDialogViewModel
+        dialog.SelectedTenant = dialog.Tenants.ToArray().find(t => t.Value === 'acme-prod')
+        assert.deepEqual(dialog.Versions.ToArray().map(v => v.Value), ['1.5.0'])
+        dialog.SelectedTenant = dialog.Tenants.ToArray().find(t => t.Value === 'acme-dev')
+        assert.deepEqual(dialog.Versions.ToArray().map(v => v.Value), ['1.5.0', '1.4.0'])
+    })
+
+    it('a partly failed policy save keeps what was written, so a retry does not resend it', async () =>
+    {
+        const fx = new PolicyFixture()
+        const page = await fx.Page()
+        page.PolicyRows.Get(1)?.EditCommand.Execute()
+        await Tick.Settle()
+        const dialog = fx.Dialogs.Last as PolicyEditDialogViewModel
+        dialog.EarlyAccess = true
+        dialog.MinVersion = '1.3.0'
+        fx.Api.FailPolicyCall = 'SetTenantMinVersion'
+        dialog.ConfirmCommand.Execute()
+        await Tick.Settle()
+        assert.equal(fx.Dialogs.IsOpen, true)
+        assert.match(dialog.ErrorText, /refused/)
+        assert.deepEqual(fx.Api.PolicyCalls, ['SetTenantChannels acme-prod stable,early'])
+        fx.Api.FailPolicyCall = undefined
+        dialog.ConfirmCommand.Execute()
+        await Tick.Settle()
+        assert.deepEqual(fx.Api.PolicyCalls, ['SetTenantChannels acme-prod stable,early', 'SetTenantMinVersion acme-prod 1.3.0'])
+        assert.equal(fx.Dialogs.IsOpen, false)
+    })
+
+    it('Selected targets: each hive target version with its owner and when it was selected', async () =>
+    {
+        const fx = new PolicyFixture()
+        fx.Api.Selections = [{ hiveId: 'acme-hive', targetVersion: '1.4.0', selectedAt: '2026-10-16T00:00:00.000Z' }]
+        const page = await fx.Page()
+        assert.equal(page.HasTargets, true)
+        assert.deepEqual(page.TargetRows.ToArray().map(r => [r.HiveLabel, r.OwnerLabel, r.TargetVersion, r.SelectedLabel]), [
+            ['Hive acme-hive', 'Acme / Acme Production', '1.4.0', '2026-10-16'],
+        ])
+    })
+
+    it('Rollout status: every hive environment against its target', async () =>
+    {
+        const fx = new PolicyFixture()
+        fx.Api.Rollouts = [{ hiveId: 'acme-hive', targetVersion: '1.4.0', environments: [
+            { environmentName: 'prod', runningImage: 'img:0', obsolete: false, ready: true },
+            { environmentName: 'dev', runningImage: 'img:old', obsolete: true, ready: true },
+            { environmentName: 'qa', obsolete: false, ready: false },
+        ] }]
+        const page = await fx.Page()
+        assert.equal(page.HasRollouts, true)
+        assert.deepEqual(page.RolloutRows.ToArray().map(r => [r.HiveLabel, r.OwnerLabel, r.Environment, r.TargetLabel, r.RunningLabel, r.StatusLabel]), [
+            ['Hive acme-hive', 'Acme / Acme Production', 'dev', '1.4.0', 'img:old', 'Behind target'],
+            ['Hive acme-hive', 'Acme / Acme Production', 'prod', '1.4.0', 'img:0', 'On target'],
+            ['Hive acme-hive', 'Acme / Acme Production', 'qa', '1.4.0', 'Not reported', 'Not ready'],
+        ])
+    })
+
+    it('no targets or rollouts -> their empty notes', async () =>
+    {
+        const fx = new PolicyFixture()
+        const page = await fx.Page()
+        assert.equal(page.HasNoTargets, true)
+        assert.equal(page.HasNoRollouts, true)
+    })
+
     it('nothing to show -> Empty', async () =>
     {
         const fx = new PolicyFixture()
