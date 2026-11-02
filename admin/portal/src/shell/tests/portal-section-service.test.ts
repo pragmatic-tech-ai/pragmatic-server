@@ -2,10 +2,11 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import type { IServiceProvider } from '@pragmatic-tech-ai/mural/runtime'
-import type { ControlPlaneClient } from '../../api-client.js'
+import { Capability } from '@pragmatic-tech-ai/mural/framework/shell/module.js'
+import { NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
 import { PageState, PortalPageViewModel } from '../portal-page-view-model.js'
 import { PortalSectionService } from '../portal-section-service.js'
-import { PortalTestHost } from './portal-test-fixtures.js'
+import { PortalTestHost, Tick } from './portal-test-fixtures.js'
 
 class StubPage extends PortalPageViewModel
 {
@@ -40,19 +41,55 @@ class TestSection extends PortalSectionService
     }
 }
 
-class Tick
+class SectionA extends TestSection
 {
-    public static Next(): Promise<void>
-    {
-        return new Promise(resolve => setImmediate(resolve))
-    }
 }
 
-class Fx
+class SectionB extends TestSection
 {
-    public static Host(): PortalTestHost
+}
+
+// Two sections behind a real NavigationService rail.
+class RailFixture
+{
+    public readonly Host = PortalTestHost.WithoutClient()
+    public readonly Navigation: NavigationService
+    private readonly capabilityA = RailFixture.CapabilityFor(SectionA)
+    private readonly capabilityB = RailFixture.CapabilityFor(SectionB)
+
+    public constructor()
     {
-        return new PortalTestHost({} as ControlPlaneClient)
+        this.Host.Provider.register(SectionA, (p) => new SectionA(p))
+        this.Host.Provider.register(SectionB, (p) => new SectionB(p))
+        this.Navigation = new NavigationService(this.Host.Provider)
+        this.Host.Provider.registerInstance(NavigationService.Key, this.Navigation)
+    }
+
+    public get A(): SectionA
+    {
+        return this.Host.Provider.getRequired(SectionA)
+    }
+
+    public get B(): SectionB
+    {
+        return this.Host.Provider.getRequired(SectionB)
+    }
+
+    public SelectA(): void
+    {
+        this.Navigation.SelectedItem = this.capabilityA
+    }
+
+    public SelectB(): void
+    {
+        this.Navigation.SelectedItem = this.capabilityB
+    }
+
+    private static CapabilityFor(section: Function): Capability
+    {
+        const c = new Capability()
+        c.ServiceKey = section as never
+        return c
     }
 }
 
@@ -60,7 +97,7 @@ describe('PortalSectionService', () =>
 {
     it('first activation creates and presents the root once', async () =>
     {
-        const host = Fx.Host()
+        const host = PortalTestHost.WithoutClient()
         const section = new TestSection(host.Provider)
         section.OnActivated()
         section.OnActivated()
@@ -74,7 +111,7 @@ describe('PortalSectionService', () =>
 
     it('re-activation re-views the current page after another section showed', () =>
     {
-        const host = Fx.Host()
+        const host = PortalTestHost.WithoutClient()
         const section = new TestSection(host.Provider)
         const other = new TestSection(host.Provider)
         section.OnActivated()
@@ -89,7 +126,7 @@ describe('PortalSectionService', () =>
 
     it('Back returns to the root and is a no-op at the root', () =>
     {
-        const host = Fx.Host()
+        const host = PortalTestHost.WithoutClient()
         const section = new TestSection(host.Provider)
         section.OnActivated()
         assert.equal(section.BackCommand.CanExecute(), false)
@@ -105,11 +142,34 @@ describe('PortalSectionService', () =>
 
     it('RefreshCurrent reloads the current page', async () =>
     {
-        const host = Fx.Host()
+        const host = PortalTestHost.WithoutClient()
         const section = new TestSection(host.Provider)
         section.OnActivated()
         await Tick.Next()
         await section.RefreshCurrent()
         assert.equal(section.Root?.Loads, 2)
+    })
+
+    it('an off-rail section presents without taking the content region', () =>
+    {
+        const rail = new RailFixture()
+        rail.SelectA()
+        assert.equal(rail.Host.Host.Content, rail.A.Root)
+        assert.equal(rail.A.IsActive, true)
+        rail.SelectB()
+        assert.equal(rail.A.IsActive, false)
+        assert.equal(rail.B.IsActive, true)
+        const late = new DetailPage()
+        rail.A.Present(late)
+        assert.equal(rail.A.Current, late)
+        assert.equal(rail.Host.Host.Content, rail.B.Root)
+        rail.SelectA()
+        assert.equal(rail.Host.Host.Content, late)
+    })
+
+    it('with no navigation registered a section counts as active', () =>
+    {
+        const section = new TestSection(PortalTestHost.WithoutClient().Provider)
+        assert.equal(section.IsActive, true)
     })
 })

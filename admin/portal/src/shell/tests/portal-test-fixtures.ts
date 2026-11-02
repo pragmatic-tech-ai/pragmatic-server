@@ -16,6 +16,15 @@ export class FakeReloader implements IPageReloader
     }
 }
 
+// Lets pending promise continuations run.
+export class Tick
+{
+    public static Next(): Promise<void>
+    {
+        return new Promise(resolve => setImmediate(resolve))
+    }
+}
+
 // A ServiceProvider with a real ContentHostService and an initialized session.
 export class PortalTestHost
 {
@@ -31,6 +40,12 @@ export class PortalTestHost
         this.Session = new PortalSessionService(this.Provider)
         this.Session.Initialize(client, PortalTestHost.Email, OperatorContext.FromWire(wireRole), this.Reloader)
         this.Provider.registerInstance(PortalSessionService.Key, this.Session)
+    }
+
+    // A host whose client is never called.
+    public static WithoutClient(): PortalTestHost
+    {
+        return new PortalTestHost({} as ControlPlaneClient)
     }
 
     public get Host(): ContentHostService

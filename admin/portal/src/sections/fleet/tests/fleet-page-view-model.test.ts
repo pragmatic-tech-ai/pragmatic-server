@@ -24,6 +24,22 @@ class FleetClient
     }
 }
 
+// Answers each ListFleet call with a promise the test resolves by hand.
+class PendingFleetClient
+{
+    public readonly Pending: Array<(hives: FleetHiveDto[]) => void> = []
+
+    public ListFleet(): Promise<FleetHiveDto[]>
+    {
+        return new Promise(resolve => this.Pending.push(resolve))
+    }
+
+    public AsClient(): ControlPlaneClient
+    {
+        return this as unknown as ControlPlaneClient
+    }
+}
+
 class Fx
 {
     public static Hive(id: string, ready: boolean[]): FleetHiveDto
@@ -79,6 +95,21 @@ describe('FleetPageViewModel', () =>
         assert.equal(page.State, PageState.Empty)
         assert.equal(page.Rows.Count, 0)
         assert.equal(page.HasNeedsAttention, false)
+    })
+
+    it('an older load settling last does not overwrite the newer rows', async () =>
+    {
+        const client = new PendingFleetClient()
+        const page = new FleetPageViewModel(new PortalTestHost(client.AsClient()).Session)
+        const first = page.Refresh()
+        const second = page.Refresh()
+        client.Pending[1]([Fx.Hive('new', [true])])
+        await second
+        client.Pending[0]([Fx.Hive('old1', [true]), Fx.Hive('old2', [true])])
+        await first
+        assert.equal(page.State, PageState.Populated)
+        assert.equal(page.Rows.Count, 1)
+        assert.equal(page.Rows.Get(0)?.DisplayName, 'Hive new')
     })
 
     it('the section presents a Fleet page as its root', () =>

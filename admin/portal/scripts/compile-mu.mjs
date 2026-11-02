@@ -46,4 +46,6 @@ class MuCompiler
     }
 }
 
+// The class constants are fixed: freezing the class makes them read-only.
+Object.freeze(MuCompiler)
 MuCompiler.Run()

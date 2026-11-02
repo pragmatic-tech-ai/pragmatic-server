@@ -177,7 +177,12 @@ export class FleetPageViewModel extends PortalPageViewModel
 
     protected override async LoadCore(): Promise<boolean>
     {
+        const generation = this.LoadGeneration
         const dtos = await this.Session.Client.ListFleet()
+        if (generation !== this.LoadGeneration)
+        {
+            return false
+        }
         this.Apply(new FleetViewModel(dtos))
         return dtos.length > 0
     }

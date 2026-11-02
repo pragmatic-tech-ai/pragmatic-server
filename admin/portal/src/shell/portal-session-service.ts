@@ -1,5 +1,5 @@
 import { RelayCommand, ServiceBase, ServiceKey, type IServiceProvider } from '@pragmatic-tech-ai/mural/runtime'
-import type { ControlPlaneClient } from '../api-client.js'
+import { ApiError, type ControlPlaneClient } from '../api-client.js'
 import type { OperatorContext } from '../operator-context.js'
 import type { IPageReloader } from './page-reloader.js'
 
@@ -15,7 +15,9 @@ export class PortalSessionService extends ServiceBase
     private static readonly CanMutateProperty = 'CanMutate'
     private static readonly DeniedReasonProperty = 'DeniedReason'
     private static readonly ReadOnlyNoticeProperty = 'ReadOnlyNotice'
+    private static readonly LogoutErrorProperty = 'LogoutError'
     private static readonly NotInitialized = 'PortalSessionService used before Initialize.'
+    private static readonly NotSignedIn = 'Not signed in'
     private static readonly DeniedTemplate = 'Needs the {role} role. Ask {whom}.'
     private static readonly ReadOnlyTemplate = 'Read-only: you are signed in as {role}.'
     private static readonly RoleToken = '{role}'
@@ -27,6 +29,7 @@ export class PortalSessionService extends ServiceBase
     private operator: OperatorContext | undefined
     private reloader: IPageReloader | undefined
     private expired = false
+    private logoutError = ''
     private readonly logoutCommand: RelayCommand
 
     public constructor(provider: IServiceProvider)
@@ -37,16 +40,21 @@ export class PortalSessionService extends ServiceBase
 
     public Initialize(client: ControlPlaneClient, email: string, operator: OperatorContext, reloader: IPageReloader): void
     {
+        const oldEmail = this.Email
+        const oldRoleLabel = this.RoleLabel
+        const oldCanMutate = this.CanMutate
+        const oldDeniedReason = this.DeniedReason
+        const oldReadOnlyNotice = this.ReadOnlyNotice
         this.client = client
         this.email = email
         this.operator = operator
         this.reloader = reloader
         this.expired = false
-        this.RaisePropertyChanged(PortalSessionService.EmailProperty, '', email)
-        this.RaisePropertyChanged(PortalSessionService.RoleLabelProperty, '', this.RoleLabel)
-        this.RaisePropertyChanged(PortalSessionService.CanMutateProperty, false, this.CanMutate)
-        this.RaisePropertyChanged(PortalSessionService.DeniedReasonProperty, '', this.DeniedReason)
-        this.RaisePropertyChanged(PortalSessionService.ReadOnlyNoticeProperty, '', this.ReadOnlyNotice)
+        this.RaisePropertyChanged(PortalSessionService.EmailProperty, oldEmail, this.Email)
+        this.RaisePropertyChanged(PortalSessionService.RoleLabelProperty, oldRoleLabel, this.RoleLabel)
+        this.RaisePropertyChanged(PortalSessionService.CanMutateProperty, oldCanMutate, this.CanMutate)
+        this.RaisePropertyChanged(PortalSessionService.DeniedReasonProperty, oldDeniedReason, this.DeniedReason)
+        this.RaisePropertyChanged(PortalSessionService.ReadOnlyNoticeProperty, oldReadOnlyNotice, this.ReadOnlyNotice)
     }
 
     public get Client(): ControlPlaneClient
@@ -76,7 +84,11 @@ export class PortalSessionService extends ServiceBase
     // Why a mutating command is disabled; '' when the operator may mutate.
     public get DeniedReason(): string
     {
-        if (this.CanMutate || this.operator === undefined)
+        if (this.operator === undefined)
+        {
+            return PortalSessionService.NotSignedIn
+        }
+        if (this.CanMutate)
         {
             return ''
         }
@@ -95,6 +107,12 @@ export class PortalSessionService extends ServiceBase
         return PortalSessionService.ReadOnlyTemplate.replace(PortalSessionService.RoleToken, this.operator.RoleLabel)
     }
 
+    // Why the last logout failed; '' when none. A failed logout keeps the page.
+    public get LogoutError(): string
+    {
+        return this.logoutError
+    }
+
     public get LogoutCommand(): RelayCommand
     {
         return this.logoutCommand
@@ -111,17 +129,37 @@ export class PortalSessionService extends ServiceBase
         this.reloader?.Reload()
     }
 
+    // Signs out, then reloads to login. A 401 means the session is already
+    // gone, so it reloads too; any other failure leaves the operator signed in,
+    // so it reports the error and stays on the page.
     public async Logout(): Promise<void>
     {
+        this.SetLogoutError('')
         try
         {
             await this.Client.Logout()
         }
-        catch
+        catch (e)
         {
-            // The reload below lands on login either way; a failed logout call
-            // leaves nothing on screen to recover.
+            if (e instanceof ApiError && e.Status === ApiError.UnauthorizedStatus)
+            {
+                this.Expire()
+                return
+            }
+            this.SetLogoutError(e instanceof Error ? e.message : String(e))
+            return
         }
         this.Expire()
+    }
+
+    private SetLogoutError(next: string): void
+    {
+        const old = this.logoutError
+        if (old === next)
+        {
+            return
+        }
+        this.logoutError = next
+        this.RaisePropertyChanged(PortalSessionService.LogoutErrorProperty, old, next)
     }
 }
