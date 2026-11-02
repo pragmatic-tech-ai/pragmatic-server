@@ -32,6 +32,10 @@ class FakeControlPlane
     public static readonly Digest = 'sha256:0f3a9c'
     // The digest as the release detail shows it (the hash, algorithm dropped).
     public static readonly DigestLabel = '0f3a9c'
+    // The ledger row's action label for AdoptAction, as the hive detail shows it.
+    public static readonly AdoptedLabel = 'Adopted'
+    // The check-in row's summary for the one ready environment Observations() reports.
+    public static readonly CheckInSummary = '1 of 1 ready'
     public static readonly Notes = 'Faster capability maps.'
     public static readonly CredentialRef = 'registry-pull/tailspin'
     public static readonly FontExt = '.woff2'
@@ -48,7 +52,7 @@ class FakeControlPlane
     private static readonly ApiPrefix = '/api/'
     private static readonly StableChannel = 'stable'
     private static readonly EarlyChannel = 'early'
-    private static readonly AdoptAction = 'adopt'
+    private static readonly AdoptAction = 'adopted'
     private static readonly LedgerId = 'l-1'
     private static readonly ObservationId = 'o-1'
     private static readonly PublishedAt = '2026-10-10T00:00:00.000Z'
@@ -521,6 +525,9 @@ test.describe('admin portal', () =>
         await expect(PortalSteps.Visible(page, FakeControlPlane.CredentialRef)).toBeVisible()
         await expect(PortalSteps.Visible(page, FakeControlPlane.Version)).toBeVisible()
         await expect(PortalSteps.Visible(page, FakeControlPlane.Image)).toBeVisible()
+        // Row-specific: the Version history (ledger) row and the Recent check-ins row.
+        await expect(PortalSteps.Visible(page, FakeControlPlane.AdoptedLabel)).toBeVisible()
+        await expect(PortalSteps.Visible(page, FakeControlPlane.CheckInSummary)).toBeVisible()
         await PortalSteps.ExpectNoBrokenText(page)
     })
 

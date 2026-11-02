@@ -93,9 +93,10 @@ export class ProvisionStepViewModel extends Observable
 // page holds a pending secret: leaving through the rail keeps it as the
 // section's current page, and no section navigation (a cross-section open of
 // a hive, say) drops or covers it. A half-filled wizard holds pending work: a
-// cross-section open lands on it rather than discarding it. The values are never logged and live nowhere else; the
-// provision result itself is not kept. The form's validation and request
-// shape follow the legacy ProvisionWizardViewModel, which this replaces.
+// cross-section open lands on it rather than discarding it. The values are
+// never logged and live nowhere else; the provision result itself is not
+// kept. The form's validation and request shape follow the legacy
+// ProvisionWizardViewModel, which this replaces.
 export class ProvisionWizardPageViewModel extends PortalPageViewModel implements IHoldsPendingSecret, IHoldsPendingWork
 {
     private static readonly ClientLabel = 'Client'
