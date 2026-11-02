@@ -13,6 +13,14 @@ export class ReleasesSectionService extends TenantSectionService
         super(provider)
     }
 
+    // CONTRACT (Task 4 implements): brings Releases to the front on the adopt
+    // wizard, preselecting `version` when given. Overview's offer banner and
+    // an environment's "Newer version offered" call it.
+    public OpenAdopt(_version?: string): void
+    {
+        this.BringToFront()
+    }
+
     protected override CreateRoot(): TenantPageViewModel
     {
         return new ReleasesPageViewModel(this.Session)

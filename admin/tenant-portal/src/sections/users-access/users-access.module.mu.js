@@ -1,3 +1,4 @@
+import { SecurityModelResources } from "./security-model/security-model.resources.mu.js";
 import { UsersAccessSectionService } from "./users-access-section-service.js";
 import { UsersAccessResources } from "./users-access.resources.mu.js";
 import { Capability, ShellModule } from "@pragmatic-tech-ai/mural/framework/shell/module.js";
@@ -14,5 +15,6 @@ export const UsersAccessModule = (() => {
     _shellModule0.AddChild(_capability1);
     const _rd2 = _shellModule0.Resources;
     for (const [_k, _v] of UsersAccessResources.Clone().Entries()) _rd2.Set(_k, _v);
+    for (const [_k, _v] of SecurityModelResources.Clone().Entries()) _rd2.Set(_k, _v);
     return _shellModule0;
 })();

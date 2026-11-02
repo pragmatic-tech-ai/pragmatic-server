@@ -4,6 +4,7 @@
 
 import UsersAccessSectionService from "./users-access-section-service.js"
 import UsersAccessResources from "./users-access.resources.mu.js"
+import SecurityModelResources from "./security-model/security-model.resources.mu.js"
 
 shell module UsersAccessModule [ Name = "Users & Access" ] {
     .services: {
@@ -14,5 +15,6 @@ shell module UsersAccessModule [ Name = "Users & Access" ] {
 
     resources: {
         merge UsersAccessResources
+        merge SecurityModelResources
     }
 }
