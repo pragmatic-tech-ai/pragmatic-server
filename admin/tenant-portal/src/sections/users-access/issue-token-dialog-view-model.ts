@@ -13,6 +13,7 @@ import { TokenDurations, type TokenDuration } from './token-duration.js'
 // this dialog keeps no copy of it.
 export class IssueTokenDialogViewModel extends TenantDialogViewModel<TokenIssuedDto>
 {
+    private static readonly NoText = ''
     private static readonly PrincipalIdProperty = 'PrincipalId'
     private static readonly ScopesProperty = 'Scopes'
     private static readonly ScopesErrorTextProperty = 'ScopesErrorText'
@@ -26,7 +27,7 @@ export class IssueTokenDialogViewModel extends TenantDialogViewModel<TokenIssued
     private readonly durations: ObservableCollection<OptionViewModel<TokenDuration>>
     private selectedDuration: OptionViewModel<TokenDuration> | undefined
 
-    public constructor(session: TenantSessionService, dialogs: DialogService, private readonly environment: string, principalId: string = '')
+    public constructor(session: TenantSessionService, dialogs: DialogService, private readonly environment: string, principalId: string = IssueTokenDialogViewModel.NoText)
     {
         super(session, dialogs, AdminCapability.Access)
         this.principalId = principalId
@@ -78,7 +79,7 @@ export class IssueTokenDialogViewModel extends TenantDialogViewModel<TokenIssued
     // Why the typed scopes are not accepted; '' until typed, or while valid.
     public get ScopesErrorText(): string
     {
-        return this.scopesTouched && this.ParsedScopes.length === 0 ? IssueTokenDialogViewModel.ScopesRequiredMessage : ''
+        return this.scopesTouched && this.ParsedScopes.length === 0 ? IssueTokenDialogViewModel.ScopesRequiredMessage : IssueTokenDialogViewModel.NoText
     }
 
     public get Durations(): ObservableCollection<OptionViewModel<TokenDuration>>

@@ -133,9 +133,12 @@ export class UsersTabViewModel extends EnvironmentScopedPageViewModel
         return AdminCapability.Access
     }
 
+    // The previous environment's rows go at once: they open accounts of that
+    // environment and must not stay clickable while the new one loads.
     protected override OnEnvironmentChanged(): void
     {
         super.OnEnvironmentChanged()
+        this.ReplaceRows(new ObservableCollection<AccountRowViewModel>())
         this.RaiseMutatingCommandsChanged()
     }
 
@@ -154,10 +157,15 @@ export class UsersTabViewModel extends EnvironmentScopedPageViewModel
             const open = new RelayCommand(() => this.section.OpenAccount(environment, account.principalId))
             rows.Add(new AccountRowViewModel(account, snapshot.grants, account.principalId === me, open))
         }
+        this.ReplaceRows(rows)
+        return rows.Count > 0
+    }
+
+    private ReplaceRows(rows: ObservableCollection<AccountRowViewModel>): void
+    {
         const old = this.rows
         this.rows = rows
         this.RaisePropertyChanged(UsersTabViewModel.RowsProperty, old, rows)
-        return rows.Count > 0
     }
 
     private async CreateAccount(): Promise<void>

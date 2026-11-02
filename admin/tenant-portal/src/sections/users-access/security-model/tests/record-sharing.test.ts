@@ -33,10 +33,10 @@ describe('RecordSharingDeriver', () =>
     {
         const rows = RecordSharingDeriver.Rows(Fixtures.Role([Fixtures.P(PrivilegeAction.Read, 'Account', AccessLevel.Organization)]), [])
         assert.equal(rows.length, 1)
-        assert.equal(rows[0].concept, 'Account')
-        assert.match(rows[0].scopeText, /organization/)
-        assert.equal(rows[0].canShare, false)
-        assert.equal(rows[0].canAssign, false)
+        assert.equal(rows[0].Concept, 'Account')
+        assert.match(rows[0].ScopeText, /organization/)
+        assert.equal(rows[0].CanShare, false)
+        assert.equal(rows[0].CanAssign, false)
     })
 
     it('sets canShare when a share privilege exists', () =>
@@ -45,8 +45,8 @@ describe('RecordSharingDeriver', () =>
             Fixtures.P(PrivilegeAction.Read, 'Account', AccessLevel.Organization),
             Fixtures.P(PrivilegeAction.Share, 'Account', AccessLevel.User)
         ]), [])
-        assert.equal(rows[0].canShare, true)
-        assert.equal(rows[0].canAssign, false)
+        assert.equal(rows[0].CanShare, true)
+        assert.equal(rows[0].CanAssign, false)
     })
 
     it('uses the broadest level across non-share actions', () =>
@@ -55,8 +55,8 @@ describe('RecordSharingDeriver', () =>
             Fixtures.P(PrivilegeAction.Read, 'Account', AccessLevel.User),
             Fixtures.P(PrivilegeAction.Update, 'Account', AccessLevel.BusinessUnit)
         ]), [])
-        assert.match(rows[0].scopeText, /business unit/)
-        assert.doesNotMatch(rows[0].scopeText, /children/)
+        assert.match(rows[0].ScopeText, /business unit/)
+        assert.doesNotMatch(rows[0].ScopeText, /children/)
     })
 
     it('lists a share/assign-only concept with no direct record access', () =>
@@ -66,9 +66,9 @@ describe('RecordSharingDeriver', () =>
             Fixtures.P(PrivilegeAction.Assign, 'Lead', AccessLevel.User)
         ]), [])
         assert.equal(rows.length, 1)
-        assert.match(rows[0].scopeText, /no direct record access/)
-        assert.equal(rows[0].canShare, true)
-        assert.equal(rows[0].canAssign, true)
+        assert.match(rows[0].ScopeText, /no direct record access/)
+        assert.equal(rows[0].CanShare, true)
+        assert.equal(rows[0].CanAssign, true)
     })
 
     it('treats a share privilege at none as absent', () =>
@@ -77,7 +77,7 @@ describe('RecordSharingDeriver', () =>
             Fixtures.P(PrivilegeAction.Read, 'Account', AccessLevel.User),
             Fixtures.P(PrivilegeAction.Share, 'Account', AccessLevel.None)
         ]), [])
-        assert.equal(rows[0].canShare, false)
+        assert.equal(rows[0].CanShare, false)
     })
 
     it('appends the ownership clause only when a rule exists', () =>
@@ -87,8 +87,8 @@ describe('RecordSharingDeriver', () =>
             Fixtures.P(PrivilegeAction.Read, 'Zeta', AccessLevel.User)
         ])
         const rows = RecordSharingDeriver.Rows(role, [Fixtures.Rule('Zeta')])
-        assert.doesNotMatch(rows[0].scopeText, /ownership rules/)
-        assert.match(rows[1].scopeText, /owned per the ownership rules/)
+        assert.doesNotMatch(rows[0].ScopeText, /ownership rules/)
+        assert.match(rows[1].ScopeText, /owned per the ownership rules/)
     })
 
     it('does not claim ownership for a rule whose owning source is unset', () =>
@@ -99,8 +99,8 @@ describe('RecordSharingDeriver', () =>
         ])
         const blank: OwnershipRuleDto = { concept: 'Account', owningBusinessUnit: { kind: '', value: '' } }
         const rows = RecordSharingDeriver.Rows(role, [blank, Fixtures.Rule('Zeta')])
-        assert.doesNotMatch(rows[0].scopeText, /ownership rules/)
-        assert.match(rows[1].scopeText, /owned per the ownership rules/)
+        assert.doesNotMatch(rows[0].ScopeText, /ownership rules/)
+        assert.match(rows[1].ScopeText, /owned per the ownership rules/)
     })
 
     it('sorts rows by concept', () =>
@@ -109,7 +109,7 @@ describe('RecordSharingDeriver', () =>
             Fixtures.P(PrivilegeAction.Read, 'Zeta', AccessLevel.User),
             Fixtures.P(PrivilegeAction.Read, 'Alpha', AccessLevel.User)
         ]), [])
-        assert.deepEqual(rows.map(r => r.concept), ['Alpha', 'Zeta'])
+        assert.deepEqual(rows.map(r => r.Concept), ['Alpha', 'Zeta'])
     })
 
     it('maps an unknown level string to no direct access without throwing', () =>
@@ -117,7 +117,7 @@ describe('RecordSharingDeriver', () =>
         const role = Fixtures.Role([Fixtures.P(PrivilegeAction.Read, 'Account', 'removedUnit')])
         const rows = RecordSharingDeriver.Rows(role, [])
         assert.equal(rows.length, 1)
-        assert.match(rows[0].scopeText, /no direct record access/)
+        assert.match(rows[0].ScopeText, /no direct record access/)
     })
 
     it('uses generic business unit wording when the owning unit was removed', () =>
@@ -131,8 +131,8 @@ describe('RecordSharingDeriver', () =>
         }
         const rows = SecurityModelDraft.From(model).RecordSharingFor('r1')
         assert.equal(rows.length, 1)
-        assert.match(rows[0].scopeText, /business unit/i)
-        assert.ok(!rows[0].scopeText.includes('removedUnit'))
+        assert.match(rows[0].ScopeText, /business unit/i)
+        assert.ok(!rows[0].ScopeText.includes('removedUnit'))
     })
 })
 
@@ -150,7 +150,7 @@ describe('SecurityModelDraft.RecordSharingFor', () =>
         const draft = SecurityModelDraft.From(model)
         const rows = draft.RecordSharingFor('r1')
         assert.equal(rows.length, 1)
-        assert.match(rows[0].scopeText, /ownership rules/)
+        assert.match(rows[0].ScopeText, /ownership rules/)
         assert.equal(draft.Dirty, false)
         assert.deepEqual(draft.RecordSharingFor('missing'), [])
     })

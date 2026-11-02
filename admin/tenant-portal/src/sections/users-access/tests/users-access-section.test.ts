@@ -254,6 +254,36 @@ describe('UsersAccessPageViewModel', () =>
         assert.equal(page.UsersTab.Environment, 'beta')
     })
 
+    it('applies the current option instance when the options were reloaded during the discard question', async () =>
+    {
+        const f = new Fixture()
+        const page = await f.Open()
+        PendingFlag.Hold(page.SecurityModelEditor)
+        page.SelectedEnvironment = page.Environments.ToArray()[1]
+        await Tick.Settle()
+        await page.Refresh()
+        await Tick.Settle()
+        await f.LastConfirm().Confirm()
+        await Tick.Settle()
+        assert.equal(page.SelectedEnvironment?.Value, 'beta')
+        assert.ok(page.Environments.ToArray().includes(page.SelectedEnvironment!))
+    })
+
+    it('drops the previous environment\'s rows at once when the environment changes', async () =>
+    {
+        const f = new Fixture()
+        const page = await f.Open()
+        page.SelectedTab = 'Tokens'
+        await Tick.Settle()
+        assert.equal(page.UsersTab.Rows.Count, 2)
+        assert.equal(page.TokensTab.Rows.Count, 3)
+        const users = page.UsersTab.UseEnvironment('beta')
+        const tokens = page.TokensTab.UseEnvironment('beta')
+        assert.equal(page.UsersTab.Rows.Count, 0)
+        assert.equal(page.TokensTab.Rows.Count, 0)
+        await Promise.all([users, tokens])
+    })
+
     it('switches environment without asking when nothing is pending', async () =>
     {
         const f = new Fixture()
@@ -353,6 +383,7 @@ describe('AccountDetailPageViewModel', () =>
         assert.equal(confirm.Warning, '')
         await confirm.Confirm()
         await Tick.Settle()
+        assert.equal(confirm.ConsequencesText, '- jane@example.test loses the Editor role in alpha at their next request.')
         assert.deepEqual(f.Api.Calls.find(c => c[0] === 'RevokeRole'),
             ['RevokeRole', 'alpha', { subject: 'p2', role: 'Editor', resourceKind: 'model', resourcePath: ['sales', 'eu'] }])
         assert.equal(detail.Grants.Count, 1)
@@ -448,6 +479,7 @@ describe('Tokens tab', () =>
         assert.deepEqual(rows.map(r => r.Status), [TokenStatus.Active, TokenStatus.Expired, TokenStatus.Revoked])
         assert.deepEqual(rows.map(r => r.ScopesText), ['read, write', 'read', 'read'])
         assert.equal(rows[0].ExpiresText, 'Never')
+        assert.equal(rows[1].ExpiresText, '2020-01-01 00:00 UTC')
         assert.equal(rows[2].RevokeCommand.CanExecute(), false)
         rows[0].RevokeCommand.Execute()
         await Tick.Settle()
@@ -455,11 +487,29 @@ describe('Tokens tab', () =>
         assert.equal(f.LastTitle, 'Revoke service token')
         assert.equal(confirm.Message, 'This token stops working immediately. Anything using it will start failing.')
         assert.equal(confirm.ConfirmLabel, 'Revoke token')
+        assert.equal(confirm.ConsequencesText,
+            '- Anything using this token starts failing at its next call.\n- The token reference stays listed as Revoked.')
         await confirm.Confirm()
         await Tick.Settle()
         assert.deepEqual(f.Api.Calls.find(c => c[0] === 'RevokeToken'), ['RevokeToken', 'alpha', 'tok-a'])
         assert.equal(page.TokensTab.Rows.ToArray()[0].Status, TokenStatus.Revoked)
         assert.equal(page.TokensTab.Rows.ToArray()[0].RevokeCommand.CanExecute(), false)
+    })
+
+    it('keeps one row command per row across reloads', async () =>
+    {
+        const f = new Fixture()
+        const page = await f.Open()
+        page.SelectedTab = 'Tokens'
+        await Tick.Settle()
+        await page.TokensTab.Refresh()
+        await page.TokensTab.Refresh()
+        const commands = (page.TokensTab as unknown as { rowCommands: unknown[] }).rowCommands
+        assert.equal(commands.length, page.TokensTab.Rows.Count)
+        const detail = await f.OpenAccount('p2')
+        await detail.Refresh()
+        await detail.Refresh()
+        assert.equal((detail as unknown as { rowCommands: unknown[] }).rowCommands.length, detail.Grants.Count)
     })
 
     it('requires a principal and at least one scope, and maps the duration', async () =>

@@ -1,12 +1,13 @@
 import { AccessLevel, LevelCycle, PrivilegeAction } from './security-model-enums.js'
 import type { OwnershipRuleDto, PrivilegeDto, RoleConfigDto } from '../../../tenant-types.js'
 
-export interface RecordSharingRowData
+// One concept's line in the Record sharing view.
+export interface IRecordSharingRow
 {
-    concept: string
-    scopeText: string
-    canShare: boolean
-    canAssign: boolean
+    readonly Concept: string
+    readonly ScopeText: string
+    readonly CanShare: boolean
+    readonly CanAssign: boolean
 }
 
 // Read-only projection of what records a role can reach, in plain words. Takes
@@ -28,7 +29,7 @@ export class RecordSharingDeriver
     private static readonly Unset = ''
     private static readonly OwnershipClause = ' (records owned per the ownership rules)'
 
-    public static Rows(role: RoleConfigDto | undefined, ownershipRules: readonly OwnershipRuleDto[]): readonly RecordSharingRowData[]
+    public static Rows(role: RoleConfigDto | undefined, ownershipRules: readonly OwnershipRuleDto[]): readonly IRecordSharingRow[]
     {
         if (role === undefined)
         {
@@ -42,15 +43,15 @@ export class RecordSharingDeriver
             byConcept.set(p.concept, list)
         }
         const owned = new Set<string>(ownershipRules.filter(r => r.owningBusinessUnit.value !== RecordSharingDeriver.Unset).map(r => r.concept))
-        const rows: RecordSharingRowData[] = []
+        const rows: IRecordSharingRow[] = []
         for (const concept of [...byConcept.keys()].sort())
         {
             const privileges = byConcept.get(concept) ?? []
             rows.push({
-                concept,
-                scopeText: RecordSharingDeriver.ScopeText(privileges) + (owned.has(concept) ? RecordSharingDeriver.OwnershipClause : RecordSharingDeriver.Unset),
-                canShare: RecordSharingDeriver.Grants(privileges, PrivilegeAction.Share),
-                canAssign: RecordSharingDeriver.Grants(privileges, PrivilegeAction.Assign)
+                Concept: concept,
+                ScopeText: RecordSharingDeriver.ScopeText(privileges) + (owned.has(concept) ? RecordSharingDeriver.OwnershipClause : RecordSharingDeriver.Unset),
+                CanShare: RecordSharingDeriver.Grants(privileges, PrivilegeAction.Share),
+                CanAssign: RecordSharingDeriver.Grants(privileges, PrivilegeAction.Assign)
             })
         }
         return rows

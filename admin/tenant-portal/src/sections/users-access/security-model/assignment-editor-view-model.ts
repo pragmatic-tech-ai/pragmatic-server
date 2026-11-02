@@ -264,7 +264,7 @@ export class AssignmentEditorViewModel extends Observable
             }
             for (const claim of section.ClaimGrants(targetId))
             {
-                this.claimRows.Add(new AssignmentClaimRowViewModel(this, claim.index, claim.claim, claim.value))
+                this.claimRows.Add(new AssignmentClaimRowViewModel(this, claim.Index, claim.Claim, claim.Value))
             }
             const teams = draft.Org.Teams
             const granted = new Set<string>(section.TeamGrants(targetId))

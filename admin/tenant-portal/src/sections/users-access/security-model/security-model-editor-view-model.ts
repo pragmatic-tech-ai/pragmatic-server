@@ -411,8 +411,8 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         return this.roles.Count > 0
     }
 
-    // The empty hint ("No roles yet. Add a role to start.") shows while the
-    // loaded model is still editable.
+    // Whether the model has no roles yet: the template then shows the hint
+    // "No roles yet. Add a role to start." (the model stays editable).
     public get HasNoRoles(): boolean
     {
         return !this.HasRoles
@@ -533,14 +533,14 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
             return SecurityModelEditorViewModel.Empty
         }
         const holders = this.draft.RoleHoldersFor(id)
-        const claims = holders.byClaim.length
-        const teams = holders.byTeam.length
-        if (holders.directCount === 0 && claims === 0 && teams === 0)
+        const claims = holders.ByClaim.length
+        const teams = holders.ByTeam.length
+        if (holders.DirectCount === 0 && claims === 0 && teams === 0)
         {
             return SecurityModelEditorViewModel.NoOneAssignedText
         }
         const P = SecurityModelEditorViewModel
-        let text = holders.directCount + P.AssignedDirectlySuffix
+        let text = holders.DirectCount + P.AssignedDirectlySuffix
         const parts: string[] = []
         if (claims > 0)
         {
@@ -875,7 +875,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         try
         {
             const model = await this.Session.Client.GetSecurityModel(environment)
-            if (generation === this.LoadGeneration && environment === this.Environment)
+            if (generation === this.LoadGeneration)
             {
                 this.SetDraft(SecurityModelDraft.From(model))
             }
@@ -920,6 +920,10 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         {
             // Reported through the page's state machine: the reload rethrows it.
             this.pendingFailure = forbidden
+            // Drop the draft too: the reload would rethrow the failure even
+            // with it kept, but a Denied page must not go on reporting pending
+            // work (blocking environment switches and navigation) for edits
+            // the server will never accept.
             this.SetDraft(undefined)
             await this.Refresh()
             return

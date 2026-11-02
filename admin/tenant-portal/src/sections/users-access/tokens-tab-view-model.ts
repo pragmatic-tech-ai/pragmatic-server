@@ -1,6 +1,7 @@
 import { ObservableCollection, type RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import { AdminCapability } from '../../shell/admin-capability.js'
+import { UtcText } from '../../shell/utc-text.js'
 import type { TenantSessionService } from '../../shell/tenant-session-service.js'
 import type { ServiceTokenSummaryDto } from '../../tenant-types.js'
 import { EnvironmentScopedPageViewModel } from './environment-scoped-page-view-model.js'
@@ -63,7 +64,7 @@ export class TokenRowViewModel extends Observable
 
     public get ExpiresText(): string
     {
-        return this.dto.expiresAt ?? TokenRowViewModel.NeverText
+        return this.dto.expiresAt === null ? TokenRowViewModel.NeverText : UtcText.DateTime(this.dto.expiresAt)
     }
 
     public get Status(): TokenStatus
@@ -115,6 +116,10 @@ export class TokensTabViewModel extends EnvironmentScopedPageViewModel
     private static readonly RevokeTitle = 'Revoke service token'
     private static readonly RevokeMessage = 'This token stops working immediately. Anything using it will start failing.'
     private static readonly RevokeLabel = 'Revoke token'
+    private static readonly RevokeConsequences: readonly string[] = [
+        'Anything using this token starts failing at its next call.',
+        'The token reference stays listed as Revoked.',
+    ]
 
     private rows = new ObservableCollection<TokenRowViewModel>()
     private readonly issueTokenCommand: RelayCommand
@@ -141,9 +146,13 @@ export class TokensTabViewModel extends EnvironmentScopedPageViewModel
         return AdminCapability.Access
     }
 
+    // The previous environment's rows go at once: their commands are bound to
+    // that environment and must not stay clickable while the new one loads.
     protected override OnEnvironmentChanged(): void
     {
         super.OnEnvironmentChanged()
+        this.ClearRowCommands()
+        this.ReplaceRows(new ObservableCollection<TokenRowViewModel>())
         this.RaiseMutatingCommandsChanged()
     }
 
@@ -155,17 +164,23 @@ export class TokensTabViewModel extends EnvironmentScopedPageViewModel
         {
             return false
         }
+        this.ClearRowCommands()
         const rows = new ObservableCollection<TokenRowViewModel>()
         for (const token of tokens)
         {
-            const revoke = this.MutatingCommand(AdminCapability.Access, () => this.Revoke(environment, token.tokenRef),
+            const revoke = this.RowMutatingCommand(AdminCapability.Access, () => this.Revoke(environment, token.tokenRef),
                 () => !token.revoked)
             rows.Add(new TokenRowViewModel(token, revoke))
         }
+        this.ReplaceRows(rows)
+        return rows.Count > 0
+    }
+
+    private ReplaceRows(rows: ObservableCollection<TokenRowViewModel>): void
+    {
         const old = this.rows
         this.rows = rows
         this.RaisePropertyChanged(TokensTabViewModel.RowsProperty, old, rows)
-        return rows.Count > 0
     }
 
     private async IssueToken(): Promise<void>
@@ -184,6 +199,7 @@ export class TokensTabViewModel extends EnvironmentScopedPageViewModel
         const T = TokensTabViewModel
         await this.Confirm(this.section.Dialogs, {
             Capability: AdminCapability.Access, Title: T.RevokeTitle, Message: T.RevokeMessage, ConfirmLabel: T.RevokeLabel,
+            Consequences: T.RevokeConsequences,
             Action: async () => { await this.Session.Client.RevokeToken(environment, tokenRef) },
             OnConfirmed: async () => { await this.Refresh() },
         })

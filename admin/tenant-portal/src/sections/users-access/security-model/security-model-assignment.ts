@@ -3,18 +3,20 @@ import type {
     RoleAssignmentDto, RoleClaimRuleDto, RoleOverrideDto, SecurityModelDto, TeamRoleGrantDto
 } from '../../../tenant-types.js'
 
-export interface AssignmentArrays<TClaim, TOverride, TTeam>
+// The live arrays one assignment edits (they belong to the draft's DTOs).
+export interface IAssignmentArrays<TClaim, TOverride, TTeam>
 {
-    claimsMapping: TClaim[]
-    overrides: TOverride[]
-    teamGrants: TTeam[]
+    readonly ClaimsMapping: TClaim[]
+    readonly Overrides: TOverride[]
+    readonly TeamGrants: TTeam[]
 }
 
-export interface ClaimGrantRow
+// One claim rule granting the target, with its position in ClaimsMapping.
+export interface IClaimGrantRow
 {
-    index: number
-    claim: string
-    value: string
+    readonly Index: number
+    readonly Claim: string
+    readonly Value: string
 }
 
 // Shared edit logic for an id-set assignment (claim rules, principal overrides,
@@ -37,22 +39,22 @@ export abstract class SecurityModelAssignment<TClaim extends { claim: string; va
         return this.dirty
     }
 
-    protected abstract Ensure(): AssignmentArrays<TClaim, TOverride, TTeam>
-    protected abstract Peek(): AssignmentArrays<TClaim, TOverride, TTeam> | undefined
+    protected abstract Ensure(): IAssignmentArrays<TClaim, TOverride, TTeam>
+    protected abstract Peek(): IAssignmentArrays<TClaim, TOverride, TTeam> | undefined
     protected abstract IdsOf(entry: TClaim | TOverride | TTeam): string[]
     protected abstract NewClaim(claim: string, value: string, id: string): TClaim
     protected abstract NewOverride(principalId: string, id: string): TOverride
     protected abstract NewTeam(teamId: string, id: string): TTeam
 
-    public ClaimGrants(targetId: string): readonly ClaimGrantRow[]
+    public ClaimGrants(targetId: string): readonly IClaimGrantRow[]
     {
-        const rows: ClaimGrantRow[] = []
-        const claims = this.Peek()?.claimsMapping ?? []
+        const rows: IClaimGrantRow[] = []
+        const claims = this.Peek()?.ClaimsMapping ?? []
         claims.forEach((rule, index) =>
         {
             if (this.IdsOf(rule).includes(targetId))
             {
-                rows.push({ index, claim: rule.claim, value: rule.value })
+                rows.push({ Index: index, Claim: rule.claim, Value: rule.value })
             }
         })
         return rows
@@ -60,13 +62,13 @@ export abstract class SecurityModelAssignment<TClaim extends { claim: string; va
 
     public AddClaimGrant(targetId: string): void
     {
-        this.Ensure().claimsMapping.push(this.NewClaim(SecurityModelAssignment.EmptyString, SecurityModelAssignment.EmptyString, targetId))
+        this.Ensure().ClaimsMapping.push(this.NewClaim(SecurityModelAssignment.EmptyString, SecurityModelAssignment.EmptyString, targetId))
         this.dirty = true
     }
 
     public SetClaim(index: number, claim: string): void
     {
-        const rule = this.Peek()?.claimsMapping[index]
+        const rule = this.Peek()?.ClaimsMapping[index]
         if (rule === undefined)
         {
             return
@@ -77,7 +79,7 @@ export abstract class SecurityModelAssignment<TClaim extends { claim: string; va
 
     public SetValue(index: number, value: string): void
     {
-        const rule = this.Peek()?.claimsMapping[index]
+        const rule = this.Peek()?.ClaimsMapping[index]
         if (rule === undefined)
         {
             return
@@ -88,7 +90,7 @@ export abstract class SecurityModelAssignment<TClaim extends { claim: string; va
 
     public RemoveClaimGrant(targetId: string, index: number): void
     {
-        const claims = this.Peek()?.claimsMapping
+        const claims = this.Peek()?.ClaimsMapping
         const rule = claims?.[index]
         if (claims === undefined || rule === undefined || !this.Drop(rule, targetId))
         {
@@ -103,7 +105,7 @@ export abstract class SecurityModelAssignment<TClaim extends { claim: string; va
 
     public PrincipalGrants(targetId: string): readonly string[]
     {
-        return (this.Peek()?.overrides ?? []).filter(o => this.IdsOf(o).includes(targetId)).map(o => o.principalId)
+        return (this.Peek()?.Overrides ?? []).filter(o => this.IdsOf(o).includes(targetId)).map(o => o.principalId)
     }
 
     public AddPrincipalGrant(targetId: string, principalId: string): void
@@ -112,7 +114,7 @@ export abstract class SecurityModelAssignment<TClaim extends { claim: string; va
         {
             return
         }
-        const overrides = this.Ensure().overrides
+        const overrides = this.Ensure().Overrides
         const entry = overrides.find(o => o.principalId === principalId)
         if (entry === undefined)
         {
@@ -128,7 +130,7 @@ export abstract class SecurityModelAssignment<TClaim extends { claim: string; va
     public RemovePrincipalGrant(targetId: string, principalId: string): void
     {
         // The normal model has one entry per principalId; iterating all matches is defensive against duplicates.
-        const overrides = this.Peek()?.overrides
+        const overrides = this.Peek()?.Overrides
         if (overrides !== undefined && this.DropAll(overrides, o => o.principalId === principalId, targetId))
         {
             this.dirty = true
@@ -137,7 +139,7 @@ export abstract class SecurityModelAssignment<TClaim extends { claim: string; va
 
     public TeamGrants(targetId: string): readonly string[]
     {
-        return (this.Peek()?.teamGrants ?? []).filter(t => this.IdsOf(t).includes(targetId)).map(t => t.teamId)
+        return (this.Peek()?.TeamGrants ?? []).filter(t => this.IdsOf(t).includes(targetId)).map(t => t.teamId)
     }
 
     public AddTeamGrant(targetId: string, teamId: string): void
@@ -146,7 +148,7 @@ export abstract class SecurityModelAssignment<TClaim extends { claim: string; va
         {
             return
         }
-        const teams = this.Ensure().teamGrants
+        const teams = this.Ensure().TeamGrants
         const entry = teams.find(t => t.teamId === teamId)
         if (entry === undefined)
         {
@@ -162,7 +164,7 @@ export abstract class SecurityModelAssignment<TClaim extends { claim: string; va
     public RemoveTeamGrant(targetId: string, teamId: string): void
     {
         // The normal model has one entry per teamId; iterating all matches is defensive against duplicates.
-        const teams = this.Peek()?.teamGrants
+        const teams = this.Peek()?.TeamGrants
         if (teams !== undefined && this.DropAll(teams, t => t.teamId === teamId, targetId))
         {
             this.dirty = true
@@ -217,13 +219,13 @@ export class RoleAssignmentSection extends SecurityModelAssignment<RoleClaimRule
         super(model)
     }
 
-    protected Ensure(): AssignmentArrays<RoleClaimRuleDto, RoleOverrideDto, TeamRoleGrantDto>
+    protected Ensure(): IAssignmentArrays<RoleClaimRuleDto, RoleOverrideDto, TeamRoleGrantDto>
     {
         this.model.roleAssignment ??= { claimsMapping: [], overrides: [], teamRoles: [] }
         return RoleAssignmentSection.Arrays(this.model.roleAssignment)
     }
 
-    protected Peek(): AssignmentArrays<RoleClaimRuleDto, RoleOverrideDto, TeamRoleGrantDto> | undefined
+    protected Peek(): IAssignmentArrays<RoleClaimRuleDto, RoleOverrideDto, TeamRoleGrantDto> | undefined
     {
         const a = this.model.roleAssignment
         return a === undefined ? undefined : RoleAssignmentSection.Arrays(a)
@@ -249,9 +251,9 @@ export class RoleAssignmentSection extends SecurityModelAssignment<RoleClaimRule
         return { teamId, roles: [id] }
     }
 
-    private static Arrays(a: RoleAssignmentDto): AssignmentArrays<RoleClaimRuleDto, RoleOverrideDto, TeamRoleGrantDto>
+    private static Arrays(a: RoleAssignmentDto): IAssignmentArrays<RoleClaimRuleDto, RoleOverrideDto, TeamRoleGrantDto>
     {
-        return { claimsMapping: a.claimsMapping, overrides: a.overrides, teamGrants: a.teamRoles }
+        return { ClaimsMapping: a.claimsMapping, Overrides: a.overrides, TeamGrants: a.teamRoles }
     }
 }
 
@@ -265,12 +267,12 @@ export class ProfileAssignmentSection extends SecurityModelAssignment<FieldProfi
         this.ensure = ensure
     }
 
-    protected Ensure(): AssignmentArrays<FieldProfileClaimRuleDto, FieldProfileOverrideDto, FieldProfileTeamGrantDto>
+    protected Ensure(): IAssignmentArrays<FieldProfileClaimRuleDto, FieldProfileOverrideDto, FieldProfileTeamGrantDto>
     {
         return ProfileAssignmentSection.Arrays(this.ensure().profileAssignment)
     }
 
-    protected Peek(): AssignmentArrays<FieldProfileClaimRuleDto, FieldProfileOverrideDto, FieldProfileTeamGrantDto> | undefined
+    protected Peek(): IAssignmentArrays<FieldProfileClaimRuleDto, FieldProfileOverrideDto, FieldProfileTeamGrantDto> | undefined
     {
         const a = this.model.fieldSecurity?.profileAssignment
         return a === undefined ? undefined : ProfileAssignmentSection.Arrays(a)
@@ -296,8 +298,8 @@ export class ProfileAssignmentSection extends SecurityModelAssignment<FieldProfi
         return { teamId, profiles: [id] }
     }
 
-    private static Arrays(a: FieldProfileAssignmentDto): AssignmentArrays<FieldProfileClaimRuleDto, FieldProfileOverrideDto, FieldProfileTeamGrantDto>
+    private static Arrays(a: FieldProfileAssignmentDto): IAssignmentArrays<FieldProfileClaimRuleDto, FieldProfileOverrideDto, FieldProfileTeamGrantDto>
     {
-        return { claimsMapping: a.claimsMapping, overrides: a.overrides, teamGrants: a.teamProfiles }
+        return { ClaimsMapping: a.claimsMapping, Overrides: a.overrides, TeamGrants: a.teamProfiles }
     }
 }

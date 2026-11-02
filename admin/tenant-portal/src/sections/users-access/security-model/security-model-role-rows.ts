@@ -1,6 +1,6 @@
 import { RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
-import type { RecordSharingRowData } from './record-sharing.js'
+import type { IRecordSharingRow } from './record-sharing.js'
 import type { SecurityModelDraft } from './security-model-draft.js'
 import { SecurityModelPart, type ISecurityModelEditHost } from './security-model-edit-host.js'
 import { AccessLevel, Actions, FieldPermission, PrivilegeAction } from './security-model-enums.js'
@@ -304,28 +304,28 @@ export class FieldGrantRowViewModel extends Observable
 // in plain words, and whether it may share / assign those records.
 export class RecordSharingRowViewModel extends Observable
 {
-    public constructor(private readonly data: RecordSharingRowData)
+    public constructor(private readonly data: IRecordSharingRow)
     {
         super()
     }
 
     public get Concept(): string
     {
-        return this.data.concept
+        return this.data.Concept
     }
 
     public get ScopeText(): string
     {
-        return this.data.scopeText
+        return this.data.ScopeText
     }
 
     public get CanShare(): boolean
     {
-        return this.data.canShare
+        return this.data.CanShare
     }
 
     public get CanAssign(): boolean
     {
-        return this.data.canAssign
+        return this.data.CanAssign
     }
 }

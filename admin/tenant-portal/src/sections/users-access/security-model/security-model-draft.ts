@@ -1,8 +1,8 @@
 import { RecordSharingDeriver } from './record-sharing.js'
 import { RoleHoldersDeriver } from './role-holders.js'
-import type { RoleHolderData } from './role-holders.js'
+import type { IRoleHolders } from './role-holders.js'
 import { AccessLevel, FieldPermission, LevelCycle, PrivilegeAction } from './security-model-enums.js'
-import type { RecordSharingRowData } from './record-sharing.js'
+import type { IRecordSharingRow } from './record-sharing.js'
 import { ProfileAssignmentSection, RoleAssignmentSection } from './security-model-assignment.js'
 import { SecurityModelOrg } from './security-model-org.js'
 import type { FieldGrantDto, FieldProfileDto, FieldSecurityDto, PrivilegeDto, RoleAssignmentDto, RoleConfigDto, SecuredFieldDto, SecurityModelDto } from '../../../tenant-types.js'
@@ -310,20 +310,20 @@ export class SecurityModelDraft
         this.dirty = true
     }
 
-    public RecordSharingFor(roleId: string): readonly RecordSharingRowData[]
+    public RecordSharingFor(roleId: string): readonly IRecordSharingRow[]
     {
         const role = this.Roles.find(r => r.id === roleId)
         return RecordSharingDeriver.Rows(role, this.model.ownershipRules ?? [])
     }
 
-    public RoleHoldersFor(roleId: string): RoleHolderData
+    public RoleHoldersFor(roleId: string): IRoleHolders
     {
         return RoleHoldersDeriver.Holders(roleId, this.model.roleAssignment, this.model.teams)
     }
 
     public DirectHolderCount(roleId: string): number
     {
-        return this.RoleHoldersFor(roleId).directCount
+        return this.RoleHoldersFor(roleId).DirectCount
     }
 
     public ToDto(): SecurityModelDto

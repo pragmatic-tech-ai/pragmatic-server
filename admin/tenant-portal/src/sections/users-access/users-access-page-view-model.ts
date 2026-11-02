@@ -316,9 +316,12 @@ export class UsersAccessPageViewModel extends TenantPageViewModel
         {
             this.confirmingSwitch = false
         }
-        if (confirmed)
+        // A live reload during the question may have replaced the options:
+        // apply the current instance for that environment, if it still exists.
+        const current = this.environments.ToArray().find(o => o.Value === value.Value)
+        if (confirmed && current !== undefined)
         {
-            this.ApplyEnvironment(value)
+            this.ApplyEnvironment(current)
         }
         else
         {

@@ -58,6 +58,9 @@ export class AccountDetailPageViewModel extends TenantPageViewModel
     ] as const
     private static readonly DisableSelfWarning = 'This is your own account; disabling it will lock you out.'
     private static readonly RoleToken = '{role}'
+    private static readonly EnvironmentToken = '{environment}'
+    private static readonly RevokeConsequenceTemplate = '{who} loses the {role} role in {environment} at their next request.'
+    private static readonly NoText = ''
     private static readonly WhoToken = '{who}'
 
     private account: AccountDto | undefined
@@ -102,7 +105,7 @@ export class AccountDetailPageViewModel extends TenantPageViewModel
 
     public get Email(): string
     {
-        return this.account?.email ?? ''
+        return this.account?.email ?? AccountDetailPageViewModel.NoText
     }
 
     // The signed-in operator's own account.
@@ -113,7 +116,7 @@ export class AccountDetailPageViewModel extends TenantPageViewModel
 
     public get StatusLabel(): string
     {
-        return this.account === undefined ? '' : AccountLabels.StatusLabel(AccountLabels.StatusOf(this.account))
+        return this.account === undefined ? AccountDetailPageViewModel.NoText : AccountLabels.StatusLabel(AccountLabels.StatusOf(this.account))
     }
 
     public get IsActive(): boolean
@@ -199,10 +202,11 @@ export class AccountDetailPageViewModel extends TenantPageViewModel
             return false
         }
         const account = snapshot.accounts.find(a => a.principalId === this.principalId)
+        this.ClearRowCommands()
         const grants = new ObservableCollection<GrantRowViewModel>()
         for (const grant of snapshot.grants.filter(g => g.subject === this.principalId))
         {
-            grants.Add(new GrantRowViewModel(grant, this.MutatingCommand(AdminCapability.Access, () => this.Revoke(grant))))
+            grants.Add(new GrantRowViewModel(grant, this.RowMutatingCommand(AdminCapability.Access, () => this.Revoke(grant))))
         }
         this.Apply(account, grants)
         return account !== undefined
@@ -236,6 +240,8 @@ export class AccountDetailPageViewModel extends TenantPageViewModel
             Capability: AdminCapability.Access,
             Title: P.RevokeTitle,
             Message: P.RevokeTemplate.replace(P.RoleToken, grant.role).replace(P.WhoToken, this.Who),
+            Consequences: [P.RevokeConsequenceTemplate.replace(P.WhoToken, this.Who).replace(P.RoleToken, grant.role)
+                .replace(P.EnvironmentToken, this.environment)],
             Warning: this.IsYou ? P.RevokeSelfWarning : undefined,
             ConfirmLabel: P.RevokeLabel,
             Action: async () =>

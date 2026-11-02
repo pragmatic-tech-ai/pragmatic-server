@@ -9,6 +9,7 @@ import type { TenantSessionService } from '../../shell/tenant-session-service.js
 // closes (created, cancelled or dismissed). Resolves with the principal id.
 export class CreateAccountDialogViewModel extends TenantDialogViewModel<string>
 {
+    private static readonly NoText = ''
     private static readonly EmailProperty = 'Email'
     private static readonly PrincipalIdProperty = 'PrincipalId'
     private static readonly PasswordProperty = 'Password'
@@ -68,7 +69,7 @@ export class CreateAccountDialogViewModel extends TenantDialogViewModel<string>
         }
         finally
         {
-            this.Password = ''
+            this.Password = CreateAccountDialogViewModel.NoText
         }
     }
 
@@ -84,7 +85,7 @@ export class CreateAccountDialogViewModel extends TenantDialogViewModel<string>
         const principalId = this.principalId.trim()
         const params = { email: this.email.trim(), principalId, password: this.password }
         await this.Session.Client.CreateAccount(this.environment, params)
-        this.Password = ''
+        this.Password = CreateAccountDialogViewModel.NoText
         return principalId
     }
 }
