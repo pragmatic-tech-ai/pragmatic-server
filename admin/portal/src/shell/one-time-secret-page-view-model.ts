@@ -1,6 +1,7 @@
 import { RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import type { ClipboardService } from '@pragmatic-tech-ai/mural/framework/shell/services/clipboard-service.js'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
+import type { IHoldsPendingSecret } from './holds-pending-secret.js'
 
 // Where a reveal page copies to: its section (the shell's clipboard seam).
 export interface IClipboardSource
@@ -12,9 +13,10 @@ export interface IClipboardSource
 // password). A page, not a dialog: a dialog closes on Escape, and this must
 // stay until the operator confirms they saved it. Confirming clears the value
 // and calls OnSaved (each page moves on to its destination); leaving through
-// the rail first keeps the page as the section's current one. The value is
+// the rail first keeps the page as the section's current one, and no section
+// navigation drops or covers it until then (IHoldsPendingSecret). The value is
 // never logged and lives nowhere else.
-export abstract class OneTimeSecretPageViewModel extends Observable
+export abstract class OneTimeSecretPageViewModel extends Observable implements IHoldsPendingSecret
 {
     private static readonly ValueProperty = 'Value'
     private static readonly SavedProperty = 'Saved'
@@ -41,6 +43,13 @@ export abstract class OneTimeSecretPageViewModel extends Observable
     public get Value(): string
     {
         return this.value
+    }
+
+    // True until the operator confirms saving the value: the section keeps
+    // this page current meanwhile.
+    public get HasPendingSecret(): boolean
+    {
+        return this.value.length > 0
     }
 
     // The operator's "I've saved it" acknowledgement.

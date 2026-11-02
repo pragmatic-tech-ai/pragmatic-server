@@ -537,6 +537,8 @@ resources HivesResources {
                                 TextBlock [ Text = $OwnerPassword, Style = @Code, Foreground = @Fg0, VerticalAlignment = Center ]
                             }
                         }
+                        TextBlock [ Text = $OwnerCopyStatus, Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,8),
+                                    Visibility = $OwnerCopyStatus << ToVisibility ]
                         StackPanel [ Orientation = Horizontal, Margin = (0,0,0,16) ] {
                             Checkbox [ IsChecked = $OwnerSaved, VerticalAlignment = Center, Margin = (0,0,8,0) ]
                             TextBlock [ Text = "I've saved the Owner password", Foreground = @Fg0, VerticalAlignment = Center ]
@@ -553,12 +555,12 @@ resources HivesResources {
                                 TextBlock [ Text = $AgentToken, Style = @Code, Foreground = @Fg0, VerticalAlignment = Center, TextWrapping = Wrap ]
                             }
                         }
+                        TextBlock [ Text = $AgentCopyStatus, Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,8),
+                                    Visibility = $AgentCopyStatus << ToVisibility ]
                         StackPanel [ Orientation = Horizontal, Margin = (0,0,0,8) ] {
                             Checkbox [ IsChecked = $AgentSaved, VerticalAlignment = Center, Margin = (0,0,8,0) ]
                             TextBlock [ Text = "I've saved the agent token", Foreground = @Fg0, VerticalAlignment = Center ]
                         }
-                        TextBlock [ Text = $CopyStatus, Style = @UiCaption, Foreground = @Fg2,
-                                    Visibility = $CopyStatus << ToVisibility ]
                     }
                 }
             }

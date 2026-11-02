@@ -229,6 +229,12 @@ describe('Settings section', () =>
         reveal.CopyCommand.Execute()
         await Tick.Settle()
         assert.deepEqual(fx.Clipboard, [fx.Api.ResetPassword])
+        // While pending, section navigation neither drops nor covers the reveal.
+        assert.equal(reveal.HasPendingSecret, true)
+        await fx.Section.BackAndRefresh()
+        fx.Section.Present(detail)
+        assert.equal(fx.Content, reveal)
+        assert.equal(reveal.Value, fx.Api.ResetPassword)
         assert.equal(reveal.ConfirmSavedCommand.CanExecute(), false)
         reveal.Saved = true
         reveal.ConfirmSavedCommand.Execute()

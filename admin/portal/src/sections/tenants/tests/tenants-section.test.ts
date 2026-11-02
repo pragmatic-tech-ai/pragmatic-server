@@ -208,6 +208,25 @@ describe('Tenants section', () =>
         assert.equal(reveal.Value, fx.Api.OwnerPassword)
     })
 
+    it('a pending Owner password reveal is not dropped or covered by section navigation', async () =>
+    {
+        const fx = new TenantsFixture()
+        const reveal = await fx.CreateTenant()
+        assert.equal(reveal.HasPendingSecret, true)
+        fx.Section.OpenTenant('acme-prod')
+        fx.Section.Back()
+        fx.Section.Replace(new TenantsPageViewModel(fx.Host.Session, fx.Section))
+        await Tick.Settle()
+        assert.equal(fx.Section.Current, reveal)
+        assert.equal(fx.Content, reveal)
+        assert.equal(reveal.Value, fx.Api.OwnerPassword)
+        reveal.Saved = true
+        reveal.ConfirmSavedCommand.Execute()
+        await Tick.Settle()
+        assert.equal(reveal.HasPendingSecret, false)
+        assert.ok(fx.Content instanceof TenantDetailPageViewModel)
+    })
+
     it('the tenant detail shows the hive binding and the observed environments, read-only', async () =>
     {
         const fx = new TenantsFixture()

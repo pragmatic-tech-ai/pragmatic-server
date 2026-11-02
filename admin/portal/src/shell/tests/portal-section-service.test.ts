@@ -4,6 +4,7 @@ import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import type { IServiceProvider } from '@pragmatic-tech-ai/mural/runtime'
 import { Capability } from '@pragmatic-tech-ai/mural/framework/shell/module.js'
 import { NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
+import type { IHoldsPendingSecret } from '../holds-pending-secret.js'
 import { PageState, PortalPageViewModel } from '../portal-page-view-model.js'
 import { PortalSectionService } from '../portal-section-service.js'
 import { PortalTestHost, Tick } from './portal-test-fixtures.js'
@@ -21,6 +22,12 @@ class StubPage extends PortalPageViewModel
 
 class DetailPage extends Observable
 {
+}
+
+// A page showing a one-time value until the operator confirms saving it.
+class PendingPage extends Observable implements IHoldsPendingSecret
+{
+    public HasPendingSecret = true
 }
 
 class TestSection extends PortalSectionService
@@ -200,6 +207,53 @@ describe('PortalSectionService', () =>
         assert.equal(section.Creates, 1)
         section.Back()
         assert.equal(section.Current, section.Root)
+    })
+
+    it('a page holding a pending one-time value stays current through every navigation that would drop or cover it', async () =>
+    {
+        const host = PortalTestHost.WithoutClient()
+        const section = new TestSection(host.Provider)
+        section.OnActivated()
+        const pending = new PendingPage()
+        section.Present(pending)
+        assert.equal(section.BackCommand.CanExecute(), false)
+        section.Present(new DetailPage())
+        assert.equal(section.Current, pending)
+        section.Replace(new DetailPage())
+        assert.equal(section.Current, pending)
+        section.PresentOverRoot(new DetailPage())
+        assert.equal(section.Current, pending)
+        section.Back()
+        assert.equal(section.Current, pending)
+        await section.BackAndRefresh()
+        assert.equal(section.Current, pending)
+        assert.equal(host.Host.Content, pending)
+        // Once the value is saved and cleared, navigation resumes.
+        pending.HasPendingSecret = false
+        assert.equal(section.BackCommand.CanExecute(), true)
+        const detail = new DetailPage()
+        section.Replace(detail)
+        assert.equal(section.Current, detail)
+        section.Back()
+        assert.equal(section.Current, section.Root)
+    })
+
+    it('a cross-section open brings a section holding a pending value to the front on that value', () =>
+    {
+        const rail = new RailFixture()
+        const itemB = new Capability()
+        itemB.ServiceKey = SectionB as never
+        rail.Navigation.Items.Add(itemB)
+        rail.SelectB()
+        const pending = new PendingPage()
+        rail.B.Present(pending)
+        rail.SelectA()
+        assert.equal(rail.Host.Host.Content, rail.A.Root)
+        rail.B.PresentOverRoot(new DetailPage())
+        assert.equal(rail.B.BringToFront(), true)
+        assert.equal(rail.Navigation.ActiveService, rail.B)
+        assert.equal(rail.B.Current, pending)
+        assert.equal(rail.Host.Host.Content, pending)
     })
 
     it('BringToFront selects the rail item naming the section; false when none does', () =>

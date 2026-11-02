@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { ApiError } from '../../../api-client.js'
 import { OperatorContext } from '../../../operator-context.js'
 import { FakeControlPlane, Inspect, PortalTestHost, TestRail, Tick } from '../../../shell/tests/portal-test-fixtures.js'
+import { TenantDetailPageViewModel } from '../../tenants/tenant-detail-page-view-model.js'
 import { TenantsPageViewModel } from '../../tenants/tenants-page-view-model.js'
 import { TenantsSectionService } from '../../tenants/tenants-section-service.js'
 import { HiveDetailPageViewModel } from '../hive-detail-page-view-model.js'
@@ -197,15 +198,63 @@ describe('Stand up a hive (provision wizard)', () =>
         assert.equal(wizard.FinishCommand.CanExecute(), true)
     })
 
-    it('each one-time value copies to the clipboard', async () =>
+    it('Finish needs the Bootstrap step: saved flags alone before a provision do not enable it', async () =>
+    {
+        const fx = new WizardFixture()
+        const wizard = await fx.AtReview()
+        wizard.OwnerSaved = true
+        wizard.AgentSaved = true
+        assert.equal(wizard.FinishCommand.CanExecute(), false)
+        assert.equal(wizard.HasPendingSecret, false)
+    })
+
+    it('each one-time value copies to the clipboard with its own status', async () =>
     {
         const fx = new WizardFixture()
         const wizard = await fx.Revealed()
+        assert.equal(wizard.HasPendingSecret, true)
         wizard.CopyOwnerPasswordCommand.Execute()
+        await Tick.Settle()
+        assert.equal(wizard.OwnerCopyStatus, 'Copied.')
+        assert.equal(wizard.AgentCopyStatus, '')
         wizard.CopyAgentTokenCommand.Execute()
         await Tick.Settle()
         assert.deepEqual(fx.Clipboard, [fx.Api.OwnerPassword, fx.Api.AgentToken])
-        assert.equal(wizard.CopyStatus, 'Copied.')
+        assert.equal(wizard.AgentCopyStatus, 'Copied.')
+    })
+
+    it('a field change raises its own notification on the page, once', async () =>
+    {
+        const fx = new WizardFixture()
+        const wizard = await fx.Wizard()
+        let raised = 0
+        const subscription = wizard.PropertyChanged('ClientId').subscribe(() => { raised++ })
+        wizard.ClientId = 'initech'
+        wizard.ClientId = 'initech'
+        subscription.dispose()
+        assert.equal(raised, 1)
+    })
+
+    it('a cross-section open of a hive keeps the revealed wizard current, with its values', async () =>
+    {
+        const fx = new WizardFixture()
+        const wizard = await fx.Revealed()
+        fx.Rail.Select(TenantsSectionService)
+        await Tick.Settle()
+        const tenants = fx.Content
+        assert.ok(tenants instanceof TenantsPageViewModel)
+        tenants.OpenCommand.Execute(tenants.Rows.ToArray().find(r => r.Id === 'acme-prod'))
+        await Tick.Settle()
+        const tenant = fx.Content
+        assert.ok(tenant instanceof TenantDetailPageViewModel)
+        tenant.OpenHiveCommand.Execute()
+        await Tick.Settle()
+        assert.equal(fx.Rail.Navigation.ActiveService, fx.Section)
+        assert.equal(fx.Section.Current, wizard)
+        assert.equal(fx.Content, wizard)
+        assert.equal(wizard.StepIndex, ProvisionStep.Bootstrap)
+        assert.equal(wizard.OwnerPassword, fx.Api.OwnerPassword)
+        assert.equal(wizard.AgentToken, fx.Api.AgentToken)
     })
 
     it('Finish clears both values and presents the new hive; Back then shows a fresh list', async () =>
@@ -218,9 +267,11 @@ describe('Stand up a hive (provision wizard)', () =>
         await Tick.Settle()
         assert.equal(wizard.OwnerPassword, '')
         assert.equal(wizard.AgentToken, '')
-        // Everything the wizard holds, short of the fake control plane itself
-        // (which keeps the fixture's values) and the services leading to it.
-        const reachable = Inspect.ReachableStrings(wizard, [fx.Api, fx.Section, fx.Host.Session])
+        assert.equal(wizard.HasPendingSecret, false)
+        // Everything reachable from the wizard and from its section, short of
+        // the fake control plane itself (which keeps the fixture's values).
+        const reachable = Inspect.ReachableStrings(wizard, [fx.Api])
+        assert.equal(Inspect.ReachableStrings(fx.Section, [fx.Api]).some(v => v === fx.Api.AgentToken || v === fx.Api.OwnerPassword), false)
         assert.ok(reachable.includes('initech-hive'))
         assert.equal(reachable.includes(fx.Api.OwnerPassword), false)
         assert.equal(reachable.includes(fx.Api.AgentToken), false)

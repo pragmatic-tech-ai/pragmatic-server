@@ -1,8 +1,8 @@
 import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import { ApiError } from '../../api-client.js'
-import type { HiveClusterBackend, HiveProvisionMode } from '../../portal-types.js'
-import { ProvisionWizardViewModel, WizardStep } from '../../provision-wizard-view-model.js'
+import type { HiveClusterBackend, HiveDto, HiveProvisionMode, ProvisionInputDto } from '../../portal-types.js'
+import type { IHoldsPendingSecret } from '../../shell/holds-pending-secret.js'
 import type { OptionViewModel } from '../../shell/option-view-model.js'
 import { PortalPageViewModel } from '../../shell/portal-page-view-model.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
@@ -18,6 +18,23 @@ export enum ProvisionStep
     Hive,
     Review,
     Bootstrap,
+}
+
+// The wizard's text fields; each value is also the bound property's name.
+export enum ProvisionField
+{
+    ClientId = 'ClientId',
+    ClientDisplayName = 'ClientDisplayName',
+    SubscriptionRef = 'SubscriptionRef',
+    TenantId = 'TenantId',
+    TenantDisplayName = 'TenantDisplayName',
+    OwnerEmail = 'OwnerEmail',
+    HiveId = 'HiveId',
+    HiveDisplayName = 'HiveDisplayName',
+    ConfigRef = 'ConfigRef',
+    Endpoint = 'Endpoint',
+    CredentialRef = 'CredentialRef',
+    TrustRootRef = 'TrustRootRef',
 }
 
 // One entry of the wizard's step indicator.
@@ -71,11 +88,13 @@ export class ProvisionStepViewModel extends Observable
 // first Owner) and the Tenant's Hive. A page of the Hives section, not a
 // dialog: it ends on the Bootstrap step, which shows the Owner password and
 // the agent token once. Finish needs both "I've saved it" flags, clears both
-// values and moves on to the new hive's detail. Leaving through the rail
-// first keeps this page, with its values, as the section's current page.
-// The values are never logged and live nowhere else; the provision result
-// itself is not kept.
-export class ProvisionWizardPageViewModel extends PortalPageViewModel
+// values and moves on to the new hive's detail. Until then the page holds a
+// pending secret: leaving through the rail keeps it as the section's current
+// page, and no section navigation (a cross-section open of a hive, say)
+// drops or covers it. The values are never logged and live nowhere else; the
+// provision result itself is not kept. The form's validation and request
+// shape follow the legacy ProvisionWizardViewModel, which this replaces.
+export class ProvisionWizardPageViewModel extends PortalPageViewModel implements IHoldsPendingSecret
 {
     private static readonly ClientLabel = 'Client'
     private static readonly TenantLabel = 'Tenant'
@@ -90,6 +109,7 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel
     private static readonly SentenceEnd = '.'
     private static readonly CopiedText = 'Copied.'
     private static readonly CopyFailedText = 'Could not copy. Select the value and copy it by hand.'
+    private static readonly IncompleteMessage = 'Choose a cluster, a cluster mode and a registry mode.'
     private static readonly NoText = ''
     private static readonly StepIndexProperty = 'StepIndex'
     private static readonly IsClientStepProperty = 'IsClientStep'
@@ -111,10 +131,11 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel
     private static readonly AgentTokenProperty = 'AgentToken'
     private static readonly OwnerSavedProperty = 'OwnerSaved'
     private static readonly AgentSavedProperty = 'AgentSaved'
-    private static readonly CopyStatusProperty = 'CopyStatus'
+    private static readonly OwnerCopyStatusProperty = 'OwnerCopyStatus'
+    private static readonly AgentCopyStatusProperty = 'AgentCopyStatus'
 
-    // The form state, validation and request shape (shared with the legacy view).
-    private readonly form: ProvisionWizardViewModel
+    // The text fields, keyed by field; a missing entry reads as ''.
+    private readonly texts = new Map<ProvisionField, string>()
     private readonly stepLabels: readonly string[]
     private readonly steps = new ObservableCollection<ProvisionStepViewModel>()
     private readonly backends = new ObservableCollection<OptionViewModel<HiveClusterBackend>>()
@@ -138,13 +159,13 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel
     private agentToken = ProvisionWizardPageViewModel.NoText
     private ownerSaved = false
     private agentSaved = false
-    private copyStatus = ProvisionWizardPageViewModel.NoText
+    private ownerCopyStatus = ProvisionWizardPageViewModel.NoText
+    private agentCopyStatus = ProvisionWizardPageViewModel.NoText
 
     public constructor(session: PortalSessionService, private readonly section: HivesSectionService)
     {
         super(session)
         const C = ProvisionWizardPageViewModel
-        this.form = new ProvisionWizardViewModel(session.Client)
         this.stepLabels = [C.ClientLabel, C.TenantLabel, C.HiveLabel, C.ReviewLabel, C.BootstrapLabel]
         this.stepLabels.forEach((label, i) => this.steps.Add(new ProvisionStepViewModel(i as ProvisionStep, label)))
         HiveOptions.Backends().forEach(o => this.backends.Add(o))
@@ -153,14 +174,13 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel
         this.selectedBackend = this.backends.Get(0)
         this.selectedClusterMode = this.clusterModes.Get(0)
         this.selectedRegistryMode = this.registryModes.Get(0)
-        this.ApplyChoices()
         this.nextCommand = new RelayCommand(() => this.Next(), () => this.CanNext())
         this.backStepCommand = new RelayCommand(() => this.BackStep(), () => this.CanBackStep())
         this.cancelCommand = new RelayCommand(() => this.section.Back(), () => this.IsFormStep && !this.submitting)
         this.submitCommand = this.MutatingCommand(() => this.Submit(), () => this.CanSubmit())
         this.finishCommand = new RelayCommand(() => this.Finish(), () => this.CanFinish())
-        this.copyOwnerPasswordCommand = new RelayCommand(() => { void this.Copy(this.ownerPassword) }, () => this.ownerPassword.length > 0)
-        this.copyAgentTokenCommand = new RelayCommand(() => { void this.Copy(this.agentToken) }, () => this.agentToken.length > 0)
+        this.copyOwnerPasswordCommand = new RelayCommand(() => { void this.Copy(this.ownerPassword, s => this.SetOwnerCopyStatus(s)) }, () => this.ownerPassword.length > 0)
+        this.copyAgentTokenCommand = new RelayCommand(() => { void this.Copy(this.agentToken, s => this.SetAgentCopyStatus(s)) }, () => this.agentToken.length > 0)
         this.SyncSteps()
     }
 
@@ -231,82 +251,82 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel
 
     public get ClientId(): string
     {
-        return this.form.ClientId
+        return this.Text(ProvisionField.ClientId)
     }
 
     public set ClientId(value: string)
     {
-        this.SetFormField(ProvisionWizardViewModel.ClientIdProperty, this.form.ClientId, value, v => { this.form.ClientId = v })
+        this.SetText(ProvisionField.ClientId, value)
     }
 
     public get ClientDisplayName(): string
     {
-        return this.form.ClientDisplayName
+        return this.Text(ProvisionField.ClientDisplayName)
     }
 
     public set ClientDisplayName(value: string)
     {
-        this.SetFormField(ProvisionWizardViewModel.ClientDisplayNameProperty, this.form.ClientDisplayName, value, v => { this.form.ClientDisplayName = v })
+        this.SetText(ProvisionField.ClientDisplayName, value)
     }
 
     public get SubscriptionRef(): string
     {
-        return this.form.SubscriptionRef
+        return this.Text(ProvisionField.SubscriptionRef)
     }
 
     public set SubscriptionRef(value: string)
     {
-        this.SetFormField(ProvisionWizardViewModel.SubscriptionRefProperty, this.form.SubscriptionRef, value, v => { this.form.SubscriptionRef = v })
+        this.SetText(ProvisionField.SubscriptionRef, value)
     }
 
     public get TenantId(): string
     {
-        return this.form.TenantId
+        return this.Text(ProvisionField.TenantId)
     }
 
     public set TenantId(value: string)
     {
-        this.SetFormField(ProvisionWizardViewModel.TenantIdProperty, this.form.TenantId, value, v => { this.form.TenantId = v })
+        this.SetText(ProvisionField.TenantId, value)
     }
 
     public get TenantDisplayName(): string
     {
-        return this.form.TenantDisplayName
+        return this.Text(ProvisionField.TenantDisplayName)
     }
 
     public set TenantDisplayName(value: string)
     {
-        this.SetFormField(ProvisionWizardViewModel.TenantDisplayNameProperty, this.form.TenantDisplayName, value, v => { this.form.TenantDisplayName = v })
+        this.SetText(ProvisionField.TenantDisplayName, value)
     }
 
     public get OwnerEmail(): string
     {
-        return this.form.OwnerEmail
+        return this.Text(ProvisionField.OwnerEmail)
     }
 
     public set OwnerEmail(value: string)
     {
-        this.SetFormField(ProvisionWizardViewModel.OwnerEmailProperty, this.form.OwnerEmail, value, v => { this.form.OwnerEmail = v })
+        this.SetText(ProvisionField.OwnerEmail, value)
     }
 
     public get HiveId(): string
     {
-        return this.form.HiveId
+        return this.Text(ProvisionField.HiveId)
     }
 
     public set HiveId(value: string)
     {
-        this.SetFormField(ProvisionWizardViewModel.HiveIdProperty, this.form.HiveId, value, v => { this.form.HiveId = v })
+        this.SetText(ProvisionField.HiveId, value)
     }
 
     public get HiveDisplayName(): string
     {
-        return this.form.HiveDisplayName
+        return this.Text(ProvisionField.HiveDisplayName)
     }
 
     public set HiveDisplayName(value: string)
     {
-        this.SetFormField(ProvisionWizardViewModel.HiveDisplayNameProperty, this.form.HiveDisplayName, value, v => { this.form.HiveDisplayName = v })
+        this.SetText(ProvisionField.HiveDisplayName, value)
     }
 
     public get Backends(): ObservableCollection<OptionViewModel<HiveClusterBackend>>
@@ -341,12 +361,12 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel
 
     public get ConfigRef(): string
     {
-        return this.form.ConfigRef
+        return this.Text(ProvisionField.ConfigRef)
     }
 
     public set ConfigRef(value: string)
     {
-        this.SetFormField(ProvisionWizardViewModel.ConfigRefProperty, this.form.ConfigRef, value, v => { this.form.ConfigRef = v })
+        this.SetText(ProvisionField.ConfigRef, value)
     }
 
     public get RegistryModes(): ObservableCollection<OptionViewModel<HiveProvisionMode>>
@@ -366,32 +386,32 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel
 
     public get Endpoint(): string
     {
-        return this.form.Endpoint
+        return this.Text(ProvisionField.Endpoint)
     }
 
     public set Endpoint(value: string)
     {
-        this.SetFormField(ProvisionWizardViewModel.EndpointProperty, this.form.Endpoint, value, v => { this.form.Endpoint = v })
+        this.SetText(ProvisionField.Endpoint, value)
     }
 
     public get CredentialRef(): string
     {
-        return this.form.CredentialRef
+        return this.Text(ProvisionField.CredentialRef)
     }
 
     public set CredentialRef(value: string)
     {
-        this.SetFormField(ProvisionWizardViewModel.CredentialRefProperty, this.form.CredentialRef, value, v => { this.form.CredentialRef = v })
+        this.SetText(ProvisionField.CredentialRef, value)
     }
 
     public get TrustRootRef(): string
     {
-        return this.form.TrustRootRef
+        return this.Text(ProvisionField.TrustRootRef)
     }
 
     public set TrustRootRef(value: string)
     {
-        this.SetFormField(ProvisionWizardViewModel.TrustRootRefProperty, this.form.TrustRootRef, value, v => { this.form.TrustRootRef = v })
+        this.SetText(ProvisionField.TrustRootRef, value)
     }
 
     // The chosen cluster backend and mode, for the Review step.
@@ -460,9 +480,23 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel
         this.finishCommand.RaiseCanExecuteChanged()
     }
 
-    public get CopyStatus(): string
+    // Whether the Owner password was copied; '' until a Copy.
+    public get OwnerCopyStatus(): string
     {
-        return this.copyStatus
+        return this.ownerCopyStatus
+    }
+
+    // Whether the agent token was copied; '' until a Copy.
+    public get AgentCopyStatus(): string
+    {
+        return this.agentCopyStatus
+    }
+
+    // True from a successful provision until Finish clears the values: the
+    // section keeps this page current meanwhile.
+    public get HasPendingSecret(): boolean
+    {
+        return this.IsBootstrapStep && (this.ownerPassword.length > 0 || this.agentToken.length > 0)
     }
 
     public get NextCommand(): RelayCommand
@@ -510,8 +544,29 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel
 
     private CanNext(): boolean
     {
-        const formStep = ProvisionWizardPageViewModel.FormStepOf(this.step)
-        return formStep !== undefined && this.form.StepValid(formStep)
+        return this.IsInputStep && this.StepValid(this.step)
+    }
+
+    // Whether a step's required fields are filled (blank counts as empty).
+    private StepValid(step: ProvisionStep): boolean
+    {
+        switch (step)
+        {
+            case ProvisionStep.Client:
+                return this.Filled(ProvisionField.ClientId) && this.Filled(ProvisionField.ClientDisplayName)
+            case ProvisionStep.Tenant:
+                return this.Filled(ProvisionField.TenantId) && this.Filled(ProvisionField.TenantDisplayName) && this.Filled(ProvisionField.OwnerEmail)
+            case ProvisionStep.Hive:
+                return this.Filled(ProvisionField.HiveId) && this.Filled(ProvisionField.HiveDisplayName)
+                    && this.selectedBackend !== undefined && this.selectedClusterMode !== undefined && this.selectedRegistryMode !== undefined
+            default:
+                return false
+        }
+    }
+
+    private CanProvision(): boolean
+    {
+        return this.StepValid(ProvisionStep.Client) && this.StepValid(ProvisionStep.Tenant) && this.StepValid(ProvisionStep.Hive)
     }
 
     private CanBackStep(): boolean
@@ -521,12 +576,12 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel
 
     private CanSubmit(): boolean
     {
-        return this.step === ProvisionStep.Review && !this.submitting && this.form.CanProvision()
+        return this.step === ProvisionStep.Review && !this.submitting && this.CanProvision()
     }
 
     private CanFinish(): boolean
     {
-        return this.ownerSaved && this.agentSaved && (this.ownerPassword.length > 0 || this.agentToken.length > 0)
+        return this.IsBootstrapStep && this.ownerSaved && this.agentSaved
     }
 
     private Next(): void
@@ -558,9 +613,10 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel
         this.SetProvisionError(ProvisionWizardPageViewModel.NoText)
         try
         {
-            const result = await this.form.Provision()
+            const result = await this.Session.Client.Provision(this.BuildInput())
+            const oldHiveId = this.provisionedHiveId
             this.provisionedHiveId = result.hive.id
-            this.RaisePropertyChanged(ProvisionWizardPageViewModel.ProvisionedHiveIdProperty, ProvisionWizardPageViewModel.NoText, this.provisionedHiveId)
+            this.RaisePropertyChanged(ProvisionWizardPageViewModel.ProvisionedHiveIdProperty, oldHiveId, this.provisionedHiveId)
             this.SetSecrets(result.secrets.ownerPassword, result.secrets.agentToken)
             this.SetStep(ProvisionStep.Bootstrap)
         }
@@ -589,38 +645,99 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel
         this.section.ShowHiveAfterProvision(this.provisionedHiveId)
     }
 
-    private async Copy(value: string): Promise<void>
+    // Copies one value and reports the outcome through that value's status.
+    private async Copy(value: string, report: (status: string) => void): Promise<void>
     {
         const clipboard = this.section.Clipboard
         if (clipboard === undefined || value.length === 0)
         {
-            this.SetCopyStatus(ProvisionWizardPageViewModel.CopyFailedText)
+            report(ProvisionWizardPageViewModel.CopyFailedText)
             return
         }
         try
         {
             await clipboard.WriteText(value)
-            this.SetCopyStatus(ProvisionWizardPageViewModel.CopiedText)
+            report(ProvisionWizardPageViewModel.CopiedText)
         }
         catch
         {
-            this.SetCopyStatus(ProvisionWizardPageViewModel.CopyFailedText)
+            report(ProvisionWizardPageViewModel.CopyFailedText)
         }
     }
 
-    private static FormStepOf(step: ProvisionStep): WizardStep | undefined
+    // The provision request from the form; optional references are sent only
+    // when filled. Call only when CanProvision().
+    private BuildInput(): ProvisionInputDto
     {
-        switch (step)
+        const F = ProvisionField
+        const client: ProvisionInputDto['client'] = { id: this.Trimmed(F.ClientId), displayName: this.Trimmed(F.ClientDisplayName) }
+        const subscriptionRef = this.Trimmed(F.SubscriptionRef)
+        if (subscriptionRef.length > 0)
         {
-            case ProvisionStep.Client:
-                return WizardStep.Client
-            case ProvisionStep.Tenant:
-                return WizardStep.Tenant
-            case ProvisionStep.Hive:
-                return WizardStep.Hive
-            default:
-                return undefined
+            client.subscriptionRef = subscriptionRef
         }
+        const tenant: ProvisionInputDto['tenant'] = { id: this.Trimmed(F.TenantId), displayName: this.Trimmed(F.TenantDisplayName), ownerEmail: this.Trimmed(F.OwnerEmail) }
+        const cluster: HiveDto['cluster'] = { backend: this.Choice(this.selectedBackend), mode: this.Choice(this.selectedClusterMode) }
+        const configRef = this.Trimmed(F.ConfigRef)
+        if (configRef.length > 0)
+        {
+            cluster.configRef = configRef
+        }
+        const registry: HiveDto['registry'] = { mode: this.Choice(this.selectedRegistryMode) }
+        const endpoint = this.Trimmed(F.Endpoint)
+        if (endpoint.length > 0)
+        {
+            registry.endpoint = endpoint
+        }
+        const credentialRef = this.Trimmed(F.CredentialRef)
+        if (credentialRef.length > 0)
+        {
+            registry.credentialRef = credentialRef
+        }
+        const hive: ProvisionInputDto['hive'] = { id: this.Trimmed(F.HiveId), displayName: this.Trimmed(F.HiveDisplayName), cluster, registry }
+        const trustRootRef = this.Trimmed(F.TrustRootRef)
+        if (trustRootRef.length > 0)
+        {
+            hive.trustRootRef = trustRootRef
+        }
+        return { client, tenant, hive }
+    }
+
+    private Choice<T>(option: OptionViewModel<T> | undefined): T
+    {
+        if (option === undefined)
+        {
+            throw new Error(ProvisionWizardPageViewModel.IncompleteMessage)
+        }
+        return option.Value
+    }
+
+    private Text(field: ProvisionField): string
+    {
+        return this.texts.get(field) ?? ProvisionWizardPageViewModel.NoText
+    }
+
+    private Trimmed(field: ProvisionField): string
+    {
+        return this.Text(field).trim()
+    }
+
+    private Filled(field: ProvisionField): boolean
+    {
+        return this.Trimmed(field).length > 0
+    }
+
+    // Sets a text field; its enum value is the bound property's name.
+    private SetText(field: ProvisionField, next: string): void
+    {
+        const old = this.Text(field)
+        if (old === next)
+        {
+            return
+        }
+        this.texts.set(field, next)
+        this.RaisePropertyChanged(field, old, next)
+        this.RaiseCommandsChanged()
     }
 
     private static Describe(e: unknown): string
@@ -641,17 +758,6 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel
         return text
     }
 
-    private SetFormField(name: string, old: string, next: string, assign: (value: string) => void): void
-    {
-        if (old === next)
-        {
-            return
-        }
-        assign(next)
-        this.RaisePropertyChanged(name, old, next)
-        this.RaiseCommandsChanged()
-    }
-
     private SetChoice<T>(name: string, old: OptionViewModel<T> | undefined, next: OptionViewModel<T> | undefined, assign: (value: OptionViewModel<T> | undefined) => void): void
     {
         if (old === next)
@@ -662,28 +768,10 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel
         const oldCluster = this.ClusterSummary
         const oldRegistry = this.RegistrySummary
         assign(next)
-        this.ApplyChoices()
         this.RaisePropertyChanged(name, old, next)
         this.RaisePropertyChanged(C.ClusterSummaryProperty, oldCluster, this.ClusterSummary)
         this.RaisePropertyChanged(C.RegistrySummaryProperty, oldRegistry, this.RegistrySummary)
-    }
-
-    // Copies the ComboBox choices into the form (a cleared choice keeps the
-    // form's previous value).
-    private ApplyChoices(): void
-    {
-        if (this.selectedBackend !== undefined)
-        {
-            this.form.Backend = this.selectedBackend.Value
-        }
-        if (this.selectedClusterMode !== undefined)
-        {
-            this.form.ClusterMode = this.selectedClusterMode.Value
-        }
-        if (this.selectedRegistryMode !== undefined)
-        {
-            this.form.RegistryMode = this.selectedRegistryMode.Value
-        }
+        this.RaiseCommandsChanged()
     }
 
     private SetStep(next: ProvisionStep): void
@@ -756,15 +844,26 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel
         this.RaiseCommandsChanged()
     }
 
-    private SetCopyStatus(next: string): void
+    private SetOwnerCopyStatus(next: string): void
     {
-        const old = this.copyStatus
+        const old = this.ownerCopyStatus
         if (old === next)
         {
             return
         }
-        this.copyStatus = next
-        this.RaisePropertyChanged(ProvisionWizardPageViewModel.CopyStatusProperty, old, next)
+        this.ownerCopyStatus = next
+        this.RaisePropertyChanged(ProvisionWizardPageViewModel.OwnerCopyStatusProperty, old, next)
+    }
+
+    private SetAgentCopyStatus(next: string): void
+    {
+        const old = this.agentCopyStatus
+        if (old === next)
+        {
+            return
+        }
+        this.agentCopyStatus = next
+        this.RaisePropertyChanged(ProvisionWizardPageViewModel.AgentCopyStatusProperty, old, next)
     }
 
     private RaiseCommandsChanged(): void

@@ -6,6 +6,7 @@ import { DialogService } from '@pragmatic-tech-ai/mural/framework/shell/services
 import { NavigationDestination, NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
 import type { IActivatable } from '@pragmatic-tech-ai/mural/framework/shell/services/activatable.js'
 import type { IDisposable, Observable } from '@pragmatic-tech-ai/todl-runtime'
+import { PendingSecret } from './holds-pending-secret.js'
 import { PortalPageViewModel } from './portal-page-view-model.js'
 import { PortalSessionService } from './portal-session-service.js'
 
@@ -31,7 +32,18 @@ export abstract class PortalSectionService extends ServiceBase implements IActiv
     public constructor(provider: IServiceProvider)
     {
         super(provider)
-        this.backCommand = new RelayCommand(() => this.Back(), () => this.pages.length > 1, { Text: PortalSectionService.BackText })
+        this.backCommand = new RelayCommand(() => this.Back(), () => this.CanGoBack, { Text: PortalSectionService.BackText })
+    }
+
+    // Whether the current page shows a one-time value not yet confirmed saved.
+    private get HoldsPendingSecret(): boolean
+    {
+        return PendingSecret.IsHeldBy(this.Current)
+    }
+
+    private get CanGoBack(): boolean
+    {
+        return this.pages.length > 1 && !this.HoldsPendingSecret
     }
 
     public get Current(): Observable | undefined
@@ -81,8 +93,14 @@ export abstract class PortalSectionService extends ServiceBase implements IActiv
 
     // Pushes a page and loads it when it is a portal page; shows it only while
     // this section is active (otherwise it shows on the next activation).
+    // A no-op while the current page holds a pending one-time value (it is
+    // never covered); this applies to every navigation below as well.
     public Present(page: Observable): void
     {
+        if (this.HoldsPendingSecret)
+        {
+            return
+        }
         const old = this.Current
         this.pages.push(page)
         this.ShowAndLoad(old, page)
@@ -92,6 +110,10 @@ export abstract class PortalSectionService extends ServiceBase implements IActiv
     // leads to), so Back skips the replaced page.
     public Replace(page: Observable): void
     {
+        if (this.HoldsPendingSecret)
+        {
+            return
+        }
         const old = this.Current
         this.pages.pop()
         this.pages.push(page)
@@ -100,8 +122,14 @@ export abstract class PortalSectionService extends ServiceBase implements IActiv
 
     // Presents `page` directly over the root: pops anything above the root,
     // creating (and loading) the root first when the section has none yet.
+    // A cross-section open (then BringToFront) over a pending one-time value
+    // therefore lands on that value, not on `page`.
     public PresentOverRoot(page: Observable): void
     {
+        if (this.HoldsPendingSecret)
+        {
+            return
+        }
         const old = this.Current
         if (this.pages.length === 0)
         {
@@ -152,10 +180,11 @@ export abstract class PortalSectionService extends ServiceBase implements IActiv
         return false
     }
 
-    // Pops to the previous page and re-views it. No-op at the root.
+    // Pops to the previous page and re-views it. No-op at the root and while
+    // the current page holds a pending one-time value.
     public Back(): void
     {
-        if (this.pages.length <= 1)
+        if (!this.CanGoBack)
         {
             return
         }
