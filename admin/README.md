@@ -23,7 +23,7 @@ npm --prefix admin/tenant-portal install && npm --prefix admin/tenant-portal run
 
 ## Tenant portal
 
-The tenant portal is a second Mural app (admin/tenant-portal/) for tenant owners: hives, versions, rollouts, environment lifecycle and live logs. It is served by a dedicated tenant listener (its own port), separate from the loopback operator listener, so the operator surface is structurally unreachable on it. Build it as shown above, then turn the tenant listener on by setting these on the control plane:
+The tenant portal is a second Mural app (admin/tenant-portal/) for a client's administrators: an Overview, Environments (lifecycle and live logs), Users & Access (accounts, grants, tokens and the security model, per environment), Releases (adopt a version), read-only Settings and Connection status. Like the Platform Admin it is Mural markup + MVVM on the framework EditorShell: `npm --prefix admin/tenant-portal run build` (and `test`, `typecheck`, `dev`) first runs `compile:mu`, which compiles `src/**/*.mu` to the committed sibling `*.mu.js`. With no session it sends the browser to the tenant's identity provider (`/tenant-auth/oidc/begin`). It is served by a dedicated tenant listener (its own port), separate from the loopback operator listener, so the operator surface is structurally unreachable on it. Build it as shown above, then turn the tenant listener on by setting these on the control plane:
 
 - PRAGMATIC_TENANT_ADMIN_PORT: the dedicated tenant listener's port. Its presence (with the base domain) activates the tenant plane; absent → operator-only, exactly as before.
 - PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN: e.g. `admin.example.com`. A request host is a tenant host iff it is `<tenantId>.<baseDomain>`; the tenant id is the first label. Subdomain admin login therefore requires the tenant id to be a lowercase DNS-label-safe string (`[a-z0-9-]`, no dot/underscore/uppercase); a tenant whose id is not DNS-safe cannot reach admin login via a host and such a host simply 403s.
@@ -32,7 +32,7 @@ The tenant portal is a second Mural app (admin/tenant-portal/) for tenant owners
 
 The tenant id and the OIDC callback are derived per request from the request's subdomain host; there is no `?tenant=` query parameter.
 
-Gated end-to-end test. It runs against a fake control plane (no IdP, no Docker), serving dist/ and canned /tenant-auth and /tenant-api responses. It needs a prior build and Playwright browsers, and is not part of the default unit run (`npm --prefix admin/tenant-portal test`):
+Gated end-to-end test. It runs against a fake control plane (no IdP, no Docker), serving dist/ and canned /tenant-auth and /tenant-api responses. It boots into the Overview, opens every rail section, an environment's detail and the create dialog, the Users & Access tabs and a one-time token reveal, the adopt wizard, a live event in Activity, and Log out landing on a stub identity provider. It needs a prior build and Playwright browsers, and is not part of the default unit run (`npm --prefix admin/tenant-portal test`):
 
 ```
 npx playwright install chromium

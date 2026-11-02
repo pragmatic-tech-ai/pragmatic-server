@@ -1,8 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { ActivityEntry, ActivityLog } from '../src/activity-log.js'
-import { PillKind } from '../src/kit/pill-kinds.js'
-import { TenantEventType } from '../src/tenant-types.js'
+import { ActivityEntry, ActivityLog } from '../activity-log.js'
+import { TenantEventType } from '../tenant-types.js'
 
 class Clock
 {
@@ -66,11 +65,6 @@ describe('ActivityEntry', () =>
         assert.equal(new ActivityEntry(TenantEventType.EnvironmentChanged, 'x', 0).Summary, 'Environment x was updated')
         assert.equal(new ActivityEntry(TenantEventType.EnvironmentDeleted, 'x', 0).Summary, 'Environment x was deleted')
         assert.equal(new ActivityEntry(TenantEventType.HealthChanged, 'x', 0).Summary, 'Health changed for x')
-    })
-
-    it('uses the Observed pill', () =>
-    {
-        assert.equal(new ActivityEntry(TenantEventType.HealthChanged, 'x', 0).Pill, PillKind.Observed)
     })
 
     it('formats relative time deterministically', () =>

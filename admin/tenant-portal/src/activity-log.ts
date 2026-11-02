@@ -1,10 +1,8 @@
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
-import { PillKind } from './kit/index.js'
 import { TenantEventType } from './tenant-types.js'
 import type { TenantEvent } from './tenant-types.js'
 
-// One observed tenant event, stamped with CLIENT time. Plain class (not Observable); structurally
-// satisfies the kit ActivityListItem contract (Summary / Pill / RelativeTime).
+// One observed tenant event, stamped with CLIENT time. Plain class (not Observable).
 export class ActivityEntry
 {
     private static readonly NamePlaceholder = '{name}'
@@ -46,11 +44,6 @@ export class ActivityEntry
     {
         const template = ActivityEntry.Templates.get(this.type) ?? ActivityEntry.NamePlaceholder
         return template.replace(ActivityEntry.NamePlaceholder, this.environmentName)
-    }
-
-    public get Pill(): PillKind
-    {
-        return PillKind.Observed
     }
 
     public RelativeTime(now?: () => number): string

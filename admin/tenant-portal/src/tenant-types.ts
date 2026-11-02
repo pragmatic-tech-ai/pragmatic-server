@@ -1,5 +1,3 @@
-import type { ActivityLog } from './activity-log.js'
-import type { NavSection } from './nav-model.js'
 
 // Wire shapes of the 7a tenant surface (/tenant-auth/* + /tenant-api/*), kept verbatim.
 
@@ -126,30 +124,6 @@ export enum VersionBadge
     Previous,
     Available,
     Withdrawn,
-}
-
-// Navigation seam the views call; TenantApp implements it.
-export interface ITenantNavigator
-{
-    ShowLogin(): void
-    ShowHiveDetail(hive: HiveDto): void
-    ShowEnvironmentDetail(env: EnvironmentDto): void
-    ShowUsersAccess(): void
-    ShowServiceTokens(): void
-    ShowSection(section: NavSection): void
-    get Profile(): TenantProfileDto | undefined
-    get Capabilities(): AdminCapabilitiesDto | undefined
-    get OwnerContact(): string | undefined
-    get Activity(): ActivityLog
-    OpenActivityDrawer(): void
-}
-
-export interface ITenantView
-{
-    AttachNavigator(nav: ITenantNavigator): void
-    Refresh(): Promise<void> | void
-    // Optional teardown hook invoked when the detail pane swaps the view out.
-    Dispose?(): void
 }
 
 // Injectable socket seam: the default implementation wraps the browser WebSocket.

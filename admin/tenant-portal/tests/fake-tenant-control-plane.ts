@@ -35,6 +35,16 @@ export class FakeTenantControlPlane
     public static readonly ChangedStatus = 'degraded'
 
     private static readonly SessionPath = '/tenant-auth/session'
+    public static readonly LogoutPath = '/tenant-auth/logout'
+    public static readonly BeginLoginPath = '/tenant-auth/oidc/begin'
+    public static readonly IdpPageText = 'Identity provider sign-in (e2e stub)'
+    private static readonly IdpPage = '<!doctype html><title>IdP</title><p>Identity provider sign-in (e2e stub)</p>'
+    private static readonly HtmlType = 'text/html'
+    private static readonly LedgerLeaf = 'ledger'
+    private static readonly UnauthorizedMessage = 'unauthorized'
+    private static readonly AdoptedAction = 'adopted'
+    private static readonly AdoptedAt = '2026-02-02T10:30:00.000Z'
+    private static readonly FontExt = '.woff2'
     private static readonly ProfilePath = '/tenant-api/profile'
     private static readonly HivesPath = '/tenant-api/hives'
     private static readonly EnvironmentsPath = '/tenant-api/environments'
@@ -53,8 +63,8 @@ export class FakeTenantControlPlane
     private static readonly GrantsLeaf = 'grants'
     private static readonly TokensLeaf = 'tokens'
     private static readonly SecurityModelLeaf = 'security-model'
-    private static readonly FakeTokenValue = 'fake-secret-token'
-    private static readonly MethodDelete = 'DELETE'
+    public static readonly IssuedTokenValue = 'fake-secret-token'
+    public static readonly MethodDelete = 'DELETE'
     private static readonly MethodPut = 'PUT'
     private static readonly AdminMarker = '/admin/'
     private static readonly TenantKind = 'Tenant'
@@ -85,9 +95,18 @@ export class FakeTenantControlPlane
         '.css': 'text/css',
         '.svg': 'image/svg+xml',
         '.ico': 'image/x-icon',
+        '.woff2': 'font/woff2',
     }
 
     public readonly TargetCalls: Array<{ subject: string; version: string }> = []
+    // False: /tenant-auth/session answers 401 (the portal redirects to the IdP).
+    public Authenticated = true
+    public LogoutCalls = 0
+    public BeginLoginCalls = 0
+    public readonly DeletedEnvironments: string[] = []
+    // Every static file requested but missing from dist/, and every theme font served.
+    public readonly NotFound: string[] = []
+    public readonly FontsServed: string[] = []
     public EnvironmentsRequests = 0
     // Names of environments created through the POST route, for e2e assertions.
     public readonly CreatedEnvironments: string[] = []
@@ -324,6 +343,26 @@ export class FakeTenantControlPlane
     {
         const method = req.method ?? FakeTenantControlPlane.MethodGet
         const path = (req.url ?? FakeTenantControlPlane.RootPath).split(FakeTenantControlPlane.QuerySeparator)[0]!
+        if (path === FakeTenantControlPlane.LogoutPath && method === FakeTenantControlPlane.MethodPost)
+        {
+            await FakeTenantControlPlane.ReadBody(req)
+            this.LogoutCalls++
+            this.Authenticated = false
+            FakeTenantControlPlane.Json(res, 200, {})
+            return
+        }
+        if (path === FakeTenantControlPlane.BeginLoginPath)
+        {
+            this.BeginLoginCalls++
+            res.writeHead(200, { [FakeTenantControlPlane.ContentTypeHeader]: FakeTenantControlPlane.HtmlType })
+            res.end(FakeTenantControlPlane.IdpPage)
+            return
+        }
+        if (path === FakeTenantControlPlane.SessionPath && !this.Authenticated)
+        {
+            FakeTenantControlPlane.Json(res, 401, { error: FakeTenantControlPlane.UnauthorizedMessage })
+            return
+        }
         if (path === FakeTenantControlPlane.SessionPath)
         {
             const session: SessionDto = { tenantId: FakeTenantControlPlane.TenantId, principalId: FakeTenantControlPlane.PrincipalId, email: FakeTenantControlPlane.UserEmail }
@@ -423,6 +462,13 @@ export class FakeTenantControlPlane
         {
             FakeTenantControlPlane.Json(res, 200, this.Health(id))
         }
+        else if (leaf === FakeTenantControlPlane.LedgerLeaf)
+        {
+            FakeTenantControlPlane.Json(res, 200, [{
+                version: FakeTenantControlPlane.CurrentVersion, action: FakeTenantControlPlane.AdoptedAction,
+                at: FakeTenantControlPlane.AdoptedAt, hiveId: id,
+            }])
+        }
         else if (leaf === FakeTenantControlPlane.TargetLeaf && method === FakeTenantControlPlane.MethodPost)
         {
             const body = JSON.parse(await FakeTenantControlPlane.ReadBody(req)) as { version: string }
@@ -442,6 +488,13 @@ export class FakeTenantControlPlane
         const [rawName, action] = path.slice(FakeTenantControlPlane.EnvPrefix.length).split(FakeTenantControlPlane.PathSeparator)
         const name = decodeURIComponent(rawName ?? FakeTenantControlPlane.Empty)
         const env = this.Environments().find(e => e.name === name)
+        if (env !== undefined && action === undefined && method === FakeTenantControlPlane.MethodDelete)
+        {
+            this.DeletedEnvironments.push(name)
+            res.writeHead(204)
+            res.end()
+            return
+        }
         if (env === undefined || action === undefined || !FakeTenantControlPlane.Actions.includes(action) || method !== FakeTenantControlPlane.MethodPost)
         {
             res.writeHead(404)
@@ -519,7 +572,7 @@ export class FakeTenantControlPlane
             const expiresAt = t.expiresInSeconds === null ? null : new Date(Date.parse(FakeTenantControlPlane.CreatedAt) + t.expiresInSeconds * 1000).toISOString()
             this.Tokens.push({ tokenRef, principalId: t.principalId, scopes: t.scopes, expiresAt, revoked: false })
             this.AdminCalls.push({ env, method, leaf, body })
-            FakeTenantControlPlane.Json(res, 201, { tokenRef, token: FakeTenantControlPlane.FakeTokenValue, principalId: t.principalId, scopes: t.scopes, expiresAt })
+            FakeTenantControlPlane.Json(res, 201, { tokenRef, token: FakeTenantControlPlane.IssuedTokenValue, principalId: t.principalId, scopes: t.scopes, expiresAt })
         }
         else if (leaf === FakeTenantControlPlane.TokensLeaf && method === FakeTenantControlPlane.MethodDelete)
         {
@@ -563,9 +616,14 @@ export class FakeTenantControlPlane
             const body = await readFile(join(this.root, rel))
             res.writeHead(200, { [FakeTenantControlPlane.ContentTypeHeader]: FakeTenantControlPlane.Types[extname(rel)] ?? FakeTenantControlPlane.DefaultType })
             res.end(body)
+            if (extname(rel) === FakeTenantControlPlane.FontExt)
+            {
+                this.FontsServed.push(path)
+            }
         }
         catch
         {
+            this.NotFound.push(path)
             res.writeHead(404)
             res.end()
         }

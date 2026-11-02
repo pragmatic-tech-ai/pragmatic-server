@@ -8,7 +8,7 @@
     "dev": "npm run compile:mu && vite",
     "build": "npm run compile:mu && vite build",
     "typecheck": "npm run compile:mu && tsc --noEmit",
-    "test": "npm run compile:mu && tsx --test tests/*.test.ts tests/kit/*.test.ts \"src/**/tests/*.test.ts\"",
+    "test": "npm run compile:mu && tsx --test \"src/**/tests/*.test.ts\"",
     "test:e2e": "playwright test"
   },
   "dependencies": {
