@@ -2,9 +2,15 @@
 //
 // FleetPageViewModel is presented full-width in the shell's content region
 // (ContentHostService.View); its template is matched implicitly by type.
-// Hives-table rows and Needs-attention entries render through their own
-// implicit-by-type templates. The section service itself backs the rail
-// capability; the side pane stays hidden, so its template is empty.
+// Needs-attention entries render through their implicit-by-type template;
+// a hives-table row's name opens the hive in the Hives section. The section
+// service itself backs the rail capability; the side pane stays hidden, so
+// its template is empty.
+//
+// Table rows use keyed templates set as the ListBox's ItemTemplate: a ListBox
+// resolves implicit-by-type templates only for MuralBase items, and the row
+// view-models are Observables. Tables use the PortalTable ListBox template
+// (shell resources) so rows span the table width.
 
 import PortalSectionService from "../../shell/portal-section-service.js"
 import FleetPageViewModel from "./fleet-page-view-model.js"
@@ -39,6 +45,9 @@ resources FleetResources {
             // Populated: summary counts, Needs attention, then the hives table.
             DockPanel [ Visibility = $IsPopulated << ToVisibility ] {
                 Grid [ DockPanel.Dock = Top, Margin = (0,0,0,16) ] {
+                    RowDefinitions {
+                        RowDefinition [ Height = GridLength.Auto ]
+                    }
                     ColumnDefinitions {
                         ColumnDefinition [ Width = GridLength.Star ]
                         ColumnDefinition [ Width = GridLength.Star ]
@@ -78,7 +87,7 @@ resources FleetResources {
                 }
 
                 TextBlock [ DockPanel.Dock = Top, Text = "Hives", Style = @UiLabel, Foreground = @Fg1, Margin = (0,0,0,6) ]
-                ListBox [ ItemsSource = $Rows ]
+                ListBox [ Template = @PortalTable, HorizontalAlignment = Stretch, ItemsSource = $Rows, ItemTemplate = @FleetHiveRowTemplate ]
             }
         }
     }
@@ -95,8 +104,9 @@ resources FleetResources {
     }
 
     // A hives-table row: name, owner, connection, last check-in, environments.
-    DataTemplate [ DataType = FleetHiveRowViewModel ] {
-        Grid [ Margin = (4,4,4,4) ] {
+    // The name opens the hive's detail in the Hives section.
+    DataTemplate x:key="FleetHiveRowTemplate" [ DataType = FleetHiveRowViewModel ] {
+        Grid [ Margin = (4,2,4,2) ] {
             ColumnDefinitions {
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]
@@ -104,11 +114,13 @@ resources FleetResources {
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]
             }
-            TextBlock [ Grid.Column = 0, Text = $DisplayName, Style = @UiLabel, Foreground = @Fg0 ]
-            TextBlock [ Grid.Column = 1, Text = $OwnerLabel, Foreground = @Fg1 ]
-            TextBlock [ Grid.Column = 2, Text = $ConnectionLabel, Foreground = @Fg1 ]
-            TextBlock [ Grid.Column = 3, Text = $LastSeenLabel, Foreground = @Fg2 ]
-            TextBlock [ Grid.Column = 4, Text = $EnvironmentsLabel, Foreground = @Fg2 ]
+            Button [ Grid.Column = 0, Variant = Ghost, Command = $OpenCommand, HorizontalAlignment = Left ] {
+                TextBlock [ Text = $DisplayName, Style = @UiLabel ]
+            }
+            TextBlock [ Grid.Column = 1, Text = $OwnerLabel, Foreground = @Fg1, VerticalAlignment = Center ]
+            TextBlock [ Grid.Column = 2, Text = $ConnectionLabel, Foreground = @Fg1, VerticalAlignment = Center ]
+            TextBlock [ Grid.Column = 3, Text = $LastSeenLabel, Foreground = @Fg2, VerticalAlignment = Center ]
+            TextBlock [ Grid.Column = 4, Text = $EnvironmentsLabel, Foreground = @Fg2, VerticalAlignment = Center ]
         }
     }
 }

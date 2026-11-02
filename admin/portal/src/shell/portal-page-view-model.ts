@@ -1,3 +1,4 @@
+import { RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import { ApiError } from '../api-client.js'
 import type { PortalSessionService } from './portal-session-service.js'
@@ -52,6 +53,18 @@ export abstract class PortalPageViewModel extends Observable
     public get CommandErrorText(): string
     {
         return this.commandErrorText
+    }
+
+    // Whether the signed-in operator may run this page's mutating commands.
+    public get CanMutate(): boolean
+    {
+        return this.Session.CanMutate
+    }
+
+    // Why this page's mutating commands are disabled; '' when they are not.
+    public get DeniedReason(): string
+    {
+        return this.Session.DeniedReason
     }
 
     // Per-state flags for the template's Visibility bindings.
@@ -133,6 +146,20 @@ export abstract class PortalPageViewModel extends Observable
             }
             this.SetCommandErrorText(PortalPageViewModel.MessageOf(e))
         }
+    }
+
+    // A mutating command: disabled, and a no-op when executed anyway, while the
+    // operator may not mutate or `enabled` says no. Its body runs through Guard.
+    protected MutatingCommand(run: () => Promise<void>, enabled?: () => boolean): RelayCommand
+    {
+        const can = (): boolean => this.Session.CanMutate && (enabled === undefined || enabled())
+        return new RelayCommand(() =>
+        {
+            if (can())
+            {
+                void this.Guard(run)
+            }
+        }, can)
     }
 
     private TryExpire(e: unknown): boolean

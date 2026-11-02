@@ -1,9 +1,12 @@
 import { ServiceProvider } from '@pragmatic-tech-ai/mural/runtime'
 import { Capability } from '@pragmatic-tech-ai/mural/framework/shell/module.js'
+import { ClipboardService } from '@pragmatic-tech-ai/mural/framework/shell/services/clipboard-service.js'
 import { ContentHostService } from '@pragmatic-tech-ai/mural/framework/shell/services/content-host-service.js'
+import { DialogService, type DialogOptions } from '@pragmatic-tech-ai/mural/framework/shell/services/dialog-service.js'
 import { NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
 import type { ControlPlaneClient } from '../../api-client.js'
 import { OperatorContext } from '../../operator-context.js'
+import type { ClientDto, CreatedTenantDto, FleetHiveDto, HiveDto, HiveRolloutDto, LedgerDto, ObservationDto, PolicyDto, TenantDto } from '../../portal-types.js'
 import type { IPageReloader } from '../page-reloader.js'
 import { PortalSessionService } from '../portal-session-service.js'
 
@@ -24,6 +27,237 @@ export class Tick
     public static Next(): Promise<void>
     {
         return new Promise(resolve => setImmediate(resolve))
+    }
+
+    // Lets a chain of awaits (load, dialog, submit, refresh) run out.
+    public static async Settle(): Promise<void>
+    {
+        for (let i = 0; i < 10; i++)
+        {
+            await Tick.Next()
+        }
+    }
+}
+
+// Reads every property a view-model exposes (own fields and prototype-chain
+// getters), for assertions about what a view-model can reveal or do.
+export class Inspect
+{
+    public static PropertyValues(target: object): unknown[]
+    {
+        const values: unknown[] = Object.values(target)
+        let proto: object | null = Object.getPrototypeOf(target)
+        while (proto !== null && proto !== Object.prototype)
+        {
+            for (const [name, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(proto)))
+            {
+                if (descriptor.get !== undefined)
+                {
+                    values.push((target as Record<string, unknown>)[name])
+                }
+            }
+            proto = Object.getPrototypeOf(proto)
+        }
+        return values
+    }
+
+    // True when any exposed property is a command (has Execute and CanExecute).
+    public static HasCommand(target: object): boolean
+    {
+        return Inspect.PropertyValues(target).some(v =>
+            typeof v === 'object' && v !== null && typeof (v as { Execute?: unknown }).Execute === 'function'
+            && typeof (v as { CanExecute?: unknown }).CanExecute === 'function')
+    }
+}
+
+// A DialogService stand-in: records each Show and stays open until the test
+// (through the dialog view-model's commands) calls Close.
+export class FakeDialogService extends DialogService
+{
+    public readonly Shown: DialogOptions[] = []
+    private resolve: ((value: unknown) => void) | undefined
+
+    public override Show<T = unknown>(options: DialogOptions): Promise<T | undefined>
+    {
+        this.Shown.push(options)
+        return new Promise<T | undefined>(resolve => { this.resolve = resolve as (value: unknown) => void })
+    }
+
+    public override Close(result?: unknown): void
+    {
+        const resolve = this.resolve
+        this.resolve = undefined
+        resolve?.(result)
+    }
+
+    public override get IsOpen(): boolean
+    {
+        return this.resolve !== undefined
+    }
+
+    // The content view-model of the last dialog shown.
+    public get Last(): unknown
+    {
+        return this.Shown.length === 0 ? undefined : this.Shown[this.Shown.length - 1].Content
+    }
+}
+
+// An in-memory control plane for section tests: list methods answer from the
+// arrays; mutating methods record their arguments and update the arrays, or
+// throw Failure when it is set.
+export class FakeControlPlane
+{
+    public Clients: ClientDto[] = []
+    public Tenants: TenantDto[] = []
+    public Hives: HiveDto[] = []
+    public Fleet: FleetHiveDto[] = []
+    public Rollouts: HiveRolloutDto[] = []
+    public Policies: PolicyDto[] = []
+    public Ledger: LedgerDto[] = []
+    public Observations: ObservationDto[] = []
+    public OwnerPassword = 'fixture-owner-password'
+    public Failure: Error | undefined
+    public readonly CreatedClients: Array<[string, string, string | undefined]> = []
+    public readonly CreatedTenants: Array<[string, string, string, string]> = []
+    public readonly CreatedHives: HiveDto[] = []
+    public readonly Deleted: string[] = []
+
+    // Seeds a client.
+    public WithClient(id: string, displayName: string = 'Client ' + id): this
+    {
+        this.Clients.push({ id, displayName, createdAt: '2026-10-01T00:00:00.000Z' })
+        return this
+    }
+
+    // Seeds a tenant of a client.
+    public WithTenant(id: string, clientId: string, displayName: string = 'Tenant ' + id): this
+    {
+        this.Tenants.push({ id, clientId, displayName, createdAt: '2026-10-02T00:00:00.000Z' })
+        return this
+    }
+
+    // Seeds a hive serving a tenant: its record, and its fleet entry (checked in
+    // a minute ago, reporting one environment per `ready` flag).
+    public WithHive(id: string, tenantId: string, ready: boolean[] = [true], credentialRef?: string): this
+    {
+        this.Hives.push({
+            id, tenantId, displayName: 'Hive ' + id,
+            cluster: { backend: 'local', mode: 'attach' },
+            registry: { mode: 'attach', credentialRef },
+        })
+        const tenant = this.Tenants.find(t => t.id === tenantId)
+        const client = tenant === undefined ? undefined : this.Clients.find(c => c.id === tenant.clientId)
+        this.Fleet.push({
+            id,
+            displayName: 'Hive ' + id,
+            tenant: tenant === undefined ? null : { id: tenant.id, displayName: tenant.displayName },
+            client: client === undefined ? null : { id: client.id, displayName: client.displayName },
+            clusterBackend: 'local',
+            clusterMode: 'attach',
+            lastSeen: new Date(Date.now() - 60 * 1000).toISOString(),
+            environments: ready.map((r, i) => ({ name: 'env' + i, ready: r, image: 'img:' + i, detail: '' })),
+        })
+        return this
+    }
+
+    public async ListClients(): Promise<ClientDto[]>
+    {
+        return [...this.Clients]
+    }
+
+    public async ListTenants(clientId?: string): Promise<TenantDto[]>
+    {
+        return this.Tenants.filter(t => clientId === undefined || t.clientId === clientId)
+    }
+
+    public async ListHives(): Promise<HiveDto[]>
+    {
+        return [...this.Hives]
+    }
+
+    public async ListFleet(): Promise<FleetHiveDto[]>
+    {
+        return [...this.Fleet]
+    }
+
+    public async ListRollouts(): Promise<HiveRolloutDto[]>
+    {
+        return [...this.Rollouts]
+    }
+
+    public async ListPolicies(): Promise<PolicyDto[]>
+    {
+        return [...this.Policies]
+    }
+
+    public async ListHiveLedger(): Promise<LedgerDto[]>
+    {
+        return [...this.Ledger]
+    }
+
+    public async ListHiveObservations(): Promise<ObservationDto[]>
+    {
+        return [...this.Observations]
+    }
+
+    public async CreateClient(id: string, displayName: string, subscriptionRef?: string): Promise<ClientDto>
+    {
+        this.ThrowIfFailing()
+        this.CreatedClients.push([id, displayName, subscriptionRef])
+        const client = { id, displayName, subscriptionRef, createdAt: new Date().toISOString() }
+        this.Clients.push(client)
+        return client
+    }
+
+    public async CreateTenant(id: string, clientId: string, displayName: string, ownerEmail: string): Promise<CreatedTenantDto>
+    {
+        this.ThrowIfFailing()
+        this.CreatedTenants.push([id, clientId, displayName, ownerEmail])
+        this.Tenants.push({ id, clientId, displayName })
+        return { id, clientId, displayName, owner: { email: ownerEmail, principalId: 'p-' + id, password: this.OwnerPassword } }
+    }
+
+    public async CreateHive(input: HiveDto): Promise<HiveDto>
+    {
+        this.ThrowIfFailing()
+        this.CreatedHives.push(input)
+        this.Hives.push(input)
+        return input
+    }
+
+    public async DeleteClient(id: string): Promise<void>
+    {
+        this.ThrowIfFailing()
+        this.Deleted.push(id)
+        this.Clients = this.Clients.filter(c => c.id !== id)
+    }
+
+    public async DeleteTenant(id: string): Promise<void>
+    {
+        this.ThrowIfFailing()
+        this.Deleted.push(id)
+        this.Tenants = this.Tenants.filter(t => t.id !== id)
+    }
+
+    public async DeleteHive(id: string): Promise<void>
+    {
+        this.ThrowIfFailing()
+        this.Deleted.push(id)
+        this.Hives = this.Hives.filter(h => h.id !== id)
+        this.Fleet = this.Fleet.filter(h => h.id !== id)
+    }
+
+    public AsClient(): ControlPlaneClient
+    {
+        return this as unknown as ControlPlaneClient
+    }
+
+    private ThrowIfFailing(): void
+    {
+        if (this.Failure !== undefined)
+        {
+            throw this.Failure
+        }
     }
 }
 
@@ -54,6 +288,22 @@ export class PortalTestHost
     {
         return this.Provider.getRequired(ContentHostService.Key)
     }
+
+    // Registers a FakeDialogService under DialogService.Key.
+    public UseDialogs(): FakeDialogService
+    {
+        const dialogs = new FakeDialogService(this.Provider)
+        this.Provider.registerInstance(DialogService.Key, dialogs)
+        return dialogs
+    }
+
+    // Registers a ClipboardService whose writes land in the returned array.
+    public UseClipboard(): string[]
+    {
+        const written: string[] = []
+        this.Provider.registerInstance(ClipboardService.Key, new ClipboardService(this.Provider, async (text) => { written.push(text) }))
+        return written
+    }
 }
 
 // A real NavigationService rail over a provider: register section types, then
@@ -73,5 +323,15 @@ export class TestRail
         const capability = new Capability()
         capability.ServiceKey = section as never
         this.Navigation.SelectedItem = capability
+    }
+
+    // Adds a rail item for a section, as PopulateFromModules would; a section
+    // can then bring itself to the front through it.
+    public Add(section: Function): Capability
+    {
+        const capability = new Capability()
+        capability.ServiceKey = section as never
+        this.Navigation.Items.Add(capability)
+        return capability
     }
 }

@@ -1,8 +1,9 @@
-import { ObservableCollection } from '@pragmatic-tech-ai/mural/runtime'
+import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import { FleetConnection, FleetViewModel, type FleetRow } from '../../fleet-view-model.js'
 import { PortalPageViewModel } from '../../shell/portal-page-view-model.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
+import type { FleetSectionService } from './fleet-section-service.js'
 
 // One hives-table row: a bindable projection of a derived FleetRow.
 export class FleetHiveRowViewModel extends Observable
@@ -14,9 +15,12 @@ export class FleetHiveRowViewModel extends Observable
     private static readonly ReadyToken = '{ready}'
     private static readonly TotalToken = '{total}'
 
-    public constructor(private readonly row: FleetRow)
+    private readonly openCommand: RelayCommand
+
+    public constructor(private readonly row: FleetRow, open: RelayCommand)
     {
         super()
+        this.openCommand = new RelayCommand(() => open.Execute(this))
     }
 
     public get Id(): string
@@ -32,6 +36,12 @@ export class FleetHiveRowViewModel extends Observable
     public get OwnerLabel(): string
     {
         return this.row.ownerLabel
+    }
+
+    // Opens this hive's detail (the page's OpenCommand with this row).
+    public get OpenCommand(): RelayCommand
+    {
+        return this.openCommand
     }
 
     public get ConnectionLabel(): string
@@ -113,10 +123,19 @@ export class FleetPageViewModel extends PortalPageViewModel
     private fleet = new FleetViewModel([])
     private readonly rows = new ObservableCollection<FleetHiveRowViewModel>()
     private readonly needsAttention = new ObservableCollection<FleetAttentionItemViewModel>()
+    private readonly openCommand: RelayCommand
 
-    public constructor(session: PortalSessionService)
+    public constructor(session: PortalSessionService, private readonly section: FleetSectionService)
     {
         super(session)
+        this.openCommand = new RelayCommand(row => this.Open(row))
+    }
+
+    // Opens a hive's detail in the Hives section; the parameter is the
+    // FleetHiveRowViewModel.
+    public get OpenCommand(): RelayCommand
+    {
+        return this.openCommand
     }
 
     public get Rows(): ObservableCollection<FleetHiveRowViewModel>
@@ -187,6 +206,14 @@ export class FleetPageViewModel extends PortalPageViewModel
         return dtos.length > 0
     }
 
+    private Open(row: unknown): void
+    {
+        if (row instanceof FleetHiveRowViewModel)
+        {
+            this.section.OpenHive(row.Id)
+        }
+    }
+
     private Apply(next: FleetViewModel): void
     {
         const old = this.fleet
@@ -194,7 +221,7 @@ export class FleetPageViewModel extends PortalPageViewModel
         this.rows.Clear()
         for (const row of next.Rows)
         {
-            this.rows.Add(new FleetHiveRowViewModel(row))
+            this.rows.Add(new FleetHiveRowViewModel(row, this.openCommand))
         }
         this.needsAttention.Clear()
         for (const row of next.NeedsAttention)

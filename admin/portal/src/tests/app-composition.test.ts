@@ -2,7 +2,8 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Visual } from '@pragmatic-tech-ai/mural/runtime'
 import { EditorShell } from '@pragmatic-tech-ai/mural/framework/shell/editor-shell.js'
-import { NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
+import { NavigationDestination, NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
+import { ClipboardService } from '@pragmatic-tech-ai/mural/framework/shell/services/clipboard-service.js'
 import { ContentHostService } from '@pragmatic-tech-ai/mural/framework/shell/services/content-host-service.js'
 import { app } from '../app.mu.js'
 import { PortalNavigationService } from '../shell/portal-navigation-service.js'
@@ -11,7 +12,7 @@ import { FleetSectionService } from '../sections/fleet/fleet-section-service.js'
 import { FleetPageViewModel } from '../sections/fleet/fleet-page-view-model.js'
 
 // The compiled app.mu: a bare EditorShell over the portal's own services,
-// with the Fleet section as the first (selected) rail destination.
+// with the sections in rail order and Fleet as the first (selected) one.
 describe('app.mu composition', () =>
 {
     const shell = app.Resources.Root as Visual
@@ -30,9 +31,14 @@ describe('app.mu composition', () =>
     {
         const nav = (shell as EditorShell).Services.get(NavigationService.Key)
         assert.ok(nav instanceof PortalNavigationService)
-        assert.equal(nav.Items.Count, 1)
+        assert.deepEqual(nav.Items.ToArray().map(i => (i as NavigationDestination).Label), ['Fleet', 'Clients', 'Tenants', 'Hives'])
         assert.equal(nav.SidePaneVisible, false)
         assert.ok(nav.ActiveService instanceof FleetSectionService)
+    })
+
+    it('registers the clipboard at the app root', () =>
+    {
+        assert.ok(app.Services.get(ClipboardService.Key) instanceof ClipboardService)
     })
 
     it('presents the Fleet page in the shared content host', () =>

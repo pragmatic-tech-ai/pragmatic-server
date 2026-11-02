@@ -1,6 +1,9 @@
-import { RelayCommand, ServiceBase, type IServiceProvider } from '@pragmatic-tech-ai/mural/runtime'
+import { RelayCommand, ServiceBase, ServiceProvider, type IServiceProvider } from '@pragmatic-tech-ai/mural/runtime'
+import { Capability } from '@pragmatic-tech-ai/mural/framework/shell/module.js'
+import { ClipboardService } from '@pragmatic-tech-ai/mural/framework/shell/services/clipboard-service.js'
 import { ContentHostService } from '@pragmatic-tech-ai/mural/framework/shell/services/content-host-service.js'
-import { NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
+import { DialogService } from '@pragmatic-tech-ai/mural/framework/shell/services/dialog-service.js'
+import { NavigationDestination, NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
 import type { IActivatable } from '@pragmatic-tech-ai/mural/framework/shell/services/activatable.js'
 import type { IDisposable, Observable } from '@pragmatic-tech-ai/todl-runtime'
 import { PortalPageViewModel } from './portal-page-view-model.js'
@@ -55,6 +58,20 @@ export abstract class PortalSectionService extends ServiceBase implements IActiv
         return this.Provider.getRequired(PortalSessionService.Key)
     }
 
+    // The shell's modal-dialog surface (EditorShell registers it at the app
+    // root); undefined before a shell exists.
+    public get Dialogs(): DialogService | undefined
+    {
+        return this.Provider.get(DialogService.Key)
+    }
+
+    // The system clipboard seam (registered at the app root); undefined when
+    // none is registered.
+    public get Clipboard(): ClipboardService | undefined
+    {
+        return this.Provider.get(ClipboardService.Key)
+    }
+
     private get Host(): ContentHostService
     {
         return this.Provider.getRequired(ContentHostService.Key)
@@ -68,11 +85,67 @@ export abstract class PortalSectionService extends ServiceBase implements IActiv
     {
         const old = this.Current
         this.pages.push(page)
-        this.ShowCurrent(old)
-        if (page instanceof PortalPageViewModel)
+        this.ShowAndLoad(old, page)
+    }
+
+    // Swaps the top page for `page` (e.g. a one-time reveal for the page it
+    // leads to), so Back skips the replaced page.
+    public Replace(page: Observable): void
+    {
+        const old = this.Current
+        this.pages.pop()
+        this.pages.push(page)
+        this.ShowAndLoad(old, page)
+    }
+
+    // Presents `page` directly over the root: pops anything above the root,
+    // creating (and loading) the root first when the section has none yet.
+    public PresentOverRoot(page: Observable): void
+    {
+        const old = this.Current
+        if (this.pages.length === 0)
         {
-            void page.Refresh()
+            const root = this.CreateRoot()
+            this.pages.push(root)
+            void root.Refresh()
         }
+        this.pages.length = 1
+        this.pages.push(page)
+        this.ShowAndLoad(old, page)
+    }
+
+    // Pops to the previous page and reloads it (after the popped page's
+    // subject was deleted, say).
+    public async BackAndRefresh(): Promise<void>
+    {
+        this.Back()
+        await this.RefreshCurrent()
+    }
+
+    // Makes this section the rail's active one by selecting the rail item
+    // whose capability names it. False when no rail item does.
+    public BringToFront(): boolean
+    {
+        const navigation = this.Provider.get(NavigationService.Key)
+        if (navigation === undefined)
+        {
+            return false
+        }
+        for (const item of navigation.Items)
+        {
+            const capability = item instanceof NavigationDestination ? item.Capability : item
+            if (!(capability instanceof Capability) || capability.ServiceKey === undefined)
+            {
+                continue
+            }
+            const token = ServiceProvider.tokenFor(capability.ServiceKey as unknown as Function)
+            if (this.Provider.get(token) === this)
+            {
+                navigation.SelectedItem = item
+                return true
+            }
+        }
+        return false
     }
 
     // Pops to the previous page and re-views it. No-op at the root.
@@ -124,6 +197,15 @@ export abstract class PortalSectionService extends ServiceBase implements IActiv
         this.navigationSubscription?.dispose()
         this.navigationSubscription = undefined
         super.dispose()
+    }
+
+    private ShowAndLoad(old: Observable | undefined, page: Observable): void
+    {
+        this.ShowCurrent(old)
+        if (page instanceof PortalPageViewModel)
+        {
+            void page.Refresh()
+        }
     }
 
     private ShowCurrent(old: Observable | undefined): void

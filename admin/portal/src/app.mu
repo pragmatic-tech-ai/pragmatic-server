@@ -17,7 +17,11 @@ import Pragmatic from "@pragmatic-tech-ai/mural/resources/pragmatic"
 import PragmaticLight from "@pragmatic-tech-ai/mural/resources/pragmatic"
 import PortalSessionService from "./shell/portal-session-service.js"
 import PortalNavigationService from "./shell/portal-navigation-service.js"
+import ClipboardService from "@pragmatic-tech-ai/mural/framework/shell/services/clipboard-service.js"
 import FleetModule from "./sections/fleet/fleet.module.mu.js"
+import ClientsModule from "./sections/clients/clients.module.mu.js"
+import TenantsModule from "./sections/tenants/tenants.module.mu.js"
+import HivesModule from "./sections/hives/hives.module.mu.js"
 import ShellResources from "./shell/shell.resources.mu.js"
 
 Application [ Theme = Pragmatic, Scheme = PragmaticLight ] {
@@ -31,10 +35,16 @@ Application [ Theme = Pragmatic, Scheme = PragmaticLight ] {
 
         // The rail, registered under NavigationService's key.
         PortalNavigationService -> NavigationService
+
+        // The system clipboard (the one-time reveal pages' Copy).
+        ClipboardService
     }
 
     .modules: {
         FleetModule
+        ClientsModule
+        TenantsModule
+        HivesModule
     }
 
     resources: {

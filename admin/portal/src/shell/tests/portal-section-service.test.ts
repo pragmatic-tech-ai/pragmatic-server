@@ -172,4 +172,46 @@ describe('PortalSectionService', () =>
         const section = new TestSection(PortalTestHost.WithoutClient().Provider)
         assert.equal(section.IsActive, true)
     })
+
+    it('Replace swaps the top page, so Back skips the replaced one', () =>
+    {
+        const host = PortalTestHost.WithoutClient()
+        const section = new TestSection(host.Provider)
+        section.OnActivated()
+        section.Present(new DetailPage())
+        const next = new DetailPage()
+        section.Replace(next)
+        assert.equal(host.Host.Content, next)
+        section.Back()
+        assert.equal(host.Host.Content, section.Root)
+    })
+
+    it('PresentOverRoot creates the root when missing and drops pages above it', () =>
+    {
+        const host = PortalTestHost.WithoutClient()
+        const section = new TestSection(host.Provider)
+        const first = new DetailPage()
+        section.PresentOverRoot(first)
+        assert.equal(section.Creates, 1)
+        assert.equal(section.Current, first)
+        section.Present(new DetailPage())
+        const second = new DetailPage()
+        section.PresentOverRoot(second)
+        assert.equal(section.Creates, 1)
+        section.Back()
+        assert.equal(section.Current, section.Root)
+    })
+
+    it('BringToFront selects the rail item naming the section; false when none does', () =>
+    {
+        const rail = new RailFixture()
+        rail.SelectA()
+        assert.equal(rail.B.BringToFront(), false)
+        const item = new Capability()
+        item.ServiceKey = SectionB as never
+        rail.Navigation.Items.Add(item)
+        assert.equal(rail.B.BringToFront(), true)
+        assert.equal(rail.Navigation.ActiveService, rail.B)
+        assert.equal(rail.Host.Host.Content, rail.B.Root)
+    })
 })

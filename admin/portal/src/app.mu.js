@@ -1,9 +1,13 @@
+import { ClientsModule } from "./sections/clients/clients.module.mu.js";
 import { FleetModule } from "./sections/fleet/fleet.module.mu.js";
+import { HivesModule } from "./sections/hives/hives.module.mu.js";
+import { TenantsModule } from "./sections/tenants/tenants.module.mu.js";
 import { PortalNavigationService } from "./shell/portal-navigation-service.js";
 import { PortalSessionService } from "./shell/portal-session-service.js";
 import { ShellResources } from "./shell/shell.resources.mu.js";
 import { ContentControl } from "@pragmatic-tech-ai/mural/framework/base/content-control.js";
 import { EditorShell } from "@pragmatic-tech-ai/mural/framework/shell/editor-shell.js";
+import { ClipboardService } from "@pragmatic-tech-ai/mural/framework/shell/services/clipboard-service.js";
 import { ContentHostService } from "@pragmatic-tech-ai/mural/framework/shell/services/content-host-service.js";
 import { NavigationService } from "@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js";
 import { Pragmatic, PragmaticLight } from "@pragmatic-tech-ai/mural/resources/pragmatic";
@@ -15,7 +19,11 @@ export const app = (() => {
     _app0.Services.register(ServiceProvider.tokenFor(PortalSessionService), (p) => new PortalSessionService(p), 'singleton');
     _app0.Services.register(ServiceProvider.tokenFor(ContentHostService), (p) => new ContentHostService(p), 'singleton');
     _app0.Services.register(ServiceProvider.tokenFor(NavigationService), (p) => new PortalNavigationService(p), 'singleton');
+    _app0.Services.register(ServiceProvider.tokenFor(ClipboardService), (p) => new ClipboardService(p), 'singleton');
     _app0.AddModule(FleetModule);
+    _app0.AddModule(ClientsModule);
+    _app0.AddModule(TenantsModule);
+    _app0.AddModule(HivesModule);
     const _rd1 = _app0.Resources;
     for (const [_k, _v] of ShellResources.Clone().Entries()) _rd1.Set(_k, _v);
     const _editorShell2 = new EditorShell();
