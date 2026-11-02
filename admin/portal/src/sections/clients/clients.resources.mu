@@ -62,11 +62,11 @@ resources ClientsResources {
                             ColumnDefinition [ Width = GridLength.Star ]
                         }
                         TextBlock [ Grid.Column = 0, Text = "Client", Style = @PortalTableLinkHeader ]
-                        TextBlock [ Grid.Column = 1, Text = "Subscription", Style = @UiCaption, Foreground = @Fg2 ]
-                        TextBlock [ Grid.Column = 2, Text = "Tenants", Style = @UiCaption, Foreground = @Fg2 ]
-                        TextBlock [ Grid.Column = 3, Text = "Hives", Style = @UiCaption, Foreground = @Fg2 ]
-                        TextBlock [ Grid.Column = 4, Text = "Connection", Style = @UiCaption, Foreground = @Fg2 ]
-                        TextBlock [ Grid.Column = 5, Text = "Client since", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 1, Text = "Subscription", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 2, Text = "Tenants", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 3, Text = "Hives", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 4, Text = "Connection", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 5, Text = "Client since", Style = @PortalTableHeader ]
                     }
                     ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $Rows, ItemTemplate = @ClientRowTemplate ]
                 }
@@ -159,11 +159,11 @@ resources ClientsResources {
                                 ColumnDefinition [ Width = GridLength.Star ]
                                 ColumnDefinition [ Width = GridLength.Star ]
                             }
-                            TextBlock [ Grid.Column = 0, Text = "Tenant", Style = @UiCaption, Foreground = @Fg2 ]
-                            TextBlock [ Grid.Column = 1, Text = "Hive", Style = @UiCaption, Foreground = @Fg2 ]
-                            TextBlock [ Grid.Column = 2, Text = "Connection", Style = @UiCaption, Foreground = @Fg2 ]
-                            TextBlock [ Grid.Column = 3, Text = "Last check-in", Style = @UiCaption, Foreground = @Fg2 ]
-                            TextBlock [ Grid.Column = 4, Text = "Environments (observed)", Style = @UiCaption, Foreground = @Fg2 ]
+                            TextBlock [ Grid.Column = 0, Text = "Tenant", Style = @PortalTableHeader ]
+                            TextBlock [ Grid.Column = 1, Text = "Hive", Style = @PortalTableHeader ]
+                            TextBlock [ Grid.Column = 2, Text = "Connection", Style = @PortalTableHeader ]
+                            TextBlock [ Grid.Column = 3, Text = "Last check-in", Style = @PortalTableHeader ]
+                            TextBlock [ Grid.Column = 4, Text = "Environments (observed)", Style = @PortalTableHeader ]
                         }
                         ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $Tenants, ItemTemplate = @ClientTenantRowTemplate ]
                     }

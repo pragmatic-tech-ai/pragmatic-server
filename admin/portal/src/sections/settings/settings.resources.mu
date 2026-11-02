@@ -89,8 +89,8 @@ resources SettingsResources {
                             ColumnDefinition [ Width = GridLength.Star ]
                         }
                         TextBlock [ Grid.Column = 0, Text = "Email", Style = @PortalTableLinkHeader ]
-                        TextBlock [ Grid.Column = 1, Text = "Role", Style = @UiCaption, Foreground = @Fg2 ]
-                        TextBlock [ Grid.Column = 2, Text = "Status", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 1, Text = "Role", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 2, Text = "Status", Style = @PortalTableHeader ]
                     }
                     ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $Operators, ItemTemplate = @OperatorRowTemplate ]
                 }

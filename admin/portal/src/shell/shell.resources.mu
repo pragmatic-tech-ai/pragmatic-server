@@ -65,17 +65,16 @@ resources ShellResources {
         Margin = (8,4,8,4);
     }
 
+    // A table's header caption: the UiCaption face in the muted Fg2 ink.
+    Style x:key="PortalTableHeader" [ TargetType = TextBlock, BasedOn = @UiCaption ] {
+        Foreground = @Fg2;
+    }
+
     // The header caption over a column whose rows hold a Ghost link button
     // (the row's name / action). The button's template pads its text by 16
-    // plus the 2 focus-ring offset, so this caption (UiCaption, Fg2) is
-    // inset 18 to line up with the link's text. The one home of that number.
-    Style x:key="PortalTableLinkHeader" [ TargetType = TextBlock ] {
-        FontFamily = @FontSans;
-        FontWeight = @UiCaptionWeight;
-        FontSize = @UiCaptionSize;
-        LineHeight = @UiCaptionLineHeight;
-        LetterSpacing = @UiCaptionTracking;
-        Foreground = @Fg2;
+    // plus the 2 focus-ring offset, so this caption is inset 18 to line up
+    // with the link's text. The one home of that number.
+    Style x:key="PortalTableLinkHeader" [ TargetType = TextBlock, BasedOn = @PortalTableHeader ] {
         Margin = (18,0,0,0);
     }
 
@@ -143,10 +142,10 @@ resources ShellResources {
                             ColumnDefinition [ Width = GridLength.Star ]
                             ColumnDefinition [ Width = GridLength.Star ]
                         }
-                        TextBlock [ Grid.Column = 0, Text = "Environment", Style = @UiCaption, Foreground = @Fg2 ]
-                        TextBlock [ Grid.Column = 1, Text = "Status", Style = @UiCaption, Foreground = @Fg2 ]
-                        TextBlock [ Grid.Column = 2, Text = "Image", Style = @UiCaption, Foreground = @Fg2 ]
-                        TextBlock [ Grid.Column = 3, Text = "Detail", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 0, Text = "Environment", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 1, Text = "Status", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 2, Text = "Image", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 3, Text = "Detail", Style = @PortalTableHeader ]
                     }
                     ItemsControl [ ItemsSource = $Rows ]
                 }

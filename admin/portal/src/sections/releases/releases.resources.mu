@@ -60,12 +60,12 @@ resources ReleasesResources {
                             ColumnDefinition [ Width = GridLength.Star ]
                         }
                         TextBlock [ Grid.Column = 0, Text = "Version", Style = @PortalTableLinkHeader ]
-                        TextBlock [ Grid.Column = 1, Text = "Channel", Style = @UiCaption, Foreground = @Fg2 ]
-                        TextBlock [ Grid.Column = 2, Text = "Signature", Style = @UiCaption, Foreground = @Fg2 ]
-                        TextBlock [ Grid.Column = 3, Text = "Status", Style = @UiCaption, Foreground = @Fg2 ]
-                        TextBlock [ Grid.Column = 4, Text = "Published", Style = @UiCaption, Foreground = @Fg2 ]
-                        TextBlock [ Grid.Column = 5, Text = "Adoption (observed)", Style = @UiCaption, Foreground = @Fg2 ]
-                        TextBlock [ Grid.Column = 6, Text = "Image", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 1, Text = "Channel", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 2, Text = "Signature", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 3, Text = "Status", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 4, Text = "Published", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 5, Text = "Adoption (observed)", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 6, Text = "Image", Style = @PortalTableHeader ]
                     }
                     ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $Rows, ItemTemplate = @ReleaseRowTemplate ]
                 }

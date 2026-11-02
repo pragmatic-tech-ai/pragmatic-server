@@ -64,11 +64,11 @@ resources TenantsResources {
                             ColumnDefinition [ Width = GridLength.Star ]
                         }
                         TextBlock [ Grid.Column = 0, Text = "Tenant", Style = @PortalTableLinkHeader ]
-                        TextBlock [ Grid.Column = 1, Text = "Client", Style = @UiCaption, Foreground = @Fg2 ]
-                        TextBlock [ Grid.Column = 2, Text = "Hive (1:1)", Style = @UiCaption, Foreground = @Fg2 ]
-                        TextBlock [ Grid.Column = 3, Text = "Hive connection", Style = @UiCaption, Foreground = @Fg2 ]
-                        TextBlock [ Grid.Column = 4, Text = "Environments (observed)", Style = @UiCaption, Foreground = @Fg2 ]
-                        TextBlock [ Grid.Column = 5, Text = "Created", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 1, Text = "Client", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 2, Text = "Hive (1:1)", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 3, Text = "Hive connection", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 4, Text = "Environments (observed)", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 5, Text = "Created", Style = @PortalTableHeader ]
                     }
                     ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $Rows, ItemTemplate = @TenantRowTemplate ]
                 }

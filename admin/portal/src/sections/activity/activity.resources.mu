@@ -42,10 +42,10 @@ resources ActivityResources {
                             ColumnDefinition [ Width = GridLength.Star ]
                             ColumnDefinition [ Width = GridLength.Star ]
                         }
-                        TextBlock [ Grid.Column = 0, Text = "When (UTC)", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 0, Text = "When (UTC)", Style = @PortalTableHeader ]
                         TextBlock [ Grid.Column = 1, Text = "Action", Style = @PortalTableLinkHeader ]
-                        TextBlock [ Grid.Column = 2, Text = "Operator", Style = @UiCaption, Foreground = @Fg2 ]
-                        TextBlock [ Grid.Column = 3, Text = "Outcome", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 2, Text = "Operator", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 3, Text = "Outcome", Style = @PortalTableHeader ]
                     }
                     ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $Rows, ItemTemplate = @ActivityRowTemplate ]
                 }

@@ -63,11 +63,11 @@ resources ReleasePolicyResources {
                             ColumnDefinition [ Width = GridLength.Star ]
                             ColumnDefinition [ Width = GridLength.Star ]
                         }
-                        TextBlock [ Grid.Column = 0, Text = "Applies to", Style = @UiCaption, Foreground = @Fg2 ]
-                        TextBlock [ Grid.Column = 1, Text = "Scope", Style = @UiCaption, Foreground = @Fg2 ]
-                        TextBlock [ Grid.Column = 2, Text = "Channels", Style = @UiCaption, Foreground = @Fg2 ]
-                        TextBlock [ Grid.Column = 3, Text = "Minimum version", Style = @UiCaption, Foreground = @Fg2 ]
-                        TextBlock [ Grid.Column = 4, Text = "Hold", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 0, Text = "Applies to", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 1, Text = "Scope", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 2, Text = "Channels", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 3, Text = "Minimum version", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 4, Text = "Hold", Style = @PortalTableHeader ]
                     }
                     ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $PolicyRows,
                               ItemTemplate = @PolicyRuleRowTemplate, Margin = (0,0,0,20) ]
@@ -88,10 +88,10 @@ resources ReleasePolicyResources {
                                 ColumnDefinition [ Width = GridLength.Star ]
                                 ColumnDefinition [ Width = GridLength.Star ]
                             }
-                            TextBlock [ Grid.Column = 0, Text = "Client / tenant", Style = @UiCaption, Foreground = @Fg2 ]
-                            TextBlock [ Grid.Column = 1, Text = "Version", Style = @UiCaption, Foreground = @Fg2 ]
-                            TextBlock [ Grid.Column = 2, Text = "Gated", Style = @UiCaption, Foreground = @Fg2 ]
-                            TextBlock [ Grid.Column = 3, Text = "Adoptable?", Style = @UiCaption, Foreground = @Fg2 ]
+                            TextBlock [ Grid.Column = 0, Text = "Client / tenant", Style = @PortalTableHeader ]
+                            TextBlock [ Grid.Column = 1, Text = "Version", Style = @PortalTableHeader ]
+                            TextBlock [ Grid.Column = 2, Text = "Gated", Style = @PortalTableHeader ]
+                            TextBlock [ Grid.Column = 3, Text = "Adoptable?", Style = @PortalTableHeader ]
                         }
                         ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $GatedRows,
                                   ItemTemplate = @GatedVersionRowTemplate, Margin = (0,0,0,20) ]
@@ -112,10 +112,10 @@ resources ReleasePolicyResources {
                                 ColumnDefinition [ Width = GridLength.Star ]
                                 ColumnDefinition [ Width = GridLength.Star ]
                             }
-                            TextBlock [ Grid.Column = 0, Text = "Hive", Style = @UiCaption, Foreground = @Fg2 ]
-                            TextBlock [ Grid.Column = 1, Text = "Client / tenant", Style = @UiCaption, Foreground = @Fg2 ]
-                            TextBlock [ Grid.Column = 2, Text = "Target version", Style = @UiCaption, Foreground = @Fg2 ]
-                            TextBlock [ Grid.Column = 3, Text = "Selected", Style = @UiCaption, Foreground = @Fg2 ]
+                            TextBlock [ Grid.Column = 0, Text = "Hive", Style = @PortalTableHeader ]
+                            TextBlock [ Grid.Column = 1, Text = "Client / tenant", Style = @PortalTableHeader ]
+                            TextBlock [ Grid.Column = 2, Text = "Target version", Style = @PortalTableHeader ]
+                            TextBlock [ Grid.Column = 3, Text = "Selected", Style = @PortalTableHeader ]
                         }
                         ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $TargetRows,
                                   ItemTemplate = @SelectedTargetRowTemplate, Margin = (0,0,0,20) ]
@@ -141,12 +141,12 @@ resources ReleasePolicyResources {
                                 ColumnDefinition [ Width = GridLength.Star ]
                                 ColumnDefinition [ Width = GridLength.Star ]
                             }
-                            TextBlock [ Grid.Column = 0, Text = "Hive", Style = @UiCaption, Foreground = @Fg2 ]
-                            TextBlock [ Grid.Column = 1, Text = "Client / tenant", Style = @UiCaption, Foreground = @Fg2 ]
-                            TextBlock [ Grid.Column = 2, Text = "Environment", Style = @UiCaption, Foreground = @Fg2 ]
-                            TextBlock [ Grid.Column = 3, Text = "Target", Style = @UiCaption, Foreground = @Fg2 ]
-                            TextBlock [ Grid.Column = 4, Text = "Running", Style = @UiCaption, Foreground = @Fg2 ]
-                            TextBlock [ Grid.Column = 5, Text = "Status", Style = @UiCaption, Foreground = @Fg2 ]
+                            TextBlock [ Grid.Column = 0, Text = "Hive", Style = @PortalTableHeader ]
+                            TextBlock [ Grid.Column = 1, Text = "Client / tenant", Style = @PortalTableHeader ]
+                            TextBlock [ Grid.Column = 2, Text = "Environment", Style = @PortalTableHeader ]
+                            TextBlock [ Grid.Column = 3, Text = "Target", Style = @PortalTableHeader ]
+                            TextBlock [ Grid.Column = 4, Text = "Running", Style = @PortalTableHeader ]
+                            TextBlock [ Grid.Column = 5, Text = "Status", Style = @PortalTableHeader ]
                         }
                         ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $RolloutRows,
                                   ItemTemplate = @RolloutRowTemplate, Margin = (0,0,0,20) ]
@@ -167,10 +167,10 @@ resources ReleasePolicyResources {
                                 ColumnDefinition [ Width = GridLength.Star ]
                                 ColumnDefinition [ Width = GridLength.Star ]
                             }
-                            TextBlock [ Grid.Column = 0, Text = "Recorded", Style = @UiCaption, Foreground = @Fg2 ]
+                            TextBlock [ Grid.Column = 0, Text = "Recorded", Style = @PortalTableHeader ]
                             TextBlock [ Grid.Column = 1, Text = "Hive", Style = @PortalTableLinkHeader ]
-                            TextBlock [ Grid.Column = 2, Text = "Outcome", Style = @UiCaption, Foreground = @Fg2 ]
-                            TextBlock [ Grid.Column = 3, Text = "Version", Style = @UiCaption, Foreground = @Fg2 ]
+                            TextBlock [ Grid.Column = 2, Text = "Outcome", Style = @PortalTableHeader ]
+                            TextBlock [ Grid.Column = 3, Text = "Version", Style = @PortalTableHeader ]
                         }
                         ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $LedgerRows,
                                   ItemTemplate = @AdoptionLedgerRowTemplate ]

@@ -83,8 +83,7 @@ export class ActivityResources extends ResourceDictionary {
             const _textBlock16 = new TextBlock();
             _textBlock16.set_property_value(Grid.ColumnKey, 0);
             _textBlock16.set_property_value(TextBlock.TextKey, "When (UTC)");
-            _textBlock16.set_property_value(TextBlock.StyleKey, DynamicResource(_textBlock16, "UiCaption"));
-            _textBlock16.set_property_value(TextBlock.ForegroundKey, DynamicResource(_textBlock16, "Fg2"));
+            _textBlock16.set_property_value(TextBlock.StyleKey, DynamicResource(_textBlock16, "PortalTableHeader"));
             _grid10.AddChild(_textBlock16);
             const _textBlock17 = new TextBlock();
             _textBlock17.set_property_value(Grid.ColumnKey, 1);
@@ -94,14 +93,12 @@ export class ActivityResources extends ResourceDictionary {
             const _textBlock18 = new TextBlock();
             _textBlock18.set_property_value(Grid.ColumnKey, 2);
             _textBlock18.set_property_value(TextBlock.TextKey, "Operator");
-            _textBlock18.set_property_value(TextBlock.StyleKey, DynamicResource(_textBlock18, "UiCaption"));
-            _textBlock18.set_property_value(TextBlock.ForegroundKey, DynamicResource(_textBlock18, "Fg2"));
+            _textBlock18.set_property_value(TextBlock.StyleKey, DynamicResource(_textBlock18, "PortalTableHeader"));
             _grid10.AddChild(_textBlock18);
             const _textBlock19 = new TextBlock();
             _textBlock19.set_property_value(Grid.ColumnKey, 3);
             _textBlock19.set_property_value(TextBlock.TextKey, "Outcome");
-            _textBlock19.set_property_value(TextBlock.StyleKey, DynamicResource(_textBlock19, "UiCaption"));
-            _textBlock19.set_property_value(TextBlock.ForegroundKey, DynamicResource(_textBlock19, "Fg2"));
+            _textBlock19.set_property_value(TextBlock.StyleKey, DynamicResource(_textBlock19, "PortalTableHeader"));
             _grid10.AddChild(_textBlock19);
             _stackPanel9.AddChild(_grid10);
             const _listBox20 = new ListBox();

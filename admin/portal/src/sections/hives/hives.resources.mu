@@ -77,11 +77,11 @@ resources HivesResources {
                             ColumnDefinition [ Width = GridLength.Star ]
                         }
                         TextBlock [ Grid.Column = 0, Text = "Hive", Style = @PortalTableLinkHeader ]
-                        TextBlock [ Grid.Column = 1, Text = "Client / tenant", Style = @UiCaption, Foreground = @Fg2 ]
-                        TextBlock [ Grid.Column = 2, Text = "Cluster", Style = @UiCaption, Foreground = @Fg2 ]
-                        TextBlock [ Grid.Column = 3, Text = "Connection", Style = @UiCaption, Foreground = @Fg2 ]
-                        TextBlock [ Grid.Column = 4, Text = "Health", Style = @UiCaption, Foreground = @Fg2 ]
-                        TextBlock [ Grid.Column = 5, Text = "Registry credential", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 1, Text = "Client / tenant", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 2, Text = "Cluster", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 3, Text = "Connection", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 4, Text = "Health", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 5, Text = "Registry credential", Style = @PortalTableHeader ]
                     }
                     ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $Rows, ItemTemplate = @HiveRowTemplate ]
                 }

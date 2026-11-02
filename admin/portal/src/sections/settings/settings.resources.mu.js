@@ -186,14 +186,12 @@ export class SettingsResources extends ResourceDictionary {
             const _textBlock37 = new TextBlock();
             _textBlock37.set_property_value(Grid.ColumnKey, 1);
             _textBlock37.set_property_value(TextBlock.TextKey, "Role");
-            _textBlock37.set_property_value(TextBlock.StyleKey, DynamicResource(_textBlock37, "UiCaption"));
-            _textBlock37.set_property_value(TextBlock.ForegroundKey, DynamicResource(_textBlock37, "Fg2"));
+            _textBlock37.set_property_value(TextBlock.StyleKey, DynamicResource(_textBlock37, "PortalTableHeader"));
             _grid31.AddChild(_textBlock37);
             const _textBlock38 = new TextBlock();
             _textBlock38.set_property_value(Grid.ColumnKey, 2);
             _textBlock38.set_property_value(TextBlock.TextKey, "Status");
-            _textBlock38.set_property_value(TextBlock.StyleKey, DynamicResource(_textBlock38, "UiCaption"));
-            _textBlock38.set_property_value(TextBlock.ForegroundKey, DynamicResource(_textBlock38, "Fg2"));
+            _textBlock38.set_property_value(TextBlock.StyleKey, DynamicResource(_textBlock38, "PortalTableHeader"));
             _grid31.AddChild(_textBlock38);
             _stackPanel26.AddChild(_grid31);
             const _listBox39 = new ListBox();
