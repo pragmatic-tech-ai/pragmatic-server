@@ -122,6 +122,7 @@ export class ReleasesResources extends ResourceDictionary {
             _textBlock24.set_property_value(TextBlock.TextKey, "Version");
             _textBlock24.set_property_value(TextBlock.StyleKey, DynamicResource(_textBlock24, "UiCaption"));
             _textBlock24.set_property_value(TextBlock.ForegroundKey, DynamicResource(_textBlock24, "Fg2"));
+            _textBlock24.set_property_value(TextBlock.MarginKey, new Thickness(18, 0, 0, 0));
             _grid15.AddChild(_textBlock24);
             const _textBlock25 = new TextBlock();
             _textBlock25.set_property_value(Grid.ColumnKey, 1);

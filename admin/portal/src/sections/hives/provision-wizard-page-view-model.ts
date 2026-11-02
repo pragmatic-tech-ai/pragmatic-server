@@ -2,7 +2,7 @@ import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/run
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import { ApiError } from '../../api-client.js'
 import type { HiveClusterBackend, HiveDto, HiveProvisionMode, ProvisionInputDto } from '../../portal-types.js'
-import type { IHoldsPendingSecret } from '../../shell/holds-pending-secret.js'
+import { PendingSecret, type IHoldsPendingSecret } from '../../shell/holds-pending-secret.js'
 import type { OptionViewModel } from '../../shell/option-view-model.js'
 import { PortalPageViewModel } from '../../shell/portal-page-view-model.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
@@ -166,6 +166,7 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
     {
         super(session)
         const C = ProvisionWizardPageViewModel
+        PendingSecret.Register(this)
         this.stepLabels = [C.ClientLabel, C.TenantLabel, C.HiveLabel, C.ReviewLabel, C.BootstrapLabel]
         this.stepLabels.forEach((label, i) => this.steps.Add(new ProvisionStepViewModel(i as ProvisionStep, label)))
         HiveOptions.Backends().forEach(o => this.backends.Add(o))
@@ -783,6 +784,7 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
             return
         }
         const was = [this.IsClientStep, this.IsTenantStep, this.IsHiveStep, this.IsReviewStep, this.IsBootstrapStep, this.IsFormStep, this.IsInputStep]
+        const wasPending = this.HasPendingSecret
         this.step = next
         this.RaisePropertyChanged(C.StepIndexProperty, old, next)
         this.RaisePropertyChanged(C.IsClientStepProperty, was[0], this.IsClientStep)
@@ -792,6 +794,7 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
         this.RaisePropertyChanged(C.IsBootstrapStepProperty, was[4], this.IsBootstrapStep)
         this.RaisePropertyChanged(C.IsFormStepProperty, was[5], this.IsFormStep)
         this.RaisePropertyChanged(C.IsInputStepProperty, was[6], this.IsInputStep)
+        this.RaisePendingSecretChanged(wasPending)
         this.SyncSteps()
         this.RaiseCommandsChanged()
     }
@@ -831,6 +834,7 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
         const C = ProvisionWizardPageViewModel
         const oldOwner = this.ownerPassword
         const oldAgent = this.agentToken
+        const wasPending = this.HasPendingSecret
         this.ownerPassword = ownerPassword
         this.agentToken = agentToken
         if (oldOwner !== ownerPassword)
@@ -841,7 +845,19 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
         {
             this.RaisePropertyChanged(C.AgentTokenProperty, oldAgent, agentToken)
         }
+        this.RaisePendingSecretChanged(wasPending)
         this.RaiseCommandsChanged()
+    }
+
+    // Tells the section when the pending-secret state flipped, so its Back
+    // command can re-evaluate.
+    private RaisePendingSecretChanged(was: boolean): void
+    {
+        const now = this.HasPendingSecret
+        if (was !== now)
+        {
+            this.RaisePropertyChanged(PendingSecret.ChangedProperty, was, now)
+        }
     }
 
     private SetOwnerCopyStatus(next: string): void

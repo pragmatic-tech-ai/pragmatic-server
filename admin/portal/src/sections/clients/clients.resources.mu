@@ -61,7 +61,7 @@ resources ClientsResources {
                             ColumnDefinition [ Width = GridLength.Star ]
                             ColumnDefinition [ Width = GridLength.Star ]
                         }
-                        TextBlock [ Grid.Column = 0, Text = "Client", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 0, Text = "Client", Style = @UiCaption, Foreground = @Fg2, Margin = (18,0,0,0) ]
                         TextBlock [ Grid.Column = 1, Text = "Subscription", Style = @UiCaption, Foreground = @Fg2 ]
                         TextBlock [ Grid.Column = 2, Text = "Tenants", Style = @UiCaption, Foreground = @Fg2 ]
                         TextBlock [ Grid.Column = 3, Text = "Hives", Style = @UiCaption, Foreground = @Fg2 ]

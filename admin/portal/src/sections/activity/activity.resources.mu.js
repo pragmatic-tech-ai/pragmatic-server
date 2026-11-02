@@ -91,6 +91,7 @@ export class ActivityResources extends ResourceDictionary {
             _textBlock17.set_property_value(TextBlock.TextKey, "Action");
             _textBlock17.set_property_value(TextBlock.StyleKey, DynamicResource(_textBlock17, "UiCaption"));
             _textBlock17.set_property_value(TextBlock.ForegroundKey, DynamicResource(_textBlock17, "Fg2"));
+            _textBlock17.set_property_value(TextBlock.MarginKey, new Thickness(18, 0, 0, 0));
             _grid10.AddChild(_textBlock17);
             const _textBlock18 = new TextBlock();
             _textBlock18.set_property_value(Grid.ColumnKey, 2);

@@ -427,6 +427,7 @@ export class ReleasePolicyResources extends ResourceDictionary {
             _textBlock89.set_property_value(TextBlock.TextKey, "Hive");
             _textBlock89.set_property_value(TextBlock.StyleKey, DynamicResource(_textBlock89, "UiCaption"));
             _textBlock89.set_property_value(TextBlock.ForegroundKey, DynamicResource(_textBlock89, "Fg2"));
+            _textBlock89.set_property_value(TextBlock.MarginKey, new Thickness(18, 0, 0, 0));
             _grid82.AddChild(_textBlock89);
             const _textBlock90 = new TextBlock();
             _textBlock90.set_property_value(Grid.ColumnKey, 2);

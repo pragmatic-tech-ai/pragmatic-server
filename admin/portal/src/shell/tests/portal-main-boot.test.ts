@@ -5,12 +5,12 @@ import { ContentHostService } from '@pragmatic-tech-ai/mural/framework/shell/ser
 import { ApiError, type ControlPlaneClient } from '../../api-client.js'
 import { OperatorContext } from '../../operator-context.js'
 import type { OperatorDto } from '../../portal-types.js'
+import { LoginHostService } from '../login-host-service.js'
 import { BootTarget, PortalBoot } from '../portal-boot.js'
 import { PageState, PortalPageViewModel } from '../portal-page-view-model.js'
 import { PortalSectionService } from '../portal-section-service.js'
 import { PortalSessionService } from '../portal-session-service.js'
 import { FakeReloader, TestRail, Tick } from './portal-test-fixtures.js'
-import { LoginHostService } from '../login-host-service.js'
 
 // A client with one list call plus the change-notification registration.
 class FakeShellClient

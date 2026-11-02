@@ -116,6 +116,7 @@ export class ClientsResources extends ResourceDictionary {
             _textBlock23.set_property_value(TextBlock.TextKey, "Client");
             _textBlock23.set_property_value(TextBlock.StyleKey, DynamicResource(_textBlock23, "UiCaption"));
             _textBlock23.set_property_value(TextBlock.ForegroundKey, DynamicResource(_textBlock23, "Fg2"));
+            _textBlock23.set_property_value(TextBlock.MarginKey, new Thickness(18, 0, 0, 0));
             _grid15.AddChild(_textBlock23);
             const _textBlock24 = new TextBlock();
             _textBlock24.set_property_value(Grid.ColumnKey, 1);

@@ -4,7 +4,7 @@ import { OperatorContext } from '../../../operator-context.js'
 import { NameConfirmDialogViewModel } from '../../../shell/name-confirm-dialog-view-model.js'
 import { PageState } from '../../../shell/portal-page-view-model.js'
 import { FakeControlPlane, Inspect, PortalTestHost, Tick, type FakeDialogService } from '../../../shell/tests/portal-test-fixtures.js'
-import { HiveDetailPageViewModel } from '../hive-detail-page-view-model.js'
+import { HiveDetailPageViewModel, HiveLedgerRowViewModel, LedgerAction } from '../hive-detail-page-view-model.js'
 import { HivesPageViewModel } from '../hives-page-view-model.js'
 import { HivesSectionService } from '../hives-section-service.js'
 import { NewHiveDialogViewModel } from '../new-hive-dialog-view-model.js'
@@ -56,6 +56,15 @@ class HivesFixture
 
 describe('Hives section', () =>
 {
+    it('every ledger action has a readable label; an unknown wire action shows as sent', () =>
+    {
+        for (const action of Object.values(LedgerAction))
+        {
+            assert.notEqual(HiveLedgerRowViewModel.LabelFor(action), action)
+        }
+        assert.equal(HiveLedgerRowViewModel.LabelFor('constructor'), 'constructor')
+    })
+
     it('the list loads each hive with its owner, connection and health', async () =>
     {
         const fx = new HivesFixture()

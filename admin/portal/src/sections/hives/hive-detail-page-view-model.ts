@@ -81,14 +81,18 @@ export enum LedgerAction
 // One version-history entry (the hive's adoption ledger).
 export class HiveLedgerRowViewModel extends Observable
 {
-    private static readonly ActionLabels: ReadonlyMap<string, string> = new Map<LedgerAction, string>([
-        [LedgerAction.Gated, 'Gated'],
-        [LedgerAction.Ungated, 'Ungated'],
-        [LedgerAction.Withdrawn, 'Withdrawn'],
-        [LedgerAction.Restored, 'Restored'],
-        [LedgerAction.Selected, 'Selected as target'],
-        [LedgerAction.Adopted, 'Adopted'],
-    ])
+    // Typed as a Record over the enum, so the compiler rejects a LedgerAction
+    // without a label. The Map view serves lookups by the wire string.
+    private static readonly ActionLabelRecord: Record<LedgerAction, string> = {
+        [LedgerAction.Gated]: 'Gated',
+        [LedgerAction.Ungated]: 'Ungated',
+        [LedgerAction.Withdrawn]: 'Withdrawn',
+        [LedgerAction.Restored]: 'Restored',
+        [LedgerAction.Selected]: 'Selected as target',
+        [LedgerAction.Adopted]: 'Adopted',
+    }
+
+    private static readonly ActionLabels: ReadonlyMap<string, string> = new Map<string, string>(Object.entries(HiveLedgerRowViewModel.ActionLabelRecord))
 
     public constructor(private readonly entry: LedgerDto)
     {

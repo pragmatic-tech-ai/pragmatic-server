@@ -28,6 +28,7 @@ export abstract class PortalSectionService extends ServiceBase implements IActiv
     private activating = false
     private navigationWatched = false
     private navigationSubscription: IDisposable | undefined
+    private secretSubscription: IDisposable | undefined
 
     public constructor(provider: IServiceProvider)
     {
@@ -57,11 +58,11 @@ export abstract class PortalSectionService extends ServiceBase implements IActiv
     }
 
     // Whether this section is the rail's active one. Tracks the
-    // NavigationService's ActiveService once watched; with no navigation
-    // registered (unit tests) the section counts as active.
+    // NavigationService's ActiveService once watched (the first activation or
+    // presented page starts the watch); with no navigation registered (unit
+    // tests) the section counts as active once watched.
     public get IsActive(): boolean
     {
-        this.WatchNavigation()
         return this.active
     }
 
@@ -194,8 +195,8 @@ export abstract class PortalSectionService extends ServiceBase implements IActiv
 
     // First activation presents the root; later ones re-view the current page
     // (another section may have replaced the shared host's content meanwhile).
-    // Navigation is not resolved here: the NavigationService calls this from
-    // its own constructor, before it is resolvable.
+    // Navigation is not resolved while presenting (the activating flag stands
+    // in for IsActive); the watch starts once the presenting is done.
     public OnActivated(): void
     {
         this.SetActive(true)
@@ -206,14 +207,17 @@ export abstract class PortalSectionService extends ServiceBase implements IActiv
             if (current === undefined)
             {
                 this.Present(this.CreateRoot())
-                return
             }
-            this.Host.View(current)
+            else
+            {
+                this.Host.View(current)
+            }
         }
         finally
         {
             this.activating = false
         }
+        this.WatchNavigation()
     }
 
     public async RefreshCurrent(): Promise<void>
@@ -229,6 +233,8 @@ export abstract class PortalSectionService extends ServiceBase implements IActiv
     {
         this.navigationSubscription?.dispose()
         this.navigationSubscription = undefined
+        this.secretSubscription?.dispose()
+        this.secretSubscription = undefined
         super.dispose()
     }
 
@@ -246,14 +252,35 @@ export abstract class PortalSectionService extends ServiceBase implements IActiv
         const current = this.Current
         this.RaisePropertyChanged(PortalSectionService.CurrentProperty, old, current)
         this.backCommand.RaiseCanExecuteChanged()
-        if (this.activating || this.IsActive)
+        this.WatchPendingSecret(current)
+        if (!this.activating)
+        {
+            this.WatchNavigation()
+        }
+        if (this.activating || this.active)
         {
             this.Host.View(current)
         }
     }
 
-    // Lazily subscribes to the NavigationService's ActiveService, syncing the
-    // active flag from its current value. Once only.
+    // Re-raises Back's CanExecute when the current page's pending-secret state
+    // flips (the value was saved and cleared), so Back enables without a
+    // further navigation. Follows the current page.
+    private WatchPendingSecret(current: Observable | undefined): void
+    {
+        this.secretSubscription?.dispose()
+        this.secretSubscription = undefined
+        if (current !== undefined && PendingSecret.IsHolder(current))
+        {
+            this.secretSubscription = current.PropertyChanged(PendingSecret.ChangedProperty)
+                .subscribe(() => this.backCommand.RaiseCanExecuteChanged())
+        }
+    }
+
+    // Subscribes to the NavigationService's ActiveService, syncing the
+    // active flag from its current value. Explicit and idempotent; called
+    // after activation, never while activating (the NavigationService may be
+    // mid-construction then).
     private WatchNavigation(): void
     {
         if (this.navigationWatched)

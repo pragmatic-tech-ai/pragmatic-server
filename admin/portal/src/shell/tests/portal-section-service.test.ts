@@ -1,10 +1,10 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
-import type { IServiceProvider } from '@pragmatic-tech-ai/mural/runtime'
+import type { IServiceProvider, ServiceConstructor } from '@pragmatic-tech-ai/mural/runtime'
 import { Capability } from '@pragmatic-tech-ai/mural/framework/shell/module.js'
 import { NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
-import type { IHoldsPendingSecret } from '../holds-pending-secret.js'
+import { PendingSecret, type IHoldsPendingSecret } from '../holds-pending-secret.js'
 import { PageState, PortalPageViewModel } from '../portal-page-view-model.js'
 import { PortalSectionService } from '../portal-section-service.js'
 import { PortalTestHost, Tick } from './portal-test-fixtures.js'
@@ -27,7 +27,34 @@ class DetailPage extends Observable
 // A page showing a one-time value until the operator confirms saving it.
 class PendingPage extends Observable implements IHoldsPendingSecret
 {
-    public HasPendingSecret = true
+    private held = true
+
+    public constructor()
+    {
+        super()
+        PendingSecret.Register(this)
+    }
+
+    public get HasPendingSecret(): boolean
+    {
+        return this.held
+    }
+
+    // The operator confirmed saving: the value is cleared.
+    public Clear(): void
+    {
+        this.held = false
+        this.RaisePropertyChanged(PendingSecret.ChangedProperty, true, false)
+    }
+}
+
+// Looks like a pending page by member name but never registered as one.
+class LookalikePage extends Observable
+{
+    public get HasPendingSecret(): boolean
+    {
+        return true
+    }
 }
 
 class TestSection extends PortalSectionService
@@ -92,10 +119,10 @@ class RailFixture
         this.Navigation.SelectedItem = this.capabilityB
     }
 
-    private static CapabilityFor(section: Function): Capability
+    public static CapabilityFor(section: ServiceConstructor<PortalSectionService>): Capability
     {
         const c = new Capability()
-        c.ServiceKey = section as never
+        c.ServiceKey = section
         return c
     }
 }
@@ -177,6 +204,7 @@ describe('PortalSectionService', () =>
     it('with no navigation registered a section counts as active', () =>
     {
         const section = new TestSection(PortalTestHost.WithoutClient().Provider)
+        section.Present(new DetailPage())
         assert.equal(section.IsActive, true)
     })
 
@@ -229,7 +257,7 @@ describe('PortalSectionService', () =>
         assert.equal(section.Current, pending)
         assert.equal(host.Host.Content, pending)
         // Once the value is saved and cleared, navigation resumes.
-        pending.HasPendingSecret = false
+        pending.Clear()
         assert.equal(section.BackCommand.CanExecute(), true)
         const detail = new DetailPage()
         section.Replace(detail)
@@ -238,12 +266,43 @@ describe('PortalSectionService', () =>
         assert.equal(section.Current, section.Root)
     })
 
+    it('Back re-evaluates when the current page clears its pending value', () =>
+    {
+        const host = PortalTestHost.WithoutClient()
+        const section = new TestSection(host.Provider)
+        section.OnActivated()
+        const pending = new PendingPage()
+        section.Present(pending)
+        let raised = 0
+        section.BackCommand.AddCanExecuteChangedListener(() => raised++)
+        pending.Clear()
+        assert.equal(raised, 1)
+        assert.equal(section.BackCommand.CanExecute(), true)
+    })
+
+    it('only registered pages count as holding a pending value', () =>
+    {
+        const host = PortalTestHost.WithoutClient()
+        const section = new TestSection(host.Provider)
+        section.OnActivated()
+        section.Present(new LookalikePage())
+        assert.equal(PendingSecret.IsHeldBy(section.Current), false)
+        assert.equal(section.BackCommand.CanExecute(), true)
+    })
+
+    it('reading IsActive has no side effect: a fresh section is inactive until activated or presented', () =>
+    {
+        const section = new TestSection(PortalTestHost.WithoutClient().Provider)
+        assert.equal(section.IsActive, false)
+        assert.equal(section.IsActive, false)
+        section.OnActivated()
+        assert.equal(section.IsActive, true)
+    })
+
     it('a cross-section open brings a section holding a pending value to the front on that value', () =>
     {
         const rail = new RailFixture()
-        const itemB = new Capability()
-        itemB.ServiceKey = SectionB as never
-        rail.Navigation.Items.Add(itemB)
+        rail.Navigation.Items.Add(RailFixture.CapabilityFor(SectionB))
         rail.SelectB()
         const pending = new PendingPage()
         rail.B.Present(pending)
@@ -261,9 +320,7 @@ describe('PortalSectionService', () =>
         const rail = new RailFixture()
         rail.SelectA()
         assert.equal(rail.B.BringToFront(), false)
-        const item = new Capability()
-        item.ServiceKey = SectionB as never
-        rail.Navigation.Items.Add(item)
+        rail.Navigation.Items.Add(RailFixture.CapabilityFor(SectionB))
         assert.equal(rail.B.BringToFront(), true)
         assert.equal(rail.Navigation.ActiveService, rail.B)
         assert.equal(rail.Host.Host.Content, rail.B.Root)

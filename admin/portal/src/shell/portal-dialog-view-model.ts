@@ -22,6 +22,9 @@ export abstract class PortalDialogViewModel<TResult> extends Observable
     private static readonly ErrorTextProperty = 'ErrorText'
     private static readonly IsBusyProperty = 'IsBusy'
     private static readonly DialogWidth = 480
+    // The dialog each service was last asked to show, by identity: a newer
+    // Open takes it over synchronously, before the older Show settles.
+    private static readonly Current = new WeakMap<DialogService, object>()
 
     protected readonly Session: PortalSessionService
     protected readonly Dialogs: DialogService
@@ -73,6 +76,7 @@ export abstract class PortalDialogViewModel<TResult> extends Observable
     public async Open(title: string): Promise<TResult | undefined>
     {
         this.isOpen = true
+        PortalDialogViewModel.Current.set(this.Dialogs, this)
         let shown: TResult | undefined
         try
         {
@@ -83,6 +87,10 @@ export abstract class PortalDialogViewModel<TResult> extends Observable
         finally
         {
             this.isOpen = false
+            if (PortalDialogViewModel.Current.get(this.Dialogs) === this)
+            {
+                PortalDialogViewModel.Current.delete(this.Dialogs)
+            }
         }
         const pending = this.inflight
         this.inflight = undefined
@@ -171,11 +179,12 @@ export abstract class PortalDialogViewModel<TResult> extends Observable
         }
     }
 
-    // Closes this dialog only while it is still the one open: after a
-    // dismissal (or a newer Show) it must not close someone else's dialog.
+    // Closes this dialog only while it is still the one the service shows:
+    // after a dismissal (or a newer Open, even before this dialog's own Show
+    // has settled) it must not close someone else's dialog.
     private CloseIfOpen(result: TResult | undefined): void
     {
-        if (this.isOpen)
+        if (this.isOpen && PortalDialogViewModel.Current.get(this.Dialogs) === this)
         {
             this.Dialogs.Close(result)
         }

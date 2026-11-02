@@ -119,7 +119,7 @@ export class LoginPageViewModel extends Observable
     private OnKey(args: unknown): void
     {
         const key = args as Partial<KeyEventArgs> | undefined
-        if (key === undefined || key.Handled === true || key.Key !== Key.Return)
+        if (key === undefined || key.Handled === true || key.Key !== Key.Return || !this.CanLogin)
         {
             return
         }

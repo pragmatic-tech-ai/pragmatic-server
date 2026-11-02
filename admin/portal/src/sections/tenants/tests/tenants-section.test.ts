@@ -227,6 +227,17 @@ describe('Tenants section', () =>
         assert.ok(fx.Content instanceof TenantDetailPageViewModel)
     })
 
+    it('the reveal raises HasPendingSecret when its value is confirmed saved', async () =>
+    {
+        const fx = new TenantsFixture()
+        const reveal = await fx.CreateTenant()
+        const seen: Array<[unknown, unknown]> = []
+        reveal.PropertyChanged('HasPendingSecret').subscribe(e => seen.push([e.oldValue, e.newValue]))
+        reveal.Saved = true
+        reveal.ConfirmSavedCommand.Execute()
+        assert.deepEqual(seen, [[true, false]])
+    })
+
     it('the tenant detail shows the hive binding and the observed environments, read-only', async () =>
     {
         const fx = new TenantsFixture()

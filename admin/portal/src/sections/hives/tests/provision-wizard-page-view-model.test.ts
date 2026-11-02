@@ -2,6 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { ApiError } from '../../../api-client.js'
 import { OperatorContext } from '../../../operator-context.js'
+import { PendingSecret } from '../../../shell/holds-pending-secret.js'
 import { FakeControlPlane, Inspect, PortalTestHost, TestRail, Tick } from '../../../shell/tests/portal-test-fixtures.js'
 import { TenantDetailPageViewModel } from '../../tenants/tenant-detail-page-view-model.js'
 import { TenantsPageViewModel } from '../../tenants/tenants-page-view-model.js'
@@ -206,6 +207,23 @@ describe('Stand up a hive (provision wizard)', () =>
         wizard.AgentSaved = true
         assert.equal(wizard.FinishCommand.CanExecute(), false)
         assert.equal(wizard.HasPendingSecret, false)
+    })
+
+    it('raises HasPendingSecret when the one-time values appear and when Finish clears them', async () =>
+    {
+        const fx = new WizardFixture()
+        const wizard = await fx.AtReview()
+        const seen: Array<[unknown, unknown]> = []
+        wizard.PropertyChanged(PendingSecret.ChangedProperty).subscribe(e => seen.push([e.oldValue, e.newValue]))
+        wizard.SubmitCommand.Execute()
+        await Tick.Settle()
+        assert.deepEqual(seen, [[false, true]])
+        wizard.OwnerSaved = true
+        wizard.AgentSaved = true
+        wizard.FinishCommand.Execute()
+        await Tick.Settle()
+        assert.deepEqual(seen, [[false, true], [true, false]])
+        assert.equal(PendingSecret.IsHolder(wizard), true)
     })
 
     it('each one-time value copies to the clipboard with its own status', async () =>

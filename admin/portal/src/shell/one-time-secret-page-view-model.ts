@@ -1,7 +1,7 @@
 import { RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import type { ClipboardService } from '@pragmatic-tech-ai/mural/framework/shell/services/clipboard-service.js'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
-import type { IHoldsPendingSecret } from './holds-pending-secret.js'
+import { PendingSecret, type IHoldsPendingSecret } from './holds-pending-secret.js'
 
 // Where a reveal page copies to: its section (the shell's clipboard seam).
 export interface IClipboardSource
@@ -35,6 +35,7 @@ export abstract class OneTimeSecretPageViewModel extends Observable implements I
     {
         super()
         this.value = value
+        PendingSecret.Register(this)
         this.confirmSavedCommand = new RelayCommand(() => this.ConfirmSaved(), () => this.saved && this.value.length > 0)
         this.copyCommand = new RelayCommand(() => { void this.Copy() }, () => this.value.length > 0)
     }
@@ -97,6 +98,7 @@ export abstract class OneTimeSecretPageViewModel extends Observable implements I
         const old = this.value
         this.value = OneTimeSecretPageViewModel.NoText
         this.RaisePropertyChanged(OneTimeSecretPageViewModel.ValueProperty, old, this.value)
+        this.RaisePropertyChanged(PendingSecret.ChangedProperty, old.length > 0, this.HasPendingSecret)
         this.confirmSavedCommand.RaiseCanExecuteChanged()
         this.copyCommand.RaiseCanExecuteChanged()
         this.OnSaved()

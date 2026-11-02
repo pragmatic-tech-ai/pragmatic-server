@@ -59,7 +59,7 @@ resources ReleasesResources {
                             ColumnDefinition [ Width = GridLength.Star ]
                             ColumnDefinition [ Width = GridLength.Star ]
                         }
-                        TextBlock [ Grid.Column = 0, Text = "Version", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 0, Text = "Version", Style = @UiCaption, Foreground = @Fg2, Margin = (18,0,0,0) ]
                         TextBlock [ Grid.Column = 1, Text = "Channel", Style = @UiCaption, Foreground = @Fg2 ]
                         TextBlock [ Grid.Column = 2, Text = "Signature", Style = @UiCaption, Foreground = @Fg2 ]
                         TextBlock [ Grid.Column = 3, Text = "Status", Style = @UiCaption, Foreground = @Fg2 ]

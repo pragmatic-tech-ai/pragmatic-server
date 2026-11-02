@@ -30,12 +30,13 @@ export class PortalSessionService extends ServiceBase
     private reloader: IPageReloader | undefined
     private expired = false
     private logoutError = ''
+    private loggingOut = false
     private readonly logoutCommand: RelayCommand
 
     public constructor(provider: IServiceProvider)
     {
         super(provider)
-        this.logoutCommand = new RelayCommand(() => { void this.Logout() }, undefined, { Text: PortalSessionService.LogoutText })
+        this.logoutCommand = new RelayCommand(() => { void this.Logout() }, () => !this.loggingOut, { Text: PortalSessionService.LogoutText })
     }
 
     public Initialize(client: ControlPlaneClient, email: string, operator: OperatorContext, reloader: IPageReloader): void
@@ -132,8 +133,14 @@ export class PortalSessionService extends ServiceBase
     // Signs out, then reloads to login. A 401 means the session is already
     // gone, so it reloads too; any other failure leaves the operator signed in,
     // so it reports the error and stays on the page.
+    // A second call while one is in flight is a no-op.
     public async Logout(): Promise<void>
     {
+        if (this.loggingOut)
+        {
+            return
+        }
+        this.SetLoggingOut(true)
         this.SetLogoutError('')
         try
         {
@@ -149,7 +156,17 @@ export class PortalSessionService extends ServiceBase
             this.SetLogoutError(e instanceof Error ? e.message : String(e))
             return
         }
+        finally
+        {
+            this.SetLoggingOut(false)
+        }
         this.Expire()
+    }
+
+    private SetLoggingOut(next: boolean): void
+    {
+        this.loggingOut = next
+        this.logoutCommand.RaiseCanExecuteChanged()
     }
 
     private SetLogoutError(next: string): void

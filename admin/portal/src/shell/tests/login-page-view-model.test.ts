@@ -134,9 +134,11 @@ describe('LoginPageViewModel', () =>
     {
         const f = new LoginFixture()
         f.Page.Email = LoginFixture.Email
-        f.Page.SubmitKeyCommand.Execute({ Key: Key.Return, Handled: false })
+        const args = { Key: Key.Return, Handled: false }
+        f.Page.SubmitKeyCommand.Execute(args)
         await Tick.Next()
         assert.equal(f.Client.Calls, 0)
+        assert.equal(args.Handled, false)
     })
 
     it('ShowError sets ErrorText', () =>

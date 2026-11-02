@@ -86,6 +86,30 @@ describe('PortalSessionService', () =>
         assert.equal(host.Session.LogoutError, '')
     })
 
+    it('a second logout while one is in flight is refused', async () =>
+    {
+        const client = new LogoutClient()
+        const host = new PortalTestHost(client.AsClient())
+        let raised = 0
+        host.Session.LogoutCommand.AddCanExecuteChangedListener(() => raised++)
+        host.Session.LogoutCommand.Execute()
+        assert.equal(host.Session.LogoutCommand.CanExecute(), false)
+        host.Session.LogoutCommand.Execute()
+        await host.Session.Logout()
+        await Tick.Next()
+        assert.equal(client.Calls, 1)
+        assert.equal(host.Reloader.Count, 1)
+        assert.ok(raised >= 2)
+    })
+
+    it('a failed logout re-enables the command', async () =>
+    {
+        const host = new PortalTestHost(new LogoutClient(new ApiError(500, 'server down')).AsClient())
+        host.Session.LogoutCommand.Execute()
+        await Tick.Next()
+        assert.equal(host.Session.LogoutCommand.CanExecute(), true)
+    })
+
     it('a failed logout stays on the page and reports the error', async () =>
     {
         const host = new PortalTestHost(new LogoutClient(new ApiError(500, 'server down')).AsClient())

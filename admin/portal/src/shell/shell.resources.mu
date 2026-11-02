@@ -59,6 +59,11 @@ resources ShellResources {
         ItemContainerStyle = @PortalTableRow;
     }
 
+    // A table's Ghost link button (the row's name / action) sits inside its
+    // template padding: 16 plus the 2 focus-ring offset. The header cell over
+    // such a column carries Margin = (18,0,0,0) so its caption lines up with
+    // the link's text.
+    //
     // The one cell inset every table's header Grid and row Grid share
     // (Style = @PortalTableColumns), so their Star columns line up.
     Style x:key="PortalTableColumns" [ TargetType = Grid ] {

@@ -76,7 +76,7 @@ resources HivesResources {
                             ColumnDefinition [ Width = GridLength.Star ]
                             ColumnDefinition [ Width = GridLength.Star ]
                         }
-                        TextBlock [ Grid.Column = 0, Text = "Hive", Style = @UiCaption, Foreground = @Fg2 ]
+                        TextBlock [ Grid.Column = 0, Text = "Hive", Style = @UiCaption, Foreground = @Fg2, Margin = (18,0,0,0) ]
                         TextBlock [ Grid.Column = 1, Text = "Client / tenant", Style = @UiCaption, Foreground = @Fg2 ]
                         TextBlock [ Grid.Column = 2, Text = "Cluster", Style = @UiCaption, Foreground = @Fg2 ]
                         TextBlock [ Grid.Column = 3, Text = "Connection", Style = @UiCaption, Foreground = @Fg2 ]
