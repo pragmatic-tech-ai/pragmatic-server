@@ -123,21 +123,14 @@ export class TenantsPageViewModel extends PortalPageViewModel
         }
     }
 
-    private async CreateTenant(): Promise<void>
+    // A created tenant reveals its Owner password first, then the list reloads.
+    private CreateTenant(): Promise<void>
     {
-        const dialogs = this.section.Dialogs
-        if (dialogs === undefined)
-        {
-            return
-        }
-        const dialog = new NewTenantDialogViewModel(this.Session, dialogs)
-        await dialog.Load()
-        const created = await dialog.Open(TenantsPageViewModel.NewTenantTitle)
-        if (created === undefined)
-        {
-            return
-        }
-        this.section.RevealOwnerPassword(created)
-        await this.Refresh()
+        return this.OpenCreate(this.section.Dialogs, dialogs => new NewTenantDialogViewModel(this.Session, dialogs),
+            TenantsPageViewModel.NewTenantTitle, created =>
+            {
+                this.section.RevealOwnerPassword(created)
+                return this.Refresh()
+            })
     }
 }

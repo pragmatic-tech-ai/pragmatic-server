@@ -3,7 +3,6 @@ import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import { FleetViewModel, type FleetRow } from '../../fleet-view-model.js'
 import { PortalDates } from '../../portal-dates.js'
 import type { ClientDto, FleetHiveDto, TenantDto } from '../../portal-types.js'
-import { NameConfirmDialogViewModel } from '../../shell/name-confirm-dialog-view-model.js'
 import { PortalPageViewModel } from '../../shell/portal-page-view-model.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
 import { FleetHiveRowViewModel } from '../fleet/fleet-page-view-model.js'
@@ -162,19 +161,14 @@ export class ClientDetailPageViewModel extends PortalPageViewModel
         this.RaisePropertyChanged(ClientDetailPageViewModel.HasNoTenantsProperty, !hadTenants, this.HasNoTenants)
     }
 
-    private async Delete(): Promise<void>
+    private Delete(): Promise<void>
     {
-        const dialogs = this.section.Dialogs
-        if (dialogs === undefined)
-        {
-            return
-        }
-        const api = this.Session.Client
-        const confirm = new NameConfirmDialogViewModel(this.Session, dialogs, this.Id, ClientDetailPageViewModel.DeleteMessage,
-            () => api.DeleteClient(this.Id))
-        if (await confirm.Open(ClientDetailPageViewModel.DeleteTitle) === NameConfirmDialogViewModel.Confirmed)
-        {
-            await this.section.BackAndRefresh()
-        }
+        return this.ConfirmByName(this.section.Dialogs, {
+            Expected: this.Id,
+            Title: ClientDetailPageViewModel.DeleteTitle,
+            Message: ClientDetailPageViewModel.DeleteMessage,
+            Action: () => this.Session.Client.DeleteClient(this.Id),
+            OnConfirmed: () => this.section.BackAndRefresh(),
+        })
     }
 }

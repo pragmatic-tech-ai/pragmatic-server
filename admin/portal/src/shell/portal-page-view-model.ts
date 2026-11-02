@@ -1,6 +1,9 @@
 import { RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
+import type { DialogService } from '@pragmatic-tech-ai/mural/framework/shell/services/dialog-service.js'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import { ApiError } from '../api-client.js'
+import { NameConfirmDialogViewModel } from './name-confirm-dialog-view-model.js'
+import type { PortalDialogViewModel } from './portal-dialog-view-model.js'
 import type { PortalSessionService } from './portal-session-service.js'
 
 // The four states every screen presents. Denied is covered by disabled commands.
@@ -10,6 +13,20 @@ export enum PageState
     Empty,
     Populated,
     Error,
+}
+
+// An irreversible action confirmed by typing the target's name.
+export interface INameConfirmRequest
+{
+    readonly Expected: string
+    readonly Title: string
+    readonly Message: string
+    // Runs inside the dialog once the name matches; a refusal shows there.
+    readonly Action: () => Promise<void>
+    // Runs after the dialog closes confirmed (e.g. back to the list).
+    readonly OnConfirmed: () => Promise<void>
+    // The confirm button's label; Delete when omitted.
+    readonly ConfirmLabel?: string
 }
 
 // Base for every page view-model a section presents. Refresh() runs LoadCore()
@@ -25,6 +42,7 @@ export abstract class PortalPageViewModel extends Observable
     private static readonly IsEmptyProperty = 'IsEmpty'
     private static readonly IsPopulatedProperty = 'IsPopulated'
     private static readonly IsErrorProperty = 'IsError'
+    private static readonly NoDialogsMessage = 'Dialogs are not available yet. Try again once the page has finished loading.'
 
     protected readonly Session: PortalSessionService
     private state = PageState.Loading
@@ -160,6 +178,46 @@ export abstract class PortalPageViewModel extends Observable
                 void this.Guard(run)
             }
         }, can)
+    }
+
+    // Opens a create dialog (loading its choices first); when it produces a
+    // result, hands it to onCreated. Run it inside a command's Guard: a
+    // missing DialogService or a failure is reported in CommandErrorText.
+    protected async OpenCreate<T>(
+        dialogs: DialogService | undefined,
+        create: (dialogs: DialogService) => PortalDialogViewModel<T>,
+        title: string,
+        onCreated: (result: T) => Promise<void>,
+    ): Promise<void>
+    {
+        const dialog = create(PortalPageViewModel.RequireDialogs(dialogs))
+        await dialog.Load()
+        const result = await dialog.Open(title)
+        if (result !== undefined)
+        {
+            await onCreated(result)
+        }
+    }
+
+    // Asks for the target's name before an irreversible action; runs
+    // OnConfirmed once the dialog closes confirmed. Run it inside a Guard.
+    protected async ConfirmByName(dialogs: DialogService | undefined, request: INameConfirmRequest): Promise<void>
+    {
+        const confirm = new NameConfirmDialogViewModel(this.Session, PortalPageViewModel.RequireDialogs(dialogs),
+            request.Expected, request.Message, request.Action, request.ConfirmLabel)
+        if (await confirm.Open(request.Title) === NameConfirmDialogViewModel.Confirmed)
+        {
+            await request.OnConfirmed()
+        }
+    }
+
+    private static RequireDialogs(dialogs: DialogService | undefined): DialogService
+    {
+        if (dialogs === undefined)
+        {
+            throw new Error(PortalPageViewModel.NoDialogsMessage)
+        }
+        return dialogs
     }
 
     private TryExpire(e: unknown): boolean

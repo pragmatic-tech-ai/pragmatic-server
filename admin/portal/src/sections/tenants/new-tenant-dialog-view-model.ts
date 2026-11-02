@@ -31,7 +31,7 @@ export class NewTenantDialogViewModel extends PortalDialogViewModel<CreatedTenan
     }
 
     // Fills the client choices (by display name).
-    public async Load(): Promise<void>
+    public override async Load(): Promise<void>
     {
         const clients = await this.Session.Client.ListClients()
         this.clients.Clear()

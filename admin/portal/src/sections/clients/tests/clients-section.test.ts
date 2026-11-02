@@ -173,6 +173,71 @@ describe('Clients section', () =>
         assert.equal(fx.Dialogs.IsOpen, false)
     })
 
+    it('a create that settles after its dialog was dismissed does not close a newer dialog', async () =>
+    {
+        const fx = ClientsFixture.Seeded()
+        const list = await fx.List()
+        list.NewCommand.Execute()
+        await Tick.Settle()
+        const first = fx.Dialogs.Last as NewClientDialogViewModel
+        first.Id = 'initech'
+        first.DisplayName = 'Initech'
+        fx.Api.HoldCreates()
+        first.ConfirmCommand.Execute()
+        await Tick.Settle()
+        fx.Dialogs.Dismiss()
+        await Tick.Settle()
+        const page = fx.Host.Host.Content as ClientsPageViewModel
+        const second = new NewClientDialogViewModel(fx.Host.Session, fx.Dialogs)
+        void second.Open('Second')
+        fx.Api.Release()
+        await Tick.Settle()
+        assert.deepEqual(fx.Api.CreatedClients, [['initech', 'Initech', undefined]])
+        assert.equal(fx.Dialogs.IsOpen, true)
+        assert.equal(fx.Dialogs.Last, second)
+        assert.equal(page.Rows.Count, 3)
+    })
+
+    it('a create that fails after its dialog was dismissed reports on the page', async () =>
+    {
+        const fx = ClientsFixture.Seeded()
+        const list = await fx.List()
+        list.NewCommand.Execute()
+        await Tick.Settle()
+        const dialog = fx.Dialogs.Last as NewClientDialogViewModel
+        dialog.Id = 'acme'
+        dialog.DisplayName = 'Acme again'
+        fx.Api.HoldCreates()
+        dialog.ConfirmCommand.Execute()
+        await Tick.Settle()
+        fx.Dialogs.Dismiss()
+        fx.Api.Failure = new ApiError(409, 'client acme already exists')
+        fx.Api.Release()
+        await Tick.Settle()
+        assert.equal(list.CommandErrorText, 'client acme already exists')
+        assert.equal(dialog.IsBusy, false)
+    })
+
+    it('with no dialog service, New and Delete report why instead of doing nothing', async () =>
+    {
+        const api = new FakeControlPlane().WithClient('acme', 'Acme')
+        const host = new PortalTestHost(api.AsClient())
+        const section = new ClientsSectionService(host.Provider)
+        section.OnActivated()
+        await Tick.Settle()
+        const list = host.Host.Content as ClientsPageViewModel
+        list.NewCommand.Execute()
+        await Tick.Settle()
+        assert.notEqual(list.CommandErrorText, '')
+        section.OpenClient('acme')
+        await Tick.Settle()
+        const detail = host.Host.Content as ClientDetailPageViewModel
+        detail.DeleteCommand.Execute()
+        await Tick.Settle()
+        assert.notEqual(detail.CommandErrorText, '')
+        assert.deepEqual(api.Deleted, [])
+    })
+
     it('Cancel closes the dialog without creating anything', async () =>
     {
         const fx = ClientsFixture.Seeded()

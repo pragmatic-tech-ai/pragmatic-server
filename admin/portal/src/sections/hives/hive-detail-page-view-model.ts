@@ -3,7 +3,6 @@ import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import { FleetConnection, FleetViewModel, type FleetRow } from '../../fleet-view-model.js'
 import { PortalDates } from '../../portal-dates.js'
 import type { EnvRolloutDto, FleetHiveDto, HiveDto, HiveRolloutDto, LedgerDto, ObservationDto, PolicyDto } from '../../portal-types.js'
-import { NameConfirmDialogViewModel } from '../../shell/name-confirm-dialog-view-model.js'
 import { ObservedEnvironmentsViewModel } from '../../shell/observed-environments-view-model.js'
 import { PortalPageViewModel } from '../../shell/portal-page-view-model.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
@@ -15,6 +14,7 @@ import type { HivesSectionService } from './hives-section-service.js'
 export class HiveCredentialViewModel extends Observable
 {
     private static readonly NotSetLabel = 'Not set'
+    private static readonly NoNameLabel = '-'
     private static readonly ReferencedLabel = 'Referenced by name'
 
     public constructor(public readonly Kind: string, private readonly reference: string | undefined)
@@ -24,7 +24,7 @@ export class HiveCredentialViewModel extends Observable
 
     public get Name(): string
     {
-        return this.reference ?? HiveCredentialViewModel.NotSetLabel
+        return this.reference ?? HiveCredentialViewModel.NoNameLabel
     }
 
     public get Status(): string
@@ -66,17 +66,29 @@ export class HiveRolloutRowViewModel extends Observable
     }
 }
 
+// The ledger actions the control plane records; values are the wire strings
+// in LedgerDto.action.
+export enum LedgerAction
+{
+    Gated = 'gated',
+    Ungated = 'ungated',
+    Withdrawn = 'withdrawn',
+    Restored = 'restored',
+    Selected = 'selected',
+    Adopted = 'adopted',
+}
+
 // One version-history entry (the hive's adoption ledger).
 export class HiveLedgerRowViewModel extends Observable
 {
-    private static readonly ActionLabels: Readonly<Record<string, string>> = {
-        gated: 'Gated',
-        ungated: 'Ungated',
-        withdrawn: 'Withdrawn',
-        restored: 'Restored',
-        selected: 'Selected as target',
-        adopted: 'Adopted',
-    }
+    private static readonly ActionLabels: ReadonlyMap<string, string> = new Map<LedgerAction, string>([
+        [LedgerAction.Gated, 'Gated'],
+        [LedgerAction.Ungated, 'Ungated'],
+        [LedgerAction.Withdrawn, 'Withdrawn'],
+        [LedgerAction.Restored, 'Restored'],
+        [LedgerAction.Selected, 'Selected as target'],
+        [LedgerAction.Adopted, 'Adopted'],
+    ])
 
     public constructor(private readonly entry: LedgerDto)
     {
@@ -88,9 +100,10 @@ export class HiveLedgerRowViewModel extends Observable
         return PortalDates.Label(this.entry.at)
     }
 
+    // The action's label; an action this portal does not know shows as sent.
     public get ActionLabel(): string
     {
-        return HiveLedgerRowViewModel.ActionLabels[this.entry.action] ?? this.entry.action
+        return HiveLedgerRowViewModel.ActionLabels.get(this.entry.action) ?? this.entry.action
     }
 
     public get Version(): string
@@ -146,9 +159,24 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
     private static readonly ChannelSeparator = ', '
     private static readonly DeleteTitle = 'Delete this hive?'
     private static readonly DeleteMessage = 'The hive record is removed. A hive that still reports environments cannot be deleted.'
-    private static readonly ChangedProperties = ['DisplayName', 'OwnerLabel', 'ClusterLabel', 'ConnectionLabel', 'LastSeenLabel',
-        'BannerText', 'HasBanner', 'TargetVersionLabel', 'ChannelsLabel', 'MinVersionLabel', 'HoldLabel', 'Observed',
-        'HasRollout', 'HasNoRollout', 'HasLedger', 'HasNoLedger', 'HasCheckIns', 'HasNoCheckIns']
+    private static readonly DisplayNameProperty = 'DisplayName'
+    private static readonly OwnerLabelProperty = 'OwnerLabel'
+    private static readonly ClusterLabelProperty = 'ClusterLabel'
+    private static readonly ConnectionLabelProperty = 'ConnectionLabel'
+    private static readonly LastSeenLabelProperty = 'LastSeenLabel'
+    private static readonly BannerTextProperty = 'BannerText'
+    private static readonly HasBannerProperty = 'HasBanner'
+    private static readonly TargetVersionLabelProperty = 'TargetVersionLabel'
+    private static readonly ChannelsLabelProperty = 'ChannelsLabel'
+    private static readonly MinVersionLabelProperty = 'MinVersionLabel'
+    private static readonly HoldLabelProperty = 'HoldLabel'
+    private static readonly ObservedProperty = 'Observed'
+    private static readonly HasRolloutProperty = 'HasRollout'
+    private static readonly HasNoRolloutProperty = 'HasNoRollout'
+    private static readonly HasLedgerProperty = 'HasLedger'
+    private static readonly HasNoLedgerProperty = 'HasNoLedger'
+    private static readonly HasCheckInsProperty = 'HasCheckIns'
+    private static readonly HasNoCheckInsProperty = 'HasNoCheckIns'
 
     private fleetHive: FleetHiveDto | undefined
     private hive: HiveDto | undefined
@@ -324,7 +352,7 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
         {
             throw new Error(HiveDetailPageViewModel.NotFoundTemplate.replace(HiveDetailPageViewModel.IdToken, this.Id))
         }
-        const before = HiveDetailPageViewModel.ChangedProperties.map(p => this.ValueOf(p))
+        const before = this.Snapshot()
         this.fleetHive = fleetHive
         this.hive = hive
         this.row = fleetHive === undefined ? undefined : new FleetViewModel([fleetHive]).Rows[0]
@@ -335,8 +363,53 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
         this.Refill(this.rolloutRows, (this.rollout?.environments ?? []).map(e => new HiveRolloutRowViewModel(e)))
         this.Refill(this.ledgerRows, ledger.map(l => new HiveLedgerRowViewModel(l)))
         this.Refill(this.checkIns, observations.map(o => new HiveCheckInRowViewModel(o)))
-        HiveDetailPageViewModel.ChangedProperties.forEach((p, i) => this.RaisePropertyChanged(p, before[i], this.ValueOf(p)))
+        this.RaiseChangedSince(before)
         return true
+    }
+
+    // The bound values a load can change, captured before it applies.
+    private Snapshot(): HiveDetailSnapshot
+    {
+        return {
+            DisplayName: this.DisplayName,
+            OwnerLabel: this.OwnerLabel,
+            ClusterLabel: this.ClusterLabel,
+            ConnectionLabel: this.ConnectionLabel,
+            LastSeenLabel: this.LastSeenLabel,
+            BannerText: this.BannerText,
+            HasBanner: this.HasBanner,
+            TargetVersionLabel: this.TargetVersionLabel,
+            ChannelsLabel: this.ChannelsLabel,
+            MinVersionLabel: this.MinVersionLabel,
+            HoldLabel: this.HoldLabel,
+            Observed: this.Observed,
+            HasRollout: this.HasRollout,
+            HasLedger: this.HasLedger,
+            HasCheckIns: this.HasCheckIns,
+        }
+    }
+
+    private RaiseChangedSince(b: HiveDetailSnapshot): void
+    {
+        const P = HiveDetailPageViewModel
+        this.RaisePropertyChanged(P.DisplayNameProperty, b.DisplayName, this.DisplayName)
+        this.RaisePropertyChanged(P.OwnerLabelProperty, b.OwnerLabel, this.OwnerLabel)
+        this.RaisePropertyChanged(P.ClusterLabelProperty, b.ClusterLabel, this.ClusterLabel)
+        this.RaisePropertyChanged(P.ConnectionLabelProperty, b.ConnectionLabel, this.ConnectionLabel)
+        this.RaisePropertyChanged(P.LastSeenLabelProperty, b.LastSeenLabel, this.LastSeenLabel)
+        this.RaisePropertyChanged(P.BannerTextProperty, b.BannerText, this.BannerText)
+        this.RaisePropertyChanged(P.HasBannerProperty, b.HasBanner, this.HasBanner)
+        this.RaisePropertyChanged(P.TargetVersionLabelProperty, b.TargetVersionLabel, this.TargetVersionLabel)
+        this.RaisePropertyChanged(P.ChannelsLabelProperty, b.ChannelsLabel, this.ChannelsLabel)
+        this.RaisePropertyChanged(P.MinVersionLabelProperty, b.MinVersionLabel, this.MinVersionLabel)
+        this.RaisePropertyChanged(P.HoldLabelProperty, b.HoldLabel, this.HoldLabel)
+        this.RaisePropertyChanged(P.ObservedProperty, b.Observed, this.Observed)
+        this.RaisePropertyChanged(P.HasRolloutProperty, b.HasRollout, this.HasRollout)
+        this.RaisePropertyChanged(P.HasNoRolloutProperty, !b.HasRollout, this.HasNoRollout)
+        this.RaisePropertyChanged(P.HasLedgerProperty, b.HasLedger, this.HasLedger)
+        this.RaisePropertyChanged(P.HasNoLedgerProperty, !b.HasLedger, this.HasNoLedger)
+        this.RaisePropertyChanged(P.HasCheckInsProperty, b.HasCheckIns, this.HasCheckIns)
+        this.RaisePropertyChanged(P.HasNoCheckInsProperty, !b.HasCheckIns, this.HasNoCheckIns)
     }
 
     private FillCredentials(hive: HiveDto | undefined): void
@@ -356,24 +429,34 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
         }
     }
 
-    private ValueOf(property: string): unknown
+    private Delete(): Promise<void>
     {
-        return (this as unknown as Record<string, unknown>)[property]
+        return this.ConfirmByName(this.section.Dialogs, {
+            Expected: this.Id,
+            Title: HiveDetailPageViewModel.DeleteTitle,
+            Message: HiveDetailPageViewModel.DeleteMessage,
+            Action: () => this.Session.Client.DeleteHive(this.Id),
+            OnConfirmed: () => this.section.BackAndRefresh(),
+        })
     }
+}
 
-    private async Delete(): Promise<void>
-    {
-        const dialogs = this.section.Dialogs
-        if (dialogs === undefined)
-        {
-            return
-        }
-        const api = this.Session.Client
-        const confirm = new NameConfirmDialogViewModel(this.Session, dialogs, this.Id, HiveDetailPageViewModel.DeleteMessage,
-            () => api.DeleteHive(this.Id))
-        if (await confirm.Open(HiveDetailPageViewModel.DeleteTitle) === NameConfirmDialogViewModel.Confirmed)
-        {
-            await this.section.BackAndRefresh()
-        }
-    }
+// The hive detail's bound values before a load, for its change notifications.
+interface HiveDetailSnapshot
+{
+    readonly DisplayName: string
+    readonly OwnerLabel: string
+    readonly ClusterLabel: string
+    readonly ConnectionLabel: string
+    readonly LastSeenLabel: string
+    readonly BannerText: string
+    readonly HasBanner: boolean
+    readonly TargetVersionLabel: string
+    readonly ChannelsLabel: string
+    readonly MinVersionLabel: string
+    readonly HoldLabel: string
+    readonly Observed: ObservedEnvironmentsViewModel
+    readonly HasRollout: boolean
+    readonly HasLedger: boolean
+    readonly HasCheckIns: boolean
 }

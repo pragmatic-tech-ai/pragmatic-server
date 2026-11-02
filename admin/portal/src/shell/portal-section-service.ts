@@ -138,6 +138,10 @@ export abstract class PortalSectionService extends ServiceBase implements IActiv
             {
                 continue
             }
+            // Safe: tokenFor only reads a static `Key` off its argument and
+            // otherwise returns it as the token, so a ServiceKey (no `Key`)
+            // passes through unchanged and a class maps to its Key; this is
+            // the same call NavigationService.syncActiveService makes.
             const token = ServiceProvider.tokenFor(capability.ServiceKey as unknown as Function)
             if (this.Provider.get(token) === this)
             {

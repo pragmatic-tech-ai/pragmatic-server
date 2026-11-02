@@ -79,8 +79,9 @@ describe('Hives section', () =>
         const list = await fx.List()
         const row = list.Rows.Get(0) as object
         assert.equal((row as { CredentialLabel: string }).CredentialLabel, 'registry-pull/acme-hive')
-        const values = Inspect.PropertyValues(row).filter(v => typeof v === 'string') as string[]
-        assert.equal(values.some(v => v.includes(HivesFixture.Secret)), false)
+        const reachable = Inspect.ReachableStrings(row)
+        assert.ok(reachable.includes('registry-pull/acme-hive'))
+        assert.equal(reachable.some(v => v.includes(HivesFixture.Secret)), false)
     })
 
     it('list -> detail: home channel, credentials by name and status, rollout, history, observed environments', async () =>
@@ -100,8 +101,8 @@ describe('Hives section', () =>
         assert.equal(detail.HasBanner, false)
         assert.deepEqual(detail.Credentials.ToArray().map(c => [c.Kind, c.Name, c.Status]), [
             ['Registry credential', 'registry-pull/acme-hive', 'Referenced by name'],
-            ['Trust root', 'Not set', 'Not set'],
-            ['Cluster config', 'Not set', 'Not set'],
+            ['Trust root', '-', 'Not set'],
+            ['Cluster config', '-', 'Not set'],
         ])
         assert.equal(detail.TargetVersionLabel, '1.4.0')
         assert.deepEqual(detail.RolloutRows.ToArray().map(r => r.StateLabel), ['Up to date', 'Behind target'])
@@ -138,6 +139,8 @@ describe('Hives section', () =>
         }])
         assert.equal(fx.Dialogs.IsOpen, false)
         assert.equal(fx.Content, list)
+        assert.deepEqual(list.Rows.ToArray().map(r => r.Id), ['acme-hive', 'acme-dev-hive'])
+        assert.equal(list.Rows.Get(1)?.CredentialLabel, 'registry-pull/dev')
     })
 
     it('Delete asks for the hive id and, on a match, deletes and returns to the list', async () =>

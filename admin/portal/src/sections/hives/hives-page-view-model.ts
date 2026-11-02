@@ -19,10 +19,13 @@ export class HiveRowViewModel extends Observable
     private static readonly NotSetLabel = 'Not set'
 
     private readonly openCommand: RelayCommand
+    // Only the reference name is kept; the hive record itself is not.
+    private readonly credentialRef: string | undefined
 
-    public constructor(private readonly row: HiveListRow, private readonly hive: HiveDto | undefined, open: RelayCommand)
+    public constructor(private readonly row: HiveListRow, hive: HiveDto | undefined, open: RelayCommand)
     {
         super()
+        this.credentialRef = hive?.registry.credentialRef
         this.openCommand = new RelayCommand(() => open.Execute(this))
     }
 
@@ -77,7 +80,7 @@ export class HiveRowViewModel extends Observable
     // The registry credential's reference name, never its value.
     public get CredentialLabel(): string
     {
-        return this.hive?.registry.credentialRef ?? HiveRowViewModel.NotSetLabel
+        return this.credentialRef ?? HiveRowViewModel.NotSetLabel
     }
 
     public get OpenCommand(): RelayCommand
@@ -152,19 +155,9 @@ export class HivesPageViewModel extends PortalPageViewModel
         }
     }
 
-    private async CreateHive(): Promise<void>
+    private CreateHive(): Promise<void>
     {
-        const dialogs = this.section.Dialogs
-        if (dialogs === undefined)
-        {
-            return
-        }
-        const dialog = new NewHiveDialogViewModel(this.Session, dialogs)
-        await dialog.Load()
-        const created = await dialog.Open(HivesPageViewModel.NewHiveTitle)
-        if (created !== undefined)
-        {
-            await this.Refresh()
-        }
+        return this.OpenCreate(this.section.Dialogs, dialogs => new NewHiveDialogViewModel(this.Session, dialogs),
+            HivesPageViewModel.NewHiveTitle, () => this.Refresh())
     }
 }

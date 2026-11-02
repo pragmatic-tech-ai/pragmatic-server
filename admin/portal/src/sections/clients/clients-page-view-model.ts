@@ -120,17 +120,9 @@ export class ClientsPageViewModel extends PortalPageViewModel
         }
     }
 
-    private async CreateClient(): Promise<void>
+    private CreateClient(): Promise<void>
     {
-        const dialogs = this.section.Dialogs
-        if (dialogs === undefined)
-        {
-            return
-        }
-        const created = await new NewClientDialogViewModel(this.Session, dialogs).Open(ClientsPageViewModel.NewClientTitle)
-        if (created !== undefined)
-        {
-            await this.Refresh()
-        }
+        return this.OpenCreate(this.section.Dialogs, dialogs => new NewClientDialogViewModel(this.Session, dialogs),
+            ClientsPageViewModel.NewClientTitle, () => this.Refresh())
     }
 }

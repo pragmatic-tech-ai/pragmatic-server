@@ -11,6 +11,12 @@ import type { PortalSessionService } from './portal-session-service.js'
 // success closes it with the result; a 401 expires the session; any other
 // failure stays open with ErrorText. Cancel (and Escape / X) resolve
 // undefined.
+//
+// A submit outlives its dialog: if the operator dismisses the dialog (Escape,
+// X) while the request is in flight, Open still resolves with the submit's
+// result once it lands, so a one-time secret in it is never dropped; a late
+// failure rejects Open instead. Close is scoped: this dialog only ever closes
+// itself, never a newer dialog that replaced it. The scrim does not dismiss.
 export abstract class PortalDialogViewModel<TResult> extends Observable
 {
     private static readonly ErrorTextProperty = 'ErrorText'
@@ -23,6 +29,8 @@ export abstract class PortalDialogViewModel<TResult> extends Observable
     private readonly cancelCommand: RelayCommand
     private errorText = ''
     private busy = false
+    private isOpen = false
+    private inflight: Promise<TResult | undefined> | undefined
 
     protected constructor(session: PortalSessionService, dialogs: DialogService)
     {
@@ -54,11 +62,35 @@ export abstract class PortalDialogViewModel<TResult> extends Observable
         return this.busy
     }
 
-    // Opens this dialog; resolves with the submit result, or undefined when
-    // cancelled.
-    public Open(title: string): Promise<TResult | undefined>
+    // Loads what the dialog offers (choices) before it opens; none by default.
+    public async Load(): Promise<void>
     {
-        return this.Dialogs.Show<TResult>({ Title: title, Content: this, Width: PortalDialogViewModel.DialogWidth })
+    }
+
+    // Opens this dialog; resolves with the submit result, or undefined when
+    // cancelled. A dismissal while a submit is in flight waits for that
+    // submit, resolving with its result (or rejecting with its failure).
+    public async Open(title: string): Promise<TResult | undefined>
+    {
+        this.isOpen = true
+        let shown: TResult | undefined
+        try
+        {
+            shown = await this.Dialogs.Show<TResult>({
+                Title: title, Content: this, Width: PortalDialogViewModel.DialogWidth, DismissOnScrimClick: false,
+            })
+        }
+        finally
+        {
+            this.isOpen = false
+        }
+        const pending = this.inflight
+        this.inflight = undefined
+        if (shown !== undefined || pending === undefined)
+        {
+            return shown
+        }
+        return await pending
     }
 
     public async Confirm(): Promise<void>
@@ -67,32 +99,21 @@ export abstract class PortalDialogViewModel<TResult> extends Observable
         {
             return
         }
-        this.SetErrorText('')
-        this.SetBusy(true)
+        const run = this.Submit()
+        this.inflight = run
         try
         {
-            const result = await this.SubmitCore()
-            this.Dialogs.Close(result)
+            await run
         }
-        catch (e)
+        catch
         {
-            if (e instanceof ApiError && e.Status === ApiError.UnauthorizedStatus)
-            {
-                this.Session.Expire()
-                this.Dialogs.Close(undefined)
-                return
-            }
-            this.SetErrorText(e instanceof Error ? e.message : String(e))
-        }
-        finally
-        {
-            this.SetBusy(false)
+            // A failure after dismissal is reported through Open's rejection.
         }
     }
 
     public Cancel(): void
     {
-        this.Dialogs.Close(undefined)
+        this.CloseIfOpen(undefined)
     }
 
     // Whether the fields are complete and valid enough to submit.
@@ -117,6 +138,47 @@ export abstract class PortalDialogViewModel<TResult> extends Observable
         assign(next)
         this.RaisePropertyChanged(name, old, next)
         this.RaiseCanConfirmChanged()
+    }
+
+    private async Submit(): Promise<TResult | undefined>
+    {
+        this.SetErrorText('')
+        this.SetBusy(true)
+        try
+        {
+            const result = await this.SubmitCore()
+            this.CloseIfOpen(result)
+            return result
+        }
+        catch (e)
+        {
+            if (e instanceof ApiError && e.Status === ApiError.UnauthorizedStatus)
+            {
+                this.Session.Expire()
+                this.CloseIfOpen(undefined)
+                return undefined
+            }
+            if (!this.isOpen)
+            {
+                throw e
+            }
+            this.SetErrorText(e instanceof Error ? e.message : String(e))
+            return undefined
+        }
+        finally
+        {
+            this.SetBusy(false)
+        }
+    }
+
+    // Closes this dialog only while it is still the one open: after a
+    // dismissal (or a newer Show) it must not close someone else's dialog.
+    private CloseIfOpen(result: TResult | undefined): void
+    {
+        if (this.isOpen)
+        {
+            this.Dialogs.Close(result)
+        }
     }
 
     private get CanConfirmNow(): boolean

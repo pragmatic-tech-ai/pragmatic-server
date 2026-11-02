@@ -135,6 +135,35 @@ describe('Tenants section', () =>
         assert.equal(fx.Section.Current, reveal)
     })
 
+    it('dismissing the dialog while the create is in flight still reveals the Owner password', async () =>
+    {
+        const fx = new TenantsFixture()
+        const list = await fx.List()
+        list.NewCommand.Execute()
+        await Tick.Settle()
+        const dialog = fx.Dialogs.Last as NewTenantDialogViewModel
+        assert.equal(fx.Dialogs.Shown[0].DismissOnScrimClick, false)
+        dialog.SelectedClient = dialog.Clients.Get(0)
+        dialog.Id = 'initech-prod'
+        dialog.DisplayName = 'Initech Production'
+        dialog.OwnerEmail = 'owner@initech.test'
+        fx.Api.HoldCreates()
+        dialog.ConfirmCommand.Execute()
+        await Tick.Settle()
+        fx.Dialogs.Dismiss()
+        await Tick.Settle()
+        fx.Api.Release()
+        await Tick.Settle()
+        const reveal = fx.Content
+        assert.ok(reveal instanceof OwnerPasswordRevealPageViewModel)
+        const revealed = fx.Api.OwnerPassword
+        assert.equal(reveal.Value, revealed)
+        // The fake itself holds the fixture value (reachable via the dialog's
+        // session); rotate it so only a copy kept by the dialog would match.
+        fx.Api.OwnerPassword = 'rotated'
+        assert.equal(Inspect.ReachableStrings(dialog).includes(revealed), false)
+    })
+
     it('Copy puts the password on the clipboard', async () =>
     {
         const fx = new TenantsFixture()

@@ -1,7 +1,6 @@
 import { RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { PortalDates } from '../../portal-dates.js'
 import type { TenantDto } from '../../portal-types.js'
-import { NameConfirmDialogViewModel } from '../../shell/name-confirm-dialog-view-model.js'
 import { ObservedEnvironmentsViewModel } from '../../shell/observed-environments-view-model.js'
 import { PortalPageViewModel } from '../../shell/portal-page-view-model.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
@@ -18,7 +17,16 @@ export class TenantDetailPageViewModel extends PortalPageViewModel
     private static readonly IdToken = '{id}'
     private static readonly DeleteTitle = 'Delete this tenant?'
     private static readonly DeleteMessage = 'The tenant record is removed. A tenant that still has a hive cannot be deleted; delete its hive first.'
-    private static readonly ChangedProperties = ['DisplayName', 'ClientName', 'CreatedLabel', 'HasHive', 'HasNoHive', 'HiveName', 'ConnectionLabel', 'LastSeenLabel', 'ClusterLabel', 'Observed']
+    private static readonly DisplayNameProperty = 'DisplayName'
+    private static readonly ClientNameProperty = 'ClientName'
+    private static readonly CreatedLabelProperty = 'CreatedLabel'
+    private static readonly HasHiveProperty = 'HasHive'
+    private static readonly HasNoHiveProperty = 'HasNoHive'
+    private static readonly HiveNameProperty = 'HiveName'
+    private static readonly ConnectionLabelProperty = 'ConnectionLabel'
+    private static readonly LastSeenLabelProperty = 'LastSeenLabel'
+    private static readonly ClusterLabelProperty = 'ClusterLabel'
+    private static readonly ObservedProperty = 'Observed'
 
     private tenant: TenantDto | undefined
     private detail: TenantDetailViewModel | undefined
@@ -117,12 +125,12 @@ export class TenantDetailPageViewModel extends PortalPageViewModel
             throw new Error(TenantDetailPageViewModel.NotFoundTemplate.replace(TenantDetailPageViewModel.IdToken, this.Id))
         }
         const hive = fleet.find(h => h.tenant?.id === tenant.id)
-        const before = TenantDetailPageViewModel.ChangedProperties.map(p => this.ValueOf(p))
+        const before = this.Snapshot()
         this.tenant = tenant
         this.detail = new TenantDetailViewModel(tenant, clients, fleet)
         this.hiveId = hive?.id
         this.observed = new ObservedEnvironmentsViewModel(hive?.environments ?? [])
-        TenantDetailPageViewModel.ChangedProperties.forEach((p, i) => this.RaisePropertyChanged(p, before[i], this.ValueOf(p)))
+        this.RaiseChangedSince(before)
         this.openHiveCommand.RaiseCanExecuteChanged()
         return true
     }
@@ -132,9 +140,35 @@ export class TenantDetailPageViewModel extends PortalPageViewModel
         return this.detail?.Binding
     }
 
-    private ValueOf(property: string): unknown
+    // The bound values a load can change, captured before it applies.
+    private Snapshot(): TenantDetailSnapshot
     {
-        return (this as unknown as Record<string, unknown>)[property]
+        return {
+            DisplayName: this.DisplayName,
+            ClientName: this.ClientName,
+            CreatedLabel: this.CreatedLabel,
+            HasHive: this.HasHive,
+            HiveName: this.HiveName,
+            ConnectionLabel: this.ConnectionLabel,
+            LastSeenLabel: this.LastSeenLabel,
+            ClusterLabel: this.ClusterLabel,
+            Observed: this.Observed,
+        }
+    }
+
+    private RaiseChangedSince(b: TenantDetailSnapshot): void
+    {
+        const P = TenantDetailPageViewModel
+        this.RaisePropertyChanged(P.DisplayNameProperty, b.DisplayName, this.DisplayName)
+        this.RaisePropertyChanged(P.ClientNameProperty, b.ClientName, this.ClientName)
+        this.RaisePropertyChanged(P.CreatedLabelProperty, b.CreatedLabel, this.CreatedLabel)
+        this.RaisePropertyChanged(P.HasHiveProperty, b.HasHive, this.HasHive)
+        this.RaisePropertyChanged(P.HasNoHiveProperty, !b.HasHive, this.HasNoHive)
+        this.RaisePropertyChanged(P.HiveNameProperty, b.HiveName, this.HiveName)
+        this.RaisePropertyChanged(P.ConnectionLabelProperty, b.ConnectionLabel, this.ConnectionLabel)
+        this.RaisePropertyChanged(P.LastSeenLabelProperty, b.LastSeenLabel, this.LastSeenLabel)
+        this.RaisePropertyChanged(P.ClusterLabelProperty, b.ClusterLabel, this.ClusterLabel)
+        this.RaisePropertyChanged(P.ObservedProperty, b.Observed, this.Observed)
     }
 
     private OpenHive(): void
@@ -145,19 +179,28 @@ export class TenantDetailPageViewModel extends PortalPageViewModel
         }
     }
 
-    private async Delete(): Promise<void>
+    private Delete(): Promise<void>
     {
-        const dialogs = this.section.Dialogs
-        if (dialogs === undefined)
-        {
-            return
-        }
-        const api = this.Session.Client
-        const confirm = new NameConfirmDialogViewModel(this.Session, dialogs, this.Id, TenantDetailPageViewModel.DeleteMessage,
-            () => api.DeleteTenant(this.Id))
-        if (await confirm.Open(TenantDetailPageViewModel.DeleteTitle) === NameConfirmDialogViewModel.Confirmed)
-        {
-            await this.section.BackAndRefresh()
-        }
+        return this.ConfirmByName(this.section.Dialogs, {
+            Expected: this.Id,
+            Title: TenantDetailPageViewModel.DeleteTitle,
+            Message: TenantDetailPageViewModel.DeleteMessage,
+            Action: () => this.Session.Client.DeleteTenant(this.Id),
+            OnConfirmed: () => this.section.BackAndRefresh(),
+        })
     }
+}
+
+// The tenant detail's bound values before a load, for its change notifications.
+interface TenantDetailSnapshot
+{
+    readonly DisplayName: string
+    readonly ClientName: string
+    readonly CreatedLabel: string
+    readonly HasHive: boolean
+    readonly HiveName: string
+    readonly ConnectionLabel: string
+    readonly LastSeenLabel: string
+    readonly ClusterLabel: string
+    readonly Observed: ObservedEnvironmentsViewModel
 }

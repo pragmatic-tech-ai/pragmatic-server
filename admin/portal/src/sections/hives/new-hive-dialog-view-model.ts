@@ -36,6 +36,7 @@ export class NewHiveDialogViewModel extends PortalDialogViewModel<HiveDto>
     private static readonly CredentialRefProperty = 'CredentialRef'
     private static readonly TrustRootRefProperty = 'TrustRootRef'
     private static readonly TenantLabelSeparator = ' / '
+    private static readonly IncompleteMessage = 'Choose a tenant, a cluster, a cluster mode and a registry mode.'
 
     private readonly tenants = new ObservableCollection<OptionViewModel<string>>()
     private readonly backends = new ObservableCollection<OptionViewModel<HiveClusterBackend>>()
@@ -71,7 +72,7 @@ export class NewHiveDialogViewModel extends PortalDialogViewModel<HiveDto>
     }
 
     // Fills the tenant choices: tenants that no hive serves yet.
-    public async Load(): Promise<void>
+    public override async Load(): Promise<void>
     {
         const api = this.Session.Client
         const [tenants, clients, hives] = await Promise.all([api.ListTenants(), api.ListClients(), api.ListHives()])
@@ -225,18 +226,32 @@ export class NewHiveDialogViewModel extends PortalDialogViewModel<HiveDto>
 
     protected override async SubmitCore(): Promise<HiveDto>
     {
-        return await this.Session.Client.CreateHive(this.BuildInput())
+        const input = this.BuildInput()
+        if (input === undefined)
+        {
+            throw new Error(NewHiveDialogViewModel.IncompleteMessage)
+        }
+        return await this.Session.Client.CreateHive(input)
     }
 
-    private BuildInput(): HiveDto
+    // The hive record from the form; undefined while a choice is missing.
+    private BuildInput(): HiveDto | undefined
     {
-        const cluster: HiveDto['cluster'] = { backend: this.selectedBackend!.Value, mode: this.selectedClusterMode!.Value }
+        const tenant = this.selectedTenant
+        const backend = this.selectedBackend
+        const clusterMode = this.selectedClusterMode
+        const registryMode = this.selectedRegistryMode
+        if (tenant === undefined || backend === undefined || clusterMode === undefined || registryMode === undefined)
+        {
+            return undefined
+        }
+        const cluster: HiveDto['cluster'] = { backend: backend.Value, mode: clusterMode.Value }
         const configRef = this.configRef.trim()
         if (configRef.length > 0)
         {
             cluster.configRef = configRef
         }
-        const registry: HiveDto['registry'] = { mode: this.selectedRegistryMode!.Value }
+        const registry: HiveDto['registry'] = { mode: registryMode.Value }
         const endpoint = this.endpoint.trim()
         if (endpoint.length > 0)
         {
@@ -247,7 +262,7 @@ export class NewHiveDialogViewModel extends PortalDialogViewModel<HiveDto>
         {
             registry.credentialRef = credentialRef
         }
-        const input: HiveDto = { id: this.id.trim(), tenantId: this.selectedTenant!.Value, displayName: this.displayName.trim(), cluster, registry }
+        const input: HiveDto = { id: this.id.trim(), tenantId: tenant.Value, displayName: this.displayName.trim(), cluster, registry }
         const trustRootRef = this.trustRootRef.trim()
         if (trustRootRef.length > 0)
         {

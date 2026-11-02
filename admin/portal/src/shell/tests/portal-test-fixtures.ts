@@ -61,6 +61,35 @@ export class Inspect
         return values
     }
 
+    // Every string reachable from a view-model: its exposed properties, and,
+    // recursively, the properties of any plain object or view-model they hold
+    // (functions and already-visited objects are skipped).
+    public static ReachableStrings(target: object): string[]
+    {
+        const found: string[] = []
+        const seen = new Set<object>()
+        const visit = (value: unknown): void =>
+        {
+            if (typeof value === 'string')
+            {
+                found.push(value)
+                return
+            }
+            if (typeof value !== 'object' || value === null || seen.has(value))
+            {
+                return
+            }
+            seen.add(value)
+            const values = Array.isArray(value) ? value : Inspect.PropertyValues(value)
+            for (const inner of values)
+            {
+                visit(inner)
+            }
+        }
+        visit(target)
+        return found
+    }
+
     // True when any exposed property is a command (has Execute and CanExecute).
     public static HasCommand(target: object): boolean
     {
@@ -70,8 +99,10 @@ export class Inspect
     }
 }
 
-// A DialogService stand-in: records each Show and stays open until the test
-// (through the dialog view-model's commands) calls Close.
+// A DialogService stand-in modelled on the real one: records each Show, one
+// dialog open at a time (a new Show supersedes the open one, resolving it
+// undefined), Close resolves whichever dialog is open now, and Dismiss is the
+// Escape / title-bar X path (resolves the open dialog with undefined).
 export class FakeDialogService extends DialogService
 {
     public readonly Shown: DialogOptions[] = []
@@ -79,8 +110,14 @@ export class FakeDialogService extends DialogService
 
     public override Show<T = unknown>(options: DialogOptions): Promise<T | undefined>
     {
+        this.Close(undefined)
         this.Shown.push(options)
         return new Promise<T | undefined>(resolve => { this.resolve = resolve as (value: unknown) => void })
+    }
+
+    public Dismiss(): void
+    {
+        this.Close(undefined)
     }
 
     public override Close(result?: unknown): void
@@ -121,6 +158,8 @@ export class FakeControlPlane
     public readonly CreatedTenants: Array<[string, string, string, string]> = []
     public readonly CreatedHives: HiveDto[] = []
     public readonly Deleted: string[] = []
+    private createGate: Promise<void> | undefined
+    private releaseCreates: (() => void) | undefined
 
     // Seeds a client.
     public WithClient(id: string, displayName: string = 'Client ' + id): this
@@ -200,8 +239,22 @@ export class FakeControlPlane
         return [...this.Observations]
     }
 
+    // Holds every create in flight until Release() is called.
+    public HoldCreates(): void
+    {
+        this.createGate = new Promise<void>(resolve => { this.releaseCreates = resolve })
+    }
+
+    public Release(): void
+    {
+        this.releaseCreates?.()
+        this.createGate = undefined
+        this.releaseCreates = undefined
+    }
+
     public async CreateClient(id: string, displayName: string, subscriptionRef?: string): Promise<ClientDto>
     {
+        await this.createGate
         this.ThrowIfFailing()
         this.CreatedClients.push([id, displayName, subscriptionRef])
         const client = { id, displayName, subscriptionRef, createdAt: new Date().toISOString() }
@@ -211,17 +264,32 @@ export class FakeControlPlane
 
     public async CreateTenant(id: string, clientId: string, displayName: string, ownerEmail: string): Promise<CreatedTenantDto>
     {
+        await this.createGate
         this.ThrowIfFailing()
         this.CreatedTenants.push([id, clientId, displayName, ownerEmail])
         this.Tenants.push({ id, clientId, displayName })
         return { id, clientId, displayName, owner: { email: ownerEmail, principalId: 'p-' + id, password: this.OwnerPassword } }
     }
 
+    // Records the hive and lists it in the fleet (never checked in yet).
     public async CreateHive(input: HiveDto): Promise<HiveDto>
     {
+        await this.createGate
         this.ThrowIfFailing()
         this.CreatedHives.push(input)
         this.Hives.push(input)
+        const tenant = this.Tenants.find(t => t.id === input.tenantId)
+        const client = tenant === undefined ? undefined : this.Clients.find(c => c.id === tenant.clientId)
+        this.Fleet.push({
+            id: input.id,
+            displayName: input.displayName,
+            tenant: tenant === undefined ? null : { id: tenant.id, displayName: tenant.displayName },
+            client: client === undefined ? null : { id: client.id, displayName: client.displayName },
+            clusterBackend: input.cluster.backend,
+            clusterMode: input.cluster.mode,
+            lastSeen: null,
+            environments: [],
+        })
         return input
     }
 
