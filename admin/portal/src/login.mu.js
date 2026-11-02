@@ -1,13 +1,13 @@
 import { LoginHostService } from "./shell/login-host-service.js";
 import { Border, Orientation, StackPanel, TextBlock, TextBox, TextWrapping } from "@pragmatic-tech-ai/mural/basic";
 import { Button, ButtonVariant } from "@pragmatic-tech-ai/mural/framework/buttons/button.js";
-import { Pragmatic, PragmaticLight } from "@pragmatic-tech-ai/mural/resources/pragmatic";
+import { Pragmatic, PragmaticDark } from "@pragmatic-tech-ai/mural/resources/pragmatic";
 import { Application, BeginStoryboardAction, DataContextBinding, DynamicResource, EventTrigger, HorizontalAlignment, InvokeCommandAction, NameScope, ServiceBinding, ServiceProvider, Storyboard, Style, Thickness, ToVisibility, VerticalAlignment } from "@pragmatic-tech-ai/mural/runtime";
 import { Pen } from "@pragmatic-tech-ai/mural/visual-engine";
 
 export const app = (() => {
     const _app0 = new Application();
-    _app0.initialize({ theme: Pragmatic, scheme: PragmaticLight });
+    _app0.initialize({ theme: Pragmatic, scheme: PragmaticDark });
     _app0.Services.register(ServiceProvider.tokenFor(LoginHostService), (p) => new LoginHostService(p), 'singleton');
     const _rd1 = _app0.Resources;
     const _act2 = new InvokeCommandAction((_target) => _target.DataContext?.SubmitKeyCommand);

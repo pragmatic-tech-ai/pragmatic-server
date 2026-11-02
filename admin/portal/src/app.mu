@@ -14,7 +14,7 @@
 import EditorShell from "@pragmatic-tech-ai/mural/framework/shell/editor-shell.js"
 import NavigationService from "@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js"
 import Pragmatic from "@pragmatic-tech-ai/mural/resources/pragmatic"
-import PragmaticLight from "@pragmatic-tech-ai/mural/resources/pragmatic"
+import PragmaticDark from "@pragmatic-tech-ai/mural/resources/pragmatic"
 import PortalSessionService from "./shell/portal-session-service.js"
 import PortalNavigationService from "./shell/portal-navigation-service.js"
 import ClipboardService from "@pragmatic-tech-ai/mural/framework/shell/services/clipboard-service.js"
@@ -29,7 +29,7 @@ import SettingsModule from "./sections/settings/settings.module.mu.js"
 import ShellResources from "./shell/shell.resources.mu.js"
 import PortalIcons from "./shell/portal-icons.mu.js"
 
-Application [ Theme = Pragmatic, Scheme = PragmaticLight ] {
+Application [ Theme = Pragmatic, Scheme = PragmaticDark ] {
     .services: {
         // The signed-in session (client, email, operator context).
         PortalSessionService

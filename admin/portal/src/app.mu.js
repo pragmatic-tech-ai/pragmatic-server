@@ -17,12 +17,12 @@ import { ClipboardService } from "@pragmatic-tech-ai/mural/framework/shell/servi
 import { ContentHostService } from "@pragmatic-tech-ai/mural/framework/shell/services/content-host-service.js";
 import { NavigationService } from "@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js";
 import { ToolTipService } from "@pragmatic-tech-ai/mural/framework/tooltips/tooltip-service.js";
-import { Pragmatic, PragmaticLight } from "@pragmatic-tech-ai/mural/resources/pragmatic";
+import { Pragmatic, PragmaticDark } from "@pragmatic-tech-ai/mural/resources/pragmatic";
 import { Application, DataContextBinding, DynamicResource, NameScope, ServiceBinding, ServiceProvider, Setter, SetterFactory, Style } from "@pragmatic-tech-ai/mural/runtime";
 
 export const app = (() => {
     const _app0 = new Application();
-    _app0.initialize({ theme: Pragmatic, scheme: PragmaticLight });
+    _app0.initialize({ theme: Pragmatic, scheme: PragmaticDark });
     _app0.Services.register(ServiceProvider.tokenFor(PortalSessionService), (p) => new PortalSessionService(p), 'singleton');
     _app0.Services.register(ServiceProvider.tokenFor(ContentHostService), (p) => new ContentHostService(p), 'singleton');
     _app0.Services.register(ServiceProvider.tokenFor(NavigationService), (p) => new PortalNavigationService(p), 'singleton');

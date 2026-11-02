@@ -13,10 +13,10 @@
 // args; the page logs in on Return only.
 
 import Pragmatic from "@pragmatic-tech-ai/mural/resources/pragmatic"
-import PragmaticLight from "@pragmatic-tech-ai/mural/resources/pragmatic"
+import PragmaticDark from "@pragmatic-tech-ai/mural/resources/pragmatic"
 import LoginHostService from "./shell/login-host-service.js"
 
-Application [ Theme = Pragmatic, Scheme = PragmaticLight ] {
+Application [ Theme = Pragmatic, Scheme = PragmaticDark ] {
     .services: {
         LoginHostService
     }
