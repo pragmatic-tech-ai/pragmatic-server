@@ -14,6 +14,8 @@ DOCKER_BUILDKIT=1 docker build -f pragmatic-server/docker/Dockerfile --secret id
 
 Before the first start. This emits admin/portal/dist/, which the control plane serves. The portal depends on the sibling Mural and todl-runtime builds via file: paths, so those siblings must already be built.
 
+The Platform Admin portal (admin/portal/) is a Mural markup app: its screens are `.mu` files under admin/portal/src/ (app.mu, login.mu, and one module per section in src/sections/). `npm --prefix admin/portal run build` first runs `compile:mu`, which compiles every `.mu` file into the `.mu.js` module beside it, then bundles with Vite. `test`, `typecheck` and `dev` run `compile:mu` first too, so there is no separate step. The generated `.mu.js` files are committed; rebuild after editing a `.mu` file and commit both.
+
 ```
 npm --prefix admin/portal install && npm --prefix admin/portal run build
 npm --prefix admin/tenant-portal install && npm --prefix admin/tenant-portal run build
@@ -72,7 +74,7 @@ The gated smoke below logs in automatically with a built-in test operator compos
 
 ## Create environments
 
-From the portal, create either a dev-blank environment (the name must be a lowercase slug, characters a-z, 0-9 and hyphen) or a demo-contoso environment (seeds the Contoso security model and four demo users). Each is a pragmatic-server:dev container on an allocated host port. Connect over HTTP at http://localhost:PORT and over WebSocket at ws://localhost:PORT/?environment=TENANT.
+The Platform Admin portal no longer has environment screens; the /api/environments routes remain. Through them, create either a dev-blank environment (the name must be a lowercase slug, characters a-z, 0-9 and hyphen) or a demo-contoso environment (seeds the Contoso security model and four demo users). Each is a pragmatic-server:dev container on an allocated host port. Connect over HTTP at http://localhost:PORT and over WebSocket at ws://localhost:PORT/?environment=TENANT.
 
 ## Gated integration smoke
 
@@ -100,10 +102,12 @@ npx tsx admin/control-plane/registry-provenance-smoke.ts
 
 ## Generated data and portal tests
 
-admin/control-plane/data/ holds generated bundles, registry.json, provisioned secrets and master keys. It is generated and gitignored; never commit it. The Playwright portal spec is gated on a one-time browser install:
+admin/control-plane/data/ holds generated bundles, registry.json, provisioned secrets and master keys. It is generated and gitignored; never commit it. The Playwright portal spec (admin/portal/tests/portal.spec.ts) runs against a fake control plane that serves dist/ and canned /api responses, and refuses every write. It logs in, checks the Fleet page, opens a tenant's detail and goes Back, opens and cancels the Create client dialog, and logs out. It needs a prior build and a one-time browser install, and is not part of the default unit run (`npm --prefix admin/portal test`):
 
 ```
 npx playwright install chromium
+npm --prefix admin/portal run build
+npm --prefix admin/portal run test:e2e
 ```
 
 ## Type-check gate

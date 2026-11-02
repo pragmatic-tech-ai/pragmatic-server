@@ -1,62 +1,56 @@
-import { test, expect, type Page } from '@playwright/test'
-import { App } from '../src/app.js'
-import { LoginView } from '../src/login-view.js'
-import { EnvironmentListView } from '../src/environment-list-view.js'
-import { EnvironmentDetailView } from '../src/environment-detail-view.js'
-import { PortalViewBase } from '../src/portal-view-base.js'
-import { GraphListView } from '../src/graph-list-view.js'
-import { CreateGraphView } from '../src/create-graph-view.js'
+import { test, expect, type Locator, type Page } from '@playwright/test'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { extname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-// A recorded API call: method + path (+ parsed JSON body for POST /api/environments).
+// A recorded API call: method + path (+ parsed JSON body when one was sent).
 type Call = { method: string; path: string; body?: unknown }
 
 // Serves the built dist/ statically and fakes the control-plane API with
-// canned data, recording every mutating call. GATED: needs Playwright
-// browser binaries and a prior `npm run build`.
+// canned data, recording every login/logout and every mutating call (which it
+// refuses). GATED: needs Playwright browser binaries and a prior
+// `npm run build`; not part of `npm test`.
 class FakeControlPlane
 {
-    public static readonly EnvName = 'alpha'
-    public static readonly EnvStatus = 'running'
-    public static readonly TemplateOneId = 'dev-blank'
-    public static readonly ListedType = 'development'
-    public static readonly RowSeparator = '  |  '
-    public static readonly RowPortText = 'port 4101'
-    public static readonly EnvironmentsPath = '/api/environments'
-    public static readonly GraphsPath = '/api/environments/alpha/graphs'
-    public static readonly NewGraphName = 'g1'
-    public static readonly NewGraphDescription = 'first graph'
-    public static readonly NewGraphPackageCount = '0'
-    public static readonly RuntimeType = 'runtime'
-    public static readonly GraphCreatedAt = '2026-01-01T00:00:00.000Z'
-    public static readonly MethodPost = 'POST'
-    public static readonly MethodDelete = 'DELETE'
     public static readonly LoginPath = '/api/login'
     public static readonly LogoutPath = '/api/logout'
-    public static readonly SessionPath = '/api/session'
+    public static readonly MethodPost = 'POST'
     public static readonly OperatorEmail = 'op@example.com'
     public static readonly OperatorPassword = 'correct-horse'
-    public static readonly BadCredentialsText = 'Invalid email or password'
-    public static readonly BadPassword = 'wrong-password'
+    public static readonly ClientId = 'tailspin'
+    public static readonly ClientName = 'Tailspin Holdings'
+    public static readonly TenantId = 'tailspin-prod'
+    public static readonly TenantName = 'Tailspin Production'
+    public static readonly HiveId = 'hive-eu-1'
+    public static readonly HiveName = 'EU Hive 1'
+    private static readonly SessionPath = '/api/session'
+    private static readonly ClientsPath = '/api/clients'
+    private static readonly TenantsPath = '/api/tenants'
+    private static readonly FleetPath = '/api/fleet'
+    private static readonly ApiPrefix = '/api/'
+    private static readonly FullRole = 'full'
+    private static readonly PrincipalId = 'p-1'
+    private static readonly CreatedAt = '2026-01-01T00:00:00.000Z'
+    private static readonly ClusterBackend = 'aks'
+    private static readonly ClusterMode = 'attach'
+    private static readonly EnvName = 'production'
+    private static readonly EnvDetail = 'ready'
     private static readonly UnauthenticatedError = 'unauthenticated'
-    private static readonly BadCredentialsError = FakeControlPlane.BadCredentialsText
+    private static readonly RefusedError = 'refused by the e2e fake'
     private static readonly SetCookieHeader = 'set-cookie'
     private static readonly SessionCookie = 'sid=test; Path=/; HttpOnly'
-    private static readonly TenantId = 't-1'
-    private static readonly HttpUrl = 'http://localhost:4101'
-    private static readonly WsUrl = 'ws://localhost:4101/?environment=t-1'
     private static readonly HtmlExt = '.html'
     private static readonly JsExt = '.js'
     private static readonly CssExt = '.css'
+    private static readonly SvgExt = '.svg'
     private static readonly RootPath = '/'
     private static readonly IndexFile = 'index.html'
     private static readonly ParentSegment = '..'
-    private static readonly EnvPrefix = '/api/environments/'
+    private static readonly QuerySeparator = '?'
     private static readonly MethodGet = 'GET'
     private static readonly HostLocal = '127.0.0.1'
+    private static readonly ContentTypeHeader = 'content-type'
     private static readonly JsonType = 'application/json'
     private static readonly DefaultType = 'application/octet-stream'
     private static readonly Types: Record<string, string> =
@@ -64,11 +58,10 @@ class FakeControlPlane
         [FakeControlPlane.HtmlExt]: 'text/html',
         [FakeControlPlane.JsExt]: 'text/javascript',
         [FakeControlPlane.CssExt]: 'text/css',
+        [FakeControlPlane.SvgExt]: 'image/svg+xml',
     }
 
     public readonly Calls: Call[] = []
-    public EnvType = FakeControlPlane.ListedType
-    public Graphs: Array<{ name: string; description: string; packageCount: number; createdAt: string }> = []
     public Authenticated = true
     private readonly root = fileURLToPath(new URL('../dist/', import.meta.url))
     private server: Server | undefined
@@ -92,19 +85,39 @@ class FakeControlPlane
         return this.Calls.find(c => c.method === method && c.path === path)
     }
 
-    private Env(): Record<string, unknown>
+    // Every mutating call other than login/logout: the fake refuses them all.
+    public get Mutations(): Call[]
     {
-        return {
-            name: FakeControlPlane.EnvName,
-            template: FakeControlPlane.TemplateOneId,
-            type: this.EnvType,
-            environmentId: FakeControlPlane.TenantId,
-            hostPort: 4101,
-            status: FakeControlPlane.EnvStatus,
-            createdAt: '2026-01-01T00:00:00.000Z',
-            httpUrl: FakeControlPlane.HttpUrl,
-            wsUrl: FakeControlPlane.WsUrl,
-        }
+        return this.Calls.filter(c => c.path !== FakeControlPlane.LoginPath && c.path !== FakeControlPlane.LogoutPath)
+    }
+
+    private Operator(): Record<string, unknown>
+    {
+        return { email: FakeControlPlane.OperatorEmail, principalId: FakeControlPlane.PrincipalId, role: FakeControlPlane.FullRole }
+    }
+
+    private Clients(): unknown[]
+    {
+        return [{ id: FakeControlPlane.ClientId, displayName: FakeControlPlane.ClientName, createdAt: FakeControlPlane.CreatedAt }]
+    }
+
+    private Tenants(): unknown[]
+    {
+        return [{ id: FakeControlPlane.TenantId, clientId: FakeControlPlane.ClientId, displayName: FakeControlPlane.TenantName, createdAt: FakeControlPlane.CreatedAt }]
+    }
+
+    private Fleet(): unknown[]
+    {
+        return [{
+            id: FakeControlPlane.HiveId,
+            displayName: FakeControlPlane.HiveName,
+            tenant: { id: FakeControlPlane.TenantId, displayName: FakeControlPlane.TenantName },
+            client: { id: FakeControlPlane.ClientId, displayName: FakeControlPlane.ClientName },
+            clusterBackend: FakeControlPlane.ClusterBackend,
+            clusterMode: FakeControlPlane.ClusterMode,
+            lastSeen: new Date().toISOString(),
+            environments: [{ name: FakeControlPlane.EnvName, ready: true, detail: FakeControlPlane.EnvDetail }],
+        }]
     }
 
     private static ReadBody(req: IncomingMessage): Promise<string>
@@ -119,19 +132,19 @@ class FakeControlPlane
 
     private static Json(res: ServerResponse, status: number, body: unknown): void
     {
-        res.writeHead(status, { 'content-type': FakeControlPlane.JsonType })
+        res.writeHead(status, { [FakeControlPlane.ContentTypeHeader]: FakeControlPlane.JsonType })
         res.end(JSON.stringify(body))
     }
 
     private async Handle(req: IncomingMessage, res: ServerResponse): Promise<void>
     {
         const method = req.method ?? FakeControlPlane.MethodGet
-        const path = (req.url ?? FakeControlPlane.RootPath).split('?')[0]!
+        const path = (req.url ?? FakeControlPlane.RootPath).split(FakeControlPlane.QuerySeparator)[0]!
         if (path === FakeControlPlane.SessionPath)
         {
             if (this.Authenticated)
             {
-                FakeControlPlane.Json(res, 200, { email: FakeControlPlane.OperatorEmail })
+                FakeControlPlane.Json(res, 200, this.Operator())
             }
             else
             {
@@ -142,16 +155,10 @@ class FakeControlPlane
         if (path === FakeControlPlane.LoginPath)
         {
             const raw = await FakeControlPlane.ReadBody(req)
-            const body = JSON.parse(raw) as { password?: string }
-            this.Calls.push({ method, path, body })
-            if (body.password === FakeControlPlane.BadPassword)
-            {
-                FakeControlPlane.Json(res, 401, { error: FakeControlPlane.BadCredentialsError })
-                return
-            }
+            this.Calls.push({ method, path, body: JSON.parse(raw) })
             this.Authenticated = true
-            res.writeHead(200, { 'content-type': FakeControlPlane.JsonType, [FakeControlPlane.SetCookieHeader]: FakeControlPlane.SessionCookie })
-            res.end(JSON.stringify({ email: FakeControlPlane.OperatorEmail }))
+            res.writeHead(200, { [FakeControlPlane.ContentTypeHeader]: FakeControlPlane.JsonType, [FakeControlPlane.SetCookieHeader]: FakeControlPlane.SessionCookie })
+            res.end(JSON.stringify(this.Operator()))
             return
         }
         if (path === FakeControlPlane.LogoutPath)
@@ -162,40 +169,45 @@ class FakeControlPlane
             FakeControlPlane.Json(res, 200, {})
             return
         }
-        if (path === FakeControlPlane.GraphsPath)
+        if (path.startsWith(FakeControlPlane.ApiPrefix))
         {
-            if (method === FakeControlPlane.MethodPost)
-            {
-                const raw = await FakeControlPlane.ReadBody(req)
-                const body = JSON.parse(raw) as { name: string; description: string }
-                this.Calls.push({ method, path, body })
-                const graph = { name: body.name, description: body.description, packageCount: 0, createdAt: FakeControlPlane.GraphCreatedAt }
-                this.Graphs.push(graph)
-                FakeControlPlane.Json(res, 201, graph)
-                return
-            }
-            FakeControlPlane.Json(res, 200, this.Graphs)
-            return
-        }
-        if (path === FakeControlPlane.EnvironmentsPath || path.startsWith(FakeControlPlane.EnvPrefix))
-        {
-            if (method === FakeControlPlane.MethodGet && path === FakeControlPlane.EnvironmentsPath)
-            {
-                FakeControlPlane.Json(res, 200, [this.Env()])
-                return
-            }
-            const raw = method === FakeControlPlane.MethodPost ? await FakeControlPlane.ReadBody(req) : ''
-            const call: Call = { method, path }
-            if (path === FakeControlPlane.EnvironmentsPath && raw.length > 0)
-            {
-                call.body = JSON.parse(raw)
-            }
-            this.Calls.push(call)
-            const created = method === FakeControlPlane.MethodPost && path === FakeControlPlane.EnvironmentsPath
-            FakeControlPlane.Json(res, created ? 201 : 200, this.Env())
+            await this.Api(method, path, req, res)
             return
         }
         await this.Serve(path, res)
+    }
+
+    // Lists for the pages the spec visits, [] for every other read, and a
+    // refusal for every write (recorded so a test can assert none happened).
+    // The events ticket is refused too, so the client opens no socket.
+    private async Api(method: string, path: string, req: IncomingMessage, res: ServerResponse): Promise<void>
+    {
+        if (!this.Authenticated)
+        {
+            FakeControlPlane.Json(res, 401, { error: FakeControlPlane.UnauthenticatedError })
+            return
+        }
+        if (method !== FakeControlPlane.MethodGet)
+        {
+            const raw = await FakeControlPlane.ReadBody(req)
+            this.Calls.push({ method, path, body: raw.length > 0 ? JSON.parse(raw) : undefined })
+            FakeControlPlane.Json(res, 401, { error: FakeControlPlane.RefusedError })
+            return
+        }
+        switch (path)
+        {
+            case FakeControlPlane.ClientsPath:
+                FakeControlPlane.Json(res, 200, this.Clients())
+                return
+            case FakeControlPlane.TenantsPath:
+                FakeControlPlane.Json(res, 200, this.Tenants())
+                return
+            case FakeControlPlane.FleetPath:
+                FakeControlPlane.Json(res, 200, this.Fleet())
+                return
+            default:
+                FakeControlPlane.Json(res, 200, [])
+        }
     }
 
     private async Serve(path: string, res: ServerResponse): Promise<void>
@@ -210,7 +222,7 @@ class FakeControlPlane
         try
         {
             const body = await readFile(join(this.root, rel))
-            res.writeHead(200, { 'content-type': FakeControlPlane.Types[extname(rel)] ?? FakeControlPlane.DefaultType })
+            res.writeHead(200, { [FakeControlPlane.ContentTypeHeader]: FakeControlPlane.Types[extname(rel)] ?? FakeControlPlane.DefaultType })
             res.end(body)
         }
         catch
@@ -221,26 +233,70 @@ class FakeControlPlane
     }
 }
 
-// Interaction helpers. ASSUMPTION (adjust empirically): Mural may render
-// TextBox either as a real <input> or as a canvas/SVG surface with a hidden
-// key sink; handle both, preferring a real input when one exists.
+// The new app's visible text, as its .mu markup spells it.
+class PortalText
+{
+    public static readonly SignInText = 'Operator sign in'
+    public static readonly LoginLabel = 'Log in'
+    public static readonly EmailPlaceholder = 'Email'
+    public static readonly PasswordPlaceholder = 'Password'
+    public static readonly LogoutLabel = 'Log out'
+    public static readonly FleetSubtitle = 'Every hive, read from its last check-in. Exceptions first.'
+    public static readonly TenantsSubtitle = 'Customer workspaces. Each is bound to exactly one hive.'
+    public static readonly TenantDetailCaption = 'Hive binding'
+    public static readonly BackLabel = 'Back'
+    public static readonly ClientsSubtitle = 'Contracting organisations. Each has one or more tenants; each tenant runs in exactly one hive.'
+    public static readonly CreateClientLabel = 'Create client'
+    // A single-line dialog caption: wrapped text renders as one SVG text per line.
+    public static readonly NewClientCaption = 'Subscription reference (optional)'
+    public static readonly CancelLabel = 'Cancel'
+}
+
+// The rail's entries, in the order app.mu lists the section modules.
+enum RailEntry
+{
+    Fleet,
+    Clients,
+    Tenants,
+    Hives,
+    Releases,
+    ReleasePolicy,
+    Activity,
+    Settings,
+}
+
+// Interaction helpers. Mural renders the whole app as SVG: a TextBox is a
+// surface with a hidden key sink (no <input>), and each control's hit rect
+// sits over its text, so clicks are forced through it. A TextBox's placeholder
+// follows its caption in document order, so the field is the placeholder's
+// last match. The rail is icon-only (its names are tooltips), so an entry is
+// clicked at its position: the header, then one fixed-pitch row per entry.
 class PortalSteps
 {
-    private static readonly InputSelector = 'input'
+    private static readonly RailX = 24
+    private static readonly RailFirstY = 97
+    private static readonly RailPitch = 40
 
-    // Types into the nth text field (input mode) or, failing that, the field showing the placeholder.
-    public static async TypeInto(page: Page, index: number, placeholder: string, text: string): Promise<void>
+    public static async TypeInto(page: Page, placeholder: string, text: string): Promise<void>
     {
-        const inputs = page.locator(PortalSteps.InputSelector)
-        if (await inputs.count() > index)
-        {
-            await inputs.nth(index).fill(text)
-            return
-        }
-        await page.getByText(placeholder, { exact: true }).click()
+        await page.getByText(placeholder, { exact: true }).last().click({ force: true })
         await page.keyboard.type(text)
     }
 
+    public static Text(page: Page, text: string): Locator
+    {
+        return page.getByText(text, { exact: true })
+    }
+
+    public static async Click(page: Page, text: string): Promise<void>
+    {
+        await PortalSteps.Text(page, text).first().click({ force: true })
+    }
+
+    public static async OpenSection(page: Page, entry: RailEntry): Promise<void>
+    {
+        await page.mouse.click(PortalSteps.RailX, PortalSteps.RailFirstY + PortalSteps.RailPitch * entry)
+    }
 }
 
 test.describe('admin portal', () =>
@@ -253,93 +309,62 @@ test.describe('admin portal', () =>
     test.beforeEach(() =>
     {
         fake.Authenticated = true
-        fake.EnvType = FakeControlPlane.ListedType
+        fake.Calls.length = 0
     })
-
-    test('lists the environment with its status', async ({ page }) =>
+    test.afterEach(() =>
     {
-        await page.goto(base)
-        await expect(page.getByText(App.TitleText)).toBeVisible()
-        await expect(page.getByText(FakeControlPlane.EnvName).first()).toBeVisible()
-        await expect(page.getByText(FakeControlPlane.EnvStatus).first()).toBeVisible()
-        const row = [FakeControlPlane.EnvName, FakeControlPlane.TemplateOneId, FakeControlPlane.ListedType, FakeControlPlane.EnvStatus, FakeControlPlane.RowPortText].join(FakeControlPlane.RowSeparator)
-        await expect(page.getByText(row, { exact: true })).toBeVisible()
+        expect(fake.Mutations).toEqual([])
     })
 
-    test('unauthenticated load shows the login view, not the list', async ({ page }) =>
+    test('logging in posts the credentials and then shows the Fleet page', async ({ page }) =>
     {
         fake.Authenticated = false
         await page.goto(base)
-        await expect(page.getByText(LoginView.LoginLabel, { exact: true })).toBeVisible()
-        await expect(page.getByText(LoginView.EmailPlaceholder, { exact: true })).toBeVisible()
-        await expect(page.getByText(EnvironmentListView.ClientsLabel, { exact: true })).toHaveCount(0)
-    })
-
-    test('logging in posts the email and then shows the environment list', async ({ page }) =>
-    {
-        fake.Authenticated = false
-        await page.goto(base)
-        await expect(page.getByText(LoginView.LoginLabel, { exact: true })).toBeVisible()
-        await PortalSteps.TypeInto(page, 0, LoginView.EmailPlaceholder, FakeControlPlane.OperatorEmail)
-        await PortalSteps.TypeInto(page, 1, LoginView.PasswordPlaceholder, FakeControlPlane.OperatorPassword)
-        await page.getByText(LoginView.LoginLabel, { exact: true }).click()
+        await expect(PortalSteps.Text(page, PortalText.SignInText)).toBeVisible()
+        await PortalSteps.TypeInto(page, PortalText.EmailPlaceholder, FakeControlPlane.OperatorEmail)
+        await PortalSteps.TypeInto(page, PortalText.PasswordPlaceholder, FakeControlPlane.OperatorPassword)
+        await PortalSteps.Click(page, PortalText.LoginLabel)
         await expect.poll(() => fake.Find(FakeControlPlane.MethodPost, FakeControlPlane.LoginPath)).toBeDefined()
         expect(fake.Find(FakeControlPlane.MethodPost, FakeControlPlane.LoginPath)!.body).toEqual({
             email: FakeControlPlane.OperatorEmail,
             password: FakeControlPlane.OperatorPassword,
         })
-        await expect(page.getByText(EnvironmentListView.ClientsLabel, { exact: true })).toBeVisible()
+        await expect(PortalSteps.Text(page, PortalText.FleetSubtitle)).toBeVisible()
+        await expect(PortalSteps.Text(page, FakeControlPlane.HiveName).first()).toBeVisible()
     })
 
-    test('bad credentials keep the login view and show the error inline', async ({ page }) =>
+    test('Tenants: a tenant row opens its detail and Back returns to the list', async ({ page }) =>
     {
-        fake.Authenticated = false
         await page.goto(base)
-        await expect(page.getByText(LoginView.LoginLabel, { exact: true })).toBeVisible()
-        await PortalSteps.TypeInto(page, 0, LoginView.EmailPlaceholder, FakeControlPlane.OperatorEmail)
-        await PortalSteps.TypeInto(page, 1, LoginView.PasswordPlaceholder, FakeControlPlane.BadPassword)
-        await page.getByText(LoginView.LoginLabel, { exact: true }).click()
-        await expect(page.getByText(FakeControlPlane.BadCredentialsText)).toBeVisible()
-        await expect(page.getByText(LoginView.LoginLabel, { exact: true })).toBeVisible()
-        await expect(page.getByText(EnvironmentListView.ClientsLabel, { exact: true })).toHaveCount(0)
+        await expect(PortalSteps.Text(page, PortalText.FleetSubtitle)).toBeVisible()
+        await PortalSteps.OpenSection(page, RailEntry.Tenants)
+        await expect(PortalSteps.Text(page, PortalText.TenantsSubtitle)).toBeVisible()
+        await PortalSteps.Click(page, FakeControlPlane.TenantName)
+        await expect(PortalSteps.Text(page, PortalText.TenantDetailCaption)).toBeVisible()
+        await PortalSteps.Click(page, PortalText.BackLabel)
+        await expect(PortalSteps.Text(page, PortalText.TenantsSubtitle)).toBeVisible()
+        await expect(PortalSteps.Text(page, PortalText.TenantDetailCaption)).not.toBeVisible()
     })
 
-    test('Logout posts to the server and returns to the login view', async ({ page }) =>
+    test('Clients: Create client opens the dialog and Cancel closes it', async ({ page }) =>
     {
         await page.goto(base)
-        await expect(page.getByText(EnvironmentListView.ClientsLabel, { exact: true })).toBeVisible()
-        await page.getByText(App.LogoutLabel, { exact: true }).click()
+        await expect(PortalSteps.Text(page, PortalText.FleetSubtitle)).toBeVisible()
+        await PortalSteps.OpenSection(page, RailEntry.Clients)
+        await expect(PortalSteps.Text(page, PortalText.ClientsSubtitle)).toBeVisible()
+        await PortalSteps.Click(page, PortalText.CreateClientLabel)
+        await expect(PortalSteps.Text(page, PortalText.NewClientCaption)).toBeVisible()
+        await PortalSteps.Click(page, PortalText.CancelLabel)
+        await expect(PortalSteps.Text(page, PortalText.NewClientCaption)).not.toBeVisible()
+        await expect(PortalSteps.Text(page, PortalText.ClientsSubtitle)).toBeVisible()
+    })
+
+    test('Log out posts to the server and returns to the login page', async ({ page }) =>
+    {
+        await page.goto(base)
+        await expect(PortalSteps.Text(page, PortalText.FleetSubtitle)).toBeVisible()
+        await PortalSteps.Click(page, PortalText.LogoutLabel)
         await expect.poll(() => fake.Find(FakeControlPlane.MethodPost, FakeControlPlane.LogoutPath)).toBeDefined()
-        await expect(page.getByText(LoginView.LoginLabel, { exact: true })).toBeVisible()
-    })
-
-    test('creating a graph from the Development detail view lists it', async ({ page }) =>
-    {
-        await page.goto(base)
-        await page.getByText(EnvironmentListView.OpenLabel, { exact: true }).click()
-        await expect(page.getByText(EnvironmentDetailView.GraphsLabel, { exact: true })).toBeVisible()
-        await page.getByText(EnvironmentDetailView.GraphsLabel, { exact: true }).click()
-        await expect(page.getByText(GraphListView.HeadingText, { exact: true })).toBeVisible()
-        await expect(page.getByText(GraphListView.EmptyText, { exact: true })).toBeVisible()
-        await page.getByText(GraphListView.NewLabel, { exact: true }).click()
-        await PortalSteps.TypeInto(page, 0, CreateGraphView.NamePlaceholder, FakeControlPlane.NewGraphName)
-        await PortalSteps.TypeInto(page, 1, CreateGraphView.DescriptionPlaceholder, FakeControlPlane.NewGraphDescription)
-        await page.getByText(CreateGraphView.CreateLabel, { exact: true }).click()
-        await expect.poll(() => fake.Find(FakeControlPlane.MethodPost, FakeControlPlane.GraphsPath)).toBeDefined()
-        expect(fake.Find(FakeControlPlane.MethodPost, FakeControlPlane.GraphsPath)!.body).toEqual({
-            name: FakeControlPlane.NewGraphName,
-            description: FakeControlPlane.NewGraphDescription,
-        })
-        const row = [FakeControlPlane.NewGraphName, FakeControlPlane.NewGraphDescription, FakeControlPlane.NewGraphPackageCount].join(FakeControlPlane.RowSeparator)
-        await expect(page.getByText(row, { exact: true })).toBeVisible()
-    })
-
-    test('a runtime environment detail shows Back and no Graphs button', async ({ page }) =>
-    {
-        fake.EnvType = FakeControlPlane.RuntimeType
-        await page.goto(base)
-        await page.getByText(EnvironmentListView.OpenLabel, { exact: true }).click()
-        await expect(page.getByText(PortalViewBase.BackLabel, { exact: true })).toBeVisible()
-        await expect(page.getByText(EnvironmentDetailView.GraphsLabel, { exact: true })).toHaveCount(0)
+        await expect(PortalSteps.Text(page, PortalText.SignInText)).toBeVisible()
     })
 })

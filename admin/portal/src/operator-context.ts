@@ -1,5 +1,3 @@
-import { ActInputs, ActVariant } from './kit/act.js'
-
 // UI vocabulary for the signed-in operator's capability.
 export enum OperatorRole
 {
@@ -58,10 +56,5 @@ export class OperatorContext
     public get AskWhom(): string
     {
         return OperatorContext.AskText
-    }
-
-    public MutatingAct(label: string, onClick: () => void, variant?: ActVariant): ActInputs
-    {
-        return { can: this.CanMutate, label, onClick, variant, need: this.NeededRoleLabel, ask: this.AskWhom }
     }
 }

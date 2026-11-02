@@ -80,30 +80,6 @@ export type OperatorDto =
     role: string
 }
 
-// Navigation contract the App implements and the views call into.
-export interface IPortalNavigator
-{
-    ShowLogin(): void
-    ShowList(): void
-    ShowDetail(name: string): void
-    ShowGraphs(name: string): void
-    ShowCreateGraph(name: string): void
-    ShowPromoteGraph(devEnvName: string): void
-    ShowClients(): void
-    ShowCreateClient(): void
-    ShowTenants(clientId: string): void
-    ShowCreateTenant(clientId: string): void
-    ShowHives(clientId: string, tenantId: string): void
-    ShowCreateHive(clientId: string, tenantId: string): void
-}
-
-// A screen that can re-fetch and re-render itself (on environments-changed).
-export interface IPortalView
-{
-    AttachNavigator(nav: IPortalNavigator): void
-    Refresh(): Promise<void>
-}
-
 export type GatingDto = { tenantId: string; version: string; gatedAt: string }
 export type SelectionDto = { hiveId: string; targetVersion: string; selectedAt: string }
 export type OperatorSummaryDto = { email: string; role: string; disabled?: boolean }
