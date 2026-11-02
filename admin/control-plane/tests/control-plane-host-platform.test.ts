@@ -18,7 +18,7 @@ import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
 import { InvalidTenantIdError } from '../idp-service.js'
 import type { IdpConnection, IIdpService } from '../idp-service.js'
-import { PlatformDirectory, RecordExistsError } from '../platform-directory.js'
+import { PlatformDirectory, RecordExistsError, RecordKind } from '../platform-directory.js'
 
 type Reply = { status: number; body: string; cacheControl?: string }
 
@@ -228,7 +228,7 @@ describe('ControlPlaneHost platform routes', () =>
         const body = { id: 't1', clientId: 'acme', displayName: 'T', ownerEmail: 'o@x.test' }
         fake.FailWith = new InvalidTenantIdError('bad id')
         assert.equal((await Harness.Send(host, 'POST', '/api/tenants', body)).status, 400)
-        fake.FailWith = new RecordExistsError('t1')
+        fake.FailWith = new RecordExistsError(RecordKind.Tenant, 't1')
         assert.equal((await Harness.Send(host, 'POST', '/api/tenants', body)).status, 409)
     })
 
@@ -321,6 +321,37 @@ describe('ControlPlaneHost platform routes', () =>
         assert.equal(r.status, 409)
         assert.equal(JSON.parse((await Harness.Send(host, 'GET', '/api/tenants')).body).length, 0)
         assert.equal(JSON.parse((await Harness.Send(host, 'GET', '/api/hives')).body).length, 0)
+    })
+
+    it('POST /api/provision with a duplicate client id names the record in the error', async () =>
+    {
+        await Harness.Send(host, 'POST', '/api/clients', { id: 'acme', displayName: 'Acme' })
+        const r = await Harness.Send(host, 'POST', '/api/provision', Harness.ProvisionBody())
+        assert.equal(JSON.parse(r.body).error, 'Client "acme" already exists')
+    })
+
+    it('POST /api/provision onto an existing client and tenant -> 201, hive created, no Owner secrets', async () =>
+    {
+        await Harness.Send(host, 'POST', '/api/clients', { id: 'acme', displayName: 'Acme' })
+        await Harness.Send(host, 'POST', '/api/tenants', { id: 't1', clientId: 'acme', displayName: 'T', ownerEmail: 'o@x.test' })
+        const body = Harness.ProvisionBody()
+        body.client = { existing: true, id: 'acme' }
+        body.tenant = { existing: true, id: 't1' }
+        const r = await Harness.Send(host, 'POST', '/api/provision', body)
+        assert.equal(r.status, 201)
+        const result = JSON.parse(r.body)
+        assert.equal(result.hive.tenantId, 't1')
+        assert.equal(result.secrets.ownerPassword, undefined)
+        assert.ok(result.secrets.agentToken.length > 0)
+        assert.equal(JSON.parse((await Harness.Send(host, 'GET', '/api/clients')).body).length, 1)
+    })
+
+    it('POST /api/provision with a non-boolean existing flag -> 400', async () =>
+    {
+        const bad = Harness.ProvisionBody()
+        bad.client = { existing: 'yes', id: 'acme' }
+        const r = await Harness.Send(host, 'POST', '/api/provision', bad)
+        assert.equal(r.status, 400)
     })
 
     it('POST /api/provision with an invalid cluster -> 400 and zero writes', async () =>

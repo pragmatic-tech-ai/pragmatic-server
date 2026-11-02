@@ -383,6 +383,13 @@ class PortalText
     public static readonly NewClientCaption = 'Subscription reference (optional)'
     public static readonly CancelLabel = 'Cancel'
     public static readonly NeedsAttentionCaption = 'Needs attention'
+    public static readonly StandUpLabel = 'Stand up a hive'
+    public static readonly NewClientChoice = 'New client'
+    public static readonly NewTenantChoice = 'New tenant'
+    public static readonly NextLabel = 'Next'
+    public static readonly ClientIdCaption = 'Client id'
+    public static readonly TenantIdCaption = 'Tenant id'
+    public static readonly HiveIdCaption = 'Hive id'
     // Each rail section's page title (its H3), in RailEntry order.
     public static readonly SectionTitles: readonly string[] = [
         'Fleet', 'Clients', 'Tenants', 'Hives', 'Registry & Releases', 'Release Policy', 'Activity', 'Settings',
@@ -587,6 +594,27 @@ test.describe('admin portal', () =>
         await PortalSteps.Click(page, PortalText.CancelLabel)
         await expect(PortalSteps.Text(page, PortalText.NewClientCaption)).not.toBeVisible()
         await expect(PortalSteps.Text(page, PortalText.ClientsSubtitle)).toBeVisible()
+    })
+
+    test('Hives: the stand-up wizard picks an existing client and tenant from ComboBoxes', async ({ page }) =>
+    {
+        await page.goto(base)
+        await expect(PortalSteps.Text(page, PortalText.FleetSubtitle)).toBeVisible()
+        await PortalSteps.OpenSection(page, RailEntry.Hives)
+        await PortalSteps.Click(page, PortalText.StandUpLabel)
+        await expect(PortalSteps.Visible(page, PortalText.NewClientChoice)).toBeVisible()
+        await expect(PortalSteps.Visible(page, PortalText.ClientIdCaption)).toBeVisible()
+        await PortalSteps.Click(page, PortalText.NewClientChoice)
+        await PortalSteps.Visible(page, FakeControlPlane.ClientName).click({ force: true })
+        await expect(PortalSteps.Text(page, PortalText.ClientIdCaption).filter({ visible: true })).toHaveCount(0)
+        await PortalSteps.Click(page, PortalText.NextLabel)
+        await expect(PortalSteps.Visible(page, PortalText.NewTenantChoice)).toBeVisible()
+        await PortalSteps.Click(page, PortalText.NewTenantChoice)
+        await PortalSteps.Visible(page, FakeControlPlane.TenantName).click({ force: true })
+        await expect(PortalSteps.Text(page, PortalText.TenantIdCaption).filter({ visible: true })).toHaveCount(0)
+        await PortalSteps.Click(page, PortalText.NextLabel)
+        await expect(PortalSteps.Visible(page, PortalText.HiveIdCaption)).toBeVisible()
+        await PortalSteps.ExpectNoBrokenText(page)
     })
 
     test('Log out posts to the server and returns to the login page', async ({ page }) =>

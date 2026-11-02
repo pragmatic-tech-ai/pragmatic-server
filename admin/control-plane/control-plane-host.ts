@@ -35,6 +35,7 @@ import {
     ClientHasTenantsError,
     HiveHasEnvironmentsError,
     RecordExistsError,
+    TenantClientMismatchError,
     TenantHasHivesError,
     UnknownClientError,
     UnknownTenantError,
@@ -269,6 +270,7 @@ export class ControlPlaneHost
     private static readonly ClientIdRequiredMessage = 'clientId (non-empty string) is required'
     private static readonly TenantIdRequiredMessage = 'tenantId (non-empty string) is required'
     private static readonly OptionalStringMessage = 'optional reference fields must be strings'
+    private static readonly ExistingFlagMessage = 'existing must be a boolean when given'
     private static readonly ClusterInvalidMessage = 'cluster must be { backend, mode } with valid values; backend one of: '
     private static readonly RegistryInvalidMessage = 'registry must be { mode, endpoint?, credentialRef? } with a valid mode; mode one of: '
     private static readonly LoginPath = '/api/login'
@@ -351,6 +353,7 @@ export class ControlPlaneHost
         [InvalidRecordIdError, ControlPlaneHost.StatusBadRequest],
         [InvalidTenantIdError, ControlPlaneHost.StatusBadRequest],
         [RecordExistsError, ControlPlaneHost.StatusConflict],
+        [TenantClientMismatchError, ControlPlaneHost.StatusBadRequest],
         [UnknownClientError, PlaneHttp.StatusNotFound],
         [UnknownTenantError, PlaneHttp.StatusNotFound],
         [ClientHasTenantsError, ControlPlaneHost.StatusConflict],
@@ -1547,17 +1550,25 @@ export class ControlPlaneHost
             PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.IdRequiredMessage })
             return
         }
-        if (typeof client.displayName !== 'string' || typeof tenant.displayName !== 'string' || typeof hive.displayName !== 'string')
+        // `existing: true` references a record that already exists; only its id is read.
+        if (!ControlPlaneHost.OptionalBoolean(client.existing) || !ControlPlaneHost.OptionalBoolean(tenant.existing))
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ExistingFlagMessage })
+            return
+        }
+        const existingClient = client.existing === true
+        const existingTenant = tenant.existing === true
+        if ((!existingClient && typeof client.displayName !== 'string') || (!existingTenant && typeof tenant.displayName !== 'string') || typeof hive.displayName !== 'string')
         {
             PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.DisplayNameRequiredMessage })
             return
         }
-        if (!ControlPlaneHost.NonEmpty(tenant.ownerEmail))
+        if (!existingTenant && !ControlPlaneHost.NonEmpty(tenant.ownerEmail))
         {
             PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.OwnerEmailRequiredMessage })
             return
         }
-        if ((tenant.id as string).startsWith(ControlPlaneHost.ReservedIdPrefix))
+        if (!existingTenant && (tenant.id as string).startsWith(ControlPlaneHost.ReservedIdPrefix))
         {
             PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ReservedIdMessage })
             return
@@ -1582,11 +1593,15 @@ export class ControlPlaneHost
         try
         {
             const result = await this.orchestrator.Provision({
-                client: { id: client.id as string, displayName: client.displayName, subscriptionRef: client.subscriptionRef as string | undefined },
-                tenant: { id: tenant.id as string, displayName: tenant.displayName, ownerEmail: tenant.ownerEmail as string },
+                client: existingClient
+                    ? { existing: true, id: client.id as string }
+                    : { id: client.id as string, displayName: client.displayName as string, subscriptionRef: client.subscriptionRef as string | undefined },
+                tenant: existingTenant
+                    ? { existing: true, id: tenant.id as string }
+                    : { id: tenant.id as string, displayName: tenant.displayName as string, ownerEmail: tenant.ownerEmail as string },
                 hive: { id: hive.id as string, displayName: hive.displayName, cluster, registry, trustRootRef: hive.trustRootRef as string | undefined }
             })
-            // Both one-time secrets are revealed exactly once here; never logged or stored.
+            // The one-time secrets (the Owner password only for a new tenant) are revealed exactly once here; never logged or stored.
             res.setHeader(ControlPlaneHost.CacheControlHeader, ControlPlaneHost.NoStore)
             PlaneHttp.WriteJson(res, ControlPlaneHost.StatusCreated, { client: result.client, tenant: ControlPlaneHost.ToTenantDto(result.tenant), hive: result.hive, secrets: result.secrets })
         }
@@ -1609,6 +1624,11 @@ export class ControlPlaneHost
     private static OptionalString(v: unknown): boolean
     {
         return v === undefined || typeof v === 'string'
+    }
+
+    private static OptionalBoolean(v: unknown): boolean
+    {
+        return v === undefined || typeof v === 'boolean'
     }
 
     private static ParseCluster(v: unknown): ClusterSpec | undefined

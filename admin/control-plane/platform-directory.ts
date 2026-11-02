@@ -11,15 +11,38 @@ export interface IEnvironmentLookup
     List(): readonly EnvironmentRecord[]
 }
 
+// The kinds of platform record, as named in error messages.
+export enum RecordKind
+{
+    Client = 'Client',
+    Tenant = 'Tenant',
+    Hive = 'Hive',
+}
+
 export class RecordExistsError extends Error
 {
     private static readonly ErrorName = 'RecordExistsError'
-    private static readonly MessagePrefix = 'Record already exists: '
+    private static readonly Quote = '"'
+    private static readonly MessageSuffix = ' already exists'
 
-    public constructor(id: string)
+    public constructor(public readonly kind: RecordKind, id: string)
     {
-        super(RecordExistsError.MessagePrefix + id)
+        super(kind + ' ' + RecordExistsError.Quote + id + RecordExistsError.Quote + RecordExistsError.MessageSuffix)
         this.name = RecordExistsError.ErrorName
+    }
+}
+
+export class TenantClientMismatchError extends Error
+{
+    private static readonly ErrorName = 'TenantClientMismatchError'
+    private static readonly Quote = '"'
+    private static readonly MessageMiddle = ' does not belong to client '
+
+    public constructor(tenantId: string, clientId: string)
+    {
+        const Q = TenantClientMismatchError.Quote
+        super(RecordKind.Tenant + ' ' + Q + tenantId + Q + TenantClientMismatchError.MessageMiddle + Q + clientId + Q)
+        this.name = TenantClientMismatchError.ErrorName
     }
 }
 
@@ -113,7 +136,7 @@ export class PlatformDirectory
 
     public async CreateClient(input: { id: string; displayName: string; subscriptionRef?: string }): Promise<ClientRecord>
     {
-        this.AssertNew(input.id, this.clients.Get(input.id))
+        this.AssertNew(RecordKind.Client, input.id, this.clients.Get(input.id))
         const record: ClientRecord = { id: input.id, displayName: input.displayName, subscriptionRef: input.subscriptionRef, createdAt: this.Stamp() }
         await this.clients.Put(record)
         return record
@@ -141,7 +164,7 @@ export class PlatformDirectory
 
     public async CreateTenant(input: { id: string; clientId: string; displayName: string }): Promise<TenantRecord>
     {
-        this.AssertNew(input.id, this.tenants.Get(input.id))
+        this.AssertNew(RecordKind.Tenant, input.id, this.tenants.Get(input.id))
         if (this.clients.Get(input.clientId) === undefined)
         {
             throw new UnknownClientError(input.clientId)
@@ -172,7 +195,7 @@ export class PlatformDirectory
     /** Read-only pre-flight: throws RecordExistsError for a duplicate id and UnknownClientError for a missing parent client. */
     public AssertCanCreateTenant(id: string, clientId: string): void
     {
-        this.AssertNew(id, this.tenants.Get(id))
+        this.AssertNew(RecordKind.Tenant, id, this.tenants.Get(id))
         if (this.clients.Get(clientId) === undefined)
         {
             throw new UnknownClientError(clientId)
@@ -207,7 +230,7 @@ export class PlatformDirectory
 
     public async CreateHive(input: { id: string; tenantId: string; displayName: string; cluster: ClusterSpec; registry: RegistrySpec; trustRootRef?: string }): Promise<HiveRecord>
     {
-        this.AssertNew(input.id, this.hives.Get(input.id))
+        this.AssertNew(RecordKind.Hive, input.id, this.hives.Get(input.id))
         if (this.tenants.Get(input.tenantId) === undefined)
         {
             throw new UnknownTenantError(input.tenantId)
@@ -246,12 +269,12 @@ export class PlatformDirectory
         HivePlacementError.Assert(hive, tenantId, hiveId)
     }
 
-    private AssertNew(id: string, existing: unknown): void
+    private AssertNew(kind: RecordKind, id: string, existing: unknown): void
     {
         RecordId.Validate(id)
         if (existing !== undefined)
         {
-            throw new RecordExistsError(id)
+            throw new RecordExistsError(kind, id)
         }
     }
 

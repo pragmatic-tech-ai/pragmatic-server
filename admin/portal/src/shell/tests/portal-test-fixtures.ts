@@ -510,16 +510,27 @@ export class FakeControlPlane
         await this.createGate
         this.ThrowIfFailing()
         this.Provisioned.push(input)
-        const client: ClientDto = { ...input.client, createdAt: '2026-10-25T00:00:00.000Z' }
-        this.Clients.push(client)
-        const tenant: TenantDto = { id: input.tenant.id, clientId: client.id, displayName: input.tenant.displayName }
-        this.Tenants.push(tenant)
+        let client = this.Clients.find(c => c.id === input.client.id)
+        if (!('existing' in input.client))
+        {
+            client = { ...input.client, createdAt: '2026-10-25T00:00:00.000Z' }
+            this.Clients.push(client)
+        }
+        let tenant = this.Tenants.find(t => t.id === input.tenant.id)
+        let secrets: ProvisionResultDto['secrets'] = { agentToken: this.AgentToken }
+        if (!('existing' in input.tenant))
+        {
+            tenant = { id: input.tenant.id, clientId: input.client.id, displayName: input.tenant.displayName }
+            this.Tenants.push(tenant)
+            secrets = { ownerEmail: input.tenant.ownerEmail, ownerPassword: this.OwnerPassword, agentToken: this.AgentToken }
+        }
+        if (client === undefined || tenant === undefined)
+        {
+            throw new ApiError(404, 'Unknown client or tenant')
+        }
         const hive: HiveDto = { ...input.hive, tenantId: tenant.id }
         this.AddHive(hive)
-        return {
-            client, tenant, hive,
-            secrets: { ownerEmail: input.tenant.ownerEmail, ownerPassword: this.OwnerPassword, agentToken: this.AgentToken },
-        }
+        return { client, tenant, hive, secrets }
     }
 
     private AddHive(input: HiveDto): void

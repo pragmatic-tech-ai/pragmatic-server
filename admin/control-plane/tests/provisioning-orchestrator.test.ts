@@ -8,7 +8,7 @@ import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
 import type { HiveRecord } from '../platform-records.js'
-import { PlatformDirectory, RecordExistsError } from '../platform-directory.js'
+import { PlatformDirectory, RecordExistsError, RecordKind, TenantClientMismatchError, UnknownClientError, UnknownTenantError } from '../platform-directory.js'
 import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
 import { ProvisionFailedError, ProvisioningOrchestrator } from '../provisioning-orchestrator.js'
 import type { ProvisionInput } from '../provisioning-orchestrator.js'
@@ -165,6 +165,87 @@ test('duplicate client id -> RecordExistsError and ZERO writes', async () =>
     assert.equal(f.directory.ListTenants().length, 0)
     assert.equal(f.directory.ListHives().length, 0)
     assert.equal(f.provisioning.Calls.length, 0)
+    assert.equal(f.deployments.Registered.length, 0)
+})
+
+test('a duplicate id names the record kind and id', async () =>
+{
+    const f = await OrchestratorFixture.Create()
+    await f.directory.CreateClient({ id: 'c1', displayName: 'Existing' })
+    await assert.rejects(() => f.orchestrator.Provision(OrchestratorFixture.Input()), (e: unknown) =>
+        e instanceof RecordExistsError && e.kind === RecordKind.Client && e.message === 'Client "c1" already exists')
+})
+
+test('an existing client is used as is: tenant + hive created, the client untouched', async () =>
+{
+    const f = await OrchestratorFixture.Create()
+    await f.directory.CreateClient({ id: 'c1', displayName: 'Existing' })
+    const input = OrchestratorFixture.Input()
+    input.client = { existing: true, id: 'c1' }
+    const result = await f.orchestrator.Provision(input)
+    assert.equal(result.client.displayName, 'Existing')
+    assert.equal(result.tenant.clientId, 'c1')
+    assert.equal(result.secrets.ownerPassword, FakeProvisioning.Password)
+    assert.equal(f.directory.ListClients().length, 1)
+    assert.ok(f.directory.GetHive('h1'))
+})
+
+test('an existing tenant is used as is: only the hive is created, no Owner secrets', async () =>
+{
+    const f = await OrchestratorFixture.Create()
+    await f.directory.CreateClient({ id: 'c1', displayName: 'Existing' })
+    await f.directory.CreateTenant({ id: 't1', clientId: 'c1', displayName: 'Existing T' })
+    const input = OrchestratorFixture.Input()
+    input.client = { existing: true, id: 'c1' }
+    input.tenant = { existing: true, id: 't1' }
+    const result = await f.orchestrator.Provision(input)
+    assert.equal(result.tenant.displayName, 'Existing T')
+    assert.equal(result.hive.tenantId, 't1')
+    assert.equal(result.secrets.ownerPassword, undefined)
+    assert.equal(result.secrets.ownerEmail, undefined)
+    assert.equal(result.secrets.agentToken, FakeDeployments.Token)
+    assert.equal(f.provisioning.Calls.length, 0)
+})
+
+test('a failure after an existing client + tenant never rolls them back', async () =>
+{
+    const f = await OrchestratorFixture.Create()
+    await f.directory.CreateClient({ id: 'c1', displayName: 'Existing' })
+    await f.directory.CreateTenant({ id: 't1', clientId: 'c1', displayName: 'Existing T' })
+    f.directory.FailCreateHive = true
+    const input = OrchestratorFixture.Input()
+    input.client = { existing: true, id: 'c1' }
+    input.tenant = { existing: true, id: 't1' }
+    await assert.rejects(() => f.orchestrator.Provision(input), (e: unknown) =>
+        e instanceof ProvisionFailedError && e.rollback.rolledBack.length === 0 && e.rollback.residue.length === 0)
+    assert.ok(f.directory.GetClient('c1'))
+    assert.ok(f.directory.GetTenant('t1'))
+})
+
+test('an unknown existing client or tenant is refused with zero writes', async () =>
+{
+    const f = await OrchestratorFixture.Create()
+    const input = OrchestratorFixture.Input()
+    input.client = { existing: true, id: 'c1' }
+    await assert.rejects(() => f.orchestrator.Provision(input), UnknownClientError)
+    await f.directory.CreateClient({ id: 'c1', displayName: 'Existing' })
+    input.tenant = { existing: true, id: 't1' }
+    await assert.rejects(() => f.orchestrator.Provision(input), UnknownTenantError)
+    assert.equal(f.directory.ListTenants().length, 0)
+    assert.equal(f.directory.ListHives().length, 0)
+})
+
+test('an existing tenant of another client is refused with zero writes', async () =>
+{
+    const f = await OrchestratorFixture.Create()
+    await f.directory.CreateClient({ id: 'c1', displayName: 'One' })
+    await f.directory.CreateClient({ id: 'c2', displayName: 'Two' })
+    await f.directory.CreateTenant({ id: 't1', clientId: 'c2', displayName: 'T' })
+    const input = OrchestratorFixture.Input()
+    input.client = { existing: true, id: 'c1' }
+    input.tenant = { existing: true, id: 't1' }
+    await assert.rejects(() => f.orchestrator.Provision(input), TenantClientMismatchError)
+    assert.equal(f.directory.ListHives().length, 0)
     assert.equal(f.deployments.Registered.length, 0)
 })
 

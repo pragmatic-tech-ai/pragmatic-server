@@ -1,17 +1,26 @@
 import { RecordId } from './platform-records.js'
 import type { ClientRecord, ClusterSpec, HiveRecord, RegistrySpec, TenantRecord } from './platform-records.js'
-import { RecordExistsError } from './platform-directory.js'
+import { RecordExistsError, RecordKind, TenantClientMismatchError, UnknownClientError, UnknownTenantError } from './platform-directory.js'
 import type { PlatformDirectory } from './platform-directory.js'
 import type { TenantProvisioningService } from './tenant-provisioning-service.js'
 import type { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
 
+// A reference to a record that already exists: provisioning uses it as is.
+export type ExistingRecordRef = { existing: true; id: string }
+
+export type NewClientInput = { existing?: false; id: string; displayName: string; subscriptionRef?: string }
+export type NewTenantInput = { existing?: false; id: string; displayName: string; ownerEmail: string }
+
+// The client and the tenant are each either created or an existing record;
+// an existing tenant needs an existing client it belongs to. The hive is always new.
 export type ProvisionInput = {
-    client: { id: string; displayName: string; subscriptionRef?: string }
-    tenant: { id: string; displayName: string; ownerEmail: string }
+    client: NewClientInput | ExistingRecordRef
+    tenant: NewTenantInput | ExistingRecordRef
     hive: { id: string; displayName: string; cluster: ClusterSpec; registry: RegistrySpec; trustRootRef?: string }
 }
 
-export type ProvisionSecrets = { ownerEmail: string; ownerPassword: string; agentToken: string }
+// The Owner's email and password are present only when a new tenant was created.
+export type ProvisionSecrets = { ownerEmail?: string; ownerPassword?: string; agentToken: string }
 
 export type ProvisionResult = { client: ClientRecord; tenant: TenantRecord; hive: HiveRecord; secrets: ProvisionSecrets }
 
@@ -66,16 +75,8 @@ export class ProvisioningOrchestrator
         const completed = new CompletedSteps()
         try
         {
-            const client = await this.directory.CreateClient(input.client)
-            completed.client = true
-            completed.tenantAttempted = true
-            const provisioned = await this.provisioning.Provision({
-                id: input.tenant.id,
-                clientId: input.client.id,
-                displayName: input.tenant.displayName,
-                ownerEmail: input.tenant.ownerEmail
-            })
-            completed.tenant = true
+            const client = await this.ClientFor(input.client, completed)
+            const { tenant, secrets } = await this.TenantFor(input, completed)
             const hive = await this.directory.CreateHive({
                 id: input.hive.id,
                 tenantId: input.tenant.id,
@@ -87,12 +88,7 @@ export class ProvisioningOrchestrator
             completed.hive = true
             const agentToken = await this.deployments.RegisterHive(input.hive.id)
             completed.registration = true
-            return {
-                client,
-                tenant: provisioned.record,
-                hive,
-                secrets: { ownerEmail: provisioned.record.ownerEmail ?? input.tenant.ownerEmail, ownerPassword: provisioned.ownerPassword, agentToken }
-            }
+            return { client, tenant, hive, secrets: { ...secrets, agentToken } }
         }
         catch (e)
         {
@@ -101,22 +97,75 @@ export class ProvisioningOrchestrator
         }
     }
 
+    // Creates the client, or returns the existing one (which rollback never touches).
+    private async ClientFor(input: ProvisionInput['client'], completed: CompletedSteps): Promise<ClientRecord>
+    {
+        if (input.existing === true)
+        {
+            return this.directory.GetClient(input.id) as ClientRecord
+        }
+        const client = await this.directory.CreateClient(input)
+        completed.client = true
+        return client
+    }
+
+    // Provisions the tenant with its first Owner, or returns the existing one
+    // (no Owner secrets then; rollback never touches it).
+    private async TenantFor(input: ProvisionInput, completed: CompletedSteps): Promise<{ tenant: TenantRecord; secrets: Omit<ProvisionSecrets, 'agentToken'> }>
+    {
+        if (input.tenant.existing === true)
+        {
+            return { tenant: this.directory.GetTenant(input.tenant.id) as TenantRecord, secrets: {} }
+        }
+        completed.tenantAttempted = true
+        const provisioned = await this.provisioning.Provision({
+            id: input.tenant.id,
+            clientId: input.client.id,
+            displayName: input.tenant.displayName,
+            ownerEmail: input.tenant.ownerEmail
+        })
+        completed.tenant = true
+        return {
+            tenant: provisioned.record,
+            secrets: { ownerEmail: provisioned.record.ownerEmail ?? input.tenant.ownerEmail, ownerPassword: provisioned.ownerPassword }
+        }
+    }
+
+    // Read-only: every new id is free, every existing reference resolves, and
+    // an existing tenant belongs to the chosen client. Nothing is written on failure.
     private PreValidate(input: ProvisionInput): void
     {
         RecordId.Validate(input.client.id)
         RecordId.Validate(input.tenant.id)
         RecordId.Validate(input.hive.id)
-        if (this.directory.GetClient(input.client.id) !== undefined)
+        const client = this.directory.GetClient(input.client.id)
+        if (input.client.existing === true && client === undefined)
         {
-            throw new RecordExistsError(input.client.id)
+            throw new UnknownClientError(input.client.id)
         }
-        if (this.directory.GetTenant(input.tenant.id) !== undefined)
+        if (input.client.existing !== true && client !== undefined)
         {
-            throw new RecordExistsError(input.tenant.id)
+            throw new RecordExistsError(RecordKind.Client, input.client.id)
+        }
+        const tenant = this.directory.GetTenant(input.tenant.id)
+        if (input.tenant.existing === true)
+        {
+            if (tenant === undefined)
+            {
+                throw new UnknownTenantError(input.tenant.id)
+            }
+            if (tenant.clientId !== input.client.id)
+            {
+                throw new TenantClientMismatchError(input.tenant.id, input.client.id)
+            }
+        }
+        else if (tenant !== undefined)
+        {
+            throw new RecordExistsError(RecordKind.Tenant, input.tenant.id)
         }
         if (this.directory.GetHive(input.hive.id) !== undefined)
         {
-            throw new RecordExistsError(input.hive.id)
+            throw new RecordExistsError(RecordKind.Hive, input.hive.id)
         }
     }
 

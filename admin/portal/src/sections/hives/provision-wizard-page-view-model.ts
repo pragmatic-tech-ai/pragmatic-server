@@ -1,10 +1,10 @@
 import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import { ApiError } from '../../api-client.js'
-import type { HiveClusterBackend, HiveDto, HiveProvisionMode, ProvisionInputDto } from '../../portal-types.js'
+import type { HiveClusterBackend, HiveDto, HiveProvisionMode, ProvisionInputDto, TenantDto } from '../../portal-types.js'
 import { PendingSecret, type IHoldsPendingSecret } from '../../shell/holds-pending-secret.js'
 import { PendingWork, type IHoldsPendingWork } from '../../shell/holds-pending-work.js'
-import type { OptionViewModel } from '../../shell/option-view-model.js'
+import { OptionViewModel } from '../../shell/option-view-model.js'
 import { PortalPageViewModel } from '../../shell/portal-page-view-model.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
 import { HiveOptions } from './hive-options.js'
@@ -85,11 +85,14 @@ export class ProvisionStepViewModel extends Observable
     }
 }
 
-// Stand up a hive: one provision call creates a Client, its Tenant (with a
-// first Owner) and the Tenant's Hive. A page of the Hives section, not a
-// dialog: it ends on the Bootstrap step, which shows the Owner password and
-// the agent token once. Finish needs both "I've saved it" flags, clears both
-// values and moves on to the new hive's detail. From Submit until then the
+// Stand up a hive: one provision call creates the Tenant's Hive, plus the
+// Client and the Tenant (with a first Owner) unless existing ones are chosen.
+// The Client and Tenant steps each offer the existing records in a ComboBox,
+// headed by a "New ..." choice that reveals the fields for a new one. A page
+// of the Hives section, not a dialog: it ends on the Bootstrap step, which
+// shows the agent token (and, for a new tenant, the Owner password) once.
+// Finish needs every shown value's "I've saved it" flag, clears the values
+// and moves on to the new hive's detail. From Submit until then the
 // page holds a pending secret: leaving through the rail keeps it as the
 // section's current page, and no section navigation (a cross-section open of
 // a hive, say) drops or covers it. A half-filled wizard holds pending work: a
@@ -113,6 +116,26 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
     private static readonly CopiedText = 'Copied.'
     private static readonly CopyFailedText = 'Could not copy. Select the value and copy it by hand.'
     private static readonly IncompleteMessage = 'Choose a cluster, a cluster mode and a registry mode.'
+    private static readonly NewClientLabel = 'New client'
+    private static readonly NewTenantLabel = 'New tenant'
+    private static readonly NewChoice = ''
+    private static readonly NewCaptionSuffix = ' (new)'
+    private static readonly ExistingCaptionSuffix = ' (existing)'
+    private static readonly CreatesAllCaption = 'Standing up creates the client, the tenant with its first Owner, the hive record and a one-time bootstrap.'
+    private static readonly CreatesTenantCaption = 'Standing up creates the tenant with its first Owner under the existing client, the hive record and a one-time bootstrap.'
+    private static readonly CreatesHiveCaption = 'Standing up creates the hive record for the existing tenant and a one-time bootstrap.'
+    private static readonly ClientsProperty = 'Clients'
+    private static readonly TenantsProperty = 'Tenants'
+    private static readonly SelectedClientProperty = 'SelectedClient'
+    private static readonly SelectedTenantProperty = 'SelectedTenant'
+    private static readonly IsNewClientProperty = 'IsNewClient'
+    private static readonly IsNewTenantProperty = 'IsNewTenant'
+    private static readonly RevealsOwnerProperty = 'RevealsOwner'
+    // The Review step's derived texts, re-raised whenever an input changes.
+    private static readonly ReviewProperties = [
+        'ReviewCaption', 'ReviewClientCaption', 'ReviewClientName', 'ReviewClientId',
+        'ReviewTenantCaption', 'ReviewTenantName', 'ReviewTenantId', 'ReviewOwnerEmail',
+    ] as const
     private static readonly NoText = ''
     private static readonly StepIndexProperty = 'StepIndex'
     private static readonly IsClientStepProperty = 'IsClientStep'
@@ -144,6 +167,16 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
     private readonly backends = new ObservableCollection<OptionViewModel<HiveClusterBackend>>()
     private readonly clusterModes = new ObservableCollection<OptionViewModel<HiveProvisionMode>>()
     private readonly registryModes = new ObservableCollection<OptionViewModel<HiveProvisionMode>>()
+    // Replaced, never mutated, on each rebuild: a realized ComboBox re-reads
+    // its items only when ItemsSource itself changes.
+    private clients = new ObservableCollection<OptionViewModel<string>>()
+    private tenants = new ObservableCollection<OptionViewModel<string>>()
+    private readonly newClient = new OptionViewModel(ProvisionWizardPageViewModel.NewChoice, ProvisionWizardPageViewModel.NewClientLabel)
+    private readonly newTenant = new OptionViewModel(ProvisionWizardPageViewModel.NewChoice, ProvisionWizardPageViewModel.NewTenantLabel)
+    private allTenants: readonly TenantDto[] = []
+    private selectedClient: OptionViewModel<string> | undefined
+    private selectedTenant: OptionViewModel<string> | undefined
+    private revealsOwner = false
     private readonly nextCommand: RelayCommand
     private readonly backStepCommand: RelayCommand
     private readonly cancelCommand: RelayCommand
@@ -179,6 +212,10 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
         this.selectedBackend = this.backends.Get(0)
         this.selectedClusterMode = this.clusterModes.Get(0)
         this.selectedRegistryMode = this.registryModes.Get(0)
+        this.clients.Add(this.newClient)
+        this.tenants.Add(this.newTenant)
+        this.selectedClient = this.newClient
+        this.selectedTenant = this.newTenant
         this.nextCommand = new RelayCommand(() => this.Next(), () => this.CanNext())
         this.backStepCommand = new RelayCommand(() => this.BackStep(), () => this.CanBackStep())
         this.cancelCommand = new RelayCommand(() => this.section.Back(), () => this.IsFormStep && !this.submitting)
@@ -252,6 +289,75 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
     public override get ErrorText(): string
     {
         return this.provisionError.length > 0 ? this.provisionError : super.ErrorText
+    }
+
+    // The client choices: "New client", then the existing clients by name.
+    public get Clients(): ObservableCollection<OptionViewModel<string>>
+    {
+        return this.clients
+    }
+
+    public get SelectedClient(): OptionViewModel<string> | undefined
+    {
+        return this.selectedClient
+    }
+
+    public set SelectedClient(value: OptionViewModel<string> | undefined)
+    {
+        const C = ProvisionWizardPageViewModel
+        const old = this.selectedClient
+        if (old === value)
+        {
+            return
+        }
+        const review = this.ReviewSnapshot()
+        const wasNew = this.IsNewClient
+        this.selectedClient = value
+        this.RaisePropertyChanged(C.SelectedClientProperty, old, value)
+        this.RaisePropertyChanged(C.IsNewClientProperty, wasNew, this.IsNewClient)
+        this.RebuildTenants()
+        this.RaiseReviewChanged(review)
+        this.RaiseCommandsChanged()
+    }
+
+    // True when a new client is to be created (its fields are shown).
+    public get IsNewClient(): boolean
+    {
+        return ProvisionWizardPageViewModel.IsNewChoice(this.selectedClient)
+    }
+
+    // The tenant choices: "New tenant", then the chosen existing client's tenants.
+    public get Tenants(): ObservableCollection<OptionViewModel<string>>
+    {
+        return this.tenants
+    }
+
+    public get SelectedTenant(): OptionViewModel<string> | undefined
+    {
+        return this.selectedTenant
+    }
+
+    public set SelectedTenant(value: OptionViewModel<string> | undefined)
+    {
+        const C = ProvisionWizardPageViewModel
+        const old = this.selectedTenant
+        if (old === value)
+        {
+            return
+        }
+        const review = this.ReviewSnapshot()
+        const wasNew = this.IsNewTenant
+        this.selectedTenant = value
+        this.RaisePropertyChanged(C.SelectedTenantProperty, old, value)
+        this.RaisePropertyChanged(C.IsNewTenantProperty, wasNew, this.IsNewTenant)
+        this.RaiseReviewChanged(review)
+        this.RaiseCommandsChanged()
+    }
+
+    // True when a new tenant (with a first Owner) is to be created.
+    public get IsNewTenant(): boolean
+    {
+        return ProvisionWizardPageViewModel.IsNewChoice(this.selectedTenant)
     }
 
     public get ClientId(): string
@@ -433,6 +539,61 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
         return this.selectedRegistryMode?.Label ?? ProvisionWizardPageViewModel.NoText
     }
 
+    // What standing up will create, for the Review step.
+    public get ReviewCaption(): string
+    {
+        const C = ProvisionWizardPageViewModel
+        if (!this.IsNewTenant)
+        {
+            return C.CreatesHiveCaption
+        }
+        return this.IsNewClient ? C.CreatesAllCaption : C.CreatesTenantCaption
+    }
+
+    public get ReviewClientCaption(): string
+    {
+        const C = ProvisionWizardPageViewModel
+        return C.ClientLabel + (this.IsNewClient ? C.NewCaptionSuffix : C.ExistingCaptionSuffix)
+    }
+
+    public get ReviewClientName(): string
+    {
+        return this.IsNewClient ? this.Trimmed(ProvisionField.ClientDisplayName) : this.selectedClient?.Label ?? ProvisionWizardPageViewModel.NoText
+    }
+
+    public get ReviewClientId(): string
+    {
+        return this.ChosenClientId()
+    }
+
+    public get ReviewTenantCaption(): string
+    {
+        const C = ProvisionWizardPageViewModel
+        return C.TenantLabel + (this.IsNewTenant ? C.NewCaptionSuffix : C.ExistingCaptionSuffix)
+    }
+
+    public get ReviewTenantName(): string
+    {
+        return this.IsNewTenant ? this.Trimmed(ProvisionField.TenantDisplayName) : this.selectedTenant?.Label ?? ProvisionWizardPageViewModel.NoText
+    }
+
+    public get ReviewTenantId(): string
+    {
+        return this.IsNewTenant ? this.Trimmed(ProvisionField.TenantId) : this.selectedTenant?.Value ?? ProvisionWizardPageViewModel.NoText
+    }
+
+    // The new tenant's first Owner; '' for an existing tenant.
+    public get ReviewOwnerEmail(): string
+    {
+        return this.IsNewTenant ? this.Trimmed(ProvisionField.OwnerEmail) : ProvisionWizardPageViewModel.NoText
+    }
+
+    // True when the provision created a new tenant, so Bootstrap also shows its Owner password.
+    public get RevealsOwner(): boolean
+    {
+        return this.revealsOwner
+    }
+
     // The provisioned hive's id; '' until the provision succeeds.
     public get ProvisionedHiveId(): string
     {
@@ -509,7 +670,7 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
     // discarded by a cross-section open (its section lands on it instead).
     public get HasPendingWork(): boolean
     {
-        return Object.values(ProvisionField).some(f => this.Filled(f))
+        return Object.values(ProvisionField).some(f => this.Filled(f)) || !this.IsNewClient || !this.IsNewTenant
     }
 
     public get NextCommand(): RelayCommand
@@ -548,11 +709,31 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
         return this.copyAgentTokenCommand
     }
 
-    // Nothing to load: the wizard starts empty, and a refresh (a live update)
-    // keeps its step and values.
-    protected override LoadCore(): Promise<boolean>
+    // Loads the existing clients and tenants for the choices. A refresh (a
+    // live update) keeps the step, the values and every choice still listed.
+    protected override async LoadCore(): Promise<boolean>
     {
-        return Promise.resolve(true)
+        const generation = this.LoadGeneration
+        const [clients, tenants] = await Promise.all([this.Session.Client.ListClients(), this.Session.Client.ListTenants()])
+        if (generation !== this.LoadGeneration)
+        {
+            return true
+        }
+        this.allTenants = tenants
+        const options = clients.map(c => new OptionViewModel(c.id, c.displayName))
+        const old = this.clients
+        const kept = ProvisionWizardPageViewModel.Kept(this.newClient, options, this.selectedClient)
+        this.clients = ProvisionWizardPageViewModel.Choices(this.newClient, options, kept)
+        this.RaisePropertyChanged(ProvisionWizardPageViewModel.ClientsProperty, old, this.clients)
+        if (kept === this.selectedClient)
+        {
+            this.RebuildTenants()
+        }
+        else
+        {
+            this.SelectedClient = kept
+        }
+        return true
     }
 
     private CanNext(): boolean
@@ -566,9 +747,10 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
         switch (step)
         {
             case ProvisionStep.Client:
-                return this.Filled(ProvisionField.ClientId) && this.Filled(ProvisionField.ClientDisplayName)
+                return !this.IsNewClient || (this.Filled(ProvisionField.ClientId) && this.Filled(ProvisionField.ClientDisplayName))
             case ProvisionStep.Tenant:
-                return this.Filled(ProvisionField.TenantId) && this.Filled(ProvisionField.TenantDisplayName) && this.Filled(ProvisionField.OwnerEmail)
+                return !this.IsNewTenant
+                    || (this.Filled(ProvisionField.TenantId) && this.Filled(ProvisionField.TenantDisplayName) && this.Filled(ProvisionField.OwnerEmail))
             case ProvisionStep.Hive:
                 return this.Filled(ProvisionField.HiveId) && this.Filled(ProvisionField.HiveDisplayName)
                     && this.selectedBackend !== undefined && this.selectedClusterMode !== undefined && this.selectedRegistryMode !== undefined
@@ -594,7 +776,7 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
 
     private CanFinish(): boolean
     {
-        return this.IsBootstrapStep && this.ownerSaved && this.agentSaved
+        return this.IsBootstrapStep && this.agentSaved && (!this.revealsOwner || this.ownerSaved)
     }
 
     private Next(): void
@@ -630,7 +812,9 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
             const oldHiveId = this.provisionedHiveId
             this.provisionedHiveId = result.hive.id
             this.RaisePropertyChanged(ProvisionWizardPageViewModel.ProvisionedHiveIdProperty, oldHiveId, this.provisionedHiveId)
-            this.SetSecrets(result.secrets.ownerPassword, result.secrets.agentToken)
+            const ownerPassword = result.secrets.ownerPassword ?? ProvisionWizardPageViewModel.NoText
+            this.SetRevealsOwner(ownerPassword.length > 0)
+            this.SetSecrets(ownerPassword, result.secrets.agentToken)
             this.SetStep(ProvisionStep.Bootstrap)
         }
         catch (e)
@@ -683,13 +867,10 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
     private BuildInput(): ProvisionInputDto
     {
         const F = ProvisionField
-        const client: ProvisionInputDto['client'] = { id: this.Trimmed(F.ClientId), displayName: this.Trimmed(F.ClientDisplayName) }
-        const subscriptionRef = this.Trimmed(F.SubscriptionRef)
-        if (subscriptionRef.length > 0)
-        {
-            client.subscriptionRef = subscriptionRef
-        }
-        const tenant: ProvisionInputDto['tenant'] = { id: this.Trimmed(F.TenantId), displayName: this.Trimmed(F.TenantDisplayName), ownerEmail: this.Trimmed(F.OwnerEmail) }
+        const client = this.BuildClient()
+        const tenant: ProvisionInputDto['tenant'] = this.IsNewTenant
+            ? { id: this.Trimmed(F.TenantId), displayName: this.Trimmed(F.TenantDisplayName), ownerEmail: this.Trimmed(F.OwnerEmail) }
+            : { existing: true, id: this.ReviewTenantId }
         const cluster: HiveDto['cluster'] = { backend: this.Choice(this.selectedBackend), mode: this.Choice(this.selectedClusterMode) }
         const configRef = this.Trimmed(F.ConfigRef)
         if (configRef.length > 0)
@@ -714,6 +895,94 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
             hive.trustRootRef = trustRootRef
         }
         return { client, tenant, hive }
+    }
+
+    // A new client from its fields, or a reference to the chosen existing one.
+    private BuildClient(): ProvisionInputDto['client']
+    {
+        const F = ProvisionField
+        if (!this.IsNewClient)
+        {
+            return { existing: true, id: this.ChosenClientId() }
+        }
+        const client: { id: string; displayName: string; subscriptionRef?: string } = { id: this.Trimmed(F.ClientId), displayName: this.Trimmed(F.ClientDisplayName) }
+        const subscriptionRef = this.Trimmed(F.SubscriptionRef)
+        if (subscriptionRef.length > 0)
+        {
+            client.subscriptionRef = subscriptionRef
+        }
+        return client
+    }
+
+    private ChosenClientId(): string
+    {
+        return this.IsNewClient ? this.Trimmed(ProvisionField.ClientId) : this.selectedClient?.Value ?? ProvisionWizardPageViewModel.NoText
+    }
+
+    // A missing selection reads as "New ...": the fields for a new record show.
+    private static IsNewChoice(option: OptionViewModel<string> | undefined): boolean
+    {
+        return option === undefined || option.Value === ProvisionWizardPageViewModel.NewChoice
+    }
+
+    // The entry to select after a rebuild: the current selection's own
+    // instance while its value is still listed, else the "New ..." entry.
+    private static Kept(first: OptionViewModel<string>, options: readonly OptionViewModel<string>[], selected: OptionViewModel<string> | undefined): OptionViewModel<string>
+    {
+        return selected !== undefined && selected !== first && options.some(o => o.Value === selected.Value) ? selected : first
+    }
+
+    // A choice list: "New ..." first, then the options, with the kept
+    // selection's instance standing in for its value's fresh option.
+    private static Choices(first: OptionViewModel<string>, options: readonly OptionViewModel<string>[], kept: OptionViewModel<string>): ObservableCollection<OptionViewModel<string>>
+    {
+        const list = new ObservableCollection<OptionViewModel<string>>()
+        list.Add(first)
+        for (const option of options)
+        {
+            list.Add(kept !== first && option.Value === kept.Value ? kept : option)
+        }
+        return list
+    }
+
+    // The tenant choices follow the client: an existing client's tenants, none for a new client.
+    private RebuildTenants(): void
+    {
+        const clientId = this.IsNewClient ? undefined : this.selectedClient?.Value
+        const options = clientId === undefined ? [] : this.allTenants.filter(t => t.clientId === clientId).map(t => new OptionViewModel(t.id, t.displayName))
+        const old = this.tenants
+        const kept = ProvisionWizardPageViewModel.Kept(this.newTenant, options, this.selectedTenant)
+        this.tenants = ProvisionWizardPageViewModel.Choices(this.newTenant, options, kept)
+        this.RaisePropertyChanged(ProvisionWizardPageViewModel.TenantsProperty, old, this.tenants)
+        this.SelectedTenant = kept
+    }
+
+    private ReviewSnapshot(): string[]
+    {
+        return ProvisionWizardPageViewModel.ReviewProperties.map(name => this[name])
+    }
+
+    private RaiseReviewChanged(before: readonly string[]): void
+    {
+        ProvisionWizardPageViewModel.ReviewProperties.forEach((name, i) =>
+        {
+            const now = this[name]
+            if (now !== before[i])
+            {
+                this.RaisePropertyChanged(name, before[i], now)
+            }
+        })
+    }
+
+    private SetRevealsOwner(next: boolean): void
+    {
+        const old = this.revealsOwner
+        if (old === next)
+        {
+            return
+        }
+        this.revealsOwner = next
+        this.RaisePropertyChanged(ProvisionWizardPageViewModel.RevealsOwnerProperty, old, next)
     }
 
     private Choice<T>(option: OptionViewModel<T> | undefined): T
@@ -748,8 +1017,10 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
         {
             return
         }
+        const review = this.ReviewSnapshot()
         this.texts.set(field, next)
         this.RaisePropertyChanged(field, old, next)
+        this.RaiseReviewChanged(review)
         this.RaiseCommandsChanged()
     }
 

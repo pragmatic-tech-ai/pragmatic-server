@@ -436,6 +436,96 @@ describe('Stand up a hive (provision wizard)', () =>
         assert.equal(wizard.AgentToken, fx.Api.AgentToken)
     })
 
+    it('the client and tenant choices list New first, then the existing records; tenants follow the client', async () =>
+    {
+        const fx = new WizardFixture()
+        const wizard = await fx.Wizard()
+        assert.deepEqual(wizard.Clients.ToArray().map(o => o.Label), ['New client', 'Acme'])
+        assert.equal(wizard.IsNewClient, true)
+        assert.deepEqual(wizard.Tenants.ToArray().map(o => o.Label), ['New tenant'])
+        wizard.SelectedClient = wizard.Clients.Get(1)
+        assert.equal(wizard.IsNewClient, false)
+        assert.equal(wizard.NextCommand.CanExecute(), true)
+        assert.deepEqual(wizard.Tenants.ToArray().map(o => o.Label), ['New tenant', 'Acme Production'])
+        assert.equal(wizard.IsNewTenant, true)
+        wizard.SelectedTenant = wizard.Tenants.Get(1)
+        assert.equal(wizard.IsNewTenant, false)
+        wizard.SelectedClient = wizard.Clients.Get(0)
+        assert.deepEqual(wizard.Tenants.ToArray().map(o => o.Label), ['New tenant'])
+        assert.equal(wizard.IsNewTenant, true)
+        assert.equal(wizard.NextCommand.CanExecute(), false)
+    })
+
+    it('an existing client and tenant: the hive is provisioned onto them and only the agent token is revealed', async () =>
+    {
+        const fx = new WizardFixture()
+        const wizard = await fx.Wizard()
+        wizard.SelectedClient = wizard.Clients.Get(1)
+        wizard.NextCommand.Execute()
+        wizard.SelectedTenant = wizard.Tenants.Get(1)
+        assert.equal(wizard.NextCommand.CanExecute(), true)
+        wizard.NextCommand.Execute()
+        wizard.HiveId = 'acme-hive-2'
+        wizard.HiveDisplayName = 'Acme hive 2'
+        wizard.NextCommand.Execute()
+        assert.equal(wizard.ReviewCaption, 'Standing up creates the hive record for the existing tenant and a one-time bootstrap.')
+        assert.deepEqual([wizard.ReviewClientCaption, wizard.ReviewClientName, wizard.ReviewClientId], ['Client (existing)', 'Acme', 'acme'])
+        assert.deepEqual([wizard.ReviewTenantCaption, wizard.ReviewTenantName, wizard.ReviewTenantId, wizard.ReviewOwnerEmail], ['Tenant (existing)', 'Acme Production', 'acme-prod', ''])
+        wizard.SubmitCommand.Execute()
+        await Tick.Settle()
+        assert.deepEqual(fx.Api.Provisioned[0].client, { existing: true, id: 'acme' })
+        assert.deepEqual(fx.Api.Provisioned[0].tenant, { existing: true, id: 'acme-prod' })
+        assert.equal(wizard.StepIndex, ProvisionStep.Bootstrap)
+        assert.equal(wizard.RevealsOwner, false)
+        assert.equal(wizard.OwnerPassword, '')
+        assert.equal(wizard.FinishCommand.CanExecute(), false)
+        wizard.AgentSaved = true
+        assert.equal(wizard.FinishCommand.CanExecute(), true)
+    })
+
+    it('an existing client with a new tenant: the tenant and its Owner are created under it', async () =>
+    {
+        const fx = new WizardFixture()
+        const wizard = await fx.Wizard()
+        wizard.SelectedClient = wizard.Clients.Get(1)
+        wizard.NextCommand.Execute()
+        wizard.TenantId = 'acme-test'
+        wizard.TenantDisplayName = 'Acme Test'
+        wizard.OwnerEmail = 'owner@acme.test'
+        wizard.NextCommand.Execute()
+        wizard.HiveId = 'acme-test-hive'
+        wizard.HiveDisplayName = 'Acme test hive'
+        wizard.NextCommand.Execute()
+        assert.equal(wizard.ReviewCaption, 'Standing up creates the tenant with its first Owner under the existing client, the hive record and a one-time bootstrap.')
+        assert.equal(wizard.ReviewOwnerEmail, 'owner@acme.test')
+        wizard.SubmitCommand.Execute()
+        await Tick.Settle()
+        assert.deepEqual(fx.Api.Provisioned[0].client, { existing: true, id: 'acme' })
+        assert.deepEqual(fx.Api.Provisioned[0].tenant, { id: 'acme-test', displayName: 'Acme Test', ownerEmail: 'owner@acme.test' })
+        assert.equal(wizard.RevealsOwner, true)
+        assert.equal(wizard.OwnerPassword, fx.Api.OwnerPassword)
+        wizard.AgentSaved = true
+        assert.equal(wizard.FinishCommand.CanExecute(), false)
+        wizard.OwnerSaved = true
+        assert.equal(wizard.FinishCommand.CanExecute(), true)
+    })
+
+    it('a chosen existing client counts as pending work, and a refresh keeps the very choice', async () =>
+    {
+        const fx = new WizardFixture()
+        const wizard = await fx.Wizard()
+        assert.equal(wizard.HasPendingWork, false)
+        const acme = wizard.Clients.Get(1)
+        wizard.SelectedClient = acme
+        const prod = wizard.Tenants.Get(1)
+        wizard.SelectedTenant = prod
+        assert.equal(wizard.HasPendingWork, true)
+        await fx.Section.RefreshCurrent()
+        assert.equal(wizard.SelectedClient, acme)
+        assert.equal(wizard.SelectedTenant, prod)
+        assert.equal(wizard.Clients.Get(1), acme)
+    })
+
     it('Cancel returns to the hives list before anything is provisioned', async () =>
     {
         const fx = new WizardFixture()

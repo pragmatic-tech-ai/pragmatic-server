@@ -375,7 +375,7 @@ resources HivesResources {
             // Page header.
             StackPanel [ DockPanel.Dock = Top, Orientation = Vertical, Margin = (0,0,0,16) ] {
                 TextBlock [ Text = "Stand up a hive", Style = @H3, Foreground = @Fg0 ]
-                TextBlock [ Text = "Creates a client, its tenant with a first Owner, and the tenant's hive, then generates the one-time bootstrap. The hive dials home; Pragmatic never connects in.",
+                TextBlock [ Text = "Creates a hive for a new or existing tenant (and client), then generates the one-time bootstrap. The hive dials home; Pragmatic never connects in.",
                             Style = @Body, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,4,0,0) ]
                 TextBlock [ Text = $DeniedReason, Style = @UiCaption, Foreground = @StateWarningInk, Margin = (0,4,0,0),
                             Visibility = $DeniedReason << ToVisibility ]
@@ -413,26 +413,37 @@ resources HivesResources {
                     // Step 1: the client.
                     StackPanel [ Orientation = Vertical, Visibility = $IsClientStep << ToVisibility ] {
                         TextBlock [ Text = "Which client is this hive for?", Style = @UiLabel, Foreground = @Fg0, Margin = (0,0,0,4) ]
-                        TextBlock [ Text = "A new client is created. Its id is permanent.", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,12) ]
-                        TextBlock [ Text = "Client id", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-                        TextBox [ Text = $ClientId, Placeholder = "e.g. tailspin", Margin = (0,0,0,12) ]
-                        TextBlock [ Text = "Display name", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-                        TextBox [ Text = $ClientDisplayName, Placeholder = "e.g. Tailspin Toys", Margin = (0,0,0,12) ]
-                        TextBlock [ Text = "Subscription reference (optional)", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-                        TextBox [ Text = $SubscriptionRef ]
+                        TextBlock [ Text = "Pick an existing client, or New client to create one. A new client's id is permanent.",
+                                    Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,12) ]
+                        TextBlock [ Text = "Client", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
+                        ComboBox [ ItemsSource = $Clients, SelectedItem = $SelectedClient, HorizontalAlignment = Stretch, Margin = (0,0,0,12) ]
+                        StackPanel [ Orientation = Vertical, Visibility = $IsNewClient << ToVisibility ] {
+                            TextBlock [ Text = "Client id", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
+                            TextBox [ Text = $ClientId, Placeholder = "e.g. tailspin", Margin = (0,0,0,12) ]
+                            TextBlock [ Text = "Display name", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
+                            TextBox [ Text = $ClientDisplayName, Placeholder = "e.g. Tailspin Toys", Margin = (0,0,0,12) ]
+                            TextBlock [ Text = "Subscription reference (optional)", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
+                            TextBox [ Text = $SubscriptionRef ]
+                        }
+                        TextBlock [ Text = $ErrorText, Foreground = @StateDangerInk, TextWrapping = Wrap, Margin = (0,12,0,0),
+                                    Visibility = $ErrorText << ToVisibility ]
                     }
 
-                    // Step 2: the tenant and its first Owner.
+                    // Step 2: the tenant (and, for a new one, its first Owner).
                     StackPanel [ Orientation = Vertical, Visibility = $IsTenantStep << ToVisibility ] {
                         TextBlock [ Text = "Which tenant will the hive serve?", Style = @UiLabel, Foreground = @Fg0, Margin = (0,0,0,4) ]
-                        TextBlock [ Text = "A new tenant is created for the client. Each hive serves exactly one tenant. Its first Owner receives a one-time password.",
+                        TextBlock [ Text = "Pick one of the client's tenants, or New tenant to create one. Each hive serves exactly one tenant. A new tenant's first Owner receives a one-time password.",
                                     Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,12) ]
-                        TextBlock [ Text = "Tenant id", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-                        TextBox [ Text = $TenantId, Placeholder = "e.g. tailspin-prod", Margin = (0,0,0,12) ]
-                        TextBlock [ Text = "Display name", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-                        TextBox [ Text = $TenantDisplayName, Placeholder = "e.g. Tailspin Production", Margin = (0,0,0,12) ]
-                        TextBlock [ Text = "Owner email", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-                        TextBox [ Text = $OwnerEmail, Placeholder = "e.g. owner@tailspin.example" ]
+                        TextBlock [ Text = "Tenant", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
+                        ComboBox [ ItemsSource = $Tenants, SelectedItem = $SelectedTenant, HorizontalAlignment = Stretch, Margin = (0,0,0,12) ]
+                        StackPanel [ Orientation = Vertical, Visibility = $IsNewTenant << ToVisibility ] {
+                            TextBlock [ Text = "Tenant id", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
+                            TextBox [ Text = $TenantId, Placeholder = "e.g. tailspin-prod", Margin = (0,0,0,12) ]
+                            TextBlock [ Text = "Display name", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
+                            TextBox [ Text = $TenantDisplayName, Placeholder = "e.g. Tailspin Production", Margin = (0,0,0,12) ]
+                            TextBlock [ Text = "Owner email", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
+                            TextBox [ Text = $OwnerEmail, Placeholder = "e.g. owner@tailspin.example" ]
+                        }
                     }
 
                     // Step 3: the hive. References are names only; no secret value is entered here.
@@ -473,8 +484,7 @@ resources HivesResources {
                     // Step 4: review, then stand it up.
                     StackPanel [ Orientation = Vertical, Visibility = $IsReviewStep << ToVisibility ] {
                         TextBlock [ Text = "Review", Style = @UiLabel, Foreground = @Fg0, Margin = (0,0,0,4) ]
-                        TextBlock [ Text = "Standing up creates the client, the tenant with its first Owner, the hive record and a one-time bootstrap.",
-                                    Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,12) ]
+                        TextBlock [ Text = $ReviewCaption, Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,12) ]
                         Border [ Fill = @Bg1, Stroke = Pen [ Brush = @Border ], Padding = (12,10,12,10), Margin = (0,0,0,12) ] {
                             Grid {
                                 ColumnDefinitions {
@@ -483,15 +493,15 @@ resources HivesResources {
                                     ColumnDefinition [ Width = GridLength.Star ]
                                 }
                                 StackPanel [ Grid.Column = 0, Orientation = Vertical ] {
-                                    TextBlock [ Text = "Client", Style = @UiCaption, Foreground = @Fg2 ]
-                                    TextBlock [ Text = $ClientDisplayName, Foreground = @Fg0 ]
-                                    TextBlock [ Text = $ClientId, Style = @Code, Foreground = @Fg2 ]
+                                    TextBlock [ Text = $ReviewClientCaption, Style = @UiCaption, Foreground = @Fg2 ]
+                                    TextBlock [ Text = $ReviewClientName, Foreground = @Fg0 ]
+                                    TextBlock [ Text = $ReviewClientId, Style = @Code, Foreground = @Fg2 ]
                                 }
                                 StackPanel [ Grid.Column = 1, Orientation = Vertical ] {
-                                    TextBlock [ Text = "Tenant", Style = @UiCaption, Foreground = @Fg2 ]
-                                    TextBlock [ Text = $TenantDisplayName, Foreground = @Fg0 ]
-                                    TextBlock [ Text = $TenantId, Style = @Code, Foreground = @Fg2 ]
-                                    TextBlock [ Text = $OwnerEmail, Foreground = @Fg1 ]
+                                    TextBlock [ Text = $ReviewTenantCaption, Style = @UiCaption, Foreground = @Fg2 ]
+                                    TextBlock [ Text = $ReviewTenantName, Foreground = @Fg0 ]
+                                    TextBlock [ Text = $ReviewTenantId, Style = @Code, Foreground = @Fg2 ]
+                                    TextBlock [ Text = $ReviewOwnerEmail, Foreground = @Fg1, Visibility = $ReviewOwnerEmail << ToVisibility ]
                                 }
                                 StackPanel [ Grid.Column = 2, Orientation = Vertical ] {
                                     TextBlock [ Text = "Hive", Style = @UiCaption, Foreground = @Fg2 ]
@@ -514,7 +524,7 @@ resources HivesResources {
                                     Visibility = $ErrorText << ToVisibility ]
                     }
 
-                    // Step 5: the one-time Bootstrap values. Shown once; Finish needs both boxes ticked.
+                    // Step 5: the one-time Bootstrap values. Shown once; Finish needs every shown box ticked.
                     StackPanel [ Orientation = Vertical, Visibility = $IsBootstrapStep << ToVisibility ] {
                         Border [ Fill = @StateSuccessSoft, Padding = (12,10,12,10), Margin = (0,0,0,12) ] {
                             StackPanel [ Orientation = Horizontal ] {
@@ -528,23 +538,26 @@ resources HivesResources {
                                         Foreground = @StateWarningInk, TextWrapping = Wrap ]
                         }
 
-                        StackPanel [ Orientation = Horizontal, Margin = (0,0,0,6) ] {
-                            TextBlock [ Text = "Owner password for", Style = @UiLabel, Foreground = @Fg1, Margin = (0,0,4,0) ]
-                            TextBlock [ Text = $OwnerEmail, Foreground = @Fg0 ]
-                        }
-                        Border [ Fill = @Bg1, Stroke = Pen [ Brush = @Border ], Padding = (12,10,12,10), Margin = (0,0,0,8) ] {
-                            DockPanel {
-                                Button [ DockPanel.Dock = Right, Variant = Secondary, Command = $CopyOwnerPasswordCommand, Margin = (12,0,0,0) ] {
-                                    TextBlock [ Text = "Copy" ]
-                                }
-                                TextBlock [ Text = $OwnerPassword, Style = @Code, Foreground = @Fg0, VerticalAlignment = Center ]
+                        // A new tenant's Owner password; an existing tenant reveals none.
+                        StackPanel [ Orientation = Vertical, Visibility = $RevealsOwner << ToVisibility ] {
+                            StackPanel [ Orientation = Horizontal, Margin = (0,0,0,6) ] {
+                                TextBlock [ Text = "Owner password for", Style = @UiLabel, Foreground = @Fg1, Margin = (0,0,4,0) ]
+                                TextBlock [ Text = $OwnerEmail, Foreground = @Fg0 ]
                             }
-                        }
-                        TextBlock [ Text = $OwnerCopyStatus, Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,8),
-                                    Visibility = $OwnerCopyStatus << ToVisibility ]
-                        StackPanel [ Orientation = Horizontal, Margin = (0,0,0,16) ] {
-                            Checkbox [ IsChecked = $OwnerSaved, VerticalAlignment = Center, Margin = (0,0,8,0) ]
-                            TextBlock [ Text = "I've saved the Owner password", Foreground = @Fg0, VerticalAlignment = Center ]
+                            Border [ Fill = @Bg1, Stroke = Pen [ Brush = @Border ], Padding = (12,10,12,10), Margin = (0,0,0,8) ] {
+                                DockPanel {
+                                    Button [ DockPanel.Dock = Right, Variant = Secondary, Command = $CopyOwnerPasswordCommand, Margin = (12,0,0,0) ] {
+                                        TextBlock [ Text = "Copy" ]
+                                    }
+                                    TextBlock [ Text = $OwnerPassword, Style = @Code, Foreground = @Fg0, VerticalAlignment = Center ]
+                                }
+                            }
+                            TextBlock [ Text = $OwnerCopyStatus, Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,8),
+                                        Visibility = $OwnerCopyStatus << ToVisibility ]
+                            StackPanel [ Orientation = Horizontal, Margin = (0,0,0,16) ] {
+                                Checkbox [ IsChecked = $OwnerSaved, VerticalAlignment = Center, Margin = (0,0,8,0) ]
+                                TextBlock [ Text = "I've saved the Owner password", Foreground = @Fg0, VerticalAlignment = Center ]
+                            }
                         }
 
                         TextBlock [ Text = "One-time agent token", Style = @UiLabel, Foreground = @Fg1, Margin = (0,0,0,2) ]

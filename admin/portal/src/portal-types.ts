@@ -100,14 +100,19 @@ export type FleetHiveDto = {
     environments: FleetEnvDto[]
 }
 
+// A record that already exists, used as is by the provision.
+export type ExistingRecordRefDto = { existing: true; id: string }
+
+// The client and the tenant are each new or an existing record; the hive is always new.
 export type ProvisionInputDto =
 {
-    client: { id: string; displayName: string; subscriptionRef?: string }
-    tenant: { id: string; displayName: string; ownerEmail: string }
+    client: { id: string; displayName: string; subscriptionRef?: string } | ExistingRecordRefDto
+    tenant: { id: string; displayName: string; ownerEmail: string } | ExistingRecordRefDto
     hive: { id: string; displayName: string; cluster: HiveDto['cluster']; registry: HiveDto['registry']; trustRootRef?: string }
 }
 
-export type ProvisionSecretsDto = { ownerEmail: string; ownerPassword: string; agentToken: string }
+// The Owner's email and password come back only when a new tenant was created.
+export type ProvisionSecretsDto = { ownerEmail?: string; ownerPassword?: string; agentToken: string }
 
 export type ProvisionResultDto = { client: ClientDto; tenant: TenantDto; hive: HiveDto; secrets: ProvisionSecretsDto }
 
