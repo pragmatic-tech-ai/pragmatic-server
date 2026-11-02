@@ -39,17 +39,16 @@ export class RolloutAgent
     {
     }
 
+    // Every tick reports what the hive sees, target or not: the snapshot is the
+    // hive's heartbeat (it is what sets "last seen"), so a hive with no release
+    // target yet still checks in. Only patching waits for a target.
     public async Tick(): Promise<void>
     {
         const target = await this.deps.fetchTarget()
-        if (target === undefined)
-        {
-            return
-        }
         const envs = await this.deps.listEnvironments()
         for (const env of envs)
         {
-            if (env.runningImage !== target.image)
+            if (target !== undefined && env.runningImage !== target.image)
             {
                 await this.deps.patchImage(env.namespace, env.deployment, env.container, target.image)
             }

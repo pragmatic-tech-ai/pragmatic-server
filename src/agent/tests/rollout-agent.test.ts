@@ -72,14 +72,19 @@ test('Tick with an empty hive patches nothing and reports an empty snapshot', as
     assert.deepEqual(fake.Snapshots, [[]])
 })
 
-test('Tick with no target neither lists, patches nor reports', async () =>
+test('Tick with no target patches nothing but still reports what it sees, so a new hive checks in', async () =>
 {
     const fake = new FakeDeps()
     fake.Target = undefined
+    fake.Envs = [
+        { environmentName: DevName, namespace: DevNamespace, deployment: Deployment, container: Container, runningImage: OldImage, ready: true },
+    ]
     await new RolloutAgent(fake.Build()).Tick()
-    assert.equal(fake.ListCalls, 0)
+    assert.equal(fake.ListCalls, 1)
     assert.deepEqual(fake.Patches, [])
-    assert.deepEqual(fake.Snapshots, [])
+    assert.equal(fake.Snapshots.length, 1)
+    assert.equal(fake.Snapshots[0][0].environmentName, DevName)
+    assert.equal(fake.Snapshots[0][0].runningImage, OldImage)
 })
 
 test('Tick patches an env with an undefined running image and still reports it', async () =>
