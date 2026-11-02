@@ -18,6 +18,7 @@ export class CreateEnvironmentDialogViewModel extends TenantDialogViewModel<Envi
     public static readonly DuplicateMessage = 'An environment with this name exists.'
     public static readonly FailureMessage = 'Could not create the environment. Please try again.'
 
+    private static readonly NoText = ''
     private static readonly NameProperty = 'Name'
     private static readonly NameErrorTextProperty = 'NameErrorText'
     private static readonly SelectedTemplateProperty = 'SelectedTemplate'
@@ -69,13 +70,13 @@ export class CreateEnvironmentDialogViewModel extends TenantDialogViewModel<Envi
         const C = CreateEnvironmentDialogViewModel
         if (this.name.length === 0)
         {
-            return ''
+            return CreateEnvironmentDialogViewModel.NoText
         }
         if (!C.NamePattern.test(this.name))
         {
             return C.FormatMessage
         }
-        return this.existingNames.has(this.name) ? C.DuplicateMessage : ''
+        return this.existingNames.has(this.name) ? C.DuplicateMessage : CreateEnvironmentDialogViewModel.NoText
     }
 
     public get Templates(): ObservableCollection<OptionViewModel<Template>>

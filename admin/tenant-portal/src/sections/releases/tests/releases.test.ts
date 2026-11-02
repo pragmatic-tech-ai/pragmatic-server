@@ -183,13 +183,17 @@ describe('ReleasesPageViewModel', () =>
         assert.equal(page.HasNoLedger, true)
     })
 
-    it('is Empty with its own text when nothing is offered, and when there is no hive', async () =>
+    it('without offers still shows what runs where and the history; only no hive is Empty', async () =>
     {
         const api = new FakeTenantApi().WithManifest('1', 'reg/app:1').WithEnvironment('alpha', EnvStatus.Running, 'hive-1', 'reg/app:1')
         api.Rollout.targetVersion = '1'
+        api.Ledger.push({ version: '1', action: 'adopted', at: '2026-01-02T03:04:00.000Z' })
         const page = await new Fixture(api).OpenReleases()
-        assert.equal(page.State, PageState.Empty)
-        assert.match(page.EmptyText, /^No new versions offered\./)
+        assert.equal(page.State, PageState.Populated)
+        assert.equal(page.HasNoOffers, true)
+        assert.match(page.NoOffersText, /^No new versions offered\./)
+        assert.equal(page.HasMatrix, true)
+        assert.equal(page.HasLedger, true)
         const noHive = new FakeTenantApi()
         const host = new TenantTestHost(noHive, null)
         const bare = new ReleasesPageViewModel(host.Session, { OpenAdopt: () => assert.fail('no navigation') })

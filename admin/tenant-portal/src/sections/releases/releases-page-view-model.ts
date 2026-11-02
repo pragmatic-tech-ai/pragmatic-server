@@ -1,9 +1,9 @@
-import { UtcText } from '../../shell/utc-text.js'
 import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import { AdminCapability } from '../../shell/admin-capability.js'
 import { TenantPageViewModel } from '../../shell/tenant-page-view-model.js'
 import type { TenantSessionService } from '../../shell/tenant-session-service.js'
+import { UtcText } from '../../shell/utc-text.js'
 import { ReleasesSnapshot } from './releases-snapshot.js'
 import type { LedgerEntry, OfferEntry, VersionEntry } from './releases-snapshot.js'
 import type { RolloutEnvDto } from '../../tenant-types.js'
@@ -179,6 +179,8 @@ export class ReleasesPageViewModel extends TenantPageViewModel
     private static readonly LedgerRowsProperty = 'LedgerRows'
     private static readonly HasLedgerProperty = 'HasLedger'
     private static readonly HasNoLedgerProperty = 'HasNoLedger'
+    private static readonly HasOffersProperty = 'HasOffers'
+    private static readonly HasNoOffersProperty = 'HasNoOffers'
     private static readonly EmptyTextProperty = 'EmptyText'
     private static readonly NoOffersText = 'No new versions offered. New versions arrive when your hive checks in.'
     private static readonly NoHiveText = 'No hive yet. Versions are offered once your hive is installed.'
@@ -269,14 +271,33 @@ export class ReleasesPageViewModel extends TenantPageViewModel
             return false
         }
         this.Apply(snapshot)
+        // With a hive the page is populated even without offers: what runs
+        // where and the version history still show, and the offers block
+        // says nothing new is offered. Only no hive is Empty.
+        return true
+    }
+
+    public get HasOffers(): boolean
+    {
         return this.offers.Count > 0
+    }
+
+    public get HasNoOffers(): boolean
+    {
+        return !this.HasOffers
+    }
+
+    // Shown in the offers block when nothing is offered.
+    public get NoOffersText(): string
+    {
+        return ReleasesPageViewModel.NoOffersText
     }
 
     // Fresh collections each load: each list re-binds in one step.
     private Apply(snapshot: ReleasesSnapshot | undefined): void
     {
         const P = ReleasesPageViewModel
-        const before = [this.HasMatrix, this.HasLedger, this.EmptyText] as const
+        const before = [this.HasMatrix, this.HasLedger, this.EmptyText, this.HasOffers] as const
         const old = [this.offers, this.matrixHeader, this.matrixRows, this.ledgerRows] as const
         this.hasHive = snapshot !== undefined
         this.offers = new ObservableCollection<OfferRowViewModel>()
@@ -310,5 +331,7 @@ export class ReleasesPageViewModel extends TenantPageViewModel
         this.RaisePropertyChanged(P.HasLedgerProperty, before[1], this.HasLedger)
         this.RaisePropertyChanged(P.HasNoLedgerProperty, !before[1], this.HasNoLedger)
         this.RaisePropertyChanged(P.EmptyTextProperty, before[2], this.EmptyText)
+        this.RaisePropertyChanged(P.HasOffersProperty, before[3], this.HasOffers)
+        this.RaisePropertyChanged(P.HasNoOffersProperty, !before[3], this.HasNoOffers)
     }
 }

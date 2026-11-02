@@ -157,7 +157,8 @@ describe('Environments list', () =>
             .WithEnvironment('alpha', EnvStatus.Running)
             .WithEnvironment('beta', EnvStatus.Stopped)
             .WithEnvironment('gamma', EnvStatus.Running)
-        const list = await Opened.List(new SectionsFixture(api))
+        const f = new SectionsFixture(api)
+        const list = await Opened.List(f)
         assert.equal(list.StartCommand.CanExecute(), false)
         list.Filter = 'a'
         list.AllSelected = true
@@ -165,6 +166,13 @@ describe('Environments list', () =>
         assert.equal(list.SelectionText, '3 selected')
         assert.equal(list.StartCommand.CanExecute(), true)
         list.StopCommand.Execute()
+        await Tick.Settle()
+        // Stop asks first, naming the running environments it will stop.
+        const ask = f.Dialogs.Last
+        assert.ok(ask instanceof ConfirmDialogViewModel)
+        assert.equal(ask.Message, 'Stops: alpha, gamma')
+        assert.equal(api.Count('StopEnvironment'), 0)
+        await ask.Confirm()
         await Tick.Settle()
         assert.deepEqual(api.Calls.filter(c => c[0] === 'StopEnvironment'), [['StopEnvironment', 'alpha'], ['StopEnvironment', 'gamma']])
         assert.equal(list.HasSelection, false)
@@ -175,6 +183,26 @@ describe('Environments list', () =>
         list.StartCommand.Execute()
         await Tick.Settle()
         assert.deepEqual(api.Calls.filter(c => c[0] === 'StartEnvironment'), [['StartEnvironment', 'alpha']])
+    })
+
+    it('unselects environments the filter hides, so bulk actions act only on what is shown', async () =>
+    {
+        const api = new FakeTenantApi().WithEnvironment('alpha', EnvStatus.Stopped).WithEnvironment('beta', EnvStatus.Stopped)
+        const list = await Opened.List(new SectionsFixture(api))
+        list.AllSelected = true
+        list.Filter = 'beta'
+        assert.deepEqual(list.SelectedNames, ['beta'])
+        list.StartCommand.Execute()
+        await Tick.Settle()
+        assert.deepEqual(api.Calls.filter(c => c[0] === 'StartEnvironment'), [['StartEnvironment', 'beta']])
+    })
+
+    it('reads health for environments without their own hive from the tenant hive', async () =>
+    {
+        const api = new FakeTenantApi().WithEnvironment('alpha', EnvStatus.Running, '', 'registry/app:2')
+        const list = await Opened.List(new SectionsFixture(api))
+        assert.deepEqual(api.Calls.filter(c => c[0] === 'GetHealth'), [['GetHealth', 'hive-1']])
+        assert.equal(list.Rows.ToArray()[0]!.HealthPill.Label, 'Healthy')
     })
 
     it('reports the first refusal, still runs the rest, then clears the selection and reloads', async () =>
@@ -249,11 +277,68 @@ describe('Environment detail', () =>
         assert.equal(degradedPage.HasOffer, false)
     })
 
-    it('is an Error when the environment no longer exists', async () =>
+    it('goes back to the list when its environment was deleted, even while another section was active', async () =>
     {
-        const page = await Opened.Detail(new SectionsFixture(new FakeTenantApi()), 'ghost')
-        assert.equal(page.State, PageState.Error)
-        assert.equal(page.ErrorText, 'Environment ghost no longer exists.')
+        const api = new FakeTenantApi().WithEnvironment('alpha').WithEnvironment('beta')
+        const f = new SectionsFixture(api)
+        await Opened.List(f)
+        await Opened.Detail(f, 'alpha')
+        f.Rail.Select(OverviewSectionService)
+        await Tick.Settle()
+        api.Environments = api.Environments.filter(e => e.name !== 'alpha')
+        f.Rail.Select(EnvironmentsSectionService)
+        await Tick.Settle()
+        assert.ok(f.Content instanceof EnvironmentsPageViewModel)
+        assert.deepEqual(f.Content.Rows.ToArray().map(r => r.Name), ['beta'])
+    })
+
+    it('offers Start whenever the environment is not running, and Restart after a failure', async () =>
+    {
+        const api = new FakeTenantApi().WithEnvironment('failed', EnvStatus.Failed).WithEnvironment('unknown', EnvStatus.Unknown)
+        const f = new SectionsFixture(api)
+        const failed = await Opened.Detail(f, 'failed')
+        assert.equal(failed.CanStart, true)
+        assert.equal(failed.StartCommand.CanExecute(), true)
+        assert.equal(failed.CanRestart, true)
+        assert.equal(failed.RestartCommand.CanExecute(), true)
+        assert.equal(failed.StopCommand.CanExecute(), false)
+        const unknown = await Opened.Detail(f, 'unknown')
+        assert.equal(unknown.StartCommand.CanExecute(), true)
+        assert.equal(unknown.RestartCommand.CanExecute(), false)
+    })
+
+    it('offers only what the hive offers: never the current target, never an older version', async () =>
+    {
+        const api = new FakeTenantApi()
+            .WithEnvironment('alpha', EnvStatus.Running, 'hive-1', 'registry/app:1')
+            .WithManifest('1', 'registry/app:1')
+            .WithManifest('2', 'registry/app:2')
+            .WithManifest('3', 'registry/app:3')
+        api.Rollout.targetVersion = '3'
+        const page = await Opened.Detail(new SectionsFixture(api), 'alpha')
+        assert.equal(page.HasOffer, false)
+        api.Rollout.targetVersion = '2'
+        await page.Refresh()
+        assert.equal(page.OfferTitle, 'Version 3 is offered.')
+    })
+
+    it('notices a server-side close of the log stream, reconnects on reopen, and drops late chunks of an old stream', async () =>
+    {
+        const api = new FakeTenantApi().WithEnvironment('alpha')
+        const page = await Opened.Detail(new SectionsFixture(api), 'alpha')
+        page.ToggleLogsCommand.Execute()
+        api.LogStreams[0]!.Push('one\n')
+        api.LogStreams[0]!.ServerClose()
+        assert.equal(page.IsStreaming, false)
+        page.ToggleLogsCommand.Execute()
+        page.ToggleLogsCommand.Execute()
+        assert.equal(api.LogStreams.length, 2)
+        api.LogStreams[1]!.Push('two\n')
+        page.ToggleLogsCommand.Execute()
+        page.ToggleLogsCommand.Execute()
+        assert.equal(api.LogStreams.length, 3)
+        api.LogStreams[1]!.Late('late\n')
+        assert.equal(page.LogBuffer, 'one\ntwo\n')
     })
 
     it('starts a stopped environment, and restarts or stops (after a confirm) a running one', async () =>

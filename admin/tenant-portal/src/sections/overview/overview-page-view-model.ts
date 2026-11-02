@@ -1,10 +1,11 @@
 import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
-import { Observable } from '@pragmatic-tech-ai/todl-runtime'
+import { Observable, type IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { ActivityLog } from '../../activity-log.js'
 import { EnvironmentRow } from '../../environment-row.js'
 import { TenantApiError } from '../../tenant-api-client.js'
 import type { EnvironmentDto, HiveHealthDto, HiveRolloutDto, ManifestDto } from '../../tenant-types.js'
 import { AdminCapability } from '../../shell/admin-capability.js'
+import { ShownPage, type IShownPage } from '../../shell/shown-page.js'
 import { TenantPageViewModel } from '../../shell/tenant-page-view-model.js'
 import type { TenantSessionService } from '../../shell/tenant-session-service.js'
 import { BestEffort } from '../environments/best-effort.js'
@@ -149,11 +150,12 @@ export class OverviewEnvironmentCardViewModel extends Observable
 // latest activity; and the connection to Pragmatic. Only the environments
 // list is essential: its failure is the page's Error. Health, versions, the
 // rollout and the hive lookup only enrich the page and degrade.
-export class OverviewPageViewModel extends TenantPageViewModel
+export class OverviewPageViewModel extends TenantPageViewModel implements IShownPage
 {
     public static readonly RecentActivityCount = 5
 
     private static readonly CardsProperty = 'Cards'
+    private static readonly NoText = ''
     private static readonly RecentActivityProperty = 'RecentActivity'
     private static readonly HasRecentActivityProperty = 'HasRecentActivity'
     private static readonly HasNoRecentActivityProperty = 'HasNoRecentActivity'
@@ -173,7 +175,7 @@ export class OverviewPageViewModel extends TenantPageViewModel
     private static readonly ForbiddenText = 'Connection status is not available to you.'
     private static readonly UnavailableText = 'Could not load the connection status.'
     private static readonly DerivedProperties: readonly string[] = [
-        'Subtitle', 'HasOffer', 'OfferTitle', 'OfferBody', 'ConnectionLabel', 'ConnectionText', 'IsConnected', 'IsQuiet', 'HasConnectionPill',
+        'Subtitle', 'HasEnvironments', 'HasNoEnvironments', 'HasOffer', 'OfferTitle', 'OfferBody', 'ConnectionLabel', 'ConnectionText', 'IsConnected', 'IsQuiet', 'HasConnectionPill',
     ]
 
     private cards = new ObservableCollection<OverviewEnvironmentCardViewModel>()
@@ -181,6 +183,7 @@ export class OverviewPageViewModel extends TenantPageViewModel
     private environments: readonly EnvironmentDto[] = []
     private hive = new OverviewHiveSnapshot(OverviewConnectionState.Unavailable)
     private offer: ManifestDto | undefined
+    private activitySubscription: IDisposable | undefined
     private readonly createCommand: RelayCommand
     private readonly reviewAdoptCommand: RelayCommand
     private readonly seeAllActivityCommand: RelayCommand
@@ -193,10 +196,27 @@ export class OverviewPageViewModel extends TenantPageViewModel
         this.reviewAdoptCommand = this.MutatingCommand(AdminCapability.Adopt, async () => this.ReviewAdopt(), () => this.offer !== undefined)
         this.seeAllActivityCommand = new RelayCommand(() => this.section.OpenActivity())
         this.viewConnectionCommand = new RelayCommand(() => this.section.OpenConnection())
-        // The section keeps one Overview page for the session, so this
-        // subscription lives exactly as long as the log it watches.
-        session.Activity.PropertyChanged(ActivityLog.EntriesProperty).subscribe(() => this.RebuildActivity())
+        ShownPage.Register(this)
         this.RebuildActivity()
+    }
+
+    // Follows the session's activity only while shown: the boot rebuilds the
+    // section's root page, so a page must not keep a subscription alive after
+    // it is gone.
+    public OnShown(): void
+    {
+        if (this.activitySubscription === undefined)
+        {
+            this.activitySubscription = this.Session.Activity.PropertyChanged(ActivityLog.EntriesProperty)
+                .subscribe(() => this.RebuildActivity())
+        }
+        this.RebuildActivity()
+    }
+
+    public OnHidden(): void
+    {
+        this.activitySubscription?.dispose()
+        this.activitySubscription = undefined
     }
 
     // The header's Activity button (opens the session's Activity page).
@@ -230,7 +250,7 @@ export class OverviewPageViewModel extends TenantPageViewModel
     public get OfferTitle(): string
     {
         const O = OverviewPageViewModel
-        return O.OfferTitleTemplate.replace(O.VersionToken, this.offer?.id ?? '')
+        return O.OfferTitleTemplate.replace(O.VersionToken, this.offer?.id ?? O.NoText)
     }
 
     public get OfferBody(): string
@@ -351,7 +371,19 @@ export class OverviewPageViewModel extends TenantPageViewModel
             return false
         }
         this.Apply(environments, hive)
-        return environments.length > 0
+        // The connection card, the offer and recent activity stand on their
+        // own: no environments is an inline note, not an empty page.
+        return true
+    }
+
+    public get HasEnvironments(): boolean
+    {
+        return this.environments.length > 0
+    }
+
+    public get HasNoEnvironments(): boolean
+    {
+        return !this.HasEnvironments
     }
 
     private Apply(environments: readonly EnvironmentDto[], hive: OverviewHiveSnapshot): void

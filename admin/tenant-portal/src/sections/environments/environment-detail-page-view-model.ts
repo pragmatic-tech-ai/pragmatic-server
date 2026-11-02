@@ -2,11 +2,12 @@ import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/run
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { ActivityLog } from '../../activity-log.js'
 import { EnvironmentRow } from '../../environment-row.js'
-import type { EnvironmentDto, HiveHealthDto, ManifestDto } from '../../tenant-types.js'
+import type { EnvironmentDto, HiveHealthDto, HiveRolloutDto, ManifestDto } from '../../tenant-types.js'
 import { AdminCapability } from '../../shell/admin-capability.js'
 import { ShownPage, type IShownPage } from '../../shell/shown-page.js'
 import { TenantPageViewModel } from '../../shell/tenant-page-view-model.js'
 import type { TenantSessionService } from '../../shell/tenant-session-service.js'
+import { UtcText } from '../../shell/utc-text.js'
 import { ActivityRows, type ActivityRowViewModel } from '../overview/activity-page-view-model.js'
 import { BestEffort } from './best-effort.js'
 import { EnvironmentPillViewModel } from './environment-pill-view-model.js'
@@ -90,8 +91,9 @@ export class EnvironmentDetailPageViewModel extends TenantPageViewModel implemen
     private static readonly DeleteMessageTemplate = 'Deleting {name} removes it from your hive.'
     private static readonly DeleteLabel = 'Delete environment'
     // Everything that derives from the loaded environment and versions.
+    private static readonly NoText = ''
     private static readonly DerivedProperties: readonly string[] = [
-        'StatusPill', 'HealthPill', 'IsRunning', 'IsStopped', 'IsFailed', 'IsUnknown', 'SubText', 'UrlText', 'Version', 'Type',
+        'StatusPill', 'HealthPill', 'IsRunning', 'IsStopped', 'IsFailed', 'IsUnknown', 'CanStart', 'CanRestart', 'SubText', 'UrlText', 'Version', 'Type',
         'Template', 'EnvironmentId', 'Created', 'UiBundleText', 'SignatureText', 'Offer', 'HasOffer', 'HasNoOffer', 'OfferTitle',
         'OfferNotes', 'HealthText', 'SignInAddress',
     ]
@@ -101,6 +103,7 @@ export class EnvironmentDetailPageViewModel extends TenantPageViewModel implemen
     private statusPill: EnvironmentPillViewModel | undefined
     private healthPill: EnvironmentPillViewModel | undefined
     private manifests: readonly ManifestDto[] = []
+    private rollout: HiveRolloutDto | undefined
     private tab = EnvironmentDetailTab.Application
     private activityRows = new ObservableCollection<ActivityRowViewModel>()
     private logsOpen = false
@@ -108,6 +111,7 @@ export class EnvironmentDetailPageViewModel extends TenantPageViewModel implemen
     private paused = false
     private logBuffer = ''
     private closeStream: (() => void) | undefined
+    private streamGeneration = 0
     private activitySubscription: IDisposable | undefined
     private readonly startCommand: RelayCommand
     private readonly stopCommand: RelayCommand
@@ -126,9 +130,9 @@ export class EnvironmentDetailPageViewModel extends TenantPageViewModel implemen
         this.tabLabels.Add(D.HealthTabLabel)
         this.tabLabels.Add(D.AccessTabLabel)
         const E = AdminCapability.Environments
-        this.startCommand = this.MutatingCommand(E, () => this.Start(), () => this.IsStopped)
+        this.startCommand = this.MutatingCommand(E, () => this.Start(), () => this.CanStart)
         this.stopCommand = this.MutatingCommand(E, () => this.Stop(), () => this.IsRunning)
-        this.restartCommand = this.MutatingCommand(E, () => this.Restart(), () => this.IsRunning)
+        this.restartCommand = this.MutatingCommand(E, () => this.Restart(), () => this.CanRestart)
         this.deleteCommand = this.MutatingCommand(E, () => this.Delete(), () => this.environment !== undefined)
         this.reviewAdoptCommand = this.MutatingCommand(AdminCapability.Adopt, async () => this.ReviewAdopt(), () => this.HasOffer)
         this.toggleLogsCommand = new RelayCommand(() => this.ToggleLogs())
@@ -160,6 +164,19 @@ export class EnvironmentDetailPageViewModel extends TenantPageViewModel implemen
         return this.environment?.IsRunning ?? false
     }
 
+    // Start is offered whenever the environment is not running (stopped,
+    // failed or unknown); Restart while it runs or after it failed. The old
+    // view always offered both.
+    public get CanStart(): boolean
+    {
+        return this.environment !== undefined && !this.environment.IsRunning
+    }
+
+    public get CanRestart(): boolean
+    {
+        return this.environment !== undefined && (this.environment.IsRunning || this.environment.IsFailed)
+    }
+
     public get IsStopped(): boolean
     {
         return this.environment?.IsStopped ?? false
@@ -181,7 +198,7 @@ export class EnvironmentDetailPageViewModel extends TenantPageViewModel implemen
         const env = this.environment?.Dto
         if (env === undefined)
         {
-            return ''
+            return EnvironmentDetailPageViewModel.NoText
         }
         const S = EnvironmentDetailPageViewModel.SubSeparator
         return env.template + S + env.type + S + env.environmentId
@@ -200,22 +217,23 @@ export class EnvironmentDetailPageViewModel extends TenantPageViewModel implemen
 
     public get Type(): string
     {
-        return this.environment?.Dto.type ?? ''
+        return this.environment?.Dto.type ?? EnvironmentDetailPageViewModel.NoText
     }
 
     public get Template(): string
     {
-        return this.environment?.Template ?? ''
+        return this.environment?.Template ?? EnvironmentDetailPageViewModel.NoText
     }
 
     public get EnvironmentId(): string
     {
-        return this.environment?.EnvironmentId ?? ''
+        return this.environment?.EnvironmentId ?? EnvironmentDetailPageViewModel.NoText
     }
 
     public get Created(): string
     {
-        return this.environment?.Dto.createdAt ?? ''
+        const created = this.environment?.Dto.createdAt
+        return created === undefined ? EnvironmentDetailPageViewModel.NoText : UtcText.DateTime(created)
     }
 
     public get UiBundleText(): string
@@ -234,7 +252,8 @@ export class EnvironmentDetailPageViewModel extends TenantPageViewModel implemen
     // The newer version offered to this environment, when there is one.
     public get Offer(): ManifestDto | undefined
     {
-        return VersionOffer.ForEnvironment(this.manifests, this.environment?.RunningImage)
+        const offer = VersionOffer.ForHive(this.manifests, this.rollout)
+        return offer === undefined || offer.image === this.environment?.RunningImage ? undefined : offer
     }
 
     public get HasOffer(): boolean
@@ -250,12 +269,12 @@ export class EnvironmentDetailPageViewModel extends TenantPageViewModel implemen
     public get OfferTitle(): string
     {
         const D = EnvironmentDetailPageViewModel
-        return D.OfferTitleTemplate.replace(D.VersionToken, this.Offer?.id ?? '')
+        return D.OfferTitleTemplate.replace(D.VersionToken, this.Offer?.id ?? EnvironmentDetailPageViewModel.NoText)
     }
 
     public get OfferNotes(): string
     {
-        return this.Offer?.notes ?? ''
+        return this.Offer?.notes ?? EnvironmentDetailPageViewModel.NoText
     }
 
     public get NewestText(): string
@@ -280,7 +299,7 @@ export class EnvironmentDetailPageViewModel extends TenantPageViewModel implemen
             return D.NoHealthText
         }
         const state = h.ready ? D.ReadyText : D.NotReadyText
-        return D.HealthPrefix + state + (h.detail.length === 0 ? '' : D.DetailSeparator + h.detail)
+        return D.HealthPrefix + state + (h.detail.length === 0 ? EnvironmentDetailPageViewModel.NoText : D.DetailSeparator + h.detail)
     }
 
     public get ActivityRows(): ObservableCollection<ActivityRowViewModel>
@@ -470,27 +489,37 @@ export class EnvironmentDetailPageViewModel extends TenantPageViewModel implemen
         const dto = environments.find(e => e.name === this.name)
         if (dto === undefined)
         {
-            const D = EnvironmentDetailPageViewModel
-            throw new Error(D.NotFoundTemplate.replace(D.NameToken, this.name))
+            // Deleted meanwhile (perhaps while another section was active):
+            // back to the list rather than an error about a gone environment.
+            void this.section.ReturnFromDeleted(this)
+            return false
         }
-        const [health, manifests] = await Promise.all([
-            this.LoadHealth(dto),
+        const hiveId = await this.HiveIdOf(dto)
+        const [health, manifests, rollout] = await Promise.all([
+            this.LoadHealth(dto, hiveId),
             BestEffort.Or(this.Session.Client.ListManifests(), [] as ManifestDto[]),
+            hiveId === undefined ? Promise.resolve(undefined) : BestEffort.Or(this.Session.Client.GetRollout(hiveId), undefined),
         ])
         if (generation !== this.LoadGeneration)
         {
             return false
         }
+        this.rollout = rollout
         this.Apply(new EnvironmentRow(dto, health), manifests)
         this.RebuildActivity()
         return true
     }
 
-    private async LoadHealth(dto: EnvironmentDto): Promise<HiveHealthDto | undefined>
+    // The environment's hive: its own, else the tenant's one hive.
+    private async HiveIdOf(dto: EnvironmentDto): Promise<string | undefined>
     {
-        const hiveId = dto.hiveId !== undefined && dto.hiveId !== ''
+        return dto.hiveId !== undefined && dto.hiveId !== EnvironmentDetailPageViewModel.NoText
             ? dto.hiveId
             : await BestEffort.Or(this.Session.ResolveHiveId(), undefined)
+    }
+
+    private async LoadHealth(dto: EnvironmentDto, hiveId: string | undefined): Promise<HiveHealthDto | undefined>
+    {
         if (hiveId === undefined)
         {
             return undefined
@@ -604,19 +633,35 @@ export class EnvironmentDetailPageViewModel extends TenantPageViewModel implemen
         const want = this.logsOpen && this.shown
         if (want && this.closeStream === undefined)
         {
-            this.closeStream = this.Session.Client.OpenLogStream(this.name, chunk => this.Append(chunk))
+            // Each stream gets a generation: a chunk or close from a stream
+            // this page has since replaced is ignored.
+            const stream = ++this.streamGeneration
+            this.closeStream = this.Session.Client.OpenLogStream(this.name,
+                chunk => this.Append(stream, chunk),
+                () => this.OnStreamClosed(stream))
         }
         else if (!want && this.closeStream !== undefined)
         {
             const close = this.closeStream
             this.closeStream = undefined
+            this.streamGeneration++
             close()
         }
     }
 
-    private Append(chunk: string): void
+    // The server closed the stream: forget it, so the next open (Hide /
+    // View logs, or leaving and coming back) reconnects.
+    private OnStreamClosed(stream: number): void
     {
-        if (this.paused || this.closeStream === undefined)
+        if (stream === this.streamGeneration)
+        {
+            this.closeStream = undefined
+        }
+    }
+
+    private Append(stream: number, chunk: string): void
+    {
+        if (this.paused || this.closeStream === undefined || stream !== this.streamGeneration)
         {
             return
         }

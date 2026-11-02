@@ -1,7 +1,8 @@
-import { UtcText } from '../../shell/utc-text.js'
 import type { TenantApiClient } from '../../tenant-api-client.js'
 import { EnvStatus, VersionBadge } from '../../tenant-types.js'
 import type { AdoptionLedgerDto, EnvironmentDto, HiveRolloutDto, ManifestDto, RolloutEnvDto } from '../../tenant-types.js'
+import { UtcText } from '../../shell/utc-text.js'
+import { VersionOffer } from '../environments/version-offer.js'
 
 // What adopting a version does to one environment.
 export enum EnvStepKind
@@ -123,8 +124,8 @@ export class ReleasesSnapshot
 
     private constructor(manifests: readonly ManifestDto[], private readonly rollout: HiveRolloutDto, environments: readonly EnvironmentDto[], ledger: readonly AdoptionLedgerDto[])
     {
-        const sorted = [...manifests].sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt))
-        const currentId = ReleasesSnapshot.CurrentId(sorted, rollout)
+        const sorted = VersionOffer.NewestFirst(manifests)
+        const currentId = VersionOffer.CurrentId(sorted, rollout)
         const currentIndex = sorted.findIndex(m => m.id === currentId)
         this.Versions = sorted.map((manifest, i) => new VersionEntry(manifest, ReleasesSnapshot.BadgeOf(manifest, i, currentIndex)))
         this.statuses = new Map(environments.map(e => [e.name, e.status]))
@@ -215,22 +216,5 @@ export class ReleasesSnapshot
             return VersionBadge.Withdrawn
         }
         return currentIndex >= 0 && index === currentIndex + 1 ? VersionBadge.Previous : VersionBadge.Available
-    }
-
-    // The target is the source of truth; with none, the running image counts
-    // only if every environment agrees.
-    private static CurrentId(sorted: readonly ManifestDto[], rollout: HiveRolloutDto): string | undefined
-    {
-        if (rollout.targetVersion !== undefined)
-        {
-            return sorted.find(m => m.id === rollout.targetVersion)?.id
-        }
-        const images = new Set(rollout.environments.map(e => e.runningImage))
-        if (images.size !== 1)
-        {
-            return undefined
-        }
-        const [image] = [...images]
-        return image === undefined ? undefined : sorted.find(m => m.image === image)?.id
     }
 }

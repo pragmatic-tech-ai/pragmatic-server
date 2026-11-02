@@ -68,7 +68,7 @@ describe('SettingsPageViewModel', () =>
             ['Cluster mode', 'attach'],
             ['Registry mode', 'pull'],
             ['Registry endpoint', 'registry.example.test'],
-            ['Created', '2026-01-01T00:00:00.000Z'],
+            ['Created', '2026-01-01 00:00 UTC'],
         ])
     })
 

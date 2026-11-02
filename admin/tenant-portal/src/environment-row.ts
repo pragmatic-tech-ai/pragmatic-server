@@ -5,7 +5,6 @@ import type { EnvironmentDto, HiveHealthDto, Template } from './tenant-types.js'
 export enum EnvironmentTone
 {
     Success,
-    Warning,
     Danger,
     Neutral,
 }

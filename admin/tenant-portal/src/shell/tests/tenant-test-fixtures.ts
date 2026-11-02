@@ -151,7 +151,9 @@ export class FakeTenantApi
     public Failure: Error | undefined
     public readonly FailOn = new Map<string, Error>()
     public readonly Calls: Array<[string, ...unknown[]]> = []
-    public readonly LogStreams: Array<{ Name: string, Push: (text: string) => void, Closed: boolean }> = []
+    // Push delivers a chunk; Late delivers one even after the stream closed (a
+    // frame already in flight); ServerClose closes it from the server side.
+    public readonly LogStreams: Array<{ Name: string, Push: (text: string) => void, Late: (text: string) => void, ServerClose: () => void, Closed: boolean }> = []
     public readonly EventHandlers: Array<(ev: TenantEvent) => void> = []
     public BeginLoginCount = 0
     public LogoutCount = 0
@@ -399,9 +401,15 @@ export class FakeTenantApi
         }
     }
 
-    public OpenLogStream(name: string, onChunk: (text: string) => void): () => void
+    public OpenLogStream(name: string, onChunk: (text: string) => void, onClose?: () => void): () => void
     {
-        const stream = { Name: name, Push: (text: string) => { if (!stream.Closed) { onChunk(text) } }, Closed: false }
+        const stream = {
+            Name: name,
+            Push: (text: string) => { if (!stream.Closed) { onChunk(text) } },
+            Late: (text: string) => { onChunk(text) },
+            ServerClose: () => { stream.Closed = true; onClose?.() },
+            Closed: false,
+        }
         this.LogStreams.push(stream)
         return () => { stream.Closed = true }
     }

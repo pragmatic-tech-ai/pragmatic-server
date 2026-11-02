@@ -1,4 +1,3 @@
-import { UtcText } from '../../shell/utc-text.js'
 import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import { TenantApiError } from '../../tenant-api-client.js'
@@ -7,6 +6,7 @@ import { PendingWork, type IHoldsPendingWork } from '../../shell/holds-pending-w
 import { OptionViewModel } from '../../shell/option-view-model.js'
 import { TenantPageViewModel } from '../../shell/tenant-page-view-model.js'
 import type { TenantSessionService } from '../../shell/tenant-session-service.js'
+import { UtcText } from '../../shell/utc-text.js'
 import { ReleasesSnapshot } from './releases-snapshot.js'
 import type { EnvStepEntry, OfferEntry } from './releases-snapshot.js'
 
@@ -124,6 +124,8 @@ export class AdoptWizardPageViewModel extends TenantPageViewModel implements IHo
     private static readonly IsChoiceStepProperty = 'IsChoiceStep'
     private static readonly VersionsProperty = 'Versions'
     private static readonly SelectedVersionProperty = 'SelectedVersion'
+    private static readonly UnofferedTextProperty = 'UnofferedText'
+    private static readonly UnofferedTemplate = 'Version {version} is no longer offered. Choose another version.'
     private static readonly VersionTextProperty = 'VersionText'
     private static readonly PublishedTextProperty = 'PublishedText'
     private static readonly NotesProperty = 'Notes'
@@ -149,6 +151,7 @@ export class AdoptWizardPageViewModel extends TenantPageViewModel implements IHo
     private static readonly NoHiveText = 'No hive yet. Versions are offered once your hive is installed.'
     private static readonly EmptyTextProperty = 'EmptyText'
     private static readonly NoText = ''
+    private static readonly VersionToken = '{version}'
     private static readonly ConflictStatus = 409
 
     private readonly steps = new ObservableCollection<AdoptStepViewModel>()
@@ -164,6 +167,7 @@ export class AdoptWizardPageViewModel extends TenantPageViewModel implements IHo
     private step = AdoptStep.Version
     private versions = new ObservableCollection<OptionViewModel<string>>()
     private selected: OptionViewModel<string> | undefined
+    private unoffered = AdoptWizardPageViewModel.NoText
     private environments = new ObservableCollection<AdoptEnvironmentRowViewModel>()
     private submitted = false
     private submitting = false
@@ -247,6 +251,10 @@ export class AdoptWizardPageViewModel extends TenantPageViewModel implements IHo
         if (next === this.selected || this.step !== AdoptStep.Version)
         {
             return
+        }
+        if (next !== undefined)
+        {
+            this.SetUnoffered(AdoptWizardPageViewModel.NoText)
         }
         this.Select(next)
     }
@@ -436,7 +444,35 @@ export class AdoptWizardPageViewModel extends TenantPageViewModel implements IHo
         {
             this.SetStep(AdoptStep.Version)
         }
+        // A version asked for (or chosen) that is no longer offered is never
+        // swapped for another one silently: that could be a rollback. Nothing
+        // is selected and the page says why; with nothing asked, the newest.
+        if (keep !== undefined && match === undefined)
+        {
+            this.SetUnoffered(AdoptWizardPageViewModel.UnofferedTemplate.replace(AdoptWizardPageViewModel.VersionToken, keep))
+            this.Select(undefined)
+            return
+        }
+        this.SetUnoffered(AdoptWizardPageViewModel.NoText)
         this.Select(match ?? options[0])
+    }
+
+    // Why nothing is selected: the version asked for is no longer offered;
+    // '' otherwise.
+    public get UnofferedText(): string
+    {
+        return this.unoffered
+    }
+
+    private SetUnoffered(next: string): void
+    {
+        const old = this.unoffered
+        if (old === next)
+        {
+            return
+        }
+        this.unoffered = next
+        this.RaisePropertyChanged(AdoptWizardPageViewModel.UnofferedTextProperty, old, next)
     }
 
     private Select(next: OptionViewModel<string> | undefined): void

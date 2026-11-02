@@ -1,6 +1,5 @@
 import { ObservableCollection } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
-import { EnvironmentRow } from '../../environment-row.js'
 import { TenantApiError } from '../../tenant-api-client.js'
 import type { HiveRolloutDto, RolloutEnvDto } from '../../tenant-types.js'
 import { TenantPageViewModel } from '../../shell/tenant-page-view-model.js'
@@ -26,16 +25,6 @@ export class ConnectionEnvironmentRowViewModel extends Observable
     public get Image(): string
     {
         return this.env.runningImage ?? ConnectionEnvironmentRowViewModel.NoImage
-    }
-
-    public get Version(): string
-    {
-        return EnvironmentRow.VersionOf(this.env.runningImage)
-    }
-
-    public get IsReady(): boolean
-    {
-        return this.env.ready
     }
 
     public get HealthLabel(): string

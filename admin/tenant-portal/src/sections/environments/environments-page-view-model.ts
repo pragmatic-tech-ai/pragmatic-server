@@ -129,6 +129,15 @@ export class EnvironmentsPageViewModel extends TenantPageViewModel implements IE
     private static readonly HasNoMatchesProperty = 'HasNoMatches'
     private static readonly SelectionTemplate = '{count} selected'
     private static readonly CountToken = '{count}'
+    private static readonly NoText = ''
+    private static readonly StopTitleTemplate = 'Stop {count} environment(s)?'
+    private static readonly StopMessagePrefix = 'Stops: '
+    private static readonly NameSeparator = ', '
+    private static readonly StopLabel = 'Stop'
+    private static readonly StopConsequences: readonly string[] = [
+        'Their live URLs stop serving until they are started again.',
+        'Their data is kept.',
+    ]
 
     private all: EnvironmentRow[] = []
     private rows = new ObservableCollection<EnvironmentTableRowViewModel>()
@@ -148,7 +157,7 @@ export class EnvironmentsPageViewModel extends TenantPageViewModel implements IE
             () => this.AnySelected(r => r.IsStopped))
         this.restartCommand = this.MutatingCommand(E, () => this.RunBulk(r => r.IsRunning, n => this.Session.Client.RestartEnvironment(n)),
             () => this.AnySelected(r => r.IsRunning))
-        this.stopCommand = this.MutatingCommand(E, () => this.RunBulk(r => r.IsRunning, n => this.Session.Client.StopEnvironment(n)),
+        this.stopCommand = this.MutatingCommand(E, () => this.ConfirmBulkStop(),
             () => this.AnySelected(r => r.IsRunning))
     }
 
@@ -174,6 +183,7 @@ export class EnvironmentsPageViewModel extends TenantPageViewModel implements IE
         this.filter = value
         this.RaisePropertyChanged(EnvironmentsPageViewModel.FilterProperty, old, value)
         this.RebuildRows()
+        this.DropHiddenSelections()
     }
 
     // Whether the filter hides every environment (there are some).
@@ -310,9 +320,19 @@ export class EnvironmentsPageViewModel extends TenantPageViewModel implements IE
     private async LoadHealth(environments: readonly EnvironmentDto[]): Promise<Map<string, HiveHealthDto>>
     {
         const hives = new Set<string>()
+        // An environment without its own hive is on the tenant's one hive
+        // (as the detail page reads it).
+        if (environments.some(e => e.hiveId === undefined || e.hiveId === EnvironmentsPageViewModel.NoText))
+        {
+            const fallback = await BestEffort.Or(this.Session.ResolveHiveId(), undefined)
+            if (fallback !== undefined)
+            {
+                hives.add(fallback)
+            }
+        }
         for (const e of environments)
         {
-            if (e.hiveId !== undefined && e.hiveId !== '')
+            if (e.hiveId !== undefined && e.hiveId !== EnvironmentsPageViewModel.NoText)
             {
                 hives.add(e.hiveId)
             }
@@ -349,6 +369,20 @@ export class EnvironmentsPageViewModel extends TenantPageViewModel implements IE
         this.RaisePropertyChanged(P.RowsProperty, old, this.rows)
         this.RaisePropertyChanged(P.AllSelectedProperty, before[0], this.AllSelected)
         this.RaisePropertyChanged(P.HasNoMatchesProperty, before[1], this.HasNoMatches)
+    }
+
+    // Bulk actions act on what the operator can see: a selected environment
+    // the filter now hides is unselected.
+    private DropHiddenSelections(): void
+    {
+        const shown = new Set(this.rows.ToArray().map(r => r.Name))
+        if ([...this.selected].every(n => shown.has(n)))
+        {
+            return
+        }
+        const before = this.SelectionSnapshot()
+        this.selected = new Set([...this.selected].filter(n => shown.has(n)))
+        this.RaiseSelectionChanged(before)
     }
 
     private SelectionSnapshot(): readonly [boolean, boolean, string]
@@ -396,6 +430,22 @@ export class EnvironmentsPageViewModel extends TenantPageViewModel implements IE
         {
             throw firstError
         }
+    }
+
+    // Stop takes environments out of service, so it asks first, naming them.
+    private ConfirmBulkStop(): Promise<void>
+    {
+        const P = EnvironmentsPageViewModel
+        const names = this.all.filter(r => this.selected.has(r.Name) && r.IsRunning).map(r => r.Name)
+        return this.Confirm(this.section.Dialogs, {
+            Capability: AdminCapability.Environments,
+            Title: P.StopTitleTemplate.replace(P.CountToken, String(names.length)),
+            Message: P.StopMessagePrefix + names.join(P.NameSeparator),
+            Consequences: P.StopConsequences,
+            ConfirmLabel: P.StopLabel,
+            Action: async () => { },
+            OnConfirmed: () => this.RunBulk(r => r.IsRunning, n => this.Session.Client.StopEnvironment(n)),
+        })
     }
 
     // A created environment opens its detail; the list reloads under it.

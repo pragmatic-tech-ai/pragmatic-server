@@ -28,33 +28,15 @@ export class VersionOffer
         return (rollout?.environments ?? []).filter(e => e.runningImage !== offer.image).length
     }
 
-    // The newest non-withdrawn manifest, when it is newer than what the
-    // environment runs (an environment whose running image is unknown is
-    // offered the newest).
-    public static ForEnvironment(manifests: readonly ManifestDto[], runningImage: string | undefined): ManifestDto | undefined
-    {
-        const sorted = VersionOffer.NewestFirst(manifests)
-        const newest = sorted.find(m => m.withdrawn !== true)
-        if (newest === undefined || newest.image === runningImage)
-        {
-            return undefined
-        }
-        const running = sorted.find(m => m.image === runningImage)
-        if (running !== undefined && Date.parse(running.publishedAt) >= Date.parse(newest.publishedAt))
-        {
-            return undefined
-        }
-        return newest
-    }
-
-    private static NewestFirst(manifests: readonly ManifestDto[]): ManifestDto[]
+    // The manifests, newest published first.
+    public static NewestFirst(manifests: readonly ManifestDto[]): ManifestDto[]
     {
         return [...manifests].sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt))
     }
 
     // The target is the source of truth; with none, the running image counts
     // only if every environment agrees.
-    private static CurrentId(sorted: readonly ManifestDto[], rollout: HiveRolloutDto): string | undefined
+    public static CurrentId(sorted: readonly ManifestDto[], rollout: HiveRolloutDto): string | undefined
     {
         if (rollout.targetVersion !== undefined)
         {

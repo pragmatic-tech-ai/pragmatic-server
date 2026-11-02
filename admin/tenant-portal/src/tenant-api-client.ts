@@ -277,11 +277,16 @@ export class TenantApiClient implements IReleasesSource, IUsersAccessSource, ITo
         }
     }
 
-    // Follows an environment's logs; raw text frames go to onChunk. The returned function closes the stream.
-    public OpenLogStream(name: string, onChunk: (text: string) => void): () => void
+    // Follows an environment's logs; raw text frames go to onChunk, and onClose runs when the server (or the
+    // network) closes the stream. The returned function closes the stream.
+    public OpenLogStream(name: string, onChunk: (text: string) => void, onClose?: () => void): () => void
     {
         const socket = this.sockets.Open(this.WsBase() + this.EnvRoute(name) + TenantApiClient.PathSeparator + TenantApiClient.LogStreamLeaf)
         socket.OnMessage(data => { onChunk(data) })
+        if (onClose !== undefined)
+        {
+            socket.OnClose(() => { onClose() })
+        }
         return () => { socket.Close() }
     }
 

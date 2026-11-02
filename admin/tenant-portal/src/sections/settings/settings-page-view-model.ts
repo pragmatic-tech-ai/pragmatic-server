@@ -2,6 +2,7 @@ import { ObservableCollection } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import { TenantPageViewModel } from '../../shell/tenant-page-view-model.js'
 import type { TenantSessionService } from '../../shell/tenant-session-service.js'
+import { UtcText } from '../../shell/utc-text.js'
 import type { HiveDto, TenantProfileDto } from '../../tenant-types.js'
 
 // The Settings page's tabs, in order.
@@ -187,17 +188,16 @@ export class SettingsPageViewModel extends TenantPageViewModel
         return !this.HasIdp
     }
 
-    // The profile, then the tenant's one hive.
+    // The profile and the tenant's one hive, read together.
     protected override async LoadCore(): Promise<boolean>
     {
         const generation = this.LoadGeneration
-        const profile = await this.Session.Client.Profile()
-        const hives = await this.Session.Client.ListHives()
+        const [profile, hives] = await Promise.all([this.Session.Client.Profile(), this.Session.Client.ListHives()])
         if (generation !== this.LoadGeneration)
         {
             return false
         }
-        this.Apply(profile ?? undefined, hives[0])
+        this.Apply(profile, hives[0])
         return this.profile !== undefined
     }
 
@@ -247,7 +247,7 @@ export class SettingsPageViewModel extends TenantPageViewModel
         {
             items.push([P.KeyRegistryEndpoint, hive.registry.endpoint])
         }
-        items.push([P.KeyCreated, hive.createdAt])
+        items.push([P.KeyCreated, UtcText.DateTime(hive.createdAt)])
         return items
     }
 

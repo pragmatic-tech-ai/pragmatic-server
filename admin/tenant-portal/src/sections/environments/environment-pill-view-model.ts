@@ -31,11 +31,6 @@ export class EnvironmentPillViewModel extends Observable
         return this.tone === EnvironmentTone.Success
     }
 
-    public get IsWarning(): boolean
-    {
-        return this.tone === EnvironmentTone.Warning
-    }
-
     public get IsDanger(): boolean
     {
         return this.tone === EnvironmentTone.Danger

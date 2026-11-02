@@ -1,6 +1,7 @@
 import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
-import { Observable } from '@pragmatic-tech-ai/todl-runtime'
+import { Observable, type IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { ActivityLog, type ActivityEntry } from '../../activity-log.js'
+import { ShownPage, type IShownPage } from '../../shell/shown-page.js'
 import { TenantPageViewModel } from '../../shell/tenant-page-view-model.js'
 import type { TenantSessionService } from '../../shell/tenant-session-service.js'
 
@@ -46,20 +47,36 @@ export class ActivityRows
 // Activity: the tenant events this session has observed, newest first. The
 // log lives only in this browser tab (it is not persisted), so a fresh
 // session starts empty. New events show as they arrive.
-export class ActivityPageViewModel extends TenantPageViewModel
+export class ActivityPageViewModel extends TenantPageViewModel implements IShownPage
 {
     private static readonly RowsProperty = 'Rows'
 
     private rows = new ObservableCollection<ActivityRowViewModel>()
     private readonly backCommand: RelayCommand
+    private subscription: IDisposable | undefined
 
     public constructor(session: TenantSessionService, back: RelayCommand)
     {
         super(session)
         this.backCommand = back
-        // The section keeps one Activity page for the session, so this
-        // subscription lives exactly as long as the log it watches.
-        session.Activity.PropertyChanged(ActivityLog.EntriesProperty).subscribe(() => { void this.Refresh() })
+        ShownPage.Register(this)
+    }
+
+    // Follows the session's activity only while shown (and reloads when it
+    // shows again), like every other page holding a live subscription.
+    public OnShown(): void
+    {
+        if (this.subscription === undefined)
+        {
+            this.subscription = this.Session.Activity.PropertyChanged(ActivityLog.EntriesProperty)
+                .subscribe(() => { void this.Refresh() })
+        }
+    }
+
+    public OnHidden(): void
+    {
+        this.subscription?.dispose()
+        this.subscription = undefined
     }
 
     public get Rows(): ObservableCollection<ActivityRowViewModel>

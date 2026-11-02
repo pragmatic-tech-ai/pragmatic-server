@@ -31,17 +31,11 @@ resources OverviewResources {
                 }
             }
 
-            // States: loading, empty, error and denied.
+            // States: loading, error and denied. With no environments the page
+            // is still populated: the connection card, the offer and recent
+            // activity show, and the environments block says none exist yet.
             TextBlock [ DockPanel.Dock = Top, Text = "Loading your environments...", Foreground = @Fg2,
                         Visibility = $IsLoading << ToVisibility ]
-            StackPanel [ DockPanel.Dock = Top, Orientation = Vertical, Visibility = $IsEmpty << ToVisibility ] {
-                TextBlock [ Text = "No environments yet", Style = @UiLabel, Foreground = @Fg0 ]
-                TextBlock [ Text = "An environment is a running workspace that serves Capability Maps to your users. Create one to get a live URL.",
-                            Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,4,0,12) ]
-                Button [ Variant = Primary, Command = $CreateCommand, HorizontalAlignment = Left ] {
-                    TextBlock [ Text = "Create your first environment" ]
-                }
-            }
             StackPanel [ DockPanel.Dock = Top, Orientation = Vertical, Visibility = $IsError << ToVisibility ] {
                 TextBlock [ Text = "Could not load your environments.", Foreground = @StateDangerInk ]
                 TextBlock [ Text = $ErrorText, Foreground = @StateDangerInk, TextWrapping = Wrap ]
@@ -82,8 +76,19 @@ resources OverviewResources {
                         // Left: the environments and the latest activity.
                         StackPanel [ Grid.Column = 0, Orientation = Vertical, Margin = (0,0,16,0) ] {
                             TextBlock [ Text = "Environments", Style = @TenantSectionCaption ]
+                            Border [ Style = @TenantPanel, Visibility = $HasNoEnvironments << ToVisibility ] {
+                                StackPanel [ Orientation = Vertical ] {
+                                    TextBlock [ Text = "No environments yet", Style = @UiLabel, Foreground = @Fg0 ]
+                                    TextBlock [ Text = "An environment is a running workspace that serves Capability Maps to your users. Create one to get a live URL.",
+                                                Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,4,0,12) ]
+                                    Button [ Variant = Primary, Command = $CreateCommand, HorizontalAlignment = Left ] {
+                                        TextBlock [ Text = "Create your first environment" ]
+                                    }
+                                }
+                            }
                             ListBox [ Style = @TenantTableList, HorizontalAlignment = Stretch, ItemsSource = $Cards,
-                                      ItemTemplate = @OverviewEnvironmentCardTemplate, Margin = (0,0,0,16) ]
+                                      ItemTemplate = @OverviewEnvironmentCardTemplate, Margin = (0,0,0,16),
+                                      Visibility = $HasEnvironments << ToVisibility ]
                             DockPanel [ Margin = (0,0,0,6) ] {
                                 Button [ DockPanel.Dock = Right, Variant = Ghost, Command = $SeeAllActivityCommand ] {
                                     TextBlock [ Text = "See all activity" ]

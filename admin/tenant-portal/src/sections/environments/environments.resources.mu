@@ -27,9 +27,6 @@ resources EnvironmentsResources {
             Border [ Fill = @StateSuccessSoft, Padding = (8,2,8,2), Visibility = $IsSuccess << ToVisibility ] {
                 TextBlock [ Text = $Label, Style = @UiCaption, Foreground = @StateSuccessInk ]
             }
-            Border [ Fill = @StateWarningSoft, Padding = (8,2,8,2), Visibility = $IsWarning << ToVisibility ] {
-                TextBlock [ Text = $Label, Style = @UiCaption, Foreground = @StateWarningInk ]
-            }
             Border [ Fill = @StateDangerSoft, Padding = (8,2,8,2), Visibility = $IsDanger << ToVisibility ] {
                 TextBlock [ Text = $Label, Style = @UiCaption, Foreground = @StateDangerInk ]
             }
@@ -159,13 +156,13 @@ resources EnvironmentsResources {
             // Page header: back, the environment, its lifecycle and Delete.
             DockPanel [ DockPanel.Dock = Top, Margin = (0,0,0,12) ] {
                 StackPanel [ DockPanel.Dock = Right, Orientation = Horizontal, VerticalAlignment = Top ] {
-                    Button [ Variant = Secondary, Command = $StartCommand, Margin = (0,0,8,0), Visibility = $IsStopped << ToVisibility ] {
+                    Button [ Variant = Secondary, Command = $StartCommand, Margin = (0,0,8,0), Visibility = $CanStart << ToVisibility ] {
                         TextBlock [ Text = "Start" ]
                     }
                     Button [ Variant = Secondary, Command = $StopCommand, Margin = (0,0,8,0), Visibility = $IsRunning << ToVisibility ] {
                         TextBlock [ Text = "Stop" ]
                     }
-                    Button [ Variant = Secondary, Command = $RestartCommand, Margin = (0,0,8,0), Visibility = $IsRunning << ToVisibility ] {
+                    Button [ Variant = Secondary, Command = $RestartCommand, Margin = (0,0,8,0), Visibility = $CanRestart << ToVisibility ] {
                         TextBlock [ Text = "Restart" ]
                     }
                     Button [ Variant = Danger, Command = $DeleteCommand ] {

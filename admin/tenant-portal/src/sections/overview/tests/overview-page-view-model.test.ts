@@ -122,7 +122,7 @@ describe('Overview page', () =>
         assert.equal(api.Count('GetRollout'), 0)
     })
 
-    it('is an Error only when the environments fail, Empty without any, and expires on a 401 anywhere', async () =>
+    it('is an Error only when the environments fail, still populated without any, and expires on a 401 anywhere', async () =>
     {
         const failing = Home.Api()
         failing.FailOn.set('ListEnvironments', new TenantApiError(500, 'boom'))
@@ -130,14 +130,30 @@ describe('Overview page', () =>
         assert.equal(failed.State, PageState.Error)
         assert.equal(failed.ErrorText, 'boom')
 
+        // No environments: the connection card, offer and activity still show.
         const empty = await Home.Open(new SectionsFixture(new FakeTenantApi()))
-        assert.equal(empty.State, PageState.Empty)
+        assert.equal(empty.State, PageState.Populated)
+        assert.equal(empty.HasNoEnvironments, true)
 
         const expiring = Home.Api()
         expiring.FailOn.set('GetHealth', new TenantApiError(401, 'gone'))
         const f = new SectionsFixture(expiring)
         await Home.Open(f)
         assert.equal(f.Host.Reloader.Count, 1)
+    })
+
+    it('stops following activity once its root is rebuilt (the boot restarts the first section)', async () =>
+    {
+        const f = new SectionsFixture(Home.Api())
+        const first = await Home.Open(f)
+        f.Overview.Restart()
+        await Tick.Settle()
+        const second = f.Content
+        assert.ok(second instanceof OverviewPageViewModel)
+        assert.notEqual(second, first)
+        f.Host.Session.RecordEvent({ type: TenantEventType.EnvironmentChanged, environmentName: 'alpha' })
+        assert.equal(first.RecentActivity.Count, 0)
+        assert.equal(second.RecentActivity.Count, 1)
     })
 
     it("opens an environment's detail in Environments from its card", async () =>

@@ -118,8 +118,10 @@ resources ReleasesResources {
                 StackPanel [ Orientation = Vertical ] {
                     // The offers, newest first.
                     TextBlock [ Text = "Offered versions", Style = @TenantSectionCaption ]
+                    TextBlock [ Text = $NoOffersText, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,16),
+                                Visibility = $HasNoOffers << ToVisibility ]
                     ListBox [ Style = @TenantTableList, HorizontalAlignment = Stretch, ItemsSource = $Offers,
-                              ItemTemplate = @ReleasesOfferTemplate, Margin = (0,0,0,8) ]
+                              ItemTemplate = @ReleasesOfferTemplate, Margin = (0,0,0,8), Visibility = $HasOffers << ToVisibility ]
 
                     // Environment x version.
                     StackPanel [ Orientation = Vertical, Visibility = $HasMatrix << ToVisibility ] {
@@ -264,6 +266,8 @@ resources ReleasesResources {
                                         Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,12) ]
                             TextBlock [ Text = "Version", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
                             ComboBox [ ItemsSource = $Versions, SelectedItem = $SelectedVersion, HorizontalAlignment = Stretch, Margin = (0,0,0,12) ]
+                            TextBlock [ Text = $UnofferedText, Foreground = @StateWarningInk, TextWrapping = Wrap, Margin = (0,0,0,12),
+                                        Visibility = $UnofferedText << ToVisibility ]
                             TextBlock [ Text = $PublishedText, Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
                             TextBlock [ Text = $Notes, Foreground = @Fg1, TextWrapping = Wrap, Visibility = $Notes << ToVisibility ]
                         }
