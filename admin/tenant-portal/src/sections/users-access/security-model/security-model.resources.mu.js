@@ -124,7 +124,7 @@ export class SecurityModelResources extends ResourceDictionary {
             _stackPanel23.set_property_value(StackPanel.OrientationKey, Orientation.Horizontal);
             _stackPanel23.set_property_value(StackPanel.MarginKey, new Thickness(0, 0, 0, 12));
             const _segmentedButton24 = new SegmentedButton();
-            _segmentedButton24.set_property_value(SegmentedButton.ItemsKey, DataContextBinding(_segmentedButton24, "ModeLabels"));
+            _segmentedButton24.set_property_value(SegmentedButton.ItemsSourceKey, DataContextBinding(_segmentedButton24, "ModeLabels"));
             _segmentedButton24.set_property_value(SegmentedButton.SelectedItemKey, DataContextBinding(_segmentedButton24, "SelectedMode"));
             _segmentedButton24.set_property_value(SegmentedButton.SelectionModeKey, SelectionMode.Single);
             _segmentedButton24.set_property_value(SegmentedButton.HorizontalAlignmentKey, HorizontalAlignment.Left);
@@ -215,7 +215,7 @@ export class SecurityModelResources extends ResourceDictionary {
             _stackPanel43.set_property_value(StackPanel.OrientationKey, Orientation.Horizontal);
             _stackPanel43.set_property_value(StackPanel.MarginKey, new Thickness(0, 0, 0, 12));
             const _segmentedButton44 = new SegmentedButton();
-            _segmentedButton44.set_property_value(SegmentedButton.ItemsKey, DataContextBinding(_segmentedButton44, "RoleTabLabels"));
+            _segmentedButton44.set_property_value(SegmentedButton.ItemsSourceKey, DataContextBinding(_segmentedButton44, "RoleTabLabels"));
             _segmentedButton44.set_property_value(SegmentedButton.SelectedItemKey, DataContextBinding(_segmentedButton44, "SelectedRoleTab"));
             _segmentedButton44.set_property_value(SegmentedButton.SelectionModeKey, SelectionMode.Single);
             _segmentedButton44.set_property_value(SegmentedButton.HorizontalAlignmentKey, HorizontalAlignment.Left);
@@ -564,7 +564,7 @@ export class SecurityModelResources extends ResourceDictionary {
             _stackPanel124.set_property_value(StackPanel.OrientationKey, Orientation.Horizontal);
             _stackPanel124.set_property_value(StackPanel.MarginKey, new Thickness(0, 0, 0, 12));
             const _segmentedButton125 = new SegmentedButton();
-            _segmentedButton125.set_property_value(SegmentedButton.ItemsKey, DataContextBinding(_segmentedButton125, "OrgTabLabels"));
+            _segmentedButton125.set_property_value(SegmentedButton.ItemsSourceKey, DataContextBinding(_segmentedButton125, "OrgTabLabels"));
             _segmentedButton125.set_property_value(SegmentedButton.SelectedItemKey, DataContextBinding(_segmentedButton125, "SelectedOrgTab"));
             _segmentedButton125.set_property_value(SegmentedButton.SelectionModeKey, SelectionMode.Single);
             _segmentedButton125.set_property_value(SegmentedButton.HorizontalAlignmentKey, HorizontalAlignment.Left);
@@ -1049,18 +1049,21 @@ export class SecurityModelResources extends ResourceDictionary {
             _textBlock244.set_property_value(TextBlock.VerticalAlignmentKey, VerticalAlignment.Center);
             _grid238.AddChild(_textBlock244);
             const _checkbox245 = new Checkbox();
+            _checkbox245.set_property_value(Checkbox.HorizontalAlignmentKey, HorizontalAlignment.Left);
             _checkbox245.set_property_value(Grid.ColumnKey, 1);
             _checkbox245.set_property_value(Checkbox.IsCheckedKey, DataContextBinding(_checkbox245, "CanRead"));
             _checkbox245.set_property_value(Checkbox.IsEnabledKey, DataContextBinding(_checkbox245, "CanEdit"));
             _checkbox245.set_property_value(Checkbox.VerticalAlignmentKey, VerticalAlignment.Center);
             _grid238.AddChild(_checkbox245);
             const _checkbox246 = new Checkbox();
+            _checkbox246.set_property_value(Checkbox.HorizontalAlignmentKey, HorizontalAlignment.Left);
             _checkbox246.set_property_value(Grid.ColumnKey, 2);
             _checkbox246.set_property_value(Checkbox.IsCheckedKey, DataContextBinding(_checkbox246, "CanUpdate"));
             _checkbox246.set_property_value(Checkbox.IsEnabledKey, DataContextBinding(_checkbox246, "CanEdit"));
             _checkbox246.set_property_value(Checkbox.VerticalAlignmentKey, VerticalAlignment.Center);
             _grid238.AddChild(_checkbox246);
             const _checkbox247 = new Checkbox();
+            _checkbox247.set_property_value(Checkbox.HorizontalAlignmentKey, HorizontalAlignment.Left);
             _checkbox247.set_property_value(Grid.ColumnKey, 3);
             _checkbox247.set_property_value(Checkbox.IsCheckedKey, DataContextBinding(_checkbox247, "CanCreate"));
             _checkbox247.set_property_value(Checkbox.IsEnabledKey, DataContextBinding(_checkbox247, "CanEdit"));
@@ -1412,6 +1415,7 @@ export class SecurityModelResources extends ResourceDictionary {
             _stackPanel329.set_property_value(StackPanel.OrientationKey, Orientation.Horizontal);
             _stackPanel329.set_property_value(StackPanel.MarginKey, new Thickness(0, 2, 0, 2));
             const _checkbox330 = new Checkbox();
+            _checkbox330.set_property_value(Checkbox.HorizontalAlignmentKey, HorizontalAlignment.Left);
             _checkbox330.set_property_value(Checkbox.IsCheckedKey, DataContextBinding(_checkbox330, "IsChecked"));
             _checkbox330.set_property_value(Checkbox.IsEnabledKey, DataContextBinding(_checkbox330, "CanEdit"));
             _checkbox330.set_property_value(Checkbox.VerticalAlignmentKey, VerticalAlignment.Center);

@@ -22,13 +22,14 @@ export class LiveUpdateBridge
         }
     }
 
-    // Reloads the active section's current page (after the session starts).
-    public async RefreshActive(): Promise<void>
+    // Rebuilds the active section from a fresh root page, which starts its
+    // own load (after the session starts).
+    public RestartActive(): void
     {
         const active = this.nav.ActiveService
         if (active instanceof TenantSectionService)
         {
-            await active.RefreshCurrent()
+            active.Restart()
         }
     }
 }

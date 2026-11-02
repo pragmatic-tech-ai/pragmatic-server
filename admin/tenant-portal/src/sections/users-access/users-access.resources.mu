@@ -69,7 +69,7 @@ resources UsersAccessResources {
                     TextBlock [ Text = "Environment", Style = @UiLabel, Foreground = @Fg1, VerticalAlignment = Center, Margin = (0,0,8,0) ]
                     ComboBox [ ItemsSource = $Environments, SelectedItem = $SelectedEnvironment, Placeholder = "Choose environment" ]
                 }
-                SegmentedButton [ DockPanel.Dock = Top, Items = $TabLabels, SelectedItem = $SelectedTab, SelectionMode = Single,
+                SegmentedButton [ DockPanel.Dock = Top, ItemsSource = $TabLabels, SelectedItem = $SelectedTab, SelectionMode = Single,
                                   HorizontalAlignment = Left, Margin = (0,0,0,16) ]
                 ContentControl [ Content = $CurrentTab ]
             }
@@ -173,7 +173,7 @@ resources UsersAccessResources {
                             ColumnDefinition [ Width = GridLength.Star ]
                             ColumnDefinition [ Width = GridLength.Star ]
                             ColumnDefinition [ Width = GridLength.Star ]
-                            ColumnDefinition [ Width = GridLength.Auto ]
+                            ColumnDefinition [ Width = GridLength.Star ]
                         }
                         TextBlock [ Grid.Column = 0, Text = "Token reference", Style = @TenantTableHeader ]
                         TextBlock [ Grid.Column = 1, Text = "Owner", Style = @TenantTableHeader ]
@@ -198,7 +198,7 @@ resources UsersAccessResources {
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]
-                ColumnDefinition [ Width = GridLength.Auto ]
+                ColumnDefinition [ Width = GridLength.Star ]
             }
             TextBlock [ Grid.Column = 0, Text = $TokenRef, Style = @Code, Foreground = @Fg0, VerticalAlignment = Center ]
             TextBlock [ Grid.Column = 1, Text = $Owner, Foreground = @Fg1, VerticalAlignment = Center ]
@@ -215,7 +215,7 @@ resources UsersAccessResources {
                     TextBlock [ Text = $StatusLabel, Style = @UiCaption, Foreground = @Fg2 ]
                 }
             }
-            Button [ Grid.Column = 5, Variant = Secondary, Command = $RevokeCommand, VerticalAlignment = Center ] {
+            Button [ Grid.Column = 5, Variant = Secondary, Command = $RevokeCommand, HorizontalAlignment = Right, VerticalAlignment = Center ] {
                 TextBlock [ Text = "Revoke" ]
             }
         }
@@ -297,7 +297,7 @@ resources UsersAccessResources {
                                     ColumnDefinitions {
                                         ColumnDefinition [ Width = GridLength.Star ]
                                         ColumnDefinition [ Width = GridLength.Star ]
-                                        ColumnDefinition [ Width = GridLength.Auto ]
+                                        ColumnDefinition [ Width = GridLength.Star ]
                                     }
                                     TextBlock [ Grid.Column = 0, Text = "Role", Style = @TenantTableHeader ]
                                     TextBlock [ Grid.Column = 1, Text = "Resource path", Style = @TenantTableHeader ]
@@ -319,11 +319,11 @@ resources UsersAccessResources {
             ColumnDefinitions {
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]
-                ColumnDefinition [ Width = GridLength.Auto ]
+                ColumnDefinition [ Width = GridLength.Star ]
             }
             TextBlock [ Grid.Column = 0, Text = $Role, Style = @UiLabel, Foreground = @Fg0, VerticalAlignment = Center ]
             TextBlock [ Grid.Column = 1, Text = $ResourceText, Style = @Code, Foreground = @Fg1, VerticalAlignment = Center ]
-            Button [ Grid.Column = 2, Variant = Secondary, Command = $RevokeCommand, VerticalAlignment = Center ] {
+            Button [ Grid.Column = 2, Variant = Secondary, Command = $RevokeCommand, HorizontalAlignment = Right, VerticalAlignment = Center ] {
                 TextBlock [ Text = "Revoke" ]
             }
         }

@@ -255,6 +255,18 @@ export abstract class TenantSectionService extends ServiceBase implements IActiv
         await this.RefreshCurrent()
     }
 
+    // Drops every page and presents a fresh root. The boot calls it on the
+    // section activated while app.mu.js was imported, before the session
+    // existed: pages capture the session's permissions as they are built,
+    // so that root is rebuilt rather than reloaded.
+    public Restart(): void
+    {
+        const old = this.Current
+        this.pages.length = 0
+        ShownPage.Hidden(old)
+        this.OnActivated()
+    }
+
     public async RefreshCurrent(): Promise<void>
     {
         const current = this.Current

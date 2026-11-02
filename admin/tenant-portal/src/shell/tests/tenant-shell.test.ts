@@ -199,6 +199,27 @@ describe('TenantSectionService', () =>
     })
 })
 
+describe('TenantSectionService.Restart', () =>
+{
+    it('rebuilds the root (built before the session existed) and drops any stacked page', async () =>
+    {
+        const f = new Fixture()
+        f.Rail.Select(SectionA)
+        await Tick.Settle()
+        const firstRoot = f.Content
+        const detail = f.A.Page('detail')
+        f.A.Present(detail)
+        new LiveUpdateBridge(f.Rail.Navigation, f.Host.Session).RestartActive()
+        await Tick.Settle()
+        assert.equal(f.A.Roots, 2)
+        assert.notEqual(f.Content, firstRoot)
+        assert.equal(f.Content.Name, 'root-a')
+        assert.equal(detail.Hidden, 1)
+        f.A.Back()
+        assert.equal(f.Content.Name, 'root-a')
+    })
+})
+
 describe('TenantPageViewModel', () =>
 {
     it('moves Loading -> Populated or Empty', async () =>

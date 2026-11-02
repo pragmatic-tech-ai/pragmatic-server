@@ -48,7 +48,7 @@ resources SettingsResources {
             }
 
             DockPanel [ Visibility = $IsPopulated << ToVisibility ] {
-                SegmentedButton [ DockPanel.Dock = Top, Items = $TabLabels, SelectedItem = $SelectedTab, SelectionMode = Single,
+                SegmentedButton [ DockPanel.Dock = Top, ItemsSource = $TabLabels, SelectedItem = $SelectedTab, SelectionMode = Single,
                                   HorizontalAlignment = Left, Margin = (0,0,0,16) ]
 
                 ScrollViewer [ HorizontalScrollEnabled = false ] {

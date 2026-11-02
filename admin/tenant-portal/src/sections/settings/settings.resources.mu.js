@@ -112,7 +112,7 @@ export class SettingsResources extends ResourceDictionary {
             _dockPanel21.set_property_value(DockPanel.VisibilityKey, DataContextBinding(_dockPanel21, "IsPopulated", ToVisibility));
             const _segmentedButton22 = new SegmentedButton();
             _segmentedButton22.set_property_value(DockPanel.DockKey, Dock.Top);
-            _segmentedButton22.set_property_value(SegmentedButton.ItemsKey, DataContextBinding(_segmentedButton22, "TabLabels"));
+            _segmentedButton22.set_property_value(SegmentedButton.ItemsSourceKey, DataContextBinding(_segmentedButton22, "TabLabels"));
             _segmentedButton22.set_property_value(SegmentedButton.SelectedItemKey, DataContextBinding(_segmentedButton22, "SelectedTab"));
             _segmentedButton22.set_property_value(SegmentedButton.SelectionModeKey, SelectionMode.Single);
             _segmentedButton22.set_property_value(SegmentedButton.HorizontalAlignmentKey, HorizontalAlignment.Left);

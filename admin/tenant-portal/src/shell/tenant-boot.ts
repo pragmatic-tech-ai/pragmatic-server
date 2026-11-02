@@ -69,9 +69,8 @@ export class TenantBoot
             return
         }
         const { app } = await import('../app.mu.js')
-        const started = TenantBoot.StartShell(app.Services, client, decision.Session, profile, new BrowserPageReloader())
+        TenantBoot.StartShell(app.Services, client, decision.Session, profile, new BrowserPageReloader())
         TenantBoot.Mount(app, root)
-        await started
     }
 
     // Sign in when the probe finds no session (null, or a 401), the shell with
@@ -128,10 +127,10 @@ export class TenantBoot
     // composes the shell and activates the first section before the session
     // exists, so that section's first load fails. This initializes the session
     // (synchronously, before the first await), routes every tenant event
-    // through the live-update bridge, and resolves once the active section's
-    // page has reloaded with the session.
-    public static async StartShell(services: IServiceProvider, client: TenantApiClient, session: SessionDto,
-        profile: TenantProfileDto | undefined, reloader: IPageReloader): Promise<void>
+    // through the live-update bridge, and rebuilds the active section's root
+    // page (it was built without the session's permissions).
+    public static StartShell(services: IServiceProvider, client: TenantApiClient, session: SessionDto,
+        profile: TenantProfileDto | undefined, reloader: IPageReloader): void
     {
         const tenantSession = services.getRequired(TenantSessionService.Key)
         tenantSession.Initialize(client, session, profile, reloader)
@@ -140,7 +139,7 @@ export class TenantBoot
         {
             bridge.OnEvent(ev).catch((e: unknown) => console.error(TenantBoot.LiveUpdateFailed, e))
         })
-        await bridge.RefreshActive()
+        bridge.RestartActive()
     }
 
     private static IsUnauthorized(e: unknown): boolean

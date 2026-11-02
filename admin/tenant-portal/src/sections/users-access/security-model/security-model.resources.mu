@@ -70,7 +70,7 @@ resources SecurityModelResources {
             ScrollViewer [ HorizontalScrollEnabled = false, Visibility = $IsPopulated << ToVisibility ] {
                 StackPanel [ Orientation = Vertical ] {
                     StackPanel [ Orientation = Horizontal, Margin = (0,0,0,12) ] {
-                        SegmentedButton [ Items = $ModeLabels, SelectedItem = $SelectedMode, SelectionMode = Single, HorizontalAlignment = Left ]
+                        SegmentedButton [ ItemsSource = $ModeLabels, SelectedItem = $SelectedMode, SelectionMode = Single, HorizontalAlignment = Left ]
                     }
                     TextBlock [ Text = $DeniedReason, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,12),
                                 Visibility = $DeniedReason << ToVisibility ]
@@ -108,7 +108,7 @@ resources SecurityModelResources {
                             TextBlock [ Text = $SelectedRoleName, Style = @H4, Foreground = @Fg0, Margin = (0,0,0,8),
                                         Visibility = $HasSelectedRole << ToVisibility ]
                             StackPanel [ Orientation = Horizontal, Margin = (0,0,0,12) ] {
-                                SegmentedButton [ Items = $RoleTabLabels, SelectedItem = $SelectedRoleTab, SelectionMode = Single, HorizontalAlignment = Left ]
+                                SegmentedButton [ ItemsSource = $RoleTabLabels, SelectedItem = $SelectedRoleTab, SelectionMode = Single, HorizontalAlignment = Left ]
                             }
 
                             // What they can do: the privilege matrix.
@@ -239,7 +239,7 @@ resources SecurityModelResources {
                     // ---- Organization mode ----
                     StackPanel [ Orientation = Vertical, Visibility = $IsOrganizationMode << ToVisibility ] {
                         StackPanel [ Orientation = Horizontal, Margin = (0,0,0,12) ] {
-                            SegmentedButton [ Items = $OrgTabLabels, SelectedItem = $SelectedOrgTab, SelectionMode = Single, HorizontalAlignment = Left ]
+                            SegmentedButton [ ItemsSource = $OrgTabLabels, SelectedItem = $SelectedOrgTab, SelectionMode = Single, HorizontalAlignment = Left ]
                         }
 
                         // Business units.
@@ -433,9 +433,9 @@ resources SecurityModelResources {
                 ColumnDefinition [ Width = GridLength.Star ]
             }
             TextBlock [ Grid.Column = 0, Text = $Label, Style = @Code, Foreground = @Fg0, VerticalAlignment = Center ]
-            Checkbox [ Grid.Column = 1, IsChecked = $CanRead, IsEnabled = $CanEdit, VerticalAlignment = Center ]
-            Checkbox [ Grid.Column = 2, IsChecked = $CanUpdate, IsEnabled = $CanEdit, VerticalAlignment = Center ]
-            Checkbox [ Grid.Column = 3, IsChecked = $CanCreate, IsEnabled = $CanEdit, VerticalAlignment = Center ]
+            Checkbox [ HorizontalAlignment = Left, Grid.Column = 1, IsChecked = $CanRead, IsEnabled = $CanEdit, VerticalAlignment = Center ]
+            Checkbox [ HorizontalAlignment = Left, Grid.Column = 2, IsChecked = $CanUpdate, IsEnabled = $CanEdit, VerticalAlignment = Center ]
+            Checkbox [ HorizontalAlignment = Left, Grid.Column = 3, IsChecked = $CanCreate, IsEnabled = $CanEdit, VerticalAlignment = Center ]
             Button [ Grid.Column = 4, Variant = Ghost, Command = $RemoveCommand, HorizontalAlignment = Left ] {
                 TextBlock [ Text = "Remove" ]
             }
@@ -588,7 +588,7 @@ resources SecurityModelResources {
 
     DataTemplate x:key="SecurityModelTeamToggleTemplate" [ DataType = TeamToggleViewModel ] {
         StackPanel [ Orientation = Horizontal, Margin = (0,2,0,2) ] {
-            Checkbox [ IsChecked = $IsChecked, IsEnabled = $CanEdit, VerticalAlignment = Center, Margin = (0,0,6,0) ]
+            Checkbox [ HorizontalAlignment = Left, IsChecked = $IsChecked, IsEnabled = $CanEdit, VerticalAlignment = Center, Margin = (0,0,6,0) ]
             TextBlock [ Text = $TeamName, Foreground = @Fg1, VerticalAlignment = Center ]
         }
     }

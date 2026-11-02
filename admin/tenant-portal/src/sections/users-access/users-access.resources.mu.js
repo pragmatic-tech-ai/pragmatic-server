@@ -147,7 +147,7 @@ export class UsersAccessResources extends ResourceDictionary {
             _dockPanel21.AddChild(_stackPanel22);
             const _segmentedButton25 = new SegmentedButton();
             _segmentedButton25.set_property_value(DockPanel.DockKey, Dock.Top);
-            _segmentedButton25.set_property_value(SegmentedButton.ItemsKey, DataContextBinding(_segmentedButton25, "TabLabels"));
+            _segmentedButton25.set_property_value(SegmentedButton.ItemsSourceKey, DataContextBinding(_segmentedButton25, "TabLabels"));
             _segmentedButton25.set_property_value(SegmentedButton.SelectedItemKey, DataContextBinding(_segmentedButton25, "SelectedTab"));
             _segmentedButton25.set_property_value(SegmentedButton.SelectionModeKey, SelectionMode.Single);
             _segmentedButton25.set_property_value(SegmentedButton.HorizontalAlignmentKey, HorizontalAlignment.Left);
@@ -417,7 +417,7 @@ export class UsersAccessResources extends ResourceDictionary {
             _columnDefinition84.set_property_value(ColumnDefinition.WidthKey, GridLength.Star);
             _grid79.ColumnDefinitions.Add(_columnDefinition84);
             const _columnDefinition85 = new ColumnDefinition();
-            _columnDefinition85.set_property_value(ColumnDefinition.WidthKey, GridLength.Auto);
+            _columnDefinition85.set_property_value(ColumnDefinition.WidthKey, GridLength.Star);
             _grid79.ColumnDefinitions.Add(_columnDefinition85);
             const _textBlock86 = new TextBlock();
             _textBlock86.set_property_value(Grid.ColumnKey, 0);
@@ -480,7 +480,7 @@ export class UsersAccessResources extends ResourceDictionary {
             _columnDefinition99.set_property_value(ColumnDefinition.WidthKey, GridLength.Star);
             _grid94.ColumnDefinitions.Add(_columnDefinition99);
             const _columnDefinition100 = new ColumnDefinition();
-            _columnDefinition100.set_property_value(ColumnDefinition.WidthKey, GridLength.Auto);
+            _columnDefinition100.set_property_value(ColumnDefinition.WidthKey, GridLength.Star);
             _grid94.ColumnDefinitions.Add(_columnDefinition100);
             const _textBlock101 = new TextBlock();
             _textBlock101.set_property_value(Grid.ColumnKey, 0);
@@ -546,6 +546,7 @@ export class UsersAccessResources extends ResourceDictionary {
             _button112.set_property_value(Grid.ColumnKey, 5);
             _button112.set_property_value(Button.VariantKey, ButtonVariant.Secondary);
             _button112.set_property_value(Button.CommandKey, DataContextBinding(_button112, "RevokeCommand"));
+            _button112.set_property_value(Button.HorizontalAlignmentKey, HorizontalAlignment.Right);
             _button112.set_property_value(Button.VerticalAlignmentKey, VerticalAlignment.Center);
             const _textBlock113 = new TextBlock();
             _textBlock113.set_property_value(TextBlock.TextKey, "Revoke");
@@ -755,7 +756,7 @@ export class UsersAccessResources extends ResourceDictionary {
             _columnDefinition161.set_property_value(ColumnDefinition.WidthKey, GridLength.Star);
             _grid159.ColumnDefinitions.Add(_columnDefinition161);
             const _columnDefinition162 = new ColumnDefinition();
-            _columnDefinition162.set_property_value(ColumnDefinition.WidthKey, GridLength.Auto);
+            _columnDefinition162.set_property_value(ColumnDefinition.WidthKey, GridLength.Star);
             _grid159.ColumnDefinitions.Add(_columnDefinition162);
             const _textBlock163 = new TextBlock();
             _textBlock163.set_property_value(Grid.ColumnKey, 0);
@@ -797,7 +798,7 @@ export class UsersAccessResources extends ResourceDictionary {
             _columnDefinition170.set_property_value(ColumnDefinition.WidthKey, GridLength.Star);
             _grid168.ColumnDefinitions.Add(_columnDefinition170);
             const _columnDefinition171 = new ColumnDefinition();
-            _columnDefinition171.set_property_value(ColumnDefinition.WidthKey, GridLength.Auto);
+            _columnDefinition171.set_property_value(ColumnDefinition.WidthKey, GridLength.Star);
             _grid168.ColumnDefinitions.Add(_columnDefinition171);
             const _textBlock172 = new TextBlock();
             _textBlock172.set_property_value(Grid.ColumnKey, 0);
@@ -817,6 +818,7 @@ export class UsersAccessResources extends ResourceDictionary {
             _button174.set_property_value(Grid.ColumnKey, 2);
             _button174.set_property_value(Button.VariantKey, ButtonVariant.Secondary);
             _button174.set_property_value(Button.CommandKey, DataContextBinding(_button174, "RevokeCommand"));
+            _button174.set_property_value(Button.HorizontalAlignmentKey, HorizontalAlignment.Right);
             _button174.set_property_value(Button.VerticalAlignmentKey, VerticalAlignment.Center);
             const _textBlock175 = new TextBlock();
             _textBlock175.set_property_value(TextBlock.TextKey, "Revoke");

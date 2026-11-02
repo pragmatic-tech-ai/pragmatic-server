@@ -190,7 +190,7 @@ export class EnvironmentsResources extends ResourceDictionary {
             const _textBox36 = new TextBox();
             _textBox36.set_property_value(TextBox.TextKey, DataContextBinding(_textBox36, "Filter"));
             _textBox36.set_property_value(TextBox.PlaceholderKey, "Filter environments");
-            _textBox36.set_property_value(TextBox.HorizontalAlignmentKey, HorizontalAlignment.Left);
+            _textBox36.set_property_value(TextBox.HorizontalAlignmentKey, HorizontalAlignment.Stretch);
             _textBox36.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));
             _stackPanel35.AddChild(_textBox36);
             const _border37 = new Border();
@@ -573,7 +573,7 @@ export class EnvironmentsResources extends ResourceDictionary {
             _border116.SetChild(_textBlock117);
             _stackPanel113.AddChild(_border116);
             const _segmentedButton118 = new SegmentedButton();
-            _segmentedButton118.set_property_value(SegmentedButton.ItemsKey, DataContextBinding(_segmentedButton118, "TabLabels"));
+            _segmentedButton118.set_property_value(SegmentedButton.ItemsSourceKey, DataContextBinding(_segmentedButton118, "TabLabels"));
             _segmentedButton118.set_property_value(SegmentedButton.SelectedItemKey, DataContextBinding(_segmentedButton118, "SelectedTab"));
             _segmentedButton118.set_property_value(SegmentedButton.SelectionModeKey, SelectionMode.Single);
             _segmentedButton118.set_property_value(SegmentedButton.HorizontalAlignmentKey, HorizontalAlignment.Left);

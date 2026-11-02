@@ -83,7 +83,7 @@ resources EnvironmentsResources {
             // Populated: filter, bulk actions over the selection, the table.
             ScrollViewer [ HorizontalScrollEnabled = false, Visibility = $IsPopulated << ToVisibility ] {
                 StackPanel [ Orientation = Vertical ] {
-                    TextBox [ Text = $Filter, Placeholder = "Filter environments", HorizontalAlignment = Left, Margin = (0,0,0,12) ]
+                    TextBox [ Text = $Filter, Placeholder = "Filter environments", HorizontalAlignment = Stretch, Margin = (0,0,0,12) ]
                     Border [ Fill = @Bg1, Stroke = Pen [ Brush = @Border ], Padding = (12,6,12,6), Margin = (0,0,0,8),
                              Visibility = $HasSelection << ToVisibility ] {
                         StackPanel [ Orientation = Horizontal ] {
@@ -216,7 +216,7 @@ resources EnvironmentsResources {
                         TextBlock [ Text = "The state of this environment is unknown.", Foreground = @Fg1, TextWrapping = Wrap ]
                     }
 
-                    SegmentedButton [ Items = $TabLabels, SelectedItem = $SelectedTab, SelectionMode = Single,
+                    SegmentedButton [ ItemsSource = $TabLabels, SelectedItem = $SelectedTab, SelectionMode = Single,
                                       HorizontalAlignment = Left, Margin = (0,0,0,16) ]
 
                     // Application & version.
