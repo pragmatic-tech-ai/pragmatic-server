@@ -5,7 +5,11 @@
 // content region to ContentHostService, where each section presents its pages.
 // PortalNavigationService replaces the stock NavigationService (EditorShell
 // skips its default when one is registered) so the side pane stays hidden.
-// PortalSessionService is initialized by main.ts before the shell is mounted.
+// The header (HeaderContent) presents PortalSessionService through the
+// ShellResources template. Importing this module composes the shell and
+// activates the first section before any session exists; PortalBoot then
+// initializes PortalSessionService and refreshes the active section before it
+// mounts the shell.
 
 import EditorShell from "@pragmatic-tech-ai/mural/framework/shell/editor-shell.js"
 import NavigationService from "@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js"
@@ -14,6 +18,7 @@ import PragmaticLight from "@pragmatic-tech-ai/mural/resources/pragmatic"
 import PortalSessionService from "./shell/portal-session-service.js"
 import PortalNavigationService from "./shell/portal-navigation-service.js"
 import FleetModule from "./sections/fleet/fleet.module.mu.js"
+import ShellResources from "./shell/shell.resources.mu.js"
 
 Application [ Theme = Pragmatic, Scheme = PragmaticLight ] {
     .services: {
@@ -33,6 +38,8 @@ Application [ Theme = Pragmatic, Scheme = PragmaticLight ] {
     }
 
     resources: {
-        EditorShell x:root { }
+        merge ShellResources
+
+        EditorShell x:root [ HeaderContent = ContentControl [ Content = $service(PortalSessionService) ] ] { }
     }
 }

@@ -1,5 +1,7 @@
 import { ServiceProvider } from '@pragmatic-tech-ai/mural/runtime'
+import { Capability } from '@pragmatic-tech-ai/mural/framework/shell/module.js'
 import { ContentHostService } from '@pragmatic-tech-ai/mural/framework/shell/services/content-host-service.js'
+import { NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
 import type { ControlPlaneClient } from '../../api-client.js'
 import { OperatorContext } from '../../operator-context.js'
 import type { IPageReloader } from '../page-reloader.js'
@@ -51,5 +53,25 @@ export class PortalTestHost
     public get Host(): ContentHostService
     {
         return this.Provider.getRequired(ContentHostService.Key)
+    }
+}
+
+// A real NavigationService rail over a provider: register section types, then
+// Select one to make it the rail's active service (activating it).
+export class TestRail
+{
+    public readonly Navigation: NavigationService
+
+    public constructor(private readonly provider: ServiceProvider)
+    {
+        this.Navigation = new NavigationService(provider)
+        provider.registerInstance(NavigationService.Key, this.Navigation)
+    }
+
+    public Select(section: Function): void
+    {
+        const capability = new Capability()
+        capability.ServiceKey = section as never
+        this.Navigation.SelectedItem = capability
     }
 }
