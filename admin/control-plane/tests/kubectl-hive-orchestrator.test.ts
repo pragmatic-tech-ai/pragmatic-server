@@ -118,6 +118,14 @@ describe('KubectlHiveOrchestrator', () =>
         assert.deepEqual(k.calls, [])
     })
 
+    it('PrepareAgent is a no-op on an attached cluster: kubectl and the verifier are never touched', async () =>
+    {
+        const { k, v, o } = Fixture.Make()
+        await o.PrepareAgent('pragmatic-server:dev')
+        assert.deepEqual(k.calls, [])
+        assert.deepEqual(v.verified, [])
+    })
+
     it('Scale calls kubectl.Scale with the derived namespace and deployment', async () =>
     {
         const { o, k } = Fixture.Make()

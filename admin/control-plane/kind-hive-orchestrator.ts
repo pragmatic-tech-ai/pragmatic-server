@@ -86,6 +86,13 @@ export class KindHiveOrchestrator implements IHiveOrchestrator
         return this.inner.Teardown(w)
     }
 
+    /** Creates the kind cluster when absent and best-effort loads the agent image into it, as Apply does for a workload. */
+    public async PrepareAgent(image: string): Promise<void>
+    {
+        await this.EnsureCluster()
+        await this.LoadImageBestEffort(image)
+    }
+
     /** Hive-scoped: deletes the whole cluster. Not part of IHiveOrchestrator. */
     public async DestroyCluster(): Promise<void>
     {

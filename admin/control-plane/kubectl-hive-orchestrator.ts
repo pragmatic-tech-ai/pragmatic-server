@@ -109,6 +109,11 @@ export class KubectlHiveOrchestrator implements IHiveOrchestrator
         return this.kubectl.DeleteNamespace(K8sManifestBuilder.NamespaceOf(w.environmentName))
     }
 
+    /** An attached cluster already exists and pulls the image itself: nothing to prepare. */
+    public async PrepareAgent(_image: string): Promise<void>
+    {
+    }
+
     /** Rewrites to the effective registry and verifies the signature; a rejection propagates so the cluster is never touched. */
     private async VerifiedImage(baseImage: string): Promise<string>
     {

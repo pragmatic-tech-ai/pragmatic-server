@@ -81,6 +81,11 @@ class FakeInner implements IHiveOrchestrator
     {
         this.calls.push('Teardown')
     }
+
+    public async PrepareAgent(_image: string): Promise<void>
+    {
+        this.calls.push('PrepareAgent')
+    }
 }
 
 class Fixture
@@ -212,6 +217,25 @@ test('Apply is repeatable: a second Apply loads the image again without failing'
     await f.sut.Apply(Fixture.Workload)
     await f.sut.Apply(Fixture.Workload)
     assert.equal(f.kind.loaded.length, 2)
+})
+
+test('PrepareAgent creates the cluster when absent and loads the agent image, without touching inner', async () =>
+{
+    const f = new Fixture()
+    await f.sut.PrepareAgent('pragmatic-server:dev')
+    assert.deepEqual(f.kind.created, [Fixture.Cluster])
+    assert.deepEqual(f.kind.loaded, [{ image: 'pragmatic-server:dev', clusterName: Fixture.Cluster }])
+    assert.deepEqual(f.inner.calls, [])
+})
+
+test('PrepareAgent reuses an existing cluster and tolerates a failed image load (best-effort)', async () =>
+{
+    const f = new Fixture()
+    f.kind.clusters = [Fixture.Cluster]
+    f.kind.failLoad = true
+    await f.sut.PrepareAgent('pragmatic-server:dev')
+    assert.deepEqual(f.kind.created, [])
+    assert.deepEqual(f.kind.loaded, [])
 })
 
 test('ScaleDatabase delegates to inner without ensuring the cluster', async () =>

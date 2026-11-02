@@ -121,7 +121,8 @@ export class K8sManifestBuilder
 
     // Pull-agent conventions.
     private static readonly AgentSuffix = 'agent'
-    private static readonly AgentImage = 'pragmatic-server:dev'
+    /** The agent's image; the automatic install prepares the cluster with it (a kind node loads it). */
+    public static readonly AgentImage = 'pragmatic-server:dev'
     private static readonly AgentContainerName = 'agent'
     private static readonly AgentEntrypoint = ['node', 'dist/bin/pragmatic-agentd.js']
     private static readonly AgentRegistryUrlVar = 'PRAGMATIC_AGENT_REGISTRY_URL'

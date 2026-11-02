@@ -21,5 +21,11 @@ describe('HiveBootstrapBundle', () =>
         assert.ok(bundle.manifest.includes('http://host.docker.internal:7001'))
         assert.ok(bundle.manifest.includes(bundle.tokenSecretName))
         assert.ok(!list.items.some(i => i.kind === 'Secret'))
+        assert.equal(bundle.autoInstall, false)
+    })
+
+    it('carries the automatic-install flag it is given', () =>
+    {
+        assert.equal(HiveBootstrapBundle.For('acme-hive', 'http://host.docker.internal:7001', true).autoInstall, true)
     })
 })

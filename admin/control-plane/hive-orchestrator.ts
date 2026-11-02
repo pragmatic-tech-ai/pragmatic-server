@@ -15,6 +15,8 @@ export interface IHiveOrchestrator
     /** Scales the workload's database StatefulSet. Scaling UP resolves only once a replica is ready; scaling to zero does not wait. */
     ScaleDatabase(workload: EnvironmentWorkload, replicas: number): Promise<void>
     Teardown(w: EnvironmentWorkload): Promise<void>
+    /** Readies the cluster to run the hive agent with this image (a kind cluster is created and the image loaded); a no-op where there is nothing to prepare. */
+    PrepareAgent(image: string): Promise<void>
 }
 
 /** Raised when no orchestrator driver exists for a backend + infra mode combination. */

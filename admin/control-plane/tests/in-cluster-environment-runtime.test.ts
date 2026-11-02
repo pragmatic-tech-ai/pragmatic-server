@@ -78,6 +78,7 @@ class FakeOrchestrator implements IHiveOrchestrator
     public async Scale(w: EnvironmentWorkload, replicas: number): Promise<void> { this.Rec('Scale', w); this.ScaleReplicas.push(replicas) }
     public async ScaleDatabase(w: EnvironmentWorkload, replicas: number): Promise<void> { this.Rec('ScaleDatabase', w); this.DbReplicas.push(replicas) }
     public async Teardown(w: EnvironmentWorkload): Promise<void> { this.Rec('Teardown', w) }
+    public async PrepareAgent(_image: string): Promise<void> { }
 }
 
 class Harness

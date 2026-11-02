@@ -25,6 +25,8 @@ export type HiveBootstrapDto = {
     tokenSecretKey: string
     /** The pod-visible agent channel URL the agent dials. */
     channelUrl: string
+    /** True when the control plane can install the agent itself (a Local hive): the portal offers the automatic path first. */
+    autoInstall: boolean
 }
 
 export class HiveBootstrapBundle
@@ -37,7 +39,7 @@ export class HiveBootstrapBundle
     {
     }
 
-    public static For(hiveId: string, channelUrl: string): HiveBootstrapDto
+    public static For(hiveId: string, channelUrl: string, autoInstall: boolean = false): HiveBootstrapDto
     {
         const tokenSecretName = K8sManifestBuilder.AgentTokenSecretNameOf(hiveId)
         const rendered = new K8sManifestBuilder().RenderHiveAgent(hiveId, channelUrl, tokenSecretName)
@@ -51,6 +53,7 @@ export class HiveBootstrapBundle
             tokenSecretName,
             tokenSecretKey: K8sManifestBuilder.AgentTokenSecretKey,
             channelUrl,
+            autoInstall,
         }
     }
 }

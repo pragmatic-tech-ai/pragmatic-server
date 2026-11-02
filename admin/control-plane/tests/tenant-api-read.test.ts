@@ -110,6 +110,10 @@ class FakeOrchestrator implements IHiveOrchestrator
     public async Teardown(_w: EnvironmentWorkload): Promise<void>
     {
     }
+
+    public async PrepareAgent(_image: string): Promise<void>
+    {
+    }
 }
 
 class FakeFactory extends HiveOrchestratorFactory
