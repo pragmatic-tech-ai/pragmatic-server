@@ -108,6 +108,9 @@ resources TenantsResources {
                 Button [ DockPanel.Dock = Right, Variant = Danger, Command = $DeleteCommand, VerticalAlignment = Top ] {
                     TextBlock [ Text = "Delete tenant" ]
                 }
+                Button [ DockPanel.Dock = Right, Variant = Secondary, Command = $ResetOwnerPasswordCommand, VerticalAlignment = Top, Margin = (0,0,8,0) ] {
+                    TextBlock [ Text = "Reset Owner password" ]
+                }
                 StackPanel [ Orientation = Vertical ] {
                     Button [ Variant = Ghost, Command = $BackCommand, HorizontalAlignment = Left, Margin = (0,0,0,8) ] {
                         TextBlock [ Text = "Back" ]
@@ -177,7 +180,7 @@ resources TenantsResources {
     // The new Owner's one-time password. Shown once; leaving needs "I've saved it".
     DataTemplate [ DataType = OwnerPasswordRevealPageViewModel ] {
         StackPanel [ Orientation = Vertical, Margin = (24,20,24,20) ] {
-            TextBlock [ Text = "Tenant created", Style = @H3, Foreground = @Fg0 ]
+            TextBlock [ Text = $Heading, Style = @H3, Foreground = @Fg0 ]
             StackPanel [ Orientation = Horizontal, Margin = (0,4,0,16) ] {
                 TextBlock [ Text = "Owner password for", Foreground = @Fg2, Margin = (0,0,4,0) ]
                 TextBlock [ Text = $Email, Foreground = @Fg0 ]
@@ -201,7 +204,7 @@ resources TenantsResources {
                 TextBlock [ Text = "I've saved it", Foreground = @Fg0, VerticalAlignment = Center ]
             }
             Button [ Variant = Primary, Command = $ConfirmSavedCommand, HorizontalAlignment = Left ] {
-                TextBlock [ Text = "Continue to the tenant" ]
+                TextBlock [ Text = $ContinueLabel ]
             }
         }
     }

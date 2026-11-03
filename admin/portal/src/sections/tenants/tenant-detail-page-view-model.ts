@@ -1,6 +1,6 @@
 import { RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { PortalDates } from '../../portal-dates.js'
-import type { TenantDto } from '../../portal-types.js'
+import type { OwnerPasswordResetDto, TenantDto } from '../../portal-types.js'
 import { ObservedEnvironmentsViewModel } from '../../shell/observed-environments-view-model.js'
 import { PortalPageViewModel } from '../../shell/portal-page-view-model.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
@@ -17,6 +17,9 @@ export class TenantDetailPageViewModel extends PortalPageViewModel
     private static readonly IdToken = '{id}'
     private static readonly DeleteTitle = 'Delete this tenant?'
     private static readonly DeleteMessage = 'The tenant record is removed. A tenant that still has a hive cannot be deleted; delete its hive first.'
+    private static readonly ResetTitle = "Reset the Owner's password?"
+    private static readonly ResetMessage = "A new one-time password is generated for the tenant's Owner and shown once. The old password stops working immediately; the Owner signs in to the Tenant Admin console with the new one."
+    private static readonly ResetLabel = 'Reset'
     private static readonly DisplayNameProperty = 'DisplayName'
     private static readonly ClientNameProperty = 'ClientName'
     private static readonly CreatedLabelProperty = 'CreatedLabel'
@@ -33,12 +36,14 @@ export class TenantDetailPageViewModel extends PortalPageViewModel
     private hiveId: string | undefined
     private observed = new ObservedEnvironmentsViewModel([])
     private readonly deleteCommand: RelayCommand
+    private readonly resetOwnerPasswordCommand: RelayCommand
     private readonly openHiveCommand: RelayCommand
 
     public constructor(session: PortalSessionService, private readonly section: TenantsSectionService, public readonly Id: string)
     {
         super(session)
         this.deleteCommand = this.MutatingCommand(() => this.Delete())
+        this.resetOwnerPasswordCommand = this.MutatingCommand(() => this.ResetOwnerPassword())
         this.openHiveCommand = new RelayCommand(() => this.OpenHive(), () => this.hiveId !== undefined)
     }
 
@@ -177,6 +182,32 @@ export class TenantDetailPageViewModel extends PortalPageViewModel
         {
             this.section.OpenHive(this.hiveId)
         }
+    }
+
+    // Resets the tenant Owner's password (confirmed by the tenant id) and reveals the new one once.
+    public get ResetOwnerPasswordCommand(): RelayCommand
+    {
+        return this.resetOwnerPasswordCommand
+    }
+
+    private ResetOwnerPassword(): Promise<void>
+    {
+        let reset: OwnerPasswordResetDto | undefined
+        return this.ConfirmByName(this.section.Dialogs, {
+            Expected: this.Id,
+            Title: TenantDetailPageViewModel.ResetTitle,
+            Message: TenantDetailPageViewModel.ResetMessage,
+            ConfirmLabel: TenantDetailPageViewModel.ResetLabel,
+            Action: async () => { reset = await this.Session.Client.ResetOwnerPassword(this.Id) },
+            OnConfirmed: async () =>
+            {
+                if (reset !== undefined)
+                {
+                    this.section.RevealResetOwnerPassword(this.Id, reset.ownerEmail, reset.ownerPassword)
+                    reset = undefined
+                }
+            },
+        })
     }
 
     private Delete(): Promise<void>

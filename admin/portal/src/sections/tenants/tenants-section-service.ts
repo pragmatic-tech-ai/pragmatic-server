@@ -3,7 +3,7 @@ import type { CreatedTenantDto } from '../../portal-types.js'
 import { PortalSectionService } from '../../shell/portal-section-service.js'
 import type { PortalPageViewModel } from '../../shell/portal-page-view-model.js'
 import { HivesSectionService } from '../hives/hives-section-service.js'
-import { OwnerPasswordRevealPageViewModel } from './owner-password-reveal-page-view-model.js'
+import { OwnerPasswordKind, OwnerPasswordRevealPageViewModel } from './owner-password-reveal-page-view-model.js'
 import { TenantDetailPageViewModel } from './tenant-detail-page-view-model.js'
 import { TenantsPageViewModel } from './tenants-page-view-model.js'
 
@@ -28,6 +28,13 @@ export class TenantsSectionService extends PortalSectionService
     public RevealOwnerPassword(created: CreatedTenantDto): void
     {
         this.Present(new OwnerPasswordRevealPageViewModel(this, created.id, created.owner.email, created.owner.password))
+    }
+
+    // Shows a reset Owner password once, over the tenant's detail (Back to the
+    // detail once saved).
+    public RevealResetOwnerPassword(tenantId: string, email: string, password: string): void
+    {
+        this.Present(new OwnerPasswordRevealPageViewModel(this, tenantId, email, password, OwnerPasswordKind.Reset))
     }
 
     // After the reveal is confirmed: its page gives way to the tenant's detail

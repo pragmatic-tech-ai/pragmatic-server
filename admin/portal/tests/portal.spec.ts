@@ -46,6 +46,10 @@ class FakeControlPlane
     // The provision's one-time token: the automatic path must never show it.
     public static readonly ProvisionToken = 'e2e-provision-token-never-shown'
     private static readonly ProvisionPath = '/api/provision'
+    // Resetting TenantId's Owner password is played through (a one-time reveal).
+    public static readonly OwnerResetPath = '/api/tenants/tailspin-prod/owner-password'
+    public static readonly OwnerResetEmail = 'owner@tailspin.example'
+    public static readonly OwnerResetPassword = 'e2e-reset-owner-password-shown-once'
     // Deleting HiveId plays the agent-removal failure, then succeeds when forced (delete anyway).
     public static readonly HiveItemPath = '/api/hives/hive-eu-1'
     public static readonly UninstallFailure = "Could not remove the hive's agent from its cluster: kubectl failed: connection refused. Fix cluster access and retry, or delete anyway to remove only the platform record."
@@ -159,6 +163,7 @@ class FakeControlPlane
     private static IsPlayedWrite(path: string): boolean
     {
         return path === FakeControlPlane.ProvisionPath || path === FakeControlPlane.NewHiveInstallPath || path === FakeControlPlane.HiveItemPath
+            || path === FakeControlPlane.OwnerResetPath
     }
 
     private Operator(): Record<string, unknown>
@@ -411,6 +416,11 @@ class FakeControlPlane
                 FakeControlPlane.Json(res, 201, this.Provisioned())
                 return
             }
+            if (path === FakeControlPlane.OwnerResetPath)
+            {
+                FakeControlPlane.Json(res, 200, { ownerEmail: FakeControlPlane.OwnerResetEmail, ownerPassword: FakeControlPlane.OwnerResetPassword })
+                return
+            }
             if (path === FakeControlPlane.HiveItemPath && method === FakeControlPlane.MethodDelete)
             {
                 this.ForcedDelete = (req.url ?? '').includes(FakeControlPlane.ForceQuery)
@@ -538,6 +548,9 @@ class PortalText
     public static readonly ConnectedText = 'Connected. The agent checked in.'
     public static readonly ManualTokenCaption = 'One-time agent token'
     public static readonly DeleteHiveLabel = 'Delete hive'
+    public static readonly ResetOwnerLabel = 'Reset Owner password'
+    public static readonly ResetLabel = 'Reset'
+    public static readonly OwnerResetHeading = 'Owner password reset'
     public static readonly DeleteLabel = 'Delete'
     public static readonly DeleteAnywayLabel = 'Delete anyway'
     public static readonly DeleteAnywayTitle = 'Delete the hive anyway?'
@@ -833,6 +846,22 @@ test.describe('admin portal', () =>
         await expect(PortalSteps.Text(page, PortalText.DeleteAnywayTitle).filter({ visible: true })).toHaveCount(0)
         // Back on the hives list, which says what the delete anyway may have left behind.
         await expect(page.getByText(FakeControlPlane.DeletedNoticeStart).filter({ visible: true }).first()).toBeVisible()
+        await PortalSteps.ExpectNoBrokenText(page)
+    })
+
+    test('Tenants: Reset Owner password confirms by name and reveals the new password once', async ({ page }) =>
+    {
+        await page.goto(base)
+        await expect(PortalSteps.Text(page, PortalText.FleetSubtitle)).toBeVisible()
+        await PortalSteps.OpenSection(page, RailEntry.Tenants)
+        await PortalSteps.Click(page, FakeControlPlane.TenantName)
+        await PortalSteps.Visible(page, PortalText.ResetOwnerLabel).click({ force: true })
+        await PortalSteps.TypeIntoDialog(page, FakeControlPlane.TenantId, FakeControlPlane.TenantId)
+        await PortalSteps.Visible(page, PortalText.ResetLabel).click({ force: true })
+        await expect.poll(() => fake.Find(FakeControlPlane.MethodPost, FakeControlPlane.OwnerResetPath)).toBeDefined()
+        await expect(PortalSteps.Visible(page, PortalText.OwnerResetHeading)).toBeVisible()
+        await expect(PortalSteps.Visible(page, FakeControlPlane.OwnerResetPassword)).toBeVisible()
+        await expect(PortalSteps.Visible(page, FakeControlPlane.OwnerResetEmail)).toBeVisible()
         await PortalSteps.ExpectNoBrokenText(page)
     })
 

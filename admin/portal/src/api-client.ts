@@ -1,4 +1,4 @@
-import type { ClientDto, CreatedTenantDto, EnvironmentDto, HiveDto, FleetHiveDto, ManifestDto, OperatorSummaryDto, GatingDto, SelectionDto, HiveRolloutDto, TenantDto, GraphDto, GraphLoadedDto, OperatorDto, PromotionResultDto, ProvisionInputDto, ProvisionResultDto, PolicyDto, ActivityDto, ObservationDto, LedgerDto, HiveBootstrapDto, RolloutRegistrationDto, AgentInstallStatusDto, HiveDeleteOutcomeDto } from './portal-types.js'
+import type { ClientDto, CreatedTenantDto, EnvironmentDto, HiveDto, FleetHiveDto, ManifestDto, OperatorSummaryDto, GatingDto, SelectionDto, HiveRolloutDto, TenantDto, GraphDto, GraphLoadedDto, OperatorDto, PromotionResultDto, ProvisionInputDto, ProvisionResultDto, PolicyDto, ActivityDto, ObservationDto, LedgerDto, HiveBootstrapDto, RolloutRegistrationDto, AgentInstallStatusDto, HiveDeleteOutcomeDto, OwnerPasswordResetDto } from './portal-types.js'
 
 // Thrown for non-2xx control-plane responses; Message carries the server's error text.
 export class ApiError extends Error
@@ -73,6 +73,7 @@ export class ControlPlaneClient
     private static readonly RolloutRegistrationSegment = 'rollout-registration'
     private static readonly AgentInstallSegment = 'agent-install'
     private static readonly ForceQuery = '?force=true'
+    private static readonly OwnerPasswordSegment = 'owner-password'
     private static readonly NoQuery = ''
     private static readonly LimitParam = 'limit'
     private static readonly PoliciesRoute = '/api/policies'
@@ -138,6 +139,13 @@ export class ControlPlaneClient
     public async DeleteTenant(id: string): Promise<void>
     {
         await this.Send<unknown>(this.ItemRoute(ControlPlaneClient.TenantsRoute, id), { method: ControlPlaneClient.MethodDelete })
+    }
+
+    // Sets a fresh Owner password in the tenant's IdP (the old one stops working at once); the reply is the only copy.
+    public async ResetOwnerPassword(tenantId: string): Promise<OwnerPasswordResetDto>
+    {
+        const route = this.ItemRoute(ControlPlaneClient.TenantsRoute, tenantId) + ControlPlaneClient.PathSeparator + ControlPlaneClient.OwnerPasswordSegment
+        return await this.Send<OwnerPasswordResetDto>(route, { method: ControlPlaneClient.MethodPost })
     }
 
     // No server-side parent filter exists; filters the full list by tenantId when given.

@@ -32,6 +32,8 @@ The tenant portal is a second Mural app (admin/tenant-portal/) for a client's ad
 
 The tenant id and the OIDC callback are derived per request from the request's subdomain host; there is no `?tenant=` query parameter.
 
+A tenant's Owner signs in to the tenant portal with the email and one-time password shown when the tenant was created. If that password is lost, a Full operator resets it in Platform Admin (Tenants, the tenant's page, Reset Owner password): after confirming with the tenant id, the control plane sets a fresh password in the tenant's identity provider (the old one stops working at once) and the portal shows it once, with the Owner's email, until it is marked saved. The API form is `POST /api/tenants/ID/owner-password` (reply `{ ownerEmail, ownerPassword }`, `Cache-Control: no-store`); it answers 409 when the tenant has no Owner recorded, no identity provider here, or its identity provider has no Owner account or refuses, and 503 when the identity provider cannot be reached. The password is never stored, logged or written to the activity log.
+
 Gated end-to-end test. It runs against a fake control plane (no IdP, no Docker), serving dist/ and canned /tenant-auth and /tenant-api responses. It boots into the Overview, opens every rail section, an environment's detail and the create dialog, the Users & Access tabs and a one-time token reveal, the adopt wizard, a live event in Activity, and Log out landing on a stub identity provider. It needs a prior build and Playwright browsers, and is not part of the default unit run (`npm --prefix admin/tenant-portal test`):
 
 ```

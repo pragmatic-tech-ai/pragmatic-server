@@ -38,6 +38,9 @@ export type TenantDto =
 export type TenantOwnerDto = { email: string; principalId: string; password: string }
 export type CreatedTenantDto = TenantDto & { owner: TenantOwnerDto }
 
+// A reset tenant Owner password (the owner-password route's reply), shown once.
+export type OwnerPasswordResetDto = { ownerEmail: string; ownerPassword: string }
+
 export type HiveClusterBackend = 'aks' | 'eks' | 'gke' | 'private' | 'local'
 export type HiveProvisionMode = 'provision' | 'attach'
 

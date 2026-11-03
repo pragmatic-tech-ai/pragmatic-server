@@ -8,7 +8,7 @@ import { NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/serv
 import { ApiError, type ControlPlaneClient } from '../../api-client.js'
 import { OperatorContext } from '../../operator-context.js'
 import { AgentInstallState, AgentInstallStep, type AgentInstallStatusDto } from '../../portal-types.js'
-import type { HiveDeleteOutcomeDto } from '../../portal-types.js'
+import type { HiveDeleteOutcomeDto, OwnerPasswordResetDto } from '../../portal-types.js'
 import type { ActivityDto, ClientDto, CreatedTenantDto, FleetHiveDto, GatingDto, HiveBootstrapDto, HiveDto, HiveRolloutDto, LedgerDto, ManifestDto, ObservationDto, OperatorSummaryDto, PolicyDto, ProvisionInputDto, ProvisionResultDto, SelectionDto, TenantDto } from '../../portal-types.js'
 import { DownloadService } from '../download-service.js'
 import type { IPageReloader } from '../page-reloader.js'
@@ -259,6 +259,11 @@ export class FakeControlPlane
     public DeleteHiveFailure: Error | undefined
     // The ids deleted with force (delete anyway), in call order; they are in Deleted too.
     public readonly ForcedDeletes: string[] = []
+    // The tenant Owner password reset: its reply, its calls, and an optional failure.
+    public OwnerResetEmail = 'owner@acme.test'
+    public OwnerResetPassword = 'fixture-reset-owner-password'
+    public OwnerResetFailure: Error | undefined
+    public readonly OwnerResets: string[] = []
     // What a hive delete replies.
     public DeleteOutcome: HiveDeleteOutcomeDto = { ok: true, retained: [] }
     public readonly Published: Array<[string, string, string | undefined, string | undefined]> = []
@@ -648,6 +653,17 @@ export class FakeControlPlane
         this.ThrowIfFailing()
         this.Deleted.push(id)
         this.Tenants = this.Tenants.filter(t => t.id !== id)
+    }
+
+    public async ResetOwnerPassword(tenantId: string): Promise<OwnerPasswordResetDto>
+    {
+        this.ThrowIfFailing()
+        if (this.OwnerResetFailure !== undefined)
+        {
+            throw this.OwnerResetFailure
+        }
+        this.OwnerResets.push(tenantId)
+        return { ownerEmail: this.OwnerResetEmail, ownerPassword: this.OwnerResetPassword }
     }
 
     public async DeleteHive(id: string, force: boolean = false): Promise<HiveDeleteOutcomeDto>

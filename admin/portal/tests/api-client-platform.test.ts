@@ -374,4 +374,13 @@ describe('ControlPlaneClient platform records', () =>
         assert.equal(err.Code, ApiError.AgentUninstallFailedCode)
         assert.equal(err.message, 'Could not remove')
     })
+
+    it('ResetOwnerPassword POSTs /api/tenants/ID/owner-password and returns the one-time reply', async () =>
+    {
+        FetchStub.Install({ ownerEmail: 'o@x.test', ownerPassword: 'pw-once' })
+        const reset = await new ControlPlaneClient().ResetOwnerPassword('t 1')
+        assert.equal(FetchStub.Calls[0]!.route, '/api/tenants/t%201/owner-password')
+        assert.equal(FetchStub.Calls[0]!.init?.method, 'POST')
+        assert.deepEqual(reset, { ownerEmail: 'o@x.test', ownerPassword: 'pw-once' })
+    })
 })
