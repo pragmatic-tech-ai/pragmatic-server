@@ -1,5 +1,6 @@
+import { CypherCells } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherCellDto, CypherQueryPageDto, CypherNodeCellDto, CypherFieldSnapshotDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { Cypher } from '@pragmatic-tech-ai/todl'
+import { Cypher } from '@pragmatic-tech-ai/todl'
 
 /** Maps the engine's PascalCase result DTO to the camelCase plain-JSON wire page, carrying the page's continuation cursor. */
 export class CypherResultMapper
@@ -39,27 +40,31 @@ export class CypherResultMapper
         {
             return cell.map(c => CypherResultMapper.Cell(c))
         }
-        if (typeof cell === 'object')
+        // Node vs map is decided by the engine's reserved-key discriminator, never by shape (a query can build any map).
+        const node = Cypher.CypherCellCodec.AsNode(cell)
+        if (node !== undefined)
         {
-            if (CypherResultMapper.IsNode(cell))
-            {
-                return CypherResultMapper.Node(cell)
-            }
-            const record: { [k: string]: CypherCellDto } = Object.create(null)
-            for (const [key, value] of Object.entries(cell))
-            {
-                record[key] = CypherResultMapper.Cell(value)
-            }
-            return record
+            return { [CypherCells.NodeKey]: CypherResultMapper.Node(node as unknown as Record<string, unknown>) } as CypherCellDto
         }
-        return null
+        const entries = Cypher.CypherCellCodec.AsMap(cell)
+        if (entries === undefined)
+        {
+            return null
+        }
+        const record: { [k: string]: CypherCellDto } = Object.create(null)
+        for (const [key, value] of Object.entries(entries))
+        {
+            record[key] = CypherResultMapper.Cell(value)
+        }
+        return CypherResultMapper.EscapeMap(record)
     }
 
-    private static IsNode(cell: object): cell is Record<string, unknown>
+    // The wire reuses the engine's escape: a map whose sole key is reserved travels as { "$map": entries }.
+    private static EscapeMap(record: { [k: string]: CypherCellDto }): CypherCellDto
     {
-        const c = cell as Record<string, unknown>
-        return typeof c.id === 'string' && typeof c.concept === 'string' && typeof c.label === 'string'
-            && typeof c.fields === 'object' && c.fields !== null && typeof c.refs === 'object' && c.refs !== null
+        const keys = Object.keys(record)
+        const reserved = keys.length === 1 && (keys[0] === CypherCells.NodeKey || keys[0] === CypherCells.MapKey)
+        return reserved ? { [CypherCells.MapKey]: record } : record
     }
 
     private static Node(node: Record<string, unknown>): CypherNodeCellDto

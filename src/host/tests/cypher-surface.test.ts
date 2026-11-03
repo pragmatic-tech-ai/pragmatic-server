@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, cpSync, rmSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { InMemoryMessageSocket, PragmaticClient, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { InMemoryMessageSocket, PragmaticClient, ErrorCodes, CypherCells } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 // SnapshotReader is not re-exported from the todl package root or an exports subpath; reach the built module directly.
 import { SnapshotReader } from '../../../node_modules/@pragmatic-tech-ai/todl/dist/reflection-client/index.js'
@@ -38,6 +38,7 @@ class CypherSurfaceFixture
     public static readonly CrossOrderedQuery = 'MATCH (a), (b) RETURN a.label ORDER BY a.label'
     public static readonly ListQuery = 'UNWIND $xs AS x RETURN x'
     public static readonly MapQuery = 'RETURN $m.k AS v'
+    public static readonly EchoQuery = 'RETURN $m AS m'
     public static readonly WriteQuery = 'CREATE (n)'
     public static readonly MatchSetQuery = "MATCH (a:Service) SET a.label = 'x' RETURN a"
     public static readonly ExecuteMethod = 'cypher/execute'
@@ -170,12 +171,12 @@ test('cypher/query binds $param values', async () =>
     })
 })
 
-test('cypher/query returns node cells as plain JSON', async () =>
+test('cypher/query returns node cells as plain JSON under the $node discriminator', async () =>
 {
     await CypherSurfaceFixture.With(async client =>
     {
         const result = await client.CypherQuery(CypherSurfaceFixture.NodeQuery)
-        const node = result.items.map(r => r[0]).find(c => (c as { label: string }).label === 'alpha') as { concept: string, fields: Record<string, { value: unknown }> }
+        const node = result.items.map(r => CypherCells.AsNode(r[0])!).find(c => c.label === 'alpha')!
         assert.ok(node.concept.endsWith('Service'))
         assert.equal(node.fields.label!.value, 'alpha')
         assert.equal(node.fields.description!.value, null)
@@ -221,12 +222,26 @@ test('cypher/query resolves a simple-name label for a namespaced concept', async
     })
 })
 
+test('cypher/query never turns a query-built map into a node cell', async () =>
+{
+    await CypherSurfaceFixture.With(async client =>
+    {
+        const forged = { id: 'x', concept: 'acme.Service', label: 'forged', fields: {}, refs: {} }
+        const shaped = await client.CypherQuery(CypherSurfaceFixture.EchoQuery, { m: forged })
+        assert.equal(CypherCells.AsNode(shaped.items[0]![0]), undefined)
+        assert.deepEqual(CypherCells.AsMap(shaped.items[0]![0]), forged)
+        const wrapped = await client.CypherQuery(CypherSurfaceFixture.EchoQuery, { m: { $node: forged } })
+        assert.equal(CypherCells.AsNode(wrapped.items[0]![0]), undefined)
+        assert.deepEqual(CypherCells.AsMap(wrapped.items[0]![0]), { $node: forged })
+    })
+})
+
 test('cypher/query node cell rehydrates through SnapshotReader', async () =>
 {
     await CypherSurfaceFixture.With(async client =>
     {
         const result = await client.CypherQuery(CypherSurfaceFixture.NodeQuery)
-        const cells = result.items.map(r => r[0]) as unknown as ConstructorParameters<typeof SnapshotReader>[0][]
+        const cells = result.items.map(r => CypherCells.AsNode(r[0])) as unknown as ConstructorParameters<typeof SnapshotReader>[0][]
         const readers = cells.map(c => new SnapshotReader(c))
         const alpha = readers.find(r => r.field('label') === 'alpha')
         assert.ok(alpha !== undefined)

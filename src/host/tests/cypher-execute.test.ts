@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readdirSync, mkdirSync, mkdtempSync, cpSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
-import { InMemoryMessageSocket, PragmaticClient, ErrorCodes, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { InMemoryMessageSocket, PragmaticClient, ErrorCodes, AppWriteStatus, CypherCells } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherExecuteParams } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { toJSON, ModelShardExtractor } from '@pragmatic-tech-ai/todl'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
@@ -315,7 +315,7 @@ test('RETURN rows come back as masked CypherNodeCellDto cells', async () =>
         const result = await handler.RunCypherExecute(ExecFixture.P(world.Shop, 'MATCH (w:Widget) RETURN w'))
         assert.equal(result.status, AppWriteStatus.Applied)
         assert.equal(result.rows.length, 1)
-        const cell = result.rows[0]![0] as { id: string, fields: Record<string, unknown> }
+        const cell = CypherCells.AsNode(result.rows[0]![0])!
         assert.equal(typeof cell.id, 'string')
         assert.ok(cell.fields['label'] !== undefined)
         assert.ok(!JSON.stringify(result).includes(ExecFixture.Secret))
