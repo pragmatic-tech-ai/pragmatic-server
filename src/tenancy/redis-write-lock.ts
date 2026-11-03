@@ -29,11 +29,14 @@ export class RedisWriteLockTiming
  * Cross-process tenant write lock over Redis: SET NX PX with a per-lease random token, renewed while held, released by
  * compare-and-delete. Every worker serving the tenant contends on the same key, so plan -> authorize -> commit -> persist
  * runs on one worker at a time; `Held` re-reads the key so a lease that expired (pause, partition) is caught before the
- * persist. An unreachable Redis fails closed (WriteLockBusyError), never open.
+ * persist starts. That re-check is not storage-level fencing: a stall longer than the lease TTL between it and the
+ * writes can still overlap another worker (the source-hash CAS narrows, but cannot close, that window). An unreachable
+ * Redis fails closed (WriteLockBusyError), never open.
  */
 export class RedisWriteLock implements IWriteLock
 {
     private static readonly KeyPrefix = 'pragmatic:write:'
+    private static readonly ReleaseScript = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
 
     constructor(
         private readonly environmentId: string,
@@ -52,9 +55,10 @@ export class RedisWriteLock implements IWriteLock
         const deadline = this.now() + this.timing.AcquireTimeoutMs
         for (;;)
         {
+            let client: IRedisLockClient | undefined
             try
             {
-                const client = await this.client()
+                client = await this.client()
                 if (await client.set(key, token, { NX: true, PX: this.timing.LeaseTtlMs }) !== null)
                 {
                     return new RedisWriteLease(key, token, client, this.timing)
@@ -62,6 +66,9 @@ export class RedisWriteLock implements IWriteLock
             }
             catch
             {
+                // the SET may have landed even though we saw an error (e.g. a timeout): release our token so the tenant is
+                // not blocked for the whole TTL by a lease nobody holds
+                await client?.eval(RedisWriteLock.ReleaseScript, { keys: [key], arguments: [token] }).catch(() => undefined)
                 throw new WriteLockBusyError()
             }
             if (this.now() >= deadline)

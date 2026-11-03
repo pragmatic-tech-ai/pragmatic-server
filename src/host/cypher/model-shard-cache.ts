@@ -21,7 +21,10 @@ export interface IModelShardSource
 export class ModelShardCache
 {
     private index: ReadonlyMap<string, LocatedShard> | undefined
-    private readonly graphs = new Map<string, Promise<IGraphQuery>>()
+    // Keyed by the located shard OBJECT, not its name: a request that located a shard before an invalidation builds from
+    // that stale document, and must not seed the cache a request of the new generation reads.
+    private readonly graphs = new Map<LocatedShard, Promise<IGraphQuery>>()
+    private disposed = false
     private subscriptions: IDisposable[] = []
     private subscribed: readonly TenantRepository[] = []
 
@@ -42,13 +45,17 @@ export class ModelShardCache
     /** The shard's unfiltered graph, built at most once per cache generation. */
     public Graph(shard: LocatedShard): Promise<IGraphQuery>
     {
-        let graph = this.graphs.get(shard.Name)
+        let graph = this.graphs.get(shard)
         if (graph === undefined)
         {
             graph = this.Build(shard)
-            this.graphs.set(shard.Name, graph)
-            // a failed build is not cached: the next request retries
-            graph.catch(() => { if (this.graphs.get(shard.Name) === graph) this.graphs.delete(shard.Name) })
+            // only a shard of the current index is cached; a stale one is built for its caller alone
+            if (this.index?.get(shard.Name) === shard)
+            {
+                this.graphs.set(shard, graph)
+                // a failed build is not cached: the next request retries
+                graph.catch(() => { if (this.graphs.get(shard) === graph) this.graphs.delete(shard) })
+            }
         }
         return graph
     }
@@ -60,8 +67,10 @@ export class ModelShardCache
         this.graphs.clear()
     }
 
+    /** Detach every repository subscription and drop the cache; later calls still answer but never re-subscribe. */
     public Dispose(): void
     {
+        this.disposed = true
         this.Unsubscribe()
         this.Invalidate()
     }
@@ -79,7 +88,12 @@ export class ModelShardCache
         {
             this.Unsubscribe()
             this.Invalidate()
-            this.index = ModelShardGraph.Index(entries.map(e => e.repo))
+            const index = ModelShardGraph.Index(entries.map(e => e.repo))
+            if (this.disposed)
+            {
+                return index
+            }
+            this.index = index
             this.subscribed = entries
             this.subscriptions = entries.map(e => e.repo.changed.subscribe(() => this.Invalidate()))
         }

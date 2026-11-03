@@ -20,13 +20,17 @@ export class GraphDataDigest
 
     public static Of(graph: IGraphQuery, labels: ReferencedLabelSet): string
     {
-        const byId = new Map<string, Mirror>()
-        for (const mirror of GraphDataDigest.Reachable(graph, labels)) byId.set(mirror.node.id, mirror)
-        const hash = createHash(GraphDataDigest.Algorithm)
-        for (const id of [...byId.keys()].sort())
+        // Every reachable record (duplicates included: a source may repeat an id), each serialized canonically, then sorted,
+        // so neither source row order nor which duplicate "wins" can move the digest. The class carries term-fixed values.
+        const records = GraphDataDigest.Reachable(graph, labels).map(mirror =>
         {
-            const node = byId.get(id)!.node
-            hash.update(JSON.stringify([id, node.type, GraphDataDigest.Sorted(node.attrs), GraphDataDigest.Sorted(node.refs ?? {})]))
+            const node = mirror.node
+            return JSON.stringify([node.id, node.type, node.class ?? null, GraphDataDigest.Sorted(node.attrs), GraphDataDigest.Sorted(node.refs ?? {})])
+        })
+        const hash = createHash(GraphDataDigest.Algorithm)
+        for (const record of records.sort())
+        {
+            hash.update(record)
             hash.update(GraphDataDigest.RecordSeparator)
         }
         return hash.digest(GraphDataDigest.Encoding)

@@ -73,3 +73,39 @@ test('a different source set rebuilds the index', async () =>
     await cache.Graph(moved)
     assert.equal(cache.Builds, 2)
 })
+
+test('a shard located before an invalidation is built for its caller but never cached for the new generation', async () =>
+{
+    const repo = ShardFixture.Repo()
+    const cache = ShardFixture.Cache(() => [repo])
+    const name = (await cache.Ids())[0]!
+    const stale = (await cache.Locate(name))!
+    repo.changed.emit({} as never)
+    const fresh = (await cache.Locate(name))!
+    assert.notEqual(fresh, stale)
+    const staleGraph = await cache.Graph(stale)
+    const freshGraph = await cache.Graph(fresh)
+    assert.notEqual(freshGraph, staleGraph)
+    assert.equal(await cache.Graph(fresh), freshGraph)
+    assert.equal(cache.Builds, 2)
+})
+
+test('after Dispose the cache still answers but never re-subscribes to repositories', async () =>
+{
+    const repo = ShardFixture.Repo()
+    let live = 0
+    const subscribe = repo.changed.subscribe.bind(repo.changed)
+    repo.changed.subscribe = handler =>
+    {
+        live++
+        const inner = subscribe(handler)
+        return { dispose: () => { live--; inner.dispose() } } as ReturnType<typeof subscribe>
+    }
+    const cache = ShardFixture.Cache(() => [repo])
+    await cache.Ids()
+    assert.equal(live, 1)
+    cache.Dispose()
+    assert.equal(live, 0)
+    assert.equal((await cache.Ids()).length, 2)
+    assert.equal(live, 0)
+})

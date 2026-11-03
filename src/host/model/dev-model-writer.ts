@@ -126,7 +126,17 @@ export class DevModelWriter
     public async Persist(draft: ModelDraft, member: { Storage: IStorage }): Promise<number>
     {
         const storage = member.Storage
-        const targets = [...draft.toTodlByFile()]
+        let targets: [string, string][]
+        try
+        {
+            // emitting can refuse (e.g. a co-located file the splicer cannot rewrite faithfully): nothing is written then
+            targets = [...draft.toTodlByFile()]
+        }
+        catch (error)
+        {
+            this.diagnostics.WriteFailed(error)
+            throw new DevModelWriteFailedError(DevModelWriter.FailedMessage)
+        }
         const snapshots = new Map<string, string | undefined>()
         for (const [uri] of targets)
         {

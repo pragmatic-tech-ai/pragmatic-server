@@ -219,3 +219,20 @@ describe('DevModelWriter', () =>
         await assert.rejects(() => f.Writer.Persist(draft, f.Member), (e: unknown) => e instanceof DevModelWriteFailedError && !e.message.includes('disk full') && !e.message.includes('.todl'))
     })
 })
+
+describe('DevModelWriter emit refusals', () =>
+{
+    test('a co-located file the splicer refuses to rewrite fails as DevModelWriteFailedError with nothing written', async () =>
+    {
+        const f = new Fixture()
+        const twoModels = 'namespace shop { concept Order { total : string?; } model A : shop { Order o1 { total = "1"; } } model B : shop { Order o2 { total = "2"; } } }'
+        f.Storage.Files.set('extra.todl', twoModels)
+        const { draft, writer } = await f.Writer.Prepare(f.Member, Fixture.Identity)
+        writer.Begin()
+        writer.CreateNode('shop.Order', new Map([['total', '3']]))
+        writer.Commit()
+        const before = new Map(f.Storage.Files)
+        await assert.rejects(() => f.Writer.Persist(draft, f.Member), DevModelWriteFailedError)
+        assert.deepEqual(f.Storage.Files, before)
+    })
+})

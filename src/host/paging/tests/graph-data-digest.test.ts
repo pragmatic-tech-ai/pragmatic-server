@@ -37,3 +37,12 @@ test('the digest moves with any reachable value, and only with reachable ones fo
     assert.equal(GraphDataDigest.Of(gadgetEdited, DigestFixture.Labeled), before)
     assert.notEqual(GraphDataDigest.Of(gadgetEdited, DigestFixture.Wildcard), GraphDataDigest.Of(DigestFixture.Graph(base), DigestFixture.Wildcard))
 })
+
+test('duplicate ids in any row order digest the same, and a class (term-fixed values) change moves it', () =>
+{
+    const one = { id: 'w1', type: 'Widget', attrs: { x: 1 } }
+    const two = { id: 'w1', type: 'Widget', attrs: { x: 2 } }
+    assert.equal(GraphDataDigest.Of(DigestFixture.Graph([one, two]), DigestFixture.Labeled), GraphDataDigest.Of(DigestFixture.Graph([two, one]), DigestFixture.Labeled))
+    const classed = { ...one, class: 'Gold' } as typeof one
+    assert.notEqual(GraphDataDigest.Of(DigestFixture.Graph([classed]), DigestFixture.Labeled), GraphDataDigest.Of(DigestFixture.Graph([one]), DigestFixture.Labeled))
+})

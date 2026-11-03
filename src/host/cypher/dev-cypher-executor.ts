@@ -29,7 +29,8 @@ export interface DevCypherTarget
 /**
  * Plan -> authorize -> commit -> persist for one Cypher write, serialized per tenant. Nothing persists on any failure.
  * The in-process mutex is the fast path; inside it the tenant write lease (cross-process in a cluster) is held across the
- * whole write, and is re-verified right before the persist (fencing) together with the source-hash compare-and-swap.
+ * whole write and re-checked right before the persist, together with the source-hash compare-and-swap. The re-check is
+ * not storage-level fencing: a stall longer than the lease TTL after it could still overlap another worker's write.
  */
 export class DevCypherExecutor
 {

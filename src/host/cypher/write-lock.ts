@@ -1,6 +1,6 @@
 import { AsyncMutex } from './async-mutex.js'
 
-/** One held tenant write lease. `Held` re-verifies ownership at the moment it is asked (the fencing check before a persist). */
+/** One held tenant write lease. `Held` re-verifies ownership at the moment it is asked (a check before persisting, not a storage fence). */
 export interface IWriteLease
 {
     Held(): Promise<boolean>

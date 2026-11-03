@@ -84,3 +84,21 @@ test('an unreachable Redis fails closed', async () =>
     h.Redis.Down = true
     await assert.rejects(() => h.Lock().Acquire(), WriteLockBusyError)
 })
+
+/** A Redis whose SET lands but whose reply is lost (the caller sees an error, e.g. a timeout). */
+class LostReplyRedis extends FakeRedis
+{
+    public override async set(key: string, value: string): Promise<string | null>
+    {
+        await super.set(key, value)
+        throw new Error('timed out')
+    }
+}
+
+test('a SET whose reply is lost releases the token it may have planted', async () =>
+{
+    const redis = new LostReplyRedis()
+    const lock = new RedisWriteLock(LockHarness.Env, async () => redis, new RedisWriteLockTiming(30_000, 10_000, 200, 50), () => 0, async () => {})
+    await assert.rejects(() => lock.Acquire(), WriteLockBusyError)
+    assert.equal(redis.Keys.size, 0)
+})

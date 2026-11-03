@@ -10,7 +10,7 @@
  * exits non-zero if any axis fails.
  */
 import { fileURLToPath } from 'node:url'
-import { PragmaticClient, ShareSubjectKind, ShareStatus, AssignStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { PragmaticClient, ShareSubjectKind, ShareStatus, AssignStatus, CypherCells } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherQueryPageDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { Command, SeedCli } from './seed.js'
 import { UserSeeder } from './users.js'
@@ -223,7 +223,7 @@ export class DemoSmoke
     private async Orders(client: PragmaticClient): Promise<OrderRow[]>
     {
         const result: CypherQueryPageDto = await client.CypherQuery(DemoSmoke.OrdersQuery)
-        return result.items.map(r => ({ id: (r[0] as { id: string }).id, orderNo: String(r[1]), owner: String(r[2]), owningBu: String(r[3]) }))
+        return result.items.map(r => ({ id: CypherCells.AsNode(r[0])?.id ?? '', orderNo: String(r[1]), owner: String(r[2]), owningBu: String(r[3]) }))
     }
 
     private async OrderByNumber(client: PragmaticClient, orderNo: string): Promise<OrderRow>
