@@ -14,9 +14,9 @@ export class ImageVerificationError extends Error
     private static readonly ErrorName = 'ImageVerificationError'
     private static readonly MessagePrefix = 'image signature verification failed: '
 
-    public constructor(imageRef: string, reason: string)
+    public constructor(public readonly ImageRef: string, public readonly Reason: string)
     {
-        super(`${ImageVerificationError.MessagePrefix}${imageRef} (${reason})`)
+        super(`${ImageVerificationError.MessagePrefix}${ImageRef} (${Reason})`)
         this.name = ImageVerificationError.ErrorName
     }
 }

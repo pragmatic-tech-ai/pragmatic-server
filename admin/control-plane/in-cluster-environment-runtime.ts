@@ -7,18 +7,24 @@ import type { EnvironmentPlacement } from './environment-placement.js'
 import type { EnvironmentWorkload } from './environment-workload.js'
 import type { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import type { IHiveOrchestrator } from './hive-orchestrator.js'
+import { ImageVerificationError } from './image-verifier.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import type { ITenantDirectory } from './tenant-api/tenant-directory.js'
 
-/** Raised for any orchestrator failure; deliberately carries no kubectl stderr, manifest or secret content. */
+/**
+ * Raised for any orchestrator failure. The message carries no kubectl stderr, manifest or secret content: only, for a
+ * failure known to be safe to show (an image the hive refused to run), a plain Reason. Detail is the underlying error's
+ * text with the environment's OIDC secret redacted; it is for the operator's log, never for a response body.
+ */
 export class InClusterOperationFailedError extends Error
 {
     private static readonly DefaultMessage = 'In-cluster environment operation failed.'
     private static readonly ErrorName = 'InClusterOperationFailedError'
+    private static readonly Space = ' '
 
-    public constructor()
+    public constructor(public readonly Reason?: string, public readonly Detail?: string)
     {
-        super(InClusterOperationFailedError.DefaultMessage)
+        super(Reason === undefined ? InClusterOperationFailedError.DefaultMessage : InClusterOperationFailedError.DefaultMessage + InClusterOperationFailedError.Space + Reason)
         this.name = InClusterOperationFailedError.ErrorName
     }
 }
@@ -73,6 +79,10 @@ export class InClusterEnvironmentRuntime implements IEnvironmentRuntime
     private static readonly EnvironmentQuery = '/?environment='
     private static readonly StoppedReplicas = 0
     private static readonly StartedReplicas = 1
+    private static readonly RefusedImagePrefix = 'The hive refused to run image '
+    private static readonly RefusedImageOpen = ' ('
+    private static readonly RefusedImageClose = ').'
+    private static readonly Redacted = '[redacted]'
 
     public constructor(
         private readonly orchestrators: HiveOrchestratorFactory,
@@ -113,7 +123,7 @@ export class InClusterEnvironmentRuntime implements IEnvironmentRuntime
         {
             throw new InClusterBundleMissingError()
         }
-        await InClusterEnvironmentRuntime.Guard(async () =>
+        await InClusterEnvironmentRuntime.Guard(ctx, async () =>
         {
             await orchestrator.Apply(workload)
             if (workload.federation !== undefined && ctx.caPem !== undefined)
@@ -130,7 +140,7 @@ export class InClusterEnvironmentRuntime implements IEnvironmentRuntime
     public async WaitHealthy(ctx: EnvRuntimeContext): Promise<void>
     {
         const { orchestrator, workload } = this.Resolve(ctx)
-        await InClusterEnvironmentRuntime.Guard(() => orchestrator.WaitHealthy(workload))
+        await InClusterEnvironmentRuntime.Guard(ctx, () => orchestrator.WaitHealthy(workload))
     }
 
     public async Start(ctx: EnvRuntimeContext): Promise<EnvEndpoint>
@@ -140,7 +150,7 @@ export class InClusterEnvironmentRuntime implements IEnvironmentRuntime
         const { orchestrator, workload } = this.Resolve(ctx)
         if (workload.database !== undefined)
         {
-            await InClusterEnvironmentRuntime.Guard(() => orchestrator.ScaleDatabase(workload, InClusterEnvironmentRuntime.StartedReplicas))
+            await InClusterEnvironmentRuntime.Guard(ctx, () => orchestrator.ScaleDatabase(workload, InClusterEnvironmentRuntime.StartedReplicas))
         }
         const endpoint = await this.BringUp(ctx)
         await this.WaitHealthy(ctx)
@@ -151,17 +161,17 @@ export class InClusterEnvironmentRuntime implements IEnvironmentRuntime
     public async Stop(ctx: EnvRuntimeContext): Promise<void>
     {
         const { orchestrator, workload } = this.Resolve(ctx)
-        await InClusterEnvironmentRuntime.Guard(() => orchestrator.Scale(workload, InClusterEnvironmentRuntime.StoppedReplicas))
+        await InClusterEnvironmentRuntime.Guard(ctx, () => orchestrator.Scale(workload, InClusterEnvironmentRuntime.StoppedReplicas))
         if (workload.database !== undefined)
         {
-            await InClusterEnvironmentRuntime.Guard(() => orchestrator.ScaleDatabase(workload, InClusterEnvironmentRuntime.StoppedReplicas))
+            await InClusterEnvironmentRuntime.Guard(ctx, () => orchestrator.ScaleDatabase(workload, InClusterEnvironmentRuntime.StoppedReplicas))
         }
     }
 
     public async Teardown(ctx: EnvRuntimeContext, _removeData: boolean): Promise<void>
     {
         const { orchestrator, workload } = this.Resolve(ctx)
-        await InClusterEnvironmentRuntime.Guard(() => orchestrator.Teardown(workload))
+        await InClusterEnvironmentRuntime.Guard(ctx, () => orchestrator.Teardown(workload))
     }
 
     public RemoveVolume(_ctx: EnvRuntimeContext): Promise<void>
@@ -182,7 +192,7 @@ export class InClusterEnvironmentRuntime implements IEnvironmentRuntime
     public async Probe(ctx: EnvRuntimeContext): Promise<boolean>
     {
         const { orchestrator, workload } = this.Resolve(ctx)
-        const health = await InClusterEnvironmentRuntime.Guard(() => orchestrator.Health(workload))
+        const health = await InClusterEnvironmentRuntime.Guard(ctx, () => orchestrator.Health(workload))
         return health.ready
     }
 
@@ -197,16 +207,35 @@ export class InClusterEnvironmentRuntime implements IEnvironmentRuntime
         return { orchestrator: this.orchestrators.For(hive), workload }
     }
 
-    private static async Guard<T>(op: () => Promise<T>): Promise<T>
+    private static async Guard<T>(ctx: EnvRuntimeContext, op: () => Promise<T>): Promise<T>
     {
         try
         {
             return await op()
         }
-        catch
+        catch (err)
         {
-            throw new InClusterOperationFailedError()
+            throw new InClusterOperationFailedError(InClusterEnvironmentRuntime.ShowableReason(err), InClusterEnvironmentRuntime.RedactedDetail(err, ctx))
         }
+    }
+
+    // Only failures whose text is known to be safe get a reason a tenant may see; an image verification error names the
+    // image ref and why it was refused, never signature, digest or key material.
+    private static ShowableReason(err: unknown): string | undefined
+    {
+        if (err instanceof ImageVerificationError)
+        {
+            const C = InClusterEnvironmentRuntime
+            return C.RefusedImagePrefix + err.ImageRef + C.RefusedImageOpen + err.Reason + C.RefusedImageClose
+        }
+        return undefined
+    }
+
+    private static RedactedDetail(err: unknown, ctx: EnvRuntimeContext): string
+    {
+        const message = err instanceof Error ? err.message : String(err)
+        const secret = ctx.oidc?.secret
+        return secret === undefined || secret === '' ? message : message.split(secret).join(InClusterEnvironmentRuntime.Redacted)
     }
 
     private static EndpointOf(ctx: EnvRuntimeContext, workload: EnvironmentWorkload): EnvEndpoint

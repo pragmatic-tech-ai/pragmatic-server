@@ -80,6 +80,24 @@ describe('Create environment dialog', () =>
         assert.deepEqual(api.Calls.filter(c => c[0] === 'CreateEnvironment')[1], ['CreateEnvironment', { name: 'fresh', template: Template.DemoContoso, type: EnvType.Development }])
     })
 
+    it('shows the server reason for a failed create, and the generic message when no answer came back', async () =>
+    {
+        const api = new FakeTenantApi()
+        const host = new TenantTestHost(api)
+        const dialogs = host.UseDialogs()
+        const dialog = new CreateEnvironmentDialogViewModel(host.Session, dialogs, [])
+        void dialog.Open('Create environment')
+        dialog.Name = 'training'
+        const reason = 'The environment could not be created. The hive refused to run image pragmatic-server:dev (no trust root configured).'
+        api.FailOn.set('CreateEnvironment', new TenantApiError(500, reason))
+        await dialog.Confirm()
+        assert.equal(dialog.ErrorText, reason)
+        assert.equal(dialogs.IsOpen, true)
+        api.FailOn.set('CreateEnvironment', new TypeError('Failed to fetch'))
+        await dialog.Confirm()
+        assert.equal(dialog.ErrorText, 'Could not create the environment. Please try again.')
+    })
+
     it('opens the created environment from the list, and is disabled without the permission', async () =>
     {
         const f = new SectionsFixture(new FakeTenantApi().WithEnvironment('alpha'))

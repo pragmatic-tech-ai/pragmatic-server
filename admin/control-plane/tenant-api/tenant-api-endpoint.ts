@@ -14,7 +14,7 @@ import { ChannelNotSubscribedError, ManifestNotGatedError, ManifestWithdrawnErro
 import type { ITenantApiEndpoint } from '../tenant-auth/tenant-plane.js'
 import type { TenantSession } from '../tenant-auth/tenant-session.js'
 import { AdminProxyError, AdminProxyErrorKind } from '../admin-proxy.js'
-import { EnvironmentExistsError, EnvironmentNotDevelopmentError, EnvironmentNotFoundError, EnvironmentNotRuntimeError } from '../environment-service.js'
+import { CreateFailedError, EnvironmentExistsError, EnvironmentNotDevelopmentError, EnvironmentNotFoundError, EnvironmentNotRuntimeError } from '../environment-service.js'
 import { EnvType, Template } from '../environment-record.js'
 import { UnsupportedBackendError } from '../hive-orchestrator.js'
 import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, IssueTokenParams, SecurityModelDto } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -139,6 +139,11 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     private static readonly CreateExistsMessage = 'An environment with that name already exists'
     private static readonly CreateUnsupportedMessage = 'The hive backend does not support this operation'
     private static readonly CreateFailedMessage = 'The environment could not be created'
+    private static readonly SentenceEnd = '.'
+    private static readonly NoDetail = ''
+    private static readonly SentenceSeparator = ' '
+    private static readonly CreateFailedRecordedMessage = 'It is listed as failed; delete it before reusing the name.'
+    private static readonly CreateFailedLogPrefix = '[tenant-api] environment create failed:'
 
     private readonly health: HiveHealthProducer
 
@@ -409,20 +414,43 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         return true
     }
 
-    /** Maps a create failure to a fixed status and a fixed generic body; the caught error (and its text) is never echoed. */
+    /**
+     * Maps a create failure to a fixed status and body; the caught error's own text is never echoed. A rolled-back
+     * create adds only its showable reason (a cause known to be safe, e.g. an image the hive refused) and whether a
+     * Failed record was kept. Every unexpected failure is logged (secret-redacted) so the operator can see the cause.
+     */
     private WriteCreateError(res: ServerResponse, err: unknown): void
     {
-        let status = TenantApiEndpoint.StatusInternal
-        let message = TenantApiEndpoint.CreateFailedMessage
+        const C = TenantApiEndpoint
+        let status = C.StatusInternal
+        let message = C.CreateFailedMessage
         if (err instanceof EnvironmentExistsError)
         {
-            status = TenantApiEndpoint.StatusConflict
-            message = TenantApiEndpoint.CreateExistsMessage
+            status = C.StatusConflict
+            message = C.CreateExistsMessage
         }
         else if (err instanceof UnsupportedBackendError)
         {
-            status = TenantApiEndpoint.StatusBadRequest
-            message = TenantApiEndpoint.CreateUnsupportedMessage
+            status = C.StatusBadRequest
+            message = C.CreateUnsupportedMessage
+        }
+        else if (err instanceof CreateFailedError)
+        {
+            console.error(C.CreateFailedLogPrefix, err.message, err.Detail ?? C.NoDetail)
+            const sentences = [C.CreateFailedMessage + C.SentenceEnd]
+            if (err.ShowableReason !== undefined)
+            {
+                sentences.push(err.ShowableReason)
+            }
+            if (err.Recorded)
+            {
+                sentences.push(C.CreateFailedRecordedMessage)
+            }
+            message = sentences.join(C.SentenceSeparator)
+        }
+        else
+        {
+            console.error(C.CreateFailedLogPrefix, err)
         }
         this.WriteJson(res, status, { [TenantApiEndpoint.ErrorKey]: message })
     }

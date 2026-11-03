@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { EnvironmentRegistry } from '../environment-registry.js'
 import { EnvStatus, EnvType, EnvironmentChangeKind, Template, type EnvironmentChange, type EnvironmentRecord, type IContainerProbe } from '../environment-record.js'
 import { PortAllocator, PortUnavailableError, type IPortProbe } from '../port-allocator.js'
+import { InClusterOperationFailedError } from '../in-cluster-environment-runtime.js'
 import { EnvironmentService, EnvironmentNotDevelopmentError, EnvironmentNotRuntimeError, EnvironmentExistsError, EnvironmentNotFoundError, ImageMissingError, DockerUnavailableError, CreateFailedError } from '../environment-service.js'
 import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
@@ -597,9 +598,23 @@ test('Create rolls back when Up fails', async () =>
 {
     const h = await Harness.Make()
     h.Docker.FailUp = true
-    await assert.rejects(() => h.Service.Create('a', Template.DevBlank, EnvType.Development), CreateFailedError)
+    await assert.rejects(() => h.Service.Create('a', Template.DevBlank, EnvType.Development), (e: unknown) => e instanceof CreateFailedError && e.Recorded)
     assert.equal(h.Calls.filter(c => c === 'down').length, 1)
     assert.equal(h.Registry.Get('a')?.status, EnvStatus.Failed)
+})
+
+test('CreateFailedError.Of carries the showable reason and detail, and redacts the secret from its reason', () =>
+{
+    const inCluster = new InClusterOperationFailedError('The hive refused to run image x (no signature).', 'kubectl detail')
+    const failed = CreateFailedError.Of(inCluster, undefined, true)
+    assert.equal(failed.ShowableReason, 'The hive refused to run image x (no signature).')
+    assert.equal(failed.Detail, 'kubectl detail')
+    assert.equal(failed.Recorded, true)
+    const plain = CreateFailedError.Of(new Error('token s3cr3t leaked'), 's3cr3t', false)
+    assert.equal(plain.ShowableReason, undefined)
+    assert.equal(plain.Detail, undefined)
+    assert.equal(plain.Recorded, false)
+    assert.equal(plain.reason, 'token [redacted] leaked')
 })
 
 test('Create still records Failed and throws CreateFailedError when rollback Down throws', async () =>

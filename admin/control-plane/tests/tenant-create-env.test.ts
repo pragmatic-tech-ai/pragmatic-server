@@ -3,13 +3,32 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
 import { beforeEach, describe, it } from 'node:test'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
-import { EnvironmentExistsError } from '../environment-service.js'
+import { CreateFailedError, EnvironmentExistsError } from '../environment-service.js'
 import { UnsupportedBackendError } from '../hive-orchestrator.js'
 import { HiveBackend, InfraMode, type HiveRecord } from '../platform-records.js'
 import { TenantApiEndpoint } from '../tenant-api/tenant-api-endpoint.js'
 import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
 import type { IEnvironmentService } from '../control-plane-host.js'
 import type { TenantSession } from '../tenant-auth/tenant-session.js'
+
+// Captures console.error lines for the duration of one call, restoring it afterwards.
+class ErrorLog
+{
+    public static async Capture<T>(body: () => Promise<T>): Promise<{ result: T; lines: string[] }>
+    {
+        const lines: string[] = []
+        const orig = console.error
+        console.error = (...args: unknown[]) => { lines.push(args.map(a => a instanceof Error ? a.message : String(a)).join(' ')) }
+        try
+        {
+            return { result: await body(), lines }
+        }
+        finally
+        {
+            console.error = orig
+        }
+    }
+}
 
 class ResRecorder
 {
@@ -193,11 +212,33 @@ describe('TenantApiEndpoint POST /tenant-api/environments', () =>
         assert.equal(res.body.includes(failure.message), false)
     })
 
-    it('answers a fixed generic 500 for any other failure without echoing its text', async () =>
+    it('answers a fixed generic 500 for any other failure without echoing its text, and logs it for the operator', async () =>
     {
         service.Failure = new Error('secret-host-detail')
-        const res = await Post(Fixtures.Valid())
+        const { result: res, lines } = await ErrorLog.Capture(() => Post(Fixtures.Valid()))
         assert.equal(res.status, 500)
         assert.doesNotMatch(res.body, /secret-host-detail/)
+        assert.equal(lines.length, 1)
+        assert.match(lines[0]!, /secret-host-detail/)
+    })
+
+    it('a rolled-back create shows only its showable reason and that a failed record was kept; the detail goes to the log', async () =>
+    {
+        const reason = 'The hive refused to run image pragmatic-server:dev (no trust root configured).'
+        service.Failure = new CreateFailedError('kubectl stderr text', reason, 'inner kubectl detail', true)
+        const { result: res, lines } = await ErrorLog.Capture(() => Post(Fixtures.Valid()))
+        assert.equal(res.status, 500)
+        assert.deepEqual(res.Json(), { error: 'The environment could not be created. ' + reason + ' It is listed as failed; delete it before reusing the name.' })
+        assert.doesNotMatch(res.body, /kubectl/)
+        assert.match(lines[0]!, /kubectl stderr text/)
+        assert.match(lines[0]!, /inner kubectl detail/)
+    })
+
+    it('a rolled-back create with no showable reason and no kept record answers the plain message', async () =>
+    {
+        service.Failure = new CreateFailedError('idp unreachable at 10.0.0.5')
+        const { result: res } = await ErrorLog.Capture(() => Post(Fixtures.Valid()))
+        assert.equal(res.status, 500)
+        assert.deepEqual(res.Json(), { error: 'The environment could not be created.' })
     })
 })

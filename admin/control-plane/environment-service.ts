@@ -21,6 +21,7 @@ import type { IUserSeeder } from './docker-env-port.js'
 import type { EnvEndpoint, EnvRuntimeContext } from './environment-runtime.js'
 import type { EnvironmentRuntimeResolver } from './environment-runtime-resolver.js'
 import type { IUiDeployActuator, UiDeployBundle } from './ui-deploy-actuator.js'
+import { InClusterOperationFailedError } from './in-cluster-environment-runtime.js'
 
 export class EnvironmentExistsError extends Error
 {
@@ -106,15 +107,37 @@ export class DockerUnavailableError extends Error
     }
 }
 
+/**
+ * A create that failed and was rolled back. `reason` is the cause's text with the OIDC secret redacted (operator-facing).
+ * ShowableReason is set only for a cause known to be safe to show a tenant; Detail is the redacted inner detail for the
+ * operator's log; Recorded says a Failed record was kept (so the name stays taken until that record is deleted).
+ */
 export class CreateFailedError extends Error
 {
     private static readonly ErrorName = 'CreateFailedError'
     private static readonly MessagePrefix = 'Environment creation failed and was rolled back: '
+    private static readonly Redacted = '[redacted]'
 
-    public constructor(public readonly reason: string)
+    public constructor(
+        public readonly reason: string,
+        public readonly ShowableReason?: string,
+        public readonly Detail?: string,
+        public readonly Recorded: boolean = false)
     {
         super(CreateFailedError.MessagePrefix + reason)
         this.name = CreateFailedError.ErrorName
+    }
+
+    public static Of(err: unknown, secret: string | undefined, recorded: boolean): CreateFailedError
+    {
+        const inCluster = err instanceof InClusterOperationFailedError ? err : undefined
+        return new CreateFailedError(CreateFailedError.Redact(err, secret), inCluster?.Reason, inCluster?.Detail, recorded)
+    }
+
+    public static Redact(err: unknown, secret: string | undefined): string
+    {
+        const message = err instanceof Error ? err.message : String(err)
+        return secret === undefined || secret === '' ? message : message.split(secret).join(CreateFailedError.Redacted)
     }
 }
 
@@ -139,7 +162,6 @@ export class EnvironmentService
     private static readonly CaFileName = 'ca.crt'
     private static readonly OidcSecretBytes = 24
     private static readonly OidcSecretEncoding = 'base64url'
-    private static readonly Redacted = '[redacted]'
     private static readonly MakerPrincipalId = 'maker'
     private static readonly MakerRoleName = 'Maker'
     private static readonly TenantKindName = 'Tenant'
@@ -232,14 +254,8 @@ export class EnvironmentService
         }
         catch (err)
         {
-            throw new CreateFailedError(EnvironmentService.Redact(err, secret))
+            throw CreateFailedError.Of(err, secret, false)
         }
-    }
-
-    private static Redact(err: unknown, secret: string | undefined): string
-    {
-        const message = err instanceof Error ? err.message : String(err)
-        return secret === undefined || secret === '' ? message : message.split(secret).join(EnvironmentService.Redacted)
     }
 
     public async Create(name: string, template: Template, type: EnvType, hostPort?: number, hiveId?: string): Promise<EnvironmentRecord>
@@ -312,7 +328,7 @@ export class EnvironmentService
             catch (err)
             {
                 EnvironmentService.RemoveBundleDir(bundleDir)
-                throw oidc === undefined ? err : new CreateFailedError(EnvironmentService.Redact(err, oidc.secret))
+                throw oidc === undefined ? err : CreateFailedError.Of(err, oidc.secret, false)
             }
 
             let imageOk: boolean
@@ -365,7 +381,7 @@ export class EnvironmentService
                 const failed = { ...record, status: EnvStatus.Failed }
                 await this.registry.Put(failed)
                 this.NotifyChanged(EnvironmentChangeKind.Created, failed)
-                throw new CreateFailedError(EnvironmentService.Redact(err, oidc?.secret))
+                throw CreateFailedError.Of(err, oidc?.secret, true)
             }
             await this.registry.Put(record)
             this.NotifyChanged(EnvironmentChangeKind.Created, record)

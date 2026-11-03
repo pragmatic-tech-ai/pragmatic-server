@@ -15,6 +15,8 @@ import type { IHiveOrchestrator, WorkloadHealth } from '../hive-orchestrator.js'
 import type { HiveRecord } from '../platform-records.js'
 import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
+import { ImageVerificationError } from '../image-verifier.js'
+import type { EnvOidc } from '../../../environments/seed/bundle.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import { EnvLogsUnavailableInClusterError, InClusterEnvironmentRuntime, InClusterHiveMissingError, InClusterOperationFailedError, InClusterBundleMissingError } from '../in-cluster-environment-runtime.js'
 
@@ -144,6 +146,29 @@ test('a thrown Apply surfaces the fixed generic error without stderr text', asyn
     const h = new Harness()
     h.Orchestrator.FailWith = new Error(Fx.Secret)
     await assert.rejects(() => h.Runtime.BringUp(h.Ctx), (e: Error) => e instanceof InClusterOperationFailedError && !e.message.includes('SECRET'))
+})
+
+test('an image the hive refused surfaces as a showable reason; other failures carry none', async () =>
+{
+    const h = new Harness()
+    h.Orchestrator.FailWith = new ImageVerificationError('pragmatic-server:dev', 'no trust root configured')
+    await assert.rejects(() => h.Runtime.BringUp(h.Ctx), (e: Error) =>
+        e instanceof InClusterOperationFailedError
+        && e.Reason === 'The hive refused to run image pragmatic-server:dev (no trust root configured).'
+        && e.message.endsWith(e.Reason))
+    h.Orchestrator.FailWith = new Error(Fx.Secret)
+    await assert.rejects(() => h.Runtime.BringUp(h.Ctx), (e: Error) => e instanceof InClusterOperationFailedError && e.Reason === undefined)
+})
+
+test('the failure detail keeps the cause for the operator log, with the OIDC secret redacted, and never enters the message', async () =>
+{
+    const h = new Harness()
+    const oidc = { secret: 'oidc-secret-bytes' } as unknown as EnvOidc
+    h.Orchestrator.FailWith = new Error('apply failed near oidc-secret-bytes')
+    await assert.rejects(() => h.Runtime.BringUp({ ...h.Ctx, oidc }), (e: Error) =>
+        e instanceof InClusterOperationFailedError
+        && e.Detail === 'apply failed near [redacted]'
+        && !e.message.includes('apply failed'))
 })
 
 test('WaitHealthy and Teardown failures are also mapped to the generic error', async () =>

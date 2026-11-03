@@ -10,7 +10,8 @@ import type { TenantSessionService } from '../../shell/tenant-session-service.js
 // Create environment: only the fields the server takes (name, template,
 // type). Create stays disabled until the name is valid and not already used
 // by a listed environment; the server's 409 (a name taken meanwhile) reads
-// the same as the local duplicate check.
+// the same as the local duplicate check; any other server answer is shown as
+// the server wrote it (it says why, e.g. an image the hive refused to run).
 export class CreateEnvironmentDialogViewModel extends TenantDialogViewModel<EnvironmentDto>
 {
     public static readonly Title = 'Create environment'
@@ -123,7 +124,8 @@ export class CreateEnvironmentDialogViewModel extends TenantDialogViewModel<Envi
     }
 
     // A 401 passes through (the base expires the session); a 409 reads as
-    // the duplicate message; anything else as the generic failure.
+    // the duplicate message; any other server answer shows the server's own
+    // text; a request that never got an answer reads as the generic failure.
     protected override async SubmitCore(): Promise<EnvironmentDto>
     {
         const C = CreateEnvironmentDialogViewModel
@@ -137,8 +139,11 @@ export class CreateEnvironmentDialogViewModel extends TenantDialogViewModel<Envi
             {
                 throw e
             }
-            const duplicate = e instanceof TenantApiError && e.Status === C.DuplicateStatus
-            throw new Error(duplicate ? C.DuplicateMessage : C.FailureMessage)
+            if (e instanceof TenantApiError)
+            {
+                throw new Error(e.Status === C.DuplicateStatus ? C.DuplicateMessage : e.message)
+            }
+            throw new Error(C.FailureMessage)
         }
     }
 }
