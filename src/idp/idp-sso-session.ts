@@ -53,6 +53,24 @@ export class IdpSsoSessionStore
     {
         this.sessions.delete(id);
     }
+
+    /**
+     * Ends every session of the principal in the tenant (after its password changed, an old SSO cookie must not re-authorize
+     * without the new password), except `keepId` when given (the session making a self-service change). Returns how many ended.
+     */
+    public RevokeAllFor(tenantId: string, principalId: string, keepId?: string): number
+    {
+        let ended = 0;
+        for (const [id, session] of this.sessions)
+        {
+            if (id !== keepId && session.TenantId === tenantId && session.PrincipalId === principalId)
+            {
+                this.sessions.delete(id);
+                ended++;
+            }
+        }
+        return ended;
+    }
 }
 
 /** Builds and reads the IdP SSO cookie. SameSite=Lax so cross-site top-level redirects carry it. */

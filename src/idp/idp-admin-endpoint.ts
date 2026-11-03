@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { ReservedRealmError } from './idp-host.js';
 import type { IdpRealmSet } from './idp-host.js';
 import type { IdpClientStore } from './idp-client-store.js';
+import type { IdpSsoSessionStore } from './idp-sso-session.js';
 
 /** Status + JSON body produced by the admin endpoint. Never carries secrets. */
 export class AdminResult
@@ -59,11 +60,15 @@ export class IdpAdminEndpoint
 
     private readonly adminTokenDigests: readonly Buffer[];
 
-    /** `adminTokens` is the set of currently valid admin tokens (several during a rotation); an empty set rejects everything. */
+    /**
+     * `adminTokens` is the set of currently valid admin tokens (several during a rotation); an empty set rejects everything.
+     * `sso` is the host's SSO session store: a password reset ends the principal's SSO sessions in it.
+     */
     public constructor(
         adminTokens: readonly string[],
         private readonly realms: IdpRealmSet,
-        private readonly clients: IdpClientStore)
+        private readonly clients: IdpClientStore,
+        private readonly sso?: IdpSsoSessionStore)
     {
         this.adminTokenDigests = adminTokens.filter(t => t.length > 0).map(t => IdpAdminEndpoint.Digest(t));
     }
@@ -195,6 +200,8 @@ export class IdpAdminEndpoint
         {
             return IdpAdminEndpoint.Fail(IdpAdminEndpoint.NotFoundStatus, IdpAdminEndpoint.UnknownAccountCode);
         }
+        // An SSO cookie issued before the reset must not re-authorize without the new password.
+        this.sso?.RevokeAllFor(tenantId, principalId);
         return new AdminResult(IdpAdminEndpoint.OkStatus, { [IdpAdminEndpoint.PrincipalIdField]: principalId });
     }
 

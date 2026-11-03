@@ -48,8 +48,9 @@ class ThrottleFixture
             const tls = IdpTlsMaterial.Load({ certFile: ca.certFile, keyFile: ca.keyFile });
             const realm = await IdpRealm.OpenFor(path.join(dir, 'realms'), ThrottleFixture.TenantId, 'T', randomBytes(32));
             await realm.SeedAccount(ThrottleFixture.Email, 'p-1', ThrottleFixture.Old, 'Owner');
-            const original = realm.RotatePassword.bind(realm);
-            realm.RotatePassword = async (e: string, c: string, n: string) =>
+            // The host rotates through RotatePasswordOf (it needs the principal to end its other SSO sessions).
+            const original = realm.RotatePasswordOf.bind(realm);
+            realm.RotatePasswordOf = async (e: string, c: string, n: string) =>
             {
                 f.rotateCalls++;
                 await new Promise(resolve => setTimeout(resolve, 50));

@@ -209,6 +209,9 @@ test('self-service rotation with the correct current password rotates: new authe
         assert.notEqual(after, before);
         assert.ok(after.startsWith(RealmTestFixture.Argon2Prefix));
         assert.ok(!after.includes(RotationFixture.NewPassword));
+        // RotatePasswordOf names the principal it rotated (the host ends that principal's other SSO sessions).
+        assert.equal(await realm.RotatePasswordOf(RealmTestFixture.Email, RotationFixture.NewPassword, RotationFixture.NewPassword + 'x'), RealmTestFixture.PrincipalId);
+        assert.equal(await realm.RotatePasswordOf(RealmTestFixture.Email, 'wrong', 'whatever'), undefined);
     });
 });
 

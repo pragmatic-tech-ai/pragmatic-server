@@ -65,3 +65,21 @@ test('the cookie is HttpOnly, Path=/, SameSite=Lax, Secure when asked', () =>
     assert.equal(IdpSsoCookie.Read('other=1'), undefined);
     assert.equal(IdpSsoCookie.Read(undefined), undefined);
 });
+
+test('RevokeAllFor ends every session of that principal in that tenant, except the one kept, and nothing else', () =>
+{
+    const store = new IdpSsoSessionTestFixture().Store();
+    const a = store.Issue('owner', 'tenant-1');
+    const b = store.Issue('owner', 'tenant-1');
+    const c = store.Issue('owner', 'tenant-1');
+    const other = store.Issue('someone', 'tenant-1');
+    const elsewhere = store.Issue('owner', 'tenant-2');
+    assert.equal(store.RevokeAllFor('tenant-1', 'owner', c.Id), 2);
+    assert.equal(store.Validate(a.Id, 'tenant-1'), null);
+    assert.equal(store.Validate(b.Id, 'tenant-1'), null);
+    assert.equal(store.Validate(c.Id, 'tenant-1')?.PrincipalId, 'owner');
+    assert.equal(store.Validate(other.Id, 'tenant-1')?.PrincipalId, 'someone');
+    assert.equal(store.Validate(elsewhere.Id, 'tenant-2')?.PrincipalId, 'owner');
+    assert.equal(store.RevokeAllFor('tenant-1', 'owner'), 1);
+    assert.equal(store.Validate(c.Id, 'tenant-1'), null);
+});

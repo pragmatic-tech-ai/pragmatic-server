@@ -129,17 +129,23 @@ export class IdpRealm
      */
     public async RotatePassword(email: string, currentPassword: string, newPassword: string): Promise<boolean>
     {
+        return (await this.RotatePasswordOf(email, currentPassword, newPassword)) !== undefined;
+    }
+
+    /** As RotatePassword, returning the rotated principal's id (undefined when nothing changed). */
+    public async RotatePasswordOf(email: string, currentPassword: string, newPassword: string): Promise<string | undefined>
+    {
         if (newPassword.length === 0)
         {
-            return false;
+            return undefined;
         }
         const result = await this.Authenticate(email, currentPassword);
         if (result === null)
         {
-            return false;
+            return undefined;
         }
         await this.StoreSecret(result.Principal.Id, newPassword);
-        return true;
+        return result.Principal.Id;
     }
 
     /**

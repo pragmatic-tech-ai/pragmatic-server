@@ -12,7 +12,7 @@ import { IdpLoginPage } from './idp-login-page.js';
 import { IdpLoginThrottle } from './idp-login-throttle.js';
 import type { IdpRealm } from './idp-realm.js';
 import type { IdpSigningKey } from './idp-signing-key.js';
-import type { IdpSsoSessionStore } from './idp-sso-session.js';
+import { IdpSsoCookie, type IdpSsoSessionStore } from './idp-sso-session.js';
 
 /** Creates (and persists) a realm for a tenant on demand. */
 export type RealmFactory = (tenantId: string, displayName: string) => Promise<IdpRealm>;
@@ -391,13 +391,26 @@ export class IdpHost
         // Count the attempt at the gate, synchronously BEFORE the await: RotatePassword yields (Argon2 + I/O), so a concurrent
         // burst would otherwise all pass CheckAllowed before any failure was recorded. Success clears the optimistic count.
         this.throttle.RecordFailure(tenantId, email, clientIp);
-        if (await realm.RotatePassword(email, current, next))
+        const principalId = await realm.RotatePasswordOf(email, current, next);
+        if (principalId !== undefined)
         {
             this.throttle.Clear(tenantId, email, clientIp);
+            this.EndOtherSsoSessions(req, tenantId, principalId);
             this.WriteJson(res, IdpHost.StatusOk, IdpHost.EmptyObject, IdpHost.NoStoreHeaders);
             return;
         }
         this.WriteJson(res, IdpHost.StatusUnauthorized, { [IdpHost.ErrorField]: IdpHost.InvalidCredentialsCode }, IdpHost.NoStoreHeaders);
+    }
+
+    /**
+     * After a self-service password change: ends the principal's other SSO sessions (an old cookie elsewhere must not
+     * re-authorize without the new password). The session making the request is kept when it is this principal's.
+     */
+    private EndOtherSsoSessions(req: IncomingMessage, tenantId: string, principalId: string): void
+    {
+        const cookieId = IdpSsoCookie.Read(req.headers.cookie);
+        const current = cookieId === undefined ? null : this.sso.Validate(cookieId, tenantId);
+        this.sso.RevokeAllFor(tenantId, principalId, current !== null && current.PrincipalId === principalId ? cookieId : undefined);
     }
 
     private async RouteAdmin(req: IncomingMessage, res: ServerResponse, admin: IdpAdminEndpoint, method: string, segments: string[]): Promise<void>

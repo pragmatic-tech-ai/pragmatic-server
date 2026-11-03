@@ -94,13 +94,15 @@ export class IdpMain
             realms.Add(tenantId, await IdpRealm.OpenFor(realmsDir, tenantId, tenantId, masterKey));
         }
         const clients = new IdpClientStore();
-        const admin = adminTokens === undefined ? undefined : new IdpAdminEndpoint(adminTokens, realms, clients);
+        // One SSO store for the host and the admin endpoint: an admin password reset ends the principal's SSO sessions.
+        const sso = new IdpSsoSessionStore();
+        const admin = adminTokens === undefined ? undefined : new IdpAdminEndpoint(adminTokens, realms, clients, sso);
         const ca = DevCa.EnsureAt(join(data, IdpMain.TlsDir), new URL(baseUrl).hostname);
         const tls = IdpTlsMaterial.Load({ certFile: ca.certFile, keyFile: ca.keyFile });
         const secure = env[IdpMain.SecureCookieEnvVar];
         const secureCookie = secure !== IdpMain.ZeroToken && secure !== IdpMain.FalseToken;
         // The built sign-in app is required: Load throws (the daemon refuses to start) when it is missing.
-        return new IdpHost(baseUrl, signingKey, realms, clients, new InMemoryAuthorizationCodeStore(), new IdpSsoSessionStore(), tls, secureCookie, admin, internalBaseUrl,
+        return new IdpHost(baseUrl, signingKey, realms, clients, new InMemoryAuthorizationCodeStore(), sso, tls, secureCookie, admin, internalBaseUrl,
             new IdpLoginThrottle(), IdpLoginPage.Load(env[IdpMain.LoginDirEnvVar] || IdpLoginPage.DefaultRoot()));
     }
 

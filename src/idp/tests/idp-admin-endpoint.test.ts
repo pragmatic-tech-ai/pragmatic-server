@@ -9,6 +9,7 @@ import { IdpRealm } from '../idp-realm.js';
 import { IdpClientStore } from '../idp-client-store.js';
 import { IdpAdminEndpoint } from '../idp-admin-endpoint.js';
 import type { AdminResult } from '../idp-admin-endpoint.js';
+import { IdpSsoSessionStore } from '../idp-sso-session.js';
 
 class AdminFixture
 {
@@ -43,13 +44,14 @@ class AdminFixture
 
     public readonly realms: IdpRealmSet;
     public readonly clients = new IdpClientStore();
+    public readonly sso = new IdpSsoSessionStore();
     public readonly endpoint: IdpAdminEndpoint;
 
     public constructor(root: string)
     {
         const masterKey = randomBytes(AdminFixture.MasterKeyBytes);
         this.realms = new IdpRealmSet([], (t, d) => IdpRealm.OpenFor(root, t, d, masterKey));
-        this.endpoint = new IdpAdminEndpoint([AdminFixture.Token], this.realms, this.clients);
+        this.endpoint = new IdpAdminEndpoint([AdminFixture.Token], this.realms, this.clients, this.sso);
     }
 
     public static async Create(): Promise<AdminFixture>
@@ -291,6 +293,30 @@ test('admin password reset sets the new password, old stops authenticating, and 
     const realm = f.realms.For(AdminFixture.Tenant)!;
     assert.notEqual(await realm.Authenticate(AdminFixture.Email, ResetFixture.Password), null);
     assert.equal(await realm.Authenticate(AdminFixture.Email, AdminFixture.Password), null);
+});
+
+test('admin password reset ends the principal\'s SSO sessions in that realm (they no longer re-authorize), and only theirs', async () =>
+{
+    const f = await AdminFixture.Create();
+    await f.PutRealm();
+    await f.PostAccount(f.AccountBody());
+    const mine = f.sso.Issue(AdminFixture.PrincipalId, AdminFixture.Tenant);
+    const theirs = f.sso.Issue('p-other', AdminFixture.Tenant);
+    const elsewhere = f.sso.Issue(AdminFixture.PrincipalId, 'tenant-2');
+    assert.equal((await ResetFixture.Reset(f, AdminFixture.PrincipalId, { password: ResetFixture.Password })).Status, AdminFixture.OkStatus);
+    assert.equal(f.sso.Validate(mine.Id, AdminFixture.Tenant), null);
+    assert.notEqual(f.sso.Validate(theirs.Id, AdminFixture.Tenant), null);
+    assert.notEqual(f.sso.Validate(elsewhere.Id, 'tenant-2'), null);
+});
+
+test('a reset for an unknown principal ends no session', async () =>
+{
+    const f = await AdminFixture.Create();
+    await f.PutRealm();
+    await f.PostAccount(f.AccountBody());
+    const mine = f.sso.Issue(AdminFixture.PrincipalId, AdminFixture.Tenant);
+    assert.equal((await ResetFixture.Reset(f, ResetFixture.UnknownPrincipal, { password: ResetFixture.Password })).Status, AdminFixture.NotFound);
+    assert.notEqual(f.sso.Validate(mine.Id, AdminFixture.Tenant), null);
 });
 
 test('admin password reset without a valid admin token is 401 and changes nothing', async () =>

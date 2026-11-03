@@ -60,7 +60,7 @@ class AdminFixture
     public static readonly DiscoveryPath = '/tenant-1/.well-known/openid-configuration';
     public static readonly InternalErrorText = '{"error":"internal_error"}';
 
-    public static async WithHost(withAdmin: boolean | typeof AdminFixture.Throwing, body: (host: IdpHost, caPem: string) => Promise<void>): Promise<void>
+    public static async WithHost(withAdmin: boolean | typeof AdminFixture.Throwing, body: (host: IdpHost, caPem: string, sso: IdpSsoSessionStore) => Promise<void>): Promise<void>
     {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), AdminFixture.DirPrefix));
         let host: IdpHost | undefined;
@@ -72,6 +72,7 @@ class AdminFixture
             const realmsDir = path.join(dir, AdminFixture.RealmDirName);
             const realms = new IdpRealmSet([], (tenantId, displayName) => IdpRealm.OpenFor(realmsDir, tenantId, displayName, randomBytes(32)));
             const clients = new IdpClientStore();
+            const sso = new IdpSsoSessionStore();
             let admin: IdpAdminEndpoint | undefined;
             if (withAdmin === AdminFixture.Throwing)
             {
@@ -79,12 +80,12 @@ class AdminFixture
             }
             else if (withAdmin)
             {
-                admin = new IdpAdminEndpoint([AdminFixture.Token], realms, clients);
+                admin = new IdpAdminEndpoint([AdminFixture.Token], realms, clients, sso);
             }
             await realms.EnsureRealm(AdminFixture.TenantId, AdminFixture.DisplayName);
-            host = new IdpHost(AdminFixture.BaseUrl, key, realms, clients, new InMemoryAuthorizationCodeStore(), new IdpSsoSessionStore(), tls, true, admin);
+            host = new IdpHost(AdminFixture.BaseUrl, key, realms, clients, new InMemoryAuthorizationCodeStore(), sso, tls, true, admin);
             await host.Listen(0, AdminFixture.Loopback);
-            await body(host, fs.readFileSync(ca.caFile, AdminFixture.Utf8));
+            await body(host, fs.readFileSync(ca.caFile, AdminFixture.Utf8), sso);
         }
         finally
         {
@@ -96,7 +97,7 @@ class AdminFixture
         }
     }
 
-    public static Send(host: IdpHost, caPem: string, method: string, urlPath: string, payload: string, authenticated: boolean = true): Promise<HttpsReply>
+    public static Send(host: IdpHost, caPem: string, method: string, urlPath: string, payload: string, authenticated: boolean = true, cookie?: string): Promise<HttpsReply>
     {
         const addr = host.Address();
         return new Promise<HttpsReply>((resolve, reject) =>
@@ -105,6 +106,10 @@ class AdminFixture
             if (authenticated)
             {
                 headers[AdminFixture.AuthorizationHeader] = AdminFixture.BearerPrefix + AdminFixture.Token;
+            }
+            if (cookie !== undefined)
+            {
+                headers['cookie'] = cookie;
             }
             const req = https.request({ host: AdminFixture.Localhost, port: addr.port, path: urlPath, method, ca: caPem, headers }, res =>
             {
@@ -215,5 +220,34 @@ test('self-service password change on the realm host: correct current rotates, w
         assert.ok(!ok.text.includes(RotateFixture.NewPassword) && !ok.text.includes(RotateFixture.OldPassword));
         const again = await AdminFixture.Send(host, ca, 'POST', RotateFixture.PasswordPath, RotateFixture.GoodBody, false);
         assert.equal(again.status, 401);
+    });
+});
+
+test('a self-service password change ends the principal\'s OTHER SSO sessions and keeps the one making the request', async () =>
+{
+    await AdminFixture.WithHost(true, async (host, ca, sso) =>
+    {
+        await AdminFixture.Send(host, ca, 'POST', AdminFixture.AccountsPath, RotateFixture.AccountBody);
+        const current = sso.Issue('p-9', AdminFixture.TenantId);
+        const otherDevice = sso.Issue('p-9', AdminFixture.TenantId);
+        const someoneElse = sso.Issue('p-1', AdminFixture.TenantId);
+        const ok = await AdminFixture.Send(host, ca, 'POST', RotateFixture.PasswordPath, RotateFixture.GoodBody, false, 'idp_sso=' + current.Id);
+        assert.equal(ok.status, 200);
+        assert.notEqual(sso.Validate(current.Id, AdminFixture.TenantId), null);
+        assert.equal(sso.Validate(otherDevice.Id, AdminFixture.TenantId), null);
+        assert.notEqual(sso.Validate(someoneElse.Id, AdminFixture.TenantId), null);
+    });
+});
+
+test('a self-service password change without an SSO cookie ends all the principal\'s SSO sessions; a failed one ends none', async () =>
+{
+    await AdminFixture.WithHost(true, async (host, ca, sso) =>
+    {
+        await AdminFixture.Send(host, ca, 'POST', AdminFixture.AccountsPath, RotateFixture.AccountBody);
+        const a = sso.Issue('p-9', AdminFixture.TenantId);
+        assert.equal((await AdminFixture.Send(host, ca, 'POST', RotateFixture.PasswordPath, RotateFixture.WrongCurrentBody, false)).status, 401);
+        assert.notEqual(sso.Validate(a.Id, AdminFixture.TenantId), null);
+        assert.equal((await AdminFixture.Send(host, ca, 'POST', RotateFixture.PasswordPath, RotateFixture.GoodBody, false)).status, 200);
+        assert.equal(sso.Validate(a.Id, AdminFixture.TenantId), null);
     });
 });
