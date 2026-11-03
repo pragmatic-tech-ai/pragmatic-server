@@ -1,5 +1,5 @@
 import type { IInstanceFilter } from '@pragmatic-tech-ai/todl'
-import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
+import type { IGraphQuery, ReflectedNode } from '@pragmatic-tech-ai/todl/graph-api'
 import { RecordKey } from '../sharing/record-keyed-view.js'
 import type { IRecordKeyedView } from '../sharing/record-keyed-view.js'
 
@@ -11,7 +11,21 @@ type Mirror = ReturnType<IGraphQuery['AllInstances']>[number]
  */
 export class FilteredGraphQuery implements IGraphQuery
 {
-    constructor(private readonly inner: IGraphQuery, private readonly filter: IInstanceFilter) {}
+    /** Present only when the inner graph can materialize: an uncommitted node is visible iff the filter keeps it. */
+    public readonly Materialize?: (node: ReflectedNode) => Mirror | undefined
+
+    constructor(private readonly inner: IGraphQuery, private readonly filter: IInstanceFilter)
+    {
+        const materialize = inner.Materialize?.bind(inner)
+        if (materialize !== undefined)
+        {
+            this.Materialize = node =>
+            {
+                const mirror = materialize(node)
+                return mirror !== undefined && this.Keep(mirror) ? mirror : undefined
+            }
+        }
+    }
 
     public Concepts(): ReturnType<IGraphQuery['Concepts']> { return this.inner.Concepts() }
     public Type(name: string): ReturnType<IGraphQuery['Type']> { return this.inner.Type(name) }

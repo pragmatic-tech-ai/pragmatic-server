@@ -149,12 +149,14 @@ class ExecFixture
         }
     }
 
+    public static CoLocatedConcept(): string
+    {
+        return `concept ${PpSecurityHarness.Concept} { ${PpSecurityHarness.OwningBuField} : string?; label : string?; secret : string?; }`
+    }
+
     public static CoLocatedTodl(): string
     {
-        const bu = PpSecurityHarness.OwningBuField
-        const widget = PpSecurityHarness.Concept
-        return `namespace acme { concept ${widget} { ${bu} : string?; label : string?; secret : string?; } `
-            + `model acmeModel : acme { ${widget} a1 { label = "alpha"; } } }`
+        return `namespace acme { ${ExecFixture.CoLocatedConcept()} model acmeModel : acme { ${PpSecurityHarness.Concept} a1 { label = "alpha"; } } }`
     }
 
     private static WriteBase(solution: string): void
@@ -368,17 +370,18 @@ test('a canonical model id stays stable across writes: second execute and a mode
     })
 })
 
-test('a schema co-located with instances is refused in-band (Invalid), nothing persisted and the concept survives', async () =>
+test('a write to a member whose schema is co-located with its instances applies and keeps the schema verbatim', async () =>
 {
     await ExecFixture.With(false, async world =>
     {
         const handler = world.Connect(ExecFixture.Context(ExecFixture.Plain))
-        const source = world.Source()
+        const schema = ExecFixture.CoLocatedConcept()
+        assert.ok(world.Source().includes(schema))
         const result = await handler.RunCypherExecute(ExecFixture.P(world.Shop, ExecFixture.Create))
-        assert.equal(result.status, AppWriteStatus.Invalid)
-        assert.ok((result.reason ?? '').includes('co-located'))
-        assert.equal(world.Source(), source)
-        assert.ok(world.Source().includes('concept Widget'))
+        assert.equal(result.status, AppWriteStatus.Applied)
+        assert.ok(world.Source().includes(schema), world.Source())
+        const page = await handler.RunCypherQuery({ cypher: ExecFixture.Find, modelId: world.Shop })
+        assert.ok(JSON.stringify(page.items).includes('zeta'))
     }, true)
 })
 
@@ -388,9 +391,8 @@ test('a model owned by the FIRST instance-bearing member resolves too (not only 
     {
         const handler = world.Connect(ExecFixture.Context(ExecFixture.Plain))
         const baseModel = world.ModelIds.find(i => i.includes('BaseM'))!
-        // BaseM lives in the first member (schema co-located with its instances): resolution succeeds, the schema guard refuses in-band
+        // BaseM lives in the first member (schema co-located with its instances): it resolves and the write applies
         const result = await handler.RunCypherExecute(ExecFixture.P(baseModel, ExecFixture.Create))
-        assert.equal(result.status, AppWriteStatus.Invalid)
-        assert.ok((result.reason ?? '').includes('co-located'))
+        assert.equal(result.status, AppWriteStatus.Applied)
     })
 })

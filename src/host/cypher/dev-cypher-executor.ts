@@ -2,7 +2,7 @@ import { AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherExecuteResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { Cypher } from '@pragmatic-tech-ai/todl'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
-import { DevModelWriter, DevModelWriteFailedError, DevModelSchemaColocatedError } from '../model/dev-model-writer.js'
+import { DevModelWriter, DevModelWriteFailedError } from '../model/dev-model-writer.js'
 import type { DevModelIdentity, DevModelPrepared } from '../model/dev-model-writer.js'
 import { AuthorizingCypherWriter, WriteAuthorizationError } from './authorizing-cypher-writer.js'
 import { CypherExecuteResultMapper } from './cypher-execute-result-mapper.js'
@@ -53,19 +53,7 @@ export class DevCypherExecutor
         {
             return CypherExecuteResultMapper.ToWire(AppWriteStatus.Conflict, this.revision(), undefined, DevCypherExecutor.RevisionReason)
         }
-        let prepared: DevModelPrepared
-        try
-        {
-            prepared = await this.writer.Prepare(target.member, target.identity, security.Mask)
-        }
-        catch (error)
-        {
-            if (error instanceof DevModelSchemaColocatedError)
-            {
-                return CypherExecuteResultMapper.ToWire(AppWriteStatus.Invalid, this.revision(), undefined, DevModelSchemaColocatedError.Message)
-            }
-            throw error
-        }
+        const prepared = await this.writer.Prepare(target.member, target.identity, security.Mask)
         const gate = await security.GateFor(prepared.draft.model, prepared.graph)
         let result: Cypher.CypherResult
         try

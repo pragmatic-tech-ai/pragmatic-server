@@ -109,7 +109,21 @@ export class MaskedMirror implements IInstanceMirror
  */
 export class FieldMaskedGraphQuery implements IGraphQuery
 {
-    constructor(private readonly inner: IGraphQuery, private readonly mask: IFieldReadMask) {}
+    /** Present only when the inner graph can materialize: an uncommitted node is masked exactly like a committed one. */
+    public readonly Materialize?: (node: ReflectedNode) => IInstanceMirror | undefined
+
+    constructor(private readonly inner: IGraphQuery, private readonly mask: IFieldReadMask)
+    {
+        const materialize = inner.Materialize?.bind(inner)
+        if (materialize !== undefined)
+        {
+            this.Materialize = node =>
+            {
+                const mirror = materialize(node)
+                return mirror === undefined ? undefined : this.Wrap(mirror)
+            }
+        }
+    }
 
     public Concepts(): ReturnType<IGraphQuery['Concepts']> { return this.inner.Concepts() }
     public Type(name: string): ReturnType<IGraphQuery['Type']> { return this.inner.Type(name) }

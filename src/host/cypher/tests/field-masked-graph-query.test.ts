@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { FieldMaskedGraphQuery, MaskedMirror, AllowAllFieldReadMask } from '../field-masked-graph-query.js'
 import type { IFieldReadMask } from '../field-masked-graph-query.js'
+import { FilteredGraphQuery } from '../filtered-graph-query.js'
 
 class FakeMirror
 {
@@ -108,4 +109,32 @@ test('a mirror whose type getter throws fails closed instead of throwing', () =>
     assert.deepEqual(masked.fields(), [])
     assert.deepEqual(masked.node.attrs, {})
     assert.equal(masked.node.id, 'w1')
+})
+
+class MaterializingGraph extends FakeGraph
+{
+    public Materialize(node: { type: string, attrs: Record<string, string> }): unknown
+    {
+        return new FakeMirror(node.type, node.attrs)
+    }
+}
+
+class CodeFilter
+{
+    public Keep(view: { Field(name: string): unknown }): boolean { return view.Field('code') !== 'hidden' }
+}
+
+test('Materialize is forwarded (masked / filtered) only when the inner graph can materialize', () =>
+{
+    const mirror = new FakeMirror('shop.Widget', { label: 'W' })
+    assert.equal(new FieldMaskedGraphQuery(new FakeGraph(mirror) as never, new CostHidden()).Materialize, undefined)
+    assert.equal(new FilteredGraphQuery(new FakeGraph(mirror) as never, new CodeFilter()).Materialize, undefined)
+
+    const inner = new MaterializingGraph(mirror) as never
+    const filtered = new FilteredGraphQuery(inner, new CodeFilter())
+    const masked = new FieldMaskedGraphQuery(filtered, new CostHidden())
+    const fresh = masked.Materialize!({ id: 'n1', type: 'shop.Widget', attrs: { label: 'N', cost: '5', code: 'open' } } as never)
+    assert.equal(fresh?.field('label')?.value, 'N')
+    assert.equal(fresh?.field('cost'), undefined)
+    assert.equal(masked.Materialize!({ id: 'n2', type: 'shop.Widget', attrs: { code: 'hidden' } } as never), undefined)
 })
