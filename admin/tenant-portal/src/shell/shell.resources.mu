@@ -3,7 +3,10 @@
 // Shared dialogs: the name-to-confirm dialog every irreversible action opens
 // and the plain confirm (with consequences and an optional warning) for
 // disruptive ones. Both render inside the shell's DialogService surface; their
-// buttons live here because a DialogAction can't follow validation.
+// buttons live here because a DialogAction can't follow validation. The
+// header's change-password dialog lives here too: current, new and confirm,
+// all masked native password inputs; why Confirm is still off shows under the
+// field at fault.
 //
 // TenantTable: the ListBox template every section table uses. The stock
 // template's ScrollViewer scrolls both axes, so rows are measured at infinite
@@ -21,6 +24,7 @@
 import TenantSectionService from "./tenant-section-service.js"
 import NameConfirmDialogViewModel from "./name-confirm-dialog-view-model.js"
 import ConfirmDialogViewModel from "./confirm-dialog-view-model.js"
+import ChangePasswordDialogViewModel from "./change-password-dialog-view-model.js"
 
 resources ShellResources {
     DataTemplate [ DataType = TenantSectionService ] {
@@ -112,6 +116,38 @@ resources ShellResources {
                 }
                 Button [ Variant = Danger, Command = $ConfirmCommand ] {
                     TextBlock [ Text = $ConfirmLabel ]
+                }
+            }
+        }
+    }
+
+    // Change your own password. Every box is a masked native password input.
+    DataTemplate [ DataType = ChangePasswordDialogViewModel ] {
+        StackPanel [ Orientation = Vertical, Margin = (0,4,0,0) ] {
+            TextBlock [ Text = "Your other sessions will be signed out. This one stays signed in.", TextWrapping = Wrap,
+                        Foreground = @Fg1, Margin = (0,0,0,12) ]
+            TextBlock [ Text = "Current password", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
+            TextBox [ UsesNativeInput = true, InputPurpose = CurrentPassword, IsPassword = true, Text = $CurrentPassword, Margin = (0,0,0,12) ]
+            TextBlock [ Text = "New password", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
+            StackPanel [ Orientation = Vertical, Margin = (0,0,0,12) ] {
+                TextBox [ UsesNativeInput = true, InputPurpose = NewPassword, IsPassword = true, Text = $NewPassword ]
+                TextBlock [ Text = $NewPasswordText, Style = @UiCaption, Foreground = @StateDangerInk, Margin = (0,4,0,0),
+                            Visibility = $NewPasswordText << ToVisibility ]
+            }
+            TextBlock [ Text = "Confirm new password", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
+            StackPanel [ Orientation = Vertical, Margin = (0,0,0,12) ] {
+                TextBox [ UsesNativeInput = true, InputPurpose = NewPassword, IsPassword = true, Text = $ConfirmPassword ]
+                TextBlock [ Text = $MismatchText, Style = @UiCaption, Foreground = @StateDangerInk, Margin = (0,4,0,0),
+                            Visibility = $MismatchText << ToVisibility ]
+            }
+            TextBlock [ Text = $ErrorText, Foreground = @StateDangerInk, TextWrapping = Wrap, Margin = (0,0,0,12),
+                        Visibility = $ErrorText << ToVisibility ]
+            StackPanel [ Orientation = Horizontal, HorizontalAlignment = Right ] {
+                Button [ Variant = Secondary, Command = $CancelCommand, Margin = (0,0,8,0) ] {
+                    TextBlock [ Text = "Cancel" ]
+                }
+                Button [ Variant = Primary, Command = $ConfirmCommand ] {
+                    TextBlock [ Text = "Change password" ]
                 }
             }
         }

@@ -67,6 +67,8 @@ export class TenantPlaneHost
         this.api = plane.api
         this.events = plane.events
         this.tenantStaticRootAbs = resolve(tenantStaticRoot)
+        // A password change (self-service or an Owner reset) closes the principal's sockets on this listener.
+        plane.principals?.Attach(this)
         // RULING 5: route every environment lifecycle change to the tenant bus, scoped by the env's owning tenant.
         // An unbound env (no tenantId) has no tenant audience, so it is skipped.
         this.changeSubscription = this.service.OnChanged(change =>
@@ -321,14 +323,15 @@ export class TenantPlaneHost
 
     /**
      * Closes the principal's open tenant sockets in the tenant (its password changed; its sessions are revoked) and returns how
-     * many. Each closed socket's teardown runs as it is dropped.
+     * many; sockets opened under the session `keepSessionId` (the one that changed its own password) stay open. Each closed
+     * socket's teardown runs as it is dropped.
      */
-    public ClosePrincipal(tenantId: string, principalId: string): number
+    public ClosePrincipal(tenantId: string, principalId: string, keepSessionId?: string): number
     {
         let closed = 0
         for (const [ws, tracked] of [...this.clients])
         {
-            if (tracked.tenantId === tenantId && tracked.principalId === principalId)
+            if (tracked.tenantId === tenantId && tracked.principalId === principalId && tracked.sessionId !== keepSessionId)
             {
                 this.Remove(ws)
                 ws.terminate()
@@ -339,9 +342,9 @@ export class TenantPlaneHost
     }
 
     /** Records a tenant socket with its teardown and owner, and wires close/error to run that teardown and drop the entry. */
-    private Track(ws: WebSocket, teardown: () => void, session: { tenantId: string; principalId: string }): void
+    private Track(ws: WebSocket, teardown: () => void, session: { id: string; tenantId: string; principalId: string }): void
     {
-        this.clients.set(ws, { teardown, tenantId: session.tenantId, principalId: session.principalId })
+        this.clients.set(ws, { teardown, tenantId: session.tenantId, principalId: session.principalId, sessionId: session.id })
         ws.on(TenantPlaneHost.CloseEvent, () => this.Remove(ws))
         ws.on(TenantPlaneHost.ErrorEvent, () => this.Remove(ws))
     }
@@ -381,5 +384,5 @@ export class TenantPlaneHost
     }
 }
 
-/** A tracked tenant socket: its teardown and the session principal it serves. */
-type TrackedSocket = { teardown: () => void; tenantId: string; principalId: string }
+/** A tracked tenant socket: its teardown, the session principal it serves, and the session it was opened under. */
+type TrackedSocket = { teardown: () => void; tenantId: string; principalId: string; sessionId: string }

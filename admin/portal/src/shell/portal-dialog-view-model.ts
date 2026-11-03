@@ -130,6 +130,13 @@ export abstract class PortalDialogViewModel<TResult> extends Observable
     // Performs the dialog's action; its result closes the dialog.
     protected abstract SubmitCore(): Promise<TResult>
 
+    // Whether Confirm needs the mutating (Operator) role; a dialog acting only on
+    // the signed-in operator's own account (their password) does not.
+    protected get RequiresMutate(): boolean
+    {
+        return true
+    }
+
     // Subclasses call this when a field that CanConfirm reads changes.
     protected RaiseCanConfirmChanged(): void
     {
@@ -192,7 +199,7 @@ export abstract class PortalDialogViewModel<TResult> extends Observable
 
     private get CanConfirmNow(): boolean
     {
-        return !this.busy && this.Session.CanMutate && this.CanConfirm
+        return !this.busy && (!this.RequiresMutate || this.Session.CanMutate) && this.CanConfirm
     }
 
     private SetErrorText(next: string): void

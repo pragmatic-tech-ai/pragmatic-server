@@ -1,5 +1,5 @@
 import { TenantEventType } from './tenant-types.js'
-import type { AdminSnapshotDto, AdoptionLedgerDto, CreateAccountParams, CreateEnvironmentParams, EnvironmentDto, GrantMutationDto, HiveDto, HiveHealthDto, HiveRolloutDto, IReleasesSource, IssueTokenParams, ISecurityModelSource, ITokensSource, IUsersAccessSource, IWebSocketFactory, IWebSocketLike, ManifestDto, SecurityModelDto, ServiceTokenSummaryDto, SessionDto, TenantEvent, TenantProfileDto, TokenIssuedDto } from './tenant-types.js'
+import type { AdminSnapshotDto, AdoptionLedgerDto, CreateAccountParams, CreateEnvironmentParams, EnvironmentDto, GrantMutationDto, HiveDto, HiveHealthDto, HiveRolloutDto, IReleasesSource, IssueTokenParams, ISecurityModelSource, ITokensSource, IUsersAccessSource, IWebSocketFactory, IWebSocketLike, ManifestDto, PasswordChangedDto, SecurityModelDto, ServiceTokenSummaryDto, SessionDto, TenantEvent, TenantProfileDto, TokenIssuedDto } from './tenant-types.js'
 
 // Thrown for non-2xx tenant-surface responses; Message carries the server's error text.
 export class TenantApiError extends Error
@@ -60,6 +60,10 @@ export class TenantApiClient implements IReleasesSource, IUsersAccessSource, ITo
     private static readonly SessionRoute = '/tenant-auth/session'
     private static readonly ProfileRoute = '/tenant-api/profile'
     private static readonly LogoutRoute = '/tenant-auth/logout'
+    private static readonly PasswordRoute = '/tenant-auth/password'
+    private static readonly CurrentPasswordKey = 'currentPassword'
+    private static readonly NewPasswordKey = 'newPassword'
+    private static readonly ConfirmPasswordKey = 'confirmPassword'
     private static readonly BeginLoginRoute = '/tenant-auth/oidc/begin'
     private static readonly HivesRoute = '/tenant-api/hives'
     private static readonly EnvironmentsRoute = '/tenant-api/environments'
@@ -133,6 +137,19 @@ export class TenantApiClient implements IReleasesSource, IUsersAccessSource, ITo
     public async Logout(): Promise<void>
     {
         await this.Send<unknown>(TenantApiClient.LogoutRoute, { method: TenantApiClient.MethodPost, body: TenantApiClient.EmptyBody })
+    }
+
+    // Changes the signed-in user's own password (the server takes who from the
+    // session, never from this body). Their other sessions are signed out; this
+    // one stays. A wrong current password is a 403; a throttled attempt a 429.
+    public async ChangeOwnPassword(currentPassword: string, newPassword: string, confirmPassword: string): Promise<PasswordChangedDto>
+    {
+        const body = {
+            [TenantApiClient.CurrentPasswordKey]: currentPassword,
+            [TenantApiClient.NewPasswordKey]: newPassword,
+            [TenantApiClient.ConfirmPasswordKey]: confirmPassword,
+        }
+        return await this.Send<PasswordChangedDto>(TenantApiClient.PasswordRoute, { method: TenantApiClient.MethodPost, body: JSON.stringify(body) })
     }
 
     public async ListHives(): Promise<HiveDto[]>

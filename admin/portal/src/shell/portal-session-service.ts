@@ -1,11 +1,15 @@
 import { RelayCommand, ServiceBase, ServiceKey, type IServiceProvider } from '@pragmatic-tech-ai/mural/runtime'
+import { DialogService } from '@pragmatic-tech-ai/mural/framework/shell/services/dialog-service.js'
 import { ApiError, type ControlPlaneClient } from '../api-client.js'
+import { ChangePasswordDialogViewModel } from './change-password-dialog-view-model.js'
 import type { OperatorContext } from '../operator-context.js'
 import type { IPageReloader } from './page-reloader.js'
 
 // The signed-in session for the shell: the control-plane client, who is signed
 // in, and what they may do. Registered at the app root; main.ts initializes it
 // before any section resolves it. Logout and expiry reload the page.
+// Change password opens the own-password dialog for any role; once it lands,
+// AccountNotice says so (the operator's other sessions were signed out).
 export class PortalSessionService extends ServiceBase
 {
     public static readonly Key = new ServiceKey<PortalSessionService>('PortalSessionService')
@@ -23,6 +27,11 @@ export class PortalSessionService extends ServiceBase
     private static readonly RoleToken = '{role}'
     private static readonly WhomToken = '{whom}'
     private static readonly LogoutText = 'Log out'
+    private static readonly ChangePasswordText = 'Change password'
+    private static readonly ChangePasswordTitle = 'Change your password'
+    private static readonly AccountNoticeProperty = 'AccountNotice'
+    private static readonly PasswordChangedNotice = 'Password changed. Your other sessions were signed out.'
+    private static readonly NoDialogsMessage = 'Dialogs are not available.'
 
     private client: ControlPlaneClient | undefined
     private email = ''
@@ -31,12 +40,17 @@ export class PortalSessionService extends ServiceBase
     private expired = false
     private logoutError = ''
     private loggingOut = false
+    private accountNotice = ''
+    private changingPassword = false
     private readonly logoutCommand: RelayCommand
+    private readonly changePasswordCommand: RelayCommand
 
     public constructor(provider: IServiceProvider)
     {
         super(provider)
         this.logoutCommand = new RelayCommand(() => { void this.Logout() }, () => !this.loggingOut, { Text: PortalSessionService.LogoutText })
+        this.changePasswordCommand = new RelayCommand(() => { void this.ChangePassword() },
+            () => !this.changingPassword && this.operator !== undefined, { Text: PortalSessionService.ChangePasswordText })
     }
 
     public Initialize(client: ControlPlaneClient, email: string, operator: OperatorContext, reloader: IPageReloader): void
@@ -56,6 +70,7 @@ export class PortalSessionService extends ServiceBase
         this.RaisePropertyChanged(PortalSessionService.CanMutateProperty, oldCanMutate, this.CanMutate)
         this.RaisePropertyChanged(PortalSessionService.DeniedReasonProperty, oldDeniedReason, this.DeniedReason)
         this.RaisePropertyChanged(PortalSessionService.ReadOnlyNoticeProperty, oldReadOnlyNotice, this.ReadOnlyNotice)
+        this.changePasswordCommand.RaiseCanExecuteChanged()
     }
 
     public get Client(): ControlPlaneClient
@@ -119,6 +134,53 @@ export class PortalSessionService extends ServiceBase
         return this.logoutCommand
     }
 
+    // Opens the change-password dialog; any role may change their own password.
+    public get ChangePasswordCommand(): RelayCommand
+    {
+        return this.changePasswordCommand
+    }
+
+    // What the last account action did ('Password changed...'); '' when none.
+    public get AccountNotice(): string
+    {
+        return this.accountNotice
+    }
+
+    // Asks for the current and a new password and changes it. Only one dialog
+    // at a time; a failure inside it stays in the dialog. Resolves once the
+    // dialog closes.
+    public async ChangePassword(): Promise<void>
+    {
+        if (this.changingPassword)
+        {
+            return
+        }
+        const dialogs = this.Provider.get(DialogService.Key)
+        if (dialogs === undefined)
+        {
+            this.SetAccountNotice(PortalSessionService.NoDialogsMessage)
+            return
+        }
+        this.SetChangingPassword(true)
+        this.SetAccountNotice('')
+        try
+        {
+            const changed = await new ChangePasswordDialogViewModel(this, dialogs).Open(PortalSessionService.ChangePasswordTitle)
+            if (changed === ChangePasswordDialogViewModel.Changed)
+            {
+                this.SetAccountNotice(PortalSessionService.PasswordChangedNotice)
+            }
+        }
+        catch (e)
+        {
+            this.SetAccountNotice(e instanceof Error ? e.message : String(e))
+        }
+        finally
+        {
+            this.SetChangingPassword(false)
+        }
+    }
+
     // Ends the session for this page: reloads at most once, landing on login.
     public Expire(): void
     {
@@ -161,6 +223,23 @@ export class PortalSessionService extends ServiceBase
             this.SetLoggingOut(false)
         }
         this.Expire()
+    }
+
+    private SetChangingPassword(next: boolean): void
+    {
+        this.changingPassword = next
+        this.changePasswordCommand.RaiseCanExecuteChanged()
+    }
+
+    private SetAccountNotice(next: string): void
+    {
+        const old = this.accountNotice
+        if (old === next)
+        {
+            return
+        }
+        this.accountNotice = next
+        this.RaisePropertyChanged(PortalSessionService.AccountNoticeProperty, old, next)
     }
 
     private SetLoggingOut(next: boolean): void

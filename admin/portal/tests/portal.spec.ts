@@ -61,6 +61,12 @@ class FakeControlPlane
     private static readonly MethodDelete = 'DELETE'
     private static readonly NewHiveBootstrapPath = '/api/hives/tailspin-local/bootstrap'
     private static readonly NewHiveInstallPath = '/api/hives/tailspin-local/agent-install'
+    // The own-password change is played through: WrongCurrentPassword is refused (403), any other is accepted.
+    public static readonly SessionPasswordPath = '/api/session/password'
+    public static readonly CurrentPassword = 'e2e-current-password'
+    public static readonly WrongCurrentPassword = 'e2e-not-the-password'
+    public static readonly NewPassword = 'e2e-new-password-12'
+    public static readonly WrongPasswordError = 'The current password is not correct.'
     private static readonly InstallStartedAt = '2026-11-03T10:00:00.000Z'
     private static readonly InstallFinishedAt = '2026-11-03T10:02:00.000Z'
     private static readonly InstallingState = 'installing'
@@ -163,7 +169,7 @@ class FakeControlPlane
     private static IsPlayedWrite(path: string): boolean
     {
         return path === FakeControlPlane.ProvisionPath || path === FakeControlPlane.NewHiveInstallPath || path === FakeControlPlane.HiveItemPath
-            || path === FakeControlPlane.OwnerResetPath
+            || path === FakeControlPlane.OwnerResetPath || path === FakeControlPlane.SessionPasswordPath
     }
 
     private Operator(): Record<string, unknown>
@@ -416,6 +422,12 @@ class FakeControlPlane
                 FakeControlPlane.Json(res, 201, this.Provisioned())
                 return
             }
+            if (path === FakeControlPlane.SessionPasswordPath)
+            {
+                const wrong = (this.Calls[this.Calls.length - 1]?.body as { currentPassword?: string } | undefined)?.currentPassword === FakeControlPlane.WrongCurrentPassword
+                FakeControlPlane.Json(res, wrong ? 403 : 200, wrong ? { error: FakeControlPlane.WrongPasswordError } : { ok: true })
+                return
+            }
             if (path === FakeControlPlane.OwnerResetPath)
             {
                 FakeControlPlane.Json(res, 200, { ownerEmail: FakeControlPlane.OwnerResetEmail, ownerPassword: FakeControlPlane.OwnerResetPassword, sessionsRevoked: true })
@@ -522,6 +534,9 @@ class PortalText
     public static readonly EmailPlaceholder = 'Email'
     public static readonly PasswordPlaceholder = 'Password'
     public static readonly LogoutLabel = 'Log out'
+    public static readonly ChangePasswordLabel = 'Change password'
+    public static readonly PasswordMismatch = 'The two new passwords do not match.'
+    public static readonly PasswordChangedNotice = 'Password changed. Your other sessions were signed out.'
     public static readonly FleetSubtitle = 'Every hive, read from its last check-in. Exceptions first.'
     public static readonly TenantsSubtitle = 'Customer workspaces. Each is bound to exactly one hive.'
     public static readonly TenantDetailCaption = 'Hive binding'
@@ -590,6 +605,8 @@ enum RailEntry
 // asserts the entry's page title, so a layout drift fails loudly.
 class PortalSteps
 {
+    // Every masked (IsPassword) native input on the page.
+    public static readonly PasswordInputs = 'input[type="password"]'
     // The rail's geometry in CSS px at the default viewport, the one place
     // the spec knows it. Mural's ActivityBarRail template is 48 wide (so its
     // icons centre at x=24); its entries are fixed-pitch ActivityBarItems 40
@@ -611,6 +628,41 @@ class PortalSteps
         await input.click()
         await page.keyboard.type(text)
         await expect(input).toHaveValue(text)
+    }
+
+    // The n-th masked password input (0: current, 1: new, 2: confirm), clicked and typed into as a person would.
+    public static async TypePassword(page: Page, index: number, text: string): Promise<void>
+    {
+        const input = page.locator(PortalSteps.PasswordInputs).nth(index)
+        const box = await input.boundingBox()
+        if (box === null)
+        {
+            throw new Error('password input ' + index + ' has no box')
+        }
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
+        await page.keyboard.type(text)
+        await expect(input).toHaveValue(text)
+    }
+
+    // A mouse click at the centre of the LOWEST visible exact text match on screen: a dialog's button, not the
+    // header button (or its tooltip) of the same label above it.
+    public static async RealClickLowest(page: Page, text: string): Promise<void>
+    {
+        const matches = PortalSteps.Text(page, text).filter({ visible: true })
+        let lowest: { x: number; y: number; width: number; height: number } | null = null
+        for (let i = 0; i < await matches.count(); i++)
+        {
+            const box = await matches.nth(i).boundingBox()
+            if (box !== null && (lowest === null || box.y > lowest.y))
+            {
+                lowest = box
+            }
+        }
+        if (lowest === null)
+        {
+            throw new Error('no box for ' + text)
+        }
+        await page.mouse.click(lowest.x + lowest.width / 2, lowest.y + lowest.height / 2)
     }
 
     // A mouse click at the on-screen centre of the visible text, as a person clicks (no forced dispatch to the element).
@@ -906,6 +958,41 @@ test.describe('admin portal', () =>
         await PortalSteps.RealClick(page, PortalText.ResetLabel)
         await expect.poll(() => fake.Find(FakeControlPlane.MethodPost, FakeControlPlane.OwnerResetPath)).toBeDefined()
         await expect(PortalSteps.Visible(page, PortalText.OwnerResetHeading)).toBeVisible()
+    })
+
+    test('Change password: real clicks and typing into three masked inputs; a mismatch says so inline; the change lands and the header says so', async ({ page }) =>
+    {
+        await page.goto(base)
+        await expect(PortalSteps.Text(page, PortalText.FleetSubtitle)).toBeVisible()
+        await PortalSteps.RealClick(page, PortalText.ChangePasswordLabel)
+        await expect(page.locator(PortalSteps.PasswordInputs)).toHaveCount(3)
+        await PortalSteps.TypePassword(page, 0, FakeControlPlane.CurrentPassword)
+        await PortalSteps.TypePassword(page, 1, FakeControlPlane.NewPassword)
+        await PortalSteps.TypePassword(page, 2, FakeControlPlane.NewPassword + 'x')
+        await expect(PortalSteps.Visible(page, PortalText.PasswordMismatch)).toBeVisible()
+        await page.keyboard.press('Backspace')
+        await expect(PortalSteps.Text(page, PortalText.PasswordMismatch).filter({ visible: true })).toHaveCount(0)
+        await PortalSteps.RealClickLowest(page, PortalText.ChangePasswordLabel)
+        await expect.poll(() => fake.Find(FakeControlPlane.MethodPost, FakeControlPlane.SessionPasswordPath)?.body).toEqual({
+            currentPassword: FakeControlPlane.CurrentPassword, newPassword: FakeControlPlane.NewPassword, confirmPassword: FakeControlPlane.NewPassword,
+        })
+        await expect(PortalSteps.Visible(page, PortalText.PasswordChangedNotice)).toBeVisible()
+        await expect(page.locator(PortalSteps.PasswordInputs)).toHaveCount(0)
+        await PortalSteps.ExpectNoBrokenText(page)
+    })
+
+    test('Change password: a wrong current password keeps the dialog open with the reason and the operator signed in', async ({ page }) =>
+    {
+        await page.goto(base)
+        await expect(PortalSteps.Text(page, PortalText.FleetSubtitle)).toBeVisible()
+        await PortalSteps.RealClick(page, PortalText.ChangePasswordLabel)
+        await PortalSteps.TypePassword(page, 0, FakeControlPlane.WrongCurrentPassword)
+        await PortalSteps.TypePassword(page, 1, FakeControlPlane.NewPassword)
+        await PortalSteps.TypePassword(page, 2, FakeControlPlane.NewPassword)
+        await PortalSteps.RealClickLowest(page, PortalText.ChangePasswordLabel)
+        await expect(PortalSteps.Visible(page, FakeControlPlane.WrongPasswordError)).toBeVisible()
+        await expect(page.locator(PortalSteps.PasswordInputs)).toHaveCount(3)
+        await expect(PortalSteps.Text(page, PortalText.SignInText)).toHaveCount(0)
     })
 
     test('Log out posts to the server and returns to the login page', async ({ page }) =>

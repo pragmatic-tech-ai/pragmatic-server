@@ -36,6 +36,10 @@ export class FakeTenantControlPlane
 
     private static readonly SessionPath = '/tenant-auth/session'
     public static readonly LogoutPath = '/tenant-auth/logout'
+    // The own-password change: WrongCurrentPassword is refused (403), ThrottledPassword throttled (429), any other accepted.
+    public static readonly PasswordPath = '/tenant-auth/password'
+    public static readonly WrongCurrentPassword = 'e2e-not-the-password'
+    public static readonly WrongPasswordError = 'The current password is not correct.'
     public static readonly BeginLoginPath = '/tenant-auth/oidc/begin'
     public static readonly IdpPageText = 'Identity provider sign-in (e2e stub)'
     private static readonly IdpPage = '<!doctype html><title>IdP</title><p>Identity provider sign-in (e2e stub)</p>'
@@ -106,6 +110,8 @@ export class FakeTenantControlPlane
     public static readonly SessionFailureMessage = 'session store unavailable'
     public LogoutCalls = 0
     public BeginLoginCalls = 0
+    // Each own-password change body, in call order.
+    public readonly PasswordCalls: unknown[] = []
     public readonly DeletedEnvironments: string[] = []
     // Every static file requested but missing from dist/, and every theme font served.
     public readonly NotFound: string[] = []
@@ -352,6 +358,14 @@ export class FakeTenantControlPlane
             this.LogoutCalls++
             this.Authenticated = false
             FakeTenantControlPlane.Json(res, 200, {})
+            return
+        }
+        if (path === FakeTenantControlPlane.PasswordPath && method === FakeTenantControlPlane.MethodPost)
+        {
+            const body = JSON.parse(await FakeTenantControlPlane.ReadBody(req)) as { currentPassword?: string }
+            this.PasswordCalls.push(body)
+            const wrong = body.currentPassword === FakeTenantControlPlane.WrongCurrentPassword
+            FakeTenantControlPlane.Json(res, wrong ? 403 : 200, wrong ? { error: FakeTenantControlPlane.WrongPasswordError } : { ok: true, otherSessionsEnded: true })
             return
         }
         if (path === FakeTenantControlPlane.BeginLoginPath)

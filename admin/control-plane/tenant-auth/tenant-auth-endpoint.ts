@@ -1,10 +1,12 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { TenantLoginError, type ITenantOidcRelyingParty } from './tenant-oidc-relying-party.js'
-import type { TenantSessionStore } from './tenant-session.js'
+import type { TenantSession, TenantSessionStore } from './tenant-session.js'
 import { TenantSessionCookie } from './tenant-session-cookie.js'
+import type { TenantPasswordChange } from './tenant-password-change.js'
 
 /**
- * The `/tenant-auth/*` HTTP surface: OIDC begin/callback, session introspection, logout. The session token only
+ * The `/tenant-auth/*` HTTP surface: OIDC begin/callback, session introspection, logout, and (when wired) the signed-in
+ * user's own password change, which needs a valid session for the request's tenant. The session token only
  * ever travels in the Set-Cookie of a successful callback; a failed login is a generic 401 with no cookie, and
  * neither the token nor the authorization code is ever logged or echoed.
  */
@@ -14,6 +16,7 @@ export class TenantAuthEndpoint
     private static readonly CallbackPath = '/tenant-auth/oidc/callback'
     private static readonly SessionPath = '/tenant-auth/session'
     private static readonly LogoutPath = '/tenant-auth/logout'
+    private static readonly PasswordPath = '/tenant-auth/password'
     private static readonly BaseUrl = 'http://localhost'
     private static readonly RootPath = '/'
     private static readonly GetMethod = 'GET'
@@ -40,7 +43,8 @@ export class TenantAuthEndpoint
     public constructor(
         private readonly rp: ITenantOidcRelyingParty,
         private readonly sessions: TenantSessionStore,
-        private readonly secureCookie: boolean)
+        private readonly secureCookie: boolean,
+        private readonly passwordChange?: TenantPasswordChange)
     {
     }
 
@@ -64,6 +68,13 @@ export class TenantAuthEndpoint
                 return true
             case TenantAuthEndpoint.LogoutPath:
                 await this.guard(req, res, TenantAuthEndpoint.PostMethod, () => this.logout(req, res))
+                return true
+            case TenantAuthEndpoint.PasswordPath:
+                if (this.passwordChange === undefined)
+                {
+                    return false
+                }
+                await this.guard(req, res, TenantAuthEndpoint.PostMethod, () => this.password(req, res, tenantId))
                 return true
             default:
                 return false
@@ -134,9 +145,8 @@ export class TenantAuthEndpoint
 
     private async session(req: IncomingMessage, res: ServerResponse): Promise<void>
     {
-        const cookie = TenantSessionCookie.Read(req.headers.cookie)
-        const session = cookie === null ? null : await this.sessions.Validate(cookie.token)
-        if (cookie === null || session === null || session.tenantId !== cookie.tenantId)
+        const session = await this.current(req)
+        if (session === null)
         {
             this.reply(res, TenantAuthEndpoint.StatusUnauthorized, TenantAuthEndpoint.UnauthorizedBody)
             return
@@ -145,6 +155,27 @@ export class TenantAuthEndpoint
             ? { tenantId: session.tenantId, principalId: session.principalId }
             : { tenantId: session.tenantId, principalId: session.principalId, email: session.email }
         this.reply(res, TenantAuthEndpoint.StatusOk, JSON.stringify(body))
+    }
+
+    /** The signed-in user's own password change: a valid session of THIS host's tenant, else the generic 401. */
+    private async password(req: IncomingMessage, res: ServerResponse, tenantId: string): Promise<void>
+    {
+        const session = await this.current(req)
+        if (session === null || session.tenantId !== tenantId || this.passwordChange === undefined)
+        {
+            req.resume()
+            this.reply(res, TenantAuthEndpoint.StatusUnauthorized, TenantAuthEndpoint.UnauthorizedBody)
+            return
+        }
+        await this.passwordChange.Handle(req, res, session)
+    }
+
+    /** The request's valid session (its cookie's tenant matching the stored session's), or null. */
+    private async current(req: IncomingMessage): Promise<TenantSession | null>
+    {
+        const cookie = TenantSessionCookie.Read(req.headers.cookie)
+        const session = cookie === null ? null : await this.sessions.Validate(cookie.token)
+        return cookie === null || session === null || session.tenantId !== cookie.tenantId ? null : session
     }
 
     private async logout(req: IncomingMessage, res: ServerResponse): Promise<void>

@@ -2,6 +2,9 @@
 
 export type SessionDto = { tenantId: string; principalId: string; email?: string }
 
+// The reply to an own-password change: changed; whether the other sessions were signed out, and why not when not.
+export type PasswordChangedDto = { ok: boolean; otherSessionsEnded: boolean; warning?: string }
+
 // Mirrored by hand from the server's tenant-profile-dto.ts; the portal never imports pragmatic-protocol.
 export type AdminCapabilitiesDto = { envs: boolean; adopt: boolean; access: boolean; settings: boolean }
 

@@ -101,3 +101,33 @@ test('CloseToken closes every socket of a multi-socket token', () =>
     assert.ok(socks.every(s => s.Closed))
     assert.equal(r.Size(), 0)
 })
+
+test('Rekey moves the sockets to the new token, keeps them open, and a later close drops them from it', () =>
+{
+    const r = new OperatorSocketRegistry()
+    const a = new FakeSocket()
+    const other = new FakeSocket()
+    r.Add('old', a)
+    r.Add('t2', other)
+    r.Rekey('old', 'new')
+    assert.equal(a.Closed, false)
+    assert.deepEqual(r.Tokens().sort(), ['new', 't2'])
+    r.CloseToken('old')
+    assert.equal(a.Closed, false)
+    a.Emit('close')
+    assert.deepEqual(r.Tokens(), ['t2'])
+    assert.equal(r.Size(), 1)
+})
+
+test('Rekey of an unknown token is a no-op; a rekeyed socket closes with its new token', () =>
+{
+    const r = new OperatorSocketRegistry()
+    const a = new FakeSocket()
+    r.Rekey('nope', 'new')
+    assert.equal(r.Size(), 0)
+    r.Add('old', a)
+    r.Rekey('old', 'new')
+    r.CloseToken('new')
+    assert.equal(a.Closed, true)
+    assert.equal(r.Size(), 0)
+})

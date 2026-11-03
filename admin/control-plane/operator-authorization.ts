@@ -6,6 +6,8 @@ export class OperatorAuthorization
 {
     /** The single home of the logout path: the host routes on it and the gate exempts it. */
     public static readonly LogoutPath = '/api/logout'
+    /** The single home of the own-password-change path: any signed-in operator may change their own password. */
+    public static readonly SessionPasswordPath = '/api/session/password'
     /** The gate's copy of the operators path (identical to the host's); the roster read is Full-only even though GET is safe. */
     private static readonly OperatorsPath = '/api/operators'
     /** Safe-method reads that still require the Full role (deny-by-default for ReadOnly). */
@@ -28,6 +30,6 @@ export class OperatorAuthorization
         {
             return false
         }
-        return path === OperatorAuthorization.LogoutPath || !this.IsMutating(method)
+        return path === OperatorAuthorization.LogoutPath || path === OperatorAuthorization.SessionPasswordPath || !this.IsMutating(method)
     }
 }

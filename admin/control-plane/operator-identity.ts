@@ -29,6 +29,7 @@ export interface IOperatorIdentity
     ListOperators(): Promise<readonly OperatorSummary[]>
     SetOperatorRole(email: string, role: OperatorRole, actorPrincipalId: string): Promise<void>
     ResetOperatorPassword(email: string): Promise<string>
+    ChangeOwnPassword(principalId: string, currentPassword: string, newPassword: string): Promise<OperatorSession | null>
     SetOperatorDisabled(email: string, disabled: boolean, actorPrincipalId: string): Promise<void>
     RevokeOperatorSessions(email: string): Promise<void>
 }
@@ -202,8 +203,7 @@ export class OperatorIdentity implements IOperatorIdentity
         {
             return null
         }
-        const email = principal.Id === OperatorIdentity.AdminPrincipalId ? this.operatorEmail : (principal.Claim(OperatorIdentity.EmailClaim) ?? principal.Id)
-        return { email, principalId: principal.Id, role: await this.RoleFor(principal.Id) }
+        return { email: await this.EmailOf(principal.Id, principal.Claim(OperatorIdentity.EmailClaim)), principalId: principal.Id, role: await this.RoleFor(principal.Id) }
     }
 
     /** Creates an authenticatable operator account and grants it the Owner (Full) or Viewer (ReadOnly) role on the control-plane tenant. */
@@ -285,7 +285,10 @@ export class OperatorIdentity implements IOperatorIdentity
         await this.pack.Grants.Save(new Grant(principalId, grantRole, new ResourceRef(ResourceKind.Tenant, this.tenant.Id, [])))
     }
 
-    /** Rotates the operator's password to a generated one and returns it; this return value is the only place it is exposed. */
+    /**
+     * Rotates the operator's password to a generated one and returns it; this return value is the only place it is exposed.
+     * Every live session of the operator ends with the old password, the caller's own included when they reset themselves.
+     */
     public async ResetOperatorPassword(email: string): Promise<string>
     {
         const principalId = await this.ResolvePrincipal(email)
@@ -299,7 +302,51 @@ export class OperatorIdentity implements IOperatorIdentity
         {
             presented.Clear()
         }
+        await this.pack.Sessions.RevokeAllFor(this.tenant, principalId)
         return password
+    }
+
+    /**
+     * Self-service change: verifies the CURRENT password of the signed-in operator (`principalId`, against the email its
+     * account signs in with), sets the new one, ends every session of the operator and issues a fresh one for the caller, which the caller must
+     * adopt (its old token is among those ended). Null when the current password does not verify for that principal;
+     * nothing changes then. Neither password is ever logged or kept.
+     */
+    public async ChangeOwnPassword(principalId: string, currentPassword: string, newPassword: string): Promise<OperatorSession | null>
+    {
+        const auth = this.pack.AuthenticatorFor(AuthMethod.Local)
+        const account = await this.pack.Accounts.FindByPrincipalId(this.tenant, principalId)
+        if (auth === undefined || account === null)
+        {
+            return null
+        }
+        const current = new PresentedSecret(currentPassword)
+        let verified: AuthenticatedResult | null = null
+        try
+        {
+            const result = await auth.Authenticate(new Credential(AuthMethod.Local, account.Email), current, this.tenant)
+            verified = result instanceof AuthenticatedResult && result.Principal.Id === principalId ? result : null
+        }
+        finally
+        {
+            current.Clear()
+        }
+        if (verified === null)
+        {
+            return null
+        }
+        const next = new PresentedSecret(newPassword)
+        try
+        {
+            await this.pack.Registrar.RotatePasswordIfChanged(this.tenant, principalId, next)
+        }
+        finally
+        {
+            next.Clear()
+        }
+        await this.pack.Sessions.RevokeAllFor(this.tenant, principalId)
+        const session = await this.pack.Sessions.Issue(verified.Principal)
+        return { token: session.Id, expiresAt: session.ExpiresAt }
     }
 
     /** Disables or re-enables an operator. Disabling also drops the operator's live sessions. Guards run before any state change. */
@@ -328,6 +375,23 @@ export class OperatorIdentity implements IOperatorIdentity
     {
         const principalId = await this.ResolvePrincipal(email)
         await this.pack.Sessions.RevokeAllFor(this.tenant, principalId)
+    }
+
+    /**
+     * The email an operator signs in with: the configured one for the bootstrap admin, else the principal's email claim,
+     * else its local account's email (an invited operator carries no claim), and only as a last resort the principal id.
+     */
+    private async EmailOf(principalId: string, claim: string | undefined): Promise<string>
+    {
+        if (principalId === OperatorIdentity.AdminPrincipalId)
+        {
+            return this.operatorEmail
+        }
+        if (claim !== undefined)
+        {
+            return claim
+        }
+        return (await this.pack.Accounts.FindByPrincipalId(this.tenant, principalId))?.Email ?? principalId
     }
 
     private async ResolvePrincipal(email: string): Promise<string>

@@ -33,3 +33,40 @@ describe('TenantPrincipalSessions', () =>
         assert.deepEqual(connections.Closed, ['t1/owner'])
     })
 })
+
+class RecordingSessions
+{
+    public readonly Calls: string[] = []
+
+    public async RevokeOthersFor(tenantId: string, principalId: string, keepId: string): Promise<number>
+    {
+        this.Calls.push(tenantId + '/' + principalId + '/keep:' + keepId)
+        return 1
+    }
+}
+
+class KeepingConnections implements IPrincipalConnections
+{
+    public readonly Closed: string[] = []
+
+    public ClosePrincipal(tenantId: string, principalId: string, keepSessionId?: string): number
+    {
+        this.Closed.push(tenantId + '/' + principalId + '/keep:' + String(keepSessionId))
+        return 1
+    }
+}
+
+describe('TenantPrincipalSessions.RevokeOthersFor', () =>
+{
+    it('ends the other stored sessions and closes the other sockets, keeping the named session on both', async () =>
+    {
+        const sessions = new RecordingSessions()
+        const revoker = new TenantPrincipalSessions(sessions as unknown as TenantSessionStore)
+        const connections = new KeepingConnections()
+        revoker.Attach(connections)
+        revoker.Attach(connections)
+        await revoker.RevokeOthersFor('t1', 'owner', 'sess-1')
+        assert.deepEqual(sessions.Calls, ['t1/owner/keep:sess-1'])
+        assert.deepEqual(connections.Closed, ['t1/owner/keep:sess-1'], 'attached once, closed once')
+    })
+})

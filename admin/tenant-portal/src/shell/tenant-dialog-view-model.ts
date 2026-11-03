@@ -38,8 +38,10 @@ export abstract class TenantDialogViewModel<TResult> extends Observable
     private inflight: Promise<TResult | undefined> | undefined
 
     // `capability` is the permission the dialog's action needs: Confirm is
-    // disabled without it (the server refuses it anyway).
-    protected constructor(session: TenantSessionService, dialogs: DialogService, private readonly capability: AdminCapability)
+    // disabled without it (the server refuses it anyway). Undefined: the
+    // dialog acts only on the signed-in user's own account (their password),
+    // which needs no permission.
+    protected constructor(session: TenantSessionService, dialogs: DialogService, private readonly capability: AdminCapability | undefined)
     {
         super()
         this.Session = session
@@ -196,7 +198,7 @@ export abstract class TenantDialogViewModel<TResult> extends Observable
 
     private get CanConfirmNow(): boolean
     {
-        return !this.busy && this.Session.Can(this.capability) && this.CanConfirm
+        return !this.busy && (this.capability === undefined || this.Session.Can(this.capability)) && this.CanConfirm
     }
 
     private SetErrorText(next: string): void

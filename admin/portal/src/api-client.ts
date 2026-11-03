@@ -45,6 +45,10 @@ export class ControlPlaneClient
     private static readonly LoginRoute = '/api/login'
     private static readonly LogoutRoute = '/api/logout'
     private static readonly SessionRoute = '/api/session'
+    private static readonly SessionPasswordRoute = '/api/session/password'
+    private static readonly CurrentPasswordKey = 'currentPassword'
+    private static readonly NewPasswordKey = 'newPassword'
+    private static readonly ConfirmPasswordKey = 'confirmPassword'
     private static readonly CredentialsMode = 'same-origin'
     private static readonly EventsRoute = '/api/events'
     private static readonly EventsTicketRoute = '/api/events-ticket'
@@ -184,6 +188,18 @@ export class ControlPlaneClient
     public async ResetOperatorPassword(email: string): Promise<{ password: string }>
     {
         return await this.Send<{ password: string }>(ControlPlaneClient.OperatorPasswordResetRoute, this.PostBody({ [ControlPlaneClient.EmailKey]: email }))
+    }
+
+    // Changes the signed-in operator's own password. The control plane ends every
+    // other session of the operator and re-issues this one (a fresh cookie), so
+    // the page stays signed in. A wrong current password is a 403.
+    public async ChangeOwnPassword(currentPassword: string, newPassword: string, confirmPassword: string): Promise<void>
+    {
+        await this.Send<unknown>(ControlPlaneClient.SessionPasswordRoute, this.PostBody({
+            [ControlPlaneClient.CurrentPasswordKey]: currentPassword,
+            [ControlPlaneClient.NewPasswordKey]: newPassword,
+            [ControlPlaneClient.ConfirmPasswordKey]: confirmPassword,
+        }))
     }
 
     public async SetOperatorDisabled(email: string, disabled: boolean): Promise<void>

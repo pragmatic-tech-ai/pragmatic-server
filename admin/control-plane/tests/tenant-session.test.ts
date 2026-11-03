@@ -199,3 +199,45 @@ test('a session issued before the principal\'s reset time is refused, even one t
         assert.notEqual(await reloaded.Validate(someoneElse.id), null)
     })
 })
+
+test('RevokeOthersFor keeps the named session (through the reset stamp, persisted) and ends every other of the principal', async () =>
+{
+    await SessionFixture.WithDir(async file =>
+    {
+        const nowMs = SessionFixture.Start
+        const clock = (): Date => new Date(nowMs)
+        const store = new TenantSessionStore(file, SessionFixture.Ttl, clock)
+        // Same instant as the stamp: the kept session must survive even though it was issued at the reset time.
+        const mine = await store.Issue(SessionFixture.Tenant, SessionFixture.Principal)
+        const other = await store.Issue(SessionFixture.Tenant, SessionFixture.Principal)
+        const someoneElse = await store.Issue(SessionFixture.Tenant, 'user-2')
+        assert.equal(await store.RevokeOthersFor(SessionFixture.Tenant, SessionFixture.Principal, mine.id), 1)
+        assert.notEqual(await store.Validate(mine.id), null)
+        assert.equal(await store.Validate(other.id), null)
+        assert.notEqual(await store.Validate(someoneElse.id), null)
+        const reloaded = new TenantSessionStore(file, SessionFixture.Ttl, clock)
+        assert.notEqual(await reloaded.Validate(mine.id), null)
+        assert.equal(await reloaded.Validate(other.id), null)
+    })
+})
+
+test('a later full reset ends the kept session too; keeping another principal session keeps nothing', async () =>
+{
+    await SessionFixture.WithDir(async file =>
+    {
+        let nowMs = SessionFixture.Start
+        const clock = (): Date => new Date(nowMs)
+        const store = new TenantSessionStore(file, SessionFixture.Ttl, clock)
+        const mine = await store.Issue(SessionFixture.Tenant, SessionFixture.Principal)
+        const theirs = await store.Issue(SessionFixture.Tenant, 'user-2')
+        assert.equal(await store.RevokeOthersFor(SessionFixture.Tenant, SessionFixture.Principal, theirs.id), 1)
+        assert.equal(await store.Validate(mine.id), null)
+        assert.notEqual(await store.Validate(theirs.id), null)
+        const again = await store.Issue(SessionFixture.Tenant, 'user-2')
+        await store.RevokeOthersFor(SessionFixture.Tenant, 'user-2', theirs.id)
+        assert.equal(await store.Validate(again.id), null)
+        nowMs += 10
+        await store.RevokeAllFor(SessionFixture.Tenant, 'user-2')
+        assert.equal(await store.Validate(theirs.id), null)
+    })
+})

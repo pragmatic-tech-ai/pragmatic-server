@@ -59,6 +59,8 @@ import { TenantOidcRelyingParty, type TenantAdminDurability } from './tenant-aut
 import { TenantAdminClientRegistry } from './tenant-auth/tenant-admin-client-record.js'
 import { MasterKeyFile } from './master-key-file.js'
 import { TenantAuthEndpoint } from './tenant-auth/tenant-auth-endpoint.js'
+import { TenantPasswordChange } from './tenant-auth/tenant-password-change.js'
+import { IdpPasswordClient } from './tenant-auth/idp-password-client.js'
 import { TenantAuthGate } from './tenant-auth/tenant-auth-gate.js'
 import { TenantHostResolver } from './tenant-auth/tenant-host-resolver.js'
 import { TenantApiEndpoint } from './tenant-api/tenant-api-endpoint.js'
@@ -220,7 +222,7 @@ export class ControlPlaneServer
         const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations, new LoginThrottle(), opts.trustedProxy, undefined, undefined, undefined, opts.allowedHosts, new OperatorAuthorization(), audit, new AuditThrottle(), idpService, agentChannelUrl, agentInstaller, new HiveAgentUninstaller(orchestrators))
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
         const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie, service, new InProcessRolloutClient(deployments), orchestrators, placement,
-            masterKey, adminClientRegistry, ControlPlaneServer.ParseSecretTtlHours(process.env[ControlPlaneServer.SecretTtlEnvVar]), tenantSessions)
+            masterKey, adminClientRegistry, ControlPlaneServer.ParseSecretTtlHours(process.env[ControlPlaneServer.SecretTtlEnvVar]), tenantSessions, principalSessions)
         // Resolve (and validate) the tenant port + bind BEFORE binding the operator listener, so a misconfigured
         // tenant port fails fast at startup rather than after the operator socket is already live.
         let tenantStart: { host: TenantPlaneHost; port: number; bind: string; scheme: string; baseDomain: string } | undefined
@@ -236,8 +238,8 @@ export class ControlPlaneServer
             const monitor = probeMs > 0
                 ? new TenantHealthMonitor(directory, new HiveHealthProducer(service, orchestrators, placement), tenantPlane.events, probeMs, probeTimeoutMs, service)
                 : undefined
+            // The host attaches its sockets to tenantPlane.principals (principalSessions), which the Owner reset also ends.
             const tenantHost = new TenantPlaneHost(tenantPlane, resolver, tenantStaticRoot, service, monitor)
-            principalSessions.Attach(tenantHost)
             const tenantPort = ControlPlaneServer.ResolveTenantPort(process.env[ControlPlaneServer.TenantPortEnvVar])
             const portWarning = ControlPlaneServer.ExternalPortWarning(tenantPort, externalPort)
             if (portWarning !== undefined)
@@ -309,7 +311,8 @@ export class ControlPlaneServer
         masterKey: Buffer,
         adminClientRegistry: TenantAdminClientRegistry,
         secretTtlHours: number,
-        sessions?: TenantSessionStore): TenantPlane | undefined
+        sessions?: TenantSessionStore,
+        principals?: TenantPrincipalSessions): TenantPlane | undefined
     {
         const port = env[ControlPlaneServer.TenantPortEnvVar]
         const baseDomain = env[ControlPlaneServer.TenantBaseDomainEnvVar]
@@ -318,7 +321,7 @@ export class ControlPlaneServer
             return undefined
         }
         return ControlPlaneServer.BuildTenantPlane(dataRoot, idpService, directory, secureCookie, service, rollout, orchestrators, placement,
-            masterKey, adminClientRegistry, secretTtlHours, sessions)
+            masterKey, adminClientRegistry, secretTtlHours, sessions, principals)
     }
 
     /** Gate-free composition of the tenant plane; callers decide whether the plane is active (ComposeTenantPlane gates on env, the standalone server always builds it). */
@@ -334,7 +337,8 @@ export class ControlPlaneServer
         masterKey: Buffer,
         adminClientRegistry: TenantAdminClientRegistry,
         secretTtlHours: number,
-        sessions: TenantSessionStore = ControlPlaneServer.TenantSessionsOf(dataRoot)): TenantPlane
+        sessions: TenantSessionStore = ControlPlaneServer.TenantSessionsOf(dataRoot),
+        principals: TenantPrincipalSessions = new TenantPrincipalSessions(sessions)): TenantPlane
     {
         const durability: TenantAdminDurability = {
             storeRoot: join(dataRoot, ControlPlaneServer.TenantAdminOidcDir),
@@ -343,11 +347,12 @@ export class ControlPlaneServer
             secretTtlMs: secretTtlHours * ControlPlaneServer.MsPerHour,
         }
         const rp = new TenantOidcRelyingParty(idpService, directory, conn => new IdpAdminClient(conn), undefined, undefined, durability)
-        const endpoint = new TenantAuthEndpoint(rp, sessions, secureCookie)
+        const passwordChange = new TenantPasswordChange(idpService, new IdpPasswordClient(), principals)
+        const endpoint = new TenantAuthEndpoint(rp, sessions, secureCookie, passwordChange)
         const gate = new TenantAuthGate(sessions)
         const api = new TenantApiEndpoint(service, directory, rollout, orchestrators, placement)
         const events = new TenantEventBus()
-        return { endpoint, gate, api, events, isDurable: rp.IsDurable }
+        return { endpoint, gate, api, events, isDurable: rp.IsDurable, principals }
     }
 
     /** The externally-visible tenant origin scheme; defaults to https when unset or blank. */

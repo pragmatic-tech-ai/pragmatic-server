@@ -3,6 +3,7 @@ import type { TenantSession } from './tenant-session.js'
 import type { TenantAuthEndpoint } from './tenant-auth-endpoint.js'
 import type { TenantAuthGate } from './tenant-auth-gate.js'
 import type { TenantEventBus } from '../tenant-api/tenant-events.js'
+import type { TenantPrincipalSessions } from './tenant-principal-sessions.js'
 
 /**
  * The tenant-plane data API seam (`/tenant-api/*`). The host depends on this interface, not the concrete
@@ -27,4 +28,6 @@ export type TenantPlane =
     events: TenantEventBus
     /** Whether the auth endpoint's relying-party was wired with the durable reuse/TTL secret path (production) vs the legacy path. */
     isDurable?: boolean
+    /** Ends a principal's tenant-portal sessions and sockets after a password change; the host attaches its sockets to it. */
+    principals?: TenantPrincipalSessions
 }

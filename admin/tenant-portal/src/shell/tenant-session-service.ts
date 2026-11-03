@@ -1,15 +1,18 @@
 import { RelayCommand, ServiceBase, ServiceKey, type IServiceProvider } from '@pragmatic-tech-ai/mural/runtime'
+import { DialogService } from '@pragmatic-tech-ai/mural/framework/shell/services/dialog-service.js'
 import { ActivityLog } from '../activity-log.js'
 import { TenantApiError, type TenantApiClient } from '../tenant-api-client.js'
 import type { SessionDto, TenantEvent, TenantProfileDto } from '../tenant-types.js'
 import { AdminCapabilities, AdminCapability } from './admin-capability.js'
+import { ChangePasswordDialogViewModel } from './change-password-dialog-view-model.js'
 import type { IPageReloader } from './page-reloader.js'
 
 // The signed-in session for the shell: the tenant API client, who is signed in,
 // the fixed identity plate (organisation / tenant / hive), what they may do,
 // and the session's observed activity. Registered at the app root; TenantBoot
 // initializes it before any section resolves it. Logout and expiry reload the
-// page, which lands on sign-in.
+// page, which lands on sign-in. Change password opens the own-password
+// dialog (no permission needed); once it lands, AccountNotice says what it did.
 export class TenantSessionService extends ServiceBase
 {
     public static readonly Key = new ServiceKey<TenantSessionService>('TenantSessionService')
@@ -33,6 +36,11 @@ export class TenantSessionService extends ServiceBase
     private static readonly ActivityTemplate = 'Activity ({count})'
     private static readonly CountToken = '{count}'
     private static readonly NoText = ''
+    private static readonly ChangePasswordText = 'Change password'
+    private static readonly ChangePasswordTitle = 'Change your password'
+    private static readonly AccountNoticeProperty = 'AccountNotice'
+    private static readonly PasswordChangedNotice = 'Password changed. Your other sessions were signed out.'
+    private static readonly NoDialogsMessage = 'Dialogs are not available.'
 
     private client: TenantApiClient | undefined
     private session: SessionDto | undefined
@@ -42,13 +50,18 @@ export class TenantSessionService extends ServiceBase
     private expired = false
     private logoutError = ''
     private loggingOut = false
+    private accountNotice = ''
+    private changingPassword = false
     private readonly activity = new ActivityLog()
     private readonly logoutCommand: RelayCommand
+    private readonly changePasswordCommand: RelayCommand
 
     public constructor(provider: IServiceProvider)
     {
         super(provider)
         this.logoutCommand = new RelayCommand(() => { void this.Logout() }, () => !this.loggingOut, { Text: TenantSessionService.LogoutText })
+        this.changePasswordCommand = new RelayCommand(() => { void this.ChangePassword() },
+            () => !this.changingPassword && this.session !== undefined, { Text: TenantSessionService.ChangePasswordText })
         this.activity.PropertyChanged(ActivityLog.EntriesProperty).subscribe(() =>
         {
             this.RaisePropertyChanged(TenantSessionService.ActivityCountTextProperty, undefined, this.ActivityCountText)
@@ -73,6 +86,7 @@ export class TenantSessionService extends ServiceBase
         this.RaisePropertyChanged(P.TenantLabelProperty, before[3], this.TenantLabel)
         this.RaisePropertyChanged(P.HiveLabelProperty, before[4], this.HiveLabel)
         this.RaisePropertyChanged(P.HasOrganisationProperty, before[5], this.HasOrganisation)
+        this.changePasswordCommand.RaiseCanExecuteChanged()
     }
 
     public get Client(): TenantApiClient
@@ -193,6 +207,52 @@ export class TenantSessionService extends ServiceBase
         return this.logoutCommand
     }
 
+    // Opens the change-password dialog for the signed-in user's own account.
+    public get ChangePasswordCommand(): RelayCommand
+    {
+        return this.changePasswordCommand
+    }
+
+    // What the last account action did ('Password changed...'); '' when none.
+    public get AccountNotice(): string
+    {
+        return this.accountNotice
+    }
+
+    // Asks for the current and a new password and changes it. One dialog at a
+    // time; a failure inside it stays in the dialog. Resolves once it closes.
+    public async ChangePassword(): Promise<void>
+    {
+        if (this.changingPassword)
+        {
+            return
+        }
+        const dialogs = this.Provider.get(DialogService.Key)
+        if (dialogs === undefined)
+        {
+            this.SetAccountNotice(TenantSessionService.NoDialogsMessage)
+            return
+        }
+        this.SetChangingPassword(true)
+        this.SetAccountNotice(TenantSessionService.NoText)
+        try
+        {
+            const changed = await new ChangePasswordDialogViewModel(this, dialogs).Open(TenantSessionService.ChangePasswordTitle)
+            if (changed !== undefined)
+            {
+                this.SetAccountNotice(changed.warning ?? TenantSessionService.PasswordChangedNotice)
+            }
+        }
+        catch (e)
+        {
+            this.SetAccountNotice(e instanceof Error ? e.message : String(e))
+        }
+        finally
+        {
+            this.SetChangingPassword(false)
+        }
+    }
+
     // Ends the session for this page: reloads at most once, landing on sign-in.
     public Expire(): void
     {
@@ -235,6 +295,23 @@ export class TenantSessionService extends ServiceBase
             this.SetLoggingOut(false)
         }
         this.Expire()
+    }
+
+    private SetChangingPassword(next: boolean): void
+    {
+        this.changingPassword = next
+        this.changePasswordCommand.RaiseCanExecuteChanged()
+    }
+
+    private SetAccountNotice(next: string): void
+    {
+        const old = this.accountNotice
+        if (old === next)
+        {
+            return
+        }
+        this.accountNotice = next
+        this.RaisePropertyChanged(TenantSessionService.AccountNoticeProperty, old, next)
     }
 
     private SetLoggingOut(next: boolean): void

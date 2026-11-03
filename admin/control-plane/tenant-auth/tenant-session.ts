@@ -4,9 +4,10 @@ import { dirname } from 'node:path'
 
 /**
  * A tenant-plane login session. The id is the bearer token: never log it or put it in an error message. `issuedAt` is absent
- * on sessions written before it existed (it is then derived from expiresAt - ttl).
+ * on sessions written before it existed (it is then derived from expiresAt - ttl). `keptAt` is set on the one session a
+ * principal reset deliberately kept (the session that changed its own password): the reset stamped then does not end it.
  */
-export type TenantSession = { id: string; tenantId: string; principalId: string; email?: string; expiresAt: string; issuedAt?: string }
+export type TenantSession = { id: string; tenantId: string; principalId: string; email?: string; expiresAt: string; issuedAt?: string; keptAt?: string }
 
 /** File-backed tenant session store keyed by session id (temp-write + atomic rename; a missing file is empty). */
 export class TenantSessionStore
@@ -82,6 +83,21 @@ export class TenantSessionStore
      */
     public async RevokeAllFor(tenantId: string, principalId: string): Promise<number>
     {
+        return await this.RevokeFor(tenantId, principalId, undefined)
+    }
+
+    /**
+     * As RevokeAllFor, but the session `keepId` (the principal's own, the one that changed its password) survives: it is
+     * marked kept through the reset stamped now, so the stamp does not refuse it. Every other session of the principal
+     * ends. An unknown `keepId`, or one of another principal, keeps nothing.
+     */
+    public async RevokeOthersFor(tenantId: string, principalId: string, keepId: string): Promise<number>
+    {
+        return await this.RevokeFor(tenantId, principalId, keepId)
+    }
+
+    private async RevokeFor(tenantId: string, principalId: string, keepId: string | undefined): Promise<number>
+    {
         await this.ensureLoaded()
         let tenantResets = this.resets.get(tenantId)
         if (tenantResets === undefined)
@@ -89,25 +105,36 @@ export class TenantSessionStore
             tenantResets = new Map()
             this.resets.set(tenantId, tenantResets)
         }
-        tenantResets.set(principalId, this.now().toISOString())
+        const stamp = this.now().toISOString()
+        tenantResets.set(principalId, stamp)
         let ended = 0
         for (const [id, session] of this.sessions)
         {
-            if (session.tenantId === tenantId && session.principalId === principalId)
+            if (session.tenantId !== tenantId || session.principalId !== principalId)
             {
-                this.sessions.delete(id)
-                ended++
+                continue
             }
+            if (id === keepId)
+            {
+                session.keptAt = stamp
+                continue
+            }
+            this.sessions.delete(id)
+            ended++
         }
         await this.persist()
         return ended
     }
 
-    /** Whether the session was issued at or before its principal's last reset. */
+    /** Whether the session was issued at or before its principal's last reset (and was not the one that reset kept). */
     private PredatesReset(session: TenantSession): boolean
     {
         const reset = this.resets.get(session.tenantId)?.get(session.principalId)
         if (reset === undefined)
+        {
+            return false
+        }
+        if (session.keptAt !== undefined && new Date(session.keptAt).getTime() >= new Date(reset).getTime())
         {
             return false
         }

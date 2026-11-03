@@ -12,6 +12,7 @@ class MutationFixture
     public static readonly FullEmail = 'full@control-plane.test'
     public static readonly RoEmail = 'ro@control-plane.test'
     public static readonly OperatorPassword = 'pw-operator-initial'
+    public static readonly ChangedPassword = 'pw-operator-changed-1'
     public static readonly UnknownEmail = 'nobody@control-plane.test'
     public static readonly MinPasswordLength = 12
     public static readonly ActorSentinel = 'some-actor'
@@ -95,6 +96,107 @@ describe('OperatorIdentity mutations', () =>
             assert.ok(pw.length >= MutationFixture.MinPasswordLength)
             assert.equal(await id.Authenticate(MutationFixture.RoEmail, MutationFixture.OperatorPassword), null)
             assert.ok(await id.Authenticate(MutationFixture.RoEmail, pw))
+        })
+    })
+
+    it('reset password ends every live session of the operator', async () =>
+    {
+        await MutationFixture.WithIdentity(async id =>
+        {
+            await id.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
+            const a = await id.Authenticate(MutationFixture.RoEmail, MutationFixture.OperatorPassword)
+            const b = await id.Authenticate(MutationFixture.RoEmail, MutationFixture.OperatorPassword)
+            const admin = await id.Authenticate(MutationFixture.AdminEmail, MutationFixture.AdminPassword)
+            assert.ok(a && b && admin)
+            await id.ResetOperatorPassword(MutationFixture.RoEmail)
+            assert.equal(await id.ValidateToken(a.token), null)
+            assert.equal(await id.ValidateToken(b.token), null)
+            assert.ok(await id.ValidateToken(admin.token), 'another operator keeps their session')
+        })
+    })
+
+    it('a reset of oneself ends the caller own sessions too (documented: the reset is not self-exempt)', async () =>
+    {
+        await MutationFixture.WithIdentity(async id =>
+        {
+            const own = await id.Authenticate(MutationFixture.AdminEmail, MutationFixture.AdminPassword)
+            assert.ok(own)
+            await id.ResetOperatorPassword(MutationFixture.AdminEmail)
+            assert.equal(await id.ValidateToken(own.token), null)
+        })
+    })
+
+    it('change own password: verifies the current one, rotates, ends every old session and issues a fresh one', async () =>
+    {
+        await MutationFixture.WithIdentity(async id =>
+        {
+            await id.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
+            const mine = await id.Authenticate(MutationFixture.RoEmail, MutationFixture.OperatorPassword)
+            const elsewhere = await id.Authenticate(MutationFixture.RoEmail, MutationFixture.OperatorPassword)
+            const admin = await id.Authenticate(MutationFixture.AdminEmail, MutationFixture.AdminPassword)
+            assert.ok(mine && elsewhere && admin)
+            const principalId = (await id.ValidateToken(mine.token))!.principalId
+            const fresh = await id.ChangeOwnPassword(principalId, MutationFixture.OperatorPassword, MutationFixture.ChangedPassword)
+            assert.ok(fresh)
+            assert.equal((await id.ValidateToken(fresh.token))?.principalId, principalId)
+            assert.equal(await id.ValidateToken(mine.token), null)
+            assert.equal(await id.ValidateToken(elsewhere.token), null)
+            assert.ok(await id.ValidateToken(admin.token))
+            assert.equal(await id.Authenticate(MutationFixture.RoEmail, MutationFixture.OperatorPassword), null)
+            assert.ok(await id.Authenticate(MutationFixture.RoEmail, MutationFixture.ChangedPassword))
+        })
+    })
+
+    it('change own password with a wrong current password changes nothing and ends no session', async () =>
+    {
+        await MutationFixture.WithIdentity(async id =>
+        {
+            await id.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
+            const mine = await id.Authenticate(MutationFixture.RoEmail, MutationFixture.OperatorPassword)
+            assert.ok(mine)
+            const principalId = (await id.ValidateToken(mine.token))!.principalId
+            assert.equal(await id.ChangeOwnPassword(principalId, 'not-the-password', MutationFixture.ChangedPassword), null)
+            assert.ok(await id.ValidateToken(mine.token))
+            assert.ok(await id.Authenticate(MutationFixture.RoEmail, MutationFixture.OperatorPassword))
+        })
+    })
+
+    it('change own password checks the current password of the session principal, not anyone else', async () =>
+    {
+        await MutationFixture.WithIdentity(async id =>
+        {
+            await id.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
+            const admin = await id.Authenticate(MutationFixture.AdminEmail, MutationFixture.AdminPassword)
+            assert.ok(admin)
+            const adminId = (await id.ValidateToken(admin.token))!.principalId
+            assert.equal(await id.ChangeOwnPassword(adminId, MutationFixture.OperatorPassword, MutationFixture.ChangedPassword), null)
+            assert.equal(await id.ChangeOwnPassword('no-such-principal', MutationFixture.OperatorPassword, MutationFixture.ChangedPassword), null)
+            assert.ok(await id.Authenticate(MutationFixture.RoEmail, MutationFixture.OperatorPassword))
+            assert.ok(await id.Authenticate(MutationFixture.AdminEmail, MutationFixture.AdminPassword))
+            assert.ok(await id.ValidateToken(admin.token))
+        })
+    })
+
+    it('the bootstrap admin can change their own password', async () =>
+    {
+        await MutationFixture.WithIdentity(async id =>
+        {
+            const admin = await id.Authenticate(MutationFixture.AdminEmail, MutationFixture.AdminPassword)
+            assert.ok(admin)
+            const adminId = (await id.ValidateToken(admin.token))!.principalId
+            assert.ok(await id.ChangeOwnPassword(adminId, MutationFixture.AdminPassword, MutationFixture.ChangedPassword))
+            assert.ok(await id.Authenticate(MutationFixture.AdminEmail, MutationFixture.ChangedPassword))
+        })
+    })
+
+    it('an invited operator session reports the email they sign in with, not their principal id', async () =>
+    {
+        await MutationFixture.WithIdentity(async id =>
+        {
+            await id.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
+            const session = await id.Authenticate(MutationFixture.RoEmail, MutationFixture.OperatorPassword)
+            assert.ok(session)
+            assert.equal((await id.ValidateToken(session.token))?.email, MutationFixture.RoEmail)
         })
     })
 

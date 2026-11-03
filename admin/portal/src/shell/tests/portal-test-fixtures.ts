@@ -251,6 +251,9 @@ export class FakeControlPlane
     public FailPolicyCall: string | undefined
     // Each operator-management write as 'Method email [argument]', in call order.
     public readonly OperatorCalls: string[] = []
+    // The own-password changes asked for, as [current, new, confirm]; a set PasswordChangeFailure fails the next ones.
+    public readonly PasswordChanges: Array<[string, string, string]> = []
+    public PasswordChangeFailure: Error | undefined
     public readonly CreatedClients: Array<[string, string, string | undefined]> = []
     public readonly CreatedTenants: Array<[string, string, string, string]> = []
     public readonly CreatedHives: HiveDto[] = []
@@ -490,6 +493,15 @@ export class FakeControlPlane
     {
         this.ThrowIfFailing()
         this.OperatorCalls.push('RevokeOperatorSessions ' + email)
+    }
+
+    public async ChangeOwnPassword(currentPassword: string, newPassword: string, confirmPassword: string): Promise<void>
+    {
+        if (this.PasswordChangeFailure !== undefined)
+        {
+            throw this.PasswordChangeFailure
+        }
+        this.PasswordChanges.push([currentPassword, newPassword, confirmPassword])
     }
 
     // Held by HoldCreates, like a create.

@@ -202,6 +202,17 @@ export class ControlPlaneHost
     private static readonly MinOperatorPasswordLength = 12
     private static readonly EmailAt = '@'
     private static readonly OperatorFieldsMessage = 'a valid email, a password of at least ' + ControlPlaneHost.MinOperatorPasswordLength + ' characters and a role (full|readonly) are required'
+    /** The signed-in operator's own password change; any role (a ReadOnly operator may change their own password). */
+    private static readonly SessionPasswordPath = OperatorAuthorization.SessionPasswordPath
+    private static readonly CurrentPasswordField = 'currentPassword'
+    private static readonly NewPasswordField = 'newPassword'
+    private static readonly ConfirmPasswordField = 'confirmPassword'
+    private static readonly PasswordFieldsMessage = 'currentPassword and newPassword (strings) are required'
+    private static readonly WeakPasswordMessage = 'The new password must be at least ' + ControlPlaneHost.MinOperatorPasswordLength + ' characters.'
+    private static readonly PasswordMismatchMessage = 'The new password and its confirmation do not match.'
+    private static readonly SamePasswordMessage = 'The new password must differ from the current one.'
+    private static readonly WrongCurrentPasswordMessage = 'The current password is not correct.'
+    private static readonly TooManyPasswordAttemptsMessage = 'Too many attempts; try again later'
     private static readonly RoleFullWire = 'full'
     private static readonly RoleReadOnlyWire = 'readonly'
     private static readonly OperatorRoles: ReadonlyMap<string, OperatorRole> = new Map([[ControlPlaneHost.RoleFullWire, OperatorRole.Full], [ControlPlaneHost.RoleReadOnlyWire, OperatorRole.ReadOnly]])
@@ -614,24 +625,33 @@ export class ControlPlaneHost
         this.revalidating = true
         try
         {
-            for (const token of this.registry.Tokens())
-            {
-                try
-                {
-                    if ((await this.operator.ValidateToken(token)) === null)
-                    {
-                        this.registry.CloseToken(token)
-                    }
-                }
-                catch
-                {
-                    // a transient validation failure must not kill the sweep; retry next tick
-                }
-            }
+            await this.CloseRevokedSockets()
         }
         finally
         {
             this.revalidating = false
+        }
+    }
+
+    /**
+     * Closes every event socket whose session token no longer validates. Run by the periodic sweep and, at once, after a
+     * change that ends sessions (a password reset or change, a disable, a revoke), so the cut is not left to the next tick.
+     */
+    private async CloseRevokedSockets(): Promise<void>
+    {
+        for (const token of this.registry.Tokens())
+        {
+            try
+            {
+                if ((await this.operator.ValidateToken(token)) === null)
+                {
+                    this.registry.CloseToken(token)
+                }
+            }
+            catch
+            {
+                // a transient validation failure must not kill the sweep; retry next tick
+            }
         }
     }
 
@@ -890,6 +910,11 @@ export class ControlPlaneHost
                 this.registry.CloseToken(token)
             }
             PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ok: true })
+            return true
+        }
+        if (path === ControlPlaneHost.SessionPasswordPath && method === PlaneHttp.MethodPost)
+        {
+            await this.HandleChangeOwnPassword(req, res)
             return true
         }
         if (path === ControlPlaneHost.OperatorsPath && method === PlaneHttp.MethodGet)
@@ -2126,7 +2151,10 @@ export class ControlPlaneHost
         }
         if (path === ControlPlaneHost.OperatorPasswordResetPath)
         {
+            // The reset ends every session of the target (the caller's own too when they reset themselves); their live
+            // event sockets close with them.
             const password = await this.operator.ResetOperatorPassword(email)
+            await this.CloseRevokedSockets()
             res.setHeader(ControlPlaneHost.CacheControlHeader, ControlPlaneHost.NoStore)
             PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { password })
             return
@@ -2134,6 +2162,7 @@ export class ControlPlaneHost
         if (path === ControlPlaneHost.OperatorRevokeSessionsPath)
         {
             await this.operator.RevokeOperatorSessions(email)
+            await this.CloseRevokedSockets()
             PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, {})
             return
         }
@@ -2157,10 +2186,82 @@ export class ControlPlaneHost
                 return
             }
             await this.operator.SetOperatorDisabled(email, body.disabled, who.principalId)
+            await this.CloseRevokedSockets()
             PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, {})
             return
         }
         PlaneHttp.WriteNotFound(res)
+    }
+
+    /**
+     * POST /api/session/password: the signed-in operator changes their own password. The identity is the session's,
+     * never the body's. Throttled per (email, client ip) through the login throttle (a wrong current password is a
+     * password guess); the attempt is counted at the gate, before the await, as login does. On success every session
+     * of the operator ends, the caller's own included, and the caller is handed a fresh session cookie, so the request
+     * making the change stays signed in while every other session (and its live sockets) is cut. A wrong current
+     * password is 403, not 401: 401 means "your session is gone" to the portal. Every reply is no-store; no password
+     * is ever echoed, logged or audited (the audit records the path and status only).
+     */
+    private async HandleChangeOwnPassword(req: IncomingMessage, res: ServerResponse): Promise<void>
+    {
+        res.setHeader(ControlPlaneHost.CacheControlHeader, ControlPlaneHost.NoStore)
+        const token = SessionCookie.Read(req.headers[ControlPlaneHost.CookieHeader])
+        const who = await this.Principal(req)
+        if (who === null || token === undefined)
+        {
+            req.resume()
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusUnauthorized, { error: ControlPlaneHost.UnauthenticatedMessage })
+            return
+        }
+        const body = await this.ReadJsonObject(req, res)
+        if (body === undefined)
+        {
+            return
+        }
+        const current = body[ControlPlaneHost.CurrentPasswordField]
+        const next = body[ControlPlaneHost.NewPasswordField]
+        const confirm = body[ControlPlaneHost.ConfirmPasswordField]
+        if (typeof current !== 'string' || current.length === 0 || typeof next !== 'string')
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.PasswordFieldsMessage })
+            return
+        }
+        if (next.length < ControlPlaneHost.MinOperatorPasswordLength)
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.WeakPasswordMessage })
+            return
+        }
+        if (confirm !== undefined && confirm !== next)
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.PasswordMismatchMessage })
+            return
+        }
+        if (next === current)
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.SamePasswordMessage })
+            return
+        }
+        const clientIp = this.ClientIp(req)
+        const gate = this.loginThrottle.CheckAllowed(who.email, clientIp)
+        if (!gate.allowed)
+        {
+            res.setHeader(ControlPlaneHost.RetryAfterHeader, String(Math.ceil(gate.retryAfterMs / ControlPlaneHost.MsPerSecond)))
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusTooManyRequests, { error: ControlPlaneHost.TooManyPasswordAttemptsMessage })
+            return
+        }
+        this.loginThrottle.RecordFailure(who.email, clientIp)
+        const session = await this.operator.ChangeOwnPassword(who.principalId, current, next)
+        if (session === null)
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.WrongCurrentPasswordMessage })
+            return
+        }
+        this.loginThrottle.Clear(who.email, clientIp)
+        // The caller's sockets follow its fresh token; every other socket of the operator held an ended token and closes.
+        this.registry.Rekey(token, session.token)
+        await this.CloseRevokedSockets()
+        res.setHeader(ControlPlaneHost.SetCookieHeader, SessionCookie.Build(session.token, session.expiresAt, this.secureCookie))
+        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ok: true })
     }
 
     /** Minimal shape check: exactly one '@' with a non-empty local part and domain. */

@@ -6,7 +6,7 @@ import { DialogService, type DialogOptions } from '@pragmatic-tech-ai/mural/fram
 import { NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
 import { TenantApiError, type TenantApiClient } from '../../tenant-api-client.js'
 import { EnvStatus, EnvType, Template } from '../../tenant-types.js'
-import type { AdminCapabilitiesDto, AdminSnapshotDto, AdoptionLedgerDto, CreateAccountParams, CreateEnvironmentParams, EnvironmentDto, GrantMutationDto, HiveDto, HiveHealthDto, HiveRolloutDto, IssueTokenParams, ManifestDto, SecurityModelDto, ServiceTokenSummaryDto, SessionDto, TenantEvent, TenantProfileDto, TokenIssuedDto } from '../../tenant-types.js'
+import type { AdminCapabilitiesDto, AdminSnapshotDto, AdoptionLedgerDto, CreateAccountParams, CreateEnvironmentParams, EnvironmentDto, GrantMutationDto, HiveDto, HiveHealthDto, HiveRolloutDto, IssueTokenParams, ManifestDto, PasswordChangedDto, SecurityModelDto, ServiceTokenSummaryDto, SessionDto, TenantEvent, TenantProfileDto, TokenIssuedDto } from '../../tenant-types.js'
 import type { IPageReloader } from '../page-reloader.js'
 import { TenantSessionService } from '../tenant-session-service.js'
 
@@ -156,6 +156,7 @@ export class FakeTenantApi
     public readonly LogStreams: Array<{ Name: string, Push: (text: string) => void, Late: (text: string) => void, ServerClose: () => void, Closed: boolean }> = []
     public readonly EventHandlers: Array<(ev: TenantEvent) => void> = []
     public BeginLoginCount = 0
+    public PasswordReply: PasswordChangedDto = { ok: true, otherSessionsEnded: true }
     public LogoutCount = 0
 
     public WithHive(id: string, displayName: string = 'Hive ' + id): this
@@ -231,6 +232,13 @@ export class FakeTenantApi
     {
         await this.Enter('Logout')
         this.LogoutCount++
+    }
+
+    // The own-password change: recorded as ['ChangeOwnPassword', current, new, confirm]; answers PasswordReply.
+    public async ChangeOwnPassword(currentPassword: string, newPassword: string, confirmPassword: string): Promise<PasswordChangedDto>
+    {
+        await this.Enter('ChangeOwnPassword', currentPassword, newPassword, confirmPassword)
+        return this.PasswordReply
     }
 
     public async ListHives(): Promise<HiveDto[]>
