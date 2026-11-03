@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { Cardinality, DataSourceKind, WriteConcurrency, WriteAtomicity, WriteFailureKind, WriteOperationKind } from '@pragmatic-tech-ai/todl'
+import { Cardinality, DataSourceKind, WriteConcurrency, WriteAtomicity, WriteFailureKind, WriteOperationKind, VersionBumpingAdapter } from '@pragmatic-tech-ai/todl'
 import type { ConnectorBinding, ConnectorSpec, IDataSourceAdapter, IInstanceView, ModelConnectorPlan, QueryRequest, WriteBatch, WriteResult, ExternalRecord } from '@pragmatic-tech-ai/todl'
 import { PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
 import { AppWriteStatus, ConnectorWriteOp } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -324,4 +324,14 @@ test('a null expectedVersion is treated as missing on an optimistic upsert and d
     ] })
     assert.deepEqual(res.results.map(r => r.status), [AppWriteStatus.Conflict, AppWriteStatus.Conflict])
     assert.equal(w.a.Batches.length, 0)
+})
+
+test('an applied optimistic upsert reports the bumped version (through the catalog version-bumping wrapper)', async () =>
+{
+    const w = Fx.World(Fx.Binding('Customer', 'a', { Concurrency: WriteConcurrency.Optimistic, VersionField: 'ver' }))
+    const wrapped = new VersionBumpingAdapter(w.a)
+    const opener = { OpenAdapter: (): Promise<IDataSourceAdapter> => Promise.resolve(wrapped) }
+    const res = await Fx.Writer({ ...w, opener } as never).Apply({ modelId: 'm', operations: [Fx.Op({ key: 'C1', expectedVersion: 1 })] })
+    assert.deepEqual(res.results, [{ key: 'C1', status: AppWriteStatus.Applied, version: 2 }])
+    assert.equal(w.a.Batches[0]!.Operations[0]!.Fields['ver'], 2)
 })

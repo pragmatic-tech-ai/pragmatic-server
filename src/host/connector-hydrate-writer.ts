@@ -270,6 +270,7 @@ export class ConnectorHydrateWriter
             return
         }
         const failures = new Map<string, WriteFailure>(result.Failures.map(f => [String(f.Key), f]))
+        const versions = new Map((result.Versions ?? []).map(v => [String(v.Key), v.Version] as const))
         // A transactional batch that applied nothing rolled back wholesale: ops absent from Failures persisted nothing.
         const rolledBack = binding.Atomicity === WriteAtomicity.Transactional && result.Applied === 0 && group.items.length > 0
         for (const item of group.items)
@@ -285,7 +286,8 @@ export class ConnectorHydrateWriter
             }
             else
             {
-                results[item.index] = { key: item.key, status: AppWriteStatus.Applied }
+                const version = versions.get(String(item.key))
+                results[item.index] = version === undefined ? { key: item.key, status: AppWriteStatus.Applied } : { key: item.key, status: AppWriteStatus.Applied, version }
             }
         }
     }
