@@ -1,3 +1,5 @@
+import type { IWriteLock } from '../host/cypher/write-lock.js'
+
 export type TenantLostHandler = (environmentId: string) => void
 
 /** Cross-replica single-writer ownership of a tenant. Async because the SaaS impl (Redis) does network I/O;
@@ -10,6 +12,8 @@ export interface ITenantOwnership
     ReleaseAll(): Promise<void>
     Healthy(): boolean
     OnLost(handler: TenantLostHandler): void
+    /** Optional: the cross-process write lock for one tenant. Absent => the server's in-process lock suffices (single replica). */
+    WriteLock?(environmentId: string): IWriteLock
 }
 
 /** Thrown by TenantRegistry when another replica owns the requested tenant. The front door maps it to a retryable reject. */

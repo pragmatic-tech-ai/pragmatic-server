@@ -237,6 +237,7 @@ export class TenantRegistry
             connectorsPolicy: provisioning.connectorsPolicy,
             connectors: provisioning.connectors,
             adapterPacks: this.adapterPacks,
+            writeLock: this.ownership.WriteLock?.(environmentId),
             identity: {
                 identityRoot: join(this.baseDir, environmentId, TenantRegistry.IdentityDir),
                 masterKey: this.masterKey,

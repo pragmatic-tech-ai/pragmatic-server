@@ -8,6 +8,7 @@ import { AuthorizingCypherWriter, WriteAuthorizationError } from './authorizing-
 import { CypherExecuteResultMapper } from './cypher-execute-result-mapper.js'
 import type { IDevWriteSecurity } from './dev-write-security.js'
 import { AsyncMutex } from './async-mutex.js'
+import { InProcessWriteLock, WriteLockBusyError, type IWriteLease, type IWriteLock } from './write-lock.js'
 
 /** A validated cypher/execute request, free of wire concerns. */
 export interface DevCypherRequest
@@ -27,8 +28,8 @@ export interface DevCypherTarget
 
 /**
  * Plan -> authorize -> commit -> persist for one Cypher write, serialized per tenant. Nothing persists on any failure.
- * The mutex is per-process: across cluster workers only the source-hash CAS protects, leaving a small CAS-to-Persist
- * TOCTOU window (acceptable for a dev endpoint; a cross-process lock is a deferred Feature).
+ * The in-process mutex is the fast path; inside it the tenant write lease (cross-process in a cluster) is held across the
+ * whole write, and is re-verified right before the persist (fencing) together with the source-hash compare-and-swap.
  */
 export class DevCypherExecutor
 {
@@ -36,18 +37,44 @@ export class DevCypherExecutor
     private static readonly InvalidReason = 'the write is not valid against the model'
     private static readonly FailedReason = 'the model could not be persisted; no changes were kept'
     private static readonly RevisionReason = 'graph revision has advanced'
+    private static readonly LeaseLostReason = 'the tenant write lease was lost before the write could persist'
     private readonly mutex = new AsyncMutex()
 
-    constructor(private readonly writer: DevModelWriter, private readonly revision: () => number)
+    constructor(private readonly writer: DevModelWriter, private readonly revision: () => number, private readonly lock: IWriteLock = new InProcessWriteLock())
     {
     }
 
     public Execute(request: DevCypherRequest, target: DevCypherTarget, security: IDevWriteSecurity): Promise<CypherExecuteResultDto>
     {
-        return this.mutex.Run(() => this.Run(request, target, security))
+        return this.mutex.Run(() => this.Locked(request, target, security))
     }
 
-    private async Run(request: DevCypherRequest, target: DevCypherTarget, security: IDevWriteSecurity): Promise<CypherExecuteResultDto>
+    private async Locked(request: DevCypherRequest, target: DevCypherTarget, security: IDevWriteSecurity): Promise<CypherExecuteResultDto>
+    {
+        let lease: IWriteLease
+        try
+        {
+            lease = await this.lock.Acquire()
+        }
+        catch (error)
+        {
+            if (error instanceof WriteLockBusyError)
+            {
+                return CypherExecuteResultMapper.ToWire(AppWriteStatus.Conflict, this.revision(), undefined, error.message)
+            }
+            throw error
+        }
+        try
+        {
+            return await this.Run(request, target, security, lease)
+        }
+        finally
+        {
+            await lease.Release()
+        }
+    }
+
+    private async Run(request: DevCypherRequest, target: DevCypherTarget, security: IDevWriteSecurity, lease: IWriteLease): Promise<CypherExecuteResultDto>
     {
         if (request.expectedRevision !== undefined && request.expectedRevision !== this.revision())
         {
@@ -81,6 +108,10 @@ export class DevCypherExecutor
         if (await this.writer.CurrentSourceHash(target.member) !== this.writer.SourceHash(prepared.sources))
         {
             return CypherExecuteResultMapper.ToWire(AppWriteStatus.Conflict, this.revision(), undefined, DevCypherExecutor.SourcesChangedReason)
+        }
+        if (!(await lease.Held()))
+        {
+            return CypherExecuteResultMapper.ToWire(AppWriteStatus.Conflict, this.revision(), undefined, DevCypherExecutor.LeaseLostReason)
         }
         let revision: number
         try

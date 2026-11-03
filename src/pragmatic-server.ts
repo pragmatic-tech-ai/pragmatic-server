@@ -57,6 +57,7 @@ import { AssignService } from './host/sharing/assign-service.js'
 import { AccessPolicySetting } from './host/apps/access-policy-setting.js'
 import { FilteredGraphQuery } from './host/cypher/filtered-graph-query.js'
 import { ModelShardCache, type IModelShardSource } from './host/cypher/model-shard-cache.js'
+import { InProcessWriteLock, type IWriteLock } from './host/cypher/write-lock.js'
 import { GraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
@@ -136,6 +137,8 @@ export interface PragmaticServerOptions
     connectors?: ConnectorsHostOptions
     connectorsPolicy?: ConnectorsPolicy
     readonly adapterPacks?: AdapterPacksConfig
+    /** Cross-process tenant write lock (cluster); absent => in-process only, correct for a single replica. */
+    writeLock?: IWriteLock
 }
 
 /** The node labels a Cypher query references; wildcard when any node pattern is unlabeled; parseFailed when the text is not valid Cypher (nothing is prefetched). */
@@ -953,7 +956,7 @@ export class PragmaticServer implements IEnvironmentGraphHost, IModelShardSource
         const security: IDevWriteSecurity = this.identity === undefined
             ? new OpenDevWriteSecurity()
             : await PrincipalDevWriteSecurity.For(context, await this.ReadAuthorization())
-        this.cypherExecutor ??= new DevCypherExecutor(writer, () => languageService.GraphRevision)
+        this.cypherExecutor ??= new DevCypherExecutor(writer, () => languageService.GraphRevision, this.options.writeLock ?? new InProcessWriteLock())
         return this.cypherExecutor.Execute(request, { member, identity: { model: solution.Name, version: PragmaticServer.GraphModelVersion, namespace } }, security)
     }
 

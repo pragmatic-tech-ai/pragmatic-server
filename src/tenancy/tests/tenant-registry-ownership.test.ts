@@ -6,6 +6,7 @@ import type { ITenantOwnership, TenantLostHandler } from '../tenant-ownership.js
 import { InMemoryTenantCoordinator } from '../tenant-coordinator.js'
 import { DeploymentMode } from '../../platform/deployment-mode.js'
 import type { TenantProvisioning } from '../tenant-provisioning.js'
+import type { IWriteLock } from '../../host/cypher/write-lock.js'
 
 class FakeOwnership implements ITenantOwnership
 {
@@ -78,4 +79,15 @@ test('OwnershipHealthy delegates to the ownership', () =>
     ownership.healthy = false
     const registry = Fixtures.RegistryWith(ownership)
     assert.equal(registry.OwnershipHealthy(), false)
+})
+
+test('a tenant server is built with the ownership write lock for that tenant (none without one)', () =>
+{
+    const lock: IWriteLock = { Acquire: () => Promise.reject(new Error('unused')) }
+    const scoped: string[] = []
+    const clustered = new FakeOwnership() as FakeOwnership & { WriteLock(environmentId: string): IWriteLock }
+    clustered.WriteLock = environmentId => { scoped.push(environmentId); return lock }
+    assert.equal(Fixtures.RegistryWith(clustered).OptionsFor('acme', { displayName: 'Acme' }).writeLock, lock)
+    assert.deepEqual(scoped, ['acme'])
+    assert.equal(Fixtures.RegistryWith(new FakeOwnership()).OptionsFor('acme', { displayName: 'Acme' }).writeLock, undefined)
 })
