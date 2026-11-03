@@ -48,7 +48,7 @@ class RoleOperator implements IOperatorIdentity
         this.ThrowIfSet()
     }
 
-    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<{ token: string; expiresAt: Date } | null> { return null }
+    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<null> { return null }
     public async ResetOperatorPassword(email: string): Promise<string>
     {
         this.Calls.push({ op: 'reset', email })

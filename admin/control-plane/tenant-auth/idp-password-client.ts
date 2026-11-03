@@ -32,6 +32,8 @@ export class IdpPasswordClient implements IIdpPasswordClient
     private static readonly PasswordSuffix = '/password'
     private static readonly PathSeparator = '/'
     private static readonly NoText = ''
+    private static readonly EndEvent = 'end'
+    private static readonly ErrorEvent = 'error'
     private static readonly PostMethod = 'POST'
     private static readonly HttpsProtocol = 'https:'
     private static readonly ContentTypeHeader = 'Content-Type'
@@ -89,15 +91,15 @@ export class IdpPasswordClient implements IIdpPasswordClient
             }, res =>
             {
                 res.resume()
-                res.on('end', () => settle(IdpPasswordClient.OutcomeOf(res.statusCode ?? 0, res.headers[IdpPasswordClient.RetryAfterHeader])))
-                res.on('error', () => settle({ Result: IdpPasswordResult.Failed }))
+                res.on(IdpPasswordClient.EndEvent, () => settle(IdpPasswordClient.OutcomeOf(res.statusCode ?? 0, res.headers[IdpPasswordClient.RetryAfterHeader])))
+                res.on(IdpPasswordClient.ErrorEvent, () => settle({ Result: IdpPasswordResult.Failed }))
             })
             req.setTimeout(IdpPasswordClient.TimeoutMs, () =>
             {
                 req.destroy()
                 settle({ Result: IdpPasswordResult.Failed })
             })
-            req.on('error', () => settle({ Result: IdpPasswordResult.Failed }))
+            req.on(IdpPasswordClient.ErrorEvent, () => settle({ Result: IdpPasswordResult.Failed }))
             req.end(payload)
         })
     }

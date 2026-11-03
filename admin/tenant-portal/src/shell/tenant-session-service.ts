@@ -41,6 +41,8 @@ export class TenantSessionService extends ServiceBase
     private static readonly AccountNoticeProperty = 'AccountNotice'
     private static readonly PasswordChangedNotice = 'Password changed. Your other sessions were signed out.'
     private static readonly NoDialogsMessage = 'Dialogs are not available.'
+    private static readonly NoEmailReason = 'This sign-in carries no email, so its password cannot be changed here.'
+    private static readonly ChangePasswordDeniedReasonProperty = 'ChangePasswordDeniedReason'
 
     private client: TenantApiClient | undefined
     private session: SessionDto | undefined
@@ -52,6 +54,8 @@ export class TenantSessionService extends ServiceBase
     private loggingOut = false
     private accountNotice = ''
     private changingPassword = false
+    private expirySuspensions = 0
+    private expiryDeferred = false
     private readonly activity = new ActivityLog()
     private readonly logoutCommand: RelayCommand
     private readonly changePasswordCommand: RelayCommand
@@ -61,7 +65,7 @@ export class TenantSessionService extends ServiceBase
         super(provider)
         this.logoutCommand = new RelayCommand(() => { void this.Logout() }, () => !this.loggingOut, { Text: TenantSessionService.LogoutText })
         this.changePasswordCommand = new RelayCommand(() => { void this.ChangePassword() },
-            () => !this.changingPassword && this.session !== undefined, { Text: TenantSessionService.ChangePasswordText })
+            () => !this.changingPassword && this.CanChangePassword, { Text: TenantSessionService.ChangePasswordText })
         this.activity.PropertyChanged(ActivityLog.EntriesProperty).subscribe(() =>
         {
             this.RaisePropertyChanged(TenantSessionService.ActivityCountTextProperty, undefined, this.ActivityCountText)
@@ -73,6 +77,7 @@ export class TenantSessionService extends ServiceBase
     public Initialize(client: TenantApiClient, session: SessionDto, profile: TenantProfileDto | undefined, reloader: IPageReloader): void
     {
         const before = [this.Email, this.RoleLabel, this.OrganisationLabel, this.TenantLabel, this.HiveLabel, this.HasOrganisation] as const
+        const beforeDenied = this.ChangePasswordDeniedReason
         this.client = client
         this.session = session
         this.profile = profile
@@ -86,6 +91,7 @@ export class TenantSessionService extends ServiceBase
         this.RaisePropertyChanged(P.TenantLabelProperty, before[3], this.TenantLabel)
         this.RaisePropertyChanged(P.HiveLabelProperty, before[4], this.HiveLabel)
         this.RaisePropertyChanged(P.HasOrganisationProperty, before[5], this.HasOrganisation)
+        this.RaisePropertyChanged(P.ChangePasswordDeniedReasonProperty, beforeDenied, this.ChangePasswordDeniedReason)
         this.changePasswordCommand.RaiseCanExecuteChanged()
     }
 
@@ -213,6 +219,20 @@ export class TenantSessionService extends ServiceBase
         return this.changePasswordCommand
     }
 
+    // Whether the signed-in user can change their password here: the server
+    // changes it by the session's email, so a sign-in without one cannot.
+    public get CanChangePassword(): boolean
+    {
+        const email = this.session?.email
+        return email !== undefined && email.length > 0
+    }
+
+    // Why Change password is off; '' when it is available.
+    public get ChangePasswordDeniedReason(): string
+    {
+        return this.session === undefined || this.CanChangePassword ? TenantSessionService.NoText : TenantSessionService.NoEmailReason
+    }
+
     // What the last account action did ('Password changed...'); '' when none.
     public get AccountNotice(): string
     {
@@ -223,7 +243,7 @@ export class TenantSessionService extends ServiceBase
     // time; a failure inside it stays in the dialog. Resolves once it closes.
     public async ChangePassword(): Promise<void>
     {
-        if (this.changingPassword)
+        if (this.changingPassword || !this.CanChangePassword)
         {
             return
         }
@@ -253,11 +273,39 @@ export class TenantSessionService extends ServiceBase
         }
     }
 
+    // Runs `work` (a password change) with expiry suspended: the server ends the
+    // old session before the fresh cookie lands, so a page request answered 401
+    // meanwhile is not the session ending. Such a 401 is remembered, and once
+    // the work is done the session is checked once: expired only if it is gone.
+    public async WithExpirySuspended<T>(work: () => Promise<T>): Promise<T>
+    {
+        this.expirySuspensions++
+        try
+        {
+            return await work()
+        }
+        finally
+        {
+            this.expirySuspensions--
+            if (this.expirySuspensions === 0 && this.expiryDeferred)
+            {
+                this.expiryDeferred = false
+                await this.RecheckSession()
+            }
+        }
+    }
+
     // Ends the session for this page: reloads at most once, landing on sign-in.
+    // While expiry is suspended it is only remembered (see WithExpirySuspended).
     public Expire(): void
     {
         if (this.expired)
         {
+            return
+        }
+        if (this.expirySuspensions > 0)
+        {
+            this.expiryDeferred = true
             return
         }
         this.expired = true
@@ -295,6 +343,25 @@ export class TenantSessionService extends ServiceBase
             this.SetLoggingOut(false)
         }
         this.Expire()
+    }
+
+    // The deferred check: expires when the server says there is no session; a
+    // failed check keeps the page (the next request decides).
+    private async RecheckSession(): Promise<void>
+    {
+        let alive: boolean
+        try
+        {
+            alive = (await this.Client.Session()) !== null
+        }
+        catch
+        {
+            alive = true
+        }
+        if (!alive)
+        {
+            this.Expire()
+        }
     }
 
     private SetChangingPassword(next: boolean): void

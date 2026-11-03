@@ -77,6 +77,10 @@ export type GraphLoadedDto =
     promotedAt: string
 }
 
+// The reply to an own-password change: changed; whether the other sessions were signed out; why to look (warning) when
+// they were not, or when no fresh session could be issued (sign in again).
+export type PasswordChangedDto = { ok: boolean; otherSessionsEnded: boolean; warning?: string }
+
 export type OperatorDto =
 {
     email: string

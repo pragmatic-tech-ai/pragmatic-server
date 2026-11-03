@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { IdpConnection } from '../idp-workload-driver.js'
 import { IdpPasswordResult, type IIdpPasswordClient } from './idp-password-client.js'
 import type { TenantSession } from './tenant-session.js'
+import { TenantSessionCookie } from './tenant-session-cookie.js'
 
 /** Reaches a tenant's IdP without launching one (the IdP service's connect-only lookup). */
 export interface ITenantIdpConnector
@@ -9,10 +10,10 @@ export interface ITenantIdpConnector
     ConnectForTenant(tenantId: string): Promise<IdpConnection | undefined>
 }
 
-/** Ends the principal's other tenant-portal sessions and sockets, keeping the one session named. */
-export interface IOtherSessionsRevoker
+/** Ends every tenant-portal session of the principal and issues the caller a fresh one, moving the caller's sockets to it. */
+export interface ISessionRotator
 {
-    RevokeOthersFor(tenantId: string, principalId: string, keepSessionId: string): Promise<void>
+    RotateFor(tenantId: string, principalId: string, oldSessionId: string, email?: string): Promise<TenantSession>
 }
 
 /**
@@ -20,9 +21,11 @@ export interface IOtherSessionsRevoker
  * tenant and email), never the body's; the body carries only currentPassword, newPassword and an optional
  * confirmPassword. The change is made by the tenant's IdP (its self-service endpoint verifies the current password,
  * throttles, rotates and ends the principal's IdP SSO sessions), reached server-to-server over the IdP's own CA. On success
- * every OTHER tenant-portal session of the principal ends, with its sockets; the session making the request is kept.
+ * every tenant-portal session of the principal ends, the caller's too, and the caller gets a fresh session (Set-Cookie, the
+ * login cookie's flags) that its open sockets move to; every other socket of the principal closes. One change per
+ * principal at a time (409 while one runs).
  *
- * Replies: 200 { ok, otherSessionsEnded } (a failed revoke still reports the change, with a warning); 400 for a missing,
+ * Replies: 200 { ok, otherSessionsEnded } (a failed rotation still reports the change, with a warning); 400 for a missing,
  * short (under MinPasswordLength: the IdP enforces none, so this plane does), mismatched or unchanged new password; 403
  * when the current password is wrong (not 401: 401 tells the portal its session is gone); 409 when the session carries no
  * email; 429 + Retry-After passed through from the IdP; 503 when the IdP cannot be reached; 502 for any other IdP refusal.
@@ -38,6 +41,9 @@ export class TenantPasswordChange
     private static readonly ConfirmPasswordField = 'confirmPassword'
     private static readonly ContentTypeHeader = 'Content-Type'
     private static readonly CacheControlHeader = 'Cache-Control'
+    private static readonly SetCookieHeader = 'Set-Cookie'
+    private static readonly KeySeparator = '\u0000'
+    private static readonly BusyMessage = 'A password change for this account is already running.'
     private static readonly RetryAfterHeader = 'Retry-After'
     private static readonly JsonContentType = 'application/json'
     private static readonly NoStore = 'no-store'
@@ -66,10 +72,14 @@ export class TenantPasswordChange
     private static readonly RefusedMessage = 'The password could not be changed.'
     private static readonly RevokeFailedWarning = 'Your password is changed, but your other sessions could not be signed out. Sign out of them, or ask your tenant owner.'
 
+    /** tenant + principal of each change in flight. */
+    private readonly inFlight = new Set<string>()
+
     public constructor(
         private readonly idp: ITenantIdpConnector,
         private readonly client: IIdpPasswordClient,
-        private readonly principals: IOtherSessionsRevoker)
+        private readonly principals: ISessionRotator,
+        private readonly secureCookie: boolean)
     {
     }
 
@@ -111,6 +121,27 @@ export class TenantPasswordChange
             this.Reply(res, TenantPasswordChange.StatusConflict, { error: TenantPasswordChange.NoEmailMessage })
             return
         }
+        // One change per principal at a time: a second one's rotation would end the first's fresh session.
+        const key = session.tenantId + TenantPasswordChange.KeySeparator + session.principalId
+        if (this.inFlight.has(key))
+        {
+            this.Reply(res, TenantPasswordChange.StatusConflict, { error: TenantPasswordChange.BusyMessage })
+            return
+        }
+        this.inFlight.add(key)
+        try
+        {
+            await this.Change(res, session, session.email, current, next)
+        }
+        finally
+        {
+            this.inFlight.delete(key)
+        }
+    }
+
+    /** Reaches the tenant IdP, asks it to change the password, and answers by its outcome (guard held). */
+    private async Change(res: ServerResponse, session: TenantSession, email: string, current: string, next: string): Promise<void>
+    {
         let conn: IdpConnection | undefined
         try
         {
@@ -125,11 +156,11 @@ export class TenantPasswordChange
             this.Reply(res, TenantPasswordChange.StatusUnavailable, { error: TenantPasswordChange.UnreachableMessage })
             return
         }
-        const outcome = await this.client.ChangePassword(conn, session.tenantId, session.email, current, next)
+        const outcome = await this.client.ChangePassword(conn, session.tenantId, email, current, next)
         switch (outcome.Result)
         {
             case IdpPasswordResult.Changed:
-                await this.EndOtherSessions(res, session)
+                await this.Rotate(res, session)
                 return
             case IdpPasswordResult.WrongPassword:
                 this.Reply(res, TenantPasswordChange.StatusForbidden, { error: TenantPasswordChange.WrongPasswordMessage })
@@ -144,19 +175,21 @@ export class TenantPasswordChange
         }
     }
 
-    /** The password is changed: end the principal's other sessions (keeping this one) and report whether that worked. */
-    private async EndOtherSessions(res: ServerResponse, session: TenantSession): Promise<void>
+    /** The password is changed: rotate the caller onto a fresh session (ending all others) and hand it the new cookie. */
+    private async Rotate(res: ServerResponse, session: TenantSession): Promise<void>
     {
+        let fresh: TenantSession
         try
         {
-            await this.principals.RevokeOthersFor(session.tenantId, session.principalId, session.id)
+            fresh = await this.principals.RotateFor(session.tenantId, session.principalId, session.id, session.email)
         }
         catch
         {
             this.Reply(res, TenantPasswordChange.StatusOk, { ok: true, otherSessionsEnded: false, warning: TenantPasswordChange.RevokeFailedWarning })
             return
         }
-        this.Reply(res, TenantPasswordChange.StatusOk, { ok: true, otherSessionsEnded: true })
+        const cookie = TenantSessionCookie.Build(fresh.tenantId, fresh.id, new Date(fresh.expiresAt), this.secureCookie)
+        this.Reply(res, TenantPasswordChange.StatusOk, { ok: true, otherSessionsEnded: true }, { [TenantPasswordChange.SetCookieHeader]: cookie })
     }
 
     private Reply(res: ServerResponse, status: number, body: unknown, extra: Record<string, string> = {}): void

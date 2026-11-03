@@ -8,6 +8,12 @@ import { ServerBootstrap } from '../../src/identity/server-bootstrap.js'
 
 export type OperatorSession = { token: string; expiresAt: Date }
 
+/**
+ * A completed own-password change. The password IS changed; `session` is the caller's fresh session (null when none could
+ * be issued: the caller must sign in again) and `otherSessionsEnded` is false when the old sessions could not be ended.
+ */
+export type OwnPasswordChange = { session: OperatorSession | null; otherSessionsEnded: boolean }
+
 /** Operator authority: Full may mutate (Owner grant on the control-plane tenant); ReadOnly may only observe (Viewer grant, or no Owner grant). */
 export enum OperatorRole
 {
@@ -29,7 +35,7 @@ export interface IOperatorIdentity
     ListOperators(): Promise<readonly OperatorSummary[]>
     SetOperatorRole(email: string, role: OperatorRole, actorPrincipalId: string): Promise<void>
     ResetOperatorPassword(email: string): Promise<string>
-    ChangeOwnPassword(principalId: string, currentPassword: string, newPassword: string): Promise<OperatorSession | null>
+    ChangeOwnPassword(principalId: string, currentPassword: string, newPassword: string): Promise<OwnPasswordChange | null>
     SetOperatorDisabled(email: string, disabled: boolean, actorPrincipalId: string): Promise<void>
     RevokeOperatorSessions(email: string): Promise<void>
 }
@@ -310,9 +316,11 @@ export class OperatorIdentity implements IOperatorIdentity
      * Self-service change: verifies the CURRENT password of the signed-in operator (`principalId`, against the email its
      * account signs in with), sets the new one, ends every session of the operator and issues a fresh one for the caller, which the caller must
      * adopt (its old token is among those ended). Null when the current password does not verify for that principal;
-     * nothing changes then. Neither password is ever logged or kept.
+     * nothing changes then. Once the password is rotated the change has happened: a failure to end the old sessions or to
+     * issue the fresh one is reported in the result (never thrown), so the caller is told the truth. Neither password is
+     * ever logged or kept.
      */
-    public async ChangeOwnPassword(principalId: string, currentPassword: string, newPassword: string): Promise<OperatorSession | null>
+    public async ChangeOwnPassword(principalId: string, currentPassword: string, newPassword: string): Promise<OwnPasswordChange | null>
     {
         const auth = this.pack.AuthenticatorFor(AuthMethod.Local)
         const account = await this.pack.Accounts.FindByPrincipalId(this.tenant, principalId)
@@ -344,9 +352,26 @@ export class OperatorIdentity implements IOperatorIdentity
         {
             next.Clear()
         }
-        await this.pack.Sessions.RevokeAllFor(this.tenant, principalId)
-        const session = await this.pack.Sessions.Issue(verified.Principal)
-        return { token: session.Id, expiresAt: session.ExpiresAt }
+        let otherSessionsEnded = true
+        try
+        {
+            await this.pack.Sessions.RevokeAllFor(this.tenant, principalId)
+        }
+        catch
+        {
+            otherSessionsEnded = false
+        }
+        let session: OperatorSession | null = null
+        try
+        {
+            const issued = await this.pack.Sessions.Issue(verified.Principal)
+            session = { token: issued.Id, expiresAt: issued.ExpiresAt }
+        }
+        catch
+        {
+            session = null
+        }
+        return { session, otherSessionsEnded }
     }
 
     /** Disables or re-enables an operator. Disabling also drops the operator's live sessions. Guards run before any state change. */

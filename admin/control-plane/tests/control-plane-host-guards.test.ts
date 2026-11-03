@@ -34,7 +34,7 @@ class NullOperator implements IOperatorIdentity
     {
     }
 
-    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<{ token: string; expiresAt: Date } | null> { return null }
+    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<null> { return null }
     public async ResetOperatorPassword(_email: string): Promise<string>
     {
         return ''

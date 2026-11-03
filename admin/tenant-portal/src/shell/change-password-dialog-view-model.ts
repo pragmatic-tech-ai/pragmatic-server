@@ -12,7 +12,9 @@ import type { TenantSessionService } from './tenant-session-service.js'
 // dialog closes (changed, cancelled or dismissed). A wrong current password,
 // or a throttled attempt, keeps the dialog open with the server's reason in
 // ErrorText. Resolves with the server's reply (a warning when the other
-// sessions could not be signed out).
+// sessions could not be signed out). While the request is in flight the
+// session does not treat a 401 as expiry: the server ends the old session
+// before the fresh cookie lands.
 export class ChangePasswordDialogViewModel extends TenantDialogViewModel<PasswordChangedDto>
 {
     // The tenant plane's floor for a new password (TenantPasswordChange.MinPasswordLength).
@@ -118,7 +120,10 @@ export class ChangePasswordDialogViewModel extends TenantDialogViewModel<Passwor
 
     protected override async SubmitCore(): Promise<PasswordChangedDto>
     {
-        const reply = await this.Session.Client.ChangeOwnPassword(this.currentPassword, this.newPassword, this.confirmPassword)
+        const current = this.currentPassword
+        const next = this.newPassword
+        const confirm = this.confirmPassword
+        const reply = await this.Session.WithExpirySuspended(() => this.Session.Client.ChangeOwnPassword(current, next, confirm))
         this.Clear()
         return reply
     }

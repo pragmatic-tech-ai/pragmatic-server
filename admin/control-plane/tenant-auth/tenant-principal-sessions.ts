@@ -1,5 +1,5 @@
 import type { IOwnerSessionRevoker } from '../tenant-provisioning-service.js'
-import type { TenantSessionStore } from './tenant-session.js'
+import type { TenantSession, TenantSessionStore } from './tenant-session.js'
 
 /** Something holding live connections per tenant principal (the tenant plane's WebSocket registry). */
 export interface IPrincipalConnections
@@ -9,12 +9,16 @@ export interface IPrincipalConnections
      * `keepSessionId` (when given) stay open.
      */
     ClosePrincipal(tenantId: string, principalId: string, keepSessionId?: string): number
+
+    /** Re-homes every connection opened under session `oldSessionId` to `newSessionId` (its session was rotated). */
+    MoveSession(oldSessionId: string, newSessionId: string): void
 }
 
 /**
  * Ends a tenant principal's tenant-portal access after its password changed: every tenant-plane session of that
  * principal, and its open tenant-plane WebSocket connections (attached once the tenant listener exists). A self-service
- * change keeps the session that made it (RevokeOthersFor); a reset by someone else keeps nothing (RevokeAllFor).
+ * change rotates the caller onto a fresh session and moves its connections there (RotateFor); a reset by someone else
+ * keeps nothing (RevokeAllFor).
  */
 export class TenantPrincipalSessions implements IOwnerSessionRevoker
 {
@@ -47,18 +51,25 @@ export class TenantPrincipalSessions implements IOwnerSessionRevoker
     }
 
     /**
-     * Ends every stored session of the principal except `keepSessionId`, and closes every open socket of the principal
-     * except those of that session; the sockets are closed even when ending the sessions fails (its error is rethrown).
+     * Ends every stored session of the principal (the caller's `oldSessionId` too) and issues the caller a fresh one; the
+     * caller's open sockets move to the fresh session and every other socket of the principal closes. When the store
+     * fails, every socket of the principal closes and the error is rethrown.
      */
-    public async RevokeOthersFor(tenantId: string, principalId: string, keepSessionId: string): Promise<void>
+    public async RotateFor(tenantId: string, principalId: string, oldSessionId: string, email?: string): Promise<TenantSession>
     {
+        let fresh: TenantSession | undefined
         try
         {
-            await this.sessions.RevokeOthersFor(tenantId, principalId, keepSessionId)
+            fresh = await this.sessions.RotateFor(tenantId, principalId, email)
+            for (const connections of this.connections)
+            {
+                connections.MoveSession(oldSessionId, fresh.id)
+            }
+            return fresh
         }
         finally
         {
-            this.CloseConnections(tenantId, principalId, keepSessionId)
+            this.CloseConnections(tenantId, principalId, fresh?.id)
         }
     }
 

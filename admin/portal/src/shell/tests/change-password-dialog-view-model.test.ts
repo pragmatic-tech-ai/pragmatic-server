@@ -76,7 +76,7 @@ describe('ChangePasswordDialogViewModel', () =>
         assert.equal(dialog.ConfirmCommand.CanExecute(), true)
         dialog.ConfirmCommand.Execute()
         await Tick.Settle()
-        assert.equal(await opened, ChangePasswordDialogViewModel.Changed)
+        assert.deepEqual(await opened, { ok: true, otherSessionsEnded: true })
         assert.deepEqual(api.PasswordChanges, [[PasswordKit.Current, PasswordKit.Next, PasswordKit.Next]])
     })
 
@@ -137,6 +137,71 @@ describe('ChangePasswordDialogViewModel', () =>
         await done
         assert.equal(api.PasswordChanges.length, 1)
         assert.equal(host.Session.AccountNotice, 'Password changed. Your other sessions were signed out.')
+    })
+
+    it('a change the server only partly completed shows its warning in the header', async () =>
+    {
+        const { api, host, dialogs } = PasswordKit.Host()
+        api.PasswordReply = { ok: true, otherSessionsEnded: true, warning: 'Your password is changed. Sign in again with the new password.' }
+        const done = host.Session.ChangePassword()
+        await Tick.Next()
+        const dialog = dialogs.Last as ChangePasswordDialogViewModel
+        PasswordKit.Fill(dialog)
+        dialog.ConfirmCommand.Execute()
+        await done
+        assert.equal(host.Session.AccountNotice, 'Your password is changed. Sign in again with the new password.')
+    })
+
+    it('while the change is submitting a 401 elsewhere does not expire the session; once done the session is checked once and kept', async () =>
+    {
+        const { api, host, dialogs } = PasswordKit.Host()
+        let release: () => void = () => undefined
+        api.PasswordChangeHold = new Promise<void>(res => { release = res })
+        const dialog = new ChangePasswordDialogViewModel(host.Session, dialogs)
+        const opened = dialog.Open('Change your password')
+        PasswordKit.Fill(dialog)
+        dialog.ConfirmCommand.Execute()
+        await Tick.Settle()
+        // A page request answered 401 between the server's revoke and the fresh cookie.
+        host.Session.Expire()
+        assert.equal(host.Reloader.Count, 0)
+        release()
+        await opened
+        await Tick.Settle()
+        assert.equal(api.SessionChecks, 1)
+        assert.equal(host.Reloader.Count, 0)
+    })
+
+    it('a 401 during the change whose session is really gone afterwards does expire, once the change is done', async () =>
+    {
+        const { api, host, dialogs } = PasswordKit.Host()
+        let release: () => void = () => undefined
+        api.PasswordChangeHold = new Promise<void>(res => { release = res })
+        api.SessionAlive = false
+        const dialog = new ChangePasswordDialogViewModel(host.Session, dialogs)
+        const opened = dialog.Open('Change your password')
+        PasswordKit.Fill(dialog)
+        dialog.ConfirmCommand.Execute()
+        await Tick.Settle()
+        host.Session.Expire()
+        assert.equal(host.Reloader.Count, 0)
+        release()
+        await opened
+        await Tick.Settle()
+        assert.equal(host.Reloader.Count, 1)
+    })
+
+    it('without a 401 during the change nothing is re-checked', async () =>
+    {
+        const { api, host, dialogs } = PasswordKit.Host()
+        const dialog = new ChangePasswordDialogViewModel(host.Session, dialogs)
+        const opened = dialog.Open('Change your password')
+        PasswordKit.Fill(dialog)
+        dialog.ConfirmCommand.Execute()
+        await opened
+        assert.equal(api.SessionChecks, 0)
+        host.Session.Expire()
+        assert.equal(host.Reloader.Count, 1, 'expiry works again once the change is done')
     })
 
     it('a cancelled change leaves the header notice empty', async () =>

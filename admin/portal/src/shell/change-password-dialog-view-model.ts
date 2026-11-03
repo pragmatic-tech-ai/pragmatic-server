@@ -1,4 +1,5 @@
 import type { DialogService } from '@pragmatic-tech-ai/mural/framework/shell/services/dialog-service.js'
+import type { PasswordChangedDto } from '../portal-types.js'
 import { PortalDialogViewModel } from './portal-dialog-view-model.js'
 import type { PortalSessionService } from './portal-session-service.js'
 
@@ -9,10 +10,11 @@ import type { PortalSessionService } from './portal-session-service.js'
 // NewPasswordText and MismatchText say why while they do not. The passwords
 // are input only: never echoed back, and cleared whenever the dialog closes
 // (changed, cancelled or dismissed). A wrong current password keeps the
-// dialog open with the server's reason in ErrorText.
-export class ChangePasswordDialogViewModel extends PortalDialogViewModel<boolean>
+// dialog open with the server's reason in ErrorText. While the request is in
+// flight the session does not treat a 401 as expiry (the server ends the old
+// session before the fresh cookie lands). Resolves with the server's reply.
+export class ChangePasswordDialogViewModel extends PortalDialogViewModel<PasswordChangedDto>
 {
-    public static readonly Changed = true
     // The control plane's floor for an operator password (its MinOperatorPasswordLength).
     public static readonly MinPasswordLength = 12
 
@@ -94,7 +96,7 @@ export class ChangePasswordDialogViewModel extends PortalDialogViewModel<boolean
     }
 
     // Whatever closes the dialog, the typed passwords do not outlive it.
-    public override async Open(title: string): Promise<boolean | undefined>
+    public override async Open(title: string): Promise<PasswordChangedDto | undefined>
     {
         try
         {
@@ -119,11 +121,14 @@ export class ChangePasswordDialogViewModel extends PortalDialogViewModel<boolean
             && this.confirmPassword === this.newPassword
     }
 
-    protected override async SubmitCore(): Promise<boolean>
+    protected override async SubmitCore(): Promise<PasswordChangedDto>
     {
-        await this.Session.Client.ChangeOwnPassword(this.currentPassword, this.newPassword, this.confirmPassword)
+        const current = this.currentPassword
+        const next = this.newPassword
+        const confirm = this.confirmPassword
+        const reply = await this.Session.WithExpirySuspended(() => this.Session.Client.ChangeOwnPassword(current, next, confirm))
         this.Clear()
-        return ChangePasswordDialogViewModel.Changed
+        return reply
     }
 
     private Clear(): void

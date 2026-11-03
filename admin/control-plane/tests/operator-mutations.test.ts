@@ -44,6 +44,12 @@ class MutationFixture
         return (await id.ListOperators()).find(o => o.email === email)?.role
     }
 
+    /** The identity's session manager, so a test can make one of its calls fail. */
+    public static SessionsOf(id: OperatorIdentity): { RevokeAllFor: (...args: unknown[]) => Promise<void>; Issue: (...args: unknown[]) => Promise<unknown> }
+    {
+        return (id as unknown as { pack: { Sessions: { RevokeAllFor: (...args: unknown[]) => Promise<void>; Issue: (...args: unknown[]) => Promise<unknown> } } }).pack.Sessions
+    }
+
     /** Logs in as the operator and returns its principal id (the actor identity the host would pass). */
     public static async PrincipalOf(id: OperatorIdentity, email: string, password: string): Promise<string>
     {
@@ -136,8 +142,10 @@ describe('OperatorIdentity mutations', () =>
             const admin = await id.Authenticate(MutationFixture.AdminEmail, MutationFixture.AdminPassword)
             assert.ok(mine && elsewhere && admin)
             const principalId = (await id.ValidateToken(mine.token))!.principalId
-            const fresh = await id.ChangeOwnPassword(principalId, MutationFixture.OperatorPassword, MutationFixture.ChangedPassword)
-            assert.ok(fresh)
+            const change = await id.ChangeOwnPassword(principalId, MutationFixture.OperatorPassword, MutationFixture.ChangedPassword)
+            assert.ok(change?.session)
+            assert.equal(change.otherSessionsEnded, true)
+            const fresh = change.session
             assert.equal((await id.ValidateToken(fresh.token))?.principalId, principalId)
             assert.equal(await id.ValidateToken(mine.token), null)
             assert.equal(await id.ValidateToken(elsewhere.token), null)
@@ -174,6 +182,37 @@ describe('OperatorIdentity mutations', () =>
             assert.ok(await id.Authenticate(MutationFixture.RoEmail, MutationFixture.OperatorPassword))
             assert.ok(await id.Authenticate(MutationFixture.AdminEmail, MutationFixture.AdminPassword))
             assert.ok(await id.ValidateToken(admin.token))
+        })
+    })
+
+    it('a failure to end the old sessions after the rotate is reported, not thrown: the password is changed and a fresh session issued', async () =>
+    {
+        await MutationFixture.WithIdentity(async id =>
+        {
+            await id.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
+            const mine = await id.Authenticate(MutationFixture.RoEmail, MutationFixture.OperatorPassword)
+            assert.ok(mine)
+            const principalId = (await id.ValidateToken(mine.token))!.principalId
+            MutationFixture.SessionsOf(id).RevokeAllFor = async () => { throw new Error('disk full') }
+            const change = await id.ChangeOwnPassword(principalId, MutationFixture.OperatorPassword, MutationFixture.ChangedPassword)
+            assert.equal(change?.otherSessionsEnded, false)
+            assert.ok(change?.session)
+            assert.ok(await id.Authenticate(MutationFixture.RoEmail, MutationFixture.ChangedPassword))
+        })
+    })
+
+    it('a failure to issue the fresh session after the rotate is reported as no session: the password is changed, sign in again', async () =>
+    {
+        await MutationFixture.WithIdentity(async id =>
+        {
+            await id.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
+            const mine = await id.Authenticate(MutationFixture.RoEmail, MutationFixture.OperatorPassword)
+            assert.ok(mine)
+            const principalId = (await id.ValidateToken(mine.token))!.principalId
+            MutationFixture.SessionsOf(id).Issue = async () => { throw new Error('disk full') }
+            const change = await id.ChangeOwnPassword(principalId, MutationFixture.OperatorPassword, MutationFixture.ChangedPassword)
+            assert.deepEqual(change, { session: null, otherSessionsEnded: true })
+            assert.equal(await id.ValidateToken(mine.token), null)
         })
     })
 

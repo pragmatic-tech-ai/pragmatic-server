@@ -200,44 +200,40 @@ test('a session issued before the principal\'s reset time is refused, even one t
     })
 })
 
-test('RevokeOthersFor keeps the named session (through the reset stamp, persisted) and ends every other of the principal', async () =>
+test('RotateFor ends every session of the principal, the caller\'s too, and issues one fresh session that the reset does not refuse (persisted)', async () =>
 {
     await SessionFixture.WithDir(async file =>
     {
         const nowMs = SessionFixture.Start
         const clock = (): Date => new Date(nowMs)
         const store = new TenantSessionStore(file, SessionFixture.Ttl, clock)
-        // Same instant as the stamp: the kept session must survive even though it was issued at the reset time.
-        const mine = await store.Issue(SessionFixture.Tenant, SessionFixture.Principal)
-        const other = await store.Issue(SessionFixture.Tenant, SessionFixture.Principal)
+        // The same instant as the rotation: the fresh session must survive its own reset stamp.
+        const mine = await store.Issue(SessionFixture.Tenant, SessionFixture.Principal, 'me@t.test')
+        const other = await store.Issue(SessionFixture.Tenant, SessionFixture.Principal, 'me@t.test')
         const someoneElse = await store.Issue(SessionFixture.Tenant, 'user-2')
-        assert.equal(await store.RevokeOthersFor(SessionFixture.Tenant, SessionFixture.Principal, mine.id), 1)
-        assert.notEqual(await store.Validate(mine.id), null)
+        const fresh = await store.RotateFor(SessionFixture.Tenant, SessionFixture.Principal, 'me@t.test')
+        assert.notEqual(fresh.id, mine.id)
+        assert.equal(fresh.email, 'me@t.test')
+        assert.equal(await store.Validate(mine.id), null)
         assert.equal(await store.Validate(other.id), null)
+        assert.notEqual(await store.Validate(fresh.id), null)
         assert.notEqual(await store.Validate(someoneElse.id), null)
         const reloaded = new TenantSessionStore(file, SessionFixture.Ttl, clock)
-        assert.notEqual(await reloaded.Validate(mine.id), null)
-        assert.equal(await reloaded.Validate(other.id), null)
+        assert.notEqual(await reloaded.Validate(fresh.id), null)
+        assert.equal(await reloaded.Validate(mine.id), null)
     })
 })
 
-test('a later full reset ends the kept session too; keeping another principal session keeps nothing', async () =>
+test('a later full reset ends the rotated session too', async () =>
 {
     await SessionFixture.WithDir(async file =>
     {
         let nowMs = SessionFixture.Start
         const clock = (): Date => new Date(nowMs)
         const store = new TenantSessionStore(file, SessionFixture.Ttl, clock)
-        const mine = await store.Issue(SessionFixture.Tenant, SessionFixture.Principal)
-        const theirs = await store.Issue(SessionFixture.Tenant, 'user-2')
-        assert.equal(await store.RevokeOthersFor(SessionFixture.Tenant, SessionFixture.Principal, theirs.id), 1)
-        assert.equal(await store.Validate(mine.id), null)
-        assert.notEqual(await store.Validate(theirs.id), null)
-        const again = await store.Issue(SessionFixture.Tenant, 'user-2')
-        await store.RevokeOthersFor(SessionFixture.Tenant, 'user-2', theirs.id)
-        assert.equal(await store.Validate(again.id), null)
+        const fresh = await store.RotateFor(SessionFixture.Tenant, SessionFixture.Principal)
         nowMs += 10
-        await store.RevokeAllFor(SessionFixture.Tenant, 'user-2')
-        assert.equal(await store.Validate(theirs.id), null)
+        await store.RevokeAllFor(SessionFixture.Tenant, SessionFixture.Principal)
+        assert.equal(await store.Validate(fresh.id), null)
     })
 })

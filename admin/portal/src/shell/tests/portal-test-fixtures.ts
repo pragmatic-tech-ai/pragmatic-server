@@ -8,7 +8,7 @@ import { NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/serv
 import { ApiError, type ControlPlaneClient } from '../../api-client.js'
 import { OperatorContext } from '../../operator-context.js'
 import { AgentInstallState, AgentInstallStep, type AgentInstallStatusDto } from '../../portal-types.js'
-import type { HiveDeleteOutcomeDto, OwnerPasswordResetDto } from '../../portal-types.js'
+import type { HiveDeleteOutcomeDto, OwnerPasswordResetDto, PasswordChangedDto } from '../../portal-types.js'
 import type { ActivityDto, ClientDto, CreatedTenantDto, FleetHiveDto, GatingDto, HiveBootstrapDto, HiveDto, HiveRolloutDto, LedgerDto, ManifestDto, ObservationDto, OperatorSummaryDto, PolicyDto, ProvisionInputDto, ProvisionResultDto, SelectionDto, TenantDto } from '../../portal-types.js'
 import { DownloadService } from '../download-service.js'
 import type { IPageReloader } from '../page-reloader.js'
@@ -254,6 +254,10 @@ export class FakeControlPlane
     // The own-password changes asked for, as [current, new, confirm]; a set PasswordChangeFailure fails the next ones.
     public readonly PasswordChanges: Array<[string, string, string]> = []
     public PasswordChangeFailure: Error | undefined
+    public PasswordChangeHold: Promise<void> | undefined
+    public PasswordReply: PasswordChangedDto = { ok: true, otherSessionsEnded: true }
+    public SessionAlive = true
+    public SessionChecks = 0
     public readonly CreatedClients: Array<[string, string, string | undefined]> = []
     public readonly CreatedTenants: Array<[string, string, string, string]> = []
     public readonly CreatedHives: HiveDto[] = []
@@ -495,13 +499,23 @@ export class FakeControlPlane
         this.OperatorCalls.push('RevokeOperatorSessions ' + email)
     }
 
-    public async ChangeOwnPassword(currentPassword: string, newPassword: string, confirmPassword: string): Promise<void>
+    // Answers PasswordReply; while PasswordChangeHold is set, the reply waits for it (a submit in flight).
+    public async ChangeOwnPassword(currentPassword: string, newPassword: string, confirmPassword: string): Promise<PasswordChangedDto>
     {
+        await this.PasswordChangeHold
         if (this.PasswordChangeFailure !== undefined)
         {
             throw this.PasswordChangeFailure
         }
         this.PasswordChanges.push([currentPassword, newPassword, confirmPassword])
+        return this.PasswordReply
+    }
+
+    // The session probe: the signed-in operator while SessionAlive, else null (401).
+    public async Session(): Promise<{ email: string; principalId: string; role: string } | null>
+    {
+        this.SessionChecks++
+        return this.SessionAlive ? { email: 'op@example.test', principalId: 'p1', role: OperatorContext.FullWireRole } : null
     }
 
     // Held by HoldCreates, like a create.

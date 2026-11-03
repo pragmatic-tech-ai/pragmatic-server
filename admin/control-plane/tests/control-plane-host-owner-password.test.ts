@@ -37,7 +37,7 @@ class FakeOperator implements IOperatorIdentity
 
     public async ListOperators(): Promise<readonly OperatorSummary[]> { return [] }
     public async SetOperatorRole(_e: string, _r: OperatorRole, _a: string): Promise<void> { }
-    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<{ token: string; expiresAt: Date } | null> { return null }
+    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<null> { return null }
     public async ResetOperatorPassword(_e: string): Promise<string> { return '' }
     public async SetOperatorDisabled(_e: string, _d: boolean, _a: string): Promise<void> { }
     public async RevokeOperatorSessions(_e: string): Promise<void> { }

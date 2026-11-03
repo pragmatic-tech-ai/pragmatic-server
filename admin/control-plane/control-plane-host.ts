@@ -22,7 +22,7 @@ import type { IIdpService } from './idp-service.js'
 import { PortUnavailableError } from './port-allocator.js'
 import { IdpUnreachableError, OwnerAccountMissingError, OwnerIdpRefusedError, OwnerNotRecordedError, OwnerResetInProgressError, TenantIdpMissingError, type OwnerPasswordReset, type TenantProvisioningService } from './tenant-provisioning-service.js'
 import { InvalidEnvironmentNameError } from './template-catalog.js'
-import { LastOperatorError, OperatorExistsError, OperatorNotFoundError, OperatorProtectedError, OperatorRole, OperatorSelfLockoutError, type IOperatorIdentity, type OperatorPrincipal } from './operator-identity.js'
+import { LastOperatorError, OperatorExistsError, OperatorNotFoundError, OperatorProtectedError, OperatorRole, OperatorSelfLockoutError, type IOperatorIdentity, type OperatorPrincipal, type OwnPasswordChange } from './operator-identity.js'
 import { OperatorAuthorization } from './operator-authorization.js'
 import { AuditRegistry } from './audit-record.js'
 import type { AuditThrottle } from './audit-throttle.js'
@@ -213,6 +213,9 @@ export class ControlPlaneHost
     private static readonly SamePasswordMessage = 'The new password must differ from the current one.'
     private static readonly WrongCurrentPasswordMessage = 'The current password is not correct.'
     private static readonly TooManyPasswordAttemptsMessage = 'Too many attempts; try again later'
+    private static readonly PasswordChangeBusyMessage = 'A password change for this account is already running.'
+    private static readonly OthersNotEndedWarning = 'Your password is changed, but your other sessions could not be signed out. Revoke them from Settings, or ask another operator.'
+    private static readonly SignInAgainWarning = 'Your password is changed. Sign in again with the new password.'
     private static readonly RoleFullWire = 'full'
     private static readonly RoleReadOnlyWire = 'readonly'
     private static readonly OperatorRoles: ReadonlyMap<string, OperatorRole> = new Map([[ControlPlaneHost.RoleFullWire, OperatorRole.Full], [ControlPlaneHost.RoleReadOnlyWire, OperatorRole.ReadOnly]])
@@ -434,6 +437,10 @@ export class ControlPlaneHost
     private wsServer: WebSocketServer | undefined
     private changeSubscription: (() => void) | undefined
     private revalidating = false
+    /** Operators (principal ids) with an own-password change in flight: a second one is refused (409). */
+    private readonly passwordChanges = new Set<string>()
+    /** Session tokens the socket sweep must not close: their own-password change is moving their sockets to a fresh token. */
+    private readonly protectedTokens = new Set<string>()
     private revalidateTimer: ReturnType<typeof setInterval> | undefined
     private readonly staticRootAbs: string
     private readonly allowedHosts: ReadonlySet<string>
@@ -643,7 +650,8 @@ export class ControlPlaneHost
         {
             try
             {
-                if ((await this.operator.ValidateToken(token)) === null)
+                // Re-checked after the await: a token shielded by a running own-password change is never closed here.
+                if ((await this.operator.ValidateToken(token)) === null && !this.protectedTokens.has(token))
                 {
                     this.registry.CloseToken(token)
                 }
@@ -2241,6 +2249,26 @@ export class ControlPlaneHost
             PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.SamePasswordMessage })
             return
         }
+        // One change per operator at a time: a second one's revoke would end the first's fresh session.
+        if (this.passwordChanges.has(who.principalId))
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusConflict, { error: ControlPlaneHost.PasswordChangeBusyMessage })
+            return
+        }
+        this.passwordChanges.add(who.principalId)
+        try
+        {
+            await this.ChangeOwnPasswordFor(req, res, who, token, current, next)
+        }
+        finally
+        {
+            this.passwordChanges.delete(who.principalId)
+        }
+    }
+
+    /** The throttled verify + rotate of HandleChangeOwnPassword, run while the operator's in-flight guard is held. */
+    private async ChangeOwnPasswordFor(req: IncomingMessage, res: ServerResponse, who: OperatorPrincipal, token: string, current: string, next: string): Promise<void>
+    {
         const clientIp = this.ClientIp(req)
         const gate = this.loginThrottle.CheckAllowed(who.email, clientIp)
         if (!gate.allowed)
@@ -2250,18 +2278,38 @@ export class ControlPlaneHost
             return
         }
         this.loginThrottle.RecordFailure(who.email, clientIp)
-        const session = await this.operator.ChangeOwnPassword(who.principalId, current, next)
-        if (session === null)
+        // The caller's token is shielded from the socket sweep from here until its sockets have moved to the fresh token:
+        // a sweep running between the revoke and the Rekey would otherwise find it ended and close the caller's socket.
+        this.protectedTokens.add(token)
+        let change: OwnPasswordChange | null
+        try
+        {
+            change = await this.operator.ChangeOwnPassword(who.principalId, current, next)
+            if (change?.session !== null && change?.session !== undefined)
+            {
+                this.registry.Rekey(token, change.session.token)
+            }
+        }
+        finally
+        {
+            this.protectedTokens.delete(token)
+        }
+        if (change === null)
         {
             PlaneHttp.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.WrongCurrentPasswordMessage })
             return
         }
         this.loginThrottle.Clear(who.email, clientIp)
-        // The caller's sockets follow its fresh token; every other socket of the operator held an ended token and closes.
-        this.registry.Rekey(token, session.token)
+        // Every other socket of the operator held an ended token and closes now.
         await this.CloseRevokedSockets()
-        res.setHeader(ControlPlaneHost.SetCookieHeader, SessionCookie.Build(session.token, session.expiresAt, this.secureCookie))
-        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ok: true })
+        if (change.session !== null)
+        {
+            res.setHeader(ControlPlaneHost.SetCookieHeader, SessionCookie.Build(change.session.token, change.session.expiresAt, this.secureCookie))
+        }
+        const warning = change.session === null
+            ? ControlPlaneHost.SignInAgainWarning
+            : (change.otherSessionsEnded ? undefined : ControlPlaneHost.OthersNotEndedWarning)
+        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ok: true, otherSessionsEnded: change.otherSessionsEnded, ...(warning === undefined ? {} : { warning }) })
     }
 
     /** Minimal shape check: exactly one '@' with a non-empty local part and domain. */

@@ -347,7 +347,7 @@ export class ControlPlaneServer
             secretTtlMs: secretTtlHours * ControlPlaneServer.MsPerHour,
         }
         const rp = new TenantOidcRelyingParty(idpService, directory, conn => new IdpAdminClient(conn), undefined, undefined, durability)
-        const passwordChange = new TenantPasswordChange(idpService, new IdpPasswordClient(), principals)
+        const passwordChange = new TenantPasswordChange(idpService, new IdpPasswordClient(), principals, secureCookie)
         const endpoint = new TenantAuthEndpoint(rp, sessions, secureCookie, passwordChange)
         const gate = new TenantAuthGate(sessions)
         const api = new TenantApiEndpoint(service, directory, rollout, orchestrators, placement)

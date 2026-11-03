@@ -150,14 +150,26 @@ test('rotation: malformed bodies are not counted toward the lock', () => Throttl
     assert.equal((await f.Rotate(ThrottleFixture.Old)).status, 200);
 }));
 
-test('shared counter: failed rotation and failed logins lock the same key; login 429 carries Retry-After', () => ThrottleFixture.Run(async f =>
+test('separate buckets: failed password changes never lock login, and failed logins never lock a change', () => ThrottleFixture.Run(async f =>
 {
-    assert.equal((await f.Rotate('nope')).status, 401);
-    assert.equal((await f.Login('bad')).status, 200);
-    assert.equal((await f.Login('bad')).status, 200);
+    for (let i = 0; i < 5; i++)
+    {
+        await f.Rotate('nope');
+    }
+    assert.equal((await f.Rotate(ThrottleFixture.Old)).status, 429, 'the change bucket itself is locked');
+    const login = await f.Login(ThrottleFixture.Old);
+    assert.notEqual(login.status, 429, 'five failed changes do not block a login');
+}));
+
+test('separate buckets: failed logins lock login (429 with Retry-After) but not a password change', () => ThrottleFixture.Run(async f =>
+{
+    for (let i = 0; i < 3; i++)
+    {
+        await f.Login('bad');
+    }
     const login = await f.Login(ThrottleFixture.Old);
     assert.equal(login.status, 429);
     assert.ok(Number(login.retryAfter) > 0);
     assert.equal(login.cacheControl, 'no-store');
-    assert.equal((await f.Rotate(ThrottleFixture.Old)).status, 429);
+    assert.equal((await f.Rotate(ThrottleFixture.Old)).status, 200);
 }));

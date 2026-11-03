@@ -32,6 +32,7 @@ export class PortalSessionService extends ServiceBase
     private static readonly AccountNoticeProperty = 'AccountNotice'
     private static readonly PasswordChangedNotice = 'Password changed. Your other sessions were signed out.'
     private static readonly NoDialogsMessage = 'Dialogs are not available.'
+    private static readonly NoText = ''
 
     private client: ControlPlaneClient | undefined
     private email = ''
@@ -42,6 +43,8 @@ export class PortalSessionService extends ServiceBase
     private loggingOut = false
     private accountNotice = ''
     private changingPassword = false
+    private expirySuspensions = 0
+    private expiryDeferred = false
     private readonly logoutCommand: RelayCommand
     private readonly changePasswordCommand: RelayCommand
 
@@ -162,13 +165,13 @@ export class PortalSessionService extends ServiceBase
             return
         }
         this.SetChangingPassword(true)
-        this.SetAccountNotice('')
+        this.SetAccountNotice(PortalSessionService.NoText)
         try
         {
             const changed = await new ChangePasswordDialogViewModel(this, dialogs).Open(PortalSessionService.ChangePasswordTitle)
-            if (changed === ChangePasswordDialogViewModel.Changed)
+            if (changed !== undefined)
             {
-                this.SetAccountNotice(PortalSessionService.PasswordChangedNotice)
+                this.SetAccountNotice(changed.warning ?? PortalSessionService.PasswordChangedNotice)
             }
         }
         catch (e)
@@ -181,11 +184,39 @@ export class PortalSessionService extends ServiceBase
         }
     }
 
+    // Runs `work` (a password change) with expiry suspended: the server ends the
+    // old session before the fresh cookie lands, so a page request answered 401
+    // meanwhile is not the session ending. Such a 401 is remembered, and once
+    // the work is done the session is checked once: expired only if it is gone.
+    public async WithExpirySuspended<T>(work: () => Promise<T>): Promise<T>
+    {
+        this.expirySuspensions++
+        try
+        {
+            return await work()
+        }
+        finally
+        {
+            this.expirySuspensions--
+            if (this.expirySuspensions === 0 && this.expiryDeferred)
+            {
+                this.expiryDeferred = false
+                await this.RecheckSession()
+            }
+        }
+    }
+
     // Ends the session for this page: reloads at most once, landing on login.
+    // While expiry is suspended it is only remembered (see WithExpirySuspended).
     public Expire(): void
     {
         if (this.expired)
         {
+            return
+        }
+        if (this.expirySuspensions > 0)
+        {
+            this.expiryDeferred = true
             return
         }
         this.expired = true
@@ -223,6 +254,25 @@ export class PortalSessionService extends ServiceBase
             this.SetLoggingOut(false)
         }
         this.Expire()
+    }
+
+    // The deferred check: expires when the server says there is no session; a
+    // failed check keeps the page (the next request decides).
+    private async RecheckSession(): Promise<void>
+    {
+        let alive: boolean
+        try
+        {
+            alive = (await this.Client.Session()) !== null
+        }
+        catch
+        {
+            alive = true
+        }
+        if (!alive)
+        {
+            this.Expire()
+        }
     }
 
     private SetChangingPassword(next: boolean): void

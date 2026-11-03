@@ -341,12 +341,54 @@ export class TenantPlaneHost
         return closed
     }
 
-    /** Records a tenant socket with its teardown and owner, and wires close/error to run that teardown and drop the entry. */
+    /** Re-homes the sockets opened under `oldSessionId` to `newSessionId` (the user's session was rotated); they stay open. */
+    public MoveSession(oldSessionId: string, newSessionId: string): void
+    {
+        for (const tracked of this.clients.values())
+        {
+            if (tracked.sessionId === oldSessionId)
+            {
+                tracked.sessionId = newSessionId
+            }
+        }
+    }
+
+    /**
+     * Records a tenant socket with its teardown and owner, and wires close/error to run that teardown and drop the entry.
+     * The session is then re-checked once: a socket admitted just before its session was ended (a password change or
+     * reset that ran between the upgrade's check and this tracking, so ClosePrincipal could not see it) is closed.
+     */
     private Track(ws: WebSocket, teardown: () => void, session: { id: string; tenantId: string; principalId: string }): void
     {
         this.clients.set(ws, { teardown, tenantId: session.tenantId, principalId: session.principalId, sessionId: session.id })
         ws.on(TenantPlaneHost.CloseEvent, () => this.Remove(ws))
         ws.on(TenantPlaneHost.ErrorEvent, () => this.Remove(ws))
+        void this.Revalidate(ws)
+    }
+
+    /** Closes the tracked socket when its (current) session is no longer valid; a session moved meanwhile is left alone. */
+    private async Revalidate(ws: WebSocket): Promise<void>
+    {
+        const tracked = this.clients.get(ws)
+        if (tracked === undefined)
+        {
+            return
+        }
+        const sessionId = tracked.sessionId
+        let live: boolean
+        try
+        {
+            live = await this.gate.IsLive(sessionId, tracked.tenantId)
+        }
+        catch
+        {
+            live = false
+        }
+        if (!live && this.clients.get(ws)?.sessionId === sessionId)
+        {
+            this.Remove(ws)
+            ws.terminate()
+        }
     }
 
     private Remove(ws: WebSocket): void

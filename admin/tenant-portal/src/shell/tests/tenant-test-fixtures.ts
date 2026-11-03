@@ -157,6 +157,10 @@ export class FakeTenantApi
     public readonly EventHandlers: Array<(ev: TenantEvent) => void> = []
     public BeginLoginCount = 0
     public PasswordReply: PasswordChangedDto = { ok: true, otherSessionsEnded: true }
+    // While set, a password change waits for it (a submit in flight).
+    public PasswordChangeHold: Promise<void> | undefined
+    // False: the session probe answers null (no session).
+    public SessionAlive = true
     public LogoutCount = 0
 
     public WithHive(id: string, displayName: string = 'Hive ' + id): this
@@ -210,7 +214,7 @@ export class FakeTenantApi
     public async Session(): Promise<SessionDto | null>
     {
         await this.Enter('Session')
-        return { tenantId: 'tenant-1', principalId: 'principal-1', email: 'owner@example.test' }
+        return this.SessionAlive ? { tenantId: 'tenant-1', principalId: 'principal-1', email: 'owner@example.test' } : null
     }
 
     public async Profile(): Promise<TenantProfileDto>
@@ -238,6 +242,7 @@ export class FakeTenantApi
     public async ChangeOwnPassword(currentPassword: string, newPassword: string, confirmPassword: string): Promise<PasswordChangedDto>
     {
         await this.Enter('ChangeOwnPassword', currentPassword, newPassword, confirmPassword)
+        await this.PasswordChangeHold
         return this.PasswordReply
     }
 

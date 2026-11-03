@@ -134,4 +134,51 @@ describe('Tenant ChangePasswordDialogViewModel', () =>
         await done
         assert.equal(host.Session.AccountNotice, api.PasswordReply.warning)
     })
+
+    it('a sign-in without an email cannot change its password here: the command is off and says why', () =>
+    {
+        const { api, host } = TenantPasswordKit.Host()
+        assert.equal(host.Session.ChangePasswordDeniedReason, '')
+        host.Session.Initialize(api.AsClient(), { tenantId: 'tenant-1', principalId: 'principal-1' }, undefined, host.Reloader)
+        assert.equal(host.Session.CanChangePassword, false)
+        assert.equal(host.Session.ChangePasswordCommand.CanExecute(), false)
+        assert.equal(host.Session.ChangePasswordDeniedReason, 'This sign-in carries no email, so its password cannot be changed here.')
+    })
+
+    it('while the change is submitting a 401 elsewhere does not expire the session; once done it is checked once and kept', async () =>
+    {
+        const { api, host, dialogs } = TenantPasswordKit.Host()
+        let release: () => void = () => undefined
+        api.PasswordChangeHold = new Promise<void>(res => { release = res })
+        const dialog = new ChangePasswordDialogViewModel(host.Session, dialogs)
+        const opened = dialog.Open('Change your password')
+        TenantPasswordKit.Fill(dialog)
+        dialog.ConfirmCommand.Execute()
+        await TenantPasswordKit.Settle()
+        host.Session.Expire()
+        assert.equal(host.Reloader.Count, 0)
+        release()
+        await opened
+        await TenantPasswordKit.Settle()
+        assert.equal(api.Count('Session'), 1)
+        assert.equal(host.Reloader.Count, 0)
+    })
+
+    it('a 401 during the change whose session is really gone afterwards does expire, once the change is done', async () =>
+    {
+        const { api, host, dialogs } = TenantPasswordKit.Host()
+        let release: () => void = () => undefined
+        api.PasswordChangeHold = new Promise<void>(res => { release = res })
+        api.SessionAlive = false
+        const dialog = new ChangePasswordDialogViewModel(host.Session, dialogs)
+        const opened = dialog.Open('Change your password')
+        TenantPasswordKit.Fill(dialog)
+        dialog.ConfirmCommand.Execute()
+        await TenantPasswordKit.Settle()
+        host.Session.Expire()
+        release()
+        await opened
+        await TenantPasswordKit.Settle()
+        assert.equal(host.Reloader.Count, 1)
+    })
 })

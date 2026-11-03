@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import type { TenantSessionStore } from '../tenant-auth/tenant-session.js'
+import type { TenantSession, TenantSessionStore } from '../tenant-auth/tenant-session.js'
 import { TenantPrincipalSessions, type IPrincipalConnections } from '../tenant-auth/tenant-principal-sessions.js'
 
 class FailingSessions
@@ -20,6 +20,10 @@ class RecordingConnections implements IPrincipalConnections
         this.Closed.push(tenantId + '/' + principalId)
         return 1
     }
+
+    public MoveSession(_oldSessionId: string, _newSessionId: string): void
+    {
+    }
 }
 
 describe('TenantPrincipalSessions', () =>
@@ -34,39 +38,54 @@ describe('TenantPrincipalSessions', () =>
     })
 })
 
-class RecordingSessions
+class RotatingSessions
 {
     public readonly Calls: string[] = []
 
-    public async RevokeOthersFor(tenantId: string, principalId: string, keepId: string): Promise<number>
+    public async RotateFor(tenantId: string, principalId: string, email?: string): Promise<TenantSession>
     {
-        this.Calls.push(tenantId + '/' + principalId + '/keep:' + keepId)
-        return 1
+        this.Calls.push(tenantId + '/' + principalId + '/' + String(email))
+        return { id: 'fresh-1', tenantId, principalId, expiresAt: '2099-01-01T00:00:00.000Z' }
     }
 }
 
-class KeepingConnections implements IPrincipalConnections
+class OrderedConnections implements IPrincipalConnections
 {
-    public readonly Closed: string[] = []
+    public readonly Log: string[] = []
 
     public ClosePrincipal(tenantId: string, principalId: string, keepSessionId?: string): number
     {
-        this.Closed.push(tenantId + '/' + principalId + '/keep:' + String(keepSessionId))
+        this.Log.push('close ' + tenantId + '/' + principalId + ' keep:' + String(keepSessionId))
         return 1
+    }
+
+    public MoveSession(oldSessionId: string, newSessionId: string): void
+    {
+        this.Log.push('move ' + oldSessionId + '->' + newSessionId)
     }
 }
 
-describe('TenantPrincipalSessions.RevokeOthersFor', () =>
+describe('TenantPrincipalSessions.RotateFor', () =>
 {
-    it('ends the other stored sessions and closes the other sockets, keeping the named session on both', async () =>
+    it('rotates the stored sessions, moves the caller sockets to the fresh session, then closes every other socket', async () =>
     {
-        const sessions = new RecordingSessions()
+        const sessions = new RotatingSessions()
         const revoker = new TenantPrincipalSessions(sessions as unknown as TenantSessionStore)
-        const connections = new KeepingConnections()
+        const connections = new OrderedConnections()
         revoker.Attach(connections)
         revoker.Attach(connections)
-        await revoker.RevokeOthersFor('t1', 'owner', 'sess-1')
-        assert.deepEqual(sessions.Calls, ['t1/owner/keep:sess-1'])
-        assert.deepEqual(connections.Closed, ['t1/owner/keep:sess-1'], 'attached once, closed once')
+        const fresh = await revoker.RotateFor('t1', 'owner', 'old-1', 'o@t')
+        assert.equal(fresh.id, 'fresh-1')
+        assert.deepEqual(sessions.Calls, ['t1/owner/o@t'])
+        assert.deepEqual(connections.Log, ['move old-1->fresh-1', 'close t1/owner keep:fresh-1'], 'attached once; moved before the close')
+    })
+
+    it('when the store fails, every socket of the principal closes and the failure is rethrown', async () =>
+    {
+        const revoker = new TenantPrincipalSessions({ RotateFor: async () => { throw new Error('disk full') } } as unknown as TenantSessionStore)
+        const connections = new OrderedConnections()
+        revoker.Attach(connections)
+        await assert.rejects(revoker.RotateFor('t1', 'owner', 'old-1'), /disk full/)
+        assert.deepEqual(connections.Log, ['close t1/owner keep:undefined'])
     })
 })

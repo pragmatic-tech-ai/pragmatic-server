@@ -1,4 +1,4 @@
-import type { ClientDto, CreatedTenantDto, EnvironmentDto, HiveDto, FleetHiveDto, ManifestDto, OperatorSummaryDto, GatingDto, SelectionDto, HiveRolloutDto, TenantDto, GraphDto, GraphLoadedDto, OperatorDto, PromotionResultDto, ProvisionInputDto, ProvisionResultDto, PolicyDto, ActivityDto, ObservationDto, LedgerDto, HiveBootstrapDto, RolloutRegistrationDto, AgentInstallStatusDto, HiveDeleteOutcomeDto, OwnerPasswordResetDto } from './portal-types.js'
+import type { ClientDto, CreatedTenantDto, EnvironmentDto, HiveDto, FleetHiveDto, ManifestDto, OperatorSummaryDto, GatingDto, SelectionDto, HiveRolloutDto, TenantDto, GraphDto, GraphLoadedDto, OperatorDto, PromotionResultDto, ProvisionInputDto, ProvisionResultDto, PolicyDto, ActivityDto, ObservationDto, LedgerDto, HiveBootstrapDto, RolloutRegistrationDto, AgentInstallStatusDto, HiveDeleteOutcomeDto, OwnerPasswordResetDto, PasswordChangedDto } from './portal-types.js'
 
 // Thrown for non-2xx control-plane responses; Message carries the server's error text.
 export class ApiError extends Error
@@ -192,10 +192,12 @@ export class ControlPlaneClient
 
     // Changes the signed-in operator's own password. The control plane ends every
     // other session of the operator and re-issues this one (a fresh cookie), so
-    // the page stays signed in. A wrong current password is a 403.
-    public async ChangeOwnPassword(currentPassword: string, newPassword: string, confirmPassword: string): Promise<void>
+    // the page stays signed in. A wrong current password is a 403; a second
+    // change while one runs is a 409. The reply's warning says what did not
+    // happen (other sessions not ended, or sign in again).
+    public async ChangeOwnPassword(currentPassword: string, newPassword: string, confirmPassword: string): Promise<PasswordChangedDto>
     {
-        await this.Send<unknown>(ControlPlaneClient.SessionPasswordRoute, this.PostBody({
+        return await this.Send<PasswordChangedDto>(ControlPlaneClient.SessionPasswordRoute, this.PostBody({
             [ControlPlaneClient.CurrentPasswordKey]: currentPassword,
             [ControlPlaneClient.NewPasswordKey]: newPassword,
             [ControlPlaneClient.ConfirmPasswordKey]: confirmPassword,

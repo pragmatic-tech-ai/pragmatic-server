@@ -18,13 +18,13 @@ import { TenantSessionCookie } from '../tenant-auth/tenant-session-cookie.js'
 import { TenantAuthEndpoint } from '../tenant-auth/tenant-auth-endpoint.js'
 import { TenantAuthGate } from '../tenant-auth/tenant-auth-gate.js'
 import { TenantPrincipalSessions } from '../tenant-auth/tenant-principal-sessions.js'
-import { TenantPasswordChange, type ITenantIdpConnector, type IOtherSessionsRevoker } from '../tenant-auth/tenant-password-change.js'
+import { TenantPasswordChange, type ITenantIdpConnector, type ISessionRotator } from '../tenant-auth/tenant-password-change.js'
 import { IdpPasswordResult, type IdpPasswordOutcome, type IIdpPasswordClient } from '../tenant-auth/idp-password-client.js'
 import type { ITenantOidcRelyingParty } from '../tenant-auth/tenant-oidc-relying-party.js'
 import type { ITenantApiEndpoint, TenantPlane } from '../tenant-auth/tenant-plane.js'
 import { TenantEventBus } from '../tenant-api/tenant-events.js'
 
-type Reply = { status: number; body: string; cacheControl?: string; retryAfter?: string }
+type Reply = { status: number; body: string; cacheControl?: string; retryAfter?: string; setCookie?: string[] }
 type ClientCall = { tenantId: string; email: string; current: string; next: string; baseUrl: string }
 
 class StubDirectory
@@ -82,20 +82,34 @@ class FakeConnector implements ITenantIdpConnector
 class FakeIdpClient implements IIdpPasswordClient
 {
     public Outcome: IdpPasswordOutcome = { Result: IdpPasswordResult.Changed }
+    public DelayMs = 0
     public readonly Calls: ClientCall[] = []
 
     public async ChangePassword(conn: IdpConnection, tenantId: string, email: string, currentPassword: string, newPassword: string): Promise<IdpPasswordOutcome>
     {
         this.Calls.push({ tenantId, email, current: currentPassword, next: newPassword, baseUrl: conn.baseUrl })
+        if (this.DelayMs > 0)
+        {
+            await new Promise(res => setTimeout(res, this.DelayMs))
+        }
         return this.Outcome
     }
 }
 
-class FailingRevoker implements IOtherSessionsRevoker
+class FailingRotator implements ISessionRotator
 {
-    public async RevokeOthersFor(_tenantId: string, _principalId: string, _keepSessionId: string): Promise<void>
+    public async RotateFor(_tenantId: string, _principalId: string, _oldSessionId: string): Promise<TenantSession>
     {
         throw new Error('disk full')
+    }
+}
+
+/** A gate that admits a socket (its upgrade check passed) but finds the session gone on the re-check after tracking. */
+class EndedAfterAdmissionGate extends TenantAuthGate
+{
+    public override async IsLive(_sessionId: string, _tenantId: string): Promise<boolean>
+    {
+        return false
     }
 }
 
@@ -134,6 +148,7 @@ class PwKit
                     body: Buffer.concat(chunks).toString('utf8'),
                     cacheControl: res.headers['cache-control'] as string | undefined,
                     retryAfter: res.headers['retry-after'] as string | undefined,
+                    setCookie: res.headers['set-cookie'],
                 }))
             })
             req.on('error', reject)
@@ -144,6 +159,19 @@ class PwKit
     public static Change(host: TenantPlaneHost, token: string | undefined, current: string = PwKit.Current, next: string = PwKit.Next, extra: Record<string, unknown> = {}): Promise<Reply>
     {
         return PwKit.Send(host, 'POST', token, { currentPassword: current, newPassword: next, ...extra })
+    }
+
+    /** The session token in a reply's pts_session Set-Cookie. */
+    public static TokenFrom(reply: Reply): string
+    {
+        const cookie = (reply.setCookie ?? []).find(c => c.startsWith(TenantSessionCookie.Name + '='))
+        assert.ok(cookie, 'a fresh session cookie is set')
+        const read = TenantSessionCookie.Read(cookie.split(';')[0])
+        assert.ok(read)
+        assert.equal(read.tenantId, PwKit.TenantId)
+        assert.match(cookie, /HttpOnly/)
+        assert.match(cookie, /SameSite=/)
+        return read.token
     }
 
     public static async OpenEvents(host: TenantPlaneHost, token: string): Promise<WebSocket>
@@ -177,13 +205,13 @@ describe('Tenant self-service password change (POST /tenant-auth/password)', () 
     let logged: string[]
     let originalError: typeof console.error
 
-    async function Start(revoker?: IOtherSessionsRevoker): Promise<void>
+    async function Start(rotator?: ISessionRotator, gate?: TenantAuthGate): Promise<void>
     {
         const principals = new TenantPrincipalSessions(store)
-        const change = new TenantPasswordChange(connector, client, revoker ?? principals)
+        const change = new TenantPasswordChange(connector, client, rotator ?? principals, false)
         const plane: TenantPlane = {
             endpoint: new TenantAuthEndpoint(new UnusedRelyingParty(), store, false, change),
-            gate: new TenantAuthGate(store),
+            gate: gate ?? new TenantAuthGate(store),
             api: new UnusedApi(),
             events: new TenantEventBus(),
             principals,
@@ -212,7 +240,7 @@ describe('Tenant self-service password change (POST /tenant-auth/password)', () 
         rmSync(parent, { recursive: true, force: true })
     })
 
-    it('changes the password at the IdP as the SESSION user and ends only their other sessions and sockets', async () =>
+    it('changes the password at the IdP as the SESSION user, rotates the caller onto a fresh session, and ends every other session and socket', async () =>
     {
         await Start()
         const mine = await store.Issue(PwKit.TenantId, PwKit.Owner, PwKit.OwnerEmail)
@@ -229,12 +257,20 @@ describe('Tenant self-service password change (POST /tenant-auth/password)', () 
         assert.deepEqual(JSON.parse(r.body), { ok: true, otherSessionsEnded: true })
         assert.deepEqual(client.Calls, [{ tenantId: PwKit.TenantId, email: PwKit.OwnerEmail, current: PwKit.Current, next: PwKit.Next, baseUrl: 'https://idp.test/acme' }])
 
-        assert.notEqual(await store.Validate(mine.id), null, 'the requesting session is kept')
+        const fresh = PwKit.TokenFrom(r)
+        assert.notEqual(fresh, mine.id)
+        assert.equal(await store.Validate(mine.id), null, 'the old cookie no longer works (a stolen copy is useless)')
+        assert.equal((await PwKit.Change(host, mine.id, PwKit.Next, 'another-new-password')).status, 401)
+        assert.equal((await store.Validate(fresh))?.email, PwKit.OwnerEmail)
         assert.equal(await store.Validate(elsewhere.id), null)
         assert.notEqual(await store.Validate(colleague.id), null)
         assert.equal(await PwKit.ClosedSoon(elsewhereSocket), true)
-        assert.equal(mySocket.readyState, WebSocket.OPEN)
+        await new Promise(res => setTimeout(res, 100))
+        assert.equal(mySocket.readyState, WebSocket.OPEN, 'the caller socket moved to the fresh session')
         assert.equal(colleagueSocket.readyState, WebSocket.OPEN)
+        // The moved socket now belongs to the fresh session: ending that one closes it.
+        assert.equal(host.ClosePrincipal(PwKit.TenantId, PwKit.Owner, fresh), 0)
+        assert.equal(host.ClosePrincipal(PwKit.TenantId, PwKit.Owner), 1)
         assert.ok(!r.body.includes(PwKit.Next) && !logged.join('\n').includes(PwKit.Next))
         mySocket.close()
         colleagueSocket.close()
@@ -306,9 +342,33 @@ describe('Tenant self-service password change (POST /tenant-auth/password)', () 
         assert.equal(client.Calls.length, 0)
     })
 
-    it('a change whose session cut failed still reports success, with otherSessionsEnded false and a warning', async () =>
+    it('a second change while one is running is a 409; the first completes', async () =>
     {
-        await Start(new FailingRevoker())
+        await Start()
+        client.DelayMs = 200
+        const mine = await store.Issue(PwKit.TenantId, PwKit.Owner, PwKit.OwnerEmail)
+        const first = PwKit.Change(host, mine.id)
+        await new Promise(res => setTimeout(res, 50))
+        const second = await PwKit.Change(host, mine.id, PwKit.Current, 'another-new-password')
+        assert.equal(second.status, 409)
+        assert.equal((JSON.parse(second.body) as { error: string }).error, 'A password change for this account is already running.')
+        const r = await first
+        assert.equal(r.status, 200)
+        assert.notEqual(await store.Validate(PwKit.TokenFrom(r)), null)
+        assert.equal(client.Calls.length, 1)
+    })
+
+    it('a socket admitted just before its session ended is closed by the re-check after tracking', async () =>
+    {
+        await Start(undefined, new EndedAfterAdmissionGate(store))
+        const mine = await store.Issue(PwKit.TenantId, PwKit.Owner, PwKit.OwnerEmail)
+        const socket = await PwKit.OpenEvents(host, mine.id)
+        assert.equal(await PwKit.ClosedSoon(socket), true)
+    })
+
+    it('a change whose session rotation failed still reports success, with otherSessionsEnded false and a warning', async () =>
+    {
+        await Start(new FailingRotator())
         const mine = await store.Issue(PwKit.TenantId, PwKit.Owner, PwKit.OwnerEmail)
         const r = await PwKit.Change(host, mine.id)
         assert.equal(r.status, 200)

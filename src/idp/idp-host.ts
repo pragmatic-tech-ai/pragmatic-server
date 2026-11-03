@@ -183,6 +183,12 @@ export class IdpHost
     private readonly internalBaseUrl: string;
     private readonly authorize: AuthorizeEndpoint;
     private readonly throttle: IdpLoginThrottle;
+    /**
+     * The self-service password change's own bucket, keyed per (tenant, email) only: a change is often made
+     * server-to-server (the tenant plane), where the caller ip is the plane's, so it must neither lock the user's
+     * browser login nor be locked by it.
+     */
+    private readonly passwordThrottle: IdpLoginThrottle;
     private readonly token: TokenEndpoint;
 
     public constructor(
@@ -198,7 +204,8 @@ export class IdpHost
         internalBaseUrl?: string,
         throttle: IdpLoginThrottle = new IdpLoginThrottle(),
         /** The sign-in app; idp-main always passes the built one. The placeholder serves hosts composed without it. */
-        private readonly loginPage: IdpLoginPage = IdpLoginPage.Placeholder())
+        private readonly loginPage: IdpLoginPage = IdpLoginPage.Placeholder(),
+        passwordThrottle: IdpLoginThrottle = new IdpLoginThrottle())
     {
         if (new URL(baseUrl).protocol !== IdpHost.HttpsProtocol)
         {
@@ -208,6 +215,7 @@ export class IdpHost
         this.internalBaseUrl = internalBaseUrl !== undefined && internalBaseUrl.trim().length > 0 ? internalBaseUrl.replace(/\/+$/, '') : this.baseUrl;
         this.authorize = new AuthorizeEndpoint(realms, clients, codes, sso, secureCookie, throttle);
         this.throttle = throttle;
+        this.passwordThrottle = passwordThrottle;
         this.token = new TokenEndpoint(this.baseUrl, signingKey, codes, clients, undefined, realms);
     }
 
@@ -381,8 +389,8 @@ export class IdpHost
             this.WriteJson(res, IdpHost.StatusBadRequest, { [IdpHost.ErrorField]: IdpHost.InvalidRequestCode }, IdpHost.NoStoreHeaders);
             return;
         }
-        const clientIp = req.socket.remoteAddress ?? IdpHost.NoClientIp;
-        const decision = this.throttle.CheckAllowed(tenantId, email, clientIp);
+        // Per (tenant, email): the change bucket ignores the caller ip (see passwordThrottle).
+        const decision = this.passwordThrottle.CheckAllowed(tenantId, email, IdpHost.NoClientIp);
         if (!decision.allowed)
         {
             this.WriteJson(res, IdpHost.StatusTooManyRequests, { [IdpHost.ErrorField]: IdpHost.TooManyAttemptsCode }, this.RetryAfterHeaders(decision.retryAfterMs));
@@ -390,11 +398,11 @@ export class IdpHost
         }
         // Count the attempt at the gate, synchronously BEFORE the await: RotatePassword yields (Argon2 + I/O), so a concurrent
         // burst would otherwise all pass CheckAllowed before any failure was recorded. Success clears the optimistic count.
-        this.throttle.RecordFailure(tenantId, email, clientIp);
+        this.passwordThrottle.RecordFailure(tenantId, email, IdpHost.NoClientIp);
         const principalId = await realm.RotatePasswordOf(email, current, next);
         if (principalId !== undefined)
         {
-            this.throttle.Clear(tenantId, email, clientIp);
+            this.passwordThrottle.Clear(tenantId, email, IdpHost.NoClientIp);
             this.EndOtherSsoSessions(req, tenantId, principalId);
             this.WriteJson(res, IdpHost.StatusOk, IdpHost.EmptyObject, IdpHost.NoStoreHeaders);
             return;

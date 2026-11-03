@@ -4,8 +4,9 @@ import { dirname } from 'node:path'
 
 /**
  * A tenant-plane login session. The id is the bearer token: never log it or put it in an error message. `issuedAt` is absent
- * on sessions written before it existed (it is then derived from expiresAt - ttl). `keptAt` is set on the one session a
- * principal reset deliberately kept (the session that changed its own password): the reset stamped then does not end it.
+ * on sessions written before it existed (it is then derived from expiresAt - ttl). `keptAt` is set on the session a rotation
+ * issues (the fresh session of the user who changed their own password): it is issued in the same instant as the reset it
+ * stamps, so the stamp must not refuse it.
  */
 export type TenantSession = { id: string; tenantId: string; principalId: string; email?: string; expiresAt: string; issuedAt?: string; keptAt?: string }
 
@@ -83,50 +84,63 @@ export class TenantSessionStore
      */
     public async RevokeAllFor(tenantId: string, principalId: string): Promise<number>
     {
-        return await this.RevokeFor(tenantId, principalId, undefined)
+        await this.ensureLoaded()
+        const ended = this.EndAllOf(tenantId, principalId)
+        await this.persist()
+        return ended
     }
 
     /**
-     * As RevokeAllFor, but the session `keepId` (the principal's own, the one that changed its password) survives: it is
-     * marked kept through the reset stamped now, so the stamp does not refuse it. Every other session of the principal
-     * ends. An unknown `keepId`, or one of another principal, keeps nothing.
+     * After the principal changed its own password: ends EVERY session of the principal in the tenant (the caller's too,
+     * so a stolen copy of its id is useless) and issues one fresh session for the caller, kept through the reset stamped
+     * now; persists once and returns the fresh session (a new bearer token: never log it).
      */
-    public async RevokeOthersFor(tenantId: string, principalId: string, keepId: string): Promise<number>
-    {
-        return await this.RevokeFor(tenantId, principalId, keepId)
-    }
-
-    private async RevokeFor(tenantId: string, principalId: string, keepId: string | undefined): Promise<number>
+    public async RotateFor(tenantId: string, principalId: string, email?: string): Promise<TenantSession>
     {
         await this.ensureLoaded()
+        this.EndAllOf(tenantId, principalId)
+        const stamp = this.resets.get(tenantId)?.get(principalId) as string
+        const session: TenantSession = {
+            id: randomBytes(TenantSessionStore.TokenBytes).toString(TenantSessionStore.TokenEncoding),
+            tenantId,
+            principalId,
+            expiresAt: new Date(new Date(stamp).getTime() + this.ttlMs).toISOString(),
+            issuedAt: stamp,
+            keptAt: stamp,
+        }
+        if (email !== undefined)
+        {
+            session.email = email
+        }
+        this.pruneExpired()
+        this.sessions.set(session.id, session)
+        await this.persist()
+        return { ...session }
+    }
+
+    /** Stamps the principal's reset time (now) and drops every one of its sessions; returns how many. Does not persist. */
+    private EndAllOf(tenantId: string, principalId: string): number
+    {
         let tenantResets = this.resets.get(tenantId)
         if (tenantResets === undefined)
         {
             tenantResets = new Map()
             this.resets.set(tenantId, tenantResets)
         }
-        const stamp = this.now().toISOString()
-        tenantResets.set(principalId, stamp)
+        tenantResets.set(principalId, this.now().toISOString())
         let ended = 0
         for (const [id, session] of this.sessions)
         {
-            if (session.tenantId !== tenantId || session.principalId !== principalId)
+            if (session.tenantId === tenantId && session.principalId === principalId)
             {
-                continue
+                this.sessions.delete(id)
+                ended++
             }
-            if (id === keepId)
-            {
-                session.keptAt = stamp
-                continue
-            }
-            this.sessions.delete(id)
-            ended++
         }
-        await this.persist()
         return ended
     }
 
-    /** Whether the session was issued at or before its principal's last reset (and was not the one that reset kept). */
+    /** Whether the session was issued at or before its principal's last reset (and is not the one that reset issued). */
     private PredatesReset(session: TenantSession): boolean
     {
         const reset = this.resets.get(session.tenantId)?.get(session.principalId)
