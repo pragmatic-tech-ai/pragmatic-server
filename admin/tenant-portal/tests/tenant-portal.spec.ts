@@ -110,10 +110,15 @@ class TenantSteps
     }
 
     // TextBoxes are native inputs (UsesNativeInput): the placeholder is the
-    // input's own attribute, so the field is found by it and filled.
+    // input's own attribute, so the field is found by it, then clicked and
+    // typed into as a person would (fill() would bypass a box that cannot be
+    // clicked, e.g. one under a dialog's hit-test-transparent container).
     public static async TypeInto(page: Page, placeholder: string, text: string): Promise<void>
     {
-        await page.locator(TenantSteps.InputByPlaceholder.replace(TenantSteps.PlaceholderToken, placeholder)).last().fill(text)
+        const input = page.locator(TenantSteps.InputByPlaceholder.replace(TenantSteps.PlaceholderToken, placeholder)).last()
+        await input.click()
+        await page.keyboard.type(text)
+        await expect(input).toHaveValue(text)
     }
 
     public static async OpenSection(page: Page, entry: RailEntry): Promise<void>

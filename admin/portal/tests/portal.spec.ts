@@ -604,12 +604,12 @@ class PortalSteps
         await page.keyboard.type(text)
     }
 
-    // A dialog's input sits under the dialog's hit rect: focus it with a forced click.
+    // A dialog's input is clicked and typed into exactly as a person would (no forced focus).
     public static async TypeIntoDialog(page: Page, placeholder: string, text: string): Promise<void>
     {
         const input = page.locator('input[placeholder="' + placeholder + '"]').last()
-        await input.click({ force: true })
-        await input.pressSequentially(text)
+        await input.click()
+        await page.keyboard.type(text)
         await expect(input).toHaveValue(text)
     }
 
@@ -863,6 +863,25 @@ test.describe('admin portal', () =>
         await expect(PortalSteps.Visible(page, FakeControlPlane.OwnerResetPassword)).toBeVisible()
         await expect(PortalSteps.Visible(page, FakeControlPlane.OwnerResetEmail)).toBeVisible()
         await PortalSteps.ExpectNoBrokenText(page)
+    })
+
+    test('a dialog text box takes a real click and real typing (no forced focus)', async ({ page }) =>
+    {
+        await page.goto(base)
+        await expect(PortalSteps.Text(page, PortalText.FleetSubtitle)).toBeVisible()
+        await PortalSteps.OpenSection(page, RailEntry.Tenants)
+        await PortalSteps.Click(page, FakeControlPlane.TenantName)
+        await PortalSteps.Visible(page, PortalText.ResetOwnerLabel).click({ force: true })
+        const input = page.locator('input[placeholder="' + FakeControlPlane.TenantId + '"]').last()
+        await expect(input).toBeVisible()
+        const box = await input.boundingBox()
+        if (box === null)
+        {
+            throw new Error('the dialog input has no box')
+        }
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
+        await page.keyboard.type(FakeControlPlane.TenantId)
+        await expect(input).toHaveValue(FakeControlPlane.TenantId)
     })
 
     test('Log out posts to the server and returns to the login page', async ({ page }) =>
