@@ -71,6 +71,29 @@ describe('Activity section', () =>
         assert.equal(fx.Content, list)
     })
 
+    it('an entry with a note shows it (e.g. what a hive delete kept); one without shows none', async () =>
+    {
+        const fx = new ActivityFixture()
+        fx.Api.Activity = [
+            { id: 'a3', actor: 'op@example.test', method: 'DELETE', path: '/api/hives/h1', status: 200, at: '2026-11-03T09:15:00.000Z', note: 'retained: pragmatic-tenant-admin-t1-data, pragmatic-tenant-admin-t1-seed' },
+            { id: 'a2', actor: 'op@example.test', method: 'DELETE', path: '/api/hives/h2', status: 200, at: '2026-11-03T09:10:00.000Z' },
+        ]
+        const list = await fx.List()
+        list.Rows.Get(0)?.OpenCommand.Execute()
+        await Tick.Settle()
+        const withNote = fx.Content
+        assert.ok(withNote instanceof ActivityEntryPageViewModel)
+        assert.equal(withNote.Note, 'retained: pragmatic-tenant-admin-t1-data, pragmatic-tenant-admin-t1-seed')
+        assert.equal(withNote.HasNote, true)
+        fx.Section.BackCommand.Execute()
+        list.Rows.Get(1)?.OpenCommand.Execute()
+        await Tick.Settle()
+        const without = fx.Content
+        assert.ok(without instanceof ActivityEntryPageViewModel)
+        assert.equal(without.Note, '')
+        assert.equal(without.HasNote, false)
+    })
+
     it('no entries -> Empty', async () =>
     {
         const fx = new ActivityFixture()

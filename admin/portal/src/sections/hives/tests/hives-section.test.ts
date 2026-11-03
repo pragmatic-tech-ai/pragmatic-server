@@ -8,6 +8,7 @@ import { HiveDetailPageViewModel, HiveLedgerRowViewModel, LedgerAction } from '.
 import { HivesPageViewModel } from '../hives-page-view-model.js'
 import { HivesSectionService } from '../hives-section-service.js'
 import { NewHiveDialogViewModel } from '../new-hive-dialog-view-model.js'
+import { HiveOptions } from '../hive-options.js'
 
 // A Hives section over a fake control plane and fake dialogs.
 class HivesFixture
@@ -135,15 +136,26 @@ describe('Hives section', () =>
         dialog.SelectedTenant = dialog.Tenants.Get(0)
         dialog.DisplayName = 'Acme Dev hive'
         assert.equal(dialog.IdHint, '')
-        for (const id of ['=b', 'b c', 'Acme', '-b', 'a_b'])
+        for (const id of ['=b', 'b c', 'Acme', '-b', 'a_b', 'a'.repeat(35)])
         {
             dialog.Id = id
             assert.equal(dialog.ConfirmCommand.CanExecute(), false, id)
             assert.match(dialog.IdHint, /lowercase/)
         }
+        dialog.Id = 'a'.repeat(34)
+        assert.equal(dialog.IdHint, '')
+        assert.equal(dialog.ConfirmCommand.CanExecute(), true)
         dialog.Id = 'acme-dev-hive'
         assert.equal(dialog.IdHint, '')
         assert.equal(dialog.ConfirmCommand.CanExecute(), true)
+    })
+
+    it('the portal caps hive ids where the control plane does (34: the kind cluster name), and says so', () =>
+    {
+        assert.equal(HiveOptions.IdMaxLength, 34)
+        assert.equal(HiveOptions.IsValidId('a'.repeat(34)), true)
+        assert.equal(HiveOptions.IsValidId('a'.repeat(35)), false)
+        assert.match(HiveOptions.IdHintFor('a'.repeat(35)), /at most 34 characters/)
     })
 
     it('New hive goes through a dialog offering only tenants without a hive', async () =>

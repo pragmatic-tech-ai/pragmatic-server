@@ -114,6 +114,15 @@ resources ActivityResources {
                     }
                 }
             }
+
+            // What the operation kept or skipped, when it says (e.g. a hive delete's retained objects).
+            Border [ DockPanel.Dock = Top, Fill = @Bg1, Stroke = Pen [ Brush = @Border ], Padding = (12,10,12,10), Margin = (0,12,0,0),
+                     Visibility = $HasNote << ToVisibility ] {
+                StackPanel [ Orientation = Vertical ] {
+                    TextBlock [ Text = "Note", Style = @UiCaption, Foreground = @Fg2 ]
+                    TextBlock [ Text = $Note, Foreground = @Fg0, TextWrapping = Wrap ]
+                }
+            }
         }
     }
 }

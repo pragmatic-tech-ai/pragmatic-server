@@ -118,7 +118,8 @@ export type ProvisionResultDto = { client: ClientDto; tenant: TenantDto; hive: H
 
 export type PolicyDto = { tenantId: string; hiveId?: string; channels?: ('stable' | 'early')[]; minVersion?: string; hold?: { reason: string; actor: string; at: string } }
 
-export type ActivityDto = { id: string; actor: string; method: string; path: string; status: number; at: string }
+// note: what the operation kept or skipped, when it says (e.g. a hive delete's retained objects).
+export type ActivityDto = { id: string; actor: string; method: string; path: string; status: number; at: string; note?: string }
 export type ObservationDto = { id: string; hiveId: string; environments: { environmentName: string; ready: boolean; runningImage?: string; detail: string }[]; reportedAt: string }
 export type LedgerDto = { id: string; tenantId?: string; hiveId?: string; version: string; action: string; at: string }
 

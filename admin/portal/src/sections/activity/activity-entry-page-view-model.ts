@@ -9,6 +9,8 @@ import type { ActivitySectionService } from './activity-section-service.js'
 // and its outcome. An audit entry never changes, so loading only shows it.
 export class ActivityEntryPageViewModel extends PortalPageViewModel
 {
+    private static readonly NoNote = ''
+
     private readonly labels: ActivityEntryLabels
 
     public constructor(session: PortalSessionService, private readonly section: ActivitySectionService, entry: ActivityDto)
@@ -50,6 +52,17 @@ export class ActivityEntryPageViewModel extends PortalPageViewModel
     public get OutcomeLabel(): string
     {
         return this.labels.OutcomeLabel
+    }
+
+    // What the operation kept or skipped (e.g. a hive delete's retained objects); '' when it says nothing.
+    public get Note(): string
+    {
+        return this.labels.Entry.note ?? ActivityEntryPageViewModel.NoNote
+    }
+
+    public get HasNote(): boolean
+    {
+        return this.Note.length > 0
     }
 
     public get BackCommand(): RelayCommand

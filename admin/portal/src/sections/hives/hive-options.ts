@@ -21,8 +21,10 @@ export class HiveOptions
     private static readonly AttachLabel = 'Attach existing'
     // A hive id becomes Kubernetes names and the pragmatic/hive label value (the control plane enforces the same rule).
     private static readonly IdPattern = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
-    private static readonly IdMaxLength = 63
-    private static readonly IdRuleText = "Use a lowercase name: letters a-z, digits and '-', starting and ending with a letter or digit, at most 63 characters."
+    // Mirrors the control plane's K8sManifestBuilder.HiveIdMaxLength: the tightest id-derived name (a kind cluster name).
+    public static readonly IdMaxLength = 34
+    private static readonly IdRuleText = "Use a lowercase name: letters a-z, digits and '-', starting and ending with a letter or digit, at most "
+        + String(HiveOptions.IdMaxLength) + ' characters.'
     private static readonly NoText = ''
 
     // Whether a (trimmed) hive id is a valid lowercase Kubernetes name.
