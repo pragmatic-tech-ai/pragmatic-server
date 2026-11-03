@@ -68,6 +68,26 @@ export class TenantSessionStore
         }
     }
 
+    /** Ends every session of the principal in the tenant (e.g. after its password changed); persists once; returns how many. */
+    public async RevokeAllFor(tenantId: string, principalId: string): Promise<number>
+    {
+        await this.ensureLoaded()
+        let ended = 0
+        for (const [id, session] of this.sessions)
+        {
+            if (session.tenantId === tenantId && session.principalId === principalId)
+            {
+                this.sessions.delete(id)
+                ended++
+            }
+        }
+        if (ended > 0)
+        {
+            await this.persist()
+        }
+        return ended
+    }
+
     private pruneExpired(): void
     {
         const nowMs = this.now().getTime()

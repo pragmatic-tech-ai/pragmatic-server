@@ -149,3 +149,24 @@ test('Issue prunes expired sessions from the file', async () =>
         assert.ok(!(await readFile(file, 'utf8')).includes(old.id))
     })
 })
+
+test('RevokeAllFor ends every session of the principal in the tenant (persisted), and only those', async () =>
+{
+    await SessionFixture.WithDir(async file =>
+    {
+        const store = new TenantSessionStore(file, SessionFixture.Ttl)
+        const a = await store.Issue(SessionFixture.Tenant, SessionFixture.Principal)
+        const b = await store.Issue(SessionFixture.Tenant, SessionFixture.Principal)
+        const other = await store.Issue(SessionFixture.Tenant, 'user-2')
+        const elsewhere = await store.Issue('other-tenant', SessionFixture.Principal)
+        assert.equal(await store.RevokeAllFor(SessionFixture.Tenant, SessionFixture.Principal), 2)
+        assert.equal(await store.Validate(a.id), null)
+        assert.equal(await store.Validate(b.id), null)
+        assert.notEqual(await store.Validate(other.id), null)
+        assert.notEqual(await store.Validate(elsewhere.id), null)
+        const reloaded = new TenantSessionStore(file, SessionFixture.Ttl)
+        assert.equal(await reloaded.Validate(a.id), null)
+        assert.notEqual(await reloaded.Validate(other.id), null)
+        assert.equal(await store.RevokeAllFor(SessionFixture.Tenant, SessionFixture.Principal), 0)
+    })
+})

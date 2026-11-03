@@ -52,6 +52,7 @@ import { IdpService, type IIdpService } from './idp-service.js'
 import { IdpAdminClient } from './idp-admin-client.js'
 import { TenantProvisioningService } from './tenant-provisioning-service.js'
 import { TenantSessionStore } from './tenant-auth/tenant-session.js'
+import { TenantPrincipalSessions } from './tenant-auth/tenant-principal-sessions.js'
 import { TenantOidcRelyingParty, type TenantAdminDurability } from './tenant-auth/tenant-oidc-relying-party.js'
 import { TenantAdminClientRegistry } from './tenant-auth/tenant-admin-client-record.js'
 import { MasterKeyFile } from './master-key-file.js'
@@ -120,6 +121,9 @@ export class ControlPlaneServer
     private static readonly TenantSchemeEnvVar = 'PRAGMATIC_TENANT_ADMIN_EXTERNAL_SCHEME'
     private static readonly TenantExternalPortEnvVar = 'PRAGMATIC_TENANT_ADMIN_EXTERNAL_PORT'
     private static readonly BadTenantExternalPortPrefix = 'Invalid PRAGMATIC_TENANT_ADMIN_EXTERNAL_PORT: '
+    private static readonly ExternalPortWarningPrefix = '[control-plane] tenant listener on port '
+    private static readonly ExternalPortWarningSuffix = ' with PRAGMATIC_TENANT_ADMIN_EXTERNAL_PORT unset: without a proxy on 80/443, the OIDC callback and the Origin checks need PRAGMATIC_TENANT_ADMIN_EXTERNAL_PORT set to the port browsers use.'
+    private static readonly ProxyPorts: ReadonlySet<number> = new Set([80, 443])
     private static readonly DefaultTenantBind = '127.0.0.1'
     /** Sentinel returned by ParseAgentChannelPort when the agent channel is not configured (or the port is invalid). */
     public static readonly AgentChannelDisabled = 0
@@ -193,7 +197,10 @@ export class ControlPlaneServer
         const adminClientRegistry = new TenantAdminClientRegistry(join(dataRoot, ControlPlaneServer.TenantAdminClientsFile))
         await Promise.all([manifests.Load(), audit.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load(), policies.Load(), ledger.Load(), adminClientRegistry.Load()])
         const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, placement, observations, ControlPlaneServer.ManifestSignerOf(process.env, dataRoot), policies, ledger)
-        const provisioning = new TenantProvisioningService(idpService, directory, conn => new IdpAdminClient(conn))
+        // One tenant session store for the tenant plane and the Owner password reset (which ends the Owner's sessions).
+        const tenantSessions = ControlPlaneServer.TenantSessionsOf(dataRoot)
+        const principalSessions = new TenantPrincipalSessions(tenantSessions)
+        const provisioning = new TenantProvisioningService(idpService, directory, conn => new IdpAdminClient(conn), principalSessions)
         const agentChannelRaw = process.env[ControlPlaneServer.AgentChannelPortEnvVar]
         const agentChannelPort = ControlPlaneServer.ParseAgentChannelPort(agentChannelRaw)
         const agentChannelUrlRaw = process.env[ControlPlaneServer.AgentChannelUrlEnvVar]
@@ -207,7 +214,7 @@ export class ControlPlaneServer
         const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations, new LoginThrottle(), opts.trustedProxy, undefined, undefined, undefined, opts.allowedHosts, new OperatorAuthorization(), audit, new AuditThrottle(), idpService, agentChannelUrl, agentInstaller, new HiveAgentUninstaller(orchestrators))
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
         const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie, service, new InProcessRolloutClient(deployments), orchestrators, placement,
-            masterKey, adminClientRegistry, ControlPlaneServer.ParseSecretTtlHours(process.env[ControlPlaneServer.SecretTtlEnvVar]))
+            masterKey, adminClientRegistry, ControlPlaneServer.ParseSecretTtlHours(process.env[ControlPlaneServer.SecretTtlEnvVar]), tenantSessions)
         // Resolve (and validate) the tenant port + bind BEFORE binding the operator listener, so a misconfigured
         // tenant port fails fast at startup rather than after the operator socket is already live.
         let tenantStart: { host: TenantPlaneHost; port: number; bind: string; scheme: string; baseDomain: string } | undefined
@@ -224,7 +231,13 @@ export class ControlPlaneServer
                 ? new TenantHealthMonitor(directory, new HiveHealthProducer(service, orchestrators, placement), tenantPlane.events, probeMs, probeTimeoutMs, service)
                 : undefined
             const tenantHost = new TenantPlaneHost(tenantPlane, resolver, tenantStaticRoot, service, monitor)
+            principalSessions.Attach(tenantHost)
             const tenantPort = ControlPlaneServer.ResolveTenantPort(process.env[ControlPlaneServer.TenantPortEnvVar])
+            const portWarning = ControlPlaneServer.ExternalPortWarning(tenantPort, externalPort)
+            if (portWarning !== undefined)
+            {
+                console.warn(portWarning)
+            }
             const tenantBind = ControlPlaneServer.TenantBind(process.env[ControlPlaneServer.TenantBindEnvVar])
             tenantStart = { host: tenantHost, port: tenantPort, bind: tenantBind, scheme, baseDomain }
         }
@@ -289,7 +302,8 @@ export class ControlPlaneServer
         placement: EnvironmentPlacement,
         masterKey: Buffer,
         adminClientRegistry: TenantAdminClientRegistry,
-        secretTtlHours: number): TenantPlane | undefined
+        secretTtlHours: number,
+        sessions?: TenantSessionStore): TenantPlane | undefined
     {
         const port = env[ControlPlaneServer.TenantPortEnvVar]
         const baseDomain = env[ControlPlaneServer.TenantBaseDomainEnvVar]
@@ -298,7 +312,7 @@ export class ControlPlaneServer
             return undefined
         }
         return ControlPlaneServer.BuildTenantPlane(dataRoot, idpService, directory, secureCookie, service, rollout, orchestrators, placement,
-            masterKey, adminClientRegistry, secretTtlHours)
+            masterKey, adminClientRegistry, secretTtlHours, sessions)
     }
 
     /** Gate-free composition of the tenant plane; callers decide whether the plane is active (ComposeTenantPlane gates on env, the standalone server always builds it). */
@@ -313,9 +327,9 @@ export class ControlPlaneServer
         placement: EnvironmentPlacement,
         masterKey: Buffer,
         adminClientRegistry: TenantAdminClientRegistry,
-        secretTtlHours: number): TenantPlane
+        secretTtlHours: number,
+        sessions: TenantSessionStore = ControlPlaneServer.TenantSessionsOf(dataRoot)): TenantPlane
     {
-        const sessions = new TenantSessionStore(join(dataRoot, ControlPlaneServer.TenantSessionsFile), ControlPlaneServer.TenantSessionTtlMs)
         const durability: TenantAdminDurability = {
             storeRoot: join(dataRoot, ControlPlaneServer.TenantAdminOidcDir),
             masterKey,
@@ -390,6 +404,20 @@ export class ControlPlaneServer
     }
 
     /** The dedicated tenant listener port; required (the plane only activates when it is set). */
+    /** The tenant session store under the data root (one instance per process: the plane and the Owner reset share it). */
+    public static TenantSessionsOf(dataRoot: string): TenantSessionStore
+    {
+        return new TenantSessionStore(join(dataRoot, ControlPlaneServer.TenantSessionsFile), ControlPlaneServer.TenantSessionTtlMs)
+    }
+
+    /** Pure: the startup warning for a tenant listener off 80/443 with no external port set (a proxy-less run needs it); undefined otherwise. */
+    public static ExternalPortWarning(tenantPort: number, externalPort: number | undefined): string | undefined
+    {
+        return externalPort !== undefined || ControlPlaneServer.ProxyPorts.has(tenantPort)
+            ? undefined
+            : ControlPlaneServer.ExternalPortWarningPrefix + String(tenantPort) + ControlPlaneServer.ExternalPortWarningSuffix
+    }
+
     /** Pure: the tenant origin's optional external port; undefined when unset or blank, throws naming the variable when invalid. */
     public static TenantExternalPort(raw: string | undefined): number | undefined
     {

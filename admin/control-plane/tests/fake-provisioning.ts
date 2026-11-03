@@ -12,6 +12,8 @@ export class FakeProvisioning
 
     public FailWith: Error | undefined
     public ResetFailWith: Error | undefined
+    // When set, the reset reports that the Owner's sessions could not be ended, with this warning.
+    public ResetWarning: string | undefined
     public readonly Resets: string[] = []
 
     public readonly Calls: TenantProvisionInput[] = []
@@ -43,7 +45,12 @@ export class FakeProvisioning
             throw this.ResetFailWith
         }
         this.Resets.push(tenantId)
-        return { ownerEmail: tenant.ownerEmail ?? '', ownerPassword: FakeProvisioning.ResetPassword }
+        const reset: OwnerPasswordReset = { ownerEmail: tenant.ownerEmail ?? '', ownerPassword: FakeProvisioning.ResetPassword, sessionsRevoked: this.ResetWarning === undefined }
+        if (this.ResetWarning !== undefined)
+        {
+            reset.warning = this.ResetWarning
+        }
+        return reset
     }
 
     public AsService(): TenantProvisioningService

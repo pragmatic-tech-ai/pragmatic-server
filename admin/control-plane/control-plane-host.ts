@@ -20,7 +20,7 @@ import type { HiveObservationRegistry } from './hive-observation-record.js'
 import { InvalidTenantIdError } from './idp-service.js'
 import type { IIdpService } from './idp-service.js'
 import { PortUnavailableError } from './port-allocator.js'
-import { IdpUnreachableError, OwnerAccountMissingError, OwnerIdpRefusedError, OwnerNotRecordedError, TenantIdpMissingError, type OwnerPasswordReset, type TenantProvisioningService } from './tenant-provisioning-service.js'
+import { IdpUnreachableError, OwnerAccountMissingError, OwnerIdpRefusedError, OwnerNotRecordedError, OwnerResetInProgressError, TenantIdpMissingError, type OwnerPasswordReset, type TenantProvisioningService } from './tenant-provisioning-service.js'
 import { InvalidEnvironmentNameError } from './template-catalog.js'
 import { LastOperatorError, OperatorExistsError, OperatorNotFoundError, OperatorProtectedError, OperatorRole, OperatorSelfLockoutError, type IOperatorIdentity, type OperatorPrincipal } from './operator-identity.js'
 import { OperatorAuthorization } from './operator-authorization.js'
@@ -416,6 +416,7 @@ export class ControlPlaneHost
         [OwnerAccountMissingError, ControlPlaneHost.StatusConflict],
         [OwnerIdpRefusedError, ControlPlaneHost.StatusConflict],
         [IdpUnreachableError, ControlPlaneHost.StatusUnavailable],
+        [OwnerResetInProgressError, ControlPlaneHost.StatusConflict],
     ])
 
     private httpServer: HttpServer | undefined

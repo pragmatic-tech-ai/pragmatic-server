@@ -53,7 +53,7 @@ export class TenantPlaneHost
     private httpServer: HttpServer | undefined
     private wsServer: WebSocketServer | undefined
     /** Tenant ws sockets mapped to their teardown (events: unsubscribe; logs: kill the stream). Close() runs each. */
-    private readonly clients = new Map<WebSocket, () => void>()
+    private readonly clients = new Map<WebSocket, TrackedSocket>()
 
     public constructor(
         plane: TenantPlane,
@@ -122,9 +122,9 @@ export class TenantPlaneHost
     {
         this.monitor?.Stop()
         this.changeSubscription()
-        for (const [ws, teardown] of this.clients)
+        for (const [ws, tracked] of this.clients)
         {
-            teardown()
+            tracked.teardown()
             ws.terminate()
         }
         this.clients.clear()
@@ -263,7 +263,7 @@ export class TenantPlaneHost
                         ws.send(JSON.stringify(ev))
                     }
                 })
-                this.Track(ws, unsubscribe)
+                this.Track(ws, unsubscribe, session)
             })
         }, () => socket.destroy())
     }
@@ -297,7 +297,7 @@ export class TenantPlaneHost
                     // Not the session tenant's env (or unknown): the socket is already closed and no stream started.
                     return
                 }
-                this.Track(ws, () => logSocket.Dispose())
+                this.Track(ws, () => logSocket.Dispose(), session)
             })
         }, () => socket.destroy())
     }
@@ -319,23 +319,42 @@ export class TenantPlaneHost
         return this.resolver.TenantFor(req.headers[PlaneHttp.HostHeader] as string | undefined)
     }
 
-    /** Records a tenant socket with its teardown and wires close/error to run that teardown and drop the entry. */
-    private Track(ws: WebSocket, teardown: () => void): void
+    /**
+     * Closes the principal's open tenant sockets in the tenant (its password changed; its sessions are revoked) and returns how
+     * many. Each closed socket's teardown runs as it is dropped.
+     */
+    public ClosePrincipal(tenantId: string, principalId: string): number
     {
-        this.clients.set(ws, teardown)
+        let closed = 0
+        for (const [ws, tracked] of [...this.clients])
+        {
+            if (tracked.tenantId === tenantId && tracked.principalId === principalId)
+            {
+                this.Remove(ws)
+                ws.terminate()
+                closed++
+            }
+        }
+        return closed
+    }
+
+    /** Records a tenant socket with its teardown and owner, and wires close/error to run that teardown and drop the entry. */
+    private Track(ws: WebSocket, teardown: () => void, session: { tenantId: string; principalId: string }): void
+    {
+        this.clients.set(ws, { teardown, tenantId: session.tenantId, principalId: session.principalId })
         ws.on(TenantPlaneHost.CloseEvent, () => this.Remove(ws))
         ws.on(TenantPlaneHost.ErrorEvent, () => this.Remove(ws))
     }
 
     private Remove(ws: WebSocket): void
     {
-        const teardown = this.clients.get(ws)
-        if (teardown === undefined)
+        const tracked = this.clients.get(ws)
+        if (tracked === undefined)
         {
             return
         }
         this.clients.delete(ws)
-        teardown()
+        tracked.teardown()
     }
 
     private static Decode(segment: string): string | undefined
@@ -361,3 +380,6 @@ export class TenantPlaneHost
         PlaneHttp.WriteJson(res, TenantPlaneHost.StatusInternal, { error: TenantPlaneHost.GenericError })
     }
 }
+
+/** A tracked tenant socket: its teardown and the session principal it serves. */
+type TrackedSocket = { teardown: () => void; tenantId: string; principalId: string }

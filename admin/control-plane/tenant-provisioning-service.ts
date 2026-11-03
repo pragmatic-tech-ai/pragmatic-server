@@ -8,8 +8,30 @@ export type TenantProvisionInput = { id: string; clientId: string; displayName: 
 
 export type TenantProvisionResult = { record: TenantRecord; ownerPassword: string };
 
-/** A reset Owner password, returned once to the operator. */
-export type OwnerPasswordReset = { ownerEmail: string; ownerPassword: string };
+/**
+ * A reset Owner password, returned once to the operator. `sessionsRevoked` is false when the password changed but the
+ * Owner's existing tenant-portal sessions could not be ended; `warning` then says so.
+ */
+export type OwnerPasswordReset = { ownerEmail: string; ownerPassword: string; sessionsRevoked: boolean; warning?: string };
+
+/** Ends a tenant principal's tenant-portal sessions (host-free: no tenant-plane types). */
+export interface IOwnerSessionRevoker
+{
+    RevokeAllFor(tenantId: string, principalId: string): Promise<void>;
+}
+
+/** A reset of this tenant's Owner password is already running. Maps to 409. */
+export class OwnerResetInProgressError extends Error
+{
+    private static readonly ErrorName = 'OwnerResetInProgressError';
+    private static readonly Message = "This tenant's Owner password is already being reset. Wait for it to finish, then reset again if needed.";
+
+    public constructor()
+    {
+        super(OwnerResetInProgressError.Message);
+        this.name = OwnerResetInProgressError.ErrorName;
+    }
+}
 
 /** The tenant has no Owner recorded (it was created without one), so there is no account to reset. Maps to 409. */
 export class OwnerNotRecordedError extends Error
@@ -28,7 +50,7 @@ export class OwnerNotRecordedError extends Error
 export class TenantIdpMissingError extends Error
 {
     private static readonly ErrorName = 'TenantIdpMissingError';
-    private static readonly Message = 'This tenant has no identity provider on this control plane, so its Owner password cannot be reset here.';
+    private static readonly Message = "This tenant's identity provider is not managed by this control plane, so its Owner password cannot be reset here. Reset it from within the tenant's cluster, through that identity provider's admin password reset.";
 
     public constructor()
     {
@@ -69,11 +91,15 @@ export class IdpUnreachableError extends Error
 {
     private static readonly ErrorName = 'IdpUnreachableError';
     private static readonly Prefix = "The tenant's identity provider could not be reached (";
-    private static readonly Suffix = '). Check that it is running, then retry. Nothing was changed.';
+    private static readonly NotSentSuffix = '). Check that it is running, then retry. Nothing was changed.';
+    private static readonly MaybeAppliedSuffix = '). The reset may have been applied: reset again to get a working password.';
+    /** Failures before the request could reach the IdP (connect refused, name or route not found): nothing was sent. */
+    private static readonly NotSentCodes: ReadonlySet<string> = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'EHOSTUNREACH', 'ENETUNREACH']);
 
     public constructor(cause: IdpAdminTransportError)
     {
-        super(IdpUnreachableError.Prefix + cause.Code + IdpUnreachableError.Suffix);
+        super(IdpUnreachableError.Prefix + cause.Code
+            + (IdpUnreachableError.NotSentCodes.has(cause.Code) ? IdpUnreachableError.NotSentSuffix : IdpUnreachableError.MaybeAppliedSuffix));
         this.name = IdpUnreachableError.ErrorName;
     }
 }
@@ -90,11 +116,20 @@ export class TenantProvisioningService
     private static readonly PasswordEncoding = 'base64url';
     private static readonly NotFoundStatus = 404;
     private static readonly UnknownAccountCode = 'unknown_account';
+    private static readonly SessionsNotEndedWarning = "The new password is set, but the Owner's existing sessions could not be ended: they stay signed in until they expire (up to 12 hours).";
+    private static readonly LogPrefix = '[owner-reset] tenant ';
+    private static readonly LogSessionsInfix = ': ending the Owner sessions failed: ';
+    private static readonly UnknownErrorName = 'Error';
+
+    /** Tenants with an Owner password reset in flight (one at a time per tenant). */
+    private readonly resetting = new Set<string>();
 
     public constructor(
         private readonly idp: IIdpService,
         private readonly directory: PlatformDirectory,
-        private readonly adminClientFactory: (conn: IdpConnection) => IdpAdminClient)
+        private readonly adminClientFactory: (conn: IdpConnection) => IdpAdminClient,
+        /** Ends the Owner's tenant-portal sessions after a reset; absent where no tenant plane runs. */
+        private readonly sessions?: IOwnerSessionRevoker)
     {
     }
 
@@ -132,6 +167,23 @@ export class TenantProvisioningService
      */
     public async ResetOwnerPassword(tenantId: string): Promise<OwnerPasswordReset>
     {
+        if (this.resetting.has(tenantId))
+        {
+            throw new OwnerResetInProgressError();
+        }
+        this.resetting.add(tenantId);
+        try
+        {
+            return await this.ResetOwnerPasswordOnce(tenantId);
+        }
+        finally
+        {
+            this.resetting.delete(tenantId);
+        }
+    }
+
+    private async ResetOwnerPasswordOnce(tenantId: string): Promise<OwnerPasswordReset>
+    {
         const tenant = this.directory.GetTenant(tenantId);
         if (tenant === undefined)
         {
@@ -155,7 +207,20 @@ export class TenantProvisioningService
         {
             throw TenantProvisioningService.ResetFailure(err);
         }
-        return { ownerEmail: tenant.ownerEmail, ownerPassword };
+        // The password changed (the IdP also ended the Owner's SSO sessions): end the tenant-portal sessions too.
+        const reset: OwnerPasswordReset = { ownerEmail: tenant.ownerEmail, ownerPassword, sessionsRevoked: true };
+        try
+        {
+            await this.sessions?.RevokeAllFor(tenantId, tenant.ownerPrincipalId);
+        }
+        catch (err)
+        {
+            console.error(TenantProvisioningService.LogPrefix + tenantId + TenantProvisioningService.LogSessionsInfix
+                + (err instanceof Error ? err.name : TenantProvisioningService.UnknownErrorName));
+            reset.sessionsRevoked = false;
+            reset.warning = TenantProvisioningService.SessionsNotEndedWarning;
+        }
+        return reset;
     }
 
     /** The one generator (and strength) for Owner passwords: 24 random bytes, base64url. */

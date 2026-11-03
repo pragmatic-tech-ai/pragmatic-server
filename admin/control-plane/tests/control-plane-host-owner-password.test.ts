@@ -15,7 +15,7 @@ import { PlatformDirectory } from '../platform-directory.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import { AuditRegistry } from '../audit-record.js'
 import { IdpAdminError, IdpAdminTransportError } from '../idp-admin-client.js'
-import { IdpUnreachableError, OwnerAccountMissingError, OwnerIdpRefusedError, OwnerNotRecordedError, TenantIdpMissingError } from '../tenant-provisioning-service.js'
+import { IdpUnreachableError, OwnerAccountMissingError, OwnerIdpRefusedError, OwnerNotRecordedError, OwnerResetInProgressError, TenantIdpMissingError } from '../tenant-provisioning-service.js'
 
 type Reply = { status: number; body: string; cacheControl?: string }
 
@@ -123,6 +123,17 @@ describe('ControlPlaneHost tenant Owner password reset', () =>
         assert.ok(!logged.join('\n').includes(FakeProvisioning.ResetPassword))
     })
 
+    it('a reset whose session revoke failed still returns the password, with sessionsRevoked false and the warning', async () =>
+    {
+        provisioning.ResetWarning = "The new password is set, but the Owner's existing sessions could not be ended."
+        const r = await Harness.Send(host, 'POST', ResetPath)
+        assert.equal(r.status, 200)
+        const body = JSON.parse(r.body) as { ownerPassword: string; sessionsRevoked: boolean; warning?: string }
+        assert.equal(body.ownerPassword, FakeProvisioning.ResetPassword)
+        assert.equal(body.sessionsRevoked, false)
+        assert.match(body.warning ?? '', /could not be ended/)
+    })
+
     it('an unknown tenant -> 404', async () =>
     {
         assert.equal((await Harness.Send(host, 'POST', '/api/tenants/nope/owner-password')).status, 404)
@@ -133,10 +144,11 @@ describe('ControlPlaneHost tenant Owner password reset', () =>
     {
         const cases: Array<[Error, number, RegExp]> = [
             [new OwnerNotRecordedError(), 409, /no Owner recorded/],
-            [new TenantIdpMissingError(), 409, /no identity provider/],
+            [new TenantIdpMissingError(), 409, /not managed by this control plane/],
             [new OwnerAccountMissingError(), 409, /no Owner account/],
             [new OwnerIdpRefusedError(new IdpAdminError(401, 'unauthorized')), 409, /refused the Owner password reset/],
             [new IdpUnreachableError(new IdpAdminTransportError('ECONNREFUSED')), 503, /could not be reached \(ECONNREFUSED\)/],
+            [new OwnerResetInProgressError(), 409, /already being reset/],
         ]
         for (const [error, status, reason] of cases)
         {

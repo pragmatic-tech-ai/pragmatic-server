@@ -544,6 +544,23 @@ describe('TenantPlaneHost streaming', () =>
         ws.close()
     })
 
+    it('ClosePrincipal closes that principal\'s open sockets in the tenant, and only theirs', async () =>
+    {
+        const mine = await store.Issue(TenantA, 'owner')
+        const theirs = await store.Issue(TenantA, 'u1')
+        const a = new WebSocket(EventsUrl(), { headers: { [Kit.HostHeader]: Kit.TenantHost, [Kit.CookieHeader]: Kit.PtsCookie(TenantA, mine.id) } })
+        const b = new WebSocket(EventsUrl(), { headers: { [Kit.HostHeader]: Kit.TenantHost, [Kit.CookieHeader]: Kit.PtsCookie(TenantA, theirs.id) } })
+        assert.equal(await Kit.Opened(a), true)
+        assert.equal(await Kit.Opened(b), true)
+        const closed = new Promise<boolean>(res => a.once('close', () => res(true)))
+        assert.equal(host.ClosePrincipal(TenantA, 'owner'), 1)
+        assert.equal(await closed, true)
+        await Kit.Delay(30)
+        assert.equal(b.readyState, WebSocket.OPEN)
+        assert.equal(host.ClosePrincipal('other', 'owner'), 0)
+        b.close()
+    })
+
     it('rejects an events socket with no pts_session cookie', async () =>
     {
         const ws = new WebSocket(EventsUrl(), { headers: { [Kit.HostHeader]: Kit.TenantHost } })

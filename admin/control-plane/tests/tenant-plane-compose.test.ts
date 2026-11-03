@@ -7,6 +7,23 @@ import { join } from 'node:path'
 import { ControlPlaneServer } from '../server.js'
 import { TenantAdminClientRegistry } from '../tenant-auth/tenant-admin-client-record.js'
 
+describe('ControlPlaneServer.ExternalPortWarning', () =>
+{
+    it('warns once when the tenant listener is not on 80/443 and no external port is set', () =>
+    {
+        assert.match(ControlPlaneServer.ExternalPortWarning(7002, undefined) ?? '', /PRAGMATIC_TENANT_ADMIN_EXTERNAL_PORT/)
+        assert.match(ControlPlaneServer.ExternalPortWarning(7002, undefined) ?? '', /without a proxy/)
+    })
+
+    it('is silent on 80 / 443 or when an external port is set', () =>
+    {
+        assert.equal(ControlPlaneServer.ExternalPortWarning(443, undefined), undefined)
+        assert.equal(ControlPlaneServer.ExternalPortWarning(80, undefined), undefined)
+        assert.equal(ControlPlaneServer.ExternalPortWarning(7002, 7002), undefined)
+        assert.equal(ControlPlaneServer.ExternalPortWarning(7002, 443), undefined)
+    })
+})
+
 describe('ControlPlaneServer.TenantExternalPort', () =>
 {
     it('is undefined when unset or blank (no port in the tenant origin, unchanged)', () =>
