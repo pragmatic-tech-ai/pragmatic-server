@@ -13,6 +13,8 @@ import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
 import { PlatformDirectory } from '../platform-directory.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
+import { KindHiveOrchestrator } from '../kind-hive-orchestrator.js'
+import type { IKind } from '../kind.js'
 import type { IHiveOrchestrator, WorkloadHealth } from '../hive-orchestrator.js'
 import { HiveAgentInstaller, InstallState, InstallStep, SystemInstallClock, type InstallStatus } from '../hive-agent-installer.js'
 import { KubectlError, type IKubectl } from '../kubectl.js'
@@ -115,6 +117,47 @@ class FakeOrchestrators
     }
 }
 
+// A gate a test holds open, then releases.
+class Gate
+{
+    public Entered = false
+    private open: () => void = () => undefined
+    private readonly opened = new Promise<void>(resolve => { this.open = resolve })
+
+    public async Pass(): Promise<void>
+    {
+        this.Entered = true
+        await this.opened
+    }
+
+    public Release(): void
+    {
+        this.open()
+    }
+
+    // Waits (real time) until something reached the gate.
+    public async Reached(): Promise<void>
+    {
+        for (let i = 0; i < 400 && !this.Entered; i++)
+        {
+            await new Promise(resolve => setTimeout(resolve, 5))
+        }
+        assert.ok(this.Entered)
+    }
+}
+
+// Kind-backed hives whose cluster teardown waits on a gate (a delete held in flight).
+class GatedKindFactory extends HiveOrchestratorFactory
+{
+    public readonly Teardown = new Gate()
+
+    public override For(hive: HiveRecord): IHiveOrchestrator
+    {
+        const kind = { DeleteCluster: async (_name: string) => { await this.Teardown.Pass() } } as unknown as IKind
+        return new KindHiveOrchestrator(kind, 'hive-' + hive.id, undefined as unknown as IHiveOrchestrator)
+    }
+}
+
 class Harness
 {
     public static readonly ChannelUrl = 'http://host.docker.internal:7001'
@@ -162,6 +205,7 @@ describe('ControlPlaneHost automatic agent install', () =>
     let deployments: PlatformDeploymentRegistry
     let observations: HiveObservationRegistry
     let orchestrators: FakeOrchestrators
+    let kindFactory: GatedKindFactory
 
     const Make = (installer: HiveAgentInstaller | undefined): ControlPlaneHost =>
         new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, deployments,
@@ -185,7 +229,10 @@ describe('ControlPlaneHost automatic agent install', () =>
         await directory.CreateTenant({ id: 't2', clientId: 'acme', displayName: 'T2' })
         await directory.CreateHive({ id: 'local1', tenantId: 't1', displayName: 'L', cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
         await directory.CreateHive({ id: 'aks1', tenantId: 't2', displayName: 'A', cluster: { backend: HiveBackend.Aks, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
-        deployments = await RolloutFixture.Create(parent, directory, new HiveOrchestratorFactory())
+        await directory.CreateTenant({ id: 't3', clientId: 'acme', displayName: 'T3' })
+        await directory.CreateHive({ id: 'kind1', tenantId: 't3', displayName: 'K', cluster: { backend: HiveBackend.Local, mode: InfraMode.Provision }, registry: { mode: InfraMode.Provision } })
+        kindFactory = new GatedKindFactory()
+        deployments = await RolloutFixture.Create(parent, directory, kindFactory)
         observations = RolloutFixture.Observations(parent)
         orchestrators = new FakeOrchestrators()
         const installer = new HiveAgentInstaller(directory, orchestrators, deployments, observations, Harness.ChannelUrl, new SystemInstallClock(), { pollIntervalMs: 5, timeoutMs: 5000 })
@@ -260,6 +307,56 @@ describe('ControlPlaneHost automatic agent install', () =>
         assert.ok(directory.GetHive('local1') !== undefined)
         // Other hives are unaffected.
         assert.equal((await Harness.Send(host, 'POST', '/api/hives/aks1/rollout-registration')).status, 201)
+    })
+
+    it('while a hive delete is in flight (cluster teardown), install, reissue and a second delete are refused (409)', async () =>
+    {
+        const deleting = Harness.Send(host, 'DELETE', '/api/hives/kind1')
+        await kindFactory.Teardown.Reached()
+        for (const [method, path] of [['POST', '/api/hives/kind1/agent-install'], ['POST', '/api/hives/kind1/rollout-registration'], ['DELETE', '/api/hives/kind1']] as const)
+        {
+            const r = await Harness.Send(host, method, path)
+            assert.equal(r.status, 409, method + ' ' + path)
+            assert.match(JSON.parse(r.body).error, /in progress/)
+        }
+        assert.deepEqual(orchestrators.Kubectl.Applied, [])
+        kindFactory.Teardown.Release()
+        assert.equal((await deleting).status, 200)
+        assert.equal(directory.GetHive('kind1'), undefined)
+        assert.equal((await Harness.Send(host, 'POST', '/api/hives/kind1/agent-install')).status, 404)
+    })
+
+    it('while a token reissue is in flight, install, delete and a second reissue are refused (409); afterwards install starts', async () =>
+    {
+        const gate = new Gate()
+        const register = deployments.RegisterHive.bind(deployments)
+        deployments.RegisterHive = async (hiveId: string) =>
+        {
+            await gate.Pass()
+            return register(hiveId)
+        }
+        const reissuing = Harness.Send(host, 'POST', '/api/hives/local1/rollout-registration')
+        await gate.Reached()
+        for (const [method, path] of [['POST', '/api/hives/local1/agent-install'], ['DELETE', '/api/hives/local1'], ['POST', '/api/hives/local1/rollout-registration']] as const)
+        {
+            const r = await Harness.Send(host, method, path)
+            assert.equal(r.status, 409, method + ' ' + path)
+            assert.match(JSON.parse(r.body).error, /in progress/)
+        }
+        assert.deepEqual(orchestrators.Kubectl.Applied, [])
+        gate.Release()
+        assert.equal((await reissuing).status, 201)
+        assert.equal((await Harness.Send(host, 'POST', '/api/hives/local1/agent-install')).status, 202)
+    })
+
+    it('a failed delete or reissue releases the hive for the next operation', async () =>
+    {
+        // local1 is attached (no cluster teardown), so its delete reaches the directory: make that fail.
+        const del = directory.DeleteHive.bind(directory)
+        directory.DeleteHive = async () => { throw new Error('disk full') }
+        assert.equal((await Harness.Send(host, 'DELETE', '/api/hives/local1')).status, 500)
+        directory.DeleteHive = del
+        assert.equal((await Harness.Send(host, 'POST', '/api/hives/local1/agent-install')).status, 202)
     })
 
     it('a kubectl failure surfaces as Failed with the redacted text and never the token; Retry restarts it', async () =>

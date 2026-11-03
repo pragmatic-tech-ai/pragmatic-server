@@ -242,6 +242,7 @@ export class ControlPlaneHost
     private static readonly AutoInstallOffMessage = 'Automatic install is not available on this control plane. Install the agent manually.'
     private static readonly ReissueDuringInstallMessage = 'An agent install is running for this hive and issues its own token. Wait for it to finish (or fail) before reissuing the token.'
     private static readonly DeleteDuringInstallMessage = 'An agent install is running for this hive. Wait for it to finish (or fail) before deleting the hive.'
+    private static readonly HiveBusyMessage = "Another operation on this hive's agent token or lifecycle (a token reissue or a delete) is in progress. Wait for it to finish, then try again."
     private static readonly HiveObservationsPathPattern = new RegExp(
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/([^/]+)/' + ControlPlaneHost.ObservationsSegment + '$')
     private static readonly ManifestsSegment = 'manifests'
@@ -399,6 +400,12 @@ export class ControlPlaneHost
     private readonly staticRootAbs: string
     private readonly allowedHosts: ReadonlySet<string>
     private readonly orchestrator: ProvisioningOrchestrator
+    /**
+     * Hives with a token reissue or a delete in flight. One token- or lifecycle-writing operation per hive at a time: an
+     * install, a reissue and a delete each refuse (409) while another runs (a running install counts too), so e.g. an
+     * install cannot recreate the cluster a delete is tearing down.
+     */
+    private readonly hiveWrites = new Set<string>()
 
     public constructor(
         private readonly service: IEnvironmentService,
@@ -1028,9 +1035,22 @@ export class ControlPlaneHost
         }
         if (method === PlaneHttp.MethodDelete)
         {
-            if (resource === ControlPlaneHost.HivesSegment && this.agentInstaller?.IsInstalling(id) === true)
+            if (resource === ControlPlaneHost.HivesSegment)
             {
-                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusConflict, { error: ControlPlaneHost.DeleteDuringInstallMessage })
+                if (this.RefuseIfHiveBusy(res, id, ControlPlaneHost.DeleteDuringInstallMessage))
+                {
+                    return true
+                }
+                this.hiveWrites.add(id)
+                try
+                {
+                    await this.DeletePlatform(resource, id)
+                }
+                finally
+                {
+                    this.hiveWrites.delete(id)
+                }
+                PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ok: true })
                 return true
             }
             await this.DeletePlatform(resource, id)
@@ -1178,8 +1198,32 @@ export class ControlPlaneHost
             PlaneHttp.WriteJson(res, ControlPlaneHost.StatusConflict, { error: ControlPlaneHost.AutoInstallOffMessage })
             return true
         }
+        if (this.hiveWrites.has(id))
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusConflict, { error: ControlPlaneHost.HiveBusyMessage })
+            return true
+        }
         this.WriteInstallStatus(res, ControlPlaneHost.StatusAccepted, installer.Start(id))
         return true
+    }
+
+    /**
+     * Writes 409 and returns true when a token- or lifecycle-writing operation is already in flight for the hive: a
+     * running install (with its own message) or a reissue / delete.
+     */
+    private RefuseIfHiveBusy(res: ServerResponse, id: string, installingMessage: string): boolean
+    {
+        if (this.agentInstaller?.IsInstalling(id) === true)
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusConflict, { error: installingMessage })
+            return true
+        }
+        if (this.hiveWrites.has(id))
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusConflict, { error: ControlPlaneHost.HiveBusyMessage })
+            return true
+        }
+        return false
     }
 
     private WriteInstallStatus(res: ServerResponse, status: number, body: InstallStatus): void
@@ -1474,14 +1518,23 @@ export class ControlPlaneHost
                 PlaneHttp.WriteNotFound(res)
                 return true
             }
-            // A reissue now would revoke the token the running install just stored.
-            if (this.agentInstaller?.IsInstalling(id) === true)
+            // A reissue now would revoke the token a running install just stored, or race a delete.
+            if (this.RefuseIfHiveBusy(res, id, ControlPlaneHost.ReissueDuringInstallMessage))
             {
-                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusConflict, { error: ControlPlaneHost.ReissueDuringInstallMessage })
                 return true
             }
+            this.hiveWrites.add(id)
+            let token: string
+            try
+            {
+                token = await this.deployments.RegisterHive(id)
+            }
+            finally
+            {
+                this.hiveWrites.delete(id)
+            }
             // The one-time reveal: the raw agent token appears in this response body only; the registry stores just its hash.
-            const dto: RolloutRegistrationDto = { token: await this.deployments.RegisterHive(id) }
+            const dto: RolloutRegistrationDto = { token }
             res.setHeader(ControlPlaneHost.CacheControlHeader, ControlPlaneHost.NoStore)
             PlaneHttp.WriteJson(res, ControlPlaneHost.StatusCreated, dto)
             return true
