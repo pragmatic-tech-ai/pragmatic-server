@@ -26,12 +26,19 @@ export class TenantPrincipalSessions implements IOwnerSessionRevoker
         this.connections.push(connections)
     }
 
+    /** Ends the stored sessions; the open sockets are closed even when that fails (its error is then rethrown). */
     public async RevokeAllFor(tenantId: string, principalId: string): Promise<void>
     {
-        await this.sessions.RevokeAllFor(tenantId, principalId)
-        for (const connections of this.connections)
+        try
         {
-            connections.ClosePrincipal(tenantId, principalId)
+            await this.sessions.RevokeAllFor(tenantId, principalId)
+        }
+        finally
+        {
+            for (const connections of this.connections)
+            {
+                connections.ClosePrincipal(tenantId, principalId)
+            }
         }
     }
 }

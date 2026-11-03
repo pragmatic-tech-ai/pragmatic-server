@@ -170,3 +170,32 @@ test('RevokeAllFor ends every session of the principal in the tenant (persisted)
         assert.equal(await store.RevokeAllFor(SessionFixture.Tenant, SessionFixture.Principal), 0)
     })
 })
+
+test('a session issued before the principal\'s reset time is refused, even one that reappears (persisted stamp; legacy sessions too)', async () =>
+{
+    await SessionFixture.WithDir(async file =>
+    {
+        let nowMs = SessionFixture.Start
+        const clock = (): Date => new Date(nowMs)
+        const store = new TenantSessionStore(file, SessionFixture.Ttl, clock)
+        const before = await store.Issue(SessionFixture.Tenant, SessionFixture.Principal)
+        assert.equal(before.issuedAt, new Date(SessionFixture.Start).toISOString())
+        nowMs += 10
+        await store.RevokeAllFor(SessionFixture.Tenant, SessionFixture.Principal)
+        // The revoked session comes back (e.g. an older file restored, or a write that raced the revoke) - plus a legacy
+        // session without issuedAt (derived from expiresAt - ttl): both predate the reset, both are refused.
+        const raw = JSON.parse(await readFile(file, 'utf8')) as Record<string, Record<string, unknown>>
+        raw.sessions[before.id] = before
+        raw.sessions['legacy'] = { id: 'legacy', tenantId: SessionFixture.Tenant, principalId: SessionFixture.Principal, expiresAt: new Date(SessionFixture.Start + SessionFixture.Ttl).toISOString() }
+        await writeFile(file, JSON.stringify(raw))
+        const reloaded = new TenantSessionStore(file, SessionFixture.Ttl, clock)
+        assert.equal(await reloaded.Validate(before.id), null)
+        assert.equal(await reloaded.Validate('legacy'), null)
+        // After the reset: a new session validates; other principals are unaffected.
+        nowMs += 10
+        const after = await reloaded.Issue(SessionFixture.Tenant, SessionFixture.Principal)
+        assert.notEqual(await reloaded.Validate(after.id), null)
+        const someoneElse = await reloaded.Issue(SessionFixture.Tenant, 'user-2')
+        assert.notEqual(await reloaded.Validate(someoneElse.id), null)
+    })
+})

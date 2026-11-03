@@ -349,7 +349,7 @@ test('a session revoke failure after the password changed still returns the pass
         await service.Provision(ProvFixture.Input());
         const reset = await service.ResetOwnerPassword(ProvFixture.TenantId);
         assert.equal(reset.sessionsRevoked, false);
-        assert.match(reset.warning ?? '', /existing sessions could not be ended/);
+        assert.match(reset.warning ?? '', /could not be ended durably: they may return after a control-plane restart/);
         assert.ok(!(reset.warning ?? '').includes(reset.ownerPassword));
         assert.ok(await realms.For(ProvFixture.TenantId)!.Authenticate(ProvFixture.OwnerEmail, reset.ownerPassword) !== null);
     });
@@ -396,7 +396,9 @@ test('an unreachable IdP: refused / not found before sending -> nothing changed;
     await ProvFixture.WithHost(async (conn, _realms, directory) =>
     {
         await new TenantProvisioningService(new FakeIdp(conn), directory, c => new IdpAdminClient(c)).Provision(ProvFixture.Input());
-        for (const code of ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'EHOSTUNREACH', 'ENETUNREACH'])
+        for (const code of ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'EHOSTUNREACH', 'ENETUNREACH',
+            'ERR_TLS_CERT_ALTNAME_INVALID', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'SELF_SIGNED_CERT_IN_CHAIN', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+            'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'CERT_HAS_EXPIRED', 'CERT_NOT_YET_VALID', 'CERT_UNTRUSTED'])
         {
             const service = new TenantProvisioningService(new FakeIdp(conn), directory, c => new TransportClient(c, code));
             await assert.rejects(service.ResetOwnerPassword(ProvFixture.TenantId), (e: unknown) => e instanceof IdpUnreachableError && /Nothing was changed/.test(e.message) && e.message.includes(code));

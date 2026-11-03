@@ -94,7 +94,13 @@ export class IdpUnreachableError extends Error
     private static readonly NotSentSuffix = '). Check that it is running, then retry. Nothing was changed.';
     private static readonly MaybeAppliedSuffix = '). The reset may have been applied: reset again to get a working password.';
     /** Failures before the request could reach the IdP (connect refused, name or route not found): nothing was sent. */
-    private static readonly NotSentCodes: ReadonlySet<string> = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'EHOSTUNREACH', 'ENETUNREACH']);
+    private static readonly NotSentCodes: ReadonlySet<string> = new Set([
+        'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'EHOSTUNREACH', 'ENETUNREACH',
+        // TLS handshake failures: the connection is refused before any request bytes are sent.
+        'ERR_TLS_CERT_ALTNAME_INVALID', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'SELF_SIGNED_CERT_IN_CHAIN', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+        'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'UNABLE_TO_GET_ISSUER_CERT', 'CERT_HAS_EXPIRED', 'CERT_NOT_YET_VALID', 'CERT_UNTRUSTED',
+        'CERT_REVOKED', 'CERT_SIGNATURE_FAILURE', 'ERR_SSL_WRONG_VERSION_NUMBER',
+    ]);
 
     public constructor(cause: IdpAdminTransportError)
     {
@@ -116,7 +122,7 @@ export class TenantProvisioningService
     private static readonly PasswordEncoding = 'base64url';
     private static readonly NotFoundStatus = 404;
     private static readonly UnknownAccountCode = 'unknown_account';
-    private static readonly SessionsNotEndedWarning = "The new password is set, but the Owner's existing sessions could not be ended: they stay signed in until they expire (up to 12 hours).";
+    private static readonly SessionsNotEndedWarning = "The new password is set, but the Owner's existing sessions could not be ended durably: they may return after a control-plane restart, until they expire (up to 12 hours).";
     private static readonly LogPrefix = '[owner-reset] tenant ';
     private static readonly LogSessionsInfix = ': ending the Owner sessions failed: ';
     private static readonly UnknownErrorName = 'Error';
