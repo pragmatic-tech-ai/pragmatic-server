@@ -613,6 +613,17 @@ class PortalSteps
         await expect(input).toHaveValue(text)
     }
 
+    // A mouse click at the on-screen centre of the visible text, as a person clicks (no forced dispatch to the element).
+    public static async RealClick(page: Page, text: string): Promise<void>
+    {
+        const box = await PortalSteps.Visible(page, text).boundingBox()
+        if (box === null)
+        {
+            throw new Error('no box for ' + text)
+        }
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
+    }
+
     public static Text(page: Page, text: string): Locator
     {
         return page.getByText(text, { exact: true })
@@ -882,6 +893,19 @@ test.describe('admin portal', () =>
         await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
         await page.keyboard.type(FakeControlPlane.TenantId)
         await expect(input).toHaveValue(FakeControlPlane.TenantId)
+    })
+
+    test('a dialog confirm button takes a real click after real typing', async ({ page }) =>
+    {
+        await page.goto(base)
+        await expect(PortalSteps.Text(page, PortalText.FleetSubtitle)).toBeVisible()
+        await PortalSteps.OpenSection(page, RailEntry.Tenants)
+        await PortalSteps.Click(page, FakeControlPlane.TenantName)
+        await PortalSteps.Visible(page, PortalText.ResetOwnerLabel).click({ force: true })
+        await PortalSteps.TypeIntoDialog(page, FakeControlPlane.TenantId, FakeControlPlane.TenantId)
+        await PortalSteps.RealClick(page, PortalText.ResetLabel)
+        await expect.poll(() => fake.Find(FakeControlPlane.MethodPost, FakeControlPlane.OwnerResetPath)).toBeDefined()
+        await expect(PortalSteps.Visible(page, PortalText.OwnerResetHeading)).toBeVisible()
     })
 
     test('Log out posts to the server and returns to the login page', async ({ page }) =>

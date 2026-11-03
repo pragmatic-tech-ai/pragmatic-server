@@ -15,6 +15,31 @@ describe('NameConfirmDialogViewModel', () =>
         assert.equal(dialog.ConfirmCommand.CanExecute(), true)
     })
 
+    it('surrounding spaces do not count, but the name must otherwise match exactly', () =>
+    {
+        const host = PortalTestHost.WithoutClient()
+        const dialog = new NameConfirmDialogViewModel(host.Session, host.UseDialogs(), 'acme', 'Gone for good.', async () => { })
+        dialog.Typed = '  acme '
+        assert.equal(dialog.IsMatch, true)
+        assert.equal(dialog.ConfirmCommand.CanExecute(), true)
+        dialog.Typed = 'Acme'
+        assert.equal(dialog.ConfirmCommand.CanExecute(), false)
+    })
+
+    it('says when the typed text does not match yet; nothing before typing, nothing once it matches', () =>
+    {
+        const host = PortalTestHost.WithoutClient()
+        const dialog = new NameConfirmDialogViewModel(host.Session, host.UseDialogs(), 'acme', 'Gone for good.', async () => { })
+        const raised: string[] = []
+        dialog.PropertyChanged('MismatchText').subscribe(e => { raised.push(String(e.newValue)) })
+        assert.equal(dialog.MismatchText, '')
+        dialog.Typed = 'acm'
+        assert.equal(dialog.MismatchText, 'That does not match acme yet.')
+        assert.deepEqual(raised, ['That does not match acme yet.'])
+        dialog.Typed = 'acme'
+        assert.equal(dialog.MismatchText, '')
+    })
+
     it('with a reason label, Confirm needs the name and a non-blank reason, which the action receives trimmed', async () =>
     {
         const host = PortalTestHost.WithoutClient()
