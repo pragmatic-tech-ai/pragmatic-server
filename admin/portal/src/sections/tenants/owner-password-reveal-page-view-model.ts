@@ -18,15 +18,28 @@ export class OwnerPasswordRevealPageViewModel extends OneTimeSecretPageViewModel
     private static readonly ResetHeading = 'Owner password reset'
     private static readonly CreatedContinue = 'Continue to the tenant'
     private static readonly ResetContinue = 'Back to the tenant'
+    private static readonly NoWarning = ''
 
     public constructor(
         private readonly section: TenantsSectionService,
         public readonly TenantId: string,
         public readonly Email: string,
         value: string,
-        public readonly Kind: OwnerPasswordKind = OwnerPasswordKind.Created)
+        public readonly Kind: OwnerPasswordKind = OwnerPasswordKind.Created,
+        private readonly warning: string = OwnerPasswordRevealPageViewModel.NoWarning)
     {
         super(section, value)
+    }
+
+    // What the operator must know beyond the password (e.g. the Owner's old sessions could not be ended); '' when nothing.
+    public get Warning(): string
+    {
+        return this.warning
+    }
+
+    public get HasWarning(): boolean
+    {
+        return this.warning.length > 0
     }
 
     public get Heading(): string

@@ -38,8 +38,9 @@ export type TenantDto =
 export type TenantOwnerDto = { email: string; principalId: string; password: string }
 export type CreatedTenantDto = TenantDto & { owner: TenantOwnerDto }
 
-// A reset tenant Owner password (the owner-password route's reply), shown once.
-export type OwnerPasswordResetDto = { ownerEmail: string; ownerPassword: string }
+// A reset tenant Owner password (the owner-password route's reply), shown once. sessionsRevoked is false, with a
+// warning to show, when the password changed but the Owner's existing sessions could not be ended.
+export type OwnerPasswordResetDto = { ownerEmail: string; ownerPassword: string; sessionsRevoked: boolean; warning?: string }
 
 export type HiveClusterBackend = 'aks' | 'eks' | 'gke' | 'private' | 'local'
 export type HiveProvisionMode = 'provision' | 'attach'

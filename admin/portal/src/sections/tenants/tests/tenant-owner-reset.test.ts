@@ -111,6 +111,30 @@ describe('Tenant Owner password reset', () =>
         assert.equal(fx.Content, detail)
     })
 
+    it('a reset whose sessions could not be ended still reveals the password, with the warning', async () =>
+    {
+        const fx = new ResetFixture()
+        fx.Api.OwnerResetWarning = "The new password is set, but the Owner's existing sessions could not be ended."
+        const detail = await fx.Detail()
+        await fx.Confirmed(detail)
+        const reveal = fx.Content
+        assert.ok(reveal instanceof OwnerPasswordRevealPageViewModel)
+        assert.equal(reveal.Value, fx.Api.OwnerResetPassword)
+        assert.equal(reveal.HasWarning, true)
+        assert.match(reveal.Warning, /could not be ended/)
+    })
+
+    it('a clean reset carries no warning', async () =>
+    {
+        const fx = new ResetFixture()
+        const detail = await fx.Detail()
+        await fx.Confirmed(detail)
+        const reveal = fx.Content
+        assert.ok(reveal instanceof OwnerPasswordRevealPageViewModel)
+        assert.equal(reveal.HasWarning, false)
+        assert.equal(reveal.Warning, '')
+    })
+
     it('a refused reset shows its reason in the dialog and reveals nothing', async () =>
     {
         const fx = new ResetFixture()

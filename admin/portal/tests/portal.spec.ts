@@ -418,7 +418,7 @@ class FakeControlPlane
             }
             if (path === FakeControlPlane.OwnerResetPath)
             {
-                FakeControlPlane.Json(res, 200, { ownerEmail: FakeControlPlane.OwnerResetEmail, ownerPassword: FakeControlPlane.OwnerResetPassword })
+                FakeControlPlane.Json(res, 200, { ownerEmail: FakeControlPlane.OwnerResetEmail, ownerPassword: FakeControlPlane.OwnerResetPassword, sessionsRevoked: true })
                 return
             }
             if (path === FakeControlPlane.HiveItemPath && method === FakeControlPlane.MethodDelete)

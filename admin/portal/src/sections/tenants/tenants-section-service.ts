@@ -32,9 +32,9 @@ export class TenantsSectionService extends PortalSectionService
 
     // Shows a reset Owner password once, over the tenant's detail (Back to the
     // detail once saved).
-    public RevealResetOwnerPassword(tenantId: string, email: string, password: string): void
+    public RevealResetOwnerPassword(tenantId: string, email: string, password: string, warning?: string): void
     {
-        this.Present(new OwnerPasswordRevealPageViewModel(this, tenantId, email, password, OwnerPasswordKind.Reset))
+        this.Present(new OwnerPasswordRevealPageViewModel(this, tenantId, email, password, OwnerPasswordKind.Reset, warning))
     }
 
     // After the reveal is confirmed: its page gives way to the tenant's detail

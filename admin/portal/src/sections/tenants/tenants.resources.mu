@@ -181,6 +181,9 @@ resources TenantsResources {
     DataTemplate [ DataType = OwnerPasswordRevealPageViewModel ] {
         StackPanel [ Orientation = Vertical, Margin = (24,20,24,20) ] {
             TextBlock [ Text = $Heading, Style = @H3, Foreground = @Fg0 ]
+            Border [ Fill = @StateWarningSoft, Padding = (12,10,12,10), Margin = (0,8,0,0), Visibility = $HasWarning << ToVisibility ] {
+                TextBlock [ Text = $Warning, Foreground = @StateDangerInk, TextWrapping = Wrap ]
+            }
             StackPanel [ Orientation = Horizontal, Margin = (0,4,0,16) ] {
                 TextBlock [ Text = "Owner password for", Foreground = @Fg2, Margin = (0,0,4,0) ]
                 TextBlock [ Text = $Email, Foreground = @Fg0 ]

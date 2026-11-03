@@ -203,7 +203,7 @@ export class TenantDetailPageViewModel extends PortalPageViewModel
             {
                 if (reset !== undefined)
                 {
-                    this.section.RevealResetOwnerPassword(this.Id, reset.ownerEmail, reset.ownerPassword)
+                    this.section.RevealResetOwnerPassword(this.Id, reset.ownerEmail, reset.ownerPassword, reset.warning)
                     reset = undefined
                 }
             },

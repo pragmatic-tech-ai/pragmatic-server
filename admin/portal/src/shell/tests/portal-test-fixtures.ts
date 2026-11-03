@@ -263,6 +263,8 @@ export class FakeControlPlane
     public OwnerResetEmail = 'owner@acme.test'
     public OwnerResetPassword = 'fixture-reset-owner-password'
     public OwnerResetFailure: Error | undefined
+    // When set, the reset reports that the Owner's sessions could not be ended, with this warning.
+    public OwnerResetWarning: string | undefined
     public readonly OwnerResets: string[] = []
     // What a hive delete replies.
     public DeleteOutcome: HiveDeleteOutcomeDto = { ok: true, retained: [] }
@@ -663,7 +665,12 @@ export class FakeControlPlane
             throw this.OwnerResetFailure
         }
         this.OwnerResets.push(tenantId)
-        return { ownerEmail: this.OwnerResetEmail, ownerPassword: this.OwnerResetPassword }
+        const reset: OwnerPasswordResetDto = { ownerEmail: this.OwnerResetEmail, ownerPassword: this.OwnerResetPassword, sessionsRevoked: this.OwnerResetWarning === undefined }
+        if (this.OwnerResetWarning !== undefined)
+        {
+            reset.warning = this.OwnerResetWarning
+        }
+        return reset
     }
 
     public async DeleteHive(id: string, force: boolean = false): Promise<HiveDeleteOutcomeDto>
