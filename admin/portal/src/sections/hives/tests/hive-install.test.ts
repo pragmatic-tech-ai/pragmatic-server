@@ -84,7 +84,7 @@ describe('Hive agent install', () =>
         assert.equal(install.Commands, [
             'kubectl apply -f bootstrap-acme-hive.json',
             'read -rs PRAGMATIC_AGENT_TOKEN   # paste the one-time agent token, then press Enter',
-            'kubectl -n pragmatic-system create secret generic pragmatic-hive-acme-hive-agent-token --from-literal=token="$PRAGMATIC_AGENT_TOKEN" --dry-run=client -o yaml | kubectl apply --server-side --field-manager=pragmatic-control-plane --force-conflicts -f -',
+            'kubectl -n pragmatic-system create secret generic pragmatic-hive-acme-hive-agent-token --from-literal=token="$PRAGMATIC_AGENT_TOKEN" --dry-run=client -o yaml | kubectl apply --server-side --field-manager=pragmatic-operator --force-conflicts -f -',
         ].join('\n'))
     })
 
@@ -95,7 +95,7 @@ describe('Hive agent install', () =>
         await install.Load('acme-hive')
         assert.equal(install.Commands, [
             'read -rs PRAGMATIC_AGENT_TOKEN   # paste the one-time agent token, then press Enter',
-            'kubectl -n pragmatic-system create secret generic pragmatic-hive-acme-hive-agent-token --from-literal=token="$PRAGMATIC_AGENT_TOKEN" --dry-run=client -o yaml | kubectl apply --server-side --field-manager=pragmatic-control-plane --force-conflicts -f -',
+            'kubectl -n pragmatic-system create secret generic pragmatic-hive-acme-hive-agent-token --from-literal=token="$PRAGMATIC_AGENT_TOKEN" --dry-run=client -o yaml | kubectl apply --server-side --field-manager=pragmatic-operator --force-conflicts -f -',
             'kubectl -n pragmatic-system rollout restart deployment -l pragmatic/hive=acme-hive',
         ].join('\n'))
     })

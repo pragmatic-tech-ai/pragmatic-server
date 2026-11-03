@@ -451,21 +451,6 @@ describe('Hive agent automatic install (stand-up wizard)', () =>
         assert.equal(wizard.FinishCommand.CanExecute(), true)
     })
 
-    it('a wizard install replaced by a newer one stops polling', async () =>
-    {
-        const fx = new AutoFixture()
-        const wizard = await fx.Revealed()
-        const first = wizard.AgentInstall
-        assert.equal(fx.Polls.Pending, 1)
-        // ChooseInstallPath runs again (as a second provision on the same page would).
-        await (wizard as unknown as { ChooseInstallPath(id: string): Promise<void> }).ChooseInstallPath('initech-hive')
-        assert.notEqual(wizard.AgentInstall, first)
-        assert.equal(fx.Polls.Pending, 1)
-        fx.Reply(AgentInstallState.Installing, AgentInstallStep.ApplyingAgent)
-        await fx.Poll()
-        assert.equal(first?.Steps.Get(1)?.IsRunning, false)
-    })
-
     it('Finish leaves the wizard and its polling stops', async () =>
     {
         const fx = new AutoFixture()

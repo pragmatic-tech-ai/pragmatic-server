@@ -46,7 +46,7 @@ export class HiveInstallViewModel extends Observable
     private static readonly FromLiteralInfix = ' --from-literal='
     private static readonly ValueOpen = '="$'
     private static readonly ValueClose = '"'
-    private static readonly ServerSideApplySuffix = ' --dry-run=client -o yaml | kubectl apply --server-side --field-manager=pragmatic-control-plane --force-conflicts -f -'
+    private static readonly ServerSideApplySuffix = ' --dry-run=client -o yaml | kubectl apply --server-side --field-manager=pragmatic-operator --force-conflicts -f -'
     private static readonly RestartInfix = ' rollout restart deployment -l '
     private static readonly IsLoadingProperty = 'IsLoading'
     private static readonly HasBundleProperty = 'HasBundle'
