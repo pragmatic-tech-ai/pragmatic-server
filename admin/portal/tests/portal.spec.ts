@@ -9,8 +9,9 @@ type Call = { method: string; path: string; body?: unknown }
 
 // Serves the built dist/ statically and fakes the control-plane API with
 // canned data, recording every login/logout and every mutating call (which it
-// refuses). GATED: needs Playwright browser binaries and a prior
-// `npm run build`; not part of `npm test`.
+// refuses), except the stand-up of NewHiveId and its automatic agent install,
+// which it plays through (Installing, then Connected). GATED: needs Playwright
+// browser binaries and a prior `npm run build`; not part of `npm test`.
 class FakeControlPlane
 {
     public static readonly LoginPath = '/api/login'
@@ -39,6 +40,22 @@ class FakeControlPlane
     public static readonly Notes = 'Faster capability maps.'
     public static readonly CredentialRef = 'registry-pull/tailspin'
     public static readonly FontExt = '.woff2'
+    // The Local hive the stand-up test provisions; its install runs automatically.
+    public static readonly NewHiveId = 'tailspin-local'
+    public static readonly NewHiveName = 'Tailspin local'
+    // The provision's one-time token: the automatic path must never show it.
+    public static readonly ProvisionToken = 'e2e-provision-token-never-shown'
+    private static readonly ProvisionPath = '/api/provision'
+    private static readonly NewHiveBootstrapPath = '/api/hives/tailspin-local/bootstrap'
+    private static readonly NewHiveInstallPath = '/api/hives/tailspin-local/agent-install'
+    private static readonly InstallStartedAt = '2026-11-03T10:00:00.000Z'
+    private static readonly InstallFinishedAt = '2026-11-03T10:02:00.000Z'
+    private static readonly InstallingState = 'installing'
+    private static readonly ConnectedState = 'connected'
+    private static readonly PreparingStep = 'preparing-cluster'
+    private static readonly StoringTokenStep = 'storing-token'
+    private static readonly WaitingStep = 'waiting-for-check-in'
+    private static readonly LocalBackend = 'local'
     private static readonly SessionPath = '/api/session'
     private static readonly ClientsPath = '/api/clients'
     private static readonly TenantsPath = '/api/tenants'
@@ -98,6 +115,8 @@ class FakeControlPlane
     // Every theme font served.
     public readonly FontsServed: string[] = []
     public Authenticated = true
+    // Reads of the new hive's install status so far (the first reports a running step, later ones Connected).
+    public InstallReads = 0
     private readonly root = fileURLToPath(new URL('../dist/', import.meta.url))
     private server: Server | undefined
 
@@ -120,10 +139,15 @@ class FakeControlPlane
         return this.Calls.find(c => c.method === method && c.path === path)
     }
 
-    // Every mutating call other than login/logout: the fake refuses them all.
+    // Every refused mutating call: all but login/logout and the played-through stand-up writes.
     public get Mutations(): Call[]
     {
-        return this.Calls.filter(c => c.path !== FakeControlPlane.LoginPath && c.path !== FakeControlPlane.LogoutPath)
+        return this.Calls.filter(c => c.path !== FakeControlPlane.LoginPath && c.path !== FakeControlPlane.LogoutPath && !FakeControlPlane.IsPlayedWrite(c.path))
+    }
+
+    private static IsPlayedWrite(path: string): boolean
+    {
+        return path === FakeControlPlane.ProvisionPath || path === FakeControlPlane.NewHiveInstallPath
     }
 
     private Operator(): Record<string, unknown>
@@ -230,7 +254,61 @@ class FakeControlPlane
             tokenSecretName: 'pragmatic-hive-hive-eu-1-agent-token',
             tokenSecretKey: 'token',
             channelUrl: 'http://host.docker.internal:7001',
+            autoInstall: false,
         }
+    }
+
+    // The new Local hive's bundle: the control plane installs its agent.
+    private NewHiveBootstrap(): unknown
+    {
+        return {
+            hiveId: FakeControlPlane.NewHiveId,
+            fileName: 'bootstrap-' + FakeControlPlane.NewHiveId + '.json',
+            manifest: '{"apiVersion":"v1","kind":"List","items":[]}',
+            namespace: 'pragmatic-system',
+            agentName: 'pragmatic-hive-' + FakeControlPlane.NewHiveId + '-agent',
+            hiveSelector: 'pragmatic/hive=' + FakeControlPlane.NewHiveId,
+            tokenSecretName: 'pragmatic-hive-' + FakeControlPlane.NewHiveId + '-agent-token',
+            tokenSecretKey: 'token',
+            channelUrl: 'http://host.docker.internal:7001',
+            autoInstall: true,
+        }
+    }
+
+    // The stand-up's provision result onto the existing client and tenant: the hive and only an agent token.
+    private Provisioned(): unknown
+    {
+        return {
+            client: this.Clients()[0],
+            tenant: this.Tenants()[0],
+            hive: {
+                id: FakeControlPlane.NewHiveId,
+                tenantId: FakeControlPlane.TenantId,
+                displayName: FakeControlPlane.NewHiveName,
+                cluster: { backend: FakeControlPlane.LocalBackend, mode: FakeControlPlane.ClusterMode },
+                registry: { mode: FakeControlPlane.ClusterMode },
+            },
+            secrets: { agentToken: FakeControlPlane.ProvisionToken },
+        }
+    }
+
+    private static InstallStatus(state: string, step: string): Record<string, unknown>
+    {
+        const status: Record<string, unknown> = { state, step, startedAt: FakeControlPlane.InstallStartedAt }
+        if (state !== FakeControlPlane.InstallingState)
+        {
+            status.finishedAt = FakeControlPlane.InstallFinishedAt
+        }
+        return status
+    }
+
+    // The automatic install as the control plane plays it: the first read is mid-way, later reads Connected.
+    private InstallProgress(): unknown
+    {
+        this.InstallReads++
+        return this.InstallReads === 1
+            ? FakeControlPlane.InstallStatus(FakeControlPlane.InstallingState, FakeControlPlane.StoringTokenStep)
+            : FakeControlPlane.InstallStatus(FakeControlPlane.ConnectedState, FakeControlPlane.WaitingStep)
     }
 
     private Manifests(): unknown[]
@@ -317,6 +395,16 @@ class FakeControlPlane
         {
             const raw = await FakeControlPlane.ReadBody(req)
             this.Calls.push({ method, path, body: raw.length > 0 ? JSON.parse(raw) : undefined })
+            if (path === FakeControlPlane.ProvisionPath)
+            {
+                FakeControlPlane.Json(res, 201, this.Provisioned())
+                return
+            }
+            if (path === FakeControlPlane.NewHiveInstallPath)
+            {
+                FakeControlPlane.Json(res, 202, FakeControlPlane.InstallStatus(FakeControlPlane.InstallingState, FakeControlPlane.PreparingStep))
+                return
+            }
             FakeControlPlane.Json(res, 401, { error: FakeControlPlane.RefusedError })
             return
         }
@@ -351,6 +439,12 @@ class FakeControlPlane
                 return
             case FakeControlPlane.HiveBootstrapPath:
                 FakeControlPlane.Json(res, 200, this.Bootstrap())
+                return
+            case FakeControlPlane.NewHiveBootstrapPath:
+                FakeControlPlane.Json(res, 200, this.NewHiveBootstrap())
+                return
+            case FakeControlPlane.NewHiveInstallPath:
+                FakeControlPlane.Json(res, 200, this.InstallProgress())
                 return
             default:
                 FakeControlPlane.Json(res, 200, [])
@@ -411,6 +505,14 @@ class PortalText
     public static readonly ClientIdCaption = 'Client id'
     public static readonly TenantIdCaption = 'Tenant id'
     public static readonly HiveIdCaption = 'Hive id'
+    public static readonly HiveIdPlaceholder = 'e.g. tailspin-hive'
+    public static readonly HiveNamePlaceholder = 'e.g. Tailspin hive'
+    public static readonly StandUpSubmitLabel = 'Stand up hive'
+    public static readonly InstallingCaption = 'Installing the agent'
+    public static readonly ApplyStepLabel = 'Apply the agent'
+    public static readonly CheckInStepLabel = 'Wait for the agent to check in'
+    public static readonly ConnectedText = 'Connected. The agent checked in.'
+    public static readonly ManualTokenCaption = 'One-time agent token'
     // Each rail section's page title (its H3), in RailEntry order.
     public static readonly SectionTitles: readonly string[] = [
         'Fleet', 'Clients', 'Tenants', 'Hives', 'Registry & Releases', 'Release Policy', 'Activity', 'Settings',
@@ -505,6 +607,7 @@ test.describe('admin portal', () =>
         fake.Calls.length = 0
         fake.NotFound.length = 0
         fake.FontsServed.length = 0
+        fake.InstallReads = 0
     })
     test.afterEach(() =>
     {
@@ -637,6 +740,37 @@ test.describe('admin portal', () =>
         await expect(PortalSteps.Text(page, PortalText.TenantIdCaption).filter({ visible: true })).toHaveCount(0)
         await PortalSteps.Click(page, PortalText.NextLabel)
         await expect(PortalSteps.Visible(page, PortalText.HiveIdCaption)).toBeVisible()
+        await PortalSteps.ExpectNoBrokenText(page)
+    })
+
+    test('Hives: standing up a Local hive installs its agent automatically and ends Connected, never showing the token', async ({ page }) =>
+    {
+        await page.goto(base)
+        await expect(PortalSteps.Text(page, PortalText.FleetSubtitle)).toBeVisible()
+        await PortalSteps.OpenSection(page, RailEntry.Hives)
+        await PortalSteps.Click(page, PortalText.StandUpLabel)
+        await expect(PortalSteps.Visible(page, PortalText.NewClientChoice)).toBeVisible()
+        await PortalSteps.Click(page, PortalText.NewClientChoice)
+        await PortalSteps.Visible(page, FakeControlPlane.ClientName).click({ force: true })
+        await PortalSteps.Click(page, PortalText.NextLabel)
+        await expect(PortalSteps.Visible(page, PortalText.NewTenantChoice)).toBeVisible()
+        await PortalSteps.Click(page, PortalText.NewTenantChoice)
+        await PortalSteps.Visible(page, FakeControlPlane.TenantName).click({ force: true })
+        await PortalSteps.Click(page, PortalText.NextLabel)
+        await expect(PortalSteps.Visible(page, PortalText.HiveIdCaption)).toBeVisible()
+        await PortalSteps.TypeInto(page, PortalText.HiveIdPlaceholder, FakeControlPlane.NewHiveId)
+        await PortalSteps.TypeInto(page, PortalText.HiveNamePlaceholder, FakeControlPlane.NewHiveName)
+        await PortalSteps.Click(page, PortalText.NextLabel)
+        await PortalSteps.Click(page, PortalText.StandUpSubmitLabel)
+        await expect(PortalSteps.Visible(page, PortalText.InstallingCaption)).toBeVisible()
+        await expect(PortalSteps.Visible(page, PortalText.ApplyStepLabel)).toBeVisible()
+        await expect(PortalSteps.Visible(page, PortalText.CheckInStepLabel)).toBeVisible()
+        await expect.poll(() => fake.Find(FakeControlPlane.MethodPost, '/api/hives/' + FakeControlPlane.NewHiveId + '/agent-install')).toBeDefined()
+        // Polled every 2 s: a mid-way read, then Connected.
+        await expect(PortalSteps.Visible(page, PortalText.ConnectedText)).toBeVisible({ timeout: 10000 })
+        expect(fake.InstallReads).toBeGreaterThanOrEqual(2)
+        await expect(page.getByText(FakeControlPlane.ProvisionToken)).toHaveCount(0)
+        await expect(PortalSteps.Text(page, PortalText.ManualTokenCaption).filter({ visible: true })).toHaveCount(0)
         await PortalSteps.ExpectNoBrokenText(page)
     })
 

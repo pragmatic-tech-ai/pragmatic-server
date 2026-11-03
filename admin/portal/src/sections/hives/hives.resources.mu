@@ -18,6 +18,12 @@
 // shared by the wizard's Bootstrap step, the hive detail and the reissued
 // token's reveal (AgentTokenRevealPageViewModel, a page like the wizard).
 //
+// HiveAgentInstallViewModel is the automatic install of a Local hive's agent
+// (the control plane runs every step itself): Install agent, its step list,
+// Connected or the error with Retry. The wizard's Bootstrap step and the hive
+// detail show it for a Local hive, with the manual install behind
+// Install manually; any other hive keeps the manual install only.
+//
 // Table rows use keyed templates set as the ListBox's ItemTemplate: a ListBox
 // resolves implicit-by-type templates only for MuralBase items, and the row
 // view-models are Observables. Tables use the PortalTable ListBox template
@@ -35,6 +41,8 @@ import ProvisionWizardPageViewModel from "./provision-wizard-page-view-model.js"
 import ProvisionStepViewModel from "./provision-wizard-page-view-model.js"
 import HiveInstallViewModel from "./hive-install-view-model.js"
 import AgentTokenRevealPageViewModel from "./agent-token-reveal-page-view-model.js"
+import HiveAgentInstallViewModel from "./hive-agent-install-view-model.js"
+import AgentInstallStepViewModel from "./hive-agent-install-view-model.js"
 
 resources HivesResources {
     DataTemplate [ DataType = HivesPageViewModel ] {
@@ -128,7 +136,8 @@ resources HivesResources {
                 Button [ DockPanel.Dock = Right, Variant = Danger, Command = $DeleteCommand, VerticalAlignment = Top ] {
                     TextBlock [ Text = "Delete hive" ]
                 }
-                Button [ DockPanel.Dock = Right, Variant = Secondary, Command = $ReissueTokenCommand, VerticalAlignment = Top, Margin = (0,0,8,0) ] {
+                Button [ DockPanel.Dock = Right, Variant = Secondary, Command = $ReissueTokenCommand, VerticalAlignment = Top, Margin = (0,0,8,0),
+                         Visibility = $IsManualOnly << ToVisibility ] {
                     TextBlock [ Text = "Reissue agent token" ]
                 }
                 StackPanel [ Orientation = Vertical ] {
@@ -160,11 +169,25 @@ resources HivesResources {
                         TextBlock [ Text = $BannerText, Foreground = @StateWarningInk, TextWrapping = Wrap ]
                     }
 
-                    // The agent's install bundle: what the client applies so the hive dials home.
+                    // The agent install: automatic for a Local hive (the control plane runs it), else the manual bundle.
                     TextBlock [ Text = "Agent install", Style = @UiLabel, Foreground = @Fg1, Margin = (0,0,0,2) ]
-                    TextBlock [ Text = "Neither the bundle nor the commands carry the agent token; it is typed in at the prompt. Reissue the token if it was lost.",
-                                Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,6) ]
-                    ContentControl [ Content = $Install, Margin = (0,0,0,16) ]
+                    StackPanel [ Orientation = Vertical, Visibility = $IsAutoInstall << ToVisibility ] {
+                        TextBlock [ Text = "Pragmatic manages this hive's cluster, so it installs the agent itself: no token or commands to pass on. Installing again issues a fresh token and restarts the agent.",
+                                    Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,6) ]
+                        ContentControl [ Content = $AgentInstall, Margin = (0,0,0,4) ]
+                        Button [ Variant = Ghost, Command = $ToggleManualCommand, HorizontalAlignment = Left, Margin = (0,0,0,8) ] {
+                            TextBlock [ Text = $ManualToggleLabel ]
+                        }
+                    }
+                    StackPanel [ Orientation = Vertical, Visibility = $ShowsManual << ToVisibility ] {
+                        TextBlock [ Text = "Neither the bundle nor the commands carry the agent token; it is typed in at the prompt. Reissue the token if it was lost.",
+                                    Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,6) ]
+                        Button [ Variant = Secondary, Command = $ReissueTokenCommand, HorizontalAlignment = Left, Margin = (0,0,0,8),
+                                 Visibility = $IsAutoInstall << ToVisibility ] {
+                            TextBlock [ Text = "Reissue agent token" ]
+                        }
+                        ContentControl [ Content = $Install, Margin = (0,0,0,16) ]
+                    }
 
                     // Home channel: telemetry the hive sends, not a connection we open.
                     TextBlock [ Text = "Home channel", Style = @UiLabel, Foreground = @Fg1, Margin = (0,0,0,6) ]
@@ -549,7 +572,8 @@ resources HivesResources {
                                 TextBlock [ Text = "is created and waiting for its first dial-in.", Foreground = @StateSuccessInk ]
                             }
                         }
-                        Border [ Fill = @StateWarningSoft, Padding = (12,10,12,10), Margin = (0,0,0,16) ] {
+                        Border [ Fill = @StateWarningSoft, Padding = (12,10,12,10), Margin = (0,0,0,16),
+                                 Visibility = $ShowsOneTimeValues << ToVisibility ] {
                             TextBlock [ Text = "These values are shown once and cannot be shown again. Copy each now and pass it on over a secure channel.",
                                         Foreground = @StateWarningInk, TextWrapping = Wrap ]
                         }
@@ -576,28 +600,51 @@ resources HivesResources {
                             }
                         }
 
-                        TextBlock [ Text = "One-time agent token", Style = @UiLabel, Foreground = @Fg1, Margin = (0,0,0,2) ]
-                        TextBlock [ Text = "The client applies it with the bootstrap. The Agent exchanges it on first dial-in; then it is useless.",
-                                    Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,6) ]
-                        Border [ Fill = @Bg1, Stroke = Pen [ Brush = @Border ], Padding = (12,10,12,10), Margin = (0,0,0,8) ] {
-                            DockPanel {
-                                Button [ DockPanel.Dock = Right, Variant = Secondary, Command = $CopyAgentTokenCommand, Margin = (12,0,0,0) ] {
-                                    TextBlock [ Text = "Copy" ]
+                        // A Local hive: the control plane installs the agent itself; the provision's token is never shown.
+                        StackPanel [ Orientation = Vertical, Visibility = $IsAutomaticInstall << ToVisibility ] {
+                            TextBlock [ Text = "Installing the agent", Style = @UiLabel, Foreground = @Fg1, Margin = (0,0,0,2) ]
+                            TextBlock [ Text = "Pragmatic manages this hive's cluster, so it installs the agent itself: no token or commands to pass on.",
+                                        Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,6) ]
+                            ContentControl [ Content = $AgentInstall, Margin = (0,0,0,4) ]
+                            Button [ Variant = Ghost, Command = $ToggleManualCommand, HorizontalAlignment = Left, Margin = (0,0,0,8),
+                                     Visibility = $CanInstallManually << ToVisibility ] {
+                                TextBlock [ Text = $ManualToggleLabel ]
+                            }
+                            StackPanel [ Orientation = Vertical, Margin = (0,0,0,8), Visibility = $ShowsManualInstall << ToVisibility ] {
+                                TextBlock [ Text = "Install it by hand instead: issue a one-time token, then send it with the bundle and commands below to the cluster's administrator.",
+                                            Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,6) ]
+                                Button [ Variant = Secondary, Command = $IssueManualTokenCommand, HorizontalAlignment = Left ] {
+                                    TextBlock [ Text = "Issue agent token" ]
                                 }
-                                TextBlock [ Text = $AgentToken, Style = @Code, Foreground = @Fg0, VerticalAlignment = Center, TextWrapping = Wrap ]
                             }
                         }
-                        TextBlock [ Text = $AgentCopyStatus, Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,8),
-                                    Visibility = $AgentCopyStatus << ToVisibility ]
-                        StackPanel [ Orientation = Horizontal, Margin = (0,0,0,16) ] {
-                            Checkbox [ IsChecked = $AgentSaved, VerticalAlignment = Center, Margin = (0,0,8,0) ]
-                            TextBlock [ Text = "I've saved the agent token", Foreground = @Fg0, VerticalAlignment = Center ]
+
+                        StackPanel [ Orientation = Vertical, Visibility = $ShowsAgentToken << ToVisibility ] {
+                            TextBlock [ Text = "One-time agent token", Style = @UiLabel, Foreground = @Fg1, Margin = (0,0,0,2) ]
+                            TextBlock [ Text = "The client applies it with the bootstrap. The Agent exchanges it on first dial-in; then it is useless.",
+                                        Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,6) ]
+                            Border [ Fill = @Bg1, Stroke = Pen [ Brush = @Border ], Padding = (12,10,12,10), Margin = (0,0,0,8) ] {
+                                DockPanel {
+                                    Button [ DockPanel.Dock = Right, Variant = Secondary, Command = $CopyAgentTokenCommand, Margin = (12,0,0,0) ] {
+                                        TextBlock [ Text = "Copy" ]
+                                    }
+                                    TextBlock [ Text = $AgentToken, Style = @Code, Foreground = @Fg0, VerticalAlignment = Center, TextWrapping = Wrap ]
+                                }
+                            }
+                            TextBlock [ Text = $AgentCopyStatus, Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,8),
+                                        Visibility = $AgentCopyStatus << ToVisibility ]
+                            StackPanel [ Orientation = Horizontal, Margin = (0,0,0,16) ] {
+                                Checkbox [ IsChecked = $AgentSaved, VerticalAlignment = Center, Margin = (0,0,8,0) ]
+                                TextBlock [ Text = "I've saved the agent token", Foreground = @Fg0, VerticalAlignment = Center ]
+                            }
                         }
 
-                        TextBlock [ Text = "Install the agent", Style = @UiLabel, Foreground = @Fg1, Margin = (0,0,0,2) ]
-                        TextBlock [ Text = "Send the bundle and these commands to the client's cluster administrator. Once applied, the hive dials home.",
-                                    Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,6) ]
-                        ContentControl [ Content = $Install ]
+                        StackPanel [ Orientation = Vertical, Visibility = $IsManualInstall << ToVisibility ] {
+                            TextBlock [ Text = "Install the agent", Style = @UiLabel, Foreground = @Fg1, Margin = (0,0,0,2) ]
+                            TextBlock [ Text = "Send the bundle and these commands to the client's cluster administrator. Once applied, the hive dials home.",
+                                        Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,6) ]
+                        }
+                        ContentControl [ Content = $Install, Visibility = $ShowsInstallPanel << ToVisibility ]
                     }
                 }
             }
@@ -636,6 +683,54 @@ resources HivesResources {
                 }
                 TextBlock [ Text = $Status, Style = @UiCaption, Foreground = @Fg2, Visibility = $Status << ToVisibility ]
             }
+        }
+    }
+
+    // The automatic agent install: Install agent, then each real step as the control plane runs it,
+    // ending Connected (the agent checked in) or on the failed step's error with Retry.
+    DataTemplate [ DataType = HiveAgentInstallViewModel ] {
+        StackPanel [ Orientation = Vertical ] {
+            Button [ Variant = Primary, Command = $StartCommand, HorizontalAlignment = Left, Margin = (0,0,0,8),
+                     Visibility = $IsIdle << ToVisibility ] {
+                TextBlock [ Text = "Install agent" ]
+            }
+            Border [ Fill = @Bg1, Stroke = Pen [ Brush = @Border ], Padding = (12,10,12,10), Margin = (0,0,0,8),
+                     Visibility = $HasProgress << ToVisibility ] {
+                StackPanel [ Orientation = Vertical ] {
+                    ItemsControl [ ItemsSource = $Steps, ItemsPanel = @AgentInstallStepsPanel ]
+                    TextBlock [ Text = $StatusText, Foreground = @Fg1, TextWrapping = Wrap, Margin = (0,8,0,0) ]
+                }
+            }
+            Border [ Fill = @StateSuccessSoft, Padding = (12,10,12,10), Margin = (0,0,0,8), Visibility = $IsConnected << ToVisibility ] {
+                TextBlock [ Text = "Connected", Foreground = @StateSuccessInk ]
+            }
+            Border [ Fill = @StateWarningSoft, Padding = (12,10,12,10), Margin = (0,0,0,8), Visibility = $ErrorText << ToVisibility ] {
+                TextBlock [ Text = $ErrorText, Foreground = @StateDangerInk, TextWrapping = Wrap ]
+            }
+            StackPanel [ Orientation = Horizontal ] {
+                Button [ Variant = Primary, Command = $RetryCommand, Margin = (0,0,8,0), Visibility = $IsFailed << ToVisibility ] {
+                    TextBlock [ Text = "Retry" ]
+                }
+                Button [ Variant = Secondary, Command = $StartCommand, Visibility = $IsConnected << ToVisibility ] {
+                    TextBlock [ Text = "Reinstall agent" ]
+                }
+            }
+        }
+    }
+
+    // The install's steps, one per row.
+    ItemsPanelTemplate x:key="AgentInstallStepsPanel" {
+        StackPanel [ Orientation = Vertical ]
+    }
+
+    // One install step: its label and, once reached, In progress / Done / Failed.
+    DataTemplate [ DataType = AgentInstallStepViewModel ] {
+        DockPanel [ Margin = (0,2,0,2) ] {
+            TextBlock [ DockPanel.Dock = Right, Text = $StatusLabel, Style = @UiCaption, Foreground = @Fg1, Visibility = $IsRunning << ToVisibility ]
+            TextBlock [ DockPanel.Dock = Right, Text = $StatusLabel, Style = @UiCaption, Foreground = @StateSuccessInk, Visibility = $IsDone << ToVisibility ]
+            TextBlock [ DockPanel.Dock = Right, Text = $StatusLabel, Style = @UiCaption, Foreground = @StateDangerInk, Visibility = $IsFailed << ToVisibility ]
+            TextBlock [ Text = $Label, Foreground = @Fg2, Visibility = $IsPending << ToVisibility ]
+            TextBlock [ Text = $Label, Foreground = @Fg0, Visibility = $IsReached << ToVisibility ]
         }
     }
 
