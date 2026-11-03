@@ -6,7 +6,9 @@ export class IdpSsoSession
     public constructor(
         public readonly PrincipalId: string,
         public readonly TenantId: string,
-        public readonly ExpiresAt: Date)
+        public readonly ExpiresAt: Date,
+        /** When the login behind it happened (a later credential change makes it stale). */
+        public readonly IssuedAt: Date)
     {
     }
 }
@@ -29,7 +31,8 @@ export class IdpSsoSessionStore
     public Issue(principalId: string, tenantId: string): { Id: string; session: IdpSsoSession }
     {
         const id = randomBytes(IdpSsoSessionStore.IdBytes).toString(IdpSsoSessionStore.IdEncoding);
-        const session = new IdpSsoSession(principalId, tenantId, new Date(this.now().getTime() + this.ttlMs));
+        const issuedAt = this.now();
+        const session = new IdpSsoSession(principalId, tenantId, new Date(issuedAt.getTime() + this.ttlMs), issuedAt);
         this.sessions.set(id, session);
         return { Id: id, session };
     }

@@ -258,3 +258,24 @@ test('admin reset for an unknown principal or an empty password is rejected and 
         assert.equal(await RotationFixture.StoredSecret(dir, key), before);
     });
 });
+
+test('CredentialsChangedAt: unset after seeding; stamped by an admin reset and by a self-service change; persisted with the realm', async () =>
+{
+    await RealmTestFixture.WithRealm(async (realm, dir, key) =>
+    {
+        assert.equal(await realm.CredentialsChangedAt(RealmTestFixture.PrincipalId), undefined);
+        const beforeReset = Date.now();
+        assert.equal(await realm.ResetPassword(RealmTestFixture.PrincipalId, 'reset-pw-1'), true);
+        const afterReset = await realm.CredentialsChangedAt(RealmTestFixture.PrincipalId);
+        assert.ok(afterReset !== undefined && afterReset.getTime() >= beforeReset);
+        await new Promise(resolve => setTimeout(resolve, 5));
+        assert.notEqual(await realm.RotatePasswordOf(RealmTestFixture.Email, 'reset-pw-1', 'rotated-pw-2'), undefined);
+        const afterRotate = await realm.CredentialsChangedAt(RealmTestFixture.PrincipalId);
+        assert.ok(afterRotate !== undefined && afterRotate.getTime() > afterReset.getTime());
+        // A failed reset / rotation stamps nothing.
+        assert.equal(await realm.ResetPassword('p-ghost', 'x'), false);
+        assert.equal(await realm.CredentialsChangedAt('p-ghost'), undefined);
+        const reopened = await IdpRealm.OpenFor(dir, RealmTestFixture.TenantId, RealmTestFixture.DisplayName, key);
+        assert.equal((await reopened.CredentialsChangedAt(RealmTestFixture.PrincipalId))?.getTime(), afterRotate.getTime());
+    });
+});

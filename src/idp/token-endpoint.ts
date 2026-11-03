@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { IAuthorizationCodeStore } from './authorization-code-store.js';
 import type { IdpClientStore } from './idp-client-store.js';
+import type { IdpRealmSet } from './idp-host.js';
 import type { IdpSigningKey } from './idp-signing-key.js';
 
 export interface TokenResult
@@ -44,6 +45,8 @@ export class TokenEndpoint
     private static readonly EmailClaim = 'email';
     private static readonly NameClaim = 'name';
     private static readonly EmptyText = '';
+    /** The authentication time of a code that carries none: older than any credential change. */
+    private static readonly Epoch = new Date(0);
 
     private readonly baseUrl: string;
 
@@ -52,7 +55,9 @@ export class TokenEndpoint
         private readonly signingKey: IdpSigningKey,
         private readonly codes: IAuthorizationCodeStore,
         private readonly clients: IdpClientStore,
-        private readonly now: () => Date = () => new Date())
+        private readonly now: () => Date = () => new Date(),
+        /** The realms whose credential changes void codes from earlier sign-ins; absent -> no such check. */
+        private readonly realms?: IdpRealmSet)
     {
         this.baseUrl = baseUrl.replace(/\/+$/, '');
     }
@@ -80,6 +85,12 @@ export class TokenEndpoint
             || verifier === ''
             || createHash(TokenEndpoint.HashAlgorithm).update(verifier).digest(TokenEndpoint.Base64Url) !== binding.CodeChallenge
             || binding.Sub === '')
+        {
+            return this.Fail(TokenEndpoint.StatusBadRequest, TokenEndpoint.InvalidGrant);
+        }
+        // A code from a sign-in before the principal's password changed is not exchanged.
+        const realm = this.realms?.For(tenantId);
+        if (realm !== undefined && await realm.IsStale(binding.Sub, binding.AuthenticatedAt ?? TokenEndpoint.Epoch))
         {
             return this.Fail(TokenEndpoint.StatusBadRequest, TokenEndpoint.InvalidGrant);
         }

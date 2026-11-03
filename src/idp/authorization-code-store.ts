@@ -11,7 +11,9 @@ export class AuthorizationCodeBinding
         public readonly CodeChallenge: string,
         public readonly ExpiresAt: Date,
         public readonly Email: string,
-        public readonly Name: string)
+        public readonly Name: string,
+        /** When the sign-in behind the code was verified; a later credential change makes the code unusable. */
+        public readonly AuthenticatedAt?: Date)
     {
     }
 }

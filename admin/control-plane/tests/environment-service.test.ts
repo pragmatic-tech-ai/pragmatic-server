@@ -465,8 +465,9 @@ class IdpFixture
             const realmsDir = join(dir, 'realms')
             const realms = new IdpRealmSet([], (id, name) => IdpRealm.OpenFor(realmsDir, id, name, randomBytes(32)))
             const clients = new IdpClientStore()
-            const admin = new IdpAdminEndpoint([IdpFixture.Token], realms, clients)
-            host = new IdpHost('https://localhost', key, realms, clients, new InMemoryAuthorizationCodeStore(), new IdpSsoSessionStore(), tls, true, admin)
+            const sso = new IdpSsoSessionStore()
+            const admin = new IdpAdminEndpoint([IdpFixture.Token], realms, clients, sso)
+            host = new IdpHost('https://localhost', key, realms, clients, new InMemoryAuthorizationCodeStore(), sso, tls, true, admin)
             await host.Listen(0, '127.0.0.1')
             const conn: IdpConnection = {
                 baseUrl: 'https://localhost:' + host.Address().port,

@@ -447,11 +447,12 @@ export class IdpSsoSmoke
         const realmsDir = join(dir, S.RealmsDirName)
         const realms = new IdpRealmSet([], (tenantId, displayName) => IdpRealm.OpenFor(realmsDir, tenantId, displayName, masterKey))
         const clients = new IdpClientStore()
-        const adminEndpoint = new IdpAdminEndpoint([S.AdminToken], realms, clients)
+        const sso = new IdpSsoSessionStore()
+        const adminEndpoint = new IdpAdminEndpoint([S.AdminToken], realms, clients, sso)
 
         const port = await FreePort.Find(S.Host)
         this.baseUrl = S.HttpsOrigin + S.Host + S.PortSeparator + port
-        this.host = new IdpHost(this.baseUrl, signingKey, realms, clients, new InMemoryAuthorizationCodeStore(), new IdpSsoSessionStore(), tls, true, adminEndpoint)
+        this.host = new IdpHost(this.baseUrl, signingKey, realms, clients, new InMemoryAuthorizationCodeStore(), sso, tls, true, adminEndpoint)
         await this.host.Listen(port, S.Host)
         console.log(S.InfoTag + S.ListeningInfo + this.baseUrl)
 

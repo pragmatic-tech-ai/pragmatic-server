@@ -31,6 +31,9 @@ class AuthorizeFixture
     public codes = new InMemoryAuthorizationCodeStore();
     public sso = new IdpSsoSessionStore();
     public endpoint!: AuthorizeEndpoint;
+    public realm!: IdpRealm;
+    // When set, a sign-in's password check completes, then waits on it (the verification is in flight).
+    public InFlight: Promise<void> | undefined;
     public authenticateCalls = 0;
 
     public static async Run(body: (f: AuthorizeFixture) => Promise<void>): Promise<void>
@@ -43,12 +46,18 @@ class AuthorizeFixture
             const clients = new IdpClientStore();
             await clients.Register(AuthorizeFixture.TenantId, AuthorizeFixture.ClientId, [AuthorizeFixture.RedirectUri], 'secret');
             const f = new AuthorizeFixture();
+            f.realm = realm;
             const original = realm.Authenticate.bind(realm);
             realm.Authenticate = async (email: string, password: string) =>
             {
                 f.authenticateCalls++;
                 await new Promise(resolve => setTimeout(resolve, 10));
-                return original(email, password);
+                const result = await original(email, password);
+                if (f.InFlight !== undefined)
+                {
+                    await f.InFlight;
+                }
+                return result;
             };
             f.endpoint = new AuthorizeEndpoint(new IdpRealmSet([[AuthorizeFixture.TenantId, realm]]), clients, f.codes, f.sso, true, new IdpLoginThrottle());
             await body(f);
@@ -266,3 +275,40 @@ test('a malformed form (missing password) is not counted toward the lock', () =>
     }
     assert.equal((await AuthorizeFixture.Attempt(f, AuthorizeFixture.Email, AuthorizeFixture.Password)).kind, 'redirect');
 }));
+
+test('a password sign-in whose verification started before a reset is refused: no SSO session, no code', async () =>
+{
+    await AuthorizeFixture.Run(async f =>
+    {
+        let release: () => void = () => undefined;
+        f.InFlight = new Promise<void>(resolve => { release = resolve; });
+        const pending = AuthorizeFixture.Attempt(f, AuthorizeFixture.Email, AuthorizeFixture.Password);
+        while (f.authenticateCalls === 0)
+        {
+            await new Promise(resolve => setImmediate(resolve));
+        }
+        await new Promise(resolve => setTimeout(resolve, 20));
+        // The old password verified; the reset lands before the sign-in completes.
+        assert.equal(await f.realm.ResetPassword(AuthorizeFixture.PrincipalId, 'new-pw-after-reset'), true);
+        release();
+        const result = await pending;
+        assert.equal(result.kind, 'loginPage');
+        f.InFlight = undefined;
+        // The new password signs in normally.
+        assert.equal((await AuthorizeFixture.Attempt(f, AuthorizeFixture.Email, 'new-pw-after-reset')).kind, 'redirect');
+    });
+});
+
+test('an SSO session issued before the credentials changed no longer re-authorizes, even if the store still holds it', async () =>
+{
+    await AuthorizeFixture.Run(async f =>
+    {
+        const issued = f.sso.Issue(AuthorizeFixture.PrincipalId, AuthorizeFixture.TenantId);
+        const cookie = IdpSsoCookie.Build(issued.Id, issued.session.ExpiresAt, true).split(';')[0];
+        assert.equal((await f.endpoint.HandleGet(AuthorizeFixture.TenantId, AuthorizeFixture.Query(), cookie)).kind, 'redirect');
+        await new Promise(resolve => setTimeout(resolve, 5));
+        await f.realm.ResetPassword(AuthorizeFixture.PrincipalId, 'new-pw-after-reset');
+        assert.equal((await f.endpoint.HandleGet(AuthorizeFixture.TenantId, AuthorizeFixture.Query(), cookie)).kind, 'loginPage');
+        assert.equal(f.sso.Validate(issued.Id, AuthorizeFixture.TenantId), null);
+    });
+});

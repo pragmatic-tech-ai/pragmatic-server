@@ -6,10 +6,14 @@ import { Argon2PasswordHasher, LocalPasswordAuthenticator } from '@pragmatic-tec
 import { FileIdentityStores } from '@pragmatic-tech-ai/todl-identity-node';
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node';
 
-/** Display-name side-store: principalId -> displayName, one small JSON doc beside the identity stores. Holds no email or secret. */
-class ProfileSideStore
+/**
+ * A per-principal side-store: principalId -> one string, one small JSON doc beside the identity stores (the display names,
+ * and the time each principal's credentials last changed). Holds no email or secret.
+ */
+class PrincipalSideStore
 {
-    private static readonly FileName = 'idp-profiles.json';
+    public static readonly ProfilesFile = 'idp-profiles.json';
+    public static readonly CredentialsChangedFile = 'idp-credentials-changed.json';
     private static readonly TmpSuffix = '.tmp';
     private static readonly Encoding = 'utf8';
     private static readonly NotFound = 'ENOENT';
@@ -18,9 +22,9 @@ class ProfileSideStore
     private writeQueue: Promise<void> = Promise.resolve();
     private tmpCounter = 0;
 
-    public constructor(private readonly dir: string)
+    public constructor(private readonly dir: string, fileName: string)
     {
-        this.file = join(dir, ProfileSideStore.FileName);
+        this.file = join(dir, fileName);
     }
 
     public async Get(principalId: string): Promise<string | undefined>
@@ -41,8 +45,8 @@ class ProfileSideStore
         const map = await this.Load();
         map.set(principalId, displayName);
         await mkdir(this.dir, { recursive: true });
-        const tmp = this.file + ProfileSideStore.TmpSuffix + (this.tmpCounter++);
-        await writeFile(tmp, JSON.stringify(Object.fromEntries(map)), ProfileSideStore.Encoding);
+        const tmp = this.file + PrincipalSideStore.TmpSuffix + (this.tmpCounter++);
+        await writeFile(tmp, JSON.stringify(Object.fromEntries(map)), PrincipalSideStore.Encoding);
         await rename(tmp, this.file);
     }
 
@@ -50,11 +54,11 @@ class ProfileSideStore
     {
         try
         {
-            return new Map(Object.entries(JSON.parse(await readFile(this.file, ProfileSideStore.Encoding)) as Record<string, string>));
+            return new Map(Object.entries(JSON.parse(await readFile(this.file, PrincipalSideStore.Encoding)) as Record<string, string>));
         }
         catch (e)
         {
-            if ((e as NodeJS.ErrnoException).code === ProfileSideStore.NotFound)
+            if ((e as NodeJS.ErrnoException).code === PrincipalSideStore.NotFound)
             {
                 return new Map();
             }
@@ -74,7 +78,11 @@ export class IdpRealm
     private readonly hasher = new Argon2PasswordHasher();
     private readonly authenticator: LocalPasswordAuthenticator;
 
-    private constructor(private readonly tenant: Tenant, private readonly stores: IdentityStoreSet, private readonly profiles: ProfileSideStore)
+    private constructor(
+        private readonly tenant: Tenant,
+        private readonly stores: IdentityStoreSet,
+        private readonly profiles: PrincipalSideStore,
+        private readonly credentialsChanged: PrincipalSideStore)
     {
         this.authenticator = new LocalPasswordAuthenticator(stores.Accounts, stores.Secrets, this.hasher);
     }
@@ -83,7 +91,8 @@ export class IdpRealm
     {
         const dir = join(realmRoot, tenantId);
         const stores = await FileIdentityStores.Open(new NodeFsStorage(dir), masterKey);
-        return new IdpRealm(new Tenant(tenantId, TenantKind.SelfHosted, displayName), stores, new ProfileSideStore(dir));
+        return new IdpRealm(new Tenant(tenantId, TenantKind.SelfHosted, displayName), stores,
+            new PrincipalSideStore(dir, PrincipalSideStore.ProfilesFile), new PrincipalSideStore(dir, PrincipalSideStore.CredentialsChangedFile));
     }
 
     public static SecretRefFor(principalId: string): string
@@ -145,6 +154,7 @@ export class IdpRealm
             return undefined;
         }
         await this.StoreSecret(result.Principal.Id, newPassword);
+        await this.StampCredentialsChanged(result.Principal.Id);
         return result.Principal.Id;
     }
 
@@ -164,7 +174,31 @@ export class IdpRealm
             return false;
         }
         await this.StoreSecret(principalId, newPassword);
+        await this.StampCredentialsChanged(principalId);
         return true;
+    }
+
+    /**
+     * When the principal's password last changed (an admin reset or a self-service change); undefined when never. Anything
+     * authenticated before it (an SSO session, an auth code, a sign-in whose check started earlier) no longer counts.
+     */
+    public async CredentialsChangedAt(principalId: string): Promise<Date | undefined>
+    {
+        const raw = await this.credentialsChanged.Get(principalId);
+        return raw === undefined ? undefined : new Date(raw);
+    }
+
+    /** Whether something authenticated at `at` predates the principal's last credential change. */
+    public async IsStale(principalId: string, at: Date): Promise<boolean>
+    {
+        const changed = await this.CredentialsChangedAt(principalId);
+        return changed !== undefined && changed.getTime() >= at.getTime();
+    }
+
+    // Stamped AFTER the new hash is stored: a sign-in that read the old hash started before the stamp, so it is refused.
+    private async StampCredentialsChanged(principalId: string): Promise<void>
+    {
+        await this.credentialsChanged.Put(principalId, new Date().toISOString());
     }
 
     private async StoreSecret(principalId: string, password: string): Promise<void>

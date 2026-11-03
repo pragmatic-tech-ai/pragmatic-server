@@ -208,7 +208,7 @@ export class IdpHost
         this.internalBaseUrl = internalBaseUrl !== undefined && internalBaseUrl.trim().length > 0 ? internalBaseUrl.replace(/\/+$/, '') : this.baseUrl;
         this.authorize = new AuthorizeEndpoint(realms, clients, codes, sso, secureCookie, throttle);
         this.throttle = throttle;
-        this.token = new TokenEndpoint(this.baseUrl, signingKey, codes, clients);
+        this.token = new TokenEndpoint(this.baseUrl, signingKey, codes, clients, undefined, realms);
     }
 
     public Listen(port: number, host: string): Promise<void>

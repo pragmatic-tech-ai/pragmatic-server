@@ -68,7 +68,7 @@ export class IdpAdminEndpoint
         adminTokens: readonly string[],
         private readonly realms: IdpRealmSet,
         private readonly clients: IdpClientStore,
-        private readonly sso?: IdpSsoSessionStore)
+        private readonly sso: IdpSsoSessionStore)
     {
         this.adminTokenDigests = adminTokens.filter(t => t.length > 0).map(t => IdpAdminEndpoint.Digest(t));
     }
@@ -201,7 +201,7 @@ export class IdpAdminEndpoint
             return IdpAdminEndpoint.Fail(IdpAdminEndpoint.NotFoundStatus, IdpAdminEndpoint.UnknownAccountCode);
         }
         // An SSO cookie issued before the reset must not re-authorize without the new password.
-        this.sso?.RevokeAllFor(tenantId, principalId);
+        this.sso.RevokeAllFor(tenantId, principalId);
         return new AdminResult(IdpAdminEndpoint.OkStatus, { [IdpAdminEndpoint.PrincipalIdField]: principalId });
     }
 

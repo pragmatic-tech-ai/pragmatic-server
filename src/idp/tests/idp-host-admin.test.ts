@@ -76,7 +76,7 @@ class AdminFixture
             let admin: IdpAdminEndpoint | undefined;
             if (withAdmin === AdminFixture.Throwing)
             {
-                admin = new ThrowingAdminEndpoint([AdminFixture.Token], realms, clients);
+                admin = new ThrowingAdminEndpoint([AdminFixture.Token], realms, clients, sso);
             }
             else if (withAdmin)
             {

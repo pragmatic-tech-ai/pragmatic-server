@@ -85,7 +85,13 @@ export class AuthorizeEndpoint
         {
             return this.LoginPage(false);
         }
-        return this.RedirectWithCode(tenantId, request, session.PrincipalId, undefined);
+        // A session from before the principal's password changed no longer signs in.
+        if (await this.realms.For(tenantId)?.IsStale(session.PrincipalId, session.IssuedAt))
+        {
+            this.sso.Revoke(id as string);
+            return this.LoginPage(false);
+        }
+        return this.RedirectWithCode(tenantId, request, session.PrincipalId, undefined, session.IssuedAt);
     }
 
     public async HandlePost(tenantId: string, query: URLSearchParams, cookieHeader: string | undefined, form: URLSearchParams, clientIp: string): Promise<AuthorizeResult>
@@ -115,15 +121,21 @@ export class AuthorizeEndpoint
         // Count the attempt at the gate, synchronously BEFORE the await: Authenticate yields (Argon2 + I/O), so a concurrent
         // burst would otherwise all pass CheckAllowed before any failure was recorded. Success clears the optimistic count.
         this.throttle.RecordFailure(tenantId, email, clientIp);
+        const startedAt = this.now();
         const result = await realm.Authenticate(email, password);
         if (result === null)
+        {
+            return this.LoginPage(true);
+        }
+        // The check may have read a password that changed while it ran: if so, refuse it.
+        if (await realm.IsStale(result.Principal.Id, startedAt))
         {
             return this.LoginPage(true);
         }
         this.throttle.Clear(tenantId, email, clientIp);
         const issued = this.sso.Issue(result.Principal.Id, tenantId);
         const cookie = IdpSsoCookie.Build(issued.Id, issued.session.ExpiresAt, this.secureCookie);
-        return this.RedirectWithCode(tenantId, request, result.Principal.Id, cookie);
+        return this.RedirectWithCode(tenantId, request, result.Principal.Id, cookie, startedAt);
     }
 
     private Validate(tenantId: string, query: URLSearchParams): AuthorizeRequest | AuthorizeResult
@@ -160,13 +172,13 @@ export class AuthorizeEndpoint
         return new AuthorizeRequest(clientId, redirectUri, challenge, state, nonce);
     }
 
-    private async RedirectWithCode(tenantId: string, request: AuthorizeRequest, sub: string, setCookie: string | undefined): Promise<AuthorizeResult>
+    private async RedirectWithCode(tenantId: string, request: AuthorizeRequest, sub: string, setCookie: string | undefined, authenticatedAt: Date): Promise<AuthorizeResult>
     {
         const expiresAt = new Date(this.now().getTime() + AuthorizeEndpoint.CodeTtlMs);
         const profile = await this.realms.For(tenantId)?.LookupProfile(sub);
         const code = await this.codes.Issue(new AuthorizationCodeBinding(
             sub, tenantId, request.ClientId, request.RedirectUri, request.Nonce, request.CodeChallenge, expiresAt,
-            profile?.email ?? AuthorizeEndpoint.EmptyText, profile?.name ?? AuthorizeEndpoint.EmptyText));
+            profile?.email ?? AuthorizeEndpoint.EmptyText, profile?.name ?? AuthorizeEndpoint.EmptyText, authenticatedAt));
         const target = new URL(request.RedirectUri);
         target.searchParams.set(AuthorizeEndpoint.CodeParam, code);
         target.searchParams.set(AuthorizeEndpoint.StateParam, request.State);

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -9,6 +9,8 @@ import { AuthorizationCodeBinding, InMemoryAuthorizationCodeStore } from '../aut
 import { IdpClientStore } from '../idp-client-store.js';
 import { IdpSigningKey } from '../idp-signing-key.js';
 import { TokenEndpoint } from '../token-endpoint.js';
+import { IdpRealmSet } from '../idp-host.js';
+import { IdpRealm } from '../idp-realm.js';
 
 class TokenFixture
 {
@@ -49,6 +51,7 @@ class TokenFixture
     public codes = new InMemoryAuthorizationCodeStore();
     public key!: IdpSigningKey;
     public endpoint!: TokenEndpoint;
+    public realm!: IdpRealm;
 
     public static async Run(body: (f: TokenFixture) => Promise<void>): Promise<void>
     {
@@ -60,7 +63,9 @@ class TokenFixture
             const clients = new IdpClientStore();
             await clients.Register(TokenFixture.TenantId, TokenFixture.ClientId, [TokenFixture.RedirectUri], TokenFixture.Secret);
             const fixedNow = new Date(Math.floor(Date.now() / 1000) * 1000);
-            f.endpoint = new TokenEndpoint(TokenFixture.BaseUrl, f.key, f.codes, clients, () => fixedNow);
+            f.realm = await IdpRealm.OpenFor(path.join(dir, 'realms'), TokenFixture.TenantId, 'T', randomBytes(32));
+            await f.realm.SeedAccount(TokenFixture.Email, TokenFixture.Sub, 'pw-before-reset', TokenFixture.Name);
+            f.endpoint = new TokenEndpoint(TokenFixture.BaseUrl, f.key, f.codes, clients, () => fixedNow, new IdpRealmSet([[TokenFixture.TenantId, f.realm]]));
             await body(f);
         }
         finally
@@ -69,12 +74,12 @@ class TokenFixture
         }
     }
 
-    public async IssueCode(name: string = TokenFixture.Name): Promise<string>
+    public async IssueCode(name: string = TokenFixture.Name, authenticatedAt: Date = new Date()): Promise<string>
     {
         const challenge = createHash(TokenFixture.HashAlgorithm).update(TokenFixture.Verifier).digest(TokenFixture.Base64Url);
         return this.codes.Issue(new AuthorizationCodeBinding(TokenFixture.Sub, TokenFixture.TenantId, TokenFixture.ClientId,
             TokenFixture.RedirectUri, TokenFixture.Nonce, challenge, new Date(Date.now() + TokenFixture.CodeTtlMs),
-            TokenFixture.Email, name));
+            TokenFixture.Email, name, authenticatedAt));
     }
 
     public static Form(code: string, overrides: Record<string, string> = {}): URLSearchParams
@@ -190,5 +195,21 @@ test('an account with no name still mints a valid id_token with email and no nam
         });
         assert.equal(payload[TokenFixture.EmailClaim], TokenFixture.Email);
         assert.equal(TokenFixture.NameClaim in payload, false);
+    });
+});
+
+test('a code from a sign-in before the credentials changed is refused (invalid_grant); one from after is honoured', async () =>
+{
+    await TokenFixture.Run(async f =>
+    {
+        const stale = await f.IssueCode(TokenFixture.Name, new Date());
+        await new Promise(resolve => setTimeout(resolve, 5));
+        assert.equal(await f.realm.ResetPassword(TokenFixture.Sub, 'pw-after-reset'), true);
+        await new Promise(resolve => setTimeout(resolve, 5));
+        const refused = await f.endpoint.Handle(TokenFixture.TenantId, TokenFixture.Form(stale));
+        assert.equal(refused.status, 400);
+        assert.equal((refused.body as Record<string, unknown>).error, TokenFixture.InvalidGrant);
+        const fresh = await f.IssueCode(TokenFixture.Name, new Date());
+        assert.equal((await f.endpoint.Handle(TokenFixture.TenantId, TokenFixture.Form(fresh))).status, 200);
     });
 });

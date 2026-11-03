@@ -173,10 +173,11 @@ class IdpFixture
             const masterKey = randomBytes(32)
             const realms = new IdpRealmSet([], (id, name) => IdpRealm.OpenFor(realmsDir, id, name, masterKey))
             const clients = new IdpClientStore()
-            const admin = new IdpAdminEndpoint([IdpFixture.AdminToken], realms, clients)
+            const sso = new IdpSsoSessionStore()
+            const admin = new IdpAdminEndpoint([IdpFixture.AdminToken], realms, clients, sso)
             const port = await IdpFixture.FreePort()
             const baseUrl = 'https://' + IdpFixture.Host + ':' + port
-            host = new IdpHost(baseUrl, key, realms, clients, new InMemoryAuthorizationCodeStore(), new IdpSsoSessionStore(), tls, true, admin)
+            host = new IdpHost(baseUrl, key, realms, clients, new InMemoryAuthorizationCodeStore(), sso, tls, true, admin)
             await host.Listen(port, IdpFixture.Host)
             const conn: IdpConnection = { baseUrl, browserBaseUrl: baseUrl, ca, adminToken: IdpFixture.AdminToken, adminTokenRef: 'admin-token', caDir: join(dir, 'tls') }
             const client = new IdpAdminClient({ baseUrl, adminToken: IdpFixture.AdminToken, ca })

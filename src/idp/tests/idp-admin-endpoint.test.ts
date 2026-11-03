@@ -250,7 +250,7 @@ test('no 200 or 400 body contains the password or the client secret', async () =
 test('any member of a multi-token set authenticates; a non-member is 401', async () =>
 {
     const f = await AdminFixture.Create();
-    const multi = new IdpAdminEndpoint([AdminFixture.Token, AdminFixture.SameLengthWrong], f.realms, f.clients);
+    const multi = new IdpAdminEndpoint([AdminFixture.Token, AdminFixture.SameLengthWrong], f.realms, f.clients, f.sso);
     const put = (token: string): Promise<AdminResult> =>
         multi.Handle(AdminFixture.Put, [AdminFixture.Realms, AdminFixture.Tenant], AdminFixture.Auth(token), { displayName: AdminFixture.Display });
     assert.equal((await put(AdminFixture.Token)).Status, AdminFixture.OkStatus);
@@ -261,7 +261,7 @@ test('any member of a multi-token set authenticates; a non-member is 401', async
 test('an empty token set rejects every request', async () =>
 {
     const f = await AdminFixture.Create();
-    const none = new IdpAdminEndpoint([], f.realms, f.clients);
+    const none = new IdpAdminEndpoint([], f.realms, f.clients, f.sso);
     for (const token of [AdminFixture.Token, '', 'x'])
     {
         const r = await none.Handle(AdminFixture.Put, [AdminFixture.Realms, AdminFixture.Tenant], AdminFixture.Auth(token), { displayName: AdminFixture.Display });
