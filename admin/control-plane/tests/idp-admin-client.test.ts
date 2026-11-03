@@ -92,6 +92,39 @@ test('EnsureRealm, SeedAccount, RegisterClient round-trip over https', async () 
     });
 });
 
+test('ResetPassword replaces an account password over https: the new one authenticates, the old one no longer does', async () =>
+{
+    await ClientFixture.WithHost(async (host, realms, _clients, ca) =>
+    {
+        const client = new IdpAdminClient({ baseUrl: ClientFixture.UrlOf(host), adminToken: ClientFixture.Token, ca });
+        await client.EnsureRealm(ClientFixture.TenantId, ClientFixture.DisplayName);
+        await client.SeedAccount(ClientFixture.TenantId, { email: ClientFixture.Email, principalId: ClientFixture.PrincipalId, displayName: ClientFixture.Ann, password: ClientFixture.Password });
+        const fresh = ClientFixture.Password + '-reset';
+        await client.ResetPassword(ClientFixture.TenantId, ClientFixture.PrincipalId, fresh);
+        const realm = realms.For(ClientFixture.TenantId);
+        assert.ok(realm !== undefined);
+        assert.ok(await realm.Authenticate(ClientFixture.Email, fresh) !== null);
+        assert.equal(await realm.Authenticate(ClientFixture.Email, ClientFixture.Password), null);
+    });
+});
+
+test('ResetPassword for an unknown principal throws IdpAdminError 404 unknown_account without the password', async () =>
+{
+    await ClientFixture.WithHost(async (host, _realms, _clients, ca) =>
+    {
+        const client = new IdpAdminClient({ baseUrl: ClientFixture.UrlOf(host), adminToken: ClientFixture.Token, ca });
+        await client.EnsureRealm(ClientFixture.TenantId, ClientFixture.DisplayName);
+        await assert.rejects(client.ResetPassword(ClientFixture.TenantId, 'nobody', ClientFixture.Password), (err: unknown) =>
+        {
+            assert.ok(err instanceof IdpAdminError);
+            assert.equal(err.Status, 404);
+            assert.equal(err.Code, 'unknown_account');
+            assert.ok(!String(err).includes(ClientFixture.Password));
+            return true;
+        });
+    });
+});
+
 test('a wrong admin token throws IdpAdminError with status 401 and no secret in the message', async () =>
 {
     await ClientFixture.WithHost(async (host, realms, _clients, ca) =>

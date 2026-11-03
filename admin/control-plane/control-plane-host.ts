@@ -20,7 +20,7 @@ import type { HiveObservationRegistry } from './hive-observation-record.js'
 import { InvalidTenantIdError } from './idp-service.js'
 import type { IIdpService } from './idp-service.js'
 import { PortUnavailableError } from './port-allocator.js'
-import type { TenantProvisioningService } from './tenant-provisioning-service.js'
+import { IdpUnreachableError, OwnerAccountMissingError, OwnerIdpRefusedError, OwnerNotRecordedError, TenantIdpMissingError, type OwnerPasswordReset, type TenantProvisioningService } from './tenant-provisioning-service.js'
 import { InvalidEnvironmentNameError } from './template-catalog.js'
 import { LastOperatorError, OperatorExistsError, OperatorNotFoundError, OperatorProtectedError, OperatorRole, OperatorSelfLockoutError, type IOperatorIdentity, type OperatorPrincipal } from './operator-identity.js'
 import { OperatorAuthorization } from './operator-authorization.js'
@@ -273,6 +273,9 @@ export class ControlPlaneHost
     private static readonly ChannelsSegment = 'channels'
     private static readonly MinVersionSegment = 'min-version'
     private static readonly HoldSegment = 'hold'
+    private static readonly OwnerPasswordSegment = 'owner-password'
+    private static readonly TenantOwnerPasswordPathPattern = new RegExp(
+        '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.TenantsSegment + '/([^/]+)/' + ControlPlaneHost.OwnerPasswordSegment + '$')
     private static readonly TenantPolicyPathPattern = new RegExp(
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.TenantsSegment + '/([^/]+)/' + ControlPlaneHost.PolicySegment + '/(' +
         [ControlPlaneHost.ChannelsSegment, ControlPlaneHost.MinVersionSegment, ControlPlaneHost.HoldSegment].join('|') + ')$')
@@ -407,6 +410,12 @@ export class ControlPlaneHost
         [AgentUninstallError, ControlPlaneHost.StatusConflict],
         // A provisioned hive's kind cluster could not be destroyed (kind / Docker down): fix it and retry, or delete anyway.
         [HiveClusterDestroyError, ControlPlaneHost.StatusConflict],
+        // Owner password reset: state the operator must fix -> 409; an unreachable tenant IdP -> 503 (not masked).
+        [OwnerNotRecordedError, ControlPlaneHost.StatusConflict],
+        [TenantIdpMissingError, ControlPlaneHost.StatusConflict],
+        [OwnerAccountMissingError, ControlPlaneHost.StatusConflict],
+        [OwnerIdpRefusedError, ControlPlaneHost.StatusConflict],
+        [IdpUnreachableError, ControlPlaneHost.StatusUnavailable],
     ])
 
     private httpServer: HttpServer | undefined
@@ -922,6 +931,11 @@ export class ControlPlaneHost
         {
             return await this.RouteRollout(req, res, method, rom)
         }
+        const opm = ControlPlaneHost.TenantOwnerPasswordPathPattern.exec(path)
+        if (opm !== null)
+        {
+            return await this.RouteOwnerPasswordReset(res, method, opm)
+        }
         const tpm = ControlPlaneHost.TenantPolicyPathPattern.exec(path)
         if (tpm !== null)
         {
@@ -1232,6 +1246,28 @@ export class ControlPlaneHost
             return true
         }
         this.WriteInstallStatus(res, ControlPlaneHost.StatusAccepted, installer.Start(id))
+        return true
+    }
+
+    /**
+     * Serves POST /api/tenants/ID/owner-password: sets a fresh Owner password in the tenant's IdP and returns
+     * { ownerEmail, ownerPassword } once (no-store). The password is never logged or audited; false for any other method.
+     */
+    private async RouteOwnerPasswordReset(res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
+    {
+        if (method !== PlaneHttp.MethodPost)
+        {
+            return false
+        }
+        const id = ControlPlaneHost.Decode(m[1] as string)
+        if (id === undefined)
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.BadNameMessage })
+            return true
+        }
+        const reset: OwnerPasswordReset = await this.provisioning.ResetOwnerPassword(id)
+        res.setHeader(ControlPlaneHost.CacheControlHeader, ControlPlaneHost.NoStore)
+        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, reset)
         return true
     }
 

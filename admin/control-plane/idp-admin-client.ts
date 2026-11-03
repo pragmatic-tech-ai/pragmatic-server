@@ -69,6 +69,7 @@ export class IdpAdminClient
     private static readonly RealmsPath = '/_admin/realms/';
     private static readonly AccountsSuffix = '/accounts';
     private static readonly ClientsSuffix = '/clients';
+    private static readonly PasswordSuffix = '/password';
     private static readonly PutMethod = 'PUT';
     private static readonly PostMethod = 'POST';
     private static readonly DeleteMethod = 'DELETE';
@@ -104,6 +105,14 @@ export class IdpAdminClient
     {
         await this.Request(IdpAdminClient.PostMethod, this.RealmPath(tenantId) + IdpAdminClient.AccountsSuffix,
             { email: account.email, principalId: account.principalId, displayName: account.displayName, password: account.password });
+    }
+
+    /** Replaces an account's password; IdpAdminError 404 `unknown_account` when the realm has no such principal. */
+    public async ResetPassword(tenantId: string, principalId: string, password: string): Promise<void>
+    {
+        await this.Request(IdpAdminClient.PostMethod,
+            this.RealmPath(tenantId) + IdpAdminClient.AccountsSuffix + IdpAdminClient.PathSeparator + encodeURIComponent(principalId) + IdpAdminClient.PasswordSuffix,
+            { password });
     }
 
     public async RegisterClient(tenantId: string, client: IdpAdminClientRegistration): Promise<void>
