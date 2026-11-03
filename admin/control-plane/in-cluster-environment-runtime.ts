@@ -7,7 +7,11 @@ import type { EnvironmentPlacement } from './environment-placement.js'
 import type { EnvironmentWorkload } from './environment-workload.js'
 import type { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import type { IHiveOrchestrator } from './hive-orchestrator.js'
+import { EffectiveRegistry } from './effective-registry.js'
 import { ImageVerificationError } from './image-verifier.js'
+import { KeyNotFoundError } from './key-store.js'
+import type { HiveRecord } from './platform-records.js'
+import type { PlatformImageSigner } from './platform-signing-key.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import type { ITenantDirectory } from './tenant-api/tenant-directory.js'
 
@@ -83,12 +87,14 @@ export class InClusterEnvironmentRuntime implements IEnvironmentRuntime
     private static readonly RefusedImageOpen = ' ('
     private static readonly RefusedImageClose = ').'
     private static readonly Redacted = '[redacted]'
+    private static readonly MissingKeyMessage = 'The platform signing key is not available, so the server image cannot be signed for this hive.'
 
     public constructor(
         private readonly orchestrators: HiveOrchestratorFactory,
         private readonly placement: EnvironmentPlacement,
         private readonly directory: ITenantDirectory,
-        private readonly bundle: IBundleBuilder)
+        private readonly bundle: IBundleBuilder,
+        private readonly signer?: PlatformImageSigner)
     {
     }
 
@@ -117,7 +123,7 @@ export class InClusterEnvironmentRuntime implements IEnvironmentRuntime
 
     public async BringUp(ctx: EnvRuntimeContext): Promise<EnvEndpoint>
     {
-        const { orchestrator, workload } = this.Resolve(ctx)
+        const { hive, orchestrator, workload } = this.Resolve(ctx)
         const bundleDir = ctx.bundleDir
         if (bundleDir === undefined)
         {
@@ -125,6 +131,7 @@ export class InClusterEnvironmentRuntime implements IEnvironmentRuntime
         }
         await InClusterEnvironmentRuntime.Guard(ctx, async () =>
         {
+            await this.SignServerImage(hive, workload)
             await orchestrator.Apply(workload)
             if (workload.federation !== undefined && ctx.caPem !== undefined)
             {
@@ -196,7 +203,22 @@ export class InClusterEnvironmentRuntime implements IEnvironmentRuntime
         return health.ready
     }
 
-    private Resolve(ctx: EnvRuntimeContext): { orchestrator: IHiveOrchestrator; workload: EnvironmentWorkload }
+    /**
+     * For a hive that trusts the platform signing key, signs the platform's server image (as the hive will pull it) so
+     * the hive's fail-closed verification accepts it. The image is the one placement chose for the template, never
+     * caller input; signing per bring-up keeps a rebuilt image runnable. Any other hive (own trust root, or none) gets
+     * nothing signed here and its verification decides. See PlatformImageSigner for the trust trade-off.
+     */
+    private async SignServerImage(hive: HiveRecord, workload: EnvironmentWorkload): Promise<void>
+    {
+        if (this.signer === undefined || !this.signer.SignsFor(hive))
+        {
+            return
+        }
+        await this.signer.Sign(EffectiveRegistry.For(hive).ImageRef(workload.image))
+    }
+
+    private Resolve(ctx: EnvRuntimeContext): { hive: HiveRecord; orchestrator: IHiveOrchestrator; workload: EnvironmentWorkload }
     {
         const hive = ctx.record.hiveId === undefined ? undefined : this.directory.GetHive(ctx.record.hiveId)
         if (hive === undefined)
@@ -204,7 +226,7 @@ export class InClusterEnvironmentRuntime implements IEnvironmentRuntime
             throw new InClusterHiveMissingError()
         }
         const workload = this.placement.WorkloadFor(ctx.record)
-        return { orchestrator: this.orchestrators.For(hive), workload }
+        return { hive, orchestrator: this.orchestrators.For(hive), workload }
     }
 
     private static async Guard<T>(ctx: EnvRuntimeContext, op: () => Promise<T>): Promise<T>
@@ -220,13 +242,18 @@ export class InClusterEnvironmentRuntime implements IEnvironmentRuntime
     }
 
     // Only failures whose text is known to be safe get a reason a tenant may see; an image verification error names the
-    // image ref and why it was refused, never signature, digest or key material.
+    // image ref and why it was refused; a missing signing key is named only generically (a tenant never sees key refs);
+    // never signature, digest or key material.
     private static ShowableReason(err: unknown): string | undefined
     {
         if (err instanceof ImageVerificationError)
         {
             const C = InClusterEnvironmentRuntime
             return C.RefusedImagePrefix + err.ImageRef + C.RefusedImageOpen + err.Reason + C.RefusedImageClose
+        }
+        if (err instanceof KeyNotFoundError)
+        {
+            return InClusterEnvironmentRuntime.MissingKeyMessage
         }
         return undefined
     }

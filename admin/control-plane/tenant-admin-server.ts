@@ -187,6 +187,8 @@ export class TenantAdminServer
         const idpService = TenantAdminServer.BuildIdpService(process.env, dataRoot)
         const orchestrators = new HiveOrchestratorFactory()
         const placement = new EnvironmentPlacement(directory)
+        // No PlatformImageSigner here, deliberately: the platform signing key's private half never ships into a hive, so
+        // the in-hive tenant admin cannot sign. It runs only images the platform signed (its hive's verification decides).
         const service = new EnvironmentService(registry, new PortAllocator(ControlPlaneServer.EnvPortFloor, new NetPortProbe()), new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(orchestrators, placement, directory, new BundleBuilderAdapter()), directory, orchestrators), new UserSeederAdapter(new UserSeeder()), dataRoot, new AdminProxy(new WsAdminConnector()), directory, idpService, conn => new IdpAdminClient(conn))
         const plane = ControlPlaneServer.BuildTenantPlane(
             dataRoot, idpService, directory, cfg.secureCookie, service, this.rollout, orchestrators, placement,

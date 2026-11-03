@@ -16,6 +16,10 @@ import type { HiveRecord } from '../platform-records.js'
 import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
 import { ImageVerificationError } from '../image-verifier.js'
+import type { IImageSigner } from '../image-signer.js'
+import { KeyNotFoundError } from '../key-store.js'
+import { InfraMode } from '../platform-records.js'
+import { PlatformImageSigner } from '../platform-signing-key.js'
 import type { EnvOidc } from '../../../environments/seed/bundle.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import { EnvLogsUnavailableInClusterError, InClusterEnvironmentRuntime, InClusterHiveMissingError, InClusterOperationFailedError, InClusterBundleMissingError } from '../in-cluster-environment-runtime.js'
@@ -83,6 +87,32 @@ class FakeOrchestrator implements IHiveOrchestrator
     public async PrepareAgent(_image: string): Promise<void> { }
 }
 
+class SigningFx
+{
+    public static readonly PlatformKey = 'platform-signing'
+    public static readonly Workload = { ...Fx.Workload, image: 'pragmatic-server:dev' } as unknown as EnvironmentWorkload
+    public static readonly Hive = { id: 'h1', registry: { mode: InfraMode.Attach, endpoint: 'reg.local:5000' }, trustRootRef: 'platform-signing' } as unknown as HiveRecord
+    public static readonly OwnKeyHive = { id: 'h1', registry: { mode: InfraMode.Attach }, trustRootRef: 'acme-key' } as unknown as HiveRecord
+    public static readonly UntrustedHive = { id: 'h1', registry: { mode: InfraMode.Attach } } as unknown as HiveRecord
+}
+
+class FakeSigner implements IImageSigner
+{
+    public readonly Signed: Array<[string, string]> = []
+    public Log: string[] | undefined
+    public FailWith: Error | undefined
+
+    public async Sign(imageRef: string, signingKeyRef: string): Promise<void>
+    {
+        this.Log?.push('Sign')
+        if (this.FailWith)
+        {
+            throw this.FailWith
+        }
+        this.Signed.push([imageRef, signingKeyRef])
+    }
+}
+
 class Harness
 {
     public readonly Orchestrator = new FakeOrchestrator()
@@ -91,17 +121,18 @@ class Harness
     public readonly BundleDir = mkdtempSync(join(tmpdir(), 'icr-'))
     public readonly Ctx: EnvRuntimeContext = { def: Fx.Def, record: this.Record, bundleDir: this.BundleDir }
 
-    public constructor(hiveKnown: boolean = true, workload: EnvironmentWorkload = Fx.Workload)
+    public constructor(hiveKnown: boolean = true, workload: EnvironmentWorkload = Fx.Workload, hive: HiveRecord = Fx.Hive, signer?: IImageSigner)
     {
         const orchestrator = this.Orchestrator
         const factory = { For: (_h: HiveRecord) => orchestrator } as unknown as HiveOrchestratorFactory
         const placement = { WorkloadFor: (_r: EnvironmentRecord) => workload } as unknown as EnvironmentPlacement
         const directory: ITenantDirectory = {
             GetTenant: () => undefined,
-            GetHive: () => hiveKnown ? Fx.Hive : undefined,
+            GetHive: () => hiveKnown ? hive : undefined,
             ListHives: () => []
         }
-        this.Runtime = new InClusterEnvironmentRuntime(factory, placement, directory, new BundleBuilderAdapter())
+        const platform = signer === undefined ? undefined : new PlatformImageSigner(signer, SigningFx.PlatformKey)
+        this.Runtime = new InClusterEnvironmentRuntime(factory, placement, directory, new BundleBuilderAdapter(), platform)
     }
 }
 
@@ -169,6 +200,46 @@ test('the failure detail keeps the cause for the operator log, with the OIDC sec
         e instanceof InClusterOperationFailedError
         && e.Detail === 'apply failed near [redacted]'
         && !e.message.includes('apply failed'))
+})
+
+test('BringUp signs the server image, as the hive pulls it, with the platform key before applying, for a hive trusting it', async () =>
+{
+    const signer = new FakeSigner()
+    const h = new Harness(true, SigningFx.Workload, SigningFx.Hive, signer)
+    signer.Log = h.Orchestrator.Order
+    await h.Runtime.Prepare(h.Ctx)
+    await h.Runtime.BringUp(h.Ctx)
+    assert.deepEqual(signer.Signed, [['reg.local:5000/pragmatic-server:dev', 'platform-signing']])
+    assert.deepEqual(h.Orchestrator.Order.slice(0, 2), ['Sign', 'Apply'])
+})
+
+test('BringUp signs nothing for a hive with its own trust root or none, or with no signer composed', async () =>
+{
+    const signer = new FakeSigner()
+    for (const hive of [SigningFx.OwnKeyHive, SigningFx.UntrustedHive])
+    {
+        const h = new Harness(true, SigningFx.Workload, hive, signer)
+        await h.Runtime.Prepare(h.Ctx)
+        await h.Runtime.BringUp(h.Ctx)
+    }
+    assert.deepEqual(signer.Signed, [])
+    const unsigned = new Harness(true, SigningFx.Workload, SigningFx.Hive)
+    await unsigned.Runtime.Prepare(unsigned.Ctx)
+    await unsigned.Runtime.BringUp(unsigned.Ctx)
+    assert.deepEqual(unsigned.Orchestrator.Calls.map(c => c.m), ['Apply'])
+})
+
+test('a missing platform key fails before the cluster is touched, without naming the key', async () =>
+{
+    const signer = new FakeSigner()
+    signer.FailWith = new KeyNotFoundError('platform-signing')
+    const h = new Harness(true, SigningFx.Workload, SigningFx.Hive, signer)
+    await h.Runtime.Prepare(h.Ctx)
+    await assert.rejects(() => h.Runtime.BringUp(h.Ctx), (e: Error) =>
+        e instanceof InClusterOperationFailedError
+        && e.Reason === 'The platform signing key is not available, so the server image cannot be signed for this hive.'
+        && !e.message.includes('platform-signing'))
+    assert.deepEqual(h.Orchestrator.Calls, [])
 })
 
 test('WaitHealthy and Teardown failures are also mapped to the generic error', async () =>

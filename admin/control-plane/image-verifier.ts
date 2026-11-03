@@ -44,7 +44,7 @@ export class CryptoImageVerifier implements IImageVerifier
             throw new ImageVerificationError(imageRef, CryptoImageVerifier.NoTrustRoot)
         }
         const digest = await this.digests.Of(imageRef)
-        const signature = await this.store.Get(digest)
+        const signature = await this.store.Get(digest, trustRootRef)
         if (signature === undefined)
         {
             throw new ImageVerificationError(imageRef, CryptoImageVerifier.NoSignature)

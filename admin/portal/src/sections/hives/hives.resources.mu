@@ -399,7 +399,7 @@ resources HivesResources {
             TextBox [ UsesNativeInput = true, Text = $Endpoint, Margin = (0,0,0,12) ]
             TextBlock [ Text = "Registry credential reference (optional)", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
             TextBox [ UsesNativeInput = true, Text = $CredentialRef, Margin = (0,0,0,12) ]
-            TextBlock [ Text = "Trust root reference (optional)", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
+            TextBlock [ Text = "Trust root reference (optional; empty uses the platform signing key)", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
             TextBox [ UsesNativeInput = true, Text = $TrustRootRef, Margin = (0,0,0,12) ]
             TextBlock [ Text = $ErrorText, Foreground = @StateDangerInk, TextWrapping = Wrap, Margin = (0,0,0,12),
                         Visibility = $ErrorText << ToVisibility ]
@@ -542,7 +542,7 @@ resources HivesResources {
                         TextBox [ UsesNativeInput = true, Text = $Endpoint, Margin = (0,0,0,12) ]
                         TextBlock [ Text = "Registry credential reference (optional)", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
                         TextBox [ UsesNativeInput = true, Text = $CredentialRef, Margin = (0,0,0,12) ]
-                        TextBlock [ Text = "Trust root reference (optional)", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
+                        TextBlock [ Text = "Trust root reference (optional; empty uses the platform signing key)", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
                         TextBox [ UsesNativeInput = true, Text = $TrustRootRef ]
                     }
 

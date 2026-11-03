@@ -37,6 +37,8 @@ import { InClusterRegistry } from './in-cluster-registry.js'
 import { UiArtifactSigner } from './ui-artifact-signer.js'
 import { FileKeyStore } from './key-store.js'
 import { ManifestSigner, type IManifestSigner } from './manifest-signer.js'
+import { PlatformImageSigner, PlatformSigningKey } from './platform-signing-key.js'
+import type { IImageSigner } from './image-signer.js'
 import { DockerImageDigest } from './image-digest.js'
 import { ImageSigner } from './image-signer.js'
 import { FileSignatureStore } from './signature-store.js'
@@ -85,6 +87,9 @@ export class ControlPlaneServer
     private static readonly KeysDirName = 'keys'
     private static readonly SigningKeyRefEnvVar = 'PRAGMATIC_ADMIN_SIGNING_KEY_REF'
     private static readonly SignaturesFileName = 'signatures.json'
+    private static readonly TrustAdoptedPrefix = 'Platform signing key '
+    private static readonly TrustAdoptedInfix = ' set as the trust root of hives: '
+    private static readonly HiveIdSeparator = ', '
     private static readonly HttpScheme = 'http://'
     private static readonly ClientsFile = 'clients.json'
     private static readonly TenantsFile = 'tenants.json'
@@ -176,6 +181,7 @@ export class ControlPlaneServer
             new HiveRegistry(join(dataRoot, ControlPlaneServer.HivesFile)),
             registry)
         await directory.Load()
+        const signing = await ControlPlaneServer.PlatformSigningOf(process.env, dataRoot, directory)
         const allocator = new PortAllocator(ControlPlaneServer.EnvPortFloor, new NetPortProbe())
         const bundle = new BundleBuilderAdapter()
         const seeder = new UserSeederAdapter(new UserSeeder())
@@ -183,7 +189,7 @@ export class ControlPlaneServer
         const idpService = new IdpService(new IdpRegistry(join(dataRoot, ControlPlaneServer.IdpsFile)), new DockerIdpDriver(new PortAllocator(ControlPlaneServer.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), dataRoot, DockerEnv.ImageName))
         const orchestrators = new HiveOrchestratorFactory(undefined, dataRoot)
         const placement = new EnvironmentPlacement(directory)
-        const service = new EnvironmentService(registry, allocator, new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, bundle), new InClusterEnvironmentRuntime(orchestrators, placement, directory, bundle), directory, orchestrators), seeder, dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn), ControlPlaneServer.UiDeployerOf(dataRoot, orchestrators, registry))
+        const service = new EnvironmentService(registry, allocator, new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, bundle), new InClusterEnvironmentRuntime(orchestrators, placement, directory, bundle, signing.PlatformSigner), directory, orchestrators), seeder, dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn), ControlPlaneServer.UiDeployerOf(dataRoot, orchestrators, registry))
         const graphService = new GraphService(registry, proxy, name => service.AdminInfoFor(name))
         const staticRoot = join(here, ControlPlaneServer.ParentSegment, ControlPlaneServer.PortalSegment, ControlPlaneServer.DistSegment)
         const manifests = new ManifestRegistry(join(dataRoot, ControlPlaneServer.ManifestsFile))
@@ -196,7 +202,7 @@ export class ControlPlaneServer
         const ledger = new AdoptionLedgerRegistry(join(dataRoot, ControlPlaneServer.AdoptionLedgerFile))
         const adminClientRegistry = new TenantAdminClientRegistry(join(dataRoot, ControlPlaneServer.TenantAdminClientsFile))
         await Promise.all([manifests.Load(), audit.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load(), policies.Load(), ledger.Load(), adminClientRegistry.Load()])
-        const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, placement, observations, ControlPlaneServer.ManifestSignerOf(process.env, dataRoot), policies, ledger)
+        const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, placement, observations, ControlPlaneServer.ManifestSignerOf(signing.PlatformSigner.KeyRef, dataRoot, signing.ImageSigner), policies, ledger)
         // One tenant session store for the tenant plane and the Owner password reset (which ends the Owner's sessions).
         const tenantSessions = ControlPlaneServer.TenantSessionsOf(dataRoot)
         const principalSessions = new TenantPrincipalSessions(tenantSessions)
@@ -499,18 +505,54 @@ export class ControlPlaneServer
         return new UiDeployActuator(new OciRegistryClient(ControlPlaneServer.HttpScheme + InClusterRegistry.PushBase()), new UiArtifactSigner(keys), keys, orchestrators, new K8sManifestBuilder(), registry)
     }
 
-    /** The registry manifest signer, composed only when a platform signing key ref is configured; otherwise publishes stay unsigned. */
-    public static ManifestSignerOf(env: NodeJS.ProcessEnv, dataRoot: string): IManifestSigner | undefined
+    /** The platform signing key ref: the operator's own (PRAGMATIC_ADMIN_SIGNING_KEY_REF, trimmed) or the generated platform key. */
+    public static SigningKeyRefOf(env: NodeJS.ProcessEnv): string
     {
         const ref = env[ControlPlaneServer.SigningKeyRefEnvVar]
-        if (typeof ref !== 'string' || ref.trim() === '')
+        return typeof ref === 'string' && ref.trim() !== '' ? ref.trim() : PlatformSigningKey.DefaultRef
+    }
+
+    /**
+     * The platform signing key, ready to use: generated on first start unless an operator named their own (which must
+     * then be in the key store - checked here, so a typo fails the start instead of every later deploy). It becomes the
+     * trust root of every hive that has none; that back-fill is permanent, so hives keep the key they were given even if
+     * the operator later names another one. Returns one shared image signer and the platform signer built over it.
+     */
+    public static async PlatformSigningOf(env: NodeJS.ProcessEnv, dataRoot: string, directory: PlatformDirectory): Promise<{ ImageSigner: IImageSigner; PlatformSigner: PlatformImageSigner }>
+    {
+        const C = ControlPlaneServer
+        const keysDir = join(dataRoot, C.KeysDirName)
+        const ref = C.SigningKeyRefOf(env)
+        if (ref === PlatformSigningKey.DefaultRef)
         {
-            return undefined
+            await PlatformSigningKey.Ensure(keysDir, ref)
         }
+        else
+        {
+            PlatformSigningKey.Require(keysDir, ref)
+        }
+        const adopted = await directory.UseDefaultTrustRoot(ref)
+        if (adopted.length > 0)
+        {
+            console.log(C.TrustAdoptedPrefix + ref + C.TrustAdoptedInfix + adopted.join(C.HiveIdSeparator))
+        }
+        const imageSigner = C.ImageSignerOf(dataRoot)
+        return { ImageSigner: imageSigner, PlatformSigner: new PlatformImageSigner(imageSigner, ref) }
+    }
+
+    /** The registry manifest signer: publishes are signed with the platform signing key `ref`, through the shared image signer. */
+    public static ManifestSignerOf(ref: string, dataRoot: string, signer: IImageSigner): IManifestSigner
+    {
+        const store = new FileSignatureStore(join(dataRoot, ControlPlaneServer.SignaturesFileName))
+        return new ManifestSigner(new DockerImageDigest(), signer, store, ref)
+    }
+
+    /** Signs images into the same signature store the hive orchestrators verify against, with keys from the key store. */
+    public static ImageSignerOf(dataRoot: string): ImageSigner
+    {
         const digests = new DockerImageDigest()
         const store = new FileSignatureStore(join(dataRoot, ControlPlaneServer.SignaturesFileName))
-        const keys = new FileKeyStore(join(dataRoot, ControlPlaneServer.KeysDirName))
-        return new ManifestSigner(digests, new ImageSigner(digests, store, keys), store, ref)
+        return new ImageSigner(digests, store, new FileKeyStore(join(dataRoot, ControlPlaneServer.KeysDirName)))
     }
 
     private static ResolvePort(raw: string | undefined): number

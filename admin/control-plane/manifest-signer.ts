@@ -1,5 +1,5 @@
 import type { IImageDigest } from './image-digest.js'
-import type { ImageSigner } from './image-signer.js'
+import type { IImageSigner } from './image-signer.js'
 import type { ISignatureStore } from './signature-store.js'
 
 export type SignForPublishResult = { digest?: string; signed: boolean }
@@ -17,7 +17,7 @@ export class ManifestSigner implements IManifestSigner
 {
     public constructor(
         private readonly digests: IImageDigest,
-        private readonly signer: ImageSigner,
+        private readonly signer: IImageSigner,
         private readonly store: ISignatureStore,
         private readonly signingKeyRef: string,
     )
@@ -46,7 +46,7 @@ export class ManifestSigner implements IManifestSigner
         let signed = false
         try
         {
-            signed = (await this.store.Get(digest)) !== undefined
+            signed = await this.store.HasKeyed(digest, this.signingKeyRef)
         }
         catch
         {

@@ -265,3 +265,27 @@ test('CreateHive validates id and stores only ref names (no secret values)', asy
         await f.Dispose()
     }
 })
+
+test('UseDefaultTrustRoot gives every hive without a trust root the platform key, keeps an own one, and defaults new hives', async () =>
+{
+    const f = await DirectoryFixture.Create()
+    try
+    {
+        await f.Seed()
+        await f.directory.CreateHive({ id: 'h2', tenantId: 't1', displayName: 'H2', cluster: DirectoryFixture.Cluster(), registry: DirectoryFixture.Registry(), trustRootRef: 'own-key' })
+        assert.deepEqual(await f.directory.UseDefaultTrustRoot('platform-signing'), ['h1'])
+        assert.equal(f.directory.GetHive('h1')?.trustRootRef, 'platform-signing')
+        assert.equal(f.directory.GetHive('h2')?.trustRootRef, 'own-key')
+        const persisted = JSON.parse(await readFile(f.hivesPath, DirectoryFixture.Encoding)) as { hives: Record<string, { trustRootRef?: string }> }
+        assert.equal(persisted.hives['h1']?.trustRootRef, 'platform-signing')
+        await f.directory.CreateHive({ id: 'h3', tenantId: 't1', displayName: 'H3', cluster: DirectoryFixture.Cluster(), registry: DirectoryFixture.Registry() })
+        await f.directory.CreateHive({ id: 'h4', tenantId: 't1', displayName: 'H4', cluster: DirectoryFixture.Cluster(), registry: DirectoryFixture.Registry(), trustRootRef: '' })
+        assert.equal(f.directory.GetHive('h3')?.trustRootRef, 'platform-signing')
+        assert.equal(f.directory.GetHive('h4')?.trustRootRef, 'platform-signing')
+        assert.deepEqual(await f.directory.UseDefaultTrustRoot('platform-signing'), [])
+    }
+    finally
+    {
+        await f.Dispose()
+    }
+})

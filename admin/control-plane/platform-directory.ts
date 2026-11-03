@@ -109,6 +109,8 @@ export class HiveHasEnvironmentsError extends Error
 
 export class PlatformDirectory
 {
+    private defaultTrustRootRef: string | undefined
+
     public constructor(
         private readonly clients: ClientRegistry,
         private readonly tenants: TenantRegistry,
@@ -123,6 +125,26 @@ export class PlatformDirectory
         await this.clients.Load()
         await this.tenants.Load()
         await this.hives.Load()
+    }
+
+    /**
+     * Makes `ref` (the platform signing key) the trust root of every hive that has none, now and for hives created
+     * later without one, so each hive can run the images the platform signs. A hive given its own trust root keeps it.
+     * Returns the ids of the hives that were given the default.
+     */
+    public async UseDefaultTrustRoot(ref: string): Promise<string[]>
+    {
+        this.defaultTrustRootRef = ref
+        const adopted: string[] = []
+        for (const hive of this.hives.List())
+        {
+            if (hive.trustRootRef === undefined || hive.trustRootRef === '')
+            {
+                await this.hives.Put({ ...hive, trustRootRef: ref })
+                adopted.push(hive.id)
+            }
+        }
+        return adopted
     }
 
     public ListClients(): readonly ClientRecord[]
@@ -244,7 +266,7 @@ export class PlatformDirectory
             displayName: input.displayName,
             cluster: input.cluster,
             registry: input.registry,
-            trustRootRef: input.trustRootRef,
+            trustRootRef: input.trustRootRef === undefined || input.trustRootRef === '' ? this.defaultTrustRootRef : input.trustRootRef,
             createdAt: this.Stamp()
         }
         await this.hives.Put(record)

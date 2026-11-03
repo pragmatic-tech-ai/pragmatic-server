@@ -967,7 +967,7 @@ export class HivesResources extends ResourceDictionary {
             _textBox203.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));
             _stackPanel177.AddChild(_textBox203);
             const _textBlock204 = new TextBlock();
-            _textBlock204.set_property_value(TextBlock.TextKey, "Trust root reference (optional)");
+            _textBlock204.set_property_value(TextBlock.TextKey, "Trust root reference (optional; empty uses the platform signing key)");
             _textBlock204.set_property_value(TextBlock.StyleKey, DynamicResource(_textBlock204, "UiCaption"));
             _textBlock204.set_property_value(TextBlock.ForegroundKey, DynamicResource(_textBlock204, "Fg2"));
             _textBlock204.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));
@@ -1407,7 +1407,7 @@ export class HivesResources extends ResourceDictionary {
             _textBox290.set_property_value(TextBox.MarginKey, new Thickness(0, 0, 0, 12));
             _stackPanel266.AddChild(_textBox290);
             const _textBlock291 = new TextBlock();
-            _textBlock291.set_property_value(TextBlock.TextKey, "Trust root reference (optional)");
+            _textBlock291.set_property_value(TextBlock.TextKey, "Trust root reference (optional; empty uses the platform signing key)");
             _textBlock291.set_property_value(TextBlock.StyleKey, DynamicResource(_textBlock291, "UiCaption"));
             _textBlock291.set_property_value(TextBlock.ForegroundKey, DynamicResource(_textBlock291, "Fg2"));
             _textBlock291.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 4));

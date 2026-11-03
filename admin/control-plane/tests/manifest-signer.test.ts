@@ -41,14 +41,24 @@ class MemoryStore implements ISignatureStore
 {
     public readonly map = new Map<string, string>()
 
-    public async Get(digest: string): Promise<string | undefined>
+    public async Get(digest: string, keyRef: string): Promise<string | undefined>
     {
-        return this.map.get(digest)
+        return this.map.get(MemoryStore.KeyOf(digest, keyRef))
     }
 
-    public async Put(digest: string, signature: string): Promise<void>
+    public async HasKeyed(digest: string, keyRef: string): Promise<boolean>
     {
-        this.map.set(digest, signature)
+        return this.map.has(MemoryStore.KeyOf(digest, keyRef))
+    }
+
+    public async Put(digest: string, keyRef: string, signature: string): Promise<void>
+    {
+        this.map.set(MemoryStore.KeyOf(digest, keyRef), signature)
+    }
+
+    private static KeyOf(digest: string, keyRef: string): string
+    {
+        return JSON.stringify([digest, keyRef])
     }
 }
 
@@ -95,7 +105,7 @@ describe('ManifestSigner', () =>
         const h = new SignerHarness(SignerFixture.Digest, SignerFixture.KeyRef)
         const result = await h.subject.SignForPublish(SignerFixture.Image)
         assert.deepEqual(result, { digest: SignerFixture.Digest, signed: true })
-        assert.ok(h.store.map.get(SignerFixture.Digest))
+        assert.ok(await h.store.Get(SignerFixture.Digest, SignerFixture.KeyRef))
     })
 
     it('reports unsigned without a digest when the image cannot be inspected', async () =>
@@ -116,8 +126,16 @@ describe('ManifestSigner', () =>
     it('reports signed from the store truthfully', async () =>
     {
         const h = new SignerHarness(SignerFixture.Digest, SignerFixture.MissingRef)
-        await h.store.Put(SignerFixture.Digest, SignerFixture.Existing)
+        await h.store.Put(SignerFixture.Digest, SignerFixture.MissingRef, SignerFixture.Existing)
         const result = await h.subject.SignForPublish(SignerFixture.Image)
         assert.deepEqual(result, { digest: SignerFixture.Digest, signed: true })
+    })
+
+    it('does not count another key\'s signature as signed', async () =>
+    {
+        const h = new SignerHarness(SignerFixture.Digest, SignerFixture.MissingRef)
+        await h.store.Put(SignerFixture.Digest, 'some-other-key', SignerFixture.Existing)
+        const result = await h.subject.SignForPublish(SignerFixture.Image)
+        assert.deepEqual(result, { digest: SignerFixture.Digest, signed: false })
     })
 })
