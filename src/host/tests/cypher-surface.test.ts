@@ -39,6 +39,8 @@ class CypherSurfaceFixture
     public static readonly ListQuery = 'UNWIND $xs AS x RETURN x'
     public static readonly MapQuery = 'RETURN $m.k AS v'
     public static readonly WriteQuery = 'CREATE (n)'
+    public static readonly MatchSetQuery = "MATCH (a:Service) SET a.label = 'x' RETURN a"
+    public static readonly ExecuteMethod = 'cypher/execute'
     public static readonly AccountLabels = 'MATCH (a:Account) RETURN a.label'
     public static readonly AccountCount = 'MATCH (a:Account) RETURN count(a) AS c'
     public static readonly AccountNodes = 'MATCH (a:Account) RETURN a'
@@ -287,10 +289,14 @@ test('cypher/query with no solution open returns no rows and is not truncated', 
     })
 })
 
-test('cypher/query rejects a write keyword with InvalidParams', async () =>
+test('cypher/query rejects a well-formed write with InvalidParams naming cypher/execute', async () =>
 {
     await CypherSurfaceFixture.With(async client =>
     {
-        await assert.rejects(() => client.CypherQuery(CypherSurfaceFixture.WriteQuery), (error: { code?: number }) => error.code === ErrorCodes.InvalidParams)
+        for (const query of [CypherSurfaceFixture.WriteQuery, CypherSurfaceFixture.MatchSetQuery])
+        {
+            await assert.rejects(() => client.CypherQuery(query), (error: { code?: number, message?: string }) =>
+                error.code === ErrorCodes.InvalidParams && (error.message ?? '').includes(CypherSurfaceFixture.ExecuteMethod))
+        }
     })
 })

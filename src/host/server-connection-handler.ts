@@ -83,6 +83,7 @@ export class ServerConnectionHandler
     private static readonly ModelScopeUnavailableMessage = `${InvalidParamsPrefix.Text}model-scoped query not available`
     private static readonly ModelViewFingerprintTag = 'modelView'
     private static readonly NotRuntimeMessage = 'operation requires a runtime tenant'
+    private static readonly ReadEndpointWriteMessage = `${InvalidParamsPrefix.Text}writes are not supported on ${CypherProtocol.Query.method}; send them to ${CypherProtocol.Execute.method}`
     private static readonly ExecuteModelIdRequiredMessage = `${InvalidParamsPrefix.Text}modelId is required: a write must name its target model`
     private static readonly NotDevelopmentMessage = 'operation requires a development tenant'
     private static readonly GraphServiceUnavailableMessage = 'graph service is not available on this tenant'
@@ -516,7 +517,7 @@ export class ServerConnectionHandler
     {
         const source = this.RequireNonEmptyString(params?.cypher, ServerConnectionHandler.CypherField)
         PageRequest.ValidatePageSize(params)
-        this.RefuseExplicitBoundsWhenPaged(source, params)
+        this.RefuseInvalidReadQuery(source, params)
         let parameters: ReadonlyMap<string, Cypher.ParameterValue>
         try
         {
@@ -628,22 +629,22 @@ export class ServerConnectionHandler
     }
 
     /**
-     * A paged request translates to engine Skip/RowCap, so a tail SKIP/LIMIT in the text would double-offset: refuse it.
-     * Judges ONLY the FINAL QueryPart.Projection: an interior WITH ... LIMIT is query-internal and intentionally allowed;
-     * only a tail SKIP/LIMIT conflicts with paging.
+     * Refuses, before any graph is fetched, a well-formed WRITE query (it belongs on cypher/execute) and, on a paged request,
+     * a tail SKIP/LIMIT: paging translates to engine Skip/RowCap, so one in the text would double-offset. Judges ONLY the FINAL
+     * QueryPart.Projection: an interior WITH ... LIMIT is query-internal and intentionally allowed.
      */
-    private RefuseExplicitBoundsWhenPaged(source: string, params: CypherQueryParams): void
+    private RefuseInvalidReadQuery(source: string, params: CypherQueryParams): void
     {
         const paged = (params.cursor !== undefined && params.cursor !== null) || (params.pageSize !== undefined && params.pageSize !== null)
-        if (!paged)
-        {
-            return
-        }
         try
         {
-            const parts = new Cypher.CypherParser(source).Parse().Parts
-            const last = parts[parts.length - 1]?.Projection
-            if (last !== undefined && (last.Skip !== undefined || last.Limit !== undefined))
+            const model = new Cypher.CypherParser(source).Parse()
+            if (model.HasWrites())
+            {
+                throw new ResponseError(ErrorCodes.InvalidParams, ServerConnectionHandler.ReadEndpointWriteMessage)
+            }
+            const last = model.Parts[model.Parts.length - 1]?.Projection
+            if (paged && last !== undefined && (last.Skip !== undefined || last.Limit !== undefined))
             {
                 throw new ResponseError(ErrorCodes.InvalidParams, ServerConnectionHandler.PagedExplicitBoundsMessage)
             }
