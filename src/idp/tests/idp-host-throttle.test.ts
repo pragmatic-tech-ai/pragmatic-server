@@ -12,6 +12,7 @@ import { IdpRealm } from '../idp-realm.js';
 import { IdpSigningKey } from '../idp-signing-key.js';
 import { IdpSsoSessionStore } from '../idp-sso-session.js';
 import { InMemoryAuthorizationCodeStore } from '../authorization-code-store.js';
+import { IdpAdminEndpoint } from '../idp-admin-endpoint.js';
 
 interface Reply
 {
@@ -30,6 +31,10 @@ class ThrottleFixture
     public static readonly Old = 'old-pw-Aa1';
     public static readonly Next = 'new-pw-Bb2';
     public static readonly PasswordPath = '/tenant-1/password';
+    public static readonly AdminToken = 'relay-admin-token';
+    public static readonly EndUserIpHeader = 'x-pragmatic-end-user-ip';
+    public static readonly PerAddress = 5;
+    public static readonly PerAccount = 20;
     public static readonly AuthorizePath = '/tenant-1/authorize?response_type=code&client_id=client-1&redirect_uri=https%3A%2F%2Fapp.example%2Fcb'
         + '&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&state=s&nonce=n';
 
@@ -58,8 +63,10 @@ class ThrottleFixture
             };
             const clients = new IdpClientStore();
             await clients.Register(ThrottleFixture.TenantId, ThrottleFixture.ClientId, [ThrottleFixture.RedirectUri], 'secret');
-            f.host = new IdpHost('https://localhost', key, new IdpRealmSet([[ThrottleFixture.TenantId, realm]]), clients,
-                new InMemoryAuthorizationCodeStore(), new IdpSsoSessionStore(), tls, true);
+            const realms = new IdpRealmSet([[ThrottleFixture.TenantId, realm]]);
+            const sso = new IdpSsoSessionStore();
+            f.host = new IdpHost('https://localhost', key, realms, clients,
+                new InMemoryAuthorizationCodeStore(), sso, tls, true, new IdpAdminEndpoint([ThrottleFixture.AdminToken], realms, clients, sso));
             await f.host.Listen(0, '127.0.0.1');
             f.ca = fs.readFileSync(ca.caFile, 'utf8');
             await body(f);
@@ -71,12 +78,12 @@ class ThrottleFixture
         }
     }
 
-    public Post(urlPath: string, contentType: string, payload: string): Promise<Reply>
+    public Post(urlPath: string, contentType: string, payload: string, extra: Record<string, string> = {}): Promise<Reply>
     {
         const addr = this.host.Address();
         return new Promise<Reply>((resolve, reject) =>
         {
-            const req = https.request({ host: 'localhost', port: addr.port, path: urlPath, method: 'POST', ca: this.ca, headers: { 'content-type': contentType } }, res =>
+            const req = https.request({ host: 'localhost', port: addr.port, path: urlPath, method: 'POST', ca: this.ca, headers: { 'content-type': contentType, ...extra } }, res =>
             {
                 const chunks: Buffer[] = [];
                 res.on('data', (c: Buffer) => chunks.push(c));
@@ -93,6 +100,18 @@ class ThrottleFixture
             JSON.stringify({ email: ThrottleFixture.Email, currentPassword: current, newPassword: ThrottleFixture.Next }));
     }
 
+    /** A change relayed for end-user address `ip`, presenting `token` as the admin credential (null: none). */
+    public RotateAs(current: string, ip: string, token: string | null = ThrottleFixture.AdminToken): Promise<Reply>
+    {
+        const headers: Record<string, string> = { [ThrottleFixture.EndUserIpHeader]: ip };
+        if (token !== null)
+        {
+            headers.authorization = 'Bearer ' + token;
+        }
+        return this.Post(ThrottleFixture.PasswordPath, 'application/json',
+            JSON.stringify({ email: ThrottleFixture.Email, currentPassword: current, newPassword: ThrottleFixture.Next }), headers);
+    }
+
     public Login(password: string): Promise<Reply>
     {
         return this.Post(ThrottleFixture.AuthorizePath, 'application/x-www-form-urlencoded',
@@ -100,9 +119,9 @@ class ThrottleFixture
     }
 }
 
-test('rotation: 3 wrong current passwords lock; the 4th is 429 with Retry-After and RotatePassword is not called', () => ThrottleFixture.Run(async f =>
+test('rotation: 5 wrong current passwords lock; the 6th is 429 with Retry-After and RotatePassword is not called', () => ThrottleFixture.Run(async f =>
 {
-    for (let i = 0; i < 3; i++)
+    for (let i = 0; i < ThrottleFixture.PerAddress; i++)
     {
         assert.equal((await f.Rotate('nope')).status, 401);
     }
@@ -117,7 +136,7 @@ test('rotation: 3 wrong current passwords lock; the 4th is 429 with Retry-After 
 test('rotation: concurrent wrong guesses for one key: at most maxAttempts reach RotatePassword (count-at-gate)', () => ThrottleFixture.Run(async f =>
 {
     const replies = await Promise.all(Array.from({ length: 8 }, () => f.Rotate('nope')));
-    assert.ok(f.rotateCalls <= 3, `RotatePassword reached ${f.rotateCalls} times`);
+    assert.ok(f.rotateCalls <= ThrottleFixture.PerAddress, `RotatePassword reached ${f.rotateCalls} times`);
     assert.equal(replies.filter(r => r.status === 429).length, 8 - f.rotateCalls);
 }));
 
@@ -126,9 +145,10 @@ test('rotation: a correct rotation clears the counter', () => ThrottleFixture.Ru
     await f.Rotate('nope');
     await f.Rotate('nope');
     assert.equal((await f.Rotate(ThrottleFixture.Old)).status, 200);
-    assert.equal((await f.Rotate('nope')).status, 401);
-    assert.equal((await f.Rotate('nope')).status, 401);
-    assert.equal((await f.Rotate('nope')).status, 401);
+    for (let i = 0; i < ThrottleFixture.PerAddress; i++)
+    {
+        assert.equal((await f.Rotate('nope')).status, 401);
+    }
     assert.equal((await f.Rotate('nope')).status, 429);
 }));
 
@@ -172,4 +192,37 @@ test('separate buckets: failed logins lock login (429 with Retry-After) but not 
     assert.ok(Number(login.retryAfter) > 0);
     assert.equal(login.cacheControl, 'no-store');
     assert.equal((await f.Rotate(ThrottleFixture.Old)).status, 200);
+}));
+
+test('per address: 5 failures from address X lock X but not address Y (relayed with the admin credential)', () => ThrottleFixture.Run(async f =>
+{
+    for (let i = 0; i < ThrottleFixture.PerAddress; i++)
+    {
+        assert.equal((await f.RotateAs('nope', '203.0.113.1')).status, 401);
+    }
+    assert.equal((await f.RotateAs(ThrottleFixture.Old, '203.0.113.1')).status, 429);
+    assert.equal((await f.RotateAs(ThrottleFixture.Old, '203.0.113.2')).status, 200);
+}));
+
+test('per account: 20 failures spread across addresses lock every address (distributed guessing is bounded)', () => ThrottleFixture.Run(async f =>
+{
+    for (let i = 0; i < ThrottleFixture.PerAccount; i++)
+    {
+        assert.equal((await f.RotateAs('nope', '198.51.100.' + String(i + 1))).status, 401);
+    }
+    const fresh = await f.RotateAs(ThrottleFixture.Old, '192.0.2.200');
+    assert.equal(fresh.status, 429);
+    assert.ok(Number(fresh.retryAfter) > 0);
+}));
+
+test('the end-user address header is ignored without a valid admin credential (the socket address is used)', () => ThrottleFixture.Run(async f =>
+{
+    for (let i = 0; i < ThrottleFixture.PerAddress; i++)
+    {
+        assert.equal((await f.RotateAs('nope', '203.0.113.' + String(i + 1), i % 2 === 0 ? null : 'not-the-token')).status, 401);
+    }
+    // Every attempt counted against the one socket address, whatever the header said.
+    assert.equal((await f.RotateAs(ThrottleFixture.Old, '203.0.113.99', null)).status, 429);
+    // With the credential the header is honoured: a fresh address is not locked.
+    assert.equal((await f.RotateAs(ThrottleFixture.Old, '203.0.113.99')).status, 200);
 }));

@@ -19,13 +19,16 @@ export type IdpPasswordOutcome = { Result: IdpPasswordResult; RetryAfterSeconds?
 /** The tenant IdP's self-service password endpoint, reached server-to-server. */
 export interface IIdpPasswordClient
 {
-    ChangePassword(conn: IdpConnection, tenantId: string, email: string, currentPassword: string, newPassword: string): Promise<IdpPasswordOutcome>
+    ChangePassword(conn: IdpConnection, tenantId: string, email: string, currentPassword: string, newPassword: string, endUserIp: string): Promise<IdpPasswordOutcome>
 }
 
 /**
  * HTTPS client for `POST <idp>/<tenant>/password` (the IdP's self-service change: email, currentPassword, newPassword).
  * Trusts only the tenant IdP's CA (`conn.ca`), as the relying party and the admin client do. It never throws: a transport
- * failure is Failed. Neither password is ever logged, put in an error, or kept past the request.
+ * failure is Failed. The call is a relay for the signed-in end user: it presents the IdP admin credential (`conn.adminToken`)
+ * and the end user's address (EndUserIpHeader), which the IdP honours only with that credential, so its per-address
+ * throttle sees the user, not the tenant plane. Neither password nor the token is ever logged, put in an error, or kept
+ * past the request.
  */
 export class IdpPasswordClient implements IIdpPasswordClient
 {
@@ -39,6 +42,9 @@ export class IdpPasswordClient implements IIdpPasswordClient
     private static readonly ContentTypeHeader = 'Content-Type'
     private static readonly ContentLengthHeader = 'Content-Length'
     private static readonly RetryAfterHeader = 'retry-after'
+    private static readonly AuthorizationHeader = 'Authorization'
+    private static readonly BearerPrefix = 'Bearer '
+    private static readonly EndUserIpHeader = 'X-Pragmatic-End-User-Ip'
     private static readonly JsonType = 'application/json'
     private static readonly Utf8 = 'utf8'
     private static readonly DefaultPort = 443
@@ -49,7 +55,7 @@ export class IdpPasswordClient implements IIdpPasswordClient
     private static readonly WholeSeconds = /^\d+$/
     private static readonly TrailingSlashes = /\/+$/
 
-    public async ChangePassword(conn: IdpConnection, tenantId: string, email: string, currentPassword: string, newPassword: string): Promise<IdpPasswordOutcome>
+    public async ChangePassword(conn: IdpConnection, tenantId: string, email: string, currentPassword: string, newPassword: string, endUserIp: string): Promise<IdpPasswordOutcome>
     {
         const url = new URL(conn.baseUrl.replace(IdpPasswordClient.TrailingSlashes, IdpPasswordClient.NoText) + IdpPasswordClient.PathSeparator + encodeURIComponent(tenantId) + IdpPasswordClient.PasswordSuffix)
         if (url.protocol !== IdpPasswordClient.HttpsProtocol)
@@ -59,7 +65,16 @@ export class IdpPasswordClient implements IIdpPasswordClient
         const payload = Buffer.from(JSON.stringify({ email, currentPassword, newPassword }), IdpPasswordClient.Utf8)
         try
         {
-            return await this.Post(new https.Agent({ ca: conn.ca }), url, payload)
+            const headers: Record<string, string | number> = {
+                [IdpPasswordClient.ContentTypeHeader]: IdpPasswordClient.JsonType,
+                [IdpPasswordClient.ContentLengthHeader]: payload.length,
+                [IdpPasswordClient.AuthorizationHeader]: IdpPasswordClient.BearerPrefix + conn.adminToken,
+            }
+            if (endUserIp.length > 0)
+            {
+                headers[IdpPasswordClient.EndUserIpHeader] = endUserIp
+            }
+            return await this.Post(new https.Agent({ ca: conn.ca }), url, payload, headers)
         }
         finally
         {
@@ -67,7 +82,7 @@ export class IdpPasswordClient implements IIdpPasswordClient
         }
     }
 
-    private Post(agent: https.Agent, url: URL, payload: Buffer): Promise<IdpPasswordOutcome>
+    private Post(agent: https.Agent, url: URL, payload: Buffer, headers: Record<string, string | number>): Promise<IdpPasswordOutcome>
     {
         return new Promise<IdpPasswordOutcome>(resolve =>
         {
@@ -87,7 +102,7 @@ export class IdpPasswordClient implements IIdpPasswordClient
                 port: url.port === '' ? IdpPasswordClient.DefaultPort : Number(url.port),
                 path: url.pathname,
                 method: IdpPasswordClient.PostMethod,
-                headers: { [IdpPasswordClient.ContentTypeHeader]: IdpPasswordClient.JsonType, [IdpPasswordClient.ContentLengthHeader]: payload.length },
+                headers,
             }, res =>
             {
                 res.resume()

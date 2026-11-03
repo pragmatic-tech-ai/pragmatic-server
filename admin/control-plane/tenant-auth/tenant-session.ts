@@ -10,7 +10,11 @@ import { dirname } from 'node:path'
  */
 export type TenantSession = { id: string; tenantId: string; principalId: string; email?: string; expiresAt: string; issuedAt?: string; keptAt?: string }
 
-/** File-backed tenant session store keyed by session id (temp-write + atomic rename; a missing file is empty). */
+/**
+ * File-backed tenant session store keyed by session id (temp-write + atomic rename; a missing file is empty). Every change
+ * is atomic: it is made on copies of the maps, the copy is persisted, and only a successful write swaps it into memory, so a
+ * failed write leaves both memory and disk exactly as they were. Changes run one at a time.
+ */
 export class TenantSessionStore
 {
     private static readonly Encoding = 'utf8'
@@ -25,10 +29,10 @@ export class TenantSessionStore
     private static readonly FileMode = 0o600
     private static readonly CorruptMessage = 'Tenant session store file is corrupt'
 
-    private readonly sessions = new Map<string, TenantSession>()
-    private readonly resets = new Map<string, Map<string, string>>()
+    private sessions = new Map<string, TenantSession>()
+    private resets = new Map<string, Map<string, string>>()
     private loading: Promise<void> | null = null
-    private persistChain: Promise<void> = Promise.resolve()
+    private mutationChain: Promise<void> = Promise.resolve()
 
     public constructor(
         private readonly filePath: string,
@@ -39,23 +43,24 @@ export class TenantSessionStore
 
     public async Issue(tenantId: string, principalId: string, email?: string): Promise<TenantSession>
     {
-        await this.ensureLoaded()
-        const issuedAt = this.now()
-        const session: TenantSession = {
-            id: randomBytes(TenantSessionStore.TokenBytes).toString(TenantSessionStore.TokenEncoding),
-            tenantId,
-            principalId,
-            expiresAt: new Date(issuedAt.getTime() + this.ttlMs).toISOString(),
-            issuedAt: issuedAt.toISOString(),
-        }
-        if (email !== undefined)
+        return await this.Mutate((sessions) =>
         {
-            session.email = email
-        }
-        this.pruneExpired()
-        this.sessions.set(session.id, session)
-        await this.persist()
-        return { ...session }
+            const issuedAt = this.now()
+            const session: TenantSession = {
+                id: randomBytes(TenantSessionStore.TokenBytes).toString(TenantSessionStore.TokenEncoding),
+                tenantId,
+                principalId,
+                expiresAt: new Date(issuedAt.getTime() + this.ttlMs).toISOString(),
+                issuedAt: issuedAt.toISOString(),
+            }
+            if (email !== undefined)
+            {
+                session.email = email
+            }
+            this.PruneExpired(sessions)
+            sessions.set(session.id, session)
+            return { ...session }
+        })
     }
 
     public async Validate(token: string): Promise<TenantSession | null>
@@ -72,10 +77,11 @@ export class TenantSessionStore
     public async Revoke(token: string): Promise<void>
     {
         await this.ensureLoaded()
-        if (this.sessions.delete(token))
+        if (!this.sessions.has(token))
         {
-            await this.persist()
+            return
         }
+        await this.Mutate((sessions) => { sessions.delete(token) })
     }
 
     /**
@@ -84,10 +90,7 @@ export class TenantSessionStore
      */
     public async RevokeAllFor(tenantId: string, principalId: string): Promise<number>
     {
-        await this.ensureLoaded()
-        const ended = this.EndAllOf(tenantId, principalId)
-        await this.persist()
-        return ended
+        return await this.Mutate((sessions, resets) => this.EndAllOf(sessions, resets, tenantId, principalId))
     }
 
     /**
@@ -97,43 +100,66 @@ export class TenantSessionStore
      */
     public async RotateFor(tenantId: string, principalId: string, email?: string): Promise<TenantSession>
     {
-        await this.ensureLoaded()
-        this.EndAllOf(tenantId, principalId)
-        const stamp = this.resets.get(tenantId)?.get(principalId) as string
-        const session: TenantSession = {
-            id: randomBytes(TenantSessionStore.TokenBytes).toString(TenantSessionStore.TokenEncoding),
-            tenantId,
-            principalId,
-            expiresAt: new Date(new Date(stamp).getTime() + this.ttlMs).toISOString(),
-            issuedAt: stamp,
-            keptAt: stamp,
-        }
-        if (email !== undefined)
+        return await this.Mutate((sessions, resets) =>
         {
-            session.email = email
-        }
-        this.pruneExpired()
-        this.sessions.set(session.id, session)
-        await this.persist()
-        return { ...session }
+            this.EndAllOf(sessions, resets, tenantId, principalId)
+            const stamp = resets.get(tenantId)?.get(principalId) as string
+            const session: TenantSession = {
+                id: randomBytes(TenantSessionStore.TokenBytes).toString(TenantSessionStore.TokenEncoding),
+                tenantId,
+                principalId,
+                expiresAt: new Date(new Date(stamp).getTime() + this.ttlMs).toISOString(),
+                issuedAt: stamp,
+                keptAt: stamp,
+            }
+            if (email !== undefined)
+            {
+                session.email = email
+            }
+            this.PruneExpired(sessions)
+            sessions.set(session.id, session)
+            return { ...session }
+        })
     }
 
-    /** Stamps the principal's reset time (now) and drops every one of its sessions; returns how many. Does not persist. */
-    private EndAllOf(tenantId: string, principalId: string): number
+    /**
+     * Runs one change atomically: `change` edits copies of the sessions and resets maps, the copies are persisted, and only
+     * then do they replace the live maps; a failed write rejects and leaves memory untouched. Changes are serialised, so
+     * each one starts from the previous one's result.
+     */
+    private Mutate<T>(change: (sessions: Map<string, TenantSession>, resets: Map<string, Map<string, string>>) => T): Promise<T>
     {
-        let tenantResets = this.resets.get(tenantId)
+        const run = this.mutationChain.then(async () =>
+        {
+            await this.ensureLoaded()
+            const sessions = new Map<string, TenantSession>([...this.sessions].map(([id, session]) => [id, { ...session }] as [string, TenantSession]))
+            const resets = new Map<string, Map<string, string>>([...this.resets].map(([tenantId, principals]) => [tenantId, new Map(principals)] as [string, Map<string, string>]))
+            const result = change(sessions, resets)
+            await this.write(sessions, resets)
+            this.sessions = sessions
+            this.resets = resets
+            return result
+        })
+        this.mutationChain = run.then(() => undefined, () => undefined)
+        return run
+    }
+
+    /** Stamps the principal's reset time (now) and drops every one of its sessions from the given maps; returns how many. */
+    private EndAllOf(sessions: Map<string, TenantSession>, resets: Map<string, Map<string, string>>, tenantId: string, principalId: string): number
+    {
+        let tenantResets = resets.get(tenantId)
         if (tenantResets === undefined)
         {
             tenantResets = new Map()
-            this.resets.set(tenantId, tenantResets)
+            resets.set(tenantId, tenantResets)
         }
         tenantResets.set(principalId, this.now().toISOString())
         let ended = 0
-        for (const [id, session] of this.sessions)
+        for (const [id, session] of sessions)
         {
             if (session.tenantId === tenantId && session.principalId === principalId)
             {
-                this.sessions.delete(id)
+                sessions.delete(id)
                 ended++
             }
         }
@@ -156,14 +182,14 @@ export class TenantSessionStore
         return issuedMs <= new Date(reset).getTime()
     }
 
-    private pruneExpired(): void
+    private PruneExpired(sessions: Map<string, TenantSession>): void
     {
         const nowMs = this.now().getTime()
-        for (const [id, session] of this.sessions)
+        for (const [id, session] of sessions)
         {
             if (new Date(session.expiresAt).getTime() <= nowMs)
             {
-                this.sessions.delete(id)
+                sessions.delete(id)
             }
         }
     }
@@ -215,19 +241,12 @@ export class TenantSessionStore
         }
     }
 
-    private persist(): Promise<void>
-    {
-        const run = this.persistChain.then(() => this.write())
-        this.persistChain = run.catch(() => undefined)
-        return run
-    }
-
-    private async write(): Promise<void>
+    private async write(sessions: Map<string, TenantSession>, resets: Map<string, Map<string, string>>): Promise<void>
     {
         await mkdir(dirname(this.filePath), { recursive: true })
         const body = {
-            [TenantSessionStore.RootKey]: Object.fromEntries(this.sessions),
-            [TenantSessionStore.ResetsKey]: Object.fromEntries([...this.resets].map(([tenantId, principals]) => [tenantId, Object.fromEntries(principals)])),
+            [TenantSessionStore.RootKey]: Object.fromEntries(sessions),
+            [TenantSessionStore.ResetsKey]: Object.fromEntries([...resets].map(([tenantId, principals]) => [tenantId, Object.fromEntries(principals)])),
         }
         const temp = `${this.filePath}.${randomUUID()}${TenantSessionStore.TempSuffix}`
         await writeFile(temp, JSON.stringify(body, null, TenantSessionStore.JsonIndent), { encoding: TenantSessionStore.Encoding, mode: TenantSessionStore.FileMode })

@@ -286,6 +286,12 @@ export class ControlPlaneServer
         }
     }
 
+    /** Pure: whether an env flag is set to true ('true' or '1'). */
+    public static ReadsTrue(raw: string | undefined): boolean
+    {
+        return raw === ControlPlaneServer.TrueToken || raw === ControlPlaneServer.OneToken
+    }
+
     /** Pure: splits a comma-separated host list, trimming blanks and dropping empties. */
     public static ParseHostList(raw: string | undefined): string[]
     {
@@ -321,7 +327,7 @@ export class ControlPlaneServer
             return undefined
         }
         return ControlPlaneServer.BuildTenantPlane(dataRoot, idpService, directory, secureCookie, service, rollout, orchestrators, placement,
-            masterKey, adminClientRegistry, secretTtlHours, sessions, principals)
+            masterKey, adminClientRegistry, secretTtlHours, sessions, principals, ControlPlaneServer.ReadsTrue(env[ControlPlaneServer.TrustedProxyEnvVar]))
     }
 
     /** Gate-free composition of the tenant plane; callers decide whether the plane is active (ComposeTenantPlane gates on env, the standalone server always builds it). */
@@ -338,7 +344,8 @@ export class ControlPlaneServer
         adminClientRegistry: TenantAdminClientRegistry,
         secretTtlHours: number,
         sessions: TenantSessionStore = ControlPlaneServer.TenantSessionsOf(dataRoot),
-        principals: TenantPrincipalSessions = new TenantPrincipalSessions(sessions)): TenantPlane
+        principals: TenantPrincipalSessions = new TenantPrincipalSessions(sessions),
+        trustedProxy: boolean = false): TenantPlane
     {
         const durability: TenantAdminDurability = {
             storeRoot: join(dataRoot, ControlPlaneServer.TenantAdminOidcDir),
@@ -347,7 +354,7 @@ export class ControlPlaneServer
             secretTtlMs: secretTtlHours * ControlPlaneServer.MsPerHour,
         }
         const rp = new TenantOidcRelyingParty(idpService, directory, conn => new IdpAdminClient(conn), undefined, undefined, durability)
-        const passwordChange = new TenantPasswordChange(idpService, new IdpPasswordClient(), principals, secureCookie)
+        const passwordChange = new TenantPasswordChange(idpService, new IdpPasswordClient(), principals, secureCookie, trustedProxy)
         const endpoint = new TenantAuthEndpoint(rp, sessions, secureCookie, passwordChange)
         const gate = new TenantAuthGate(sessions)
         const api = new TenantApiEndpoint(service, directory, rollout, orchestrators, placement)

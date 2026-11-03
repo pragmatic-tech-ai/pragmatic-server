@@ -52,25 +52,19 @@ export class TenantPrincipalSessions implements IOwnerSessionRevoker
 
     /**
      * Ends every stored session of the principal (the caller's `oldSessionId` too) and issues the caller a fresh one; the
-     * caller's open sockets move to the fresh session and every other socket of the principal closes. When the store
-     * fails, every socket of the principal closes and the error is rethrown.
+     * caller's open sockets move to the fresh session and every other socket of the principal closes. The store change is
+     * atomic, so when it fails nothing changed: no socket is closed, every session (the caller's too) stays valid, and the
+     * error is rethrown.
      */
     public async RotateFor(tenantId: string, principalId: string, oldSessionId: string, email?: string): Promise<TenantSession>
     {
-        let fresh: TenantSession | undefined
-        try
+        const fresh = await this.sessions.RotateFor(tenantId, principalId, email)
+        for (const connections of this.connections)
         {
-            fresh = await this.sessions.RotateFor(tenantId, principalId, email)
-            for (const connections of this.connections)
-            {
-                connections.MoveSession(oldSessionId, fresh.id)
-            }
-            return fresh
+            connections.MoveSession(oldSessionId, fresh.id)
         }
-        finally
-        {
-            this.CloseConnections(tenantId, principalId, fresh?.id)
-        }
+        this.CloseConnections(tenantId, principalId, fresh.id)
+        return fresh
     }
 
     private CloseConnections(tenantId: string, principalId: string, keepSessionId: string | undefined): void

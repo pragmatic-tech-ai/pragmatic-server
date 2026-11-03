@@ -80,12 +80,12 @@ describe('TenantPrincipalSessions.RotateFor', () =>
         assert.deepEqual(connections.Log, ['move old-1->fresh-1', 'close t1/owner keep:fresh-1'], 'attached once; moved before the close')
     })
 
-    it('when the store fails, every socket of the principal closes and the failure is rethrown', async () =>
+    it('when the store fails nothing changed: no socket is moved or closed, and the failure is rethrown', async () =>
     {
         const revoker = new TenantPrincipalSessions({ RotateFor: async () => { throw new Error('disk full') } } as unknown as TenantSessionStore)
         const connections = new OrderedConnections()
         revoker.Attach(connections)
         await assert.rejects(revoker.RotateFor('t1', 'owner', 'old-1'), /disk full/)
-        assert.deepEqual(connections.Log, ['close t1/owner keep:undefined'])
+        assert.deepEqual(connections.Log, [])
     })
 })

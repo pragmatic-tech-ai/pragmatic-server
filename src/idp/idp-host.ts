@@ -153,6 +153,13 @@ export class IdpHost
     private static readonly TooManyAttemptsCode = 'too_many_attempts';
     private static readonly MillisPerSecond = 1000;
     private static readonly NoClientIp = '';
+    /** The end user's address, sent by an admin-credentialed relay (the tenant plane); honoured only with that credential. */
+    private static readonly EndUserIpHeader = 'x-pragmatic-end-user-ip';
+    private static readonly PlausibleIp = /^[0-9A-Fa-f:.]{1,64}$/;
+    /** The change's strict per-(tenant, email, client address) bucket. */
+    private static readonly PasswordAttemptsPerAddress = 5;
+    /** The change's generous per-(tenant, email) cap across all addresses: bounds distributed guessing. */
+    private static readonly PasswordAttemptsPerAccount = 20;
     private static readonly InvalidCredentialsCode = 'invalid_credentials';
     private static readonly InvalidRequestCode = 'invalid_request';
     private static readonly EmptyObject = {};
@@ -184,11 +191,13 @@ export class IdpHost
     private readonly authorize: AuthorizeEndpoint;
     private readonly throttle: IdpLoginThrottle;
     /**
-     * The self-service password change's own bucket, keyed per (tenant, email) only: a change is often made
-     * server-to-server (the tenant plane), where the caller ip is the plane's, so it must neither lock the user's
-     * browser login nor be locked by it.
+     * The self-service password change's own buckets, separate from sign-in (a change must neither lock the browser
+     * sign-in nor be locked by it): a strict one per (tenant, email, client address) and a generous cap per
+     * (tenant, email) across addresses. The client address is the end user's: for a relayed call (the tenant plane,
+     * server-to-server) it comes from EndUserIpHeader, trusted only with a valid admin credential.
      */
     private readonly passwordThrottle: IdpLoginThrottle;
+    private readonly passwordCapThrottle: IdpLoginThrottle;
     private readonly token: TokenEndpoint;
 
     public constructor(
@@ -205,7 +214,8 @@ export class IdpHost
         throttle: IdpLoginThrottle = new IdpLoginThrottle(),
         /** The sign-in app; idp-main always passes the built one. The placeholder serves hosts composed without it. */
         private readonly loginPage: IdpLoginPage = IdpLoginPage.Placeholder(),
-        passwordThrottle: IdpLoginThrottle = new IdpLoginThrottle())
+        passwordThrottle: IdpLoginThrottle = new IdpLoginThrottle({ maxAttempts: IdpHost.PasswordAttemptsPerAddress }),
+        passwordCapThrottle: IdpLoginThrottle = new IdpLoginThrottle({ maxAttempts: IdpHost.PasswordAttemptsPerAccount }))
     {
         if (new URL(baseUrl).protocol !== IdpHost.HttpsProtocol)
         {
@@ -216,6 +226,7 @@ export class IdpHost
         this.authorize = new AuthorizeEndpoint(realms, clients, codes, sso, secureCookie, throttle);
         this.throttle = throttle;
         this.passwordThrottle = passwordThrottle;
+        this.passwordCapThrottle = passwordCapThrottle;
         this.token = new TokenEndpoint(this.baseUrl, signingKey, codes, clients, undefined, realms);
     }
 
@@ -389,25 +400,46 @@ export class IdpHost
             this.WriteJson(res, IdpHost.StatusBadRequest, { [IdpHost.ErrorField]: IdpHost.InvalidRequestCode }, IdpHost.NoStoreHeaders);
             return;
         }
-        // Per (tenant, email): the change bucket ignores the caller ip (see passwordThrottle).
-        const decision = this.passwordThrottle.CheckAllowed(tenantId, email, IdpHost.NoClientIp);
-        if (!decision.allowed)
+        const clientIp = this.PasswordClientIp(req);
+        const perAddress = this.passwordThrottle.CheckAllowed(tenantId, email, clientIp);
+        const perAccount = this.passwordCapThrottle.CheckAllowed(tenantId, email, IdpHost.NoClientIp);
+        if (!perAddress.allowed || !perAccount.allowed)
         {
-            this.WriteJson(res, IdpHost.StatusTooManyRequests, { [IdpHost.ErrorField]: IdpHost.TooManyAttemptsCode }, this.RetryAfterHeaders(decision.retryAfterMs));
+            const retryAfterMs = Math.max(perAddress.retryAfterMs, perAccount.retryAfterMs);
+            this.WriteJson(res, IdpHost.StatusTooManyRequests, { [IdpHost.ErrorField]: IdpHost.TooManyAttemptsCode }, this.RetryAfterHeaders(retryAfterMs));
             return;
         }
         // Count the attempt at the gate, synchronously BEFORE the await: RotatePassword yields (Argon2 + I/O), so a concurrent
-        // burst would otherwise all pass CheckAllowed before any failure was recorded. Success clears the optimistic count.
-        this.passwordThrottle.RecordFailure(tenantId, email, IdpHost.NoClientIp);
+        // burst would otherwise all pass CheckAllowed before any failure was recorded. Success clears the optimistic counts.
+        this.passwordThrottle.RecordFailure(tenantId, email, clientIp);
+        this.passwordCapThrottle.RecordFailure(tenantId, email, IdpHost.NoClientIp);
         const principalId = await realm.RotatePasswordOf(email, current, next);
         if (principalId !== undefined)
         {
-            this.passwordThrottle.Clear(tenantId, email, IdpHost.NoClientIp);
+            this.passwordThrottle.Clear(tenantId, email, clientIp);
+            this.passwordCapThrottle.Clear(tenantId, email, IdpHost.NoClientIp);
             this.EndOtherSsoSessions(req, tenantId, principalId);
             this.WriteJson(res, IdpHost.StatusOk, IdpHost.EmptyObject, IdpHost.NoStoreHeaders);
             return;
         }
         this.WriteJson(res, IdpHost.StatusUnauthorized, { [IdpHost.ErrorField]: IdpHost.InvalidCredentialsCode }, IdpHost.NoStoreHeaders);
+    }
+
+    /**
+     * The address a password change is throttled under: the end user's address from EndUserIpHeader when the caller
+     * presents a valid admin credential (the tenant plane relaying its user's change), else the socket's. The header is
+     * ignored without the credential, so a browser cannot pick its own bucket. The credential is never logged.
+     */
+    private PasswordClientIp(req: IncomingMessage): string
+    {
+        const socketIp = req.socket.remoteAddress ?? IdpHost.NoClientIp;
+        const forwarded = req.headers[IdpHost.EndUserIpHeader];
+        if (typeof forwarded !== 'string' || !IdpHost.PlausibleIp.test(forwarded.trim()))
+        {
+            return socketIp;
+        }
+        const authorization = req.headers[IdpHost.AuthorizationHeader];
+        return this.admin !== undefined && this.admin.IsAdminCredential(authorization) ? forwarded.trim() : socketIp;
     }
 
     /**

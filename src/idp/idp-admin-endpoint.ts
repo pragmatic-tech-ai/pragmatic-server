@@ -125,6 +125,15 @@ export class IdpAdminEndpoint
         return IdpAdminEndpoint.NotFound();
     }
 
+    /**
+     * Whether an Authorization header carries a valid admin bearer token (the same check the admin API makes). Lets the
+     * host trust a relayed end-user address only from an admin-credentialed caller. Constant-time; never logs the token.
+     */
+    public IsAdminCredential(authorization: string | undefined): boolean
+    {
+        return this.VerifyToken(authorization);
+    }
+
     private VerifyToken(authorization: string | undefined): boolean
     {
         if (typeof authorization !== 'string' || !authorization.startsWith(IdpAdminEndpoint.BearerPrefix))

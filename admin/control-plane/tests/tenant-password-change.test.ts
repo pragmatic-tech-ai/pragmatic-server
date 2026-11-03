@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { request } from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -25,7 +25,7 @@ import type { ITenantApiEndpoint, TenantPlane } from '../tenant-auth/tenant-plan
 import { TenantEventBus } from '../tenant-api/tenant-events.js'
 
 type Reply = { status: number; body: string; cacheControl?: string; retryAfter?: string; setCookie?: string[] }
-type ClientCall = { tenantId: string; email: string; current: string; next: string; baseUrl: string }
+type ClientCall = { tenantId: string; email: string; current: string; next: string; baseUrl: string; endUserIp?: string }
 
 class StubDirectory
 {
@@ -85,8 +85,11 @@ class FakeIdpClient implements IIdpPasswordClient
     public DelayMs = 0
     public readonly Calls: ClientCall[] = []
 
-    public async ChangePassword(conn: IdpConnection, tenantId: string, email: string, currentPassword: string, newPassword: string): Promise<IdpPasswordOutcome>
+    public LastEndUserIp = ''
+
+    public async ChangePassword(conn: IdpConnection, tenantId: string, email: string, currentPassword: string, newPassword: string, endUserIp: string): Promise<IdpPasswordOutcome>
     {
+        this.LastEndUserIp = endUserIp
         this.Calls.push({ tenantId, email, current: currentPassword, next: newPassword, baseUrl: conn.baseUrl })
         if (this.DelayMs > 0)
         {
@@ -256,6 +259,7 @@ describe('Tenant self-service password change (POST /tenant-auth/password)', () 
         assert.equal(r.cacheControl, 'no-store')
         assert.deepEqual(JSON.parse(r.body), { ok: true, otherSessionsEnded: true })
         assert.deepEqual(client.Calls, [{ tenantId: PwKit.TenantId, email: PwKit.OwnerEmail, current: PwKit.Current, next: PwKit.Next, baseUrl: 'https://idp.test/acme' }])
+        assert.match(client.LastEndUserIp, /127\.0\.0\.1$/, 'the end user address (here the socket peer; no trusted proxy) is relayed')
 
         const fresh = PwKit.TokenFrom(r)
         assert.notEqual(fresh, mine.id)
@@ -364,6 +368,33 @@ describe('Tenant self-service password change (POST /tenant-auth/password)', () 
         const mine = await store.Issue(PwKit.TenantId, PwKit.Owner, PwKit.OwnerEmail)
         const socket = await PwKit.OpenEvents(host, mine.id)
         assert.equal(await PwKit.ClosedSoon(socket), true)
+    })
+
+    it('a rotation whose write fails changes nothing: the caller keeps its session, no socket closes, the warning is truthful', async () =>
+    {
+        const sub = join(parent, 'sub')
+        store = new TenantSessionStore(join(sub, 'tenant-sessions.json'), 3600000)
+        await Start()
+        const mine = await store.Issue(PwKit.TenantId, PwKit.Owner, PwKit.OwnerEmail)
+        const elsewhere = await store.Issue(PwKit.TenantId, PwKit.Owner, PwKit.OwnerEmail)
+        const mySocket = await PwKit.OpenEvents(host, mine.id)
+        const elsewhereSocket = await PwKit.OpenEvents(host, elsewhere.id)
+        rmSync(sub, { recursive: true, force: true })
+        writeFileSync(sub, 'blocked')
+        const r = await PwKit.Change(host, mine.id)
+        assert.equal(r.status, 200)
+        const body = JSON.parse(r.body) as { otherSessionsEnded: boolean; warning?: string }
+        assert.equal(body.otherSessionsEnded, false)
+        assert.match(body.warning ?? '', /could not be signed out/)
+        assert.equal((r.setCookie ?? []).some(c => c.startsWith(TenantSessionCookie.Name + '=')), false)
+        assert.notEqual(await store.Validate(mine.id), null)
+        assert.notEqual(await store.Validate(elsewhere.id), null)
+        await new Promise(res => setTimeout(res, 100))
+        assert.equal(mySocket.readyState, WebSocket.OPEN)
+        assert.equal(elsewhereSocket.readyState, WebSocket.OPEN)
+        mySocket.close()
+        elsewhereSocket.close()
+        rmSync(sub, { force: true })
     })
 
     it('a change whose session rotation failed still reports success, with otherSessionsEnded false and a warning', async () =>

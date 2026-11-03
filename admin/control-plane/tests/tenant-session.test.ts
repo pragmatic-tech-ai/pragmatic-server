@@ -237,3 +237,50 @@ test('a later full reset ends the rotated session too', async () =>
         assert.equal(await store.Validate(fresh.id), null)
     })
 })
+
+test('a change whose write fails leaves memory and disk as they were: rotate, revoke-all and issue are atomic', async () =>
+{
+    const root = await mkdtemp(join(tmpdir(), 'tenant-session-atomic-'))
+    const sub = join(root, 'sub')
+    const file = join(sub, 'tenant-sessions.json')
+    try
+    {
+        const store = new TenantSessionStore(file, SessionFixture.Ttl)
+        const mine = await store.Issue(SessionFixture.Tenant, SessionFixture.Principal, 'me@t.test')
+        const other = await store.Issue(SessionFixture.Tenant, SessionFixture.Principal, 'me@t.test')
+        // Make every further write fail: the store's directory becomes a plain file.
+        await rm(sub, { recursive: true, force: true })
+        await writeFile(sub, 'blocked')
+        await assert.rejects(store.RotateFor(SessionFixture.Tenant, SessionFixture.Principal, 'me@t.test'))
+        await assert.rejects(store.RevokeAllFor(SessionFixture.Tenant, SessionFixture.Principal))
+        await assert.rejects(store.Revoke(mine.id))
+        await assert.rejects(store.Issue(SessionFixture.Tenant, SessionFixture.Principal))
+        assert.notEqual(await store.Validate(mine.id), null, 'the caller keeps its valid session')
+        assert.notEqual(await store.Validate(other.id), null, 'nothing was ended in memory either')
+        // Writes work again: the rotation lands, and a restart (reload from disk) agrees.
+        await rm(sub, { force: true })
+        const fresh = await store.RotateFor(SessionFixture.Tenant, SessionFixture.Principal, 'me@t.test')
+        const reloaded = new TenantSessionStore(file, SessionFixture.Ttl)
+        assert.equal(await reloaded.Validate(mine.id), null)
+        assert.equal(await reloaded.Validate(other.id), null)
+        assert.notEqual(await reloaded.Validate(fresh.id), null)
+    }
+    finally
+    {
+        await rm(root, { recursive: true, force: true })
+    }
+})
+
+test('concurrent changes are serialised: none is lost', async () =>
+{
+    await SessionFixture.WithDir(async file =>
+    {
+        const store = new TenantSessionStore(file, SessionFixture.Ttl)
+        const issued = await Promise.all(Array.from({ length: 5 }, (_, i) => store.Issue(SessionFixture.Tenant, 'user-' + i)))
+        const reloaded = new TenantSessionStore(file, SessionFixture.Ttl)
+        for (const session of issued)
+        {
+            assert.notEqual(await reloaded.Validate(session.id), null)
+        }
+    })
+})

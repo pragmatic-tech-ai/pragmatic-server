@@ -43,6 +43,9 @@ export class TenantPasswordChange
     private static readonly CacheControlHeader = 'Cache-Control'
     private static readonly SetCookieHeader = 'Set-Cookie'
     private static readonly KeySeparator = '\u0000'
+    private static readonly ForwardedForHeader = 'x-forwarded-for'
+    private static readonly ForwardedSeparator = ','
+    private static readonly NoAddress = ''
     private static readonly BusyMessage = 'A password change for this account is already running.'
     private static readonly RetryAfterHeader = 'Retry-After'
     private static readonly JsonContentType = 'application/json'
@@ -79,7 +82,9 @@ export class TenantPasswordChange
         private readonly idp: ITenantIdpConnector,
         private readonly client: IIdpPasswordClient,
         private readonly principals: ISessionRotator,
-        private readonly secureCookie: boolean)
+        private readonly secureCookie: boolean,
+        /** Behind a trusted proxy the end user's address is the last x-forwarded-for hop; else the socket's. */
+        private readonly trustedProxy: boolean = false)
     {
     }
 
@@ -131,7 +136,7 @@ export class TenantPasswordChange
         this.inFlight.add(key)
         try
         {
-            await this.Change(res, session, session.email, current, next)
+            await this.Change(res, session, session.email, current, next, this.EndUserIp(req))
         }
         finally
         {
@@ -140,7 +145,7 @@ export class TenantPasswordChange
     }
 
     /** Reaches the tenant IdP, asks it to change the password, and answers by its outcome (guard held). */
-    private async Change(res: ServerResponse, session: TenantSession, email: string, current: string, next: string): Promise<void>
+    private async Change(res: ServerResponse, session: TenantSession, email: string, current: string, next: string, endUserIp: string): Promise<void>
     {
         let conn: IdpConnection | undefined
         try
@@ -156,7 +161,7 @@ export class TenantPasswordChange
             this.Reply(res, TenantPasswordChange.StatusUnavailable, { error: TenantPasswordChange.UnreachableMessage })
             return
         }
-        const outcome = await this.client.ChangePassword(conn, session.tenantId, email, current, next)
+        const outcome = await this.client.ChangePassword(conn, session.tenantId, email, current, next, endUserIp)
         switch (outcome.Result)
         {
             case IdpPasswordResult.Changed:
@@ -190,6 +195,22 @@ export class TenantPasswordChange
         }
         const cookie = TenantSessionCookie.Build(fresh.tenantId, fresh.id, new Date(fresh.expiresAt), this.secureCookie)
         this.Reply(res, TenantPasswordChange.StatusOk, { ok: true, otherSessionsEnded: true }, { [TenantPasswordChange.SetCookieHeader]: cookie })
+    }
+
+    /** The end user's address, relayed to the IdP for its per-address throttle. */
+    private EndUserIp(req: IncomingMessage): string
+    {
+        if (this.trustedProxy)
+        {
+            const raw = req.headers[TenantPasswordChange.ForwardedForHeader]
+            const header = Array.isArray(raw) ? raw.join(TenantPasswordChange.ForwardedSeparator) : raw
+            const last = header?.split(TenantPasswordChange.ForwardedSeparator).pop()?.trim()
+            if (last !== undefined && last.length > 0)
+            {
+                return last
+            }
+        }
+        return req.socket.remoteAddress ?? TenantPasswordChange.NoAddress
     }
 
     private Reply(res: ServerResponse, status: number, body: unknown, extra: Record<string, string> = {}): void
