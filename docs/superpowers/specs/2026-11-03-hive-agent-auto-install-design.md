@@ -84,12 +84,14 @@ under the per-hive operation lock, in this order:
    except the shared `pragmatic-system` Namespace, plus the token Secret, names derived from the same
    render as the bundle); `kubectl delete -f -` of `TenantAdminBootstrap.CredentialRemovalManifest`
    (the tenant-admin's IdP CA and IdP admin-token Secret copies, by name, since older clusters carry
-   them unlabelled); then `kubectl delete deployment,service,serviceaccount,secret -l
+   them unlabelled; only when the tenant's tenant-admin Deployment is absent or labelled for THIS
+   hive, so deleting another hive of the same tenant on the same context leaves them); then `kubectl delete deployment,service,serviceaccount,secret -l
    pragmatic/hive=<id> -n pragmatic-system` (the agent, and the tenant-admin pod with its Service,
    ServiceAccount and labelled credentials such as a pull secret; bootstrap labels every Secret it
    carries for the hive except the seed). Kept on purpose, together: the tenant-admin data PVC and
-   its seed Secret (the master key that decrypts it); the delete names both in its response
-   (`retained`) and in the audit entry's note. Provisioned (kind) hives skip this step: their whole
+   its seed Secret (the master key that decrypts it); the delete names those that exist (and only
+   when this hive owns the tenant-admin) in its response (`retained`) and in the audit entry's note
+   (shown on the portal's activity entry). Provisioned (kind) hives skip this step: their whole
    cluster is destroyed next, agent included. Other backends' clusters are never touched.
 2. `DestroyHiveCluster` (provisioned hives), 3. `DeregisterHive` (the agent token stops verifying),
    4. delete the record.
@@ -107,10 +109,22 @@ failure, behind its own confirm-by-name dialog, and the hives list then shows wh
 may have been left behind.
 
 Hive ids become Kubernetes names and the `pragmatic/hive` label value, so they must be lowercase
-RFC 1123 labels (a-z, 0-9, '-', starting and ending with a letter or digit, at most 63
-characters): enforced on create and provision (400), mirrored in the portal, and refused again by
-the selector builder, the installer and the uninstaller, so a selector like `pragmatic/hive==b`
-can never match another hive.
+RFC 1123 labels (a-z, 0-9, '-', starting and ending with a letter or digit) of at most 34
+characters - the tightest id-derived limit: a provisioned hive's kind cluster name
+`pragmatic-hive-<id>` is capped at 49, and the agent name `pragmatic-hive-<id>-agent` is also its
+app label value (63). One constant (`K8sManifestBuilder.HiveIdMaxLength`, mirrored by the portal's
+`HiveOptions.IdMaxLength`); enforced on create and provision (400), mirrored in the portal, and
+refused again by the selector builder, the installer and the uninstaller, so a selector like
+`pragmatic/hive==b` can never match another hive.
+
+Legacy hives: a hive stored before this rule with an id that breaks it (uppercase, `_`, `.`, other
+characters, or longer than 34) gets no automatic install and no bootstrap commands, and its delete
+refuses the cluster uninstall: remove it with Delete anyway (`?force=true`), clean its cluster by
+hand if needed, and recreate it with a valid id.
+
+Pull credentials: bootstrap labels the pull-credential Secret with the bootstrapping hive, so the
+last hive to bootstrap a given Secret name owns it and its delete removes it. Sharing one
+pull-secret name between hives is not supported.
 
 ## Left to the builder
 
