@@ -50,7 +50,7 @@ class ModelScopedWorld
         const handler = ServerConnectionHandler.Attach(
             serverSocket, this.language, this.manager, context, () => Promise.reject(new Error(ModelScopedFixture.NoConnectors)), ctx => this.server.Graph(ctx),
             undefined, undefined, undefined, undefined, undefined, undefined, purpose, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-            this.fieldMasks, ctx => this.server.ConnectorReadAuthorizationFor(ctx), undefined, (ctx, id) => this.server.ModelGraph(ctx, id))
+            this.fieldMasks, ctx => this.server.ConnectorReadAuthorizationFor(ctx), undefined, this.server)
         this.clients.push(PragmaticClient.CreateOverSocket(clientSocket))
         this.handlers.push(handler)
         return handler
@@ -342,6 +342,30 @@ test('modelId on a Runtime-purpose connection is InvalidParams', async () =>
     {
         const handler = world.Connect(ModelScopedFixture.Context(ModelScopedFixture.Plain), TenantPurpose.Runtime)
         const error = await ModelScopedFixture.CodeOf(handler.RunCypherQuery(ModelScopedFixture.Params(world.ModelIds[0])))
+        assert.equal(error.code, ErrorCodes.InvalidParams)
+    })
+})
+
+test('cypher/models lists exactly the shard ids model-scoped queries accept', async () =>
+{
+    await ModelScopedFixture.With(true, async world =>
+    {
+        const handler = world.Connect(ModelScopedFixture.Context(ModelScopedFixture.Plain))
+        const listed = (await handler.RunCypherModels()).models
+        assert.deepEqual(listed, [...world.ModelIds].sort())
+        for (const id of listed)
+        {
+            await handler.RunCypherQuery(ModelScopedFixture.Params(id))
+        }
+    })
+})
+
+test('cypher/models on a Runtime-purpose connection is InvalidParams', async () =>
+{
+    await ModelScopedFixture.With(false, async world =>
+    {
+        const handler = world.Connect(ModelScopedFixture.Context(ModelScopedFixture.Plain), TenantPurpose.Runtime)
+        const error = await ModelScopedFixture.CodeOf(handler.RunCypherModels())
         assert.equal(error.code, ErrorCodes.InvalidParams)
     })
 })

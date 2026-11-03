@@ -56,7 +56,7 @@ import { ShareService } from './host/sharing/share-service.js'
 import { AssignService } from './host/sharing/assign-service.js'
 import { AccessPolicySetting } from './host/apps/access-policy-setting.js'
 import { FilteredGraphQuery } from './host/cypher/filtered-graph-query.js'
-import { ModelShardGraph } from './host/cypher/model-shard-graph.js'
+import { ModelShardCache, type IModelShardSource } from './host/cypher/model-shard-cache.js'
 import { GraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
@@ -144,7 +144,7 @@ export type ReferencedLabelSet = { labels: readonly string[]; wildcard: boolean;
 type AppBase = { domain: Domain; plan: ModelConnectorPlan; nativeBase: IGraphQuery; defaultConcepts: ReadonlySet<string>; ownConcepts: ReadonlySet<string> }
 
 /** Headless single-tenant in-process host: composes the engine over the lazy root and opens a solution. */
-export class PragmaticServer implements IEnvironmentGraphHost
+export class PragmaticServer implements IEnvironmentGraphHost, IModelShardSource
 {
     private static readonly DefaultPackagesDir = 'packages'
     private static readonly DefaultGraphsDir = 'graphs'
@@ -180,6 +180,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
     private tenant: Tenant | undefined
     private oidc: OidcFrontDoor | undefined
     private graphCache: TenantGraphCache | undefined
+    private shardCache: ModelShardCache | undefined
     private appsStorage: IStorage | undefined
     private appsRegistry: PragmaticAppsRegistry | undefined
     private appIngest: AppIngestService | undefined
@@ -893,13 +894,14 @@ export class PragmaticServer implements IEnvironmentGraphHost
      */
     public async ModelGraph(context: AccessContext, modelId: string): Promise<IGraphQuery>
     {
-        const sources = await this.CollectGraphSources()
-        const shard = ModelShardGraph.Locate(sources.map(s => s.repo), modelId)
+        const shards = this.Shards()
+        const shard = await shards.Locate(modelId)
         if (shard === undefined)
         {
             throw new ResponseError(ErrorCodes.InvalidParams, PragmaticServer.ModelNotFoundMessage)
         }
-        const base = await ModelShardGraph.Build(shard)
+        // the unfiltered shard graph is shared across principals; the row filter and field mask apply per request below
+        const base = await shards.Graph(shard)
         const predicate = IdentityEnforcement.ForRepository(shard.Repo, context, Action.Read).InstanceFilter()
         const depth = await (await this.DepthFilterSource()).ReadFilterFor(context)
         const filtered = new FilteredGraphQuery(base, new CompositeInstanceFilter([predicate, depth]))
@@ -909,6 +911,17 @@ export class PragmaticServer implements IEnvironmentGraphHost
         }
         const mask = await (await this.ReadAuthorization()).FieldReadMaskFor(context)
         return mask === AllowAllFieldReadMask.Instance ? filtered : new FieldMaskedGraphQuery(filtered, mask)
+    }
+
+    /** The model shard ids of the active solution a principal may pass as modelId (membership in the tenant's own sources). */
+    public async ModelIds(_context: AccessContext): Promise<readonly string[]>
+    {
+        return await this.Shards().Ids()
+    }
+
+    private Shards(): ModelShardCache
+    {
+        return this.shardCache ??= new ModelShardCache(() => this.CollectGraphSources())
     }
 
     /**
@@ -921,8 +934,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
         {
             throw new ResponseError(ErrorCodes.InvalidRequest, PragmaticServer.NotDevelopmentMessage)
         }
-        const sources = await this.CollectGraphSources()
-        const shard = ModelShardGraph.Locate(sources.map(s => s.repo), modelId)
+        const shard = await this.Shards().Locate(modelId)
         const solution = (await this.Manager()).ActiveSolution
         if (shard === undefined || solution === undefined)
         {
@@ -1027,6 +1039,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
         finally
         {
             this.graphCache?.Dispose()
+            this.shardCache?.Dispose()
             this.appGraphs.clear()
             try
             {

@@ -120,6 +120,7 @@ export class PolicyGate
             [ConnectorProtocol.RefreshModel.method, connect],
             [CypherProtocol.Query.method, readTenant],
             [CypherProtocol.Execute.method, writeTenant],
+            [CypherProtocol.Models.method, readTenant],
             [AppDataProtocol.Write.method, writeTenant],
             [DataSharingProtocol.Share.method, writeTenant],
             [DataSharingProtocol.Unshare.method, writeTenant],

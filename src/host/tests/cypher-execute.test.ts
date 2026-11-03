@@ -54,7 +54,7 @@ class ExecWorld
         const handler = ServerConnectionHandler.Attach(
             serverSocket, this.language, this.manager, context, () => Promise.reject(new Error(ExecFixture.NoConnectors)), ctx => this.server.Graph(ctx),
             undefined, undefined, undefined, undefined, undefined, undefined, purpose, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-            this.fieldMasks, ctx => this.server.ConnectorReadAuthorizationFor(ctx), undefined, (ctx, id) => this.server.ModelGraph(ctx, id),
+            this.fieldMasks, ctx => this.server.ConnectorReadAuthorizationFor(ctx), undefined, this.server,
             (ctx, id, request) => this.server.ExecuteCypher(ctx, id, request))
         this.clients.push(PragmaticClient.CreateOverSocket(clientSocket))
         this.handlers.push(handler)

@@ -97,6 +97,12 @@ test('cypher/query is allowed for a reader and denied with no role', () =>
     assert.equal(GateFixture.Gate(null).Authorize(CypherProtocol.Query.method).Allowed, false)
 })
 
+test('cypher/models is a tenant read: allowed for a reader, denied with no role', () =>
+{
+    assert.equal(GateFixture.Gate(Role.Viewer).Authorize(CypherProtocol.Models.method).Allowed, true)
+    assert.equal(GateFixture.Gate(null).Authorize(CypherProtocol.Models.method).Allowed, false)
+})
+
 test('Owner may list/read/write/test/prepare/refresh connectors', () =>
 {
     const gate = GateFixture.Gate(Role.Owner)
