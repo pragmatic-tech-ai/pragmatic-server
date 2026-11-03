@@ -43,6 +43,7 @@ import { BuildStateMapper } from './build-state-mapper.js'
 import { CypherParamConverter, CypherParamError } from './cypher/cypher-param-converter.js'
 import { AdapterPackError, AdapterPackErrorKind } from '@pragmatic-tech-ai/todl-connectors-host'
 import type { DevCypherRequest } from './cypher/dev-cypher-executor.js'
+import { GraphDataDigest } from './paging/graph-data-digest.js'
 import type { IModelShardSource } from './cypher/model-shard-cache.js'
 import { CypherResultMapper } from './cypher/cypher-result-mapper.js'
 import { trace } from '@opentelemetry/api'
@@ -84,6 +85,7 @@ export class ServerConnectionHandler
     private static readonly ModelScopeUnavailableMessage = `${InvalidParamsPrefix.Text}model-scoped query not available`
     private static readonly ModelViewFingerprintTag = 'modelView'
     private static readonly NotRuntimeMessage = 'operation requires a runtime tenant'
+    private static readonly DataRevisionFingerprintTag = 'data'
     private static readonly ReadEndpointWriteMessage = `${InvalidParamsPrefix.Text}writes are not supported on ${CypherProtocol.Query.method}; send them to ${CypherProtocol.Execute.method}`
     private static readonly ExecuteModelIdRequiredMessage = `${InvalidParamsPrefix.Text}modelId is required: a write must name its target model`
     private static readonly NotDevelopmentMessage = 'operation requires a development tenant'
@@ -553,9 +555,10 @@ export class ServerConnectionHandler
         {
             throw new ResponseError(ErrorCodes.InvalidParams, ServerConnectionHandler.RuntimeModelScopeMessage)
         }
+        const labels = Cypher.ReferencedLabels.Of(source)
         const graph = this.purpose === TenantPurpose.Runtime
             ? this.boundApp !== undefined
-                ? await this.RequireBoundAppGraph(Cypher.ReferencedLabels.Of(source))
+                ? await this.RequireBoundAppGraph(labels)
                 : await this.RequireEnvironmentGraph()
             : modelId === undefined
                 ? await this.MaskedTenantGraph()
@@ -564,6 +567,11 @@ export class ServerConnectionHandler
         // reading GraphRevision before the fetch would fingerprint page 1 against the pre-build revision and
         // page 2 would then always be rejected as stale
         const parts = [ServerConnectionHandler.CypherFingerprintTag, source, CypherParamConverter.Canonical(params.parameters), String(this.languageService.GraphRevision)]
+        if (this.purpose === TenantPurpose.Runtime)
+        {
+            // runtime data (app writes, connector rows) moves without GraphRevision: fingerprint the data itself
+            parts.push(ServerConnectionHandler.DataRevisionFingerprintTag, GraphDataDigest.Of(graph, labels))
+        }
         if (modelId !== undefined)
         {
             parts.push(ServerConnectionHandler.ModelScopeFingerprintTag, modelId)
