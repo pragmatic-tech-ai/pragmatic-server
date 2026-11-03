@@ -2,8 +2,8 @@ import { join } from 'node:path'
 import { LazyCompositionRoot, HostKinds, ModuleStateKind } from '@pragmatic-tech-ai/todl-runtime'
 import { TenantPurpose } from './tenancy/tenant-purpose.js'
 import type { ModuleStateProperty } from '@pragmatic-tech-ai/todl-runtime'
-import { SolutionManagerService, StoragePackageSource, StoragePackageStore, PackageStoreKey, ConnectorPrefetch, ConnectorRuntimeGraphQuery, DataSourceAdapterCatalog, WikiOriginKind } from '@pragmatic-tech-ai/todl'
-import type { ModelConnectorPlan, IDataSourceAdapterProvider } from '@pragmatic-tech-ai/todl'
+import { SolutionManagerService, StoragePackageSource, StoragePackageStore, PackageStoreKey, ConnectorPrefetch, ConnectorRuntimeGraphQuery, DataSourceAdapterCatalog, WikiOriginKind, Cypher, ConjunctiveQueryFilterProvider } from '@pragmatic-tech-ai/todl'
+import type { ModelConnectorPlan, IDataSourceAdapterProvider, IConnectorQueryFilterProvider } from '@pragmatic-tech-ai/todl'
 import type { Domain } from '@pragmatic-tech-ai/todl/domain'
 import { NodeProjectSystemComposer } from '@pragmatic-tech-ai/todl/project-system'
 import { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
@@ -143,6 +143,8 @@ export interface PragmaticServerOptions
 
 /** The node labels a Cypher query references; wildcard when any node pattern is unlabeled; parseFailed when the text is not valid Cypher (nothing is prefetched). */
 export type ReferencedLabelSet = { labels: readonly string[]; wildcard: boolean; parseFailed: boolean }
+/** The read query a runtime graph is built for: its WHERE / inline-property equalities are pushed into connector pulls. */
+export type CypherScanQuery = { text: string; parameters: ReadonlyMap<string, Cypher.ParameterValue> }
 
 type AppBase = { domain: Domain; plan: ModelConnectorPlan; nativeBase: IGraphQuery; defaultConcepts: ReadonlySet<string>; ownConcepts: ReadonlySet<string> }
 
@@ -532,23 +534,25 @@ export class PragmaticServer implements IEnvironmentGraphHost, IModelShardSource
      * prefetched fresh per query, then the SP-3b depth+predicate filter over the result. The connector layer sits INSIDE the filter,
      * so a connector-minted instance is filtered exactly like a native one.
      */
-    public async GraphForPragmaticApp(context: AccessContext, name: string, labels: ReferencedLabelSet = PragmaticServer.NoLabels, maskFields = true): Promise<IGraphQuery>
+    public async GraphForPragmaticApp(context: AccessContext, name: string, labels: ReferencedLabelSet = PragmaticServer.NoLabels, maskFields = true, query?: CypherScanQuery): Promise<IGraphQuery>
     {
         const built = await this.BaseGraphFor(name)
         const nativeBase = built.nativeBase
         const concepts = PragmaticServer.ConnectorConcepts(labels, built.plan, nativeBase)
         const services = this.root.Services()
+        const rules = await AccessPolicySetting.Load(this.AppsStorage(), name)
+        const enforcement = IdentityEnforcement.Over(PolicyCatalog.FromPolicies(rules), context, Action.Read)
+        const shareIndex = await this.ShareIndexFor(context, name)
         const snapshot = concepts.length === 0
             ? new Map()
-            : await ConnectorPrefetch.ForConcepts(concepts, built.plan, services.getRequired(DataSourceAdapterCatalog.ServiceKey), services, built.domain)
+            : await ConnectorPrefetch.ForConcepts(concepts, built.plan, services.getRequired(DataSourceAdapterCatalog.ServiceKey), services, built.domain,
+                PragmaticServer.PushDownFor(query, nativeBase, enforcement, shareIndex.IsEmpty()))
         const base = new ConnectorRuntimeGraphQuery(nativeBase, snapshot, built.defaultConcepts)
-        const rules = await AccessPolicySetting.Load(this.AppsStorage(), name)
-        const predicate = IdentityEnforcement.Over(PolicyCatalog.FromPolicies(rules), context, Action.Read).InstanceFilter()
+        const predicate = enforcement.InstanceFilter()
         const depthSource = await this.DepthFilterSource()
         const bypass = await this.AppPrivateConcepts(depthSource, context, built)
         const depth = new ConceptBypassInstanceFilter(await depthSource.ReadFilterFor(context), bypass)
         const composite = new CompositeInstanceFilter([predicate, depth])
-        const shareIndex = await this.ShareIndexFor(context, name)
         const instanceFilter = shareIndex.IsEmpty()
             ? composite
             : new ShareWideningInstanceFilter(composite, shareIndex, ConceptIdFields.From(built.plan))
@@ -563,6 +567,18 @@ export class PragmaticServer implements IEnvironmentGraphHost, IModelShardSource
             return filtered
         }
         return new FieldMaskedGraphQuery(filtered, mask)
+    }
+
+    /**
+     * The source filters a runtime pull may push down. Each is a SUPERSET of what the in-memory filters keep: the query's
+     * own WHERE / inline-property equalities (CypherPushDown) and, unless record shares widen visibility past the access
+     * policy, the policy's push-down. Nothing is pushed for a non-query build (writes, write-target reads).
+     */
+    private static PushDownFor(query: CypherScanQuery | undefined, schema: IGraphQuery, enforcement: IdentityEnforcement, noShares: boolean): IConnectorQueryFilterProvider | undefined
+    {
+        if (query === undefined) return undefined
+        const fromQuery = Cypher.CypherPushDown.Analyze(query.text, new Cypher.GraphQuerySchema(schema), query.parameters)
+        return noShares ? new ConjunctiveQueryFilterProvider(fromQuery, enforcement.QueryFilterProvider()) : fromQuery
     }
 
     /**
