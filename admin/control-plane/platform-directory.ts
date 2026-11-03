@@ -4,6 +4,7 @@ import type { HiveRegistry } from './hive-registry.js'
 import type { EnvironmentRecord } from './environment-record.js'
 import { HivePlacementError } from './hive-placement-error.js'
 import { RecordId } from './platform-records.js'
+import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import type { ClientRecord, TenantRecord, HiveRecord, ClusterSpec, RegistrySpec } from './platform-records.js'
 
 export interface IEnvironmentLookup
@@ -230,6 +231,8 @@ export class PlatformDirectory
 
     public async CreateHive(input: { id: string; tenantId: string; displayName: string; cluster: ClusterSpec; registry: RegistrySpec; trustRootRef?: string }): Promise<HiveRecord>
     {
+        // The id becomes Kubernetes names and the pragmatic/hive label value: it must be a valid one.
+        K8sManifestBuilder.AssertValidHiveId(input.id)
         this.AssertNew(RecordKind.Hive, input.id, this.hives.Get(input.id))
         if (this.tenants.Get(input.tenantId) === undefined)
         {

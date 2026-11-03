@@ -2,6 +2,8 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { AgentUninstallError, HiveAgentUninstaller } from '../hive-agent-uninstaller.js'
 import { HiveBootstrapBundle } from '../hive-bootstrap-bundle.js'
+import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
+import { TenantAdminBootstrap } from '../tenant-admin-bootstrap.js'
 import type { IHiveOrchestrator, WorkloadHealth } from '../hive-orchestrator.js'
 import { KubectlError, type IKubectl } from '../kubectl.js'
 import type { EnvironmentWorkload } from '../environment-workload.js'
@@ -92,15 +94,21 @@ describe('HiveAgentUninstaller', () =>
         assert.equal(fx.Uninstaller.Covers(Fixture.Hive('a1', HiveBackend.Aks, InfraMode.Attach)), false)
     })
 
-    it('deletes the bundle objects and the token Secret by name, then every hive-labelled deployment (tenant-admin too)', async () =>
+    it('deletes the bundle objects, the token Secret and the tenant-admin credential Secrets by name, then the hive-labelled stateless objects', async () =>
     {
         const fx = new Fixture()
         await fx.Uninstaller.Uninstall(Fixture.Hive('h1', HiveBackend.Local, InfraMode.Attach))
         assert.deepEqual(fx.Orchestrators.Resolved, ['h1'])
         assert.deepEqual(fx.Orchestrators.Kubectl.Calls, [
             ['DeleteManifest', HiveBootstrapBundle.RemovalManifest('h1')],
-            ['DeleteBySelector', 'pragmatic-system', 'deployment', 'pragmatic/hive=h1'],
+            ['DeleteManifest', TenantAdminBootstrap.CredentialRemovalManifest('t1')],
+            ['DeleteBySelector', 'pragmatic-system', 'deployment,service,serviceaccount,secret', 'pragmatic/hive=h1'],
         ])
+        // The tenant-admin data PVC and its seed Secret (the master key that decrypts it) are kept together.
+        const all = JSON.stringify(fx.Orchestrators.Kubectl.Calls)
+        assert.ok(!all.includes(K8sManifestBuilder.TenantAdminClaimNameOf('t1')))
+        assert.ok(!all.includes(K8sManifestBuilder.TenantAdminSeedSecretNameOf('t1')))
+        assert.ok(!all.includes('persistentvolumeclaim'))
         // The shared namespace stays: other hives' agents may live in it.
         assert.ok(!fx.Orchestrators.Kubectl.Calls.some(c => c[0] === 'DeleteNamespace'))
     })
@@ -125,13 +133,38 @@ describe('HiveAgentUninstaller', () =>
         await assert.rejects(fx.Uninstaller.Uninstall(Fixture.Hive('h1', HiveBackend.Local, InfraMode.Attach)), AgentUninstallError)
     })
 
-    it('a non-kubectl failure gives a fixed reason, never the raw error text', async () =>
+    it('a non-kubectl failure is not an uninstall failure: it propagates as is (a real server error)', async () =>
     {
         const fx = new Fixture()
-        fx.Orchestrators.ResolveError = new Error('raw internal detail')
+        const boom = new Error('raw internal detail')
+        fx.Orchestrators.ResolveError = boom
         const err = await fx.Uninstaller.Uninstall(Fixture.Hive('h1', HiveBackend.Local, InfraMode.Attach)).then(() => undefined, (e: unknown) => e)
-        assert.ok(err instanceof AgentUninstallError)
-        assert.ok(!err.message.includes('raw internal detail'))
-        assert.match(err.message, /^Could not remove the hive's agent from its cluster: the cluster could not be reached\./)
+        assert.equal(err, boom)
+        fx.Orchestrators.ResolveError = undefined
+        const typeError = new TypeError('bug')
+        fx.Orchestrators.Kubectl.DeleteManifestError = typeError
+        assert.equal(await fx.Uninstaller.Uninstall(Fixture.Hive('h1', HiveBackend.Local, InfraMode.Attach)).then(() => undefined, (e: unknown) => e), typeError)
+    })
+
+    it('refuses a (legacy) hive id that is not a valid label value: =b and "b " would select other hives', async () =>
+    {
+        for (const id of ['=b', 'b '])
+        {
+            const fx = new Fixture()
+            const err = await fx.Uninstaller.Uninstall(Fixture.Hive(id, HiveBackend.Local, InfraMode.Attach)).then(() => undefined, (e: unknown) => e)
+            assert.ok(err instanceof AgentUninstallError)
+            assert.match(err.message, /not a valid Kubernetes label value/)
+            assert.deepEqual(fx.Orchestrators.Kubectl.Calls, [])
+            assert.deepEqual(fx.Orchestrators.Resolved, [])
+        }
+    })
+
+    it('Retained names the tenant-admin data PVC and its seed Secret, kept together', () =>
+    {
+        const fx = new Fixture()
+        assert.deepEqual(fx.Uninstaller.Retained(Fixture.Hive('h1', HiveBackend.Local, InfraMode.Attach)), [
+            K8sManifestBuilder.TenantAdminClaimNameOf('t1'),
+            K8sManifestBuilder.TenantAdminSeedSecretNameOf('t1'),
+        ])
     })
 })

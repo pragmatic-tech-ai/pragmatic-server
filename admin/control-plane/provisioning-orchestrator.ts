@@ -1,4 +1,5 @@
 import { RecordId } from './platform-records.js'
+import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import type { ClientRecord, ClusterSpec, HiveRecord, RegistrySpec, TenantRecord } from './platform-records.js'
 import { RecordExistsError, RecordKind, TenantClientMismatchError, UnknownClientError, UnknownTenantError } from './platform-directory.js'
 import type { PlatformDirectory } from './platform-directory.js'
@@ -138,6 +139,7 @@ export class ProvisioningOrchestrator
         RecordId.Validate(input.client.id)
         RecordId.Validate(input.tenant.id)
         RecordId.Validate(input.hive.id)
+        K8sManifestBuilder.AssertValidHiveId(input.hive.id)
         const client = this.directory.GetClient(input.client.id)
         if (input.client.existing === true && client === undefined)
         {

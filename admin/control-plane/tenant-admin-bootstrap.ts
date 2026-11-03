@@ -57,7 +57,16 @@ export interface TenantIdpMaterial
 type RenderedList = { items: RenderedItem[] }
 type RenderedItem = { kind: string; metadata: { name: string } }
 
-type SecretEntry = { readonly name: string; readonly type: string; readonly data: Map<string, Buffer> }
+type SecretEntry = { readonly name: string; readonly type: string; readonly data: Map<string, Buffer>; readonly retention: SecretRetention }
+
+/** What a hive delete does with a bootstrap Secret. */
+export enum SecretRetention
+{
+    /** Hive-labelled: removed with the hive's other objects. */
+    RemovedWithHive,
+    /** Unlabelled: kept on hive delete (the seed, whose master key decrypts the retained data PVC). */
+    Retained,
+}
 
 /**
  * The secret material a bootstrap must carry to a hive. Values live only in ES private fields, so JSON.stringify,
@@ -77,6 +86,7 @@ export class BootstrapSecretSet
     private static readonly MetadataKey = 'metadata'
     private static readonly NameKey = 'name'
     private static readonly NamespaceKey = 'namespace'
+    private static readonly LabelsKey = 'labels'
     private static readonly TypeKey = 'type'
     private static readonly DataKey = 'data'
     private static readonly ItemsKey = 'items'
@@ -85,14 +95,19 @@ export class BootstrapSecretSet
 
     #entries: SecretEntry[] = []
 
-    public Add(name: string, data: Record<string, Buffer | string>, type: string = BootstrapSecretSet.OpaqueType): void
+    /** With a hive id, every Secret not marked Retained carries the hive's label, so a hive delete finds it by selector. */
+    public constructor(private readonly hiveId?: string)
+    {
+    }
+
+    public Add(name: string, data: Record<string, Buffer | string>, type: string = BootstrapSecretSet.OpaqueType, retention: SecretRetention = SecretRetention.RemovedWithHive): void
     {
         const map = new Map<string, Buffer>()
         for (const [key, value] of Object.entries(data))
         {
             map.set(key, typeof value === 'string' ? Buffer.from(value, BootstrapSecretSet.Utf8) : value)
         }
-        this.#entries.push({ name, type, data: map })
+        this.#entries.push({ name, type, data: map, retention })
     }
 
     /** Adds a file to an already-added Secret (e.g. extra seeded state); throws when the Secret is unknown. */
@@ -117,11 +132,21 @@ export class BootstrapSecretSet
         const items = this.#entries.map(e => ({
             [BootstrapSecretSet.ApiVersionKey]: BootstrapSecretSet.ApiVersion,
             [BootstrapSecretSet.KindKey]: BootstrapSecretSet.SecretKind,
-            [BootstrapSecretSet.MetadataKey]: { [BootstrapSecretSet.NameKey]: e.name, [BootstrapSecretSet.NamespaceKey]: K8sManifestBuilder.SystemNamespace },
+            [BootstrapSecretSet.MetadataKey]: this.Metadata(e),
             [BootstrapSecretSet.TypeKey]: e.type,
             [BootstrapSecretSet.DataKey]: Object.fromEntries([...e.data].map(([k, v]) => [k, v.toString(BootstrapSecretSet.Base64)])),
         }))
         return JSON.stringify({ [BootstrapSecretSet.ApiVersionKey]: BootstrapSecretSet.ApiVersion, [BootstrapSecretSet.KindKey]: BootstrapSecretSet.ListKind, [BootstrapSecretSet.ItemsKey]: items })
+    }
+
+    private Metadata(e: SecretEntry): Record<string, unknown>
+    {
+        const meta: Record<string, unknown> = { [BootstrapSecretSet.NameKey]: e.name, [BootstrapSecretSet.NamespaceKey]: K8sManifestBuilder.SystemNamespace }
+        if (this.hiveId !== undefined && e.retention === SecretRetention.RemovedWithHive)
+        {
+            meta[BootstrapSecretSet.LabelsKey] = K8sManifestBuilder.HiveLabelsOf(this.hiveId)
+        }
+        return meta
     }
 
     public toJSON(): string
@@ -174,6 +199,7 @@ export class TenantAdminBootstrap
     private static readonly ApiVersion = 'v1'
     private static readonly ListKind = 'List'
     private static readonly NamespaceKind = 'Namespace'
+    private static readonly SecretKind = 'Secret'
     private static readonly JsonIndent = 2
     private static readonly KeySeparator = '/'
 
@@ -195,6 +221,21 @@ export class TenantAdminBootstrap
         return `${K8sManifestBuilder.TenantAdminNameOf(tenantId)}${TenantAdminBootstrap.IdpTokenSuffix}`
     }
 
+    /**
+     * The tenant-admin's live-credential Secret copies in pragmatic-system, as a v1 List of identities to delete by name on hive
+     * delete (older clusters have them unlabelled): the IdP CA and the IdP admin-token copy. Never the seed Secret.
+     */
+    public static CredentialRemovalManifest(tenantId: string): string
+    {
+        const C = TenantAdminBootstrap
+        const items = [C.IdpCaSecretNameOf(tenantId), C.IdpTokenSecretNameOf(tenantId)].map(name => ({
+            apiVersion: C.ApiVersion,
+            kind: C.SecretKind,
+            metadata: { name, namespace: K8sManifestBuilder.SystemNamespace },
+        }))
+        return JSON.stringify({ apiVersion: C.ApiVersion, kind: C.ListKind, items })
+    }
+
     public async GenerateBootstrap(input: TenantBootstrapInput): Promise<TenantBootstrap>
     {
         const { tenant, hive } = input
@@ -203,13 +244,14 @@ export class TenantAdminBootstrap
         const agentToken = await this.registrar.RegisterHive(hive.id)
         const seed: TenantDirectorySeed = { tenant: { ...tenant }, hives: [{ ...hive, agentTokenRef: agentTokenSecretName }], ...(input.organisation !== undefined ? { organisation: input.organisation } : {}) }
 
-        const secrets = new BootstrapSecretSet()
+        const secrets = new BootstrapSecretSet(hive.id)
         secrets.Add(agentTokenSecretName, { [TenantAdminBootstrap.TokenKey]: agentToken })
+        // Retained on hive delete together with the data PVC: its master key is what decrypts that data.
         secrets.Add(seedSecretName, {
             [TenantAdminBootstrap.SeedKey]: JSON.stringify(seed, undefined, TenantAdminBootstrap.JsonIndent),
             [TenantAdminBootstrap.MasterKeyKey]: randomBytes(TenantAdminBootstrap.MasterKeyBytes),
             [TenantAdminBootstrap.TrustRootKey]: input.trustRootPublicKey,
-        })
+        }, undefined, SecretRetention.Retained)
         if (input.pullCredential !== undefined)
         {
             secrets.Add(input.pullCredential.secretName, { [TenantAdminBootstrap.DockerConfigKey]: input.pullCredential.dockerConfigJson }, TenantAdminBootstrap.DockerConfigType)

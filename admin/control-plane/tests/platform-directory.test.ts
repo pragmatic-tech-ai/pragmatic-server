@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
-import { HiveBackend, InfraMode } from '../platform-records.js'
+import { HiveBackend, InfraMode, InvalidRecordIdError } from '../platform-records.js'
 import type { ClusterSpec, RegistrySpec } from '../platform-records.js'
 import { EnvStatus, EnvType, Template } from '../environment-record.js'
 import type { EnvironmentRecord } from '../environment-record.js'
@@ -137,6 +137,27 @@ test('CreateTenant for a missing client throws UnknownClientError', async () =>
     try
     {
         await assert.rejects(f.directory.CreateTenant({ id: 't1', clientId: 'nope', displayName: 'T' }), UnknownClientError)
+    }
+    finally
+    {
+        await f.Dispose()
+    }
+})
+
+test('CreateHive refuses an id that is not a lowercase RFC 1123 label (=b, "b "), with a clear message and no write', async () =>
+{
+    const f = await DirectoryFixture.Create()
+    try
+    {
+        await f.directory.CreateClient({ id: 'c1', displayName: 'C' })
+        await f.directory.CreateTenant({ id: 't1', clientId: 'c1', displayName: 'T' })
+        for (const id of ['=b', 'b ', 'B'])
+        {
+            await assert.rejects(
+                f.directory.CreateHive({ id, tenantId: 't1', displayName: 'H', cluster: DirectoryFixture.Cluster(), registry: DirectoryFixture.Registry() }),
+                (e: unknown) => e instanceof InvalidRecordIdError && /hive id must be/.test(e.message))
+        }
+        assert.equal(f.directory.ListHives().length, 0)
     }
     finally
     {

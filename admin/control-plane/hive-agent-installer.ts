@@ -164,6 +164,7 @@ export class HiveAgentInstaller
     private static readonly ChannelOffMessage = 'Automatic install is not available: the agent channel is not configured (start the control plane with PRAGMATIC_AGENT_CHANNEL_PORT).'
     private static readonly TimeoutMessage = 'The agent did not check in in time. On a fresh cluster its image may still be loading: check its pod with `kubectl -n pragmatic-system get pods`, then retry.'
     private static readonly HiveGoneMessage = 'The install stopped: the hive was deleted while it ran.'
+    private static readonly UnsafeIdMessage = "Automatic install is not available for this hive: its id is not a valid Kubernetes label value, so its workloads cannot be selected safely. Recreate the hive with a lowercase id (a-z, 0-9, '-')."
     private static readonly StepFailureMessages: Readonly<Record<InstallStep, string>> = {
         [InstallStep.PreparingCluster]: 'Could not prepare the cluster for the agent.',
         [InstallStep.ApplyingAgent]: 'Could not apply the agent to the cluster.',
@@ -204,7 +205,7 @@ export class HiveAgentInstaller
     /** Whether an automatic install can run for this hive: its cluster is one the control plane drives, and the agent channel is on. */
     public Supports(hive: HiveRecord): boolean
     {
-        return hive.cluster.backend === HiveBackend.Local && this.agentChannelUrl !== undefined
+        return hive.cluster.backend === HiveBackend.Local && this.agentChannelUrl !== undefined && K8sManifestBuilder.IsValidHiveId(hive.id)
     }
 
     /** Begins an install in the background and returns its first status. Throws for an unknown, unsupported or busy hive. */
@@ -218,6 +219,11 @@ export class HiveAgentInstaller
         if (hive.cluster.backend !== HiveBackend.Local)
         {
             throw new AgentInstallUnavailableError(HiveAgentInstaller.NotLocalMessage)
+        }
+        // Defence in depth for legacy records: the restart selector must match this hive only.
+        if (!K8sManifestBuilder.IsValidHiveId(hive.id))
+        {
+            throw new AgentInstallUnavailableError(HiveAgentInstaller.UnsafeIdMessage)
         }
         const channelUrl = this.agentChannelUrl
         if (channelUrl === undefined)

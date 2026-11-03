@@ -44,7 +44,7 @@ import {
 import { HivePlacementError } from './hive-placement-error.js'
 import { HiveBootstrapBundle } from './hive-bootstrap-bundle.js'
 import { AgentInstallInProgressError, AgentInstallUnavailableError, type HiveAgentInstaller, type InstallStatus } from './hive-agent-installer.js'
-import { AgentUninstallError, type HiveAgentUninstaller } from './hive-agent-uninstaller.js'
+import { AgentUninstallError, HiveClusterDestroyError, type HiveAgentUninstaller } from './hive-agent-uninstaller.js'
 import { HiveBackend, InfraMode, InvalidRecordIdError } from './platform-records.js'
 import { PlaneHttp } from './plane-http.js'
 import { ProvisioningOrchestrator, ProvisionFailedError } from './provisioning-orchestrator.js'
@@ -165,6 +165,8 @@ export type FleetHiveDto = {
 export type ChangedEvent = { type: string }
 
 type ErrorCtor = abstract new (...args: never[]) => Error
+/** A hive delete's outcome for the operator: what was deliberately kept, and what a delete anyway may have left behind. */
+type HiveDeleteOutcome = { retained: string[]; notice?: string }
 type LoginBody = { email?: unknown; password?: unknown }
 
 export class ControlPlaneHost
@@ -244,6 +246,11 @@ export class ControlPlaneHost
     private static readonly ForceParam = 'force'
     private static readonly ForceValue = 'true'
     private static readonly ForceAuditSuffix = '?' + ControlPlaneHost.ForceParam + '=' + ControlPlaneHost.ForceValue
+    private static readonly HiveItemPathPattern = new RegExp('^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/[^/]+$')
+    private static readonly AgentLeftNotice = 'The agent was not removed: the agent may remain in the cluster, locked out (its token is revoked), until someone removes it.'
+    private static readonly KindClusterLeftNotice = "The hive's kind cluster was not destroyed: the kind cluster may be left behind on this machine."
+    private static readonly RetainedNotePrefix = 'retained: '
+    private static readonly NoteSeparator = ', '
     private static readonly AutoInstallOffMessage = 'Automatic install is not available on this control plane. Install the agent manually.'
     private static readonly ReissueDuringInstallMessage = 'An agent install is running for this hive and issues its own token. Wait for it to finish (or fail) before reissuing the token.'
     private static readonly DeleteDuringInstallMessage = 'An agent install is running for this hive. Wait for it to finish (or fail) before deleting the hive.'
@@ -398,6 +405,8 @@ export class ControlPlaneHost
         // The hive's cluster refused or could not be reached while its agent was being removed: the operator fixes cluster
         // access and retries, or deletes anyway. A conflict, not a server error (5xx answers are masked as generic 500s).
         [AgentUninstallError, ControlPlaneHost.StatusConflict],
+        // A provisioned hive's kind cluster could not be destroyed (kind / Docker down): fix it and retry, or delete anyway.
+        [HiveClusterDestroyError, ControlPlaneHost.StatusConflict],
     ])
 
     private httpServer: HttpServer | undefined
@@ -414,6 +423,8 @@ export class ControlPlaneHost
      * install cannot recreate the cluster a delete is tearing down.
      */
     private readonly hiveWrites = new Set<string>()
+    /** A handler's note for its request's audit entry (written once, after the response, by Handle). */
+    private readonly auditNotes = new WeakMap<ServerResponse, string>()
 
     public constructor(
         private readonly service: IEnvironmentService,
@@ -739,9 +750,9 @@ export class ControlPlaneHost
             {
                 auditActor = ControlPlaneHost.ActorOf(who)
                 auditMethod = method
-                // The query is never stored (it could carry anything); only the fixed delete-anyway marker is, so a
-                // forced hive delete reads as such in the activity log.
-                auditPath = ControlPlaneHost.ForceRequested(req) ? path + ControlPlaneHost.ForceAuditSuffix : path
+                // The query is never stored (it could carry anything); only the fixed delete-anyway marker is, and only on a
+                // hive delete, so a forced hive delete reads as such in the activity log.
+                auditPath = ControlPlaneHost.IsForcedHiveDelete(req, method, path) ? path + ControlPlaneHost.ForceAuditSuffix : path
             }
             const handled = await this.RouteApi(req, res, path)
             if (!handled)
@@ -759,7 +770,7 @@ export class ControlPlaneHost
             // outcome (an unrouted /api mutation is a 404 here; a thrown handler is a 500).
             if (auditActor !== null)
             {
-                await this.RecordAudit(auditActor, auditMethod, auditPath, res.statusCode)
+                await this.RecordAudit(auditActor, auditMethod, auditPath, res.statusCode, this.auditNotes.get(res))
             }
         }
     }
@@ -778,7 +789,7 @@ export class ControlPlaneHost
     }
 
     /** Best-effort audit append: never throws, never alters the response. */
-    private async RecordAudit(actor: string, method: string, path: string, status: number): Promise<void>
+    private async RecordAudit(actor: string, method: string, path: string, status: number, note?: string): Promise<void>
     {
         if (this.audit === undefined)
         {
@@ -787,7 +798,7 @@ export class ControlPlaneHost
         try
         {
             const safePath = path.length > ControlPlaneHost.MaxAuditPathLength ? path.slice(0, ControlPlaneHost.MaxAuditPathLength) : path
-            await this.audit.Append({ actor, method, path: safePath, status, at: new Date().toISOString() })
+            await this.audit.Append({ actor, method, path: safePath, status, at: new Date().toISOString(), ...(note === undefined ? {} : { note }) })
         }
         catch (err)
         {
@@ -1054,15 +1065,20 @@ export class ControlPlaneHost
                     return true
                 }
                 this.hiveWrites.add(id)
+                let outcome: HiveDeleteOutcome
                 try
                 {
-                    await this.DeleteHiveEverywhere(id, ControlPlaneHost.ForceRequested(req))
+                    outcome = await this.DeleteHiveEverywhere(id, ControlPlaneHost.ForceRequested(req))
                 }
                 finally
                 {
                     this.hiveWrites.delete(id)
                 }
-                PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ok: true })
+                if (outcome.retained.length > 0)
+                {
+                    this.auditNotes.set(res, ControlPlaneHost.RetainedNotePrefix + outcome.retained.join(ControlPlaneHost.NoteSeparator))
+                }
+                PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ok: true, ...outcome })
                 return true
             }
             await this.DeletePlatform(resource, id)
@@ -1605,6 +1621,7 @@ export class ControlPlaneHost
         }
     }
 
+    /** Deletes a client or a tenant. Hives are deleted by DeleteHiveEverywhere, under the per-hive operation lock. */
     private async DeletePlatform(resource: string, id: string): Promise<void>
     {
         switch (resource)
@@ -1619,9 +1636,6 @@ export class ControlPlaneHost
                 await this.idp?.TeardownForTenant(id)
                 await this.directory.DeleteTenant(id)
                 break
-            default:
-                await this.DeleteHiveEverywhere(id, false)
-                break
         }
     }
 
@@ -1631,17 +1645,45 @@ export class ControlPlaneHost
      * record. A failure before the record's removal leaves the record (and, before the revoke, the token) for a retry. The
      * environments guard runs first so a non-empty hive never loses its cluster.
      */
-    private async DeleteHiveEverywhere(id: string, force: boolean): Promise<void>
+    private async DeleteHiveEverywhere(id: string, force: boolean): Promise<HiveDeleteOutcome>
     {
         this.directory.AssertHiveDeletable(id)
         const hive = this.directory.GetHive(id)
-        if (!force && hive !== undefined && this.agentUninstaller?.Covers(hive) === true)
+        const uninstalls = hive !== undefined && this.agentUninstaller?.Covers(hive) === true
+        const outcome: HiveDeleteOutcome = { retained: [] }
+        if (uninstalls && !force)
         {
-            await this.agentUninstaller.Uninstall(hive)
+            await this.agentUninstaller!.Uninstall(hive!)
+            outcome.retained = this.agentUninstaller!.Retained(hive!)
         }
-        await this.deployments.DestroyHiveCluster(id)
+        else if (uninstalls)
+        {
+            outcome.notice = ControlPlaneHost.AgentLeftNotice
+        }
+        if (!force)
+        {
+            try
+            {
+                await this.deployments.DestroyHiveCluster(id)
+            }
+            catch (err)
+            {
+                HiveClusterDestroyError.From(err)
+            }
+        }
+        else if (hive?.cluster.mode === InfraMode.Provision && hive.cluster.backend === HiveBackend.Local)
+        {
+            outcome.notice = ControlPlaneHost.KindClusterLeftNotice
+        }
         await this.deployments.DeregisterHive(id)
         await this.directory.DeleteHive(id)
+        return outcome
+    }
+
+    /** Whether the request is a delete-anyway of a hive (DELETE /api/hives/ID?force=true). */
+    private static IsForcedHiveDelete(req: IncomingMessage, method: string, path: string): boolean
+    {
+        return method === PlaneHttp.MethodDelete && ControlPlaneHost.HiveItemPathPattern.test(path) && ControlPlaneHost.ForceRequested(req)
     }
 
     /** Whether the request asks to delete anyway (`?force=true`). */
@@ -2218,6 +2260,11 @@ export class ControlPlaneHost
         {
             // The code lets the portal offer delete anyway for exactly this failure.
             PlaneHttp.WriteJson(res, status, { error: err.message, code: AgentUninstallError.Code })
+            return
+        }
+        if (err instanceof HiveClusterDestroyError)
+        {
+            PlaneHttp.WriteJson(res, status, { error: err.message, code: HiveClusterDestroyError.Code })
             return
         }
         PlaneHttp.WriteJson(res, status, { error: (err as Error).message })

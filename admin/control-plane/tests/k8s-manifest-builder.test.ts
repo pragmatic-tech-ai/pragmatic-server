@@ -5,6 +5,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
+import { InvalidRecordIdError } from '../platform-records.js'
 import { EnvServerSeedSource } from '../env-server-seed.js'
 import type { EnvironmentWorkload } from '../environment-workload.js'
 import type { IdpWorkloadSpec } from '../idp-workload-driver.js'
@@ -500,5 +501,32 @@ describe('K8sManifestBuilder federated served environment', () =>
         const text = JSON.stringify(items)
         assert.ok(!text.includes('NODE_EXTRA_CA_CERTS'))
         assert.ok(!text.includes('/etc/idp-ca'))
+    })
+})
+
+describe('K8sManifestBuilder hive ids', () =>
+{
+    it('accepts lowercase RFC 1123 labels of at most 63 characters', () =>
+    {
+        for (const id of ['b', 'h1', 'acme-hive', 'default-pragmatic-hive', 'a'.repeat(63)])
+        {
+            assert.equal(K8sManifestBuilder.IsValidHiveId(id), true, id)
+        }
+    })
+
+    it('refuses ids that would widen a selector or break a name (=b, "b ", upper case, edge dashes, underscores, too long)', () =>
+    {
+        for (const id of ['', '=b', 'b ', ' b', 'b,c', 'B', '-b', 'b-', 'a_b', 'a.b', 'a/b', 'a'.repeat(64)])
+        {
+            assert.equal(K8sManifestBuilder.IsValidHiveId(id), false, JSON.stringify(id))
+            assert.throws(() => K8sManifestBuilder.AssertValidHiveId(id), InvalidRecordIdError)
+        }
+    })
+
+    it('never builds a selector for an unsafe id: pragmatic/hive==b would match hive b', () =>
+    {
+        assert.equal(K8sManifestBuilder.HiveLabelSelectorOf('b'), 'pragmatic/hive=b')
+        assert.throws(() => K8sManifestBuilder.HiveLabelSelectorOf('=b'), InvalidRecordIdError)
+        assert.throws(() => K8sManifestBuilder.HiveLabelSelectorOf('b '), InvalidRecordIdError)
     })
 })

@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { HiveBootstrapBundle } from '../hive-bootstrap-bundle.js'
+import { InvalidRecordIdError } from '../platform-records.js'
 
 describe('HiveBootstrapBundle', () =>
 {
@@ -38,6 +39,12 @@ describe('HiveBootstrapBundle', () =>
         ])
         assert.deepEqual(removal.items.map(i => i.kind), ['ServiceAccount', 'ClusterRole', 'ClusterRoleBinding', 'Deployment', 'Secret'])
         assert.ok(!HiveBootstrapBundle.RemovalManifest('acme-hive').includes('"spec"'))
+    })
+
+    it('refuses an id that is not a valid label value: the manual rotation command restarts by its selector', () =>
+    {
+        assert.throws(() => HiveBootstrapBundle.For('=b', 'http://host.docker.internal:7001'), InvalidRecordIdError)
+        assert.throws(() => HiveBootstrapBundle.For('b ', 'http://host.docker.internal:7001'), InvalidRecordIdError)
     })
 
     it('carries the automatic-install flag it is given', () =>

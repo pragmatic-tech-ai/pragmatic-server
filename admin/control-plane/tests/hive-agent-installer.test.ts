@@ -465,6 +465,15 @@ describe('HiveAgentInstaller', () =>
         assert.deepEqual(fx.Orchestrators.Resolved, [])
     })
 
+    it('refuses a (legacy) hive whose id is not a valid label value: its restart selector could match another hive', () =>
+    {
+        const fx = new Fixture()
+        fx.Hives.set('=b', { id: '=b', tenantId: 't1', displayName: 'x', cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision }, createdAt: '2026-01-01T00:00:00.000Z' })
+        assert.throws(() => fx.Installer.Start('=b'), (e: unknown) => e instanceof AgentInstallUnavailableError && /not a valid Kubernetes label value/.test(e.message))
+        assert.equal(fx.Installer.Supports(fx.Hives.get('=b')!), false)
+        assert.deepEqual(fx.Orchestrators.Resolved, [])
+    })
+
     it('StatusFor is undefined before any install; Supports is true for Local hives only', () =>
     {
         const fx = new Fixture()

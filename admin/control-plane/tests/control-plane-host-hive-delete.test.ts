@@ -16,7 +16,10 @@ import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import { KindHiveOrchestrator } from '../kind-hive-orchestrator.js'
 import type { IKind } from '../kind.js'
 import type { IHiveOrchestrator, WorkloadHealth } from '../hive-orchestrator.js'
-import { AgentUninstallError, HiveAgentUninstaller } from '../hive-agent-uninstaller.js'
+import { AgentUninstallError, HiveAgentUninstaller, HiveClusterDestroyError } from '../hive-agent-uninstaller.js'
+import { KindError } from '../kind.js'
+import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
+import { TenantAdminBootstrap } from '../tenant-admin-bootstrap.js'
 import { HiveBootstrapBundle } from '../hive-bootstrap-bundle.js'
 import { KubectlError, type IKubectl } from '../kubectl.js'
 import type { EnvironmentWorkload } from '../environment-workload.js'
@@ -26,6 +29,7 @@ import { HiveNotRegisteredError } from '../rollout-errors.js'
 import { HiveBackend, InfraMode, type HiveRecord } from '../platform-records.js'
 
 type Reply = { status: number; body: string }
+type DeleteBody = { ok?: boolean; retained?: string[]; notice?: string; error?: string; code?: string }
 
 class FakeOperator implements IOperatorIdentity
 {
@@ -120,10 +124,20 @@ class FakeOrchestrators
 class RecordingKindFactory extends HiveOrchestratorFactory
 {
     public readonly Destroyed: string[] = []
+    public FailWith: Error | undefined
 
     public override For(hive: HiveRecord): IHiveOrchestrator
     {
-        const kind = { DeleteCluster: async (name: string) => { this.Destroyed.push(name) } } as unknown as IKind
+        const kind = {
+            DeleteCluster: async (name: string) =>
+            {
+                if (this.FailWith !== undefined)
+                {
+                    throw this.FailWith
+                }
+                this.Destroyed.push(name)
+            },
+        } as unknown as IKind
         return new KindHiveOrchestrator(kind, 'hive-' + hive.id, undefined as unknown as IHiveOrchestrator)
     }
 }
@@ -216,13 +230,24 @@ describe('ControlPlaneHost hive delete uninstalls the agent', () =>
     {
         const r = await Harness.Send(host, 'DELETE', '/api/hives/local1')
         assert.equal(r.status, 200)
-        assert.deepEqual(events, ['DeleteManifest', 'DeleteBySelector', 'DestroyHiveCluster', 'DeregisterHive', 'DeleteHive'])
+        assert.deepEqual(events, ['DeleteManifest', 'DeleteManifest', 'DeleteBySelector', 'DestroyHiveCluster', 'DeregisterHive', 'DeleteHive'])
         assert.deepEqual(orchestrators.Kubectl.Calls, [
             ['DeleteManifest', HiveBootstrapBundle.RemovalManifest('local1')],
-            ['DeleteBySelector', 'pragmatic-system', 'deployment', 'pragmatic/hive=local1'],
+            ['DeleteManifest', TenantAdminBootstrap.CredentialRemovalManifest('t-local1')],
+            ['DeleteBySelector', 'pragmatic-system', 'deployment,service,serviceaccount,secret', 'pragmatic/hive=local1'],
         ])
         assert.equal(directory.GetHive('local1'), undefined)
         await assert.rejects(deployments.VerifyAgentToken('local1', tokens.get('local1')!), HiveNotRegisteredError)
+    })
+
+    it('the response and the audit entry name what is retained: the tenant-admin data PVC and its seed Secret', async () =>
+    {
+        const r = await Harness.Send(host, 'DELETE', '/api/hives/local1')
+        const retained = [K8sManifestBuilder.TenantAdminClaimNameOf('t-local1'), K8sManifestBuilder.TenantAdminSeedSecretNameOf('t-local1')]
+        assert.deepEqual((JSON.parse(r.body) as DeleteBody).retained, retained)
+        const entry = audit.Recent(10).find(e => e.method === 'DELETE')
+        assert.equal(entry?.path, '/api/hives/local1')
+        assert.equal(entry?.note, 'retained: ' + retained.join(', '))
     })
 
     it('an uninstall failure: 409 with the code and guidance, record and registration intact, later steps never run', async () =>
@@ -248,15 +273,18 @@ describe('ControlPlaneHost hive delete uninstalls the agent', () =>
         assert.equal(directory.GetHive('local1'), undefined)
     })
 
-    it('delete anyway (?force=true) skips the cluster uninstall but still deregisters the token and deletes the record, and is audited as such', async () =>
+    it('delete anyway (?force=true) skips the cluster work but still deregisters the token and deletes the record, and is audited as such', async () =>
     {
         orchestrators.Kubectl.DeleteError = new KubectlError('connection refused')
         const r = await Harness.Send(host, 'DELETE', '/api/hives/local1?force=true')
         assert.equal(r.status, 200)
-        assert.deepEqual(events, ['DestroyHiveCluster', 'DeregisterHive', 'DeleteHive'])
+        assert.deepEqual(events, ['DeregisterHive', 'DeleteHive'])
         assert.deepEqual(orchestrators.Kubectl.Calls, [])
         assert.equal(directory.GetHive('local1'), undefined)
         await assert.rejects(deployments.VerifyAgentToken('local1', tokens.get('local1')!), HiveNotRegisteredError)
+        const body = JSON.parse(r.body) as DeleteBody
+        assert.deepEqual(body.retained, [])
+        assert.match(body.notice ?? '', /agent may remain in the cluster/)
         const entry = audit.Recent(10).find(e => e.method === 'DELETE')
         assert.equal(entry?.path, '/api/hives/local1?force=true')
         assert.equal(entry?.status, 200)
@@ -269,6 +297,59 @@ describe('ControlPlaneHost hive delete uninstalls the agent', () =>
         assert.deepEqual(kindFactory.Destroyed, ['hive-kind1'])
         assert.deepEqual(orchestrators.Kubectl.Calls, [])
         await assert.rejects(deployments.VerifyAgentToken('kind1', tokens.get('kind1')!), HiveNotRegisteredError)
+    })
+
+    it('a kind cluster that cannot be destroyed: 409 with the code and redacted reason, record and token intact', async () =>
+    {
+        kindFactory.FailWith = new KindError('Cannot connect to the Docker daemon at npipe:////./pipe/docker_engine. Is the docker daemon running?')
+        const r = await Harness.Send(host, 'DELETE', '/api/hives/kind1')
+        assert.equal(r.status, 409)
+        const body = JSON.parse(r.body) as DeleteBody
+        assert.equal(body.code, HiveClusterDestroyError.Code)
+        assert.match(body.error ?? '', /^Could not destroy the hive's kind cluster: kind failed: Cannot connect to the Docker daemon/)
+        assert.match(body.error ?? '', /delete anyway/)
+        assert.ok(directory.GetHive('kind1') !== undefined)
+        await deployments.VerifyAgentToken('kind1', tokens.get('kind1')!)
+        assert.deepEqual(events, ['DestroyHiveCluster'])
+    })
+
+    it('delete anyway on a kind hive skips the cluster destroy, still revokes and deletes, and says the cluster may be left behind', async () =>
+    {
+        kindFactory.FailWith = new KindError('docker down')
+        const r = await Harness.Send(host, 'DELETE', '/api/hives/kind1?force=true')
+        assert.equal(r.status, 200)
+        assert.deepEqual(events, ['DeregisterHive', 'DeleteHive'])
+        assert.match((JSON.parse(r.body) as DeleteBody).notice ?? '', /kind cluster may be left behind/)
+        assert.equal(directory.GetHive('kind1'), undefined)
+        await assert.rejects(deployments.VerifyAgentToken('kind1', tokens.get('kind1')!), HiveNotRegisteredError)
+    })
+
+    it('a non-exec destroy failure is a real server error (500), not a delete-anyway case', async () =>
+    {
+        kindFactory.FailWith = new TypeError('bug')
+        assert.equal((await Harness.Send(host, 'DELETE', '/api/hives/kind1')).status, 500)
+        assert.ok(directory.GetHive('kind1') !== undefined)
+    })
+
+    it('token revoked but the record delete failed: the token is already dead and a retry completes', async () =>
+    {
+        const remove = directory.DeleteHive.bind(directory)
+        let failOnce = true
+        directory.DeleteHive = async (id: string) =>
+        {
+            events.push('DeleteHive')
+            if (failOnce)
+            {
+                failOnce = false
+                throw new Error('disk full')
+            }
+            await remove(id)
+        }
+        assert.equal((await Harness.Send(host, 'DELETE', '/api/hives/local1')).status, 500)
+        assert.ok(directory.GetHive('local1') !== undefined)
+        await assert.rejects(deployments.VerifyAgentToken('local1', tokens.get('local1')!), HiveNotRegisteredError)
+        assert.equal((await Harness.Send(host, 'DELETE', '/api/hives/local1')).status, 200)
+        assert.equal(directory.GetHive('local1'), undefined)
     })
 
     it('a non-Local hive: no cluster is touched, the token is deregistered and the record deleted', async () =>

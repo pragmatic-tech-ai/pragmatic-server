@@ -8,6 +8,8 @@ export type AuditRecord = {
     path: string
     status: number
     at: string
+    /** What the operation kept or skipped, when it says (e.g. a hive delete's retained objects). Never secret material. */
+    note?: string
 }
 
 export class AuditRegistry extends JsonRecordStore<AuditRecord>

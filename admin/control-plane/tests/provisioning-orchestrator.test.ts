@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
-import { HiveBackend, InfraMode } from '../platform-records.js'
+import { HiveBackend, InfraMode, InvalidRecordIdError } from '../platform-records.js'
 import type { HiveRecord } from '../platform-records.js'
 import { PlatformDirectory, RecordExistsError, RecordKind, TenantClientMismatchError, UnknownClientError, UnknownTenantError } from '../platform-directory.js'
 import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
@@ -153,6 +153,20 @@ test('happy path provisions client + tenant + hive and returns both secrets', as
     assert.ok(f.directory.GetClient('c1'))
     assert.ok(f.directory.GetTenant('t1'))
     assert.ok(f.directory.GetHive('h1'))
+})
+
+test('an unsafe hive id (=b, "b ") is refused before ANY write', async () =>
+{
+    for (const id of ['=b', 'b '])
+    {
+        const f = await OrchestratorFixture.Create()
+        const input = OrchestratorFixture.Input()
+        input.hive.id = id
+        await assert.rejects(() => f.orchestrator.Provision(input), (e: unknown) => e instanceof InvalidRecordIdError && /hive id must be/.test(e.message))
+        f.AssertStoresEmpty()
+        assert.equal(f.provisioning.Calls.length, 0)
+        assert.equal(f.deployments.Registered.length, 0)
+    }
 })
 
 test('duplicate client id -> RecordExistsError and ZERO writes', async () =>

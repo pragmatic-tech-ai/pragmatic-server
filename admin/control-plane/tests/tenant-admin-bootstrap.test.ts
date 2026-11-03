@@ -213,6 +213,37 @@ describe('TenantAdminBootstrap in-cluster IdP federation producer', () =>
         assert.ok(secretVolumes.includes(TenantAdminBootstrap.IdpTokenSecretNameOf('acme')))
     })
 
+    it('labels every Secret it carries for the hive except the seed (kept with the data PVC on hive delete)', async () =>
+    {
+        const b = await Federated()
+        const list = JSON.parse(b.secrets.RenderManifest()) as { items: { metadata: { name: string; labels?: Record<string, string> } }[] }
+        const seedName = K8sManifestBuilder.TenantAdminSeedSecretNameOf('acme')
+        for (const item of list.items)
+        {
+            if (item.metadata.name === seedName)
+            {
+                assert.equal(item.metadata.labels, undefined)
+            }
+            else
+            {
+                assert.deepEqual(item.metadata.labels, { 'pragmatic/hive': 'hive-a' }, item.metadata.name)
+            }
+        }
+        assert.ok(list.items.some(i => i.metadata.name === 'pull-cred'))
+        assert.ok(list.items.some(i => i.metadata.name === seedName))
+    })
+
+    it('names the tenant-admin credential Secrets for removal (IdP CA and admin-token copies), never the seed', () =>
+    {
+        const removal = JSON.parse(TenantAdminBootstrap.CredentialRemovalManifest('acme')) as { kind: string; items: unknown[] }
+        assert.equal(removal.kind, 'List')
+        assert.deepEqual(removal.items, [
+            { apiVersion: 'v1', kind: 'Secret', metadata: { name: TenantAdminBootstrap.IdpCaSecretNameOf('acme'), namespace: 'pragmatic-system' } },
+            { apiVersion: 'v1', kind: 'Secret', metadata: { name: TenantAdminBootstrap.IdpTokenSecretNameOf('acme'), namespace: 'pragmatic-system' } },
+        ])
+        assert.ok(!TenantAdminBootstrap.CredentialRemovalManifest('acme').includes(K8sManifestBuilder.TenantAdminSeedSecretNameOf('acme')))
+    })
+
     it('projects a ca.crt-only Secret and never references the IdP TLS Secret from the pod', async () =>
     {
         const b = await Federated()

@@ -8,6 +8,7 @@ import { IdpContainerEnv } from './idp-container-env.js'
 import type { IdpWorkloadSpec } from './idp-workload-driver.js'
 import { TenantAdminEnv } from './tenant-admin-env.js'
 import type { TenantAdminWorkloadSpec } from './tenant-admin-workload.js'
+import { InvalidRecordIdError } from './platform-records.js'
 
 export type K8sObject = Record<string, unknown>
 
@@ -100,6 +101,9 @@ export class K8sManifestBuilder
     private static readonly PostgresPasswordVar = 'POSTGRES_PASSWORD'
     private static readonly PasswordSecretKey = 'password'
     private static readonly Rfc1123Name = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
+    /** A label value's (and an RFC 1123 label's) maximum length. */
+    private static readonly LabelValueMax = 63
+    private static readonly InvalidHiveIdMessage = "hive id must be a lowercase Kubernetes name: letters a-z, digits and '-', starting and ending with a letter or digit, at most 63 characters"
     private static readonly NonNameChars = /[^a-z0-9]+/g
     private static readonly EdgeDashes = /^-+|-+$/g
     private static readonly NameDash = '-'
@@ -480,6 +484,12 @@ export class K8sManifestBuilder
 
     private HiveLabels(hiveId: string): Record<string, string>
     {
+        return K8sManifestBuilder.HiveLabelsOf(hiveId)
+    }
+
+    /** The labels that mark an object as the hive's (selected by HiveLabelSelectorOf). */
+    public static HiveLabelsOf(hiveId: string): Record<string, string>
+    {
         return { [K8sManifestBuilder.HiveLabel]: hiveId }
     }
 
@@ -855,10 +865,29 @@ export class K8sManifestBuilder
     }
 
     /** Name of the Secret holding a hive's one-time agent bearer (key `token`). */
-    /** Selects every workload labelled for the hive (in pragmatic-system: its agent and, when installed, its tenant-admin pod). */
+    /**
+     * Selects every workload labelled for the hive (in pragmatic-system: its agent and, when installed, its tenant-admin pod).
+     * Refuses an id that is not a valid label value: `pragmatic/hive==b` would also select hive `b`.
+     */
     public static HiveLabelSelectorOf(hiveId: string): string
     {
+        K8sManifestBuilder.AssertValidHiveId(hiveId)
         return `${K8sManifestBuilder.HiveLabel}=${hiveId}`
+    }
+
+    /** Whether a hive id is a lowercase RFC 1123 label (so also a valid label value and name component): selectors built from it match only that hive. */
+    public static IsValidHiveId(hiveId: string): boolean
+    {
+        return hiveId.length <= K8sManifestBuilder.LabelValueMax && K8sManifestBuilder.Rfc1123Name.test(hiveId)
+    }
+
+    /** Throws InvalidRecordIdError (a 400) with the operator-facing rule when the hive id is not valid. */
+    public static AssertValidHiveId(hiveId: string): void
+    {
+        if (!K8sManifestBuilder.IsValidHiveId(hiveId))
+        {
+            throw new InvalidRecordIdError(K8sManifestBuilder.InvalidHiveIdMessage)
+        }
     }
 
     public static AgentTokenSecretNameOf(hiveId: string): string
