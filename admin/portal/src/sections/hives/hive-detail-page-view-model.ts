@@ -7,7 +7,7 @@ import { ObservedEnvironmentsViewModel } from '../../shell/observed-environments
 import { PortalPageViewModel } from '../../shell/portal-page-view-model.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
 import { FleetHiveRowViewModel } from '../fleet/fleet-page-view-model.js'
-import { HiveAgentInstallViewModel } from './hive-agent-install-view-model.js'
+import { AgentInstallPhase, HiveAgentInstallViewModel } from './hive-agent-install-view-model.js'
 import { HiveInstallMode, HiveInstallViewModel } from './hive-install-view-model.js'
 import type { HivesSectionService } from './hives-section-service.js'
 
@@ -218,20 +218,27 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
     private readonly agentInstall: HiveAgentInstallViewModel
     private readonly toggleManualCommand: RelayCommand
     private manualOpen = false
+    // The install-path values as last raised, for their change notifications.
+    private pathShown: InstallPathSnapshot
 
     public constructor(session: PortalSessionService, private readonly section: HivesSectionService, public readonly Id: string)
     {
         super(session)
         this.deleteCommand = this.MutatingCommand(() => this.Delete())
-        this.reissueTokenCommand = this.MutatingCommand(() => this.ReissueToken())
+        // A reissue while an automatic install runs would revoke the token the install just stored.
+        this.reissueTokenCommand = this.MutatingCommand(() => this.ReissueToken(), () => !this.agentInstall.IsInstalling)
         this.install = new HiveInstallViewModel(session, section, HiveInstallMode.FirstInstall)
         this.agentInstall = new HiveAgentInstallViewModel(session, Id, section.PollScheduler)
         this.toggleManualCommand = new RelayCommand(() => this.ToggleManual())
-        this.install.PropertyChanged(HiveInstallViewModel.AutoInstallProperty).subscribe(e => this.OnAutoInstallChanged(e.oldValue as boolean))
-        // Once the agent checks in, reload: the home channel and check-ins now show it.
-        this.agentInstall.PropertyChanged(HiveAgentInstallViewModel.ConnectedProperty).subscribe(() =>
+        this.pathShown = this.PathSnapshot()
+        this.install.PropertyChanged(HiveInstallViewModel.AutoInstallProperty).subscribe(() => this.RaisePathChanged())
+        this.install.PropertyChanged(HiveInstallViewModel.HasLoadedProperty).subscribe(() => this.RaisePathChanged())
+        this.agentInstall.PropertyChanged(HiveAgentInstallViewModel.InstallingProperty).subscribe(() => this.reissueTokenCommand.RaiseCanExecuteChanged())
+        // Once a running install connects, reload: the home channel and check-ins now show the agent. Opening
+        // the page on an install that already connected is not a transition, so it does not reload again.
+        this.agentInstall.PropertyChanged(HiveAgentInstallViewModel.PhaseChangedProperty).subscribe(e =>
         {
-            if (this.agentInstall.IsConnected)
+            if (e.oldValue === AgentInstallPhase.Installing && e.newValue === AgentInstallPhase.Connected)
             {
                 void this.Refresh()
             }
@@ -400,10 +407,12 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
         return this.install.AutoInstall
     }
 
-    // True when the manual install is the only path (any other hive).
+    // True when the manual install is the only path (any other hive, or a
+    // bundle that could not load); false until the bundle read settles, so a
+    // Local hive never flashes the manual install.
     public get IsManualOnly(): boolean
     {
-        return !this.install.AutoInstall
+        return this.install.HasLoaded && !this.install.AutoInstall
     }
 
     // Whether the manual install (bundle, commands, Reissue token) shows: always
@@ -439,20 +448,39 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
 
     private ToggleManual(): void
     {
-        const C = HiveDetailPageViewModel
-        const was = [this.ShowsManual, this.ManualToggleLabel] as const
         this.manualOpen = !this.manualOpen
-        this.RaisePropertyChanged(C.ShowsManualProperty, was[0], this.ShowsManual)
-        this.RaisePropertyChanged(C.ManualToggleLabelProperty, was[1], this.ManualToggleLabel)
+        this.RaisePathChanged()
     }
 
-    private OnAutoInstallChanged(was: boolean): void
+    private PathSnapshot(): InstallPathSnapshot
+    {
+        return {
+            IsAutoInstall: this.IsAutoInstall,
+            IsManualOnly: this.IsManualOnly,
+            ShowsManual: this.ShowsManual,
+            ManualToggleLabel: this.ManualToggleLabel,
+        }
+    }
+
+    // Raises whichever install-path values changed since last raised.
+    private RaisePathChanged(): void
     {
         const C = HiveDetailPageViewModel
-        const showedManual = was ? this.manualOpen : true
-        this.RaisePropertyChanged(C.IsAutoInstallProperty, was, this.IsAutoInstall)
-        this.RaisePropertyChanged(C.IsManualOnlyProperty, !was, this.IsManualOnly)
-        this.RaisePropertyChanged(C.ShowsManualProperty, showedManual, this.ShowsManual)
+        const b = this.pathShown
+        const now = this.PathSnapshot()
+        this.pathShown = now
+        this.RaiseIfChanged(C.IsAutoInstallProperty, b.IsAutoInstall, now.IsAutoInstall)
+        this.RaiseIfChanged(C.IsManualOnlyProperty, b.IsManualOnly, now.IsManualOnly)
+        this.RaiseIfChanged(C.ShowsManualProperty, b.ShowsManual, now.ShowsManual)
+        this.RaiseIfChanged(C.ManualToggleLabelProperty, b.ManualToggleLabel, now.ManualToggleLabel)
+    }
+
+    private RaiseIfChanged<T>(name: string, old: T, now: T): void
+    {
+        if (old !== now)
+        {
+            this.RaisePropertyChanged(name, old, now)
+        }
     }
 
     protected override async LoadCore(): Promise<boolean>
@@ -574,6 +602,15 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
             OnConfirmed: () => this.section.BackAndRefresh(),
         })
     }
+}
+
+// The hive detail's install-path values, for their change notifications.
+interface InstallPathSnapshot
+{
+    readonly IsAutoInstall: boolean
+    readonly IsManualOnly: boolean
+    readonly ShowsManual: boolean
+    readonly ManualToggleLabel: string
 }
 
 // The hive detail's bound values before a load, for its change notifications.

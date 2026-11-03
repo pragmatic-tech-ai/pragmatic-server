@@ -149,6 +149,7 @@ export class HiveAgentInstallViewModel extends Observable
     public static readonly ConnectedProperty = HiveAgentInstallViewModel.IsConnectedProperty
     public static readonly FailedProperty = HiveAgentInstallViewModel.IsFailedProperty
     public static readonly InstallingProperty = HiveAgentInstallViewModel.IsInstallingProperty
+    public static readonly PhaseChangedProperty = HiveAgentInstallViewModel.PhaseProperty
 
     private readonly steps = new ObservableCollection<AgentInstallStepViewModel>()
     private readonly startCommand: RelayCommand

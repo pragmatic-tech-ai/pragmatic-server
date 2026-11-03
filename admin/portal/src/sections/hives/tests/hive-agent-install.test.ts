@@ -248,6 +248,57 @@ describe('Hive agent automatic install (hive page)', () =>
         assert.equal(detail.AgentInstall.IsInstalling, true)
     })
 
+    it('before the bundle loads the page shows neither path, so a Local hive never flashes the manual install', async () =>
+    {
+        const fx = new AutoFixture()
+        let release: () => void = () => undefined
+        const gate = new Promise<void>(resolve => { release = resolve })
+        const bootstrap = fx.Api.GetHiveBootstrap.bind(fx.Api)
+        fx.Api.GetHiveBootstrap = async (hiveId: string) =>
+        {
+            await gate
+            return bootstrap(hiveId)
+        }
+        const detail = await fx.Detail()
+        assert.equal(detail.IsAutoInstall, false)
+        assert.equal(detail.IsManualOnly, false)
+        assert.equal(detail.ShowsManual, false)
+        const seen: string[] = []
+        detail.PropertyChanged('IsAutoInstall').subscribe(e => seen.push('IsAutoInstall=' + String(e.newValue)))
+        detail.PropertyChanged('IsManualOnly').subscribe(e => seen.push('IsManualOnly=' + String(e.newValue)))
+        release()
+        await Tick.Settle()
+        assert.equal(detail.IsAutoInstall, true)
+        assert.equal(detail.IsManualOnly, false)
+        assert.deepEqual(seen, ['IsAutoInstall=true'])
+    })
+
+    it('a bundle that failed to load (agent channel off) leaves the manual install, with its reason, showing', async () =>
+    {
+        const fx = new AutoFixture()
+        fx.Api.BootstrapFailure = new ApiError(409, 'The agent channel is not configured')
+        const detail = await fx.Detail()
+        assert.equal(detail.IsAutoInstall, false)
+        assert.equal(detail.IsManualOnly, true)
+        assert.equal(detail.ShowsManual, true)
+        assert.equal(detail.Install.ErrorText, 'The agent channel is not configured')
+    })
+
+    it('Reissue is disabled while an automatic install runs (it would revoke the install\'s token)', async () =>
+    {
+        const fx = new AutoFixture()
+        const detail = await fx.Detail()
+        assert.equal(detail.ReissueTokenCommand.CanExecute(), true)
+        let raised = 0
+        detail.ReissueTokenCommand.AddCanExecuteChangedListener(() => { raised++ })
+        await detail.AgentInstall.Start()
+        assert.equal(detail.ReissueTokenCommand.CanExecute(), false)
+        assert.ok(raised > 0)
+        fx.Reply(AgentInstallState.Failed, AgentInstallStep.ApplyingAgent, 'Could not apply the agent to the cluster.')
+        await fx.Poll()
+        assert.equal(detail.ReissueTokenCommand.CanExecute(), true)
+    })
+
     it('any other hive keeps the manual install only', async () =>
     {
         const fx = new AutoFixture()
@@ -289,6 +340,23 @@ describe('Hive agent automatic install (hive page)', () =>
         assert.equal(detail.IsShowing, true)
         assert.ok(fx.Api.InstallReads > reads)
         assert.equal(fx.Polls.Pending, 1)
+    })
+
+    it('opening the page on an already Connected install does not reload it again', async () =>
+    {
+        const fx = new AutoFixture()
+        fx.Reply(AgentInstallState.Connected, AgentInstallStep.WaitingForCheckIn)
+        let fleetReads = 0
+        const listFleet = fx.Api.ListFleet.bind(fx.Api)
+        fx.Api.ListFleet = async () =>
+        {
+            fleetReads++
+            return listFleet()
+        }
+        const detail = await fx.Detail()
+        assert.equal(detail.AgentInstall.IsConnected, true)
+        // The hives list and the detail's own first load; no extra reload.
+        assert.equal(fleetReads, 2)
     })
 
     it('when the install connects, the page reloads to show the check-in', async () =>
@@ -381,6 +449,21 @@ describe('Hive agent automatic install (stand-up wizard)', () =>
         assert.equal(wizard.ShowsAgentToken, false)
         assert.equal(wizard.CanInstallManually, false)
         assert.equal(wizard.FinishCommand.CanExecute(), true)
+    })
+
+    it('a wizard install replaced by a newer one stops polling', async () =>
+    {
+        const fx = new AutoFixture()
+        const wizard = await fx.Revealed()
+        const first = wizard.AgentInstall
+        assert.equal(fx.Polls.Pending, 1)
+        // ChooseInstallPath runs again (as a second provision on the same page would).
+        await (wizard as unknown as { ChooseInstallPath(id: string): Promise<void> }).ChooseInstallPath('initech-hive')
+        assert.notEqual(wizard.AgentInstall, first)
+        assert.equal(fx.Polls.Pending, 1)
+        fx.Reply(AgentInstallState.Installing, AgentInstallStep.ApplyingAgent)
+        await fx.Poll()
+        assert.equal(first?.Steps.Get(1)?.IsRunning, false)
     })
 
     it('Finish leaves the wizard and its polling stops', async () =>

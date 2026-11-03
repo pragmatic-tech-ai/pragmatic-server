@@ -6,9 +6,11 @@ import type { DownloadService } from '../../shell/download-service.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
 
 // What the install commands do: a first install applies the bundle and
-// creates the token Secret; a rotation replaces the Secret and restarts the
+// writes the token Secret; a rotation replaces the Secret and restarts the
 // hive's deployments that read it (the agent and, when installed, the
-// tenant-admin pod), since a Secret-sourced env only changes on restart.
+// tenant-admin pod), since a Secret-sourced env only changes on restart. The
+// Secret is always applied server-side, so no last-applied annotation keeps a
+// copy of the token.
 export enum HiveInstallMode
 {
     FirstInstall,
@@ -44,7 +46,7 @@ export class HiveInstallViewModel extends Observable
     private static readonly FromLiteralInfix = ' --from-literal='
     private static readonly ValueOpen = '="$'
     private static readonly ValueClose = '"'
-    private static readonly ReplaceSuffix = ' --dry-run=client -o yaml | kubectl apply -f -'
+    private static readonly ServerSideApplySuffix = ' --dry-run=client -o yaml | kubectl apply --server-side --field-manager=pragmatic-control-plane --force-conflicts -f -'
     private static readonly RestartInfix = ' rollout restart deployment -l '
     private static readonly IsLoadingProperty = 'IsLoading'
     private static readonly HasBundleProperty = 'HasBundle'
@@ -53,11 +55,13 @@ export class HiveInstallViewModel extends Observable
     private static readonly FileNameProperty = 'FileName'
     private static readonly ChannelUrlProperty = 'ChannelUrl'
     private static readonly StatusProperty = 'Status'
-    // The bound name a page watches to learn which install path the hive offers.
+    // The bound names a page watches to learn which install path the hive offers.
     public static readonly AutoInstallProperty = 'AutoInstall'
+    public static readonly HasLoadedProperty = 'HasLoaded'
 
     private bundle: HiveBootstrapDto | undefined
     private loading = false
+    private loaded = false
     private errorText = HiveInstallViewModel.NoText
     private status = HiveInstallViewModel.NoText
     private loadGeneration = 0
@@ -79,6 +83,13 @@ export class HiveInstallViewModel extends Observable
     public get HasBundle(): boolean
     {
         return this.bundle !== undefined
+    }
+
+    // True once a bundle read has settled (with the bundle or a reason it is
+    // unavailable): until then neither install path is known.
+    public get HasLoaded(): boolean
+    {
+        return this.loaded
     }
 
     // True once the bundle says the control plane installs this hive's agent
@@ -115,11 +126,11 @@ export class HiveInstallViewModel extends Observable
         }
         const C = HiveInstallViewModel
         const readToken = C.ReadPrefix + C.TokenVariable + C.ReadComment
-        const createSecret = C.KubectlNamespacePrefix + b.namespace + C.CreateSecretInfix + b.tokenSecretName
-            + C.FromLiteralInfix + b.tokenSecretKey + C.ValueOpen + C.TokenVariable + C.ValueClose
+        const applySecret = C.KubectlNamespacePrefix + b.namespace + C.CreateSecretInfix + b.tokenSecretName
+            + C.FromLiteralInfix + b.tokenSecretKey + C.ValueOpen + C.TokenVariable + C.ValueClose + C.ServerSideApplySuffix
         const lines = this.mode === HiveInstallMode.FirstInstall
-            ? [C.ApplyPrefix + b.fileName, readToken, createSecret]
-            : [readToken, createSecret + C.ReplaceSuffix, C.KubectlNamespacePrefix + b.namespace + C.RestartInfix + b.hiveSelector]
+            ? [C.ApplyPrefix + b.fileName, readToken, applySecret]
+            : [readToken, applySecret, C.KubectlNamespacePrefix + b.namespace + C.RestartInfix + b.hiveSelector]
         return lines.join(C.LineBreak)
     }
 
@@ -165,6 +176,7 @@ export class HiveInstallViewModel extends Observable
         this.bundle = bundle
         this.errorText = error
         this.loading = false
+        this.loaded = true
         this.RaiseChangedSince(loaded)
     }
 
@@ -224,6 +236,7 @@ export class HiveInstallViewModel extends Observable
             FileName: this.FileName,
             ChannelUrl: this.ChannelUrl,
             AutoInstall: this.AutoInstall,
+            HasLoaded: this.HasLoaded,
         }
     }
 
@@ -237,6 +250,7 @@ export class HiveInstallViewModel extends Observable
         this.RaiseIfChanged(C.FileNameProperty, b.FileName, this.FileName)
         this.RaiseIfChanged(C.ChannelUrlProperty, b.ChannelUrl, this.ChannelUrl)
         this.RaiseIfChanged(C.AutoInstallProperty, b.AutoInstall, this.AutoInstall)
+        this.RaiseIfChanged(C.HasLoadedProperty, b.HasLoaded, this.HasLoaded)
         if (b.HasBundle !== this.HasBundle)
         {
             this.downloadCommand.RaiseCanExecuteChanged()
@@ -263,4 +277,5 @@ interface HiveInstallSnapshot
     readonly FileName: string
     readonly ChannelUrl: string
     readonly AutoInstall: boolean
+    readonly HasLoaded: boolean
 }

@@ -964,6 +964,7 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
         agentInstall.PropertyChanged(HiveAgentInstallViewModel.FailedProperty).subscribe(() => this.RaiseManualChanged())
         agentInstall.PropertyChanged(HiveAgentInstallViewModel.InstallingProperty).subscribe(() => this.OnInstallRestarted())
         const old = this.agentInstall
+        old?.Stop()
         this.agentInstall = agentInstall
         this.RaisePropertyChanged(ProvisionWizardPageViewModel.AgentInstallProperty, old, agentInstall)
         this.SetSecrets(this.ownerPassword, ProvisionWizardPageViewModel.NoText)
