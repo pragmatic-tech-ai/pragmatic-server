@@ -1,5 +1,5 @@
 import type { ConnectorRuntime } from '../connectors/connector-runtime.js'
-import type { ConnectorModelDto, ConnectorWriteBackParams, ConnectorPagedWriteParams, ConnectorPagedWriteResultDto, EntityDto, FlushOutcomeDto, Page, PageParams, ConnectionProbeDto, ConnectorRefreshOutcomeDto, ConnectorMergeDecisionDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { ConnectorModelDto, ConnectorWriteBackParams, ConnectorPagedWriteParams, ConnectorPagedWriteResultDto, EntityDto, FlushOutcomeDto, Page, PageParams, ConnectionProbeDto, ConnectorRefreshOutcomeDto, ConnectorMergeDecisionDto, ConnectorFilterTermDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { PagingLimits } from '../config/paging-limits.js'
 import { PageFingerprint, PageRequest } from './paging/page-request.js'
 import { WireScalar } from './wire-scalar.js'
@@ -127,13 +127,13 @@ export class ConnectorService
     }
 
     /** On-demand keyset-paged read of ONE connector binding: never prepares the model nor opens any other concept's adapter. */
-    public async ReadPage(modelId: string, concept: string, params: PageParams, limits: PagingLimits, context: AccessContext): Promise<Page<EntityDto>>
+    public async ReadPage(modelId: string, concept: string, params: PageParams, limits: PagingLimits, context: AccessContext, where?: readonly ConnectorFilterTermDto[]): Promise<Page<EntityDto>>
     {
         const runtime = await this.Runtime()
         const authz = await this.ReadAuthorization(context)
         // Folded only when the authorization is identity-backed; allow-all (even via a wired factory) keeps the fingerprint principal-independent.
         const digest = !authz.IdentityBacked ? undefined : ConnectorPrincipalDigest.Of(context)
-        return new ConnectorPageReader(runtime).ReadPage(modelId, concept, params, limits, authz, digest)
+        return new ConnectorPageReader(runtime).ReadPage(modelId, concept, params, limits, authz, digest, where)
     }
 
     /** Hydrate-on-write: edits paged entities by id+fields, reconstructing each write target with one keyed read. Never prepares the model.

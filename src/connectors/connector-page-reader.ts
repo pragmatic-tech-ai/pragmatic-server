@@ -1,5 +1,6 @@
 import { ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { EntityDto, Page, PageParams } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { ConnectorFilterTermDto, EntityDto, Page, PageParams } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { ConnectorReadFilter } from './connector-read-filter.js'
 import { ConnectorMirrorMapper } from '@pragmatic-tech-ai/todl'
 import type { ConnectorBinding, ConnectorSpec, ExternalFieldValue, ExternalRecord, ModelConnectorPlan, PageQuery, QueryRequest } from '@pragmatic-tech-ai/todl'
 import type { PagingLimits } from '../config/paging-limits.js'
@@ -38,12 +39,13 @@ export class ConnectorPageReader
      *  MaxSlicesPerPage is hit (the ONLY case that returns a short page that still carries a cursor). The cursor resumes after
      *  the last RAW key consumed, so filtered rows are never re-scanned, duplicated or skipped. A principal digest (passed only
      *  when the authorization is identity-backed) is folded into the fingerprint so a cursor is bound to its principal. */
-    public async ReadPage(modelId: string, concept: string, params: PageParams, limits: PagingLimits, authz?: IConnectorReadAuthorization, principalDigest?: string): Promise<Page<EntityDto>>
+    public async ReadPage(modelId: string, concept: string, params: PageParams, limits: PagingLimits, authz?: IConnectorReadAuthorization, principalDigest?: string, where?: readonly ConnectorFilterTermDto[]): Promise<Page<EntityDto>>
     {
         const plan = this.runtime.PlanOf(modelId)
         const binding = ConnectorPageReader.SingleBinding(plan, concept)
         const spec = ConnectorPageReader.SpecOf(plan, binding)
-        const parts = [ConnectorPageReader.FingerprintTag, modelId, concept, binding.Connector, binding.Source, binding.IdKey]
+        const filter = ConnectorReadFilter.For(binding, where, authz?.FieldMask)
+        const parts = [ConnectorPageReader.FingerprintTag, modelId, concept, binding.Connector, binding.Source, binding.IdKey, ConnectorReadFilter.Canonical(filter)]
         if (principalDigest !== undefined)
         {
             parts.push(principalDigest)
@@ -55,7 +57,7 @@ export class ConnectorPageReader
         {
             throw ConnectorPageReader.Unsupported(concept, ConnectorPageReader.UnsupportedNotPageable)
         }
-        const request = ConnectorPageReader.RequestFor(binding)
+        const request: QueryRequest = filter === undefined ? ConnectorPageReader.RequestFor(binding) : { ...ConnectorPageReader.RequestFor(binding), Where: filter }
         const items: EntityDto[] = []
         let after = page.After
         let nextAfter: ExternalFieldValue | undefined

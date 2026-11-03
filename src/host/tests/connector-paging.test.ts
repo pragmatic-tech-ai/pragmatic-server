@@ -4,8 +4,8 @@ import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { newDb } from 'pg-mem'
-import { InMemoryMessageSocket, PragmaticClient, CursorStaleError, ConnectorProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { EntityDto, Page } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { InMemoryMessageSocket, PragmaticClient, CursorStaleError, ConnectorProtocol, ConnectorFilterOp, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { ConnectorFilterTermDto, EntityDto, Page } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { PagingLimits } from '../../config/paging-limits.js'
@@ -204,5 +204,62 @@ test('connector/readPage tiles a SQL binding through the real reconnecting catal
         assert.deepEqual(sizes, [2, 2, 1])
         assert.equal(new Set(ids).size, 5)
         assert.deepEqual(ids, [...ids].sort())
+    })
+})
+
+class FilteredPageFixture
+{
+    public static async Walk(client: PragmaticClient, modelId: string, where: ConnectorFilterTermDto[], pageSize: number): Promise<string[]>
+    {
+        const names: string[] = []
+        let cursor: string | undefined
+        do
+        {
+            const page = await client.ReadEntitiesPage(modelId, ConnectorPagingFixture.ConceptId, { cursor, pageSize }, where)
+            names.push(...page.items.map(e => String(e.fields['name'])))
+            cursor = page.nextCursor
+        }
+        while (cursor !== undefined)
+        return names
+    }
+
+    public static async Code(attempt: Promise<unknown>): Promise<number | undefined>
+    {
+        try
+        {
+            await attempt
+            return undefined
+        }
+        catch (error)
+        {
+            return (error as { code?: number }).code
+        }
+    }
+}
+
+test('connector/readPage applies a rich filter at the source and pages the filtered rows', async () =>
+{
+    await ConnectorPagingFixture.With(8, async (client, modelId) =>
+    {
+        const range: ConnectorFilterTermDto[] = [{ field: 'name', op: ConnectorFilterOp.Gte, value: 'n2' }, { field: 'name', op: ConnectorFilterOp.Lt, value: 'n6' }]
+        assert.deepEqual(await FilteredPageFixture.Walk(client, modelId, range, 3), ['n2', 'n3', 'n4', 'n5'])
+        const set: ConnectorFilterTermDto[] = [{ field: 'name', op: ConnectorFilterOp.In, values: ['n1', 'n7', 'nope'] }]
+        assert.deepEqual(await FilteredPageFixture.Walk(client, modelId, set, 5), ['n1', 'n7'])
+        assert.deepEqual(await FilteredPageFixture.Walk(client, modelId, [{ field: 'name', op: ConnectorFilterOp.IsNull }], 5), [])
+        assert.deepEqual(await FilteredPageFixture.Walk(client, modelId, [{ field: 'id', op: ConnectorFilterOp.Eq, value: 'C3' }], 5), ['n3'])
+    })
+})
+
+test('connector/readPage refuses an unmapped field or bad operator, and binds a cursor to its filter', async () =>
+{
+    await ConnectorPagingFixture.With(6, async (client, modelId) =>
+    {
+        const read = (where: ConnectorFilterTermDto[], cursor?: string) => client.ReadEntitiesPage(modelId, ConnectorPagingFixture.ConceptId, { cursor, pageSize: 2 }, where)
+        assert.equal(await FilteredPageFixture.Code(read([{ field: 'secretish', op: ConnectorFilterOp.Eq, value: 'x' }])), ErrorCodes.InvalidParams)
+        assert.equal(await FilteredPageFixture.Code(read([{ field: 'name', op: 'like' as ConnectorFilterOp, value: 'x' }])), ErrorCodes.InvalidParams)
+        assert.equal(await FilteredPageFixture.Code(read([{ field: 'name', op: ConnectorFilterOp.Eq, value: { nested: 1 } as never }])), ErrorCodes.InvalidParams)
+        const first = await read([{ field: 'name', op: ConnectorFilterOp.Gte, value: 'n0' }])
+        assert.ok(first.nextCursor !== undefined)
+        assert.equal(await FilteredPageFixture.Code(read([{ field: 'name', op: ConnectorFilterOp.Gte, value: 'n1' }], first.nextCursor)), CursorStaleError.Code)
     })
 })
