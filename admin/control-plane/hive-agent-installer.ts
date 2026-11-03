@@ -44,10 +44,15 @@ export interface IInstallOrchestratorSource
     For(hive: HiveRecord): IHiveOrchestrator
 }
 
-/** Issues a fresh agent token (keeping only its hash); satisfied by PlatformDeploymentRegistry. */
+/**
+ * Mints an agent token and, separately, commits it (stores its hash, replacing the previous one); satisfied by
+ * PlatformDeploymentRegistry. The split lets the installer store the token in the cluster first, so a failed store
+ * leaves the hive's previous token valid.
+ */
 export interface IAgentTokenIssuer
 {
-    RegisterHive(hiveId: string): Promise<string>
+    NewAgentToken(): string
+    CommitAgentToken(hiveId: string, token: string): Promise<void>
 }
 
 /** The hive's latest check-in; satisfied by HiveObservationRegistry. */
@@ -104,6 +109,18 @@ export class AgentInstallInProgressError extends Error
     }
 }
 
+/** The hive was deleted while its install ran: the install stops before its next step. */
+class InstallHiveGoneError extends Error
+{
+    private static readonly ErrorName = 'InstallHiveGoneError'
+
+    public constructor(message: string)
+    {
+        super(message)
+        this.name = InstallHiveGoneError.ErrorName
+    }
+}
+
 /** One install's mutable state; the installer hands out copies only. */
 class InstallRun
 {
@@ -145,7 +162,8 @@ export class HiveAgentInstaller
 
     private static readonly NotLocalMessage = 'Automatic install is not available for this hive: the control plane does not manage its cluster. Install the agent manually.'
     private static readonly ChannelOffMessage = 'Automatic install is not available: the agent channel is not configured (start the control plane with PRAGMATIC_AGENT_CHANNEL_PORT).'
-    private static readonly TimeoutMessage = 'The agent did not check in in time. Check that its pod is running in the pragmatic-system namespace, then retry.'
+    private static readonly TimeoutMessage = 'The agent did not check in in time. On a fresh cluster its image may still be loading: check its pod with `kubectl -n pragmatic-system get pods`, then retry.'
+    private static readonly HiveGoneMessage = 'The install stopped: the hive was deleted while it ran.'
     private static readonly StepFailureMessages: Readonly<Record<InstallStep, string>> = {
         [InstallStep.PreparingCluster]: 'Could not prepare the cluster for the agent.',
         [InstallStep.ApplyingAgent]: 'Could not apply the agent to the cluster.',
@@ -222,7 +240,16 @@ export class HiveAgentInstaller
         return this.runs.get(hiveId)?.Snapshot()
     }
 
-    /** Resolves once the hive's latest install has settled (Connected or Failed), with its final status. */
+    /** Whether an install is running for the hive (a token rotation now would revoke the install's token). */
+    public IsInstalling(hiveId: string): boolean
+    {
+        return this.runs.get(hiveId)?.state === InstallState.Installing
+    }
+
+    /**
+     * Resolves once the hive's latest install has settled (Connected or Failed), with its final status. For tests and
+     * tooling: the HTTP surface polls StatusFor instead.
+     */
     public async WhenSettled(hiveId: string): Promise<InstallStatus | undefined>
     {
         const run = this.runs.get(hiveId)
@@ -244,19 +271,25 @@ export class HiveAgentInstaller
         {
             const orchestrator = this.orchestrators.For(hive)
             const bundle = HiveBootstrapBundle.For(hive.id, channelUrl, true)
-            run.step = InstallStep.PreparingCluster
+            this.Enter(run, InstallStep.PreparingCluster)
             await orchestrator.PrepareAgent(K8sManifestBuilder.AgentImage)
-            run.step = InstallStep.ApplyingAgent
+            this.Enter(run, InstallStep.ApplyingAgent)
             await orchestrator.Kubectl.Apply(bundle.manifest)
-            run.step = InstallStep.StoringToken
-            token = await this.tokens.RegisterHive(hive.id)
-            const issuedAt = this.clock.Now()
-            await orchestrator.Kubectl.Apply(HiveAgentInstaller.SecretManifest(bundle, token))
+            this.Enter(run, InstallStep.StoringToken)
+            // Store first, commit after: a failed store leaves the hive's previous token valid.
+            token = this.tokens.NewAgentToken()
+            await orchestrator.Kubectl.ApplyServerSide(HiveAgentInstaller.SecretManifest(bundle, token))
+            this.Enter(run, InstallStep.StoringToken)
+            await this.tokens.CommitAgentToken(hive.id, token)
             token = undefined
-            run.step = InstallStep.RestartingAgent
-            await orchestrator.Kubectl.RolloutRestart(bundle.namespace, bundle.agentName)
-            run.step = InstallStep.WaitingForCheckIn
-            await this.WaitForCheckIn(run, issuedAt)
+            this.Enter(run, InstallStep.RestartingAgent)
+            // Every deployment reading the Secret (the agent and, when installed, the tenant-admin pod) restarts.
+            await orchestrator.Kubectl.RolloutRestartSelector(bundle.namespace, bundle.hiveSelector)
+            // Cut off after the restart: a report verified against the old token before the commit, but recorded
+            // later, cannot count as the new agent's check-in.
+            const restartedAt = this.clock.Now()
+            this.Enter(run, InstallStep.WaitingForCheckIn)
+            await this.WaitForCheckIn(run, restartedAt)
         }
         catch (err)
         {
@@ -264,14 +297,24 @@ export class HiveAgentInstaller
         }
     }
 
-    /** Polls the hive's check-ins until one newer than the token's issue arrives (only the new token can report then), or times out. */
-    private async WaitForCheckIn(run: InstallRun, issuedAt: number): Promise<void>
+    /** Moves the run to its next step; stops it (throws) when the hive was deleted meanwhile. */
+    private Enter(run: InstallRun, step: InstallStep): void
+    {
+        run.step = step
+        if (this.hives.GetHive(run.hiveId) === undefined)
+        {
+            throw new InstallHiveGoneError(HiveAgentInstaller.HiveGoneMessage)
+        }
+    }
+
+    /** Polls the hive's check-ins until one newer than the restart arrives, or times out. */
+    private async WaitForCheckIn(run: InstallRun, cutoff: number): Promise<void>
     {
         const deadline = this.clock.Now() + this.timing.timeoutMs
         for (;;)
         {
             const latest = this.checkIns.LatestRecord(run.hiveId)
-            if (latest !== undefined && Date.parse(latest.reportedAt) > issuedAt)
+            if (latest !== undefined && Date.parse(latest.reportedAt) > cutoff)
             {
                 run.state = InstallState.Connected
                 run.finishedAt = new Date(this.clock.Now()).toISOString()
@@ -291,7 +334,7 @@ export class HiveAgentInstaller
     /** Records a failed step: the fixed step message, plus kubectl's (already redacted) text with any token occurrence scrubbed too. */
     private Fail(run: InstallRun, err: unknown, token: string | undefined): void
     {
-        let message = HiveAgentInstaller.StepFailureMessages[run.step]
+        let message = err instanceof InstallHiveGoneError ? err.message : HiveAgentInstaller.StepFailureMessages[run.step]
         if (err instanceof KubectlError)
         {
             message += HiveAgentInstaller.DetailSeparator + err.message
@@ -308,7 +351,7 @@ export class HiveAgentInstaller
         console.error(HiveAgentInstaller.LogPrefix + run.hiveId + HiveAgentInstaller.LogStepInfix + run.step + HiveAgentInstaller.LogErrorInfix + name)
     }
 
-    /** The agent token's Secret as a v1 manifest; applied through kubectl's stdin, never written anywhere else. */
+    /** The agent token's Secret as a v1 manifest; applied server-side through kubectl's stdin, never written anywhere else. */
     private static SecretManifest(bundle: HiveBootstrapDto, token: string): string
     {
         const C = HiveAgentInstaller

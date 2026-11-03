@@ -72,6 +72,22 @@ test('LoadImage runs kind load docker-image <image> --name <n>', async () =>
     assert.deepEqual(fake.LastArgs, ['load', 'docker-image', 'img:1', '--name', 'c1'])
 })
 
+test('LoadImage runs on the image-load exec (its own, longer timeout); every other call on the main one', async () =>
+{
+    const main = new FakeExecFile()
+    const images = new FakeExecFile()
+    const cli = new KindCli(main, images)
+    await cli.LoadImage('img:1', 'c1')
+    await cli.DeleteCluster('c1')
+    assert.deepEqual(images.LastArgs, ['load', 'docker-image', 'img:1', '--name', 'c1'])
+    assert.deepEqual(main.LastArgs, ['delete', 'cluster', '--name', 'c1'])
+})
+
+test('the image-load timeout allows a multi-GB image (at least 20 minutes)', () =>
+{
+    assert.ok(KindCli.ImageLoadTimeoutMs >= 20 * 60 * 1000)
+})
+
 test('ListClusters parses newline-separated names', async () =>
 {
     const fake = new FakeExecFile()

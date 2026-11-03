@@ -65,7 +65,14 @@ export class KindCli implements IKind
         '  extraPortMappings:',
     ]
 
-    public constructor(private readonly exec: IExecFile)
+    /**
+     * Upper bound on one `kind load docker-image`: the agent image is ~2 GB, well past NodeExecFile's default, and a
+     * load cut short leaves the node to pull an image it cannot reach.
+     */
+    public static readonly ImageLoadTimeoutMs = 20 * 60 * 1000
+
+    /** `imageExec` runs image loads only (give it ImageLoadTimeoutMs); every other call uses `exec`. */
+    public constructor(private readonly exec: IExecFile, private readonly imageExec: IExecFile = exec)
     {
     }
 
@@ -116,14 +123,14 @@ export class KindCli implements IKind
 
     public async LoadImage(image: string, clusterName: string): Promise<void>
     {
-        await this.Invoke([KindCli.Load, KindCli.DockerImage, image, KindCli.NameFlag, clusterName])
+        await this.Invoke([KindCli.Load, KindCli.DockerImage, image, KindCli.NameFlag, clusterName], this.imageExec)
     }
 
-    private async Invoke(args: readonly string[]): Promise<string>
+    private async Invoke(args: readonly string[], exec: IExecFile = this.exec): Promise<string>
     {
         try
         {
-            const result = await this.exec.Run(KindCli.Kind, args)
+            const result = await exec.Run(KindCli.Kind, args)
             return result.stdout
         }
         catch (e: unknown)

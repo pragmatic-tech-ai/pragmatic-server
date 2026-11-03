@@ -41,7 +41,7 @@ export class HiveOrchestratorFactory
         {
             const clusterName = KindClusterName.For(hive.id)
             const inner = this.BuildKubectl(hive, KindClusterName.ContextFor(clusterName))
-            return new KindHiveOrchestrator(new KindCli(new NodeExecFile()), clusterName, inner)
+            return new KindHiveOrchestrator(new KindCli(new NodeExecFile(), new NodeExecFile(KindCli.ImageLoadTimeoutMs)), clusterName, inner)
         }
         throw new UnsupportedBackendError(backend, mode)
     }

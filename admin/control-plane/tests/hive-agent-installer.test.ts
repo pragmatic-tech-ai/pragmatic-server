@@ -19,18 +19,30 @@ class FakeKubectl implements IKubectl
 {
     public readonly Calls: string[][] = []
     public readonly Applied: string[] = []
-    // Fails the Nth Apply (1-based) with this error; 0 = never.
-    public FailApplyAt = 0
-    public ApplyError: Error = new Error('apply failed')
+    public readonly ServerApplied: string[] = []
+    public ApplyError: Error | undefined
+    public ServerApplyError: Error | undefined
     public RestartError: Error | undefined
+    // Runs inside the restart, before it returns (e.g. a snapshot recorded meanwhile).
+    public OnRestart: (() => void) | undefined
 
     public async Apply(manifestJson: string): Promise<void>
     {
         this.Calls.push(['Apply'])
         this.Applied.push(manifestJson)
-        if (this.Applied.length === this.FailApplyAt)
+        if (this.ApplyError !== undefined)
         {
             throw this.ApplyError
+        }
+    }
+
+    public async ApplyServerSide(manifestJson: string): Promise<void>
+    {
+        this.Calls.push(['ApplyServerSide'])
+        this.ServerApplied.push(manifestJson)
+        if (this.ServerApplyError !== undefined)
+        {
+            throw this.ServerApplyError
         }
     }
 
@@ -38,10 +50,12 @@ class FakeKubectl implements IKubectl
     public async SetImage(n: string, d: string, c: string, i: string): Promise<void> { this.Calls.push(['SetImage', n, d, c, i]) }
     public async Scale(n: string, d: string, r: number): Promise<void> { this.Calls.push(['Scale', n, d, String(r)]) }
     public async ScaleStatefulSet(n: string, s: string, r: number): Promise<void> { this.Calls.push(['ScaleStatefulSet', n, s, String(r)]) }
+    public async RolloutRestart(n: string, d: string): Promise<void> { this.Calls.push(['RolloutRestart', n, d]) }
 
-    public async RolloutRestart(n: string, d: string): Promise<void>
+    public async RolloutRestartSelector(n: string, s: string): Promise<void>
     {
-        this.Calls.push(['RolloutRestart', n, d])
+        this.Calls.push(['RolloutRestartSelector', n, s])
+        this.OnRestart?.()
         if (this.RestartError !== undefined)
         {
             throw this.RestartError
@@ -61,6 +75,7 @@ class FakeOrchestrator implements IHiveOrchestrator
 {
     public readonly Prepared: string[] = []
     public PrepareError: Error | undefined
+    public OnPrepare: (() => void) | undefined
 
     public constructor(public readonly Kubectl: FakeKubectl)
     {
@@ -69,6 +84,7 @@ class FakeOrchestrator implements IHiveOrchestrator
     public async PrepareAgent(image: string): Promise<void>
     {
         this.Prepared.push(image)
+        this.OnPrepare?.()
         if (this.PrepareError !== undefined)
         {
             throw this.PrepareError
@@ -97,17 +113,23 @@ class FakeOrchestrators
     }
 }
 
+// Mints tokens short and dotted, so KubectlError's long-run redaction never matches them: only the
+// installer's own exact-token scrub can keep them out of error text.
 class FakeIssuer
 {
-    public static readonly TokenPrefix = 'AgentTok_'
-    public readonly Issued: string[] = []
+    public readonly Minted: string[] = []
+    public readonly Committed: Array<[string, string]> = []
 
-    public async RegisterHive(hiveId: string): Promise<string>
+    public NewAgentToken(): string
     {
-        // Long and base64url-shaped, like the real token, so the KubectlError redaction applies to it.
-        const token = FakeIssuer.TokenPrefix + hiveId + '_' + 'x9Q2'.repeat(10) + String(this.Issued.length)
-        this.Issued.push(token)
+        const token = 'tk.' + String(this.Minted.length) + '.Zq'
+        this.Minted.push(token)
         return token
+    }
+
+    public async CommitAgentToken(hiveId: string, token: string): Promise<void>
+    {
+        this.Committed.push([hiveId, token])
     }
 }
 
@@ -139,6 +161,26 @@ class FakeClock implements IInstallClock
         this.Delays++
         await new Promise(resolve => setImmediate(resolve))
         this.OnDelay?.()
+    }
+}
+
+// Captures console.error while a test body runs.
+class ErrorLog
+{
+    public static async Capture(body: () => Promise<void>): Promise<string>
+    {
+        const lines: string[] = []
+        const original = console.error
+        console.error = (...args: unknown[]) => { lines.push(args.map(a => String(a)).join(' ')) }
+        try
+        {
+            await body()
+        }
+        finally
+        {
+            console.error = original
+        }
+        return lines.join('\n')
     }
 }
 
@@ -195,7 +237,7 @@ class Fixture
 
 describe('HiveAgentInstaller', () =>
 {
-    it('runs every step in order and ends Connected once a check-in newer than the token arrives', async () =>
+    it('runs every step in order and ends Connected once a check-in newer than the restart arrives', async () =>
     {
         const fx = new Fixture()
         fx.CheckInAfter(2)
@@ -208,35 +250,56 @@ describe('HiveAgentInstaller', () =>
         assert.ok(done?.finishedAt !== undefined)
         assert.equal(done?.error, undefined)
         assert.deepEqual(fx.Orchestrators.Orchestrator.Prepared, [K8sManifestBuilder.AgentImage])
-        assert.deepEqual(fx.Kubectl.Calls, [['Apply'], ['Apply'], ['RolloutRestart', 'pragmatic-system', 'pragmatic-hive-h1-agent']])
+        // The token Secret goes server-side; the restart covers every deployment reading it (agent and tenant-admin).
+        assert.deepEqual(fx.Kubectl.Calls, [['Apply'], ['ApplyServerSide'], ['RolloutRestartSelector', 'pragmatic-system', 'pragmatic/hive=h1']])
         const agent = JSON.parse(fx.Kubectl.Applied[0]!) as { kind: string; items: { kind: string }[] }
         assert.equal(agent.kind, 'List')
         assert.ok(agent.items.some(i => i.kind === 'Deployment'))
         assert.ok(fx.Kubectl.Applied[0]!.includes(Fixture.ChannelUrl))
-        assert.equal(fx.Issuer.Issued.length, 1)
+        assert.deepEqual(fx.Issuer.Committed, [['h1', fx.Issuer.Minted[0]]])
         assert.deepEqual(fx.Installer.StatusFor('h1'), done)
     })
 
-    it('stores the token in the agent Secret through stdin (Apply) only, never in any argument', async () =>
+    it('stores the token in the agent Secret through a server-side apply on stdin, and commits it only after the Secret is stored', async () =>
     {
         const fx = new Fixture()
         fx.CheckInAfter(1)
+        const order: string[] = []
+        const commit = fx.Issuer.CommitAgentToken.bind(fx.Issuer)
+        fx.Issuer.CommitAgentToken = async (hiveId: string, token: string) =>
+        {
+            order.push('commit after ' + fx.Kubectl.ServerApplied.length + ' secret apply')
+            await commit(hiveId, token)
+        }
         fx.Installer.Start('h1')
         await fx.Installer.WhenSettled('h1')
-        const token = fx.Issuer.Issued[0]!
-        const secret = JSON.parse(fx.Kubectl.Applied[1]!) as { apiVersion: string; kind: string; type: string; metadata: { name: string; namespace: string }; stringData: Record<string, string> }
+        const token = fx.Issuer.Minted[0]!
+        const secret = JSON.parse(fx.Kubectl.ServerApplied[0]!) as { apiVersion: string; kind: string; type: string; metadata: { name: string; namespace: string }; stringData: Record<string, string> }
         assert.equal(secret.apiVersion, 'v1')
         assert.equal(secret.kind, 'Secret')
         assert.equal(secret.type, 'Opaque')
         assert.equal(secret.metadata.name, 'pragmatic-hive-h1-agent-token')
         assert.equal(secret.metadata.namespace, 'pragmatic-system')
         assert.deepEqual(secret.stringData, { token })
+        assert.deepEqual(order, ['commit after 1 secret apply'])
         assert.ok(!fx.Kubectl.Applied[0]!.includes(token))
-        assert.ok(!JSON.stringify(fx.Kubectl.Calls).includes(token))
         assert.ok(!JSON.stringify(fx.Installer.StatusFor('h1')).includes(token))
     })
 
-    it('a snapshot from before the token was issued does not count as the check-in', async () =>
+    it('a failed Secret apply never commits the new token, so the previous one stays valid', async () =>
+    {
+        const fx = new Fixture()
+        fx.Kubectl.ServerApplyError = new KubectlError('error: secrets is forbidden')
+        fx.Installer.Start('h1')
+        const done = await fx.Installer.WhenSettled('h1')
+        assert.equal(done?.state, InstallState.Failed)
+        assert.equal(done?.step, InstallStep.StoringToken)
+        assert.equal(fx.Issuer.Minted.length, 1)
+        assert.deepEqual(fx.Issuer.Committed, [])
+        assert.ok(!fx.Kubectl.Calls.some(c => c[0] === 'RolloutRestartSelector'))
+    })
+
+    it('a snapshot from before the install does not count as the check-in', async () =>
     {
         const fx = new Fixture()
         fx.CheckIns.Records.set('h1', { reportedAt: new Date(fx.Clock.Ms - 1000).toISOString() })
@@ -247,7 +310,22 @@ describe('HiveAgentInstaller', () =>
         assert.equal(fx.Clock.Delays, 3)
     })
 
-    it('fails at WaitingForCheckIn when no check-in arrives before the timeout', async () =>
+    it('a snapshot recorded while the restart runs (an old pod, old token) does not count: the cutoff is after the restart', async () =>
+    {
+        const fx = new Fixture()
+        fx.Kubectl.OnRestart = () =>
+        {
+            fx.CheckIns.Records.set('h1', { reportedAt: new Date(fx.Clock.Ms).toISOString() })
+            fx.Clock.Ms += 50
+        }
+        fx.CheckInAfter(2)
+        fx.Installer.Start('h1')
+        const done = await fx.Installer.WhenSettled('h1')
+        assert.equal(done?.state, InstallState.Connected)
+        assert.equal(fx.Clock.Delays, 2)
+    })
+
+    it('fails at WaitingForCheckIn when no check-in arrives in time, pointing at the agent pod and the image load', async () =>
     {
         const fx = new Fixture()
         fx.Installer.Start('h1')
@@ -255,6 +333,8 @@ describe('HiveAgentInstaller', () =>
         assert.equal(done?.state, InstallState.Failed)
         assert.equal(done?.step, InstallStep.WaitingForCheckIn)
         assert.match(done?.error ?? '', /did not check in/)
+        assert.match(done?.error ?? '', /image may still be loading/)
+        assert.match(done?.error ?? '', /kubectl -n pragmatic-system get pods/)
         assert.ok(done?.finishedAt !== undefined)
         assert.equal(fx.Clock.Delays, Fixture.TimeoutMs / Fixture.PollMs)
     })
@@ -262,7 +342,6 @@ describe('HiveAgentInstaller', () =>
     it('a kubectl failure fails its step with the fixed message plus the redacted kubectl text; later steps never run', async () =>
     {
         const fx = new Fixture()
-        fx.Kubectl.FailApplyAt = 1
         fx.Kubectl.ApplyError = new KubectlError('error: connection refused to the cluster\npassword=hunter2')
         fx.Installer.Start('h1')
         const done = await fx.Installer.WhenSettled('h1')
@@ -271,47 +350,59 @@ describe('HiveAgentInstaller', () =>
         assert.match(done?.error ?? '', /^Could not apply the agent to the cluster/)
         assert.match(done?.error ?? '', /connection refused/)
         assert.ok(!(done?.error ?? '').includes('hunter2'))
-        assert.equal(fx.Issuer.Issued.length, 0)
+        assert.equal(fx.Issuer.Minted.length, 0)
         assert.deepEqual(fx.Kubectl.Calls, [['Apply']])
     })
 
-    it('a failure while storing the token never surfaces the token, even when kubectl echoes it', async () =>
+    it('a token kubectl echoes back is scrubbed from the status and never logged (the redaction alone would miss this short token)', async () =>
     {
         const fx = new Fixture()
-        fx.Kubectl.FailApplyAt = 2
-        // The token is only known once issued: echo it back the way a chatty kubectl might.
-        const issued = fx.Issuer.RegisterHive.bind(fx.Issuer)
-        fx.Issuer.RegisterHive = async (hiveId: string) =>
+        const mint = fx.Issuer.NewAgentToken.bind(fx.Issuer)
+        fx.Issuer.NewAgentToken = () =>
         {
-            const token = await issued(hiveId)
-            fx.Kubectl.ApplyError = new KubectlError('error validating data: stringData.token ' + token + ' rejected')
+            const token = mint()
+            fx.Kubectl.ServerApplyError = new KubectlError('error validating data: stringData.token value ' + token + ' rejected')
             return token
         }
-        fx.Installer.Start('h1')
-        const done = await fx.Installer.WhenSettled('h1')
-        const token = fx.Issuer.Issued[0]!
-        assert.equal(done?.state, InstallState.Failed)
-        assert.equal(done?.step, InstallStep.StoringToken)
-        assert.match(done?.error ?? '', /^Could not store the agent token/)
-        assert.ok(!(done?.error ?? '').includes(token))
-        assert.ok(!JSON.stringify(done).includes(token))
+        let done: Awaited<ReturnType<HiveAgentInstaller['WhenSettled']>>
+        const log = await ErrorLog.Capture(async () =>
+        {
+            fx.Installer.Start('h1')
+            done = await fx.Installer.WhenSettled('h1')
+        })
+        const token = fx.Issuer.Minted[0]!
+        // The premise: KubectlError alone leaves this token in its text.
+        assert.ok(new KubectlError('x ' + token).message.includes(token))
+        assert.equal(done!?.state, InstallState.Failed)
+        assert.equal(done!?.step, InstallStep.StoringToken)
+        assert.match(done!?.error ?? '', /^Could not store the agent token/)
+        assert.match(done!?.error ?? '', /\[REDACTED\]/)
+        assert.ok(!JSON.stringify(done!).includes(token))
+        assert.ok(log.length > 0)
+        assert.ok(!log.includes(token))
     })
 
-    it('a non-kubectl failure reports only the fixed step message, never the raw error text', async () =>
+    it('a non-kubectl failure reports only the fixed step message, and the log carries no raw error text', async () =>
     {
         const fx = new Fixture()
         fx.Orchestrators.Orchestrator.PrepareError = new Error('kind exploded with secret-ish detail')
-        fx.Installer.Start('kind1')
-        const done = await fx.Installer.WhenSettled('kind1')
-        assert.equal(done?.state, InstallState.Failed)
-        assert.equal(done?.step, InstallStep.PreparingCluster)
-        assert.equal(done?.error, 'Could not prepare the cluster for the agent.')
+        let done: Awaited<ReturnType<HiveAgentInstaller['WhenSettled']>>
+        const log = await ErrorLog.Capture(async () =>
+        {
+            fx.Installer.Start('kind1')
+            done = await fx.Installer.WhenSettled('kind1')
+        })
+        assert.equal(done!?.state, InstallState.Failed)
+        assert.equal(done!?.step, InstallStep.PreparingCluster)
+        assert.equal(done!?.error, 'Could not prepare the cluster for the agent.')
+        assert.match(log, /kind1/)
+        assert.ok(!log.includes('secret-ish'))
     })
 
     it('a restart failure fails RestartingAgent', async () =>
     {
         const fx = new Fixture()
-        fx.Kubectl.RestartError = new KubectlError('deployments.apps "pragmatic-hive-h1-agent" not found')
+        fx.Kubectl.RestartError = new KubectlError('no deployments matched')
         fx.Installer.Start('h1')
         const done = await fx.Installer.WhenSettled('h1')
         assert.equal(done?.state, InstallState.Failed)
@@ -319,15 +410,32 @@ describe('HiveAgentInstaller', () =>
         assert.match(done?.error ?? '', /^Could not restart the agent/)
     })
 
-    it('one install at a time per hive; Retry after a failure starts a fresh run', async () =>
+    it('a hive deleted mid-install stops the install before the next step: nothing applied, no token committed', async () =>
     {
         const fx = new Fixture()
-        fx.Kubectl.FailApplyAt = 1
+        fx.Orchestrators.Orchestrator.OnPrepare = () => { fx.Hives.delete('h1') }
         fx.Installer.Start('h1')
+        const done = await fx.Installer.WhenSettled('h1')
+        assert.equal(done?.state, InstallState.Failed)
+        assert.equal(done?.step, InstallStep.ApplyingAgent)
+        assert.match(done?.error ?? '', /hive was deleted/)
+        assert.deepEqual(fx.Kubectl.Calls, [])
+        assert.deepEqual(fx.Issuer.Minted, [])
+        assert.deepEqual(fx.Issuer.Committed, [])
+    })
+
+    it('one install at a time per hive (IsInstalling says so); Retry after a failure starts a fresh run', async () =>
+    {
+        const fx = new Fixture()
+        fx.Kubectl.ApplyError = new Error('apply failed')
+        assert.equal(fx.Installer.IsInstalling('h1'), false)
+        fx.Installer.Start('h1')
+        assert.equal(fx.Installer.IsInstalling('h1'), true)
         assert.throws(() => fx.Installer.Start('h1'), AgentInstallInProgressError)
         const failed = await fx.Installer.WhenSettled('h1')
         assert.equal(failed?.state, InstallState.Failed)
-        fx.Kubectl.FailApplyAt = 0
+        assert.equal(fx.Installer.IsInstalling('h1'), false)
+        fx.Kubectl.ApplyError = undefined
         fx.CheckInAfter(fx.Clock.Delays + 1)
         const retried = fx.Installer.Start('h1')
         assert.equal(retried.state, InstallState.Installing)
@@ -341,6 +449,7 @@ describe('HiveAgentInstaller', () =>
         const fx = new Fixture()
         fx.Installer.Start('h1')
         assert.equal(fx.Installer.Start('kind1').state, InstallState.Installing)
+        assert.equal(fx.Installer.IsInstalling('aks1'), false)
     })
 
     it('refuses an unknown hive, a non-Local hive and a control plane whose agent channel is off', () =>

@@ -51,12 +51,14 @@ class FakeOperator implements IOperatorIdentity
     public async Revoke(_t: string): Promise<void> { }
 }
 
-// Records every kubectl call; Apply's manifest is what kubectl would read on stdin.
+// Records every kubectl call; the Apply manifests are what kubectl would read on stdin.
 class FakeKubectl implements IKubectl
 {
     public readonly Applied: string[] = []
+    public readonly ServerApplied: string[] = []
     public readonly Args: string[][] = []
     public ApplyError: Error | undefined
+    public ServerApplyError: Error | undefined
 
     public async Apply(manifestJson: string): Promise<void>
     {
@@ -66,6 +68,17 @@ class FakeKubectl implements IKubectl
             throw this.ApplyError
         }
     }
+
+    public async ApplyServerSide(manifestJson: string): Promise<void>
+    {
+        this.ServerApplied.push(manifestJson)
+        if (this.ServerApplyError !== undefined)
+        {
+            throw this.ServerApplyError
+        }
+    }
+
+    public async RolloutRestartSelector(n: string, s: string): Promise<void> { this.Args.push([n, s]) }
 
     public async RolloutStatus(n: string, d: string): Promise<void> { this.Args.push([n, d]) }
     public async SetImage(n: string, d: string, c: string, i: string): Promise<void> { this.Args.push([n, d, c, i]) }
@@ -194,14 +207,15 @@ describe('ControlPlaneHost automatic agent install', () =>
         const first = JSON.parse(started.body) as InstallStatus
         assert.equal(first.state, InstallState.Installing)
         // Wait for the token Secret to be applied, then read the token the way the agent would: from the Secret.
-        for (let i = 0; i < 400 && orchestrators.Kubectl.Applied.length < 2; i++)
+        for (let i = 0; i < 400 && orchestrators.Kubectl.Args.length < 1; i++)
         {
             await new Promise(resolve => setTimeout(resolve, 5))
         }
-        const secret = JSON.parse(orchestrators.Kubectl.Applied[1]!) as { kind: string; stringData: { token: string } }
+        const secret = JSON.parse(orchestrators.Kubectl.ServerApplied[0]!) as { kind: string; stringData: { token: string } }
         assert.equal(secret.kind, 'Secret')
         const token = secret.stringData.token
         await deployments.VerifyAgentToken('local1', token)
+        assert.deepEqual(orchestrators.Kubectl.Args, [['pragmatic-system', 'pragmatic/hive=local1']])
         await new Promise(resolve => setTimeout(resolve, 5))
         await observations.RecordSnapshot('local1', [])
         const { reply, status } = await Harness.Settled(host, 'local1')
@@ -220,6 +234,32 @@ describe('ControlPlaneHost automatic agent install', () =>
         const again = await Harness.Send(host, 'POST', '/api/hives/local1/agent-install')
         assert.equal(again.status, 409)
         assert.match(JSON.parse(again.body).error, /already running/)
+    })
+
+    it('a failed Secret store leaves the hive\'s previous agent token valid', async () =>
+    {
+        const old = JSON.parse((await Harness.Send(host, 'POST', '/api/hives/local1/rollout-registration')).body).token as string
+        orchestrators.Kubectl.ServerApplyError = new KubectlError('error: secrets "pragmatic-hive-local1-agent-token" is forbidden')
+        assert.equal((await Harness.Send(host, 'POST', '/api/hives/local1/agent-install')).status, 202)
+        const { status } = await Harness.Settled(host, 'local1')
+        assert.equal(status.state, InstallState.Failed)
+        assert.equal(status.step, InstallStep.StoringToken)
+        await deployments.VerifyAgentToken('local1', old)
+    })
+
+    it('while an install runs, reissuing the token and deleting the hive are refused (409)', async () =>
+    {
+        assert.equal((await Harness.Send(host, 'POST', '/api/hives/local1/agent-install')).status, 202)
+        const reissue = await Harness.Send(host, 'POST', '/api/hives/local1/rollout-registration')
+        assert.equal(reissue.status, 409)
+        assert.match(JSON.parse(reissue.body).error, /install is running/)
+        assert.ok(!reissue.body.includes('token":'))
+        const del = await Harness.Send(host, 'DELETE', '/api/hives/local1')
+        assert.equal(del.status, 409)
+        assert.match(JSON.parse(del.body).error, /install is running/)
+        assert.ok(directory.GetHive('local1') !== undefined)
+        // Other hives are unaffected.
+        assert.equal((await Harness.Send(host, 'POST', '/api/hives/aks1/rollout-registration')).status, 201)
     })
 
     it('a kubectl failure surfaces as Failed with the redacted text and never the token; Retry restarts it', async () =>

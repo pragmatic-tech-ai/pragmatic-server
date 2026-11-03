@@ -38,13 +38,19 @@ New `HiveAgentInstaller` (admin/control-plane/hive-agent-installer.ts), one per 
 - `StatusFor(hiveId): InstallStatus | undefined` - the latest install's state, in memory only
   (a control-plane restart forgets it; the hive's real state is still `lastSeen`).
 - Steps, in order (enum `InstallStep`): `PreparingCluster` (Provision mode: ensure the kind
-  cluster exists and load the agent image; Attach: no-op), `ApplyingAgent` (bundle manifest via
-  `IKubectl.Apply`, stdin), `StoringToken` (`RegisterHive` issues the token; a v1 Secret manifest
-  carrying it is applied via `IKubectl.Apply` on stdin; the token is dropped from memory right
-  after), `RestartingAgent` (`IKubectl.RolloutRestart` on the agent deployment so a reinstall
-  picks the new token up), `WaitingForCheckIn` (poll hive observations until a snapshot newer
-  than the install's start arrives; default timeout 15 min - a fresh cluster loads the ~2 GB
-  image first).
+  cluster exists and load the agent image, with a 20 min image-load timeout; Attach: no-op),
+  `ApplyingAgent` (bundle manifest via `IKubectl.Apply`, stdin), `StoringToken` (a fresh token is
+  minted, `NewAgentToken`; a v1 Secret manifest carrying it is applied server-side via
+  `IKubectl.ApplyServerSide` on stdin, so no last-applied annotation copies it; only then is its
+  hash committed, `CommitAgentToken`, so a failed store leaves the previous token valid; the token
+  is dropped from memory right after), `RestartingAgent` (`IKubectl.RolloutRestartSelector` with
+  the bundle's hive selector, restarting every deployment that reads the Secret - the agent and,
+  when installed, the tenant-admin pod - so a reinstall picks the new token up),
+  `WaitingForCheckIn` (poll hive observations until a snapshot newer than the moment the restart
+  returned arrives; default timeout 15 min - a fresh cluster loads the ~2 GB image first). Before
+  each step the hive must still exist; a hive deleted mid-install stops it (Failed).
+- While an install runs for a hive, reissuing its token (`rollout-registration`) and deleting the
+  hive are refused (409), since either would undo the install.
 - `InstallStatus = { state: InstallState (Installing | Connected | Failed), step: InstallStep,
   startedAt, finishedAt?, error? }`. Errors are fixed operator-facing messages per step plus the
   already-redacted `KubectlError` text; never the token.

@@ -13,6 +13,13 @@ export interface IKubectl
     Scale(namespace: string, deployment: string, replicas: number): Promise<void>
     ScaleStatefulSet(namespace: string, statefulSet: string, replicas: number): Promise<void>
     RolloutRestart(namespace: string, deployment: string): Promise<void>
+    /** Restarts every deployment in the namespace that matches the label selector. */
+    RolloutRestartSelector(namespace: string, selector: string): Promise<void>
+    /**
+     * Applies a manifest server-side (stdin, forced, under the control plane's field manager): unlike a client-side
+     * apply it writes no last-applied-configuration annotation, so a Secret's value is not copied into one.
+     */
+    ApplyServerSide(manifestJson: string): Promise<void>
     Get(namespace: string, resource: string): Promise<string>
     DeleteNamespace(namespace: string): Promise<void>
 }
@@ -86,6 +93,11 @@ export class KubectlCli implements IKubectl
     private static readonly ApplyVerb = 'apply'
     private static readonly FileFlag = '-f'
     private static readonly Stdin = '-'
+    private static readonly ServerSideFlag = '--server-side'
+    private static readonly FieldManagerFlag = '--field-manager=pragmatic-control-plane'
+    private static readonly ForceConflictsFlag = '--force-conflicts'
+    private static readonly DeploymentResource = 'deployment'
+    private static readonly SelectorFlag = '-l'
     private static readonly Rollout = 'rollout'
     private static readonly Status = 'status'
     private static readonly Restart = 'restart'
@@ -118,6 +130,12 @@ export class KubectlCli implements IKubectl
         await this.Invoke([KubectlCli.ApplyVerb, KubectlCli.FileFlag, KubectlCli.Stdin], manifestJson)
     }
 
+    public async ApplyServerSide(manifestJson: string): Promise<void>
+    {
+        const K = KubectlCli
+        await this.Invoke([K.ApplyVerb, K.ServerSideFlag, K.FieldManagerFlag, K.ForceConflictsFlag, K.FileFlag, K.Stdin], manifestJson)
+    }
+
     public async RolloutStatus(namespace: string, deployment: string): Promise<void>
     {
         await this.Invoke([KubectlCli.Rollout, KubectlCli.Status, KubectlCli.DeploymentPrefix + deployment, KubectlCli.NamespaceFlag, namespace])
@@ -141,6 +159,11 @@ export class KubectlCli implements IKubectl
     public async RolloutRestart(namespace: string, deployment: string): Promise<void>
     {
         await this.Invoke([KubectlCli.Rollout, KubectlCli.Restart, KubectlCli.DeploymentPrefix + deployment, KubectlCli.NamespaceFlag, namespace])
+    }
+
+    public async RolloutRestartSelector(namespace: string, selector: string): Promise<void>
+    {
+        await this.Invoke([KubectlCli.Rollout, KubectlCli.Restart, KubectlCli.DeploymentResource, KubectlCli.SelectorFlag, selector, KubectlCli.NamespaceFlag, namespace])
     }
 
     public Get(namespace: string, resource: string): Promise<string>

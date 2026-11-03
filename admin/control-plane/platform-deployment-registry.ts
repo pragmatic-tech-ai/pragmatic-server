@@ -509,11 +509,24 @@ export class PlatformDeploymentRegistry
         return { targetVersion: target?.version, environments }
     }
 
+    /** Issues a fresh agent token and makes it the hive's only valid one at once (the manual reissue path). */
     public async RegisterHive(hiveId: string): Promise<string>
     {
-        const token = randomBytes(PlatformDeploymentRegistry.TokenBytes).toString(PlatformDeploymentRegistry.TokenEncoding)
-        await this.registrations.Put({ id: hiveId, hiveId, agentTokenHash: this.HashToken(token), registeredAt: new Date().toISOString() })
+        const token = this.NewAgentToken()
+        await this.CommitAgentToken(hiveId, token)
         return token
+    }
+
+    /** Mints a fresh agent token without registering it: the hive's current token stays valid until CommitAgentToken. */
+    public NewAgentToken(): string
+    {
+        return randomBytes(PlatformDeploymentRegistry.TokenBytes).toString(PlatformDeploymentRegistry.TokenEncoding)
+    }
+
+    /** Makes the token the hive's only valid one (stores its hash; the previous token stops verifying). */
+    public async CommitAgentToken(hiveId: string, token: string): Promise<void>
+    {
+        await this.registrations.Put({ id: hiveId, hiveId, agentTokenHash: this.HashToken(token), registeredAt: new Date().toISOString() })
     }
 
     public async DeregisterHive(hiveId: string): Promise<void>

@@ -240,6 +240,8 @@ export class ControlPlaneHost
     private static readonly HiveAgentInstallPathPattern = new RegExp(
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/([^/]+)/' + ControlPlaneHost.AgentInstallSegment + '$')
     private static readonly AutoInstallOffMessage = 'Automatic install is not available on this control plane. Install the agent manually.'
+    private static readonly ReissueDuringInstallMessage = 'An agent install is running for this hive and issues its own token. Wait for it to finish (or fail) before reissuing the token.'
+    private static readonly DeleteDuringInstallMessage = 'An agent install is running for this hive. Wait for it to finish (or fail) before deleting the hive.'
     private static readonly HiveObservationsPathPattern = new RegExp(
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/([^/]+)/' + ControlPlaneHost.ObservationsSegment + '$')
     private static readonly ManifestsSegment = 'manifests'
@@ -1026,6 +1028,11 @@ export class ControlPlaneHost
         }
         if (method === PlaneHttp.MethodDelete)
         {
+            if (resource === ControlPlaneHost.HivesSegment && this.agentInstaller?.IsInstalling(id) === true)
+            {
+                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusConflict, { error: ControlPlaneHost.DeleteDuringInstallMessage })
+                return true
+            }
             await this.DeletePlatform(resource, id)
             PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ok: true })
             return true
@@ -1465,6 +1472,12 @@ export class ControlPlaneHost
             if (this.directory.GetHive(id) === undefined)
             {
                 PlaneHttp.WriteNotFound(res)
+                return true
+            }
+            // A reissue now would revoke the token the running install just stored.
+            if (this.agentInstaller?.IsInstalling(id) === true)
+            {
+                PlaneHttp.WriteJson(res, ControlPlaneHost.StatusConflict, { error: ControlPlaneHost.ReissueDuringInstallMessage })
                 return true
             }
             // The one-time reveal: the raw agent token appears in this response body only; the registry stores just its hash.

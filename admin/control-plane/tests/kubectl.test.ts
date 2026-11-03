@@ -79,6 +79,21 @@ test('RolloutRestart args', async () =>
     assert.deepEqual(f.Last.args, ['--context', 'kind-hive', 'rollout', 'restart', 'deployment/dep', '-n', 'ns'])
 })
 
+test('ApplyServerSide runs a forced server-side apply under the control plane field manager, manifest on stdin only', async () =>
+{
+    const f = new KubectlFixture()
+    await f.Cli.ApplyServerSide('{"kind":"Secret"}')
+    assert.deepEqual(f.Last.args, ['--context', 'kind-hive', 'apply', '--server-side', '--field-manager=pragmatic-control-plane', '--force-conflicts', '-f', '-'])
+    assert.equal(f.Last.stdin, '{"kind":"Secret"}')
+})
+
+test('RolloutRestartSelector restarts every deployment matching the selector', async () =>
+{
+    const f = new KubectlFixture()
+    await f.Cli.RolloutRestartSelector('pragmatic-system', 'pragmatic/hive=h1')
+    assert.deepEqual(f.Last.args, ['--context', 'kind-hive', 'rollout', 'restart', 'deployment', '-l', 'pragmatic/hive=h1', '-n', 'pragmatic-system'])
+})
+
 test('Get args and returns stdout', async () =>
 {
     const f = new KubectlFixture()

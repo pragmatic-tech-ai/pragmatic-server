@@ -341,6 +341,23 @@ test('DeregisterHive removes a prior registration so VerifyAgentToken then fails
     })
 })
 
+test('NewAgentToken mints without registering; CommitAgentToken then makes it the only valid one', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        const old = await reg.RegisterHive(Fx.HiveA)
+        const fresh = reg.NewAgentToken()
+        assert.ok(fresh.length > 0)
+        assert.notEqual(fresh, old)
+        // Minted but not committed: the old token still verifies, the new one does not.
+        await reg.VerifyAgentToken(Fx.HiveA, old)
+        await assert.rejects(reg.VerifyAgentToken(Fx.HiveA, fresh), AgentUnauthorizedError)
+        await reg.CommitAgentToken(Fx.HiveA, fresh)
+        await reg.VerifyAgentToken(Fx.HiveA, fresh)
+        await assert.rejects(reg.VerifyAgentToken(Fx.HiveA, old), AgentUnauthorizedError)
+    })
+})
+
 test('SelectTarget on an unknown hive throws UnknownHiveError', async () =>
 {
     await Fx.Run(async reg =>

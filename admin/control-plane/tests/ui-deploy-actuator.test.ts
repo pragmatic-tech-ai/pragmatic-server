@@ -65,6 +65,14 @@ class FakeKubectl implements IKubectl
         this.events.push('restart')
     }
 
+    public async RolloutRestartSelector(_namespace: string, _selector: string): Promise<void>
+    {
+    }
+
+    public async ApplyServerSide(_manifestJson: string): Promise<void>
+    {
+    }
+
     public StatusFails = false
     public Statuses: Array<[string, string]> = []
 
