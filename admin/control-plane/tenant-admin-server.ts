@@ -39,6 +39,8 @@ export type TenantAdminConfig = {
     readonly bind: string
     readonly baseDomain: string
     readonly scheme: string
+    /** The tenant origin's externally visible port, when it is not the scheme default (proxy-less runs). */
+    readonly externalPort: number | undefined
     readonly secureCookie: boolean
     readonly secretTtlHours: number
     readonly probeMs: number
@@ -124,6 +126,7 @@ export class TenantAdminServer
             bind: ControlPlaneServer.TenantBind(env[TenantAdminEnv.Bind]),
             baseDomain,
             scheme: ControlPlaneServer.TenantScheme(env[TenantAdminEnv.Scheme]),
+            externalPort: ControlPlaneServer.TenantExternalPort(env[TenantAdminEnv.ExternalPort]),
             secureCookie: secure === TenantAdminServer.TrueToken || secure === TenantAdminServer.OneToken,
             secretTtlHours: ControlPlaneServer.ParseSecretTtlHours(env[TenantAdminEnv.SecretTtl]),
             probeMs: ControlPlaneServer.ParseHealthProbeMs(env[TenantAdminEnv.HealthProbeMs]),
@@ -188,7 +191,7 @@ export class TenantAdminServer
         const plane = ControlPlaneServer.BuildTenantPlane(
             dataRoot, idpService, directory, cfg.secureCookie, service, this.rollout, orchestrators, placement,
             masterKey, adminClients, cfg.secretTtlHours)
-        const resolver = new TenantHostResolver(cfg.baseDomain, cfg.scheme, directory)
+        const resolver = new TenantHostResolver(cfg.baseDomain, cfg.scheme, directory, cfg.externalPort)
         const staticRoot = join(dirname(fileURLToPath(import.meta.url)), ControlPlaneServer.ParentSegment, ControlPlaneServer.TenantPortalSegment, ControlPlaneServer.DistSegment)
         const monitor = cfg.probeMs > 0
             ? new TenantHealthMonitor(directory, new HiveHealthProducer(service, orchestrators, placement), plane.events, cfg.probeMs, cfg.probeTimeoutMs, service)

@@ -247,6 +247,57 @@ class Kit
     }
 }
 
+describe('TenantPlaneHost with an external port (proxy-less local run)', () =>
+{
+    const ExternalPort = 7002
+    const PortedHost = 'acme.admin.example.com:7002'
+    let parent: string
+    let host: TenantPlaneHost
+    let rp: CapturingRelyingParty
+
+    beforeEach(async () =>
+    {
+        parent = mkdtempSync(join(tmpdir(), 'tph-port-'))
+        mkdirSync(join(parent, 'tenant-static'))
+        const store = new TenantSessionStore(join(parent, 'tenant-sessions.json'), 3600000)
+        rp = new CapturingRelyingParty()
+        const plane: TenantPlane = { endpoint: new TenantAuthEndpoint(rp, store, false), gate: new TenantAuthGate(store), api: new StubTenantApi(), events: new TenantEventBus() }
+        const resolver = new TenantHostResolver(Kit.BaseDomain, Kit.Scheme, new StubDirectory([Kit.TenantId]) as unknown as PlatformDirectory, ExternalPort)
+        host = new TenantPlaneHost(plane, resolver, join(parent, 'tenant-static'), new FakeStreamingService([]) as unknown as IEnvironmentService)
+        await host.Listen(0, '127.0.0.1')
+    })
+
+    afterEach(async () =>
+    {
+        await host.Close()
+        rmSync(parent, { recursive: true, force: true })
+    })
+
+    it('begin hands the relying party a callback on the external port', async () =>
+    {
+        const r = await Kit.Raw(host, HttpMethod.Get, Kit.BeginPath, { [Kit.HostHeader]: PortedHost })
+        assert.equal(r.status, 302)
+        assert.equal(rp.LastCallback, 'https://acme.admin.example.com:7002/tenant-auth/oidc/callback')
+    })
+
+    it('accepts the tenant host with or without the external port, and 403s another port', async () =>
+    {
+        assert.equal((await Kit.Raw(host, HttpMethod.Get, Kit.BeginPath, { [Kit.HostHeader]: PortedHost })).status, 302)
+        assert.equal((await Kit.Raw(host, HttpMethod.Get, Kit.BeginPath, { [Kit.HostHeader]: Kit.TenantHost })).status, 302)
+        const other = await Kit.Raw(host, HttpMethod.Get, Kit.BeginPath, { [Kit.HostHeader]: 'acme.admin.example.com:7003' })
+        assert.equal(other.status, 403)
+        assert.equal((await Kit.Raw(host, HttpMethod.Get, Kit.BeginPath, { [Kit.HostHeader]: 'nope.admin.example.com:7002' })).status, 403)
+    })
+
+    it('a mutating request needs the exact external origin', async () =>
+    {
+        const ok = await Kit.Raw(host, HttpMethod.Post, Kit.LogoutPath, { [Kit.HostHeader]: PortedHost, [Kit.OriginHeader]: 'https://acme.admin.example.com:7002' })
+        assert.equal(ok.status, 204)
+        const portless = await Kit.Raw(host, HttpMethod.Post, Kit.LogoutPath, { [Kit.HostHeader]: PortedHost, [Kit.OriginHeader]: Kit.AllowedOrigin })
+        assert.equal(portless.status, 403)
+    })
+})
+
 describe('TenantPlaneHost routing and isolation', () =>
 {
     let parent: string

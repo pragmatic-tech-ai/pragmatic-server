@@ -105,6 +105,21 @@ describe('TenantAdminServer', () =>
         assert.equal(cfg.bind, Names.DefaultBind)
         assert.equal(cfg.scheme, Names.DefaultScheme)
         assert.equal(cfg.secureCookie, false)
+        assert.equal(cfg.externalPort, undefined)
+    })
+
+    it('ReadConfig reads an optional external port, validated like the other ports', () =>
+    {
+        const e = env()
+        e['PRAGMATIC_TENANT_ADMIN_EXTERNAL_PORT'] = '7002'
+        assert.equal(TenantAdminServer.ReadConfig(e).externalPort, 7002)
+        e['PRAGMATIC_TENANT_ADMIN_EXTERNAL_PORT'] = ''
+        assert.equal(TenantAdminServer.ReadConfig(e).externalPort, undefined)
+        for (const bad of ['abc', '0', '70000', '1.5'])
+        {
+            e['PRAGMATIC_TENANT_ADMIN_EXTERNAL_PORT'] = bad
+            assert.throws(() => TenantAdminServer.ReadConfig(e), /PRAGMATIC_TENANT_ADMIN_EXTERNAL_PORT/)
+        }
     })
 
     for (const missing of [Names.DataRootVar, Names.PortVar, Names.DomainVar])

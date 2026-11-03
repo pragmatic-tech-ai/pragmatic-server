@@ -118,6 +118,8 @@ export class ControlPlaneServer
     private static readonly TenantBindEnvVar = 'PRAGMATIC_TENANT_ADMIN_BIND'
     private static readonly TenantBaseDomainEnvVar = 'PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN'
     private static readonly TenantSchemeEnvVar = 'PRAGMATIC_TENANT_ADMIN_EXTERNAL_SCHEME'
+    private static readonly TenantExternalPortEnvVar = 'PRAGMATIC_TENANT_ADMIN_EXTERNAL_PORT'
+    private static readonly BadTenantExternalPortPrefix = 'Invalid PRAGMATIC_TENANT_ADMIN_EXTERNAL_PORT: '
     private static readonly DefaultTenantBind = '127.0.0.1'
     /** Sentinel returned by ParseAgentChannelPort when the agent channel is not configured (or the port is invalid). */
     public static readonly AgentChannelDisabled = 0
@@ -213,7 +215,8 @@ export class ControlPlaneServer
         {
             const baseDomain = process.env[ControlPlaneServer.TenantBaseDomainEnvVar] as string
             const scheme = ControlPlaneServer.TenantScheme(process.env[ControlPlaneServer.TenantSchemeEnvVar])
-            const resolver = new TenantHostResolver(baseDomain, scheme, directory)
+            const externalPort = ControlPlaneServer.TenantExternalPort(process.env[ControlPlaneServer.TenantExternalPortEnvVar])
+            const resolver = new TenantHostResolver(baseDomain, scheme, directory, externalPort)
             const tenantStaticRoot = join(here, ControlPlaneServer.ParentSegment, ControlPlaneServer.TenantPortalSegment, ControlPlaneServer.DistSegment)
             const probeMs = ControlPlaneServer.ParseHealthProbeMs(process.env[ControlPlaneServer.HealthProbeMsEnvVar])
             const probeTimeoutMs = ControlPlaneServer.ParseHealthProbeTimeoutMs(process.env[ControlPlaneServer.HealthProbeTimeoutMsEnvVar])
@@ -387,6 +390,21 @@ export class ControlPlaneServer
     }
 
     /** The dedicated tenant listener port; required (the plane only activates when it is set). */
+    /** Pure: the tenant origin's optional external port; undefined when unset or blank, throws naming the variable when invalid. */
+    public static TenantExternalPort(raw: string | undefined): number | undefined
+    {
+        if (raw === undefined || raw === '')
+        {
+            return undefined
+        }
+        const port = Number(raw)
+        if (!Number.isInteger(port) || port < 1 || port > ControlPlaneServer.MaxPort)
+        {
+            throw new Error(ControlPlaneServer.BadTenantExternalPortPrefix + raw)
+        }
+        return port
+    }
+
     public static ResolveTenantPort(raw: string | undefined): number
     {
         const port = Number(raw)

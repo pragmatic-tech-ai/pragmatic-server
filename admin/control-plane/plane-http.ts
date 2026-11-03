@@ -5,7 +5,7 @@ import { extname, resolve, sep } from 'node:path'
 /** Stateless HTTP primitives shared by the control-plane host and any other plane host (host/origin checks, JSON + static responses). */
 export class PlaneHttp
 {
-    public static readonly HostHeaderPattern = /^(\[[^\]]+\]|[^:]+)(?::\d+)?$/
+    public static readonly HostHeaderPattern = /^(\[[^\]]+\]|[^:]+)(?::(\d+))?$/
     public static readonly HostHeader = 'host'
     public static readonly OriginHeader = 'origin'
     public static readonly ContentType = 'Content-Type'
@@ -43,6 +43,13 @@ export class PlaneHttp
         return m === null ? undefined : (m[1] as string).toLowerCase()
     }
 
+    /** The Host header's port; undefined when it carries none (or is malformed). */
+    public static HostPort(hostHeader: string | undefined): number | undefined
+    {
+        const m = hostHeader === undefined ? null : PlaneHttp.HostHeaderPattern.exec(hostHeader)
+        return m === null || m[2] === undefined ? undefined : Number(m[2])
+    }
+
     /** True when the request's Host header (port stripped, lowercased) is in the given set. */
     public static HostIn(req: IncomingMessage, allowed: ReadonlySet<string>): boolean
     {
@@ -65,19 +72,6 @@ export class PlaneHttp
         }
         const host = PlaneHttp.OriginHost(origin)
         return host !== undefined && allowed.has(host)
-    }
-
-    /** Self-origin check: an absent Origin is allowed; a present one's host must equal the request's own host. */
-    public static OriginIsHost(req: IncomingMessage, hostHeader: string | undefined): boolean
-    {
-        const origin = req.headers[PlaneHttp.OriginHeader]
-        if (origin === undefined)
-        {
-            return true
-        }
-        const originHost = PlaneHttp.OriginHost(origin)
-        const host = PlaneHttp.HostName(hostHeader)
-        return originHost !== undefined && host !== undefined && originHost === host
     }
 
     /** The lowercased host (port stripped) of an Origin header, or undefined when it does not parse. */

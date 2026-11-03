@@ -36,6 +36,7 @@ export class TenantPlaneHost
     private static readonly StatusInternal = 500
     private static readonly ForbiddenHostMessage = 'Host not allowed'
     private static readonly BadOriginMessage = 'Origin not allowed'
+    private static readonly OriginHeader = 'origin'
     private static readonly UnauthenticatedMessage = 'Authentication required'
     private static readonly GenericError = 'Internal server error'
     private static readonly NotListeningMessage = 'TenantPlaneHost is not listening'
@@ -193,7 +194,7 @@ export class TenantPlaneHost
         {
             return false
         }
-        if (PlaneHttp.IsMutating(req) && !PlaneHttp.OriginIsHost(req, host))
+        if (PlaneHttp.IsMutating(req) && !this.resolver.OriginAllowed(req.headers[TenantPlaneHost.OriginHeader], host))
         {
             req.resume()
             PlaneHttp.WriteJson(res, TenantPlaneHost.StatusForbidden, { error: TenantPlaneHost.BadOriginMessage })
@@ -309,7 +310,7 @@ export class TenantPlaneHost
         {
             return false
         }
-        return PlaneHttp.OriginIsHost(req, host)
+        return this.resolver.OriginAllowed(req.headers[TenantPlaneHost.OriginHeader], host)
     }
 
     /** The tenant id this request's host resolves to (undefined if the host is not an accepted tenant subdomain). */

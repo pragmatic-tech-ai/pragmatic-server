@@ -6,6 +6,8 @@ export class TenantAdminEnv
     public static readonly Bind = 'PRAGMATIC_TENANT_ADMIN_BIND'
     public static readonly BaseDomain = 'PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN'
     public static readonly Scheme = 'PRAGMATIC_TENANT_ADMIN_EXTERNAL_SCHEME'
+    /** Optional externally visible port of the tenant origin (proxy-less local runs); omitted or the scheme default -> no port. */
+    public static readonly ExternalPort = 'PRAGMATIC_TENANT_ADMIN_EXTERNAL_PORT'
     public static readonly SecureCookie = 'PRAGMATIC_TENANT_ADMIN_SECURE_COOKIE'
     public static readonly SecretTtl = 'PRAGMATIC_TENANT_ADMIN_SECRET_TTL_HOURS'
     public static readonly HealthProbeMs = 'PRAGMATIC_TENANT_ADMIN_HEALTH_PROBE_MS'

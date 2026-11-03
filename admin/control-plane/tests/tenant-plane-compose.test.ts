@@ -7,6 +7,30 @@ import { join } from 'node:path'
 import { ControlPlaneServer } from '../server.js'
 import { TenantAdminClientRegistry } from '../tenant-auth/tenant-admin-client-record.js'
 
+describe('ControlPlaneServer.TenantExternalPort', () =>
+{
+    it('is undefined when unset or blank (no port in the tenant origin, unchanged)', () =>
+    {
+        assert.equal(ControlPlaneServer.TenantExternalPort(undefined), undefined)
+        assert.equal(ControlPlaneServer.TenantExternalPort(''), undefined)
+    })
+
+    it('returns a valid port', () =>
+    {
+        assert.equal(ControlPlaneServer.TenantExternalPort('7002'), 7002)
+        assert.equal(ControlPlaneServer.TenantExternalPort('1'), 1)
+        assert.equal(ControlPlaneServer.TenantExternalPort('65535'), 65535)
+    })
+
+    for (const bad of ['abc', '0', '70000', '1.5', '-1'])
+    {
+        it(`throws naming the variable for ${bad}`, () =>
+        {
+            assert.throws(() => ControlPlaneServer.TenantExternalPort(bad), /PRAGMATIC_TENANT_ADMIN_EXTERNAL_PORT/)
+        })
+    }
+})
+
 describe('ControlPlaneServer.ParseSecretTtlHours', () =>
 {
     const defaultHours = 168
