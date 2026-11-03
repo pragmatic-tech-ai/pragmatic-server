@@ -1,3 +1,4 @@
+import { readFile, rename, writeFile } from 'node:fs/promises';
 import { Argon2PasswordHasher } from '@pragmatic-tech-ai/todl-identity-local';
 
 /** A registered confidential OIDC client. Holds only the secret's hash, never the secret. */
@@ -12,22 +13,44 @@ export class OidcClient
     }
 }
 
+/** One persisted client row: the same fields as OidcClient (the secret only as its argon2 hash). */
+type ClientRow = { clientId: string; tenantId: string; redirectUris: string[]; secretHash: string };
+
 /**
- * In-memory confidential-client registry, keyed by (tenantId, clientId). A persistent
- * implementation can replace it later behind the same public surface.
+ * Confidential-client registry, keyed by (tenantId, clientId). `new IdpClientStore()` is in-memory; `Open(file)` is durable:
+ * every Register/Remove rewrites the file (atomically, serialized), so a restarted IdP keeps the clients the control plane
+ * registered. The file holds secret hashes only, never a secret.
  */
 export class IdpClientStore
 {
     private static readonly DummySecret = 'idp-client-store-dummy-secret';
+    private static readonly Encoding = 'utf8';
+    private static readonly TmpSuffix = '.tmp';
+    private static readonly NotFound = 'ENOENT';
+    private static readonly UnreadableMessage = 'IdpClientStore: cannot read the client registrations at ';
 
     private readonly hasher = new Argon2PasswordHasher();
     private readonly clients = new Map<string, OidcClient>();
     private readonly dummyHash: Promise<string> = this.hasher.Hash(IdpClientStore.DummySecret);
+    private writes: Promise<void> = Promise.resolve();
+
+    public constructor(private readonly file?: string)
+    {
+    }
+
+    /** A durable store backed by `file` (created on the first write). Throws when the file exists but cannot be read. */
+    public static async Open(file: string): Promise<IdpClientStore>
+    {
+        const store = new IdpClientStore(file);
+        await store.Load();
+        return store;
+    }
 
     public async Register(tenantId: string, clientId: string, redirectUris: readonly string[], secret: string): Promise<void>
     {
         const hash = await this.hasher.Hash(secret);
         this.clients.set(IdpClientStore.KeyFor(tenantId, clientId), new OidcClient(clientId, tenantId, [...redirectUris], hash));
+        await this.Persist();
     }
 
     public Find(tenantId: string, clientId: string): OidcClient | undefined
@@ -36,9 +59,14 @@ export class IdpClientStore
     }
 
     /** Removes the client; returns whether it existed. */
-    public Remove(tenantId: string, clientId: string): boolean
+    public async Remove(tenantId: string, clientId: string): Promise<boolean>
     {
-        return this.clients.delete(IdpClientStore.KeyFor(tenantId, clientId));
+        const existed = this.clients.delete(IdpClientStore.KeyFor(tenantId, clientId));
+        if (existed)
+        {
+            await this.Persist();
+        }
+        return existed;
     }
 
     /** Uniform: an unknown client costs the same argon2 verify as a wrong secret and yields false. */
@@ -63,5 +91,51 @@ export class IdpClientStore
     private static KeyFor(tenantId: string, clientId: string): string
     {
         return JSON.stringify([tenantId, clientId]);
+    }
+
+    private async Load(): Promise<void>
+    {
+        let rows: ClientRow[];
+        try
+        {
+            rows = JSON.parse(await readFile(this.file as string, IdpClientStore.Encoding)) as ClientRow[];
+            if (!Array.isArray(rows))
+            {
+                throw new Error();
+            }
+        }
+        catch (e)
+        {
+            if ((e as NodeJS.ErrnoException).code === IdpClientStore.NotFound)
+            {
+                return;
+            }
+            // Refuse to start rather than silently forget every client (a corrupt file would otherwise look like "no clients").
+            throw new Error(IdpClientStore.UnreadableMessage + this.file);
+        }
+        for (const r of rows)
+        {
+            this.clients.set(IdpClientStore.KeyFor(r.tenantId, r.clientId), new OidcClient(r.clientId, r.tenantId, [...r.redirectUris], r.secretHash));
+        }
+    }
+
+    // Serialized whole-file rewrite through a temp file + rename, so a crash mid-write never leaves a torn file.
+    private Persist(): Promise<void>
+    {
+        if (this.file === undefined)
+        {
+            return Promise.resolve();
+        }
+        const file = this.file;
+        const run = this.writes.then(async () =>
+        {
+            const rows: ClientRow[] = [...this.clients.values()].map(c => ({ clientId: c.ClientId, tenantId: c.TenantId, redirectUris: [...c.RedirectUris], secretHash: c.SecretHash }));
+            const tmp = file + IdpClientStore.TmpSuffix;
+            await writeFile(tmp, JSON.stringify(rows), IdpClientStore.Encoding);
+            await rename(tmp, file);
+        });
+        // A failed write must not wedge later ones; the caller still sees this write's error.
+        this.writes = run.catch(() => undefined);
+        return run;
     }
 }

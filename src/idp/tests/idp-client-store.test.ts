@@ -1,5 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { IdpClientStore } from '../idp-client-store.js';
 
 class ClientStoreFixture
@@ -83,15 +86,15 @@ test('the same clientId under two tenants stays distinct', async () =>
 test('Remove of a registered client returns true and the client is gone', async () =>
 {
     const store = await ClientStoreFixture.Seeded();
-    assert.equal(store.Remove(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId), true);
+    assert.equal(await store.Remove(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId), true);
     assert.equal(store.Find(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId), undefined);
 });
 
 test('Remove of an unknown client returns false and changes nothing', async () =>
 {
     const store = await ClientStoreFixture.Seeded();
-    assert.equal(store.Remove(ClientStoreFixture.TenantId, 'ghost'), false);
-    assert.equal(store.Remove(ClientStoreFixture.OtherTenantId, ClientStoreFixture.ClientId), false);
+    assert.equal(await store.Remove(ClientStoreFixture.TenantId, 'ghost'), false);
+    assert.equal(await store.Remove(ClientStoreFixture.OtherTenantId, ClientStoreFixture.ClientId), false);
     assert.notEqual(store.Find(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId), undefined);
 });
 
@@ -100,7 +103,68 @@ test('Remove leaves another client of the same tenant intact', async () =>
     const store = await ClientStoreFixture.Seeded();
     const otherClient = 'client-2';
     await store.Register(ClientStoreFixture.TenantId, otherClient, [ClientStoreFixture.Redirect], ClientStoreFixture.Secret);
-    assert.equal(store.Remove(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId), true);
+    assert.equal(await store.Remove(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId), true);
     assert.equal(store.Find(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId), undefined);
     assert.notEqual(store.Find(ClientStoreFixture.TenantId, otherClient), undefined);
 });
+
+class DurableFixture
+{
+    public static readonly DirPrefix = 'idp-client-store-';
+    public static readonly FileName = 'clients.json';
+
+    public static async Run(body: (file: string) => Promise<void>): Promise<void>
+    {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), DurableFixture.DirPrefix));
+        try
+        {
+            await body(path.join(dir, DurableFixture.FileName));
+        }
+        finally
+        {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    }
+}
+
+test('a durable store reloads its clients: same redirect allowlist, same secret verifies', () => DurableFixture.Run(async file =>
+{
+    const first = await IdpClientStore.Open(file);
+    await first.Register(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId, [ClientStoreFixture.Redirect], ClientStoreFixture.Secret);
+    const reopened = await IdpClientStore.Open(file);
+    assert.equal(reopened.Find(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId)?.ClientId, ClientStoreFixture.ClientId);
+    assert.equal(reopened.RedirectAllowed(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId, ClientStoreFixture.Redirect), true);
+    assert.equal(await reopened.VerifySecret(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId, ClientStoreFixture.Secret), true);
+    assert.equal(await reopened.VerifySecret(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId, ClientStoreFixture.WrongSecret), false);
+}));
+
+test('the durable file holds only the secret hash, never the secret', () => DurableFixture.Run(async file =>
+{
+    const store = await IdpClientStore.Open(file);
+    await store.Register(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId, [ClientStoreFixture.Redirect], ClientStoreFixture.Secret);
+    const text = fs.readFileSync(file, 'utf8');
+    assert.ok(!text.includes(ClientStoreFixture.Secret));
+    assert.ok(text.includes(ClientStoreFixture.HashPrefix));
+}));
+
+test('a removal is durable, and a re-registration replaces the client', () => DurableFixture.Run(async file =>
+{
+    const store = await IdpClientStore.Open(file);
+    await store.Register(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId, [ClientStoreFixture.Redirect], ClientStoreFixture.Secret);
+    const other = 'client-2';
+    await store.Register(ClientStoreFixture.TenantId, other, ['https://e/one'], ClientStoreFixture.Secret);
+    await store.Register(ClientStoreFixture.TenantId, other, ['https://e/two'], ClientStoreFixture.Secret);
+    assert.equal(await store.Remove(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId), true);
+    const reopened = await IdpClientStore.Open(file);
+    assert.equal(reopened.Find(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId), undefined);
+    assert.equal(reopened.RedirectAllowed(ClientStoreFixture.TenantId, other, 'https://e/one'), false);
+    assert.equal(reopened.RedirectAllowed(ClientStoreFixture.TenantId, other, 'https://e/two'), true);
+}));
+
+test('a missing file opens empty; an unreadable file is refused rather than silently dropping clients', () => DurableFixture.Run(async file =>
+{
+    const empty = await IdpClientStore.Open(file);
+    assert.equal(empty.Find(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId), undefined);
+    fs.writeFileSync(file, '{not json');
+    await assert.rejects(IdpClientStore.Open(file), /client registrations/);
+}));

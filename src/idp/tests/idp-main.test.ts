@@ -113,6 +113,65 @@ class MainFixture
         }
     }
 
+    public static readonly ClientBody = '{"clientId":"durable-client","redirectUris":["https://app.example/cb"],"secret":"durable-client-secret-xyz"}';
+    public static readonly ClientsPath = '/_admin/realms/tenant-1/clients';
+    public static readonly ClientPath = '/_admin/realms/tenant-1/clients/durable-client';
+    public static readonly AuthorizePath = '/tenant-1/authorize?response_type=code&client_id=durable-client&redirect_uri=https%3A%2F%2Fapp.example%2Fcb'
+        + '&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&state=s&nonce=n';
+
+    /** An admin request with a JSON body; returns the status. */
+    public static Send(port: number, ca: string, method: string, urlPath: string, body: string): Promise<number>
+    {
+        return new Promise((resolve, reject) =>
+        {
+            const req = https.request({ host: MainFixture.Localhost, port, path: urlPath, ca, method, headers: { authorization: 'Bearer ' + MainFixture.AdminToken, 'content-type': 'application/json' } }, res =>
+            {
+                res.resume();
+                res.on('end', () => resolve(res.statusCode ?? 0));
+            });
+            req.on('error', reject);
+            req.end(body);
+        });
+    }
+
+    /** A plain GET; returns only the status. */
+    public static Status(port: number, ca: string, urlPath: string): Promise<number>
+    {
+        return new Promise((resolve, reject) =>
+        {
+            const req = https.get({ host: MainFixture.Localhost, port, path: urlPath, ca }, res =>
+            {
+                res.resume();
+                res.on('end', () => resolve(res.statusCode ?? 0));
+            });
+            req.on('error', reject);
+        });
+    }
+
+    /** Composes an admin-enabled IdP on `dir` with NO PRAGMATIC_IDP_TENANTS, runs `body` against it, then closes it. */
+    public static async WithIdp(dir: string, body: (port: number, ca: string) => Promise<void>): Promise<void>
+    {
+        const host = await IdpMain.Compose({ ...MainFixture.LoginEnv(), PRAGMATIC_IDP_DATA: dir, PRAGMATIC_IDP_BASE_URL: MainFixture.BaseUrl, [MainFixture.AdminRefEnv]: MainFixture.AdminRef });
+        try
+        {
+            await host.Listen(0, MainFixture.Loopback);
+            await body(host.Address().port, fs.readFileSync(path.join(dir, MainFixture.TlsDir, MainFixture.CaFile), MainFixture.Utf8));
+        }
+        finally
+        {
+            await host.Close();
+        }
+    }
+
+    /** A data dir holding the admin token file. */
+    public static AdminDataDir(): string
+    {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), MainFixture.DirPrefix));
+        fs.mkdirSync(path.join(dir, MainFixture.SecretsDir), { recursive: true });
+        fs.writeFileSync(path.join(dir, MainFixture.SecretsDir, MainFixture.AdminRef), MainFixture.AdminToken + '\n');
+        return dir;
+    }
+
     public static Get(port: number, ca: string, urlPath: string): Promise<{ status: number; body: any }>
     {
         return new Promise((resolve, reject) =>
@@ -319,4 +378,49 @@ test('a multi-line admin-token ref authenticates every member and rejects a non-
 test('a single-line admin-token ref still works', async () =>
 {
     assert.equal(await MainFixture.StatusWithTokenFile('only-token-ddd', 'only-token-ddd'), 200);
+});
+
+test('a realm and a client created through the admin API survive a restart without PRAGMATIC_IDP_TENANTS', async () =>
+{
+    const dir = MainFixture.AdminDataDir();
+    try
+    {
+        await MainFixture.WithIdp(dir, async (port, ca) =>
+        {
+            assert.equal(await MainFixture.Send(port, ca, 'PUT', MainFixture.AdminRealmPath, MainFixture.DisplayBody), 200);
+            assert.equal(await MainFixture.Send(port, ca, 'POST', MainFixture.ClientsPath, MainFixture.ClientBody), 200);
+            assert.equal(await MainFixture.Status(port, ca, MainFixture.AuthorizePath), 200);
+        });
+        await MainFixture.WithIdp(dir, async (port, ca) =>
+        {
+            assert.equal((await MainFixture.Get(port, ca, `/${MainFixture.TenantId}/.well-known/openid-configuration`)).status, 200);
+            assert.equal(await MainFixture.Status(port, ca, MainFixture.AuthorizePath), 200);
+        });
+    }
+    finally
+    {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('a client deleted through the admin API stays deleted after a restart', async () =>
+{
+    const dir = MainFixture.AdminDataDir();
+    try
+    {
+        await MainFixture.WithIdp(dir, async (port, ca) =>
+        {
+            assert.equal(await MainFixture.Send(port, ca, 'PUT', MainFixture.AdminRealmPath, MainFixture.DisplayBody), 200);
+            assert.equal(await MainFixture.Send(port, ca, 'POST', MainFixture.ClientsPath, MainFixture.ClientBody), 200);
+            assert.equal(await MainFixture.Send(port, ca, 'DELETE', MainFixture.ClientPath, ''), 200);
+        });
+        await MainFixture.WithIdp(dir, async (port, ca) =>
+        {
+            assert.notEqual(await MainFixture.Status(port, ca, MainFixture.AuthorizePath), 200);
+        });
+    }
+    finally
+    {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
 });

@@ -230,7 +230,7 @@ export class IdpAdminEndpoint
     /** Idempotent teardown: 200 whether or not the client (or its realm) still exists, so a retried or late delete never fails. */
     private async DeleteClient(tenantId: string, clientId: string): Promise<AdminResult>
     {
-        this.clients.Remove(tenantId, clientId);
+        await this.clients.Remove(tenantId, clientId);
         return new AdminResult(IdpAdminEndpoint.OkStatus, { [IdpAdminEndpoint.ClientIdField]: clientId });
     }
 

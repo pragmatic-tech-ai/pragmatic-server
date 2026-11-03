@@ -10,6 +10,7 @@ import { IdpHost, IdpRealmSet, type RealmFactory } from './idp-host.js';
 import { IdpLoginPage } from './idp-login-page.js';
 import { IdpLoginThrottle } from './idp-login-throttle.js';
 import { IdpRealm } from './idp-realm.js';
+import { IdpRealmCatalog } from './idp-realm-catalog.js';
 import { IdpSigningKey } from './idp-signing-key.js';
 import { IdpSsoSessionStore } from './idp-sso-session.js';
 
@@ -40,6 +41,7 @@ export class IdpMain
     private static readonly MasterKeyFile = 'master.key';
     private static readonly TlsDir = 'tls';
     private static readonly RealmsDir = 'realms';
+    private static readonly ClientsFile = 'clients.json';
     private static readonly MasterKeyBytes = 32;
     private static readonly KeyFileMode = 0o600;
     private static readonly TenantSeparator = ',';
@@ -85,15 +87,30 @@ export class IdpMain
         const masterKey = IdpMain.LoadOrCreateMasterKey(join(data, IdpMain.MasterKeyFile));
         const realmsDir = join(data, IdpMain.RealmsDir);
         const adminTokens = IdpMain.LoadAdminTokens(data, env[IdpMain.AdminTokenRefEnvVar]);
+        // Realms and clients created through the admin API are durable on the data volume, so a restarted IdP (a
+        // reboot, a Docker restart, an image upgrade) reopens them instead of forgetting the tenant.
+        const catalog = await IdpRealmCatalog.Open(realmsDir);
         const factory: RealmFactory | undefined = adminTokens === undefined
             ? undefined
-            : (tenantId, displayName) => IdpRealm.OpenFor(realmsDir, tenantId, displayName, masterKey);
+            : async (tenantId, displayName) =>
+            {
+                const realm = await IdpRealm.OpenFor(realmsDir, tenantId, displayName, masterKey);
+                await catalog.Record(tenantId, displayName);
+                return realm;
+            };
         const realms = new IdpRealmSet([], factory);
         for (const tenantId of IdpMain.ParseTenants(env[IdpMain.TenantsEnvVar]))
         {
             realms.Add(tenantId, await IdpRealm.OpenFor(realmsDir, tenantId, tenantId, masterKey));
         }
-        const clients = new IdpClientStore();
+        for (const entry of catalog.Entries())
+        {
+            if (realms.For(entry.tenantId) === undefined)
+            {
+                realms.Add(entry.tenantId, await IdpRealm.OpenFor(realmsDir, entry.tenantId, entry.displayName, masterKey));
+            }
+        }
+        const clients = await IdpClientStore.Open(join(data, IdpMain.ClientsFile));
         // One SSO store for the host and the admin endpoint: an admin password reset ends the principal's SSO sessions.
         const sso = new IdpSsoSessionStore();
         const admin = adminTokens === undefined ? undefined : new IdpAdminEndpoint(adminTokens, realms, clients, sso);
