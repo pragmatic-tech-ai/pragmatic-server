@@ -73,6 +73,31 @@ New `HiveAgentInstaller` (admin/control-plane/hive-agent-installer.ts), one per 
   existing Reissue token + commands move under "Install manually". Non-Local hives keep today's UI.
 - Progress is polled (2 s) from `GET .../agent-install`; polling stops when the page is left.
 
+## Uninstall on delete
+
+Added 2026-11-03 (branch hive-delete-uninstall-agent). `DELETE /api/hives/:id` runs fail-closed,
+under the per-hive operation lock, in this order:
+
+1. Remove the agent from its cluster (`HiveAgentUninstaller`, attached Local hives only): one
+   `kubectl delete --ignore-not-found -f -` (stdin) of `HiveBootstrapBundle.RemovalManifest` -
+   every bundle object except the shared `pragmatic-system` Namespace, plus the token Secret, names
+   derived from the same render as the bundle - then `kubectl delete deployment -l
+   pragmatic/hive=<id> -n pragmatic-system --ignore-not-found` (the agent and, when installed, the
+   tenant-admin pod). A half-installed or hand-removed agent deletes cleanly. Provisioned (kind)
+   hives skip this step: their whole cluster is destroyed next, agent included, and an uninstall
+   against a cluster that is already gone would only block the delete. Other backends' clusters
+   are never touched.
+2. `DestroyHiveCluster` (provisioned hives), 3. `DeregisterHive` (the agent token stops verifying),
+   4. delete the record.
+
+A failure before step 4 leaves the record for retry. An uninstall failure answers 409 with
+`code: "agent-uninstall-failed"` and "Could not remove the hive's agent from its cluster:
+<redacted kubectl reason>. Fix cluster access and retry, or delete anyway to remove only the
+platform record." Delete anyway is `DELETE /api/hives/:id?force=true`: it skips step 1 only (the
+agent may remain in the cluster, locked out because its token is revoked) and is audited with
+the fixed `?force=true` marker (no other query text is ever stored). The portal offers it on the
+hive page after that specific failure, behind its own confirm-by-name dialog.
+
 ## Left to the builder
 
 Exact copy, the polling helper's shape, test fixtures. Keep the existing conventions (OOP,
