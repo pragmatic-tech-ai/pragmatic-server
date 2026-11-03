@@ -3,7 +3,7 @@ import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import { ApiError } from '../../api-client.js'
 import { FleetConnection, FleetViewModel, type FleetRow } from '../../fleet-view-model.js'
 import { PortalDates } from '../../portal-dates.js'
-import type { EnvRolloutDto, FleetHiveDto, HiveDto, HiveRolloutDto, LedgerDto, ObservationDto, PolicyDto } from '../../portal-types.js'
+import type { EnvRolloutDto, FleetHiveDto, HiveDeleteOutcomeDto, HiveDto, HiveRolloutDto, LedgerDto, ObservationDto, PolicyDto } from '../../portal-types.js'
 import { ObservedEnvironmentsViewModel } from '../../shell/observed-environments-view-model.js'
 import { PortalPageViewModel } from '../../shell/portal-page-view-model.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
@@ -173,9 +173,16 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
     private static readonly HeldTemplate = 'Held: {name}'
     private static readonly ChannelSeparator = ', '
     private static readonly DeleteTitle = 'Delete this hive?'
-    private static readonly DeleteMessage = 'The hive record is removed. A hive that still reports environments cannot be deleted.'
+    private static readonly DeleteMessage = "The hive's agent is removed from its cluster (for a provisioned hive, its kind cluster is destroyed), its agent token is revoked, and the hive record is removed. The tenant-admin data volume and its seed Secret are kept. A hive that still reports environments cannot be deleted."
     private static readonly DeleteAnywayTitle = 'Delete the hive anyway?'
     private static readonly DeleteAnywayMessage = "Its agent could not be removed from the cluster. Deleting anyway revokes the agent's token and removes the hive record; the agent and its objects may remain in the cluster, locked out, until someone removes them there."
+    private static readonly DestroyAnywayMessage = "Its kind cluster could not be destroyed. Deleting anyway revokes the agent's token and removes the hive record; the kind cluster may be left behind on this machine."
+    private static readonly DeletedTemplate = 'Hive {id} was deleted.'
+    private static readonly RetainedPrefix = ' Kept in the cluster with the tenant data: '
+    private static readonly RetainedSeparator = ', '
+    private static readonly SentenceEnd = '.'
+    private static readonly NoticeSeparator = ' '
+    private static readonly ForceableCodes: ReadonlySet<string> = new Set([ApiError.AgentUninstallFailedCode, ApiError.ClusterDestroyFailedCode])
     private static readonly DeleteAnywayLabel = 'Delete anyway'
     private static readonly CanDeleteAnywayProperty = 'CanDeleteAnyway'
     private static readonly DeleteAnywayTextProperty = 'DeleteAnywayText'
@@ -220,8 +227,12 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
     private readonly checkIns = new ObservableCollection<HiveCheckInRowViewModel>()
     private readonly deleteCommand: RelayCommand
     private readonly deleteAnywayCommand: RelayCommand
-    // Why the last delete could not remove the agent from its cluster; '' until such a failure (offers delete anyway).
+    // The notice the hives list shows after this hive's delete.
+    private deletedNotice = ''
+    // Why the last delete could not finish its cluster work; '' until such a failure (offers delete anyway).
     private deleteAnywayText = ''
+    // The code of that failure (which cluster work failed), for the delete anyway warning.
+    private deleteAnywayCode = ''
     private readonly reissueTokenCommand: RelayCommand
     private readonly install: HiveInstallViewModel
     private readonly agentInstall: HiveAgentInstallViewModel
@@ -513,6 +524,8 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
 
     protected override async LoadCore(): Promise<boolean>
     {
+        // A reload starts fresh: an earlier delete failure no longer stands for the hive as it is now.
+        this.SetDeleteAnyway('', '')
         const generation = this.LoadGeneration
         const api = this.Session.Client
         void this.install.Load(this.Id)
@@ -627,7 +640,7 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
             Title: HiveDetailPageViewModel.DeleteTitle,
             Message: HiveDetailPageViewModel.DeleteMessage,
             Action: () => this.DeleteOrOfferAnyway(),
-            OnConfirmed: () => this.section.BackAndRefresh(),
+            OnConfirmed: () => this.section.BackAfterDelete(this.deletedNotice),
         })
     }
 
@@ -637,16 +650,36 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
     {
         try
         {
-            await this.Session.Client.DeleteHive(this.Id)
+            this.deletedNotice = this.DeletedNotice(await this.Session.Client.DeleteHive(this.Id))
         }
         catch (e)
         {
-            if (e instanceof ApiError && e.Code === ApiError.AgentUninstallFailedCode)
+            if (e instanceof ApiError && e.Code !== undefined && HiveDetailPageViewModel.ForceableCodes.has(e.Code))
             {
-                this.SetDeleteAnywayText(e.message)
+                this.SetDeleteAnyway(e.message, e.Code)
+            }
+            else
+            {
+                this.SetDeleteAnyway('', '')
             }
             throw e
         }
+    }
+
+    // What the hives list says after the delete: the hive went, what was kept, and what may have been left.
+    private DeletedNotice(outcome: HiveDeleteOutcomeDto): string
+    {
+        const C = HiveDetailPageViewModel
+        let text = C.DeletedTemplate.replace(C.IdToken, this.Id)
+        if (outcome.retained.length > 0)
+        {
+            text += C.RetainedPrefix + outcome.retained.join(C.RetainedSeparator) + C.SentenceEnd
+        }
+        if (outcome.notice !== undefined && outcome.notice.length > 0)
+        {
+            text += C.NoticeSeparator + outcome.notice
+        }
+        return text
     }
 
     private DeleteAnyway(): Promise<void>
@@ -654,16 +687,17 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
         return this.ConfirmByName(this.section.Dialogs, {
             Expected: this.Id,
             Title: HiveDetailPageViewModel.DeleteAnywayTitle,
-            Message: HiveDetailPageViewModel.DeleteAnywayMessage,
+            Message: this.deleteAnywayCode === ApiError.ClusterDestroyFailedCode ? HiveDetailPageViewModel.DestroyAnywayMessage : HiveDetailPageViewModel.DeleteAnywayMessage,
             ConfirmLabel: HiveDetailPageViewModel.DeleteAnywayLabel,
-            Action: () => this.Session.Client.DeleteHive(this.Id, true),
-            OnConfirmed: () => this.section.BackAndRefresh(),
+            Action: async () => { this.deletedNotice = this.DeletedNotice(await this.Session.Client.DeleteHive(this.Id, true)) },
+            OnConfirmed: () => this.section.BackAfterDelete(this.deletedNotice),
         })
     }
 
-    private SetDeleteAnywayText(next: string): void
+    private SetDeleteAnyway(next: string, code: string): void
     {
         const C = HiveDetailPageViewModel
+        this.deleteAnywayCode = code
         const was = [this.deleteAnywayText, this.CanDeleteAnyway] as const
         if (was[0] === next)
         {

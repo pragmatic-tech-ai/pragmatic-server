@@ -8,6 +8,7 @@ import { NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/serv
 import { ApiError, type ControlPlaneClient } from '../../api-client.js'
 import { OperatorContext } from '../../operator-context.js'
 import { AgentInstallState, AgentInstallStep, type AgentInstallStatusDto } from '../../portal-types.js'
+import type { HiveDeleteOutcomeDto } from '../../portal-types.js'
 import type { ActivityDto, ClientDto, CreatedTenantDto, FleetHiveDto, GatingDto, HiveBootstrapDto, HiveDto, HiveRolloutDto, LedgerDto, ManifestDto, ObservationDto, OperatorSummaryDto, PolicyDto, ProvisionInputDto, ProvisionResultDto, SelectionDto, TenantDto } from '../../portal-types.js'
 import { DownloadService } from '../download-service.js'
 import type { IPageReloader } from '../page-reloader.js'
@@ -258,6 +259,8 @@ export class FakeControlPlane
     public DeleteHiveFailure: Error | undefined
     // The ids deleted with force (delete anyway), in call order; they are in Deleted too.
     public readonly ForcedDeletes: string[] = []
+    // What a hive delete replies.
+    public DeleteOutcome: HiveDeleteOutcomeDto = { ok: true, retained: [] }
     public readonly Published: Array<[string, string, string | undefined, string | undefined]> = []
     public readonly Withdrawals: Array<[string, boolean, string | undefined]> = []
     public readonly GateCalls: Array<[string, string]> = []
@@ -647,7 +650,7 @@ export class FakeControlPlane
         this.Tenants = this.Tenants.filter(t => t.id !== id)
     }
 
-    public async DeleteHive(id: string, force: boolean = false): Promise<void>
+    public async DeleteHive(id: string, force: boolean = false): Promise<HiveDeleteOutcomeDto>
     {
         this.ThrowIfFailing()
         if (force)
@@ -661,6 +664,7 @@ export class FakeControlPlane
         this.Deleted.push(id)
         this.Hives = this.Hives.filter(h => h.id !== id)
         this.Fleet = this.Fleet.filter(h => h.id !== id)
+        return { ...this.DeleteOutcome }
     }
 
     public async GetHiveBootstrap(hiveId: string): Promise<HiveBootstrapDto>

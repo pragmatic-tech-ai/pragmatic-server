@@ -94,11 +94,16 @@ export class HiveRowViewModel extends Observable
 export class HivesPageViewModel extends PortalPageViewModel
 {
     private static readonly NewHiveTitle = 'Create hive'
+    private static readonly NoticeTextProperty = 'NoticeText'
+    private static readonly HasNoticeProperty = 'HasNotice'
+    private static readonly NoText = ''
 
     private readonly rows = new ObservableCollection<HiveRowViewModel>()
     private readonly openCommand: RelayCommand
     private readonly newCommand: RelayCommand
     private readonly standUpCommand: RelayCommand
+    private readonly dismissNoticeCommand: RelayCommand
+    private noticeText = HivesPageViewModel.NoText
 
     public constructor(session: PortalSessionService, private readonly section: HivesSectionService)
     {
@@ -106,6 +111,36 @@ export class HivesPageViewModel extends PortalPageViewModel
         this.openCommand = new RelayCommand(row => this.Open(row))
         this.newCommand = this.MutatingCommand(() => this.CreateHive())
         this.standUpCommand = this.MutatingCommand(() => this.StandUp())
+        this.dismissNoticeCommand = new RelayCommand(() => this.SetNotice(HivesPageViewModel.NoText))
+    }
+
+    // What the last operation (a hive delete) wants the operator to know; '' when nothing.
+    public get NoticeText(): string
+    {
+        return this.noticeText
+    }
+
+    public get HasNotice(): boolean
+    {
+        return this.noticeText.length > 0
+    }
+
+    public get DismissNoticeCommand(): RelayCommand
+    {
+        return this.dismissNoticeCommand
+    }
+
+    // Shows a notice above the list until dismissed (a reload keeps it).
+    public SetNotice(next: string): void
+    {
+        const old = this.noticeText
+        if (old === next)
+        {
+            return
+        }
+        this.noticeText = next
+        this.RaisePropertyChanged(HivesPageViewModel.NoticeTextProperty, old, next)
+        this.RaisePropertyChanged(HivesPageViewModel.HasNoticeProperty, old.length > 0, next.length > 0)
     }
 
     public get Rows(): ObservableCollection<HiveRowViewModel>

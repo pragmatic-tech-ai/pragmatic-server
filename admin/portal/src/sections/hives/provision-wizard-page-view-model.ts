@@ -173,6 +173,7 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
     private static readonly OwnerCopyStatusProperty = 'OwnerCopyStatus'
     private static readonly AgentCopyStatusProperty = 'AgentCopyStatus'
     private static readonly InstallPathProperty = 'InstallPath'
+    private static readonly HiveIdHintProperty = 'HiveIdHint'
     private static readonly IsAutomaticInstallProperty = 'IsAutomaticInstall'
     private static readonly IsManualInstallProperty = 'IsManualInstall'
     private static readonly AgentInstallProperty = 'AgentInstall'
@@ -464,7 +465,18 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
 
     public set HiveId(value: string)
     {
+        const hint = this.HiveIdHint
         this.SetText(ProvisionField.HiveId, value)
+        if (hint !== this.HiveIdHint)
+        {
+            this.RaisePropertyChanged(ProvisionWizardPageViewModel.HiveIdHintProperty, hint, this.HiveIdHint)
+        }
+    }
+
+    // Why the typed hive id is refused; '' while it is empty or valid.
+    public get HiveIdHint(): string
+    {
+        return HiveOptions.IdHintFor(this.Text(ProvisionField.HiveId))
     }
 
     public get HiveDisplayName(): string
@@ -866,7 +878,7 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
                 return !this.IsNewTenant
                     || (this.Filled(ProvisionField.TenantId) && this.Filled(ProvisionField.TenantDisplayName) && this.Filled(ProvisionField.OwnerEmail))
             case ProvisionStep.Hive:
-                return this.Filled(ProvisionField.HiveId) && this.Filled(ProvisionField.HiveDisplayName)
+                return HiveOptions.IsValidId(this.Trimmed(ProvisionField.HiveId)) && this.Filled(ProvisionField.HiveDisplayName)
                     && this.selectedBackend !== undefined && this.selectedClusterMode !== undefined && this.selectedRegistryMode !== undefined
             default:
                 return false

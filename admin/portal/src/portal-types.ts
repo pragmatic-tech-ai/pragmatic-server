@@ -167,5 +167,9 @@ export type AgentInstallStatusDto =
     error?: string
 }
 
+// A hive delete's reply: what was deliberately kept in the cluster (the tenant-admin data volume and its seed
+// Secret), and what a delete anyway may have left behind.
+export type HiveDeleteOutcomeDto = { ok: boolean; retained: string[]; notice?: string }
+
 // A freshly minted one-time agent token (the rollout-registration route's reply).
 export type RolloutRegistrationDto = { token: string }

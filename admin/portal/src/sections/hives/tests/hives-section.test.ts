@@ -124,6 +124,28 @@ describe('Hives section', () =>
         assert.ok(fx.Content instanceof HivesPageViewModel)
     })
 
+    it('New hive refuses an id that is not a lowercase Kubernetes name (=b, "b ", upper case) and says why', async () =>
+    {
+        const fx = new HivesFixture()
+        const list = await fx.List()
+        list.NewCommand.Execute()
+        await Tick.Settle()
+        const dialog = fx.Dialogs.Last
+        assert.ok(dialog instanceof NewHiveDialogViewModel)
+        dialog.SelectedTenant = dialog.Tenants.Get(0)
+        dialog.DisplayName = 'Acme Dev hive'
+        assert.equal(dialog.IdHint, '')
+        for (const id of ['=b', 'b c', 'Acme', '-b', 'a_b'])
+        {
+            dialog.Id = id
+            assert.equal(dialog.ConfirmCommand.CanExecute(), false, id)
+            assert.match(dialog.IdHint, /lowercase/)
+        }
+        dialog.Id = 'acme-dev-hive'
+        assert.equal(dialog.IdHint, '')
+        assert.equal(dialog.ConfirmCommand.CanExecute(), true)
+    })
+
     it('New hive goes through a dialog offering only tenants without a hive', async () =>
     {
         const fx = new HivesFixture()

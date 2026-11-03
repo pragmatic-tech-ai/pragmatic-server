@@ -67,6 +67,17 @@ resources HivesResources {
                 }
             }
 
+            // What the last hive delete kept or may have left behind, until dismissed.
+            Border [ DockPanel.Dock = Top, Fill = @StateSuccessSoft, Padding = (12,10,12,10), Margin = (0,0,0,16),
+                     Visibility = $HasNotice << ToVisibility ] {
+                DockPanel {
+                    Button [ DockPanel.Dock = Right, Variant = Ghost, Command = $DismissNoticeCommand, VerticalAlignment = Top, Margin = (12,0,0,0) ] {
+                        TextBlock [ Text = "Dismiss" ]
+                    }
+                    TextBlock [ Text = $NoticeText, Foreground = @StateSuccessInk, TextWrapping = Wrap ]
+                }
+            }
+
             // State presentation: loading, empty and error.
             TextBlock [ DockPanel.Dock = Top, Text = "Loading hives...", Foreground = @Fg2,
                         Visibility = $IsLoading << ToVisibility ]
@@ -362,6 +373,8 @@ resources HivesResources {
                        HorizontalAlignment = Stretch, Margin = (0,0,0,12) ]
             TextBlock [ Text = "Hive id", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
             TextBox [ UsesNativeInput = true, Text = $Id, Placeholder = "e.g. tailspin-hive", Margin = (0,0,0,12) ]
+            TextBlock [ Text = $IdHint, Style = @UiCaption, Foreground = @StateDangerInk, TextWrapping = Wrap, Margin = (0,0,0,12),
+                        Visibility = $IdHint << ToVisibility ]
             TextBlock [ Text = "Display name", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
             TextBox [ UsesNativeInput = true, Text = $DisplayName, Placeholder = "e.g. Tailspin hive", Margin = (0,0,0,12) ]
             Grid [ Margin = (0,0,0,12) ] {
@@ -503,6 +516,8 @@ resources HivesResources {
                                     Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,12) ]
                         TextBlock [ Text = "Hive id", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
                         TextBox [ UsesNativeInput = true, Text = $HiveId, Placeholder = "e.g. tailspin-hive", Margin = (0,0,0,12) ]
+                        TextBlock [ Text = $HiveIdHint, Style = @UiCaption, Foreground = @StateDangerInk, TextWrapping = Wrap, Margin = (0,0,0,12),
+                                    Visibility = $HiveIdHint << ToVisibility ]
                         TextBlock [ Text = "Display name", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
                         TextBox [ UsesNativeInput = true, Text = $HiveDisplayName, Placeholder = "e.g. Tailspin hive", Margin = (0,0,0,12) ]
                         Grid [ Margin = (0,0,0,12) ] {

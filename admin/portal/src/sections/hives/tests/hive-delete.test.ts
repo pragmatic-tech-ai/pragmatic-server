@@ -123,6 +123,90 @@ describe('Hive delete: the agent cannot be removed from its cluster', () =>
         assert.ok(fx.Content instanceof HivesPageViewModel)
     })
 
+    it('a kind cluster that cannot be destroyed also offers Delete anyway, warning the cluster may be left behind', async () =>
+    {
+        const fx = new DeleteFixture()
+        fx.Api.DeleteHiveFailure = new ApiError(409, "Could not destroy the hive's kind cluster: kind failed: docker down.", undefined, ApiError.ClusterDestroyFailedCode)
+        const detail = await fx.Detail()
+        await fx.Confirm(() => detail.DeleteCommand.Execute())
+        fx.Dialogs.Dismiss()
+        await Tick.Settle()
+        assert.equal(detail.CanDeleteAnyway, true)
+        const anyway = await fx.Confirm(() => detail.DeleteAnywayCommand.Execute())
+        assert.match(anyway.Message, /kind cluster may be left behind/)
+        assert.deepEqual(fx.Api.ForcedDeletes, ['acme-hive'])
+    })
+
+    it('a later delete failure for another reason withdraws Delete anyway, and so does a reload', async () =>
+    {
+        const fx = new DeleteFixture()
+        fx.Api.DeleteHiveFailure = new ApiError(409, DeleteFixture.UninstallFailure, undefined, ApiError.AgentUninstallFailedCode)
+        const detail = await fx.Detail()
+        await fx.Confirm(() => detail.DeleteCommand.Execute())
+        fx.Dialogs.Dismiss()
+        await Tick.Settle()
+        assert.equal(detail.CanDeleteAnyway, true)
+        fx.Api.DeleteHiveFailure = new ApiError(409, 'Hive acme-hive still has environments')
+        await fx.Confirm(() => detail.DeleteCommand.Execute())
+        fx.Dialogs.Dismiss()
+        await Tick.Settle()
+        assert.equal(detail.CanDeleteAnyway, false)
+        assert.equal(detail.DeleteAnywayText, '')
+        fx.Api.DeleteHiveFailure = new ApiError(409, DeleteFixture.UninstallFailure, undefined, ApiError.AgentUninstallFailedCode)
+        await fx.Confirm(() => detail.DeleteCommand.Execute())
+        fx.Dialogs.Dismiss()
+        await Tick.Settle()
+        assert.equal(detail.CanDeleteAnyway, true)
+        await detail.Refresh()
+        assert.equal(detail.CanDeleteAnyway, false)
+        assert.equal(detail.DeleteAnywayCommand.CanExecute(), false)
+    })
+
+    it('the Delete dialog says the agent is removed and its token revoked, and that the data volume is kept', async () =>
+    {
+        const fx = new DeleteFixture()
+        const detail = await fx.Detail()
+        detail.DeleteCommand.Execute()
+        await Tick.Settle()
+        const confirm = fx.Dialogs.Last
+        assert.ok(confirm instanceof NameConfirmDialogViewModel)
+        assert.match(confirm.Message, /agent is removed from its cluster/)
+        assert.match(confirm.Message, /token is revoked/)
+        assert.match(confirm.Message, /kind cluster is destroyed/)
+        assert.match(confirm.Message, /data volume and its seed Secret are kept/)
+    })
+
+    it('after a delete the hives list says what was kept, and what a delete anyway may have left', async () =>
+    {
+        const fx = new DeleteFixture()
+        fx.Api.DeleteOutcome = { ok: true, retained: ['pragmatic-tenant-admin-acme-prod-data', 'pragmatic-tenant-admin-acme-prod-seed'] }
+        const detail = await fx.Detail()
+        await fx.Confirm(() => detail.DeleteCommand.Execute())
+        const list = fx.Content
+        assert.ok(list instanceof HivesPageViewModel)
+        assert.equal(list.HasNotice, true)
+        assert.match(list.NoticeText, /^Hive acme-hive was deleted\./)
+        assert.match(list.NoticeText, /pragmatic-tenant-admin-acme-prod-data, pragmatic-tenant-admin-acme-prod-seed/)
+        list.DismissNoticeCommand.Execute()
+        assert.equal(list.HasNotice, false)
+        assert.equal(list.NoticeText, '')
+    })
+
+    it('a delete anyway notice reaches the list too', async () =>
+    {
+        const fx = new DeleteFixture()
+        fx.Api.DeleteHiveFailure = new ApiError(409, DeleteFixture.UninstallFailure, undefined, ApiError.AgentUninstallFailedCode)
+        fx.Api.DeleteOutcome = { ok: true, retained: [], notice: 'The agent was not removed: the agent may remain in the cluster, locked out.' }
+        const detail = await fx.Detail()
+        await fx.Confirm(() => detail.DeleteCommand.Execute())
+        fx.Dialogs.Dismiss()
+        await Tick.Settle()
+        await fx.Confirm(() => detail.DeleteAnywayCommand.Execute())
+        const list = fx.Content
+        assert.ok(list instanceof HivesPageViewModel)
+        assert.match(list.NoticeText, /agent may remain in the cluster, locked out/)
+    })
+
     it('Observer: Delete anyway is disabled even after the failure is known', async () =>
     {
         const fx = new DeleteFixture(OperatorContext.ReadOnlyWireRole)

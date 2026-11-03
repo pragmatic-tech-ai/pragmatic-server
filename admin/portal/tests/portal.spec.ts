@@ -51,6 +51,8 @@ class FakeControlPlane
     public static readonly UninstallFailure = "Could not remove the hive's agent from its cluster: kubectl failed: connection refused. Fix cluster access and retry, or delete anyway to remove only the platform record."
     public static readonly UninstallFailureStart = /^Could not remove the hive's agent/
     private static readonly UninstallFailedCode = 'agent-uninstall-failed'
+    public static readonly ForcedNotice = 'The agent was not removed: the agent may remain in the cluster, locked out (its token is revoked), until someone removes it.'
+    public static readonly DeletedNoticeStart = /^Hive hive-eu-1 was deleted\./
     private static readonly ForceQuery = 'force=true'
     private static readonly MethodDelete = 'DELETE'
     private static readonly NewHiveBootstrapPath = '/api/hives/tailspin-local/bootstrap'
@@ -414,7 +416,7 @@ class FakeControlPlane
                 this.ForcedDelete = (req.url ?? '').includes(FakeControlPlane.ForceQuery)
                 if (this.ForcedDelete)
                 {
-                    FakeControlPlane.Json(res, 200, { ok: true })
+                    FakeControlPlane.Json(res, 200, { ok: true, retained: [], notice: FakeControlPlane.ForcedNotice })
                 }
                 else
                 {
@@ -829,6 +831,8 @@ test.describe('admin portal', () =>
         await PortalSteps.Text(page, PortalText.DeleteAnywayLabel).filter({ visible: true }).last().click({ force: true })
         await expect.poll(() => fake.ForcedDelete).toBe(true)
         await expect(PortalSteps.Text(page, PortalText.DeleteAnywayTitle).filter({ visible: true })).toHaveCount(0)
+        // Back on the hives list, which says what the delete anyway may have left behind.
+        await expect(page.getByText(FakeControlPlane.DeletedNoticeStart).filter({ visible: true }).first()).toBeVisible()
         await PortalSteps.ExpectNoBrokenText(page)
     })
 

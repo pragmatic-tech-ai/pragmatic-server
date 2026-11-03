@@ -359,8 +359,9 @@ describe('ControlPlaneClient platform records', () =>
 
     it('DeleteHive DELETEs the hive; with force it adds ?force=true (delete anyway)', async () =>
     {
-        FetchStub.Install({ ok: true })
-        await new ControlPlaneClient().DeleteHive('h 1')
+        FetchStub.Install({ ok: true, retained: [] })
+        const outcome = await new ControlPlaneClient().DeleteHive('h 1')
+        assert.deepEqual(outcome, { ok: true, retained: [] })
         await new ControlPlaneClient().DeleteHive('h 1', true)
         assert.deepEqual(FetchStub.Calls.map(c => [c.route, c.init?.method]), [['/api/hives/h%201', 'DELETE'], ['/api/hives/h%201?force=true', 'DELETE']])
     })

@@ -39,6 +39,18 @@ export class HivesSectionService extends PortalSectionService
         this.Present(new AgentTokenRevealPageViewModel(this.Session, this, hiveId, token))
     }
 
+    // After a hive delete: back to the list (reloaded), which shows what the delete kept or may have left behind.
+    public async BackAfterDelete(notice: string): Promise<void>
+    {
+        this.Back()
+        const list = this.Current
+        if (list instanceof HivesPageViewModel)
+        {
+            list.SetNotice(notice)
+        }
+        await this.RefreshCurrent()
+    }
+
     // Opens the Stand up a hive wizard over the current page.
     public StandUp(): void
     {

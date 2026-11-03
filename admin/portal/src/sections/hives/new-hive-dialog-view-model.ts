@@ -14,6 +14,7 @@ export class NewHiveDialogViewModel extends PortalDialogViewModel<HiveDto>
     private static readonly SelectedTenantProperty = 'SelectedTenant'
     private static readonly HasNoFreeTenantProperty = 'HasNoFreeTenant'
     private static readonly IdProperty = 'Id'
+    private static readonly IdHintProperty = 'IdHint'
     private static readonly DisplayNameProperty = 'DisplayName'
     private static readonly SelectedBackendProperty = 'SelectedBackend'
     private static readonly SelectedClusterModeProperty = 'SelectedClusterMode'
@@ -96,7 +97,18 @@ export class NewHiveDialogViewModel extends PortalDialogViewModel<HiveDto>
 
     public set Id(value: string)
     {
+        const hint = this.IdHint
         this.SetField(NewHiveDialogViewModel.IdProperty, this.id, value, v => { this.id = v })
+        if (hint !== this.IdHint)
+        {
+            this.RaisePropertyChanged(NewHiveDialogViewModel.IdHintProperty, hint, this.IdHint)
+        }
+    }
+
+    // Why the typed id is refused; '' while it is empty or valid.
+    public get IdHint(): string
+    {
+        return HiveOptions.IdHintFor(this.id)
     }
 
     public get DisplayName(): string
@@ -200,7 +212,7 @@ export class NewHiveDialogViewModel extends PortalDialogViewModel<HiveDto>
             && this.selectedBackend !== undefined
             && this.selectedClusterMode !== undefined
             && this.selectedRegistryMode !== undefined
-            && this.id.trim().length > 0
+            && HiveOptions.IsValidId(this.id.trim())
             && this.displayName.trim().length > 0
     }
 

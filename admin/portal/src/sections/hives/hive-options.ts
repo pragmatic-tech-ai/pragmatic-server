@@ -19,6 +19,24 @@ export class HiveOptions
     private static readonly LocalLabel = 'Local'
     private static readonly ProvisionLabel = 'Provision'
     private static readonly AttachLabel = 'Attach existing'
+    // A hive id becomes Kubernetes names and the pragmatic/hive label value (the control plane enforces the same rule).
+    private static readonly IdPattern = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
+    private static readonly IdMaxLength = 63
+    private static readonly IdRuleText = "Use a lowercase name: letters a-z, digits and '-', starting and ending with a letter or digit, at most 63 characters."
+    private static readonly NoText = ''
+
+    // Whether a (trimmed) hive id is a valid lowercase Kubernetes name.
+    public static IsValidId(id: string): boolean
+    {
+        return id.length <= HiveOptions.IdMaxLength && HiveOptions.IdPattern.test(id)
+    }
+
+    // Why a typed hive id is refused; '' while it is empty or valid.
+    public static IdHintFor(id: string): string
+    {
+        const trimmed = id.trim()
+        return trimmed.length === 0 || HiveOptions.IsValidId(trimmed) ? HiveOptions.NoText : HiveOptions.IdRuleText
+    }
 
     // The cluster backends, Local first.
     public static Backends(): OptionViewModel<HiveClusterBackend>[]

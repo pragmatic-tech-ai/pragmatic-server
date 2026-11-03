@@ -1,4 +1,4 @@
-import type { ClientDto, CreatedTenantDto, EnvironmentDto, HiveDto, FleetHiveDto, ManifestDto, OperatorSummaryDto, GatingDto, SelectionDto, HiveRolloutDto, TenantDto, GraphDto, GraphLoadedDto, OperatorDto, PromotionResultDto, ProvisionInputDto, ProvisionResultDto, PolicyDto, ActivityDto, ObservationDto, LedgerDto, HiveBootstrapDto, RolloutRegistrationDto, AgentInstallStatusDto } from './portal-types.js'
+import type { ClientDto, CreatedTenantDto, EnvironmentDto, HiveDto, FleetHiveDto, ManifestDto, OperatorSummaryDto, GatingDto, SelectionDto, HiveRolloutDto, TenantDto, GraphDto, GraphLoadedDto, OperatorDto, PromotionResultDto, ProvisionInputDto, ProvisionResultDto, PolicyDto, ActivityDto, ObservationDto, LedgerDto, HiveBootstrapDto, RolloutRegistrationDto, AgentInstallStatusDto, HiveDeleteOutcomeDto } from './portal-types.js'
 
 // Thrown for non-2xx control-plane responses; Message carries the server's error text.
 export class ApiError extends Error
@@ -7,6 +7,8 @@ export class ApiError extends Error
     public static readonly NotFoundStatus = 404
     // The control plane's code for a hive delete that could not remove the agent from its cluster (delete anyway may follow).
     public static readonly AgentUninstallFailedCode = 'agent-uninstall-failed'
+    // The control plane's code for a hive delete whose local kind cluster could not be destroyed (delete anyway may follow).
+    public static readonly ClusterDestroyFailedCode = 'cluster-destroy-failed'
 
     public readonly Status: number
     public readonly rollback?: { rolledBack: string[]; residue: string[] }
@@ -213,10 +215,10 @@ export class ControlPlaneClient
 
     // Deletes a hive (its agent is removed from a cluster the control plane drives, its token revoked). With force
     // (delete anyway) the agent's removal is skipped: for a cluster that is unreachable or gone.
-    public async DeleteHive(id: string, force: boolean = false): Promise<void>
+    public async DeleteHive(id: string, force: boolean = false): Promise<HiveDeleteOutcomeDto>
     {
         const route = this.ItemRoute(ControlPlaneClient.HivesRoute, id) + (force ? ControlPlaneClient.ForceQuery : ControlPlaneClient.NoQuery)
-        await this.Send<unknown>(route, { method: ControlPlaneClient.MethodDelete })
+        return await this.Send<HiveDeleteOutcomeDto>(route, { method: ControlPlaneClient.MethodDelete })
     }
 
     public async PublishManifest(version: string, image: string, notes?: string, channel?: string): Promise<ManifestDto>

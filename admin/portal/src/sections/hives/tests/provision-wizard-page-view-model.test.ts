@@ -138,6 +138,30 @@ describe('Stand up a hive (provision wizard)', () =>
         assert.equal(wizard.ClientId, 'initech')
     })
 
+    it('the Hive step refuses an id that is not a lowercase Kubernetes name and says why', async () =>
+    {
+        const fx = new WizardFixture()
+        const wizard = await fx.Wizard()
+        wizard.ClientId = 'initech'
+        wizard.ClientDisplayName = 'Initech'
+        wizard.NextCommand.Execute()
+        wizard.TenantId = 'initech-prod'
+        wizard.TenantDisplayName = 'Initech Production'
+        wizard.OwnerEmail = 'owner@initech.test'
+        wizard.NextCommand.Execute()
+        wizard.HiveDisplayName = 'Initech hive'
+        assert.equal(wizard.HiveIdHint, '')
+        let raised = 0
+        wizard.PropertyChanged('HiveIdHint').subscribe(() => { raised++ })
+        wizard.HiveId = '=b'
+        assert.equal(wizard.NextCommand.CanExecute(), false)
+        assert.match(wizard.HiveIdHint, /lowercase/)
+        wizard.HiveId = 'initech-hive'
+        assert.equal(wizard.HiveIdHint, '')
+        assert.equal(wizard.NextCommand.CanExecute(), true)
+        assert.equal(raised, 2)
+    })
+
     it('Submit is offered on Review only, and the review summarises the input', async () =>
     {
         const wizard = await new WizardFixture().Wizard()
