@@ -283,6 +283,12 @@ describe('ControlPlaneHost operator action audit', () =>
         assert.ok(!JSON.stringify(entry).includes('hunter2'))
     })
 
+    it('marks a delete-anyway (?force=true) with that fixed marker only, never the rest of the query', async () =>
+    {
+        await Harness.Send(host, 'POST', '/api/manifests?force=true&token=s3cret', { version: '1.0.0', image: 'img:1' })
+        assert.equal(audit.Recent(1)[0]!.path, '/api/manifests?force=true')
+    })
+
     it('swallows an audit failure without changing the response', async () =>
     {
         await host.Close()

@@ -22,6 +22,10 @@ export interface IKubectl
     ApplyServerSide(manifestJson: string): Promise<void>
     Get(namespace: string, resource: string): Promise<string>
     DeleteNamespace(namespace: string): Promise<void>
+    /** Deletes the objects a manifest names (stdin); objects already gone are not an error. */
+    DeleteManifest(manifestJson: string): Promise<void>
+    /** Deletes every `resource` in the namespace matching the label selector; none matching is not an error. */
+    DeleteBySelector(namespace: string, resource: string, selector: string): Promise<void>
 }
 
 /** A failed kubectl invocation. Stderr is redacted of secret-looking tokens before it is surfaced. */
@@ -174,6 +178,16 @@ export class KubectlCli implements IKubectl
     public async DeleteNamespace(namespace: string): Promise<void>
     {
         await this.Invoke([KubectlCli.Delete, KubectlCli.Namespace, namespace, KubectlCli.IgnoreNotFound])
+    }
+
+    public async DeleteManifest(manifestJson: string): Promise<void>
+    {
+        await this.Invoke([KubectlCli.Delete, KubectlCli.IgnoreNotFound, KubectlCli.FileFlag, KubectlCli.Stdin], manifestJson)
+    }
+
+    public async DeleteBySelector(namespace: string, resource: string, selector: string): Promise<void>
+    {
+        await this.Invoke([KubectlCli.Delete, resource, KubectlCli.SelectorFlag, selector, KubectlCli.NamespaceFlag, namespace, KubectlCli.IgnoreNotFound])
     }
 
     private async Invoke(args: readonly string[], stdin?: string): Promise<string>

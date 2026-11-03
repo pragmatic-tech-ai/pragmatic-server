@@ -94,6 +94,21 @@ test('RolloutRestartSelector restarts every deployment matching the selector', a
     assert.deepEqual(f.Last.args, ['--context', 'kind-hive', 'rollout', 'restart', 'deployment', '-l', 'pragmatic/hive=h1', '-n', 'pragmatic-system'])
 })
 
+test('DeleteManifest deletes the manifest\'s objects (stdin), tolerating ones already gone', async () =>
+{
+    const f = new KubectlFixture()
+    await f.Cli.DeleteManifest('{"kind":"List"}')
+    assert.deepEqual(f.Last.args, ['--context', 'kind-hive', 'delete', '--ignore-not-found', '-f', '-'])
+    assert.equal(f.Last.stdin, '{"kind":"List"}')
+})
+
+test('DeleteBySelector deletes the matching resources in the namespace, tolerating none', async () =>
+{
+    const f = new KubectlFixture()
+    await f.Cli.DeleteBySelector('pragmatic-system', 'deployment', 'pragmatic/hive=h1')
+    assert.deepEqual(f.Last.args, ['--context', 'kind-hive', 'delete', 'deployment', '-l', 'pragmatic/hive=h1', '-n', 'pragmatic-system', '--ignore-not-found'])
+})
+
 test('Get args and returns stdout', async () =>
 {
     const f = new KubectlFixture()

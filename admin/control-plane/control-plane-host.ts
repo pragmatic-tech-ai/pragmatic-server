@@ -44,6 +44,7 @@ import {
 import { HivePlacementError } from './hive-placement-error.js'
 import { HiveBootstrapBundle } from './hive-bootstrap-bundle.js'
 import { AgentInstallInProgressError, AgentInstallUnavailableError, type HiveAgentInstaller, type InstallStatus } from './hive-agent-installer.js'
+import { AgentUninstallError, type HiveAgentUninstaller } from './hive-agent-uninstaller.js'
 import { HiveBackend, InfraMode, InvalidRecordIdError } from './platform-records.js'
 import { PlaneHttp } from './plane-http.js'
 import { ProvisioningOrchestrator, ProvisionFailedError } from './provisioning-orchestrator.js'
@@ -239,6 +240,10 @@ export class ControlPlaneHost
     private static readonly AgentInstallSegment = 'agent-install'
     private static readonly HiveAgentInstallPathPattern = new RegExp(
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/([^/]+)/' + ControlPlaneHost.AgentInstallSegment + '$')
+    /** `DELETE /api/hives/ID?force=true`: delete anyway, skipping the agent's removal from an unreachable cluster. */
+    private static readonly ForceParam = 'force'
+    private static readonly ForceValue = 'true'
+    private static readonly ForceAuditSuffix = '?' + ControlPlaneHost.ForceParam + '=' + ControlPlaneHost.ForceValue
     private static readonly AutoInstallOffMessage = 'Automatic install is not available on this control plane. Install the agent manually.'
     private static readonly ReissueDuringInstallMessage = 'An agent install is running for this hive and issues its own token. Wait for it to finish (or fail) before reissuing the token.'
     private static readonly DeleteDuringInstallMessage = 'An agent install is running for this hive. Wait for it to finish (or fail) before deleting the hive.'
@@ -390,6 +395,9 @@ export class ControlPlaneHost
         [UnknownHiveError, PlaneHttp.StatusNotFound],
         [AgentInstallUnavailableError, ControlPlaneHost.StatusConflict],
         [AgentInstallInProgressError, ControlPlaneHost.StatusConflict],
+        // The hive's cluster refused or could not be reached while its agent was being removed: the operator fixes cluster
+        // access and retries, or deletes anyway. A conflict, not a server error (5xx answers are masked as generic 500s).
+        [AgentUninstallError, ControlPlaneHost.StatusConflict],
     ])
 
     private httpServer: HttpServer | undefined
@@ -430,7 +438,9 @@ export class ControlPlaneHost
         /** The pod-visible agent channel URL a hive's bootstrap points its agent at; undefined while the channel is off. */
         private readonly agentChannelUrl?: string,
         /** Installs a Local hive's agent from the control plane itself; undefined disables the automatic path. */
-        private readonly agentInstaller?: HiveAgentInstaller)
+        private readonly agentInstaller?: HiveAgentInstaller,
+        /** Removes a hive's agent from its cluster when the hive is deleted; undefined removes only platform state. */
+        private readonly agentUninstaller?: HiveAgentUninstaller)
     {
         this.allowedHosts = new Set([...ControlPlaneHost.DefaultAllowedHosts, ...allowedHosts.map(h => h.toLowerCase())])
         this.staticRootAbs = resolve(staticRoot)
@@ -729,7 +739,9 @@ export class ControlPlaneHost
             {
                 auditActor = ControlPlaneHost.ActorOf(who)
                 auditMethod = method
-                auditPath = path
+                // The query is never stored (it could carry anything); only the fixed delete-anyway marker is, so a
+                // forced hive delete reads as such in the activity log.
+                auditPath = ControlPlaneHost.ForceRequested(req) ? path + ControlPlaneHost.ForceAuditSuffix : path
             }
             const handled = await this.RouteApi(req, res, path)
             if (!handled)
@@ -1044,7 +1056,7 @@ export class ControlPlaneHost
                 this.hiveWrites.add(id)
                 try
                 {
-                    await this.DeletePlatform(resource, id)
+                    await this.DeleteHiveEverywhere(id, ControlPlaneHost.ForceRequested(req))
                 }
                 finally
                 {
@@ -1608,13 +1620,35 @@ export class ControlPlaneHost
                 await this.directory.DeleteTenant(id)
                 break
             default:
-                // Fail-closed: destroy the cluster first so a failure leaves the record for retry. The environments guard
-                // runs before the destroy so a non-empty hive never loses its cluster.
-                this.directory.AssertHiveDeletable(id)
-                await this.deployments.DestroyHiveCluster(id)
-                await this.directory.DeleteHive(id)
+                await this.DeleteHiveEverywhere(id, false)
                 break
         }
+    }
+
+    /**
+     * Deletes a hive, fail-closed, in this order: remove its agent from the cluster (attached Local hives; skipped when
+     * forced, for a cluster that is unreachable or gone), destroy a provisioned cluster, revoke the agent token, then the
+     * record. A failure before the record's removal leaves the record (and, before the revoke, the token) for a retry. The
+     * environments guard runs first so a non-empty hive never loses its cluster.
+     */
+    private async DeleteHiveEverywhere(id: string, force: boolean): Promise<void>
+    {
+        this.directory.AssertHiveDeletable(id)
+        const hive = this.directory.GetHive(id)
+        if (!force && hive !== undefined && this.agentUninstaller?.Covers(hive) === true)
+        {
+            await this.agentUninstaller.Uninstall(hive)
+        }
+        await this.deployments.DestroyHiveCluster(id)
+        await this.deployments.DeregisterHive(id)
+        await this.directory.DeleteHive(id)
+    }
+
+    /** Whether the request asks to delete anyway (`?force=true`). */
+    private static ForceRequested(req: IncomingMessage): boolean
+    {
+        const value = new URL(req.url ?? PlaneHttp.RootPath, ControlPlaneHost.BaseUrl).searchParams.get(ControlPlaneHost.ForceParam)
+        return value === ControlPlaneHost.ForceValue
     }
 
     private async HandleCreatePlatform(resource: string, req: IncomingMessage, res: ServerResponse): Promise<void>
@@ -2178,6 +2212,12 @@ export class ControlPlaneHost
         if (err instanceof ImageMissingError)
         {
             PlaneHttp.WriteJson(res, status, { error: err.message, buildCommand: err.buildCommand })
+            return
+        }
+        if (err instanceof AgentUninstallError)
+        {
+            // The code lets the portal offer delete anyway for exactly this failure.
+            PlaneHttp.WriteJson(res, status, { error: err.message, code: AgentUninstallError.Code })
             return
         }
         PlaneHttp.WriteJson(res, status, { error: (err as Error).message })

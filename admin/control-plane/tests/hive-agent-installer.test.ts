@@ -68,6 +68,8 @@ class FakeKubectl implements IKubectl
         return '{}'
     }
 
+    public async DeleteManifest(_m: string): Promise<void> { }
+    public async DeleteBySelector(_n: string, _r: string, _s: string): Promise<void> { }
     public async DeleteNamespace(n: string): Promise<void> { this.Calls.push(['DeleteNamespace', n]) }
 }
 

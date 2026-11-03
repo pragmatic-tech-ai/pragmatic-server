@@ -29,11 +29,20 @@ export type HiveBootstrapDto = {
     autoInstall: boolean
 }
 
+/** An object's identity in a removal manifest: enough for `kubectl delete -f`, no spec or data. */
+type K8sIdentity = { apiVersion: string; kind: string; metadata: { name: string; namespace?: string } }
+
 export class HiveBootstrapBundle
 {
     private static readonly FilePrefix = 'bootstrap-'
     private static readonly FileExtension = '.json'
     private static readonly JsonIndent = 2
+    /** Rendering for removal keeps identities only, so the channel URL (which lands in the Deployment spec) is irrelevant. */
+    private static readonly NoChannel = ''
+    private static readonly NamespaceKind = 'Namespace'
+    private static readonly ListKind = 'List'
+    private static readonly SecretKind = 'Secret'
+    private static readonly ApiVersionCore = 'v1'
 
     private constructor()
     {
@@ -55,5 +64,27 @@ export class HiveBootstrapBundle
             channelUrl,
             autoInstall,
         }
+    }
+
+    /**
+     * The hive agent's objects to remove from a cluster, as a v1 List of identities: every bundle object except the shared
+     * Namespace (other hives' agents live in it), plus the token Secret. Derived from the same render as the bundle, so the
+     * names never drift.
+     */
+    public static RemovalManifest(hiveId: string): string
+    {
+        const C = HiveBootstrapBundle
+        const tokenSecretName = K8sManifestBuilder.AgentTokenSecretNameOf(hiveId)
+        const rendered = JSON.parse(new K8sManifestBuilder().RenderHiveAgent(hiveId, C.NoChannel, tokenSecretName)) as { items: K8sIdentity[] }
+        const items: K8sIdentity[] = rendered.items
+            .filter(i => i.kind !== C.NamespaceKind)
+            .map(i => C.Identity(i.apiVersion, i.kind, i.metadata.name, i.metadata.namespace))
+        items.push(C.Identity(C.ApiVersionCore, C.SecretKind, tokenSecretName, K8sManifestBuilder.SystemNamespace))
+        return JSON.stringify({ apiVersion: C.ApiVersionCore, kind: C.ListKind, items })
+    }
+
+    private static Identity(apiVersion: string, kind: string, name: string, namespace: string | undefined): K8sIdentity
+    {
+        return { apiVersion, kind, metadata: namespace === undefined ? { name } : { name, namespace } }
     }
 }

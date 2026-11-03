@@ -73,6 +73,14 @@ class FakeKubectl implements IKubectl
     {
     }
 
+    public async DeleteManifest(_manifestJson: string): Promise<void>
+    {
+    }
+
+    public async DeleteBySelector(_namespace: string, _resource: string, _selector: string): Promise<void>
+    {
+    }
+
     public StatusFails = false
     public Statuses: Array<[string, string]> = []
 

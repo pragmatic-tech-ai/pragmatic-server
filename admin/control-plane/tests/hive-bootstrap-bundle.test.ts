@@ -24,6 +24,22 @@ describe('HiveBootstrapBundle', () =>
         assert.equal(bundle.autoInstall, false)
     })
 
+    it('the removal manifest names every bundle object but the shared Namespace, plus the token Secret, and carries no spec or data', () =>
+    {
+        const bundle = HiveBootstrapBundle.For('acme-hive', 'http://host.docker.internal:7001')
+        const removal = JSON.parse(HiveBootstrapBundle.RemovalManifest('acme-hive')) as { kind: string; items: Record<string, unknown>[] }
+        assert.equal(removal.kind, 'List')
+        const rendered = (JSON.parse(bundle.manifest) as { items: { kind: string; apiVersion: string; metadata: { name: string; namespace?: string } }[] }).items
+            .filter(i => i.kind !== 'Namespace')
+            .map(i => ({ apiVersion: i.apiVersion, kind: i.kind, metadata: i.metadata.namespace === undefined ? { name: i.metadata.name } : { name: i.metadata.name, namespace: i.metadata.namespace } }))
+        assert.deepEqual(removal.items, [
+            ...rendered,
+            { apiVersion: 'v1', kind: 'Secret', metadata: { name: bundle.tokenSecretName, namespace: bundle.namespace } },
+        ])
+        assert.deepEqual(removal.items.map(i => i.kind), ['ServiceAccount', 'ClusterRole', 'ClusterRoleBinding', 'Deployment', 'Secret'])
+        assert.ok(!HiveBootstrapBundle.RemovalManifest('acme-hive').includes('"spec"'))
+    })
+
     it('carries the automatic-install flag it is given', () =>
     {
         assert.equal(HiveBootstrapBundle.For('acme-hive', 'http://host.docker.internal:7001', true).autoInstall, true)
