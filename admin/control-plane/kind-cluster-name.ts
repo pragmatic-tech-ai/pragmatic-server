@@ -17,6 +17,8 @@ export class KindClusterName
     private static readonly ContextPrefix = 'kind-'
     private static readonly Pattern = /^[a-z0-9-]+$/
     private static readonly MaxLength = 49
+    /** The longest hive id whose cluster name still fits. */
+    public static readonly MaxHiveIdLength = KindClusterName.MaxLength - KindClusterName.Prefix.length
 
     public static For(hiveId: string): string
     {

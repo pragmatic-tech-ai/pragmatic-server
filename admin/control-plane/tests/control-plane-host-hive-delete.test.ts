@@ -57,8 +57,16 @@ class FakeKubectl implements IKubectl
     public readonly Calls: string[][] = []
     public DeleteError: Error | undefined
 
+    // What exists in the cluster: resource ('kind/name') -> its JSON.
+    public readonly Objects = new Map<string, string>()
+
     public constructor(private readonly events: string[])
     {
+    }
+
+    public async Find(_namespace: string, resource: string): Promise<string | undefined>
+    {
+        return this.Objects.get(resource)
     }
 
     public async DeleteManifest(manifestJson: string): Promise<void>
@@ -242,8 +250,10 @@ describe('ControlPlaneHost hive delete uninstalls the agent', () =>
 
     it('the response and the audit entry name what is retained: the tenant-admin data PVC and its seed Secret', async () =>
     {
-        const r = await Harness.Send(host, 'DELETE', '/api/hives/local1')
         const retained = [K8sManifestBuilder.TenantAdminClaimNameOf('t-local1'), K8sManifestBuilder.TenantAdminSeedSecretNameOf('t-local1')]
+        orchestrators.Kubectl.Objects.set('persistentvolumeclaim/' + retained[0], '{}')
+        orchestrators.Kubectl.Objects.set('secret/' + retained[1], '{}')
+        const r = await Harness.Send(host, 'DELETE', '/api/hives/local1')
         assert.deepEqual((JSON.parse(r.body) as DeleteBody).retained, retained)
         const entry = audit.Recent(10).find(e => e.method === 'DELETE')
         assert.equal(entry?.path, '/api/hives/local1')
@@ -350,6 +360,23 @@ describe('ControlPlaneHost hive delete uninstalls the agent', () =>
         await assert.rejects(deployments.VerifyAgentToken('local1', tokens.get('local1')!), HiveNotRegisteredError)
         assert.equal((await Harness.Send(host, 'DELETE', '/api/hives/local1')).status, 200)
         assert.equal(directory.GetHive('local1'), undefined)
+    })
+
+    it('nothing retained exists: an empty retained list and no audit note', async () =>
+    {
+        const r = await Harness.Send(host, 'DELETE', '/api/hives/local1')
+        assert.deepEqual((JSON.parse(r.body) as DeleteBody).retained, [])
+        assert.equal(audit.Recent(10).find(e => e.method === 'DELETE')?.note, undefined)
+    })
+
+    it('two hives of one tenant on one context: deleting the non-owner leaves the owner\'s tenant-admin credential copies', async () =>
+    {
+        await directory.CreateHive({ id: 'owner1', tenantId: 't-local1', displayName: 'owner', cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
+        orchestrators.Kubectl.Objects.set('deployment/' + K8sManifestBuilder.TenantAdminNameOf('t-local1'), JSON.stringify({ metadata: { name: 'x', labels: { 'pragmatic/hive': 'owner1' } } }))
+        assert.equal((await Harness.Send(host, 'DELETE', '/api/hives/local1')).status, 200)
+        assert.ok(!orchestrators.Kubectl.Calls.some(c => c[1] === TenantAdminBootstrap.CredentialRemovalManifest('t-local1')))
+        assert.equal((await Harness.Send(host, 'DELETE', '/api/hives/owner1')).status, 200)
+        assert.ok(orchestrators.Kubectl.Calls.some(c => c[1] === TenantAdminBootstrap.CredentialRemovalManifest('t-local1')))
     })
 
     it('a non-Local hive: no cluster is touched, the token is deregistered and the record deleted', async () =>

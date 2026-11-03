@@ -9,6 +9,7 @@ import type { IdpWorkloadSpec } from './idp-workload-driver.js'
 import { TenantAdminEnv } from './tenant-admin-env.js'
 import type { TenantAdminWorkloadSpec } from './tenant-admin-workload.js'
 import { InvalidRecordIdError } from './platform-records.js'
+import { KindClusterName } from './kind-cluster-name.js'
 
 export type K8sObject = Record<string, unknown>
 
@@ -103,7 +104,6 @@ export class K8sManifestBuilder
     private static readonly Rfc1123Name = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
     /** A label value's (and an RFC 1123 label's) maximum length. */
     private static readonly LabelValueMax = 63
-    private static readonly InvalidHiveIdMessage = "hive id must be a lowercase Kubernetes name: letters a-z, digits and '-', starting and ending with a letter or digit, at most 63 characters"
     private static readonly NonNameChars = /[^a-z0-9]+/g
     private static readonly EdgeDashes = /^-+|-+$/g
     private static readonly NameDash = '-'
@@ -137,6 +137,15 @@ export class K8sManifestBuilder
     public static readonly SystemNamespace = 'pragmatic-system'
     private static readonly HiveAgentNamespace = K8sManifestBuilder.SystemNamespace
     private static readonly HiveAgentPrefix = 'pragmatic-hive-'
+    /**
+     * The longest hive id every id-derived name and label still fits: the agent name (pragmatic-hive-ID-agent) is also its
+     * app label value (<= 63), and a provisioned hive's kind cluster name has its own, tighter, cap. The portal mirrors it.
+     */
+    public static readonly HiveIdMaxLength = Math.min(
+        K8sManifestBuilder.LabelValueMax - (K8sManifestBuilder.HiveAgentPrefix.length + 1 + K8sManifestBuilder.AgentSuffix.length),
+        KindClusterName.MaxHiveIdLength)
+    private static readonly InvalidHiveIdMessage = "hive id must be a lowercase Kubernetes name: letters a-z, digits and '-', starting and ending with a letter or digit, at most "
+        + String(K8sManifestBuilder.HiveIdMaxLength) + ' characters'
 
     // IdP workload conventions.
     private static readonly IdpBrowserHostPrefix = 'idp-'
@@ -485,6 +494,14 @@ export class K8sManifestBuilder
     private HiveLabels(hiveId: string): Record<string, string>
     {
         return K8sManifestBuilder.HiveLabelsOf(hiveId)
+    }
+
+    /** The hive an object (as kubectl returns it) is labelled for; undefined when unlabelled. */
+    public static HiveOf(doc: unknown): string | undefined
+    {
+        const labels = (doc as { [k: string]: { [k: string]: Record<string, unknown> | undefined } | undefined } | null)?.[K8sManifestBuilder.MetadataKey]?.[K8sManifestBuilder.LabelsKey]
+        const hive = labels?.[K8sManifestBuilder.HiveLabel]
+        return typeof hive === 'string' ? hive : undefined
     }
 
     /** The labels that mark an object as the hive's (selected by HiveLabelSelectorOf). */
@@ -878,7 +895,7 @@ export class K8sManifestBuilder
     /** Whether a hive id is a lowercase RFC 1123 label (so also a valid label value and name component): selectors built from it match only that hive. */
     public static IsValidHiveId(hiveId: string): boolean
     {
-        return hiveId.length <= K8sManifestBuilder.LabelValueMax && K8sManifestBuilder.Rfc1123Name.test(hiveId)
+        return hiveId.length <= K8sManifestBuilder.HiveIdMaxLength && K8sManifestBuilder.Rfc1123Name.test(hiveId)
     }
 
     /** Throws InvalidRecordIdError (a 400) with the operator-facing rule when the hive id is not valid. */

@@ -77,6 +77,11 @@ class FakeKubectl implements IKubectl
     {
     }
 
+    public async Find(_namespace: string, _resource: string): Promise<string | undefined>
+    {
+        return undefined
+    }
+
     public async DeleteBySelector(_namespace: string, _resource: string, _selector: string): Promise<void>
     {
     }

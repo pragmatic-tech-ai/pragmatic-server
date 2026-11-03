@@ -2,7 +2,7 @@ import { HiveBootstrapBundle } from './hive-bootstrap-bundle.js'
 import type { IInstallOrchestratorSource } from './hive-agent-installer.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import { KindError } from './kind.js'
-import { KubectlError } from './kubectl.js'
+import { KubectlError, type IKubectl } from './kubectl.js'
 import { HiveBackend, InfraMode, type HiveRecord } from './platform-records.js'
 import { TenantAdminBootstrap } from './tenant-admin-bootstrap.js'
 
@@ -71,6 +71,9 @@ export class HiveClusterDestroyError extends Error
 export class HiveAgentUninstaller
 {
     private static readonly SelectedResources = 'deployment,service,serviceaccount,secret'
+    private static readonly DeploymentPrefix = 'deployment/'
+    private static readonly ClaimPrefix = 'persistentvolumeclaim/'
+    private static readonly SecretPrefix = 'secret/'
     private static readonly UnsafeIdReason = "the hive id is not a valid Kubernetes label value, so its objects cannot be selected safely (a selector could match another hive's)"
 
     public constructor(private readonly orchestrators: IInstallOrchestratorSource)
@@ -83,28 +86,31 @@ export class HiveAgentUninstaller
         return hive.cluster.backend === HiveBackend.Local && hive.cluster.mode === InfraMode.Attach
     }
 
-    /** The objects an uninstall deliberately keeps: the tenant-admin data PVC and its seed Secret, together. */
-    public Retained(hive: HiveRecord): string[]
-    {
-        return [K8sManifestBuilder.TenantAdminClaimNameOf(hive.tenantId), K8sManifestBuilder.TenantAdminSeedSecretNameOf(hive.tenantId)]
-    }
-
     /**
-     * Removes the agent's objects. Throws AgentUninstallError when kubectl fails or the id cannot be selected safely; any other
-     * failure is not an uninstall failure and propagates as is.
+     * Removes the agent's objects and returns the names of what it deliberately kept and that exists: the tenant-admin data
+     * PVC and its seed Secret. The tenant's credential copies are deleted by name, and the kept objects reported, only when
+     * this hive owns the tenant's tenant-admin (its Deployment carries this hive's label) or none is installed: another hive
+     * of the same tenant on the same cluster keeps them. Throws AgentUninstallError when kubectl fails or the id cannot be
+     * selected safely; any other failure is not an uninstall failure and propagates as is.
      */
-    public async Uninstall(hive: HiveRecord): Promise<void>
+    public async Uninstall(hive: HiveRecord): Promise<string[]>
     {
         if (!K8sManifestBuilder.IsValidHiveId(hive.id))
         {
             throw new AgentUninstallError(HiveAgentUninstaller.UnsafeIdReason)
         }
         const kubectl = this.orchestrators.For(hive).Kubectl
+        const ns = K8sManifestBuilder.SystemNamespace
         try
         {
             await kubectl.DeleteManifest(HiveBootstrapBundle.RemovalManifest(hive.id))
-            await kubectl.DeleteManifest(TenantAdminBootstrap.CredentialRemovalManifest(hive.tenantId))
-            await kubectl.DeleteBySelector(K8sManifestBuilder.SystemNamespace, HiveAgentUninstaller.SelectedResources, K8sManifestBuilder.HiveLabelSelectorOf(hive.id))
+            const owns = await this.OwnsTenantAdmin(kubectl, hive)
+            if (owns)
+            {
+                await kubectl.DeleteManifest(TenantAdminBootstrap.CredentialRemovalManifest(hive.tenantId))
+            }
+            await kubectl.DeleteBySelector(ns, HiveAgentUninstaller.SelectedResources, K8sManifestBuilder.HiveLabelSelectorOf(hive.id))
+            return owns ? await this.ExistingRetained(kubectl, hive) : []
         }
         catch (err)
         {
@@ -114,5 +120,31 @@ export class HiveAgentUninstaller
             }
             throw err
         }
+    }
+
+    /** Whether the tenant's tenant-admin in pragmatic-system is absent or labelled for this hive. */
+    private async OwnsTenantAdmin(kubectl: IKubectl, hive: HiveRecord): Promise<boolean>
+    {
+        const doc = await kubectl.Find(K8sManifestBuilder.SystemNamespace, HiveAgentUninstaller.DeploymentPrefix + K8sManifestBuilder.TenantAdminNameOf(hive.tenantId))
+        return doc === undefined || K8sManifestBuilder.HiveOf(JSON.parse(doc)) === hive.id
+    }
+
+    /** The kept tenant-admin data PVC and seed Secret that actually exist. */
+    private async ExistingRetained(kubectl: IKubectl, hive: HiveRecord): Promise<string[]>
+    {
+        const C = HiveAgentUninstaller
+        const candidates: Array<[string, string]> = [
+            [C.ClaimPrefix, K8sManifestBuilder.TenantAdminClaimNameOf(hive.tenantId)],
+            [C.SecretPrefix, K8sManifestBuilder.TenantAdminSeedSecretNameOf(hive.tenantId)],
+        ]
+        const kept: string[] = []
+        for (const [prefix, name] of candidates)
+        {
+            if (await kubectl.Find(K8sManifestBuilder.SystemNamespace, prefix + name) !== undefined)
+            {
+                kept.push(name)
+            }
+        }
+        return kept
     }
 }

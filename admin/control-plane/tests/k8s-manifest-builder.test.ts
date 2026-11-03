@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
 import { InvalidRecordIdError } from '../platform-records.js'
+import { KindClusterName } from '../kind-cluster-name.js'
 import { EnvServerSeedSource } from '../env-server-seed.js'
 import type { EnvironmentWorkload } from '../environment-workload.js'
 import type { IdpWorkloadSpec } from '../idp-workload-driver.js'
@@ -508,7 +509,7 @@ describe('K8sManifestBuilder hive ids', () =>
 {
     it('accepts lowercase RFC 1123 labels of at most 63 characters', () =>
     {
-        for (const id of ['b', 'h1', 'acme-hive', 'default-pragmatic-hive', 'a'.repeat(63)])
+        for (const id of ['b', 'h1', 'acme-hive', 'default-pragmatic-hive', 'a'.repeat(K8sManifestBuilder.HiveIdMaxLength)])
         {
             assert.equal(K8sManifestBuilder.IsValidHiveId(id), true, id)
         }
@@ -516,11 +517,21 @@ describe('K8sManifestBuilder hive ids', () =>
 
     it('refuses ids that would widen a selector or break a name (=b, "b ", upper case, edge dashes, underscores, too long)', () =>
     {
-        for (const id of ['', '=b', 'b ', ' b', 'b,c', 'B', '-b', 'b-', 'a_b', 'a.b', 'a/b', 'a'.repeat(64)])
+        for (const id of ['', '=b', 'b ', ' b', 'b,c', 'B', '-b', 'b-', 'a_b', 'a.b', 'a/b', 'a'.repeat(K8sManifestBuilder.HiveIdMaxLength + 1), 'a'.repeat(63)])
         {
             assert.equal(K8sManifestBuilder.IsValidHiveId(id), false, JSON.stringify(id))
             assert.throws(() => K8sManifestBuilder.AssertValidHiveId(id), InvalidRecordIdError)
         }
+    })
+
+    it('caps the id at the tightest derived limit (34): the kind cluster name, and the agent name used as a label value', () =>
+    {
+        assert.equal(K8sManifestBuilder.HiveIdMaxLength, 34)
+        const longest = 'a'.repeat(K8sManifestBuilder.HiveIdMaxLength)
+        assert.ok(K8sManifestBuilder.HiveAgentNameOf(longest).length <= 63)
+        assert.doesNotThrow(() => KindClusterName.For(longest))
+        assert.throws(() => KindClusterName.For(longest + 'a'))
+        assert.match(String((() => { try { K8sManifestBuilder.AssertValidHiveId(longest + 'a') } catch (e) { return (e as Error).message } return '' })()), /at most 34 characters/)
     })
 
     it('never builds a selector for an unsafe id: pragmatic/hive==b would match hive b', () =>

@@ -109,6 +109,16 @@ test('DeleteBySelector deletes the matching resources in the namespace, tolerati
     assert.deepEqual(f.Last.args, ['--context', 'kind-hive', 'delete', 'deployment', '-l', 'pragmatic/hive=h1', '-n', 'pragmatic-system', '--ignore-not-found'])
 })
 
+test('Find gets one resource as JSON, tolerating its absence (undefined)', async () =>
+{
+    const f = new KubectlFixture()
+    f.Fake.Stdout = '{"kind":"Deployment"}'
+    assert.equal(await f.Cli.Find('pragmatic-system', 'deployment/x'), '{"kind":"Deployment"}')
+    assert.deepEqual(f.Last.args, ['--context', 'kind-hive', 'get', 'deployment/x', '-n', 'pragmatic-system', '-o', 'json', '--ignore-not-found'])
+    f.Fake.Stdout = '\n'
+    assert.equal(await f.Cli.Find('pragmatic-system', 'deployment/x'), undefined)
+})
+
 test('Get args and returns stdout', async () =>
 {
     const f = new KubectlFixture()

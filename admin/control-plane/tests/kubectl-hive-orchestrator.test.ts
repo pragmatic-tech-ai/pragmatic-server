@@ -30,6 +30,7 @@ class FakeKubectl implements IKubectl
     public RolloutRestartSelector(n: string, s: string) { return this.Record('RolloutRestartSelector', [n, s]) }
     public ApplyServerSide(m: string) { return this.Record('ApplyServerSide', [m]) }
     public DeleteManifest(m: string) { return this.Record('DeleteManifest', [m]) }
+    public async Find(n: string, r: string): Promise<string | undefined> { await this.Record('Find', [n, r]); return undefined }
     public DeleteBySelector(n: string, r: string, s: string) { return this.Record('DeleteBySelector', [n, r, s]) }
     public async Get(n: string, r: string)
     {

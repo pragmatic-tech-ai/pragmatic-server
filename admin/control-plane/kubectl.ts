@@ -22,6 +22,8 @@ export interface IKubectl
     ApplyServerSide(manifestJson: string): Promise<void>
     Get(namespace: string, resource: string): Promise<string>
     DeleteNamespace(namespace: string): Promise<void>
+    /** One resource ('kind/name') as JSON, or undefined when it does not exist. */
+    Find(namespace: string, resource: string): Promise<string | undefined>
     /** Deletes the objects a manifest names (stdin); objects already gone are not an error. */
     DeleteManifest(manifestJson: string): Promise<void>
     /** Deletes every `resource` in the namespace matching the label selector; none matching is not an error. */
@@ -178,6 +180,12 @@ export class KubectlCli implements IKubectl
     public async DeleteNamespace(namespace: string): Promise<void>
     {
         await this.Invoke([KubectlCli.Delete, KubectlCli.Namespace, namespace, KubectlCli.IgnoreNotFound])
+    }
+
+    public async Find(namespace: string, resource: string): Promise<string | undefined>
+    {
+        const stdout = await this.Invoke([KubectlCli.GetVerb, resource, KubectlCli.NamespaceFlag, namespace, KubectlCli.OutputFlag, KubectlCli.Json, KubectlCli.IgnoreNotFound])
+        return stdout.trim().length === 0 ? undefined : stdout
     }
 
     public async DeleteManifest(manifestJson: string): Promise<void>

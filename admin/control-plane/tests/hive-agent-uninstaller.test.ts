@@ -12,8 +12,16 @@ import { HiveBackend, InfraMode, type HiveRecord } from '../platform-records.js'
 class FakeKubectl implements IKubectl
 {
     public readonly Calls: string[][] = []
+    // What exists in the cluster: resource ('kind/name') -> its JSON.
+    public readonly Objects = new Map<string, string>()
     public DeleteManifestError: Error | undefined
     public DeleteSelectorError: Error | undefined
+
+    public async Find(namespace: string, resource: string): Promise<string | undefined>
+    {
+        this.Calls.push(['Find', namespace, resource])
+        return this.Objects.get(resource)
+    }
 
     public async DeleteManifest(manifestJson: string): Promise<void>
     {
@@ -78,6 +86,12 @@ class Fixture
     public readonly Orchestrators = new FakeOrchestrators()
     public readonly Uninstaller = new HiveAgentUninstaller(this.Orchestrators)
 
+    // A tenant-admin Deployment as kubectl returns it, labelled for a hive.
+    public static Deployment(hiveId: string): string
+    {
+        return JSON.stringify({ kind: 'Deployment', metadata: { name: 'x', labels: { 'pragmatic/hive': hiveId } } })
+    }
+
     public static Hive(id: string, backend: HiveBackend, mode: InfraMode): HiveRecord
     {
         return { id, tenantId: 't1', displayName: id, cluster: { backend, mode }, registry: { mode: InfraMode.Provision }, createdAt: '2026-01-01T00:00:00.000Z' }
@@ -94,21 +108,26 @@ describe('HiveAgentUninstaller', () =>
         assert.equal(fx.Uninstaller.Covers(Fixture.Hive('a1', HiveBackend.Aks, InfraMode.Attach)), false)
     })
 
-    it('deletes the bundle objects, the token Secret and the tenant-admin credential Secrets by name, then the hive-labelled stateless objects', async () =>
+    it('deletes the bundle objects, the token Secret and (no tenant-admin elsewhere) the credential copies by name, then the hive-labelled stateless objects', async () =>
     {
         const fx = new Fixture()
-        await fx.Uninstaller.Uninstall(Fixture.Hive('h1', HiveBackend.Local, InfraMode.Attach))
+        const retained = await fx.Uninstaller.Uninstall(Fixture.Hive('h1', HiveBackend.Local, InfraMode.Attach))
         assert.deepEqual(fx.Orchestrators.Resolved, ['h1'])
         assert.deepEqual(fx.Orchestrators.Kubectl.Calls, [
             ['DeleteManifest', HiveBootstrapBundle.RemovalManifest('h1')],
+            ['Find', 'pragmatic-system', 'deployment/' + K8sManifestBuilder.TenantAdminNameOf('t1')],
             ['DeleteManifest', TenantAdminBootstrap.CredentialRemovalManifest('t1')],
             ['DeleteBySelector', 'pragmatic-system', 'deployment,service,serviceaccount,secret', 'pragmatic/hive=h1'],
+            ['Find', 'pragmatic-system', 'persistentvolumeclaim/' + K8sManifestBuilder.TenantAdminClaimNameOf('t1')],
+            ['Find', 'pragmatic-system', 'secret/' + K8sManifestBuilder.TenantAdminSeedSecretNameOf('t1')],
         ])
-        // The tenant-admin data PVC and its seed Secret (the master key that decrypts it) are kept together.
-        const all = JSON.stringify(fx.Orchestrators.Kubectl.Calls)
-        assert.ok(!all.includes(K8sManifestBuilder.TenantAdminClaimNameOf('t1')))
-        assert.ok(!all.includes(K8sManifestBuilder.TenantAdminSeedSecretNameOf('t1')))
-        assert.ok(!all.includes('persistentvolumeclaim'))
+        // Nothing retained exists here, so nothing is reported.
+        assert.deepEqual(retained, [])
+        // The tenant-admin data PVC and its seed Secret (the master key that decrypts it) are never deleted.
+        const deletes = JSON.stringify(fx.Orchestrators.Kubectl.Calls.filter(c => c[0] !== 'Find'))
+        assert.ok(!deletes.includes(K8sManifestBuilder.TenantAdminClaimNameOf('t1')))
+        assert.ok(!deletes.includes(K8sManifestBuilder.TenantAdminSeedSecretNameOf('t1')))
+        assert.ok(!deletes.includes('persistentvolumeclaim'))
         // The shared namespace stays: other hives' agents may live in it.
         assert.ok(!fx.Orchestrators.Kubectl.Calls.some(c => c[0] === 'DeleteNamespace'))
     })
@@ -159,12 +178,37 @@ describe('HiveAgentUninstaller', () =>
         }
     })
 
-    it('Retained names the tenant-admin data PVC and its seed Secret, kept together', () =>
+    it('reports as retained only the tenant-admin data PVC and seed Secret that exist', async () =>
     {
         const fx = new Fixture()
-        assert.deepEqual(fx.Uninstaller.Retained(Fixture.Hive('h1', HiveBackend.Local, InfraMode.Attach)), [
+        fx.Orchestrators.Kubectl.Objects.set('deployment/' + K8sManifestBuilder.TenantAdminNameOf('t1'), Fixture.Deployment('h1'))
+        fx.Orchestrators.Kubectl.Objects.set('persistentvolumeclaim/' + K8sManifestBuilder.TenantAdminClaimNameOf('t1'), '{}')
+        assert.deepEqual(await fx.Uninstaller.Uninstall(Fixture.Hive('h1', HiveBackend.Local, InfraMode.Attach)), [K8sManifestBuilder.TenantAdminClaimNameOf('t1')])
+        fx.Orchestrators.Kubectl.Objects.set('secret/' + K8sManifestBuilder.TenantAdminSeedSecretNameOf('t1'), '{}')
+        assert.deepEqual(await fx.Uninstaller.Uninstall(Fixture.Hive('h1', HiveBackend.Local, InfraMode.Attach)), [
             K8sManifestBuilder.TenantAdminClaimNameOf('t1'),
             K8sManifestBuilder.TenantAdminSeedSecretNameOf('t1'),
         ])
+    })
+
+    it('two hives of one tenant on one context: deleting the hive that does not own the tenant-admin leaves its credential copies and retains nothing', async () =>
+    {
+        const fx = new Fixture()
+        fx.Orchestrators.Kubectl.Objects.set('deployment/' + K8sManifestBuilder.TenantAdminNameOf('t1'), Fixture.Deployment('owner'))
+        fx.Orchestrators.Kubectl.Objects.set('persistentvolumeclaim/' + K8sManifestBuilder.TenantAdminClaimNameOf('t1'), '{}')
+        fx.Orchestrators.Kubectl.Objects.set('secret/' + K8sManifestBuilder.TenantAdminSeedSecretNameOf('t1'), '{}')
+        const retained = await fx.Uninstaller.Uninstall(Fixture.Hive('other', HiveBackend.Local, InfraMode.Attach))
+        assert.deepEqual(retained, [])
+        const calls = fx.Orchestrators.Kubectl.Calls
+        assert.ok(!calls.some(c => c[0] === 'DeleteManifest' && c[1] === TenantAdminBootstrap.CredentialRemovalManifest('t1')))
+        assert.deepEqual(calls.find(c => c[0] === 'DeleteBySelector'), ['DeleteBySelector', 'pragmatic-system', 'deployment,service,serviceaccount,secret', 'pragmatic/hive=other'])
+    })
+
+    it('a tenant-admin Deployment without the hive label is not ours either: its credential copies stay', async () =>
+    {
+        const fx = new Fixture()
+        fx.Orchestrators.Kubectl.Objects.set('deployment/' + K8sManifestBuilder.TenantAdminNameOf('t1'), '{"metadata":{"name":"x"}}')
+        await fx.Uninstaller.Uninstall(Fixture.Hive('h1', HiveBackend.Local, InfraMode.Attach))
+        assert.ok(!fx.Orchestrators.Kubectl.Calls.some(c => c[0] === 'DeleteManifest' && c[1] === TenantAdminBootstrap.CredentialRemovalManifest('t1')))
     })
 })

@@ -1653,8 +1653,7 @@ export class ControlPlaneHost
         const outcome: HiveDeleteOutcome = { retained: [] }
         if (uninstalls && !force)
         {
-            await this.agentUninstaller!.Uninstall(hive!)
-            outcome.retained = this.agentUninstaller!.Retained(hive!)
+            outcome.retained = await this.agentUninstaller!.Uninstall(hive!)
         }
         else if (uninstalls)
         {
