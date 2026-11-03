@@ -1,6 +1,8 @@
 import { createClient } from 'redis'
 import type { RedisClientType } from 'redis'
 import type { ITenantOwnership, TenantLostHandler } from './tenant-ownership.js'
+import type { IWriteLock } from '../host/cypher/write-lock.js'
+import { RedisWriteLock, type IRedisLockClient } from './redis-write-lock.js'
 
 /** Cross-replica single-writer ownership over Redis: a replica claims a tenant under a TTL-leased key, renews it while
  *  serving, and releases it on evict/shutdown. A renewal that finds the key is no longer ours disposes the local server
@@ -132,6 +134,22 @@ export class RedisTenantOwnership implements ITenantOwnership
         finally
         {
             await client.quit().catch(() => {})
+        }
+    }
+
+    /** The tenant's write lock, contended on the same Redis every replica uses for ownership. */
+    public WriteLock(environmentId: string): IWriteLock
+    {
+        return new RedisWriteLock(environmentId, async () => this.LockClient(await this.Connected()))
+    }
+
+    // Bounds every lock command by the ownership command timeout, so a hung Redis cannot stall a write forever.
+    private LockClient(client: RedisClientType): IRedisLockClient
+    {
+        return {
+            set: (key, value, options) => this.WithTimeout(client.set(key, value, options)),
+            get: key => this.WithTimeout(client.get(key)),
+            eval: (script, options) => this.WithTimeout(client.eval(script, options)),
         }
     }
 

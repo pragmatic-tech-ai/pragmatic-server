@@ -22,19 +22,23 @@ export class ModelShardGraph
 {
     private static readonly ShardVersion = '0.0.0'
 
-    /** Finds `modelId` among the models of the tenant's repositories (each document computed once); undefined for a non-member id. */
-    public static Locate(repos: readonly Repository[], modelId: string): LocatedShard | undefined
+    /** Every model of the tenant's repositories by id (each document computed once); the first repository declaring an id owns it. */
+    public static Index(repos: readonly Repository[]): Map<string, LocatedShard>
     {
+        const index = new Map<string, LocatedShard>()
         for (const repo of repos)
         {
             const full = toJSON(repo)
-            const id = ModelShardExtractor.ModelsOf(full).find(m => String(m) === modelId)
-            if (id !== undefined)
+            for (const id of ModelShardExtractor.ModelsOf(full))
             {
-                return { Repo: repo, Full: full, ModelId: id, Name: modelId }
+                const name = String(id)
+                if (!index.has(name))
+                {
+                    index.set(name, { Repo: repo, Full: full, ModelId: id, Name: name })
+                }
             }
         }
-        return undefined
+        return index
     }
 
     /** The unfiltered single-shard graph for a located shard. */

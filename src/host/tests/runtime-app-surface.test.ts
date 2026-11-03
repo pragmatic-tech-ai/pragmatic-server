@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, cpSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { InMemoryMessageSocket, PragmaticClient, ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { InMemoryMessageSocket, PragmaticClient, ErrorCodes, ResponseError, CursorStaleError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
 import {
     Repository, Cardinality, toJSON, BlobPackageStore, StoragePackageSink,
@@ -330,5 +330,30 @@ test('runtime e2e: open rejects a manifest whose name differs from its directory
         fx.RenameManifest(RuntimeSurfaceFixture.AppA, RuntimeSurfaceFixture.Renamed)
         const client = (await fx.Runtime())()
         await assert.rejects(() => client.OpenApplication(RuntimeSurfaceFixture.AppA), RuntimeSurfaceFixture.NameMismatch)
+    })
+})
+
+class RuntimeCursorFixture
+{
+    public static readonly Ordered = 'MATCH (w:Widget) RETURN w.label AS label ORDER BY label'
+
+    public static IsStale(error: { code?: number }): boolean
+    {
+        return error.code === CursorStaleError.Code
+    }
+}
+
+test('runtime e2e: a cursor stays valid while the app data is unchanged and goes stale when the data behind it changes', async () =>
+{
+    await RuntimeSurfaceFixture.Run(async fx =>
+    {
+        await fx.Seed(RuntimeSurfaceFixture.AppA, RuntimeSurfaceFixture.PkgA, RuntimeSurfaceFixture.Widget, [RuntimeSurfaceFixture.Bolt, RuntimeSurfaceFixture.Cog, RuntimeSurfaceFixture.Nut], false)
+        const client = (await fx.Runtime())()
+        await client.OpenApplication(RuntimeSurfaceFixture.AppA)
+        const first = await client.CypherQuery(RuntimeCursorFixture.Ordered, undefined, { pageSize: 1 })
+        const second = await client.CypherQuery(RuntimeCursorFixture.Ordered, undefined, { cursor: first.nextCursor, pageSize: 1 })
+        assert.deepEqual(RuntimeSurfaceFixture.Column(second), [RuntimeSurfaceFixture.Cog])
+        fx.DenyLabel(RuntimeSurfaceFixture.AppA, RuntimeSurfaceFixture.Widget, RuntimeSurfaceFixture.Bolt)
+        await assert.rejects(() => client.CypherQuery(RuntimeCursorFixture.Ordered, undefined, { cursor: second.nextCursor, pageSize: 1 }), RuntimeCursorFixture.IsStale)
     })
 })

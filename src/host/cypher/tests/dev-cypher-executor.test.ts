@@ -8,6 +8,7 @@ import { DevModelWriter, DevModelWriteFailedError } from '../../model/dev-model-
 import type { IDevLanguageService } from '../../model/dev-model-writer.js'
 import { DevCypherExecutor } from '../dev-cypher-executor.js'
 import { OpenDevWriteSecurity } from '../dev-write-security.js'
+import { InProcessWriteLock, WriteLockBusyError, type IWriteLease, type IWriteLock } from '../write-lock.js'
 
 class MemoryStorage implements IStorage
 {
@@ -74,4 +75,88 @@ test('a Persist failure surfaces as in-band Failed with the fixed reason and no 
     assert.equal(result.revision, 7)
     assert.deepEqual(result.rows, [])
     assert.equal(storage.Files.get('model.todl'), ExecutorFixture.Model)
+})
+
+/** A lock whose lease is granted (or refused) and reports itself held (or lost) as the test dictates. */
+class ScriptedLock implements IWriteLock
+{
+    public Acquired = 0
+    public Released = 0
+
+    constructor(private readonly busy: boolean, private readonly held: boolean)
+    {
+    }
+
+    public async Acquire(): Promise<IWriteLease>
+    {
+        if (this.busy) throw new WriteLockBusyError()
+        this.Acquired++
+        return { Held: async () => this.held, Release: async () => { this.Released++ } }
+    }
+}
+
+class LockFixture
+{
+    public static async Run(lock: IWriteLock, storage: MemoryStorage): Promise<Awaited<ReturnType<DevCypherExecutor['Execute']>>>
+    {
+        const language = new StubLanguageService()
+        const executor = new DevCypherExecutor(new DevModelWriter(language), () => language.GraphRevision, lock)
+        return await executor.Execute(
+            { cypher: ExecutorFixture.Create, parameters: new Map(), timeoutMs: 5000, maxVarLength: 8 },
+            { member: { Storage: storage }, identity: { model: 'sol', version: '0.0.0', namespace: 'shop' } },
+            new OpenDevWriteSecurity())
+    }
+
+    public static Storage(): MemoryStorage
+    {
+        const storage = new MemoryStorage()
+        storage.Files.set('model.todl', ExecutorFixture.Model)
+        return storage
+    }
+}
+
+test('a write holds the tenant lease across the whole write and releases it', async () =>
+{
+    const lock = new ScriptedLock(false, true)
+    const storage = LockFixture.Storage()
+    const result = await LockFixture.Run(lock, storage)
+    assert.equal(result.status, AppWriteStatus.Applied)
+    assert.deepEqual([lock.Acquired, lock.Released], [1, 1])
+    assert.ok([...storage.Files.values()].some(text => text.includes('Bo')), JSON.stringify([...storage.Files]))
+})
+
+test('a lease held elsewhere is an in-band Conflict and nothing persists', async () =>
+{
+    const storage = LockFixture.Storage()
+    const result = await LockFixture.Run(new ScriptedLock(true, true), storage)
+    assert.equal(result.status, AppWriteStatus.Conflict)
+    assert.equal(result.reason, 'another write to this tenant is in progress')
+    assert.deepEqual([...storage.Files], [['model.todl', ExecutorFixture.Model]])
+})
+
+test('a lease lost before the persist (fencing) is a Conflict, nothing persists, and the lease is released', async () =>
+{
+    const lock = new ScriptedLock(false, false)
+    const storage = LockFixture.Storage()
+    const result = await LockFixture.Run(lock, storage)
+    assert.equal(result.status, AppWriteStatus.Conflict)
+    assert.equal(result.reason, 'the tenant write lease was lost before the write could persist')
+    assert.deepEqual([...storage.Files], [['model.todl', ExecutorFixture.Model]])
+    assert.equal(lock.Released, 1)
+})
+
+test('the in-process lock hands out one lease at a time, in arrival order', async () =>
+{
+    const lock = new InProcessWriteLock()
+    const order: string[] = []
+    const first = await lock.Acquire()
+    const second = lock.Acquire().then(lease => { order.push('second'); return lease })
+    await new Promise(resolve => setTimeout(resolve, 10))
+    order.push('first-release')
+    await first.Release()
+    assert.equal(await first.Held(), false)
+    const lease = await second
+    assert.deepEqual(order, ['first-release', 'second'])
+    assert.equal(await lease.Held(), true)
+    await lease.Release()
 })

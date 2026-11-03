@@ -2,8 +2,8 @@ import { join } from 'node:path'
 import { LazyCompositionRoot, HostKinds, ModuleStateKind } from '@pragmatic-tech-ai/todl-runtime'
 import { TenantPurpose } from './tenancy/tenant-purpose.js'
 import type { ModuleStateProperty } from '@pragmatic-tech-ai/todl-runtime'
-import { SolutionManagerService, StoragePackageSource, StoragePackageStore, PackageStoreKey, ConnectorPrefetch, ConnectorRuntimeGraphQuery, DataSourceAdapterCatalog, WikiOriginKind } from '@pragmatic-tech-ai/todl'
-import type { ModelConnectorPlan, IDataSourceAdapterProvider } from '@pragmatic-tech-ai/todl'
+import { SolutionManagerService, StoragePackageSource, StoragePackageStore, PackageStoreKey, ConnectorPrefetch, ConnectorRuntimeGraphQuery, DataSourceAdapterCatalog, WikiOriginKind, Cypher, ConjunctiveQueryFilterProvider } from '@pragmatic-tech-ai/todl'
+import type { ModelConnectorPlan, IDataSourceAdapterProvider, IConnectorQueryFilterProvider } from '@pragmatic-tech-ai/todl'
 import type { Domain } from '@pragmatic-tech-ai/todl/domain'
 import { NodeProjectSystemComposer } from '@pragmatic-tech-ai/todl/project-system'
 import { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
@@ -56,7 +56,8 @@ import { ShareService } from './host/sharing/share-service.js'
 import { AssignService } from './host/sharing/assign-service.js'
 import { AccessPolicySetting } from './host/apps/access-policy-setting.js'
 import { FilteredGraphQuery } from './host/cypher/filtered-graph-query.js'
-import { ModelShardGraph } from './host/cypher/model-shard-graph.js'
+import { ModelShardCache, type IModelShardSource } from './host/cypher/model-shard-cache.js'
+import { InProcessWriteLock, type IWriteLock } from './host/cypher/write-lock.js'
 import { GraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
@@ -136,15 +137,19 @@ export interface PragmaticServerOptions
     connectors?: ConnectorsHostOptions
     connectorsPolicy?: ConnectorsPolicy
     readonly adapterPacks?: AdapterPacksConfig
+    /** Cross-process tenant write lock (cluster); absent => in-process only, correct for a single replica. */
+    writeLock?: IWriteLock
 }
 
 /** The node labels a Cypher query references; wildcard when any node pattern is unlabeled; parseFailed when the text is not valid Cypher (nothing is prefetched). */
 export type ReferencedLabelSet = { labels: readonly string[]; wildcard: boolean; parseFailed: boolean }
+/** The read query a runtime graph is built for: its WHERE / inline-property equalities are pushed into connector pulls. */
+export type CypherScanQuery = { text: string; parameters: ReadonlyMap<string, Cypher.ParameterValue> }
 
 type AppBase = { domain: Domain; plan: ModelConnectorPlan; nativeBase: IGraphQuery; defaultConcepts: ReadonlySet<string>; ownConcepts: ReadonlySet<string> }
 
 /** Headless single-tenant in-process host: composes the engine over the lazy root and opens a solution. */
-export class PragmaticServer implements IEnvironmentGraphHost
+export class PragmaticServer implements IEnvironmentGraphHost, IModelShardSource
 {
     private static readonly DefaultPackagesDir = 'packages'
     private static readonly DefaultGraphsDir = 'graphs'
@@ -180,6 +185,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
     private tenant: Tenant | undefined
     private oidc: OidcFrontDoor | undefined
     private graphCache: TenantGraphCache | undefined
+    private shardCache: ModelShardCache | undefined
     private appsStorage: IStorage | undefined
     private appsRegistry: PragmaticAppsRegistry | undefined
     private appIngest: AppIngestService | undefined
@@ -528,23 +534,25 @@ export class PragmaticServer implements IEnvironmentGraphHost
      * prefetched fresh per query, then the SP-3b depth+predicate filter over the result. The connector layer sits INSIDE the filter,
      * so a connector-minted instance is filtered exactly like a native one.
      */
-    public async GraphForPragmaticApp(context: AccessContext, name: string, labels: ReferencedLabelSet = PragmaticServer.NoLabels, maskFields = true): Promise<IGraphQuery>
+    public async GraphForPragmaticApp(context: AccessContext, name: string, labels: ReferencedLabelSet = PragmaticServer.NoLabels, maskFields = true, query?: CypherScanQuery): Promise<IGraphQuery>
     {
         const built = await this.BaseGraphFor(name)
         const nativeBase = built.nativeBase
         const concepts = PragmaticServer.ConnectorConcepts(labels, built.plan, nativeBase)
         const services = this.root.Services()
+        const rules = await AccessPolicySetting.Load(this.AppsStorage(), name)
+        const enforcement = IdentityEnforcement.Over(PolicyCatalog.FromPolicies(rules), context, Action.Read)
+        const shareIndex = await this.ShareIndexFor(context, name)
         const snapshot = concepts.length === 0
             ? new Map()
-            : await ConnectorPrefetch.ForConcepts(concepts, built.plan, services.getRequired(DataSourceAdapterCatalog.ServiceKey), services, built.domain)
+            : await ConnectorPrefetch.ForConcepts(concepts, built.plan, services.getRequired(DataSourceAdapterCatalog.ServiceKey), services, built.domain,
+                PragmaticServer.PushDownFor(query, nativeBase, enforcement, shareIndex.IsEmpty()))
         const base = new ConnectorRuntimeGraphQuery(nativeBase, snapshot, built.defaultConcepts)
-        const rules = await AccessPolicySetting.Load(this.AppsStorage(), name)
-        const predicate = IdentityEnforcement.Over(PolicyCatalog.FromPolicies(rules), context, Action.Read).InstanceFilter()
+        const predicate = enforcement.InstanceFilter()
         const depthSource = await this.DepthFilterSource()
         const bypass = await this.AppPrivateConcepts(depthSource, context, built)
         const depth = new ConceptBypassInstanceFilter(await depthSource.ReadFilterFor(context), bypass)
         const composite = new CompositeInstanceFilter([predicate, depth])
-        const shareIndex = await this.ShareIndexFor(context, name)
         const instanceFilter = shareIndex.IsEmpty()
             ? composite
             : new ShareWideningInstanceFilter(composite, shareIndex, ConceptIdFields.From(built.plan))
@@ -559,6 +567,18 @@ export class PragmaticServer implements IEnvironmentGraphHost
             return filtered
         }
         return new FieldMaskedGraphQuery(filtered, mask)
+    }
+
+    /**
+     * The source filters a runtime pull may push down. Each is a SUPERSET of what the in-memory filters keep: the query's
+     * own WHERE / inline-property equalities (CypherPushDown) and, unless record shares widen visibility past the access
+     * policy, the policy's push-down. Nothing is pushed for a non-query build (writes, write-target reads).
+     */
+    private static PushDownFor(query: CypherScanQuery | undefined, schema: IGraphQuery, enforcement: IdentityEnforcement, noShares: boolean): IConnectorQueryFilterProvider | undefined
+    {
+        if (query === undefined) return undefined
+        const fromQuery = Cypher.CypherPushDown.Analyze(query.text, new Cypher.GraphQuerySchema(schema), query.parameters)
+        return noShares ? new ConjunctiveQueryFilterProvider(fromQuery, enforcement.QueryFilterProvider()) : fromQuery
     }
 
     /**
@@ -893,13 +913,14 @@ export class PragmaticServer implements IEnvironmentGraphHost
      */
     public async ModelGraph(context: AccessContext, modelId: string): Promise<IGraphQuery>
     {
-        const sources = await this.CollectGraphSources()
-        const shard = ModelShardGraph.Locate(sources.map(s => s.repo), modelId)
+        const shards = this.Shards()
+        const shard = await shards.Locate(modelId)
         if (shard === undefined)
         {
             throw new ResponseError(ErrorCodes.InvalidParams, PragmaticServer.ModelNotFoundMessage)
         }
-        const base = await ModelShardGraph.Build(shard)
+        // the unfiltered shard graph is shared across principals; the row filter and field mask apply per request below
+        const base = await shards.Graph(shard)
         const predicate = IdentityEnforcement.ForRepository(shard.Repo, context, Action.Read).InstanceFilter()
         const depth = await (await this.DepthFilterSource()).ReadFilterFor(context)
         const filtered = new FilteredGraphQuery(base, new CompositeInstanceFilter([predicate, depth]))
@@ -909,6 +930,17 @@ export class PragmaticServer implements IEnvironmentGraphHost
         }
         const mask = await (await this.ReadAuthorization()).FieldReadMaskFor(context)
         return mask === AllowAllFieldReadMask.Instance ? filtered : new FieldMaskedGraphQuery(filtered, mask)
+    }
+
+    /** The model shard ids of the active solution a principal may pass as modelId (membership in the tenant's own sources). */
+    public async ModelIds(_context: AccessContext): Promise<readonly string[]>
+    {
+        return await this.Shards().Ids()
+    }
+
+    private Shards(): ModelShardCache
+    {
+        return this.shardCache ??= new ModelShardCache(() => this.CollectGraphSources())
     }
 
     /**
@@ -921,8 +953,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
         {
             throw new ResponseError(ErrorCodes.InvalidRequest, PragmaticServer.NotDevelopmentMessage)
         }
-        const sources = await this.CollectGraphSources()
-        const shard = ModelShardGraph.Locate(sources.map(s => s.repo), modelId)
+        const shard = await this.Shards().Locate(modelId)
         const solution = (await this.Manager()).ActiveSolution
         if (shard === undefined || solution === undefined)
         {
@@ -941,7 +972,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
         const security: IDevWriteSecurity = this.identity === undefined
             ? new OpenDevWriteSecurity()
             : await PrincipalDevWriteSecurity.For(context, await this.ReadAuthorization())
-        this.cypherExecutor ??= new DevCypherExecutor(writer, () => languageService.GraphRevision)
+        this.cypherExecutor ??= new DevCypherExecutor(writer, () => languageService.GraphRevision, this.options.writeLock ?? new InProcessWriteLock())
         return this.cypherExecutor.Execute(request, { member, identity: { model: solution.Name, version: PragmaticServer.GraphModelVersion, namespace } }, security)
     }
 
@@ -1027,6 +1058,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
         finally
         {
             this.graphCache?.Dispose()
+            this.shardCache?.Dispose()
             this.appGraphs.clear()
             try
             {

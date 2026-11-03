@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import type { IStorage, StorageEntry } from '@pragmatic-tech-ai/todl-runtime'
 import { checkAgainst, toJSON } from '@pragmatic-tech-ai/todl'
 import type { TodlDocument } from '@pragmatic-tech-ai/todl'
-import { DevModelWriter, DevModelWriteFailedError, DevModelSchemaColocatedError, type IDevLanguageService, type IDevWriteDiagnostics } from '../dev-model-writer.js'
+import { DevModelWriter, DevModelWriteFailedError, type IDevLanguageService, type IDevWriteDiagnostics } from '../dev-model-writer.js'
 import { TodlSourceCollector } from '../todl-source-collector.js'
 
 class MemoryStorage implements IStorage
@@ -174,11 +174,19 @@ describe('DevModelWriter', () =>
         assert.notEqual(f.Writer.SourceHash(await collector.Collect(f.Storage)), a)
     })
 
-    test('Prepare refuses a member whose own sources hold schema beside instances', async () =>
+    test('a member whose own sources hold schema beside instances writes without touching the schema', async () =>
     {
         const f = new Fixture()
-        f.Storage.Files.set('extra.todl', 'namespace shop { concept Order { total : string?; } }')
-        await assert.rejects(() => f.Writer.Prepare(f.Member, Fixture.Identity), DevModelSchemaColocatedError)
+        const schema = 'namespace shop { concept Order { total : string?; } }'
+        f.Storage.Files.set('extra.todl', schema)
+        const { draft, writer } = await f.Writer.Prepare(f.Member, Fixture.Identity)
+        assert.equal(draft.Owns('shop.Order'), false)
+        writer.Begin()
+        writer.CreateNode('shop.Order', new Map([['total', '9']]))
+        writer.Commit()
+        await f.Writer.Persist(draft, f.Member)
+        assert.equal(f.Storage.Files.get('extra.todl'), schema)
+        assert.ok([...f.Storage.Files.values()].some(t => t.includes('total = "9"')))
     })
 
     test('a refresh failure after a successful write still persists and returns the last-known revision', async () =>
@@ -209,5 +217,22 @@ describe('DevModelWriter', () =>
         f.Storage.ResetWrites()
         f.Storage.FailOnWriteNumber = 1
         await assert.rejects(() => f.Writer.Persist(draft, f.Member), (e: unknown) => e instanceof DevModelWriteFailedError && !e.message.includes('disk full') && !e.message.includes('.todl'))
+    })
+})
+
+describe('DevModelWriter emit refusals', () =>
+{
+    test('a co-located file the splicer refuses to rewrite fails as DevModelWriteFailedError with nothing written', async () =>
+    {
+        const f = new Fixture()
+        const twoModels = 'namespace shop { concept Order { total : string?; } model A : shop { Order o1 { total = "1"; } } model B : shop { Order o2 { total = "2"; } } }'
+        f.Storage.Files.set('extra.todl', twoModels)
+        const { draft, writer } = await f.Writer.Prepare(f.Member, Fixture.Identity)
+        writer.Begin()
+        writer.CreateNode('shop.Order', new Map([['total', '3']]))
+        writer.Commit()
+        const before = new Map(f.Storage.Files)
+        await assert.rejects(() => f.Writer.Persist(draft, f.Member), DevModelWriteFailedError)
+        assert.deepEqual(f.Storage.Files, before)
     })
 })

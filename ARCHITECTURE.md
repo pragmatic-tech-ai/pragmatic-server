@@ -45,6 +45,11 @@
 
 - **`TenantGraphComposition`** (`tenant-graph-source.ts:44`) — `Compose()` emits each member `Repository` via `PackageManifestBridge.toResolvedJsonDocument`, merges seeds (assert-no-conflict dedup); `BuildQuery(artifact)` (:64) loads into `Domain(new MemoryPackageSource(...))` + `FrozenGraph` wrapped as `GraphQuery`. `TenantRepository` type at :7.
 - **`TenantGraphCache`** (`tenant-graph-cache.ts:15`) — caches one UNFILTERED artifact, invalidated on `repo.changed`; per request `AllowedIds(entries, context)` strips RBAC-hidden instances, **deny-wins across repos** (:85), keeps seedNodes in allowed + seedEdges both-endpoints allowed; then binds graph.
+- **`ModelShardCache`** (`model-shard-cache.ts`) — principal-independent shard index + per-shard UNFILTERED graph for model-scoped Cypher, invalidated on `repo.changed` / source-set change; `PragmaticServer.ModelGraph` filters + masks per request. `PragmaticServer` is the handler's `IModelShardSource` (`ModelGraph`, `ModelIds` → `cypher/models`).
+- **Read endpoint guards:** `cypher/query` parses once and rejects a well-formed write (names `cypher/execute`) and, when paged, a tail SKIP/LIMIT. Runtime cursors also fingerprint the reachable data (`paging/graph-data-digest.ts`), since runtime graphs re-pull per request.
+- **Cells:** `cypher-result-mapper.ts` decodes engine cells with `Cypher.CypherCellCodec` (node = `{ "$node": … }`, reserved-key maps escaped as `{ "$map": … }`) — never by shape.
+- **Writes (`cypher/execute`, dev):** `DevCypherExecutor` = in-process mutex + tenant write lease (`write-lock.ts`; `RedisWriteLock` from `RedisTenantOwnership` in a cluster, via `PragmaticServerOptions.writeLock`) held across plan→authorize→commit→persist, fenced (`Held()`) + source-hash CAS before persist. Co-located schema members are writable (TODL splices model bodies). Secured graphs forward `Materialize` (read-your-writes).
+- **Push-down (runtime):** a runtime read passes `{ text, parameters }` to `GraphForPragmaticApp`, which pushes `Cypher.CypherPushDown` ∧ the access-policy push-down (only with no record shares) into `ConnectorPrefetch` source queries.
 - **Handler:** `ServerConnectionHandler` registers `CypherProtocol.Query` under `guarded` (rate-limit→authorize→handler); `cypher-param-converter.ts` (wire params→engine, `Object.create(null)` anti-`__proto__`), `cypher-result-mapper.ts` (engine PascalCase→wire camelCase). Error map: syntax/semantic→InvalidParams, `CypherTimeout`→ -32030. Limits from `CypherLimits` config.
 
 ## Runtime data ops (`TenantPurpose.Runtime`; `src/host/sharing/`, `src/host/apps/`)
@@ -57,7 +62,7 @@
 
 ## Connectors (`src/host/` + phase-6 wiring)
 
-- `PragmaticServer.Connectors()` (:226) — reaches the first member with `.Storage` (same solution-view seam). In-process `ConnectorRuntime` + `ConnectorsHost`; `ConnectorService` + handlers over `ConnectorProtocol`. Per-tenant `ConnectorsPolicy` (allowlist / catalog-only fail-closed / provider-override) via `PolicyConnectionResolver`. ⇐ runtime-tenant vision: connectors inject instances INTO Cypher queries — NOT wired into the graph scan path today.
+- `PragmaticServer.Connectors()` (:226) — reaches the first member with `.Storage` (same solution-view seam). In-process `ConnectorRuntime` + `ConnectorsHost`; `ConnectorService` + handlers over `ConnectorProtocol`. Per-tenant `ConnectorsPolicy` (allowlist / catalog-only fail-closed / provider-override) via `PolicyConnectionResolver`. Runtime app graphs prefetch connector rows per request (`ConnectorPrefetch`), with query/policy filters pushed down.
 
 ## Identity / RBAC / authorization
 

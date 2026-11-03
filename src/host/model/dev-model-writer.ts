@@ -77,18 +77,6 @@ export class ConsoleDevWriteDiagnostics implements IDevWriteDiagnostics
     }
 }
 
-/** Thrown by Prepare when the member's own sources hold schema (concepts etc.) beside instances: a write would not round-trip it. */
-export class DevModelSchemaColocatedError extends Error
-{
-    public static readonly Message = 'model schema is co-located with instances; writes require the schema in a base project'
-
-    constructor()
-    {
-        super(DevModelSchemaColocatedError.Message)
-        this.name = 'DevModelSchemaColocatedError'
-    }
-}
-
 /** Thrown when persisting fails; any partially written files have been restored. */
 export class DevModelWriteFailedError extends Error
 {
@@ -121,11 +109,8 @@ export class DevModelWriter
         const sources = await this.collector.Collect(member.Storage)
         const resolved = await this.languageService.ResolveBasesFor(member.Storage)
         const bases = checkAgainst(resolved.bases, []).model
+        // Schema declared in the member's own sources is frozen by the draft and round-trips verbatim (only model bodies are rewritten).
         const draft = ModelDraft.fromSources([bases], sources, { namespace: identity.namespace })
-        if (draft.toJSON().nodes.some(n => n.metaKind !== null))
-        {
-            throw new DevModelSchemaColocatedError()
-        }
         const bake = (d: ModelDraft): Cypher.ICypherGraph =>
             new Cypher.GraphQueryAdapter(mask.Apply(ModelDraftBaker.BakeQuery(d, { model: identity.model, version: identity.version }), d.model))
         const writer = new ModelDraftWriter(draft, new SnowflakeIdGenerator(), bake)
@@ -141,7 +126,17 @@ export class DevModelWriter
     public async Persist(draft: ModelDraft, member: { Storage: IStorage }): Promise<number>
     {
         const storage = member.Storage
-        const targets = [...draft.toTodlByFile()]
+        let targets: [string, string][]
+        try
+        {
+            // emitting can refuse (e.g. a co-located file the splicer cannot rewrite faithfully): nothing is written then
+            targets = [...draft.toTodlByFile()]
+        }
+        catch (error)
+        {
+            this.diagnostics.WriteFailed(error)
+            throw new DevModelWriteFailedError(DevModelWriter.FailedMessage)
+        }
         const snapshots = new Map<string, string | undefined>()
         for (const [uri] of targets)
         {

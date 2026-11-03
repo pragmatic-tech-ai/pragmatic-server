@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readdirSync, mkdirSync, mkdtempSync, cpSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
-import { InMemoryMessageSocket, PragmaticClient, ErrorCodes, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { InMemoryMessageSocket, PragmaticClient, ErrorCodes, AppWriteStatus, CypherCells } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherExecuteParams } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { toJSON, ModelShardExtractor } from '@pragmatic-tech-ai/todl'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
@@ -54,7 +54,7 @@ class ExecWorld
         const handler = ServerConnectionHandler.Attach(
             serverSocket, this.language, this.manager, context, () => Promise.reject(new Error(ExecFixture.NoConnectors)), ctx => this.server.Graph(ctx),
             undefined, undefined, undefined, undefined, undefined, undefined, purpose, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-            this.fieldMasks, ctx => this.server.ConnectorReadAuthorizationFor(ctx), undefined, (ctx, id) => this.server.ModelGraph(ctx, id),
+            this.fieldMasks, ctx => this.server.ConnectorReadAuthorizationFor(ctx), undefined, this.server,
             (ctx, id, request) => this.server.ExecuteCypher(ctx, id, request))
         this.clients.push(PragmaticClient.CreateOverSocket(clientSocket))
         this.handlers.push(handler)
@@ -149,12 +149,14 @@ class ExecFixture
         }
     }
 
+    public static CoLocatedConcept(): string
+    {
+        return `concept ${PpSecurityHarness.Concept} { ${PpSecurityHarness.OwningBuField} : string?; label : string?; secret : string?; }`
+    }
+
     public static CoLocatedTodl(): string
     {
-        const bu = PpSecurityHarness.OwningBuField
-        const widget = PpSecurityHarness.Concept
-        return `namespace acme { concept ${widget} { ${bu} : string?; label : string?; secret : string?; } `
-            + `model acmeModel : acme { ${widget} a1 { label = "alpha"; } } }`
+        return `namespace acme { ${ExecFixture.CoLocatedConcept()} model acmeModel : acme { ${PpSecurityHarness.Concept} a1 { label = "alpha"; } } }`
     }
 
     private static WriteBase(solution: string): void
@@ -313,7 +315,7 @@ test('RETURN rows come back as masked CypherNodeCellDto cells', async () =>
         const result = await handler.RunCypherExecute(ExecFixture.P(world.Shop, 'MATCH (w:Widget) RETURN w'))
         assert.equal(result.status, AppWriteStatus.Applied)
         assert.equal(result.rows.length, 1)
-        const cell = result.rows[0]![0] as { id: string, fields: Record<string, unknown> }
+        const cell = CypherCells.AsNode(result.rows[0]![0])!
         assert.equal(typeof cell.id, 'string')
         assert.ok(cell.fields['label'] !== undefined)
         assert.ok(!JSON.stringify(result).includes(ExecFixture.Secret))
@@ -368,17 +370,18 @@ test('a canonical model id stays stable across writes: second execute and a mode
     })
 })
 
-test('a schema co-located with instances is refused in-band (Invalid), nothing persisted and the concept survives', async () =>
+test('a write to a member whose schema is co-located with its instances applies and keeps the schema verbatim', async () =>
 {
     await ExecFixture.With(false, async world =>
     {
         const handler = world.Connect(ExecFixture.Context(ExecFixture.Plain))
-        const source = world.Source()
+        const schema = ExecFixture.CoLocatedConcept()
+        assert.ok(world.Source().includes(schema))
         const result = await handler.RunCypherExecute(ExecFixture.P(world.Shop, ExecFixture.Create))
-        assert.equal(result.status, AppWriteStatus.Invalid)
-        assert.ok((result.reason ?? '').includes('co-located'))
-        assert.equal(world.Source(), source)
-        assert.ok(world.Source().includes('concept Widget'))
+        assert.equal(result.status, AppWriteStatus.Applied)
+        assert.ok(world.Source().includes(schema), world.Source())
+        const page = await handler.RunCypherQuery({ cypher: ExecFixture.Find, modelId: world.Shop })
+        assert.ok(JSON.stringify(page.items).includes('zeta'))
     }, true)
 })
 
@@ -388,9 +391,8 @@ test('a model owned by the FIRST instance-bearing member resolves too (not only 
     {
         const handler = world.Connect(ExecFixture.Context(ExecFixture.Plain))
         const baseModel = world.ModelIds.find(i => i.includes('BaseM'))!
-        // BaseM lives in the first member (schema co-located with its instances): resolution succeeds, the schema guard refuses in-band
+        // BaseM lives in the first member (schema co-located with its instances): it resolves and the write applies
         const result = await handler.RunCypherExecute(ExecFixture.P(baseModel, ExecFixture.Create))
-        assert.equal(result.status, AppWriteStatus.Invalid)
-        assert.ok((result.reason ?? '').includes('co-located'))
+        assert.equal(result.status, AppWriteStatus.Applied)
     })
 })
