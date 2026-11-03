@@ -7,6 +7,7 @@ import { PendingWork, type IHoldsPendingWork } from '../../shell/holds-pending-w
 import { OptionViewModel } from '../../shell/option-view-model.js'
 import { PortalPageViewModel } from '../../shell/portal-page-view-model.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
+import { HiveAgentInstallViewModel } from './hive-agent-install-view-model.js'
 import { HiveInstallMode, HiveInstallViewModel } from './hive-install-view-model.js'
 import { HiveOptions } from './hive-options.js'
 import type { HivesSectionService } from './hives-section-service.js'
@@ -20,6 +21,17 @@ export enum ProvisionStep
     Hive,
     Review,
     Bootstrap,
+}
+
+// How the Bootstrap step installs the new hive's agent. Deciding: the
+// hive's bundle is still loading. Automatic: the control plane installs it (a
+// Local hive); the provision's token is dropped unshown, since the install
+// issues its own. Manual: the token, bundle and commands, as before.
+export enum ProvisionInstallPath
+{
+    Deciding,
+    Automatic,
+    Manual,
 }
 
 // The wizard's text fields; each value is also the bound property's name.
@@ -160,6 +172,18 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
     private static readonly AgentSavedProperty = 'AgentSaved'
     private static readonly OwnerCopyStatusProperty = 'OwnerCopyStatus'
     private static readonly AgentCopyStatusProperty = 'AgentCopyStatus'
+    private static readonly InstallPathProperty = 'InstallPath'
+    private static readonly IsAutomaticInstallProperty = 'IsAutomaticInstall'
+    private static readonly IsManualInstallProperty = 'IsManualInstall'
+    private static readonly AgentInstallProperty = 'AgentInstall'
+    private static readonly ShowsAgentTokenProperty = 'ShowsAgentToken'
+    private static readonly ShowsOneTimeValuesProperty = 'ShowsOneTimeValues'
+    private static readonly CanInstallManuallyProperty = 'CanInstallManually'
+    private static readonly ShowsManualInstallProperty = 'ShowsManualInstall'
+    private static readonly ShowsInstallPanelProperty = 'ShowsInstallPanel'
+    private static readonly ManualToggleLabelProperty = 'ManualToggleLabel'
+    private static readonly ShowManualLabel = 'Install manually'
+    private static readonly HideManualLabel = 'Hide manual install'
 
     // The text fields, keyed by field; a missing entry reads as ''.
     private readonly texts = new Map<ProvisionField, string>()
@@ -199,6 +223,13 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
     private agentSaved = false
     private ownerCopyStatus = ProvisionWizardPageViewModel.NoText
     private agentCopyStatus = ProvisionWizardPageViewModel.NoText
+    private installPath = ProvisionInstallPath.Deciding
+    private agentInstall: HiveAgentInstallViewModel | undefined
+    private manualOpen = false
+    // The Install manually values as last raised, for their change notifications.
+    private manualShown: ManualSnapshot
+    private readonly toggleManualCommand: RelayCommand
+    private readonly issueManualTokenCommand: RelayCommand
 
     public constructor(session: PortalSessionService, private readonly section: HivesSectionService)
     {
@@ -226,6 +257,9 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
         this.finishCommand = new RelayCommand(() => this.Finish(), () => this.CanFinish())
         this.copyOwnerPasswordCommand = new RelayCommand(() => { void this.Copy(this.ownerPassword, s => this.SetOwnerCopyStatus(s)) }, () => this.ownerPassword.length > 0)
         this.copyAgentTokenCommand = new RelayCommand(() => { void this.Copy(this.agentToken, s => this.SetAgentCopyStatus(s)) }, () => this.agentToken.length > 0)
+        this.toggleManualCommand = new RelayCommand(() => this.ToggleManual(), () => this.CanInstallManually)
+        this.issueManualTokenCommand = this.MutatingCommand(() => this.IssueManualToken(), () => this.CanInstallManually && this.agentToken.length === 0)
+        this.manualShown = this.ManualSnapshot()
         this.SyncSteps()
     }
 
@@ -597,6 +631,77 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
         return this.install
     }
 
+    // How the Bootstrap step installs the agent.
+    public get InstallPath(): ProvisionInstallPath
+    {
+        return this.installPath
+    }
+
+    public get IsAutomaticInstall(): boolean
+    {
+        return this.installPath === ProvisionInstallPath.Automatic
+    }
+
+    public get IsManualInstall(): boolean
+    {
+        return this.installPath === ProvisionInstallPath.Manual
+    }
+
+    // The automatic install's progress; undefined unless the path is Automatic.
+    public get AgentInstall(): HiveAgentInstallViewModel | undefined
+    {
+        return this.agentInstall
+    }
+
+    // Whether the agent token shows: on the manual path, or once issued for a
+    // manual install after the automatic one failed. Never while deciding.
+    public get ShowsAgentToken(): boolean
+    {
+        return this.agentToken.length > 0 && this.installPath !== ProvisionInstallPath.Deciding
+    }
+
+    // Whether any one-time value shows (the shown-once warning goes with them).
+    public get ShowsOneTimeValues(): boolean
+    {
+        return this.revealsOwner || this.ShowsAgentToken
+    }
+
+    // True once the automatic install failed: Install manually is offered.
+    public get CanInstallManually(): boolean
+    {
+        return this.IsAutomaticInstall && this.agentInstall?.IsFailed === true
+    }
+
+    // Whether the Install manually expander is open (after a failed automatic install).
+    public get ShowsManualInstall(): boolean
+    {
+        return this.CanInstallManually && this.manualOpen
+    }
+
+    // Whether the bundle and commands show: the manual path, or the open expander.
+    public get ShowsInstallPanel(): boolean
+    {
+        return this.IsManualInstall || this.ShowsManualInstall
+    }
+
+    public get ManualToggleLabel(): string
+    {
+        return this.manualOpen ? ProvisionWizardPageViewModel.HideManualLabel : ProvisionWizardPageViewModel.ShowManualLabel
+    }
+
+    // Opens or closes Install manually.
+    public get ToggleManualCommand(): RelayCommand
+    {
+        return this.toggleManualCommand
+    }
+
+    // Issues a one-time agent token for the manual install (shown once here,
+    // like the hive page's Reissue). Offered after a failed automatic install.
+    public get IssueManualTokenCommand(): RelayCommand
+    {
+        return this.issueManualTokenCommand
+    }
+
     // True when the provision created a new tenant, so Bootstrap also shows its Owner password.
     public get RevealsOwner(): boolean
     {
@@ -783,9 +888,12 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
         return this.step === ProvisionStep.Review && !this.submitting && this.CanProvision()
     }
 
+    // The agent side is done when its token is saved, or, on the automatic
+    // path, when no token is shown (the install issues and stores its own).
     private CanFinish(): boolean
     {
-        return this.IsBootstrapStep && this.agentSaved && (!this.revealsOwner || this.ownerSaved)
+        const agentDone = this.agentToken.length === 0 ? this.IsAutomaticInstall : this.agentSaved
+        return this.IsBootstrapStep && agentDone && (!this.revealsOwner || this.ownerSaved)
     }
 
     private Next(): void
@@ -825,7 +933,7 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
             this.SetRevealsOwner(ownerPassword.length > 0)
             this.SetSecrets(ownerPassword, result.secrets.agentToken)
             this.SetStep(ProvisionStep.Bootstrap)
-            void this.install.Load(result.hive.id)
+            void this.ChooseInstallPath(result.hive.id)
         }
         catch (e)
         {
@@ -838,6 +946,126 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
         finally
         {
             this.SetSubmitting(false)
+        }
+    }
+
+    // Loads the new hive's bundle, then takes the automatic path when it says
+    // so (dropping the provision's token unshown and starting the install),
+    // else the manual one (a failed bundle read shows on the manual path).
+    private async ChooseInstallPath(hiveId: string): Promise<void>
+    {
+        await this.install.Load(hiveId)
+        if (!this.install.AutoInstall)
+        {
+            this.SetInstallPath(ProvisionInstallPath.Manual)
+            return
+        }
+        const agentInstall = new HiveAgentInstallViewModel(this.Session, hiveId, this.section.PollScheduler)
+        agentInstall.PropertyChanged(HiveAgentInstallViewModel.FailedProperty).subscribe(() => this.RaiseManualChanged())
+        agentInstall.PropertyChanged(HiveAgentInstallViewModel.InstallingProperty).subscribe(() => this.OnInstallRestarted())
+        const old = this.agentInstall
+        this.agentInstall = agentInstall
+        this.RaisePropertyChanged(ProvisionWizardPageViewModel.AgentInstallProperty, old, agentInstall)
+        this.SetSecrets(this.ownerPassword, ProvisionWizardPageViewModel.NoText)
+        this.SetInstallPath(ProvisionInstallPath.Automatic)
+        await agentInstall.Start()
+        if (!this.IsShowing)
+        {
+            agentInstall.Stop()
+        }
+    }
+
+    // Shown: follow the automatic install (polling while it runs).
+    protected override OnShown(): void
+    {
+        void this.agentInstall?.Resume()
+    }
+
+    // Left: stop polling.
+    protected override OnHidden(): void
+    {
+        this.agentInstall?.Stop()
+    }
+
+    // A Retry issues the install's own token, which replaces any token issued
+    // for a manual install: that one no longer works, so it stops showing.
+    private OnInstallRestarted(): void
+    {
+        if (this.agentInstall?.IsInstalling !== true || this.agentToken.length === 0)
+        {
+            return
+        }
+        this.AgentSaved = false
+        this.SetSecrets(this.ownerPassword, ProvisionWizardPageViewModel.NoText)
+    }
+
+    // Runs inside the page's Guard: a refusal shows in CommandErrorText.
+    private async IssueManualToken(): Promise<void>
+    {
+        const token = await this.Session.Client.ReissueAgentToken(this.provisionedHiveId)
+        this.AgentSaved = false
+        this.SetSecrets(this.ownerPassword, token)
+    }
+
+    private ToggleManual(): void
+    {
+        if (!this.CanInstallManually)
+        {
+            return
+        }
+        this.manualOpen = !this.manualOpen
+        this.RaiseManualChanged()
+    }
+
+    private ManualSnapshot(): ManualSnapshot
+    {
+        return {
+            CanInstallManually: this.CanInstallManually,
+            ShowsManualInstall: this.ShowsManualInstall,
+            ShowsInstallPanel: this.ShowsInstallPanel,
+            ManualToggleLabel: this.ManualToggleLabel,
+        }
+    }
+
+    // Raises whichever Install manually values changed since last raised.
+    private RaiseManualChanged(): void
+    {
+        const C = ProvisionWizardPageViewModel
+        const b = this.manualShown
+        const now = this.ManualSnapshot()
+        this.manualShown = now
+        this.RaiseIfChanged(C.CanInstallManuallyProperty, b.CanInstallManually, now.CanInstallManually)
+        this.RaiseIfChanged(C.ShowsManualInstallProperty, b.ShowsManualInstall, now.ShowsManualInstall)
+        this.RaiseIfChanged(C.ShowsInstallPanelProperty, b.ShowsInstallPanel, now.ShowsInstallPanel)
+        this.RaiseIfChanged(C.ManualToggleLabelProperty, b.ManualToggleLabel, now.ManualToggleLabel)
+        this.toggleManualCommand.RaiseCanExecuteChanged()
+        this.issueManualTokenCommand.RaiseCanExecuteChanged()
+    }
+
+    private SetInstallPath(next: ProvisionInstallPath): void
+    {
+        const C = ProvisionWizardPageViewModel
+        const old = this.installPath
+        if (old === next)
+        {
+            return
+        }
+        const was = [this.IsAutomaticInstall, this.IsManualInstall, this.ShowsAgentToken, this.ShowsOneTimeValues] as const
+        this.installPath = next
+        this.RaisePropertyChanged(C.InstallPathProperty, old, next)
+        this.RaiseIfChanged(C.IsAutomaticInstallProperty, was[0], this.IsAutomaticInstall)
+        this.RaiseIfChanged(C.IsManualInstallProperty, was[1], this.IsManualInstall)
+        this.RaiseIfChanged(C.ShowsAgentTokenProperty, was[2], this.ShowsAgentToken)
+        this.RaiseIfChanged(C.ShowsOneTimeValuesProperty, was[3], this.ShowsOneTimeValues)
+        this.RaiseManualChanged()
+        this.finishCommand.RaiseCanExecuteChanged()
+    }
+
+    private RaiseIfChanged<T>(name: string, old: T, now: T): void
+    {
+        if (old !== now)
+        {
+            this.RaisePropertyChanged(name, old, now)
         }
     }
 
@@ -991,8 +1219,10 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
         {
             return
         }
+        const wasShown = this.ShowsOneTimeValues
         this.revealsOwner = next
         this.RaisePropertyChanged(ProvisionWizardPageViewModel.RevealsOwnerProperty, old, next)
+        this.RaiseIfChanged(ProvisionWizardPageViewModel.ShowsOneTimeValuesProperty, wasShown, this.ShowsOneTimeValues)
     }
 
     private Choice<T>(option: OptionViewModel<T> | undefined): T
@@ -1130,8 +1360,11 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
         const oldOwner = this.ownerPassword
         const oldAgent = this.agentToken
         const wasPending = this.HasPendingSecret
+        const wasShown = [this.ShowsAgentToken, this.ShowsOneTimeValues] as const
         this.ownerPassword = ownerPassword
         this.agentToken = agentToken
+        this.RaiseIfChanged(C.ShowsAgentTokenProperty, wasShown[0], this.ShowsAgentToken)
+        this.RaiseIfChanged(C.ShowsOneTimeValuesProperty, wasShown[1], this.ShowsOneTimeValues)
         if (oldOwner !== ownerPassword)
         {
             this.RaisePropertyChanged(C.OwnerPasswordProperty, oldOwner, ownerPassword)
@@ -1186,5 +1419,15 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
         this.finishCommand.RaiseCanExecuteChanged()
         this.copyOwnerPasswordCommand.RaiseCanExecuteChanged()
         this.copyAgentTokenCommand.RaiseCanExecuteChanged()
+        this.issueManualTokenCommand.RaiseCanExecuteChanged()
     }
+}
+
+// The Install manually expander's bound values, for their change notifications.
+interface ManualSnapshot
+{
+    readonly CanInstallManually: boolean
+    readonly ShowsManualInstall: boolean
+    readonly ShowsInstallPanel: boolean
+    readonly ManualToggleLabel: string
 }

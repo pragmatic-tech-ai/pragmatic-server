@@ -53,6 +53,7 @@ export abstract class PortalPageViewModel extends Observable
     private commandErrorText = ''
     private loadGeneration = 0
     private mutating = false
+    private showing = false
     private readonly mutatingCommands: RelayCommand[] = []
 
     public constructor(session: PortalSessionService)
@@ -145,6 +146,48 @@ export abstract class PortalPageViewModel extends Observable
             this.SetErrorText(PortalPageViewModel.MessageOf(e))
             this.SetState(PageState.Error)
         }
+    }
+
+    // Whether the page is on screen: its section is the active one and it is
+    // the section's current page.
+    public get IsShowing(): boolean
+    {
+        return this.showing
+    }
+
+    // Called by the section when the page comes on screen (presented, returned
+    // to, or its section re-activated). Idempotent: OnShown runs once per
+    // appearance.
+    public NotifyShown(): void
+    {
+        if (this.showing)
+        {
+            return
+        }
+        this.showing = true
+        this.OnShown()
+    }
+
+    // Called by the section when the page leaves the screen (covered by
+    // another page, popped, or its section left). Idempotent.
+    public NotifyHidden(): void
+    {
+        if (!this.showing)
+        {
+            return
+        }
+        this.showing = false
+        this.OnHidden()
+    }
+
+    // The page came on screen; e.g. resume polling. No-op by default.
+    protected OnShown(): void
+    {
+    }
+
+    // The page left the screen; e.g. stop polling. No-op by default.
+    protected OnHidden(): void
+    {
     }
 
     // The generation of the latest Refresh(). A LoadCore that applies data

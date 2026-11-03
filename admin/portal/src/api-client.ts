@@ -1,9 +1,10 @@
-import type { ClientDto, CreatedTenantDto, EnvironmentDto, HiveDto, FleetHiveDto, ManifestDto, OperatorSummaryDto, GatingDto, SelectionDto, HiveRolloutDto, TenantDto, GraphDto, GraphLoadedDto, OperatorDto, PromotionResultDto, ProvisionInputDto, ProvisionResultDto, PolicyDto, ActivityDto, ObservationDto, LedgerDto, HiveBootstrapDto, RolloutRegistrationDto } from './portal-types.js'
+import type { ClientDto, CreatedTenantDto, EnvironmentDto, HiveDto, FleetHiveDto, ManifestDto, OperatorSummaryDto, GatingDto, SelectionDto, HiveRolloutDto, TenantDto, GraphDto, GraphLoadedDto, OperatorDto, PromotionResultDto, ProvisionInputDto, ProvisionResultDto, PolicyDto, ActivityDto, ObservationDto, LedgerDto, HiveBootstrapDto, RolloutRegistrationDto, AgentInstallStatusDto } from './portal-types.js'
 
 // Thrown for non-2xx control-plane responses; Message carries the server's error text.
 export class ApiError extends Error
 {
     public static readonly UnauthorizedStatus = 401
+    public static readonly NotFoundStatus = 404
 
     public readonly Status: number
     public readonly rollback?: { rolledBack: string[]; residue: string[] }
@@ -63,6 +64,7 @@ export class ControlPlaneClient
     private static readonly LedgerSegment = 'ledger'
     private static readonly BootstrapSegment = 'bootstrap'
     private static readonly RolloutRegistrationSegment = 'rollout-registration'
+    private static readonly AgentInstallSegment = 'agent-install'
     private static readonly LimitParam = 'limit'
     private static readonly PoliciesRoute = '/api/policies'
     private static readonly PolicySegment = 'policy'
@@ -281,6 +283,29 @@ export class ControlPlaneClient
     {
         const reply = await this.Send<RolloutRegistrationDto>(this.HiveSubRoute(hiveId, ControlPlaneClient.RolloutRegistrationSegment), { method: ControlPlaneClient.MethodPost })
         return reply.token
+    }
+
+    // Starts the control plane's automatic agent install for a Local hive; the reply is its first status (never a token).
+    public async StartAgentInstall(hiveId: string): Promise<AgentInstallStatusDto>
+    {
+        return await this.Send<AgentInstallStatusDto>(this.HiveSubRoute(hiveId, ControlPlaneClient.AgentInstallSegment), { method: ControlPlaneClient.MethodPost })
+    }
+
+    // The hive's latest automatic install status; null when none has run since the control plane started.
+    public async GetAgentInstall(hiveId: string): Promise<AgentInstallStatusDto | null>
+    {
+        try
+        {
+            return await this.Send<AgentInstallStatusDto>(this.HiveSubRoute(hiveId, ControlPlaneClient.AgentInstallSegment), undefined)
+        }
+        catch (e)
+        {
+            if (e instanceof ApiError && e.Status === ApiError.NotFoundStatus)
+            {
+                return null
+            }
+            throw e
+        }
     }
 
     private HivePolicyRoute(hiveId: string, segment: string): string

@@ -1,7 +1,8 @@
 import { afterEach, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { ControlPlaneClient } from '../src/api-client.js'
-import type { GatingDto, HiveDto, HiveRolloutDto, ManifestDto, OperatorSummaryDto, SelectionDto, TenantDto } from '../src/portal-types.js'
+import { ApiError, ControlPlaneClient } from '../src/api-client.js'
+import { AgentInstallState, AgentInstallStep } from '../src/portal-types.js'
+import type { AgentInstallStatusDto, GatingDto, HiveDto, HiveRolloutDto, ManifestDto, OperatorSummaryDto, SelectionDto, TenantDto } from '../src/portal-types.js'
 
 type Recorded = { route: string; init: RequestInit | undefined }
 
@@ -330,5 +331,29 @@ describe('ControlPlaneClient platform records', () =>
         assert.equal(call.init?.body, undefined)
         assert.equal(call.init?.credentials, 'same-origin')
         assert.deepEqual(rollouts, payload)
+    })
+
+    it('StartAgentInstall POSTs /api/hives/ID/agent-install and returns the status', async () =>
+    {
+        const payload: AgentInstallStatusDto = { state: AgentInstallState.Installing, step: AgentInstallStep.PreparingCluster, startedAt: '2026-11-03T10:00:00.000Z' }
+        FetchStub.Install(payload)
+        const status = await new ControlPlaneClient().StartAgentInstall('h 1')
+        const call = FetchStub.Calls[0]!
+        assert.equal(call.route, '/api/hives/h%201/agent-install')
+        assert.equal(call.init?.method, 'POST')
+        assert.deepEqual(status, payload)
+    })
+
+    it('GetAgentInstall GETs the status, and reads a 404 as no install yet', async () =>
+    {
+        const payload: AgentInstallStatusDto = { state: AgentInstallState.Connected, step: AgentInstallStep.WaitingForCheckIn, startedAt: '2026-11-03T10:00:00.000Z', finishedAt: '2026-11-03T10:01:00.000Z' }
+        FetchStub.Install(payload)
+        assert.deepEqual(await new ControlPlaneClient().GetAgentInstall('h1'), payload)
+        assert.equal(FetchStub.Calls[0]!.route, '/api/hives/h1/agent-install')
+        assert.equal(FetchStub.Calls[0]!.init?.method, undefined)
+        globalThis.fetch = (async () => ({ ok: false, status: 404, json: async () => ({ error: 'Not found' }) }) as Response) as typeof fetch
+        assert.equal(await new ControlPlaneClient().GetAgentInstall('h1'), null)
+        globalThis.fetch = (async () => ({ ok: false, status: 500, json: async () => ({ error: 'boom' }) }) as Response) as typeof fetch
+        await assert.rejects(new ControlPlaneClient().GetAgentInstall('h1'), (e: unknown) => e instanceof ApiError && e.Status === 500)
     })
 })

@@ -1,4 +1,5 @@
 import { ServiceProvider, type ServiceToken } from '@pragmatic-tech-ai/mural/runtime'
+import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { Capability } from '@pragmatic-tech-ai/mural/framework/shell/module.js'
 import { ClipboardService } from '@pragmatic-tech-ai/mural/framework/shell/services/clipboard-service.js'
 import { ContentHostService } from '@pragmatic-tech-ai/mural/framework/shell/services/content-host-service.js'
@@ -6,9 +7,11 @@ import { DialogService, type DialogOptions } from '@pragmatic-tech-ai/mural/fram
 import { NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
 import { ApiError, type ControlPlaneClient } from '../../api-client.js'
 import { OperatorContext } from '../../operator-context.js'
+import { AgentInstallState, AgentInstallStep, type AgentInstallStatusDto } from '../../portal-types.js'
 import type { ActivityDto, ClientDto, CreatedTenantDto, FleetHiveDto, GatingDto, HiveBootstrapDto, HiveDto, HiveRolloutDto, LedgerDto, ManifestDto, ObservationDto, OperatorSummaryDto, PolicyDto, ProvisionInputDto, ProvisionResultDto, SelectionDto, TenantDto } from '../../portal-types.js'
 import { DownloadService } from '../download-service.js'
 import type { IPageReloader } from '../page-reloader.js'
+import { PollScheduling, type IPollScheduler } from '../poll-scheduler.js'
 import { PortalSessionService } from '../portal-session-service.js'
 
 // Counts reloads instead of touching window.location.
@@ -101,6 +104,67 @@ export class Inspect
     }
 }
 
+// A poll scheduler driven by hand: Schedule queues the poll; RunPending runs
+// every queued poll still live (not disposed), as the timer would.
+export class FakePollScheduler implements IPollScheduler
+{
+    public readonly Delays: number[] = []
+    private queue: FakeScheduledPoll[] = []
+
+    public Schedule(delayMs: number, poll: () => void): IDisposable
+    {
+        this.Delays.push(delayMs)
+        const scheduled = new FakeScheduledPoll(poll)
+        this.queue.push(scheduled)
+        return scheduled
+    }
+
+    // How many queued polls are still live.
+    public get Pending(): number
+    {
+        return this.queue.filter(p => p.Live).length
+    }
+
+    public RunPending(): void
+    {
+        const due = this.queue
+        this.queue = []
+        for (const p of due)
+        {
+            p.Run()
+        }
+    }
+}
+
+// One queued fake poll; disposing it cancels it.
+export class FakeScheduledPoll implements IDisposable
+{
+    private live = true
+
+    public constructor(private readonly poll: () => void)
+    {
+    }
+
+    public get Live(): boolean
+    {
+        return this.live
+    }
+
+    public Run(): void
+    {
+        if (this.live)
+        {
+            this.live = false
+            this.poll()
+        }
+    }
+
+    public dispose(): void
+    {
+        this.live = false
+    }
+}
+
 // A DialogService stand-in modelled on the real one: records each Show, one
 // dialog open at a time (a new Show supersedes the open one, resolving it
 // undefined), Close resolves whichever dialog is open now, and Dismiss is the
@@ -165,6 +229,16 @@ export class FakeControlPlane
     public ReissuedToken = 'fixture-reissued-token'
     // While set, the bootstrap read fails with it (e.g. a 409 for an agent channel that is off).
     public BootstrapFailure: Error | undefined
+    // What the bootstrap says about the automatic install (true: a Local hive on a control plane that installs it).
+    public AutoInstall = false
+    // The automatic install: each StartAgentInstall answers StartReply (or throws StartFailure);
+    // each GetAgentInstall answers the next of InstallReplies, the last one repeating (none: null).
+    public StartReply: AgentInstallStatusDto = FakeControlPlane.InstallStatus(AgentInstallState.Installing, AgentInstallStep.PreparingCluster)
+    public StartFailure: Error | undefined
+    public InstallReplies: Array<AgentInstallStatusDto | null> = []
+    public InstallReadFailure: Error | undefined
+    public readonly InstallStarts: string[] = []
+    public InstallReads = 0
     public readonly Reissued: string[] = []
     public ProvisionCalls = 0
     public readonly Provisioned: ProvisionInputDto[] = []
@@ -593,7 +667,44 @@ export class FakeControlPlane
             tokenSecretName: 'pragmatic-hive-' + hiveId + '-agent-token',
             tokenSecretKey: 'token',
             channelUrl: 'http://host.docker.internal:7001',
+            autoInstall: this.AutoInstall,
         }
+    }
+
+    // An install status at a step (startedAt fixed; finishedAt once settled).
+    public static InstallStatus(state: AgentInstallState, step: AgentInstallStep, error?: string): AgentInstallStatusDto
+    {
+        const status: AgentInstallStatusDto = { state, step, startedAt: '2026-11-03T10:00:00.000Z' }
+        if (state !== AgentInstallState.Installing)
+        {
+            status.finishedAt = '2026-11-03T10:05:00.000Z'
+        }
+        if (error !== undefined)
+        {
+            status.error = error
+        }
+        return status
+    }
+
+    public async StartAgentInstall(hiveId: string): Promise<AgentInstallStatusDto>
+    {
+        if (this.StartFailure !== undefined)
+        {
+            throw this.StartFailure
+        }
+        this.InstallStarts.push(hiveId)
+        return { ...this.StartReply }
+    }
+
+    public async GetAgentInstall(_hiveId: string): Promise<AgentInstallStatusDto | null>
+    {
+        this.InstallReads++
+        if (this.InstallReadFailure !== undefined)
+        {
+            throw this.InstallReadFailure
+        }
+        const next = this.InstallReplies.length > 1 ? this.InstallReplies.shift() : this.InstallReplies[0]
+        return next === undefined || next === null ? null : { ...next }
     }
 
     public async ReissueAgentToken(hiveId: string): Promise<string>
@@ -659,6 +770,14 @@ export class PortalTestHost
         const saved: Array<[string, string]> = []
         this.Provider.registerInstance(DownloadService.Key, new DownloadService(this.Provider, (fileName, text) => { saved.push([fileName, text]) }))
         return saved
+    }
+
+    // Registers a hand-driven poll scheduler under PollScheduling.Key.
+    public UsePolls(): FakePollScheduler
+    {
+        const polls = new FakePollScheduler()
+        this.Provider.registerInstance(PollScheduling.Key, polls)
+        return polls
     }
 
     // Registers a ClipboardService whose writes land in the returned array.

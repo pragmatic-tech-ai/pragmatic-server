@@ -53,6 +53,8 @@ export class HiveInstallViewModel extends Observable
     private static readonly FileNameProperty = 'FileName'
     private static readonly ChannelUrlProperty = 'ChannelUrl'
     private static readonly StatusProperty = 'Status'
+    // The bound name a page watches to learn which install path the hive offers.
+    public static readonly AutoInstallProperty = 'AutoInstall'
 
     private bundle: HiveBootstrapDto | undefined
     private loading = false
@@ -77,6 +79,13 @@ export class HiveInstallViewModel extends Observable
     public get HasBundle(): boolean
     {
         return this.bundle !== undefined
+    }
+
+    // True once the bundle says the control plane installs this hive's agent
+    // itself (a Local hive); false before it loads or when it failed to.
+    public get AutoInstall(): boolean
+    {
+        return this.bundle?.autoInstall === true
     }
 
     // Why the bundle is unavailable (e.g. the agent channel is off); '' otherwise.
@@ -214,6 +223,7 @@ export class HiveInstallViewModel extends Observable
             Commands: this.Commands,
             FileName: this.FileName,
             ChannelUrl: this.ChannelUrl,
+            AutoInstall: this.AutoInstall,
         }
     }
 
@@ -226,6 +236,7 @@ export class HiveInstallViewModel extends Observable
         this.RaiseIfChanged(C.CommandsProperty, b.Commands, this.Commands)
         this.RaiseIfChanged(C.FileNameProperty, b.FileName, this.FileName)
         this.RaiseIfChanged(C.ChannelUrlProperty, b.ChannelUrl, this.ChannelUrl)
+        this.RaiseIfChanged(C.AutoInstallProperty, b.AutoInstall, this.AutoInstall)
         if (b.HasBundle !== this.HasBundle)
         {
             this.downloadCommand.RaiseCanExecuteChanged()
@@ -251,4 +262,5 @@ interface HiveInstallSnapshot
     readonly Commands: string
     readonly FileName: string
     readonly ChannelUrl: string
+    readonly AutoInstall: boolean
 }

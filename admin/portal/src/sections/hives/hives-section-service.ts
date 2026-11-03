@@ -1,4 +1,5 @@
 import { ServiceKey, type IServiceProvider } from '@pragmatic-tech-ai/mural/runtime'
+import { PollScheduling, TimerPollScheduler, type IPollScheduler } from '../../shell/poll-scheduler.js'
 import { PortalSectionService } from '../../shell/portal-section-service.js'
 import type { PortalPageViewModel } from '../../shell/portal-page-view-model.js'
 import { AgentTokenRevealPageViewModel } from './agent-token-reveal-page-view-model.js'
@@ -13,9 +14,18 @@ export class HivesSectionService extends PortalSectionService
 {
     public static readonly Key = new ServiceKey<HivesSectionService>('HivesSectionService')
 
+    private readonly timers = new TimerPollScheduler()
+
     public constructor(provider: IServiceProvider)
     {
         super(provider)
+    }
+
+    // Drives the automatic install's status polling: the registered scheduler
+    // (tests), else the browser's timers.
+    public get PollScheduler(): IPollScheduler
+    {
+        return this.Provider.get(PollScheduling.Key) ?? this.timers
     }
 
     public OpenHive(id: string): void

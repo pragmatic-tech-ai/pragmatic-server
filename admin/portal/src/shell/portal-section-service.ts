@@ -238,6 +238,7 @@ export abstract class PortalSectionService extends ServiceBase implements IActiv
             else
             {
                 this.Host.View(current)
+                PortalSectionService.Shown(current)
                 reload = !(current instanceof PortalPageViewModel && current.IsLoading)
             }
         }
@@ -282,6 +283,10 @@ export abstract class PortalSectionService extends ServiceBase implements IActiv
     private ShowCurrent(old: Observable | undefined): void
     {
         const current = this.Current
+        if (old !== current && old instanceof PortalPageViewModel)
+        {
+            old.NotifyHidden()
+        }
         this.RaisePropertyChanged(PortalSectionService.CurrentProperty, old, current)
         this.backCommand.RaiseCanExecuteChanged()
         this.WatchPendingSecret(current)
@@ -292,6 +297,16 @@ export abstract class PortalSectionService extends ServiceBase implements IActiv
         if (this.activating || this.active)
         {
             this.Host.View(current)
+            PortalSectionService.Shown(current)
+        }
+    }
+
+    // Tells a portal page it is on screen.
+    private static Shown(page: Observable | undefined): void
+    {
+        if (page instanceof PortalPageViewModel)
+        {
+            page.NotifyShown()
         }
     }
 
@@ -340,5 +355,19 @@ export abstract class PortalSectionService extends ServiceBase implements IActiv
         }
         this.active = next
         this.RaisePropertyChanged(PortalSectionService.IsActiveProperty, old, next)
+        // Leaving the rail section takes its current page off screen; coming
+        // back shows it again (OnActivated also re-views it).
+        const current = this.Current
+        if (current instanceof PortalPageViewModel)
+        {
+            if (next)
+            {
+                current.NotifyShown()
+            }
+            else
+            {
+                current.NotifyHidden()
+            }
+        }
     }
 }

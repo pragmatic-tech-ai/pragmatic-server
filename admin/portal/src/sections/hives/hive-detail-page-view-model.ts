@@ -7,6 +7,7 @@ import { ObservedEnvironmentsViewModel } from '../../shell/observed-environments
 import { PortalPageViewModel } from '../../shell/portal-page-view-model.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
 import { FleetHiveRowViewModel } from '../fleet/fleet-page-view-model.js'
+import { HiveAgentInstallViewModel } from './hive-agent-install-view-model.js'
 import { HiveInstallMode, HiveInstallViewModel } from './hive-install-view-model.js'
 import type { HivesSectionService } from './hives-section-service.js'
 
@@ -151,6 +152,9 @@ export class HiveCheckInRowViewModel extends Observable
 // A hive's detail: its home channel (read from its check-ins), credentials by
 // name and status, rollout state, version history, per-hive release policy
 // and the environments it observes, read-only. Delete asks for the hive id.
+// A Local hive (its bundle says autoInstall) offers Install agent, which the
+// control plane runs itself, with the bundle, commands and Reissue token
+// under Install manually; any other hive keeps the manual install only.
 export class HiveDetailPageViewModel extends PortalPageViewModel
 {
     private static readonly NotFoundTemplate = 'Hive {id} was not found.'
@@ -191,6 +195,12 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
     private static readonly HasNoLedgerProperty = 'HasNoLedger'
     private static readonly HasCheckInsProperty = 'HasCheckIns'
     private static readonly HasNoCheckInsProperty = 'HasNoCheckIns'
+    private static readonly IsAutoInstallProperty = 'IsAutoInstall'
+    private static readonly IsManualOnlyProperty = 'IsManualOnly'
+    private static readonly ShowsManualProperty = 'ShowsManual'
+    private static readonly ManualToggleLabelProperty = 'ManualToggleLabel'
+    private static readonly ShowManualLabel = 'Install manually'
+    private static readonly HideManualLabel = 'Hide manual install'
 
     private fleetHive: FleetHiveDto | undefined
     private hive: HiveDto | undefined
@@ -205,6 +215,9 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
     private readonly deleteCommand: RelayCommand
     private readonly reissueTokenCommand: RelayCommand
     private readonly install: HiveInstallViewModel
+    private readonly agentInstall: HiveAgentInstallViewModel
+    private readonly toggleManualCommand: RelayCommand
+    private manualOpen = false
 
     public constructor(session: PortalSessionService, private readonly section: HivesSectionService, public readonly Id: string)
     {
@@ -212,6 +225,17 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
         this.deleteCommand = this.MutatingCommand(() => this.Delete())
         this.reissueTokenCommand = this.MutatingCommand(() => this.ReissueToken())
         this.install = new HiveInstallViewModel(session, section, HiveInstallMode.FirstInstall)
+        this.agentInstall = new HiveAgentInstallViewModel(session, Id, section.PollScheduler)
+        this.toggleManualCommand = new RelayCommand(() => this.ToggleManual())
+        this.install.PropertyChanged(HiveInstallViewModel.AutoInstallProperty).subscribe(e => this.OnAutoInstallChanged(e.oldValue as boolean))
+        // Once the agent checks in, reload: the home channel and check-ins now show it.
+        this.agentInstall.PropertyChanged(HiveAgentInstallViewModel.ConnectedProperty).subscribe(() =>
+        {
+            if (this.agentInstall.IsConnected)
+            {
+                void this.Refresh()
+            }
+        })
     }
 
     public get DisplayName(): string
@@ -362,6 +386,73 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
     public get Install(): HiveInstallViewModel
     {
         return this.install
+    }
+
+    // The automatic install (Install agent, its steps, error and Retry).
+    public get AgentInstall(): HiveAgentInstallViewModel
+    {
+        return this.agentInstall
+    }
+
+    // True when the control plane installs this hive's agent itself (Local hives).
+    public get IsAutoInstall(): boolean
+    {
+        return this.install.AutoInstall
+    }
+
+    // True when the manual install is the only path (any other hive).
+    public get IsManualOnly(): boolean
+    {
+        return !this.install.AutoInstall
+    }
+
+    // Whether the manual install (bundle, commands, Reissue token) shows: always
+    // for a manual-only hive, behind Install manually for an automatic one.
+    public get ShowsManual(): boolean
+    {
+        return this.IsManualOnly || this.manualOpen
+    }
+
+    // The Install manually expander's label.
+    public get ManualToggleLabel(): string
+    {
+        return this.manualOpen ? HiveDetailPageViewModel.HideManualLabel : HiveDetailPageViewModel.ShowManualLabel
+    }
+
+    // Opens or closes the Install manually expander.
+    public get ToggleManualCommand(): RelayCommand
+    {
+        return this.toggleManualCommand
+    }
+
+    // Shown: follow the hive's latest automatic install (polling while it runs).
+    protected override OnShown(): void
+    {
+        void this.agentInstall.Resume()
+    }
+
+    // Left: stop polling.
+    protected override OnHidden(): void
+    {
+        this.agentInstall.Stop()
+    }
+
+    private ToggleManual(): void
+    {
+        const C = HiveDetailPageViewModel
+        const was = [this.ShowsManual, this.ManualToggleLabel] as const
+        this.manualOpen = !this.manualOpen
+        this.RaisePropertyChanged(C.ShowsManualProperty, was[0], this.ShowsManual)
+        this.RaisePropertyChanged(C.ManualToggleLabelProperty, was[1], this.ManualToggleLabel)
+    }
+
+    private OnAutoInstallChanged(was: boolean): void
+    {
+        const C = HiveDetailPageViewModel
+        const showedManual = was ? this.manualOpen : true
+        this.RaisePropertyChanged(C.IsAutoInstallProperty, was, this.IsAutoInstall)
+        this.RaisePropertyChanged(C.IsManualOnlyProperty, !was, this.IsManualOnly)
+        this.RaisePropertyChanged(C.ShowsManualProperty, showedManual, this.ShowsManual)
     }
 
     protected override async LoadCore(): Promise<boolean>

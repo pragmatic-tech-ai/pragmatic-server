@@ -135,6 +135,36 @@ export type HiveBootstrapDto =
     tokenSecretName: string
     tokenSecretKey: string
     channelUrl: string
+    // True when the control plane installs the agent itself (a Local hive): the automatic path is offered first.
+    autoInstall: boolean
+}
+
+// Where an automatic agent install stands; values match the server wire strings.
+export enum AgentInstallState
+{
+    Installing = 'installing',
+    Connected = 'connected',
+    Failed = 'failed',
+}
+
+// The automatic install's steps, in order; values match the server wire strings.
+export enum AgentInstallStep
+{
+    PreparingCluster = 'preparing-cluster',
+    ApplyingAgent = 'applying-agent',
+    StoringToken = 'storing-token',
+    RestartingAgent = 'restarting-agent',
+    WaitingForCheckIn = 'waiting-for-check-in',
+}
+
+// An automatic agent install's status (the agent-install route's reply). Never carries the agent token.
+export type AgentInstallStatusDto =
+{
+    state: AgentInstallState
+    step: AgentInstallStep
+    startedAt: string
+    finishedAt?: string
+    error?: string
 }
 
 // A freshly minted one-time agent token (the rollout-registration route's reply).
