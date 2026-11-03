@@ -46,6 +46,7 @@ export class TenantPasswordChange
     private static readonly ForwardedForHeader = 'x-forwarded-for'
     private static readonly ForwardedSeparator = ','
     private static readonly NoAddress = ''
+    private static readonly PlausibleIp = /^[0-9A-Fa-f:.]{1,64}$/
     private static readonly BusyMessage = 'A password change for this account is already running.'
     private static readonly RetryAfterHeader = 'Retry-After'
     private static readonly JsonContentType = 'application/json'
@@ -83,7 +84,7 @@ export class TenantPasswordChange
         private readonly client: IIdpPasswordClient,
         private readonly principals: ISessionRotator,
         private readonly secureCookie: boolean,
-        /** Behind a trusted proxy the end user's address is the last x-forwarded-for hop; else the socket's. */
+        /** Behind a trusted proxy (PRAGMATIC_TENANT_ADMIN_TRUSTED_PROXY) the end user's address is the last x-forwarded-for hop; else the socket's. */
         private readonly trustedProxy: boolean = false)
     {
     }
@@ -197,7 +198,10 @@ export class TenantPasswordChange
         this.Reply(res, TenantPasswordChange.StatusOk, { ok: true, otherSessionsEnded: true }, { [TenantPasswordChange.SetCookieHeader]: cookie })
     }
 
-    /** The end user's address, relayed to the IdP for its per-address throttle. */
+    /**
+     * The end user's address, relayed to the IdP for its per-address throttle: the last x-forwarded-for hop only behind a
+     * trusted proxy and only when it looks like an IP address; otherwise the socket's peer.
+     */
     private EndUserIp(req: IncomingMessage): string
     {
         if (this.trustedProxy)
@@ -205,7 +209,7 @@ export class TenantPasswordChange
             const raw = req.headers[TenantPasswordChange.ForwardedForHeader]
             const header = Array.isArray(raw) ? raw.join(TenantPasswordChange.ForwardedSeparator) : raw
             const last = header?.split(TenantPasswordChange.ForwardedSeparator).pop()?.trim()
-            if (last !== undefined && last.length > 0)
+            if (last !== undefined && TenantPasswordChange.PlausibleIp.test(last))
             {
                 return last
             }

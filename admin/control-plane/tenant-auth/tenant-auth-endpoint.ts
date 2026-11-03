@@ -178,12 +178,23 @@ export class TenantAuthEndpoint
         return cookie === null || session === null || session.tenantId !== cookie.tenantId ? null : session
     }
 
+    /**
+     * Ends the session and clears the cookie. A revocation fails closed (the session is refused in memory even when the
+     * store could not write it), so a failed write still answers signed out; the next successful write persists it.
+     */
     private async logout(req: IncomingMessage, res: ServerResponse): Promise<void>
     {
         const cookie = TenantSessionCookie.Read(req.headers.cookie)
         if (cookie !== null)
         {
-            await this.sessions.Revoke(cookie.token)
+            try
+            {
+                await this.sessions.Revoke(cookie.token)
+            }
+            catch
+            {
+                // Already refused in memory (fail-closed); the token is never logged.
+            }
         }
         res.writeHead(TenantAuthEndpoint.StatusNoContent, {
             [TenantAuthEndpoint.SetCookieHeader]: TenantSessionCookie.BuildClearing(this.secureCookie),

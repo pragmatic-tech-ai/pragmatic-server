@@ -12,8 +12,11 @@ export type TenantSession = { id: string; tenantId: string; principalId: string;
 
 /**
  * File-backed tenant session store keyed by session id (temp-write + atomic rename; a missing file is empty). Every change
- * is atomic: it is made on copies of the maps, the copy is persisted, and only a successful write swaps it into memory, so a
- * failed write leaves both memory and disk exactly as they were. Changes run one at a time.
+ * is made on copies of the maps and persisted; changes run one at a time. Grants (Issue, RotateFor) are strict: only a
+ * successful write swaps the copy into memory, so a failed write leaves memory and disk as they were. Revocations
+ * (Revoke, RevokeAllFor) fail CLOSED: the copy is swapped into memory even when the write fails (the error is then
+ * rethrown), so an ended session is refused at once; the next successful change writes memory, which carries the
+ * revocation to disk.
  */
 export class TenantSessionStore
 {
@@ -28,6 +31,8 @@ export class TenantSessionStore
     private static readonly TokenEncoding = 'base64url'
     private static readonly FileMode = 0o600
     private static readonly CorruptMessage = 'Tenant session store file is corrupt'
+    /** Mutate's failClosed flag for revocations: applied in memory even when the write fails. */
+    private static readonly FailClosed = true
 
     private sessions = new Map<string, TenantSession>()
     private resets = new Map<string, Map<string, string>>()
@@ -81,7 +86,7 @@ export class TenantSessionStore
         {
             return
         }
-        await this.Mutate((sessions) => { sessions.delete(token) })
+        await this.Mutate((sessions) => { sessions.delete(token) }, TenantSessionStore.FailClosed)
     }
 
     /**
@@ -90,7 +95,7 @@ export class TenantSessionStore
      */
     public async RevokeAllFor(tenantId: string, principalId: string): Promise<number>
     {
-        return await this.Mutate((sessions, resets) => this.EndAllOf(sessions, resets, tenantId, principalId))
+        return await this.Mutate((sessions, resets) => this.EndAllOf(sessions, resets, tenantId, principalId), TenantSessionStore.FailClosed)
     }
 
     /**
@@ -123,11 +128,12 @@ export class TenantSessionStore
     }
 
     /**
-     * Runs one change atomically: `change` edits copies of the sessions and resets maps, the copies are persisted, and only
-     * then do they replace the live maps; a failed write rejects and leaves memory untouched. Changes are serialised, so
-     * each one starts from the previous one's result.
+     * Runs one change: `change` edits copies of the sessions and resets maps (taken from memory, so they include any
+     * revocation an earlier failed write already applied), the copies are persisted, and then they replace the live maps.
+     * A failed write rejects; it leaves memory untouched unless `failClosed` (a revocation), in which case the copies
+     * replace the live maps anyway. Changes are serialised, so each one starts from the previous one's result.
      */
-    private Mutate<T>(change: (sessions: Map<string, TenantSession>, resets: Map<string, Map<string, string>>) => T): Promise<T>
+    private Mutate<T>(change: (sessions: Map<string, TenantSession>, resets: Map<string, Map<string, string>>) => T, failClosed: boolean = false): Promise<T>
     {
         const run = this.mutationChain.then(async () =>
         {
@@ -135,7 +141,19 @@ export class TenantSessionStore
             const sessions = new Map<string, TenantSession>([...this.sessions].map(([id, session]) => [id, { ...session }] as [string, TenantSession]))
             const resets = new Map<string, Map<string, string>>([...this.resets].map(([tenantId, principals]) => [tenantId, new Map(principals)] as [string, Map<string, string>]))
             const result = change(sessions, resets)
-            await this.write(sessions, resets)
+            try
+            {
+                await this.write(sessions, resets)
+            }
+            catch (err)
+            {
+                if (failClosed)
+                {
+                    this.sessions = sessions
+                    this.resets = resets
+                }
+                throw err
+            }
             this.sessions = sessions
             this.resets = resets
             return result

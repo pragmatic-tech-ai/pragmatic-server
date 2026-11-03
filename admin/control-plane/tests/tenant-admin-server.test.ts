@@ -106,6 +106,13 @@ describe('TenantAdminServer', () =>
         assert.equal(cfg.scheme, Names.DefaultScheme)
         assert.equal(cfg.secureCookie, false)
         assert.equal(cfg.externalPort, undefined)
+        assert.equal(cfg.trustedProxy, false, 'the tenant listener trusts no proxy unless told to')
+    })
+
+    it('ReadConfig reads PRAGMATIC_TENANT_ADMIN_TRUSTED_PROXY (its own flag, not the operator listener\'s)', () =>
+    {
+        assert.equal(TenantAdminServer.ReadConfig({ ...env(), PRAGMATIC_TENANT_ADMIN_TRUSTED_PROXY: 'true' }).trustedProxy, true)
+        assert.equal(TenantAdminServer.ReadConfig({ ...env(), PRAGMATIC_ADMIN_TRUSTED_PROXY: 'true' }).trustedProxy, false)
     })
 
     it('ReadConfig reads an optional external port, validated like the other ports', () =>

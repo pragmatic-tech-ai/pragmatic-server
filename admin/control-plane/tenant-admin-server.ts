@@ -42,6 +42,8 @@ export type TenantAdminConfig = {
     /** The tenant origin's externally visible port, when it is not the scheme default (proxy-less runs). */
     readonly externalPort: number | undefined
     readonly secureCookie: boolean
+    /** Whether the tenant listener is behind a trusted proxy (PRAGMATIC_TENANT_ADMIN_TRUSTED_PROXY). */
+    readonly trustedProxy: boolean
     readonly secretTtlHours: number
     readonly probeMs: number
     readonly probeTimeoutMs: number
@@ -128,6 +130,7 @@ export class TenantAdminServer
             scheme: ControlPlaneServer.TenantScheme(env[TenantAdminEnv.Scheme]),
             externalPort: ControlPlaneServer.TenantExternalPort(env[TenantAdminEnv.ExternalPort]),
             secureCookie: secure === TenantAdminServer.TrueToken || secure === TenantAdminServer.OneToken,
+            trustedProxy: ControlPlaneServer.ReadsTrue(env[TenantAdminEnv.TrustedProxy]),
             secretTtlHours: ControlPlaneServer.ParseSecretTtlHours(env[TenantAdminEnv.SecretTtl]),
             probeMs: ControlPlaneServer.ParseHealthProbeMs(env[TenantAdminEnv.HealthProbeMs]),
             probeTimeoutMs: ControlPlaneServer.ParseHealthProbeTimeoutMs(env[TenantAdminEnv.HealthProbeTimeoutMs]),
@@ -192,7 +195,7 @@ export class TenantAdminServer
         const service = new EnvironmentService(registry, new PortAllocator(ControlPlaneServer.EnvPortFloor, new NetPortProbe()), new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(orchestrators, placement, directory, new BundleBuilderAdapter()), directory, orchestrators), new UserSeederAdapter(new UserSeeder()), dataRoot, new AdminProxy(new WsAdminConnector()), directory, idpService, conn => new IdpAdminClient(conn))
         const plane = ControlPlaneServer.BuildTenantPlane(
             dataRoot, idpService, directory, cfg.secureCookie, service, this.rollout, orchestrators, placement,
-            masterKey, adminClients, cfg.secretTtlHours)
+            masterKey, adminClients, cfg.secretTtlHours, undefined, undefined, cfg.trustedProxy)
         const resolver = new TenantHostResolver(cfg.baseDomain, cfg.scheme, directory, cfg.externalPort)
         const staticRoot = join(dirname(fileURLToPath(import.meta.url)), ControlPlaneServer.ParentSegment, ControlPlaneServer.TenantPortalSegment, ControlPlaneServer.DistSegment)
         const monitor = cfg.probeMs > 0

@@ -60,6 +60,7 @@ import { TenantAdminClientRegistry } from './tenant-auth/tenant-admin-client-rec
 import { MasterKeyFile } from './master-key-file.js'
 import { TenantAuthEndpoint } from './tenant-auth/tenant-auth-endpoint.js'
 import { TenantPasswordChange } from './tenant-auth/tenant-password-change.js'
+import { TenantAdminEnv } from './tenant-admin-env.js'
 import { IdpPasswordClient } from './tenant-auth/idp-password-client.js'
 import { TenantAuthGate } from './tenant-auth/tenant-auth-gate.js'
 import { TenantHostResolver } from './tenant-auth/tenant-host-resolver.js'
@@ -327,7 +328,7 @@ export class ControlPlaneServer
             return undefined
         }
         return ControlPlaneServer.BuildTenantPlane(dataRoot, idpService, directory, secureCookie, service, rollout, orchestrators, placement,
-            masterKey, adminClientRegistry, secretTtlHours, sessions, principals, ControlPlaneServer.ReadsTrue(env[ControlPlaneServer.TrustedProxyEnvVar]))
+            masterKey, adminClientRegistry, secretTtlHours, sessions, principals, ControlPlaneServer.ReadsTrue(env[TenantAdminEnv.TrustedProxy]))
     }
 
     /** Gate-free composition of the tenant plane; callers decide whether the plane is active (ComposeTenantPlane gates on env, the standalone server always builds it). */

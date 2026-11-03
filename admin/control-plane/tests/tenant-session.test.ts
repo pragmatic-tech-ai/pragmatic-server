@@ -238,7 +238,7 @@ test('a later full reset ends the rotated session too', async () =>
     })
 })
 
-test('a change whose write fails leaves memory and disk as they were: rotate, revoke-all and issue are atomic', async () =>
+test('a grant whose write fails leaves memory and disk as they were: rotate and issue are strict', async () =>
 {
     const root = await mkdtemp(join(tmpdir(), 'tenant-session-atomic-'))
     const sub = join(root, 'sub')
@@ -252,8 +252,6 @@ test('a change whose write fails leaves memory and disk as they were: rotate, re
         await rm(sub, { recursive: true, force: true })
         await writeFile(sub, 'blocked')
         await assert.rejects(store.RotateFor(SessionFixture.Tenant, SessionFixture.Principal, 'me@t.test'))
-        await assert.rejects(store.RevokeAllFor(SessionFixture.Tenant, SessionFixture.Principal))
-        await assert.rejects(store.Revoke(mine.id))
         await assert.rejects(store.Issue(SessionFixture.Tenant, SessionFixture.Principal))
         assert.notEqual(await store.Validate(mine.id), null, 'the caller keeps its valid session')
         assert.notEqual(await store.Validate(other.id), null, 'nothing was ended in memory either')
@@ -283,4 +281,39 @@ test('concurrent changes are serialised: none is lost', async () =>
             assert.notEqual(await reloaded.Validate(session.id), null)
         }
     })
+})
+
+test('a revocation whose write fails still takes effect at once (fail closed); the next successful write carries it to disk', async () =>
+{
+    const root = await mkdtemp(join(tmpdir(), 'tenant-session-failclosed-'))
+    const sub = join(root, 'sub')
+    const file = join(sub, 'tenant-sessions.json')
+    try
+    {
+        const store = new TenantSessionStore(file, SessionFixture.Ttl)
+        const owner1 = await store.Issue(SessionFixture.Tenant, SessionFixture.Principal)
+        const owner2 = await store.Issue(SessionFixture.Tenant, SessionFixture.Principal)
+        const loggingOut = await store.Issue(SessionFixture.Tenant, 'user-2')
+        const bystander = await store.Issue(SessionFixture.Tenant, 'user-3')
+        await rm(sub, { recursive: true, force: true })
+        await writeFile(sub, 'blocked')
+        await assert.rejects(store.RevokeAllFor(SessionFixture.Tenant, SessionFixture.Principal))
+        await assert.rejects(store.Revoke(loggingOut.id))
+        assert.equal(await store.Validate(owner1.id), null, 'refused at once despite the failed write')
+        assert.equal(await store.Validate(owner2.id), null)
+        assert.equal(await store.Validate(loggingOut.id), null)
+        assert.notEqual(await store.Validate(bystander.id), null)
+        // Writes work again: the next change writes memory, revocations included.
+        await rm(sub, { force: true })
+        await store.Issue(SessionFixture.Tenant, 'user-4')
+        const reloaded = new TenantSessionStore(file, SessionFixture.Ttl)
+        assert.equal(await reloaded.Validate(owner1.id), null)
+        assert.equal(await reloaded.Validate(owner2.id), null)
+        assert.equal(await reloaded.Validate(loggingOut.id), null)
+        assert.notEqual(await reloaded.Validate(bystander.id), null)
+    }
+    finally
+    {
+        await rm(root, { recursive: true, force: true })
+    }
 })

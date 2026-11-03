@@ -132,9 +132,9 @@ class PwKit
         return TenantSessionCookie.Name + '=' + encodeURIComponent(PwKit.TenantId) + '.' + token
     }
 
-    public static Send(host: TenantPlaneHost, method: string, token: string | undefined, body?: unknown, origin: string = PwKit.Origin): Promise<Reply>
+    public static Send(host: TenantPlaneHost, method: string, token: string | undefined, body?: unknown, origin: string = PwKit.Origin, path: string = PwKit.Path, extra: Record<string, string> = {}): Promise<Reply>
     {
-        const headers: Record<string, string> = { host: PwKit.TenantHost, origin, 'content-type': 'application/json' }
+        const headers: Record<string, string> = { host: PwKit.TenantHost, origin, 'content-type': 'application/json', ...extra }
         if (token !== undefined)
         {
             headers.cookie = PwKit.Cookie(token)
@@ -142,7 +142,7 @@ class PwKit
         const addr = host.Address()
         return new Promise((resolve, reject) =>
         {
-            const req = request({ host: addr.address, port: addr.port, method, path: PwKit.Path, headers }, res =>
+            const req = request({ host: addr.address, port: addr.port, method, path, headers }, res =>
             {
                 const chunks: Buffer[] = []
                 res.on('data', c => chunks.push(c as Buffer))
@@ -208,10 +208,10 @@ describe('Tenant self-service password change (POST /tenant-auth/password)', () 
     let logged: string[]
     let originalError: typeof console.error
 
-    async function Start(rotator?: ISessionRotator, gate?: TenantAuthGate): Promise<void>
+    async function Start(rotator?: ISessionRotator, gate?: TenantAuthGate, trustedProxy: boolean = false): Promise<void>
     {
         const principals = new TenantPrincipalSessions(store)
-        const change = new TenantPasswordChange(connector, client, rotator ?? principals, false)
+        const change = new TenantPasswordChange(connector, client, rotator ?? principals, false, trustedProxy)
         const plane: TenantPlane = {
             endpoint: new TenantAuthEndpoint(new UnusedRelyingParty(), store, false, change),
             gate: gate ?? new TenantAuthGate(store),
@@ -395,6 +395,42 @@ describe('Tenant self-service password change (POST /tenant-auth/password)', () 
         mySocket.close()
         elsewhereSocket.close()
         rmSync(sub, { force: true })
+    })
+
+    it('logout whose revocation write fails still clears the cookie and answers signed out; the session is refused', async () =>
+    {
+        const sub = join(parent, 'sub')
+        store = new TenantSessionStore(join(sub, 'tenant-sessions.json'), 3600000)
+        await Start()
+        const mine = await store.Issue(PwKit.TenantId, PwKit.Owner, PwKit.OwnerEmail)
+        rmSync(sub, { recursive: true, force: true })
+        writeFileSync(sub, 'blocked')
+        const r = await PwKit.Send(host, 'POST', mine.id, {}, PwKit.Origin, '/tenant-auth/logout')
+        assert.equal(r.status, 204)
+        assert.ok((r.setCookie ?? []).some(c => c.startsWith(TenantSessionCookie.Name + '=;') || /Max-Age=0/.test(c)))
+        assert.equal(await store.Validate(mine.id), null)
+        rmSync(sub, { force: true })
+    })
+
+    it('the relayed end-user address: the last x-forwarded-for hop only behind a trusted proxy and only when it is an IP', async () =>
+    {
+        await Start(undefined, undefined, true)
+        const mine = await store.Issue(PwKit.TenantId, PwKit.Owner, PwKit.OwnerEmail)
+        const body = { currentPassword: PwKit.Current, newPassword: PwKit.Next }
+        let r = await PwKit.Send(host, 'POST', mine.id, body, PwKit.Origin, PwKit.Path, { 'x-forwarded-for': '10.0.0.1, 203.0.113.9' })
+        assert.equal(client.LastEndUserIp, '203.0.113.9')
+        const fresh = PwKit.TokenFrom(r)
+        r = await PwKit.Send(host, 'POST', fresh, body, PwKit.Origin, PwKit.Path, { 'x-forwarded-for': 'not an address<script>' })
+        assert.equal(r.status, 200)
+        assert.match(client.LastEndUserIp, /127\.0\.0\.1$/, 'a malformed hop falls back to the socket peer')
+    })
+
+    it('without the trusted-proxy flag x-forwarded-for is ignored: the socket peer is relayed', async () =>
+    {
+        await Start()
+        const mine = await store.Issue(PwKit.TenantId, PwKit.Owner, PwKit.OwnerEmail)
+        await PwKit.Send(host, 'POST', mine.id, { currentPassword: PwKit.Current, newPassword: PwKit.Next }, PwKit.Origin, PwKit.Path, { 'x-forwarded-for': '203.0.113.9' })
+        assert.match(client.LastEndUserIp, /127\.0\.0\.1$/)
     })
 
     it('a change whose session rotation failed still reports success, with otherSessionsEnded false and a warning', async () =>

@@ -9,6 +9,8 @@ export class TenantAdminEnv
     /** Optional externally visible port of the tenant origin (proxy-less local runs); omitted or the scheme default -> no port. */
     public static readonly ExternalPort = 'PRAGMATIC_TENANT_ADMIN_EXTERNAL_PORT'
     public static readonly SecureCookie = 'PRAGMATIC_TENANT_ADMIN_SECURE_COOKIE'
+    /** Whether the TENANT listener sits behind a trusted proxy (x-forwarded-for is then the user's address); default off. */
+    public static readonly TrustedProxy = 'PRAGMATIC_TENANT_ADMIN_TRUSTED_PROXY'
     public static readonly SecretTtl = 'PRAGMATIC_TENANT_ADMIN_SECRET_TTL_HOURS'
     public static readonly HealthProbeMs = 'PRAGMATIC_TENANT_ADMIN_HEALTH_PROBE_MS'
     public static readonly HealthProbeTimeoutMs = 'PRAGMATIC_TENANT_ADMIN_HEALTH_PROBE_TIMEOUT_MS'
