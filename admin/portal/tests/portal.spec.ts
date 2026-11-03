@@ -46,6 +46,13 @@ class FakeControlPlane
     // The provision's one-time token: the automatic path must never show it.
     public static readonly ProvisionToken = 'e2e-provision-token-never-shown'
     private static readonly ProvisionPath = '/api/provision'
+    // Deleting HiveId plays the agent-removal failure, then succeeds when forced (delete anyway).
+    public static readonly HiveItemPath = '/api/hives/hive-eu-1'
+    public static readonly UninstallFailure = "Could not remove the hive's agent from its cluster: kubectl failed: connection refused. Fix cluster access and retry, or delete anyway to remove only the platform record."
+    public static readonly UninstallFailureStart = /^Could not remove the hive's agent/
+    private static readonly UninstallFailedCode = 'agent-uninstall-failed'
+    private static readonly ForceQuery = 'force=true'
+    private static readonly MethodDelete = 'DELETE'
     private static readonly NewHiveBootstrapPath = '/api/hives/tailspin-local/bootstrap'
     private static readonly NewHiveInstallPath = '/api/hives/tailspin-local/agent-install'
     private static readonly InstallStartedAt = '2026-11-03T10:00:00.000Z'
@@ -117,6 +124,8 @@ class FakeControlPlane
     public Authenticated = true
     // Reads of the new hive's install status so far (the first reports a running step, later ones Connected).
     public InstallReads = 0
+    // Whether the hive was deleted with force (delete anyway).
+    public ForcedDelete = false
     private readonly root = fileURLToPath(new URL('../dist/', import.meta.url))
     private server: Server | undefined
 
@@ -147,7 +156,7 @@ class FakeControlPlane
 
     private static IsPlayedWrite(path: string): boolean
     {
-        return path === FakeControlPlane.ProvisionPath || path === FakeControlPlane.NewHiveInstallPath
+        return path === FakeControlPlane.ProvisionPath || path === FakeControlPlane.NewHiveInstallPath || path === FakeControlPlane.HiveItemPath
     }
 
     private Operator(): Record<string, unknown>
@@ -400,6 +409,19 @@ class FakeControlPlane
                 FakeControlPlane.Json(res, 201, this.Provisioned())
                 return
             }
+            if (path === FakeControlPlane.HiveItemPath && method === FakeControlPlane.MethodDelete)
+            {
+                this.ForcedDelete = (req.url ?? '').includes(FakeControlPlane.ForceQuery)
+                if (this.ForcedDelete)
+                {
+                    FakeControlPlane.Json(res, 200, { ok: true })
+                }
+                else
+                {
+                    FakeControlPlane.Json(res, 409, { error: FakeControlPlane.UninstallFailure, code: FakeControlPlane.UninstallFailedCode })
+                }
+                return
+            }
             if (path === FakeControlPlane.NewHiveInstallPath)
             {
                 FakeControlPlane.Json(res, 202, FakeControlPlane.InstallStatus(FakeControlPlane.InstallingState, FakeControlPlane.PreparingStep))
@@ -513,6 +535,10 @@ class PortalText
     public static readonly CheckInStepLabel = 'Wait for the agent to check in'
     public static readonly ConnectedText = 'Connected. The agent checked in.'
     public static readonly ManualTokenCaption = 'One-time agent token'
+    public static readonly DeleteHiveLabel = 'Delete hive'
+    public static readonly DeleteLabel = 'Delete'
+    public static readonly DeleteAnywayLabel = 'Delete anyway'
+    public static readonly DeleteAnywayTitle = 'Delete the hive anyway?'
     // Each rail section's page title (its H3), in RailEntry order.
     public static readonly SectionTitles: readonly string[] = [
         'Fleet', 'Clients', 'Tenants', 'Hives', 'Registry & Releases', 'Release Policy', 'Activity', 'Settings',
@@ -563,6 +589,15 @@ class PortalSteps
         await page.keyboard.type(text)
     }
 
+    // A dialog's input sits under the dialog's hit rect: focus it with a forced click.
+    public static async TypeIntoDialog(page: Page, placeholder: string, text: string): Promise<void>
+    {
+        const input = page.locator('input[placeholder="' + placeholder + '"]').last()
+        await input.click({ force: true })
+        await input.pressSequentially(text)
+        await expect(input).toHaveValue(text)
+    }
+
     public static Text(page: Page, text: string): Locator
     {
         return page.getByText(text, { exact: true })
@@ -608,6 +643,7 @@ test.describe('admin portal', () =>
         fake.NotFound.length = 0
         fake.FontsServed.length = 0
         fake.InstallReads = 0
+        fake.ForcedDelete = false
     })
     test.afterEach(() =>
     {
@@ -771,6 +807,28 @@ test.describe('admin portal', () =>
         expect(fake.InstallReads).toBeGreaterThanOrEqual(2)
         await expect(page.getByText(FakeControlPlane.ProvisionToken)).toHaveCount(0)
         await expect(PortalSteps.Text(page, PortalText.ManualTokenCaption).filter({ visible: true })).toHaveCount(0)
+        await PortalSteps.ExpectNoBrokenText(page)
+    })
+
+    test('Hives: a delete that cannot remove the agent shows why and offers Delete anyway, which force-deletes', async ({ page }) =>
+    {
+        await page.goto(base)
+        await expect(PortalSteps.Text(page, PortalText.FleetSubtitle)).toBeVisible()
+        await PortalSteps.Click(page, FakeControlPlane.HiveName)
+        await PortalSteps.Visible(page, PortalText.DeleteHiveLabel).click({ force: true })
+        await PortalSteps.TypeIntoDialog(page, FakeControlPlane.HiveId, FakeControlPlane.HiveId)
+        await PortalSteps.Visible(page, PortalText.DeleteLabel).click({ force: true })
+        // Wrapped text renders one SVG text per line: match the reason's first words.
+        await expect(page.getByText(FakeControlPlane.UninstallFailureStart).filter({ visible: true }).first()).toBeVisible()
+        await expect.poll(() => fake.Find('DELETE', FakeControlPlane.HiveItemPath)).toBeDefined()
+        expect(fake.ForcedDelete).toBe(false)
+        await PortalSteps.Visible(page, PortalText.CancelLabel).click({ force: true })
+        await PortalSteps.Visible(page, PortalText.DeleteAnywayLabel).click({ force: true })
+        await expect(PortalSteps.Visible(page, PortalText.DeleteAnywayTitle)).toBeVisible()
+        await PortalSteps.TypeIntoDialog(page, FakeControlPlane.HiveId, FakeControlPlane.HiveId)
+        await PortalSteps.Text(page, PortalText.DeleteAnywayLabel).filter({ visible: true }).last().click({ force: true })
+        await expect.poll(() => fake.ForcedDelete).toBe(true)
+        await expect(PortalSteps.Text(page, PortalText.DeleteAnywayTitle).filter({ visible: true })).toHaveCount(0)
         await PortalSteps.ExpectNoBrokenText(page)
     })
 

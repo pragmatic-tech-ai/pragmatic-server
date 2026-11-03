@@ -356,4 +356,21 @@ describe('ControlPlaneClient platform records', () =>
         globalThis.fetch = (async () => ({ ok: false, status: 500, json: async () => ({ error: 'boom' }) }) as Response) as typeof fetch
         await assert.rejects(new ControlPlaneClient().GetAgentInstall('h1'), (e: unknown) => e instanceof ApiError && e.Status === 500)
     })
+
+    it('DeleteHive DELETEs the hive; with force it adds ?force=true (delete anyway)', async () =>
+    {
+        FetchStub.Install({ ok: true })
+        await new ControlPlaneClient().DeleteHive('h 1')
+        await new ControlPlaneClient().DeleteHive('h 1', true)
+        assert.deepEqual(FetchStub.Calls.map(c => [c.route, c.init?.method]), [['/api/hives/h%201', 'DELETE'], ['/api/hives/h%201?force=true', 'DELETE']])
+    })
+
+    it('an error reply carries the server code on ApiError.Code', async () =>
+    {
+        globalThis.fetch = (async () => ({ ok: false, status: 409, json: async () => ({ error: 'Could not remove', code: 'agent-uninstall-failed' }) }) as Response) as typeof fetch
+        const err = await new ControlPlaneClient().DeleteHive('h1').then(() => undefined, (e: unknown) => e)
+        assert.ok(err instanceof ApiError)
+        assert.equal(err.Code, ApiError.AgentUninstallFailedCode)
+        assert.equal(err.message, 'Could not remove')
+    })
 })

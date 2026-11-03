@@ -254,6 +254,10 @@ export class FakeControlPlane
     public readonly CreatedTenants: Array<[string, string, string, string]> = []
     public readonly CreatedHives: HiveDto[] = []
     public readonly Deleted: string[] = []
+    // While set, a hive delete without force fails with it (e.g. the agent could not be removed from its cluster).
+    public DeleteHiveFailure: Error | undefined
+    // The ids deleted with force (delete anyway), in call order; they are in Deleted too.
+    public readonly ForcedDeletes: string[] = []
     public readonly Published: Array<[string, string, string | undefined, string | undefined]> = []
     public readonly Withdrawals: Array<[string, boolean, string | undefined]> = []
     public readonly GateCalls: Array<[string, string]> = []
@@ -643,9 +647,17 @@ export class FakeControlPlane
         this.Tenants = this.Tenants.filter(t => t.id !== id)
     }
 
-    public async DeleteHive(id: string): Promise<void>
+    public async DeleteHive(id: string, force: boolean = false): Promise<void>
     {
         this.ThrowIfFailing()
+        if (force)
+        {
+            this.ForcedDeletes.push(id)
+        }
+        else if (this.DeleteHiveFailure !== undefined)
+        {
+            throw this.DeleteHiveFailure
+        }
         this.Deleted.push(id)
         this.Hives = this.Hives.filter(h => h.id !== id)
         this.Fleet = this.Fleet.filter(h => h.id !== id)

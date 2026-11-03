@@ -1,5 +1,6 @@
 import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
+import { ApiError } from '../../api-client.js'
 import { FleetConnection, FleetViewModel, type FleetRow } from '../../fleet-view-model.js'
 import { PortalDates } from '../../portal-dates.js'
 import type { EnvRolloutDto, FleetHiveDto, HiveDto, HiveRolloutDto, LedgerDto, ObservationDto, PolicyDto } from '../../portal-types.js'
@@ -173,6 +174,11 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
     private static readonly ChannelSeparator = ', '
     private static readonly DeleteTitle = 'Delete this hive?'
     private static readonly DeleteMessage = 'The hive record is removed. A hive that still reports environments cannot be deleted.'
+    private static readonly DeleteAnywayTitle = 'Delete the hive anyway?'
+    private static readonly DeleteAnywayMessage = "Its agent could not be removed from the cluster. Deleting anyway revokes the agent's token and removes the hive record; the agent and its objects may remain in the cluster, locked out, until someone removes them there."
+    private static readonly DeleteAnywayLabel = 'Delete anyway'
+    private static readonly CanDeleteAnywayProperty = 'CanDeleteAnyway'
+    private static readonly DeleteAnywayTextProperty = 'DeleteAnywayText'
     private static readonly ReissueTitle = 'Reissue the agent token?'
     private static readonly ReissueMessage = 'A new one-time token replaces the current one at once. The running agent (and the tenant-admin pod, if installed) is locked out until the new token is in its Secret and they restart.'
     private static readonly ReissueLabel = 'Reissue'
@@ -213,6 +219,9 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
     private readonly ledgerRows = new ObservableCollection<HiveLedgerRowViewModel>()
     private readonly checkIns = new ObservableCollection<HiveCheckInRowViewModel>()
     private readonly deleteCommand: RelayCommand
+    private readonly deleteAnywayCommand: RelayCommand
+    // Why the last delete could not remove the agent from its cluster; '' until such a failure (offers delete anyway).
+    private deleteAnywayText = ''
     private readonly reissueTokenCommand: RelayCommand
     private readonly install: HiveInstallViewModel
     private readonly agentInstall: HiveAgentInstallViewModel
@@ -225,6 +234,7 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
     {
         super(session)
         this.deleteCommand = this.MutatingCommand(() => this.Delete())
+        this.deleteAnywayCommand = this.MutatingCommand(() => this.DeleteAnyway(), () => this.CanDeleteAnyway)
         // A reissue while an automatic install runs would revoke the token the install just stored.
         this.reissueTokenCommand = this.MutatingCommand(() => this.ReissueToken(), () => !this.agentInstall.IsInstalling)
         this.install = new HiveInstallViewModel(session, section, HiveInstallMode.FirstInstall)
@@ -381,6 +391,24 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
     public get DeleteCommand(): RelayCommand
     {
         return this.deleteCommand
+    }
+
+    // True once a delete failed because the agent could not be removed from the hive's cluster.
+    public get CanDeleteAnyway(): boolean
+    {
+        return this.deleteAnywayText.length > 0
+    }
+
+    // That failure's reason, shown beside Delete anyway.
+    public get DeleteAnywayText(): string
+    {
+        return this.deleteAnywayText
+    }
+
+    // Deletes the hive without removing its agent from the cluster (confirmed by the hive id).
+    public get DeleteAnywayCommand(): RelayCommand
+    {
+        return this.deleteAnywayCommand
     }
 
     // Mints a new one-time agent token (confirmed by the hive id) and reveals it with the rotation commands.
@@ -598,9 +626,53 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
             Expected: this.Id,
             Title: HiveDetailPageViewModel.DeleteTitle,
             Message: HiveDetailPageViewModel.DeleteMessage,
-            Action: () => this.Session.Client.DeleteHive(this.Id),
+            Action: () => this.DeleteOrOfferAnyway(),
             OnConfirmed: () => this.section.BackAndRefresh(),
         })
+    }
+
+    // Deletes; when the agent could not be removed from the cluster, offers delete anyway on the page, then rethrows
+    // so the dialog shows the reason. A later success needs no offer.
+    private async DeleteOrOfferAnyway(): Promise<void>
+    {
+        try
+        {
+            await this.Session.Client.DeleteHive(this.Id)
+        }
+        catch (e)
+        {
+            if (e instanceof ApiError && e.Code === ApiError.AgentUninstallFailedCode)
+            {
+                this.SetDeleteAnywayText(e.message)
+            }
+            throw e
+        }
+    }
+
+    private DeleteAnyway(): Promise<void>
+    {
+        return this.ConfirmByName(this.section.Dialogs, {
+            Expected: this.Id,
+            Title: HiveDetailPageViewModel.DeleteAnywayTitle,
+            Message: HiveDetailPageViewModel.DeleteAnywayMessage,
+            ConfirmLabel: HiveDetailPageViewModel.DeleteAnywayLabel,
+            Action: () => this.Session.Client.DeleteHive(this.Id, true),
+            OnConfirmed: () => this.section.BackAndRefresh(),
+        })
+    }
+
+    private SetDeleteAnywayText(next: string): void
+    {
+        const C = HiveDetailPageViewModel
+        const was = [this.deleteAnywayText, this.CanDeleteAnyway] as const
+        if (was[0] === next)
+        {
+            return
+        }
+        this.deleteAnywayText = next
+        this.RaisePropertyChanged(C.DeleteAnywayTextProperty, was[0], next)
+        this.RaisePropertyChanged(C.CanDeleteAnywayProperty, was[1], this.CanDeleteAnyway)
+        this.deleteAnywayCommand.RaiseCanExecuteChanged()
     }
 }
 

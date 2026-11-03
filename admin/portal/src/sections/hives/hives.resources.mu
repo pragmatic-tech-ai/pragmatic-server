@@ -169,6 +169,17 @@ resources HivesResources {
                         TextBlock [ Text = $BannerText, Foreground = @StateWarningInk, TextWrapping = Wrap ]
                     }
 
+                    // A delete that could not remove the agent from its cluster: the reason and Delete anyway.
+                    Border [ Fill = @StateWarningSoft, Padding = (12,10,12,10), Margin = (0,0,0,16),
+                             Visibility = $CanDeleteAnyway << ToVisibility ] {
+                        DockPanel {
+                            Button [ DockPanel.Dock = Right, Variant = Danger, Command = $DeleteAnywayCommand, VerticalAlignment = Top, Margin = (12,0,0,0) ] {
+                                TextBlock [ Text = "Delete anyway" ]
+                            }
+                            TextBlock [ Text = $DeleteAnywayText, Foreground = @StateDangerInk, TextWrapping = Wrap ]
+                        }
+                    }
+
                     // The agent install: automatic for a Local hive (the control plane runs it), else the manual bundle.
                     TextBlock [ Text = "Agent install", Style = @UiLabel, Foreground = @Fg1, Margin = (0,0,0,2) ]
                     StackPanel [ Orientation = Vertical, Visibility = $IsAutoInstall << ToVisibility ] {

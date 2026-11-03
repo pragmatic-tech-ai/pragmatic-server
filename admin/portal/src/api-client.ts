@@ -5,15 +5,20 @@ export class ApiError extends Error
 {
     public static readonly UnauthorizedStatus = 401
     public static readonly NotFoundStatus = 404
+    // The control plane's code for a hive delete that could not remove the agent from its cluster (delete anyway may follow).
+    public static readonly AgentUninstallFailedCode = 'agent-uninstall-failed'
 
     public readonly Status: number
     public readonly rollback?: { rolledBack: string[]; residue: string[] }
+    // The server's machine-readable error code, when it sends one.
+    public readonly Code: string | undefined
 
-    public constructor(status: number, message: string, rollback?: { rolledBack: string[]; residue: string[] })
+    public constructor(status: number, message: string, rollback?: { rolledBack: string[]; residue: string[] }, code?: string)
     {
         super(message)
         this.Status = status
         this.rollback = rollback
+        this.Code = code
     }
 }
 
@@ -65,6 +70,8 @@ export class ControlPlaneClient
     private static readonly BootstrapSegment = 'bootstrap'
     private static readonly RolloutRegistrationSegment = 'rollout-registration'
     private static readonly AgentInstallSegment = 'agent-install'
+    private static readonly ForceQuery = '?force=true'
+    private static readonly NoQuery = ''
     private static readonly LimitParam = 'limit'
     private static readonly PoliciesRoute = '/api/policies'
     private static readonly PolicySegment = 'policy'
@@ -204,9 +211,12 @@ export class ControlPlaneClient
         return await this.Send<ProvisionResultDto>(ControlPlaneClient.ProvisionRoute, { method: ControlPlaneClient.MethodPost, body: JSON.stringify(input) })
     }
 
-    public async DeleteHive(id: string): Promise<void>
+    // Deletes a hive (its agent is removed from a cluster the control plane drives, its token revoked). With force
+    // (delete anyway) the agent's removal is skipped: for a cluster that is unreachable or gone.
+    public async DeleteHive(id: string, force: boolean = false): Promise<void>
     {
-        await this.Send<unknown>(this.ItemRoute(ControlPlaneClient.HivesRoute, id), { method: ControlPlaneClient.MethodDelete })
+        const route = this.ItemRoute(ControlPlaneClient.HivesRoute, id) + (force ? ControlPlaneClient.ForceQuery : ControlPlaneClient.NoQuery)
+        await this.Send<unknown>(route, { method: ControlPlaneClient.MethodDelete })
     }
 
     public async PublishManifest(version: string, image: string, notes?: string, channel?: string): Promise<ManifestDto>
@@ -575,8 +585,8 @@ export class ControlPlaneClient
         }
         if (!response.ok)
         {
-            const body = payload as { error?: string; rollback?: { rolledBack: string[]; residue: string[] } } | undefined
-            throw new ApiError(response.status, body?.error ?? ControlPlaneClient.RequestFailed + String(response.status), body?.rollback)
+            const body = payload as { error?: string; code?: string; rollback?: { rolledBack: string[]; residue: string[] } } | undefined
+            throw new ApiError(response.status, body?.error ?? ControlPlaneClient.RequestFailed + String(response.status), body?.rollback, body?.code)
         }
         return payload as T
     }
