@@ -159,3 +159,16 @@ test('Open rejects truncated, garbage and wrong-shape files with a fixed error',
         })
     }
 })
+
+test('refs containing the separator are rejected without touching the store', async () =>
+{
+    await SealedFixture.WithDir(async file =>
+    {
+        const store = await SealedSecretStore.Open(file, randomBytes(32))
+        const bad = 'a\u0000b'
+        const fixed = (e: Error) => e.message === 'A sealed secret reference is invalid.'
+        await assert.rejects(async () => store.Put(bad, randomBytes(8)), fixed)
+        await assert.rejects(async () => store.Get(bad), fixed)
+        await assert.rejects(async () => store.Delete(bad), fixed)
+    })
+})
