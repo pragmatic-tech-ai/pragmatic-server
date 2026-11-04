@@ -1,8 +1,10 @@
 import { randomBytes } from 'node:crypto'
+import { ConsoleFingerprintKeys } from './console-fingerprint-keys.js'
 import type { IdpWorkloadSpec } from './idp-workload-driver.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
+import type { VerifiedImage } from './pinned-image-verifier.js'
 import type { HiveRecord, TenantRecord } from './platform-records.js'
-import type { TenantAdminWorkloadSpec } from './tenant-admin-workload.js'
+import type { TenantAdminWorkloadSpec, TenantConsoleExposure } from './tenant-admin-workload.js'
 import type { TenantDirectorySeed } from './tenant-api/seeded-tenant-directory.js'
 
 /** The slice of the platform deployment registry bootstrap needs: mint a hive's one-time agent bearer. */
@@ -36,10 +38,24 @@ export interface TenantBootstrapInput
      * Secret set is pragmatic-system only), so whoever provisions the IdP must create them in the IdP namespace. Omit when the IdP
      * is provisioned separately.
      */
-    idp?: Pick<IdpWorkloadSpec, 'image' | 'port' | 'tlsSecretName' | 'adminTokenSecretName' | 'adminTokenRef'> & TenantIdpMaterial
+    idp?: Pick<IdpWorkloadSpec, 'image' | 'port' | 'tlsSecretName' | 'adminTokenSecretName' | 'adminTokenRef' | 'ingressTls'> & TenantIdpMaterial
     /** The signing trust root's PUBLIC key (PEM). Never the private half. */
     trustRootPublicKey: string
     pullCredential?: PullCredential
+    /**
+     * True when the hive agent already runs (the in-hive console install): no RegisterHive, no agent-token Secret and no hive
+     * agent objects in the set (re-applying them would revert the running agent). The console still references
+     * AgentTokenSecretNameOf(hive.id), the agent's own Secret.
+     */
+    reuseAgentToken?: boolean
+    /** Browser exposure of the console (host + Ingress TLS choice); the console also places its environments with this TLS choice. */
+    console?: TenantConsoleExposure
+    /** The 32-byte session-fingerprint key; carried in its own hive-labelled Secret and mounted by the console. */
+    fingerprintKey?: Buffer
+    /** The platform-pinned image refs the console may run; written into the seed Secret as verified-images.json. */
+    verifiedImages?: readonly VerifiedImage[]
+    /** The console's existing 32-byte master key (reinstall keeps the data PVC readable); a fresh one is minted when omitted. */
+    masterKey?: Buffer
 }
 
 /**
@@ -165,7 +181,7 @@ export class TenantBootstrap
 {
     public constructor(
         public readonly seed: TenantDirectorySeed,
-        /** A v1 List (Namespace, agent, IdP, tenant-admin). Secrets are referenced by name only. */
+        /** A v1 List (Namespace, agent unless the token is reused, IdP, tenant-admin). Secrets are referenced by name only. */
         public readonly manifest: string,
         public readonly secrets: BootstrapSecretSet,
         public readonly agentTokenSecretName: string,
@@ -175,9 +191,12 @@ export class TenantBootstrap
 }
 
 /**
- * Platform-side provisioning split: mints the one-time agent token and a per-tenant master key, emits the tenant + hive
- * directory read-models as the tenant-admin seed, and assembles the bootstrap manifest set (agent + IdP + tenant-admin)
- * plus the Secrets they reference. Nothing secret is logged, returned in the manifest, or retained after the call.
+ * The production renderer of a tenant's console (used by TenantConsoleInstaller for the in-hive install, and by the bootstrap
+ * smokes): mints (or, for a running hive agent, reuses) the agent token and a per-tenant master key (or keeps the existing one
+ * on reinstall), emits the tenant + hive directory read-models as the tenant-admin seed (with the pinned-image allow-list),
+ * and assembles the manifest set (agent unless reused + IdP + tenant-admin with its console exposure) plus the Secrets they
+ * reference (seed, fingerprint key, IdP CA / admin-token copies, pull credential). Nothing secret is logged, returned in the
+ * manifest, or retained after the call.
  */
 export class TenantAdminBootstrap
 {
@@ -186,6 +205,8 @@ export class TenantAdminBootstrap
     public static readonly TrustRootKey = 'trust-root.pub'
     /** The platform-pinned image refs the console may run (PinnedImageVerifier's file). */
     public static readonly VerifiedImagesKey = 'verified-images.json'
+    /** The one key of the fingerprint Secret (mounted by the console at /fingerprint/fingerprint.key). */
+    public static readonly FingerprintKeyKey = K8sManifestBuilder.FingerprintItemKey
     private static readonly TokenKey = 'token'
     private static readonly IdpCaKey = 'ca.crt'
     private static readonly IdpAdminTokenKey = 'admin-token'
@@ -193,6 +214,8 @@ export class TenantAdminBootstrap
     private static readonly DockerConfigKey = '.dockerconfigjson'
     private static readonly DockerConfigType = 'kubernetes.io/dockerconfigjson'
     private static readonly MasterKeyBytes = 32
+    private static readonly BadMasterKey = 'TenantAdminBootstrap: the console master key must be exactly 32 bytes'
+    private static readonly BadFingerprintKey = 'TenantAdminBootstrap: the console fingerprint key must be exactly 32 bytes'
     private static readonly ApiVersionKey = 'apiVersion'
     private static readonly KindKey = 'kind'
     private static readonly ItemsKey = 'items'
@@ -220,6 +243,12 @@ export class TenantAdminBootstrap
         return K8sManifestBuilder.TenantConsoleIdpTokenSecretNameOf(tenantId)
     }
 
+    /** Name of the console's session-fingerprint key Secret in pragmatic-system (pragmatic-tenant-admin-<tenant>-fingerprint). */
+    public static FingerprintKeySecretNameOf(tenantId: string): string
+    {
+        return K8sManifestBuilder.TenantConsoleFingerprintSecretNameOf(tenantId)
+    }
+
     /**
      * The tenant-admin's live-credential Secret copies in pragmatic-system, as a v1 List of identities to delete by name on hive
      * delete (older clusters have them unlabelled): the fingerprint key, the IdP CA and the IdP admin-token copy - the same list
@@ -238,19 +267,33 @@ export class TenantAdminBootstrap
     public async GenerateBootstrap(input: TenantBootstrapInput): Promise<TenantBootstrap>
     {
         const { tenant, hive } = input
+        TenantAdminBootstrap.AssertKeyLength(input.masterKey, TenantAdminBootstrap.MasterKeyBytes, TenantAdminBootstrap.BadMasterKey)
+        TenantAdminBootstrap.AssertKeyLength(input.fingerprintKey, ConsoleFingerprintKeys.KeyBytes, TenantAdminBootstrap.BadFingerprintKey)
         const agentTokenSecretName = K8sManifestBuilder.AgentTokenSecretNameOf(hive.id)
         const seedSecretName = K8sManifestBuilder.TenantAdminSeedSecretNameOf(tenant.id)
-        const agentToken = await this.registrar.RegisterHive(hive.id)
         const seed: TenantDirectorySeed = { tenant: { ...tenant }, hives: [{ ...hive, agentTokenRef: agentTokenSecretName }], ...(input.organisation !== undefined ? { organisation: input.organisation } : {}) }
 
         const secrets = new BootstrapSecretSet(hive.id)
-        secrets.Add(agentTokenSecretName, { [TenantAdminBootstrap.TokenKey]: agentToken })
+        if (input.reuseAgentToken !== true)
+        {
+            secrets.Add(agentTokenSecretName, { [TenantAdminBootstrap.TokenKey]: await this.registrar.RegisterHive(hive.id) })
+        }
         // Retained on hive delete together with the data PVC: its master key is what decrypts that data.
         secrets.Add(seedSecretName, {
             [TenantAdminBootstrap.SeedKey]: JSON.stringify(seed, undefined, TenantAdminBootstrap.JsonIndent),
-            [TenantAdminBootstrap.MasterKeyKey]: randomBytes(TenantAdminBootstrap.MasterKeyBytes),
+            [TenantAdminBootstrap.MasterKeyKey]: input.masterKey ?? randomBytes(TenantAdminBootstrap.MasterKeyBytes),
             [TenantAdminBootstrap.TrustRootKey]: input.trustRootPublicKey,
         }, undefined, SecretRetention.Retained)
+        if (input.verifiedImages !== undefined)
+        {
+            // The init container copies the seed Secret into the data root, where PinnedImageVerifier reads it.
+            const images: VerifiedImage[] = input.verifiedImages.map(i => ({ imageRef: i.imageRef }))
+            secrets.AddEntry(seedSecretName, TenantAdminBootstrap.VerifiedImagesKey, JSON.stringify(images, undefined, TenantAdminBootstrap.JsonIndent))
+        }
+        if (input.fingerprintKey !== undefined)
+        {
+            secrets.Add(TenantAdminBootstrap.FingerprintKeySecretNameOf(tenant.id), { [TenantAdminBootstrap.FingerprintKeyKey]: input.fingerprintKey })
+        }
         if (input.pullCredential !== undefined)
         {
             secrets.Add(input.pullCredential.secretName, { [TenantAdminBootstrap.DockerConfigKey]: input.pullCredential.dockerConfigJson }, TenantAdminBootstrap.DockerConfigType)
@@ -263,6 +306,14 @@ export class TenantAdminBootstrap
             secrets.Add(TenantAdminBootstrap.IdpTokenSecretNameOf(tenant.id), { [TenantAdminBootstrap.IdpAdminTokenKey]: material.adminToken })
         }
         return new TenantBootstrap(seed, this.AssembleManifest(input, agentTokenSecretName, seedSecretName, material !== undefined), secrets, agentTokenSecretName, seedSecretName)
+    }
+
+    private static AssertKeyLength(key: Buffer | undefined, bytes: number, message: string): void
+    {
+        if (key !== undefined && key.length !== bytes)
+        {
+            throw new Error(message)
+        }
     }
 
     /**
@@ -294,6 +345,8 @@ export class TenantAdminBootstrap
             agentTokenSecretName,
             rolloutUrl: input.channelUrl,
             imagePullSecretName: input.pullCredential?.secretName,
+            console: input.console,
+            fingerprintKeySecretName: input.fingerprintKey === undefined ? undefined : TenantAdminBootstrap.FingerprintKeySecretNameOf(tenant.id),
         }
         // federated implies input.idp is defined (IdpMaterial requires it); the `&& input.idp` narrows it for TS.
         if (federated && input.idp !== undefined)
@@ -305,11 +358,12 @@ export class TenantAdminBootstrap
                 adminTokenSecretName: TenantAdminBootstrap.IdpTokenSecretNameOf(tenant.id),
             }
         }
-        const rendered = [this.manifests.RenderHiveAgent(hive.id, input.channelUrl, agentTokenSecretName)]
+        // A reused token means the hive agent already runs: re-applying it would revert its Deployment and RBAC.
+        const rendered = input.reuseAgentToken === true ? [] : [this.manifests.RenderHiveAgent(hive.id, input.channelUrl, agentTokenSecretName)]
         if (input.idp !== undefined)
         {
-            const { image, port, tlsSecretName, adminTokenSecretName, adminTokenRef } = input.idp
-            const idp: IdpWorkloadSpec = { tenantId: tenant.id, hiveId: hive.id, image, port, tlsSecretName, adminTokenSecretName, adminTokenRef }
+            const { image, port, tlsSecretName, adminTokenSecretName, adminTokenRef, ingressTls } = input.idp
+            const idp: IdpWorkloadSpec = { tenantId: tenant.id, hiveId: hive.id, image, port, tlsSecretName, adminTokenSecretName, adminTokenRef, ingressTls }
             if (admin.idp !== undefined)
             {
                 idp.baseDomain = input.baseDomain

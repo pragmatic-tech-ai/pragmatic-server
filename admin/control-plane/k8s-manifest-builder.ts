@@ -281,7 +281,8 @@ export class K8sManifestBuilder
     private static readonly TenantConsoleDevTlsSuffix = '-dev-tls'
     private static readonly FingerprintVolume = 'fingerprint'
     private static readonly FingerprintMount = '/fingerprint'
-    private static readonly FingerprintItemKey = 'fingerprint.key'
+    /** The one key of the fingerprint Secret (and the file name it is projected as). */
+    public static readonly FingerprintItemKey = 'fingerprint.key'
     /** Name of the RoleBinding the console creates in each environment namespace (binding its env ClusterRole there). */
     public static readonly TenantConsoleEnvBindingName = 'pragmatic-tenant-console'
     /** Where the console reads its fingerprint key (the mount plus the one projected item). */
