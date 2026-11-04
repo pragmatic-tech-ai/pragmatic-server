@@ -152,7 +152,7 @@ describe('TenantAdminServer', () =>
         writeSeed()
         const directory = TenantAdminServer.LoadSeed(root)
         const account = new InClusterServiceAccount('/t', '/c')
-        const setup = TenantAdminServer.InClusterOrchestrationOf(account, directory, root, undefined)
+        const setup = TenantAdminServer.InClusterOrchestrationOf(account, directory, root)
         assert.deepEqual(setup.identity, { tenantId: Names.TenantId, hiveId: Names.HiveId })
         assert.ok(setup.verifier instanceof PinnedImageVerifier)
     })

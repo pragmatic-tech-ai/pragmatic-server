@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { EnvironmentUnreachableError } from '../environment-endpoints.js'
 import type { EnvironmentRecord } from '../environment-record.js'
@@ -60,5 +63,31 @@ describe('InClusterEnvironmentReach', () =>
         const reach = new InClusterEnvironmentReach(kubectl as unknown as IKubectl)
         assert.equal(await reach.AdminPasswordFor(RecordKit.Make({}), 'unused'), Names.Password)
         assert.deepEqual(kubectl.Reads, [Names.Namespace + '/' + Names.SecretRef])
+    })
+
+    it('a Docker record keeps its local URLs', async () =>
+    {
+        const reach = new InClusterEnvironmentReach(new FakeKubectl() as unknown as IKubectl)
+        const lease = await reach.UrlsFor(RecordKit.Make({ hostPort: 7777 }))
+        assert.equal(lease.httpUrl, 'http://localhost:7777')
+        assert.equal(lease.wsUrl, 'ws://localhost:7777')
+    })
+
+    it('a Docker record reads its password from the local bundle, not the cluster', async () =>
+    {
+        const dir = mkdtempSync(join(tmpdir(), 'reach-'))
+        try
+        {
+            mkdirSync(join(dir, Names.EnvName))
+            writeFileSync(join(dir, Names.EnvName, 'provisioned-secrets.json'), JSON.stringify({ [Names.EnvironmentId + '-admin-pw']: Names.Password }))
+            const kubectl = new FakeKubectl()
+            const reach = new InClusterEnvironmentReach(kubectl as unknown as IKubectl)
+            assert.equal(await reach.AdminPasswordFor(RecordKit.Make({ hostPort: 7777 }), dir), Names.Password)
+            assert.deepEqual(kubectl.Reads, [])
+        }
+        finally
+        {
+            rmSync(dir, { recursive: true, force: true })
+        }
     })
 })

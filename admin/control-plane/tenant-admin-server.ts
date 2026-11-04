@@ -167,15 +167,11 @@ export class TenantAdminServer
     /**
      * What the console needs to orchestrate its own hive through the Kubernetes API: the API client over the pod's service
      * account, the identity from the seed (tenant + the hive it was installed into) and the pinned-image allow-list the
-     * platform left in the data root. TLS is the placement's concern, so `ingressTls` shapes nothing here. No network call.
+     * platform left in the data root. No network call.
      */
-    public static InClusterOrchestrationOf(account: InClusterServiceAccount, directory: SeededTenantDirectory, dataRoot: string, _ingressTls: IngressTls | undefined): InClusterOrchestration
+    public static InClusterOrchestrationOf(account: InClusterServiceAccount, directory: SeededTenantDirectory, dataRoot: string): InClusterOrchestration
     {
-        const hive = directory.ListHives()[0]
-        if (hive === undefined)
-        {
-            throw new Error(TenantAdminServer.NoIdentityMessage)
-        }
+        const hive = TenantAdminServer.FirstHiveOf(directory)
         return {
             client: new KubeApiClient(new HttpsKubeTransport(account)),
             identity: { tenantId: hive.tenantId, hiveId: hive.id },
@@ -225,10 +221,10 @@ export class TenantAdminServer
         await adminClients.Load()
         const idpService = TenantAdminServer.BuildIdpService(env, dataRoot)
         const account = InClusterServiceAccount.Detect(env, serviceAccountRoot)
-        const inCluster = account === undefined ? undefined : TenantAdminServer.InClusterOrchestrationOf(account, directory, dataRoot, cfg.ingressTls)
+        const inCluster = account === undefined ? undefined : TenantAdminServer.InClusterOrchestrationOf(account, directory, dataRoot)
         const orchestrators = inCluster === undefined ? new HiveOrchestratorFactory() : new HiveOrchestratorFactory(undefined, dataRoot, inCluster)
         const placement = new EnvironmentPlacement(directory, cfg.ingressTls)
-        const reach = inCluster === undefined ? undefined : new InClusterEnvironmentReach(orchestrators.For(directory.ListHives()[0] as HiveRecord).Kubectl)
+        const reach = inCluster === undefined ? undefined : new InClusterEnvironmentReach(orchestrators.For(TenantAdminServer.FirstHiveOf(directory)).Kubectl)
         // No PlatformImageSigner here, deliberately: the platform signing key's private half never ships into a hive, so
         // the in-hive tenant admin cannot sign. It runs only images the platform signed (its hive's verification decides).
         const service = new EnvironmentService(registry, new PortAllocator(ControlPlaneServer.EnvPortFloor, new NetPortProbe()), new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(orchestrators, placement, directory, new BundleBuilderAdapter()), directory, orchestrators), new UserSeederAdapter(new UserSeeder()), dataRoot, new AdminProxy(new WsAdminConnector()), directory, idpService, conn => new IdpAdminClient(conn), undefined, reach)
@@ -275,8 +271,18 @@ export class TenantAdminServer
 
     private static ConsoleAliasOf(cfg: TenantAdminConfig, directory: SeededTenantDirectory): ConsoleHostAlias | undefined
     {
+        return cfg.consoleHost === undefined ? undefined : { host: cfg.consoleHost, tenantId: TenantAdminServer.FirstHiveOf(directory).tenantId }
+    }
+
+    /** The seed's first hive: the console's own identity. Throws NoIdentityMessage when the seed has none. */
+    private static FirstHiveOf(directory: SeededTenantDirectory): HiveRecord
+    {
         const hive = directory.ListHives()[0]
-        return cfg.consoleHost === undefined || hive === undefined ? undefined : { host: cfg.consoleHost, tenantId: hive.tenantId }
+        if (hive === undefined)
+        {
+            throw new Error(TenantAdminServer.NoIdentityMessage)
+        }
+        return hive
     }
 
     private static OptionalOf(env: NodeJS.ProcessEnv, name: string): string | undefined
