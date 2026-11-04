@@ -552,6 +552,14 @@ export class K8sManifestBuilder
         return typeof hive === 'string' ? hive : undefined
     }
 
+    /** Whether a Namespace (as the API returns it) enforces a Pod Security level the console's admission fence admits. */
+    public static EnforcesAdmittedPodSecurity(doc: unknown): boolean
+    {
+        const labels = (doc as { [k: string]: { [k: string]: Record<string, unknown> | undefined } | undefined } | null)?.[K8sManifestBuilder.MetadataKey]?.[K8sManifestBuilder.LabelsKey]
+        const level = labels?.[K8sManifestBuilder.PodSecurityEnforceLabel]
+        return typeof level === 'string' && K8sManifestBuilder.AdmittedPodSecurityLevels.includes(level)
+    }
+
     /** The labels that mark an object as the hive's (selected by HiveLabelSelectorOf). */
     public static HiveLabelsOf(hiveId: string): Record<string, string>
     {

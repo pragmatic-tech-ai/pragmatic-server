@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { InClusterHiveOrchestrator, InvalidTlsSourceSecretError } from '../in-cluster-hive-orchestrator.js'
 import type { InClusterOrchestration } from '../in-cluster-hive-orchestrator.js'
-import { EnvNamespaceRefusedError } from '../env-namespace-guard.js'
+import { EnvNamespaceRefusal, EnvNamespaceRefusedError } from '../env-namespace-guard.js'
 import { PinnedImageVerifier } from '../pinned-image-verifier.js'
 import { ImageVerificationError } from '../image-verifier.js'
 import { EffectiveRegistry } from '../effective-registry.js'
@@ -111,6 +111,8 @@ class OrchestratorFixture
         return OrchestratorFixture.Json(200, { metadata: { name: OrchestratorFixture.Ns, labels } })
     }
 
+    public static readonly OwnLabels: Record<string, string> = { 'pragmatic/hive': 'h1', 'pod-security.kubernetes.io/enforce': 'baseline' }
+
     public static Body(call: SentCall | undefined): any
     {
         return JSON.parse(call?.body ?? 'null')
@@ -161,7 +163,7 @@ test('Apply over an existing own namespace and binding (409) carries on without 
 {
     const { t, o } = OrchestratorFixture.Make()
     t.On(KubeMethod.Post, OrchestratorFixture.NamespacesPath, OrchestratorFixture.Json(409, {}), 1)
-    t.On(KubeMethod.Get, OrchestratorFixture.NsPath, OrchestratorFixture.Namespace({ 'pragmatic/hive': OrchestratorFixture.Hive }))
+    t.On(KubeMethod.Get, OrchestratorFixture.NsPath, OrchestratorFixture.Namespace(OrchestratorFixture.OwnLabels))
     t.On(KubeMethod.Post, OrchestratorFixture.BindingsPath, OrchestratorFixture.Json(409, {}))
     await o.Apply(OrchestratorFixture.Workload())
     assert.ok(t.Paths(KubeMethod.Patch).length > 0)
@@ -198,7 +200,7 @@ test('Apply refuses an existing namespace not labelled for this hive', async () 
         t.On(KubeMethod.Post, OrchestratorFixture.NamespacesPath, OrchestratorFixture.Json(409, {}))
         t.On(KubeMethod.Get, OrchestratorFixture.NsPath, OrchestratorFixture.Namespace(labels))
         await assert.rejects(o.Apply(OrchestratorFixture.Workload()), (e: unknown) =>
-            e instanceof EnvNamespaceRefusedError && e.message.includes(OrchestratorFixture.Ns))
+            e instanceof EnvNamespaceRefusedError && e.Refusal === EnvNamespaceRefusal.OtherHive && e.message.includes(OrchestratorFixture.Ns))
         assert.deepEqual(t.Paths(KubeMethod.Patch), [])
         assert.deepEqual(t.Paths(KubeMethod.Post), [OrchestratorFixture.NamespacesPath])
     }
@@ -207,8 +209,41 @@ test('Apply refuses an existing namespace not labelled for this hive', async () 
 test('Apply refuses a workload of another hive before any API call', async () =>
 {
     const { t, o } = OrchestratorFixture.Make()
-    await assert.rejects(o.Apply({ ...OrchestratorFixture.Workload(), hiveId: 'other' }), EnvNamespaceRefusedError)
+    await assert.rejects(o.Apply({ ...OrchestratorFixture.Workload(), hiveId: 'other' }), (e: unknown) =>
+        e instanceof EnvNamespaceRefusedError
+        && e.Refusal === EnvNamespaceRefusal.WorkloadOfOtherHive
+        && e.Target === 'other'
+        && e.message === 'The tenant console manages only its own hive; this environment belongs to hive: other')
     assert.deepEqual(t.Calls, [])
+})
+
+test('Apply refuses to adopt an own namespace that does not enforce an admitted Pod Security level', async () =>
+{
+    const unadmitted: Array<Record<string, string>> = [{ 'pragmatic/hive': 'h1' }, { 'pragmatic/hive': 'h1', 'pod-security.kubernetes.io/enforce': 'privileged' }]
+    for (const labels of unadmitted)
+    {
+        const { t, o } = OrchestratorFixture.Make()
+        t.On(KubeMethod.Post, OrchestratorFixture.NamespacesPath, OrchestratorFixture.Json(409, {}))
+        t.On(KubeMethod.Get, OrchestratorFixture.NsPath, OrchestratorFixture.Namespace(labels))
+        await assert.rejects(o.Apply(OrchestratorFixture.Workload()), (e: unknown) =>
+            e instanceof EnvNamespaceRefusedError
+            && e.Refusal === EnvNamespaceRefusal.NoPodSecurity
+            && e.Target === OrchestratorFixture.Ns
+            && e.message.includes('Pod Security'))
+        assert.deepEqual(t.Paths(KubeMethod.Post), [OrchestratorFixture.NamespacesPath])
+        assert.deepEqual(t.Paths(KubeMethod.Patch), [])
+    }
+})
+
+test('Apply refuses a namespace that vanished between the 409 and the read', async () =>
+{
+    const { t, o } = OrchestratorFixture.Make()
+    t.On(KubeMethod.Post, OrchestratorFixture.NamespacesPath, OrchestratorFixture.Json(409, {}))
+    t.On(KubeMethod.Get, OrchestratorFixture.NsPath, { status: 404, body: '{}' })
+    await assert.rejects(o.Apply(OrchestratorFixture.Workload()), (e: unknown) =>
+        e instanceof EnvNamespaceRefusedError && e.Target === OrchestratorFixture.Ns)
+    assert.deepEqual(t.Paths(KubeMethod.Post), [OrchestratorFixture.NamespacesPath])
+    assert.deepEqual(t.Paths(KubeMethod.Patch), [])
 })
 
 test('Apply refuses an image the platform did not verify', async () =>
@@ -315,4 +350,14 @@ test('Kubectl is the guarded API kubectl and the other verbs go through it', asy
     assert.deepEqual(t.Paths(KubeMethod.Patch), ['/apis/apps/v1/namespaces/pragmatic-env-a/deployments/pragmatic-env-a-server/scale'])
     await o.PrepareAgent('pragmatic-server:dev')
     assert.equal(t.Calls.length, 1)
+})
+
+test('Apply fails plainly when the rendered manifest has no Namespace object', async () =>
+{
+    const { t, o } = OrchestratorFixture.Make()
+    const stub = { Render: () => JSON.stringify({ apiVersion: 'v1', kind: 'List', items: [{ apiVersion: 'v1', kind: 'Service', metadata: { name: 's', namespace: OrchestratorFixture.Ns } }] }) }
+    ;(o as unknown as { manifests: unknown }).manifests = stub
+    await assert.rejects(o.Apply(OrchestratorFixture.Workload()), (e: unknown) =>
+        e instanceof Error && e.message === 'The rendered environment manifest has no Namespace object for pragmatic-env-a')
+    assert.deepEqual(t.Calls, [])
 })

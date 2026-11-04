@@ -46,13 +46,12 @@ export class InClusterHiveOrchestrator implements IHiveOrchestrator
 {
     public static readonly BindingRetry: OrchestratorPolling = { attempts: 20, intervalMs: 500 }
 
-    private static readonly NamespaceType: KubeTypeRef = { apiVersion: 'v1', kind: 'Namespace' }
     private static readonly RoleBindingType: KubeTypeRef = { apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'RoleBinding' }
     private static readonly SecretType: KubeTypeRef = { apiVersion: 'v1', kind: 'Secret' }
     private static readonly RbacApiGroup = 'rbac.authorization.k8s.io'
     private static readonly ClusterRoleKind = 'ClusterRole'
     private static readonly ServiceAccountKind = 'ServiceAccount'
-    private static readonly ListKind = 'List'
+    private static readonly NoNamespaceItem = 'The rendered environment manifest has no Namespace object for '
     private static readonly TlsCertKey = 'tls.crt'
     private static readonly TlsKeyKey = 'tls.key'
     private static readonly Forbidden = 403
@@ -83,24 +82,25 @@ export class InClusterHiveOrchestrator implements IHiveOrchestrator
         EnvNamespaceGuard.AssertEnvNamespace(ns)
         if (w.hiveId !== this.setup.identity.hiveId)
         {
-            throw new EnvNamespaceRefusedError(ns, EnvNamespaceRefusal.OtherHive)
+            throw new EnvNamespaceRefusedError(w.hiveId, EnvNamespaceRefusal.WorkloadOfOtherHive)
         }
         const image = this.registry.ImageRef(w.image)
         await this.setup.verifier.Verify(image, this.trustRootRef)
         const items = InClusterHiveOrchestrator.ItemsOf(this.manifests.Render({ ...w, image }))
         const namespaceItem = items.find(i => InClusterHiveOrchestrator.IsNamespace(i) && i.metadata.name === ns)
-        const rest = items.filter(i => i !== namespaceItem)
-        if (namespaceItem !== undefined)
+        if (namespaceItem === undefined)
         {
-            await this.CreateNamespace(ns, namespaceItem)
+            throw new Error(InClusterHiveOrchestrator.NoNamespaceItem + ns)
         }
+        const rest = items.filter(i => i !== namespaceItem)
+        await this.CreateNamespace(ns, namespaceItem)
         await this.CreateConsoleBinding(ns)
         const tls = w.federation?.ingressTls
         if (tls !== undefined && IngressTlsPolicy.CopiesSecret(tls))
         {
             await this.CopyTlsSecret(ns, tls, K8sManifestBuilder.ServerDeploymentOf(w.environmentName))
         }
-        const manifest = JSON.stringify({ apiVersion: InClusterHiveOrchestrator.NamespaceType.apiVersion, kind: InClusterHiveOrchestrator.ListKind, items: rest })
+        const manifest = JSON.stringify({ apiVersion: KubeResourceCatalog.NamespaceType.apiVersion, kind: KubeResourceCatalog.ListKind, items: rest })
         await this.RetryingForbidden(() => this.kubectl.Apply(manifest))
     }
 
@@ -148,16 +148,20 @@ export class InClusterHiveOrchestrator implements IHiveOrchestrator
     {
     }
 
-    /** POST the Namespace (no patch: the admission fence admits only creates); on 409 adopt it only when it is this hive's. */
+    /**
+     * POST the Namespace (no patch: the admission fence admits only creates); on 409 adopt it only when it is this hive's and enforces
+     * an admitted Pod Security level (the console cannot add the label to an older namespace).
+     */
     private async CreateNamespace(ns: string, item: ManifestItem): Promise<void>
     {
-        const created = await this.setup.client.Create(KubeResourceCatalog.PathOf(InClusterHiveOrchestrator.NamespaceType, undefined), item)
+        const created = await this.setup.client.Create(KubeResourceCatalog.PathOf(KubeResourceCatalog.NamespaceType, undefined), item)
         if (created)
         {
             return
         }
         const existing = await this.setup.client.Get(InClusterHiveOrchestrator.NamespacePath(ns))
         InClusterHiveOrchestrator.AssertOwned(existing, ns, this.setup.identity.hiveId)
+        EnvNamespaceGuard.AssertPodSecurityEnforced(existing, ns)
     }
 
     /** Binds the console's env ClusterRole to its ServiceAccount inside the namespace; an existing binding (409) is fine. */
@@ -235,12 +239,12 @@ export class InClusterHiveOrchestrator implements IHiveOrchestrator
 
     private static NamespacePath(ns: string): string
     {
-        return KubeResourceCatalog.PathOf(InClusterHiveOrchestrator.NamespaceType, undefined, ns)
+        return KubeResourceCatalog.PathOf(KubeResourceCatalog.NamespaceType, undefined, ns)
     }
 
     private static IsNamespace(item: ManifestItem): boolean
     {
-        return item.apiVersion === InClusterHiveOrchestrator.NamespaceType.apiVersion && item.kind === InClusterHiveOrchestrator.NamespaceType.kind
+        return item.apiVersion === KubeResourceCatalog.NamespaceType.apiVersion && item.kind === KubeResourceCatalog.NamespaceType.kind
     }
 
     private static ItemsOf(manifestJson: string): ManifestItem[]

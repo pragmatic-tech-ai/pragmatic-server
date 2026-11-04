@@ -21,7 +21,9 @@ export interface TenantConsoleAdmissionSpec
  * console's cluster-wide RBAC: RBAC cannot restrict names by prefix or label, so the API server itself refuses any console
  * request on a Namespace that is not one of this hive's `pragmatic-env-` namespaces (a created one must also enforce the
  * baseline or restricted Pod Security level, so the env role cannot run a privileged pod there), and any RoleBinding other than the
- * console's own env binding (its env ClusterRole, its ServiceAccount as the only subject) in such a namespace. It applies
+ * console's own env binding (its env ClusterRole, its ServiceAccount as the only subject) in such a namespace. A binding also needs
+ * its namespace to enforce an admitted Pod Security level, so a hive-labelled namespace made before that label existed (which the
+ * console cannot relabel) is never bound. It applies
  * only to the console's exact ServiceAccount user and fails closed. The console has no admissionregistration grants.
  */
 export class TenantConsoleAdmission
@@ -52,7 +54,7 @@ export class TenantConsoleAdmission
     private static readonly EscapedQuote = "\\'"
     private static readonly NamespaceCreateMessage = 'The console may only create its own hive\'s environment namespaces, enforcing the baseline or restricted Pod Security level.'
     private static readonly NamespaceChangeMessage = 'The console may only change or delete its own hive\'s environment namespaces.'
-    private static readonly BindingNamespaceMessage = 'The console may only bind roles inside its own hive\'s environment namespaces.'
+    private static readonly BindingNamespaceMessage = 'The console may only bind roles inside its own hive\'s environment namespaces that enforce the baseline or restricted Pod Security level.'
     private static readonly BindingNameMessage = 'The console may only create its own environment role binding.'
     private static readonly BindingRoleMessage = 'The console may only bind its own environment ClusterRole.'
     private static readonly BindingSubjectsMessage = 'The console may only bind its environment role to its own ServiceAccount.'
@@ -120,7 +122,7 @@ export class TenantConsoleAdmission
                 message: C.NamespaceChangeMessage,
             },
             {
-                expression: `${isBinding} || (${C.OwnNamespace(spec, 'request.namespace', 'namespaceObject')})`,
+                expression: `${isBinding} || (${C.OwnNamespace(spec, 'request.namespace', 'namespaceObject')} && ${C.PodSecurityEnforced(spec, 'namespaceObject')})`,
                 message: C.BindingNamespaceMessage,
             },
             {

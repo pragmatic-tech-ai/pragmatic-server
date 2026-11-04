@@ -32,3 +32,17 @@ export class UnsupportedBackendError extends Error
         this.name = UnsupportedBackendError.ErrorName
     }
 }
+
+/** Inside a tenant console pod: the hive is not the console's own, so the console has no driver for it. */
+export class ForeignHiveError extends UnsupportedBackendError
+{
+    private static readonly MessagePrefix = 'The tenant console manages only its own hive: '
+    private static readonly ForeignErrorName = 'ForeignHiveError'
+
+    public constructor(public readonly HiveId: string, backend: HiveBackend, mode: InfraMode)
+    {
+        super(backend, mode)
+        this.message = ForeignHiveError.MessagePrefix + HiveId
+        this.name = ForeignHiveError.ForeignErrorName
+    }
+}

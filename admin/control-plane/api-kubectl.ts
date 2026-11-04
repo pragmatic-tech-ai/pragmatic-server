@@ -44,12 +44,10 @@ export class ApiKubectl implements IKubectl
     public static readonly DefaultRollout: OrchestratorPolling = { attempts: 150, intervalMs: 2000 }
     private static readonly BadManifestMessage = 'kubectl manifest was not valid JSON'
     private static readonly MissingNamespacePrefix = 'Namespaced object has no metadata.namespace: '
-    private static readonly ListKind = 'List'
     private static readonly ScaleSegment = '/scale'
     private static readonly RestartedAt = 'kubectl.kubernetes.io/restartedAt'
     private static readonly DeploymentType: KubeTypeRef = { apiVersion: 'apps/v1', kind: 'Deployment' }
     private static readonly StatefulSetType: KubeTypeRef = { apiVersion: 'apps/v1', kind: 'StatefulSet' }
-    private static readonly NamespaceType: KubeTypeRef = { apiVersion: 'v1', kind: 'Namespace' }
     private static readonly NotFound = 404
     private static readonly Comma = ','
     private static readonly Slash = '/'
@@ -155,7 +153,7 @@ export class ApiKubectl implements IKubectl
 
     public async DeleteNamespace(namespace: string): Promise<void>
     {
-        const path = KubeResourceCatalog.PathOf(ApiKubectl.NamespaceType, undefined, namespace)
+        const path = KubeResourceCatalog.PathOf(KubeResourceCatalog.NamespaceType, undefined, namespace)
         if (await this.client.Delete(path))
         {
             await this.WaitGone(path, ApiKubectl.NamespaceLabel + namespace)
@@ -261,6 +259,6 @@ export class ApiKubectl implements IKubectl
         {
             throw new KubectlError(ApiKubectl.BadManifestMessage, '', false)
         }
-        return parsed.kind === ApiKubectl.ListKind ? parsed.items ?? [] : [parsed as unknown as ManifestObject]
+        return parsed.kind === KubeResourceCatalog.ListKind ? parsed.items ?? [] : [parsed as unknown as ManifestObject]
     }
 }

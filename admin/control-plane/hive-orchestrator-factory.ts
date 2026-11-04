@@ -5,7 +5,7 @@ import { EffectiveRegistry } from './effective-registry.js'
 import { FileKeyStore } from './key-store.js'
 import { FileSignatureStore } from './signature-store.js'
 import { InClusterHiveOrchestrator, type InClusterOrchestration } from './in-cluster-hive-orchestrator.js'
-import { UnsupportedBackendError } from './hive-orchestrator.js'
+import { ForeignHiveError, UnsupportedBackendError } from './hive-orchestrator.js'
 import type { IHiveOrchestrator } from './hive-orchestrator.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import { KindCli } from './kind.js'
@@ -40,11 +40,15 @@ export class HiveOrchestratorFactory
         const { backend, mode, configRef } = hive.cluster
         if (this.inCluster !== undefined)
         {
-            if (backend === HiveBackend.Local && hive.id === this.inCluster.identity.hiveId)
+            if (hive.id !== this.inCluster.identity.hiveId)
             {
-                return new InClusterHiveOrchestrator(this.inCluster, EffectiveRegistry.For(hive), hive.trustRootRef)
+                throw new ForeignHiveError(hive.id, backend, mode)
             }
-            throw new UnsupportedBackendError(backend, mode)
+            if (backend !== HiveBackend.Local)
+            {
+                throw new UnsupportedBackendError(backend, mode)
+            }
+            return new InClusterHiveOrchestrator(this.inCluster, EffectiveRegistry.For(hive), hive.trustRootRef)
         }
         if (backend === HiveBackend.Local && mode === InfraMode.Attach)
         {

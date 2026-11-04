@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { EnvNamespaceGuard, EnvNamespaceRefusedError } from '../env-namespace-guard.js'
+import { EnvNamespaceGuard, EnvNamespaceRefusal, EnvNamespaceRefusedError } from '../env-namespace-guard.js'
 import type { IKubectl } from '../kubectl.js'
 
 class RecordingKubectl implements IKubectl
@@ -111,6 +111,27 @@ test('refuses a manifest naming a foreign namespace, a foreign Namespace or an u
     await assert.rejects(guard.Apply(JSON.stringify({ apiVersion: 'v1', kind: 'Secret', metadata: { name: 's' } })), GuardFixture.IsRefusal)
     await assert.rejects(guard.Apply(GuardFixture.List({ apiVersion: 'example.com/v1', kind: 'Widget', metadata: { name: 'w', namespace: GuardFixture.Env } })), GuardFixture.IsRefusal)
     assert.deepEqual(inner.Calls, [])
+})
+
+test('refuses a nested List item and a null item', async () =>
+{
+    const { inner, guard } = GuardFixture.Make()
+    const nested = { apiVersion: 'v1', kind: 'List', items: [GuardFixture.Secret('pragmatic-system')] }
+    await assert.rejects(guard.Apply(GuardFixture.List(GuardFixture.Secret(GuardFixture.Env), nested)), GuardFixture.IsRefusal)
+    await assert.rejects(guard.Apply(JSON.stringify({ apiVersion: 'v1', kind: 'List', items: [null] })), GuardFixture.IsRefusal)
+    await assert.rejects(guard.ApplyServerSide(JSON.stringify({ apiVersion: 'v1', kind: 'List', items: [GuardFixture.Secret(GuardFixture.Env), null] })), GuardFixture.IsRefusal)
+    assert.deepEqual(inner.Calls, [])
+})
+
+test('a refused object is reported as the Target, not as a namespace', async () =>
+{
+    const { guard } = GuardFixture.Make()
+    await assert.rejects(guard.Get(GuardFixture.Env, 'clusterrole/cluster-admin'), (e: unknown) =>
+        e instanceof EnvNamespaceRefusedError && e.Target === 'clusterrole/cluster-admin' && e.Refusal === EnvNamespaceRefusal.OutsidePrefix)
+    await assert.rejects(guard.Apply(GuardFixture.List({ apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'ClusterRole', metadata: { name: 'x' } })), (e: unknown) =>
+        e instanceof EnvNamespaceRefusedError && e.Target === 'ClusterRole/x')
+    await assert.rejects(guard.Scale('kube-system', 'd', 1), (e: unknown) =>
+        e instanceof EnvNamespaceRefusedError && e.Target === 'kube-system')
 })
 
 test('refuses a cluster-scoped Get even when the namespace argument is an env namespace', async () =>

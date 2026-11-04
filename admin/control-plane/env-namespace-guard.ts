@@ -2,27 +2,37 @@ import { KubectlError, type IKubectl } from './kubectl.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import { KubeResourceCatalog, type KubeTypeRef } from './kube-api-client.js'
 
-/** Why a namespace was refused. */
+/** Why the console refused a namespace, an object or a workload. */
 export enum EnvNamespaceRefusal
 {
     /** The call or a manifest item reaches outside the console's `pragmatic-env-*` namespaces. */
     OutsidePrefix = 'outside-prefix',
     /** The environment namespace already exists and is not labelled for this hive. */
     OtherHive = 'other-hive',
+    /** The environment namespace is this hive's but does not enforce the baseline or restricted Pod Security level. */
+    NoPodSecurity = 'no-pod-security',
+    /** The workload belongs to another hive than the console's own. */
+    WorkloadOfOtherHive = 'workload-of-other-hive',
 }
 
-/** A refused namespace; the message is a plain sentence naming only the namespace (or object) refused. */
+/**
+ * A refusal; the message is a plain sentence naming only `Target`: the namespace, the object (`Kind/name`, `kind/name`) or, for
+ * WorkloadOfOtherHive, the hive the workload belongs to.
+ */
 export class EnvNamespaceRefusedError extends Error
 {
     private static readonly ErrorName = 'EnvNamespaceRefusedError'
-    private static readonly OutsidePrefixMessage = 'The tenant console manages only its own namespaces named pragmatic-env-*: '
-    private static readonly OtherHiveMessage = 'The environment namespace already exists and does not belong to this hive: '
+    private static readonly Sentences: Readonly<Record<EnvNamespaceRefusal, readonly [string, string]>> = {
+        [EnvNamespaceRefusal.OutsidePrefix]: ['The tenant console manages only its own namespaces named pragmatic-env-*: ', ''],
+        [EnvNamespaceRefusal.OtherHive]: ['The environment namespace already exists and does not belong to this hive: ', ''],
+        [EnvNamespaceRefusal.NoPodSecurity]: ['The environment namespace ', ' does not enforce the baseline or restricted Pod Security level; re-apply the environment from the platform to label it.'],
+        [EnvNamespaceRefusal.WorkloadOfOtherHive]: ['The tenant console manages only its own hive; this environment belongs to hive: ', ''],
+    }
 
-    public constructor(public readonly Namespace: string, public readonly Refusal: EnvNamespaceRefusal = EnvNamespaceRefusal.OutsidePrefix)
+    public constructor(public readonly Target: string, public readonly Refusal: EnvNamespaceRefusal = EnvNamespaceRefusal.OutsidePrefix)
     {
-        super((Refusal === EnvNamespaceRefusal.OtherHive
-            ? EnvNamespaceRefusedError.OtherHiveMessage
-            : EnvNamespaceRefusedError.OutsidePrefixMessage) + Namespace)
+        const [before, after] = EnvNamespaceRefusedError.Sentences[Refusal]
+        super(before + Target + after)
         this.name = EnvNamespaceRefusedError.ErrorName
     }
 }
@@ -37,8 +47,6 @@ type GuardedItem = { apiVersion?: unknown; kind?: unknown; metadata?: { name?: u
  */
 export class EnvNamespaceGuard implements IKubectl
 {
-    private static readonly ListKind = 'List'
-    private static readonly NamespaceType: KubeTypeRef = { apiVersion: 'v1', kind: 'Namespace' }
     private static readonly BadManifestMessage = 'kubectl manifest was not valid JSON'
     private static readonly Slash = '/'
     private static readonly Comma = ','
@@ -73,6 +81,18 @@ export class EnvNamespaceGuard implements IKubectl
         if (existing !== undefined && K8sManifestBuilder.HiveOf(existing) !== hiveId)
         {
             throw new EnvNamespaceRefusedError(namespace, EnvNamespaceRefusal.OtherHive)
+        }
+    }
+
+    /**
+     * Refuses an existing environment namespace that does not enforce an admitted Pod Security level (one made before env namespaces
+     * carried the label): the console cannot relabel it, and binding its env role there would allow privileged pods.
+     */
+    public static AssertPodSecurityEnforced(existing: unknown, namespace: string): void
+    {
+        if (!K8sManifestBuilder.EnforcesAdmittedPodSecurity(existing))
+        {
+            throw new EnvNamespaceRefusedError(namespace, EnvNamespaceRefusal.NoPodSecurity)
         }
     }
 
@@ -210,7 +230,7 @@ export class EnvNamespaceGuard implements IKubectl
 
     private static IsNamespaceType(type: KubeTypeRef): boolean
     {
-        return type.apiVersion === EnvNamespaceGuard.NamespaceType.apiVersion && type.kind === EnvNamespaceGuard.NamespaceType.kind
+        return type.apiVersion === KubeResourceCatalog.NamespaceType.apiVersion && type.kind === KubeResourceCatalog.NamespaceType.kind
     }
 
     /** Every item is a namespaced kind in an env namespace or an env Namespace; bad JSON fails with a fixed message (it may hold Secret data). */
@@ -263,7 +283,7 @@ export class EnvNamespaceGuard implements IKubectl
         {
             throw new KubectlError(EnvNamespaceGuard.BadManifestMessage, '', false)
         }
-        if (parsed.kind === EnvNamespaceGuard.ListKind)
+        if (parsed.kind === KubeResourceCatalog.ListKind)
         {
             return Array.isArray(parsed.items) ? parsed.items.map(i => (i ?? {}) as GuardedItem) : []
         }

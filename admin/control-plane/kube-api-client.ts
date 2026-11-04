@@ -85,6 +85,10 @@ export class UnsupportedKubeKindError extends KubectlError
 
 export class KubeResourceCatalog
 {
+    /** The cluster-scoped Namespace type: the one home shared by ApiKubectl, the env guard and the in-cluster orchestrator. */
+    public static readonly NamespaceType: KubeTypeRef = { apiVersion: 'v1', kind: 'Namespace' }
+    /** The kind of a manifest that wraps several objects in `items`. */
+    public static readonly ListKind = 'List'
     private static readonly CoreVersion = 'v1'
     private static readonly CoreRoot = '/api/'
     private static readonly GroupRoot = '/apis/'

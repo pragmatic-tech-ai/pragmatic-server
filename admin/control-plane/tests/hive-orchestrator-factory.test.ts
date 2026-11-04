@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { isAbsolute } from 'node:path'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
-import { UnsupportedBackendError } from '../hive-orchestrator.js'
+import { ForeignHiveError, UnsupportedBackendError } from '../hive-orchestrator.js'
 import { KubectlHiveOrchestrator } from '../kubectl-hive-orchestrator.js'
 import { KubectlCli } from '../kubectl.js'
 import { KindClusterName } from '../kind-cluster-name.js'
@@ -131,6 +131,8 @@ test('another hive id throws UnsupportedBackendError', () =>
 {
     const factory = new HiveOrchestratorFactory(undefined, undefined, InClusterFixture.Setup('hive-other'))
     assert.throws(() => factory.For(FactoryFixture.Hive(HiveBackend.Local, InfraMode.Attach)), UnsupportedBackendError)
+    assert.throws(() => factory.For(FactoryFixture.Hive(HiveBackend.Local, InfraMode.Attach)), (e: unknown) =>
+        e instanceof ForeignHiveError && e.HiveId === 'hive-1' && e.message === 'The tenant console manages only its own hive: hive-1')
     const inPod = new HiveOrchestratorFactory(undefined, undefined, InClusterFixture.Setup('hive-1'))
     assert.throws(() => inPod.For(FactoryFixture.Hive(HiveBackend.Aks, InfraMode.Attach)), UnsupportedBackendError)
 })

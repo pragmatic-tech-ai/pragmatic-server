@@ -256,3 +256,10 @@ test('HttpsKubeTransport timeout fails with a fixed message that holds no token'
         await fixture.Stop()
     }
 })
+
+test('the catalog declares the Namespace type and the List kind once', () =>
+{
+    assert.deepEqual(KubeResourceCatalog.NamespaceType, { apiVersion: 'v1', kind: 'Namespace' })
+    assert.equal(KubeResourceCatalog.ListKind, 'List')
+    assert.equal(KubeResourceCatalog.IsNamespaced(KubeResourceCatalog.NamespaceType), false)
+})
