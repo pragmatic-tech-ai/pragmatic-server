@@ -129,6 +129,7 @@ export class IngressTlsPolicy
         return tls.source !== IngressTlsSource.CertManager
     }
 
+    /** Serialises the choice as the TenantAdminEnv.IngressTls* trio (secret and issuer keys only when set). */
     public static ToEnv(tls: IngressTls): Record<string, string>
     {
         const env: Record<string, string> = { [TenantAdminEnv.IngressTlsSource]: tls.source }
@@ -143,6 +144,7 @@ export class IngressTlsPolicy
         return env
     }
 
+    /** Reads the TenantAdminEnv.IngressTls* trio; undefined when no source is set, otherwise validated through Parse. */
     public static FromEnv(env: NodeJS.ProcessEnv): IngressTls | undefined
     {
         const source = env[TenantAdminEnv.IngressTlsSource]

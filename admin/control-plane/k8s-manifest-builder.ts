@@ -161,6 +161,12 @@ export class K8sManifestBuilder
     private static readonly SslPassthroughValue = 'true'
     private static readonly BackendProtocolAnnotation = 'nginx.ingress.kubernetes.io/backend-protocol'
     private static readonly BackendProtocolHttps = 'HTTPS'
+    private static readonly ProxySslSecretAnnotation = 'nginx.ingress.kubernetes.io/proxy-ssl-secret'
+    private static readonly ProxySslVerifyAnnotation = 'nginx.ingress.kubernetes.io/proxy-ssl-verify'
+    private static readonly ProxySslNameAnnotation = 'nginx.ingress.kubernetes.io/proxy-ssl-name'
+    private static readonly ProxySslServerNameAnnotation = 'nginx.ingress.kubernetes.io/proxy-ssl-server-name'
+    private static readonly AnnotationOn = 'on'
+    private static readonly NamespaceSeparator = '/'
     private static readonly HostKey = 'host'
     private static readonly HttpKey = 'http'
     private static readonly PathsKey = 'paths'
@@ -847,7 +853,16 @@ export class K8sManifestBuilder
         // With a TLS choice the controller terminates for browsers and re-encrypts to the IdP, which keeps serving its own internal certificate.
         meta[K8sManifestBuilder.AnnotationsKey] = tls === undefined
             ? { [K8sManifestBuilder.SslPassthroughAnnotation]: K8sManifestBuilder.SslPassthroughValue }
-            : { [K8sManifestBuilder.BackendProtocolAnnotation]: K8sManifestBuilder.BackendProtocolHttps, ...IngressTlsPolicy.AnnotationsFor(tls) }
+            : {
+                [K8sManifestBuilder.BackendProtocolAnnotation]: K8sManifestBuilder.BackendProtocolHttps,
+                // Verify the IdP certificate on the re-encrypt hop: its own TLS Secret carries the issuing ca.crt (nginx uses it as the CA bundle),
+                // and the cert is issued for the Service-DNS host, which is not the upstream name nginx would otherwise present.
+                [K8sManifestBuilder.ProxySslSecretAnnotation]: `${name}${K8sManifestBuilder.NamespaceSeparator}${spec.tlsSecretName}`,
+                [K8sManifestBuilder.ProxySslVerifyAnnotation]: K8sManifestBuilder.AnnotationOn,
+                [K8sManifestBuilder.ProxySslNameAnnotation]: new URL(K8sManifestBuilder.IdpBaseUrlOf(spec.tenantId, spec.port)).hostname,
+                [K8sManifestBuilder.ProxySslServerNameAnnotation]: K8sManifestBuilder.AnnotationOn,
+                ...IngressTlsPolicy.AnnotationsFor(tls),
+            }
         return {
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionNetworking,
             [K8sManifestBuilder.KindKey]: K8sManifestBuilder.IngressKind,
@@ -1385,9 +1400,10 @@ export class K8sManifestBuilder
     /**
      * Per-env TLS-TERMINATING Ingress: <environmentId>.<baseDomain> → the env Service. The env server speaks plain
      * HTTP (pragmatic-server-host serves node:http in-cluster), so — unlike the IdP, which serves its own HTTPS and
-     * uses ssl-passthrough — the ingress controller terminates TLS here and proxies HTTP to the backend. In dev,
-     * ingress-nginx serves its default self-signed cert for the host (the Playwright smoke uses ignoreHTTPSErrors);
-     * a real per-host cert Secret is the cloud follow-on. NEVER passthrough (that would hand raw TLS to an HTTP server).
+     * uses ssl-passthrough — the ingress controller terminates TLS here and proxies HTTP to the backend. With a
+     * federation.ingressTls choice the host serves the Secret from IngressTlsPolicy.SecretNameFor (plus the cert-manager
+     * annotation for that source); with none, ingress-nginx serves its default self-signed cert (the Playwright smoke
+     * uses ignoreHTTPSErrors). NEVER passthrough (that would hand raw TLS to an HTTP server).
      */
     private ServerIngress(workload: EnvironmentWorkload, baseDomain: string): K8sObject
     {

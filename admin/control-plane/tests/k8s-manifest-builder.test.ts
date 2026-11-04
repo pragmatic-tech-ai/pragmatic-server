@@ -320,6 +320,12 @@ describe('K8sManifestBuilder.RenderIdp', () =>
         assert.equal(ing.metadata.annotations['nginx.ingress.kubernetes.io/ssl-passthrough'], undefined)
         assert.equal(ing.metadata.annotations['nginx.ingress.kubernetes.io/backend-protocol'], 'HTTPS')
         assert.deepEqual(ing.spec.tls, [{ hosts: ['idp-t1.d.localtest'], secretName: 'pragmatic-dev-tls' }])
+        // The re-encrypt hop verifies the IdP certificate against the ca.crt in the IdP's own TLS Secret, by its Service-DNS name.
+        const a = ing.metadata.annotations
+        assert.equal(a['nginx.ingress.kubernetes.io/proxy-ssl-secret'], 'pragmatic-idp-t1/idp-tls-secret')
+        assert.equal(a['nginx.ingress.kubernetes.io/proxy-ssl-verify'], 'on')
+        assert.equal(a['nginx.ingress.kubernetes.io/proxy-ssl-name'], new URL(K8sManifestBuilder.IdpBaseUrlOf('t1', 9443)).hostname)
+        assert.equal(a['nginx.ingress.kubernetes.io/proxy-ssl-server-name'], 'on')
     })
 
     it('IdP Ingress with cert-manager carries the issuer annotation and a Secret distinct from the IdP key Secret', () =>
