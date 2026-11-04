@@ -71,15 +71,15 @@ export type KubeTypeRef = { apiVersion: string; kind: string }
 
 type KubeKindEntry = { apiVersion: string; kind: string; plural: string; namespaced: boolean; short?: string }
 
-export class UnsupportedKubeKindError extends Error
+export class UnsupportedKubeKindError extends KubectlError
 {
-    private static readonly Prefix = 'Unsupported Kubernetes kind: '
-    private static readonly ErrorName = 'UnsupportedKubeKindError'
+    private static readonly KindPrefix = 'Unsupported Kubernetes kind: '
+    private static readonly KindErrorName = 'UnsupportedKubeKindError'
 
     public constructor(description: string)
     {
-        super(UnsupportedKubeKindError.Prefix + description)
-        this.name = UnsupportedKubeKindError.ErrorName
+        super(UnsupportedKubeKindError.KindPrefix + description, '', false)
+        this.name = UnsupportedKubeKindError.KindErrorName
     }
 }
 
@@ -93,6 +93,7 @@ export class KubeResourceCatalog
     private static readonly Entries: ReadonlyArray<KubeKindEntry> = [
         { apiVersion: 'v1', kind: 'Namespace', plural: 'namespaces', namespaced: false },
         { apiVersion: 'v1', kind: 'Secret', plural: 'secrets', namespaced: true },
+        { apiVersion: 'v1', kind: 'Pod', plural: 'pods', namespaced: true, short: 'po' },
         { apiVersion: 'v1', kind: 'ConfigMap', plural: 'configmaps', namespaced: true },
         { apiVersion: 'v1', kind: 'Service', plural: 'services', namespaced: true, short: 'svc' },
         { apiVersion: 'v1', kind: 'ServiceAccount', plural: 'serviceaccounts', namespaced: true },
@@ -157,19 +158,19 @@ export class KubeResourceCatalog
     }
 }
 
-export class KubeApiError extends Error
+export class KubeApiError extends KubectlError
 {
-    private static readonly Prefix = 'kubernetes API '
+    private static readonly ApiPrefix = 'kubernetes API '
     private static readonly Middle = ' failed with status '
     private static readonly Space = ' '
     private static readonly Separator = ': '
-    private static readonly ErrorName = 'KubeApiError'
+    private static readonly ApiErrorName = 'KubeApiError'
 
     public constructor(public readonly Status: number, method: KubeMethod, path: string, apiMessage: string | undefined)
     {
-        super(KubeApiError.Prefix + method + KubeApiError.Space + path + KubeApiError.Middle + Status
-            + (apiMessage === undefined || apiMessage === '' ? '' : KubeApiError.Separator + KubectlError.Redact(apiMessage).trim()))
-        this.name = KubeApiError.ErrorName
+        super(KubeApiError.ApiPrefix + method + KubeApiError.Space + path + KubeApiError.Middle + Status
+            + (apiMessage === undefined || apiMessage === '' ? '' : KubeApiError.Separator + KubectlError.Redact(apiMessage).trim()), '', false)
+        this.name = KubeApiError.ApiErrorName
     }
 }
 
@@ -260,7 +261,7 @@ export class KubeApiClient
         }
         catch
         {
-            throw new Error(KubeApiClient.BadJsonMessage)
+            throw new KubectlError(KubeApiClient.BadJsonMessage, '', false)
         }
     }
 

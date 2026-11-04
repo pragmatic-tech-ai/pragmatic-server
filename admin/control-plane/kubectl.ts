@@ -145,9 +145,10 @@ export class KubectlError extends Error
     private static readonly Prefix = 'kubectl failed: '
     private static readonly ErrorName = 'KubectlError'
 
-    public constructor(rawStderr: string)
+    /** Subclasses that build an already-redacted, self-describing message pass `prefix` '' and `redact` false. */
+    public constructor(rawStderr: string, prefix: string = KubectlError.Prefix, redact: boolean = true)
     {
-        super(KubectlError.Prefix + KubectlError.Redact(rawStderr).trim())
+        super(prefix + (redact ? KubectlError.Redact(rawStderr).trim() : rawStderr))
         this.name = KubectlError.ErrorName
     }
 

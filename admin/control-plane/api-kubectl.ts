@@ -1,18 +1,32 @@
-import type { IKubectl } from './kubectl.js'
+import { KubectlError, type IKubectl } from './kubectl.js'
 import { KubeApiClient, KubeApiError, KubeContentType, KubeMethod, KubeResourceCatalog, type KubeTypeRef } from './kube-api-client.js'
 import { SystemInstallClock, type IInstallClock } from './hive-agent-installer.js'
 import type { OrchestratorPolling } from './kubectl-hive-orchestrator.js'
 
-export class RolloutTimeoutError extends Error
+export class RolloutTimeoutError extends KubectlError
 {
-    private static readonly Prefix = 'Deployment '
-    private static readonly Suffix = ' did not finish rolling out in time.'
-    private static readonly ErrorName = 'RolloutTimeoutError'
+    private static readonly RolloutPrefix = 'Deployment '
+    private static readonly RolloutSuffix = ' did not finish rolling out in time.'
+    private static readonly RolloutErrorName = 'RolloutTimeoutError'
 
     public constructor(namespace: string, deployment: string)
     {
-        super(RolloutTimeoutError.Prefix + namespace + '/' + deployment + RolloutTimeoutError.Suffix)
-        this.name = RolloutTimeoutError.ErrorName
+        super(RolloutTimeoutError.RolloutPrefix + namespace + '/' + deployment + RolloutTimeoutError.RolloutSuffix, '', false)
+        this.name = RolloutTimeoutError.RolloutErrorName
+    }
+}
+
+/** A namespace or other resource that was deleted but still exists after the bounded wait. */
+export class DeleteTimeoutError extends KubectlError
+{
+    private static readonly DeletePrefix = 'Resource '
+    private static readonly DeleteSuffix = ' was not deleted in time.'
+    private static readonly DeleteErrorName = 'DeleteTimeoutError'
+
+    public constructor(path: string)
+    {
+        super(DeleteTimeoutError.DeletePrefix + path + DeleteTimeoutError.DeleteSuffix, '', false)
+        this.name = DeleteTimeoutError.DeleteErrorName
     }
 }
 
@@ -21,7 +35,7 @@ type ManifestObject = { apiVersion: string; kind: string; metadata: { name: stri
 type DeploymentState = {
     metadata?: { generation?: number }
     spec?: { replicas?: number }
-    status?: { observedGeneration?: number; updatedReplicas?: number; availableReplicas?: number }
+    status?: { observedGeneration?: number; replicas?: number; updatedReplicas?: number; availableReplicas?: number }
 }
 
 /** IKubectl over the Kubernetes API: the in-cluster replacement for the kubectl binary. */
@@ -29,6 +43,7 @@ export class ApiKubectl implements IKubectl
 {
     public static readonly DefaultRollout: OrchestratorPolling = { attempts: 150, intervalMs: 2000 }
     private static readonly BadManifestMessage = 'kubectl manifest was not valid JSON'
+    private static readonly MissingNamespacePrefix = 'Namespaced object has no metadata.namespace: '
     private static readonly ListKind = 'List'
     private static readonly ScaleSegment = '/scale'
     private static readonly RestartedAt = 'kubectl.kubernetes.io/restartedAt'
@@ -120,7 +135,11 @@ export class ApiKubectl implements IKubectl
         for (let attempt = 0; attempt < this.rollout.attempts; attempt++)
         {
             const state = await this.client.Get(path) as DeploymentState | undefined
-            if (state !== undefined && ApiKubectl.IsRolledOut(state))
+            if (state === undefined)
+            {
+                throw new KubeApiError(ApiKubectl.NotFound, KubeMethod.Get, path, undefined)
+            }
+            if (ApiKubectl.IsRolledOut(state))
             {
                 return
             }
@@ -134,7 +153,25 @@ export class ApiKubectl implements IKubectl
 
     public async DeleteNamespace(namespace: string): Promise<void>
     {
-        await this.client.Delete(KubeResourceCatalog.PathOf(ApiKubectl.NamespaceType, undefined, namespace))
+        const path = KubeResourceCatalog.PathOf(ApiKubectl.NamespaceType, undefined, namespace)
+        if (await this.client.Delete(path))
+        {
+            await this.WaitGone(path)
+        }
+    }
+
+    /** Polls until the object is gone (kubectl delete waits for finalizers); bounded like RolloutStatus. */
+    private async WaitGone(path: string): Promise<void>
+    {
+        for (let attempt = 0; attempt < this.rollout.attempts; attempt++)
+        {
+            if (await this.client.Get(path) === undefined)
+            {
+                return
+            }
+            await this.clock.Delay(this.rollout.intervalMs)
+        }
+        throw new DeleteTimeoutError(path)
     }
 
     public async DeleteManifest(manifestJson: string): Promise<void>
@@ -151,9 +188,18 @@ export class ApiKubectl implements IKubectl
         {
             const type = KubeResourceCatalog.ParseResource(word.trim()).type
             const items = await this.client.List(KubeResourceCatalog.PathOf(type, namespace), selector)
+            const deleted: string[] = []
             for (const item of items)
             {
-                await this.client.Delete(KubeResourceCatalog.PathOf(type, namespace, ApiKubectl.NameOf(item)))
+                const path = KubeResourceCatalog.PathOf(type, namespace, ApiKubectl.NameOf(item))
+                if (await this.client.Delete(path))
+                {
+                    deleted.push(path)
+                }
+            }
+            for (const path of deleted)
+            {
+                await this.WaitGone(path)
             }
         }
     }
@@ -166,9 +212,11 @@ export class ApiKubectl implements IKubectl
             return true
         }
         const status = state.status ?? {}
+        const updated = status.updatedReplicas ?? 0
         return (status.observedGeneration ?? 0) >= (state.metadata?.generation ?? 0)
-            && (status.updatedReplicas ?? 0) === replicas
-            && (status.availableReplicas ?? 0) === replicas
+            && updated === replicas
+            && (status.replicas ?? 0) === updated
+            && (status.availableReplicas ?? 0) >= updated
     }
 
     private static DeploymentPath(namespace: string, deployment: string): string
@@ -184,6 +232,10 @@ export class ApiKubectl implements IKubectl
 
     private static PathOfObject(item: ManifestObject): string
     {
+        if (item.metadata.namespace === undefined && KubeResourceCatalog.IsNamespaced(item))
+        {
+            throw new KubectlError(ApiKubectl.MissingNamespacePrefix + item.kind + '/' + item.metadata.name, '', false)
+        }
         return KubeResourceCatalog.PathOf(item, item.metadata.namespace, item.metadata.name)
     }
 
@@ -202,7 +254,7 @@ export class ApiKubectl implements IKubectl
         }
         catch
         {
-            throw new Error(ApiKubectl.BadManifestMessage)
+            throw new KubectlError(ApiKubectl.BadManifestMessage, '', false)
         }
         return parsed.kind === ApiKubectl.ListKind ? parsed.items ?? [] : [parsed as unknown as ManifestObject]
     }
