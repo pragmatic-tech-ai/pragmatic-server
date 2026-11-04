@@ -28,12 +28,17 @@ export class AuditRegistry extends JsonRecordStore<AuditRecord>
     public async Append(entry: Omit<AuditRecord, 'id'>): Promise<void>
     {
         const id = randomUUID()
-        await this.Put({ ...entry, id })
-        const all = this.List()
-        if (all.length <= AuditRegistry.MaxEntries)
+        this.Stage({ ...entry, id })
+        const all = [...this.Values()]
+        if (all.length > AuditRegistry.MaxEntries)
         {
-            return
+            this.Evict(all)
         }
+        await this.Flush()
+    }
+
+    private Evict(all: readonly AuditRecord[]): void
+    {
         const excess = all.length - AuditRegistry.MaxEntries
         // Anonymous entries are evicted first so an unauthenticated flood cannot push out
         // authored history; authored entries go only once no anonymous entry remains.
@@ -43,7 +48,7 @@ export class AuditRegistry extends JsonRecordStore<AuditRecord>
         const oldest = [...anonymous, ...authored].slice(0, excess)
         for (const rec of oldest)
         {
-            await this.Remove(rec.id)
+            this.Unstage(rec.id)
         }
     }
 
