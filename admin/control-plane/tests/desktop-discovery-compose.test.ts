@@ -65,12 +65,13 @@ describe('ControlPlaneServer.DesktopTenantPlaneUrlOf', () =>
 
 describe('ControlPlaneHost desktop discovery route', () =>
 {
-    let dir: string
+    const dirs: string[] = []
     let host: ControlPlaneHost
 
     async function Start(trustedProxy: boolean): Promise<void>
     {
-        dir = mkdtempSync(join(tmpdir(), 'discover-host-'))
+        const dir = mkdtempSync(join(tmpdir(), 'discover-host-'))
+        dirs.push(dir)
         const index = new TenantAccountIndex(join(dir, 'tenant-accounts.json'))
         await index.Load()
         await index.Record('acme', 'owner', ComposeFixture.Ann)
@@ -91,7 +92,10 @@ describe('ControlPlaneHost desktop discovery route', () =>
     afterEach(async () =>
     {
         await host.Close()
-        rmSync(dir, { recursive: true, force: true })
+        for (const dir of dirs.splice(0))
+        {
+            rmSync(dir, { recursive: true, force: true })
+        }
     })
 
     it('serves discovery without an operator session', async () =>

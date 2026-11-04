@@ -127,7 +127,6 @@ export class TenantProvisioningService
     private static readonly LogPrefix = '[owner-reset] tenant ';
     private static readonly LogSessionsInfix = ': ending the Owner sessions failed: ';
     private static readonly UnknownErrorName = 'Error';
-    private static readonly IndexForgetPrefix = '[account-index] tenant ';
     private static readonly IndexForgetInfix = ': forgetting its accounts failed (the startup back-fill will drop them): ';
     private static readonly IndexFailurePrefix = '[account-index] tenant ';
     private static readonly IndexFailureInfix = ': indexing the Owner failed (the startup back-fill will retry): ';
@@ -185,7 +184,7 @@ export class TenantProvisioningService
         catch (err)
         {
             // The tenant is already gone, so this must not fail the delete; BackfillFrom drops the leftover rows at startup.
-            console.error(TenantProvisioningService.IndexForgetPrefix + tenantId + TenantProvisioningService.IndexForgetInfix
+            console.error(TenantProvisioningService.IndexFailurePrefix + tenantId + TenantProvisioningService.IndexForgetInfix
                 + (err instanceof Error ? err.name : TenantProvisioningService.UnknownErrorName));
         }
     }
