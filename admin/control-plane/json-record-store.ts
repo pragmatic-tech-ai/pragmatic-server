@@ -58,17 +58,19 @@ export abstract class JsonRecordStore<TRecord extends { id: string }>
         return record === undefined ? undefined : structuredClone(record)
     }
 
+    /** Stages the record and resolves once a write including it is durable; writes are serialized through Flush. */
     public async Put(record: TRecord): Promise<void>
     {
-        this.records.set(record.id, structuredClone(record))
-        await this.persist()
+        this.Stage(record)
+        await this.Flush()
     }
 
+    /** Unstages the record and, if it existed, resolves once a write without it is durable (serialized through Flush). */
     public async Remove(id: string): Promise<void>
     {
-        if (this.records.delete(id))
+        if (this.Unstage(id))
         {
-            await this.persist()
+            await this.Flush()
         }
     }
 
