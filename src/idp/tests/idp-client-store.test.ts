@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { test, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -168,3 +168,52 @@ test('a missing file opens empty; an unreadable file is refused rather than sile
     fs.writeFileSync(file, '{not json');
     await assert.rejects(IdpClientStore.Open(file), /client registrations/);
 }));
+
+class LoopbackFixture
+{
+    public static readonly Registered = 'http://127.0.0.1/pragmatic-desktop/callback';
+    public static readonly PortFul = 'http://127.0.0.1:7000/cb';
+    public static readonly Good: readonly string[] = ['http://127.0.0.1:51234/pragmatic-desktop/callback', 'http://127.0.0.1:1/pragmatic-desktop/callback', 'http://127.0.0.1:65535/pragmatic-desktop/callback'];
+    public static readonly Bad: readonly string[] = [
+        'http://127.0.0.1:5/other',
+        'http://127.0.0.1:5/pragmatic-desktop/callback?x=1',
+        'http://127.0.0.1:5/pragmatic-desktop/callback#f',
+        'https://127.0.0.1:5/pragmatic-desktop/callback',
+        'http://localhost:5/pragmatic-desktop/callback',
+        'http://127.0.0.1.evil.test:5/pragmatic-desktop/callback',
+        'http://127.0.0.1:0/pragmatic-desktop/callback',
+        'not a url'];
+    public static readonly PortFulOther = 'http://127.0.0.1:7001/cb';
+    public static readonly OtherClient = 'client-2';
+
+    public static async Register(uri: string): Promise<IdpClientStore>
+    {
+        const store = new IdpClientStore();
+        await store.Register(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId, [uri], ClientStoreFixture.Secret);
+        return store;
+    }
+}
+
+describe('loopback redirect', () =>
+{
+    it('matches any port on a registered portless 127.0.0.1 redirect', async () =>
+    {
+        const store = await LoopbackFixture.Register(LoopbackFixture.Registered);
+        for (const uri of LoopbackFixture.Good)
+        {
+            assert.equal(store.RedirectAllowed(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId, uri), true, uri);
+        }
+    });
+
+    it('refuses a different path, a query, a fragment, https, localhost or a port-ful registration mismatch', async () =>
+    {
+        const store = await LoopbackFixture.Register(LoopbackFixture.Registered);
+        for (const uri of LoopbackFixture.Bad)
+        {
+            assert.equal(store.RedirectAllowed(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId, uri), false, uri);
+        }
+        const portFul = await LoopbackFixture.Register(LoopbackFixture.PortFul);
+        assert.equal(portFul.RedirectAllowed(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId, LoopbackFixture.PortFul), true);
+        assert.equal(portFul.RedirectAllowed(ClientStoreFixture.TenantId, ClientStoreFixture.ClientId, LoopbackFixture.PortFulOther), false);
+    });
+});

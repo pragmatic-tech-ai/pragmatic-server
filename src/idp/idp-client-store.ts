@@ -27,6 +27,12 @@ export class IdpClientStore
     private static readonly Encoding = 'utf8';
     private static readonly TmpSuffix = '.tmp';
     private static readonly NotFound = 'ENOENT';
+    private static readonly LoopbackScheme = 'http:';
+    private static readonly LoopbackHost = '127.0.0.1';
+    private static readonly LoopbackOrigin = 'http://127.0.0.1';
+    private static readonly PortMark = ':';
+    private static readonly QueryMark = '?';
+    private static readonly FragmentMark = '#';
     private static readonly UnreadableMessage = 'IdpClientStore: cannot read the client registrations at ';
 
     private readonly hasher = new Argon2PasswordHasher();
@@ -81,11 +87,42 @@ export class IdpClientStore
         return this.hasher.Verify(presented, client.SecretHash);
     }
 
-    /** Exact string equality against the registered allowlist; no prefix, normalization or query tolerance. */
+    /**
+     * Exact string equality against the registered allowlist (no prefix, normalization or query tolerance), plus the
+     * RFC 8252 section 7.3 loopback rule: a registered portless http://127.0.0.1 URI matches the identical URI on any port 1-65535.
+     */
     public RedirectAllowed(tenantId: string, clientId: string, redirectUri: string): boolean
     {
         const client = this.Find(tenantId, clientId);
-        return client !== undefined && client.RedirectUris.includes(redirectUri);
+        return client !== undefined && (client.RedirectUris.includes(redirectUri) || client.RedirectUris.some(r => IdpClientStore.IsLoopbackMatch(r, redirectUri)));
+    }
+
+    private static IsLoopbackMatch(registered: string, presented: string): boolean
+    {
+        if (!registered.startsWith(IdpClientStore.LoopbackOrigin) || presented.includes(IdpClientStore.QueryMark) || presented.includes(IdpClientStore.FragmentMark))
+        {
+            return false;
+        }
+        try
+        {
+            const reg = new URL(registered);
+            const pres = new URL(presented);
+            if (reg.protocol !== IdpClientStore.LoopbackScheme || reg.hostname !== IdpClientStore.LoopbackHost || reg.port !== '' || registered.startsWith(IdpClientStore.LoopbackOrigin + IdpClientStore.PortMark))
+            {
+                return false;
+            }
+            const port = Number(pres.port);
+            if (pres.protocol !== IdpClientStore.LoopbackScheme || pres.hostname !== IdpClientStore.LoopbackHost || !Number.isInteger(port) || port < 1 || port > 65535)
+            {
+                return false;
+            }
+            // Byte-identical path: URL parsing would otherwise fold dot segments and escapes into a false match.
+            return presented === IdpClientStore.LoopbackOrigin + IdpClientStore.PortMark + pres.port + registered.slice(IdpClientStore.LoopbackOrigin.length);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static KeyFor(tenantId: string, clientId: string): string
