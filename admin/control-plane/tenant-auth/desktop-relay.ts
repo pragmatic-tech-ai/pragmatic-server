@@ -1,7 +1,7 @@
 import { STATUS_CODES, type IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { WebSocket, WebSocketServer, type RawData } from 'ws'
-import { ApplicationDeployProtocol, AppWriteStatus, GraphProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { ApplicationDeployProtocol, AppWriteStatus, GraphProtocol, type TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { AuditRegistry } from '../audit-record.js'
 import { AuditThrottle } from '../audit-throttle.js'
 import type { IEnvironmentService } from '../control-plane-host.js'
@@ -48,6 +48,40 @@ export class WsUpstreamDialer implements IUpstreamDialer
                 reject(new Error(WsUpstreamDialer.RefusedMessage))
             })
         })
+    }
+}
+
+/** A cancellable one-shot timer. */
+export interface IRelayTimer
+{
+    Cancel(): void
+}
+
+/** The relay's clock: the time now and one-shot timers (the seam tests drive heartbeats and deadlines through). */
+export interface IRelayClock
+{
+    Now(): number
+    Schedule(callback: () => void, delayMs: number): IRelayTimer
+}
+
+/** The production clock: Date.now and unref'd setTimeout, its delay clamped to what setTimeout accepts. */
+export class SystemRelayClock implements IRelayClock
+{
+    /** setTimeout's ceiling (2^31 - 1 ms); a caller re-arms when it fires before its due time. */
+    private static readonly MaxDelayMs = 2147483647
+    private static readonly MinDelayMs = 0
+
+    public Now(): number
+    {
+        return Date.now()
+    }
+
+    public Schedule(callback: () => void, delayMs: number): IRelayTimer
+    {
+        const handle = setTimeout(callback, Math.min(Math.max(SystemRelayClock.MinDelayMs, delayMs), SystemRelayClock.MaxDelayMs))
+        // A relay's timers must not keep the process alive on their own.
+        handle.unref?.()
+        return { Cancel: () => clearTimeout(handle) }
     }
 }
 
@@ -110,6 +144,11 @@ type RelayContext = { session: TenantSession; actor: string; action: DesktopActi
  * deploy is audited once when its response returns (200, or 500 for an error or a non-applied deploy; 502 if the relay
  * closed first). The tunnel lease is held for the whole relay and released exactly once. Neither the desktop token nor
  * the minted credential is ever logged, audited or echoed.
+ *
+ * A relay's lifetime is bounded. It pings the client every 30 s and terminates a client that has not answered the previous
+ * ping by the next one (a 30 s pong window), so a crashed or sleeping desktop never holds a tunnel lease and an upstream
+ * socket indefinitely. And it closes with 4001 (RelayPipe.Expired: expired, open a new relay) at the earlier of its
+ * desktop session's expiry and its minted credential's expiry, so it never outlives either.
  */
 export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConnections
 {
@@ -163,7 +202,8 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
         private readonly audit: AuditRegistry,
         private readonly dialer: IUpstreamDialer = new WsUpstreamDialer(),
         private readonly anonymousThrottle: AuditThrottle = new AuditThrottle(),
-        private readonly trustedProxy: boolean = false)
+        private readonly trustedProxy: boolean = false,
+        private readonly clock: IRelayClock = new SystemRelayClock())
     {
     }
 
@@ -315,11 +355,12 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
     {
         let lease: EnvironmentUrlsLease | undefined
         let upstream: WebSocket
+        let credential: TokenIssuedDto
         try
         {
             lease = await this.endpoints.UrlsFor(record)
-            const credential = await this.Mint(context.action, record.name)
-            upstream = await this.dialer.Dial(lease.wsUrl + DesktopRelay.UpstreamQuery + encodeURIComponent(record.environmentId), credential)
+            credential = await this.Mint(context.action, record.name)
+            upstream = await this.dialer.Dial(lease.wsUrl + DesktopRelay.UpstreamQuery + encodeURIComponent(record.environmentId), credential.token)
         }
         catch (err)
         {
@@ -329,7 +370,8 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
             await this.Refuse(socket, DesktopRelay.StatusBadGateway, context.actor, context.action, context.envName)
             return
         }
-        const pipe = new RelayPipe(this, context, upstream, lease, () => this.pipes.delete(pipe))
+        const deadlineMs = DesktopRelay.DeadlineOf(context.session, credential)
+        const pipe = new RelayPipe(this, context, upstream, lease, () => this.pipes.delete(pipe), this.clock, deadlineMs)
         // The session may have ended while the credential was minted and the upstream dialed (a sign-out or password change
         // whose CloseSession / ClosePrincipal ran before this pipe existed): check again. From here to handleUpgrade there is
         // no await, so a later CloseSession / ClosePrincipal sees the pipe and a socket closing later hits the guard below.
@@ -370,12 +412,23 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
         }
     }
 
-    private async Mint(action: DesktopAction, envName: string): Promise<string>
+    private async Mint(action: DesktopAction, envName: string): Promise<TokenIssuedDto>
     {
-        const issued = action === DesktopAction.Contribute
+        return action === DesktopAction.Contribute
             ? await this.service.AdminIssueMakerToken(envName)
             : await this.service.AdminIssueDeployToken(envName)
-        return issued.token
+    }
+
+    /**
+     * When the relay must end (epoch ms): the earlier of the session's expiry and the credential's (a credential without
+     * one does not bound it). An unreadable expiry fails closed: the relay ends at once.
+     */
+    public static DeadlineOf(session: TenantSession, credential: TokenIssuedDto): number
+    {
+        const sessionMs = Date.parse(session.expiresAt)
+        const credentialMs = credential.expiresAt === null ? Number.POSITIVE_INFINITY : Date.parse(credential.expiresAt)
+        const deadline = Math.min(sessionMs, credentialMs)
+        return Number.isNaN(deadline) ? Number.NEGATIVE_INFINITY : deadline
     }
 
     /** A refusal before any principal is known: audited as anonymous, but only while the address is under the throttle. */
@@ -457,12 +510,19 @@ type InFlightRequest = { method: string; audited: boolean; note?: string }
 /**
  * One live relay: the desktop client socket and the environment server socket, piped. Upstream frames that arrive before
  * the client upgrade completes are buffered. Either side closing closes the other; the lease is released exactly once.
+ * Once attached, the client is pinged every HeartbeatMs and terminated when the previous ping went unanswered; at the
+ * deadline the relay closes with Expired (4001).
  */
 class RelayPipe
 {
     public static readonly GoingAway = 1001
     public static readonly PolicyViolation = 1008
     public static readonly NormalClosure = 1000
+    /** The relay reached its deadline (its desktop session or its minted credential expired): open a new relay. */
+    public static readonly Expired = 4001
+    /** A ping goes out this often; a client that has not answered the previous one by the next is terminated. */
+    public static readonly HeartbeatMs = 30_000
+    private static readonly PongEvent = 'pong'
     /** At most this many forwarded requests (audited or not) may await an answer on one relay. */
     public static readonly MaxPending = 32
     private static readonly MessageEvent = 'message'
@@ -492,18 +552,24 @@ class RelayPipe
     private readonly pending = new Map<string, InFlightRequest>()
     private readonly allowed: ReadonlySet<string>
     private closed = false
+    private awaitingPong = false
+    private heartbeat: IRelayTimer | undefined
+    private deadline: IRelayTimer | undefined
 
     public constructor(
         private readonly relay: DesktopRelay,
         public context: RelayContext,
         private readonly upstream: WebSocket,
         private readonly lease: EnvironmentUrlsLease,
-        private readonly onClosed: () => void)
+        private readonly onClosed: () => void,
+        private readonly clock: IRelayClock,
+        private readonly deadlineMs: number)
     {
         this.allowed = DesktopRelayAllowlist.For(context.action)
         upstream.on(RelayPipe.MessageEvent, (data, isBinary) => this.FromUpstream(data, isBinary))
         upstream.on(RelayPipe.CloseEvent, code => this.Close(RelayPipe.SendableFrom(code)))
         upstream.on(RelayPipe.ErrorEvent, () => this.Close(RelayPipe.InternalError))
+        this.ArmDeadline()
     }
 
     /** Whether the client upgrade completed (Attach ran). */
@@ -523,10 +589,54 @@ class RelayPipe
         client.on(RelayPipe.MessageEvent, (data, isBinary) => this.FromClient(data, isBinary))
         client.on(RelayPipe.CloseEvent, () => this.Close(RelayPipe.NormalClosure))
         client.on(RelayPipe.ErrorEvent, () => this.Close(RelayPipe.InternalError))
+        client.on(RelayPipe.PongEvent, () => { this.awaitingPong = false })
         for (const frame of this.buffered.splice(0))
         {
             client.send(frame.data, { binary: frame.isBinary })
         }
+        this.ArmHeartbeat()
+    }
+
+    private ArmHeartbeat(): void
+    {
+        this.heartbeat = this.clock.Schedule(() => this.Beat(), RelayPipe.HeartbeatMs)
+    }
+
+    /** Pings the client, or terminates it when the previous ping is still unanswered (it is gone or half-open). */
+    private Beat(): void
+    {
+        const client = this.client
+        if (this.closed || client === undefined)
+        {
+            return
+        }
+        if (this.awaitingPong)
+        {
+            this.Close(RelayPipe.GoingAway)
+            client.terminate()
+            return
+        }
+        this.awaitingPong = true
+        client.ping()
+        this.ArmHeartbeat()
+    }
+
+    /** Closes the relay with Expired at the deadline; a timer that fired early (its delay was clamped) re-arms. */
+    private ArmDeadline(): void
+    {
+        this.deadline = this.clock.Schedule(() =>
+        {
+            if (this.closed)
+            {
+                return
+            }
+            if (this.clock.Now() < this.deadlineMs)
+            {
+                this.ArmDeadline()
+                return
+            }
+            this.Close(RelayPipe.Expired)
+        }, this.deadlineMs - this.clock.Now())
     }
 
     /** Closes both sides once (`code` is what the client sees), releases the lease, and audits unanswered audited calls. */
@@ -537,6 +647,8 @@ class RelayPipe
             return
         }
         this.closed = true
+        this.heartbeat?.Cancel()
+        this.deadline?.Cancel()
         this.lease.Release()
         this.onClosed()
         RelayPipe.CloseSocket(this.client, code)

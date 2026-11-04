@@ -14,7 +14,7 @@ import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environ
 import type { HiveRecord, TenantRecord } from '../platform-records.js'
 import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
 import { DesktopAuthGate } from '../tenant-auth/desktop-auth-gate.js'
-import { DesktopRelay, WsUpstreamDialer, type IUpstreamDialer } from '../tenant-auth/desktop-relay.js'
+import { DesktopRelay, WsUpstreamDialer, type IRelayClock, type IRelayTimer, type IUpstreamDialer } from '../tenant-auth/desktop-relay.js'
 import { DesktopTargets, type DesktopCapabilitiesSource } from '../tenant-auth/desktop-targets.js'
 import { TenantSessionKind, TenantSessionStore } from '../tenant-auth/tenant-session.js'
 import { TenantPrincipalSessions } from '../tenant-auth/tenant-principal-sessions.js'
@@ -116,11 +116,56 @@ class FakeUpstream
     }
 }
 
+/** A manual clock for the relay's heartbeat and deadline: Advance fires every timer that falls due, in order. */
+class FakeRelayClock implements IRelayClock
+{
+    public now = Date.now()
+    private readonly timers: { due: number; callback: () => void; cancelled: boolean }[] = []
+
+    public Now(): number
+    {
+        return this.now
+    }
+
+    public Schedule(callback: () => void, delayMs: number): IRelayTimer
+    {
+        const timer = { due: this.now + delayMs, callback, cancelled: false }
+        this.timers.push(timer)
+        return { Cancel: () => { timer.cancelled = true } }
+    }
+
+    public Advance(ms: number): void
+    {
+        const target = this.now + ms
+        for (;;)
+        {
+            const next = this.timers.filter(t => !t.cancelled && t.due <= target).sort((a, b) => a.due - b.due)[0]
+            if (next === undefined)
+            {
+                break
+            }
+            next.cancelled = true
+            this.now = Math.max(this.now, next.due)
+            next.callback()
+        }
+        this.now = target
+    }
+
+    /** Timers still armed (not fired, not cancelled). */
+    public Armed(): number
+    {
+        return this.timers.filter(t => !t.cancelled).length
+    }
+}
+
 /** IEnvironmentService fake: the env list plus the two credential mints (which can be made to fail). */
 class RelayService
 {
     public failMint = false
     public mints: string[] = []
+    /** When set, a minted credential expires this long after the mint (by the relay's clock). */
+    public credentialTtlMs: number | undefined
+    public clock: FakeRelayClock | undefined
 
     public constructor(private readonly records: readonly EnvironmentRecord[])
     {
@@ -148,7 +193,8 @@ class RelayService
         {
             throw new Error('mint failed')
         }
-        return { tokenRef: 'ref', token, principalId: 'maker', scopes: [], expiresAt: null }
+        const expiresAt = this.credentialTtlMs === undefined ? null : new Date((this.clock?.Now() ?? Date.now()) + this.credentialTtlMs).toISOString()
+        return { tokenRef: 'ref', token, principalId: 'maker', scopes: [], expiresAt }
     }
 }
 
@@ -243,15 +289,16 @@ class RelayKit
     public relay!: DesktopRelay
     public upstream!: FakeUpstream
     public readonly directory = new RelayDirectory()
+    public readonly clock = new FakeRelayClock()
     public desktopToken = ''
     public consoleToken = ''
     private server: Server | undefined
     private port = 0
 
-    public async Start(capabilities?: DesktopCapabilitiesSource): Promise<void>
+    public async Start(capabilities?: DesktopCapabilitiesSource, desktopTtlMs?: number): Promise<void>
     {
         this.dir = await mkdtemp(join(tmpdir(), 'desktop-relay-'))
-        this.store = new TenantSessionStore(join(this.dir, 'sessions.json'), 60000)
+        this.store = new TenantSessionStore(join(this.dir, 'sessions.json'), 60000, undefined, desktopTtlMs)
         this.audit = new AuditRegistry(join(this.dir, 'tenant-desktop-audit.json'))
         await this.audit.Load()
         this.upstream = new FakeUpstream()
@@ -266,7 +313,8 @@ class RelayKit
         this.dialer = new CountingDialer()
         const service = this.service as unknown as IEnvironmentService
         this.relay = new DesktopRelay(new DesktopAuthGate(this.store, this.directory), new DesktopTargets(service, this.directory, capabilities), service,
-            this.endpoints as unknown as EnvironmentEndpoints, this.audit, this.dialer)
+            this.endpoints as unknown as EnvironmentEndpoints, this.audit, this.dialer, undefined, false, this.clock)
+        this.service.clock = this.clock
         this.desktopToken = (await this.store.Issue(RelayKit.TenantId, RelayKit.Principal, RelayKit.Email, TenantSessionKind.Desktop)).id
         this.consoleToken = (await this.store.Issue(RelayKit.TenantId, RelayKit.Principal, RelayKit.Email)).id
         const server = createServer((_req, res) => { res.statusCode = 404; res.end() })
@@ -297,10 +345,10 @@ class RelayKit
     }
 
     /** Dials the relay raw; resolves the refusal status, or 101 with the open socket. */
-    public Dial(env: string, action: string, bearer?: string, origin?: string): Promise<{ status: number; ws?: WebSocket }>
+    public Dial(env: string, action: string, bearer?: string, origin?: string, autoPong: boolean = true): Promise<{ status: number; ws?: WebSocket }>
     {
         const headers: Record<string, string> = bearer === undefined ? {} : { Authorization: 'Bearer ' + bearer }
-        const ws = new WebSocket(this.Url(env, action), origin === undefined ? { headers } : { headers, origin })
+        const ws = new WebSocket(this.Url(env, action), origin === undefined ? { headers, autoPong } : { headers, origin, autoPong })
         return new Promise(res =>
         {
             ws.once('unexpected-response', (_req, response) =>
@@ -363,6 +411,14 @@ class RelayKit
     public static Next(ws: WebSocket): Promise<Record<string, unknown>>
     {
         return new Promise(res => ws.once('message', data => res(JSON.parse(String(data)) as Record<string, unknown>)))
+    }
+
+    /** One round trip through the relay: proves it is open, and that every frame the client sent before was processed. */
+    public static async RoundTrip(ws: WebSocket, id: number): Promise<void>
+    {
+        const answer = RelayKit.Next(ws)
+        ws.send(RelayKit.Request(id, 'graph/list'))
+        assert.deepEqual((await answer).result, [])
     }
 
     public static Closed(ws: WebSocket): Promise<number>
@@ -705,6 +761,89 @@ describe('DesktopRelay contribute', () =>
         assert.equal(kit.relay.ClosePrincipal(RelayKit.TenantId, RelayKit.Principal), 1)
         await closed
         await RelayKit.Until(() => kit.endpoints.releases === 1)
+    })
+})
+
+describe('DesktopRelay lifetime', () =>
+{
+    let kit: RelayKit
+
+    afterEach(async () =>
+    {
+        await kit.Stop()
+    })
+
+    it('closes with 4001 when the minted credential expires (before the session), releasing the lease and the upstream', async () =>
+    {
+        kit = new RelayKit()
+        await kit.Start()
+        kit.service.credentialTtlMs = 15_000
+        const ws = (await kit.Dial(RelayKit.Dev, 'contribute', kit.desktopToken)).ws as WebSocket
+        const closed = RelayKit.Closed(ws)
+        kit.clock.Advance(14_000)
+        await RelayKit.RoundTrip(ws, 1)
+        kit.clock.Advance(1_000)
+        assert.equal(await closed, 4001)
+        await RelayKit.Until(() => kit.endpoints.releases === 1 && kit.upstream.closedByPeer === 1)
+        assert.equal(kit.clock.Armed(), 0, 'heartbeat and deadline timers are cancelled')
+    })
+
+    it('closes with 4001 when its desktop session expires (before the credential)', async () =>
+    {
+        kit = new RelayKit()
+        await kit.Start(undefined, 20_000)
+        kit.service.credentialTtlMs = 60 * 60 * 1000
+        const ws = (await kit.Dial(RelayKit.Dev, 'contribute', kit.desktopToken)).ws as WebSocket
+        const closed = RelayKit.Closed(ws)
+        // The session's expiry is stamped by the store's real clock, a little after the fake clock started: step past it.
+        kit.clock.Advance(19_000)
+        await RelayKit.RoundTrip(ws, 1)
+        kit.clock.Advance(2_000)
+        assert.equal(await closed, 4001)
+        await RelayKit.Until(() => kit.endpoints.releases === 1)
+    })
+
+    it('pings the client every 30 s and keeps a client that answers', async () =>
+    {
+        kit = new RelayKit()
+        await kit.Start()
+        const ws = (await kit.Dial(RelayKit.Dev, 'contribute', kit.desktopToken)).ws as WebSocket
+        let pings = 0
+        ws.on('ping', () => { pings++ })
+        for (let beat = 1; beat <= 3; beat++)
+        {
+            kit.clock.Advance(30_000)
+            await RelayKit.Until(() => pings === beat)
+            // The pong was sent before the ping event fired, so this round trip lands after it.
+            await RelayKit.RoundTrip(ws, beat)
+        }
+        assert.equal(kit.endpoints.releases, 0)
+        ws.close()
+    })
+
+    it('terminates a client that misses a pong within the 30 s window and releases its lease and upstream', async () =>
+    {
+        kit = new RelayKit()
+        await kit.Start()
+        const ws = (await kit.Dial(RelayKit.Dev, 'contribute', kit.desktopToken, undefined, false)).ws as WebSocket
+        let pinged = false
+        ws.on('ping', () => { pinged = true })
+        const closed = RelayKit.Closed(ws)
+        kit.clock.Advance(30_000)
+        await RelayKit.Until(() => pinged)
+        assert.equal(kit.endpoints.releases, 0)
+        kit.clock.Advance(30_000)
+        await closed
+        await RelayKit.Until(() => kit.endpoints.releases === 1 && kit.upstream.closedByPeer === 1)
+    })
+
+    it('DeadlineOf is the earlier expiry; no credential expiry leaves the session one; an unreadable expiry fails closed', () =>
+    {
+        const session = { id: 's', tenantId: 't', principalId: 'p', expiresAt: '2026-11-05T00:00:00.000Z' }
+        const credential = { tokenRef: 'r', token: 'x', principalId: 'maker', scopes: [], expiresAt: '2026-11-04T01:00:00.000Z' }
+        assert.equal(DesktopRelay.DeadlineOf(session, credential), Date.parse('2026-11-04T01:00:00.000Z'))
+        assert.equal(DesktopRelay.DeadlineOf(session, { ...credential, expiresAt: null }), Date.parse(session.expiresAt))
+        assert.equal(DesktopRelay.DeadlineOf({ ...session, expiresAt: 'bad' }, credential), Number.NEGATIVE_INFINITY)
     })
 })
 
