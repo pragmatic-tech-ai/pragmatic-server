@@ -1,5 +1,4 @@
-import { readFileSync } from 'node:fs'
-import { request } from 'node:https'
+import { KubeHttpsTransport, KubeServiceAccountDefaults } from './kube-https-transport.js'
 
 interface IContainerSpec
 {
@@ -40,12 +39,11 @@ interface IK8sResponse
 
 export class InClusterK8sApi
 {
-    public static readonly DefaultTokenPath = '/var/run/secrets/kubernetes.io/serviceaccount/token'
-    public static readonly DefaultCaPath = '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
-    public static readonly DefaultHost = 'kubernetes.default.svc'
+    public static readonly DefaultTokenPath = KubeServiceAccountDefaults.TokenPath
+    public static readonly DefaultCaPath = KubeServiceAccountDefaults.CaPath
+    public static readonly DefaultHost = KubeServiceAccountDefaults.Host
 
     private static readonly Empty = ''
-    private static readonly Utf8 = 'utf8'
     private static readonly DeploymentPathTemplate = '/apis/apps/v1/namespaces/{ns}/deployments/{dep}'
     private static readonly DeploymentsListPath = '/apis/apps/v1/deployments'
     private static readonly LabelSelectorParam = '?labelSelector='
@@ -54,29 +52,22 @@ export class InClusterK8sApi
     private static readonly DeploymentToken = '{dep}'
     private static readonly GetMethod = 'GET'
     private static readonly PatchMethod = 'PATCH'
-    private static readonly AuthorizationHeader = 'Authorization'
-    private static readonly BearerPrefix = 'Bearer '
-    private static readonly ContentTypeHeader = 'Content-Type'
-    private static readonly ContentLengthHeader = 'Content-Length'
-    private static readonly AcceptHeader = 'Accept'
     private static readonly JsonType = 'application/json'
     private static readonly StrategicMergePatchType = 'application/strategic-merge-patch+json'
-    private static readonly DataEvent = 'data'
-    private static readonly EndEvent = 'end'
-    private static readonly ErrorEvent = 'error'
     private static readonly NotFound = 404
     private static readonly OkMin = 200
     private static readonly OkMax = 299
-    private static readonly RequestTimeoutMs = 10000
-    private static readonly TimeoutMessage = 'kubernetes API request timed out'
     private static readonly FailurePrefix = 'kubernetes API request failed with status '
 
+    private readonly transport: KubeHttpsTransport
+
     public constructor(
-        private readonly tokenPath: string = InClusterK8sApi.DefaultTokenPath,
-        private readonly caPath: string = InClusterK8sApi.DefaultCaPath,
-        private readonly host: string = InClusterK8sApi.DefaultHost,
-        private readonly port?: number)
+        tokenPath: string = InClusterK8sApi.DefaultTokenPath,
+        caPath: string = InClusterK8sApi.DefaultCaPath,
+        host: string = InClusterK8sApi.DefaultHost,
+        port?: number)
     {
+        this.transport = new KubeHttpsTransport(tokenPath, caPath, host, port)
     }
 
     public async ReadDeploymentImage(namespace: string, deployment: string, container: string): Promise<string | undefined>
@@ -137,36 +128,8 @@ export class InClusterK8sApi
         }
     }
 
-    // Node's global fetch cannot trust a custom CA without undici, so TLS to the API server uses node:https with the SA CA.
     protected Send(method: string, path: string, body: string | undefined, contentType: string): Promise<IK8sResponse>
     {
-        const token = readFileSync(this.tokenPath, InClusterK8sApi.Utf8).trim()
-        const ca = readFileSync(this.caPath)
-        const headers: Record<string, string | number> = {
-            [InClusterK8sApi.AuthorizationHeader]: InClusterK8sApi.BearerPrefix + token,
-            [InClusterK8sApi.AcceptHeader]: InClusterK8sApi.JsonType,
-        }
-        if (body !== undefined)
-        {
-            headers[InClusterK8sApi.ContentTypeHeader] = contentType
-            headers[InClusterK8sApi.ContentLengthHeader] = Buffer.byteLength(body)
-        }
-        return new Promise<IK8sResponse>((resolve, reject) =>
-        {
-            const req = request({ host: this.host, port: this.port, path, method, headers, ca }, res =>
-            {
-                const chunks: Buffer[] = []
-                res.on(InClusterK8sApi.DataEvent, (chunk: Buffer) => chunks.push(chunk))
-                res.on(InClusterK8sApi.EndEvent, () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString(InClusterK8sApi.Utf8) }))
-            })
-            // generic message only: never the token, headers or body
-            req.setTimeout(InClusterK8sApi.RequestTimeoutMs, () => req.destroy(new Error(InClusterK8sApi.TimeoutMessage)))
-            req.on(InClusterK8sApi.ErrorEvent, reject)
-            if (body !== undefined)
-            {
-                req.write(body)
-            }
-            req.end()
-        })
+        return this.transport.Send(method, path, body, contentType)
     }
 }
