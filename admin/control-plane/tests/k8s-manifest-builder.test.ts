@@ -52,6 +52,41 @@ class Fixture
 
 describe('K8sManifestBuilder', () =>
 {
+    it('the environment Namespace enforces the baseline Pod Security level', () =>
+    {
+        for (const withDb of [false, true])
+        {
+            const ns = Fixture.Items(withDb).find(i => i.kind === 'Namespace')!
+            assert.deepEqual(ns.metadata.labels, {
+                'pragmatic/environment': 'dev1',
+                'pragmatic/hive': 'hive-a',
+                'pod-security.kubernetes.io/enforce': 'baseline',
+                'pod-security.kubernetes.io/enforce-version': 'latest',
+            })
+        }
+    })
+
+    it('no environment pod asks for anything the baseline Pod Security level forbids', () =>
+    {
+        const workload = { ...Fixture.Workload(true), federation: { baseDomain: 'hive.test', caSecretName: 'ca' } }
+        const items = JSON.parse(new K8sManifestBuilder().Render(workload)).items as any[]
+        const pods = items.filter(i => i.kind === 'Deployment' || i.kind === 'StatefulSet').map(i => i.spec.template.spec)
+        assert.equal(pods.length, 2)
+        for (const pod of pods)
+        {
+            assert.equal(pod.hostNetwork, undefined)
+            assert.equal(pod.hostPID, undefined)
+            assert.equal(pod.hostIPC, undefined)
+            assert.ok(!(pod.volumes ?? []).some((v: any) => v.hostPath !== undefined))
+            for (const c of [...(pod.initContainers ?? []), ...pod.containers])
+            {
+                assert.notEqual(c.securityContext?.privileged, true)
+                assert.equal(c.securityContext?.capabilities?.add, undefined)
+                assert.ok(!(c.ports ?? []).some((p: any) => p.hostPort !== undefined))
+            }
+        }
+    })
+
     it('renders all five objects when a database is present', () =>
     {
         const items = Fixture.Items(true)

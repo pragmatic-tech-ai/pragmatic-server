@@ -300,6 +300,13 @@ export class K8sManifestBuilder
     private static readonly DeleteVerb = 'delete'
     private static readonly BindVerb = 'bind'
     private static readonly AnyVerb = '*'
+    private static readonly PodSecurityEnforceLabel = 'pod-security.kubernetes.io/enforce'
+    private static readonly PodSecurityEnforceVersionLabel = 'pod-security.kubernetes.io/enforce-version'
+    private static readonly PodSecurityBaseline = 'baseline'
+    private static readonly PodSecurityRestricted = 'restricted'
+    private static readonly PodSecurityLatest = 'latest'
+    /** Pod Security levels the console's admission fence accepts on a namespace it creates (never `privileged`). */
+    private static readonly AdmittedPodSecurityLevels = [K8sManifestBuilder.PodSecurityBaseline, K8sManifestBuilder.PodSecurityRestricted]
 
     // In-cluster server boot wiring (env var names and file contract match environments/seed/docker.ts).
     private static readonly ConfigMapKey = 'configMap'
@@ -1016,7 +1023,7 @@ export class K8sManifestBuilder
     /**
      * Renders one tenant's console (tenant-admin) container: shared pragmatic-system Namespace (unlabeled, first); SA with a
      * mounted API token; the console ClusterRole; its admission fence (ValidatingAdmissionPolicy + binding, applied before the
-     * grant so it is never unfenced); the ClusterRoleBinding (namespaces and per-namespace binding of its env role); the env ClusterRole (bound by the console per environment namespace, never here); with a console exposure whose TLS
+     * grant; enforcement is eventually consistent, but the console pod and its token start later in the same apply); the ClusterRoleBinding (namespaces and per-namespace binding of its env role); the env ClusterRole (bound by the console per environment namespace, never here); with a console exposure whose TLS
      * Secret is copied, a get-only Role + RoleBinding on that one source Secret; data PVC; Deployment (init container seeds
      * the data root from the seed Secret); a ClusterIP Service; and, with a console exposure, its Ingress. The token and RBAC
      * render even without `console`, by design: every console manages its environments in-cluster (including bootstrap
@@ -1096,6 +1103,8 @@ export class K8sManifestBuilder
             labels: this.HiveLabels(spec.hiveId),
             hiveId: spec.hiveId,
             hiveLabel: K8sManifestBuilder.HiveLabel,
+            podSecurityLabel: K8sManifestBuilder.PodSecurityEnforceLabel,
+            podSecurityLevels: K8sManifestBuilder.AdmittedPodSecurityLevels,
             namespacePrefix: K8sManifestBuilder.EnvNamespacePrefix,
             serviceAccountName: K8sManifestBuilder.TenantAdminNameOf(spec.tenantId),
             serviceAccountNamespace: K8sManifestBuilder.SystemNamespace,
@@ -1597,9 +1606,13 @@ export class K8sManifestBuilder
             [K8sManifestBuilder.KindKey]: K8sManifestBuilder.NamespaceKind,
             [K8sManifestBuilder.MetadataKey]: {
                 [K8sManifestBuilder.NameKey]: K8sManifestBuilder.NamespaceOf(workload.environmentName),
+                // Pod Security Admission: every environment namespace enforces `baseline` (no privileged / host access), so the
+                // console's env role cannot run a node-escaping pod there; the console's admission fence requires this label.
                 [K8sManifestBuilder.LabelsKey]: {
                     [K8sManifestBuilder.EnvironmentLabel]: workload.environmentName,
                     [K8sManifestBuilder.HiveLabel]: workload.hiveId,
+                    [K8sManifestBuilder.PodSecurityEnforceLabel]: K8sManifestBuilder.PodSecurityBaseline,
+                    [K8sManifestBuilder.PodSecurityEnforceVersionLabel]: K8sManifestBuilder.PodSecurityLatest,
                 },
             },
         }

@@ -6,6 +6,9 @@ export interface TenantConsoleAdmissionSpec
     labels: Record<string, string>
     hiveId: string
     hiveLabel: string
+    /** Pod Security Admission enforce label a created namespace must carry, with one of `podSecurityLevels`. */
+    podSecurityLabel: string
+    podSecurityLevels: ReadonlyArray<string>
     namespacePrefix: string
     serviceAccountName: string
     serviceAccountNamespace: string
@@ -16,7 +19,8 @@ export interface TenantConsoleAdmissionSpec
 /**
  * The per-console ValidatingAdmissionPolicy + binding (admissionregistration.k8s.io/v1, Kubernetes >= 1.30) that fences the
  * console's cluster-wide RBAC: RBAC cannot restrict names by prefix or label, so the API server itself refuses any console
- * request on a Namespace that is not one of this hive's `pragmatic-env-` namespaces, and any RoleBinding other than the
+ * request on a Namespace that is not one of this hive's `pragmatic-env-` namespaces (a created one must also enforce the
+ * baseline or restricted Pod Security level, so the env role cannot run a privileged pod there), and any RoleBinding other than the
  * console's own env binding (its env ClusterRole, its ServiceAccount as the only subject) in such a namespace. It applies
  * only to the console's exact ServiceAccount user and fails closed. The console has no admissionregistration grants.
  */
@@ -46,7 +50,7 @@ export class TenantConsoleAdmission
     private static readonly QuoteChar = /'/g
     private static readonly EscapedBackslash = '\\\\'
     private static readonly EscapedQuote = "\\'"
-    private static readonly NamespaceCreateMessage = 'The console may only create its own hive\'s environment namespaces.'
+    private static readonly NamespaceCreateMessage = 'The console may only create its own hive\'s environment namespaces, enforcing the baseline or restricted Pod Security level.'
     private static readonly NamespaceChangeMessage = 'The console may only change or delete its own hive\'s environment namespaces.'
     private static readonly BindingNamespaceMessage = 'The console may only bind roles inside its own hive\'s environment namespaces.'
     private static readonly BindingNameMessage = 'The console may only create its own environment role binding.'
@@ -108,7 +112,7 @@ export class TenantConsoleAdmission
         const create = s(C.Create)
         return [
             {
-                expression: `${isNamespace} || request.operation != ${create} || (${C.OwnNamespace(spec, 'object.metadata.name', 'object')})`,
+                expression: `${isNamespace} || request.operation != ${create} || (${C.OwnNamespace(spec, 'object.metadata.name', 'object')} && ${C.PodSecurityEnforced(spec, 'object')})`,
                 message: C.NamespaceCreateMessage,
             },
             {
@@ -132,6 +136,15 @@ export class TenantConsoleAdmission
                 message: C.BindingSubjectsMessage,
             },
         ]
+    }
+
+    /** `<objectExpr>` enforces an admitted Pod Security level (follows OwnNamespace, which already guarded has(labels)). */
+    private static PodSecurityEnforced(spec: TenantConsoleAdmissionSpec, objectExpr: string): string
+    {
+        const s = TenantConsoleAdmission.CelString
+        const labels = `${objectExpr}.metadata.labels`
+        const label = s(spec.podSecurityLabel)
+        return `${label} in ${labels} && ${labels}[${label}] in [${spec.podSecurityLevels.map(s).join(', ')}]`
     }
 
     /** `<nameExpr>` has the env prefix and `<objectExpr>` carries this hive's label (a missing label map or key is a refusal, not an error). */
