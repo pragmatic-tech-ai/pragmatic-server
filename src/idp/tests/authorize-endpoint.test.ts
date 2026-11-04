@@ -294,6 +294,9 @@ test('a password sign-in whose verification started before a reset is refused: n
         const result = await pending;
         assert.equal(result.kind, 'loginPage');
         f.InFlight = undefined;
+        // Staleness compares millisecond stamps (changed >= startedAt), so a sign-in that starts in the reset's own
+        // millisecond is refused; step past it, as a real user's next attempt would.
+        await new Promise(resolve => setTimeout(resolve, 5));
         // The new password signs in normally.
         assert.equal((await AuthorizeFixture.Attempt(f, AuthorizeFixture.Email, 'new-pw-after-reset')).kind, 'redirect');
     });
