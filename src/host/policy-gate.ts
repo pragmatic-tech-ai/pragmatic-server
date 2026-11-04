@@ -111,6 +111,7 @@ export class PolicyGate
             [ModelProtocol.Resources.method, read],
             [ConnectorProtocol.List.method, readConnector],
             [ConnectorProtocol.Read.method, readConnector],
+            [ConnectorProtocol.Decisions.method, readConnector],
             [ConnectorProtocol.ReadPage.method, readConnector],
             [ConnectorProtocol.WriteBack.method, writeConnector],
             [ConnectorProtocol.WritePaged.method, writeConnector],

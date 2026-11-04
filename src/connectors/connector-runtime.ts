@@ -1,4 +1,5 @@
 import { ModelRegistry, GenericModelDataSource, FederatedModelDataConnector, DataSourceAdapterCatalog } from '@pragmatic-tech-ai/todl'
+import type { MergeDecision } from '@pragmatic-tech-ai/todl'
 import type { ReflectedEntity, DataSourceKind, FlushOutcome, Diagnostic, ConnectorSpec, ModelConnectorPlan, IDataSourceAdapter } from '@pragmatic-tech-ai/todl'
 import type { IServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import { ModelSchemaTypes } from './model-schema-types.js'
@@ -224,6 +225,13 @@ export class ConnectorRuntime
         this.registry.Register(model.ModelId, source)
         this.connectors.set(model.ModelId, connector)
         await source.Prepare(this.services)
+    }
+
+    /** The identity-resolution merge audit of one model (preparing it first): per merged canonical, which source won each field. */
+    public async Decisions(modelId: string): Promise<readonly MergeDecision[]>
+    {
+        await this.PrepareModel(modelId)
+        return this.connectors.get(modelId)?.Decisions() ?? []
     }
 
     public async ConceptNames(modelId: string): Promise<readonly string[]>

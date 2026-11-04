@@ -1,5 +1,5 @@
 import type { ConnectorRuntime } from '../connectors/connector-runtime.js'
-import type { ConnectorModelDto, ConnectorWriteBackParams, ConnectorPagedWriteParams, ConnectorPagedWriteResultDto, EntityDto, FlushOutcomeDto, Page, PageParams, ConnectionProbeDto, ConnectorRefreshOutcomeDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { ConnectorModelDto, ConnectorWriteBackParams, ConnectorPagedWriteParams, ConnectorPagedWriteResultDto, EntityDto, FlushOutcomeDto, Page, PageParams, ConnectionProbeDto, ConnectorRefreshOutcomeDto, ConnectorMergeDecisionDto, ConnectorFilterTermDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { PagingLimits } from '../config/paging-limits.js'
 import { PageFingerprint, PageRequest } from './paging/page-request.js'
 import { WireScalar } from './wire-scalar.js'
@@ -127,13 +127,13 @@ export class ConnectorService
     }
 
     /** On-demand keyset-paged read of ONE connector binding: never prepares the model nor opens any other concept's adapter. */
-    public async ReadPage(modelId: string, concept: string, params: PageParams, limits: PagingLimits, context: AccessContext): Promise<Page<EntityDto>>
+    public async ReadPage(modelId: string, concept: string, params: PageParams, limits: PagingLimits, context: AccessContext, where?: readonly ConnectorFilterTermDto[]): Promise<Page<EntityDto>>
     {
         const runtime = await this.Runtime()
         const authz = await this.ReadAuthorization(context)
         // Folded only when the authorization is identity-backed; allow-all (even via a wired factory) keeps the fingerprint principal-independent.
         const digest = !authz.IdentityBacked ? undefined : ConnectorPrincipalDigest.Of(context)
-        return new ConnectorPageReader(runtime).ReadPage(modelId, concept, params, limits, authz, digest)
+        return new ConnectorPageReader(runtime).ReadPage(modelId, concept, params, limits, authz, digest, where)
     }
 
     /** Hydrate-on-write: edits paged entities by id+fields, reconstructing each write target with one keyed read. Never prepares the model.
@@ -176,6 +176,40 @@ export class ConnectorService
         const runtime = await this.Runtime()
         const outcome = await runtime.RefreshModel(modelId)
         return { diagnostics: outcome.Diagnostics.map((d) => ({ code: d.code, message: d.message })) }
+    }
+
+    /**
+     * The merge audit of one connector model, as the caller may see it: a decision is listed only when its canonical instance
+     * passes the caller's row filter and its field passes the field mask, so the audit is never an oracle for hidden rows or
+     * secured fields. `canonical` narrows to one merged instance.
+     */
+    public async Decisions(modelId: string, canonical: string | undefined, context: AccessContext): Promise<ConnectorMergeDecisionDto[]>
+    {
+        const authz = await this.ReadAuthorization(context)
+        const runtime = await this.Runtime()
+        const decisions = (await runtime.Decisions(modelId)).filter(d => canonical === undefined || d.canonical === canonical)
+        const visible = new Map<string, string | undefined>()
+        const out: ConnectorMergeDecisionDto[] = []
+        for (const decision of decisions)
+        {
+            if (!visible.has(decision.canonical))
+            {
+                const entity = await runtime.Entity(modelId, decision.canonical)
+                visible.set(decision.canonical, entity !== undefined && authz.Filter.Keep(new EntityInstanceView(entity)) ? entity.concept : undefined)
+            }
+            const concept = visible.get(decision.canonical)
+            if (concept === undefined || !authz.FieldMask.CanRead(concept, decision.member))
+            {
+                continue
+            }
+            const dto: ConnectorMergeDecisionDto = { canonical: decision.canonical, member: decision.member, source: decision.source, winningNode: decision.winningNode }
+            if (decision.strategy !== undefined)
+            {
+                dto.strategy = decision.strategy
+            }
+            out.push(dto)
+        }
+        return out
     }
 
     public async Test(modelId: string, connectorName: string): Promise<ConnectionProbeDto>
