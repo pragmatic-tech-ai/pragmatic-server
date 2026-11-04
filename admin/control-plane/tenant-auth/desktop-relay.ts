@@ -8,6 +8,7 @@ import type { IEnvironmentService } from '../control-plane-host.js'
 import type { EnvironmentEndpoints, EnvironmentUrlsLease } from '../environment-endpoints.js'
 import type { EnvironmentRecord } from '../environment-record.js'
 import { PlaneHttp } from '../plane-http.js'
+import { TransportFailure } from '../transport-failure.js'
 import { DesktopAction, DesktopTargetVerdict, type DesktopTargets } from './desktop-targets.js'
 import type { DesktopAuthGate } from './desktop-auth-gate.js'
 import type { IDesktopSessionConnections } from './desktop-endpoint.js'
@@ -384,6 +385,11 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
         }
         catch (err)
         {
+            // A dial refused or reset at the TCP level means the env's tunnel is dead: drop it so the next relay reopens it.
+            if (TransportFailure.Is(err))
+            {
+                lease?.Fail()
+            }
             lease?.Release()
             if (credential !== undefined)
             {

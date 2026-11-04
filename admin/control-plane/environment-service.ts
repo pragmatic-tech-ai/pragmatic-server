@@ -9,7 +9,8 @@ import { EnvStatus, EnvType, EnvironmentChangeKind, type Template, type Environm
 import type { EnvironmentRegistry } from './environment-registry.js'
 import type { PortAllocator } from './port-allocator.js'
 import { TemplateCatalog } from './template-catalog.js'
-import type { AdminConnectInfo, AdminSnapshot, IAdminAccess, IAdminProxy } from './admin-proxy.js'
+import { AdminProxyError, type AdminConnectInfo, type AdminSnapshot, type IAdminAccess, type IAdminProxy } from './admin-proxy.js'
+import { TransportFailure } from './transport-failure.js'
 import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto, ServiceTokenSummaryDto, IssueTokenParams } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ITenantDirectory } from './tenant-api/tenant-directory.js'
 import { UnknownHiveError } from './rollout-errors.js'
@@ -660,13 +661,22 @@ export class EnvironmentService implements IAdminAccess
         {
             return await op(lease.info)
         }
+        catch (err)
+        {
+            // A dial that failed at the TCP level means the env's tunnel is dead: drop it so the next call reopens it.
+            if ((err instanceof AdminProxyError && err.IsTransport) || TransportFailure.Is(err))
+            {
+                lease.Fail()
+            }
+            throw err
+        }
         finally
         {
             lease.Release()
         }
     }
 
-    private async AdminLeaseFor(name: string): Promise<{ info: AdminConnectInfo; Release(): void }>
+    private async AdminLeaseFor(name: string): Promise<{ info: AdminConnectInfo; Release(): void; Fail(): void }>
     {
         const rec = this.Require(name)
         // The password is resolved first, so a missing secret never opens a cluster tunnel.
@@ -679,7 +689,7 @@ export class EnvironmentService implements IAdminAccess
             email: BundleBuilder.AdminEmailPrefix + rec.environmentId + BundleBuilder.AdminEmailSuffix,
             password
         }
-        return { info, Release: () => urls.Release() }
+        return { info, Release: () => urls.Release(), Fail: () => urls.Fail() }
     }
 
     /** Docker records resolve locally; an in-cluster record needs the composed endpoints (its tunnel + cluster Secret). */

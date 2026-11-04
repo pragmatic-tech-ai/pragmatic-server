@@ -6,6 +6,13 @@ export interface ITunnelLease
     readonly LocalPort: number
     /** Gives the hold back; idempotent. When the last lease goes, the tunnel's idle countdown starts. */
     Release(): void
+
+    /**
+     * Reports that a dial through this tunnel failed at the TCP level (its pod is gone; kubectl may not have exited): the
+     * tunnel is dropped from the pool at once, so the next Acquire opens a fresh one, and its process is killed when its
+     * last lease is released. The caller still releases its own lease.
+     */
+    Fail(): void
 }
 
 /** The pool was closed while a tunnel was still opening: the tunnel was killed, so its port is useless. */
@@ -27,6 +34,8 @@ type TunnelEntry = {
     result?: PortForwardResult
     leases: number
     closed: boolean
+    /** Dropped after a failed dial: killed when its last lease goes. */
+    retired: boolean
     timer?: ReturnType<typeof setTimeout>
 }
 
@@ -35,8 +44,13 @@ class TunnelLease implements ITunnelLease
 {
     private released = false
 
-    public constructor(public readonly LocalPort: number, private readonly onRelease: () => void)
+    public constructor(public readonly LocalPort: number, private readonly onRelease: () => void, private readonly onFail: () => void)
     {
+    }
+
+    public Fail(): void
+    {
+        this.onFail()
     }
 
     public Release(): void
@@ -53,7 +67,8 @@ class TunnelLease implements ITunnelLease
 /**
  * Keeps one kubectl port-forward per key (an environment on a hive) open while it is in use. Concurrent acquires for a
  * key share one open. A tunnel with outstanding leases never idles out; once its last lease is released it is killed
- * after idleMs unless acquired again. A tunnel whose process exits is dropped so the next acquire reopens it.
+ * after idleMs unless acquired again. A tunnel whose process exits, or through which a dial failed (a lease's Fail), is
+ * dropped so the next acquire reopens it; a failed one is killed once its last lease is released.
  * CloseAll (shutdown) kills every tunnel; acquires still waiting on an open reject with TunnelPoolClosedError.
  */
 export class ClusterTunnelPool
@@ -72,7 +87,7 @@ export class ClusterTunnelPool
         let entry = this.entries.get(key)
         if (entry === undefined)
         {
-            const created: TunnelEntry = { opening: Promise.resolve(0), leases: 0, closed: false }
+            const created: TunnelEntry = { opening: Promise.resolve(0), leases: 0, closed: false, retired: false }
             // Mapped BEFORE Open runs: an opener that throws synchronously drops the entry inside Open, and that drop
             // must find it in the map, or the rejected entry would stay cached and fail every later Acquire.
             this.entries.set(key, created)
@@ -92,7 +107,7 @@ export class ClusterTunnelPool
             held.leases--
             throw err
         }
-        return new TunnelLease(port, () => this.Release(key, held))
+        return new TunnelLease(port, () => this.Release(key, held), () => this.Retire(key, held))
     }
 
     /** Kills every tunnel and forgets them all; a tunnel still opening is killed as soon as it lands. */
@@ -132,6 +147,11 @@ export class ClusterTunnelPool
     private Release(key: string, entry: TunnelEntry): void
     {
         entry.leases--
+        if (entry.leases === 0 && entry.retired && !entry.closed)
+        {
+            ClusterTunnelPool.Stop(entry)
+            return
+        }
         if (entry.leases > 0 || entry.closed || this.entries.get(key) !== entry)
         {
             return
@@ -151,6 +171,13 @@ export class ClusterTunnelPool
         }
         this.entries.delete(key)
         ClusterTunnelPool.Stop(entry)
+    }
+
+    /** A dial through the tunnel failed: forget it now (the next Acquire reopens), and kill it once nobody holds it. */
+    private Retire(key: string, entry: TunnelEntry): void
+    {
+        entry.retired = true
+        this.Drop(key, entry)
     }
 
     private Drop(key: string, entry: TunnelEntry): void

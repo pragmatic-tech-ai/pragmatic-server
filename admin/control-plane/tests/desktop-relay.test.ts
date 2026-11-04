@@ -216,6 +216,7 @@ class RelayEndpoints
 {
     public leases = 0
     public releases = 0
+    public fails = 0
     public unreachable = false
 
     public constructor(public port: number)
@@ -229,7 +230,7 @@ class RelayEndpoints
             throw new EnvironmentUnreachableError()
         }
         this.leases++
-        return { httpUrl: 'http://127.0.0.1:' + String(this.port), wsUrl: 'ws://127.0.0.1:' + String(this.port), Release: () => { this.releases++ } }
+        return { httpUrl: 'http://127.0.0.1:' + String(this.port), wsUrl: 'ws://127.0.0.1:' + String(this.port), Release: () => { this.releases++ }, Fail: () => { this.fails++ } }
     }
 }
 
@@ -578,6 +579,7 @@ describe('DesktopRelay refusals', () =>
         assert.equal((await kit.Dial(RelayKit.Dev, 'contribute', kit.desktopToken)).status, 502)
         assert.equal(kit.endpoints.leases, 1)
         assert.equal(kit.endpoints.releases, 1)
+        assert.equal(kit.endpoints.fails, 1, 'a dial refused at the TCP level drops the tunnel')
         assert.equal(kit.Audit().filter(r => r.status === 502).length, 2)
     })
 })

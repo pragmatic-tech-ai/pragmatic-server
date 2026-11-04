@@ -1,6 +1,7 @@
 import { AdminProtocol, GraphProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AccountDto, AdminAckDto, CreateAccountParams, GraphCreateParamsDto, GraphDetailDto, GraphExportDto, GraphLoadParamsDto, GraphLoadedDto, GraphRefParamsDto, GraphSummaryDto, GrantDto, GrantMutationDto, IdentityConfigDto, IssueTokenParams, MessageConnection, RevokeTokenParams, SecurityModelDto, ServiceTokenSummaryDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { UserSeeder } from '../../environments/seed/users.js'
+import { TransportFailure } from './transport-failure.js'
 
 export type AdminConnectInfo = { httpUrl: string; wsUrl: string; tenant: string; email: string; password: string }
 /** Runs admin calls against an environment as its Owner, holding whatever keeps it reachable (a cluster tunnel) until the call settles. */
@@ -29,12 +30,15 @@ export class AdminProxyError extends Error
     private static readonly ProtocolMessage = 'the environment admin request failed'
 
     public readonly Kind: AdminProxyErrorKind
+    /** The connect failed at the TCP level (refused, reset, timed out): the environment's address itself is dead. */
+    public readonly IsTransport: boolean
 
-    public constructor(kind: AdminProxyErrorKind, message?: string)
+    public constructor(kind: AdminProxyErrorKind, message?: string, isTransport: boolean = false)
     {
         super(message ?? AdminProxyError.DefaultMessage(kind))
         this.name = AdminProxyError.ErrorName
         this.Kind = kind
+        this.IsTransport = isTransport
     }
 
     private static DefaultMessage(kind: AdminProxyErrorKind): string
@@ -235,7 +239,7 @@ export class AdminProxy implements IAdminProxy
         }
         catch (err)
         {
-            throw err instanceof AdminProxyError ? err : new AdminProxyError(AdminProxyErrorKind.Connect, AdminProxy.MessageOf(err))
+            throw err instanceof AdminProxyError ? err : new AdminProxyError(AdminProxyErrorKind.Connect, AdminProxy.MessageOf(err), TransportFailure.Is(err))
         }
         try
         {

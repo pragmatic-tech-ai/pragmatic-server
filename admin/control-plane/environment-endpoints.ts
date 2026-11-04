@@ -15,8 +15,12 @@ import type { ITenantDirectory } from './tenant-api/tenant-directory.js'
 /** Where the platform (this host) reaches an environment server over HTTP and WebSocket. */
 export type EnvironmentUrls = { httpUrl: string; wsUrl: string }
 
-/** Environment URLs held open until Release (idempotent): an in-cluster tunnel stays up while any lease is held. */
-export type EnvironmentUrlsLease = EnvironmentUrls & { Release(): void }
+/**
+ * Environment URLs held open until Release (idempotent): an in-cluster tunnel stays up while any lease is held. Fail
+ * reports a TCP-level dial failure through them (see TransportFailure): an in-cluster tunnel is then dropped so the next
+ * lease reopens it; for a Docker record it is a no-op.
+ */
+export type EnvironmentUrlsLease = EnvironmentUrls & { Release(): void; Fail(): void }
 
 /** The environment runs on a hive the platform cannot reach (unknown hive, unsupported backend, no kubectl context). */
 export class EnvironmentUnreachableError extends Error
@@ -88,6 +92,7 @@ export class EnvironmentEndpoints
             httpUrl: EnvironmentEndpoints.TunnelHttpPrefix + String(lease.LocalPort),
             wsUrl: EnvironmentEndpoints.TunnelWsPrefix + String(lease.LocalPort),
             Release: () => lease.Release(),
+            Fail: () => lease.Fail(),
         }
     }
 
@@ -110,6 +115,7 @@ export class EnvironmentEndpoints
             httpUrl: EnvironmentEndpoints.LocalHttpPrefix + String(rec.hostPort),
             wsUrl: EnvironmentEndpoints.LocalWsPrefix + String(rec.hostPort),
             Release: () => undefined,
+            Fail: () => undefined,
         }
     }
 

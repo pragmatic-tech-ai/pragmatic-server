@@ -254,6 +254,26 @@ test('a tunnel whose process exits is dropped so the next Acquire reopens it', a
     pool.CloseAll()
 })
 
+test('a lease reporting a failed dial (Fail) drops the tunnel at once; it is killed when its last lease goes', async () =>
+{
+    const spawner = new FakeSpawner()
+    const pool = new ClusterTunnelPool()
+    const open = Fx.Open(spawner)
+    const failing = await pool.Acquire(Fx.Key, open)
+    const other = await pool.Acquire(Fx.Key, open)
+    failing.Fail()
+    const fresh = await pool.Acquire(Fx.Key, open)
+    assert.equal(spawner.Spawned.length, 2, 'the next Acquire reopens')
+    const dead = spawner.Spawned[0].process
+    failing.Release()
+    assert.equal(dead.Killed, false, 'still leased by another holder')
+    other.Release()
+    assert.equal(dead.Killed, true)
+    assert.equal(spawner.Spawned[1].process.Killed, false)
+    fresh.Release()
+    pool.CloseAll()
+})
+
 test('a failed open is not cached: the next Acquire tries again', async () =>
 {
     const spawner = new FakeSpawner()

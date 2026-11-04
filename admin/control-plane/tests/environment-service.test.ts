@@ -36,7 +36,7 @@ import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import { UnsupportedBackendError } from '../hive-orchestrator.js'
 import { TenantPurposeName, type EnvDefinition, type EnvOidc } from '../../../environments/seed/bundle.js'
 import type { UserSeed } from '../../../environments/seed/users.js'
-import type { IAdminProxy, AdminConnectInfo, AdminSnapshot } from '../admin-proxy.js'
+import { AdminProxyError, AdminProxyErrorKind, type IAdminProxy, type AdminConnectInfo, type AdminSnapshot } from '../admin-proxy.js'
 import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, IssueTokenParams, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { PassThrough } from 'node:stream'
 import type { IPortForwardingKubectl, IProcessSpawner, ISpawnedProcess } from '../kubectl.js'
@@ -1501,6 +1501,7 @@ class CountingEndpoints extends EnvironmentEndpoints
 {
     public Held = 0
     public Acquired = 0
+    public Failed = 0
 
     public override async UrlsFor(): Promise<EnvironmentUrlsLease>
     {
@@ -1518,6 +1519,7 @@ class CountingEndpoints extends EnvironmentEndpoints
                     this.Held--
                 }
             },
+            Fail: () => { this.Failed++ },
         }
     }
 
@@ -1576,6 +1578,20 @@ test('an in-service admin call releases its URL lease when the proxy call fails'
     proxy.Fail = true
     await assert.rejects(() => h.Service.AdminSnapshot(InClusterAdminFixture.Name), /proxy down/)
     assert.equal(proxy.HeldDuringCall, 1)
+    assert.equal(endpoints.Held, 0)
+})
+
+test('WithAdmin drops the tunnel (Fail) when the call fails at the TCP level, not when the environment answers an error', async () =>
+{
+    const { h, endpoints, proxy } = await LeaseFixture.Make()
+    proxy.Fail = true
+    await assert.rejects(() => h.Service.AdminSnapshot(InClusterAdminFixture.Name), /proxy down/)
+    assert.equal(endpoints.Failed, 0)
+    const refused = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:1'), { code: 'ECONNREFUSED' })
+    await assert.rejects(() => h.Service.WithAdmin(InClusterAdminFixture.Name, async () => { throw refused }))
+    assert.equal(endpoints.Failed, 1)
+    await assert.rejects(() => h.Service.WithAdmin(InClusterAdminFixture.Name, async () => { throw new AdminProxyError(AdminProxyErrorKind.Connect, 'x', true) }))
+    assert.equal(endpoints.Failed, 2)
     assert.equal(endpoints.Held, 0)
 })
 
