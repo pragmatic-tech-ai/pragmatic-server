@@ -1,0 +1,46 @@
+# Plexus sign-in and publishing: rulings made during execution
+
+Every decision taken on the user's behalf while the plan ran (subagent-driven), in order, each with what it costs if wrong. Server merged at d4b1fd7, Plexus at dfcf2b1d (local only).
+
+- | T10 -> T11 | T11 consumes AccountService.Session()/HandleSignedOut(), not listed in T10 Produces | GAP -> Ruling R1 |
+- | T11 -> T12 | T11 changes IGraphContributeApi/ITenantPublishApi bridges used by renderer IPC services that T12 reshapes | ordering -> Ruling R2 |
+- | T12 -> T14, T13 | core dialogs (T14) need "Sign in" opening the app's account dialog (T13); core cannot import app | CONFLICT -> Ruling R3 |
+- | T3 self | status precedence unspecified | Ruling R4 |
+- | T9 self | needs owner password | Ruling R5 |
+- Ruling R1: T10's AccountService also exposes `Session(): Promise<DesktopSession | undefined>` and `HandleSignedOut(): Promise<void>` - T11 consumes them - cost if wrong: small rename.
+- Ruling R2: T11 minimally adapts the renderer IPC services (IpcGraphContributor, IpcTenantPublisher) and existing callers so the app compiles at its commit; T12 then reshapes the core seams - cost: a little churn in two files.
+- Ruling R3: T12 adds `RequestSignIn(): void` and a `SignInRequested: Signal` to IAccountService (IpcAccountService raises it); T13's account module subscribes and opens AccountDialog; T14's "Sign in" buttons call `RequestSignIn()` - keeps core free of app types (layering rule) - cost: one extra seam member.
+- Ruling R4: discovery check order is Origin (403) -> throttle (429) -> body validation (400) -> availability (503) -> lookup (200/404) - cheapest refusals first, throttle counts everything that is not a browser - cost: trivial.
+- Ruling R5: T9 smoke takes the owner password as a file path argument; if no valid password file is available the controller runs it up to the IdP login step and records what was verified - cost: the browser-login leg is verified in T15 manually instead.
+- Ruling: subagent commits keep their own accurate model trailer (e.g. Claude Sonnet 5.5) instead of the Opus 5.5 line - attribution should name the model that wrote the commit - cost if wrong: cosmetic, amend trailers before any push.
+- Ruling: TenantSessionStore persists only SHA-256 digests of session tokens (both kinds) - spec anti-goal forbids a long-lived credential unencrypted on disk and desktop sessions live up to 30 days - cost if wrong: an extra store migration; old-format console sessions may be discarded (users re-sign-in).
+- Ruling: account 'disable' needs no new revocation path - the platform has no account-disable operation today; password reset/change revocation of desktop sessions is covered by Task 2 tests - cost if wrong: a future disable feature must call RevokeAllFor.
+- Task 6: parked - capability-guard test stubs TenantAdminCapabilities.For - Ruling: no real role lacks envs today (spec: finer roles are a later feature), so a stub is the only way to exercise the 403; switch to a real session when roles become role-derived - cost if wrong: none now.
+- Ruling: ClusterTunnelPool hands out leases; idle timer runs only at zero leases - the relay holds one upstream socket per session and would otherwise be cut after 5 min - cost if wrong: small API churn for Task 8.
+- Ruling: ClusterTunnelPool drops its unused spawner parameter (overrides plan signature) - an unused seam; EnvironmentEndpoints owns spawning - cost if wrong: trivial.
+- Ruling: tenant-admin-server.ts (in-hive console) gets no tunnel - spec lists the in-hive desktop API + relay as a follow-up; in-cluster AdminInfoFor there reports 'not reachable' - cost if wrong: in-hive maker-token minting stays broken until that follow-up.
+- Ruling: desktop sign-out closes relays already open under that session - spec Goal 6 says signing out ends Plexus's access; the console's logout keeps its existing behaviour - cost if wrong: one extra seam DesktopEndpoint -> relay.
+- Task 8: parked - missing RED evidence for DesktopTargets.Check / Origin-403 / host routing - Ruling: tests exist now; TDD order can't be retrofitted - cost: none.
+- Ruling: Task 9 smoke has two parts - (a) HTTP smoke against the restarted control plane: discovery, begin (authorize URL), unauthenticated targets/relay refusals, and the full browser login + relay leg only when an owner password file is passed (none exists on this machine); (b) an in-process cluster check composing the real EnvironmentEndpoints + KubectlCli against the docker-desktop hive: tunnel to training2, read its admin secret, mint a maker token, open a relay-equivalent upstream and call graph/list - so Task 7 is proven on the real cluster without a password - cost if wrong: the browser leg is verified in Task 15 by the user signing in from Plexus.
+- Ruling: do not rebuild/roll the live training2 image to prove scope enforcement live - it changes the user's environment; the relay's method allowlist already bounds the credential and token-scope unit tests cover enforcement; smoke reports a pre-scope image as WARN - cost if wrong: existing environments only get server-side scope enforcement after their image is rebuilt and rolled (tell the user).
+- Ruling: the account bridge resolves to a reply envelope and the renderer unwraps it (core/shared AccountWire.Unwrap) instead of rebuilding errors from message text - contextBridge strips error classes; message matching is fragile - cost if wrong: one extra bridge interface.
+- Ruling: legacy graph/tenant profile cleanup runs on every start (plan said once) - after Task 11 nothing writes those files, so it is an idempotent no-op - cost if wrong: none.
+- Ruling: new AccountErrorKind InvalidEmail ('That doesn't look like an email address.') for the server's 400 - spec wants plain accurate sentences - cost: one more enum member.
+- Ruling: Task 11 pulled Task 12's seam reshape (IGraphContributor/ITenantPublisher) and Task 14's configure-command removal forward - dead SetProfile plumbing would otherwise remain; Task 12 and 14 briefs are amended at dispatch to the current state - cost: none.
+- Ruling: vitest todl shim gained RemoteBindMode (packages/plexus-core/vitest.config.ts) - fixes 10 pre-existing core failures - cost: none.
+- Ruling: interim 'profile'-named dialogs that ask for an environment name stay until Task 14 replaces them with pickers - cost: none if Task 14 lands.
+- Ruling: Task 13 dialog uses one template with per-step visibility panels instead of a DataTemplate per step - matches existing dialogs and avoids ContentControl pitfalls - cost: none.
+- Ruling: remove the account dialog's explicit Width (house rule: layout composes without explicit sizes) unless it renders unusably, in which case restore with a stated reason - cost: cosmetic.
+- Ruling (to carry into Task 14 fix round): IAccountService.RequestSignIn() returns Promise<boolean> resolved when the app's account dialog closes (true if signed in); the contributors reopen the picker after a successful sign-in - mural shows one dialog at a time, so the picker cannot stay open - cost if wrong: small seam change in core + app account module.
+- Ruling: extra sentence for Failed/Unknown envs 'This environment is not running. Check it in the tenant console.' accepted - spec wants a plain sentence per state - cost: none.
+- Ruling: RelayError added to the shared contract so pickers distinguish relay sentences from unexpected errors - accepted - cost: none.
+- Ruling: target pickers keep an explicit Width 420 set in TS - without it the picker filled the whole window (seen live); restored with stated reason per the Task 13 width ruling - cost: cosmetic.
+- Ruling: tenant delete / rollback revokes all that tenant's sessions and open relays, and sessions issued before the tenant record's createdAt are refused - fills the gap the 'no disable path' ruling missed - cost: one store method + a check in the gates.
+- Final: parked - HandleSignedOut load/compare/clear not atomic vs a concurrent re-sign-in Keep - Ruling: window is a few file ops wide and only when re-signing in over a live session; worst case the user signs in again - cost if wrong: one extra sign-in.
+- Final: parked - TenantDeployService.Assemble unexpected fs errors (EACCES) reach the renderer with raw text naming a local build path (no secret) - Ruling: outside the fix diff, no second fix wave; file as follow-up - cost: an unfriendly message in a rare local-permissions failure.
+- Ruling: residual minors from both fix-wave re-reviews get one small follow-up fix each (server: StillLive closed-pipe; Plexus: Assemble raw fs text, HandleSignedOut/Keep serialisation) instead of being parked - user's standing rule 'fix all minors' overrides the skill's single-fix-wave limit - cost: one more short round; parked lines above for these two Plexus items are superseded.
+
+## Follow-ups
+
+- Follow-up (to file as GitHub Feature at finish): Plexus live e2e specs runtime-live-loop / sp1-plexus-smoke skip because contribute/publish now need a scripted desktop sign-in
+- Follow-up (to file as GitHub Feature at finish): Mural Button ignores its Command's CanExecute (enabled state) - every Plexus dialog affected (account Continue etc.); pickers bind IsEnabled directly as a workaround.
