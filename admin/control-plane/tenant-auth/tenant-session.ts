@@ -31,7 +31,7 @@ class RenewalRefused extends Error
  * at once (best effort: a failed write leaves it to the next change). Temp-write + atomic rename; a missing file is empty. Every change
  * is made on copies of the maps and persisted; changes run one at a time. Grants (Issue, RotateFor) are strict: only a
  * successful write swaps the copy into memory, so a failed write leaves memory and disk as they were. Revocations
- * (Revoke, RevokeAllFor) fail CLOSED: the copy is swapped into memory even when the write fails (the error is then
+ * (Revoke, RevokeAllFor, RevokeTenant) fail CLOSED: the copy is swapped into memory even when the write fails (the error is then
  * rethrown), so an ended session is refused at once; the next successful change writes memory, which carries the
  * revocation to disk.
  */
@@ -44,6 +44,8 @@ export class TenantSessionStore
     private static readonly RootKey = 'sessions'
     /** tenantId -> principalId -> when that principal's sessions were last ended (a password reset). */
     private static readonly ResetsKey = 'principalResets'
+    /** tenantId -> when every session of that tenant was last ended (the tenant was deleted or its provisioning rolled back). */
+    private static readonly TenantResetsKey = 'tenantResets'
     /** Marks a file whose session keys are token digests; a file without it holds raw tokens and is migrated on load. */
     private static readonly FormatKey = 'tokenFormat'
     private static readonly DigestFormat = 'sha256'
@@ -64,6 +66,7 @@ export class TenantSessionStore
 
     private sessions = new Map<string, TenantSession>()
     private resets = new Map<string, Map<string, string>>()
+    private tenantResets = new Map<string, string>()
     private loading: Promise<void> | null = null
     private mutationChain: Promise<void> = Promise.resolve()
 
@@ -212,6 +215,29 @@ export class TenantSessionStore
     }
 
     /**
+     * Ends every session of the tenant, of both kinds (the tenant was deleted, or its provisioning rolled back), and stamps
+     * the time tenant-wide, so a session issued before it is refused even if it reappears (a failed write lost on restart):
+     * a later tenant with the same id never inherits them. Fails closed like RevokeAllFor; returns how many sessions ended.
+     */
+    public async RevokeTenant(tenantId: string): Promise<number>
+    {
+        return await this.Mutate((sessions, _resets, tenantResets) =>
+        {
+            tenantResets.set(tenantId, this.now().toISOString())
+            let ended = 0
+            for (const [id, session] of sessions)
+            {
+                if (session.tenantId === tenantId)
+                {
+                    sessions.delete(id)
+                    ended++
+                }
+            }
+            return ended
+        }, TenantSessionStore.FailClosed)
+    }
+
+    /**
      * After the principal changed its own password: ends EVERY session of the principal in the tenant (the caller's too,
      * so a stolen copy of its id is useless) and issues one fresh session for the caller, kept through the reset stamped
      * now; persists once and returns the fresh session (a new bearer token: never log it).
@@ -247,17 +273,18 @@ export class TenantSessionStore
      * A failed write rejects; it leaves memory untouched unless `failClosed` (a revocation), in which case the copies
      * replace the live maps anyway. Changes are serialised, so each one starts from the previous one's result.
      */
-    private Mutate<T>(change: (sessions: Map<string, TenantSession>, resets: Map<string, Map<string, string>>) => T, failClosed: boolean = false): Promise<T>
+    private Mutate<T>(change: (sessions: Map<string, TenantSession>, resets: Map<string, Map<string, string>>, tenantResets: Map<string, string>) => T, failClosed: boolean = false): Promise<T>
     {
         const run = this.mutationChain.then(async () =>
         {
             await this.ensureLoaded()
             const sessions = new Map<string, TenantSession>([...this.sessions].map(([id, session]) => [id, { ...session }] as [string, TenantSession]))
             const resets = new Map<string, Map<string, string>>([...this.resets].map(([tenantId, principals]) => [tenantId, new Map(principals)] as [string, Map<string, string>]))
-            const result = change(sessions, resets)
+            const tenantResets = new Map(this.tenantResets)
+            const result = change(sessions, resets, tenantResets)
             try
             {
-                await this.write(sessions, resets)
+                await this.write(sessions, resets, tenantResets)
             }
             catch (err)
             {
@@ -265,11 +292,13 @@ export class TenantSessionStore
                 {
                     this.sessions = sessions
                     this.resets = resets
+                    this.tenantResets = tenantResets
                 }
                 throw err
             }
             this.sessions = sessions
             this.resets = resets
+            this.tenantResets = tenantResets
             return result
         })
         this.mutationChain = run.then(() => undefined, () => undefined)
@@ -298,9 +327,18 @@ export class TenantSessionStore
         return ended
     }
 
-    /** Whether the session was issued at or before its principal's last reset (and is not the one that reset issued). */
+    /**
+     * Whether the session was issued at or before its tenant's last tenant-wide reset (nothing keeps a session through
+     * that), or at or before its principal's last reset (and is not the one that reset issued).
+     */
     private PredatesReset(session: TenantSession): boolean
     {
+        const issuedMs = session.issuedAt !== undefined ? new Date(session.issuedAt).getTime() : new Date(session.expiresAt).getTime() - this.ttlMs
+        const tenantReset = this.tenantResets.get(session.tenantId)
+        if (tenantReset !== undefined && issuedMs <= new Date(tenantReset).getTime())
+        {
+            return true
+        }
         const reset = this.resets.get(session.tenantId)?.get(session.principalId)
         if (reset === undefined)
         {
@@ -310,7 +348,6 @@ export class TenantSessionStore
         {
             return false
         }
-        const issuedMs = session.issuedAt !== undefined ? new Date(session.issuedAt).getTime() : new Date(session.expiresAt).getTime() - this.ttlMs
         return issuedMs <= new Date(reset).getTime()
     }
 
@@ -354,7 +391,7 @@ export class TenantSessionStore
             }
             throw err
         }
-        let parsed: { [TenantSessionStore.RootKey]?: Record<string, TenantSession>; [TenantSessionStore.ResetsKey]?: Record<string, Record<string, string>>; [TenantSessionStore.FormatKey]?: string }
+        let parsed: { [TenantSessionStore.RootKey]?: Record<string, TenantSession>; [TenantSessionStore.ResetsKey]?: Record<string, Record<string, string>>; [TenantSessionStore.TenantResetsKey]?: Record<string, string>; [TenantSessionStore.FormatKey]?: string }
         try
         {
             parsed = JSON.parse(text) as typeof parsed
@@ -374,11 +411,15 @@ export class TenantSessionStore
         {
             this.resets.set(tenantId, new Map(Object.entries(principals)))
         }
+        for (const [tenantId, stamp] of Object.entries(parsed[TenantSessionStore.TenantResetsKey] ?? {}))
+        {
+            this.tenantResets.set(tenantId, stamp)
+        }
         if (legacy && this.sessions.size > 0)
         {
             try
             {
-                await this.write(this.sessions, this.resets)
+                await this.write(this.sessions, this.resets, this.tenantResets)
             }
             catch
             {
@@ -387,13 +428,14 @@ export class TenantSessionStore
         }
     }
 
-    private async write(sessions: Map<string, TenantSession>, resets: Map<string, Map<string, string>>): Promise<void>
+    private async write(sessions: Map<string, TenantSession>, resets: Map<string, Map<string, string>>, tenantResets: Map<string, string>): Promise<void>
     {
         await mkdir(dirname(this.filePath), { recursive: true })
         const body = {
             [TenantSessionStore.FormatKey]: TenantSessionStore.DigestFormat,
             [TenantSessionStore.RootKey]: Object.fromEntries(sessions),
             [TenantSessionStore.ResetsKey]: Object.fromEntries([...resets].map(([tenantId, principals]) => [tenantId, Object.fromEntries(principals)])),
+            [TenantSessionStore.TenantResetsKey]: Object.fromEntries(tenantResets),
         }
         const temp = `${this.filePath}.${randomUUID()}${TenantSessionStore.TempSuffix}`
         await writeFile(temp, JSON.stringify(body, null, TenantSessionStore.JsonIndent), { encoding: TenantSessionStore.Encoding, mode: TenantSessionStore.FileMode })

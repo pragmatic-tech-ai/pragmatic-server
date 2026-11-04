@@ -254,6 +254,21 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
         return closed
     }
 
+    /** Closes every relay of the tenant (it was deleted: its sessions are revoked) with a policy close; returns how many. */
+    public CloseTenant(tenantId: string): number
+    {
+        let closed = 0
+        for (const pipe of [...this.pipes])
+        {
+            if (pipe.context.session.tenantId === tenantId)
+            {
+                pipe.Close(RelayPipe.PolicyViolation)
+                closed++
+            }
+        }
+        return closed
+    }
+
     /** Closes the relays opened under session `sessionId` (it signed out) with a normal close; returns how many. */
     public CloseSession(sessionId: string): number
     {

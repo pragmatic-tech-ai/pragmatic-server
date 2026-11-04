@@ -15,10 +15,13 @@ export type TenantProvisionResult = { record: TenantRecord; ownerPassword: strin
  */
 export type OwnerPasswordReset = { ownerEmail: string; ownerPassword: string; sessionsRevoked: boolean; warning?: string };
 
-/** Ends a tenant principal's tenant-portal sessions (host-free: no tenant-plane types). */
+/** Ends a tenant principal's, or a whole tenant's, tenant-plane sessions (host-free: no tenant-plane types). */
 export interface IOwnerSessionRevoker
 {
     RevokeAllFor(tenantId: string, principalId: string): Promise<void>;
+
+    /** Ends every session of the tenant, console and desktop, and closes its open connections. */
+    RevokeTenant(tenantId: string): Promise<void>;
 }
 
 /** A reset of this tenant's Owner password is already running. Maps to 409. */
@@ -129,6 +132,8 @@ export class TenantProvisioningService
     private static readonly UnknownErrorName = 'Error';
     private static readonly IndexForgetInfix = ': forgetting its accounts failed (the startup back-fill will drop them): ';
     private static readonly IndexFailurePrefix = '[account-index] tenant ';
+    private static readonly LogPrefixTenant = '[tenant-delete] tenant ';
+    private static readonly TenantSessionsInfix = ': ending its sessions failed (memory refuses them; the gate refuses them after a restart): ';
     private static readonly IndexFailureInfix = ': indexing the Owner failed (the startup back-fill will retry): ';
 
     /** Tenants with an Owner password reset in flight (one at a time per tenant). */
@@ -174,9 +179,23 @@ export class TenantProvisioningService
         return { record, ownerPassword };
     }
 
-    /** Drops a deleted tenant's accounts from the discovery index. */
+    /**
+     * Forgets a deleted (or rolled-back) tenant: ends every one of its tenant-plane sessions, console and desktop, closing
+     * its open sockets and relays, so a later tenant re-created under the same id never inherits them; then drops its
+     * accounts from the discovery index. Neither failure fails the delete (the tenant is already gone): a failed session
+     * write still ends them in memory, and the desktop gate refuses a session whose tenant record is missing or newer.
+     */
     public async ForgetTenant(tenantId: string): Promise<void>
     {
+        try
+        {
+            await this.sessions?.RevokeTenant(tenantId);
+        }
+        catch (err)
+        {
+            console.error(TenantProvisioningService.LogPrefixTenant + tenantId + TenantProvisioningService.TenantSessionsInfix
+                + (err instanceof Error ? err.name : TenantProvisioningService.UnknownErrorName));
+        }
         try
         {
             await this.accounts?.ForgetTenant(tenantId);

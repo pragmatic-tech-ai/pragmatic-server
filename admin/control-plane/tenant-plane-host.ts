@@ -395,6 +395,22 @@ export class TenantPlaneHost
         return closed
     }
 
+    /** Closes every open tenant socket of the tenant, any principal (the tenant was deleted); returns how many. */
+    public CloseTenant(tenantId: string): number
+    {
+        let closed = 0
+        for (const [ws, tracked] of [...this.clients])
+        {
+            if (tracked.tenantId === tenantId)
+            {
+                this.Remove(ws)
+                ws.terminate()
+                closed++
+            }
+        }
+        return closed
+    }
+
     /** Re-homes the sockets opened under `oldSessionId` to `newSessionId` (the user's session was rotated); they stay open. */
     public MoveSession(oldSessionId: string, newSessionId: string): void
     {

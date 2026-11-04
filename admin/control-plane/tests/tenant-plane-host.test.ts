@@ -575,6 +575,20 @@ describe('TenantPlaneHost streaming', () =>
         b.close()
     })
 
+    it('CloseTenant closes the open sockets of every principal in the tenant (it was deleted), and only in that tenant', async () =>
+    {
+        const owner = await store.Issue(TenantA, 'owner')
+        const member = await store.Issue(TenantA, 'u1')
+        const a = new WebSocket(EventsUrl(), { headers: { [Kit.HostHeader]: Kit.TenantHost, [Kit.CookieHeader]: Kit.PtsCookie(TenantA, owner.id) } })
+        const b = new WebSocket(EventsUrl(), { headers: { [Kit.HostHeader]: Kit.TenantHost, [Kit.CookieHeader]: Kit.PtsCookie(TenantA, member.id) } })
+        assert.equal(await Kit.Opened(a), true)
+        assert.equal(await Kit.Opened(b), true)
+        const closed = Promise.all([a, b].map(ws => new Promise<boolean>(res => ws.once('close', () => res(true)))))
+        assert.equal(host.CloseTenant('other'), 0)
+        assert.equal(host.CloseTenant(TenantA), 2)
+        assert.deepEqual(await closed, [true, true])
+    })
+
     it('rejects an events socket with no pts_session cookie', async () =>
     {
         const ws = new WebSocket(EventsUrl(), { headers: { [Kit.HostHeader]: Kit.TenantHost } })
@@ -720,6 +734,11 @@ class StubRelay
     }
 
     public ClosePrincipal(): number
+    {
+        return 0
+    }
+
+    public CloseTenant(): number
     {
         return 0
     }

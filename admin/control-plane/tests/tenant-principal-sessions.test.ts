@@ -9,6 +9,11 @@ class FailingSessions
     {
         throw new Error('disk full')
     }
+
+    public async RevokeTenant(_tenantId: string): Promise<number>
+    {
+        throw new Error('disk full')
+    }
 }
 
 class RecordingConnections implements IPrincipalConnections
@@ -24,6 +29,12 @@ class RecordingConnections implements IPrincipalConnections
     public MoveSession(_oldSessionId: string, _newSessionId: string): void
     {
     }
+
+    public CloseTenant(tenantId: string): number
+    {
+        this.Closed.push(tenantId + '/*')
+        return 1
+    }
 }
 
 describe('TenantPrincipalSessions', () =>
@@ -35,6 +46,15 @@ describe('TenantPrincipalSessions', () =>
         revoker.Attach(connections)
         await assert.rejects(revoker.RevokeAllFor('t1', 'owner'), /disk full/)
         assert.deepEqual(connections.Closed, ['t1/owner'])
+    })
+
+    it('closes every socket and relay of the tenant even when ending its stored sessions fails, then reports the failure', async () =>
+    {
+        const revoker = new TenantPrincipalSessions(new FailingSessions() as unknown as TenantSessionStore)
+        const connections = new RecordingConnections()
+        revoker.Attach(connections)
+        await assert.rejects(revoker.RevokeTenant('t1'), /disk full/)
+        assert.deepEqual(connections.Closed, ['t1/*'])
     })
 })
 
@@ -62,6 +82,12 @@ class OrderedConnections implements IPrincipalConnections
     public MoveSession(oldSessionId: string, newSessionId: string): void
     {
         this.Log.push('move ' + oldSessionId + '->' + newSessionId)
+    }
+
+    public CloseTenant(tenantId: string): number
+    {
+        this.Log.push('close tenant ' + tenantId)
+        return 1
     }
 }
 

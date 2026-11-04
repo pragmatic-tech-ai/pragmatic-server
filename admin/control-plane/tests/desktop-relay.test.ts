@@ -17,6 +17,10 @@ import { DesktopAuthGate } from '../tenant-auth/desktop-auth-gate.js'
 import { DesktopRelay, WsUpstreamDialer, type IUpstreamDialer } from '../tenant-auth/desktop-relay.js'
 import { DesktopTargets, type DesktopCapabilitiesSource } from '../tenant-auth/desktop-targets.js'
 import { TenantSessionKind, TenantSessionStore } from '../tenant-auth/tenant-session.js'
+import { TenantPrincipalSessions } from '../tenant-auth/tenant-principal-sessions.js'
+import type { IIdpService } from '../idp-service.js'
+import type { PlatformDirectory } from '../platform-directory.js'
+import { TenantProvisioningService } from '../tenant-provisioning-service.js'
 
 /** A fake environment server: answers graph/list, graph/contribute, application/deploy and records what it saw. */
 class FakeUpstream
@@ -186,11 +190,19 @@ class CountingDialer implements IUpstreamDialer
     }
 }
 
+/** Every tenant exists (created 2026-01-01) unless deleted, or re-created at a later time. */
 class RelayDirectory implements ITenantDirectory
 {
+    public readonly gone = new Set<string>()
+    public readonly recreatedAt = new Map<string, string>()
+
     public GetTenant(id: string): TenantRecord | undefined
     {
-        return { id, clientId: 'c1', displayName: id, createdAt: '2026-01-01T00:00:00.000Z', ownerPrincipalId: RelayKit.Principal }
+        if (this.gone.has(id))
+        {
+            return undefined
+        }
+        return { id, clientId: 'c1', displayName: id, createdAt: this.recreatedAt.get(id) ?? '2026-01-01T00:00:00.000Z', ownerPrincipalId: RelayKit.Principal }
     }
 
     public GetHive(): HiveRecord | undefined
@@ -230,6 +242,7 @@ class RelayKit
     public dialer!: CountingDialer
     public relay!: DesktopRelay
     public upstream!: FakeUpstream
+    public readonly directory = new RelayDirectory()
     public desktopToken = ''
     public consoleToken = ''
     private server: Server | undefined
@@ -252,7 +265,7 @@ class RelayKit
         this.endpoints = new RelayEndpoints(upstreamPort)
         this.dialer = new CountingDialer()
         const service = this.service as unknown as IEnvironmentService
-        this.relay = new DesktopRelay(new DesktopAuthGate(this.store), new DesktopTargets(service, new RelayDirectory(), capabilities), service,
+        this.relay = new DesktopRelay(new DesktopAuthGate(this.store, this.directory), new DesktopTargets(service, this.directory, capabilities), service,
             this.endpoints as unknown as EnvironmentEndpoints, this.audit, this.dialer)
         this.desktopToken = (await this.store.Issue(RelayKit.TenantId, RelayKit.Principal, RelayKit.Email, TenantSessionKind.Desktop)).id
         this.consoleToken = (await this.store.Issue(RelayKit.TenantId, RelayKit.Principal, RelayKit.Email)).id
@@ -692,6 +705,51 @@ describe('DesktopRelay contribute', () =>
         assert.equal(kit.relay.ClosePrincipal(RelayKit.TenantId, RelayKit.Principal), 1)
         await closed
         await RelayKit.Until(() => kit.endpoints.releases === 1)
+    })
+})
+
+describe('DesktopRelay tenant deletion', () =>
+{
+    let kit: RelayKit
+
+    beforeEach(async () =>
+    {
+        kit = new RelayKit()
+        await kit.Start()
+    })
+
+    afterEach(async () =>
+    {
+        await kit.Stop()
+    })
+
+    it('deleting the tenant (ForgetTenant) closes its open relay, releases the lease, and its desktop bearer is then refused 401', async () =>
+    {
+        const principals = new TenantPrincipalSessions(kit.store)
+        principals.Attach(kit.relay)
+        const provisioning = new TenantProvisioningService({} as IIdpService, {} as PlatformDirectory, () => { throw new Error('unused') }, principals)
+        const { ws } = await kit.Dial(RelayKit.Dev, 'contribute', kit.desktopToken)
+        const closed = RelayKit.Closed(ws as WebSocket)
+        kit.directory.gone.add(RelayKit.TenantId)
+        await provisioning.ForgetTenant(RelayKit.TenantId)
+        assert.equal(await closed, 1008)
+        await RelayKit.Until(() => kit.endpoints.releases === 1)
+        // Re-provisioned under the same id: the old bearer is gone from the store and stays refused.
+        kit.directory.gone.delete(RelayKit.TenantId)
+        kit.directory.recreatedAt.set(RelayKit.TenantId, new Date().toISOString())
+        assert.equal((await kit.Dial(RelayKit.Dev, 'contribute', kit.desktopToken)).status, 401)
+        assert.equal(kit.service.mints.length, 1)
+    })
+
+    it('a desktop bearer issued before its tenant was re-created is refused 401 even when its session survived; nothing is minted', async () =>
+    {
+        kit.directory.recreatedAt.set(RelayKit.TenantId, new Date(Date.now() + 60000).toISOString())
+        assert.equal((await kit.Dial(RelayKit.Dev, 'contribute', kit.desktopToken)).status, 401)
+        kit.directory.recreatedAt.delete(RelayKit.TenantId)
+        kit.directory.gone.add(RelayKit.TenantId)
+        assert.equal((await kit.Dial(RelayKit.Dev, 'contribute', kit.desktopToken)).status, 401)
+        assert.equal(kit.service.mints.length, 0)
+        assert.equal(kit.endpoints.leases, 0)
     })
 })
 

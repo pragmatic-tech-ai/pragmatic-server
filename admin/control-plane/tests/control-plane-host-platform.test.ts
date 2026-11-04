@@ -263,9 +263,12 @@ describe('ControlPlaneHost platform routes', () =>
         idp.Fail = true
         assert.equal((await Harness.Send(host, 'DELETE', '/api/tenants/t1')).status, 500)
         assert.equal((await Harness.Send(host, 'GET', '/api/tenants/t1')).status, 200)
+        assert.deepEqual(fake.Forgotten, [], 'a failed delete keeps the tenant and its sessions')
         idp.Fail = false
         assert.equal((await Harness.Send(host, 'DELETE', '/api/tenants/t1')).status, 200)
         assert.deepEqual(idp.TornDown, ['t1'])
+        // ForgetTenant ends the tenant's sessions (both kinds) and closes its relays and sockets.
+        assert.deepEqual(fake.Forgotten, ['t1'])
         assert.equal((await Harness.Send(host, 'GET', '/api/tenants/t1')).status, 404)
     })
 

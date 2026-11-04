@@ -12,6 +12,9 @@ export interface IPrincipalConnections
 
     /** Re-homes every connection opened under session `oldSessionId` to `newSessionId` (its session was rotated). */
     MoveSession(oldSessionId: string, newSessionId: string): void
+
+    /** Closes every open connection of the tenant, any principal and any session kind (the tenant is gone); returns how many. */
+    CloseTenant(tenantId: string): number
 }
 
 /**
@@ -47,6 +50,25 @@ export class TenantPrincipalSessions implements IOwnerSessionRevoker
         finally
         {
             this.CloseConnections(tenantId, principalId, undefined)
+        }
+    }
+
+    /**
+     * Ends every stored session of the tenant, both kinds (it was deleted, or its provisioning rolled back), and closes all
+     * of its open sockets and desktop relays even when the store change fails (its error is then rethrown).
+     */
+    public async RevokeTenant(tenantId: string): Promise<void>
+    {
+        try
+        {
+            await this.sessions.RevokeTenant(tenantId)
+        }
+        finally
+        {
+            for (const connections of this.connections)
+            {
+                connections.CloseTenant(tenantId)
+            }
         }
     }
 

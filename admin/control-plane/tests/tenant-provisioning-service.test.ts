@@ -21,7 +21,7 @@ import { PlatformDirectory, RecordExistsError, UnknownClientError, UnknownTenant
 import { IdpUnreachableError, OwnerAccountMissingError, OwnerIdpRefusedError, OwnerNotRecordedError, OwnerResetInProgressError, TenantIdpMissingError, TenantProvisioningService, type IOwnerSessionRevoker } from '../tenant-provisioning-service.js';
 import { IdpAdminTransportError } from '../idp-admin-client.js';
 import { TenantAccountIndex } from '../tenant-account-index.js';
-import { TenantSessionStore } from '../tenant-auth/tenant-session.js';
+import { TenantSessionKind, TenantSessionStore } from '../tenant-auth/tenant-session.js';
 import { TenantPrincipalSessions } from '../tenant-auth/tenant-principal-sessions.js';
 
 class FakeIdp implements IIdpService
@@ -176,6 +176,44 @@ test('Provision records the Owner in the account index, and ForgetTenant removes
         {
             fs.rmSync(dir, { recursive: true, force: true });
         }
+    });
+});
+
+test('ForgetTenant ends every session of the tenant, console and desktop, and closes its connections', async () =>
+{
+    await ProvFixture.WithHost(async (conn, _realms, directory) =>
+    {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), ProvFixture.DirPrefix));
+        try
+        {
+            const sessions = new TenantSessionStore(path.join(dir, 'sessions.json'), 60000);
+            const principals = new TenantPrincipalSessions(sessions);
+            const closedTenants: string[] = [];
+            principals.Attach({ ClosePrincipal: () => 0, MoveSession: () => undefined, CloseTenant: (t: string) => { closedTenants.push(t); return 1; } });
+            const service = new TenantProvisioningService(new FakeIdp(conn), directory, c => new IdpAdminClient(c), principals);
+            const consoleSession = await sessions.Issue(ProvFixture.TenantId, 'owner');
+            const desktop = await sessions.Issue(ProvFixture.TenantId, 'owner', undefined, TenantSessionKind.Desktop);
+            const other = await sessions.Issue('other-tenant', 'owner', undefined, TenantSessionKind.Desktop);
+            await service.ForgetTenant(ProvFixture.TenantId);
+            assert.equal(await sessions.Validate(consoleSession.id), null);
+            assert.equal(await sessions.Validate(desktop.id), null);
+            assert.notEqual(await sessions.Validate(other.id), null);
+            assert.deepEqual(closedTenants, [ProvFixture.TenantId]);
+        }
+        finally
+        {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
+
+test('ForgetTenant does not fail when ending the sessions fails', async () =>
+{
+    await ProvFixture.WithHost(async (conn, _realms, directory) =>
+    {
+        const failing: IOwnerSessionRevoker = { RevokeAllFor: async () => undefined, RevokeTenant: async () => { throw new Error('disk full'); } };
+        const service = new TenantProvisioningService(new FakeIdp(conn), directory, c => new IdpAdminClient(c), failing);
+        await service.ForgetTenant(ProvFixture.TenantId);
     });
 });
 
@@ -377,7 +415,7 @@ test('a session revoke failure after the password changed still returns the pass
 {
     await ProvFixture.WithHost(async (conn, realms, directory) =>
     {
-        const failing: IOwnerSessionRevoker = { RevokeAllFor: async () => { throw new Error('disk full'); } };
+        const failing: IOwnerSessionRevoker = { RevokeAllFor: async () => { throw new Error('disk full'); }, RevokeTenant: async () => undefined };
         const service = new TenantProvisioningService(new FakeIdp(conn), directory, c => new IdpAdminClient(c), failing);
         await service.Provision(ProvFixture.Input());
         const reset = await service.ResetOwnerPassword(ProvFixture.TenantId);
@@ -393,7 +431,7 @@ test('a refused or failed IdP reset ends no session', async () =>
     await ProvFixture.WithHost(async (conn, _realms, directory) =>
     {
         const calls: string[] = [];
-        const spy: IOwnerSessionRevoker = { RevokeAllFor: async (t: string, p: string) => { calls.push(t + '/' + p); } };
+        const spy: IOwnerSessionRevoker = { RevokeAllFor: async (t: string, p: string) => { calls.push(t + '/' + p); }, RevokeTenant: async () => undefined };
         const service = new TenantProvisioningService(new FakeIdp({ ...conn, adminToken: ProvFixture.BadToken }), directory, c => new IdpAdminClient(c), spy);
         await new TenantProvisioningService(new FakeIdp(conn), directory, c => new IdpAdminClient(c)).Provision(ProvFixture.Input());
         await assert.rejects(service.ResetOwnerPassword(ProvFixture.TenantId), OwnerIdpRefusedError);

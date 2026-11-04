@@ -403,7 +403,8 @@ export class ControlPlaneServer
         const plane: TenantPlane = { endpoint, gate, api, events, isDurable: rp.IsDurable, principals }
         if (withDesktop)
         {
-            const desktopGate = new DesktopAuthGate(sessions)
+            // Given the tenant records, a bearer of a deleted (or deleted and re-created) tenant is refused.
+            const desktopGate = new DesktopAuthGate(sessions, directory)
             const targets = new DesktopTargets(service, directory)
             if (relay !== undefined)
             {

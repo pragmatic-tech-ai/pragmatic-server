@@ -224,6 +224,69 @@ test('RotateFor ends every session of the principal, the caller\'s too, and issu
     })
 })
 
+test('RevokeTenant ends every session of the tenant, both kinds and every principal (persisted), and only that tenant', async () =>
+{
+    await SessionFixture.WithDir(async file =>
+    {
+        let nowMs = SessionFixture.Start
+        const clock = (): Date => new Date(nowMs)
+        const store = new TenantSessionStore(file, SessionFixture.Ttl, clock)
+        const owner = await store.Issue(SessionFixture.Tenant, 'owner')
+        const desktop = await store.Issue(SessionFixture.Tenant, SessionFixture.Principal, SessionFixture.Email, TenantSessionKind.Desktop)
+        const elsewhere = await store.Issue('other-tenant', 'owner', undefined, TenantSessionKind.Desktop)
+        nowMs += 10
+        assert.equal(await store.RevokeTenant(SessionFixture.Tenant), 2)
+        assert.equal(await store.Validate(owner.id), null)
+        assert.equal(await store.Validate(desktop.id), null)
+        assert.notEqual(await store.Validate(elsewhere.id), null)
+        const reloaded = new TenantSessionStore(file, SessionFixture.Ttl, clock)
+        assert.equal(await reloaded.Validate(desktop.id), null)
+        assert.notEqual(await reloaded.Validate(elsewhere.id), null)
+    })
+})
+
+test('a session issued before its tenant was revoked is refused even if it reappears; a later tenant of the same id signs in fresh', async () =>
+{
+    await SessionFixture.WithDir(async file =>
+    {
+        let nowMs = SessionFixture.Start
+        const clock = (): Date => new Date(nowMs)
+        const store = new TenantSessionStore(file, SessionFixture.Ttl, clock)
+        const before = await store.Issue(SessionFixture.Tenant, 'owner', undefined, TenantSessionKind.Desktop)
+        nowMs += 10
+        await store.RevokeTenant(SessionFixture.Tenant)
+        // The revoked session comes back (a restored file, or a write lost before restart): the tenant-wide stamp refuses it.
+        const raw = JSON.parse(await readFile(file, 'utf8')) as Record<string, Record<string, unknown>>
+        raw.sessions[TenantSessionStore.DigestOf(before.id)] = { ...before, id: TenantSessionStore.DigestOf(before.id), keptAt: new Date(nowMs + 5).toISOString() }
+        await writeFile(file, JSON.stringify(raw))
+        const reloaded = new TenantSessionStore(file, SessionFixture.Ttl, clock)
+        assert.equal(await reloaded.Validate(before.id), null)
+        nowMs += 10
+        const after = await reloaded.Issue(SessionFixture.Tenant, 'owner', undefined, TenantSessionKind.Desktop)
+        assert.notEqual(await reloaded.Validate(after.id), null)
+    })
+})
+
+test('a tenant revocation whose write fails still takes effect at once (fail closed)', async () =>
+{
+    const root = await mkdtemp(join(tmpdir(), 'tenant-session-tenantrevoke-'))
+    const sub = join(root, 'sub')
+    const file = join(sub, 'tenant-sessions.json')
+    try
+    {
+        const store = new TenantSessionStore(file, SessionFixture.Ttl)
+        const doomed = await store.Issue(SessionFixture.Tenant, 'owner', undefined, TenantSessionKind.Desktop)
+        await rm(sub, { recursive: true, force: true })
+        await writeFile(sub, 'blocked')
+        await assert.rejects(store.RevokeTenant(SessionFixture.Tenant))
+        assert.equal(await store.Validate(doomed.id), null)
+    }
+    finally
+    {
+        await rm(root, { recursive: true, force: true })
+    }
+})
+
 test('a later full reset ends the rotated session too', async () =>
 {
     await SessionFixture.WithDir(async file =>
