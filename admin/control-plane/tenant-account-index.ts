@@ -67,9 +67,17 @@ export class TenantAccountIndex extends JsonRecordStore<TenantAccountRecord>
         return [...found]
     }
 
-    /** Indexes every directory tenant's recorded Owner that is not yet indexed; returns how many were added. */
+    /**
+     * Reconciles the index with the directory: drops rows whose tenant no longer exists, and indexes every directory
+     * tenant's recorded Owner that is not yet indexed. Returns how many were added.
+     */
     public async BackfillFrom(directory: PlatformDirectory): Promise<number>
     {
+        const orphans = [...this.Values()].filter(r => directory.GetTenant(r.tenantId) === undefined).map(r => r.id)
+        for (const id of orphans)
+        {
+            await this.Remove(id)
+        }
         let added = 0
         for (const tenant of directory.ListTenants())
         {

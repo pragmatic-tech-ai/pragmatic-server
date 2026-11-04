@@ -185,7 +185,7 @@ export class ProvisioningOrchestrator
         }
         if (completed.tenant)
         {
-            await this.Compensate(ProvisioningOrchestrator.TenantPrefix + input.tenant.id, () => this.directory.DeleteTenant(input.tenant.id), rolledBack, residue)
+            await this.Compensate(ProvisioningOrchestrator.TenantPrefix + input.tenant.id, () => this.DeleteTenantAndAccounts(input.tenant.id), rolledBack, residue)
         }
         if (completed.tenantAttempted)
         {
@@ -196,6 +196,13 @@ export class ProvisioningOrchestrator
             await this.Compensate(ProvisioningOrchestrator.ClientPrefix + input.client.id, () => this.directory.DeleteClient(input.client.id), rolledBack, residue)
         }
         return { rolledBack, residue }
+    }
+
+    /** Rolls a provisioned tenant back: its record, then its entries in the email-discovery index. */
+    private async DeleteTenantAndAccounts(tenantId: string): Promise<void>
+    {
+        await this.directory.DeleteTenant(tenantId)
+        await this.provisioning.ForgetTenant(tenantId)
     }
 
     private async Compensate(label: string, action: () => Promise<void>, rolledBack: string[], residue: string[]): Promise<void>

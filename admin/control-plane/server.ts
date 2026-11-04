@@ -430,8 +430,6 @@ export class ControlPlaneServer
         return raw === undefined || raw === '' ? ControlPlaneServer.DefaultAgentChannelBind : raw
     }
 
-    /** The dedicated tenant listener port; required (the plane only activates when it is set). */
-    /** The tenant session store under the data root (one instance per process: the plane and the Owner reset share it). */
     /**
      * Where the desktop app finds the tenant plane: `PRAGMATIC_DESKTOP_TENANT_PLANE_URL` when set, else the loopback
      * tenant listener when the tenant plane is enabled (both port and base domain set), else undefined (discovery answers 503).
@@ -452,6 +450,7 @@ export class ControlPlaneServer
         return ControlPlaneServer.LoopbackHttpPrefix + port
     }
 
+    /** The tenant session store under the data root (one instance per process: the plane and the Owner reset share it). */
     public static TenantSessionsOf(dataRoot: string): TenantSessionStore
     {
         return new TenantSessionStore(join(dataRoot, ControlPlaneServer.TenantSessionsFile), ControlPlaneServer.TenantSessionTtlMs)

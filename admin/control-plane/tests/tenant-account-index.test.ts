@@ -99,4 +99,14 @@ describe('TenantAccountIndex', () =>
         assert.deepEqual(index.TenantsFor(IndexFixture.Ann), [IndexFixture.Acme])
         assert.equal(await index.BackfillFrom(directory), 0)
     })
+
+    it('back-fill drops rows whose tenant no longer exists in the directory', async () =>
+    {
+        const directory = await IndexFixture.NewDirectory(dir)
+        await directory.CreateTenant({ id: IndexFixture.Beta, clientId: IndexFixture.ClientId, displayName: 'Beta' })
+        await index.Record(IndexFixture.Acme, IndexFixture.Owner, IndexFixture.Ann)
+        await index.Record(IndexFixture.Beta, IndexFixture.Owner, IndexFixture.Ann)
+        await index.BackfillFrom(directory)
+        assert.deepEqual(index.TenantsFor(IndexFixture.Ann), [IndexFixture.Beta])
+    })
 })

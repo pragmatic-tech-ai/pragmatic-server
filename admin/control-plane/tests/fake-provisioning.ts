@@ -15,6 +15,7 @@ export class FakeProvisioning
     // When set, the reset reports that the Owner's sessions could not be ended, with this warning.
     public ResetWarning: string | undefined
     public readonly Resets: string[] = []
+    public readonly Forgotten: string[] = []
 
     public readonly Calls: TenantProvisionInput[] = []
 
@@ -53,8 +54,9 @@ export class FakeProvisioning
         return reset
     }
 
-    public async ForgetTenant(_tenantId: string): Promise<void>
+    public async ForgetTenant(tenantId: string): Promise<void>
     {
+        this.Forgotten.push(tenantId)
     }
 
     public AsService(): TenantProvisioningService

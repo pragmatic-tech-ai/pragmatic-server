@@ -179,6 +179,16 @@ test('Provision records the Owner in the account index, and ForgetTenant removes
     });
 });
 
+test('ForgetTenant does not fail when the index write fails', async () =>
+{
+    await ProvFixture.WithHost(async (conn, _realms, directory) =>
+    {
+        const failing = { ForgetTenant: async () => { throw new Error('disk full'); } } as unknown as TenantAccountIndex;
+        const service = new TenantProvisioningService(new FakeIdp(conn), directory, c => new IdpAdminClient(c), undefined, failing);
+        await service.ForgetTenant(ProvFixture.TenantId);
+    });
+});
+
 test('Provision ensures the realm, seeds an Owner who can authenticate, and persists non-secret metadata', async () =>
 {
     await ProvFixture.WithHost(async (conn, realms, directory) =>

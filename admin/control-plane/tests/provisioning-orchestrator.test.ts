@@ -302,6 +302,14 @@ test('CreateHive failure rolls back tenant + client and reports residue', async 
     f.AssertStoresEmpty()
 })
 
+test('rolling back a provisioned tenant also forgets its discovery-index accounts', async () =>
+{
+    const f = await OrchestratorFixture.Create()
+    f.directory.FailCreateHive = true
+    await f.CaptureFailure()
+    assert.deepEqual(f.provisioning.Forgotten, ['t1'])
+})
+
 test('RegisterHive failure rolls back hive + tenant + client', async () =>
 {
     const f = await OrchestratorFixture.Create()

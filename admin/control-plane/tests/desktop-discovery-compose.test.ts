@@ -25,6 +25,9 @@ class ComposeFixture
     public static readonly Loopback = '127.0.0.1'
     public static readonly Ann = 'ann@acme.test'
     public static readonly Plane = 'http://127.0.0.1:7002'
+    public static readonly HopA = '203.0.113.1'
+    public static readonly HopB = '203.0.113.2'
+    public static readonly Limit = 10
 
     public static Post(port: number, headers: Record<string, string>): Promise<number>
     {
@@ -65,7 +68,7 @@ describe('ControlPlaneHost desktop discovery route', () =>
     let dir: string
     let host: ControlPlaneHost
 
-    beforeEach(async () =>
+    async function Start(trustedProxy: boolean): Promise<void>
     {
         dir = mkdtempSync(join(tmpdir(), 'discover-host-'))
         const index = new TenantAccountIndex(join(dir, 'tenant-accounts.json'))
@@ -76,8 +79,13 @@ describe('ControlPlaneHost desktop discovery route', () =>
         const endpoint = new DesktopDiscoveryEndpoint(index, directory, ComposeFixture.Plane, DesktopDiscoveryEndpoint.NewThrottle())
         host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, dir, {} as IOperatorIdentity, false,
             directory, {} as PlatformDeploymentRegistry, {} as TenantProvisioningService, {} as HiveObservationRegistry,
-            undefined, false, undefined, undefined, undefined, [], undefined, undefined, undefined, undefined, undefined, undefined, undefined, endpoint)
+            undefined, trustedProxy, undefined, undefined, undefined, [], undefined, undefined, undefined, undefined, undefined, undefined, undefined, endpoint)
         await host.Listen(0, ComposeFixture.Loopback)
+    }
+
+    beforeEach(async () =>
+    {
+        await Start(false)
     })
 
     afterEach(async () =>
@@ -94,5 +102,31 @@ describe('ControlPlaneHost desktop discovery route', () =>
     it('refuses a browser request that carries an Origin header', async () =>
     {
         assert.equal(await ComposeFixture.Post(host.Address().port, { origin: 'http://evil.test' }), 403)
+    })
+
+    it('keys the throttle on the forwarded address behind a trusted proxy', async () =>
+    {
+        await host.Close()
+        await Start(true)
+        const port = host.Address().port
+        for (const hop of [ComposeFixture.HopA, ComposeFixture.HopB])
+        {
+            for (let i = 0; i < ComposeFixture.Limit; i++)
+            {
+                assert.equal(await ComposeFixture.Post(port, { 'x-forwarded-for': hop }), 200)
+            }
+        }
+        assert.equal(await ComposeFixture.Post(port, { 'x-forwarded-for': ComposeFixture.HopA }), 429)
+        assert.equal(await ComposeFixture.Post(port, { 'x-forwarded-for': ComposeFixture.HopB }), 429)
+    })
+
+    it('ignores x-forwarded-for without a trusted proxy (one shared budget)', async () =>
+    {
+        const port = host.Address().port
+        for (let i = 0; i < ComposeFixture.Limit; i++)
+        {
+            await ComposeFixture.Post(port, { 'x-forwarded-for': `10.0.0.${i}` })
+        }
+        assert.equal(await ComposeFixture.Post(port, { 'x-forwarded-for': ComposeFixture.HopB }), 429)
     })
 })
