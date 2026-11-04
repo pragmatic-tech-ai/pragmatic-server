@@ -1,7 +1,7 @@
 import {
     createMessageConnection, NullLogger, WebSocketMessageReader, WebSocketMessageWriter, LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol, AdminProtocol, CypherProtocol, PragmaticAppProtocol, GraphProtocol,
 } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, ModelViewPageDto, ModelViewParams, ResolvedResourceDto, GrantDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, SetSecurityModelParams, AccountDto, CreateAccountParams, ServiceTokenSummaryDto, IssueTokenParams, TokenIssuedDto, CypherQueryParams, CypherQueryPageDto, CypherExecuteParams, CypherExecuteResultDto, CypherModelListDto, PragmaticAppSummaryDto, GraphSummaryDto, GraphLoadParamsDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, ModelViewPageDto, ModelViewParams, ResolvedResourceDto, GrantDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, SetSecurityModelParams, AccountDto, CreateAccountParams, ServiceTokenSummaryDto, IssueTokenParams, TokenIssuedDto, CypherQueryParams, CypherQueryPageDto, CypherExecuteParams, CypherExecuteResultDto, CypherModelListDto, ConnectorReadParams, Page, EntityDto, PragmaticAppSummaryDto, GraphSummaryDto, GraphLoadParamsDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ResponseError, ErrorCodes, DrainingError, ApplicationDeployProtocol, AppDataProtocol, DataSharingProtocol, DataAssignmentProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherAppDeployParamsDto, AppDeployResultDto, AppWriteParams, AppWriteResultDto, AppWriteOpDto, ShareParams, ShareResultDto, UnshareParams, UnshareResultDto, ListSharesParams, ListSharesResultDto, AssignParams, AssignResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { RequestType, NotificationType } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -86,6 +86,7 @@ export class ServerConnectionHandler
     private static readonly ModelViewFingerprintTag = 'modelView'
     private static readonly NotRuntimeMessage = 'operation requires a runtime tenant'
     private static readonly DataRevisionFingerprintTag = 'data'
+    private static readonly ReadWhereUnsupportedMessage = `${InvalidParamsPrefix.Text}where is supported on connector/readPage only`
     private static readonly ReadEndpointWriteMessage = `${InvalidParamsPrefix.Text}writes are not supported on ${CypherProtocol.Query.method}; send them to ${CypherProtocol.Execute.method}`
     private static readonly ExecuteModelIdRequiredMessage = `${InvalidParamsPrefix.Text}modelId is required: a write must name its target model`
     private static readonly NotDevelopmentMessage = 'operation requires a development tenant'
@@ -425,7 +426,7 @@ export class ServerConnectionHandler
             await this.connectorService.Invalidate()
         }))
         this.guarded(ConnectorProtocol.Prepare, p => this.connectorService.Prepare(p.modelId))
-        this.guarded(ConnectorProtocol.Read, p => this.connectorService.Read(p.modelId, p.concept, p, this.paging, this.accessContext))
+        this.guarded(ConnectorProtocol.Read, p => this.RunConnectorRead(p))
         this.guarded(ConnectorProtocol.ReadPage, p => this.connectorService.ReadPage(p.modelId, p.concept, p, this.paging, this.accessContext, p.where))
         this.guarded(ConnectorProtocol.RefreshModel, p => this.connectorService.RefreshModel(p.modelId))
         this.guarded(ConnectorProtocol.Decisions, p => this.connectorService.Decisions(p.modelId, p.canonical, this.accessContext))
@@ -439,6 +440,17 @@ export class ServerConnectionHandler
         this.guarded(CypherProtocol.Query, p => this.RunCypherQuery(p))
         this.guarded(CypherProtocol.Execute, p => this.RunCypherExecute(p))
         this.guardedNoParams(CypherProtocol.Models, () => this.RunCypherModels())
+    }
+
+    /** connector/read pages the MATERIALIZED model and has no source filter: a `where` (connector/readPage only) is refused
+     *  rather than silently ignored, which would hand back unfiltered rows. */
+    private RunConnectorRead(params: ConnectorReadParams): Promise<Page<EntityDto>>
+    {
+        if (params?.where !== undefined && params.where !== null)
+        {
+            throw new ResponseError(ErrorCodes.InvalidParams, ServerConnectionHandler.ReadWhereUnsupportedMessage)
+        }
+        return this.connectorService.Read(params.modelId, params.concept, params, this.paging, this.accessContext)
     }
 
     /** The shard ids usable as modelId. Model scope exists on development tenants only, as on cypher/query. */

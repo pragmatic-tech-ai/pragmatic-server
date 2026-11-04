@@ -60,3 +60,14 @@ test('no terms means no filter, and the canonical form distinguishes filters', (
     assert.notEqual(ConnectorReadFilter.Canonical(a), ConnectorReadFilter.Canonical(b))
     assert.equal(ConnectorReadFilter.Canonical(undefined), '')
 })
+
+test('a malformed term on a masked field fails exactly like one on an unknown field (no oracle through operand errors)', () =>
+{
+    const masked = ReadFilterFixture.Message(() => ConnectorReadFilter.For(ReadFilterFixture.Binding, [{ field: 'salary', op: ConnectorFilterOp.Eq, value: {} as never }], ReadFilterFixture.HideSalary))
+    const unknown = ReadFilterFixture.Message(() => ConnectorReadFilter.For(ReadFilterFixture.Binding, [{ field: 'nosuch', op: ConnectorFilterOp.Eq, value: {} as never }], ReadFilterFixture.HideSalary))
+    assert.equal(masked, unknown)
+    const badIn = ReadFilterFixture.Message(() => ConnectorReadFilter.For(ReadFilterFixture.Binding, [{ field: 'salary', op: ConnectorFilterOp.In, values: 'x' as never }], ReadFilterFixture.HideSalary))
+    assert.equal(badIn, unknown)
+    const badOp = ReadFilterFixture.Message(() => ConnectorReadFilter.For(ReadFilterFixture.Binding, [{ field: 'salary', op: 'like' as ConnectorFilterOp, value: 1 }], ReadFilterFixture.HideSalary))
+    assert.equal(badOp, unknown)
+})

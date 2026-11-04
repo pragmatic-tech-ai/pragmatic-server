@@ -263,3 +263,12 @@ test('connector/readPage refuses an unmapped field or bad operator, and binds a 
         assert.equal(await FilteredPageFixture.Code(read([{ field: 'name', op: ConnectorFilterOp.Gte, value: 'n1' }], first.nextCursor)), CursorStaleError.Code)
     })
 })
+
+test('connector/read refuses a where filter instead of ignoring it', async () =>
+{
+    await ConnectorPagingFixture.With(3, async (client, modelId) =>
+    {
+        const attempt = client['Request'](ConnectorProtocol.Read, { modelId, concept: ConnectorPagingFixture.ConceptId, where: [{ field: 'name', op: ConnectorFilterOp.Eq, value: 'n1' }] })
+        assert.equal(await FilteredPageFixture.Code(attempt), ErrorCodes.InvalidParams)
+    })
+})

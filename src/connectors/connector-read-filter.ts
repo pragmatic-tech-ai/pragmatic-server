@@ -55,14 +55,17 @@ export class ConnectorReadFilter
         {
             throw new ResponseError(ErrorCodes.InvalidParams, ConnectorReadFilter.BadTermMessage)
         }
+        // Availability FIRST, before the operator or operand is looked at: an unmapped member and a masked one must fail
+        // identically whatever else is wrong with the term, or the error itself reveals that a secured field exists.
+        const mapped = Object.prototype.hasOwnProperty.call(binding.FieldMap, term.field)
+        if (!mapped || (mask !== undefined && !mask.CanRead(binding.Concept, term.field)))
+        {
+            throw new ResponseError(ErrorCodes.InvalidParams, ConnectorReadFilter.UnavailableFieldPrefix + term.field)
+        }
         const op = ConnectorReadFilter.Operators.get(term.op)
         if (op === undefined)
         {
             throw new ResponseError(ErrorCodes.InvalidParams, ConnectorReadFilter.BadOperatorPrefix + String(term.op))
-        }
-        if (mask !== undefined && !mask.CanRead(binding.Concept, term.field))
-        {
-            throw new ResponseError(ErrorCodes.InvalidParams, ConnectorReadFilter.UnavailableFieldPrefix + term.field)
         }
         if (op === QueryCompareOp.In)
         {
