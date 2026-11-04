@@ -1,0 +1,292 @@
+import { execFile } from 'node:child_process'
+import { chmod, mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { SealedSecretStore } from './sealed-secret-store.js'
+
+export type IssuedCertificate = { cert: Buffer; key: Buffer }
+
+export interface IDevCertificateIssuer
+{
+    /** The CA certificate PEM for the base domain, minting it once. */
+    EnsureCa(baseDomain: string): Promise<Buffer>
+    Issue(baseDomain: string, hosts: readonly string[]): Promise<IssuedCertificate>
+    CaFileOf(baseDomain: string): string
+}
+
+/** The CA certificate exists but its sealed key is gone; a new CA is never minted silently. */
+export class DevCaKeyMissingError extends Error
+{
+    private static readonly Text = 'The development certificate authority key is missing from the sealed store, so no new certificate can be signed. Remove the stored CA certificate for this domain deliberately to start a new CA.'
+
+    public constructor()
+    {
+        super(DevCaKeyMissingError.Text)
+        this.name = 'DevCaKeyMissingError'
+    }
+}
+
+/** A host that is not the base domain or a name under it. */
+export class DevCaHostOutsideDomainError extends Error
+{
+    private static readonly Text = 'A certificate host must be the base domain or a name under it (a wildcard may only be the whole first label): '
+
+    public constructor(host: string)
+    {
+        super(DevCaHostOutsideDomainError.Text + host)
+        this.name = 'DevCaHostOutsideDomainError'
+    }
+}
+
+/**
+ * One development CA per base domain, name-constrained to that domain and minted with the openssl CLI.
+ * The CA key lives only in the sealed store; it touches disk solely inside a short-lived 0700 staging
+ * directory while a leaf is signed. All operations are serialized.
+ */
+export class DevCertificateAuthority implements IDevCertificateIssuer
+{
+    public static readonly DirName = 'dev-ca'
+    private static readonly KeyRefPrefix = 'dev-ca-key/'
+    private static readonly CaCertFile = 'ca.crt'
+    private static readonly CaKeyFile = 'ca.key'
+    private static readonly LeafKeyFile = 'leaf.key'
+    private static readonly LeafCsrFile = 'leaf.csr'
+    private static readonly LeafCertFile = 'leaf.crt'
+    private static readonly LeafExtFile = 'leaf.ext'
+    private static readonly StagingPrefix = '.dev-ca-staging-'
+    private static readonly NamePattern = /^[a-z0-9*.-]+$/
+    private static readonly WildcardLabel = '*'
+    private static readonly WildcardPrefix = '*.'
+    private static readonly Dot = '.'
+    private static readonly KeySpec = 'rsa:2048'
+    private static readonly CaDays = '3650'
+    private static readonly LeafDays = '397'
+    private static readonly SubjectPrefix = '/CN='
+    private static readonly CaSubjectPrefix = '/CN=Pragmatic Development CA ('
+    private static readonly CaSubjectSuffix = ')'
+    private static readonly CaBasicConstraints = 'basicConstraints=critical,CA:TRUE,pathlen:0'
+    private static readonly CaKeyUsage = 'keyUsage=critical,keyCertSign,cRLSign'
+    private static readonly NameConstraintsPrefix = 'nameConstraints=critical,permitted;DNS:'
+    private static readonly SanPrefix = 'subjectAltName='
+    private static readonly DnsPrefix = 'DNS:'
+    private static readonly SanSeparator = ','
+    private static readonly LeafExtensions = ['basicConstraints=CA:FALSE', 'keyUsage=critical,digitalSignature,keyEncipherment', 'extendedKeyUsage=serverAuth']
+    private static readonly Eol = '\n'
+    private static readonly NotFoundCode = 'ENOENT'
+    private static readonly KeyMode = 0o600
+    private static readonly DirMode = 0o700
+    private static readonly BadBaseText = 'The base domain is invalid: '
+    private static readonly OpensslFailed = 'Development CA: openssl failed (is the openssl CLI installed and on PATH?): '
+
+    private chain: Promise<void> = Promise.resolve()
+
+    public constructor(
+        private readonly rootDir: string,
+        private readonly store: SealedSecretStore,
+        private readonly openssl: string = 'openssl')
+    {
+    }
+
+    public static KeyRefOf(baseDomain: string): string
+    {
+        return `${DevCertificateAuthority.KeyRefPrefix}${baseDomain}`
+    }
+
+    public CaFileOf(baseDomain: string): string
+    {
+        DevCertificateAuthority.CheckBase(baseDomain)
+        return join(this.rootDir, baseDomain, DevCertificateAuthority.CaCertFile)
+    }
+
+    public EnsureCa(baseDomain: string): Promise<Buffer>
+    {
+        return this.Enqueue(() =>
+        {
+            DevCertificateAuthority.CheckBase(baseDomain)
+            return this.EnsureCaNow(baseDomain)
+        })
+    }
+
+    public Issue(baseDomain: string, hosts: readonly string[]): Promise<IssuedCertificate>
+    {
+        return this.Enqueue(async () =>
+        {
+            DevCertificateAuthority.CheckBase(baseDomain)
+            DevCertificateAuthority.CheckHosts(baseDomain, hosts)
+            await this.EnsureCaNow(baseDomain)
+            return this.IssueNow(baseDomain, hosts)
+        })
+    }
+
+    private static CheckBase(baseDomain: string): void
+    {
+        const labels = baseDomain.split(DevCertificateAuthority.Dot)
+        if (!DevCertificateAuthority.NamePattern.test(baseDomain)
+            || baseDomain.includes(DevCertificateAuthority.WildcardLabel)
+            || labels.some(l => l.length === 0))
+        {
+            throw new Error(DevCertificateAuthority.BadBaseText + baseDomain)
+        }
+    }
+
+    private static CheckHosts(baseDomain: string, hosts: readonly string[]): void
+    {
+        if (hosts.length === 0)
+        {
+            throw new DevCaHostOutsideDomainError('')
+        }
+        for (const host of hosts)
+        {
+            DevCertificateAuthority.CheckHost(baseDomain, host)
+        }
+    }
+
+    private static CheckHost(baseDomain: string, host: string): void
+    {
+        const bare = host.startsWith(DevCertificateAuthority.WildcardPrefix) ? host.slice(DevCertificateAuthority.WildcardPrefix.length) : host
+        const labelsOk = !bare.includes(DevCertificateAuthority.WildcardLabel) && bare.split(DevCertificateAuthority.Dot).every(l => l.length > 0)
+        const inDomain = bare === baseDomain || bare.endsWith(DevCertificateAuthority.Dot + baseDomain)
+        if (!DevCertificateAuthority.NamePattern.test(host) || !labelsOk || !inDomain)
+        {
+            throw new DevCaHostOutsideDomainError(host)
+        }
+    }
+
+    private Enqueue<T>(work: () => Promise<T>): Promise<T>
+    {
+        const run = this.chain.then(work)
+        this.chain = run.then(() => undefined, () => undefined)
+        return run
+    }
+
+    private async EnsureCaNow(baseDomain: string): Promise<Buffer>
+    {
+        await this.SweepStaging()
+        const certFile = this.CaFileOf(baseDomain)
+        const keyRef = DevCertificateAuthority.KeyRefOf(baseDomain)
+        const existing = await DevCertificateAuthority.ReadIfPresent(certFile)
+        if (existing !== undefined)
+        {
+            if (await this.store.Get(keyRef) === undefined)
+            {
+                throw new DevCaKeyMissingError()
+            }
+            return existing
+        }
+        const stage = await this.NewStage()
+        try
+        {
+            const keyFile = join(stage, DevCertificateAuthority.CaKeyFile)
+            const stagedCert = join(stage, DevCertificateAuthority.CaCertFile)
+            await this.Run([
+                'req', '-x509', '-newkey', DevCertificateAuthority.KeySpec, '-nodes',
+                '-keyout', keyFile, '-out', stagedCert, '-days', DevCertificateAuthority.CaDays,
+                '-subj', DevCertificateAuthority.CaSubjectPrefix + baseDomain + DevCertificateAuthority.CaSubjectSuffix,
+                '-addext', DevCertificateAuthority.CaBasicConstraints,
+                '-addext', DevCertificateAuthority.CaKeyUsage,
+                '-addext', DevCertificateAuthority.NameConstraintsPrefix + baseDomain,
+            ])
+            // Seal the key first: a crash before the certificate lands leaves no CA file, so the next call mints afresh.
+            await this.store.Put(keyRef, await readFile(keyFile))
+            await mkdir(join(this.rootDir, baseDomain), { recursive: true })
+            await rename(stagedCert, certFile)
+        }
+        finally
+        {
+            await rm(stage, { recursive: true, force: true })
+        }
+        return readFile(certFile)
+    }
+
+    private async IssueNow(baseDomain: string, hosts: readonly string[]): Promise<IssuedCertificate>
+    {
+        const caKey = await this.store.Get(DevCertificateAuthority.KeyRefOf(baseDomain))
+        if (caKey === undefined)
+        {
+            throw new DevCaKeyMissingError()
+        }
+        const stage = await this.NewStage()
+        try
+        {
+            const caKeyFile = join(stage, DevCertificateAuthority.CaKeyFile)
+            const caCertFile = join(stage, DevCertificateAuthority.CaCertFile)
+            const leafKeyFile = join(stage, DevCertificateAuthority.LeafKeyFile)
+            const csrFile = join(stage, DevCertificateAuthority.LeafCsrFile)
+            const leafCertFile = join(stage, DevCertificateAuthority.LeafCertFile)
+            const extFile = join(stage, DevCertificateAuthority.LeafExtFile)
+            await writeFile(caKeyFile, caKey, { mode: DevCertificateAuthority.KeyMode })
+            await chmod(caKeyFile, DevCertificateAuthority.KeyMode)
+            await writeFile(caCertFile, await readFile(this.CaFileOf(baseDomain)))
+            const san = DevCertificateAuthority.SanPrefix + hosts.map(h => DevCertificateAuthority.DnsPrefix + h).join(DevCertificateAuthority.SanSeparator)
+            await writeFile(extFile, [san, ...DevCertificateAuthority.LeafExtensions].join(DevCertificateAuthority.Eol) + DevCertificateAuthority.Eol)
+            await this.Run(['req', '-newkey', DevCertificateAuthority.KeySpec, '-nodes', '-keyout', leafKeyFile, '-out', csrFile,
+                '-subj', DevCertificateAuthority.SubjectPrefix + hosts[0]])
+            await chmod(leafKeyFile, DevCertificateAuthority.KeyMode)
+            await this.Run(['x509', '-req', '-in', csrFile, '-CA', caCertFile, '-CAkey', caKeyFile, '-CAcreateserial',
+                '-out', leafCertFile, '-days', DevCertificateAuthority.LeafDays, '-extfile', extFile])
+            return { cert: await readFile(leafCertFile), key: await readFile(leafKeyFile) }
+        }
+        finally
+        {
+            await rm(stage, { recursive: true, force: true })
+        }
+    }
+
+    private async NewStage(): Promise<string>
+    {
+        await mkdir(this.rootDir, { recursive: true })
+        const stage = await mkdtemp(join(this.rootDir, DevCertificateAuthority.StagingPrefix))
+        await chmod(stage, DevCertificateAuthority.DirMode)
+        return stage
+    }
+
+    /** Removes staging dirs a crashed run left behind (they may hold a transient CA key). Runs inside the serialized chain. */
+    private async SweepStaging(): Promise<void>
+    {
+        try
+        {
+            for (const entry of await readdir(this.rootDir))
+            {
+                if (entry.startsWith(DevCertificateAuthority.StagingPrefix))
+                {
+                    await rm(join(this.rootDir, entry), { recursive: true, force: true })
+                }
+            }
+        }
+        catch
+        {
+            // root absent: nothing to sweep.
+        }
+    }
+
+    private static async ReadIfPresent(file: string): Promise<Buffer | undefined>
+    {
+        try
+        {
+            return await readFile(file)
+        }
+        catch (err)
+        {
+            if ((err as NodeJS.ErrnoException).code === DevCertificateAuthority.NotFoundCode)
+            {
+                return undefined
+            }
+            throw err
+        }
+    }
+
+    private Run(args: string[]): Promise<void>
+    {
+        return new Promise((resolve, reject) =>
+        {
+            execFile(this.openssl, args, { windowsHide: true }, err =>
+            {
+                if (err === null)
+                {
+                    resolve()
+                    return
+                }
+                reject(new Error(DevCertificateAuthority.OpensslFailed + err.message))
+            })
+        })
+    }
+}
