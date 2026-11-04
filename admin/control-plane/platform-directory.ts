@@ -6,7 +6,7 @@ import { HivePlacementError } from './hive-placement-error.js'
 import { RecordId } from './platform-records.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import { UnknownHiveError } from './rollout-errors.js'
-import type { HiveConsoleSpec } from './hive-console-spec.js'
+import { HiveConsoleSpecs, type HiveConsoleSpec } from './hive-console-spec.js'
 import type { ClientRecord, TenantRecord, HiveRecord, ClusterSpec, RegistrySpec } from './platform-records.js'
 
 export interface IEnvironmentLookup
@@ -139,6 +139,25 @@ export class PlatformDirectory
         await this.clients.Load()
         await this.tenants.Load()
         await this.hives.Load()
+        this.AssertOneConsolePerTenant()
+    }
+
+    private AssertOneConsolePerTenant(): void
+    {
+        const owners = new Map<string, string>()
+        for (const hive of this.hives.List())
+        {
+            if (hive.console === undefined)
+            {
+                continue
+            }
+            const first = owners.get(hive.tenantId)
+            if (first !== undefined)
+            {
+                throw new InHiveConsoleTakenError(hive.tenantId, first)
+            }
+            owners.set(hive.tenantId, hive.id)
+        }
     }
 
     /**
@@ -294,6 +313,10 @@ export class PlatformDirectory
         if (hive === undefined)
         {
             throw new UnknownHiveError(hiveId)
+        }
+        if (console !== undefined)
+        {
+            HiveConsoleSpecs.Validate(console, hive.tenantId)
         }
         const other = this.hives.List().find(h => h.tenantId === hive.tenantId && h.id !== hiveId && h.console !== undefined)
         if (console !== undefined && other !== undefined)

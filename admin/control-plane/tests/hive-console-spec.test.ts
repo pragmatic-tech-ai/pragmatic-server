@@ -39,3 +39,26 @@ test('refuses a bad host, a non-object body and a bad TLS choice with plain erro
     assert.throws(() => HiveConsoleSpecs.Parse({ baseDomain: 'localtest.me', tls: { source: 'nope' } }), InvalidIngressTlsError)
     assert.throws(() => HiveConsoleSpecs.Parse({ baseDomain: 'localtest.me' }), InvalidIngressTlsError)
 })
+
+test('refuses unknown fields, at the top level and inside tls', () =>
+{
+    assert.throws(() => HiveConsoleSpecs.Parse({ baseDomain: 'localtest.me', hots: 'x', tls: { source: 'development' } }), /not a console setting/)
+    assert.throws(() => HiveConsoleSpecs.Parse({ baseDomain: 'localtest.me', tls: { source: 'development', extra: 1 } }), /not a TLS setting/)
+})
+
+test('refuses an empty-string host instead of treating it as absent', () =>
+{
+    assert.throws(() => HiveConsoleSpecs.Parse({ baseDomain: 'localtest.me', host: '', tls: { source: 'development' } }), InvalidHiveConsoleError)
+})
+
+test('Validate refuses a tenant whose default host is not a DNS name, and a development host outside the base domain', () =>
+{
+    const spec = HiveConsoleSpecs.Parse({ baseDomain: 'localtest.me', tls: { source: 'development' } })
+    HiveConsoleSpecs.Validate(spec, 'acme')
+    for (const tenantId of ['Acme_1', 'a'.repeat(64), 'has space'])
+    {
+        assert.throws(() => HiveConsoleSpecs.Validate(spec, tenantId), InvalidHiveConsoleError, tenantId)
+    }
+    const outside = { baseDomain: 'localtest.me', host: 'console.example.com', tls: { source: IngressTlsSource.Development } }
+    assert.throws(() => HiveConsoleSpecs.Validate(outside, 'acme'), /base domain or a name under it/)
+})

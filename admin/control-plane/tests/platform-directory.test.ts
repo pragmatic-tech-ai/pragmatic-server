@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, readFile } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ClientRegistry } from '../client-registry.js'
@@ -22,6 +22,7 @@ import {
 } from '../platform-directory.js'
 import { UnknownHiveError } from '../rollout-errors.js'
 import { IngressTlsSource } from '../ingress-tls.js'
+import { InvalidHiveConsoleError } from '../hive-console-spec.js'
 import type { HiveConsoleSpec } from '../hive-console-spec.js'
 import { HivePlacementError } from '../hive-placement-error.js'
 import type { IEnvironmentLookup } from '../platform-directory.js'
@@ -373,6 +374,69 @@ test('the console setting survives a reload', async () =>
             new FakeEnvironments([]))
         await reloaded.Load()
         assert.deepEqual(reloaded.GetHive('h1')?.console, ConsoleFixture.Spec)
+    }
+    finally
+    {
+        await f.Dispose()
+    }
+})
+
+test('SetHiveConsole refuses a tenant whose effective console host is not a valid DNS name', async () =>
+{
+    const f = await DirectoryFixture.Create()
+    try
+    {
+        for (const tenantId of ['Acme_1', 'a'.repeat(64)])
+        {
+            await f.directory.CreateClient({ id: 'c' + tenantId.length, displayName: 'C' })
+            await f.directory.CreateTenant({ id: tenantId, clientId: 'c' + tenantId.length, displayName: 'T' })
+            await f.directory.CreateHive({ id: 'hx' + tenantId.length, tenantId, displayName: 'H', cluster: DirectoryFixture.Cluster(), registry: DirectoryFixture.Registry() })
+            await assert.rejects(() => f.directory.SetHiveConsole('hx' + tenantId.length, ConsoleFixture.Spec), InvalidHiveConsoleError)
+            assert.equal(f.directory.GetHive('hx' + tenantId.length)?.console, undefined)
+        }
+    }
+    finally
+    {
+        await f.Dispose()
+    }
+})
+
+test('two concurrent SetHiveConsole calls for two hives of one tenant: exactly one succeeds', async () =>
+{
+    const f = await DirectoryFixture.Create()
+    try
+    {
+        await f.Seed()
+        await ConsoleFixture.SeedSecondHive(f)
+        const results = await Promise.allSettled([f.directory.SetHiveConsole('h1', ConsoleFixture.Spec), f.directory.SetHiveConsole('h2', ConsoleFixture.Spec)])
+        assert.equal(results.filter(r => r.status === 'fulfilled').length, 1)
+        const failed = results.find(r => r.status === 'rejected') as PromiseRejectedResult
+        assert.ok(failed.reason instanceof InHiveConsoleTakenError)
+        assert.equal(f.directory.ListHives('t1').filter(h => h.console !== undefined).length, 1)
+    }
+    finally
+    {
+        await f.Dispose()
+    }
+})
+
+test('Load fails with a plain error when two hives of one tenant both carry a console', async () =>
+{
+    const f = await DirectoryFixture.Create()
+    try
+    {
+        await f.Seed()
+        await ConsoleFixture.SeedSecondHive(f)
+        await f.directory.SetHiveConsole('h1', ConsoleFixture.Spec)
+        const file = JSON.parse(await readFile(f.hivesPath, 'utf8')) as { hives: Record<string, Record<string, unknown>> }
+        file.hives['h2']!.console = ConsoleFixture.Spec
+        await writeFile(f.hivesPath, JSON.stringify(file))
+        const reloaded = new PlatformDirectory(
+            new ClientRegistry(join(f.dir, 'clients.json')),
+            new TenantRegistry(join(f.dir, 'tenants.json')),
+            new HiveRegistry(f.hivesPath),
+            new FakeEnvironments([]))
+        await assert.rejects(() => reloaded.Load(), /already runs its console in hive/)
     }
     finally
     {

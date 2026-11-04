@@ -12,6 +12,8 @@ import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
+import { OperatorAuthorization } from '../operator-authorization.js'
+import { AuditRegistry } from '../audit-record.js'
 import { PlatformDirectory } from '../platform-directory.js'
 import { HiveBackend, InfraMode, type HiveRecord } from '../platform-records.js'
 
@@ -50,10 +52,14 @@ class Harness
 {
     public static readonly Good = { baseDomain: 'localtest.me', tls: { source: 'development' } }
 
-    public static Put(host: ControlPlaneHost, path: string, body: unknown, token: string = FakeOperator.FullToken): Promise<Reply>
+    public static Put(host: ControlPlaneHost, path: string, body: unknown, token: string | null = FakeOperator.FullToken, extra: Record<string, string> = {}): Promise<Reply>
     {
         const payload = typeof body === 'string' ? body : JSON.stringify(body)
-        const headers: Record<string, string> = { 'content-type': 'application/json', cookie: 'cp_session=' + token }
+        const headers: Record<string, string> = { 'content-type': 'application/json', ...extra }
+        if (token !== null)
+        {
+            headers.cookie = 'cp_session=' + token
+        }
         const addr = host.Address()
         return new Promise((resolve, reject) =>
         {
@@ -74,6 +80,7 @@ describe('ControlPlaneHost hive console settings', () =>
     let host: ControlPlaneHost
     let parent: string
     let directory: PlatformDirectory
+    let audit: AuditRegistry
 
     beforeEach(async () =>
     {
@@ -92,9 +99,12 @@ describe('ControlPlaneHost hive console settings', () =>
         const spec = { cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } }
         await directory.CreateHive({ id: 'h1', tenantId: 't1', displayName: 'H1', ...spec })
         await directory.CreateHive({ id: 'h2', tenantId: 't1', displayName: 'H2', ...spec })
+        audit = new AuditRegistry(join(parent, 'audit.json'))
+        await audit.Load()
         const deployments = await RolloutFixture.Create(parent, directory, new HiveOrchestratorFactory())
         host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, deployments,
-            new FakeProvisioning(directory).AsService(), RolloutFixture.Observations(parent))
+            new FakeProvisioning(directory).AsService(), RolloutFixture.Observations(parent),
+            undefined, undefined, undefined, undefined, undefined, undefined, new OperatorAuthorization(), audit)
         await host.Listen(0, '127.0.0.1')
     })
 
@@ -144,5 +154,43 @@ describe('ControlPlaneHost hive console settings', () =>
         const r = await Harness.Put(host, '/api/hives/h1/console', Harness.Good, FakeOperator.ReadOnlyToken)
         assert.equal(r.status, 403)
         assert.equal(directory.GetHive('h1')?.console, undefined)
+    })
+
+    it('an unauthenticated PUT is 401 and changes nothing', async () =>
+    {
+        assert.equal((await Harness.Put(host, '/api/hives/h1/console', Harness.Good, null)).status, 401)
+        assert.equal(directory.GetHive('h1')?.console, undefined)
+    })
+
+    it('a cross-origin PUT is 403 and changes nothing', async () =>
+    {
+        const r = await Harness.Put(host, '/api/hives/h1/console', Harness.Good, FakeOperator.FullToken, { origin: 'http://evil.example' })
+        assert.equal(r.status, 403)
+        assert.equal(directory.GetHive('h1')?.console, undefined)
+    })
+
+    it('an oversized body is 413', async () =>
+    {
+        const r = await Harness.Put(host, '/api/hives/h1/console', { ...Harness.Good, baseDomain: 'a'.repeat(10000) })
+        assert.equal(r.status, 413)
+        assert.equal(directory.GetHive('h1')?.console, undefined)
+    })
+
+    it('a tenant whose default console host is not a DNS name is 400', async () =>
+    {
+        await directory.CreateTenant({ id: 'Acme_1', clientId: 'acme', displayName: 'Odd' })
+        await directory.CreateHive({ id: 'h3', tenantId: 'Acme_1', displayName: 'H3', cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
+        const r = await Harness.Put(host, '/api/hives/h3/console', Harness.Good)
+        assert.equal(r.status, 400)
+        assert.match(JSON.parse(r.body).error as string, /^[A-Z].*\.$/)
+    })
+
+    it('the PUT is audited with the operator and the real status', async () =>
+    {
+        await Harness.Put(host, '/api/hives/h1/console', Harness.Good)
+        await Harness.Put(host, '/api/hives/h2/console', Harness.Good)
+        const entries = audit.Recent(10).filter(e => e.path.endsWith('/console'))
+        assert.deepEqual(entries.map(e => [e.actor, e.method, e.path, e.status]).sort(),
+            [['op@example.com', 'PUT', '/api/hives/h1/console', 200], ['op@example.com', 'PUT', '/api/hives/h2/console', 409]])
     })
 })
