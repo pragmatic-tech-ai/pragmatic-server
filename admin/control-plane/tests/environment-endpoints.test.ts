@@ -6,7 +6,8 @@ import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import type { IKubectl, IPortForwardingKubectl, IProcessSpawner, ISpawnedProcess } from '../kubectl.js'
 import { ClusterTunnelPool } from '../cluster-tunnel-pool.js'
-import { EnvironmentEndpoints, EnvironmentUnreachableError } from '../environment-endpoints.js'
+import { BundleBuilder } from '../../../environments/seed/bundle.js'
+import { EnvironmentEndpoints, EnvironmentSecretsUnreadableError, EnvironmentUnreachableError, type IEnvironmentReach } from '../environment-endpoints.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import type { IHiveOrchestrator } from '../hive-orchestrator.js'
 import { UnsupportedBackendError } from '../hive-orchestrator.js'
@@ -222,6 +223,28 @@ test('in-cluster AdminPasswordFor without the admin entry throws without naming 
     h.Kubectl.SecretJson = Fx.SecretJson({ other: Fx.Password })
     await assert.rejects(() => h.Endpoints.AdminPasswordFor(Fx.InCluster(), '/unused'), (err: Error) =>
         /no provisioned secret for e1-admin-pw/.test(err.message) && !err.message.includes(Fx.Password))
+})
+
+test('AdminPasswordFromSecretJson decodes the provisioned-secrets entry', () =>
+{
+    const rec = Fx.InCluster()
+    const b64 = Buffer.from(JSON.stringify({ [rec.environmentId + BundleBuilder.AdminSecretSuffix]: 'pw-1' }), 'utf8').toString('base64')
+    const json = JSON.stringify({ data: { 'provisioned-secrets.json': b64 } })
+    assert.equal(EnvironmentEndpoints.AdminPasswordFromSecretJson(rec, json), 'pw-1')
+})
+
+test('AdminPasswordFromSecretJson refuses unreadable secrets with the fixed message', () =>
+{
+    assert.throws(() => EnvironmentEndpoints.AdminPasswordFromSecretJson(Fx.InCluster(), '{not json'), (err: Error) =>
+        err instanceof EnvironmentSecretsUnreadableError && !err.message.includes('not json'))
+})
+
+test('EnvironmentEndpoints is an IEnvironmentReach', async () =>
+{
+    const h = new Harness()
+    const reach: IEnvironmentReach = new EnvironmentEndpoints(h.Orchestrators, new FakeDirectory(), h.Pool, new NoSpawner())
+    const urls = await reach.UrlsFor(Fx.Docker('/b/e1'))
+    assert.equal(urls.httpUrl, 'http://localhost:9200')
 })
 
 test('Docker AdminPasswordFor reads the local bundle', async () =>

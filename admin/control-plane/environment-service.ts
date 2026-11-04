@@ -23,7 +23,7 @@ import type { EnvEndpoint, EnvRuntimeContext } from './environment-runtime.js'
 import type { EnvironmentRuntimeResolver } from './environment-runtime-resolver.js'
 import type { IUiDeployActuator, UiDeployBundle } from './ui-deploy-actuator.js'
 import { InClusterOperationFailedError } from './in-cluster-environment-runtime.js'
-import { EnvironmentEndpoints, EnvironmentUnreachableError, type EnvironmentUrlsLease } from './environment-endpoints.js'
+import { EnvironmentEndpoints, EnvironmentUnreachableError, type EnvironmentUrlsLease, type IEnvironmentReach } from './environment-endpoints.js'
 
 export class EnvironmentExistsError extends Error
 {
@@ -202,7 +202,7 @@ export class EnvironmentService implements IAdminAccess
         private readonly idp: IIdpService,
         private readonly adminClientFactory: (conn: IdpConnection) => IdpAdminClient,
         private readonly uiDeployer?: IUiDeployActuator,
-        private readonly endpoints?: EnvironmentEndpoints)
+        private readonly endpoints?: IEnvironmentReach)
     {
     }
 

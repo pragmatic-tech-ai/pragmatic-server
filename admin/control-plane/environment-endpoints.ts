@@ -22,6 +22,15 @@ export type EnvironmentUrls = { httpUrl: string; wsUrl: string }
  */
 export type EnvironmentUrlsLease = EnvironmentUrls & { Release(): void; Fail(): void }
 
+/** How a host reaches an environment server and learns its Owner password. */
+export interface IEnvironmentReach
+{
+    /** Where this host reaches the environment server; held until Release (a no-op where nothing is held). */
+    UrlsFor(rec: EnvironmentRecord): Promise<EnvironmentUrlsLease>
+    /** The environment's Owner (admin) password. */
+    AdminPasswordFor(rec: EnvironmentRecord, dataRoot: string): Promise<string>
+}
+
 /** The environment runs on a hive the platform cannot reach (unknown hive, unsupported backend, no kubectl context). */
 export class EnvironmentUnreachableError extends Error
 {
@@ -53,7 +62,7 @@ export class EnvironmentSecretsUnreadableError extends Error
  * host: `localhost:<hostPort>` and its local bundle. An in-cluster record is reached through a pooled kubectl
  * port-forward to its server Service, and its password is read from the env Secret in the cluster.
  */
-export class EnvironmentEndpoints
+export class EnvironmentEndpoints implements IEnvironmentReach
 {
     private static readonly LocalHttpPrefix = 'http://localhost:'
     private static readonly LocalWsPrefix = 'ws://localhost:'
@@ -105,7 +114,13 @@ export class EnvironmentEndpoints
         }
         const { kubectl } = this.Reach(rec)
         const json = await kubectl.Get(K8sManifestBuilder.NamespaceOf(rec.name), EnvironmentEndpoints.SecretPrefix + EnvServerSeedSource.SecretNameOf(rec.name))
-        return EnvironmentEndpoints.SecretOf(EnvironmentEndpoints.ParseObject(EnvironmentEndpoints.SecretsFileOf(json)), EnvironmentEndpoints.AdminRefOf(rec))
+        return EnvironmentEndpoints.AdminPasswordFromSecretJson(rec, json)
+    }
+
+    /** The Owner password from a `kubectl get secret -o json` document of the env Secret. */
+    public static AdminPasswordFromSecretJson(rec: EnvironmentRecord, secretJson: string): string
+    {
+        return EnvironmentEndpoints.SecretOf(EnvironmentEndpoints.ParseObject(EnvironmentEndpoints.SecretsFileOf(secretJson)), EnvironmentEndpoints.AdminRefOf(rec))
     }
 
     /** Docker URLs for a record on this host; nothing is held, so Release is a no-op. */

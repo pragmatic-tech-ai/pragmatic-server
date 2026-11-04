@@ -14,7 +14,7 @@ import { LoginThrottle } from './login-throttle.js'
 import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import { constants as osConstants } from 'node:os'
 import { ClusterTunnelPool } from './cluster-tunnel-pool.js'
-import { EnvironmentEndpoints } from './environment-endpoints.js'
+import { EnvironmentEndpoints, type IEnvironmentReach } from './environment-endpoints.js'
 import { NodeProcessSpawner } from './kubectl.js'
 import { ManifestRegistry } from './manifest-record.js'
 import { AdoptionLedgerRegistry } from './adoption-ledger-record.js'
@@ -87,7 +87,7 @@ import type { ITenantDirectory } from './tenant-api/tenant-directory.js'
 import type { IRolloutClient } from './tenant-api/rollout-client.js'
 
 /** What the desktop relay needs beyond the tenant plane: how environments are reached, and where relays are audited. */
-export type DesktopRelayWiring = { endpoints: EnvironmentEndpoints; audit: AuditRegistry }
+export type DesktopRelayWiring = { endpoints: IEnvironmentReach; audit: AuditRegistry }
 
 export class ControlPlaneServer
 {

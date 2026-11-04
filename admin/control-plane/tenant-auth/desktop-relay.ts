@@ -5,7 +5,7 @@ import { ApplicationDeployProtocol, AppWriteStatus, GraphProtocol, type TokenIss
 import { AuditRegistry } from '../audit-record.js'
 import { AuditThrottle } from '../audit-throttle.js'
 import type { IEnvironmentService } from '../control-plane-host.js'
-import type { EnvironmentEndpoints, EnvironmentUrlsLease } from '../environment-endpoints.js'
+import type { IEnvironmentReach, EnvironmentUrlsLease } from '../environment-endpoints.js'
 import type { EnvironmentRecord } from '../environment-record.js'
 import { PlaneHttp } from '../plane-http.js'
 import { TransportFailure } from '../transport-failure.js'
@@ -200,7 +200,7 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
         private readonly gate: DesktopAuthGate,
         private readonly targets: DesktopTargets,
         private readonly service: IEnvironmentService,
-        private readonly endpoints: EnvironmentEndpoints,
+        private readonly endpoints: IEnvironmentReach,
         private readonly audit: AuditRegistry,
         private readonly dialer: IUpstreamDialer = new WsUpstreamDialer(),
         /** Per client address: bounds how many refusals (anonymous or signed in) reach the audit log. */
