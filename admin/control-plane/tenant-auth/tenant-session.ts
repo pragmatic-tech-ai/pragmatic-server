@@ -17,6 +17,11 @@ export enum TenantSessionKind
     Desktop = 'desktop',
 }
 
+/** Thrown inside a renewal's serialised change when the session is no longer live: no write is made. */
+class RenewalRefused extends Error
+{
+}
+
 /**
  * File-backed tenant session store keyed by session id (temp-write + atomic rename; a missing file is empty). Every change
  * is made on copies of the maps and persisted; changes run one at a time. Grants (Issue, RotateFor) are strict: only a
@@ -97,7 +102,7 @@ export class TenantSessionStore
         }
         if (this.IsDueForRenewal(session))
         {
-            return await this.Renew(token, session)
+            return await this.Renew(token)
         }
         return { ...session }
     }
@@ -115,30 +120,52 @@ export class TenantSessionStore
 
     /**
      * Slides a desktop session's expiry to now + the desktop ttl, capped at its issue time + the maximum lifetime, and
-     * persists it. A failed write must not refuse a session that is still valid: the un-slid session is returned.
+     * persists it. The session is re-checked inside the serialised change: one revoked, expired or reset while this
+     * waited in the queue is refused (null). A failed WRITE must not refuse a session that is still valid, so the un-slid
+     * session is returned, but only if it is still present and live in memory; any other error propagates.
      */
-    private async Renew(token: string, seen: TenantSession): Promise<TenantSession>
+    private async Renew(token: string): Promise<TenantSession | null>
     {
+        let changed = false
         try
         {
             return await this.Mutate((sessions) =>
             {
-                const current = sessions.get(token) as TenantSession
-                if (!this.IsDueForRenewal(current))
+                const current = sessions.get(token)
+                if (current === undefined || !this.IsLive(current))
                 {
-                    return { ...current }
+                    throw new RenewalRefused()
                 }
-                const nowMs = this.now().getTime()
-                const issuedMs = new Date(current.issuedAt ?? current.expiresAt).getTime()
-                current.expiresAt = new Date(Math.min(nowMs + this.desktopTtlMs, issuedMs + TenantSessionStore.DesktopMaxLifetimeMs)).toISOString()
-                current.keptAt = new Date(nowMs).toISOString()
+                if (this.IsDueForRenewal(current))
+                {
+                    const nowMs = this.now().getTime()
+                    const issuedMs = new Date(current.issuedAt ?? current.expiresAt).getTime()
+                    current.expiresAt = new Date(Math.min(nowMs + this.desktopTtlMs, issuedMs + TenantSessionStore.DesktopMaxLifetimeMs)).toISOString()
+                    current.keptAt = new Date(nowMs).toISOString()
+                }
+                changed = true
                 return { ...current }
             })
         }
-        catch
+        catch (err)
         {
-            return { ...seen }
+            if (err instanceof RenewalRefused)
+            {
+                return null
+            }
+            if (!changed)
+            {
+                throw err
+            }
+            const still = this.sessions.get(token)
+            return still !== undefined && this.IsLive(still) ? { ...still } : null
         }
+    }
+
+    /** Whether the session is unexpired and not predating its principal's reset. */
+    private IsLive(session: TenantSession): boolean
+    {
+        return new Date(session.expiresAt).getTime() > this.now().getTime() && !this.PredatesReset(session)
     }
 
     public async Revoke(token: string): Promise<void>

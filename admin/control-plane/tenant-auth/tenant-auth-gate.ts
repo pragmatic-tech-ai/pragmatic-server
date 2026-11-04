@@ -32,10 +32,10 @@ export class TenantAuthGate
         return session
     }
 
-    /** Whether the session `sessionId` is still valid for `tenantId` (a tracked socket's re-check after it was admitted). */
+    /** Whether the session `sessionId` is still valid for `tenantId` (a tracked socket's re-check after it was admitted); a desktop session is never live here. */
     public async IsLive(sessionId: string, tenantId: string): Promise<boolean>
     {
         const session = await this.sessions.Validate(sessionId)
-        return session !== null && session.tenantId === tenantId
+        return session !== null && session.tenantId === tenantId && session.kind !== TenantSessionKind.Desktop
     }
 }

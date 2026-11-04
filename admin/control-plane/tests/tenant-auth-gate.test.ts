@@ -117,3 +117,16 @@ test('Principal refuses a desktop token carried in a console cookie', async () =
         assert.equal(await gate.Principal(GateFixture.Req(GateFixture.Cookie(GateFixture.Tenant, desktop.id))), null)
     })
 })
+
+test('IsLive is false for a desktop session', async () =>
+{
+    await GateFixture.WithDir(async file =>
+    {
+        const store = new TenantSessionStore(file, GateFixture.Ttl)
+        const desktop = await store.Issue(GateFixture.Tenant, GateFixture.Principal, GateFixture.Email, TenantSessionKind.Desktop)
+        const console = await store.Issue(GateFixture.Tenant, GateFixture.Principal, GateFixture.Email)
+        const gate = new TenantAuthGate(store)
+        assert.equal(await gate.IsLive(desktop.id, GateFixture.Tenant), false)
+        assert.equal(await gate.IsLive(console.id, GateFixture.Tenant), true)
+    })
+})

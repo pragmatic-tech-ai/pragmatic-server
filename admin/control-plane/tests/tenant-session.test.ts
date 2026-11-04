@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { TenantSessionKind, TenantSessionStore } from '../tenant-auth/tenant-session.js'
@@ -430,5 +430,45 @@ test('loads a file written before session kinds existed as console sessions', as
         assert.equal(seen?.kind, undefined)
         assert.equal(seen?.expiresAt, old.expiresAt)
         assert.equal((await DesktopFixture.OnDisk(file, 'old-token')).keptAt, undefined)
+    })
+})
+
+test('a renewal-due desktop session revoked while Validate waits in the queue validates as null', async () =>
+{
+    for (const end of [
+        (store: TenantSessionStore, id: string) => store.Revoke(id),
+        (store: TenantSessionStore) => store.RevokeAllFor(SessionFixture.Tenant, SessionFixture.Principal),
+        (store: TenantSessionStore) => store.RotateFor(SessionFixture.Tenant, SessionFixture.Principal),
+    ])
+    {
+        await SessionFixture.WithDir(async file =>
+        {
+            const store = DesktopFixture.Store(file)
+            const s = await store.Issue(SessionFixture.Tenant, SessionFixture.Principal, undefined, TenantSessionKind.Desktop)
+            DesktopFixture.Clock += 2 * DesktopFixture.Hour
+            const ending = end(store, s.id)
+            const validating = store.Validate(s.id)
+            assert.equal(await validating, null)
+            await ending
+            assert.equal(await store.Validate(s.id), null)
+        })
+    }
+})
+
+test('a failed renewal write returns the un-slid session while it is live, and null once it is revoked', async () =>
+{
+    await SessionFixture.WithDir(async file =>
+    {
+        const store = DesktopFixture.Store(file)
+        const s = await store.Issue(SessionFixture.Tenant, SessionFixture.Principal, undefined, TenantSessionKind.Desktop)
+        await rm(file, { force: true })
+        await mkdir(file)
+        DesktopFixture.Clock += 2 * DesktopFixture.Hour
+        const seen = await store.Validate(s.id)
+        assert.equal(seen?.expiresAt, s.expiresAt)
+        const revoking = store.RevokeAllFor(SessionFixture.Tenant, SessionFixture.Principal).catch(() => undefined)
+        const validating = store.Validate(s.id)
+        await revoking
+        assert.equal(await validating, null)
     })
 })
