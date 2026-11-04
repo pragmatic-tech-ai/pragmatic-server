@@ -1,6 +1,5 @@
-# NOTE: the sibling packages are expected to sit next to this repo in the workspace
-# (the loop's ../$pkg mirrors the local layout). Committed artifact; not executed
-# against GitHub in this phase.
+# The server consumes its siblings as file:../<pkg> deps, so CI rebuilds the local workspace layout: this repo is
+# checked out to $GITHUB_WORKSPACE/pragmatic-server and each sibling is cloned (default branch) beside it.
 name: ci
 on:
   push:
@@ -10,6 +9,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: pragmatic-server
+      - name: Clone siblings
+        working-directory: ${{ github.workspace }}
+        run: |
+          for pair in todl-runtime:todl-runtime todl:TODL mural:Mural pragmatic-protocol:pragmatic-protocol todl-identity:todl-identity todl-identity-local:todl-identity-local todl-identity-host:todl-identity-host todl-identity-cloud:todl-identity-cloud todl-identity-engine:todl-identity-engine todl-connectors-host:todl-connectors-host todl-platform-node:todl-platform-node todl-platform-cloud:todl-platform-cloud todl-platform-aws:todl-platform-aws todl-platform-azure:todl-platform-azure todl-platform-gcp:todl-platform-gcp todl-identity-node:todl-identity-node; do
+            git clone --depth 1 "https://github.com/pragmatic-tech-ai/${pair%%:*}.git" "${pair#*:}"
+          done
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -17,21 +24,26 @@ jobs:
         run: |
           printf '@pragmatic-tech-ai:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=${{ secrets.PACKAGES_TOKEN }}\n' > ~/.npmrc
       - name: Build siblings in dependency order
+        working-directory: ${{ github.workspace }}
         run: |
-          for pkg in todl-runtime TODL Mural pragmatic-protocol todl-identity todl-identity-local todl-identity-host todl-identity-cloud todl-identity-engine todl-connectors-host todl-platform-node todl-platform-cloud todl-identity-node pragmatic-server; do
-            (cd "../$pkg" && npm install --no-audit --no-fund && npm run build)
+          for pkg in todl-runtime TODL Mural pragmatic-protocol todl-identity todl-identity-local todl-identity-host todl-identity-cloud todl-identity-engine todl-connectors-host todl-platform-node todl-platform-cloud todl-platform-aws todl-platform-azure todl-platform-gcp todl-identity-node pragmatic-server; do
+            (cd "$pkg" && npm install --no-audit --no-fund && npm run build)
           done
       - name: Test
-        run: cd ../pragmatic-server && npx tsx --test "src/**/*.test.ts"
+        working-directory: ${{ github.workspace }}/pragmatic-server
+        run: npx tsx --test "src/**/*.test.ts"
       - name: IdP sign-in app (unit tests + typecheck)
+        working-directory: ${{ github.workspace }}/pragmatic-server/idp-login
         run: |
-          cd ../pragmatic-server/idp-login && npm install --no-audit --no-fund && npm test && npm run typecheck
+          npm install --no-audit --no-fund && npm test && npm run typecheck
       - name: Docker build
+        working-directory: ${{ github.workspace }}
         run: |
           printf '@pragmatic-tech-ai:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=${{ secrets.PACKAGES_TOKEN }}\n' > "$RUNNER_TEMP/npmrc"
-          DOCKER_BUILDKIT=1 docker build --secret id=npmrc,src="$RUNNER_TEMP/npmrc" -f pragmatic-server/docker/Dockerfile -t pragmatic-server ..
+          DOCKER_BUILDKIT=1 docker build --secret id=npmrc,src="$RUNNER_TEMP/npmrc" -f pragmatic-server/docker/Dockerfile -t pragmatic-server .
           rm -f "$RUNNER_TEMP/npmrc"
       - name: Helm lint + template
+        working-directory: ${{ github.workspace }}
         run: |
           helm lint pragmatic-server/helm/pragmatic-server
           helm template pragmatic-server/helm/pragmatic-server
