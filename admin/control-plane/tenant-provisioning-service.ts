@@ -3,6 +3,7 @@ import { IdpAdminError, IdpAdminTransportError, type IdpAdminClient } from './id
 import type { IdpConnection, IIdpService } from './idp-service.js';
 import { UnknownTenantError, type PlatformDirectory } from './platform-directory.js';
 import type { TenantRecord } from './platform-records.js';
+import type { TenantAccountIndex } from './tenant-account-index.js';
 
 export type TenantProvisionInput = { id: string; clientId: string; displayName: string; ownerEmail: string };
 
@@ -126,6 +127,8 @@ export class TenantProvisioningService
     private static readonly LogPrefix = '[owner-reset] tenant ';
     private static readonly LogSessionsInfix = ': ending the Owner sessions failed: ';
     private static readonly UnknownErrorName = 'Error';
+    private static readonly IndexFailurePrefix = '[account-index] tenant ';
+    private static readonly IndexFailureInfix = ': indexing the Owner failed (the startup back-fill will retry): ';
 
     /** Tenants with an Owner password reset in flight (one at a time per tenant). */
     private readonly resetting = new Set<string>();
@@ -135,7 +138,9 @@ export class TenantProvisioningService
         private readonly directory: PlatformDirectory,
         private readonly adminClientFactory: (conn: IdpConnection) => IdpAdminClient,
         /** Ends the Owner's tenant-portal sessions after a reset; absent where no tenant plane runs. */
-        private readonly sessions?: IOwnerSessionRevoker)
+        private readonly sessions?: IOwnerSessionRevoker,
+        /** The email-discovery index every account created here must be recorded in (see TenantAccountIndex). */
+        private readonly accounts?: TenantAccountIndex)
     {
     }
 
@@ -164,7 +169,35 @@ export class TenantProvisioningService
             idpCaRef: conn.caDir,
             idpAdminTokenRef: conn.adminTokenRef
         });
+        await this.IndexOwner(record);
         return { record, ownerPassword };
+    }
+
+    /** Drops a deleted tenant's accounts from the discovery index. */
+    public async ForgetTenant(tenantId: string): Promise<void>
+    {
+        await this.accounts?.ForgetTenant(tenantId);
+    }
+
+    /**
+     * Records the seeded Owner for email discovery. The tenant and its one-time password already exist, so an index failure
+     * must not fail the provision (the password would be lost); the startup back-fill indexes the Owner on the next restart.
+     */
+    private async IndexOwner(record: TenantRecord): Promise<void>
+    {
+        if (this.accounts === undefined || record.ownerEmail === undefined || record.ownerPrincipalId === undefined)
+        {
+            return;
+        }
+        try
+        {
+            await this.accounts.Record(record.id, record.ownerPrincipalId, record.ownerEmail);
+        }
+        catch (err)
+        {
+            console.error(TenantProvisioningService.IndexFailurePrefix + record.id + TenantProvisioningService.IndexFailureInfix
+                + (err instanceof Error ? err.name : TenantProvisioningService.UnknownErrorName));
+        }
     }
 
     /**

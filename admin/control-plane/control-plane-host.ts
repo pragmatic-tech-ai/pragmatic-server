@@ -26,6 +26,7 @@ import { LastOperatorError, OperatorExistsError, OperatorNotFoundError, Operator
 import { OperatorAuthorization } from './operator-authorization.js'
 import { AuditRegistry } from './audit-record.js'
 import type { AuditThrottle } from './audit-throttle.js'
+import type { DesktopDiscoveryEndpoint } from './desktop-discovery-endpoint.js'
 import { Channel } from './channel.js'
 import { SessionCookie } from './session-cookie.js'
 import { EventsTicketStore } from './events-ticket-store.js'
@@ -316,6 +317,7 @@ export class ControlPlaneHost
     private static readonly ClusterInvalidMessage = 'cluster must be { backend, mode } with valid values; backend one of: '
     private static readonly RegistryInvalidMessage = 'registry must be { mode, endpoint?, credentialRef? } with a valid mode; mode one of: '
     private static readonly LoginPath = '/api/login'
+    private static readonly DiscoverPath = '/api/desktop/discover'
     private static RoleWire(role: OperatorRole): string
     {
         return role === OperatorRole.Full ? ControlPlaneHost.RoleFullWire : ControlPlaneHost.RoleReadOnlyWire
@@ -479,7 +481,9 @@ export class ControlPlaneHost
         /** Installs a Local hive's agent from the control plane itself; undefined disables the automatic path. */
         private readonly agentInstaller?: HiveAgentInstaller,
         /** Removes a hive's agent from its cluster when the hive is deleted; undefined removes only platform state. */
-        private readonly agentUninstaller?: HiveAgentUninstaller)
+        private readonly agentUninstaller?: HiveAgentUninstaller,
+        /** Public desktop email discovery (POST /api/desktop/discover); undefined leaves the route unmounted. */
+        private readonly discovery?: DesktopDiscoveryEndpoint)
     {
         this.allowedHosts = new Set([...ControlPlaneHost.DefaultAllowedHosts, ...allowedHosts.map(h => h.toLowerCase())])
         this.staticRootAbs = resolve(staticRoot)
@@ -868,6 +872,11 @@ export class ControlPlaneHost
         if (path === ControlPlaneHost.ActivityAllPath && method === PlaneHttp.MethodGet)
         {
             PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, [...(this.audit?.Recent(this.ActivityLimit(req)) ?? [])])
+            return true
+        }
+        if (path === ControlPlaneHost.DiscoverPath && method === PlaneHttp.MethodPost && this.discovery !== undefined)
+        {
+            await this.discovery.Handle(req, res, this.ClientIp(req))
             return true
         }
         if (path === ControlPlaneHost.LoginPath && method === PlaneHttp.MethodPost)
@@ -1705,6 +1714,7 @@ export class ControlPlaneHost
                 this.directory.AssertTenantDeletable(id)
                 await this.idp?.TeardownForTenant(id)
                 await this.directory.DeleteTenant(id)
+                await this.provisioning.ForgetTenant(id)
                 break
         }
     }
@@ -2519,7 +2529,7 @@ export class ControlPlaneHost
 
     private static IsPublicApi(path: string): boolean
     {
-        return path === ControlPlaneHost.PingPath || path === ControlPlaneHost.LoginPath || path === ControlPlaneHost.SessionPath
+        return path === ControlPlaneHost.PingPath || path === ControlPlaneHost.LoginPath || path === ControlPlaneHost.SessionPath || path === ControlPlaneHost.DiscoverPath
     }
 
     /** Absent Origin is allowed (non-browser / same-origin navigation); a present one must equal our own origin,

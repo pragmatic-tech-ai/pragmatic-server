@@ -2,6 +2,8 @@ import { mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { AuditRegistry } from './audit-record.js'
 import { AuditThrottle } from './audit-throttle.js'
+import { DesktopDiscoveryEndpoint } from './desktop-discovery-endpoint.js'
+import { TenantAccountIndex } from './tenant-account-index.js'
 import { OperatorAuthorization } from './operator-authorization.js'
 import { fileURLToPath } from 'node:url'
 import { DockerEnv } from '../../environments/seed/docker.js'
@@ -163,6 +165,9 @@ export class ControlPlaneServer
     // Above the default probe interval (30s) so a legitimately slow-but-healthy probe is not treated as wedged.
     private static readonly DefaultHealthProbeTimeoutMs = 60000
     public static readonly TenantAdminClientsFile = 'tenant-admin-clients.json'
+    public static readonly TenantAccountsFile = 'tenant-accounts.json'
+    public static readonly DesktopTenantPlaneUrlEnvVar = 'PRAGMATIC_DESKTOP_TENANT_PLANE_URL'
+    private static readonly LoopbackHttpPrefix = 'http://127.0.0.1:'
     private static readonly TenantAdminOidcDir = 'tenant-admin-oidc'
     private static readonly PositiveIntegerPattern = /^[0-9]+$/
 
@@ -204,12 +209,14 @@ export class ControlPlaneServer
         const policies = new ReleasePolicyRegistry(join(dataRoot, ControlPlaneServer.ReleasePoliciesFile))
         const ledger = new AdoptionLedgerRegistry(join(dataRoot, ControlPlaneServer.AdoptionLedgerFile))
         const adminClientRegistry = new TenantAdminClientRegistry(join(dataRoot, ControlPlaneServer.TenantAdminClientsFile))
-        await Promise.all([manifests.Load(), audit.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load(), policies.Load(), ledger.Load(), adminClientRegistry.Load()])
+        const accountIndex = new TenantAccountIndex(join(dataRoot, ControlPlaneServer.TenantAccountsFile))
+        await Promise.all([manifests.Load(), audit.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load(), policies.Load(), ledger.Load(), adminClientRegistry.Load(), accountIndex.Load()])
+        await accountIndex.BackfillFrom(directory)
         const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, placement, observations, ControlPlaneServer.ManifestSignerOf(signing.PlatformSigner.KeyRef, dataRoot, signing.ImageSigner), policies, ledger)
         // One tenant session store for the tenant plane and the Owner password reset (which ends the Owner's sessions).
         const tenantSessions = ControlPlaneServer.TenantSessionsOf(dataRoot)
         const principalSessions = new TenantPrincipalSessions(tenantSessions)
-        const provisioning = new TenantProvisioningService(idpService, directory, conn => new IdpAdminClient(conn), principalSessions)
+        const provisioning = new TenantProvisioningService(idpService, directory, conn => new IdpAdminClient(conn), principalSessions, accountIndex)
         const agentChannelRaw = process.env[ControlPlaneServer.AgentChannelPortEnvVar]
         const agentChannelPort = ControlPlaneServer.ParseAgentChannelPort(agentChannelRaw)
         const agentChannelUrlRaw = process.env[ControlPlaneServer.AgentChannelUrlEnvVar]
@@ -220,7 +227,8 @@ export class ControlPlaneServer
         }
         // Installs a Local hive's agent through the same cluster access the orchestrators already hold; off with the channel.
         const agentInstaller = new HiveAgentInstaller(directory, orchestrators, deployments, observations, agentChannelUrl)
-        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations, new LoginThrottle(), opts.trustedProxy, undefined, undefined, undefined, opts.allowedHosts, new OperatorAuthorization(), audit, new AuditThrottle(), idpService, agentChannelUrl, agentInstaller, new HiveAgentUninstaller(orchestrators))
+        const discovery = new DesktopDiscoveryEndpoint(accountIndex, directory, ControlPlaneServer.DesktopTenantPlaneUrlOf(process.env), DesktopDiscoveryEndpoint.NewThrottle())
+        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations, new LoginThrottle(), opts.trustedProxy, undefined, undefined, undefined, opts.allowedHosts, new OperatorAuthorization(), audit, new AuditThrottle(), idpService, agentChannelUrl, agentInstaller, new HiveAgentUninstaller(orchestrators), discovery)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
         const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie, service, new InProcessRolloutClient(deployments), orchestrators, placement,
             masterKey, adminClientRegistry, ControlPlaneServer.ParseSecretTtlHours(process.env[ControlPlaneServer.SecretTtlEnvVar]), tenantSessions, principalSessions)
@@ -424,6 +432,26 @@ export class ControlPlaneServer
 
     /** The dedicated tenant listener port; required (the plane only activates when it is set). */
     /** The tenant session store under the data root (one instance per process: the plane and the Owner reset share it). */
+    /**
+     * Where the desktop app finds the tenant plane: `PRAGMATIC_DESKTOP_TENANT_PLANE_URL` when set, else the loopback
+     * tenant listener when the tenant plane is enabled (both port and base domain set), else undefined (discovery answers 503).
+     */
+    public static DesktopTenantPlaneUrlOf(env: NodeJS.ProcessEnv): string | undefined
+    {
+        const explicit = env[ControlPlaneServer.DesktopTenantPlaneUrlEnvVar]
+        if (explicit !== undefined && explicit !== '')
+        {
+            return explicit
+        }
+        const port = env[ControlPlaneServer.TenantPortEnvVar]
+        const baseDomain = env[ControlPlaneServer.TenantBaseDomainEnvVar]
+        if (port === undefined || port === '' || baseDomain === undefined || baseDomain === '')
+        {
+            return undefined
+        }
+        return ControlPlaneServer.LoopbackHttpPrefix + port
+    }
+
     public static TenantSessionsOf(dataRoot: string): TenantSessionStore
     {
         return new TenantSessionStore(join(dataRoot, ControlPlaneServer.TenantSessionsFile), ControlPlaneServer.TenantSessionTtlMs)

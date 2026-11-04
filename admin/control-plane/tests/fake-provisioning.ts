@@ -53,6 +53,10 @@ export class FakeProvisioning
         return reset
     }
 
+    public async ForgetTenant(_tenantId: string): Promise<void>
+    {
+    }
+
     public AsService(): TenantProvisioningService
     {
         return this as unknown as TenantProvisioningService

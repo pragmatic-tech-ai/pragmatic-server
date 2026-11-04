@@ -20,6 +20,7 @@ import { HiveRegistry } from '../hive-registry.js';
 import { PlatformDirectory, RecordExistsError, UnknownClientError, UnknownTenantError } from '../platform-directory.js';
 import { IdpUnreachableError, OwnerAccountMissingError, OwnerIdpRefusedError, OwnerNotRecordedError, OwnerResetInProgressError, TenantIdpMissingError, TenantProvisioningService, type IOwnerSessionRevoker } from '../tenant-provisioning-service.js';
 import { IdpAdminTransportError } from '../idp-admin-client.js';
+import { TenantAccountIndex } from '../tenant-account-index.js';
 import { TenantSessionStore } from '../tenant-auth/tenant-session.js';
 import { TenantPrincipalSessions } from '../tenant-auth/tenant-principal-sessions.js';
 
@@ -155,6 +156,28 @@ class ProvFixture
         return new TenantProvisioningService(new FakeIdp(conn), directory, c => new IdpAdminClient(c));
     }
 }
+
+test('Provision records the Owner in the account index, and ForgetTenant removes it', async () =>
+{
+    await ProvFixture.WithHost(async (conn, _realms, directory) =>
+    {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), ProvFixture.DirPrefix));
+        try
+        {
+            const index = new TenantAccountIndex(path.join(dir, 'tenant-accounts.json'));
+            await index.Load();
+            const service = new TenantProvisioningService(new FakeIdp(conn), directory, c => new IdpAdminClient(c), undefined, index);
+            await service.Provision(ProvFixture.Input());
+            assert.deepEqual(index.TenantsFor(ProvFixture.OwnerEmail.toUpperCase()), [ProvFixture.TenantId]);
+            await service.ForgetTenant(ProvFixture.TenantId);
+            assert.deepEqual(index.TenantsFor(ProvFixture.OwnerEmail), []);
+        }
+        finally
+        {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
 
 test('Provision ensures the realm, seeds an Owner who can authenticate, and persists non-secret metadata', async () =>
 {
