@@ -1,7 +1,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { randomBytes, X509Certificate } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -21,6 +21,16 @@ class TrustScriptFixture
     public static readonly MissingName = 'missing.crt'
     public static readonly ColonPattern = /:/g
     public static readonly UsageExit = 2
+    public static readonly WhatIfFlag = '-WhatIf'
+    public static readonly RemoveFlag = '-Remove'
+    public static readonly ThumbprintParam = '-Thumbprint'
+    public static readonly CheckDir = 'C:/tmp/followups/ca-script-check'
+    public static readonly Openssl = 'openssl'
+    public static readonly StoreItemQuery = "Test-Path -LiteralPath ('Cert:\\CurrentUser\\Root\\' + $args[0])"
+    public static readonly FirstStoreThumbprintQuery = "(Get-ChildItem Cert:\\CurrentUser\\Root | Select-Object -First 1).Thumbprint"
+    public static readonly PlainExts = ['basicConstraints=critical,CA:FALSE']
+    public static readonly UnconstrainedCaExts = ['basicConstraints=critical,CA:TRUE']
+    public static readonly ZeroThumbprint = '0000000000000000000000000000000000000000'
     public static readonly NotFoundExit = 1
 
     public static Script(): string
@@ -30,8 +40,49 @@ class TrustScriptFixture
 
     public static Run(...args: string[]): { status: number | null; stdout: string; stderr: string }
     {
-        const r = spawnSync(TrustScriptFixture.Shell, [...TrustScriptFixture.ShellArgs, TrustScriptFixture.Script(), ...args], { encoding: 'utf8' })
+        const r = spawnSync(TrustScriptFixture.Shell, [...TrustScriptFixture.ShellArgs, TrustScriptFixture.Script(), ...args], { encoding: 'utf8', env: TrustScriptFixture.CleanEnv() })
         return { status: r.status, stdout: r.stdout, stderr: r.stderr }
+    }
+
+    // A PowerShell 7 PSModulePath inherited from the launching shell breaks the Cert: drive in Windows PowerShell 5.1.
+    public static CleanEnv(): NodeJS.ProcessEnv
+    {
+        const env = { ...process.env }
+        delete env.PSModulePath
+        return env
+    }
+
+    public static Query(command: string, ...args: string[]): string
+    {
+        const r = spawnSync(TrustScriptFixture.Shell, ['-NoProfile', '-Command', command, ...args], { encoding: 'utf8', env: TrustScriptFixture.CleanEnv() })
+        return r.stdout.trim()
+    }
+
+    public static InStore(thumbprint: string): boolean
+    {
+        return TrustScriptFixture.Query(`& { ${TrustScriptFixture.StoreItemQuery} }`, thumbprint) === 'True'
+    }
+
+    public static async WithOpenssl(exts: string[], body: (certFile: string) => Promise<void>): Promise<void>
+    {
+        await mkdir(TrustScriptFixture.CheckDir, { recursive: true })
+        const dir = await mkdtemp(join(TrustScriptFixture.CheckDir, 'c-'))
+        try
+        {
+            const certFile = join(dir, 'c.crt')
+            const args = ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', join(dir, 'c.key'), '-out', certFile, '-days', '2', '-subj', '/CN=throwaway-test']
+            for (const e of exts)
+            {
+                args.push('-addext', e)
+            }
+            const r = spawnSync(TrustScriptFixture.Openssl, args, { encoding: 'utf8', env: { ...process.env, MSYS_NO_PATHCONV: '1' } })
+            assert.equal(r.status, 0, r.stderr)
+            await body(certFile)
+        }
+        finally
+        {
+            await rm(dir, { recursive: true, force: true })
+        }
     }
 
     public static async With(body: (caFile: string, pem: Buffer, dir: string) => Promise<void>): Promise<void>
@@ -90,5 +141,72 @@ describe('dev-ca-trust.ps1', { skip: process.platform !== 'win32' }, () =>
             const r = TrustScriptFixture.Run(TrustScriptFixture.CaFileFlag, join(dir, TrustScriptFixture.MissingName), TrustScriptFixture.ThumbprintFlag)
             assert.equal(r.status, TrustScriptFixture.NotFoundExit)
         })
+    })
+
+    test('-Install -WhatIf on the dev CA reports and leaves the store untouched', async () =>
+    {
+        await TrustScriptFixture.With(async (caFile, pem) =>
+        {
+            const thumb = new X509Certificate(pem).fingerprint.replace(TrustScriptFixture.ColonPattern, '')
+            const before = TrustScriptFixture.InStore(thumb)
+            const r = TrustScriptFixture.Run(TrustScriptFixture.CaFileFlag, caFile, TrustScriptFixture.InstallFlag, TrustScriptFixture.WhatIfFlag)
+            assert.equal(r.status, 0)
+            assert.equal(r.stdout.includes(`would install: ${thumb}`), true)
+            assert.equal(TrustScriptFixture.InStore(thumb), before)
+        })
+    })
+
+    test('-Install refuses a plain non-CA certificate', async () =>
+    {
+        await TrustScriptFixture.WithOpenssl(TrustScriptFixture.PlainExts, async (certFile) =>
+        {
+            const r = TrustScriptFixture.Run(TrustScriptFixture.CaFileFlag, certFile, TrustScriptFixture.InstallFlag, TrustScriptFixture.WhatIfFlag)
+            assert.equal(r.status, TrustScriptFixture.NotFoundExit)
+            assert.match(r.stderr, /refusing: .* is not a name-constrained CA/)
+        })
+    })
+
+    test('-Install refuses a CA without name constraints', async () =>
+    {
+        await TrustScriptFixture.WithOpenssl(TrustScriptFixture.UnconstrainedCaExts, async (certFile) =>
+        {
+            const r = TrustScriptFixture.Run(TrustScriptFixture.CaFileFlag, certFile, TrustScriptFixture.InstallFlag, TrustScriptFixture.WhatIfFlag)
+            assert.equal(r.status, TrustScriptFixture.NotFoundExit)
+            assert.match(r.stderr, /refusing: .* is not a name-constrained CA/)
+        })
+    })
+
+    test('-Remove -WhatIf for a certificate that is not installed says so', async () =>
+    {
+        await TrustScriptFixture.With(async (caFile, pem) =>
+        {
+            const thumb = new X509Certificate(pem).fingerprint.replace(TrustScriptFixture.ColonPattern, '')
+            const r = TrustScriptFixture.Run(TrustScriptFixture.CaFileFlag, caFile, TrustScriptFixture.RemoveFlag, TrustScriptFixture.WhatIfFlag)
+            assert.equal(r.status, 0)
+            assert.equal(r.stdout.includes(`not installed: ${thumb}`), true)
+            assert.equal(TrustScriptFixture.InStore(thumb), false)
+        })
+    })
+
+    test('-Remove -WhatIf -Thumbprint on an installed root reports and keeps it', async () =>
+    {
+        // Uses an existing machine root purely as read-only data; -WhatIf guarantees nothing is removed.
+        const thumb = TrustScriptFixture.Query(TrustScriptFixture.FirstStoreThumbprintQuery)
+        assert.match(thumb, /^[0-9A-F]{40}$/)
+        const r = TrustScriptFixture.Run(TrustScriptFixture.ThumbprintParam, thumb.toLowerCase(), TrustScriptFixture.RemoveFlag, TrustScriptFixture.WhatIfFlag)
+        assert.equal(r.status, 0)
+        assert.equal(r.stdout.includes(`would remove: ${thumb}`), true)
+        assert.equal(TrustScriptFixture.InStore(thumb), true)
+    })
+
+    test('-Thumbprint must be 40 hex characters and only works with -Remove', async () =>
+    {
+        const bad = TrustScriptFixture.Run(TrustScriptFixture.ThumbprintParam, 'xyz', TrustScriptFixture.RemoveFlag, TrustScriptFixture.WhatIfFlag)
+        assert.equal(bad.status, TrustScriptFixture.UsageExit)
+        const wrongSwitch = TrustScriptFixture.Run(TrustScriptFixture.ThumbprintParam, TrustScriptFixture.ZeroThumbprint, TrustScriptFixture.InstallFlag, TrustScriptFixture.WhatIfFlag)
+        assert.equal(wrongSwitch.status, TrustScriptFixture.UsageExit)
+        const ok = TrustScriptFixture.Run(TrustScriptFixture.ThumbprintParam, TrustScriptFixture.ZeroThumbprint, TrustScriptFixture.RemoveFlag, TrustScriptFixture.WhatIfFlag)
+        assert.equal(ok.status, 0)
+        assert.equal(ok.stdout.includes(`not installed: ${TrustScriptFixture.ZeroThumbprint}`), true)
     })
 })

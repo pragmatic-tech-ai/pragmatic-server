@@ -53,3 +53,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File admin\control-plane\dev\dev-
 powershell -NoProfile -ExecutionPolicy Bypass -File admin\control-plane\dev\dev-ca-trust.ps1 -CaFile <ca.crt> -Remove
 powershell -NoProfile -ExecutionPolicy Bypass -File admin\control-plane\dev\dev-ca-trust.ps1 -CaFile <ca.crt> -ShowThumbprint
 ```
+
+Add `-WhatIf` to `-Install` or `-Remove` to see what would happen without changing the store. `-Install` refuses
+anything that is not a name-constrained CA. After the CA file is gone, remove it by thumbprint with
+`-Thumbprint <40 hex> -Remove`.
