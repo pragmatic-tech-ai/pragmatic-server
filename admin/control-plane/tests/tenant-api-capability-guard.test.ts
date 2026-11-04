@@ -1,12 +1,13 @@
 import { strict as assert } from 'node:assert'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
-import { describe, it } from 'node:test'
+import { describe, it, mock } from 'node:test'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import type { IEnvironmentService } from '../control-plane-host.js'
 import type { TenantRecord } from '../platform-records.js'
 import { SeededTenantDirectory } from '../tenant-api/seeded-tenant-directory.js'
 import { TenantApiEndpoint } from '../tenant-api/tenant-api-endpoint.js'
+import { TenantAdminCapabilities } from '../tenant-api/tenant-admin-capabilities.js'
 import type { TenantSession } from '../tenant-auth/tenant-session.js'
 
 /** Records what the endpoint wrote so a test can assert on status and JSON body without a real socket. */
@@ -121,6 +122,12 @@ class FakeService
     public async AdminGrantAppReader(): Promise<void>
     {
         this.Calls++
+    }
+
+    public async AdminIssueDeployToken(): Promise<unknown>
+    {
+        this.Calls++
+        return { token: 't', principalId: 'deployer', expiresAt: 'x' }
     }
 }
 
@@ -268,6 +275,26 @@ describe('TenantApiEndpoint capability guard', () =>
             const res = await Fixtures.Send(f.endpoint, Fixtures.Session('someone-else'), r.Method, Fixtures.Base + r.Suffix, r.Body)
             assert.equal(res.status, 404)
             assert.equal(f.service.Calls, 0)
+        })
+    }
+
+    for (const suffix of ['maker-token', 'app-reader-grant'])
+    {
+        it(`POST ${suffix} is 403 generic for a session without the envs capability and never reaches the service`, async () =>
+        {
+            const stub = mock.method(TenantAdminCapabilities, 'For', () => ({ roleLabel: 'x', capabilities: { envs: false, adopt: false, access: false, settings: false } }))
+            try
+            {
+                const f = Fixtures.Build(true)
+                const res = await Fixtures.Send(f.endpoint, Fixtures.Session(Fixtures.OwnerId), 'POST', Fixtures.Base + suffix)
+                assert.equal(res.status, 403)
+                assert.deepEqual(JSON.parse(res.body), Fixtures.Forbidden)
+                assert.equal(f.service.Calls, 0)
+            }
+            finally
+            {
+                stub.mock.restore()
+            }
         })
     }
 

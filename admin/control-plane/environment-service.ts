@@ -166,6 +166,14 @@ export class EnvironmentService
     private static readonly MakerRoleName = 'Maker'
     private static readonly TenantKindName = 'Tenant'
     private static readonly MakerScope = 'graph-contribute'
+    /** The maker also holds Viewer so graph/list passes the role check; the token scope still limits it to contribute + list. */
+    private static readonly MakerListRoleName = 'Viewer'
+    private static readonly DeployerPrincipalId = 'deployer'
+    /** Administer on the Tenant, required by application/deploy; the application-deploy scope limits the token to that one method. */
+    private static readonly DeployerRoleName = 'Admin'
+    private static readonly DeployScope = 'application-deploy'
+    /** Fifteen minutes: a deploy token is single-purpose and short-lived; callers re-mint per publish. */
+    private static readonly DeployTtlSeconds = 900
     /** The well-known runtime principal a served environment-bound app authenticates as; holds the general read grant. */
     private static readonly AppReaderPrincipalId = 'app-reader'
     /** A read-only coarse role: Role.Viewer covers Action.Read, which the CypherProtocol.Query readTenant gate requires. */
@@ -583,7 +591,21 @@ export class EnvironmentService
         }
         const info = await this.AdminInfoFor(name)
         await this.proxy.GrantRole(info, { subject: EnvironmentService.MakerPrincipalId, role: EnvironmentService.MakerRoleName, resourceKind: EnvironmentService.TenantKindName, resourcePath: [] })
+        await this.proxy.GrantRole(info, { subject: EnvironmentService.MakerPrincipalId, role: EnvironmentService.MakerListRoleName, resourceKind: EnvironmentService.TenantKindName, resourcePath: [] })
         return this.proxy.IssueToken(info, { principalId: EnvironmentService.MakerPrincipalId, scopes: [EnvironmentService.MakerScope], expiresInSeconds: EnvironmentService.MakerTokenTtlSeconds })
+    }
+
+    /** Mints a short-lived deploy-only credential for a Runtime environment: Admin for the deployer principal, scoped to application/deploy alone. */
+    public async AdminIssueDeployToken(name: string): Promise<TokenIssuedDto>
+    {
+        const rec = this.Require(name)
+        if (rec.type !== EnvType.Runtime)
+        {
+            throw new EnvironmentNotRuntimeError(name)
+        }
+        const info = await this.AdminInfoFor(name)
+        await this.proxy.GrantRole(info, { subject: EnvironmentService.DeployerPrincipalId, role: EnvironmentService.DeployerRoleName, resourceKind: EnvironmentService.TenantKindName, resourcePath: [] })
+        return this.proxy.IssueToken(info, { principalId: EnvironmentService.DeployerPrincipalId, scopes: [EnvironmentService.DeployScope], expiresInSeconds: EnvironmentService.DeployTtlSeconds })
     }
 
     /** Idempotently grants the well-known app-reader principal a read-capable role on a runtime environment, as Owner via the proxy, so a served environment-bound app passes the readTenant gate without weakening authoring gates. Returns nothing: no token or secret is minted or surfaced. */

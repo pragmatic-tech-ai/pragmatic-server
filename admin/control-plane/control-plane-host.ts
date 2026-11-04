@@ -82,6 +82,7 @@ export interface IEnvironmentService
     AdminGetSecurityModel(name: string): Promise<SecurityModelDto | undefined>
     AdminSetSecurityModel(name: string, securityModel: SecurityModelDto): Promise<void>
     AdminIssueMakerToken(name: string): Promise<TokenIssuedDto>
+    AdminIssueDeployToken(name: string): Promise<TokenIssuedDto>
     AdminListTokens(name: string): Promise<ServiceTokenSummaryDto[]>
     AdminIssueToken(name: string, params: IssueTokenParams): Promise<TokenIssuedDto>
     AdminRevokeToken(name: string, tokenRef: string): Promise<void>

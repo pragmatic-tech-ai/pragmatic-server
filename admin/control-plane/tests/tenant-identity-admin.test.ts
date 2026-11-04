@@ -100,6 +100,11 @@ class FakeService
         return this.Rec('AdminIssueMakerToken', a, { token: 'tok', principalId: 'maker', expiresAt: 'x' })
     }
 
+    public async AdminIssueDeployToken(...a: unknown[]): Promise<unknown>
+    {
+        return this.Rec('AdminIssueDeployToken', a, { token: 'tok', principalId: 'deployer', expiresAt: 'x' })
+    }
+
     public async AdminListTokens(...a: unknown[]): Promise<unknown>
     {
         return this.Rec('AdminListTokens', a, [{ tokenRef: 'r1', principalId: 'svc', scopes: ['read'], expiresAt: null }])

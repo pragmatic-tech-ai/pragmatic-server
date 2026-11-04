@@ -941,15 +941,36 @@ test('AdminIssueMakerToken grants Maker then issues a maker token; repeat call s
     const h = await Harness.Make()
     await AdminFixture.Seed(h)
     const dto = await h.Service.AdminIssueMakerToken(AdminFixture.Name)
-    assert.deepEqual(h.Proxy.Calls.map(c => c.method), ['GrantRole', 'IssueToken'])
+    assert.deepEqual(h.Proxy.Calls.map(c => c.method), ['GrantRole', 'GrantRole', 'IssueToken'])
     assert.deepEqual(h.Proxy.Calls[0].args, [{ subject: 'maker', role: 'Maker', resourceKind: 'Tenant', resourcePath: [] }])
-    const params = h.Proxy.Calls[1].args[0] as IssueTokenParams
+    assert.deepEqual(h.Proxy.Calls[1].args, [{ subject: 'maker', role: 'Viewer', resourceKind: 'Tenant', resourcePath: [] }])
+    const params = h.Proxy.Calls[2].args[0] as IssueTokenParams
     assert.equal(params.principalId, 'maker')
     assert.deepEqual(params.scopes, ['graph-contribute'])
     assert.equal(dto.token, 'secret-token')
     assert.equal(h.Proxy.Calls[0].info.password, AdminFixture.Password)
     await h.Service.AdminIssueMakerToken(AdminFixture.Name)
-    assert.equal(h.Proxy.Calls.length, 4)
+    assert.equal(h.Proxy.Calls.length, 6)
+})
+
+test('AdminIssueDeployToken on a Runtime env grants Admin to deployer then issues a 15-minute deploy-only token', async () =>
+{
+    const h = await Harness.Make()
+    await AdminFixture.Seed(h)
+    await h.Registry.Put({ ...h.Registry.Get(AdminFixture.Name)!, type: EnvType.Runtime })
+    const dto = await h.Service.AdminIssueDeployToken(AdminFixture.Name)
+    assert.deepEqual(h.Proxy.Calls.map(c => c.method), ['GrantRole', 'IssueToken'])
+    assert.deepEqual(h.Proxy.Calls[0].args, [{ subject: 'deployer', role: 'Admin', resourceKind: 'Tenant', resourcePath: [] }])
+    assert.deepEqual(h.Proxy.Calls[1].args, [{ principalId: 'deployer', scopes: ['application-deploy'], expiresInSeconds: 900 }])
+    assert.equal(dto.token, 'secret-token')
+})
+
+test('AdminIssueDeployToken on a Development env throws EnvironmentNotRuntimeError before any proxy call', async () =>
+{
+    const h = await Harness.Make()
+    await AdminFixture.Seed(h)
+    await assert.rejects(() => h.Service.AdminIssueDeployToken(AdminFixture.Name), EnvironmentNotRuntimeError)
+    assert.equal(h.Proxy.Calls.length, 0)
 })
 
 test('AdminListTokens forwards to proxy.ListTokens with the env admin info, with no env-type guard', async () =>

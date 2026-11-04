@@ -64,6 +64,7 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     private static readonly EnvNamePathPattern = new RegExp(
         '^' + TenantApiEndpoint.Prefix + TenantApiEndpoint.EnvironmentsSegment + '/([^/]+)$')
     private static readonly AdminSegment = 'admin'
+    private static readonly EnvsCapability = 'envs'
     private static readonly AccessCapability = 'access'
     private static readonly SettingsCapability = 'settings'
     private static readonly SnapshotLeaf = 'snapshot'
@@ -512,7 +513,7 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
 
     /**
      * The single audit point for capability enforcement: which admin write routes need which capability. GETs, environment
-     * lifecycle/create, hive target and the env credential routes are deliberately absent (open to any tenant admin).
+     * lifecycle/create, hive target and the env credential routes (gated separately on the envs capability in RouteEnvCredential) are deliberately absent.
      */
     private static RequiredCapability(method: string, leaf: string, tail: string | undefined): keyof AdminCapabilities | undefined
     {
@@ -768,6 +769,10 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         if (rec === undefined)
         {
             this.WriteNotFound(res)
+            return true
+        }
+        if (!this.RequireCapability(res, session, TenantApiEndpoint.EnvsCapability))
+        {
             return true
         }
         try
