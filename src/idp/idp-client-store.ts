@@ -30,6 +30,7 @@ export class IdpClientStore
     private static readonly LoopbackScheme = 'http:';
     private static readonly LoopbackHost = '127.0.0.1';
     private static readonly LoopbackOrigin = 'http://127.0.0.1';
+    private static readonly NoPort = '';
     private static readonly PortMark = ':';
     private static readonly QueryMark = '?';
     private static readonly FragmentMark = '#';
@@ -107,12 +108,12 @@ export class IdpClientStore
         {
             const reg = new URL(registered);
             const pres = new URL(presented);
-            if (reg.protocol !== IdpClientStore.LoopbackScheme || reg.hostname !== IdpClientStore.LoopbackHost || reg.port !== '' || registered.startsWith(IdpClientStore.LoopbackOrigin + IdpClientStore.PortMark))
+            if (reg.protocol !== IdpClientStore.LoopbackScheme || reg.hostname !== IdpClientStore.LoopbackHost || reg.port !== IdpClientStore.NoPort || registered.startsWith(IdpClientStore.LoopbackOrigin + IdpClientStore.PortMark))
             {
                 return false;
             }
             const port = Number(pres.port);
-            if (pres.protocol !== IdpClientStore.LoopbackScheme || pres.hostname !== IdpClientStore.LoopbackHost || !Number.isInteger(port) || port < 1 || port > 65535)
+            if (!Number.isInteger(port) || port < 1 || port > 65535)
             {
                 return false;
             }

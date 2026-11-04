@@ -184,7 +184,6 @@ class LoopbackFixture
         'http://127.0.0.1:0/pragmatic-desktop/callback',
         'not a url'];
     public static readonly PortFulOther = 'http://127.0.0.1:7001/cb';
-    public static readonly OtherClient = 'client-2';
 
     public static async Register(uri: string): Promise<IdpClientStore>
     {
