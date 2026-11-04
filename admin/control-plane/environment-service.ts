@@ -22,7 +22,7 @@ import type { EnvEndpoint, EnvRuntimeContext } from './environment-runtime.js'
 import type { EnvironmentRuntimeResolver } from './environment-runtime-resolver.js'
 import type { IUiDeployActuator, UiDeployBundle } from './ui-deploy-actuator.js'
 import { InClusterOperationFailedError } from './in-cluster-environment-runtime.js'
-import { EnvironmentEndpoints, EnvironmentUnreachableError, type EnvironmentUrls } from './environment-endpoints.js'
+import { EnvironmentEndpoints, EnvironmentUnreachableError, type EnvironmentUrlsLease } from './environment-endpoints.js'
 
 export class EnvironmentExistsError extends Error
 {
@@ -544,44 +544,40 @@ export class EnvironmentService
 
     public async AdminSnapshot(name: string): Promise<AdminSnapshot>
     {
-        const info = await this.AdminInfoFor(name)
-        return this.proxy.LoadAdmin(info)
+        return this.WithAdmin(name, info => this.proxy.LoadAdmin(info))
     }
 
     public async AdminCreateAccount(name: string, params: CreateAccountParams): Promise<void>
     {
-        const info = await this.AdminInfoFor(name)
-        return this.proxy.CreateAccount(info, params)
+        return this.WithAdmin(name, info => this.proxy.CreateAccount(info, params))
     }
 
     public async AdminDisableAccount(name: string, principalId: string): Promise<void>
     {
-        const info = await this.AdminInfoFor(name)
-        return this.proxy.DisableAccount(info, principalId)
+        return this.WithAdmin(name, info => this.proxy.DisableAccount(info, principalId))
     }
 
     public async AdminGrantRole(name: string, mutation: GrantMutationDto): Promise<void>
     {
-        const info = await this.AdminInfoFor(name)
-        return this.proxy.GrantRole(info, mutation)
+        return this.WithAdmin(name, info => this.proxy.GrantRole(info, mutation))
     }
 
     public async AdminListTokens(name: string): Promise<ServiceTokenSummaryDto[]>
     {
-        const info = await this.AdminInfoFor(name)
-        return this.proxy.ListTokens(info)
+        return this.WithAdmin(name, info => this.proxy.ListTokens(info))
     }
 
     public async AdminIssueToken(name: string, params: IssueTokenParams): Promise<TokenIssuedDto>
     {
-        const info = await this.AdminInfoFor(name)
-        return this.proxy.IssueToken(info, params)
+        return this.WithAdmin(name, info => this.proxy.IssueToken(info, params))
     }
 
     public async AdminRevokeToken(name: string, tokenRef: string): Promise<void>
     {
-        const info = await this.AdminInfoFor(name)
-        await this.proxy.RevokeToken(info, { tokenRef })
+        return this.WithAdmin(name, async info =>
+        {
+            await this.proxy.RevokeToken(info, { tokenRef })
+        })
     }
 
     public async AdminIssueMakerToken(name: string): Promise<TokenIssuedDto>
@@ -591,10 +587,12 @@ export class EnvironmentService
         {
             throw new EnvironmentNotDevelopmentError(name)
         }
-        const info = await this.AdminInfoFor(name)
-        await this.proxy.GrantRole(info, { subject: EnvironmentService.MakerPrincipalId, role: EnvironmentService.MakerRoleName, resourceKind: EnvironmentService.TenantKindName, resourcePath: [] })
-        await this.proxy.GrantRole(info, { subject: EnvironmentService.MakerPrincipalId, role: EnvironmentService.MakerListRoleName, resourceKind: EnvironmentService.TenantKindName, resourcePath: [] })
-        return this.proxy.IssueToken(info, { principalId: EnvironmentService.MakerPrincipalId, scopes: [EnvironmentService.MakerScope], expiresInSeconds: EnvironmentService.MakerTokenTtlSeconds })
+        return this.WithAdmin(name, async info =>
+        {
+            await this.proxy.GrantRole(info, { subject: EnvironmentService.MakerPrincipalId, role: EnvironmentService.MakerRoleName, resourceKind: EnvironmentService.TenantKindName, resourcePath: [] })
+            await this.proxy.GrantRole(info, { subject: EnvironmentService.MakerPrincipalId, role: EnvironmentService.MakerListRoleName, resourceKind: EnvironmentService.TenantKindName, resourcePath: [] })
+            return this.proxy.IssueToken(info, { principalId: EnvironmentService.MakerPrincipalId, scopes: [EnvironmentService.MakerScope], expiresInSeconds: EnvironmentService.MakerTokenTtlSeconds })
+        })
     }
 
     /** Mints a short-lived deploy-only credential for a Runtime environment: Admin for the deployer principal, scoped to application/deploy alone. */
@@ -605,9 +603,11 @@ export class EnvironmentService
         {
             throw new EnvironmentNotRuntimeError(name)
         }
-        const info = await this.AdminInfoFor(name)
-        await this.proxy.GrantRole(info, { subject: EnvironmentService.DeployerPrincipalId, role: EnvironmentService.DeployerRoleName, resourceKind: EnvironmentService.TenantKindName, resourcePath: [] })
-        return this.proxy.IssueToken(info, { principalId: EnvironmentService.DeployerPrincipalId, scopes: [EnvironmentService.DeployScope], expiresInSeconds: EnvironmentService.DeployTtlSeconds })
+        return this.WithAdmin(name, async info =>
+        {
+            await this.proxy.GrantRole(info, { subject: EnvironmentService.DeployerPrincipalId, role: EnvironmentService.DeployerRoleName, resourceKind: EnvironmentService.TenantKindName, resourcePath: [] })
+            return this.proxy.IssueToken(info, { principalId: EnvironmentService.DeployerPrincipalId, scopes: [EnvironmentService.DeployScope], expiresInSeconds: EnvironmentService.DeployTtlSeconds })
+        })
     }
 
     /** Idempotently grants the well-known app-reader principal a read-capable role on a runtime environment, as Owner via the proxy, so a served environment-bound app passes the readTenant gate without weakening authoring gates. Returns nothing: no token or secret is minted or surfaced. */
@@ -618,58 +618,81 @@ export class EnvironmentService
         {
             throw new EnvironmentNotRuntimeError(name)
         }
-        const info = await this.AdminInfoFor(name)
-        await this.proxy.GrantRole(info, { subject: EnvironmentService.AppReaderPrincipalId, role: EnvironmentService.AppReaderRoleName, resourceKind: EnvironmentService.TenantKindName, resourcePath: [] })
+        return this.WithAdmin(name, async info =>
+        {
+            await this.proxy.GrantRole(info, { subject: EnvironmentService.AppReaderPrincipalId, role: EnvironmentService.AppReaderRoleName, resourceKind: EnvironmentService.TenantKindName, resourcePath: [] })
+        })
     }
 
     public async AdminRevokeRole(name: string, mutation: GrantMutationDto): Promise<void>
     {
-        const info = await this.AdminInfoFor(name)
-        return this.proxy.RevokeRole(info, mutation)
+        return this.WithAdmin(name, info => this.proxy.RevokeRole(info, mutation))
     }
 
     public async AdminGetConfig(name: string): Promise<IdentityConfigDto>
     {
-        const info = await this.AdminInfoFor(name)
-        return this.proxy.GetConfig(info)
+        return this.WithAdmin(name, info => this.proxy.GetConfig(info))
     }
 
     public async AdminSetConfig(name: string, config: IdentityConfigDto): Promise<void>
     {
-        const info = await this.AdminInfoFor(name)
-        return this.proxy.SetConfig(info, config)
+        return this.WithAdmin(name, info => this.proxy.SetConfig(info, config))
     }
 
     public async AdminGetSecurityModel(name: string): Promise<SecurityModelDto | undefined>
     {
-        const info = await this.AdminInfoFor(name)
-        return this.proxy.GetSecurityModel(info)
+        return this.WithAdmin(name, info => this.proxy.GetSecurityModel(info))
     }
 
     public async AdminSetSecurityModel(name: string, securityModel: SecurityModelDto): Promise<void>
     {
-        const info = await this.AdminInfoFor(name)
-        return this.proxy.SetSecurityModel(info, securityModel)
+        return this.WithAdmin(name, info => this.proxy.SetSecurityModel(info, securityModel))
     }
 
-    /** Resolves the environment's stored Owner credential into connect info for the admin proxy. */
+    /**
+     * Resolves the environment's stored Owner credential into connect info for the admin proxy, for callers outside this
+     * service. The tunnel lease is given back at once: an in-cluster tunnel then stays open for the pool's idle window,
+     * ample for the short admin call the caller makes next. In-service admin calls hold their lease (WithAdmin) instead.
+     */
     public async AdminInfoFor(name: string): Promise<AdminConnectInfo>
+    {
+        const lease = await this.AdminLeaseFor(name)
+        lease.Release()
+        return lease.info
+    }
+
+    /** Runs one admin call against the environment, holding its tunnel lease until the call settles. */
+    private async WithAdmin<T>(name: string, op: (info: AdminConnectInfo) => Promise<T>): Promise<T>
+    {
+        const lease = await this.AdminLeaseFor(name)
+        try
+        {
+            return await op(lease.info)
+        }
+        finally
+        {
+            lease.Release()
+        }
+    }
+
+    private async AdminLeaseFor(name: string): Promise<{ info: AdminConnectInfo; Release(): void }>
     {
         const rec = this.Require(name)
         // The password is resolved first, so a missing secret never opens a cluster tunnel.
         const password = await this.AdminPasswordOf(rec)
         const urls = await this.UrlsOf(rec)
-        return {
+        const info: AdminConnectInfo = {
             httpUrl: urls.httpUrl,
             wsUrl: urls.wsUrl,
             tenant: rec.environmentId,
             email: BundleBuilder.AdminEmailPrefix + rec.environmentId + BundleBuilder.AdminEmailSuffix,
             password
         }
+        return { info, Release: () => urls.Release() }
     }
 
     /** Docker records resolve locally; an in-cluster record needs the composed endpoints (its tunnel + cluster Secret). */
-    private async AdminPasswordOf(rec: EnvironmentRecord): Promise<string>
+    private AdminPasswordOf(rec: EnvironmentRecord): Promise<string>
     {
         if (this.endpoints !== undefined)
         {
@@ -677,13 +700,12 @@ export class EnvironmentService
         }
         if (!EnvironmentEndpoints.IsLocal(rec))
         {
-            throw new EnvironmentUnreachableError()
+            return Promise.reject(new EnvironmentUnreachableError())
         }
-        const secrets = await EnvironmentService.ReadSecrets(rec.bundleDir)
-        return EnvironmentService.Secret(secrets, rec.environmentId + BundleBuilder.AdminSecretSuffix)
+        return EnvironmentEndpoints.LocalAdminPasswordOf(rec, this.dataRoot)
     }
 
-    private UrlsOf(rec: EnvironmentRecord): Promise<EnvironmentUrls>
+    private UrlsOf(rec: EnvironmentRecord): Promise<EnvironmentUrlsLease>
     {
         if (this.endpoints !== undefined)
         {

@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { PassThrough } from 'node:stream'
 import { KubectlCli, PortForwardError, type IExecFile, type IProcessSpawner, type ISpawnedProcess } from '../kubectl.js'
-import { ClusterTunnelPool } from '../cluster-tunnel-pool.js'
+import { ClusterTunnelPool, TunnelPoolClosedError } from '../cluster-tunnel-pool.js'
 
 class FakeProcess implements ISpawnedProcess
 {
@@ -77,6 +77,7 @@ class Fx
     public static readonly OtherKey = 'k2'
     public static readonly RemotePort = 8080
     public static readonly LocalPort = 51234
+    public static readonly IdleMs = 300_000
     public static readonly PortForwardVerb = 'port-forward'
     public static readonly Leaked = 'hunter2'
 
@@ -141,12 +142,12 @@ test('PortForward rejects on an early exit without surfacing process output', as
     await assert.rejects(pending, (err: Error) => err instanceof PortForwardError && !err.message.includes(Fx.Leaked))
 })
 
-test('Acquire opens one tunnel and returns its local port', async () =>
+test('Acquire opens one tunnel and leases its local port', async () =>
 {
     const spawner = new FakeSpawner()
-    const pool = new ClusterTunnelPool(spawner)
-    const port = await pool.Acquire(Fx.Key, Fx.Open(pool.Spawner))
-    assert.equal(port, Fx.LocalPort)
+    const pool = new ClusterTunnelPool()
+    const lease = await pool.Acquire(Fx.Key, Fx.Open(spawner))
+    assert.equal(lease.LocalPort, Fx.LocalPort)
     assert.equal(spawner.Spawned.length, 1)
     pool.CloseAll()
 })
@@ -154,13 +155,13 @@ test('Acquire opens one tunnel and returns its local port', async () =>
 test('two concurrent Acquire calls for one key spawn once', async () =>
 {
     const spawner = new FakeSpawner()
-    const pool = new ClusterTunnelPool(spawner)
+    const pool = new ClusterTunnelPool()
     const open = Fx.Open(spawner)
     const [a, b] = await Promise.all([pool.Acquire(Fx.Key, open), pool.Acquire(Fx.Key, open)])
-    assert.equal(a, Fx.LocalPort)
-    assert.equal(b, Fx.LocalPort)
+    assert.equal(a.LocalPort, Fx.LocalPort)
+    assert.equal(b.LocalPort, Fx.LocalPort)
     assert.equal(spawner.Spawned.length, 1)
-    assert.equal(await pool.Acquire(Fx.Key, open), Fx.LocalPort)
+    assert.equal((await pool.Acquire(Fx.Key, open)).LocalPort, Fx.LocalPort)
     assert.equal(spawner.Spawned.length, 1)
     pool.CloseAll()
 })
@@ -168,7 +169,7 @@ test('two concurrent Acquire calls for one key spawn once', async () =>
 test('distinct keys get distinct tunnels', async () =>
 {
     const spawner = new FakeSpawner()
-    const pool = new ClusterTunnelPool(spawner)
+    const pool = new ClusterTunnelPool()
     await pool.Acquire(Fx.Key, Fx.Open(spawner))
     await pool.Acquire(Fx.OtherKey, Fx.Open(spawner, Fx.OtherTarget))
     assert.equal(spawner.Spawned.length, 2)
@@ -176,29 +177,75 @@ test('distinct keys get distinct tunnels', async () =>
     assert.ok(spawner.Spawned.every(s => s.process.Killed))
 })
 
-test('an idle tunnel is killed after 5 minutes; each Acquire resets the idle timer', async (t) =>
+test('a held lease keeps its tunnel open past the 5 minute idle window', async (t) =>
 {
-    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+    t.mock.timers.enable({ apis: ['setTimeout'] })
     const spawner = new FakeSpawner()
-    const pool = new ClusterTunnelPool(spawner)
+    const pool = new ClusterTunnelPool()
+    await pool.Acquire(Fx.Key, Fx.Open(spawner))
+    t.mock.timers.tick(Fx.IdleMs * 3)
+    assert.equal(spawner.Spawned[0].process.Killed, false)
+    pool.CloseAll()
+})
+
+test('releasing the last lease starts the 5 minute idle countdown, then the tunnel is killed', async (t) =>
+{
+    t.mock.timers.enable({ apis: ['setTimeout'] })
+    const spawner = new FakeSpawner()
+    const pool = new ClusterTunnelPool()
     const open = Fx.Open(spawner)
-    await pool.Acquire(Fx.Key, open)
+    const lease = await pool.Acquire(Fx.Key, open)
+    t.mock.timers.tick(Fx.IdleMs * 2)
+    lease.Release()
     const proc = spawner.Spawned[0].process
-    t.mock.timers.tick(200_000)
-    await pool.Acquire(Fx.Key, open)
-    t.mock.timers.tick(200_000)
+    t.mock.timers.tick(Fx.IdleMs - 1)
     assert.equal(proc.Killed, false)
-    t.mock.timers.tick(100_000)
+    t.mock.timers.tick(1)
     assert.equal(proc.Killed, true)
     await pool.Acquire(Fx.Key, open)
     assert.equal(spawner.Spawned.length, 2)
     pool.CloseAll()
 })
 
+test('with two leases, releasing one keeps the tunnel alive; Release is idempotent', async (t) =>
+{
+    t.mock.timers.enable({ apis: ['setTimeout'] })
+    const spawner = new FakeSpawner()
+    const pool = new ClusterTunnelPool()
+    const open = Fx.Open(spawner)
+    const first = await pool.Acquire(Fx.Key, open)
+    const second = await pool.Acquire(Fx.Key, open)
+    first.Release()
+    first.Release()
+    t.mock.timers.tick(Fx.IdleMs * 2)
+    assert.equal(spawner.Spawned[0].process.Killed, false)
+    second.Release()
+    t.mock.timers.tick(Fx.IdleMs)
+    assert.equal(spawner.Spawned[0].process.Killed, true)
+    pool.CloseAll()
+})
+
+test('an Acquire during the idle countdown cancels it', async (t) =>
+{
+    t.mock.timers.enable({ apis: ['setTimeout'] })
+    const spawner = new FakeSpawner()
+    const pool = new ClusterTunnelPool()
+    const open = Fx.Open(spawner)
+    const idle = await pool.Acquire(Fx.Key, open)
+    idle.Release()
+    t.mock.timers.tick(Fx.IdleMs - 1)
+    const held = await pool.Acquire(Fx.Key, open)
+    t.mock.timers.tick(Fx.IdleMs * 2)
+    assert.equal(spawner.Spawned[0].process.Killed, false)
+    assert.equal(spawner.Spawned.length, 1)
+    held.Release()
+    pool.CloseAll()
+})
+
 test('a tunnel whose process exits is dropped so the next Acquire reopens it', async () =>
 {
     const spawner = new FakeSpawner()
-    const pool = new ClusterTunnelPool(spawner)
+    const pool = new ClusterTunnelPool()
     const open = Fx.Open(spawner)
     await pool.Acquire(Fx.Key, open)
     spawner.Spawned[0].process.Exit()
@@ -210,20 +257,24 @@ test('a tunnel whose process exits is dropped so the next Acquire reopens it', a
 test('a failed open is not cached: the next Acquire tries again', async () =>
 {
     const spawner = new FakeSpawner()
-    const pool = new ClusterTunnelPool(spawner)
+    const pool = new ClusterTunnelPool()
     await assert.rejects(pool.Acquire(Fx.Key, () => Promise.reject(new PortForwardError())), PortForwardError)
-    assert.equal(await pool.Acquire(Fx.Key, Fx.Open(spawner)), Fx.LocalPort)
+    assert.equal((await pool.Acquire(Fx.Key, Fx.Open(spawner))).LocalPort, Fx.LocalPort)
     pool.CloseAll()
 })
 
-test('CloseAll kills every open tunnel and a tunnel still opening is killed once it lands', async () =>
+test('CloseAll kills every open tunnel; acquires waiting on a tunnel still opening reject and it is killed once it lands', async () =>
 {
     const spawner = new FakeSpawner()
-    const pool = new ClusterTunnelPool(spawner)
+    const pool = new ClusterTunnelPool()
     await pool.Acquire(Fx.Key, Fx.Open(spawner))
-    const pending = pool.Acquire(Fx.OtherKey, Fx.Open(spawner, Fx.OtherTarget))
+    const open = Fx.Open(spawner, Fx.OtherTarget)
+    const pending = [pool.Acquire(Fx.OtherKey, open), pool.Acquire(Fx.OtherKey, open)]
     pool.CloseAll()
     assert.equal(spawner.Spawned[0].process.Killed, true)
-    await pending.catch(() => undefined)
+    for (const p of pending)
+    {
+        await assert.rejects(p, (err: Error) => err instanceof TunnelPoolClosedError && err.message === TunnelPoolClosedError.DefaultMessage)
+    }
     assert.equal(spawner.Spawned[1].process.Killed, true)
 })

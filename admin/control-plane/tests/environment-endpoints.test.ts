@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -102,7 +102,7 @@ class FakeOrchestrators extends HiveOrchestratorFactory
 {
     public Fail: Error | undefined
 
-    public constructor(private readonly kubectl: IKubectl)
+    public constructor(public Kubectl: IKubectl | undefined)
     {
         super()
     }
@@ -113,7 +113,7 @@ class FakeOrchestrators extends HiveOrchestratorFactory
         {
             throw this.Fail
         }
-        return { Kubectl: this.kubectl } as unknown as IHiveOrchestrator
+        return { Kubectl: this.Kubectl } as unknown as IHiveOrchestrator
     }
 }
 
@@ -147,31 +147,37 @@ class Harness
 {
     public readonly Kubectl: PlainKubectl
     public readonly Orchestrators: FakeOrchestrators
-    public readonly Pool = new ClusterTunnelPool(new NoSpawner())
+    public readonly Pool = new ClusterTunnelPool()
     public readonly Endpoints: EnvironmentEndpoints
 
     public constructor(kubectl: PlainKubectl = new FakeKubectl())
     {
         this.Kubectl = kubectl
         this.Orchestrators = new FakeOrchestrators(kubectl)
-        this.Endpoints = new EnvironmentEndpoints(this.Orchestrators, new FakeDirectory(), this.Pool)
+        this.Endpoints = new EnvironmentEndpoints(this.Orchestrators, new FakeDirectory(), this.Pool, new NoSpawner())
     }
 }
 
 test('Docker UrlsFor keeps localhost:<hostPort>', async () =>
 {
     const h = new Harness()
-    assert.deepEqual(await h.Endpoints.UrlsFor(Fx.Docker('/b/e1')), { httpUrl: 'http://localhost:9200', wsUrl: 'ws://localhost:9200' })
+    const urls = await h.Endpoints.UrlsFor(Fx.Docker('/b/e1'))
+    assert.deepEqual({ httpUrl: urls.httpUrl, wsUrl: urls.wsUrl }, { httpUrl: 'http://localhost:9200', wsUrl: 'ws://localhost:9200' })
+    urls.Release()
+    urls.Release()
     assert.equal(h.Kubectl.Forwards.length, 0)
 })
 
 test('in-cluster UrlsFor tunnels to the server Service and returns 127.0.0.1:<local>', async () =>
 {
     const h = new Harness()
-    assert.deepEqual(await h.Endpoints.UrlsFor(Fx.InCluster()), { httpUrl: 'http://127.0.0.1:50123', wsUrl: 'ws://127.0.0.1:50123' })
+    const urls = await h.Endpoints.UrlsFor(Fx.InCluster())
+    assert.deepEqual({ httpUrl: urls.httpUrl, wsUrl: urls.wsUrl }, { httpUrl: 'http://127.0.0.1:50123', wsUrl: 'ws://127.0.0.1:50123' })
     assert.deepEqual(h.Kubectl.Forwards, ['pragmatic-env-e1 svc/pragmatic-env-e1-server 8080'])
-    await h.Endpoints.UrlsFor(Fx.InCluster())
+    const again = await h.Endpoints.UrlsFor(Fx.InCluster())
     assert.equal(h.Kubectl.Forwards.length, 1)
+    urls.Release()
+    again.Release()
     h.Pool.CloseAll()
 })
 
@@ -180,6 +186,14 @@ test('in-cluster UrlsFor on a hive with no kubectl context throws EnvironmentUnr
     const h = new Harness(new PlainKubectl())
     await assert.rejects(() => h.Endpoints.UrlsFor(Fx.InCluster()), (err: Error) =>
         err instanceof EnvironmentUnreachableError && err.message === 'The environment\'s hive is not reachable from the platform.')
+})
+
+test('in-cluster UrlsFor on a hive whose orchestrator carries no kubectl throws EnvironmentUnreachableError, not a TypeError', async () =>
+{
+    const h = new Harness()
+    h.Orchestrators.Kubectl = undefined
+    await assert.rejects(() => h.Endpoints.UrlsFor(Fx.InCluster()), EnvironmentUnreachableError)
+    await assert.rejects(() => h.Endpoints.AdminPasswordFor(Fx.InCluster(), '/unused'), EnvironmentUnreachableError)
 })
 
 test('in-cluster UrlsFor on an unsupported hive backend throws EnvironmentUnreachableError', async () =>
@@ -214,7 +228,14 @@ test('Docker AdminPasswordFor reads the local bundle', async () =>
 {
     const h = new Harness()
     const bundleDir = await mkdtemp(join(tmpdir(), 'endpoints-bundle-'))
-    await writeFile(join(bundleDir, Fx.SecretsKey), JSON.stringify({ [Fx.AdminKey]: Fx.LocalPassword }))
-    assert.equal(await h.Endpoints.AdminPasswordFor(Fx.Docker(bundleDir), '/unused'), Fx.LocalPassword)
-    assert.equal(h.Kubectl.Gets.length, 0)
+    try
+    {
+        await writeFile(join(bundleDir, Fx.SecretsKey), JSON.stringify({ [Fx.AdminKey]: Fx.LocalPassword }))
+        assert.equal(await h.Endpoints.AdminPasswordFor(Fx.Docker(bundleDir), '/unused'), Fx.LocalPassword)
+        assert.equal(h.Kubectl.Gets.length, 0)
+    }
+    finally
+    {
+        await rm(bundleDir, { recursive: true, force: true })
+    }
 })

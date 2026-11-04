@@ -39,9 +39,9 @@ import type { UserSeed } from '../../../environments/seed/users.js'
 import type { IAdminProxy, AdminConnectInfo, AdminSnapshot } from '../admin-proxy.js'
 import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, IssueTokenParams, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { PassThrough } from 'node:stream'
-import { NodeProcessSpawner, type IPortForwardingKubectl, type ISpawnedProcess } from '../kubectl.js'
+import type { IPortForwardingKubectl, IProcessSpawner, ISpawnedProcess } from '../kubectl.js'
 import { ClusterTunnelPool } from '../cluster-tunnel-pool.js'
-import { EnvironmentEndpoints, EnvironmentUnreachableError } from '../environment-endpoints.js'
+import { EnvironmentEndpoints, EnvironmentUnreachableError, type EnvironmentUrlsLease } from '../environment-endpoints.js'
 import type { IHiveOrchestrator } from '../hive-orchestrator.js'
 
 /**
@@ -1371,6 +1371,15 @@ test('Delete is fail-open when the IdP connect rejects', async () =>
 
 class InClusterAdminFixture
 {
+    /** The fake kubectl forwards without spawning; a real spawn here would be a test bug. */
+    public static readonly ThrowingSpawner = class implements IProcessSpawner
+    {
+        public Spawn(): ISpawnedProcess
+        {
+            throw new Error('no process may be spawned in this test')
+        }
+    }
+
     public static readonly Name = 'icl'
     public static readonly Password = 'cluster-owner-secret'
     public static readonly LocalPort = 51777
@@ -1399,8 +1408,8 @@ class InClusterAdminFixture
                 return { Kubectl: kubectl } as unknown as IHiveOrchestrator
             }
         }()
-        const pool = new ClusterTunnelPool(new NodeProcessSpawner())
-        const endpoints = new EnvironmentEndpoints(orchestrators, h.Directory, pool)
+        const pool = new ClusterTunnelPool()
+        const endpoints = new EnvironmentEndpoints(orchestrators, h.Directory, pool, new InClusterAdminFixture.ThrowingSpawner())
         h.Service = new EnvironmentService(h.Registry, new FakeAllocator(h.Calls, false), SingleBackendResolver.Of(new DockerEnvironmentRuntime(h.Docker, h.Bundle), h.Directory, new HiveOrchestratorFactory()), h.Seeder, h.DataRoot, h.Proxy, h.Directory, h.Idp, c => new IdpAdminClient(c), undefined, endpoints)
         const rec = Harness.Record(InClusterAdminFixture.Name, EnvStatus.Running)
         await h.Registry.Put({ ...rec, hiveId: 'h1', hostPort: undefined, bundleDir: undefined, containerName: undefined, volumeName: undefined })
@@ -1439,4 +1448,95 @@ test('AdminInfoFor on an in-cluster record without composed endpoints throws Env
     await h.Registry.Put({ ...rec, hiveId: 'h1', hostPort: undefined, bundleDir: undefined })
     await assert.rejects(() => h.Service.AdminInfoFor(InClusterAdminFixture.Name), EnvironmentUnreachableError)
     assert.equal(h.Proxy.Calls.length, 0)
+})
+
+/** Endpoints that count outstanding URL leases, so a test can see when an admin call holds and releases its tunnel. */
+class CountingEndpoints extends EnvironmentEndpoints
+{
+    public Held = 0
+    public Acquired = 0
+
+    public override async UrlsFor(): Promise<EnvironmentUrlsLease>
+    {
+        this.Held++
+        this.Acquired++
+        let released = false
+        return {
+            httpUrl: 'http://127.0.0.1:1',
+            wsUrl: 'ws://127.0.0.1:1',
+            Release: () =>
+            {
+                if (!released)
+                {
+                    released = true
+                    this.Held--
+                }
+            },
+        }
+    }
+
+    public override async AdminPasswordFor(): Promise<string>
+    {
+        return InClusterAdminFixture.Password
+    }
+}
+
+/** Records how many leases were outstanding when LoadAdmin ran, and optionally fails it. */
+class LeaseObservingProxy extends FakeAdminProxy
+{
+    public HeldDuringCall = -1
+    public Fail = false
+
+    public constructor(private readonly endpoints: CountingEndpoints)
+    {
+        super()
+    }
+
+    public override async LoadAdmin(info: AdminConnectInfo): Promise<AdminSnapshot>
+    {
+        this.HeldDuringCall = this.endpoints.Held
+        if (this.Fail)
+        {
+            throw new Error('proxy down')
+        }
+        return super.LoadAdmin(info)
+    }
+}
+
+class LeaseFixture
+{
+    public static async Make(): Promise<{ h: Harness; endpoints: CountingEndpoints; proxy: LeaseObservingProxy }>
+    {
+        const h = await Harness.Make()
+        const endpoints = new CountingEndpoints(new HiveOrchestratorFactory(), h.Directory, new ClusterTunnelPool(), new InClusterAdminFixture.ThrowingSpawner())
+        const proxy = new LeaseObservingProxy(endpoints)
+        h.Service = new EnvironmentService(h.Registry, new FakeAllocator(h.Calls, false), SingleBackendResolver.Of(new DockerEnvironmentRuntime(h.Docker, h.Bundle), h.Directory, new HiveOrchestratorFactory()), h.Seeder, h.DataRoot, proxy, h.Directory, h.Idp, c => new IdpAdminClient(c), undefined, endpoints)
+        await h.Registry.Put(Harness.Record(InClusterAdminFixture.Name, EnvStatus.Running))
+        return { h, endpoints, proxy }
+    }
+}
+
+test('an in-service admin call holds its URL lease for the proxy call and releases it after', async () =>
+{
+    const { h, endpoints, proxy } = await LeaseFixture.Make()
+    await h.Service.AdminSnapshot(InClusterAdminFixture.Name)
+    assert.equal(proxy.HeldDuringCall, 1)
+    assert.equal(endpoints.Held, 0)
+})
+
+test('an in-service admin call releases its URL lease when the proxy call fails', async () =>
+{
+    const { h, endpoints, proxy } = await LeaseFixture.Make()
+    proxy.Fail = true
+    await assert.rejects(() => h.Service.AdminSnapshot(InClusterAdminFixture.Name), /proxy down/)
+    assert.equal(proxy.HeldDuringCall, 1)
+    assert.equal(endpoints.Held, 0)
+})
+
+test('AdminInfoFor (for outside callers) gives its URL lease back at once', async () =>
+{
+    const { h, endpoints } = await LeaseFixture.Make()
+    await h.Service.AdminInfoFor(InClusterAdminFixture.Name)
+    assert.equal(endpoints.Acquired, 1)
+    assert.equal(endpoints.Held, 0)
 })

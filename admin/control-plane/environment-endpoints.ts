@@ -8,12 +8,15 @@ import { EnvironmentWorkloadFactory } from './environment-workload.js'
 import type { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import { UnsupportedBackendError } from './hive-orchestrator.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
-import { KubectlCli, type IKubectl, type IPortForwardingKubectl } from './kubectl.js'
+import { KubectlCli, type IKubectl, type IPortForwardingKubectl, type IProcessSpawner } from './kubectl.js'
 import type { HiveRecord } from './platform-records.js'
 import type { ITenantDirectory } from './tenant-api/tenant-directory.js'
 
 /** Where the platform (this host) reaches an environment server over HTTP and WebSocket. */
 export type EnvironmentUrls = { httpUrl: string; wsUrl: string }
+
+/** Environment URLs held open until Release (idempotent): an in-cluster tunnel stays up while any lease is held. */
+export type EnvironmentUrlsLease = EnvironmentUrls & { Release(): void }
 
 /** The environment runs on a hive the platform cannot reach (unknown hive, unsupported backend, no kubectl context). */
 export class EnvironmentUnreachableError extends Error
@@ -63,11 +66,13 @@ export class EnvironmentEndpoints
     public constructor(
         private readonly orchestrators: HiveOrchestratorFactory,
         private readonly directory: ITenantDirectory,
-        private readonly tunnels: ClusterTunnelPool)
+        private readonly tunnels: ClusterTunnelPool,
+        private readonly spawner: IProcessSpawner)
     {
     }
 
-    public async UrlsFor(rec: EnvironmentRecord): Promise<EnvironmentUrls>
+    /** The env's URLs, held until the caller's Release: a Docker record's Release is a no-op. */
+    public async UrlsFor(rec: EnvironmentRecord): Promise<EnvironmentUrlsLease>
     {
         if (EnvironmentEndpoints.IsLocal(rec))
         {
@@ -78,29 +83,42 @@ export class EnvironmentEndpoints
         {
             throw new EnvironmentUnreachableError()
         }
-        const port = await this.tunnels.Acquire(hive.id + EnvironmentEndpoints.KeySeparator + rec.name, () => this.Forward(kubectl, rec))
-        return { httpUrl: EnvironmentEndpoints.TunnelHttpPrefix + String(port), wsUrl: EnvironmentEndpoints.TunnelWsPrefix + String(port) }
+        const lease = await this.tunnels.Acquire(hive.id + EnvironmentEndpoints.KeySeparator + rec.name, () => this.Forward(kubectl, rec))
+        return {
+            httpUrl: EnvironmentEndpoints.TunnelHttpPrefix + String(lease.LocalPort),
+            wsUrl: EnvironmentEndpoints.TunnelWsPrefix + String(lease.LocalPort),
+            Release: () => lease.Release(),
+        }
     }
 
-    /** The Owner password: from the local bundle (Docker; dataRoot locates a bundle-less record) or the cluster Secret. */
+    /** The Owner password: from the local bundle (Docker) or the env Secret in the cluster (in-cluster). */
     public async AdminPasswordFor(rec: EnvironmentRecord, dataRoot: string): Promise<string>
     {
-        const ref = rec.environmentId + BundleBuilder.AdminSecretSuffix
         if (EnvironmentEndpoints.IsLocal(rec))
         {
-            const bundleDir = rec.bundleDir ?? join(dataRoot, rec.name)
-            const text = await readFile(join(bundleDir, EnvServerSeedSource.SecretsFile), EnvironmentEndpoints.Utf8)
-            return EnvironmentEndpoints.SecretOf(EnvironmentEndpoints.ParseObject(text), ref)
+            return EnvironmentEndpoints.LocalAdminPasswordOf(rec, dataRoot)
         }
         const { kubectl } = this.Reach(rec)
         const json = await kubectl.Get(K8sManifestBuilder.NamespaceOf(rec.name), EnvironmentEndpoints.SecretPrefix + EnvServerSeedSource.SecretNameOf(rec.name))
-        return EnvironmentEndpoints.SecretOf(EnvironmentEndpoints.ParseObject(EnvironmentEndpoints.SecretsFileOf(json)), ref)
+        return EnvironmentEndpoints.SecretOf(EnvironmentEndpoints.ParseObject(EnvironmentEndpoints.SecretsFileOf(json)), EnvironmentEndpoints.AdminRefOf(rec))
     }
 
-    /** Docker URLs for a record on this host. */
-    public static LocalUrlsOf(rec: EnvironmentRecord): EnvironmentUrls
+    /** Docker URLs for a record on this host; nothing is held, so Release is a no-op. */
+    public static LocalUrlsOf(rec: EnvironmentRecord): EnvironmentUrlsLease
     {
-        return { httpUrl: EnvironmentEndpoints.LocalHttpPrefix + String(rec.hostPort), wsUrl: EnvironmentEndpoints.LocalWsPrefix + String(rec.hostPort) }
+        return {
+            httpUrl: EnvironmentEndpoints.LocalHttpPrefix + String(rec.hostPort),
+            wsUrl: EnvironmentEndpoints.LocalWsPrefix + String(rec.hostPort),
+            Release: () => undefined,
+        }
+    }
+
+    /** A Docker record's Owner password from its local bundle (`bundleDir`, else `<dataRoot>/<name>`). */
+    public static async LocalAdminPasswordOf(rec: EnvironmentRecord, dataRoot: string): Promise<string>
+    {
+        const bundleDir = rec.bundleDir ?? join(dataRoot, rec.name)
+        const text = await readFile(join(bundleDir, EnvServerSeedSource.SecretsFile), EnvironmentEndpoints.Utf8)
+        return EnvironmentEndpoints.SecretOf(EnvironmentEndpoints.ParseObject(text), EnvironmentEndpoints.AdminRefOf(rec))
     }
 
     /** A record with a host port is a Docker environment on this host. */
@@ -112,7 +130,7 @@ export class EnvironmentEndpoints
     private Forward(kubectl: IPortForwardingKubectl, rec: EnvironmentRecord): ReturnType<IPortForwardingKubectl['PortForward']>
     {
         const target = EnvironmentEndpoints.ServicePrefix + K8sManifestBuilder.ServerDeploymentOf(rec.name)
-        return kubectl.PortForward(K8sManifestBuilder.NamespaceOf(rec.name), target, EnvironmentWorkloadFactory.ServerPort, this.tunnels.Spawner)
+        return kubectl.PortForward(K8sManifestBuilder.NamespaceOf(rec.name), target, EnvironmentWorkloadFactory.ServerPort, this.spawner)
     }
 
     private Reach(rec: EnvironmentRecord): { hive: HiveRecord; kubectl: IKubectl }
@@ -122,9 +140,10 @@ export class EnvironmentEndpoints
         {
             throw new EnvironmentUnreachableError()
         }
+        let kubectl: IKubectl | undefined
         try
         {
-            return { hive, kubectl: this.orchestrators.For(hive).Kubectl }
+            kubectl = this.orchestrators.For(hive).Kubectl
         }
         catch (err)
         {
@@ -134,6 +153,16 @@ export class EnvironmentEndpoints
             }
             throw err
         }
+        if (kubectl === undefined || kubectl === null)
+        {
+            throw new EnvironmentUnreachableError()
+        }
+        return { hive, kubectl }
+    }
+
+    private static AdminRefOf(rec: EnvironmentRecord): string
+    {
+        return rec.environmentId + BundleBuilder.AdminSecretSuffix
     }
 
     /** The decoded provisioned-secrets file text from a `kubectl get secret -o json` document. */

@@ -70,9 +70,11 @@ export class PortForwardError extends Error
 /** Real IProcessSpawner: node spawn with an argument array (never a shell); stdout piped, stdin and stderr discarded. */
 export class NodeProcessSpawner implements IProcessSpawner
 {
+    private static readonly PortForwardStdio: ['ignore', 'pipe', 'ignore'] = ['ignore', 'pipe', 'ignore']
+
     public Spawn(file: string, args: readonly string[]): ISpawnedProcess
     {
-        return new NodeSpawnedProcess(spawn(file, [...args], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }))
+        return new NodeSpawnedProcess(spawn(file, [...args], { stdio: NodeProcessSpawner.PortForwardStdio, windowsHide: true }))
     }
 }
 
@@ -88,7 +90,8 @@ export class NodeSpawnedProcess implements ISpawnedProcess
     public constructor(private readonly child: ChildProcess)
     {
         child.once(NodeSpawnedProcess.ExitEvent, () => this.MarkExited())
-        child.once(NodeSpawnedProcess.ErrorEvent, () => this.MarkExited())
+        // on, not once: a second 'error' (e.g. a failed kill) must not go unhandled and crash the process.
+        child.on(NodeSpawnedProcess.ErrorEvent, () => this.MarkExited())
     }
 
     public get Stdout(): NodeJS.ReadableStream
@@ -307,9 +310,9 @@ export class KubectlCli implements IPortForwardingKubectl
     }
 
     /** Whether a kubectl can open port-forwards (it carries a context the platform can tunnel through). */
-    public static CanPortForward(kubectl: IKubectl): kubectl is IPortForwardingKubectl
+    public static CanPortForward(kubectl: IKubectl | undefined): kubectl is IPortForwardingKubectl
     {
-        return typeof (kubectl as Partial<IPortForwardingKubectl>).PortForward === 'function'
+        return kubectl !== undefined && kubectl !== null && typeof (kubectl as Partial<IPortForwardingKubectl>).PortForward === 'function'
     }
 
     /**
