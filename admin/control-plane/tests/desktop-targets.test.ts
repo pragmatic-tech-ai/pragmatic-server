@@ -4,7 +4,7 @@ import type { IEnvironmentService } from '../control-plane-host.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import type { HiveRecord, TenantRecord } from '../platform-records.js'
 import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
-import { DesktopAction, DesktopTargets, type DesktopCapabilitiesSource } from '../tenant-auth/desktop-targets.js'
+import { DesktopAction, DesktopTargets, DesktopTargetVerdict, type DesktopCapabilitiesSource } from '../tenant-auth/desktop-targets.js'
 import { TenantSessionKind, type TenantSession } from '../tenant-auth/tenant-session.js'
 
 /** Only ListReconciled is read by DesktopTargets. */
@@ -101,6 +101,21 @@ describe('DesktopTargets', () =>
         assert.equal(await targets.Allows(session, TargetKit.ForeignDev, DesktopAction.Contribute), undefined)
         assert.equal(await targets.Allows(session, TargetKit.ForeignRun, DesktopAction.Publish), undefined)
         assert.equal(await targets.Allows(session, 'missing', DesktopAction.Contribute), undefined)
+    })
+
+    it('Check tells a stopped eligible env (NotRunning) apart from one the session may not act on (Forbidden)', async () =>
+    {
+        const targets = TargetKit.Targets()
+        const session = TargetKit.Session()
+        const allowed = await targets.Check(session, TargetKit.Dev, DesktopAction.Contribute)
+        assert.equal(allowed.verdict, DesktopTargetVerdict.Allowed)
+        assert.equal(allowed.record?.name, TargetKit.Dev)
+        assert.deepEqual(await targets.Check(session, TargetKit.DevStopped, DesktopAction.Contribute), { verdict: DesktopTargetVerdict.NotRunning })
+        assert.deepEqual(await targets.Check(session, TargetKit.Run, DesktopAction.Contribute), { verdict: DesktopTargetVerdict.Forbidden })
+        assert.deepEqual(await targets.Check(session, TargetKit.ForeignDev, DesktopAction.Contribute), { verdict: DesktopTargetVerdict.Forbidden })
+        assert.deepEqual(await targets.Check(session, 'missing', DesktopAction.Contribute), { verdict: DesktopTargetVerdict.Forbidden })
+        const noEnvs: DesktopCapabilitiesSource = () => ({ roleLabel: 'Viewer', capabilities: { envs: false, adopt: false, access: false, settings: false } })
+        assert.deepEqual(await TargetKit.Targets(noEnvs).Check(session, TargetKit.DevStopped, DesktopAction.Contribute), { verdict: DesktopTargetVerdict.Forbidden })
     })
 
     it('a role without the environments capability is offered nothing and allowed nothing', async () =>

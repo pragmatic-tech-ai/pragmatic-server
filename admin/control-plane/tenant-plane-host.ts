@@ -9,6 +9,7 @@ import { EnvironmentChangeKind } from './environment-record.js'
 import { PlaneHttp } from './plane-http.js'
 import type { TenantAuthEndpoint } from './tenant-auth/tenant-auth-endpoint.js'
 import { DesktopEndpoint } from './tenant-auth/desktop-endpoint.js'
+import { DesktopRelay } from './tenant-auth/desktop-relay.js'
 import type { TenantAuthGate } from './tenant-auth/tenant-auth-gate.js'
 import type { ITenantApiEndpoint, TenantPlane } from './tenant-auth/tenant-plane.js'
 import type { TenantHostResolver } from './tenant-auth/tenant-host-resolver.js'
@@ -53,6 +54,7 @@ export class TenantPlaneHost
     private readonly api: ITenantApiEndpoint
     private readonly events: TenantEventBus
     private readonly desktop: DesktopEndpoint | undefined
+    private readonly relay: DesktopRelay | undefined
     private readonly tenantStaticRootAbs: string
     private readonly changeSubscription: () => void
     private httpServer: HttpServer | undefined
@@ -72,9 +74,14 @@ export class TenantPlaneHost
         this.api = plane.api
         this.events = plane.events
         this.desktop = plane.desktop
+        this.relay = plane.relay
         this.tenantStaticRootAbs = resolve(tenantStaticRoot)
         // A password change (self-service or an Owner reset) closes the principal's sockets on this listener.
         plane.principals?.Attach(this)
+        if (this.relay !== undefined)
+        {
+            plane.principals?.Attach(this.relay)
+        }
         // RULING 5: route every environment lifecycle change to the tenant bus, scoped by the env's owning tenant.
         // An unbound env (no tenantId) has no tenant audience, so it is skipped.
         this.changeSubscription = this.service.OnChanged(change =>
@@ -136,6 +143,7 @@ export class TenantPlaneHost
             ws.terminate()
         }
         this.clients.clear()
+        this.relay?.Close()
         const wss = this.wsServer
         const server = this.httpServer
         this.wsServer = undefined
@@ -249,9 +257,10 @@ export class TenantPlaneHost
     }
 
     /**
-     * Dispatches a ws upgrade. Only `/tenant-api/events` and the tenant logs-stream pattern are served; any other
-     * path destroys the socket. Each is gated by the request host (a known tenant subdomain), the tenant origin,
-     * and a resolved `pts_session` principal; any failure destroys the socket.
+     * Dispatches a ws upgrade. The desktop relay (`/desktop/relay`, answered by DesktopRelay with its own HTTP refusals),
+     * `/tenant-api/events` and the tenant logs-stream pattern are served; any other path destroys the socket. The tenant
+     * routes are each gated by the request host (a known tenant subdomain), the tenant origin, and a resolved
+     * `pts_session` principal; any failure destroys the socket.
      */
     private RouteUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, wss: WebSocketServer): void
     {
@@ -259,6 +268,17 @@ export class TenantPlaneHost
         if (path === undefined)
         {
             socket.destroy()
+            return
+        }
+        // Host-independent like the rest of `/desktop/*`: the relay takes its tenant only from the desktop bearer.
+        if (path === DesktopRelay.Path)
+        {
+            if (this.relay === undefined)
+            {
+                socket.destroy()
+                return
+            }
+            this.relay.Upgrade(req, socket, head).catch(() => socket.destroy())
             return
         }
         if (path === TenantPlaneHost.TenantEventsPath)

@@ -28,6 +28,8 @@ import { DesktopAuthGate } from '../tenant-auth/desktop-auth-gate.js'
 import { DesktopEndpoint } from '../tenant-auth/desktop-endpoint.js'
 import { DesktopSignInFlows } from '../tenant-auth/desktop-sign-in-flows.js'
 import { DesktopTargets } from '../tenant-auth/desktop-targets.js'
+import type { DesktopRelay } from '../tenant-auth/desktop-relay.js'
+import type { Duplex } from 'node:stream'
 
 type Reply = { status: number; body: string }
 
@@ -699,6 +701,34 @@ describe('TenantPlaneHost health monitor lifecycle', () =>
     })
 })
 
+/** Stands in for DesktopRelay on the host: records the upgrade target and answers 418 so the route is observable. */
+class StubRelay
+{
+    private static readonly Teapot = ['HTTP/1.1 418 Teapot', 'Connection: close', 'Content-Length: 0', '', ''].join(String.fromCharCode(13, 10))
+    public readonly urls: string[] = []
+    public closed = 0
+
+    public async Upgrade(req: IncomingMessage, socket: Duplex): Promise<void>
+    {
+        this.urls.push(String(req.url))
+        socket.end(StubRelay.Teapot)
+    }
+
+    public Close(): void
+    {
+        this.closed++
+    }
+
+    public ClosePrincipal(): number
+    {
+        return 0
+    }
+
+    public MoveSession(): void
+    {
+    }
+}
+
 /** Builds a tenant plane with (or without) the desktop endpoint and runs a body against a listening host. */
 class DesktopHostKit
 {
@@ -767,6 +797,42 @@ describe('TenantPlaneHost desktop surface', () =>
             const signedOut = await Kit.Raw(host, HttpMethod.Get, DesktopHostKit.TargetsPath, { [Kit.HostHeader]: DesktopHostKit.LoopbackHost })
             assert.equal(signedOut.status, 401)
             assert.deepEqual(JSON.parse(signedOut.body), { error: 'signed-out' })
+        })
+    })
+
+    it('routes the /desktop/relay upgrade to the plane relay on any Host, and closes it with the host', async () =>
+    {
+        const relay = new StubRelay()
+        const plane = kit.Plane(true)
+        plane.relay = relay as unknown as DesktopRelay
+        await kit.WithHost(plane, async host =>
+        {
+            const { port } = host.Address()
+            const status = await new Promise<number>(res =>
+            {
+                const ws = new WebSocket('ws://127.0.0.1:' + String(port) + '/desktop/relay?environment=acme-dev&action=contribute', { headers: { Host: DesktopHostKit.LoopbackHost } })
+                ws.once('unexpected-response', (_req, response) => { res(response.statusCode ?? 0); ws.terminate() })
+                ws.once('error', () => res(-1))
+            })
+            assert.equal(status, 418)
+            assert.deepEqual(relay.urls, ['/desktop/relay?environment=acme-dev&action=contribute'])
+        })
+        assert.equal(relay.closed, 1)
+    })
+
+    it('destroys a /desktop/relay upgrade when the plane has no relay', async () =>
+    {
+        await kit.WithHost(kit.Plane(true), async host =>
+        {
+            const { port } = host.Address()
+            const outcome = await new Promise<string>(res =>
+            {
+                const ws = new WebSocket('ws://127.0.0.1:' + String(port) + '/desktop/relay?environment=acme-dev&action=contribute')
+                ws.once('open', () => { res('open'); ws.terminate() })
+                ws.once('unexpected-response', () => { res('response'); ws.terminate() })
+                ws.once('error', () => res('error'))
+            })
+            assert.equal(outcome, 'error')
         })
     })
 

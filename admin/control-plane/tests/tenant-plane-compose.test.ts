@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ControlPlaneServer } from '../server.js'
 import { TenantAdminClientRegistry } from '../tenant-auth/tenant-admin-client-record.js'
+import { DesktopRelay } from '../tenant-auth/desktop-relay.js'
 
 describe('ControlPlaneServer.ExternalPortWarning', () =>
 {
@@ -176,6 +177,25 @@ describe('ControlPlaneServer.ComposeTenantPlane', () =>
             const registry = new TenantAdminClientRegistry(join(dir, 'tenant-admin-clients.json'))
             const standalone = ControlPlaneServer.BuildTenantPlane(dir, stub, stub, false, stub, stub, stub, stub, randomBytes(32), registry, 168)
             assert.equal(standalone.desktop, undefined)
+        }
+        finally
+        {
+            rmSync(dir, { recursive: true, force: true })
+        }
+    })
+
+    it('mounts the desktop relay only when the relay wiring is supplied', () =>
+    {
+        const env = { PRAGMATIC_TENANT_ADMIN_PORT: Port, PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN: BaseDomain } as NodeJS.ProcessEnv
+        assert.equal(compose(env)?.relay, undefined)
+        const dir = mkdtempSync(join(tmpdir(), 'tenant-plane-compose-'))
+        try
+        {
+            const registry = new TenantAdminClientRegistry(join(dir, 'tenant-admin-clients.json'))
+            const wired = ControlPlaneServer.ComposeTenantPlane(env, dir, stub, stub, false, stub, stub, stub, stub, randomBytes(32), registry, 168,
+                undefined, undefined, { endpoints: stub, audit: stub })
+            assert.ok(wired?.relay instanceof DesktopRelay)
+            assert.equal(ControlPlaneServer.DesktopAuditFile, 'tenant-desktop-audit.json')
         }
         finally
         {

@@ -12,6 +12,17 @@ export enum DesktopAction
     Publish = 'publish',
 }
 
+/** The outcome of `DesktopTargets.Check`: allowed now, not allowed at all, or allowed but the env is not running. */
+export enum DesktopTargetVerdict
+{
+    Allowed = 'allowed',
+    Forbidden = 'forbidden',
+    NotRunning = 'not-running',
+}
+
+/** A Check result; `record` is set only when Allowed. */
+export type DesktopTargetCheck = { verdict: DesktopTargetVerdict; record?: EnvironmentRecord }
+
 /** One pickable environment: only what the desktop pickers show. */
 export type DesktopTargetDto = { name: string; status: EnvStatus }
 
@@ -21,10 +32,10 @@ export type DesktopTargetsDto = { contribute: DesktopTargetDto[]; publish: Deskt
 export type DesktopCapabilitiesSource = (session: TenantSession, tenant: TenantRecord | undefined) => AdminRoleCapabilities
 
 /**
- * The environments a desktop session may act on. Offered == allowed: `For` (the pickers) and `Allows` (the action, used
+ * The environments a desktop session may act on. Offered == allowed: `For` (the pickers) and `Allows` / `Check` (the action, used
  * by the relay) apply one rule, `IsEligible`: the session holds the environments capability (from the same source the
  * profile reports, computed once per call), the env belongs to the session's tenant, and its type is the action's
- * (Development for contribute, Runtime for publish). `Allows` additionally requires the env to be running.
+ * (Development for contribute, Runtime for publish). `Allows` / `Check` additionally require the env to be running.
  */
 export class DesktopTargets
 {
@@ -48,13 +59,28 @@ export class DesktopTargets
     /** The session's env `envName` when it may run `action` on it now; undefined otherwise (unknown, foreign, wrong type, not running, no capability). */
     public async Allows(session: TenantSession, envName: string, action: DesktopAction): Promise<EnvironmentRecord | undefined>
     {
+        const check = await this.Check(session, envName, action)
+        return check.verdict === DesktopTargetVerdict.Allowed ? check.record : undefined
+    }
+
+    /**
+     * Why the session may or may not run `action` on `envName` now, for callers that answer each case differently (the
+     * relay: 403 vs 409). Forbidden covers unknown, foreign, wrong-type and no-capability alike, so it is no existence
+     * oracle; NotRunning is only reported for an env the session could otherwise act on.
+     */
+    public async Check(session: TenantSession, envName: string, action: DesktopAction): Promise<DesktopTargetCheck>
+    {
         const mayActOnEnvs = this.MayActOnEnvs(session)
         const record = (await this.service.ListReconciled()).find(r => r.name === envName)
-        if (record === undefined || !DesktopTargets.IsEligible(session, mayActOnEnvs, record, action) || record.status !== EnvStatus.Running)
+        if (record === undefined || !DesktopTargets.IsEligible(session, mayActOnEnvs, record, action))
         {
-            return undefined
+            return { verdict: DesktopTargetVerdict.Forbidden }
         }
-        return record
+        if (record.status !== EnvStatus.Running)
+        {
+            return { verdict: DesktopTargetVerdict.NotRunning }
+        }
+        return { verdict: DesktopTargetVerdict.Allowed, record }
     }
 
     private MayActOnEnvs(session: TenantSession): boolean

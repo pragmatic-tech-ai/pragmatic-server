@@ -71,6 +71,7 @@ import { IdpPasswordClient } from './tenant-auth/idp-password-client.js'
 import { TenantAuthGate } from './tenant-auth/tenant-auth-gate.js'
 import { DesktopAuthGate } from './tenant-auth/desktop-auth-gate.js'
 import { DesktopEndpoint } from './tenant-auth/desktop-endpoint.js'
+import { DesktopRelay, WsUpstreamDialer } from './tenant-auth/desktop-relay.js'
 import { DesktopSignInFlows } from './tenant-auth/desktop-sign-in-flows.js'
 import { DesktopTargets } from './tenant-auth/desktop-targets.js'
 import { TenantHostResolver } from './tenant-auth/tenant-host-resolver.js'
@@ -84,6 +85,9 @@ import type { TenantPlane } from './tenant-auth/tenant-plane.js'
 import type { IEnvironmentService } from './control-plane-host.js'
 import type { ITenantDirectory } from './tenant-api/tenant-directory.js'
 import type { IRolloutClient } from './tenant-api/rollout-client.js'
+
+/** What the desktop relay needs beyond the tenant plane: how environments are reached, and where relays are audited. */
+export type DesktopRelayWiring = { endpoints: EnvironmentEndpoints; audit: AuditRegistry }
 
 export class ControlPlaneServer
 {
@@ -112,6 +116,8 @@ export class ControlPlaneServer
     private static readonly HivesFile = 'hives.json'
     private static readonly ManifestsFile = 'manifests.json'
     private static readonly AuditFile = 'audit.json'
+    /** The tenant plane's own audit of desktop relays (who contributed / published what, and refusals). */
+    public static readonly DesktopAuditFile = 'tenant-desktop-audit.json'
     private static readonly GatingFile = 'gating.json'
     private static readonly SelectionsFile = 'selections.json'
     private static readonly HiveObservationsFile = 'hive-observations.json'
@@ -217,6 +223,7 @@ export class ControlPlaneServer
         const staticRoot = join(here, ControlPlaneServer.ParentSegment, ControlPlaneServer.PortalSegment, ControlPlaneServer.DistSegment)
         const manifests = new ManifestRegistry(join(dataRoot, ControlPlaneServer.ManifestsFile))
         const audit = new AuditRegistry(join(dataRoot, ControlPlaneServer.AuditFile))
+        const desktopAudit = new AuditRegistry(join(dataRoot, ControlPlaneServer.DesktopAuditFile))
         const gating = new GatingRegistry(join(dataRoot, ControlPlaneServer.GatingFile))
         const selections = new SelectionRegistry(join(dataRoot, ControlPlaneServer.SelectionsFile))
         const observations = new HiveObservationRegistry(join(dataRoot, ControlPlaneServer.HiveObservationsFile))
@@ -225,7 +232,7 @@ export class ControlPlaneServer
         const ledger = new AdoptionLedgerRegistry(join(dataRoot, ControlPlaneServer.AdoptionLedgerFile))
         const adminClientRegistry = new TenantAdminClientRegistry(join(dataRoot, ControlPlaneServer.TenantAdminClientsFile))
         const accountIndex = new TenantAccountIndex(join(dataRoot, ControlPlaneServer.TenantAccountsFile))
-        await Promise.all([manifests.Load(), audit.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load(), policies.Load(), ledger.Load(), adminClientRegistry.Load(), accountIndex.Load()])
+        await Promise.all([manifests.Load(), audit.Load(), desktopAudit.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load(), policies.Load(), ledger.Load(), adminClientRegistry.Load(), accountIndex.Load()])
         await accountIndex.BackfillFrom(directory)
         const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, placement, observations, ControlPlaneServer.ManifestSignerOf(signing.PlatformSigner.KeyRef, dataRoot, signing.ImageSigner), policies, ledger)
         // One tenant session store for the tenant plane and the Owner password reset (which ends the Owner's sessions).
@@ -246,7 +253,8 @@ export class ControlPlaneServer
         const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations, new LoginThrottle(), opts.trustedProxy, undefined, undefined, undefined, opts.allowedHosts, new OperatorAuthorization(), audit, new AuditThrottle(), idpService, agentChannelUrl, agentInstaller, new HiveAgentUninstaller(orchestrators), discovery)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
         const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie, service, new InProcessRolloutClient(deployments), orchestrators, placement,
-            masterKey, adminClientRegistry, ControlPlaneServer.ParseSecretTtlHours(process.env[ControlPlaneServer.SecretTtlEnvVar]), tenantSessions, principalSessions)
+            masterKey, adminClientRegistry, ControlPlaneServer.ParseSecretTtlHours(process.env[ControlPlaneServer.SecretTtlEnvVar]), tenantSessions, principalSessions,
+            { endpoints, audit: desktopAudit })
         // Resolve (and validate) the tenant port + bind BEFORE binding the operator listener, so a misconfigured
         // tenant port fails fast at startup rather than after the operator socket is already live.
         let tenantStart: { host: TenantPlaneHost; port: number; bind: string; scheme: string; baseDomain: string } | undefined
@@ -342,7 +350,8 @@ export class ControlPlaneServer
         adminClientRegistry: TenantAdminClientRegistry,
         secretTtlHours: number,
         sessions?: TenantSessionStore,
-        principals?: TenantPrincipalSessions): TenantPlane | undefined
+        principals?: TenantPrincipalSessions,
+        relay?: DesktopRelayWiring): TenantPlane | undefined
     {
         const port = env[ControlPlaneServer.TenantPortEnvVar]
         const baseDomain = env[ControlPlaneServer.TenantBaseDomainEnvVar]
@@ -352,13 +361,14 @@ export class ControlPlaneServer
         }
         // The control plane's tenant plane is the one Plexus talks to, so it carries the desktop surface.
         return ControlPlaneServer.BuildTenantPlane(dataRoot, idpService, directory, secureCookie, service, rollout, orchestrators, placement,
-            masterKey, adminClientRegistry, secretTtlHours, sessions, principals, ControlPlaneServer.ReadsTrue(env[TenantAdminEnv.TrustedProxy]), true)
+            masterKey, adminClientRegistry, secretTtlHours, sessions, principals, ControlPlaneServer.ReadsTrue(env[TenantAdminEnv.TrustedProxy]), true, relay)
     }
 
     /**
      * Gate-free composition of the tenant plane; callers decide whether the plane is active (ComposeTenantPlane gates on env,
      * the standalone server always builds it). `withDesktop` mounts the Plexus `/desktop/*` surface; it is off by default,
-     * so the in-hive tenant console does not serve it (that is a later follow-up).
+     * so the in-hive tenant console does not serve it (that is a later follow-up). The desktop relay is mounted with it when
+     * `relay` supplies how environments are reached and where relays are audited.
      */
     public static BuildTenantPlane(
         dataRoot: string,
@@ -375,7 +385,8 @@ export class ControlPlaneServer
         sessions: TenantSessionStore = ControlPlaneServer.TenantSessionsOf(dataRoot),
         principals: TenantPrincipalSessions = new TenantPrincipalSessions(sessions),
         trustedProxy: boolean = false,
-        withDesktop: boolean = false): TenantPlane
+        withDesktop: boolean = false,
+        relay?: DesktopRelayWiring): TenantPlane
     {
         const durability: TenantAdminDurability = {
             storeRoot: join(dataRoot, ControlPlaneServer.TenantAdminOidcDir),
@@ -392,8 +403,14 @@ export class ControlPlaneServer
         const plane: TenantPlane = { endpoint, gate, api, events, isDurable: rp.IsDurable, principals }
         if (withDesktop)
         {
-            plane.desktop = new DesktopEndpoint(rp, sessions, new DesktopAuthGate(sessions), new DesktopSignInFlows(), new DesktopTargets(service, directory), directory,
+            const desktopGate = new DesktopAuthGate(sessions)
+            const targets = new DesktopTargets(service, directory)
+            plane.desktop = new DesktopEndpoint(rp, sessions, desktopGate, new DesktopSignInFlows(), targets, directory,
                 session => api.Profile(session), new LoginThrottle(), DesktopEndpoint.NewBeginThrottle(), trustedProxy)
+            if (relay !== undefined)
+            {
+                plane.relay = new DesktopRelay(desktopGate, targets, service, relay.endpoints, relay.audit, new WsUpstreamDialer(), new AuditThrottle(), trustedProxy)
+            }
         }
         return plane
     }
