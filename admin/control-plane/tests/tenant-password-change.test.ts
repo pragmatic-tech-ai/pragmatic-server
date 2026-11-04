@@ -82,8 +82,11 @@ class FakeConnector implements ITenantIdpConnector
 class FakeIdpClient implements IIdpPasswordClient
 {
     public Outcome: IdpPasswordOutcome = { Result: IdpPasswordResult.Changed }
-    public DelayMs = 0
     public readonly Calls: ClientCall[] = []
+    /** Resolves once a held change has entered the client (see Hold). */
+    public Entered: Promise<void> = Promise.resolve()
+    private held: Promise<void> | undefined
+    private enter: (() => void) | undefined
 
     public LastEndUserIp = ''
 
@@ -91,11 +94,21 @@ class FakeIdpClient implements IIdpPasswordClient
     {
         this.LastEndUserIp = endUserIp
         this.Calls.push({ tenantId, email, current: currentPassword, next: newPassword, baseUrl: conn.baseUrl })
-        if (this.DelayMs > 0)
+        this.enter?.()
+        if (this.held !== undefined)
         {
-            await new Promise(res => setTimeout(res, this.DelayMs))
+            await this.held
         }
         return this.Outcome
+    }
+
+    /** Holds the next change inside the client until the returned release runs; Entered resolves when it gets there. */
+    public Hold(): () => void
+    {
+        let release: () => void = () => undefined
+        this.held = new Promise<void>(res => { release = res })
+        this.Entered = new Promise<void>(res => { this.enter = res })
+        return release
     }
 }
 
@@ -184,16 +197,31 @@ class PwKit
         return ws
     }
 
-    public static async ClosedSoon(ws: WebSocket): Promise<boolean>
+    /** Resolves true once the socket has closed (no time window: a socket that never closes fails the test by its timeout). */
+    public static async Closed(ws: WebSocket): Promise<boolean>
     {
         if (ws.readyState === WebSocket.CLOSED)
         {
             return true
         }
+        return await new Promise<boolean>(res => ws.once('close', () => res(true)))
+    }
+
+    /**
+     * Whether the socket is still open on the server: a ping round trip. Anything the server did to the socket before this
+     * call (a terminate) reaches the client before the pong could, so a closed socket answers false, with no sleep.
+     */
+    public static async StillOpen(ws: WebSocket): Promise<boolean>
+    {
+        if (ws.readyState !== WebSocket.OPEN)
+        {
+            return false
+        }
         return await new Promise<boolean>(res =>
         {
-            const timer = setTimeout(() => res(false), 500)
-            ws.once('close', () => { clearTimeout(timer); res(true) })
+            ws.once('pong', () => res(ws.readyState === WebSocket.OPEN))
+            ws.once('close', () => res(false))
+            ws.ping()
         })
     }
 }
@@ -268,10 +296,9 @@ describe('Tenant self-service password change (POST /tenant-auth/password)', () 
         assert.equal((await store.Validate(fresh))?.email, PwKit.OwnerEmail)
         assert.equal(await store.Validate(elsewhere.id), null)
         assert.notEqual(await store.Validate(colleague.id), null)
-        assert.equal(await PwKit.ClosedSoon(elsewhereSocket), true)
-        await new Promise(res => setTimeout(res, 100))
-        assert.equal(mySocket.readyState, WebSocket.OPEN, 'the caller socket moved to the fresh session')
-        assert.equal(colleagueSocket.readyState, WebSocket.OPEN)
+        assert.equal(await PwKit.Closed(elsewhereSocket), true)
+        assert.equal(await PwKit.StillOpen(mySocket), true, 'the caller socket moved to the fresh session')
+        assert.equal(await PwKit.StillOpen(colleagueSocket), true)
         // The moved socket now belongs to the fresh session: ending that one closes it.
         assert.equal(host.ClosePrincipal(PwKit.TenantId, PwKit.Owner, fresh), 0)
         assert.equal(host.ClosePrincipal(PwKit.TenantId, PwKit.Owner), 1)
@@ -349,11 +376,12 @@ describe('Tenant self-service password change (POST /tenant-auth/password)', () 
     it('a second change while one is running is a 409; the first completes', async () =>
     {
         await Start()
-        client.DelayMs = 200
+        const release = client.Hold()
         const mine = await store.Issue(PwKit.TenantId, PwKit.Owner, PwKit.OwnerEmail)
         const first = PwKit.Change(host, mine.id)
-        await new Promise(res => setTimeout(res, 50))
+        await client.Entered
         const second = await PwKit.Change(host, mine.id, PwKit.Current, 'another-new-password')
+        release()
         assert.equal(second.status, 409)
         assert.equal((JSON.parse(second.body) as { error: string }).error, 'A password change for this account is already running.')
         const r = await first
@@ -367,7 +395,7 @@ describe('Tenant self-service password change (POST /tenant-auth/password)', () 
         await Start(undefined, new EndedAfterAdmissionGate(store))
         const mine = await store.Issue(PwKit.TenantId, PwKit.Owner, PwKit.OwnerEmail)
         const socket = await PwKit.OpenEvents(host, mine.id)
-        assert.equal(await PwKit.ClosedSoon(socket), true)
+        assert.equal(await PwKit.Closed(socket), true)
     })
 
     it('a rotation whose write fails changes nothing: the caller keeps its session, no socket closes, the warning is truthful', async () =>
@@ -389,9 +417,8 @@ describe('Tenant self-service password change (POST /tenant-auth/password)', () 
         assert.equal((r.setCookie ?? []).some(c => c.startsWith(TenantSessionCookie.Name + '=')), false)
         assert.notEqual(await store.Validate(mine.id), null)
         assert.notEqual(await store.Validate(elsewhere.id), null)
-        await new Promise(res => setTimeout(res, 100))
-        assert.equal(mySocket.readyState, WebSocket.OPEN)
-        assert.equal(elsewhereSocket.readyState, WebSocket.OPEN)
+        assert.equal(await PwKit.StillOpen(mySocket), true)
+        assert.equal(await PwKit.StillOpen(elsewhereSocket), true)
         mySocket.close()
         elsewhereSocket.close()
         rmSync(sub, { force: true })
