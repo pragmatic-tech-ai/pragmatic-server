@@ -762,7 +762,7 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         return true
     }
 
-    /** POST maker-token (201 + the once-only token DTO) and POST app-reader-grant (200 { ok }, no secret) on the tenant's own environment. */
+    /** POST maker-token (201 + the once-only token DTO) and POST app-reader-grant (200 { ok }, no secret) on the tenant's own environment. Both routes require the envs capability after the ownership check (403 generic otherwise). */
     private async RouteEnvCredential(res: ServerResponse, m: RegExpExecArray, session: TenantSession): Promise<boolean>
     {
         const rec = this.OwnedEnv(m[1] as string, session)
