@@ -254,7 +254,7 @@ export class ControlPlaneSmoke
         await Promise.all([manifests.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load()])
         const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, placement, observations)
         this.service = service
-        const host = new ControlPlaneHost(service, new GraphService(registry, proxy, name => service.AdminInfoFor(name)), staticRoot, operator, false, directory, deployments, {} as TenantProvisioningService, observations)
+        const host = new ControlPlaneHost(service, new GraphService(registry, proxy, service), staticRoot, operator, false, directory, deployments, {} as TenantProvisioningService, observations)
         try
         {
             await host.Listen(0, ControlPlaneSmoke.LoopbackHost)

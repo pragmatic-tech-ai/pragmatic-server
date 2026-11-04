@@ -125,7 +125,7 @@ export interface ILoopEnvironments
 {
     Create(name: string, template: Template, type: EnvType, hostPort?: number): Promise<EnvironmentRecord>
     Delete(name: string): Promise<void>
-    AdminInfoFor(name: string): Promise<AdminConnectInfo>
+    WithAdmin<T>(name: string, op: (info: AdminConnectInfo) => Promise<T>): Promise<T>
     AdminIssueMakerToken(name: string): Promise<TokenIssuedDto>
     AdminCreateAccount(name: string, params: CreateAccountParams): Promise<void>
     AdminGrantRole(name: string, mutation: GrantMutationDto): Promise<void>
@@ -339,7 +339,7 @@ export class LoopOrchestrator
         const proxy = new AdminProxy(new WsAdminConnector())
         const idpService = new IdpService(new IdpRegistry(join(dataRoot, LoopOrchestrator.IdpsFile)), new DockerIdpDriver(new PortAllocator(LoopOrchestrator.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), dataRoot, DockerEnv.ImageName))
         const service = new EnvironmentService(registry, allocator, new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(new HiveOrchestratorFactory(), new EnvironmentPlacement(directory), directory, new BundleBuilderAdapter()), directory, new HiveOrchestratorFactory()), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn))
-        const graphs = new GraphService(registry, proxy, name => service.AdminInfoFor(name))
+        const graphs = new GraphService(registry, proxy, service)
         return new LoopOrchestrator(service, graphs, new SeederLoopLogin(), logger, dataRoot, new PgLoopDatabase(service))
     }
 
@@ -365,10 +365,12 @@ export class LoopOrchestrator
         const name = LoopOrchestrator.RuntimeEnvName
         this.logger.Log(LoopOrchestrator.MsgCreatingRuntime)
         const rec = LoopOrchestrator.RequireRunning(await this.envs.Create(name, Template.RuntimePostgres, EnvType.Runtime))
-        // AdminInfoFor reads the env's provisioned-secrets.json (`<tenant>-admin-pw`) into connect info.
-        const info = await this.envs.AdminInfoFor(name)
-        this.secrets.add(info.password)
-        const deployToken = await this.login.Login(info.httpUrl, rec.environmentId, info.email, info.password)
+        // WithAdmin reads the env's provisioned Owner password (`<tenant>-admin-pw`) into connect info for the login.
+        const deployToken = await this.envs.WithAdmin(name, info =>
+        {
+            this.secrets.add(info.password)
+            return this.login.Login(info.httpUrl, rec.environmentId, info.email, info.password)
+        })
         this.secrets.add(deployToken)
         this.logger.Log(LoopOrchestrator.MsgProvisioning)
         const reader = await this.Provision(name, LoopOrchestrator.ReaderPrincipal, LoopOrchestrator.ReaderEmail, true)

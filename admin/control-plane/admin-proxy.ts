@@ -3,6 +3,12 @@ import type { AccountDto, AdminAckDto, CreateAccountParams, GraphCreateParamsDto
 import { UserSeeder } from '../../environments/seed/users.js'
 
 export type AdminConnectInfo = { httpUrl: string; wsUrl: string; tenant: string; email: string; password: string }
+/** Runs admin calls against an environment as its Owner, holding whatever keeps it reachable (a cluster tunnel) until the call settles. */
+export interface IAdminAccess
+{
+    WithAdmin<T>(name: string, op: (info: AdminConnectInfo) => Promise<T>): Promise<T>
+}
+
 export type AdminSnapshot = { accounts: AccountDto[]; grants: GrantDto[]; config: IdentityConfigDto }
 
 export enum AdminProxyErrorKind

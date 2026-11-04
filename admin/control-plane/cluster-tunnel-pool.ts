@@ -73,8 +73,10 @@ export class ClusterTunnelPool
         if (entry === undefined)
         {
             const created: TunnelEntry = { opening: Promise.resolve(0), leases: 0, closed: false }
-            created.opening = this.Open(key, created, open)
+            // Mapped BEFORE Open runs: an opener that throws synchronously drops the entry inside Open, and that drop
+            // must find it in the map, or the rejected entry would stay cached and fail every later Acquire.
             this.entries.set(key, created)
+            created.opening = this.Open(key, created, open)
             entry = created
         }
         entry.leases++

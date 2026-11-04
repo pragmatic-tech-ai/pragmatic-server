@@ -51,9 +51,9 @@ class FakeEnvs implements ILoopEnvironments
         this.deleted.push(name)
     }
 
-    public async AdminInfoFor(_name: string): Promise<AdminConnectInfo>
+    public async WithAdmin<T>(_name: string, op: (info: AdminConnectInfo) => Promise<T>): Promise<T>
     {
-        return { httpUrl: 'http://localhost:8102', wsUrl: 'ws://localhost:8102', tenant: 'contoso', email: 'admin@contoso.test', password: Fixture.AdminPw }
+        return op({ httpUrl: 'http://localhost:8102', wsUrl: 'ws://localhost:8102', tenant: 'contoso', email: 'admin@contoso.test', password: Fixture.AdminPw })
     }
 
     public async AdminIssueMakerToken(_name: string): Promise<TokenIssuedDto>

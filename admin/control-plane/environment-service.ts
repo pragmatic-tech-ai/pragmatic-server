@@ -9,7 +9,7 @@ import { EnvStatus, EnvType, EnvironmentChangeKind, type Template, type Environm
 import type { EnvironmentRegistry } from './environment-registry.js'
 import type { PortAllocator } from './port-allocator.js'
 import { TemplateCatalog } from './template-catalog.js'
-import type { AdminConnectInfo, AdminSnapshot, IAdminProxy } from './admin-proxy.js'
+import type { AdminConnectInfo, AdminSnapshot, IAdminAccess, IAdminProxy } from './admin-proxy.js'
 import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto, ServiceTokenSummaryDto, IssueTokenParams } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ITenantDirectory } from './tenant-api/tenant-directory.js'
 import { UnknownHiveError } from './rollout-errors.js'
@@ -143,7 +143,7 @@ export class CreateFailedError extends Error
 }
 
 /** Orchestrates environment lifecycle over the SP-ENV blocks via fakeable seams. */
-export class EnvironmentService
+export class EnvironmentService implements IAdminAccess
 {
     private static readonly HttpsPrefix = 'https://'
     private static readonly HttpPrefix = 'http://localhost:'
@@ -650,19 +650,10 @@ export class EnvironmentService
     }
 
     /**
-     * Resolves the environment's stored Owner credential into connect info for the admin proxy, for callers outside this
-     * service. The tunnel lease is given back at once: an in-cluster tunnel then stays open for the pool's idle window,
-     * ample for the short admin call the caller makes next. In-service admin calls hold their lease (WithAdmin) instead.
+     * Runs admin calls against the environment as its Owner, holding its tunnel lease until `op` settles, so a long call
+     * (a graph promotion) can never have an in-cluster tunnel idle out under it. The only way out to connect info.
      */
-    public async AdminInfoFor(name: string): Promise<AdminConnectInfo>
-    {
-        const lease = await this.AdminLeaseFor(name)
-        lease.Release()
-        return lease.info
-    }
-
-    /** Runs one admin call against the environment, holding its tunnel lease until the call settles. */
-    private async WithAdmin<T>(name: string, op: (info: AdminConnectInfo) => Promise<T>): Promise<T>
+    public async WithAdmin<T>(name: string, op: (info: AdminConnectInfo) => Promise<T>): Promise<T>
     {
         const lease = await this.AdminLeaseFor(name)
         try

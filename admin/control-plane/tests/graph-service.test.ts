@@ -71,6 +71,9 @@ class FakeAdminProxy implements IAdminProxy
     public Calls: string[] = []
     public Infos: AdminConnectInfo[] = []
     public Throw: Error | undefined
+    /** When set, sampled at every Track: how many admin leases are held during each proxy call. */
+    public HeldProbe: (() => number) | undefined
+    public HeldAtCalls: number[] = []
     public Detail: GraphDetailDto = { name: Fixture.G1, description: Fixture.Description, packages: [{ id: 'p', version: '1' }, { id: 'q', version: '2' }], createdAt: Fixture.CreatedAt }
     public Export: GraphExportDto = { name: Fixture.G1, packages: [{ id: 'p', version: '1', modelJson: '{"p":1}' }, { id: 'q', version: '2', modelJson: '{"q":2}' }] }
     public Loaded: GraphLoadedDto = { name: Fixture.G1, packages: [{ id: 'p', version: '1' }, { id: 'q', version: '2' }], promotedAt: Fixture.PromotedAt }
@@ -180,6 +183,10 @@ class FakeAdminProxy implements IAdminProxy
     {
         this.Calls.push(call)
         this.Infos.push(info)
+        if (this.HeldProbe)
+        {
+            this.HeldAtCalls.push(this.HeldProbe())
+        }
         if (this.Throw)
         {
             throw this.Throw
@@ -197,11 +204,24 @@ class Harness
     public constructor(type: EnvType = EnvType.Development)
     {
         this.Lookup.Add(Fixture.Record(Fixture.Dev1, type))
-        this.Service = new GraphService(this.Lookup, this.Proxy, async name =>
+        this.Service = new GraphService(this.Lookup, this.Proxy, this)
+    }
+
+    /** IAdminAccess: records which env each admin call ran against and how many stay held. */
+    public Held = 0
+
+    public async WithAdmin<T>(name: string, op: (info: AdminConnectInfo) => Promise<T>): Promise<T>
+    {
+        this.InfoCalls.push(name)
+        this.Held++
+        try
         {
-            this.InfoCalls.push(name)
-            return Fixture.Info
-        })
+            return await op(Fixture.Info)
+        }
+        finally
+        {
+            this.Held--
+        }
     }
 }
 
@@ -332,6 +352,28 @@ test('Promote exports from the dev source and loads the exported packages into t
     assert.deepEqual(h.Proxy.Calls, [`export:${Fixture.G1}`, `load:${Fixture.G1}:2`])
     assert.deepEqual(h.InfoCalls, [Fixture.Dev1, Fixture.Rt1])
     assert.deepEqual(result, { graphName: Fixture.G1, packageCount: 2, targetEnv: Fixture.Rt1 })
+})
+
+test('every graph call holds its environment lease for the proxy call and releases it after', async () =>
+{
+    const h = new Harness()
+    h.Lookup.Add(Fixture.Record(Fixture.Rt1, EnvType.Runtime))
+    h.Proxy.HeldProbe = () => h.Held
+    await h.Service.List(Fixture.Dev1)
+    await h.Service.Get(Fixture.Dev1, Fixture.G1)
+    await h.Service.Promote(Fixture.Dev1, Fixture.G1, Fixture.Rt1)
+    await h.Service.GetLoaded(Fixture.Rt1)
+    // List, Get: one lease each; Promote's export AND load both run with source and target leased; GetLoaded: one.
+    assert.deepEqual(h.Proxy.HeldAtCalls, [1, 1, 2, 2, 1])
+    assert.equal(h.Held, 0)
+})
+
+test('a failing graph call still releases its lease', async () =>
+{
+    const h = new Harness()
+    h.Proxy.Throw = new Error('boom')
+    await assert.rejects(h.Service.List(Fixture.Dev1))
+    assert.equal(h.Held, 0)
 })
 
 test('a container Protocol error from ExportGraph maps via Classify', async () =>

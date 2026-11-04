@@ -1,5 +1,5 @@
 import type { GraphDetailDto, GraphLoadedDto, GraphSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { AdminProxyError, AdminProxyErrorKind, type AdminConnectInfo, type IAdminProxy } from './admin-proxy.js'
+import { AdminProxyError, AdminProxyErrorKind, type IAdminAccess, type IAdminProxy } from './admin-proxy.js'
 import { EnvType, type EnvironmentRecord } from './environment-record.js'
 import { EnvironmentNotDevelopmentError, EnvironmentNotFoundError, EnvironmentNotRuntimeError } from './environment-service.js'
 import type { GraphDto, PromotionResultDto } from './control-plane-host.js'
@@ -55,64 +55,56 @@ export class GraphService
     public constructor(
         private readonly environments: IEnvironmentLookup,
         private readonly proxy: IAdminProxy,
-        private readonly adminInfoFor: (name: string) => Promise<AdminConnectInfo>)
+        private readonly admin: IAdminAccess)
     {
     }
 
     public async Create(envName: string, name: string, description: string): Promise<GraphDto>
     {
-        const info = await this.InfoFor(envName)
-        const summary = await GraphService.Classify(name, () => this.proxy.CreateGraph(info, { graphName: name, description }))
+        this.Require(envName)
+        const summary = await this.admin.WithAdmin(envName, info => GraphService.Classify(name, () => this.proxy.CreateGraph(info, { graphName: name, description })))
         return GraphService.FromSummary(summary)
     }
 
     public async List(envName: string): Promise<GraphDto[]>
     {
-        const info = await this.InfoFor(envName)
-        const summaries = await this.proxy.ListGraphs(info)
+        this.Require(envName)
+        const summaries = await this.admin.WithAdmin(envName, info => this.proxy.ListGraphs(info))
         return summaries.map(s => GraphService.FromSummary(s))
     }
 
     public async Get(envName: string, graphName: string): Promise<GraphDto>
     {
-        const info = await this.InfoFor(envName)
-        const detail = await GraphService.Classify(graphName, () => this.proxy.GetGraph(info, { graphName }))
+        this.Require(envName)
+        const detail = await this.admin.WithAdmin(envName, info => GraphService.Classify(graphName, () => this.proxy.GetGraph(info, { graphName })))
         return GraphService.FromDetail(detail)
     }
 
     public async Delete(envName: string, graphName: string): Promise<void>
     {
-        const info = await this.InfoFor(envName)
-        await GraphService.Classify(graphName, () => this.proxy.DeleteGraph(info, { graphName }))
+        this.Require(envName)
+        await this.admin.WithAdmin(envName, info => GraphService.Classify(graphName, () => this.proxy.DeleteGraph(info, { graphName })))
     }
 
     /** Relays a dev-environment graph into a runtime environment: read the packages out of the source (as its Owner), write them into the target (as its Owner). The two containers never touch. */
     public async Promote(sourceEnv: string, graphName: string, targetEnv: string): Promise<PromotionResultDto>
     {
         // Both env-type gates run before any proxy call, so a wrong type never opens a container connection.
-        const sourceInfo = await this.InfoFor(sourceEnv)
-        const targetInfo = await this.RuntimeInfoFor(targetEnv)
-        const exported = await GraphService.Classify(graphName, () => this.proxy.ExportGraph(sourceInfo, { graphName }))
-        const loaded = await this.proxy.LoadGraph(targetInfo, { graphName, packages: exported.packages })
+        this.Require(sourceEnv)
+        this.RequireRuntime(targetEnv)
+        // Both environments stay leased for the whole relay: a long export/load can never lose its tunnel mid-call.
+        const loaded = await this.admin.WithAdmin(sourceEnv, sourceInfo => this.admin.WithAdmin(targetEnv, async targetInfo =>
+        {
+            const exported = await GraphService.Classify(graphName, () => this.proxy.ExportGraph(sourceInfo, { graphName }))
+            return this.proxy.LoadGraph(targetInfo, { graphName, packages: exported.packages })
+        }))
         return { graphName: loaded.name, packageCount: loaded.packages.length, targetEnv }
     }
 
     public async GetLoaded(runtimeEnv: string): Promise<GraphLoadedDto | null>
     {
-        const info = await this.RuntimeInfoFor(runtimeEnv)
-        return this.proxy.GetLoadedGraph(info)
-    }
-
-    private async InfoFor(envName: string): Promise<AdminConnectInfo>
-    {
-        this.Require(envName)
-        return this.adminInfoFor(envName)
-    }
-
-    private async RuntimeInfoFor(envName: string): Promise<AdminConnectInfo>
-    {
-        this.RequireRuntime(envName)
-        return this.adminInfoFor(envName)
+        this.RequireRuntime(runtimeEnv)
+        return this.admin.WithAdmin(runtimeEnv, info => this.proxy.GetLoadedGraph(info))
     }
 
     private Require(envName: string): EnvironmentRecord

@@ -41,6 +41,7 @@ import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, IssueTok
 import { PassThrough } from 'node:stream'
 import type { IPortForwardingKubectl, IProcessSpawner, ISpawnedProcess } from '../kubectl.js'
 import { ClusterTunnelPool } from '../cluster-tunnel-pool.js'
+import { GraphService } from '../graph-service.js'
 import { EnvironmentEndpoints, EnvironmentUnreachableError, type EnvironmentUrlsLease } from '../environment-endpoints.js'
 import type { IHiveOrchestrator } from '../hive-orchestrator.js'
 
@@ -1369,6 +1370,51 @@ test('Delete is fail-open when the IdP connect rejects', async () =>
     })
 })
 
+/** A tunnel process that records being killed (the pool's idle expiry kills it). */
+class RecordingTunnelProcess implements ISpawnedProcess
+{
+    public readonly Stdout = new PassThrough()
+    public Killed = false
+
+    public Kill(): void
+    {
+        this.Killed = true
+    }
+
+    public OnExit(): void
+    {
+    }
+}
+
+/** An admin proxy whose ListGraphs stays in flight until the test lets it finish. */
+class SlowGraphProxy extends FakeAdminProxy
+{
+    public Entered!: Promise<void>
+    private enter!: () => void
+    private finish!: () => void
+    private readonly gate: Promise<void>
+
+    public constructor()
+    {
+        super()
+        this.Entered = new Promise<void>(resolve => { this.enter = resolve })
+        this.gate = new Promise<void>(resolve => { this.finish = resolve })
+    }
+
+    public Finish(): void
+    {
+        this.finish()
+    }
+
+    public override async ListGraphs(info: AdminConnectInfo): Promise<any[]>
+    {
+        this.enter()
+        await this.gate
+        this.Calls.push({ method: 'ListGraphs', info, args: [] })
+        return []
+    }
+}
+
 class InClusterAdminFixture
 {
     /** The fake kubectl forwards without spawning; a real spawn here would be a test bug. */
@@ -1387,20 +1433,20 @@ class InClusterAdminFixture
     public static readonly AdminKey = 'icl-admin-pw'
 
     /** A kubectl whose Secret holds the Owner password and whose port-forward lands on a fixed local port. */
-    public static Kubectl(): IPortForwardingKubectl
+    public static Kubectl(process: ISpawnedProcess): IPortForwardingKubectl
     {
         const secret = JSON.stringify({ data: { [InClusterAdminFixture.SecretsKey]: Buffer.from(JSON.stringify({ [InClusterAdminFixture.AdminKey]: InClusterAdminFixture.Password })).toString('base64') } })
-        const process: ISpawnedProcess = { Stdout: new PassThrough(), Kill: () => undefined, OnExit: () => undefined }
         return {
             Get: async () => secret,
             PortForward: async () => ({ LocalPort: InClusterAdminFixture.LocalPort, Process: process }),
         } as unknown as IPortForwardingKubectl
     }
 
-    public static async Make(): Promise<{ h: Harness; pool: ClusterTunnelPool }>
+    public static async Make(proxy?: FakeAdminProxy): Promise<{ h: Harness; pool: ClusterTunnelPool; tunnel: RecordingTunnelProcess }>
     {
         const h = await Harness.Make()
-        const kubectl = InClusterAdminFixture.Kubectl()
+        const tunnel = new RecordingTunnelProcess()
+        const kubectl = InClusterAdminFixture.Kubectl(tunnel)
         const orchestrators = new class extends HiveOrchestratorFactory
         {
             public override For(): IHiveOrchestrator
@@ -1410,17 +1456,17 @@ class InClusterAdminFixture
         }()
         const pool = new ClusterTunnelPool()
         const endpoints = new EnvironmentEndpoints(orchestrators, h.Directory, pool, new InClusterAdminFixture.ThrowingSpawner())
-        h.Service = new EnvironmentService(h.Registry, new FakeAllocator(h.Calls, false), SingleBackendResolver.Of(new DockerEnvironmentRuntime(h.Docker, h.Bundle), h.Directory, new HiveOrchestratorFactory()), h.Seeder, h.DataRoot, h.Proxy, h.Directory, h.Idp, c => new IdpAdminClient(c), undefined, endpoints)
+        h.Service = new EnvironmentService(h.Registry, new FakeAllocator(h.Calls, false), SingleBackendResolver.Of(new DockerEnvironmentRuntime(h.Docker, h.Bundle), h.Directory, new HiveOrchestratorFactory()), h.Seeder, h.DataRoot, proxy ?? h.Proxy, h.Directory, h.Idp, c => new IdpAdminClient(c), undefined, endpoints)
         const rec = Harness.Record(InClusterAdminFixture.Name, EnvStatus.Running)
         await h.Registry.Put({ ...rec, hiveId: 'h1', hostPort: undefined, bundleDir: undefined, containerName: undefined, volumeName: undefined })
-        return { h, pool }
+        return { h, pool, tunnel }
     }
 }
 
-test('AdminInfoFor on an in-cluster record tunnels to the env and reads the Owner password from the cluster Secret', async () =>
+test('WithAdmin on an in-cluster record tunnels to the env and reads the Owner password from the cluster Secret', async () =>
 {
     const { h, pool } = await InClusterAdminFixture.Make()
-    const info = await h.Service.AdminInfoFor(InClusterAdminFixture.Name)
+    const info = await h.Service.WithAdmin(InClusterAdminFixture.Name, async got => got)
     assert.deepEqual(info, {
         httpUrl: 'http://127.0.0.1:51777',
         wsUrl: 'ws://127.0.0.1:51777',
@@ -1441,12 +1487,12 @@ test('AdminIssueMakerToken works for an in-cluster Development env', async () =>
     pool.CloseAll()
 })
 
-test('AdminInfoFor on an in-cluster record without composed endpoints throws EnvironmentUnreachableError', async () =>
+test('WithAdmin on an in-cluster record without composed endpoints throws EnvironmentUnreachableError', async () =>
 {
     const h = await Harness.Make()
     const rec = Harness.Record(InClusterAdminFixture.Name, EnvStatus.Running)
     await h.Registry.Put({ ...rec, hiveId: 'h1', hostPort: undefined, bundleDir: undefined })
-    await assert.rejects(() => h.Service.AdminInfoFor(InClusterAdminFixture.Name), EnvironmentUnreachableError)
+    await assert.rejects(() => h.Service.WithAdmin(InClusterAdminFixture.Name, async got => got), EnvironmentUnreachableError)
     assert.equal(h.Proxy.Calls.length, 0)
 })
 
@@ -1533,10 +1579,33 @@ test('an in-service admin call releases its URL lease when the proxy call fails'
     assert.equal(endpoints.Held, 0)
 })
 
-test('AdminInfoFor (for outside callers) gives its URL lease back at once', async () =>
+test('WithAdmin (for outside callers) holds the URL lease while op runs and returns its result', async () =>
 {
     const { h, endpoints } = await LeaseFixture.Make()
-    await h.Service.AdminInfoFor(InClusterAdminFixture.Name)
+    const result = await h.Service.WithAdmin(InClusterAdminFixture.Name, async info =>
+    {
+        assert.equal(endpoints.Held, 1)
+        return info.tenant
+    })
+    assert.equal(result, InClusterAdminFixture.Name)
     assert.equal(endpoints.Acquired, 1)
     assert.equal(endpoints.Held, 0)
+})
+
+test('a graph call that outlives the tunnel idle window keeps its tunnel; the idle countdown starts when it ends', async (t) =>
+{
+    const proxy = new SlowGraphProxy()
+    const { h, pool, tunnel } = await InClusterAdminFixture.Make(proxy)
+    t.mock.timers.enable({ apis: ['setTimeout'] })
+    const graphs = new GraphService(h.Registry, proxy, h.Service)
+    const listing = graphs.List(InClusterAdminFixture.Name)
+    await proxy.Entered
+    t.mock.timers.tick(ClusterTunnelPool.DefaultIdleMs * 3)
+    assert.equal(tunnel.Killed, false)
+    proxy.Finish()
+    await listing
+    assert.equal(tunnel.Killed, false)
+    t.mock.timers.tick(ClusterTunnelPool.DefaultIdleMs)
+    assert.equal(tunnel.Killed, true)
+    pool.CloseAll()
 })

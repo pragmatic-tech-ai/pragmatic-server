@@ -213,7 +213,7 @@ export class ControlPlaneServer
         ControlPlaneServer.CloseOnShutdown(tunnels)
         const endpoints = new EnvironmentEndpoints(orchestrators, directory, tunnels, new NodeProcessSpawner())
         const service = new EnvironmentService(registry, allocator, new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, bundle), new InClusterEnvironmentRuntime(orchestrators, placement, directory, bundle, signing.PlatformSigner), directory, orchestrators), seeder, dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn), ControlPlaneServer.UiDeployerOf(dataRoot, orchestrators, registry), endpoints)
-        const graphService = new GraphService(registry, proxy, name => service.AdminInfoFor(name))
+        const graphService = new GraphService(registry, proxy, service)
         const staticRoot = join(here, ControlPlaneServer.ParentSegment, ControlPlaneServer.PortalSegment, ControlPlaneServer.DistSegment)
         const manifests = new ManifestRegistry(join(dataRoot, ControlPlaneServer.ManifestsFile))
         const audit = new AuditRegistry(join(dataRoot, ControlPlaneServer.AuditFile))

@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { PassThrough } from 'node:stream'
-import { KubectlCli, PortForwardError, type IExecFile, type IProcessSpawner, type ISpawnedProcess } from '../kubectl.js'
+import { KubectlCli, PortForwardError, type IExecFile, type IProcessSpawner, type ISpawnedProcess, type PortForwardResult } from '../kubectl.js'
 import { ClusterTunnelPool, TunnelPoolClosedError } from '../cluster-tunnel-pool.js'
 
 class FakeProcess implements ISpawnedProcess
@@ -259,6 +259,30 @@ test('a failed open is not cached: the next Acquire tries again', async () =>
     const spawner = new FakeSpawner()
     const pool = new ClusterTunnelPool()
     await assert.rejects(pool.Acquire(Fx.Key, () => Promise.reject(new PortForwardError())), PortForwardError)
+    assert.equal((await pool.Acquire(Fx.Key, Fx.Open(spawner))).LocalPort, Fx.LocalPort)
+    pool.CloseAll()
+})
+
+test('an opener that throws synchronously is not cached: the next Acquire opens a tunnel', async () =>
+{
+    const spawner = new FakeSpawner()
+    const pool = new ClusterTunnelPool()
+    const throwing = (): Promise<PortForwardResult> =>
+    {
+        throw new PortForwardError()
+    }
+    await assert.rejects(pool.Acquire(Fx.Key, throwing), PortForwardError)
+    assert.equal((await pool.Acquire(Fx.Key, Fx.Open(spawner))).LocalPort, Fx.LocalPort)
+    assert.equal(spawner.Spawned.length, 1)
+    pool.CloseAll()
+})
+
+test('a spawner that throws synchronously inside PortForward is not cached either', async () =>
+{
+    const spawner = new FakeSpawner()
+    const pool = new ClusterTunnelPool()
+    const broken: IProcessSpawner = { Spawn: () => { throw new Error('spawn kubectl ENOENT') } }
+    await assert.rejects(pool.Acquire(Fx.Key, Fx.Open(broken)))
     assert.equal((await pool.Acquire(Fx.Key, Fx.Open(spawner))).LocalPort, Fx.LocalPort)
     pool.CloseAll()
 })
