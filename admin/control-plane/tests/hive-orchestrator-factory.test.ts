@@ -9,6 +9,11 @@ import { KindClusterName } from '../kind-cluster-name.js'
 import { KindHiveOrchestrator } from '../kind-hive-orchestrator.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
 import type { HiveRecord } from '../platform-records.js'
+import { InClusterHiveOrchestrator } from '../in-cluster-hive-orchestrator.js'
+import type { InClusterOrchestration } from '../in-cluster-hive-orchestrator.js'
+import { EnvNamespaceGuard } from '../env-namespace-guard.js'
+import { PinnedImageVerifier } from '../pinned-image-verifier.js'
+import { KubeApiClient } from '../kube-api-client.js'
 
 class FactoryFixture
 {
@@ -97,4 +102,43 @@ test('the default data root is absolute (independent of cwd)', () =>
 {
     const factory = new HiveOrchestratorFactory() as unknown as { dataRoot: string }
     assert.ok(isAbsolute(factory.dataRoot))
+})
+
+class InClusterFixture
+{
+    public static Setup(hiveId: string): InClusterOrchestration
+    {
+        return {
+            client: new KubeApiClient({ Send: () => Promise.resolve({ status: 200, body: '{}' }) }),
+            identity: { tenantId: 'acme-prod', hiveId },
+            verifier: new PinnedImageVerifier([]),
+        }
+    }
+}
+
+test('in a pod a Local hive of this console gets the in-cluster orchestrator', () =>
+{
+    const factory = new HiveOrchestratorFactory(undefined, undefined, InClusterFixture.Setup('hive-1'))
+    for (const mode of [InfraMode.Attach, InfraMode.Provision])
+    {
+        const orchestrator = factory.For(FactoryFixture.Hive(HiveBackend.Local, mode))
+        assert.ok(orchestrator instanceof InClusterHiveOrchestrator)
+        assert.ok(orchestrator.Kubectl instanceof EnvNamespaceGuard)
+    }
+})
+
+test('another hive id throws UnsupportedBackendError', () =>
+{
+    const factory = new HiveOrchestratorFactory(undefined, undefined, InClusterFixture.Setup('hive-other'))
+    assert.throws(() => factory.For(FactoryFixture.Hive(HiveBackend.Local, InfraMode.Attach)), UnsupportedBackendError)
+    const inPod = new HiveOrchestratorFactory(undefined, undefined, InClusterFixture.Setup('hive-1'))
+    assert.throws(() => inPod.For(FactoryFixture.Hive(HiveBackend.Aks, InfraMode.Attach)), UnsupportedBackendError)
+})
+
+test('without in-cluster setup the kubectl orchestrator is unchanged', () =>
+{
+    const factory = new HiveOrchestratorFactory(undefined, undefined, undefined)
+    const orchestrator = factory.For(FactoryFixture.Hive(HiveBackend.Local, InfraMode.Attach))
+    assert.ok(orchestrator instanceof KubectlHiveOrchestrator)
+    assert.ok(orchestrator.Kubectl instanceof KubectlCli)
 })

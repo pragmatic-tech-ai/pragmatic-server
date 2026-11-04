@@ -4,6 +4,7 @@ import type { IKubectl } from './kubectl.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import type { EffectiveRegistry } from './effective-registry.js'
 import type { IImageVerifier } from './image-verifier.js'
+import { EnvNamespaceGuard } from './env-namespace-guard.js'
 
 export type OrchestratorPolling = { attempts: number; intervalMs: number }
 
@@ -14,6 +15,7 @@ export class KubectlHiveOrchestrator implements IHiveOrchestrator
 
     private static readonly DeploymentPrefix = 'deployment/'
     private static readonly StatefulSetPrefix = 'statefulset/'
+    private static readonly NamespacePrefix = 'namespace/'
     private static readonly StatusKey = 'status'
     private static readonly ReadyReplicasKey = 'readyReplicas'
     private static readonly SpecKey = 'spec'
@@ -47,9 +49,13 @@ export class KubectlHiveOrchestrator implements IHiveOrchestrator
     {
     }
 
+    /** Refuses an existing environment namespace that is not labelled for the workload's hive (never adopts another hive's). */
     public async Apply(w: EnvironmentWorkload): Promise<void>
     {
         const image = await this.VerifiedImage(w.image)
+        const ns = K8sManifestBuilder.NamespaceOf(w.environmentName)
+        const existing = await this.kubectl.Find(ns, KubectlHiveOrchestrator.NamespacePrefix + ns)
+        EnvNamespaceGuard.AssertHiveOwns(existing === undefined ? undefined : JSON.parse(existing), ns, w.hiveId)
         await this.kubectl.Apply(this.manifests.Render({ ...w, image }))
     }
 

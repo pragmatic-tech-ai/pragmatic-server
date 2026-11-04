@@ -4,6 +4,7 @@ import { DockerImageDigest } from './image-digest.js'
 import { EffectiveRegistry } from './effective-registry.js'
 import { FileKeyStore } from './key-store.js'
 import { FileSignatureStore } from './signature-store.js'
+import { InClusterHiveOrchestrator, type InClusterOrchestration } from './in-cluster-hive-orchestrator.js'
 import { UnsupportedBackendError } from './hive-orchestrator.js'
 import type { IHiveOrchestrator } from './hive-orchestrator.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
@@ -15,7 +16,10 @@ import { KubectlHiveOrchestrator } from './kubectl-hive-orchestrator.js'
 import { HiveBackend, InfraMode } from './platform-records.js'
 import type { HiveRecord } from './platform-records.js'
 
-/** The single place a hive's backend x mode maps to a concrete orchestrator driver. */
+/**
+ * The single place a hive's backend x mode maps to a concrete orchestrator driver. Inside a tenant console pod (`inCluster` set)
+ * the only hive it can drive is its own Local hive, through the Kubernetes API; every other hive is unsupported there.
+ */
 export class HiveOrchestratorFactory
 {
     private static readonly DefaultLocalContext = 'docker-desktop'
@@ -26,13 +30,22 @@ export class HiveOrchestratorFactory
 
     public constructor(
         private readonly localContext: string = HiveOrchestratorFactory.DefaultLocalContext,
-        private readonly dataRoot: string = HiveOrchestratorFactory.DefaultDataRoot)
+        private readonly dataRoot: string = HiveOrchestratorFactory.DefaultDataRoot,
+        private readonly inCluster?: InClusterOrchestration)
     {
     }
 
     public For(hive: HiveRecord): IHiveOrchestrator
     {
         const { backend, mode, configRef } = hive.cluster
+        if (this.inCluster !== undefined)
+        {
+            if (backend === HiveBackend.Local && hive.id === this.inCluster.identity.hiveId)
+            {
+                return new InClusterHiveOrchestrator(this.inCluster, EffectiveRegistry.For(hive), hive.trustRootRef)
+            }
+            throw new UnsupportedBackendError(backend, mode)
+        }
         if (backend === HiveBackend.Local && mode === InfraMode.Attach)
         {
             return this.BuildKubectl(hive, configRef ?? this.localContext)

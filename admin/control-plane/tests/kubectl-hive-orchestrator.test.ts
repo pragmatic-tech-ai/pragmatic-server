@@ -2,6 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { KubectlHiveOrchestrator } from '../kubectl-hive-orchestrator.js'
 import { UnsupportedBackendError } from '../hive-orchestrator.js'
+import { EnvNamespaceRefusedError } from '../env-namespace-guard.js'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
 import type { IKubectl } from '../kubectl.js'
@@ -14,6 +15,7 @@ class FakeKubectl implements IKubectl
     public calls: string[][] = []
     public rejectOn = new Set<string>()
     public getResponses: string[] = []
+    public found: string | undefined = undefined
 
     private Record(method: string, args: string[]): Promise<void>
     {
@@ -30,7 +32,7 @@ class FakeKubectl implements IKubectl
     public RolloutRestartSelector(n: string, s: string) { return this.Record('RolloutRestartSelector', [n, s]) }
     public ApplyServerSide(m: string) { return this.Record('ApplyServerSide', [m]) }
     public DeleteManifest(m: string) { return this.Record('DeleteManifest', [m]) }
-    public async Find(n: string, r: string): Promise<string | undefined> { await this.Record('Find', [n, r]); return undefined }
+    public async Find(n: string, r: string): Promise<string | undefined> { await this.Record('Find', [n, r]); return this.found }
     public DeleteBySelector(n: string, r: string, s: string) { return this.Record('DeleteBySelector', [n, r, s]) }
     public async Get(n: string, r: string)
     {
@@ -70,6 +72,7 @@ class Fixture
 
     public static readonly Ns = 'pragmatic-env-dev1'
     public static readonly Dep = 'pragmatic-env-dev1-server'
+    public static readonly FindNamespace = ['Find', 'pragmatic-env-dev1', 'namespace/pragmatic-env-dev1']
 
     public static Workload(withDb: boolean): EnvironmentWorkload
     {
@@ -104,7 +107,27 @@ describe('KubectlHiveOrchestrator', () =>
     {
         const { k, o } = Fixture.Make()
         await o.Apply(Fixture.Workload(true))
-        assert.deepEqual(k.calls, [['Apply', new K8sManifestBuilder().Render(Fixture.Workload(true))]])
+        assert.deepEqual(k.calls, [Fixture.FindNamespace, ['Apply', new K8sManifestBuilder().Render(Fixture.Workload(true))]])
+    })
+
+    it('Apply into an existing namespace of this hive applies the manifest', async () =>
+    {
+        const { k, o } = Fixture.Make()
+        k.found = JSON.stringify({ metadata: { name: Fixture.Ns, labels: { 'pragmatic/hive': 'h' } } })
+        await o.Apply(Fixture.Workload(false))
+        assert.deepEqual(k.calls.map(c => c[0]), ['Find', 'Apply'])
+    })
+
+    it('Apply refuses an existing namespace labelled for another hive or unlabelled', async () =>
+    {
+        for (const labels of [{ 'pragmatic/hive': 'other' }, undefined])
+        {
+            const { k, o } = Fixture.Make()
+            k.found = JSON.stringify({ metadata: { name: Fixture.Ns, labels } })
+            await assert.rejects(o.Apply(Fixture.Workload(false)), (e: unknown) =>
+                e instanceof EnvNamespaceRefusedError && e.message.includes(Fixture.Ns))
+            assert.deepEqual(k.calls, [Fixture.FindNamespace])
+        }
     })
 
     it('Apply verifies the effective image and the manifest carries it', async () =>
@@ -112,7 +135,7 @@ describe('KubectlHiveOrchestrator', () =>
         const { k, v, o } = Fixture.Make('localhost:5000/')
         await o.Apply(Fixture.Workload(true))
         assert.deepEqual(v.verified, [['localhost:5000/srv:1', Fixture.Trust]])
-        assert.deepEqual(k.calls, [['Apply', new K8sManifestBuilder().Render({ ...Fixture.Workload(true), image: 'localhost:5000/srv:1' })]])
+        assert.deepEqual(k.calls, [Fixture.FindNamespace, ['Apply', new K8sManifestBuilder().Render({ ...Fixture.Workload(true), image: 'localhost:5000/srv:1' })]])
     })
 
     it('Apply never reaches kubectl when verification rejects', async () =>
