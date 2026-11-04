@@ -54,7 +54,8 @@ class TenantOidcClient
     private static readonly DesktopClientId = 'pragmatic-desktop'
     private static readonly ConsoleSecretRefPrefix = 'tenant-admin-oidc/'
     private static readonly DesktopSecretRefPrefix = 'tenant-desktop-oidc/'
-    private static readonly DesktopRegisteredRedirect = 'http://127.0.0.1/pragmatic-desktop/callback'
+    /** The desktop client's registered redirect: loopback with no port, so the IdP matches any port (RFC 8252 sec. 7.3). */
+    public static readonly DesktopRegisteredRedirect = 'http://127.0.0.1/pragmatic-desktop/callback'
 
     private constructor(
         public readonly ClientId: string,
@@ -212,6 +213,8 @@ class CaTrustingHttpClient implements IHttpClient
 export class TenantOidcRelyingParty implements ITenantOidcRelyingParty
 {
     public static readonly AdminClientId = TenantOidcClient.ConsoleClientId
+    /** The redirect the desktop client is registered with (the IdP matches it on any loopback port). */
+    public static readonly DesktopRegisteredRedirect = TenantOidcClient.DesktopRegisteredRedirect
 
     private static readonly GenericOidcPackId = 'generic-oidc'
     private static readonly SecretBytes = 24

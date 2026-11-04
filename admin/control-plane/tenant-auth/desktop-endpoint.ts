@@ -59,6 +59,8 @@ export class DesktopEndpoint
     private static readonly VerifierPattern = /^[A-Za-z0-9._~-]{43,128}$/
     private static readonly MinPort = 1
     private static readonly MaxPort = 65535
+    /** http's default port: URL parsing drops it, so the IdP's loopback rule (which needs a port) refuses it; refused here too. */
+    private static readonly DefaultHttpPort = 80
     private static readonly MaxTenantIdLength = 128
     private static readonly MaxRedirectLength = 64
     private static readonly MaxChallengeLength = 43
@@ -357,7 +359,7 @@ export class DesktopEndpoint
         return body.value ?? {}
     }
 
-    /** `http://127.0.0.1:<port>/pragmatic-desktop/callback` with a port 1-65535 written without leading zeros. */
+    /** `http://127.0.0.1:<port>/pragmatic-desktop/callback` with a port 1-65535 other than 80, written without leading zeros. */
     public static IsLoopbackRedirect(redirectUri: string): boolean
     {
         const m = DesktopEndpoint.RedirectPattern.exec(redirectUri)
@@ -368,7 +370,7 @@ export class DesktopEndpoint
         const raw = m[1] as string
         const port = Number(raw)
         // A zero-padded port would not match the IdP's byte-exact loopback rule, so it is refused here too.
-        return String(port) === raw && port >= DesktopEndpoint.MinPort && port <= DesktopEndpoint.MaxPort
+        return String(port) === raw && port >= DesktopEndpoint.MinPort && port <= DesktopEndpoint.MaxPort && port !== DesktopEndpoint.DefaultHttpPort
     }
 
     /** Timing-safe `base64url(sha256(verifier)) === challenge`. */

@@ -21,6 +21,8 @@ import { TenantAuthGate } from '../tenant-auth/tenant-auth-gate.js'
 import { TenantLoginError, TenantOidcClientKind, type ITenantOidcRelyingParty } from '../tenant-auth/tenant-oidc-relying-party.js'
 import { TenantSessionCookie } from '../tenant-auth/tenant-session-cookie.js'
 import { TenantSessionKind, TenantSessionStore } from '../tenant-auth/tenant-session.js'
+import { TenantOidcRelyingParty } from '../tenant-auth/tenant-oidc-relying-party.js'
+import { IdpClientStore } from '../../../src/idp/idp-client-store.js'
 
 type Reply = { status: number; body: Record<string, unknown> | undefined; text: string }
 
@@ -266,10 +268,10 @@ describe('DesktopEndpoint', () =>
         assert.equal(h.Rp.BeginCallback, EndpointKit.RedirectUri)
     })
 
-    it('begin rejects a non-loopback, port-0, wrong-path or zero-padded redirect, and a bad challenge', async () =>
+    it('begin rejects a non-loopback, port-0, port-80, wrong-path or zero-padded redirect, and a bad challenge', async () =>
     {
         const challenge = EndpointKit.Challenge(EndpointKit.Verifier())
-        for (const bad of ['http://localhost:5/pragmatic-desktop/callback', 'http://127.0.0.1:0/pragmatic-desktop/callback', 'http://127.0.0.1:5/other',
+        for (const bad of ['http://localhost:5/pragmatic-desktop/callback', 'http://127.0.0.1:0/pragmatic-desktop/callback', 'http://127.0.0.1:80/pragmatic-desktop/callback', 'http://127.0.0.1:5/other',
             'http://127.0.0.1:65536/pragmatic-desktop/callback', 'http://127.0.0.1:05/pragmatic-desktop/callback', 'https://127.0.0.1:5/pragmatic-desktop/callback'])
         {
             assert.equal((await h.Begin(bad, challenge)).status, 400, bad)
@@ -483,5 +485,23 @@ describe('DesktopEndpoint client address', () =>
             }
             assert.equal((await h.Complete('nope-y', EndpointKit.Verifier(), { [AddressKit.Forwarded]: '203.0.113.2' })).status, 429)
         })
+    })
+})
+
+describe('DesktopEndpoint redirect rule agrees with the IdP loopback rule', () =>
+{
+    it('accepts exactly the redirects the IdP accepts for the registered desktop redirect', async () =>
+    {
+        const idp = new IdpClientStore()
+        await idp.Register('acme', 'plexus-desktop', [TenantOidcRelyingParty.DesktopRegisteredRedirect], 'secret')
+        const path = '/pragmatic-desktop/callback'
+        const candidates = [1, 79, 80, 81, 443, 8080, 53111, 65535].map(port => 'http://127.0.0.1:' + String(port) + path)
+            .concat(['http://127.0.0.1:080' + path, 'http://127.0.0.1:0' + path, 'http://127.0.0.1:65536' + path, 'http://127.0.0.1:05' + path,
+                'http://localhost:5000' + path, 'http://127.0.0.1:5000/other', 'http://127.0.0.1:5000' + path + '?x=1'])
+        for (const uri of candidates)
+        {
+            assert.equal(DesktopEndpoint.IsLoopbackRedirect(uri), idp.RedirectAllowed('acme', 'plexus-desktop', uri), uri)
+        }
+        assert.equal(DesktopEndpoint.IsLoopbackRedirect('http://127.0.0.1:80' + path), false)
     })
 })
