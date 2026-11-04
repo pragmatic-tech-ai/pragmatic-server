@@ -14,13 +14,20 @@ import type { ILogProcess } from '../../../environments/seed/docker.js'
 import type { PlatformDirectory } from '../platform-directory.js'
 import type { TenantRecord } from '../platform-records.js'
 import { TenantHostResolver } from '../tenant-auth/tenant-host-resolver.js'
-import { TenantSessionStore, type TenantSession } from '../tenant-auth/tenant-session.js'
+import { TenantSessionKind, TenantSessionStore, type TenantSession } from '../tenant-auth/tenant-session.js'
 import { TenantSessionCookie } from '../tenant-auth/tenant-session-cookie.js'
 import { TenantAuthEndpoint } from '../tenant-auth/tenant-auth-endpoint.js'
 import { TenantAuthGate } from '../tenant-auth/tenant-auth-gate.js'
 import type { ITenantOidcRelyingParty } from '../tenant-auth/tenant-oidc-relying-party.js'
 import type { ITenantApiEndpoint, TenantPlane } from '../tenant-auth/tenant-plane.js'
 import { TenantEventBus } from '../tenant-api/tenant-events.js'
+import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
+import type { TenantProfileDto } from '../tenant-api/tenant-profile-dto.js'
+import { LoginThrottle } from '../login-throttle.js'
+import { DesktopAuthGate } from '../tenant-auth/desktop-auth-gate.js'
+import { DesktopEndpoint } from '../tenant-auth/desktop-endpoint.js'
+import { DesktopSignInFlows } from '../tenant-auth/desktop-sign-in-flows.js'
+import { DesktopTargets } from '../tenant-auth/desktop-targets.js'
 
 type Reply = { status: number; body: string }
 
@@ -105,6 +112,11 @@ class FakeStreamingService
     }
 
     public List(): readonly EnvironmentRecord[]
+    {
+        return this.records
+    }
+
+    public async ListReconciled(): Promise<readonly EnvironmentRecord[]>
     {
         return this.records
     }
@@ -684,5 +696,95 @@ describe('TenantPlaneHost health monitor lifecycle', () =>
         {
             rmSync(parent, { recursive: true, force: true })
         }
+    })
+})
+
+/** Builds a tenant plane with (or without) the desktop endpoint and runs a body against a listening host. */
+class DesktopHostKit
+{
+    public static readonly LoopbackHost = '127.0.0.1:7002'
+    public static readonly TargetsPath = '/desktop/targets'
+    public static readonly AuthorizationHeader = 'authorization'
+    public static readonly BearerPrefix = 'Bearer '
+
+    public constructor(private readonly parent: string, public readonly Store: TenantSessionStore)
+    {
+    }
+
+    public Plane(withDesktop: boolean): TenantPlane
+    {
+        const rp = new CapturingRelyingParty()
+        const directory = new StubDirectory([Kit.TenantId]) as unknown as ITenantDirectory
+        const service = new FakeStreamingService([Kit.Record('acme-dev', Kit.TenantId), Kit.Record('other-dev', 'other')]) as unknown as IEnvironmentService
+        const plane: TenantPlane = { endpoint: new TenantAuthEndpoint(rp, this.Store, false), gate: new TenantAuthGate(this.Store), api: new StubTenantApi(), events: new TenantEventBus() }
+        if (withDesktop)
+        {
+            plane.desktop = new DesktopEndpoint(rp, this.Store, new DesktopAuthGate(this.Store), new DesktopSignInFlows(), new DesktopTargets(service, directory), directory,
+                s => ({ principalId: s.principalId } as TenantProfileDto), new LoginThrottle())
+        }
+        return plane
+    }
+
+    public async WithHost(plane: TenantPlane, body: (host: TenantPlaneHost) => Promise<void>): Promise<void>
+    {
+        const host = new TenantPlaneHost(plane, Kit.Resolver(), this.parent, new FakeStreamingService([]) as unknown as IEnvironmentService)
+        await host.Listen(0, '127.0.0.1')
+        try
+        {
+            await body(host)
+        }
+        finally
+        {
+            await host.Close()
+        }
+    }
+}
+
+describe('TenantPlaneHost desktop surface', () =>
+{
+    let parent: string
+    let kit: DesktopHostKit
+
+    beforeEach(() =>
+    {
+        parent = mkdtempSync(join(tmpdir(), 'tph-desktop-'))
+        kit = new DesktopHostKit(parent, new TenantSessionStore(join(parent, 'tenant-sessions.json'), 3600000))
+    })
+
+    afterEach(() =>
+    {
+        rmSync(parent, { recursive: true, force: true })
+    })
+
+    it('GET /desktop/targets with Host 127.0.0.1:7002 reaches the desktop endpoint, tenant from the bearer', async () =>
+    {
+        await kit.WithHost(kit.Plane(true), async host =>
+        {
+            const session = await kit.Store.Issue(Kit.TenantId, 'sub-1', undefined, TenantSessionKind.Desktop)
+            const ok = await Kit.Raw(host, HttpMethod.Get, DesktopHostKit.TargetsPath, { [Kit.HostHeader]: DesktopHostKit.LoopbackHost, [DesktopHostKit.AuthorizationHeader]: DesktopHostKit.BearerPrefix + session.id })
+            assert.equal(ok.status, 200)
+            assert.deepEqual(JSON.parse(ok.body), { contribute: [{ name: 'acme-dev', status: EnvStatus.Running }], publish: [] })
+            const signedOut = await Kit.Raw(host, HttpMethod.Get, DesktopHostKit.TargetsPath, { [Kit.HostHeader]: DesktopHostKit.LoopbackHost })
+            assert.equal(signedOut.status, 401)
+            assert.deepEqual(JSON.parse(signedOut.body), { error: 'signed-out' })
+        })
+    })
+
+    it('answers /desktop/* with 404 when the plane has no desktop endpoint', async () =>
+    {
+        await kit.WithHost(kit.Plane(false), async host =>
+        {
+            const r = await Kit.Raw(host, HttpMethod.Get, DesktopHostKit.TargetsPath, { [Kit.HostHeader]: DesktopHostKit.LoopbackHost })
+            assert.equal(r.status, 404)
+        })
+    })
+
+    it('still refuses a non-tenant host outside /desktop/', async () =>
+    {
+        await kit.WithHost(kit.Plane(true), async host =>
+        {
+            assert.equal((await Kit.Raw(host, HttpMethod.Get, Kit.SessionPath, { [Kit.HostHeader]: DesktopHostKit.LoopbackHost })).status, 403)
+            assert.equal((await Kit.Raw(host, HttpMethod.Get, '/desktop', { [Kit.HostHeader]: DesktopHostKit.LoopbackHost })).status, 403)
+        })
     })
 })

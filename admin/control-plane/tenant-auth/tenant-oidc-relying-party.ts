@@ -28,11 +28,52 @@ export type TenantAdminDurability =
     now?: () => number
 }
 
+/** Which confidential client a login runs under: the tenant console's, or the Plexus desktop app's (RFC 8252 loopback). */
+export enum TenantOidcClientKind
+{
+    Console = 'console',
+    Desktop = 'desktop',
+}
+
 /** The outcome of a completed tenant-admin login: the IdP subject (principal) and, when mapped, its email. */
 export interface ITenantOidcRelyingParty
 {
-    Begin(tenantId: string, callbackUrl: string): Promise<{ Url: string; State: string }>
-    Complete(tenantId: string, code: string, state: string, callbackUrl: string): Promise<{ principalId: string; email?: string }>
+    Begin(tenantId: string, callbackUrl: string, kind?: TenantOidcClientKind): Promise<{ Url: string; State: string }>
+    Complete(tenantId: string, code: string, state: string, callbackUrl: string, kind?: TenantOidcClientKind): Promise<{ principalId: string; email?: string }>
+}
+
+/**
+ * One client kind's IdP coordinates for a tenant: its client id, its own secret ref and registry row (so the console and
+ * desktop clients never overwrite each other's secret), and the redirect it registers. The console registers the exact
+ * per-request callback; the desktop registers the portless loopback URI, which the IdP matches on any port (RFC 8252 7.3),
+ * while its authorize request and code exchange carry the port-ful callback.
+ */
+class TenantOidcClient
+{
+    public static readonly ConsoleClientId = 'pragmatic-tenant-admin'
+    private static readonly DesktopClientId = 'pragmatic-desktop'
+    private static readonly ConsoleSecretRefPrefix = 'tenant-admin-oidc/'
+    private static readonly DesktopSecretRefPrefix = 'tenant-desktop-oidc/'
+    private static readonly DesktopRegisteredRedirect = 'http://127.0.0.1/pragmatic-desktop/callback'
+
+    private constructor(
+        public readonly ClientId: string,
+        public readonly SecretRef: string,
+        public readonly RegistryId: string,
+        public readonly RegisteredRedirect: string)
+    {
+    }
+
+    public static For(kind: TenantOidcClientKind, tenantId: string, callbackUrl: string): TenantOidcClient
+    {
+        if (kind === TenantOidcClientKind.Desktop)
+        {
+            const ref = TenantOidcClient.DesktopSecretRefPrefix + tenantId
+            return new TenantOidcClient(TenantOidcClient.DesktopClientId, ref, ref, TenantOidcClient.DesktopRegisteredRedirect)
+        }
+        // The console row keeps its historical id (the tenant id), so existing registries are read unchanged.
+        return new TenantOidcClient(TenantOidcClient.ConsoleClientId, TenantOidcClient.ConsoleSecretRefPrefix + tenantId, tenantId, callbackUrl)
+    }
 }
 
 /**
@@ -170,10 +211,9 @@ class CaTrustingHttpClient implements IHttpClient
  */
 export class TenantOidcRelyingParty implements ITenantOidcRelyingParty
 {
-    public static readonly AdminClientId = 'pragmatic-tenant-admin'
+    public static readonly AdminClientId = TenantOidcClient.ConsoleClientId
 
     private static readonly GenericOidcPackId = 'generic-oidc'
-    private static readonly SecretRefPrefix = 'tenant-admin-oidc/'
     private static readonly SecretBytes = 24
     private static readonly SecretEncoding = 'base64url'
     private static readonly IssuerSeparator = '/'
@@ -203,20 +243,19 @@ export class TenantOidcRelyingParty implements ITenantOidcRelyingParty
         return this.durability !== undefined
     }
 
-    public async Begin(tenantId: string, callbackUrl: string): Promise<{ Url: string; State: string }>
+    public async Begin(tenantId: string, callbackUrl: string, kind: TenantOidcClientKind = TenantOidcClientKind.Console): Promise<{ Url: string; State: string }>
     {
         try
         {
-            const cb = callbackUrl
+            const client = TenantOidcClient.For(kind, tenantId, callbackUrl)
             const conn = await this.idp.EnsureForTenant(tenantId, this.displayNameFor(tenantId))
-            const secretRef = TenantOidcRelyingParty.SecretRefPrefix + tenantId
             const secret = this.durability === undefined
-                ? await this.FreshSecretForLogin(secretRef)
-                : await this.SecretForLogin(tenantId, secretRef)
-            await this.adminClientFactory(conn).RegisterClient(tenantId, { clientId: TenantOidcRelyingParty.AdminClientId, redirectUris: [cb], secret })
+                ? await this.FreshSecretForLogin(client.SecretRef)
+                : await this.SecretForLogin(tenantId, client)
+            await this.adminClientFactory(conn).RegisterClient(tenantId, { clientId: client.ClientId, redirectUris: [client.RegisteredRedirect], secret })
             const stores = await this.stores()
             const tenant = this.tenantFor(tenantId)
-            const resolved = this.resolverFor(conn).Resolve(tenant, this.configFor(conn, tenantId, secretRef, cb), stores)
+            const resolved = this.resolverFor(conn).Resolve(tenant, this.configFor(conn, tenantId, client, callbackUrl), stores)
             if (resolved.Oidc === undefined)
             {
                 throw new TenantLoginError()
@@ -244,25 +283,27 @@ export class TenantOidcRelyingParty implements ITenantOidcRelyingParty
         return secret
     }
 
-    /** Durable path: reuse the stored secret until it ages past the TTL, coalescing concurrent calls per tenant. */
-    private SecretForLogin(tenantId: string, secretRef: string): Promise<string>
+    /** Durable path: reuse the stored secret until it ages past the TTL, coalescing concurrent calls per tenant client. */
+    private SecretForLogin(tenantId: string, client: TenantOidcClient): Promise<string>
     {
-        const pending = this.inFlight.get(tenantId)
+        // Keyed by the secret ref, so a console and a desktop login racing for one tenant never share a secret.
+        const pending = this.inFlight.get(client.SecretRef)
         if (pending !== undefined)
         {
             return pending
         }
-        const minted = this.MintOrReuse(tenantId, secretRef).finally(() => this.inFlight.delete(tenantId))
-        this.inFlight.set(tenantId, minted)
+        const minted = this.MintOrReuse(tenantId, client).finally(() => this.inFlight.delete(client.SecretRef))
+        this.inFlight.set(client.SecretRef, minted)
         return minted
     }
 
-    private async MintOrReuse(tenantId: string, secretRef: string): Promise<string>
+    private async MintOrReuse(tenantId: string, client: TenantOidcClient): Promise<string>
     {
         const durability = this.durability!
         const now = durability.now ?? (() => Date.now())
         const stores = await this.stores()
-        const record = durability.registry.Get(tenantId)
+        const secretRef = client.SecretRef
+        const record = durability.registry.Get(client.RegistryId)
         const existing = await stores.Secrets.Get(secretRef)
         // A corrupted/unparseable rotatedAt counts as aged, so a bad row forces a rotation rather than freezing the secret forever.
         const parsed = record === undefined ? Number.NaN : Date.parse(record.rotatedAt)
@@ -271,23 +312,22 @@ export class TenantOidcRelyingParty implements ITenantOidcRelyingParty
         {
             const secret = this.MintSecret()
             await stores.Secrets.Put(secretRef, secret)
-            await durability.registry.Put({ id: tenantId, tenantId, clientId: TenantOidcRelyingParty.AdminClientId, secretRef, rotatedAt: new Date(now()).toISOString() })
+            await durability.registry.Put({ id: client.RegistryId, tenantId, clientId: client.ClientId, secretRef, rotatedAt: new Date(now()).toISOString() })
             return secret
         }
         return existing
     }
 
-    public async Complete(tenantId: string, code: string, state: string, callbackUrl: string): Promise<{ principalId: string; email?: string }>
+    public async Complete(tenantId: string, code: string, state: string, callbackUrl: string, kind: TenantOidcClientKind = TenantOidcClientKind.Console): Promise<{ principalId: string; email?: string }>
     {
         const presented = new PresentedSecret(code)
         try
         {
-            const cb = callbackUrl
+            const client = TenantOidcClient.For(kind, tenantId, callbackUrl)
             const conn = await this.idp.EnsureForTenant(tenantId, this.displayNameFor(tenantId))
-            const secretRef = TenantOidcRelyingParty.SecretRefPrefix + tenantId
             const stores = await this.stores()
             const tenant = this.tenantFor(tenantId)
-            const resolved = this.resolverFor(conn).Resolve(tenant, this.configFor(conn, tenantId, secretRef, cb), stores)
+            const resolved = this.resolverFor(conn).Resolve(tenant, this.configFor(conn, tenantId, client, callbackUrl), stores)
             const authenticator = resolved.Oidc?.AuthenticatorFor(AuthMethod.Oidc)
             if (authenticator === undefined)
             {
@@ -338,14 +378,15 @@ export class TenantOidcRelyingParty implements ITenantOidcRelyingParty
         return conn.baseUrl + TenantOidcRelyingParty.IssuerSeparator + encodeURIComponent(tenantId) + TenantOidcRelyingParty.WellKnownSuffix
     }
 
-    private configFor(conn: IdpConnection, tenantId: string, secretRef: string, callbackUrl: string): IdentityConfig
+    /** The pack config for one client: its id and secret ref, and the callback the authorize request and code exchange carry. */
+    private configFor(conn: IdpConnection, tenantId: string, client: TenantOidcClient, callbackUrl: string): IdentityConfig
     {
         const providerSettings = new Map<string, string>([
             [OidcSettingKeys.Issuer, TenantOidcRelyingParty.IssuerFor(conn, tenantId)],
             [OidcSettingKeys.DiscoveryUrl, TenantOidcRelyingParty.DiscoveryUrlFor(conn, tenantId)],
-            [OidcSettingKeys.ClientId, TenantOidcRelyingParty.AdminClientId],
+            [OidcSettingKeys.ClientId, client.ClientId],
             [OidcSettingKeys.RedirectUri, callbackUrl],
-            [OidcSettingKeys.SecretRef, secretRef],
+            [OidcSettingKeys.SecretRef, client.SecretRef],
         ])
         const claimsMapping = new Map<string, string>([[TenantOidcRelyingParty.EmailClaim, TenantOidcRelyingParty.EmailClaim]])
         return new IdentityConfig(TenantOidcRelyingParty.GenericOidcPackId, DelegationDepth.AuthnDirectory, providerSettings, new Map(), claimsMapping)

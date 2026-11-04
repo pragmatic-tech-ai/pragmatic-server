@@ -65,6 +65,10 @@ import { TenantPasswordChange } from './tenant-auth/tenant-password-change.js'
 import { TenantAdminEnv } from './tenant-admin-env.js'
 import { IdpPasswordClient } from './tenant-auth/idp-password-client.js'
 import { TenantAuthGate } from './tenant-auth/tenant-auth-gate.js'
+import { DesktopAuthGate } from './tenant-auth/desktop-auth-gate.js'
+import { DesktopEndpoint } from './tenant-auth/desktop-endpoint.js'
+import { DesktopSignInFlows } from './tenant-auth/desktop-sign-in-flows.js'
+import { DesktopTargets } from './tenant-auth/desktop-targets.js'
 import { TenantHostResolver } from './tenant-auth/tenant-host-resolver.js'
 import { TenantApiEndpoint } from './tenant-api/tenant-api-endpoint.js'
 import { InProcessRolloutClient } from './tenant-api/in-process-rollout-client.js'
@@ -335,11 +339,16 @@ export class ControlPlaneServer
         {
             return undefined
         }
+        // The control plane's tenant plane is the one Plexus talks to, so it carries the desktop surface.
         return ControlPlaneServer.BuildTenantPlane(dataRoot, idpService, directory, secureCookie, service, rollout, orchestrators, placement,
-            masterKey, adminClientRegistry, secretTtlHours, sessions, principals, ControlPlaneServer.ReadsTrue(env[TenantAdminEnv.TrustedProxy]))
+            masterKey, adminClientRegistry, secretTtlHours, sessions, principals, ControlPlaneServer.ReadsTrue(env[TenantAdminEnv.TrustedProxy]), true)
     }
 
-    /** Gate-free composition of the tenant plane; callers decide whether the plane is active (ComposeTenantPlane gates on env, the standalone server always builds it). */
+    /**
+     * Gate-free composition of the tenant plane; callers decide whether the plane is active (ComposeTenantPlane gates on env,
+     * the standalone server always builds it). `withDesktop` mounts the Plexus `/desktop/*` surface; it is off by default,
+     * so the in-hive tenant console does not serve it (that is a later follow-up).
+     */
     public static BuildTenantPlane(
         dataRoot: string,
         idpService: IIdpService,
@@ -354,7 +363,8 @@ export class ControlPlaneServer
         secretTtlHours: number,
         sessions: TenantSessionStore = ControlPlaneServer.TenantSessionsOf(dataRoot),
         principals: TenantPrincipalSessions = new TenantPrincipalSessions(sessions),
-        trustedProxy: boolean = false): TenantPlane
+        trustedProxy: boolean = false,
+        withDesktop: boolean = false): TenantPlane
     {
         const durability: TenantAdminDurability = {
             storeRoot: join(dataRoot, ControlPlaneServer.TenantAdminOidcDir),
@@ -368,7 +378,13 @@ export class ControlPlaneServer
         const gate = new TenantAuthGate(sessions)
         const api = new TenantApiEndpoint(service, directory, rollout, orchestrators, placement)
         const events = new TenantEventBus()
-        return { endpoint, gate, api, events, isDurable: rp.IsDurable, principals }
+        const plane: TenantPlane = { endpoint, gate, api, events, isDurable: rp.IsDurable, principals }
+        if (withDesktop)
+        {
+            plane.desktop = new DesktopEndpoint(rp, sessions, new DesktopAuthGate(sessions), new DesktopSignInFlows(), new DesktopTargets(service, directory), directory,
+                session => api.Profile(session), new LoginThrottle())
+        }
+        return plane
     }
 
     /** The externally-visible tenant origin scheme; defaults to https when unset or blank. */

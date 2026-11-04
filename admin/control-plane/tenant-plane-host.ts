@@ -8,6 +8,7 @@ import type { IEnvironmentService } from './control-plane-host.js'
 import { EnvironmentChangeKind } from './environment-record.js'
 import { PlaneHttp } from './plane-http.js'
 import type { TenantAuthEndpoint } from './tenant-auth/tenant-auth-endpoint.js'
+import { DesktopEndpoint } from './tenant-auth/desktop-endpoint.js'
 import type { TenantAuthGate } from './tenant-auth/tenant-auth-gate.js'
 import type { ITenantApiEndpoint, TenantPlane } from './tenant-auth/tenant-plane.js'
 import type { TenantHostResolver } from './tenant-auth/tenant-host-resolver.js'
@@ -17,11 +18,12 @@ import type { TenantHealthMonitor } from './tenant-health-monitor.js'
 
 /**
  * The dedicated tenant-admin listener: its own `http.Server` + `WebSocketServer`, serving ONLY the tenant surface
- * (`/tenant-auth/*`, `/tenant-api/*`, and the tenant portal bundle). There is no operator route here, so the
- * operator plane is structurally unreachable on this listener regardless of the request host. The tenant id and the
- * OIDC callback are derived per request from the request's subdomain host (`<tenantId>.<baseDomain>`) via the
- * `TenantHostResolver`; a host that is not a known tenant subdomain is refused (403) before any routing, on both
- * HTTP and ws.
+ * (`/tenant-auth/*`, `/tenant-api/*`, the Plexus `/desktop/*`, and the tenant portal bundle). There is no operator route
+ * here, so the operator plane is structurally unreachable on this listener regardless of the request host. The tenant id
+ * and the OIDC callback are derived per request from the request's subdomain host (`<tenantId>.<baseDomain>`) via the
+ * `TenantHostResolver`; a host that is not a known tenant subdomain is refused (403) before any routing, on both HTTP and
+ * ws. The one exception is `/desktop/*`, which is Host-independent (Plexus dials plain loopback): it takes its tenant only
+ * from the sign-in flow or the desktop bearer, never the Host.
  */
 export class TenantPlaneHost
 {
@@ -48,6 +50,7 @@ export class TenantPlaneHost
     private readonly gate: TenantAuthGate
     private readonly api: ITenantApiEndpoint
     private readonly events: TenantEventBus
+    private readonly desktop: DesktopEndpoint | undefined
     private readonly tenantStaticRootAbs: string
     private readonly changeSubscription: () => void
     private httpServer: HttpServer | undefined
@@ -66,6 +69,7 @@ export class TenantPlaneHost
         this.gate = plane.gate
         this.api = plane.api
         this.events = plane.events
+        this.desktop = plane.desktop
         this.tenantStaticRootAbs = resolve(tenantStaticRoot)
         // A password change (self-service or an Owner reset) closes the principal's sockets on this listener.
         plane.principals?.Attach(this)
@@ -159,6 +163,13 @@ export class TenantPlaneHost
     {
         try
         {
+            const path = new URL(req.url ?? PlaneHttp.RootPath, TenantPlaneHost.BaseUrl).pathname
+            // The desktop surface is Host-independent (Plexus dials plain loopback): its tenant comes from the flow or bearer.
+            if (path.startsWith(DesktopEndpoint.Prefix))
+            {
+                await this.RouteDesktop(req, res, path)
+                return
+            }
             const host = req.headers[PlaneHttp.HostHeader] as string | undefined
             if (!this.resolver.Accepts(host))
             {
@@ -168,7 +179,6 @@ export class TenantPlaneHost
             }
             const tenantId = this.resolver.TenantFor(host) as string
             const callbackUrl = this.resolver.CallbackFor(host as string)
-            const path = new URL(req.url ?? PlaneHttp.RootPath, TenantPlaneHost.BaseUrl).pathname
             if (await this.RouteTenant(req, res, path, host as string, tenantId, callbackUrl))
             {
                 return
@@ -180,6 +190,17 @@ export class TenantPlaneHost
         {
             this.WriteError(res, err)
         }
+    }
+
+    /** Hands `/desktop/*` to the desktop endpoint; 404 when the plane has none or the path is not one of its routes. */
+    private async RouteDesktop(req: IncomingMessage, res: ServerResponse, path: string): Promise<void>
+    {
+        if (this.desktop !== undefined && await this.desktop.Handle(req, res, path))
+        {
+            return
+        }
+        req.resume()
+        PlaneHttp.WriteNotFound(res)
     }
 
     /**

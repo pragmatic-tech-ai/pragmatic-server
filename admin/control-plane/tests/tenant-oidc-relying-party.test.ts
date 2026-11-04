@@ -29,7 +29,7 @@ import { HiveRegistry } from '../hive-registry.js'
 import type { EnvironmentRecord } from '../environment-record.js'
 import type { IEnvironmentLookup } from '../platform-directory.js'
 import { TenantAdminClientRegistry } from '../tenant-auth/tenant-admin-client-record.js'
-import { TenantLoginError, TenantOidcRelyingParty } from '../tenant-auth/tenant-oidc-relying-party.js'
+import { TenantLoginError, TenantOidcClientKind, TenantOidcRelyingParty } from '../tenant-auth/tenant-oidc-relying-party.js'
 import type { TenantAdminDurability } from '../tenant-auth/tenant-oidc-relying-party.js'
 
 /** A raw user-agent exchange result; redirects are read, never followed. */
@@ -647,6 +647,100 @@ test('Complete with a bad code throws a generic TenantLoginError that leaks neit
                 assert.ok(!/secret/i.test(err.message))
                 return true
             })
+    })
+})
+
+/** The desktop (Plexus) client's coordinates the relying party is expected to use. */
+class DesktopFixture
+{
+    public static readonly ClientId = 'pragmatic-desktop'
+    public static readonly RegisteredRedirect = 'http://127.0.0.1/pragmatic-desktop/callback'
+    public static readonly CallbackUrl = 'http://127.0.0.1:53111/pragmatic-desktop/callback'
+    public static readonly SecretRef = 'tenant-desktop-oidc/' + IdpFixture.TenantId
+}
+
+describe('TenantOidcRelyingParty desktop client', () =>
+{
+    it('registers the desktop client with the portless loopback redirect and leaves the console client alone', async () =>
+    {
+        await IdpFixture.With(async (conn, browser) =>
+        {
+            const fixture = await DurableFixture.Create()
+            const clock = new Clock(DurableTimes.Start)
+            const registrations: IdpAdminClientRegistration[] = []
+            const rp = new TenantOidcRelyingParty(
+                new StubIdp(conn), await IdpFixture.Directory(), DurableFixture.RegistrationRecordingFactory(registrations),
+                undefined, undefined, fixture.Durability(clock.Now, DurableTimes.TtlMs))
+
+            const consoleBegin = await rp.Begin(IdpFixture.TenantId, IdpFixture.CallbackUrl)
+            const consoleSecret = await fixture.StoredSecret(IdpFixture.TenantId)
+            // Concurrent console + desktop Begins must not coalesce onto one secret.
+            await Promise.all([rp.Begin(IdpFixture.TenantId, DesktopFixture.CallbackUrl, TenantOidcClientKind.Desktop), rp.Begin(IdpFixture.TenantId, IdpFixture.CallbackUrl)])
+
+            const consoleRegs = registrations.filter(r => r.clientId === TenantOidcRelyingParty.AdminClientId)
+            const desktopRegs = registrations.filter(r => r.clientId === DesktopFixture.ClientId)
+            assert.equal(consoleRegs.length, 2)
+            assert.equal(desktopRegs.length, 1)
+            assert.deepEqual(desktopRegs[0].redirectUris, [DesktopFixture.RegisteredRedirect])
+            assert.ok(consoleRegs.every(r => r.redirectUris.length === 1 && r.redirectUris[0] === IdpFixture.CallbackUrl))
+            assert.ok(consoleRegs.every(r => r.secret === consoleSecret))
+            assert.notEqual(desktopRegs[0].secret, consoleSecret)
+
+            const stores = await FileIdentityStores.Open(new NodeFsStorage(fixture.storeRoot), fixture.masterKey)
+            assert.equal(await stores.Secrets.Get(DesktopFixture.SecretRef), desktopRegs[0].secret)
+            assert.equal(await fixture.StoredSecret(IdpFixture.TenantId), consoleSecret)
+            assert.equal(fixture.registry.Get(IdpFixture.TenantId)?.clientId, TenantOidcRelyingParty.AdminClientId)
+            const desktopRecord = fixture.registry.List().find(r => r.clientId === DesktopFixture.ClientId)
+            assert.ok(desktopRecord !== undefined)
+            assert.equal(desktopRecord.tenantId, IdpFixture.TenantId)
+            assert.equal(desktopRecord.secretRef, DesktopFixture.SecretRef)
+            assert.ok(!JSON.stringify(fixture.registry.List()).includes(desktopRegs[0].secret))
+
+            // The console login begun before the desktop registration still completes: its client was not overwritten.
+            await browser.Get(consoleBegin.Url)
+            const redirect = await browser.PostForm(consoleBegin.Url, new Map([['email', IdpFixture.OwnerEmail], ['password', IdpFixture.OwnerPassword]]))
+            const code = new URL(redirect.Location!).searchParams.get('code') ?? ''
+            const result = await rp.Complete(IdpFixture.TenantId, code, consoleBegin.State, IdpFixture.CallbackUrl)
+            assert.equal(result.principalId, IdpFixture.OwnerPrincipalId)
+        })
+    })
+
+    it('a desktop sign-in round trips through the IdP on a port-ful loopback redirect', async () =>
+    {
+        await IdpFixture.With(async (conn, browser) =>
+        {
+            const rp = new TenantOidcRelyingParty(new StubIdp(conn), await IdpFixture.Directory(), IdpFixture.AdminClientFor)
+            const begin = await rp.Begin(IdpFixture.TenantId, DesktopFixture.CallbackUrl, TenantOidcClientKind.Desktop)
+            const url = new URL(begin.Url)
+            assert.equal(url.searchParams.get('client_id'), DesktopFixture.ClientId)
+            assert.equal(url.searchParams.get('redirect_uri'), DesktopFixture.CallbackUrl)
+
+            assert.equal((await browser.Get(begin.Url)).Status, 200)
+            const redirect = await browser.PostForm(begin.Url, new Map([['email', IdpFixture.OwnerEmail], ['password', IdpFixture.OwnerPassword]]))
+            assert.equal(redirect.Status, 302)
+            const target = new URL(redirect.Location!)
+            assert.equal(target.origin + target.pathname, DesktopFixture.CallbackUrl)
+            assert.equal(target.searchParams.get('state'), begin.State)
+            const code = target.searchParams.get('code') ?? ''
+
+            const result = await rp.Complete(IdpFixture.TenantId, code, begin.State, DesktopFixture.CallbackUrl, TenantOidcClientKind.Desktop)
+            assert.equal(result.principalId, IdpFixture.OwnerPrincipalId)
+            assert.equal(result.email, IdpFixture.OwnerEmail)
+        })
+    })
+
+    it('a desktop code cannot be redeemed as a console login', async () =>
+    {
+        await IdpFixture.With(async (conn, browser) =>
+        {
+            const rp = new TenantOidcRelyingParty(new StubIdp(conn), await IdpFixture.Directory(), IdpFixture.AdminClientFor)
+            await rp.Begin(IdpFixture.TenantId, IdpFixture.CallbackUrl)
+            const begin = await rp.Begin(IdpFixture.TenantId, DesktopFixture.CallbackUrl, TenantOidcClientKind.Desktop)
+            await browser.Get(begin.Url)
+            const redirect = await browser.PostForm(begin.Url, new Map([['email', IdpFixture.OwnerEmail], ['password', IdpFixture.OwnerPassword]]))
+            const code = new URL(redirect.Location!).searchParams.get('code') ?? ''
+            await assert.rejects(() => rp.Complete(IdpFixture.TenantId, code, begin.State, DesktopFixture.CallbackUrl), TenantLoginError)
+        })
     })
 })
 

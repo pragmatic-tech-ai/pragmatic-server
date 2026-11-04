@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { IEnvironmentService, MakerTokenDto } from '../control-plane-host.js'
 import { EnvironmentDtoMapper } from '../environment-dto.js'
 import { TenantAdminCapabilities, type AdminCapabilities } from './tenant-admin-capabilities.js'
-import { TenantProfileMapper } from './tenant-profile-dto.js'
+import { TenantProfileMapper, type TenantProfileDto } from './tenant-profile-dto.js'
 import { HiveDtoMapper } from './hive-dto.js'
 import { HiveHealthProducer } from '../hive-health-producer.js'
 import type { EnvironmentPlacement } from '../environment-placement.js'
@@ -157,12 +157,17 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         this.health = new HiveHealthProducer(service, orchestrators, placement)
     }
 
-    private RouteProfile(res: ServerResponse, session: TenantSession): void
+    /** The signed-in admin's profile, the one the console's `/tenant-api/profile` and the desktop's `/desktop/profile` both report. */
+    public Profile(session: TenantSession): TenantProfileDto
     {
         const tenant = this.directory.GetTenant(session.tenantId)
         const hive = this.directory.ListHives(session.tenantId)[0]
-        const dto = TenantProfileMapper.ToDto(session, tenant, hive, this.directory.GetOrganisation?.(session.tenantId), TenantAdminCapabilities.For(session, tenant))
-        this.WriteJson(res, TenantApiEndpoint.StatusOk, dto)
+        return TenantProfileMapper.ToDto(session, tenant, hive, this.directory.GetOrganisation?.(session.tenantId), TenantAdminCapabilities.For(session, tenant))
+    }
+
+    private RouteProfile(res: ServerResponse, session: TenantSession): void
+    {
+        this.WriteJson(res, TenantApiEndpoint.StatusOk, this.Profile(session))
     }
 
     public async Handle(req: IncomingMessage, res: ServerResponse, path: string, session: TenantSession): Promise<boolean>

@@ -4,6 +4,7 @@ import type { TenantAuthEndpoint } from './tenant-auth-endpoint.js'
 import type { TenantAuthGate } from './tenant-auth-gate.js'
 import type { TenantEventBus } from '../tenant-api/tenant-events.js'
 import type { TenantPrincipalSessions } from './tenant-principal-sessions.js'
+import type { DesktopEndpoint } from './desktop-endpoint.js'
 
 /**
  * The tenant-plane data API seam (`/tenant-api/*`). The host depends on this interface, not the concrete
@@ -30,4 +31,6 @@ export type TenantPlane =
     isDurable?: boolean
     /** Ends a principal's tenant-portal sessions and sockets after a password change; the host attaches its sockets to it. */
     principals?: TenantPrincipalSessions
+    /** The Host-independent Plexus desktop surface (`/desktop/*`); absent means those paths answer 404. */
+    desktop?: DesktopEndpoint
 }

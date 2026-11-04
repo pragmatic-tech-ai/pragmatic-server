@@ -166,6 +166,23 @@ describe('ControlPlaneServer.ComposeTenantPlane', () =>
         assert.equal(plane.isDurable, true)
     })
 
+    it('mounts the desktop surface on the control plane tenant plane, and not on a default BuildTenantPlane', () =>
+    {
+        const plane = compose({ PRAGMATIC_TENANT_ADMIN_PORT: Port, PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN: BaseDomain } as NodeJS.ProcessEnv)
+        assert.ok(plane?.desktop !== undefined)
+        const dir = mkdtempSync(join(tmpdir(), 'tenant-plane-compose-'))
+        try
+        {
+            const registry = new TenantAdminClientRegistry(join(dir, 'tenant-admin-clients.json'))
+            const standalone = ControlPlaneServer.BuildTenantPlane(dir, stub, stub, false, stub, stub, stub, stub, randomBytes(32), registry, 168)
+            assert.equal(standalone.desktop, undefined)
+        }
+        finally
+        {
+            rmSync(dir, { recursive: true, force: true })
+        }
+    })
+
     it('returns undefined (fail-closed) when the tenant port env is unset', () =>
     {
         assert.equal(compose({ PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN: BaseDomain } as NodeJS.ProcessEnv), undefined)
