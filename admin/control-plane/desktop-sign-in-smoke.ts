@@ -215,6 +215,12 @@ export class DesktopSignInSmoke
         console.log(DesktopSignInSmoke.SkipPrefix + label)
     }
 
+    /** A finding worth the operator's attention that does not fail the smoke. */
+    private Warn(label: string): void
+    {
+        console.log(DesktopSignInSmoke.WarnPrefix + label)
+    }
+
     // ---------------------------------------------------------------- part (a): HTTP
 
     private async RunHttp(passwordFile: string | undefined): Promise<void>
@@ -456,7 +462,7 @@ export class DesktopSignInSmoke
                     const invalid = refusal?.code === S.InvalidRequestCode
                     if (invalid && text.includes(S.RoleRefusalText))
                     {
-                        console.log(S.WarnPrefix + S.LabelClusterRoleOnly)
+                        this.Warn(S.LabelClusterRoleOnly)
                     }
                     else
                     {

@@ -19,6 +19,9 @@ export class DesktopDiscoveryEndpoint
     private static readonly MaxEmailLength = 254
     private static readonly MaxBodyBytes = 4096
     private static readonly Utf8 = 'utf8'
+    private static readonly DataEvent = 'data'
+    private static readonly EndEvent = 'end'
+    private static readonly ErrorEvent = 'error'
     private static readonly RetryAfterHeader = 'retry-after'
     private static readonly MsPerSecond = 1000
     private static readonly StatusBadRequest = 400
@@ -126,7 +129,7 @@ export class DesktopDiscoveryEndpoint
             const chunks: Buffer[] = []
             let size = 0
             let tooLarge = false
-            req.on('data', (c: Buffer) =>
+            req.on(DesktopDiscoveryEndpoint.DataEvent, (c: Buffer) =>
             {
                 size += c.length
                 if (size > DesktopDiscoveryEndpoint.MaxBodyBytes)
@@ -136,8 +139,8 @@ export class DesktopDiscoveryEndpoint
                 }
                 chunks.push(c)
             })
-            req.on('end', () => resolveBody(tooLarge ? undefined : Buffer.concat(chunks).toString(DesktopDiscoveryEndpoint.Utf8)))
-            req.on('error', reject)
+            req.on(DesktopDiscoveryEndpoint.EndEvent, () => resolveBody(tooLarge ? undefined : Buffer.concat(chunks).toString(DesktopDiscoveryEndpoint.Utf8)))
+            req.on(DesktopDiscoveryEndpoint.ErrorEvent, reject)
         })
     }
 }

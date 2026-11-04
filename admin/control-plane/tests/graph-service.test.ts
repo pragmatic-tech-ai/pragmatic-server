@@ -200,15 +200,14 @@ class Harness
     public readonly Lookup = new FakeLookup()
     public InfoCalls: string[] = []
     public readonly Service: GraphService
+    /** IAdminAccess: records which env each admin call ran against and how many stay held. */
+    public Held = 0
 
     public constructor(type: EnvType = EnvType.Development)
     {
         this.Lookup.Add(Fixture.Record(Fixture.Dev1, type))
         this.Service = new GraphService(this.Lookup, this.Proxy, this)
     }
-
-    /** IAdminAccess: records which env each admin call ran against and how many stay held. */
-    public Held = 0
 
     public async WithAdmin<T>(name: string, op: (info: AdminConnectInfo) => Promise<T>): Promise<T>
     {
