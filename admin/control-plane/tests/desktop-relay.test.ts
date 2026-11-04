@@ -17,7 +17,7 @@ import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
 import { DesktopAuthGate } from '../tenant-auth/desktop-auth-gate.js'
 import { DesktopRelay, WsUpstreamDialer, type IRelayClock, type IRelayTimer, type IUpstreamDialer } from '../tenant-auth/desktop-relay.js'
 import { DesktopTargets, type DesktopCapabilitiesSource } from '../tenant-auth/desktop-targets.js'
-import { TenantSessionKind, TenantSessionStore } from '../tenant-auth/tenant-session.js'
+import { TenantSessionKind, TenantSessionStore, type TenantSession } from '../tenant-auth/tenant-session.js'
 import { TenantPrincipalSessions } from '../tenant-auth/tenant-principal-sessions.js'
 import type { IIdpService } from '../idp-service.js'
 import type { PlatformDirectory } from '../platform-directory.js'
@@ -276,6 +276,25 @@ class RelayDirectory implements ITenantDirectory
     }
 }
 
+/** A desktop gate whose re-check (every call after the first) can be held, to act while the relay awaits StillLive. */
+class HoldingGate extends DesktopAuthGate
+{
+    public calls = 0
+    public hold: Promise<void> | undefined
+    public reachedRecheck = false
+
+    public override async Principal(req: IncomingMessage): Promise<TenantSession | null>
+    {
+        this.calls++
+        if (this.calls > 1 && this.hold !== undefined)
+        {
+            this.reachedRecheck = true
+            await this.hold
+        }
+        return super.Principal(req)
+    }
+}
+
 /** One relay under test: a real session store + audit file, the relay mounted on a bare http server's upgrade. */
 class RelayKit
 {
@@ -301,6 +320,7 @@ class RelayKit
     public endpoints!: RelayEndpoints
     public dialer!: CountingDialer
     public relay!: DesktopRelay
+    public gate!: HoldingGate
     public upstream!: FakeUpstream
     public readonly directory = new RelayDirectory()
     public readonly clock = new FakeRelayClock()
@@ -326,7 +346,8 @@ class RelayKit
         this.endpoints = new RelayEndpoints(upstreamPort)
         this.dialer = new CountingDialer()
         const service = this.service as unknown as IEnvironmentService
-        this.relay = new DesktopRelay(new DesktopAuthGate(this.store, this.directory), new DesktopTargets(service, this.directory, capabilities), service,
+        this.gate = new HoldingGate(this.store, this.directory)
+        this.relay = new DesktopRelay(this.gate, new DesktopTargets(service, this.directory, capabilities), service,
             this.endpoints as unknown as EnvironmentEndpoints, this.audit, this.dialer, refusalThrottle, false, this.clock)
         this.service.clock = this.clock
         this.desktopToken = (await this.store.Issue(RelayKit.TenantId, RelayKit.Principal, RelayKit.Email, TenantSessionKind.Desktop)).id
@@ -935,6 +956,53 @@ describe('DesktopRelay lifetime', () =>
         assert.equal(DesktopRelay.DeadlineOf(session, credential), Date.parse('2026-11-04T01:00:00.000Z'))
         assert.equal(DesktopRelay.DeadlineOf(session, { ...credential, expiresAt: null }), Date.parse(session.expiresAt))
         assert.equal(DesktopRelay.DeadlineOf({ ...session, expiresAt: 'bad' }, credential), Number.NEGATIVE_INFINITY)
+    })
+})
+
+describe('DesktopRelay pipe closed during the session re-check', () =>
+{
+    let kit: RelayKit
+    let release: () => void = () => undefined
+
+    beforeEach(async () =>
+    {
+        kit = new RelayKit()
+        await kit.Start()
+        kit.gate.hold = new Promise<void>(res => { release = res })
+    })
+
+    afterEach(async () =>
+    {
+        release()
+        await kit.Stop()
+    })
+
+    it('a deadline falling due during the re-check: no upgrade (502), the pipe is not tracked, the lease is released once', async () =>
+    {
+        kit.service.credentialTtlMs = 1_000
+        const dialed = kit.Dial(RelayKit.Dev, 'contribute', kit.desktopToken)
+        await RelayKit.Until(() => kit.gate.reachedRecheck)
+        kit.clock.Advance(1_000)
+        assert.equal(kit.endpoints.releases, 1)
+        release()
+        assert.equal((await dialed).status, 502)
+        assert.equal(kit.relay.CloseSession(kit.desktopToken), 0, 'the closed pipe is not tracked')
+        assert.equal(kit.endpoints.leases, 1)
+        assert.equal(kit.endpoints.releases, 1)
+        await RelayKit.Until(() => kit.service.revokes.length === 1)
+    })
+
+    it('an upstream closing during the re-check: no upgrade (502), the pipe is not tracked, the lease is released once', async () =>
+    {
+        const dialed = kit.Dial(RelayKit.Dev, 'contribute', kit.desktopToken)
+        await RelayKit.Until(() => kit.gate.reachedRecheck)
+        kit.upstream.CloseAll()
+        await RelayKit.Until(() => kit.endpoints.releases === 1)
+        release()
+        assert.equal((await dialed).status, 502)
+        assert.equal(kit.relay.CloseSession(kit.desktopToken), 0, 'the closed pipe is not tracked')
+        assert.equal(kit.endpoints.releases, 1)
+        assert.equal(kit.Audit().at(-1)?.status, 502)
     })
 })
 

@@ -416,6 +416,13 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
             pipe.Close(RelayPipe.GoingAway)
             return
         }
+        // The pipe may have closed during that await (its deadline fell due, or the upstream closed or failed): it has
+        // already released its lease and revoked its credential, so it is neither tracked nor upgraded; the client gets 502.
+        if (pipe.IsClosed)
+        {
+            await this.Refuse(req, socket, DesktopRelay.StatusBadGateway, context.actor, context.action, context.envName)
+            return
+        }
         this.pipes.add(pipe)
         // ws can still abort the handshake without calling back (a bad subprotocol or extension header, a socket that is no
         // longer writable): the socket then closes with no client attached, and the pipe must release its lease and upstream.
@@ -599,6 +606,12 @@ class RelayPipe
         upstream.on(RelayPipe.CloseEvent, code => this.Close(RelayPipe.SendableFrom(code)))
         upstream.on(RelayPipe.ErrorEvent, () => this.Close(RelayPipe.InternalError))
         this.ArmDeadline()
+    }
+
+    /** Whether the pipe has closed (its lease is released). */
+    public get IsClosed(): boolean
+    {
+        return this.closed
     }
 
     /** Whether the client upgrade completed (Attach ran). */
