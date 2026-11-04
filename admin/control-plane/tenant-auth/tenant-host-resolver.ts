@@ -1,6 +1,9 @@
 import { PlaneHttp } from '../plane-http.js'
 import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
 
+/** A host (not a tenant subdomain) that answers for one tenant: the tenant console's own host. */
+export type ConsoleHostAlias = { host: string; tenantId: string }
+
 /**
  * Maps a tenant subdomain Host header (`<tenantId>.<baseDomain>`) to a known tenant id, and is the one builder of a
  * tenant's external origin (`<scheme>://<tenantId>.<baseDomain>[:<externalPort>]`) and of its OIDC callback.
@@ -21,12 +24,14 @@ export class TenantHostResolver
     private readonly baseDomain: string
     /** The port the tenant origin shows; undefined when none (unset, or the scheme's default). */
     private readonly originPort: number | undefined
+    private readonly consoleAlias: ConsoleHostAlias | undefined
 
     public constructor(
         baseDomain: string,
         private readonly externalScheme: string,
         private readonly directory: ITenantDirectory,
-        externalPort?: number
+        externalPort?: number,
+        consoleHost?: ConsoleHostAlias
     )
     {
         if (externalPort !== undefined && (!Number.isInteger(externalPort) || externalPort < 1 || externalPort > TenantHostResolver.MaxPort))
@@ -42,6 +47,7 @@ export class TenantHostResolver
             throw new Error(TenantHostResolver.BadBaseDomainMessage)
         }
         this.baseDomain = normalized
+        this.consoleAlias = consoleHost === undefined ? undefined : { host: consoleHost.host.toLowerCase(), tenantId: consoleHost.tenantId }
     }
 
     /** The tenant id for a host exactly one label under the base domain, or undefined. */
@@ -57,6 +63,10 @@ export class TenantHostResolver
         if (this.originPort !== undefined && port !== undefined && port !== this.originPort)
         {
             return undefined
+        }
+        if (this.consoleAlias !== undefined && host === this.consoleAlias.host)
+        {
+            return this.directory.GetTenant(this.consoleAlias.tenantId) !== undefined ? this.consoleAlias.tenantId : undefined
         }
         const suffix = TenantHostResolver.LabelSeparator + this.baseDomain
         if (!host.endsWith(suffix))

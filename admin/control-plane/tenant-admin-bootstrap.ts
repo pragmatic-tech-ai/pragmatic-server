@@ -184,6 +184,8 @@ export class TenantAdminBootstrap
     public static readonly SeedKey = 'seed.json'
     public static readonly MasterKeyKey = 'master.key'
     public static readonly TrustRootKey = 'trust-root.pub'
+    /** The platform-pinned image refs the console may run (PinnedImageVerifier's file). */
+    public static readonly VerifiedImagesKey = 'verified-images.json'
     private static readonly TokenKey = 'token'
     private static readonly IdpCaKey = 'ca.crt'
     private static readonly IdpAdminTokenKey = 'admin-token'

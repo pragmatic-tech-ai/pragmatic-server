@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test'
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { InjectedIdpService } from '../injected-idp-service.js'
@@ -13,6 +14,9 @@ import { TenantApiEndpoint } from '../tenant-api/tenant-api-endpoint.js'
 import { RolloutUnavailableError, type IRolloutClient } from '../tenant-api/rollout-client.js'
 import { UnconfiguredRolloutClient } from '../tenant-api/unconfigured-rollout-client.js'
 import { HttpRolloutClient } from '../tenant-api/http-rollout-client.js'
+import { InClusterEnvironmentReach } from '../in-cluster-environment-reach.js'
+import { InClusterServiceAccount } from '../kube-api-client.js'
+import { PinnedImageVerifier } from '../pinned-image-verifier.js'
 import { EnvironmentPlacement } from '../environment-placement.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import type { HiveRecord, TenantRecord } from '../platform-records.js'
@@ -127,6 +131,52 @@ describe('TenantAdminServer', () =>
             e['PRAGMATIC_TENANT_ADMIN_EXTERNAL_PORT'] = bad
             assert.throws(() => TenantAdminServer.ReadConfig(e), /PRAGMATIC_TENANT_ADMIN_EXTERNAL_PORT/)
         }
+    })
+
+    it('ReadConfig reads the console host and TLS settings', () =>
+    {
+        const none = TenantAdminServer.ReadConfig(env())
+        assert.equal(none.consoleHost, undefined)
+        assert.equal(none.ingressTls, undefined)
+        const cfg = TenantAdminServer.ReadConfig({
+            ...env(),
+            PRAGMATIC_TENANT_ADMIN_CONSOLE_HOST: 'console-acme.localtest.me',
+            PRAGMATIC_TENANT_ADMIN_INGRESS_TLS_SOURCE: 'development',
+        })
+        assert.equal(cfg.consoleHost, 'console-acme.localtest.me')
+        assert.equal(cfg.ingressTls?.source, 'development')
+    })
+
+    it('InClusterOrchestrationOf takes the identity from the seed', () =>
+    {
+        writeSeed()
+        const directory = TenantAdminServer.LoadSeed(root)
+        const account = new InClusterServiceAccount('/t', '/c')
+        const setup = TenantAdminServer.InClusterOrchestrationOf(account, directory, root, undefined)
+        assert.deepEqual(setup.identity, { tenantId: Names.TenantId, hiveId: Names.HiveId })
+        assert.ok(setup.verifier instanceof PinnedImageVerifier)
+    })
+
+    it('Compose without a service account keeps kubectl orchestration and no reach', async () =>
+    {
+        writeSeed()
+        writeFileSync(join(root, Names.MasterKeyFile), randomBytes(Names.KeyBytes))
+        const server = new TenantAdminServer(TenantAdminServer.ReadConfig(env()), new FakeRolloutClient())
+        const composition = await server.Compose({})
+        assert.equal(composition.reach, undefined)
+    })
+
+    it('Compose in a pod builds the reach', async () =>
+    {
+        writeSeedJson({ tenant, hives: [{ ...hive, cluster: { backend: 'local', mode: 'attach' } }] })
+        writeFileSync(join(root, Names.MasterKeyFile), randomBytes(Names.KeyBytes))
+        const saRoot = join(root, 'sa')
+        mkdirSync(saRoot)
+        writeFileSync(join(saRoot, 'token'), 't')
+        writeFileSync(join(saRoot, 'ca.crt'), 'c')
+        const server = new TenantAdminServer(TenantAdminServer.ReadConfig(env()), new FakeRolloutClient())
+        const composition = await server.Compose({ ...env(), KUBERNETES_SERVICE_HOST: '10.0.0.1' }, saRoot)
+        assert.ok(composition.reach instanceof InClusterEnvironmentReach)
     })
 
     for (const missing of [Names.DataRootVar, Names.PortVar, Names.DomainVar])

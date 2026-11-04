@@ -139,3 +139,43 @@ test('OriginAllowed: absent is allowed; a present Origin must be exactly the ten
     assert.equal(proxied.OriginAllowed('https://acme.admin.example.com:8443', 'acme.admin.example.com:8443'), false)
     assert.equal(proxied.OriginAllowed('https://other.admin.example.com', 'acme.admin.example.com'), false)
 })
+
+class ConsoleKit
+{
+    public static Make(externalPort?: number): TenantHostResolver
+    {
+        return new TenantHostResolver(ResolverKit.Base, ResolverKit.Scheme, new StubDirectory(['acme']) as unknown as PlatformDirectory, externalPort, { host: 'Console-Acme.localtest.me', tenantId: 'acme' })
+    }
+}
+
+test('console host maps to the seeded tenant', () =>
+{
+    const r = ConsoleKit.Make()
+    assert.equal(r.TenantFor('console-acme.localtest.me'), 'acme')
+    assert.equal(r.TenantFor('CONSOLE-ACME.localtest.me:8443'), 'acme')
+    assert.equal(r.Accepts('console-acme.localtest.me'), true)
+})
+
+test('tenant subdomains still resolve', () =>
+{
+    assert.equal(ConsoleKit.Make().TenantFor('acme.admin.example.com'), 'acme')
+    assert.equal(ConsoleKit.Make().TenantFor('other.localtest.me'), undefined)
+})
+
+test('console host with another port is refused when an external port is set', () =>
+{
+    const r = ConsoleKit.Make(7002)
+    assert.equal(r.TenantFor('console-acme.localtest.me:7003'), undefined)
+    assert.equal(r.TenantFor('console-acme.localtest.me:7002'), 'acme')
+})
+
+test('console host answers nothing when the directory does not know its tenant', () =>
+{
+    const r = new TenantHostResolver(ResolverKit.Base, ResolverKit.Scheme, new StubDirectory([]) as unknown as PlatformDirectory, undefined, { host: 'console-acme.localtest.me', tenantId: 'acme' })
+    assert.equal(r.TenantFor('console-acme.localtest.me'), undefined)
+})
+
+test('OriginFor(console host) is the https origin of that host', () =>
+{
+    assert.equal(ConsoleKit.Make().OriginFor('console-acme.localtest.me'), 'https://console-acme.localtest.me')
+})
