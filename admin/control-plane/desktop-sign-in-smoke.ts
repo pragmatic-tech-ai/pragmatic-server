@@ -11,7 +11,7 @@
  *
  * Part (b), --cluster: composes the real KubectlCli / ClusterTunnelPool / EnvironmentEndpoints / EnvironmentService over
  * the hive data root in-process, mints a maker token for the in-cluster Development env and exercises it over the
- * environment's own socket: graph list works, a graph method outside the maker scope is refused.
+ * environment's own socket: graph list works, a graph method outside the maker scope is refused with the scope error.
  *
  * Only statuses and counts are printed: never tokens, passwords, emails or secret content.
  */
@@ -81,9 +81,53 @@ export class DesktopSignInSmoke
     private static readonly ClientIdMarker = 'client_id=pragmatic-desktop'
     private static readonly PkceMarker = 'code_challenge_method=S256'
     private static readonly MethodNotFoundCode = -32601
+    private static readonly InvalidRequestCode = -32600
+    private static readonly ScopeRefusalText = 'outside this credential'
     private static readonly Base64Url = 'base64url'
+    private static readonly Base64 = 'base64'
     private static readonly Sha256 = 'sha256'
     private static readonly VerifierBytes = 32
+    private static readonly WsKeyBytes = 16
+    private static readonly RequestTimeoutMs = 15000
+    private static readonly MethodGet = 'GET'
+    private static readonly MethodPost = 'POST'
+    private static readonly HeaderContentType = 'content-type'
+    private static readonly HeaderAuthorization = 'authorization'
+    private static readonly HeaderCookie = 'cookie'
+    private static readonly HeaderOrigin = 'origin'
+    private static readonly HeaderSetCookie = 'set-cookie'
+    private static readonly HeaderLocation = 'location'
+    private static readonly HeaderConnection = 'connection'
+    private static readonly HeaderUpgrade = 'upgrade'
+    private static readonly HeaderWsVersion = 'sec-websocket-version'
+    private static readonly HeaderWsKey = 'sec-websocket-key'
+    private static readonly UpgradeValue = 'Upgrade'
+    private static readonly WebsocketValue = 'websocket'
+    private static readonly WsVersionValue = '13'
+    private static readonly FormType = 'application/x-www-form-urlencoded'
+    private static readonly BearerPrefix = 'Bearer '
+    private static readonly Redirect = 'manual'
+    private static readonly Http = 'http://'
+    private static readonly Ws = 'ws://'
+    private static readonly EnvQuery = '?environment='
+    private static readonly ActionContribute = '&action=contribute'
+    private static readonly EnvironmentParam = '/?environment='
+    private static readonly Colon = ':'
+    private static readonly Semicolon = ';'
+    private static readonly Empty = ''
+    private static readonly StateParam = 'state'
+    private static readonly CodeParam = 'code'
+    private static readonly EmailField = 'email'
+    private static readonly PasswordField = 'password'
+    private static readonly MissingGraph = 'no-such-graph'
+    private static readonly EventError = 'error'
+    private static readonly EventTimeout = 'timeout'
+    private static readonly EventResponse = 'response'
+    private static readonly EventUpgrade = 'upgrade'
+    private static readonly EventData = 'data'
+    private static readonly EventEnd = 'end'
+    private static readonly OwnerEmailMissing = 'the target environment tenant has no owner email on record'
+    private static readonly TimeoutMessage = 'request timed out'
     private static readonly SkippedNoPassword = 'skipped: no owner password file'
     private static readonly ClusterSkipped = 'skipped: --cluster not given'
     private static readonly OkPrefix = 'ok    '
@@ -92,6 +136,26 @@ export class DesktopSignInSmoke
     private static readonly Overall = 'OVERALL '
     private static readonly Pass = 'PASS'
     private static readonly Fail = 'FAIL'
+    private static readonly UnexpectedLabel = 'unexpected error during the smoke run, error name '
+    private static readonly BeginNoUrlLabel = 'begin returned 200 without an authorize URL'
+    private static readonly LabelDiscoverKnown = 'discover known owner -> 200 with at least one tenant, found '
+    private static readonly LabelDiscoverUnknown = 'discover unknown email -> 404, got '
+    private static readonly LabelDiscoverOrigin = 'discover with Origin -> 403, got '
+    private static readonly LabelBegin = 'begin -> 200 with an authorize URL carrying client_id and S256, status '
+    private static readonly LabelAuthorizeHost = ', authorize host '
+    private static readonly LabelTargets401 = 'targets without bearer -> 401, got '
+    private static readonly LabelRelay401 = 'relay upgrade without bearer -> 401, got '
+    private static readonly LabelLogin = 'IdP login redirected to the loopback callback, status '
+    private static readonly LabelComplete = 'complete -> 200, got '
+    private static readonly LabelTargetsAuthed = 'targets with bearer -> 200, got '
+    private static readonly LabelRelayList = 'relay graph/list returned a list, count '
+    private static readonly LabelRelayDelete = 'relay graph/delete refused with -32601, got '
+    private static readonly LabelSignOut = 'sign-out -> 200 or 204, got '
+    private static readonly LabelEnvOnRecord = 'in-cluster env training2 is on record'
+    private static readonly LabelTunnel = 'cluster tunnel opened'
+    private static readonly LabelMinted = 'maker token minted (admin secret read from the cluster)'
+    private static readonly LabelClusterList = 'maker-token graph/list returned a list, count '
+    private static readonly LabelClusterScope = 'maker-token graph/delete refused as outside the credential scope (InvalidRequest), got code '
 
     private failures = 0
     private readonly operatorUrl = process.env[DesktopSignInSmoke.OperatorUrlEnv] ?? DesktopSignInSmoke.DefaultOperatorUrl
@@ -115,7 +179,7 @@ export class DesktopSignInSmoke
         }
         catch (err)
         {
-            smoke.Check('unexpected error: ' + DesktopSignInSmoke.SafeMessage(err), false)
+            smoke.Check(DesktopSignInSmoke.UnexpectedLabel + DesktopSignInSmoke.SafeName(err), false)
         }
         console.log(DesktopSignInSmoke.Overall + (smoke.failures === 0 ? DesktopSignInSmoke.Pass : DesktopSignInSmoke.Fail))
         process.exit(smoke.failures === 0 ? 0 : 1)
@@ -127,10 +191,10 @@ export class DesktopSignInSmoke
         return i >= 0 ? argv[i + 1] : undefined
     }
 
-    /** Error text for the log; error messages here come from our own code and never carry secrets. */
-    private static SafeMessage(err: unknown): string
+    /** Only the error class name is logged: messages can quote request or secret material. */
+    private static SafeName(err: unknown): string
     {
-        return err instanceof Error ? err.name + ': ' + err.message : String(err)
+        return err instanceof Error ? err.name : typeof err
     }
 
     private Check(label: string, ok: boolean): boolean
@@ -154,34 +218,36 @@ export class DesktopSignInSmoke
     {
         const S = DesktopSignInSmoke
         const ownerEmail = this.OwnerEmailOfTarget()
-        const found = await this.PostJson(this.operatorUrl + S.DiscoverPath, { email: ownerEmail })
+        const found = await this.PostJson(this.operatorUrl + S.DiscoverPath, { [S.EmailField]: ownerEmail })
         const tenants = (JSON.parse(found.body) as { tenants?: { id: string }[] }).tenants ?? []
-        this.Check('discover known owner -> 200, found ' + String(tenants.length) + ' tenant(s)', found.status === 200 && tenants.length > 0)
-        const unknown = await this.PostJson(this.operatorUrl + S.DiscoverPath, { email: S.UnknownEmail })
-        this.Check('discover unknown email -> ' + String(unknown.status) + ' (want 404)', unknown.status === 404)
-        const withOrigin = await this.PostJson(this.operatorUrl + S.DiscoverPath, { email: ownerEmail }, { origin: S.OriginHeaderValue })
-        this.Check('discover with Origin -> ' + String(withOrigin.status) + ' (want 403)', withOrigin.status === 403)
+        this.Check(S.LabelDiscoverKnown + String(tenants.length), found.status === 200 && tenants.length > 0)
+        const unknown = await this.PostJson(this.operatorUrl + S.DiscoverPath, { [S.EmailField]: S.UnknownEmail })
+        this.Check(S.LabelDiscoverUnknown + String(unknown.status), unknown.status === 404)
+        const withOrigin = await this.PostJson(this.operatorUrl + S.DiscoverPath, { [S.EmailField]: ownerEmail }, { [S.HeaderOrigin]: S.OriginHeaderValue })
+        this.Check(S.LabelDiscoverOrigin + String(withOrigin.status), withOrigin.status === 403)
 
         const tenantId = tenants[0]?.id
         const verifier = randomBytes(S.VerifierBytes).toString(S.Base64Url)
         const challenge = createHash(S.Sha256).update(verifier).digest(S.Base64Url)
         const listener = await this.OpenLoopbackListener()
-        let begun: { authorizeUrl?: string } = {}
         try
         {
-            const redirectUri = 'http://' + S.Loopback + ':' + String(listener.port) + S.CallbackPath
+            const redirectUri = S.Http + S.Loopback + S.Colon + String(listener.port) + S.CallbackPath
             const begin = await this.PostJson(this.tenantUrl + S.BeginPath, { tenantId, redirectUri, bindingChallenge: challenge })
-            begun = begin.status === 200 ? JSON.parse(begin.body) as { authorizeUrl?: string } : {}
-            const url = begun.authorizeUrl
+            const url = begin.status === 200 ? (JSON.parse(begin.body) as { authorizeUrl?: string }).authorizeUrl : undefined
             const shaped = url !== undefined && url.includes(S.ClientIdMarker) && url.includes(S.PkceMarker)
-            this.Check('begin -> ' + String(begin.status) + (url === undefined ? '' : ', authorize host ' + new URL(url).host) + ', client_id + S256 present: ' + String(shaped), begin.status === 200 && shaped)
+            this.Check(S.LabelBegin + String(begin.status) + (url === undefined ? S.Empty : S.LabelAuthorizeHost + new URL(url).host), shaped)
+            if (begin.status === 200 && url === undefined)
+            {
+                this.Check(S.BeginNoUrlLabel, false)
+            }
             if (passwordFile === undefined)
             {
                 this.Skip(S.SkippedNoPassword)
             }
-            else if (begun.authorizeUrl !== undefined)
+            else if (url !== undefined)
             {
-                await this.RunLogin(begun.authorizeUrl, redirectUri, verifier, ownerEmail, readFileSync(passwordFile, S.Utf8).trim())
+                await this.RunLogin(url, redirectUri, verifier, ownerEmail, readFileSync(passwordFile, S.Utf8).trim())
             }
         }
         finally
@@ -189,57 +255,68 @@ export class DesktopSignInSmoke
             listener.close()
         }
 
-        const targets = await this.Request(this.tenantUrl + S.TargetsPath, 'GET')
-        this.Check('targets without bearer -> ' + String(targets.status) + ' (want 401)', targets.status === 401)
-        const relay = await this.RelayUpgrade(S.RelayPath + '?environment=' + S.TargetEnvName + '&action=contribute')
-        this.Check('relay upgrade without bearer -> ' + String(relay) + ' (want 401)', relay === 401)
+        const targets = await this.Request(this.tenantUrl + S.TargetsPath, S.MethodGet)
+        this.Check(S.LabelTargets401 + String(targets.status), targets.status === 401)
+        const relay = await this.RelayUpgrade(S.RelayPath + S.EnvQuery + S.TargetEnvName + S.ActionContribute)
+        this.Check(S.LabelRelay401 + String(relay), relay === 401)
     }
 
     /** The full leg: password login against the IdP form, complete, targets, relay (list works, delete refused), sign-out. */
     private async RunLogin(authorizeUrl: string, redirectUri: string, verifier: string, email: string, password: string): Promise<void>
     {
         const S = DesktopSignInSmoke
-        const page = await fetch(authorizeUrl, { redirect: 'manual' })
-        const cookie = (page.headers.get('set-cookie') ?? '').split(';')[0] ?? ''
-        const form = await fetch(authorizeUrl, {
-            method: 'POST',
-            redirect: 'manual',
-            headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-            body: new URLSearchParams({ email, password }).toString(),
+        const page = await this.Fetch(authorizeUrl, { redirect: S.Redirect })
+        const cookie = (page.headers.get(S.HeaderSetCookie) ?? S.Empty).split(S.Semicolon)[0] ?? S.Empty
+        const form = await this.Fetch(authorizeUrl, {
+            method: S.MethodPost,
+            redirect: S.Redirect,
+            headers: { [S.HeaderContentType]: S.FormType, [S.HeaderCookie]: cookie },
+            body: new URLSearchParams({ [S.EmailField]: email, [S.PasswordField]: password }).toString(),
         })
-        const location = form.headers.get('location') ?? ''
+        const location = form.headers.get(S.HeaderLocation) ?? S.Empty
         const landed = location.startsWith(redirectUri)
-        this.Check('IdP login -> ' + String(form.status) + ', redirected to the loopback callback: ' + String(landed), landed)
+        this.Check(S.LabelLogin + String(form.status), landed)
         if (!landed)
         {
             return
         }
         const params = new URL(location).searchParams
-        const complete = await this.PostJson(this.tenantUrl + S.CompletePath, { state: params.get('state'), code: params.get('code'), bindingVerifier: verifier })
+        const complete = await this.PostJson(this.tenantUrl + S.CompletePath, { state: params.get(S.StateParam), code: params.get(S.CodeParam), bindingVerifier: verifier })
         const session = complete.status === 200 ? JSON.parse(complete.body) as { token: string } : undefined
-        this.Check('complete -> ' + String(complete.status), session !== undefined)
+        this.Check(S.LabelComplete + String(complete.status), session !== undefined)
         if (session === undefined)
         {
             return
         }
-        const bearer = { authorization: 'Bearer ' + session.token }
-        const targets = await this.Request(this.tenantUrl + S.TargetsPath, 'GET', bearer)
-        const listed = targets.status === 200 ? JSON.parse(targets.body) as { contribute: unknown[]; publish: unknown[] } : undefined
-        this.Check('targets with bearer -> ' + String(targets.status) + (listed === undefined ? '' : ', contribute ' + String(listed.contribute.length) + ', publish ' + String(listed.publish.length)), listed !== undefined)
-        const client = await PragmaticClient.ConnectAsync('ws://' + new URL(this.tenantUrl).host + S.RelayPath + '?environment=' + S.TargetEnvName + '&action=contribute', { bearerToken: session.token })
+        const bearer = { [S.HeaderAuthorization]: S.BearerPrefix + session.token }
         try
         {
-            const graphs = await client.ListGraphs()
-            this.Check('relay graph/list -> ' + String(graphs.length) + ' graph(s)', true)
-            const refused = await client.DeleteGraph({ graphName: 'no-such-graph' }).then(() => undefined, (e: unknown) => (e as { code?: number }).code)
-            this.Check('relay graph/delete refused with ' + String(refused) + ' (want ' + String(S.MethodNotFoundCode) + ')', refused === S.MethodNotFoundCode)
+            const targets = await this.Request(this.tenantUrl + S.TargetsPath, S.MethodGet, bearer)
+            this.Check(S.LabelTargetsAuthed + String(targets.status), targets.status === 200)
+            const client = await PragmaticClient.ConnectAsync(S.Ws + new URL(this.tenantUrl).host + S.RelayPath + S.EnvQuery + S.TargetEnvName + S.ActionContribute, { bearerToken: session.token })
+            try
+            {
+                const graphs = await client.ListGraphs()
+                this.Check(S.LabelRelayList + String(graphs.length), Array.isArray(graphs))
+                const refused = await client.DeleteGraph({ graphName: S.MissingGraph }).then(() => undefined, (e: unknown) => (e as { code?: number }).code)
+                this.Check(S.LabelRelayDelete + String(refused), refused === S.MethodNotFoundCode)
+            }
+            finally
+            {
+                await client.DisposeAsync()
+            }
         }
         finally
         {
-            await client.DisposeAsync()
+            const out = await this.Request(this.tenantUrl + S.SignOutPath, S.MethodPost, bearer)
+            this.Check(S.LabelSignOut + String(out.status), out.status === 200 || out.status === 204)
         }
-        const out = await this.Request(this.tenantUrl + S.SignOutPath, 'POST', bearer)
-        this.Check('sign-out -> ' + String(out.status), out.status === 200 || out.status === 204)
+    }
+
+    /** fetch with a hard timeout. */
+    private Fetch(url: string, init: RequestInit): Promise<Response>
+    {
+        return fetch(url, { ...init, signal: AbortSignal.timeout(DesktopSignInSmoke.RequestTimeoutMs) })
     }
 
     /** The owner email of the tenant that owns the target environment, from the platform records. Never printed. */
@@ -248,10 +325,10 @@ export class DesktopSignInSmoke
         const S = DesktopSignInSmoke
         const registry = JSON.parse(readFileSync(join(this.dataRoot, S.RegistryFile), S.Utf8)) as { environments: Record<string, { tenantId: string }> }
         const tenants = JSON.parse(readFileSync(join(this.dataRoot, S.TenantsFile), S.Utf8)) as { tenants: Record<string, { ownerEmail?: string }> }
-        const email = tenants.tenants[registry.environments[S.TargetEnvName]?.tenantId ?? '']?.ownerEmail
+        const email = tenants.tenants[registry.environments[S.TargetEnvName]?.tenantId ?? S.Empty]?.ownerEmail
         if (email === undefined)
         {
-            throw new Error('the target environment\'s tenant has no owner email on record')
+            throw new Error(S.OwnerEmailMissing)
         }
         return email
     }
@@ -261,27 +338,29 @@ export class DesktopSignInSmoke
         return new Promise((resolve, reject) =>
         {
             const server = createServer(socket => socket.destroy())
-            server.once('error', reject)
+            server.once(DesktopSignInSmoke.EventError, reject)
             server.listen(0, DesktopSignInSmoke.Loopback, () => resolve({ port: (server.address() as AddressInfo).port, close: () => server.close() }))
         })
     }
 
     private PostJson(url: string, body: unknown, headers: Record<string, string> = {}): Promise<HttpResult>
     {
-        return this.Request(url, 'POST', { 'content-type': DesktopSignInSmoke.JsonType, ...headers }, JSON.stringify(body))
+        return this.Request(url, DesktopSignInSmoke.MethodPost, { [DesktopSignInSmoke.HeaderContentType]: DesktopSignInSmoke.JsonType, ...headers }, JSON.stringify(body))
     }
 
     private Request(url: string, method: string, headers: Record<string, string> = {}, body?: string): Promise<HttpResult>
     {
+        const S = DesktopSignInSmoke
         return new Promise((resolve, reject) =>
         {
-            const req = request(url, { method, headers }, res =>
+            const req = request(url, { method, headers, timeout: S.RequestTimeoutMs }, res =>
             {
                 const chunks: Buffer[] = []
-                res.on('data', c => chunks.push(c as Buffer))
-                res.on('end', () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString(DesktopSignInSmoke.Utf8), location: res.headers.location }))
+                res.on(S.EventData, c => chunks.push(c as Buffer))
+                res.on(S.EventEnd, () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString(S.Utf8), location: res.headers.location }))
             })
-            req.on('error', reject)
+            req.on(S.EventTimeout, () => req.destroy(new Error(S.TimeoutMessage)))
+            req.on(S.EventError, reject)
             req.end(body)
         })
     }
@@ -289,22 +368,30 @@ export class DesktopSignInSmoke
     /** A bearer-less WebSocket upgrade attempt: resolves with the plain HTTP status that refused it (0 if it upgraded). */
     private RelayUpgrade(path: string): Promise<number>
     {
+        const S = DesktopSignInSmoke
         return new Promise((resolve, reject) =>
         {
             const req = request(this.tenantUrl + path, {
-                headers: { connection: 'Upgrade', upgrade: 'websocket', 'sec-websocket-version': '13', 'sec-websocket-key': randomBytes(16).toString('base64') },
+                timeout: S.RequestTimeoutMs,
+                headers: {
+                    [S.HeaderConnection]: S.UpgradeValue,
+                    [S.HeaderUpgrade]: S.WebsocketValue,
+                    [S.HeaderWsVersion]: S.WsVersionValue,
+                    [S.HeaderWsKey]: randomBytes(S.WsKeyBytes).toString(S.Base64),
+                },
             })
-            req.on('response', res =>
+            req.on(S.EventTimeout, () => req.destroy(new Error(S.TimeoutMessage)))
+            req.on(S.EventResponse, res =>
             {
                 res.resume()
                 resolve(res.statusCode ?? 0)
             })
-            req.on('upgrade', (_res, socket) =>
+            req.on(S.EventUpgrade, (_res, socket) =>
             {
                 socket.destroy()
                 resolve(0)
             })
-            req.on('error', reject)
+            req.on(S.EventError, reject)
             req.end()
         })
     }
@@ -346,22 +433,24 @@ export class DesktopSignInSmoke
         {
             if (rec === undefined)
             {
-                this.Check('in-cluster env ' + S.TargetEnvName + ' is on record', false)
+                this.Check(S.LabelEnvOnRecord, false)
                 return
             }
             const lease = await endpoints.UrlsFor(rec)
             try
             {
-                this.Check('cluster tunnel opened', true)
+                this.Check(S.LabelTunnel, true)
                 const minted = await service.AdminIssueMakerToken(S.TargetEnvName)
-                this.Check('maker token minted (admin secret read from the cluster)', typeof minted.token === 'string' && minted.token.length > 0)
-                const client = await PragmaticClient.ConnectAsync(lease.wsUrl + '/?environment=' + rec.environmentId, { bearerToken: minted.token })
+                this.Check(S.LabelMinted, typeof minted.token === 'string' && minted.token.length > 0)
+                const client = await PragmaticClient.ConnectAsync(lease.wsUrl + S.EnvironmentParam + rec.environmentId, { bearerToken: minted.token })
                 try
                 {
                     const graphs = await client.ListGraphs()
-                    this.Check('maker-token graph/list -> ' + String(graphs.length) + ' graph(s)', Array.isArray(graphs))
-                    const refused = await client.CreateGraph({ graphName: 'smoke-out-of-scope', description: '' }).then(() => false, () => true)
-                    this.Check('maker-token graph/create refused (outside the scope)', refused)
+                    this.Check(S.LabelClusterList + String(graphs.length), Array.isArray(graphs))
+                    // Non-mutating probe: the scope gate answers before the method runs, so nothing is ever deleted.
+                    const refusal = await client.DeleteGraph({ graphName: S.MissingGraph }).then(() => undefined, (e: unknown) => e as { code?: number; message?: string })
+                    const scoped = refusal?.code === S.InvalidRequestCode && (refusal.message ?? S.Empty).includes(S.ScopeRefusalText)
+                    this.Check(S.LabelClusterScope + String(refusal?.code), scoped)
                 }
                 finally
                 {
