@@ -114,21 +114,41 @@ class EndpointKit
     }
 }
 
+/** A movable millisecond clock for the login throttle. */
+class ThrottleClock
+{
+    private current = Date.now()
+
+    public readonly Now = (): number => this.current
+
+    public Advance(ms: number): void
+    {
+        this.current += ms
+    }
+}
+
 class EndpointHarness
 {
+    public static readonly LockoutMs = 1000
     public readonly Dir = mkdtempSync(join(tmpdir(), 'desktop-endpoint-'))
     public readonly Rp = new FakeRelyingParty()
     public readonly Sessions = new TenantSessionStore(join(this.Dir, 'sessions.json'), 3600000)
     public readonly DesktopGate = new DesktopAuthGate(this.Sessions)
     public readonly ConsoleGate = new TenantAuthGate(this.Sessions)
-    public readonly Throttle = new LoginThrottle({ maxAttempts: 3 })
+    public readonly Clock = new ThrottleClock()
+    public readonly Throttle = new LoginThrottle({ maxAttempts: 3, lockoutMs: EndpointHarness.LockoutMs, now: this.Clock.Now })
     private readonly directory = new EndpointDirectory()
-    public readonly Endpoint = new DesktopEndpoint(
-        this.Rp, this.Sessions, this.DesktopGate, new DesktopSignInFlows(),
-        new DesktopTargets(new EndpointListing() as unknown as IEnvironmentService, this.directory), this.directory,
-        s => TenantProfileMapper.ToDto(s, this.directory.GetTenant(s.tenantId), undefined, undefined, TenantAdminCapabilities.For(s, this.directory.GetTenant(s.tenantId))),
-        this.Throttle)
+    public readonly Endpoint: DesktopEndpoint
     private server: Server | undefined
+
+    public constructor(trustedProxy: boolean = false)
+    {
+        this.Endpoint = new DesktopEndpoint(
+            this.Rp, this.Sessions, this.DesktopGate, new DesktopSignInFlows(),
+            new DesktopTargets(new EndpointListing() as unknown as IEnvironmentService, this.directory), this.directory,
+            s => TenantProfileMapper.ToDto(s, this.directory.GetTenant(s.tenantId), undefined, undefined, TenantAdminCapabilities.For(s, this.directory.GetTenant(s.tenantId))),
+            this.Throttle, DesktopEndpoint.NewBeginThrottle(), trustedProxy)
+    }
 
     public async Start(): Promise<void>
     {
@@ -159,8 +179,12 @@ class EndpointHarness
 
     public Send(method: string, path: string, body: unknown, headers: Record<string, string> = {}): Promise<Reply>
     {
+        return this.SendRaw(method, path, body === undefined ? '' : JSON.stringify(body), headers)
+    }
+
+    public SendRaw(method: string, path: string, payload: string, headers: Record<string, string> = {}): Promise<Reply>
+    {
         const port = (this.server!.address() as AddressInfo).port
-        const payload = body === undefined ? '' : JSON.stringify(body)
         return new Promise((resolve, reject) =>
         {
             const req = request({ host: EndpointKit.Loopback, port, method, path, headers: { 'content-type': 'application/json', ...headers } }, res =>
@@ -191,9 +215,9 @@ class EndpointHarness
         return new URL(begun.body!['authorizeUrl'] as string).searchParams.get('state') as string
     }
 
-    public Complete(state: string, verifier: string): Promise<Reply>
+    public Complete(state: string, verifier: string, headers: Record<string, string> = {}): Promise<Reply>
     {
-        return this.Send('POST', EndpointKit.CompletePath, { state, code: EndpointKit.Code, bindingVerifier: verifier })
+        return this.Send('POST', EndpointKit.CompletePath, { state, code: EndpointKit.Code, bindingVerifier: verifier }, headers)
     }
 
     public async SignIn(): Promise<string>
@@ -367,5 +391,86 @@ describe('DesktopEndpoint', () =>
         assert.equal((await h.Send('GET', EndpointKit.BeginPath, undefined)).status, 405)
         assert.equal((await h.Send('POST', EndpointKit.TargetsPath, undefined)).status, 405)
         assert.equal((await h.Send('GET', '/desktop/other', undefined)).status, 404)
+    })
+
+    it('a throttled complete does not burn the flow: once the lock lifts the same flow completes', async () =>
+    {
+        const verifier = EndpointKit.Verifier()
+        const state = await h.BeginFlow(verifier)
+        for (let i = 0; i < 3; i++)
+        {
+            assert.equal((await h.Complete('never-begun-' + String(i), EndpointKit.Verifier())).status, 401)
+        }
+        assert.equal((await h.Complete(state, verifier)).status, 429)
+        h.Clock.Advance(EndpointHarness.LockoutMs + 1)
+        assert.equal((await h.Complete(state, verifier)).status, 200)
+    })
+
+    it('begin is rate limited per address: the 11th begin in a minute is 429, whatever its body', async () =>
+    {
+        for (let i = 0; i < DesktopEndpoint.MaxBeginsPerWindow; i++)
+        {
+            const body = i % 2 === 0 ? { tenantId: 'nope' } : { tenantId: EndpointKit.TenantId, redirectUri: EndpointKit.RedirectUri, bindingChallenge: EndpointKit.Challenge(EndpointKit.Verifier()) }
+            assert.notEqual((await h.Send('POST', EndpointKit.BeginPath, body)).status, 429)
+        }
+        const limited = await h.Begin(EndpointKit.RedirectUri, EndpointKit.Challenge(EndpointKit.Verifier()))
+        assert.equal(limited.status, 429)
+        assert.deepEqual(limited.body, { error: 'too-many-requests' })
+    })
+
+    it('an oversized body is 413 and is not read further', async () =>
+    {
+        const huge = JSON.stringify({ tenantId: EndpointKit.TenantId, pad: 'x'.repeat(20000) })
+        const r = await h.SendRaw('POST', EndpointKit.BeginPath, huge)
+        assert.equal(r.status, 413)
+        assert.equal(h.Rp.BeginKind, undefined)
+    })
+})
+
+/** Runs a body against a started harness (optionally behind a trusted proxy) and disposes it. */
+class AddressKit
+{
+    public static readonly Forwarded = 'x-forwarded-for'
+
+    public static async With(trustedProxy: boolean, body: (h: EndpointHarness) => Promise<void>): Promise<void>
+    {
+        const h = new EndpointHarness(trustedProxy)
+        await h.Start()
+        try
+        {
+            await body(h)
+        }
+        finally
+        {
+            await h.Dispose()
+        }
+    }
+}
+
+describe('DesktopEndpoint client address', () =>
+{
+    it('behind a trusted proxy, two forwarded addresses get separate throttle buckets', async () =>
+    {
+        await AddressKit.With(true, async h =>
+        {
+            for (let i = 0; i < 3; i++)
+            {
+                assert.equal((await h.Complete('nope-' + String(i), EndpointKit.Verifier(), { [AddressKit.Forwarded]: '10.0.0.9, 203.0.113.1' })).status, 401)
+            }
+            assert.equal((await h.Complete('nope-x', EndpointKit.Verifier(), { [AddressKit.Forwarded]: '203.0.113.1' })).status, 429)
+            assert.equal((await h.Complete('nope-y', EndpointKit.Verifier(), { [AddressKit.Forwarded]: '203.0.113.2' })).status, 401)
+        })
+    })
+
+    it('without a trusted proxy the forwarded header is ignored (one bucket per socket address)', async () =>
+    {
+        await AddressKit.With(false, async h =>
+        {
+            for (let i = 0; i < 3; i++)
+            {
+                assert.equal((await h.Complete('nope-' + String(i), EndpointKit.Verifier(), { [AddressKit.Forwarded]: '203.0.113.1' })).status, 401)
+            }
+            assert.equal((await h.Complete('nope-y', EndpointKit.Verifier(), { [AddressKit.Forwarded]: '203.0.113.2' })).status, 429)
+        })
     })
 })

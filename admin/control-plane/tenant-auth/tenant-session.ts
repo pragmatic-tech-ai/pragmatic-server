@@ -1,9 +1,10 @@
-import { randomBytes, randomUUID } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 /**
- * A tenant-plane login session. The id is the bearer token: never log it or put it in an error message. `issuedAt` is absent
+ * A tenant-plane login session. The id handed to callers is the bearer token: never log it or put it in an error message
+ * (the store itself keeps and persists only the token's SHA-256 digest). `issuedAt` is absent
  * on sessions written before it existed (it is then derived from expiresAt - ttl). `keptAt` is set on the session a rotation
  * issues (the fresh session of the user who changed their own password): it is issued in the same instant as the reset it
  * stamps, so the stamp must not refuse it.
@@ -23,7 +24,11 @@ class RenewalRefused extends Error
 }
 
 /**
- * File-backed tenant session store keyed by session id (temp-write + atomic rename; a missing file is empty). Every change
+ * File-backed tenant session store keyed by the SHA-256 digest of each session's bearer token: the raw token is handed to
+ * the caller once (Issue, RotateFor) and never kept or written; Validate and Revoke hash the token presented. Sessions the
+ * store returns carry the caller's token as their id, so the token-keyed socket bookkeeping above it is unchanged. A file
+ * written before digests (no `tokenFormat` marker, raw tokens as keys) is migrated on load by hashing its keys and rewritten
+ * at once (best effort: a failed write leaves it to the next change). Temp-write + atomic rename; a missing file is empty. Every change
  * is made on copies of the maps and persisted; changes run one at a time. Grants (Issue, RotateFor) are strict: only a
  * successful write swaps the copy into memory, so a failed write leaves memory and disk as they were. Revocations
  * (Revoke, RevokeAllFor) fail CLOSED: the copy is swapped into memory even when the write fails (the error is then
@@ -39,6 +44,11 @@ export class TenantSessionStore
     private static readonly RootKey = 'sessions'
     /** tenantId -> principalId -> when that principal's sessions were last ended (a password reset). */
     private static readonly ResetsKey = 'principalResets'
+    /** Marks a file whose session keys are token digests; a file without it holds raw tokens and is migrated on load. */
+    private static readonly FormatKey = 'tokenFormat'
+    private static readonly DigestFormat = 'sha256'
+    private static readonly DigestAlgorithm = 'sha256'
+    private static readonly DigestEncoding = 'base64url'
     private static readonly TokenBytes = 32
     private static readonly TokenEncoding = 'base64url'
     private static readonly FileMode = 0o600
@@ -67,12 +77,13 @@ export class TenantSessionStore
 
     public async Issue(tenantId: string, principalId: string, email?: string, kind: TenantSessionKind = TenantSessionKind.Console): Promise<TenantSession>
     {
+        const token = TenantSessionStore.NewToken()
         return await this.Mutate((sessions) =>
         {
             const issuedAt = this.now()
             const lifetimeMs = kind === TenantSessionKind.Desktop ? this.desktopTtlMs : this.ttlMs
             const session: TenantSession = {
-                id: randomBytes(TenantSessionStore.TokenBytes).toString(TenantSessionStore.TokenEncoding),
+                id: TenantSessionStore.DigestOf(token),
                 tenantId,
                 principalId,
                 expiresAt: new Date(issuedAt.getTime() + lifetimeMs).toISOString(),
@@ -88,23 +99,35 @@ export class TenantSessionStore
             }
             this.PruneExpired(sessions)
             sessions.set(session.id, session)
-            return { ...session }
+            return { ...session, id: token }
         })
+    }
+
+    /** The key a token is stored under: its SHA-256 digest (base64url). */
+    public static DigestOf(token: string): string
+    {
+        return createHash(TenantSessionStore.DigestAlgorithm).update(token).digest(TenantSessionStore.DigestEncoding)
+    }
+
+    private static NewToken(): string
+    {
+        return randomBytes(TenantSessionStore.TokenBytes).toString(TenantSessionStore.TokenEncoding)
     }
 
     public async Validate(token: string): Promise<TenantSession | null>
     {
         await this.ensureLoaded()
-        const session = this.sessions.get(token)
+        const key = TenantSessionStore.DigestOf(token)
+        const session = this.sessions.get(key)
         if (session === undefined || new Date(session.expiresAt).getTime() <= this.now().getTime() || this.PredatesReset(session))
         {
             return null
         }
         if (this.IsDueForRenewal(session))
         {
-            return await this.Renew(token)
+            return await this.Renew(key, token)
         }
-        return { ...session }
+        return { ...session, id: token }
     }
 
     /** Whether a desktop session has gone a renewal interval without being kept (a console session never slides). */
@@ -124,14 +147,14 @@ export class TenantSessionStore
      * waited in the queue is refused (null). A failed WRITE must not refuse a session that is still valid, so the un-slid
      * session is returned, but only if it is still present and live in memory; any other error propagates.
      */
-    private async Renew(token: string): Promise<TenantSession | null>
+    private async Renew(key: string, token: string): Promise<TenantSession | null>
     {
         let changed = false
         try
         {
             return await this.Mutate((sessions) =>
             {
-                const current = sessions.get(token)
+                const current = sessions.get(key)
                 if (current === undefined || !this.IsLive(current))
                 {
                     throw new RenewalRefused()
@@ -144,7 +167,7 @@ export class TenantSessionStore
                     current.keptAt = new Date(nowMs).toISOString()
                 }
                 changed = true
-                return { ...current }
+                return { ...current, id: token }
             })
         }
         catch (err)
@@ -157,8 +180,8 @@ export class TenantSessionStore
             {
                 throw err
             }
-            const still = this.sessions.get(token)
-            return still !== undefined && this.IsLive(still) ? { ...still } : null
+            const still = this.sessions.get(key)
+            return still !== undefined && this.IsLive(still) ? { ...still, id: token } : null
         }
     }
 
@@ -171,11 +194,12 @@ export class TenantSessionStore
     public async Revoke(token: string): Promise<void>
     {
         await this.ensureLoaded()
-        if (!this.sessions.has(token))
+        const key = TenantSessionStore.DigestOf(token)
+        if (!this.sessions.has(key))
         {
             return
         }
-        await this.Mutate((sessions) => { sessions.delete(token) }, TenantSessionStore.FailClosed)
+        await this.Mutate((sessions) => { sessions.delete(key) }, TenantSessionStore.FailClosed)
     }
 
     /**
@@ -194,12 +218,13 @@ export class TenantSessionStore
      */
     public async RotateFor(tenantId: string, principalId: string, email?: string): Promise<TenantSession>
     {
+        const token = TenantSessionStore.NewToken()
         return await this.Mutate((sessions, resets) =>
         {
             this.EndAllOf(sessions, resets, tenantId, principalId)
             const stamp = resets.get(tenantId)?.get(principalId) as string
             const session: TenantSession = {
-                id: randomBytes(TenantSessionStore.TokenBytes).toString(TenantSessionStore.TokenEncoding),
+                id: TenantSessionStore.DigestOf(token),
                 tenantId,
                 principalId,
                 expiresAt: new Date(new Date(stamp).getTime() + this.ttlMs).toISOString(),
@@ -212,7 +237,7 @@ export class TenantSessionStore
             }
             this.PruneExpired(sessions)
             sessions.set(session.id, session)
-            return { ...session }
+            return { ...session, id: token }
         })
     }
 
@@ -329,7 +354,7 @@ export class TenantSessionStore
             }
             throw err
         }
-        let parsed: { [TenantSessionStore.RootKey]?: Record<string, TenantSession>; [TenantSessionStore.ResetsKey]?: Record<string, Record<string, string>> }
+        let parsed: { [TenantSessionStore.RootKey]?: Record<string, TenantSession>; [TenantSessionStore.ResetsKey]?: Record<string, Record<string, string>>; [TenantSessionStore.FormatKey]?: string }
         try
         {
             parsed = JSON.parse(text) as typeof parsed
@@ -338,13 +363,27 @@ export class TenantSessionStore
         {
             throw new Error(TenantSessionStore.CorruptMessage)
         }
+        const legacy = parsed[TenantSessionStore.FormatKey] !== TenantSessionStore.DigestFormat
         for (const [id, session] of Object.entries(parsed[TenantSessionStore.RootKey] ?? {}))
         {
-            this.sessions.set(id, session)
+            // A pre-digest file is keyed by the raw token: re-key it by the token's digest.
+            const key = legacy ? TenantSessionStore.DigestOf(id) : id
+            this.sessions.set(key, { ...session, id: key })
         }
         for (const [tenantId, principals] of Object.entries(parsed[TenantSessionStore.ResetsKey] ?? {}))
         {
             this.resets.set(tenantId, new Map(Object.entries(principals)))
+        }
+        if (legacy && this.sessions.size > 0)
+        {
+            try
+            {
+                await this.write(this.sessions, this.resets)
+            }
+            catch
+            {
+                // Best effort: the migrated (digest-keyed) maps are in memory, and the next change persists them.
+            }
         }
     }
 
@@ -352,6 +391,7 @@ export class TenantSessionStore
     {
         await mkdir(dirname(this.filePath), { recursive: true })
         const body = {
+            [TenantSessionStore.FormatKey]: TenantSessionStore.DigestFormat,
             [TenantSessionStore.RootKey]: Object.fromEntries(sessions),
             [TenantSessionStore.ResetsKey]: Object.fromEntries([...resets].map(([tenantId, principals]) => [tenantId, Object.fromEntries(principals)])),
         }

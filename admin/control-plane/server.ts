@@ -382,7 +382,7 @@ export class ControlPlaneServer
         if (withDesktop)
         {
             plane.desktop = new DesktopEndpoint(rp, sessions, new DesktopAuthGate(sessions), new DesktopSignInFlows(), new DesktopTargets(service, directory), directory,
-                session => api.Profile(session), new LoginThrottle())
+                session => api.Profile(session), new LoginThrottle(), DesktopEndpoint.NewBeginThrottle(), trustedProxy)
         }
         return plane
     }

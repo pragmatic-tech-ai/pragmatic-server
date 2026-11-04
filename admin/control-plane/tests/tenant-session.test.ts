@@ -185,8 +185,8 @@ test('a session issued before the principal\'s reset time is refused, even one t
         // The revoked session comes back (e.g. an older file restored, or a write that raced the revoke) - plus a legacy
         // session without issuedAt (derived from expiresAt - ttl): both predate the reset, both are refused.
         const raw = JSON.parse(await readFile(file, 'utf8')) as Record<string, Record<string, unknown>>
-        raw.sessions[before.id] = before
-        raw.sessions['legacy'] = { id: 'legacy', tenantId: SessionFixture.Tenant, principalId: SessionFixture.Principal, expiresAt: new Date(SessionFixture.Start + SessionFixture.Ttl).toISOString() }
+        raw.sessions[TenantSessionStore.DigestOf(before.id)] = { ...before, id: TenantSessionStore.DigestOf(before.id) }
+        raw.sessions[TenantSessionStore.DigestOf('legacy')] = { id: TenantSessionStore.DigestOf('legacy'), tenantId: SessionFixture.Tenant, principalId: SessionFixture.Principal, expiresAt: new Date(SessionFixture.Start + SessionFixture.Ttl).toISOString() }
         await writeFile(file, JSON.stringify(raw))
         const reloaded = new TenantSessionStore(file, SessionFixture.Ttl, clock)
         assert.equal(await reloaded.Validate(before.id), null)
@@ -338,7 +338,7 @@ class DesktopFixture
 
     public static async OnDisk(file: string, id: string): Promise<{ expiresAt: string; keptAt?: string; kind?: string }>
     {
-        return JSON.parse(await readFile(file, 'utf8')).sessions[id]
+        return JSON.parse(await readFile(file, 'utf8')).sessions[TenantSessionStore.DigestOf(id)]
     }
 }
 
@@ -470,5 +470,53 @@ test('a failed renewal write returns the un-slid session while it is live, and n
         const validating = store.Validate(s.id)
         await revoking
         assert.equal(await validating, null)
+    })
+})
+
+test('persists only token digests: the file never holds a token, and a token still validates after a reload', async () =>
+{
+    await SessionFixture.WithDir(async file =>
+    {
+        const store = new TenantSessionStore(file, SessionFixture.Ttl)
+        const consoleSession = await store.Issue(SessionFixture.Tenant, SessionFixture.Principal, SessionFixture.Email)
+        const desktop = await store.Issue(SessionFixture.Tenant, SessionFixture.Principal, undefined, TenantSessionKind.Desktop)
+        const rotated = await store.RotateFor(SessionFixture.Tenant, 'user-2')
+        const text = await readFile(file, 'utf8')
+        for (const token of [consoleSession.id, desktop.id, rotated.id])
+        {
+            assert.ok(!text.includes(token))
+            assert.ok(text.includes(TenantSessionStore.DigestOf(token)))
+        }
+        const reloaded = new TenantSessionStore(file, SessionFixture.Ttl)
+        assert.equal((await reloaded.Validate(consoleSession.id))?.id, consoleSession.id)
+        assert.equal((await reloaded.Validate(desktop.id))?.kind, TenantSessionKind.Desktop)
+        assert.notEqual(await reloaded.Validate(rotated.id), null)
+        // A digest is not a token: presenting what is on disk authenticates nothing.
+        assert.equal(await reloaded.Validate(TenantSessionStore.DigestOf(consoleSession.id)), null)
+        await reloaded.Revoke(desktop.id)
+        assert.equal(await new TenantSessionStore(file, SessionFixture.Ttl).Validate(desktop.id), null)
+    })
+})
+
+test('migrates a raw-token file on load: sessions re-keyed by digest, resets kept, raw tokens gone from disk', async () =>
+{
+    await SessionFixture.WithDir(async file =>
+    {
+        const expiresAt = new Date(Date.now() + SessionFixture.Ttl).toISOString()
+        const issuedAt = new Date(Date.now() - 1000).toISOString()
+        const resetAt = new Date(Date.now() - 5000).toISOString()
+        const legacy = {
+            sessions: { 'raw-token-abcdef0123456789': { id: 'raw-token-abcdef0123456789', tenantId: SessionFixture.Tenant, principalId: SessionFixture.Principal, issuedAt, expiresAt } },
+            principalResets: { [SessionFixture.Tenant]: { 'user-9': resetAt } },
+        }
+        await writeFile(file, JSON.stringify(legacy), 'utf8')
+        const store = new TenantSessionStore(file, SessionFixture.Ttl)
+        assert.equal((await store.Validate('raw-token-abcdef0123456789'))?.principalId, SessionFixture.Principal)
+        const text = await readFile(file, 'utf8')
+        assert.ok(!text.includes('raw-token-abcdef0123456789'))
+        const onDisk = JSON.parse(text) as { tokenFormat: string; principalResets: Record<string, Record<string, string>> }
+        assert.equal(onDisk.tokenFormat, 'sha256')
+        assert.equal(onDisk.principalResets[SessionFixture.Tenant]?.['user-9'], resetAt)
+        assert.notEqual(await new TenantSessionStore(file, SessionFixture.Ttl).Validate('raw-token-abcdef0123456789'), null)
     })
 })

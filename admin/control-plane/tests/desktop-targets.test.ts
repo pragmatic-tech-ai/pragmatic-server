@@ -4,7 +4,7 @@ import type { IEnvironmentService } from '../control-plane-host.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import type { HiveRecord, TenantRecord } from '../platform-records.js'
 import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
-import { DesktopAction, DesktopTargets } from '../tenant-auth/desktop-targets.js'
+import { DesktopAction, DesktopTargets, type DesktopCapabilitiesSource } from '../tenant-auth/desktop-targets.js'
 import { TenantSessionKind, type TenantSession } from '../tenant-auth/tenant-session.js'
 
 /** Only ListReconciled is read by DesktopTargets. */
@@ -60,7 +60,7 @@ class TargetKit
         return { id: 'tok', tenantId: TargetKit.TenantId, principalId: TargetKit.OwnerId, expiresAt: '2099-01-01T00:00:00.000Z', kind: TenantSessionKind.Desktop }
     }
 
-    public static Targets(): DesktopTargets
+    public static Targets(capabilities?: DesktopCapabilitiesSource): DesktopTargets
     {
         const records = [
             TargetKit.Record(TargetKit.Dev, TargetKit.TenantId, EnvType.Development, EnvStatus.Running),
@@ -69,7 +69,7 @@ class TargetKit
             TargetKit.Record(TargetKit.ForeignDev, TargetKit.OtherTenantId, EnvType.Development, EnvStatus.Running),
             TargetKit.Record(TargetKit.ForeignRun, TargetKit.OtherTenantId, EnvType.Runtime, EnvStatus.Running),
         ]
-        return new DesktopTargets(new ListingService(records) as unknown as IEnvironmentService, new TargetsDirectory())
+        return new DesktopTargets(new ListingService(records) as unknown as IEnvironmentService, new TargetsDirectory(), capabilities)
     }
 }
 
@@ -101,5 +101,14 @@ describe('DesktopTargets', () =>
         assert.equal(await targets.Allows(session, TargetKit.ForeignDev, DesktopAction.Contribute), undefined)
         assert.equal(await targets.Allows(session, TargetKit.ForeignRun, DesktopAction.Publish), undefined)
         assert.equal(await targets.Allows(session, 'missing', DesktopAction.Contribute), undefined)
+    })
+
+    it('a role without the environments capability is offered nothing and allowed nothing', async () =>
+    {
+        const noEnvs: DesktopCapabilitiesSource = () => ({ roleLabel: 'Viewer', capabilities: { envs: false, adopt: false, access: false, settings: false } })
+        const targets = TargetKit.Targets(noEnvs)
+        assert.deepEqual(await targets.For(TargetKit.Session()), { contribute: [], publish: [] })
+        assert.equal(await targets.Allows(TargetKit.Session(), TargetKit.Dev, DesktopAction.Contribute), undefined)
+        assert.equal(await targets.Allows(TargetKit.Session(), TargetKit.Run, DesktopAction.Publish), undefined)
     })
 })

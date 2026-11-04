@@ -779,6 +779,19 @@ describe('TenantPlaneHost desktop surface', () =>
         })
     })
 
+    it('answers an unparseable request target with 400, never a thrown 500, on any host', async () =>
+    {
+        await kit.WithHost(kit.Plane(true), async host =>
+        {
+            for (const hostHeader of [DesktopHostKit.LoopbackHost, Kit.TenantHost])
+            {
+                const r = await Kit.Raw(host, HttpMethod.Get, '//[', { [Kit.HostHeader]: hostHeader })
+                assert.equal(r.status, 400)
+                assert.deepEqual(JSON.parse(r.body), { error: 'Bad request' })
+            }
+        })
+    })
+
     it('still refuses a non-tenant host outside /desktop/', async () =>
     {
         await kit.WithHost(kit.Plane(true), async host =>

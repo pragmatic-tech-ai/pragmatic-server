@@ -3,6 +3,7 @@ import type { IdpConnection } from '../idp-workload-driver.js'
 import { IdpPasswordResult, type IIdpPasswordClient } from './idp-password-client.js'
 import type { TenantSession } from './tenant-session.js'
 import { TenantSessionCookie } from './tenant-session-cookie.js'
+import { TenantClientAddress } from './tenant-client-address.js'
 
 /** Reaches a tenant's IdP without launching one (the IdP service's connect-only lookup). */
 export interface ITenantIdpConnector
@@ -43,10 +44,6 @@ export class TenantPasswordChange
     private static readonly CacheControlHeader = 'Cache-Control'
     private static readonly SetCookieHeader = 'Set-Cookie'
     private static readonly KeySeparator = '\u0000'
-    private static readonly ForwardedForHeader = 'x-forwarded-for'
-    private static readonly ForwardedSeparator = ','
-    private static readonly NoAddress = ''
-    private static readonly PlausibleIp = /^[0-9A-Fa-f:.]{1,64}$/
     private static readonly BusyMessage = 'A password change for this account is already running.'
     private static readonly RetryAfterHeader = 'Retry-After'
     private static readonly JsonContentType = 'application/json'
@@ -204,17 +201,7 @@ export class TenantPasswordChange
      */
     private EndUserIp(req: IncomingMessage): string
     {
-        if (this.trustedProxy)
-        {
-            const raw = req.headers[TenantPasswordChange.ForwardedForHeader]
-            const header = Array.isArray(raw) ? raw.join(TenantPasswordChange.ForwardedSeparator) : raw
-            const last = header?.split(TenantPasswordChange.ForwardedSeparator).pop()?.trim()
-            if (last !== undefined && TenantPasswordChange.PlausibleIp.test(last))
-            {
-                return last
-            }
-        }
-        return req.socket.remoteAddress ?? TenantPasswordChange.NoAddress
+        return TenantClientAddress.Of(req, this.trustedProxy)
     }
 
     private Reply(res: ServerResponse, status: number, body: unknown, extra: Record<string, string> = {}): void

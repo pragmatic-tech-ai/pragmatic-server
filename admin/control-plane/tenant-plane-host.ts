@@ -33,6 +33,7 @@ export class TenantPlaneHost
     private static readonly TenantEventsPath = '/tenant-api/events'
     private static readonly TenantLogsStreamPattern = new RegExp(
         '^' + TenantPlaneHost.TenantApiPrefix + 'environments/([^/]+)/logs/stream$')
+    private static readonly StatusBadRequest = 400
     private static readonly StatusForbidden = 403
     private static readonly StatusUnauthorized = 401
     private static readonly StatusInternal = 500
@@ -41,6 +42,7 @@ export class TenantPlaneHost
     private static readonly OriginHeader = 'origin'
     private static readonly UnauthenticatedMessage = 'Authentication required'
     private static readonly GenericError = 'Internal server error'
+    private static readonly BadRequestMessage = 'Bad request'
     private static readonly NotListeningMessage = 'TenantPlaneHost is not listening'
     private static readonly CloseEvent = 'close'
     private static readonly ErrorEvent = 'error'
@@ -163,7 +165,13 @@ export class TenantPlaneHost
     {
         try
         {
-            const path = new URL(req.url ?? PlaneHttp.RootPath, TenantPlaneHost.BaseUrl).pathname
+            const path = TenantPlaneHost.PathOf(req)
+            if (path === undefined)
+            {
+                req.resume()
+                PlaneHttp.WriteJson(res, TenantPlaneHost.StatusBadRequest, { error: TenantPlaneHost.BadRequestMessage })
+                return
+            }
             // The desktop surface is Host-independent (Plexus dials plain loopback): its tenant comes from the flow or bearer.
             if (path.startsWith(DesktopEndpoint.Prefix))
             {
@@ -247,7 +255,12 @@ export class TenantPlaneHost
      */
     private RouteUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, wss: WebSocketServer): void
     {
-        const path = new URL(req.url ?? PlaneHttp.RootPath, TenantPlaneHost.BaseUrl).pathname
+        const path = TenantPlaneHost.PathOf(req)
+        if (path === undefined)
+        {
+            socket.destroy()
+            return
+        }
         if (path === TenantPlaneHost.TenantEventsPath)
         {
             this.UpgradeTenantEvents(req, socket, head, wss)
@@ -421,6 +434,19 @@ export class TenantPlaneHost
         }
         this.clients.delete(ws)
         tracked.teardown()
+    }
+
+    /** The request target's path, or undefined when the target does not parse as a URL (answered 400, never a thrown 500). */
+    private static PathOf(req: IncomingMessage): string | undefined
+    {
+        try
+        {
+            return new URL(req.url ?? PlaneHttp.RootPath, TenantPlaneHost.BaseUrl).pathname
+        }
+        catch
+        {
+            return undefined
+        }
     }
 
     private static Decode(segment: string): string | undefined
