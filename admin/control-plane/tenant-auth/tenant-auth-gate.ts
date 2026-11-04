@@ -1,4 +1,5 @@
 import type { IncomingMessage } from 'node:http'
+import { TenantSessionKind } from './tenant-session.js'
 import type { TenantSession, TenantSessionStore } from './tenant-session.js'
 import { TenantSessionCookie } from './tenant-session-cookie.js'
 
@@ -24,7 +25,7 @@ export class TenantAuthGate
             return null
         }
         const session = await this.sessions.Validate(cookie.token)
-        if (session === null || session.tenantId !== cookie.tenantId)
+        if (session === null || session.tenantId !== cookie.tenantId || session.kind === TenantSessionKind.Desktop)
         {
             return null
         }

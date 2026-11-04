@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { IncomingMessage } from 'node:http'
-import { TenantSessionStore } from '../tenant-auth/tenant-session.js'
+import { TenantSessionKind, TenantSessionStore } from '../tenant-auth/tenant-session.js'
 import { TenantSessionCookie } from '../tenant-auth/tenant-session-cookie.js'
 import { TenantAuthGate } from '../tenant-auth/tenant-auth-gate.js'
 
@@ -104,5 +104,16 @@ test('Principal returns null when the cookie tenant does not match the session t
         const issued = await store.Issue(GateFixture.Tenant, GateFixture.Principal)
         const gate = new TenantAuthGate(store)
         assert.equal(await gate.Principal(GateFixture.Req(GateFixture.Cookie('other-tenant', issued.id))), null)
+    })
+})
+
+test('Principal refuses a desktop token carried in a console cookie', async () =>
+{
+    await GateFixture.WithDir(async file =>
+    {
+        const store = new TenantSessionStore(file, GateFixture.Ttl)
+        const desktop = await store.Issue(GateFixture.Tenant, GateFixture.Principal, GateFixture.Email, TenantSessionKind.Desktop)
+        const gate = new TenantAuthGate(store)
+        assert.equal(await gate.Principal(GateFixture.Req(GateFixture.Cookie(GateFixture.Tenant, desktop.id))), null)
     })
 })

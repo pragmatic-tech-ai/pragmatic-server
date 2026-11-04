@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { TenantSessionStore } from '../tenant-auth/tenant-session.js'
+import { TenantSessionKind, TenantSessionStore } from '../tenant-auth/tenant-session.js'
 
 class SessionFixture
 {
@@ -316,4 +316,119 @@ test('a revocation whose write fails still takes effect at once (fail closed); t
     {
         await rm(root, { recursive: true, force: true })
     }
+})
+
+class DesktopFixture
+{
+    public static readonly Day = 24 * 60 * 60 * 1000
+    public static readonly Hour = 60 * 60 * 1000
+    public static readonly Minute = 60 * 1000
+    public static Clock = 0
+
+    public static Now(): Date
+    {
+        return new Date(DesktopFixture.Clock)
+    }
+
+    public static Store(file: string): TenantSessionStore
+    {
+        DesktopFixture.Clock = SessionFixture.Start
+        return new TenantSessionStore(file, SessionFixture.Ttl, () => DesktopFixture.Now())
+    }
+
+    public static async OnDisk(file: string, id: string): Promise<{ expiresAt: string; keptAt?: string; kind?: string }>
+    {
+        return JSON.parse(await readFile(file, 'utf8')).sessions[id]
+    }
+}
+
+test('issues a desktop session that lives 7 days', async () =>
+{
+    await SessionFixture.WithDir(async file =>
+    {
+        const store = DesktopFixture.Store(file)
+        const s = await store.Issue(SessionFixture.Tenant, SessionFixture.Principal, SessionFixture.Email, TenantSessionKind.Desktop)
+        assert.equal(new Date(s.expiresAt).getTime() - new Date(s.issuedAt as string).getTime(), 7 * DesktopFixture.Day)
+        assert.equal(s.kind, 'desktop')
+        assert.equal((await store.Validate(s.id))?.kind, TenantSessionKind.Desktop)
+    })
+})
+
+test('slides a desktop session on use, at most once per hour, never past 30 days', async () =>
+{
+    await SessionFixture.WithDir(async file =>
+    {
+        const store = DesktopFixture.Store(file)
+        const s = await store.Issue(SessionFixture.Tenant, SessionFixture.Principal, undefined, TenantSessionKind.Desktop)
+        const issuedMs = new Date(s.issuedAt as string).getTime()
+        DesktopFixture.Clock = issuedMs + 2 * DesktopFixture.Hour
+        const slid = await store.Validate(s.id)
+        assert.equal(new Date(slid?.expiresAt as string).getTime(), DesktopFixture.Clock + 7 * DesktopFixture.Day)
+        const first = await DesktopFixture.OnDisk(file, s.id)
+        assert.equal(first.expiresAt, slid?.expiresAt)
+        assert.equal(first.keptAt, new Date(DesktopFixture.Clock).toISOString())
+        const bytes = await readFile(file, 'utf8')
+        DesktopFixture.Clock += 10 * DesktopFixture.Minute
+        const again = await store.Validate(s.id)
+        assert.equal(again?.expiresAt, slid?.expiresAt)
+        assert.equal(await readFile(file, 'utf8'), bytes)
+        for (let at = 3 * DesktopFixture.Day; at < 29.9 * DesktopFixture.Day; at += 3 * DesktopFixture.Day)
+        {
+            DesktopFixture.Clock = issuedMs + at
+            assert.notEqual(await store.Validate(s.id), null)
+        }
+        DesktopFixture.Clock = issuedMs + 29.9 * DesktopFixture.Day
+        const late = await store.Validate(s.id)
+        assert.ok(new Date(late?.expiresAt as string).getTime() <= issuedMs + 30 * DesktopFixture.Day)
+        assert.equal(late?.expiresAt, new Date(issuedMs + 30 * DesktopFixture.Day).toISOString())
+        DesktopFixture.Clock = issuedMs + 30 * DesktopFixture.Day + 1
+        assert.equal(await store.Validate(s.id), null)
+    })
+})
+
+test('does not slide a console session', async () =>
+{
+    await SessionFixture.WithDir(async file =>
+    {
+        const store = DesktopFixture.Store(file)
+        const s = await store.Issue(SessionFixture.Tenant, SessionFixture.Principal)
+        assert.equal(s.kind, undefined)
+        DesktopFixture.Clock += 30000
+        const seen = await store.Validate(s.id)
+        assert.equal(seen?.expiresAt, s.expiresAt)
+        assert.equal((await DesktopFixture.OnDisk(file, s.id)).keptAt, undefined)
+    })
+})
+
+test('ends desktop sessions with RevokeAllFor and RotateFor', async () =>
+{
+    await SessionFixture.WithDir(async file =>
+    {
+        const store = DesktopFixture.Store(file)
+        const a = await store.Issue(SessionFixture.Tenant, SessionFixture.Principal, undefined, TenantSessionKind.Desktop)
+        assert.equal(await store.RevokeAllFor(SessionFixture.Tenant, SessionFixture.Principal), 1)
+        assert.equal(await store.Validate(a.id), null)
+        DesktopFixture.Clock += 5
+        const b = await store.Issue(SessionFixture.Tenant, SessionFixture.Principal, undefined, TenantSessionKind.Desktop)
+        DesktopFixture.Clock += 5
+        const fresh = await store.RotateFor(SessionFixture.Tenant, SessionFixture.Principal)
+        assert.equal(await store.Validate(b.id), null)
+        assert.equal(fresh.kind, undefined)
+        assert.notEqual(await store.Validate(fresh.id), null)
+    })
+})
+
+test('loads a file written before session kinds existed as console sessions', async () =>
+{
+    await SessionFixture.WithDir(async file =>
+    {
+        const old = { id: 'old-token', tenantId: SessionFixture.Tenant, principalId: SessionFixture.Principal, issuedAt: new Date(SessionFixture.Start).toISOString(), expiresAt: new Date(SessionFixture.Start + SessionFixture.Ttl).toISOString() }
+        await writeFile(file, JSON.stringify({ sessions: { 'old-token': old }, principalResets: {} }), 'utf8')
+        const store = DesktopFixture.Store(file)
+        DesktopFixture.Clock += 30000
+        const seen = await store.Validate('old-token')
+        assert.equal(seen?.kind, undefined)
+        assert.equal(seen?.expiresAt, old.expiresAt)
+        assert.equal((await DesktopFixture.OnDisk(file, 'old-token')).keptAt, undefined)
+    })
 })

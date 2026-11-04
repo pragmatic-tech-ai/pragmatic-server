@@ -8,7 +8,14 @@ import { dirname } from 'node:path'
  * issues (the fresh session of the user who changed their own password): it is issued in the same instant as the reset it
  * stamps, so the stamp must not refuse it.
  */
-export type TenantSession = { id: string; tenantId: string; principalId: string; email?: string; expiresAt: string; issuedAt?: string; keptAt?: string }
+export type TenantSession = { id: string; tenantId: string; principalId: string; email?: string; expiresAt: string; issuedAt?: string; keptAt?: string; kind?: TenantSessionKind }
+
+/** What a session authenticates: a console cookie, or the Plexus desktop bearer. A session without a kind is a Console one. */
+export enum TenantSessionKind
+{
+    Console = 'console',
+    Desktop = 'desktop',
+}
 
 /**
  * File-backed tenant session store keyed by session id (temp-write + atomic rename; a missing file is empty). Every change
@@ -33,6 +40,12 @@ export class TenantSessionStore
     private static readonly CorruptMessage = 'Tenant session store file is corrupt'
     /** Mutate's failClosed flag for revocations: applied in memory even when the write fails. */
     private static readonly FailClosed = true
+    /** How long a desktop session lives from issue and from each renewal. */
+    public static readonly DesktopTtlMs = 7 * 24 * 60 * 60 * 1000
+    /** A desktop session is renewed at most once per this interval of use. */
+    public static readonly DesktopRenewalIntervalMs = 60 * 60 * 1000
+    /** A desktop session never lives past this long after it was issued, however often it is used. */
+    public static readonly DesktopMaxLifetimeMs = 30 * 24 * 60 * 60 * 1000
 
     private sessions = new Map<string, TenantSession>()
     private resets = new Map<string, Map<string, string>>()
@@ -42,21 +55,27 @@ export class TenantSessionStore
     public constructor(
         private readonly filePath: string,
         private readonly ttlMs: number,
-        private readonly now: () => Date = () => new Date())
+        private readonly now: () => Date = () => new Date(),
+        private readonly desktopTtlMs: number = TenantSessionStore.DesktopTtlMs)
     {
     }
 
-    public async Issue(tenantId: string, principalId: string, email?: string): Promise<TenantSession>
+    public async Issue(tenantId: string, principalId: string, email?: string, kind: TenantSessionKind = TenantSessionKind.Console): Promise<TenantSession>
     {
         return await this.Mutate((sessions) =>
         {
             const issuedAt = this.now()
+            const lifetimeMs = kind === TenantSessionKind.Desktop ? this.desktopTtlMs : this.ttlMs
             const session: TenantSession = {
                 id: randomBytes(TenantSessionStore.TokenBytes).toString(TenantSessionStore.TokenEncoding),
                 tenantId,
                 principalId,
-                expiresAt: new Date(issuedAt.getTime() + this.ttlMs).toISOString(),
+                expiresAt: new Date(issuedAt.getTime() + lifetimeMs).toISOString(),
                 issuedAt: issuedAt.toISOString(),
+            }
+            if (kind === TenantSessionKind.Desktop)
+            {
+                session.kind = kind
             }
             if (email !== undefined)
             {
@@ -76,7 +95,50 @@ export class TenantSessionStore
         {
             return null
         }
+        if (this.IsDueForRenewal(session))
+        {
+            return await this.Renew(token, session)
+        }
         return { ...session }
+    }
+
+    /** Whether a desktop session has gone a renewal interval without being kept (a console session never slides). */
+    private IsDueForRenewal(session: TenantSession): boolean
+    {
+        if (session.kind !== TenantSessionKind.Desktop)
+        {
+            return false
+        }
+        const lastKeptMs = new Date(session.keptAt ?? session.issuedAt ?? session.expiresAt).getTime()
+        return this.now().getTime() - lastKeptMs >= TenantSessionStore.DesktopRenewalIntervalMs
+    }
+
+    /**
+     * Slides a desktop session's expiry to now + the desktop ttl, capped at its issue time + the maximum lifetime, and
+     * persists it. A failed write must not refuse a session that is still valid: the un-slid session is returned.
+     */
+    private async Renew(token: string, seen: TenantSession): Promise<TenantSession>
+    {
+        try
+        {
+            return await this.Mutate((sessions) =>
+            {
+                const current = sessions.get(token) as TenantSession
+                if (!this.IsDueForRenewal(current))
+                {
+                    return { ...current }
+                }
+                const nowMs = this.now().getTime()
+                const issuedMs = new Date(current.issuedAt ?? current.expiresAt).getTime()
+                current.expiresAt = new Date(Math.min(nowMs + this.desktopTtlMs, issuedMs + TenantSessionStore.DesktopMaxLifetimeMs)).toISOString()
+                current.keptAt = new Date(nowMs).toISOString()
+                return { ...current }
+            })
+        }
+        catch
+        {
+            return { ...seen }
+        }
     }
 
     public async Revoke(token: string): Promise<void>
