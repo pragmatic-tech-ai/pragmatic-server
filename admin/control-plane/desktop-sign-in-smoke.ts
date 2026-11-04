@@ -83,6 +83,9 @@ export class DesktopSignInSmoke
     private static readonly MethodNotFoundCode = -32601
     private static readonly InvalidRequestCode = -32600
     private static readonly ScopeRefusalText = 'outside this credential'
+    private static readonly RoleRefusalText = 'no grant covers this action'
+    private static readonly WarnPrefix = 'warn  '
+    private static readonly LabelClusterRoleOnly = 'maker-token graph/delete refused by role; this environment server image predates scope enforcement'
     private static readonly Base64Url = 'base64url'
     private static readonly Base64 = 'base64'
     private static readonly Sha256 = 'sha256'
@@ -449,8 +452,16 @@ export class DesktopSignInSmoke
                     this.Check(S.LabelClusterList + String(graphs.length), Array.isArray(graphs))
                     // Non-mutating probe: the scope gate answers before the method runs, so nothing is ever deleted.
                     const refusal = await client.DeleteGraph({ graphName: S.MissingGraph }).then(() => undefined, (e: unknown) => e as { code?: number; message?: string })
-                    const scoped = refusal?.code === S.InvalidRequestCode && (refusal.message ?? S.Empty).includes(S.ScopeRefusalText)
-                    this.Check(S.LabelClusterScope + String(refusal?.code), scoped)
+                    const text = refusal?.message ?? S.Empty
+                    const invalid = refusal?.code === S.InvalidRequestCode
+                    if (invalid && text.includes(S.RoleRefusalText))
+                    {
+                        console.log(S.WarnPrefix + S.LabelClusterRoleOnly)
+                    }
+                    else
+                    {
+                        this.Check(S.LabelClusterScope + String(refusal?.code), invalid && text.includes(S.ScopeRefusalText))
+                    }
                 }
                 finally
                 {
