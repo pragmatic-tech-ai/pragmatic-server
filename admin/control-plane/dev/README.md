@@ -42,3 +42,14 @@ Log into the tenant panel at `https://acme.lvh.me` as `owner@acme.test` with tha
 - TLS uses a local dev CA (not a public one); hence the one-time `trust-ca.ps1` step.
 - Each additional tenant gets its own IdP CA under `data/idp/<tenant>/tls/ca.crt` — trust it the same way
   (copy it beside this README as `<tenant>-idp-ca.crt` and re-run `trust-ca.ps1`).
+
+## Development console certificates
+
+The in-hive console is served over TLS signed by a per-domain development CA. The portal shows the CA file path;
+trust it for your Windows user (no elevation, Windows shows its own confirmation) or remove it again:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File admin\control-plane\dev\dev-ca-trust.ps1 -CaFile <ca.crt> -Install
+powershell -NoProfile -ExecutionPolicy Bypass -File admin\control-plane\dev\dev-ca-trust.ps1 -CaFile <ca.crt> -Remove
+powershell -NoProfile -ExecutionPolicy Bypass -File admin\control-plane\dev\dev-ca-trust.ps1 -CaFile <ca.crt> -ShowThumbprint
+```
