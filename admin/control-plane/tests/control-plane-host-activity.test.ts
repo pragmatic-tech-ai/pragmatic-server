@@ -75,6 +75,36 @@ class ThrowingAudit extends AuditRegistry
     }
 }
 
+/** An audit whose file write is held inside WriteText until Release runs; Entered resolves once a write gets there. */
+class HeldAudit extends AuditRegistry
+{
+    public Written = false
+    public readonly Entered: Promise<void>
+    private readonly gate: Promise<void>
+    private enter: () => void = () => undefined
+    private release: () => void = () => undefined
+
+    public constructor(filePath: string)
+    {
+        super(filePath)
+        this.Entered = new Promise<void>(res => { this.enter = res })
+        this.gate = new Promise<void>(res => { this.release = res })
+    }
+
+    public Release(): void
+    {
+        this.release()
+    }
+
+    protected override async WriteText(text: string): Promise<void>
+    {
+        this.enter()
+        await this.gate
+        await super.WriteText(text)
+        this.Written = true
+    }
+}
+
 class Harness
 {
     public static Send(host: ControlPlaneHost, method: string, path: string, body?: unknown, authed: boolean = true, extraHeaders: Record<string, string> = {}): Promise<Reply>
@@ -156,6 +186,19 @@ describe('ControlPlaneHost audit edge cases', () =>
         host = await Harness.Build(parent, operator, new ThrowingAudit(join(parent, 'audit-throw.json')))
         const res = await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
         assert.equal(res.status, 403)
+    })
+
+    it('Close resolves only after an audit write still running behind a sent response has finished', async () =>
+    {
+        const audit = new HeldAudit(join(parent, 'audit.json'))
+        host = await Harness.Build(parent, operator, audit)
+        const res = await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        assert.equal(res.status, 201)
+        await audit.Entered
+        const closed = host.Close().then(() => audit.Written)
+        // The release comes later than an undrained Close would resolve; a draining Close waits for it either way.
+        setTimeout(() => audit.Release(), 100)
+        assert.equal(await closed, true, 'the audit file write finished before Close resolved (teardown cannot race it)')
     })
 })
 

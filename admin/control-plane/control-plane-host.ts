@@ -456,6 +456,8 @@ export class ControlPlaneHost
     private readonly hiveWrites = new Set<string>()
     /** A handler's note for its request's audit entry (written once, after the response, by Handle). */
     private readonly auditNotes = new WeakMap<ServerResponse, string>()
+    /** Audit appends still running (each starts after its response was sent); Close waits for them. */
+    private readonly pendingAudits = new Set<Promise<void>>()
 
     public constructor(
         private readonly service: IEnvironmentService,
@@ -700,6 +702,9 @@ export class ControlPlaneHost
             server.closeAllConnections()
             await new Promise<void>(res => server.close(() => res()))
         }
+        // An audit write runs after its response, so a caller can see the response before the write ends:
+        // Close resolves only once none is still writing (AppendAudit never rejects).
+        await Promise.all([...this.pendingAudits])
     }
 
     public Address(): { address: string; port: number }
@@ -831,17 +836,31 @@ export class ControlPlaneHost
         return true
     }
 
-    /** Best-effort audit append: never throws, never alters the response. */
+    /** Best-effort audit append: never throws, never alters the response; tracked until done so Close can wait for it. */
     private async RecordAudit(actor: string, method: string, path: string, status: number, note?: string): Promise<void>
     {
         if (this.audit === undefined)
         {
             return
         }
+        const append = this.AppendAudit(this.audit, actor, method, path, status, note)
+        this.pendingAudits.add(append)
+        try
+        {
+            await append
+        }
+        finally
+        {
+            this.pendingAudits.delete(append)
+        }
+    }
+
+    private async AppendAudit(audit: AuditRegistry, actor: string, method: string, path: string, status: number, note: string | undefined): Promise<void>
+    {
         try
         {
             const safePath = path.length > ControlPlaneHost.MaxAuditPathLength ? path.slice(0, ControlPlaneHost.MaxAuditPathLength) : path
-            await this.audit.Append({ actor, method, path: safePath, status, at: new Date().toISOString(), ...(note === undefined ? {} : { note }) })
+            await audit.Append({ actor, method, path: safePath, status, at: new Date().toISOString(), ...(note === undefined ? {} : { note }) })
         }
         catch (err)
         {

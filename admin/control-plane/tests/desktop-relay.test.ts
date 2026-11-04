@@ -448,6 +448,28 @@ class RelayKit
         return new Promise(res => ws.once('message', data => res(JSON.parse(String(data)) as Record<string, unknown>)))
     }
 
+    /**
+     * The next `count` messages, in order, through ONE listener armed now. Frames that reach the client in one read are
+     * emitted back to back in the same tick, so a Next re-armed after awaiting the previous one can miss the second.
+     */
+    public static Messages(ws: WebSocket, count: number): Promise<Record<string, unknown>[]>
+    {
+        return new Promise(res =>
+        {
+            const received: Record<string, unknown>[] = []
+            const onMessage = (data: unknown): void =>
+            {
+                received.push(JSON.parse(String(data)) as Record<string, unknown>)
+                if (received.length === count)
+                {
+                    ws.off('message', onMessage)
+                    res(received)
+                }
+            }
+            ws.on('message', onMessage)
+        })
+    }
+
     /** One round trip through the relay: proves it is open, and that every frame the client sent before was processed. */
     public static async RoundTrip(ws: WebSocket, id: number): Promise<void>
     {
@@ -852,12 +874,11 @@ describe('DesktopRelay contribute', () =>
         const ws = (await kit.Dial(RelayKit.Dev, 'contribute', kit.desktopToken)).ws as WebSocket
         RelayKit.Contributes(ws, [7], FakeUpstream.SlowFailingGraph)
         await RelayKit.Until(() => kit.upstream.methods.length === 1)
-        const first = RelayKit.Next(ws)
+        const answers = RelayKit.Messages(ws, 2)
         ws.send(RelayKit.Request(7, 'graph/list'))
-        const refusal = await first
-        assert.equal((refusal.error as { code?: number } | undefined)?.code, -32600)
-        assert.equal(refusal.id, 7)
-        const contributeAnswer = await RelayKit.Next(ws)
+        const [refusal, contributeAnswer] = await answers
+        assert.equal((refusal?.error as { code?: number } | undefined)?.code, -32600)
+        assert.equal(refusal?.id, 7)
         assert.equal((contributeAnswer.error as { code?: number } | undefined)?.code, -32000)
         assert.deepEqual(kit.upstream.methods, ['graph/contribute'])
         await RelayKit.Until(() => kit.Audit().length === 1)
