@@ -139,6 +139,8 @@ class EndpointHarness
     public readonly Throttle = new LoginThrottle({ maxAttempts: 3, lockoutMs: EndpointHarness.LockoutMs, now: this.Clock.Now })
     private readonly directory = new EndpointDirectory()
     public readonly Endpoint: DesktopEndpoint
+    /** The sessions whose connections a sign-out asked to close (stands in for the relay). */
+    public readonly ClosedSessions: string[] = []
     private server: Server | undefined
 
     public constructor(trustedProxy: boolean = false)
@@ -147,7 +149,8 @@ class EndpointHarness
             this.Rp, this.Sessions, this.DesktopGate, new DesktopSignInFlows(),
             new DesktopTargets(new EndpointListing() as unknown as IEnvironmentService, this.directory), this.directory,
             s => TenantProfileMapper.ToDto(s, this.directory.GetTenant(s.tenantId), undefined, undefined, TenantAdminCapabilities.For(s, this.directory.GetTenant(s.tenantId))),
-            this.Throttle, DesktopEndpoint.NewBeginThrottle(), trustedProxy)
+            this.Throttle, DesktopEndpoint.NewBeginThrottle(), trustedProxy,
+            { CloseSession: id => { this.ClosedSessions.push(id); return 1 } })
     }
 
     public async Start(): Promise<void>
@@ -359,6 +362,14 @@ describe('DesktopEndpoint', () =>
         assert.equal(await h.DesktopGate.Principal(h.RequestWith(h.Bearer(first))), null)
         assert.notEqual(await h.DesktopGate.Principal(h.RequestWith(h.Bearer(second))), null)
         assert.equal((await h.Send('GET', EndpointKit.ProfilePath, undefined, h.Bearer(first))).status, 401)
+    })
+
+    it('sign-out closes the connections (relays) opened under that session only', async () =>
+    {
+        const first = await h.SignIn()
+        await h.SignIn()
+        assert.equal((await h.Send('POST', EndpointKit.SignOutPath, undefined, h.Bearer(first))).status, 204)
+        assert.deepEqual(h.ClosedSessions, [first])
     })
 
     it('profile and targets answer for a desktop bearer', async () =>

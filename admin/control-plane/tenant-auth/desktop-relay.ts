@@ -10,6 +10,7 @@ import type { EnvironmentRecord } from '../environment-record.js'
 import { PlaneHttp } from '../plane-http.js'
 import { DesktopAction, DesktopTargetVerdict, type DesktopTargets } from './desktop-targets.js'
 import type { DesktopAuthGate } from './desktop-auth-gate.js'
+import type { IDesktopSessionConnections } from './desktop-endpoint.js'
 import type { IPrincipalConnections } from './tenant-principal-sessions.js'
 import { TenantClientAddress } from './tenant-client-address.js'
 import type { TenantSession } from './tenant-session.js'
@@ -96,8 +97,9 @@ type RelayContext = { session: TenantSession; actor: string; action: DesktopActi
  * Plexus never holds an environment credential: the relay authenticates the Desktop bearer, checks the env with the same
  * rule the targets list uses, mints a short-lived credential for the action (maker for contribute, deployer for publish),
  * dials the environment server with it, and pipes JSON-RPC text frames both ways. Client requests outside the action's
- * allowlist are answered -32601 here and never forwarded; non-allowlisted notifications and client responses are dropped
- * silently (there is nothing to answer, and the desktop flows send neither); a non-JSON, binary or batch frame closes the
+ * allowlist are answered -32601 here and never forwarded; an audited request reusing a pending id is answered -32600, and
+ * one beyond 32 pending is answered -32603, neither forwarded; client notifications and client responses are dropped
+ * silently (neither flow sends one, and a notification could not be audited); a malformed handshake is refused 400; a non-JSON, binary or batch frame closes the
  * relay with 1008. Upstream frames pass through untouched.
  *
  * Refusals are plain HTTP answers written before the upgrade: 403 for any request carrying an Origin header (desktop
@@ -109,7 +111,7 @@ type RelayContext = { session: TenantSession; actor: string; action: DesktopActi
  * closed first). The tunnel lease is held for the whole relay and released exactly once. Neither the desktop token nor
  * the minted credential is ever logged, audited or echoed.
  */
-export class DesktopRelay implements IPrincipalConnections
+export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConnections
 {
     public static readonly Path = '/desktop/relay'
     private static readonly BaseUrl = 'http://localhost'
@@ -132,6 +134,15 @@ export class DesktopRelay implements IPrincipalConnections
     private static readonly LogPrefix = '[desktop-relay] upstream failed:'
     private static readonly ErrorEvent = 'error'
     private static readonly FinishEvent = 'finish'
+    private static readonly CloseEvent = 'close'
+    private static readonly MethodGet = 'GET'
+    private static readonly UpgradeHeader = 'upgrade'
+    private static readonly WebSocketUpgrade = 'websocket'
+    private static readonly KeyHeader = 'sec-websocket-key'
+    private static readonly VersionHeader = 'sec-websocket-version'
+    /** The handshake shape ws accepts (its keyRegex and versions); anything else ws would abort without calling back. */
+    private static readonly KeyPattern = /^[+/0-9A-Za-z]{22}==$/
+    private static readonly Versions: ReadonlySet<string> = new Set(['13', '8'])
     private static readonly Messages: ReadonlyMap<number, string> = new Map([
         [DesktopRelay.StatusUnauthorized, 'Sign in to the desktop app again.'],
         [DesktopRelay.StatusBadRequest, 'The relay needs an environment and an action of contribute or publish.'],
@@ -163,6 +174,12 @@ export class DesktopRelay implements IPrincipalConnections
         const query = DesktopRelay.QueryOf(req)
         const rawEnv = query?.get(DesktopRelay.EnvironmentParam) ?? DesktopRelay.NoValue
         const rawAction = query?.get(DesktopRelay.ActionParam) ?? DesktopRelay.NoValue
+        // ws's handleUpgrade drops a malformed handshake without calling back; refuse it here, before anything is minted.
+        if (!DesktopRelay.IsWebSocketHandshake(req))
+        {
+            await this.RefuseAnonymous(req, socket, DesktopRelay.StatusBadRequest, rawAction, rawEnv)
+            return
+        }
         // Desktop-only like the rest of `/desktop/*`: a browser page always sends Origin on a WebSocket, so it is refused.
         if (req.headers[PlaneHttp.OriginHeader] !== undefined)
         {
@@ -237,6 +254,21 @@ export class DesktopRelay implements IPrincipalConnections
         return closed
     }
 
+    /** Closes the relays opened under session `sessionId` (it signed out) with a normal close; returns how many. */
+    public CloseSession(sessionId: string): number
+    {
+        let closed = 0
+        for (const pipe of [...this.pipes])
+        {
+            if (pipe.context.session.id === sessionId)
+            {
+                pipe.Close(RelayPipe.NormalClosure)
+                closed++
+            }
+        }
+        return closed
+    }
+
     /** Re-homes relays opened under a rotated session so a later ClosePrincipal keeps them. */
     public MoveSession(oldSessionId: string, newSessionId: string): void
     {
@@ -289,6 +321,15 @@ export class DesktopRelay implements IPrincipalConnections
             return
         }
         this.pipes.add(pipe)
+        // ws can still abort the handshake without calling back (a bad subprotocol or extension header, a socket that is no
+        // longer writable): the socket then closes with no client attached, and the pipe must release its lease and upstream.
+        socket.once(DesktopRelay.CloseEvent, () =>
+        {
+            if (!pipe.IsAttached)
+            {
+                pipe.Close(RelayPipe.GoingAway)
+            }
+        })
         this.wss.handleUpgrade(req, socket, head, client => pipe.Attach(client))
     }
 
@@ -333,6 +374,18 @@ export class DesktopRelay implements IPrincipalConnections
             + DesktopRelay.ResponseHeaders + String(Buffer.byteLength(body)) + DesktopRelay.HeaderSeparator + DesktopRelay.HeaderSeparator + body)
     }
 
+    /** A GET carrying `Upgrade: websocket`, a well-formed Sec-WebSocket-Key, and version 13 or 8. */
+    private static IsWebSocketHandshake(req: IncomingMessage): boolean
+    {
+        const upgrade = req.headers[DesktopRelay.UpgradeHeader]
+        const key = req.headers[DesktopRelay.KeyHeader]
+        const version = req.headers[DesktopRelay.VersionHeader]
+        return req.method === DesktopRelay.MethodGet
+            && typeof upgrade === 'string' && upgrade.toLowerCase() === DesktopRelay.WebSocketUpgrade
+            && typeof key === 'string' && DesktopRelay.KeyPattern.test(key)
+            && typeof version === 'string' && DesktopRelay.Versions.has(version.trim())
+    }
+
     private static QueryOf(req: IncomingMessage): URLSearchParams | undefined
     {
         try
@@ -372,13 +425,15 @@ class RelayPipe
 {
     public static readonly GoingAway = 1001
     public static readonly PolicyViolation = 1008
+    public static readonly NormalClosure = 1000
+    /** At most this many audited requests may await an answer on one relay. */
+    public static readonly MaxPending = 32
     private static readonly MessageEvent = 'message'
     private static readonly CloseEvent = 'close'
     private static readonly ErrorEvent = 'error'
     private static readonly IdField = 'id'
     private static readonly MethodField = 'method'
     private static readonly ErrorField = 'error'
-    private static readonly NormalClosure = 1000
     private static readonly InternalError = 1011
     private static readonly SendableCodes: ReadonlySet<number> = new Set([1000, 1001, 1003, 1007, 1008, 1009, 1011, 1012, 1013])
     private static readonly MinApplicationCode = 3000
@@ -386,6 +441,10 @@ class RelayPipe
     private static readonly JsonRpcVersion = '2.0'
     private static readonly MethodNotFound = -32601
     private static readonly NotAvailableMessage = 'This method is not available through the desktop relay.'
+    private static readonly InvalidRequest = -32600
+    private static readonly DuplicateIdMessage = 'This request id is already waiting for an answer on the desktop relay.'
+    private static readonly InternalErrorCode = -32603
+    private static readonly TooManyPendingMessage = 'Too many requests are waiting for an answer on the desktop relay.'
     private static readonly StatusOk = 200
     private static readonly StatusFailed = 500
     private static readonly StatusUnanswered = 502
@@ -407,6 +466,12 @@ class RelayPipe
         upstream.on(RelayPipe.MessageEvent, (data, isBinary) => this.FromUpstream(data, isBinary))
         upstream.on(RelayPipe.CloseEvent, code => this.Close(RelayPipe.SendableFrom(code)))
         upstream.on(RelayPipe.ErrorEvent, () => this.Close(RelayPipe.InternalError))
+    }
+
+    /** Whether the client upgrade completed (Attach ran). */
+    public get IsAttached(): boolean
+    {
+        return this.client !== undefined
     }
 
     public Attach(client: WebSocket): void
@@ -459,21 +524,40 @@ class RelayPipe
             // A client response (the environment server sends the desktop flows no requests): nothing to forward.
             return
         }
-        const isRequest = Object.hasOwn(message, RelayPipe.IdField)
+        if (!Object.hasOwn(message, RelayPipe.IdField))
+        {
+            // A notification: neither action's flow sends one, and it could not be audited, so none is forwarded.
+            return
+        }
         if (!this.allowed.has(method))
         {
-            if (isRequest)
-            {
-                this.client?.send(JSON.stringify({ jsonrpc: RelayPipe.JsonRpcVersion, id: message.id, error: { code: RelayPipe.MethodNotFound, message: RelayPipe.NotAvailableMessage } }))
-            }
+            this.Reject(message.id, RelayPipe.MethodNotFound, RelayPipe.NotAvailableMessage)
             return
         }
         const noteField = DesktopRelayAllowlist.NoteFieldOf(method)
-        if (isRequest && noteField !== undefined)
+        if (noteField !== undefined)
         {
-            this.pending.set(JSON.stringify(message.id), { method, note: RelayPipe.NoteOf(message.params, noteField) })
+            const key = JSON.stringify(message.id)
+            if (this.pending.has(key))
+            {
+                // A reused id would make the answer ambiguous, so the audit could miss or misname this call.
+                this.Reject(message.id, RelayPipe.InvalidRequest, RelayPipe.DuplicateIdMessage)
+                return
+            }
+            if (this.pending.size >= RelayPipe.MaxPending)
+            {
+                this.Reject(message.id, RelayPipe.InternalErrorCode, RelayPipe.TooManyPendingMessage)
+                return
+            }
+            this.pending.set(key, { method, note: RelayPipe.NoteOf(message.params, noteField) })
         }
         this.upstream.send(String(data))
+    }
+
+    /** Answers a client request here with a JSON-RPC error; it is never forwarded. */
+    private Reject(id: unknown, code: number, message: string): void
+    {
+        this.client?.send(JSON.stringify({ jsonrpc: RelayPipe.JsonRpcVersion, id, error: { code, message } }))
     }
 
     private FromUpstream(data: RawData, isBinary: boolean): void

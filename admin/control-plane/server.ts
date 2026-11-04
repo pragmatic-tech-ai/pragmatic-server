@@ -405,12 +405,13 @@ export class ControlPlaneServer
         {
             const desktopGate = new DesktopAuthGate(sessions)
             const targets = new DesktopTargets(service, directory)
-            plane.desktop = new DesktopEndpoint(rp, sessions, desktopGate, new DesktopSignInFlows(), targets, directory,
-                session => api.Profile(session), new LoginThrottle(), DesktopEndpoint.NewBeginThrottle(), trustedProxy)
             if (relay !== undefined)
             {
                 plane.relay = new DesktopRelay(desktopGate, targets, service, relay.endpoints, relay.audit, new WsUpstreamDialer(), new AuditThrottle(), trustedProxy)
             }
+            // A desktop sign-out also closes the relays opened under that session.
+            plane.desktop = new DesktopEndpoint(rp, sessions, desktopGate, new DesktopSignInFlows(), targets, directory,
+                session => api.Profile(session), new LoginThrottle(), DesktopEndpoint.NewBeginThrottle(), trustedProxy, plane.relay)
         }
         return plane
     }

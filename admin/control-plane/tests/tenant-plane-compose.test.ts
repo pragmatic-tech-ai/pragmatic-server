@@ -195,6 +195,8 @@ describe('ControlPlaneServer.ComposeTenantPlane', () =>
             const wired = ControlPlaneServer.ComposeTenantPlane(env, dir, stub, stub, false, stub, stub, stub, stub, randomBytes(32), registry, 168,
                 undefined, undefined, { endpoints: stub, audit: stub })
             assert.ok(wired?.relay instanceof DesktopRelay)
+            // Sign-out closes the session's relays: the desktop endpoint holds the same relay as its connections.
+            assert.equal((wired?.desktop as unknown as { connections: unknown }).connections, wired?.relay)
             assert.equal(ControlPlaneServer.DesktopAuditFile, 'tenant-desktop-audit.json')
         }
         finally

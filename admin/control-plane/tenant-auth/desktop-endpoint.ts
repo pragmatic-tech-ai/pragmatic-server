@@ -12,6 +12,13 @@ import { TenantClientAddress } from './tenant-client-address.js'
 import { TenantLoginError, TenantOidcClientKind, type ITenantOidcRelyingParty } from './tenant-oidc-relying-party.js'
 import { TenantSessionKind, type TenantSession, type TenantSessionStore } from './tenant-session.js'
 
+/** Live connections opened under a desktop session (the relay): signing out closes them. */
+export interface IDesktopSessionConnections
+{
+    /** Closes the connections opened under session `sessionId`; returns how many. */
+    CloseSession(sessionId: string): number
+}
+
 /** A /desktop/* route: the method it answers and what runs it. */
 type DesktopRoute = { method: string; run: (req: IncomingMessage, res: ServerResponse) => Promise<void> }
 
@@ -115,7 +122,9 @@ export class DesktopEndpoint
         private readonly throttle: LoginThrottle,
         private readonly beginThrottle: AuditThrottle = DesktopEndpoint.NewBeginThrottle(),
         /** Behind a trusted proxy (PRAGMATIC_TENANT_ADMIN_TRUSTED_PROXY) the end user's address is the last x-forwarded-for hop. */
-        private readonly trustedProxy: boolean = false)
+        private readonly trustedProxy: boolean = false,
+        /** Connections a sign-out ends (the relay); absent, sign-out only revokes the session. */
+        private readonly connections?: IDesktopSessionConnections)
     {
         this.routes = new Map<string, DesktopRoute>([
             [DesktopEndpoint.BeginPath, { method: PlaneHttp.MethodPost, run: (req, res) => this.Begin(req, res) }],
@@ -269,7 +278,10 @@ export class DesktopEndpoint
         this.Reply(res, PlaneHttp.StatusOk, signedIn)
     }
 
-    /** Ends only the presenting session. A revocation fails closed (refused in memory even if the write failed), so it is still 204. */
+    /**
+     * Ends only the presenting session and the connections (relays) opened under it. A revocation fails closed (refused in
+     * memory even if the write failed), so it is still 204, and the connections close either way.
+     */
     private async SignOut(res: ServerResponse, session: TenantSession): Promise<void>
     {
         try
@@ -280,6 +292,7 @@ export class DesktopEndpoint
         {
             // Already refused in memory; the token is never logged.
         }
+        this.connections?.CloseSession(session.id)
         res.writeHead(DesktopEndpoint.StatusNoContent, { [DesktopEndpoint.CacheControlHeader]: DesktopEndpoint.NoStore })
         res.end()
     }

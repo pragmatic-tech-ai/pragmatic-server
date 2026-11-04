@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { mkdtemp, rm } from 'node:fs/promises'
-import { createServer, type IncomingMessage, type Server } from 'node:http'
+import { createServer, request, type ClientRequest, type IncomingMessage, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -22,6 +22,7 @@ import { TenantSessionKind, TenantSessionStore } from '../tenant-auth/tenant-ses
 class FakeUpstream
 {
     public static readonly FailingGraph = 'boom'
+    public static readonly HeldGraph = 'hold'
     public readonly methods: string[] = []
     public readonly bearers: string[] = []
     public readonly urls: string[] = []
@@ -79,6 +80,10 @@ class FakeUpstream
             return
         }
         const params = msg.params ?? {}
+        if (params.graphName === FakeUpstream.HeldGraph)
+        {
+            return
+        }
         let reply: Record<string, unknown>
         if (msg.method === 'graph/contribute' && params.graphName === FakeUpstream.FailingGraph)
         {
@@ -161,12 +166,16 @@ class RelayEndpoints
 class CountingDialer implements IUpstreamDialer
 {
     public dials = 0
+    /** When set, a dial resolves only after this gate opens (the test acts on the client socket meanwhile). */
+    public gate: Promise<void> | undefined
     private readonly inner = new WsUpstreamDialer()
 
-    public Dial(url: string, bearer: string): Promise<WebSocket>
+    public async Dial(url: string, bearer: string): Promise<WebSocket>
     {
         this.dials++
-        return this.inner.Dial(url, bearer)
+        const ws = await this.inner.Dial(url, bearer)
+        await this.gate
+        return ws
     }
 }
 
@@ -284,6 +293,22 @@ class RelayKit
         })
     }
 
+    /** Sends a hand-made upgrade request; resolves the HTTP status answered (or -1 when the socket just closed). */
+    public RawUpgrade(headers: Record<string, string>): { req: ClientRequest; status: Promise<number> }
+    {
+        const req = request({ host: '127.0.0.1', port: this.port, path: '/desktop/relay?environment=' + RelayKit.Dev + '&action=contribute',
+            headers: { Connection: 'Upgrade', Upgrade: 'websocket', Authorization: 'Bearer ' + this.desktopToken, ...headers } })
+        const status = new Promise<number>(res =>
+        {
+            req.once('response', response => { res(response.statusCode ?? 0); response.resume() })
+            req.once('upgrade', (_res, socket) => { res(101); socket.destroy() })
+            req.once('error', () => res(-1))
+            req.once('close', () => res(-1))
+        })
+        req.end()
+        return { req, status }
+    }
+
     public Client(env: string, action: string): Promise<PragmaticClient>
     {
         return PragmaticClient.ConnectAsync(this.Url(env, action), { bearerToken: this.desktopToken })
@@ -303,6 +328,16 @@ class RelayKit
     public static Request(id: number, method: string, params: unknown = {}): string
     {
         return JSON.stringify({ jsonrpc: '2.0', id, method, params })
+    }
+
+    public static readonly Key = 'dGhlIHNhbXBsZSBub25jZQ=='
+
+    public static Contributes(ws: WebSocket, ids: number[], graphName: string): void
+    {
+        for (const id of ids)
+        {
+            ws.send(RelayKit.Request(id, 'graph/contribute', RelayKit.Contribute(graphName)))
+        }
     }
 
     public static Next(ws: WebSocket): Promise<Record<string, unknown>>
@@ -370,6 +405,40 @@ describe('DesktopRelay refusals', () =>
         assert.equal(kit.service.mints.length, 0)
         assert.equal(kit.Audit()[0]?.status, 403)
         assert.equal(kit.Audit()[0]?.actor, AuditRegistry.AnonymousActor)
+    })
+
+    it('400 for a malformed handshake (no Sec-WebSocket-Key, bad version, not websocket); nothing minted, leased or dialed', async () =>
+    {
+        assert.equal(await kit.RawUpgrade({ 'Sec-WebSocket-Version': '13' }).status, 400)
+        assert.equal(await kit.RawUpgrade({ 'Sec-WebSocket-Key': RelayKit.Key, 'Sec-WebSocket-Version': '12' }).status, 400)
+        assert.equal(await kit.RawUpgrade({ Upgrade: 'h2c', 'Sec-WebSocket-Key': RelayKit.Key, 'Sec-WebSocket-Version': '13' }).status, 400)
+        assert.equal(kit.service.mints.length, 0)
+        assert.equal(kit.endpoints.leases, 0)
+        assert.equal(kit.dialer.dials, 0)
+        assert.equal(kit.Audit()[0]?.status, 400)
+    })
+
+    it('a handshake ws aborts after the dial (bad subprotocol header) releases the lease once and closes the upstream', async () =>
+    {
+        const { status } = kit.RawUpgrade({ 'Sec-WebSocket-Key': RelayKit.Key, 'Sec-WebSocket-Version': '13', 'Sec-WebSocket-Protocol': 'a b' })
+        assert.equal(await status, 400)
+        await RelayKit.Until(() => kit.endpoints.releases === 1 && kit.upstream.closedByPeer === 1)
+        assert.equal(kit.endpoints.leases, 1)
+        await new Promise(res => setTimeout(res, 30))
+        assert.equal(kit.endpoints.releases, 1)
+    })
+
+    it('a client socket destroyed while the upstream dial completes releases the lease once and closes the upstream', async () =>
+    {
+        let open: () => void = () => undefined
+        kit.dialer.gate = new Promise<void>(res => { open = res })
+        const { req } = kit.RawUpgrade({ 'Sec-WebSocket-Key': RelayKit.Key, 'Sec-WebSocket-Version': '13' })
+        await RelayKit.Until(() => kit.upstream.Connections() === 1)
+        req.destroy()
+        await new Promise(res => setTimeout(res, 30))
+        open()
+        await RelayKit.Until(() => kit.endpoints.releases === 1 && kit.upstream.closedByPeer === 1)
+        assert.equal(kit.endpoints.leases, 1)
     })
 
     it('400 for an unknown action or a missing environment', async () =>
@@ -490,6 +559,46 @@ describe('DesktopRelay contribute', () =>
         ws?.close()
     })
 
+    it('drops an allowlisted notification (no id): nothing unaudited reaches the upstream', async () =>
+    {
+        const { ws } = await kit.Dial(RelayKit.Dev, 'contribute', kit.desktopToken)
+        ws?.send(JSON.stringify({ jsonrpc: '2.0', method: 'graph/contribute', params: RelayKit.Contribute(RelayKit.Graph) }))
+        ws?.send(RelayKit.Request(2, 'graph/list'))
+        assert.deepEqual((await RelayKit.Next(ws as WebSocket)).result, [])
+        assert.deepEqual(kit.upstream.methods, ['graph/list'])
+        ws?.close()
+    })
+
+    it('answers an audited request that reuses a pending id with -32600 and does not forward it', async () =>
+    {
+        const ws = (await kit.Dial(RelayKit.Dev, 'contribute', kit.desktopToken)).ws as WebSocket
+        RelayKit.Contributes(ws, [7], FakeUpstream.HeldGraph)
+        await RelayKit.Until(() => kit.upstream.methods.length === 1)
+        const answer = RelayKit.Next(ws)
+        RelayKit.Contributes(ws, [7], RelayKit.Graph)
+        const error = (await answer).error as { code: number; message: string }
+        assert.equal(error.code, -32600)
+        assert.equal((await answer).id, 7)
+        await new Promise(res => setTimeout(res, 30))
+        assert.equal(kit.upstream.methods.length, 1)
+        ws.close()
+    })
+
+    it('caps pending audited requests at 32: the next is answered -32603 and not forwarded', async () =>
+    {
+        const ws = (await kit.Dial(RelayKit.Dev, 'contribute', kit.desktopToken)).ws as WebSocket
+        RelayKit.Contributes(ws, Array.from({ length: 32 }, (_v, i) => i + 1), FakeUpstream.HeldGraph)
+        await RelayKit.Until(() => kit.upstream.methods.length === 32)
+        const answer = RelayKit.Next(ws)
+        RelayKit.Contributes(ws, [33], RelayKit.Graph)
+        const reply = await answer
+        assert.equal(reply.id, 33)
+        assert.equal((reply.error as { code: number }).code, -32603)
+        await new Promise(res => setTimeout(res, 30))
+        assert.equal(kit.upstream.methods.length, 32)
+        ws.close()
+    })
+
     it('closes the relay with 1008 on a non-JSON frame and on a batch', async () =>
     {
         const first = (await kit.Dial(RelayKit.Dev, 'contribute', kit.desktopToken)).ws as WebSocket
@@ -522,6 +631,16 @@ describe('DesktopRelay contribute', () =>
         await RelayKit.Until(() => kit.upstream.Connections() === 1)
         ws?.close()
         await RelayKit.Until(() => kit.upstream.closedByPeer === 1 && kit.endpoints.releases === 1)
+    })
+
+    it('a sign-out (CloseSession) closes that session\'s relays with a normal close and releases the lease', async () =>
+    {
+        const { ws } = await kit.Dial(RelayKit.Dev, 'contribute', kit.desktopToken)
+        const closed = RelayKit.Closed(ws as WebSocket)
+        assert.equal(kit.relay.CloseSession('another-session'), 0)
+        assert.equal(kit.relay.CloseSession(kit.desktopToken), 1)
+        assert.equal(await closed, 1000)
+        await RelayKit.Until(() => kit.endpoints.releases === 1 && kit.upstream.closedByPeer === 1)
     })
 
     it('a password change (ClosePrincipal) ends the principal\'s relays', async () =>
