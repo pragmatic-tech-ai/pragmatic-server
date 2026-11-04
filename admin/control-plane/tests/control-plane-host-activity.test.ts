@@ -16,6 +16,7 @@ import { HiveRegistry } from '../hive-registry.js'
 import { PlatformDirectory } from '../platform-directory.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import { RolloutFixture } from './rollout-fixture.js'
+import { HeldAudit } from './held-audit.js'
 
 type Reply = { status: number; body: string; headers: Record<string, string | string[] | undefined> }
 
@@ -72,36 +73,6 @@ class ThrowingAudit extends AuditRegistry
     public override async Append(_entry: Omit<AuditRecord, 'id'>): Promise<void>
     {
         throw new Error('disk full')
-    }
-}
-
-/** An audit whose file write is held inside WriteText until Release runs; Entered resolves once a write gets there. */
-class HeldAudit extends AuditRegistry
-{
-    public Written = false
-    public readonly Entered: Promise<void>
-    private readonly gate: Promise<void>
-    private enter: () => void = () => undefined
-    private release: () => void = () => undefined
-
-    public constructor(filePath: string)
-    {
-        super(filePath)
-        this.Entered = new Promise<void>(res => { this.enter = res })
-        this.gate = new Promise<void>(res => { this.release = res })
-    }
-
-    public Release(): void
-    {
-        this.release()
-    }
-
-    protected override async WriteText(text: string): Promise<void>
-    {
-        this.enter()
-        await this.gate
-        await super.WriteText(text)
-        this.Written = true
     }
 }
 

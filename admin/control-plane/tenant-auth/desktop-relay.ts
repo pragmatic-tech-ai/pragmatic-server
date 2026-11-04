@@ -195,6 +195,8 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
 
     private readonly wss = new WebSocketServer({ noServer: true })
     private readonly pipes = new Set<RelayPipe>()
+    /** Audit appends still running (each starts after its answer was written); Close waits for them. */
+    private readonly pendingAudits = new Set<Promise<void>>()
 
     public constructor(
         private readonly gate: DesktopAuthGate,
@@ -271,14 +273,22 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
         await this.Connect(req, socket, head, { session, actor, action, envName: record.name }, record)
     }
 
-    /** Ends every open relay (the tenant listener is closing). */
-    public Close(): void
+    /**
+     * Ends every open relay (the tenant listener is closing) and resolves once no audit append is still writing: an
+     * outcome or refusal is recorded after its answer, so a caller can see the answer before the write ends.
+     */
+    public async Close(): Promise<void>
     {
         for (const pipe of [...this.pipes])
         {
             pipe.Close(RelayPipe.GoingAway)
         }
         this.pipes.clear()
+        // AppendAudit never rejects; a write started while waiting is waited for too.
+        while (this.pendingAudits.size > 0)
+        {
+            await Promise.all([...this.pendingAudits])
+        }
     }
 
     /** Closes the principal's relays (its password changed) except those under `keepSessionId`; returns how many. */
@@ -357,8 +367,22 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
         }
     }
 
-    /** Best-effort audit append: never throws. */
+    /** Best-effort audit append: never throws; tracked until done so Close can wait for it. */
     public async Record(actor: string, method: string, path: string, status: number, note?: string): Promise<void>
+    {
+        const append = this.AppendAudit(actor, method, path, status, note)
+        this.pendingAudits.add(append)
+        try
+        {
+            await append
+        }
+        finally
+        {
+            this.pendingAudits.delete(append)
+        }
+    }
+
+    private async AppendAudit(actor: string, method: string, path: string, status: number, note: string | undefined): Promise<void>
     {
         const entry = { actor, method: DesktopRelay.Clip(method), path: DesktopRelay.Clip(path), status, at: new Date().toISOString() }
         try

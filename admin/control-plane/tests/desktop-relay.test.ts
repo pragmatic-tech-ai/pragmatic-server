@@ -22,6 +22,7 @@ import { TenantPrincipalSessions } from '../tenant-auth/tenant-principal-session
 import type { IIdpService } from '../idp-service.js'
 import type { PlatformDirectory } from '../platform-directory.js'
 import { TenantProvisioningService } from '../tenant-provisioning-service.js'
+import { HeldAudit } from './held-audit.js'
 
 /** A fake environment server: answers graph/list, graph/contribute, application/deploy and records what it saw. */
 class FakeUpstream
@@ -329,11 +330,11 @@ class RelayKit
     private server: Server | undefined
     private port = 0
 
-    public async Start(capabilities?: DesktopCapabilitiesSource, desktopTtlMs?: number, refusalThrottle?: AuditThrottle): Promise<void>
+    public async Start(capabilities?: DesktopCapabilitiesSource, desktopTtlMs?: number, refusalThrottle?: AuditThrottle, auditOf: (path: string) => AuditRegistry = path => new AuditRegistry(path)): Promise<void>
     {
         this.dir = await mkdtemp(join(tmpdir(), 'desktop-relay-'))
         this.store = new TenantSessionStore(join(this.dir, 'sessions.json'), 60000, undefined, desktopTtlMs)
-        this.audit = new AuditRegistry(join(this.dir, 'tenant-desktop-audit.json'))
+        this.audit = auditOf(join(this.dir, 'tenant-desktop-audit.json'))
         await this.audit.Load()
         this.upstream = new FakeUpstream()
         const upstreamPort = await this.upstream.Start()
@@ -361,7 +362,6 @@ class RelayKit
 
     public async Stop(): Promise<void>
     {
-        this.relay.Close()
         await this.upstream.Stop()
         const server = this.server
         if (server !== undefined)
@@ -369,9 +369,9 @@ class RelayKit
             server.closeAllConnections()
             await new Promise<void>(res => server.close(() => res()))
         }
-        // Audit appends run after the answer is written; let the last ones land before removing their directory.
-        await new Promise(res => setTimeout(res, 50))
-        await rm(this.dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 20 })
+        // Last, as the tenant host does: Close resolves once every audit append (they run after the answer) has finished.
+        await this.relay.Close()
+        await rm(this.dir, { recursive: true, force: true })
     }
 
     public Url(env: string, action: string): string
@@ -700,6 +700,34 @@ describe('DesktopRelay refusal audit throttle', () =>
         await client.ContributeGraph(RelayKit.Contribute(RelayKit.Graph) as never)
         await client.DisposeAsync()
         await RelayKit.Until(() => kit.Audit().some(r => r.status === 200 && r.note === RelayKit.Graph))
+    })
+})
+
+describe('DesktopRelay close', () =>
+{
+    let kit: RelayKit
+    let audit: HeldAudit
+
+    beforeEach(async () =>
+    {
+        kit = new RelayKit()
+        await kit.Start(undefined, undefined, undefined, path => { audit = new HeldAudit(path); return audit })
+    })
+
+    afterEach(async () =>
+    {
+        audit.Release()
+        await kit.Stop()
+    })
+
+    it('Close resolves only after an audit write still running behind a sent refusal has finished', async () =>
+    {
+        assert.equal((await kit.Dial(RelayKit.Dev, 'contribute')).status, 401)
+        await audit.Entered
+        const closed = kit.relay.Close().then(() => audit.Written)
+        // The release comes later than an undrained Close would resolve; a draining Close waits for it either way.
+        setTimeout(() => audit.Release(), 100)
+        assert.equal(await closed, true, 'the audit file write finished before Close resolved (teardown cannot race it)')
     })
 })
 

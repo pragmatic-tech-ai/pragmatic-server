@@ -143,7 +143,6 @@ export class TenantPlaneHost
             ws.terminate()
         }
         this.clients.clear()
-        this.relay?.Close()
         const wss = this.wsServer
         const server = this.httpServer
         this.wsServer = undefined
@@ -157,6 +156,8 @@ export class TenantPlaneHost
             server.closeAllConnections()
             await new Promise<void>(res => server.close(() => res()))
         }
+        // After the listener has closed, so a refusal audited while it closed is among the writes the relay waits for.
+        await this.relay?.Close()
     }
 
     public Address(): { address: string; port: number }
