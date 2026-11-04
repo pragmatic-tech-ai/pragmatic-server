@@ -22,6 +22,7 @@ import type { EnvEndpoint, EnvRuntimeContext } from './environment-runtime.js'
 import type { EnvironmentRuntimeResolver } from './environment-runtime-resolver.js'
 import type { IUiDeployActuator, UiDeployBundle } from './ui-deploy-actuator.js'
 import { InClusterOperationFailedError } from './in-cluster-environment-runtime.js'
+import { EnvironmentEndpoints, EnvironmentUnreachableError, type EnvironmentUrls } from './environment-endpoints.js'
 
 export class EnvironmentExistsError extends Error
 {
@@ -199,7 +200,8 @@ export class EnvironmentService
         private readonly directory: ITenantDirectory,
         private readonly idp: IIdpService,
         private readonly adminClientFactory: (conn: IdpConnection) => IdpAdminClient,
-        private readonly uiDeployer?: IUiDeployActuator)
+        private readonly uiDeployer?: IUiDeployActuator,
+        private readonly endpoints?: EnvironmentEndpoints)
     {
     }
 
@@ -654,14 +656,44 @@ export class EnvironmentService
     public async AdminInfoFor(name: string): Promise<AdminConnectInfo>
     {
         const rec = this.Require(name)
-        const secrets = await EnvironmentService.ReadSecrets(rec.bundleDir)
+        // The password is resolved first, so a missing secret never opens a cluster tunnel.
+        const password = await this.AdminPasswordOf(rec)
+        const urls = await this.UrlsOf(rec)
         return {
-            httpUrl: EnvironmentService.HttpPrefix + String(rec.hostPort),
-            wsUrl: EnvironmentService.WsPrefix + String(rec.hostPort),
+            httpUrl: urls.httpUrl,
+            wsUrl: urls.wsUrl,
             tenant: rec.environmentId,
             email: BundleBuilder.AdminEmailPrefix + rec.environmentId + BundleBuilder.AdminEmailSuffix,
-            password: EnvironmentService.Secret(secrets, rec.environmentId + BundleBuilder.AdminSecretSuffix)
+            password
         }
+    }
+
+    /** Docker records resolve locally; an in-cluster record needs the composed endpoints (its tunnel + cluster Secret). */
+    private async AdminPasswordOf(rec: EnvironmentRecord): Promise<string>
+    {
+        if (this.endpoints !== undefined)
+        {
+            return this.endpoints.AdminPasswordFor(rec, this.dataRoot)
+        }
+        if (!EnvironmentEndpoints.IsLocal(rec))
+        {
+            throw new EnvironmentUnreachableError()
+        }
+        const secrets = await EnvironmentService.ReadSecrets(rec.bundleDir)
+        return EnvironmentService.Secret(secrets, rec.environmentId + BundleBuilder.AdminSecretSuffix)
+    }
+
+    private UrlsOf(rec: EnvironmentRecord): Promise<EnvironmentUrls>
+    {
+        if (this.endpoints !== undefined)
+        {
+            return this.endpoints.UrlsFor(rec)
+        }
+        if (!EnvironmentEndpoints.IsLocal(rec))
+        {
+            return Promise.reject(new EnvironmentUnreachableError())
+        }
+        return Promise.resolve(EnvironmentEndpoints.LocalUrlsOf(rec))
     }
 
     /** The env's provisioned Postgres coordinates; the password is the persisted secret, not the (re-randomised) re-derived one. */

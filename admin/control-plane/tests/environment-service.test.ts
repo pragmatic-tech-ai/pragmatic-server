@@ -38,6 +38,11 @@ import { TenantPurposeName, type EnvDefinition, type EnvOidc } from '../../../en
 import type { UserSeed } from '../../../environments/seed/users.js'
 import type { IAdminProxy, AdminConnectInfo, AdminSnapshot } from '../admin-proxy.js'
 import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, IssueTokenParams, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { PassThrough } from 'node:stream'
+import { NodeProcessSpawner, type IPortForwardingKubectl, type ISpawnedProcess } from '../kubectl.js'
+import { ClusterTunnelPool } from '../cluster-tunnel-pool.js'
+import { EnvironmentEndpoints, EnvironmentUnreachableError } from '../environment-endpoints.js'
+import type { IHiveOrchestrator } from '../hive-orchestrator.js'
 
 /**
  * Routes every record (bound or not) to the one Docker fake, preserving the pre-resolver service tests. The real
@@ -1362,4 +1367,76 @@ test('Delete is fail-open when the IdP connect rejects', async () =>
         assert.equal(received.length, 1)
         assert.equal(received[0].kind, EnvironmentChangeKind.Deleted)
     })
+})
+
+class InClusterAdminFixture
+{
+    public static readonly Name = 'icl'
+    public static readonly Password = 'cluster-owner-secret'
+    public static readonly LocalPort = 51777
+    public static readonly SecretsKey = 'provisioned-secrets.json'
+    public static readonly AdminKey = 'icl-admin-pw'
+
+    /** A kubectl whose Secret holds the Owner password and whose port-forward lands on a fixed local port. */
+    public static Kubectl(): IPortForwardingKubectl
+    {
+        const secret = JSON.stringify({ data: { [InClusterAdminFixture.SecretsKey]: Buffer.from(JSON.stringify({ [InClusterAdminFixture.AdminKey]: InClusterAdminFixture.Password })).toString('base64') } })
+        const process: ISpawnedProcess = { Stdout: new PassThrough(), Kill: () => undefined, OnExit: () => undefined }
+        return {
+            Get: async () => secret,
+            PortForward: async () => ({ LocalPort: InClusterAdminFixture.LocalPort, Process: process }),
+        } as unknown as IPortForwardingKubectl
+    }
+
+    public static async Make(): Promise<{ h: Harness; pool: ClusterTunnelPool }>
+    {
+        const h = await Harness.Make()
+        const kubectl = InClusterAdminFixture.Kubectl()
+        const orchestrators = new class extends HiveOrchestratorFactory
+        {
+            public override For(): IHiveOrchestrator
+            {
+                return { Kubectl: kubectl } as unknown as IHiveOrchestrator
+            }
+        }()
+        const pool = new ClusterTunnelPool(new NodeProcessSpawner())
+        const endpoints = new EnvironmentEndpoints(orchestrators, h.Directory, pool)
+        h.Service = new EnvironmentService(h.Registry, new FakeAllocator(h.Calls, false), SingleBackendResolver.Of(new DockerEnvironmentRuntime(h.Docker, h.Bundle), h.Directory, new HiveOrchestratorFactory()), h.Seeder, h.DataRoot, h.Proxy, h.Directory, h.Idp, c => new IdpAdminClient(c), undefined, endpoints)
+        const rec = Harness.Record(InClusterAdminFixture.Name, EnvStatus.Running)
+        await h.Registry.Put({ ...rec, hiveId: 'h1', hostPort: undefined, bundleDir: undefined, containerName: undefined, volumeName: undefined })
+        return { h, pool }
+    }
+}
+
+test('AdminInfoFor on an in-cluster record tunnels to the env and reads the Owner password from the cluster Secret', async () =>
+{
+    const { h, pool } = await InClusterAdminFixture.Make()
+    const info = await h.Service.AdminInfoFor(InClusterAdminFixture.Name)
+    assert.deepEqual(info, {
+        httpUrl: 'http://127.0.0.1:51777',
+        wsUrl: 'ws://127.0.0.1:51777',
+        tenant: InClusterAdminFixture.Name,
+        email: 'admin@icl.test',
+        password: InClusterAdminFixture.Password
+    })
+    pool.CloseAll()
+})
+
+test('AdminIssueMakerToken works for an in-cluster Development env', async () =>
+{
+    const { h, pool } = await InClusterAdminFixture.Make()
+    const dto = await h.Service.AdminIssueMakerToken(InClusterAdminFixture.Name)
+    assert.equal(dto.token, 'secret-token')
+    assert.equal(h.Proxy.Calls[0].info.httpUrl, 'http://127.0.0.1:51777')
+    assert.equal(h.Proxy.Calls[0].info.password, InClusterAdminFixture.Password)
+    pool.CloseAll()
+})
+
+test('AdminInfoFor on an in-cluster record without composed endpoints throws EnvironmentUnreachableError', async () =>
+{
+    const h = await Harness.Make()
+    const rec = Harness.Record(InClusterAdminFixture.Name, EnvStatus.Running)
+    await h.Registry.Put({ ...rec, hiveId: 'h1', hostPort: undefined, bundleDir: undefined })
+    await assert.rejects(() => h.Service.AdminInfoFor(InClusterAdminFixture.Name), EnvironmentUnreachableError)
+    assert.equal(h.Proxy.Calls.length, 0)
 })

@@ -12,6 +12,10 @@ import { AdminProxy, WsAdminConnector } from './admin-proxy.js'
 import { ControlPlaneHost } from './control-plane-host.js'
 import { LoginThrottle } from './login-throttle.js'
 import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
+import { constants as osConstants } from 'node:os'
+import { ClusterTunnelPool } from './cluster-tunnel-pool.js'
+import { EnvironmentEndpoints } from './environment-endpoints.js'
+import { NodeProcessSpawner } from './kubectl.js'
 import { ManifestRegistry } from './manifest-record.js'
 import { AdoptionLedgerRegistry } from './adoption-ledger-record.js'
 import { GatingRegistry } from './gating-record.js'
@@ -84,6 +88,9 @@ import type { IRolloutClient } from './tenant-api/rollout-client.js'
 export class ControlPlaneServer
 {
     private static readonly PortEnvVar = 'PRAGMATIC_ADMIN_PORT'
+    private static readonly ExitEvent = 'exit'
+    private static readonly ShutdownSignals: readonly NodeJS.Signals[] = ['SIGINT', 'SIGTERM']
+    private static readonly SignalExitBase = 128
     private static readonly DefaultPort = 7000
     public static readonly EnvPortFloor = 8100
     public static readonly IdpPortFloor = 12100
@@ -201,7 +208,11 @@ export class ControlPlaneServer
         const idpService = new IdpService(new IdpRegistry(join(dataRoot, ControlPlaneServer.IdpsFile)), new DockerIdpDriver(new PortAllocator(ControlPlaneServer.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), dataRoot, DockerEnv.ImageName))
         const orchestrators = new HiveOrchestratorFactory(undefined, dataRoot)
         const placement = new EnvironmentPlacement(directory)
-        const service = new EnvironmentService(registry, allocator, new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, bundle), new InClusterEnvironmentRuntime(orchestrators, placement, directory, bundle, signing.PlatformSigner), directory, orchestrators), seeder, dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn), ControlPlaneServer.UiDeployerOf(dataRoot, orchestrators, registry))
+        // In-cluster environments are reached through pooled kubectl port-forwards; every tunnel dies with the process.
+        const tunnels = new ClusterTunnelPool(new NodeProcessSpawner())
+        ControlPlaneServer.CloseOnShutdown(tunnels)
+        const endpoints = new EnvironmentEndpoints(orchestrators, directory, tunnels)
+        const service = new EnvironmentService(registry, allocator, new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, bundle), new InClusterEnvironmentRuntime(orchestrators, placement, directory, bundle, signing.PlatformSigner), directory, orchestrators), seeder, dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn), ControlPlaneServer.UiDeployerOf(dataRoot, orchestrators, registry), endpoints)
         const graphService = new GraphService(registry, proxy, name => service.AdminInfoFor(name))
         const staticRoot = join(here, ControlPlaneServer.ParentSegment, ControlPlaneServer.PortalSegment, ControlPlaneServer.DistSegment)
         const manifests = new ManifestRegistry(join(dataRoot, ControlPlaneServer.ManifestsFile))
@@ -623,6 +634,23 @@ export class ControlPlaneServer
             throw new Error(ControlPlaneServer.BadPortPrefix + raw)
         }
         return port
+    }
+
+    /**
+     * Kills every pooled tunnel when the process ends. SIGINT/SIGTERM are handled so the exit hook runs (a signal's
+     * default action skips 'exit'); the process then exits with the conventional 128 + signal number.
+     */
+    public static CloseOnShutdown(tunnels: ClusterTunnelPool): void
+    {
+        process.once(ControlPlaneServer.ExitEvent, () => tunnels.CloseAll())
+        for (const signal of ControlPlaneServer.ShutdownSignals)
+        {
+            process.once(signal, () =>
+            {
+                tunnels.CloseAll()
+                process.exit(ControlPlaneServer.SignalExitBase + osConstants.signals[signal])
+            })
+        }
     }
 
     /** True when this module is the process entry point (not when imported by tests). */

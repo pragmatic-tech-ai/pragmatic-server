@@ -52,7 +52,8 @@ export class EnvironmentWorkloadFactory
 {
     private static readonly ServerImage = 'pragmatic-server:dev'
     private static readonly DatabaseImage = 'postgres:16'
-    private static readonly ServerPort = 8080
+    /** The env server's container + Service port. */
+    public static readonly ServerPort = 8080
     private static readonly NoTrustKeyRef = ''
     /** The in-cluster registry is plain HTTP; the pod-side client needs an absolute URL base. */
     private static readonly HttpScheme = 'http://'

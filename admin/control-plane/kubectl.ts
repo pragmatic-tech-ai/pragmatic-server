@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn, type ChildProcess } from 'node:child_process'
 
 export interface IExecFile
 {
@@ -28,6 +28,104 @@ export interface IKubectl
     DeleteManifest(manifestJson: string): Promise<void>
     /** Deletes every `resource` in the namespace matching the label selector; none matching is not an error. */
     DeleteBySelector(namespace: string, resource: string, selector: string): Promise<void>
+}
+
+/** A long-lived child process (a kubectl port-forward): its stdout, a way to stop it, and an exit notification. */
+export interface ISpawnedProcess
+{
+    readonly Stdout: NodeJS.ReadableStream
+    Kill(): void
+    OnExit(cb: () => void): void
+}
+
+/** Starts long-lived processes; the seam that lets tests stand in for kubectl port-forward. */
+export interface IProcessSpawner
+{
+    Spawn(file: string, args: readonly string[]): ISpawnedProcess
+}
+
+/** A local tunnel to a cluster port: the loopback port it listens on and the process that holds it open. */
+export type PortForwardResult = { LocalPort: number; Process: ISpawnedProcess }
+
+/** A kubectl that can also open a port-forward through its context (KubectlCli; test fakes may implement it too). */
+export interface IPortForwardingKubectl extends IKubectl
+{
+    PortForward(namespace: string, target: string, remotePort: number, spawner: IProcessSpawner): Promise<PortForwardResult>
+}
+
+/** A port-forward that never became ready or exited early. Carries a fixed message: process output is never surfaced. */
+export class PortForwardError extends Error
+{
+    public static readonly NotReadyMessage = 'kubectl port-forward did not become ready in time'
+    public static readonly ExitedMessage = 'kubectl port-forward exited before forwarding'
+    private static readonly ErrorName = 'PortForwardError'
+
+    public constructor(message: string = PortForwardError.ExitedMessage)
+    {
+        super(message)
+        this.name = PortForwardError.ErrorName
+    }
+}
+
+/** Real IProcessSpawner: node spawn with an argument array (never a shell); stdout piped, stdin and stderr discarded. */
+export class NodeProcessSpawner implements IProcessSpawner
+{
+    public Spawn(file: string, args: readonly string[]): ISpawnedProcess
+    {
+        return new NodeSpawnedProcess(spawn(file, [...args], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }))
+    }
+}
+
+/** Wraps a ChildProcess; a spawn failure ('error') counts as an exit, and OnExit after the exit fires at once. */
+export class NodeSpawnedProcess implements ISpawnedProcess
+{
+    private static readonly ExitEvent = 'exit'
+    private static readonly ErrorEvent = 'error'
+
+    private exited = false
+    private readonly exitCallbacks: (() => void)[] = []
+
+    public constructor(private readonly child: ChildProcess)
+    {
+        child.once(NodeSpawnedProcess.ExitEvent, () => this.MarkExited())
+        child.once(NodeSpawnedProcess.ErrorEvent, () => this.MarkExited())
+    }
+
+    public get Stdout(): NodeJS.ReadableStream
+    {
+        return this.child.stdout as NodeJS.ReadableStream
+    }
+
+    public Kill(): void
+    {
+        if (!this.exited)
+        {
+            this.child.kill()
+        }
+    }
+
+    public OnExit(cb: () => void): void
+    {
+        if (this.exited)
+        {
+            cb()
+            return
+        }
+        this.exitCallbacks.push(cb)
+    }
+
+    private MarkExited(): void
+    {
+        if (this.exited)
+        {
+            return
+        }
+        this.exited = true
+        for (const cb of this.exitCallbacks.splice(0))
+        {
+            cb()
+        }
+    }
 }
 
 /** A failed kubectl invocation. Stderr is redacted of secret-looking tokens before it is surfaced. */
@@ -92,7 +190,7 @@ export class NodeExecFile implements IExecFile
     }
 }
 
-export class KubectlCli implements IKubectl
+export class KubectlCli implements IPortForwardingKubectl
 {
     private static readonly Kubectl = 'kubectl'
     private static readonly ContextFlag = '--context'
@@ -121,6 +219,16 @@ export class KubectlCli implements IKubectl
     private static readonly DeploymentPrefix = 'deployment/'
     private static readonly StatefulSetPrefix = 'statefulset/'
     private static readonly Assign = '='
+    private static readonly PortForwardVerb = 'port-forward'
+    private static readonly AnyLocalPort = '0:'
+    private static readonly AddressFlag = '--address'
+    private static readonly Loopback = '127.0.0.1'
+    private static readonly DataEvent = 'data'
+    private static readonly Utf8 = 'utf8'
+    /** How long a port-forward may take to print its forwarding line. */
+    public static readonly PortForwardReadyMs = 15000
+    /** `Forwarding from 127.0.0.1:<local> -> <remote>`, matched only once its line is complete. */
+    private static readonly ForwardingPattern = /Forwarding from 127\.0\.0\.1:(\d+) -> (\d+)\r?\n/g
 
     public constructor(private readonly context: string, private readonly exec: IExecFile = new NodeExecFile())
     {
@@ -196,6 +304,73 @@ export class KubectlCli implements IKubectl
     public async DeleteBySelector(namespace: string, resource: string, selector: string): Promise<void>
     {
         await this.Invoke([KubectlCli.Delete, resource, KubectlCli.SelectorFlag, selector, KubectlCli.NamespaceFlag, namespace, KubectlCli.IgnoreNotFound])
+    }
+
+    /** Whether a kubectl can open port-forwards (it carries a context the platform can tunnel through). */
+    public static CanPortForward(kubectl: IKubectl): kubectl is IPortForwardingKubectl
+    {
+        return typeof (kubectl as Partial<IPortForwardingKubectl>).PortForward === 'function'
+    }
+
+    /**
+     * Opens `kubectl --context <ctx> -n <ns> port-forward <target> 0:<remotePort> --address 127.0.0.1` and resolves
+     * with the loopback port kubectl picked, once it prints its forwarding line for remotePort. Rejects (and kills the
+     * process) after PortForwardReadyMs, or as soon as the process exits first; kubectl's output is never surfaced.
+     */
+    public PortForward(namespace: string, target: string, remotePort: number, spawner: IProcessSpawner): Promise<PortForwardResult>
+    {
+        const K = KubectlCli
+        const args = [K.ContextFlag, this.context, K.NamespaceFlag, namespace, K.PortForwardVerb, target, K.AnyLocalPort + String(remotePort), K.AddressFlag, K.Loopback]
+        const child = spawner.Spawn(K.Kubectl, args)
+        return new Promise<PortForwardResult>((resolve, reject) =>
+        {
+            let buffered = ''
+            let settled = false
+            const settle = (fail: PortForwardError | undefined, localPort?: number): void =>
+            {
+                if (settled)
+                {
+                    return
+                }
+                settled = true
+                clearTimeout(timer)
+                child.Stdout.removeListener(K.DataEvent, onData)
+                // Keep draining: kubectl logs a line per relayed connection and must never block on a full pipe.
+                child.Stdout.resume()
+                if (fail !== undefined)
+                {
+                    child.Kill()
+                    reject(fail)
+                    return
+                }
+                resolve({ LocalPort: localPort as number, Process: child })
+            }
+            const onData = (chunk: Buffer | string): void =>
+            {
+                buffered += typeof chunk === 'string' ? chunk : chunk.toString(K.Utf8)
+                const local = KubectlCli.ForwardedPort(buffered, remotePort)
+                if (local !== undefined)
+                {
+                    settle(undefined, local)
+                }
+            }
+            const timer = setTimeout(() => settle(new PortForwardError(PortForwardError.NotReadyMessage)), K.PortForwardReadyMs)
+            child.Stdout.on(K.DataEvent, onData)
+            child.OnExit(() => settle(new PortForwardError(PortForwardError.ExitedMessage)))
+        })
+    }
+
+    /** The local port of the first complete forwarding line for remotePort in the text, if any. */
+    private static ForwardedPort(text: string, remotePort: number): number | undefined
+    {
+        for (const match of text.matchAll(KubectlCli.ForwardingPattern))
+        {
+            if (Number(match[2]) === remotePort)
+            {
+                return Number(match[1])
+            }
+        }
+        return undefined
     }
 
     private async Invoke(args: readonly string[], stdin?: string): Promise<string>
