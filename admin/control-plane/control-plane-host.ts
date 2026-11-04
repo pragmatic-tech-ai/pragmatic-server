@@ -35,6 +35,7 @@ import { AdminProxyError, AdminProxyErrorKind, type AdminSnapshot } from './admi
 import {
     ClientHasTenantsError,
     HiveHasEnvironmentsError,
+    InHiveConsoleTakenError,
     RecordExistsError,
     TenantClientMismatchError,
     TenantHasHivesError,
@@ -44,6 +45,8 @@ import {
 } from './platform-directory.js'
 import { HivePlacementError } from './hive-placement-error.js'
 import { HiveBootstrapBundle } from './hive-bootstrap-bundle.js'
+import { HiveConsoleSpecs, InvalidHiveConsoleError } from './hive-console-spec.js'
+import { InvalidIngressTlsError } from './ingress-tls.js'
 import { AgentInstallInProgressError, AgentInstallUnavailableError, type HiveAgentInstaller, type InstallStatus } from './hive-agent-installer.js'
 import { AgentUninstallError, HiveClusterDestroyError, type HiveAgentUninstaller } from './hive-agent-uninstaller.js'
 import { HiveBackend, InfraMode, InvalidRecordIdError } from './platform-records.js'
@@ -262,6 +265,9 @@ export class ControlPlaneHost
     private static readonly ForceParam = 'force'
     private static readonly ForceValue = 'true'
     private static readonly ForceAuditSuffix = '?' + ControlPlaneHost.ForceParam + '=' + ControlPlaneHost.ForceValue
+    private static readonly ConsoleSegment = 'console'
+    private static readonly HiveConsolePathPattern = new RegExp(
+        '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/([^/]+)/' + ControlPlaneHost.ConsoleSegment + '$')
     private static readonly HiveItemPathPattern = new RegExp('^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/[^/]+$')
     private static readonly AgentLeftNotice = 'The agent was not removed: the agent may remain in the cluster, locked out (its token is revoked), until someone removes it.'
     private static readonly KindClusterLeftNotice = "The hive's kind cluster was not destroyed: the kind cluster may be left behind on this machine."
@@ -422,6 +428,9 @@ export class ControlPlaneHost
         [UnknownHiveError, PlaneHttp.StatusNotFound],
         [AgentInstallUnavailableError, ControlPlaneHost.StatusConflict],
         [AgentInstallInProgressError, ControlPlaneHost.StatusConflict],
+        [InvalidHiveConsoleError, ControlPlaneHost.StatusBadRequest],
+        [InvalidIngressTlsError, ControlPlaneHost.StatusBadRequest],
+        [InHiveConsoleTakenError, ControlPlaneHost.StatusConflict],
         // The hive's cluster refused or could not be reached while its agent was being removed: the operator fixes cluster
         // access and retries, or deletes anyway. A conflict, not a server error (5xx answers are masked as generic 500s).
         [AgentUninstallError, ControlPlaneHost.StatusConflict],
@@ -1064,6 +1073,11 @@ export class ControlPlaneHost
         {
             return this.RouteHiveAgentInstall(res, method, him)
         }
+        const hcm = ControlPlaneHost.HiveConsolePathPattern.exec(path)
+        if (hcm !== null)
+        {
+            return await this.RouteHiveConsole(req, res, method, hcm)
+        }
         const plm = ControlPlaneHost.PlatformPathPattern.exec(path)
         if (plm !== null)
         {
@@ -1309,6 +1323,28 @@ export class ControlPlaneHost
             return true
         }
         this.WriteInstallStatus(res, ControlPlaneHost.StatusAccepted, installer.Start(id))
+        return true
+    }
+
+    /** Serves PUT /api/hives/ID/console: stores where the hive serves its tenant's console and returns the updated hive. False for any other method. */
+    private async RouteHiveConsole(req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
+    {
+        if (method !== PlaneHttp.MethodPut)
+        {
+            return false
+        }
+        const id = this.KnownHiveId(res, m)
+        if (id === undefined)
+        {
+            return true
+        }
+        const body = await this.ReadJsonObject(req, res)
+        if (body === undefined)
+        {
+            return true
+        }
+        const hive: HiveDto = await this.directory.SetHiveConsole(id, HiveConsoleSpecs.Parse(body))
+        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, hive)
         return true
     }
 

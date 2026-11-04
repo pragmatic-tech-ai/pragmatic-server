@@ -1,3 +1,5 @@
+import type { HiveConsoleSpec } from './hive-console-spec.js'
+
 export type ClientRecord = {
     id: string
     displayName: string
@@ -62,6 +64,8 @@ export type HiveRecord = {
      * RegisterHive has no Secret name and leaves it unset.
      */
     agentTokenRef?: string
+    /** Where this hive serves its tenant's in-hive console (optional: unset until the operator configures it). */
+    console?: HiveConsoleSpec
     createdAt: string
 }
 

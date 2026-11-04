@@ -146,13 +146,22 @@ export class DevCertificateAuthority implements IDevCertificateIssuer
         })
     }
 
+    /**
+     * True for a domain a development CA (or a console host) may use: lowercase DNS labels, at least two of them,
+     * at most 253 characters, and not a well-known public suffix. The one validator shared with the hive console settings.
+     */
+    public static IsValidDomain(domain: string): boolean
+    {
+        const labels = domain.split(DevCertificateAuthority.Dot)
+        return domain.length <= DevCertificateAuthority.MaxNameLength
+            && labels.length >= DevCertificateAuthority.MinBaseLabels
+            && labels.every(l => DevCertificateAuthority.LabelPattern.test(l))
+            && !DevCertificateAuthority.PublicSuffixes.has(domain)
+    }
+
     private static CheckBase(baseDomain: string): void
     {
-        const labels = baseDomain.split(DevCertificateAuthority.Dot)
-        if (baseDomain.length > DevCertificateAuthority.MaxNameLength
-            || labels.length < DevCertificateAuthority.MinBaseLabels
-            || !labels.every(l => DevCertificateAuthority.LabelPattern.test(l))
-            || DevCertificateAuthority.PublicSuffixes.has(baseDomain))
+        if (!DevCertificateAuthority.IsValidDomain(baseDomain))
         {
             throw new Error(DevCertificateAuthority.BadBaseText + baseDomain)
         }

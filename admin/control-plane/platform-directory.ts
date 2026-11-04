@@ -5,6 +5,8 @@ import type { EnvironmentRecord } from './environment-record.js'
 import { HivePlacementError } from './hive-placement-error.js'
 import { RecordId } from './platform-records.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
+import { UnknownHiveError } from './rollout-errors.js'
+import type { HiveConsoleSpec } from './hive-console-spec.js'
 import type { ClientRecord, TenantRecord, HiveRecord, ClusterSpec, RegistrySpec } from './platform-records.js'
 
 export interface IEnvironmentLookup
@@ -104,6 +106,18 @@ export class HiveHasEnvironmentsError extends Error
     {
         super(HiveHasEnvironmentsError.MessagePrefix + id)
         this.name = HiveHasEnvironmentsError.ErrorName
+    }
+}
+
+/** The tenant already runs its console in another hive. */
+export class InHiveConsoleTakenError extends Error
+{
+    private static readonly ErrorName = 'InHiveConsoleTakenError'
+
+    public constructor(tenantId: string, hiveId: string)
+    {
+        super(`Tenant ${tenantId} already runs its console in hive ${hiveId}; a tenant has one console.`)
+        this.name = InHiveConsoleTakenError.ErrorName
     }
 }
 
@@ -271,6 +285,25 @@ export class PlatformDirectory
         }
         await this.hives.Put(record)
         return record
+    }
+
+    /** Sets (or, with undefined, clears) where the hive serves its tenant's console; a tenant has one console across its hives. */
+    public async SetHiveConsole(hiveId: string, console: HiveConsoleSpec | undefined): Promise<HiveRecord>
+    {
+        const hive = this.hives.Get(hiveId)
+        if (hive === undefined)
+        {
+            throw new UnknownHiveError(hiveId)
+        }
+        const other = this.hives.List().find(h => h.tenantId === hive.tenantId && h.id !== hiveId && h.console !== undefined)
+        if (console !== undefined && other !== undefined)
+        {
+            throw new InHiveConsoleTakenError(hive.tenantId, other.id)
+        }
+        const { console: _previous, ...rest } = hive
+        const updated: HiveRecord = console === undefined ? rest : { ...rest, console }
+        await this.hives.Put(updated)
+        return updated
     }
 
     public async DeleteHive(id: string): Promise<void>

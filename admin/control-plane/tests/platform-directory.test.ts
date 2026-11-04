@@ -17,8 +17,12 @@ import {
     UnknownTenantError,
     ClientHasTenantsError,
     TenantHasHivesError,
-    HiveHasEnvironmentsError
+    HiveHasEnvironmentsError,
+    InHiveConsoleTakenError
 } from '../platform-directory.js'
+import { UnknownHiveError } from '../rollout-errors.js'
+import { IngressTlsSource } from '../ingress-tls.js'
+import type { HiveConsoleSpec } from '../hive-console-spec.js'
 import { HivePlacementError } from '../hive-placement-error.js'
 import type { IEnvironmentLookup } from '../platform-directory.js'
 
@@ -283,6 +287,92 @@ test('UseDefaultTrustRoot gives every hive without a trust root the platform key
         assert.equal(f.directory.GetHive('h3')?.trustRootRef, 'platform-signing')
         assert.equal(f.directory.GetHive('h4')?.trustRootRef, 'platform-signing')
         assert.deepEqual(await f.directory.UseDefaultTrustRoot('platform-signing'), [])
+    }
+    finally
+    {
+        await f.Dispose()
+    }
+})
+
+class ConsoleFixture
+{
+    public static readonly Spec: HiveConsoleSpec = { baseDomain: 'localtest.me', tls: { source: IngressTlsSource.Development } }
+
+    public static async SeedSecondHive(f: DirectoryFixture): Promise<void>
+    {
+        await f.directory.CreateHive({ id: 'h2', tenantId: 't1', displayName: 'H2', cluster: DirectoryFixture.Cluster(), registry: DirectoryFixture.Registry() })
+    }
+}
+
+test('SetHiveConsole stores the setting and an unknown hive is refused', async () =>
+{
+    const f = await DirectoryFixture.Create()
+    try
+    {
+        await f.Seed()
+        const updated = await f.directory.SetHiveConsole('h1', ConsoleFixture.Spec)
+        assert.deepEqual(updated.console, ConsoleFixture.Spec)
+        assert.deepEqual(f.directory.GetHive('h1')?.console, ConsoleFixture.Spec)
+        await assert.rejects(() => f.directory.SetHiveConsole('nope', ConsoleFixture.Spec), UnknownHiveError)
+    }
+    finally
+    {
+        await f.Dispose()
+    }
+})
+
+test('a second hive of the same tenant cannot also run the console', async () =>
+{
+    const f = await DirectoryFixture.Create()
+    try
+    {
+        await f.Seed()
+        await ConsoleFixture.SeedSecondHive(f)
+        await f.directory.SetHiveConsole('h1', ConsoleFixture.Spec)
+        await assert.rejects(() => f.directory.SetHiveConsole('h2', ConsoleFixture.Spec), InHiveConsoleTakenError)
+        // Re-setting on the hive that owns it is an update, not a conflict.
+        await f.directory.SetHiveConsole('h1', { ...ConsoleFixture.Spec, baseDomain: 'other.me' })
+    }
+    finally
+    {
+        await f.Dispose()
+    }
+})
+
+test('clearing the setting frees the tenant', async () =>
+{
+    const f = await DirectoryFixture.Create()
+    try
+    {
+        await f.Seed()
+        await ConsoleFixture.SeedSecondHive(f)
+        await f.directory.SetHiveConsole('h1', ConsoleFixture.Spec)
+        const cleared = await f.directory.SetHiveConsole('h1', undefined)
+        assert.equal(cleared.console, undefined)
+        assert.ok(!('console' in (f.directory.GetHive('h1') as object)))
+        await f.directory.SetHiveConsole('h2', ConsoleFixture.Spec)
+        assert.deepEqual(f.directory.GetHive('h2')?.console, ConsoleFixture.Spec)
+    }
+    finally
+    {
+        await f.Dispose()
+    }
+})
+
+test('the console setting survives a reload', async () =>
+{
+    const f = await DirectoryFixture.Create()
+    try
+    {
+        await f.Seed()
+        await f.directory.SetHiveConsole('h1', ConsoleFixture.Spec)
+        const reloaded = new PlatformDirectory(
+            new ClientRegistry(join(f.dir, 'clients.json')),
+            new TenantRegistry(join(f.dir, 'tenants.json')),
+            new HiveRegistry(f.hivesPath),
+            new FakeEnvironments([]))
+        await reloaded.Load()
+        assert.deepEqual(reloaded.GetHive('h1')?.console, ConsoleFixture.Spec)
     }
     finally
     {
