@@ -22,6 +22,7 @@ import { RateLimitGuard } from './rate-limit-guard.js'
 import { RateLimitScope } from './rate-limiter.js'
 import { ConnectorService } from './connector-service.js'
 import type { IConnectorReadAuthorization } from './connector-read-authorization.js'
+import { TokenScopeGate } from './token-scope.js'
 import { ConnectorPrincipalDigest } from './connector-read-authorization.js'
 import type { IHydrateAuthorization } from './connector-hydrate-writer.js'
 import type { IWriteTargetSource } from './write-target-source.js'
@@ -66,6 +67,7 @@ export class ServerConnectionHandler
     private static readonly ClaimsMappingField = 'claimsMapping'
     private static readonly SecurityModelField = 'securityModel'
     private static readonly PrincipalIdField = 'principalId'
+    private static readonly OutsideScopeMessage = "method is outside this credential's scope"
     private static readonly EmailField = 'email'
     private static readonly PasswordField = 'password'
     private static readonly TokenRefField = 'tokenRef'
@@ -105,6 +107,7 @@ export class ServerConnectionHandler
     private readonly languageService: ILanguageService
     private readonly manager: SolutionManagerService
     private readonly accessContext: AccessContext
+    private readonly scopeGate: TokenScopeGate
     private readonly gate: PolicyGate
     private readonly connectorService: ConnectorService
     private readonly graphSubscription: IDisposable
@@ -163,6 +166,7 @@ export class ServerConnectionHandler
         this.parent = parent
         this.connectorService = new ConnectorService(connectorsFactory, connectorWriteAuthorization, connectorReadAuthorization)
         this.accessContext = accessContext
+        this.scopeGate = TokenScopeGate.ForContext(accessContext)
         this.connection = connection
         this.languageService = languageService
         this.manager = manager
@@ -298,6 +302,10 @@ export class ServerConnectionHandler
 
     private authorize(method: string): void
     {
+        if (!this.scopeGate.Allows(method))
+        {
+            throw new ResponseError(ErrorCodes.InvalidRequest, ServerConnectionHandler.OutsideScopeMessage)
+        }
         const decision = this.gate.Authorize(method)
         if (!decision.Allowed)
         {

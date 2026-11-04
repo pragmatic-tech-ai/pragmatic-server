@@ -8,6 +8,7 @@ import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services
 import { TenantPurpose } from '../../tenancy/tenant-purpose.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
 import { PolicyGate } from '../policy-gate.js'
+import { ScopedAccessContext, TokenScope } from '../token-scope.js'
 import type { IDevGraphService } from '../graphs/dev-graph-service.js'
 
 class FakeGraphService implements IDevGraphService
@@ -55,6 +56,7 @@ class GraphFixture
     public static readonly DeleteCall = 'delete:'
     public static readonly ContributeCall = 'contribute:'
     public static readonly SolutionId = 'sol-1'
+    public static readonly OutsideScopeText = "outside this credential's scope"
     public static readonly UnavailableText = 'graph service is not available'
     public static readonly NotDevelopmentText = 'operation requires a development tenant'
     private static readonly TenantId = 't1'
@@ -95,11 +97,11 @@ class GraphFixture
         return {}
     }
 
-    public async With(purpose: TenantPurpose, body: (client: PragmaticClient) => Promise<void>, wired: boolean = true): Promise<void>
+    public async With(purpose: TenantPurpose, body: (client: PragmaticClient) => Promise<void>, wired: boolean = true, context: AccessContext = GraphFixture.Context(Role.Owner)): Promise<void>
     {
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const handler = ServerConnectionHandler.Attach(
-            serverSocket, GraphFixture.Language(), {} as SolutionManagerService, GraphFixture.Context(Role.Owner), () => Promise.reject(new Error()), () => Promise.reject(new Error()),
+            serverSocket, GraphFixture.Language(), {} as SolutionManagerService, context, () => Promise.reject(new Error()), () => Promise.reject(new Error()),
             undefined, undefined, undefined, undefined, undefined, undefined, purpose, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
             undefined, undefined, undefined, undefined, undefined, undefined, wired ? this.Service : undefined)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
@@ -237,4 +239,24 @@ test('a Maker-only principal may contribute but nothing else', () =>
 test('an Owner may contribute', () =>
 {
     assert.equal(GraphFixture.Gate(Role.Owner).Authorize(GraphProtocol.Contribute.method).Allowed, true)
+})
+
+test('a graph-contribute service credential is refused graph/delete even with an Owner role; an unscoped Owner is not', async () =>
+{
+    const fixture = new GraphFixture()
+    const scoped = new ScopedAccessContext(GraphFixture.Context(Role.Owner), [TokenScope.GraphContribute])
+    await fixture.With(TenantPurpose.Development, async client =>
+    {
+        const error = await GraphFixture.ErrorOf(client.DeleteGraph({ graphName: GraphFixture.GraphName }))
+        assert.equal(error.code, ErrorCodes.InvalidRequest)
+        assert.ok((error.message ?? '').includes(GraphFixture.OutsideScopeText))
+        await client.ListGraphs()
+        assert.deepEqual(fixture.Service.Calls, [GraphFixture.ListCall])
+    }, true, scoped)
+    const open = new GraphFixture()
+    await open.With(TenantPurpose.Development, async client =>
+    {
+        await client.DeleteGraph({ graphName: GraphFixture.GraphName })
+        assert.deepEqual(open.Service.Calls, [GraphFixture.DeleteCall + GraphFixture.GraphName])
+    })
 })

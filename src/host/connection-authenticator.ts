@@ -5,6 +5,7 @@ import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
 import { trace, isSpanContextValid } from '@opentelemetry/api'
 import { NullAccessAuditSink, AuditSurface, AuditOutcome } from './access-audit.js'
 import type { IAccessAuditSink, AccessAuditEvent } from './access-audit.js'
+import { ScopedAccessContext } from './token-scope.js'
 
 /** Resolves a bearer token to an AccessContext: session first, then service token. Fail-closed:
  *  an unresolved token returns null and no context is built. */
@@ -76,7 +77,9 @@ export class ConnectionAuthenticator
                 const result = await serviceAuthenticator.Authenticate(new Credential(AuthMethod.ServiceToken, ConnectionAuthenticator.EmptyReference), presented, tenant)
                 if (result instanceof AuthenticatedResult)
                 {
-                    return this.assembler.AssembleAsync(pack, tenant, result.Principal)
+                    // a service token's scopes ride in Principal.Groups; carry them explicitly so only this path is ever scope-restricted
+                    const context = await this.assembler.AssembleAsync(pack, tenant, result.Principal)
+                    return new ScopedAccessContext(context, result.Principal.Groups)
                 }
             }
             finally
