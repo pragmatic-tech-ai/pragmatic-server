@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, utimes } from 'node:fs/promises'
 import { createPublicKey, randomBytes, X509Certificate } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -16,7 +16,17 @@ class CaFixture
     public static readonly PrivateKeyMarker = 'PRIVATE KEY'
     public static readonly KeySuffix = '.key'
     public static readonly Encoding = 'utf8'
-    public static readonly MaxLeafMs = 398 * 24 * 3600 * 1000
+    public static readonly LeafMs = 397 * 24 * 3600 * 1000
+    public static readonly WildcardSan = 'DNS:*.localtest.me'
+    public static readonly DomainSan = 'DNS:localtest.me'
+    public static readonly OutsideHost = 'console.example.com'
+    public static readonly SuffixTrick = 'evillocaltest.me'
+    public static readonly InnerWildcards = ['a.*.localtest.me', 'x*.localtest.me']
+    public static readonly BadHosts = ['-lead.localtest.me', 'trail-.localtest.me', `${'a'.repeat(64)}.localtest.me`]
+    public static readonly BadBases = ['me', 'localhost', 'co.uk', 'com.au', '-bad.me', 'bad-.me', `${'a'.repeat(64)}.me`]
+    public static readonly MissingOpenssl = 'no-such-openssl-binary'
+    public static readonly StagingPrefix = '.dev-ca-staging-'
+    public static readonly StaleSeconds = 3600
 
     public static async With(body: (ca: DevCertificateAuthority, root: string, vaultFile: string, store: SealedSecretStore) => Promise<void>): Promise<void>
     {
@@ -92,9 +102,9 @@ test('Issue signs a wildcard leaf for the base domain', async () =>
         const leaf = new X509Certificate(issued.cert)
         assert.equal(leaf.checkIssued(caCert), true)
         assert.equal(leaf.verify(caCert.publicKey), true)
-        assert.ok(leaf.subjectAltName?.includes('DNS:*.localtest.me'))
-        assert.ok(leaf.subjectAltName?.includes('DNS:localtest.me'))
-        assert.ok(new Date(leaf.validTo).getTime() - new Date(leaf.validFrom).getTime() <= CaFixture.MaxLeafMs)
+        assert.ok(leaf.subjectAltName?.includes(CaFixture.WildcardSan))
+        assert.ok(leaf.subjectAltName?.includes(CaFixture.DomainSan))
+        assert.equal(new Date(leaf.validTo).getTime() - new Date(leaf.validFrom).getTime(), CaFixture.LeafMs)
         assert.equal(leaf.ca, false)
         const fromKey = createPublicKey(issued.key).export({ type: 'spki', format: 'der' })
         assert.deepEqual(fromKey, leaf.publicKey.export({ type: 'spki', format: 'der' }))
@@ -105,10 +115,10 @@ test('Issue refuses a host outside the base domain and an inner wildcard', async
 {
     await CaFixture.With(async (ca) =>
     {
-        await assert.rejects(ca.Issue(CaFixture.Domain, ['console.example.com']), DevCaHostOutsideDomainError)
-        await assert.rejects(ca.Issue(CaFixture.Domain, ['evillocaltest.me']), DevCaHostOutsideDomainError)
-        await assert.rejects(ca.Issue(CaFixture.Domain, ['a.*.localtest.me']), DevCaHostOutsideDomainError)
-        await assert.rejects(ca.Issue(CaFixture.Domain, ['x*.localtest.me']), DevCaHostOutsideDomainError)
+        for (const host of [CaFixture.OutsideHost, CaFixture.SuffixTrick, ...CaFixture.InnerWildcards, ...CaFixture.BadHosts])
+        {
+            await assert.rejects(ca.Issue(CaFixture.Domain, [host]), DevCaHostOutsideDomainError)
+        }
         await assert.rejects(ca.Issue(CaFixture.Domain, []), DevCaHostOutsideDomainError)
     })
 })
@@ -131,5 +141,47 @@ test('concurrent EnsureCa calls mint one CA', async () =>
     {
         const [a, b] = await Promise.all([ca.EnsureCa(CaFixture.Domain), ca.EnsureCa(CaFixture.Domain)])
         assert.deepEqual(a, b)
+    })
+})
+
+test('a base domain that is a single label, a public suffix or not a valid DNS name is refused', async () =>
+{
+    await CaFixture.With(async (ca) =>
+    {
+        for (const base of CaFixture.BadBases)
+        {
+            await assert.rejects(ca.EnsureCa(base))
+            await assert.rejects(ca.Issue(base, [base]))
+        }
+    })
+})
+
+test('staging is removed after an openssl failure in EnsureCa and in Issue', async () =>
+{
+    await CaFixture.With(async (ca, root, _vaultFile, store) =>
+    {
+        const broken = new DevCertificateAuthority(root, store, CaFixture.MissingOpenssl)
+        await assert.rejects(broken.EnsureCa(CaFixture.Domain))
+        assert.deepEqual(await readdir(root), [])
+        await ca.EnsureCa(CaFixture.Domain)
+        await assert.rejects(broken.Issue(CaFixture.Domain, [CaFixture.Wildcard]))
+        assert.deepEqual(await readdir(root), [CaFixture.Domain])
+    })
+})
+
+test('only stale staging dirs are swept, so a second instance cannot remove live staging', async () =>
+{
+    await CaFixture.With(async (ca, root) =>
+    {
+        const fresh = join(root, `${CaFixture.StagingPrefix}fresh`)
+        const stale = join(root, `${CaFixture.StagingPrefix}stale`)
+        await mkdir(fresh, { recursive: true })
+        await mkdir(stale, { recursive: true })
+        const old = new Date(Date.now() - CaFixture.StaleSeconds * 1000 * 2)
+        await utimes(stale, old, old)
+        await ca.EnsureCa(CaFixture.Domain)
+        const left = await readdir(root)
+        assert.ok(left.includes(`${CaFixture.StagingPrefix}fresh`))
+        assert.equal(left.includes(`${CaFixture.StagingPrefix}stale`), false)
     })
 })

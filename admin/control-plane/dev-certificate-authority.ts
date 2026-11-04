@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { chmod, mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { SealedSecretStore } from './sealed-secret-store.js'
 
@@ -39,8 +39,11 @@ export class DevCaHostOutsideDomainError extends Error
 
 /**
  * One development CA per base domain, name-constrained to that domain and minted with the openssl CLI.
- * The CA key lives only in the sealed store; it touches disk solely inside a short-lived 0700 staging
- * directory while a leaf is signed. All operations are serialized.
+ * The CA key lives only in the sealed store; it touches disk solely inside a short-lived staging
+ * directory while a leaf is signed. On POSIX that directory and its key files are 0700/0600; on Windows
+ * the modes are no-ops and the files are protected by the ACL inherited from rootDir (the user-owned
+ * data directory), plus the staging directory's very short life. All operations on one instance are
+ * serialized; a second instance on the same rootDir is safe because only stale staging dirs are swept.
  */
 export class DevCertificateAuthority implements IDevCertificateIssuer
 {
@@ -53,8 +56,34 @@ export class DevCertificateAuthority implements IDevCertificateIssuer
     private static readonly LeafCertFile = 'leaf.crt'
     private static readonly LeafExtFile = 'leaf.ext'
     private static readonly StagingPrefix = '.dev-ca-staging-'
-    private static readonly NamePattern = /^[a-z0-9*.-]+$/
-    private static readonly WildcardLabel = '*'
+    private static readonly LabelPattern = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
+    private static readonly MaxNameLength = 253
+    private static readonly MinBaseLabels = 2
+    private static readonly StaleStagingMs = 10 * 60 * 1000
+    // Well-known multi-label public suffixes (not exhaustive): a CA constrained to one would span unrelated owners.
+    private static readonly PublicSuffixes: ReadonlySet<string> = new Set([
+        'co.uk', 'org.uk', 'ac.uk', 'gov.uk', 'me.uk', 'ltd.uk', 'plc.uk', 'net.uk', 'sch.uk',
+        'com.au', 'net.au', 'org.au', 'edu.au', 'gov.au', 'co.nz', 'org.nz', 'net.nz', 'govt.nz',
+        'co.jp', 'ne.jp', 'or.jp', 'ac.jp', 'go.jp', 'co.kr', 'or.kr', 'co.in', 'net.in', 'org.in',
+        'com.br', 'net.br', 'org.br', 'com.cn', 'net.cn', 'org.cn', 'gov.cn', 'com.mx', 'org.mx',
+        'co.za', 'org.za', 'com.sg', 'com.hk', 'com.tw', 'com.tr', 'com.ar', 'com.ua', 'co.il', 'co.id',
+    ])
+    private static readonly CmdReq = 'req'
+    private static readonly CmdX509 = 'x509'
+    private static readonly FlagX509 = '-x509'
+    private static readonly FlagReq = '-req'
+    private static readonly FlagNewkey = '-newkey'
+    private static readonly FlagNodes = '-nodes'
+    private static readonly FlagKeyout = '-keyout'
+    private static readonly FlagOut = '-out'
+    private static readonly FlagIn = '-in'
+    private static readonly FlagDays = '-days'
+    private static readonly FlagSubj = '-subj'
+    private static readonly FlagAddext = '-addext'
+    private static readonly FlagCa = '-CA'
+    private static readonly FlagCaKey = '-CAkey'
+    private static readonly FlagCaCreateSerial = '-CAcreateserial'
+    private static readonly FlagExtfile = '-extfile'
     private static readonly WildcardPrefix = '*.'
     private static readonly Dot = '.'
     private static readonly KeySpec = 'rsa:2048'
@@ -120,9 +149,10 @@ export class DevCertificateAuthority implements IDevCertificateIssuer
     private static CheckBase(baseDomain: string): void
     {
         const labels = baseDomain.split(DevCertificateAuthority.Dot)
-        if (!DevCertificateAuthority.NamePattern.test(baseDomain)
-            || baseDomain.includes(DevCertificateAuthority.WildcardLabel)
-            || labels.some(l => l.length === 0))
+        if (baseDomain.length > DevCertificateAuthority.MaxNameLength
+            || labels.length < DevCertificateAuthority.MinBaseLabels
+            || !labels.every(l => DevCertificateAuthority.LabelPattern.test(l))
+            || DevCertificateAuthority.PublicSuffixes.has(baseDomain))
         {
             throw new Error(DevCertificateAuthority.BadBaseText + baseDomain)
         }
@@ -143,9 +173,10 @@ export class DevCertificateAuthority implements IDevCertificateIssuer
     private static CheckHost(baseDomain: string, host: string): void
     {
         const bare = host.startsWith(DevCertificateAuthority.WildcardPrefix) ? host.slice(DevCertificateAuthority.WildcardPrefix.length) : host
-        const labelsOk = !bare.includes(DevCertificateAuthority.WildcardLabel) && bare.split(DevCertificateAuthority.Dot).every(l => l.length > 0)
+        const labelsOk = bare.length > 0 && host.length <= DevCertificateAuthority.MaxNameLength
+            && bare.split(DevCertificateAuthority.Dot).every(l => DevCertificateAuthority.LabelPattern.test(l))
         const inDomain = bare === baseDomain || bare.endsWith(DevCertificateAuthority.Dot + baseDomain)
-        if (!DevCertificateAuthority.NamePattern.test(host) || !labelsOk || !inDomain)
+        if (!labelsOk || !inDomain)
         {
             throw new DevCaHostOutsideDomainError(host)
         }
@@ -178,12 +209,12 @@ export class DevCertificateAuthority implements IDevCertificateIssuer
             const keyFile = join(stage, DevCertificateAuthority.CaKeyFile)
             const stagedCert = join(stage, DevCertificateAuthority.CaCertFile)
             await this.Run([
-                'req', '-x509', '-newkey', DevCertificateAuthority.KeySpec, '-nodes',
-                '-keyout', keyFile, '-out', stagedCert, '-days', DevCertificateAuthority.CaDays,
-                '-subj', DevCertificateAuthority.CaSubjectPrefix + baseDomain + DevCertificateAuthority.CaSubjectSuffix,
-                '-addext', DevCertificateAuthority.CaBasicConstraints,
-                '-addext', DevCertificateAuthority.CaKeyUsage,
-                '-addext', DevCertificateAuthority.NameConstraintsPrefix + baseDomain,
+                DevCertificateAuthority.CmdReq, DevCertificateAuthority.FlagX509, DevCertificateAuthority.FlagNewkey, DevCertificateAuthority.KeySpec, DevCertificateAuthority.FlagNodes,
+                DevCertificateAuthority.FlagKeyout, keyFile, DevCertificateAuthority.FlagOut, stagedCert, DevCertificateAuthority.FlagDays, DevCertificateAuthority.CaDays,
+                DevCertificateAuthority.FlagSubj, DevCertificateAuthority.CaSubjectPrefix + baseDomain + DevCertificateAuthority.CaSubjectSuffix,
+                DevCertificateAuthority.FlagAddext, DevCertificateAuthority.CaBasicConstraints,
+                DevCertificateAuthority.FlagAddext, DevCertificateAuthority.CaKeyUsage,
+                DevCertificateAuthority.FlagAddext, DevCertificateAuthority.NameConstraintsPrefix + baseDomain,
             ])
             // Seal the key first: a crash before the certificate lands leaves no CA file, so the next call mints afresh.
             await this.store.Put(keyRef, await readFile(keyFile))
@@ -218,11 +249,14 @@ export class DevCertificateAuthority implements IDevCertificateIssuer
             await writeFile(caCertFile, await readFile(this.CaFileOf(baseDomain)))
             const san = DevCertificateAuthority.SanPrefix + hosts.map(h => DevCertificateAuthority.DnsPrefix + h).join(DevCertificateAuthority.SanSeparator)
             await writeFile(extFile, [san, ...DevCertificateAuthority.LeafExtensions].join(DevCertificateAuthority.Eol) + DevCertificateAuthority.Eol)
-            await this.Run(['req', '-newkey', DevCertificateAuthority.KeySpec, '-nodes', '-keyout', leafKeyFile, '-out', csrFile,
-                '-subj', DevCertificateAuthority.SubjectPrefix + hosts[0]])
+            await this.Run([DevCertificateAuthority.CmdReq, DevCertificateAuthority.FlagNewkey, DevCertificateAuthority.KeySpec, DevCertificateAuthority.FlagNodes,
+                DevCertificateAuthority.FlagKeyout, leafKeyFile, DevCertificateAuthority.FlagOut, csrFile,
+                DevCertificateAuthority.FlagSubj, DevCertificateAuthority.SubjectPrefix + hosts[0]])
             await chmod(leafKeyFile, DevCertificateAuthority.KeyMode)
-            await this.Run(['x509', '-req', '-in', csrFile, '-CA', caCertFile, '-CAkey', caKeyFile, '-CAcreateserial',
-                '-out', leafCertFile, '-days', DevCertificateAuthority.LeafDays, '-extfile', extFile])
+            await this.Run([DevCertificateAuthority.CmdX509, DevCertificateAuthority.FlagReq, DevCertificateAuthority.FlagIn, csrFile,
+                DevCertificateAuthority.FlagCa, caCertFile, DevCertificateAuthority.FlagCaKey, caKeyFile, DevCertificateAuthority.FlagCaCreateSerial,
+                DevCertificateAuthority.FlagOut, leafCertFile, DevCertificateAuthority.FlagDays, DevCertificateAuthority.LeafDays,
+                DevCertificateAuthority.FlagExtfile, extFile])
             return { cert: await readFile(leafCertFile), key: await readFile(leafKeyFile) }
         }
         finally
@@ -239,22 +273,31 @@ export class DevCertificateAuthority implements IDevCertificateIssuer
         return stage
     }
 
-    /** Removes staging dirs a crashed run left behind (they may hold a transient CA key). Runs inside the serialized chain. */
+    /**
+     * Removes staging dirs a crashed run left behind (they may hold a transient CA key). Only dirs older than
+     * StaleStagingMs go, so a second instance or process on the same rootDir never loses its live staging.
+     */
     private async SweepStaging(): Promise<void>
     {
         try
         {
             for (const entry of await readdir(this.rootDir))
             {
-                if (entry.startsWith(DevCertificateAuthority.StagingPrefix))
+                if (!entry.startsWith(DevCertificateAuthority.StagingPrefix))
                 {
-                    await rm(join(this.rootDir, entry), { recursive: true, force: true })
+                    continue
+                }
+                const dir = join(this.rootDir, entry)
+                const info = await stat(dir)
+                if (Date.now() - info.mtimeMs > DevCertificateAuthority.StaleStagingMs)
+                {
+                    await rm(dir, { recursive: true, force: true })
                 }
             }
         }
         catch
         {
-            // root absent: nothing to sweep.
+            // root absent or an entry vanished concurrently: nothing to sweep.
         }
     }
 
