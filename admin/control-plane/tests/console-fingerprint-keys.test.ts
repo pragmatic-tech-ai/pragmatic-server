@@ -1,10 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { SealedSecretStore } from '../sealed-secret-store.js'
+import { SealedSecretStore, SealedSecretUnreadableError } from '../sealed-secret-store.js'
 import { ConsoleFingerprintKeys } from '../console-fingerprint-keys.js'
 
 class KeysFixture
@@ -64,4 +64,45 @@ test('Remove forgets the key', async () =>
         await keys.Remove('h1')
         assert.equal(await keys.Get('h1'), undefined)
     })
+})
+
+test('Ensure does not overwrite an unreadable key', async () =>
+{
+    const dir = await mkdtemp(join(tmpdir(), KeysFixture.Prefix))
+    try
+    {
+        const file = join(dir, SealedSecretStore.FileName)
+        const master = randomBytes(32)
+        const first = new ConsoleFingerprintKeys(await SealedSecretStore.Open(file, master))
+        await first.Ensure('h1')
+        const before = await readFile(file, 'utf8')
+        const second = new ConsoleFingerprintKeys(await SealedSecretStore.Open(file, randomBytes(32)))
+        await assert.rejects(second.Ensure('h1'), SealedSecretUnreadableError)
+        assert.equal(await readFile(file, 'utf8'), before)
+    }
+    finally
+    {
+        await rm(dir, { recursive: true, force: true })
+    }
+})
+
+test('Ensure hands out no unpersisted key and a failed Ensure clears pending', async () =>
+{
+    const dir = await mkdtemp(join(tmpdir(), KeysFixture.Prefix))
+    try
+    {
+        const sub = join(dir, 'sub')
+        const store = await SealedSecretStore.Open(join(sub, SealedSecretStore.FileName), randomBytes(32))
+        const keys = new ConsoleFingerprintKeys(store)
+        await writeFile(sub, 'blocker')
+        await assert.rejects(keys.Ensure('h1'))
+        assert.equal(await keys.Get('h1'), undefined)
+        await rm(sub)
+        const key = await keys.Ensure('h1')
+        assert.equal(key.length, ConsoleFingerprintKeys.KeyBytes)
+    }
+    finally
+    {
+        await rm(dir, { recursive: true, force: true })
+    }
 })
