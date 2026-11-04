@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test'
 import { WebSocket, WebSocketServer } from 'ws'
 import { AppWriteStatus, PragmaticClient, type TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { AuditRegistry, type AuditRecord } from '../audit-record.js'
+import { AuditThrottle } from '../audit-throttle.js'
 import type { IEnvironmentService } from '../control-plane-host.js'
 import { EnvironmentUnreachableError, type EnvironmentEndpoints, type EnvironmentUrlsLease } from '../environment-endpoints.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
@@ -295,7 +296,7 @@ class RelayKit
     private server: Server | undefined
     private port = 0
 
-    public async Start(capabilities?: DesktopCapabilitiesSource, desktopTtlMs?: number): Promise<void>
+    public async Start(capabilities?: DesktopCapabilitiesSource, desktopTtlMs?: number, refusalThrottle?: AuditThrottle): Promise<void>
     {
         this.dir = await mkdtemp(join(tmpdir(), 'desktop-relay-'))
         this.store = new TenantSessionStore(join(this.dir, 'sessions.json'), 60000, undefined, desktopTtlMs)
@@ -313,7 +314,7 @@ class RelayKit
         this.dialer = new CountingDialer()
         const service = this.service as unknown as IEnvironmentService
         this.relay = new DesktopRelay(new DesktopAuthGate(this.store, this.directory), new DesktopTargets(service, this.directory, capabilities), service,
-            this.endpoints as unknown as EnvironmentEndpoints, this.audit, this.dialer, undefined, false, this.clock)
+            this.endpoints as unknown as EnvironmentEndpoints, this.audit, this.dialer, refusalThrottle, false, this.clock)
         this.service.clock = this.clock
         this.desktopToken = (await this.store.Issue(RelayKit.TenantId, RelayKit.Principal, RelayKit.Email, TenantSessionKind.Desktop)).id
         this.consoleToken = (await this.store.Issue(RelayKit.TenantId, RelayKit.Principal, RelayKit.Email)).id
@@ -566,6 +567,33 @@ describe('DesktopRelay refusals', () =>
         assert.equal(kit.endpoints.leases, 1)
         assert.equal(kit.endpoints.releases, 1)
         assert.equal(kit.Audit().filter(r => r.status === 502).length, 2)
+    })
+})
+
+describe('DesktopRelay refusal audit throttle', () =>
+{
+    let kit: RelayKit
+
+    afterEach(async () =>
+    {
+        await kit.Stop()
+    })
+
+    it('throttles signed-in refusals per address, so they cannot flush the log; contribute outcomes are still recorded', async () =>
+    {
+        kit = new RelayKit()
+        await kit.Start(undefined, undefined, new AuditThrottle({ maxHits: 2 }))
+        for (let i = 0; i < 6; i++)
+        {
+            assert.equal((await kit.Dial(RelayKit.Run, 'contribute', kit.desktopToken)).status, 403)
+        }
+        const refusals = kit.Audit().filter(r => r.status === 403)
+        assert.equal(refusals.length, 3, 'the hits up to the lockout are audited, the rest are not')
+        assert.ok(refusals.every(r => r.actor === RelayKit.TenantId + '/' + RelayKit.Email))
+        const client = await kit.Client(RelayKit.Dev, 'contribute')
+        await client.ContributeGraph(RelayKit.Contribute(RelayKit.Graph) as never)
+        await client.DisposeAsync()
+        await RelayKit.Until(() => kit.Audit().some(r => r.status === 200 && r.note === RelayKit.Graph))
     })
 })
 

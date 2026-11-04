@@ -139,8 +139,8 @@ type RelayContext = { session: TenantSession; actor: string; action: DesktopActi
  * Refusals are plain HTTP answers written before the upgrade: 403 for any request carrying an Origin header (desktop
  * only: a browser page cannot drive it), 401 (no valid desktop bearer), 400 (bad action or no
  * environment), 403 (not allowed: capability, type, tenant or unknown), 409 (allowed but not running), 502 (unreachable,
- * minting failed, or the environment server refused the dial). Each refusal is audited with its HTTP status (anonymous
- * refusals under a per-address throttle, so an unauthenticated flood cannot churn the log), and each forwarded contribute or
+ * minting failed, or the environment server refused the dial). Each refusal is audited with its HTTP status under a
+ * per-address throttle (anonymous and signed-in alike, so no flood can churn the shared log), and each forwarded contribute or
  * deploy is audited once when its response returns (200, or 500 for an error or a non-applied deploy; 502 if the relay
  * closed first). The tunnel lease is held for the whole relay and released exactly once. Neither the desktop token nor
  * the minted credential is ever logged, audited or echoed.
@@ -201,7 +201,8 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
         private readonly endpoints: EnvironmentEndpoints,
         private readonly audit: AuditRegistry,
         private readonly dialer: IUpstreamDialer = new WsUpstreamDialer(),
-        private readonly anonymousThrottle: AuditThrottle = new AuditThrottle(),
+        /** Per client address: bounds how many refusals (anonymous or signed in) reach the audit log. */
+        private readonly refusalThrottle: AuditThrottle = new AuditThrottle(),
         private readonly trustedProxy: boolean = false,
         private readonly clock: IRelayClock = new SystemRelayClock())
     {
@@ -217,13 +218,13 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
         // ws's handleUpgrade drops a malformed handshake without calling back; refuse it here, before anything is minted.
         if (!DesktopRelay.IsWebSocketHandshake(req))
         {
-            await this.RefuseAnonymous(req, socket, DesktopRelay.StatusBadRequest, rawAction, rawEnv)
+            await this.Refuse(req, socket, DesktopRelay.StatusBadRequest, AuditRegistry.AnonymousActor, rawAction, rawEnv)
             return
         }
         // Desktop-only like the rest of `/desktop/*`: a browser page always sends Origin on a WebSocket, so it is refused.
         if (req.headers[PlaneHttp.OriginHeader] !== undefined)
         {
-            await this.RefuseAnonymous(req, socket, DesktopRelay.StatusForbidden, rawAction, rawEnv)
+            await this.Refuse(req, socket, DesktopRelay.StatusForbidden, AuditRegistry.AnonymousActor, rawAction, rawEnv)
             return
         }
         let session: TenantSession | null
@@ -233,19 +234,19 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
         }
         catch
         {
-            await this.Refuse(socket, DesktopRelay.StatusInternal, AuditRegistry.AnonymousActor, rawAction, rawEnv)
+            await this.Refuse(req, socket, DesktopRelay.StatusInternal, AuditRegistry.AnonymousActor, rawAction, rawEnv)
             return
         }
         if (session === null)
         {
-            await this.RefuseAnonymous(req, socket, DesktopRelay.StatusUnauthorized, rawAction, rawEnv)
+            await this.Refuse(req, socket, DesktopRelay.StatusUnauthorized, AuditRegistry.AnonymousActor, rawAction, rawEnv)
             return
         }
         const actor = DesktopRelay.ActorOf(session)
         const action = DesktopRelay.ActionOf(rawAction)
         if (action === undefined || rawEnv === DesktopRelay.NoValue)
         {
-            await this.Refuse(socket, DesktopRelay.StatusBadRequest, actor, rawAction, rawEnv)
+            await this.Refuse(req, socket, DesktopRelay.StatusBadRequest, actor, rawAction, rawEnv)
             return
         }
         let record: EnvironmentRecord
@@ -255,14 +256,14 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
             if (check.verdict !== DesktopTargetVerdict.Allowed || check.record === undefined)
             {
                 const status = check.verdict === DesktopTargetVerdict.NotRunning ? DesktopRelay.StatusConflict : DesktopRelay.StatusForbidden
-                await this.Refuse(socket, status, actor, action, rawEnv)
+                await this.Refuse(req, socket, status, actor, action, rawEnv)
                 return
             }
             record = check.record
         }
         catch
         {
-            await this.Refuse(socket, DesktopRelay.StatusInternal, actor, action, rawEnv)
+            await this.Refuse(req, socket, DesktopRelay.StatusInternal, actor, action, rawEnv)
             return
         }
         await this.Connect(req, socket, head, { session, actor, action, envName: record.name }, record)
@@ -367,7 +368,7 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
             lease?.Release()
             // Only the error's name: messages from lower layers are not vetted for secret material.
             console.error(DesktopRelay.LogPrefix, err instanceof Error ? err.name : typeof err)
-            await this.Refuse(socket, DesktopRelay.StatusBadGateway, context.actor, context.action, context.envName)
+            await this.Refuse(req, socket, DesktopRelay.StatusBadGateway, context.actor, context.action, context.envName)
             return
         }
         const deadlineMs = DesktopRelay.DeadlineOf(context.session, credential)
@@ -378,7 +379,7 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
         if (!await this.StillLive(req, context.session))
         {
             pipe.Close(RelayPipe.NormalClosure)
-            await this.Refuse(socket, DesktopRelay.StatusUnauthorized, context.actor, context.action, context.envName)
+            await this.Refuse(req, socket, DesktopRelay.StatusUnauthorized, context.actor, context.action, context.envName)
             return
         }
         if (socket.destroyed)
@@ -431,24 +432,22 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
         return Number.isNaN(deadline) ? Number.NEGATIVE_INFINITY : deadline
     }
 
-    /** A refusal before any principal is known: audited as anonymous, but only while the address is under the throttle. */
-    private async RefuseAnonymous(req: IncomingMessage, socket: Duplex, status: number, rawAction: string, rawEnv: string): Promise<void>
+    /**
+     * Answers a refusal and audits it, but only while the client's address is under the refusal throttle: anonymous or
+     * signed in, no one address can flood the shared, capped audit log and evict the contribute and deploy outcome
+     * records (those are never throttled).
+     */
+    private async Refuse(req: IncomingMessage, socket: Duplex, status: number, actor: string, method: string, path: string): Promise<void>
     {
         const ip = TenantClientAddress.Of(req, this.trustedProxy)
-        const audited = this.anonymousThrottle.CheckAllowed(ip).allowed
+        const audited = this.refusalThrottle.CheckAllowed(ip).allowed
         // Counted before the awaited write so a parallel burst cannot slip past the throttle.
-        this.anonymousThrottle.RecordHit(ip)
+        this.refusalThrottle.RecordHit(ip)
         DesktopRelay.WriteRefusal(socket, status)
         if (audited)
         {
-            await this.Record(AuditRegistry.AnonymousActor, rawAction, rawEnv, status)
+            await this.Record(actor, method, path, status)
         }
-    }
-
-    private async Refuse(socket: Duplex, status: number, actor: string, method: string, path: string): Promise<void>
-    {
-        DesktopRelay.WriteRefusal(socket, status)
-        await this.Record(actor, method, path, status)
     }
 
     /** Writes a plain HTTP refusal on the not-yet-upgraded socket and ends it. */
