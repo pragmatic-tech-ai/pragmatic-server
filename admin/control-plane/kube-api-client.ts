@@ -56,9 +56,9 @@ export class HttpsKubeTransport implements IKubeTransport
 {
     private readonly https: KubeHttpsTransport
 
-    public constructor(account: InClusterServiceAccount, timeoutMs: number = 30000)
+    public constructor(account: InClusterServiceAccount, timeoutMs: number = 30000, host: string = InClusterServiceAccount.Host, port?: number)
     {
-        this.https = new KubeHttpsTransport(account.TokenPath, account.CaPath, InClusterServiceAccount.Host, undefined, timeoutMs)
+        this.https = new KubeHttpsTransport(account.TokenPath, account.CaPath, host, port, timeoutMs)
     }
 
     public Send(method: KubeMethod, path: string, body: string | undefined, contentType: KubeContentType): Promise<KubeResponse>
@@ -89,18 +89,17 @@ export class KubeResourceCatalog
     private static readonly CoreRoot = '/api/'
     private static readonly GroupRoot = '/apis/'
     private static readonly Slash = '/'
-    private static readonly Query = '?'
     private static readonly NamespacesSegment = 'namespaces/'
     private static readonly Entries: ReadonlyArray<KubeKindEntry> = [
-        { apiVersion: 'v1', kind: 'Namespace', plural: 'namespaces', namespaced: false, short: 'ns' },
+        { apiVersion: 'v1', kind: 'Namespace', plural: 'namespaces', namespaced: false },
         { apiVersion: 'v1', kind: 'Secret', plural: 'secrets', namespaced: true },
-        { apiVersion: 'v1', kind: 'ConfigMap', plural: 'configmaps', namespaced: true, short: 'cm' },
+        { apiVersion: 'v1', kind: 'ConfigMap', plural: 'configmaps', namespaced: true },
         { apiVersion: 'v1', kind: 'Service', plural: 'services', namespaced: true, short: 'svc' },
-        { apiVersion: 'v1', kind: 'ServiceAccount', plural: 'serviceaccounts', namespaced: true, short: 'sa' },
-        { apiVersion: 'v1', kind: 'PersistentVolumeClaim', plural: 'persistentvolumeclaims', namespaced: true, short: 'pvc' },
-        { apiVersion: 'apps/v1', kind: 'Deployment', plural: 'deployments', namespaced: true, short: 'deploy' },
-        { apiVersion: 'apps/v1', kind: 'StatefulSet', plural: 'statefulsets', namespaced: true, short: 'sts' },
-        { apiVersion: 'networking.k8s.io/v1', kind: 'Ingress', plural: 'ingresses', namespaced: true, short: 'ing' },
+        { apiVersion: 'v1', kind: 'ServiceAccount', plural: 'serviceaccounts', namespaced: true },
+        { apiVersion: 'v1', kind: 'PersistentVolumeClaim', plural: 'persistentvolumeclaims', namespaced: true },
+        { apiVersion: 'apps/v1', kind: 'Deployment', plural: 'deployments', namespaced: true },
+        { apiVersion: 'apps/v1', kind: 'StatefulSet', plural: 'statefulsets', namespaced: true },
+        { apiVersion: 'networking.k8s.io/v1', kind: 'Ingress', plural: 'ingresses', namespaced: true },
         { apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'Role', plural: 'roles', namespaced: true },
         { apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'RoleBinding', plural: 'rolebindings', namespaced: true },
         { apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'ClusterRole', plural: 'clusterroles', namespaced: false },
@@ -147,20 +146,6 @@ export class KubeResourceCatalog
         return KubeResourceCatalog.EntryOf(type).namespaced
     }
 
-    /** The plural collection name inside an API path, or undefined when the path names no catalog kind. */
-    public static PluralInPath(path: string): string | undefined
-    {
-        const segments = path.split(KubeResourceCatalog.Query)[0]!.split(KubeResourceCatalog.Slash)
-        for (let i = segments.length - 1; i >= 0; i--)
-        {
-            if (KubeResourceCatalog.Entries.some(e => e.plural === segments[i]))
-            {
-                return segments[i]
-            }
-        }
-        return undefined
-    }
-
     private static EntryOf(type: KubeTypeRef): KubeKindEntry
     {
         const entry = KubeResourceCatalog.Entries.find(e => e.apiVersion === type.apiVersion && e.kind === type.kind)
@@ -180,9 +165,9 @@ export class KubeApiError extends Error
     private static readonly Separator = ': '
     private static readonly ErrorName = 'KubeApiError'
 
-    public constructor(public readonly Status: number, method: KubeMethod, kind: string, apiMessage: string | undefined)
+    public constructor(public readonly Status: number, method: KubeMethod, path: string, apiMessage: string | undefined)
     {
-        super(KubeApiError.Prefix + method + KubeApiError.Space + kind + KubeApiError.Middle + Status
+        super(KubeApiError.Prefix + method + KubeApiError.Space + path + KubeApiError.Middle + Status
             + (apiMessage === undefined || apiMessage === '' ? '' : KubeApiError.Separator + KubectlError.Redact(apiMessage).trim()))
         this.name = KubeApiError.ErrorName
     }
@@ -193,7 +178,7 @@ export class KubeApiClient
     public static readonly FieldManager = 'pragmatic-tenant-console'
     private static readonly ApplyQuery = '?fieldManager=' + KubeApiClient.FieldManager + '&force=true'
     private static readonly LabelSelectorQuery = '?labelSelector='
-    private static readonly UnknownKind = 'resource'
+    private static readonly BadJsonMessage = 'kubernetes API GET response was not valid JSON'
     private static readonly NotFound = 404
     private static readonly Conflict = 409
     private static readonly OkMin = 200
@@ -211,7 +196,7 @@ export class KubeApiClient
             return undefined
         }
         KubeApiClient.EnsureOk(response, KubeMethod.Get, path)
-        return JSON.parse(response.body) as unknown
+        return KubeApiClient.ParseJson(response.body)
     }
 
     public async List(path: string, labelSelector?: string): Promise<unknown[]>
@@ -219,7 +204,7 @@ export class KubeApiClient
         const target = labelSelector === undefined ? path : path + KubeApiClient.LabelSelectorQuery + encodeURIComponent(labelSelector)
         const response = await this.transport.Send(KubeMethod.Get, target, undefined, KubeContentType.Json)
         KubeApiClient.EnsureOk(response, KubeMethod.Get, path)
-        const list = JSON.parse(response.body) as { items?: unknown[] }
+        const list = KubeApiClient.ParseJson(response.body) as { items?: unknown[] }
         return list.items ?? []
     }
 
@@ -263,8 +248,20 @@ export class KubeApiClient
         {
             return
         }
-        throw new KubeApiError(response.status, method, KubeResourceCatalog.PluralInPath(path) ?? KubeApiClient.UnknownKind,
-            KubeApiClient.MessageOf(response.body))
+        throw new KubeApiError(response.status, method, path, KubeApiClient.MessageOf(response.body))
+    }
+
+    /** The SyntaxError text can echo a body snippet (a Secret GET), so a bad body fails with a fixed message. */
+    private static ParseJson(body: string): unknown
+    {
+        try
+        {
+            return JSON.parse(body) as unknown
+        }
+        catch
+        {
+            throw new Error(KubeApiClient.BadJsonMessage)
+        }
     }
 
     private static MessageOf(body: string): string | undefined

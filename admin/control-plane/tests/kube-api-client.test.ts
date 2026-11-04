@@ -1,10 +1,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { createServer } from 'node:https'
+import type { Server } from 'node:https'
+import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DevCa } from '../../../src/idp/dev-ca.js'
 import {
-    InClusterServiceAccount, KubeApiClient, KubeApiError, KubeContentType, KubeMethod,
+    HttpsKubeTransport, InClusterServiceAccount, KubeApiClient, KubeApiError, KubeContentType, KubeMethod,
     KubeResourceCatalog, UnsupportedKubeKindError,
 } from '../kube-api-client.js'
 import type { IKubeTransport, KubeResponse } from '../kube-api-client.js'
@@ -96,7 +99,7 @@ test('a failed call redacts the API message', async () =>
         assert.equal(error.Status, 422)
         assert.ok(error.message.includes('[REDACTED]'))
         assert.ok(!error.message.includes(token))
-        assert.ok(error.message.includes('POST secrets failed with status 422'))
+        assert.ok(error.message.startsWith('kubernetes API POST /api/v1/namespaces/x/secrets failed with status 422: '))
         return true
     })
 })
@@ -117,5 +120,130 @@ test('Detect needs KUBERNETES_SERVICE_HOST and both files', () =>
     finally
     {
         rmSync(dir, { recursive: true, force: true })
+    }
+})
+
+test('a failed call names the method and path and carries no query', async () =>
+{
+    const fake = new FakeKubeTransport([{ status: 403, body: '{"message":"forbidden"}' }, { status: 500, body: 'not json' }])
+    const client = new KubeApiClient(fake)
+    await assert.rejects(client.Apply('/api/v1/namespaces/x/secrets/roles', {}), { message: 'kubernetes API PATCH /api/v1/namespaces/x/secrets/roles failed with status 403: forbidden' })
+    await assert.rejects(client.Delete('/api/v1/namespaces/x'), { message: 'kubernetes API DELETE /api/v1/namespaces/x failed with status 500' })
+})
+
+test('a failed call redacts a Bearer credential in the API message', async () =>
+{
+    const fake = new FakeKubeTransport([{ status: 401, body: JSON.stringify({ message: 'bad header Bearer s3cr3t-value' }) }])
+    await assert.rejects(new KubeApiClient(fake).Get('/api/v1/namespaces/x'), (error: unknown) =>
+    {
+        assert.ok(error instanceof KubeApiError)
+        assert.ok(!error.message.includes('s3cr3t-value'))
+        assert.ok(error.message.includes('[REDACTED]'))
+        return true
+    })
+})
+
+test('a 2xx with a non-JSON body fails with a fixed message that never echoes the body', async () =>
+{
+    const fake = new FakeKubeTransport([{ status: 200, body: 'SECRETBODY{' }, { status: 200, body: 'SECRETBODY{' }])
+    const client = new KubeApiClient(fake)
+    for (const call of [() => client.Get('/api/v1/namespaces/x/secrets/a'), () => client.List('/api/v1/namespaces/x/secrets')])
+    {
+        await assert.rejects(call(), (error: unknown) =>
+        {
+            assert.ok(error instanceof Error)
+            assert.ok(!error.message.includes('SECRETBODY'))
+            assert.equal(error.message, 'kubernetes API GET response was not valid JSON')
+            return true
+        })
+    }
+})
+
+test('ParseResource accepts only exact kind names plus svc', () =>
+{
+    assert.throws(() => KubeResourceCatalog.ParseResource('sts/x'), UnsupportedKubeKindError)
+    assert.throws(() => KubeResourceCatalog.ParseResource('cm/x'), UnsupportedKubeKindError)
+})
+
+class ApiServerFixture
+{
+    public readonly Seen: Array<{ auth: string | undefined; method: string | undefined; url: string | undefined }> = []
+    public Port = 0
+    public Dir = ''
+    public Account: InClusterServiceAccount | undefined
+    private server: Server | undefined
+    private hang = false
+
+    public async Start(): Promise<void>
+    {
+        this.Dir = mkdtempSync(join(tmpdir(), 'kube-https-'))
+        const files = DevCa.EnsureAt(this.Dir, 'localhost')
+        writeFileSync(join(this.Dir, 'token'), 'first-token')
+        this.Account = new InClusterServiceAccount(join(this.Dir, 'token'), files.caFile)
+        this.server = createServer({ key: readFileSync(files.keyFile), cert: readFileSync(files.certFile) }, (req, res) =>
+        {
+            this.Seen.push({ auth: req.headers.authorization, method: req.method, url: req.url })
+            if (this.hang)
+            {
+                return
+            }
+            res.statusCode = 200
+            res.end('{"ok":true}')
+        })
+        await new Promise<void>(resolve => this.server!.listen(0, '127.0.0.1', resolve))
+        this.Port = (this.server.address() as { port: number }).port
+    }
+
+    public Hang(): void
+    {
+        this.hang = true
+    }
+
+    public async Stop(): Promise<void>
+    {
+        this.server?.closeAllConnections()
+        await new Promise<void>(resolve => this.server!.close(() => resolve()))
+        rmSync(this.Dir, { recursive: true, force: true })
+    }
+}
+
+test('HttpsKubeTransport rereads the token on every request and trusts the service-account CA', async () =>
+{
+    const fixture = new ApiServerFixture()
+    await fixture.Start()
+    try
+    {
+        const transport = new HttpsKubeTransport(fixture.Account!, 5000, 'localhost', fixture.Port)
+        const first = await transport.Send(KubeMethod.Get, '/x', undefined, KubeContentType.Json)
+        writeFileSync(fixture.Account!.TokenPath, 'second-token')
+        await transport.Send(KubeMethod.Get, '/x', undefined, KubeContentType.Json)
+        assert.equal(first.status, 200)
+        assert.deepEqual(fixture.Seen.map(s => s.auth), ['Bearer first-token', 'Bearer second-token'])
+    }
+    finally
+    {
+        await fixture.Stop()
+    }
+})
+
+test('HttpsKubeTransport timeout fails with a fixed message that holds no token', async () =>
+{
+    const fixture = new ApiServerFixture()
+    await fixture.Start()
+    fixture.Hang()
+    try
+    {
+        const transport = new HttpsKubeTransport(fixture.Account!, 200, 'localhost', fixture.Port)
+        await assert.rejects(transport.Send(KubeMethod.Get, '/x', undefined, KubeContentType.Json), (error: unknown) =>
+        {
+            assert.ok(error instanceof Error)
+            assert.equal(error.message, 'kubernetes API request timed out')
+            assert.ok(!error.message.includes('first-token'))
+            return true
+        })
+    }
+    finally
+    {
+        await fixture.Stop()
     }
 })
