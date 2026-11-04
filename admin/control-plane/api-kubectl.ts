@@ -23,9 +23,9 @@ export class DeleteTimeoutError extends KubectlError
     private static readonly DeleteSuffix = ' was not deleted in time.'
     private static readonly DeleteErrorName = 'DeleteTimeoutError'
 
-    public constructor(path: string)
+    public constructor(resource: string)
     {
-        super(DeleteTimeoutError.DeletePrefix + path + DeleteTimeoutError.DeleteSuffix, '', false)
+        super(DeleteTimeoutError.DeletePrefix + resource + DeleteTimeoutError.DeleteSuffix, '', false)
         this.name = DeleteTimeoutError.DeleteErrorName
     }
 }
@@ -52,6 +52,8 @@ export class ApiKubectl implements IKubectl
     private static readonly NamespaceType: KubeTypeRef = { apiVersion: 'v1', kind: 'Namespace' }
     private static readonly NotFound = 404
     private static readonly Comma = ','
+    private static readonly Slash = '/'
+    private static readonly NamespaceLabel = 'namespace/'
     private static readonly DefaultReplicas = 1
 
     public constructor(
@@ -156,12 +158,12 @@ export class ApiKubectl implements IKubectl
         const path = KubeResourceCatalog.PathOf(ApiKubectl.NamespaceType, undefined, namespace)
         if (await this.client.Delete(path))
         {
-            await this.WaitGone(path)
+            await this.WaitGone(path, ApiKubectl.NamespaceLabel + namespace)
         }
     }
 
     /** Polls until the object is gone (kubectl delete waits for finalizers); bounded like RolloutStatus. */
-    private async WaitGone(path: string): Promise<void>
+    private async WaitGone(path: string, label: string): Promise<void>
     {
         for (let attempt = 0; attempt < this.rollout.attempts; attempt++)
         {
@@ -169,9 +171,12 @@ export class ApiKubectl implements IKubectl
             {
                 return
             }
-            await this.clock.Delay(this.rollout.intervalMs)
+            if (attempt + 1 < this.rollout.attempts)
+            {
+                await this.clock.Delay(this.rollout.intervalMs)
+            }
         }
-        throw new DeleteTimeoutError(path)
+        throw new DeleteTimeoutError(label)
     }
 
     public async DeleteManifest(manifestJson: string): Promise<void>
@@ -188,18 +193,18 @@ export class ApiKubectl implements IKubectl
         {
             const type = KubeResourceCatalog.ParseResource(word.trim()).type
             const items = await this.client.List(KubeResourceCatalog.PathOf(type, namespace), selector)
-            const deleted: string[] = []
+            const deleted: Array<{ path: string; label: string }> = []
             for (const item of items)
             {
                 const path = KubeResourceCatalog.PathOf(type, namespace, ApiKubectl.NameOf(item))
                 if (await this.client.Delete(path))
                 {
-                    deleted.push(path)
+                    deleted.push({ path, label: type.kind.toLowerCase() + ApiKubectl.Slash + ApiKubectl.NameOf(item) })
                 }
             }
-            for (const path of deleted)
+            for (const entry of deleted)
             {
-                await this.WaitGone(path)
+                await this.WaitGone(entry.path, entry.label)
             }
         }
     }

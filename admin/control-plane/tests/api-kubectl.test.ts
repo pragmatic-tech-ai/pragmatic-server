@@ -177,9 +177,10 @@ test('DeleteNamespace waits until the namespace is gone', async () =>
 
 test('DeleteNamespace times out when the namespace never goes away', async () =>
 {
-    const { fake, kubectl } = Fixture.Make([Fixture.Empty, Fixture.Ok({}), Fixture.Ok({})], { attempts: 2, intervalMs: 0 })
-    await assert.rejects(() => kubectl.DeleteNamespace('ns'), (e: unknown) => e instanceof KubectlError)
+    const { fake, kubectl, clock } = Fixture.Make([Fixture.Empty, Fixture.Ok({}), Fixture.Ok({})], { attempts: 2, intervalMs: 0 })
+    await assert.rejects(() => kubectl.DeleteNamespace('ns'), (e: unknown) => e instanceof KubectlError && e.message === 'Resource namespace/ns was not deleted in time.')
     assert.equal(fake.Calls.length, 3)
+    assert.equal(clock.Delays, 1)
 })
 
 test('DeleteManifest tolerates objects already gone', async () =>
