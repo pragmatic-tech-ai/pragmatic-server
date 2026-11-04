@@ -167,6 +167,9 @@ class RelayService
     /** When set, a minted credential expires this long after the mint (by the relay's clock). */
     public credentialTtlMs: number | undefined
     public clock: FakeRelayClock | undefined
+    /** env/tokenRef of every credential revoked. */
+    public revokes: string[] = []
+    public failRevoke = false
 
     public constructor(private readonly records: readonly EnvironmentRecord[])
     {
@@ -187,6 +190,15 @@ class RelayService
         return this.Mint(name, RelayKit.DeployToken)
     }
 
+    public async AdminRevokeToken(name: string, tokenRef: string): Promise<void>
+    {
+        this.revokes.push(name + '/' + tokenRef)
+        if (this.failRevoke)
+        {
+            throw new Error('revoke failed: secret-ish detail')
+        }
+    }
+
     private Mint(name: string, token: string): TokenIssuedDto
     {
         this.mints.push(name)
@@ -195,7 +207,7 @@ class RelayService
             throw new Error('mint failed')
         }
         const expiresAt = this.credentialTtlMs === undefined ? null : new Date((this.clock?.Now() ?? Date.now()) + this.credentialTtlMs).toISOString()
-        return { tokenRef: 'ref', token, principalId: 'maker', scopes: [], expiresAt }
+        return { tokenRef: 'ref-' + String(this.mints.length), token, principalId: 'maker', scopes: [], expiresAt }
     }
 }
 
@@ -567,6 +579,55 @@ describe('DesktopRelay refusals', () =>
         assert.equal(kit.endpoints.leases, 1)
         assert.equal(kit.endpoints.releases, 1)
         assert.equal(kit.Audit().filter(r => r.status === 502).length, 2)
+    })
+})
+
+describe('DesktopRelay credential revocation', () =>
+{
+    let kit: RelayKit
+
+    beforeEach(async () =>
+    {
+        kit = new RelayKit()
+        await kit.Start()
+    })
+
+    afterEach(async () =>
+    {
+        await kit.Stop()
+    })
+
+    it('revokes the minted credential when the relay closes', async () =>
+    {
+        const client = await kit.Client(RelayKit.Dev, 'contribute')
+        assert.deepEqual(await client.ListGraphs(), [])
+        assert.deepEqual(kit.service.revokes, [])
+        await client.DisposeAsync()
+        await RelayKit.Until(() => kit.service.revokes.length === 1)
+        assert.deepEqual(kit.service.revokes, [RelayKit.Dev + '/ref-1'])
+    })
+
+    it('revokes the credential when the upstream dial fails after the mint', async () =>
+    {
+        await kit.upstream.Stop()
+        assert.equal((await kit.Dial(RelayKit.Run, 'publish', kit.desktopToken)).status, 502)
+        await RelayKit.Until(() => kit.service.revokes.length === 1)
+        assert.deepEqual(kit.service.revokes, [RelayKit.Run + '/ref-1'])
+    })
+
+    it('a failing revoke never blocks the close and logs only the error name', async (t) =>
+    {
+        kit.service.failRevoke = true
+        const logged: unknown[][] = []
+        t.mock.method(console, 'error', (...args: unknown[]) => { logged.push(args) })
+        const { ws } = await kit.Dial(RelayKit.Dev, 'contribute', kit.desktopToken)
+        const closed = RelayKit.Closed(ws as WebSocket)
+        assert.equal(kit.relay.CloseSession(kit.desktopToken), 1)
+        assert.equal(await closed, 1000)
+        assert.equal(kit.endpoints.releases, 1)
+        await RelayKit.Until(() => logged.length === 1)
+        assert.ok(!JSON.stringify(logged).includes('secret-ish'))
+        assert.equal(logged[0]?.[1], 'Error')
     })
 })
 

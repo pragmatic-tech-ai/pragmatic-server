@@ -171,6 +171,7 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
     private static readonly ResponseHeaders = 'Connection: close\r\nContent-Type: application/json\r\nContent-Length: '
     private static readonly Space = ' '
     private static readonly LogPrefix = '[desktop-relay] upstream failed:'
+    private static readonly RevokeLogPrefix = '[desktop-relay] revoking the relay credential failed:'
     private static readonly ErrorEvent = 'error'
     private static readonly FinishEvent = 'finish'
     private static readonly CloseEvent = 'close'
@@ -337,6 +338,24 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
         }
     }
 
+    /**
+     * Revokes a relay's minted credential in its environment once the relay is done with it, so the env's token list does
+     * not grow by one row per relay until expiry. Best effort and fire-and-forget: it never blocks or fails a close, and a
+     * failure logs only the error's name (the credential then simply expires).
+     */
+    public RevokeCredential(envName: string, tokenRef: string): void
+    {
+        const log = (err: unknown): void => console.error(DesktopRelay.RevokeLogPrefix, err instanceof Error ? err.name : typeof err)
+        try
+        {
+            this.service.AdminRevokeToken(envName, tokenRef).catch(log)
+        }
+        catch (err)
+        {
+            log(err)
+        }
+    }
+
     /** Best-effort audit append: never throws. */
     public async Record(actor: string, method: string, path: string, status: number, note?: string): Promise<void>
     {
@@ -356,7 +375,7 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
     {
         let lease: EnvironmentUrlsLease | undefined
         let upstream: WebSocket
-        let credential: TokenIssuedDto
+        let credential: TokenIssuedDto | undefined
         try
         {
             lease = await this.endpoints.UrlsFor(record)
@@ -366,13 +385,17 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
         catch (err)
         {
             lease?.Release()
+            if (credential !== undefined)
+            {
+                this.RevokeCredential(record.name, credential.tokenRef)
+            }
             // Only the error's name: messages from lower layers are not vetted for secret material.
             console.error(DesktopRelay.LogPrefix, err instanceof Error ? err.name : typeof err)
             await this.Refuse(req, socket, DesktopRelay.StatusBadGateway, context.actor, context.action, context.envName)
             return
         }
         const deadlineMs = DesktopRelay.DeadlineOf(context.session, credential)
-        const pipe = new RelayPipe(this, context, upstream, lease, () => this.pipes.delete(pipe), this.clock, deadlineMs)
+        const pipe = new RelayPipe(this, context, upstream, lease, () => this.pipes.delete(pipe), this.clock, deadlineMs, credential.tokenRef)
         // The session may have ended while the credential was minted and the upstream dialed (a sign-out or password change
         // whose CloseSession / ClosePrincipal ran before this pipe existed): check again. From here to handleUpgrade there is
         // no await, so a later CloseSession / ClosePrincipal sees the pipe and a socket closing later hits the guard below.
@@ -562,7 +585,8 @@ class RelayPipe
         private readonly lease: EnvironmentUrlsLease,
         private readonly onClosed: () => void,
         private readonly clock: IRelayClock,
-        private readonly deadlineMs: number)
+        private readonly deadlineMs: number,
+        private readonly credentialRef: string)
     {
         this.allowed = DesktopRelayAllowlist.For(context.action)
         upstream.on(RelayPipe.MessageEvent, (data, isBinary) => this.FromUpstream(data, isBinary))
@@ -638,7 +662,10 @@ class RelayPipe
         }, this.deadlineMs - this.clock.Now())
     }
 
-    /** Closes both sides once (`code` is what the client sees), releases the lease, and audits unanswered audited calls. */
+    /**
+     * Closes both sides once (`code` is what the client sees), releases the lease, revokes the minted credential (best
+     * effort), and audits unanswered audited calls.
+     */
     public Close(code: number): void
     {
         if (this.closed)
@@ -652,6 +679,7 @@ class RelayPipe
         this.onClosed()
         RelayPipe.CloseSocket(this.client, code)
         RelayPipe.CloseSocket(this.upstream, RelayPipe.NormalClosure)
+        this.relay.RevokeCredential(this.context.envName, this.credentialRef)
         for (const entry of [...this.pending.values()].filter(e => e.audited))
         {
             void this.relay.Record(this.context.actor, this.context.action, this.context.envName, RelayPipe.StatusUnanswered, entry.note)
