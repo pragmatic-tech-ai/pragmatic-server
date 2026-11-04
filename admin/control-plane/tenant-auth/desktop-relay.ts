@@ -97,8 +97,8 @@ type RelayContext = { session: TenantSession; actor: string; action: DesktopActi
  * Plexus never holds an environment credential: the relay authenticates the Desktop bearer, checks the env with the same
  * rule the targets list uses, mints a short-lived credential for the action (maker for contribute, deployer for publish),
  * dials the environment server with it, and pipes JSON-RPC text frames both ways. Client requests outside the action's
- * allowlist are answered -32601 here and never forwarded; an audited request reusing a pending id is answered -32600, and
- * one beyond 32 pending is answered -32603, neither forwarded; client notifications and client responses are dropped
+ * allowlist are answered -32601 here and never forwarded; a request reusing the id of any forwarded request still awaiting
+ * its answer is answered -32600, and one beyond 32 awaiting answers (audited or not) -32603, neither forwarded; client notifications and client responses are dropped
  * silently (neither flow sends one, and a notification could not be audited); a malformed handshake is refused 400; a non-JSON, binary or batch frame closes the
  * relay with 1008. Upstream frames pass through untouched.
  *
@@ -315,6 +315,15 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
             return
         }
         const pipe = new RelayPipe(this, context, upstream, lease, () => this.pipes.delete(pipe))
+        // The session may have ended while the credential was minted and the upstream dialed (a sign-out or password change
+        // whose CloseSession / ClosePrincipal ran before this pipe existed): check again. From here to handleUpgrade there is
+        // no await, so a later CloseSession / ClosePrincipal sees the pipe and a socket closing later hits the guard below.
+        if (!await this.StillLive(req, context.session))
+        {
+            pipe.Close(RelayPipe.NormalClosure)
+            await this.Refuse(socket, DesktopRelay.StatusUnauthorized, context.actor, context.action, context.envName)
+            return
+        }
         if (socket.destroyed)
         {
             pipe.Close(RelayPipe.GoingAway)
@@ -331,6 +340,19 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
             }
         })
         this.wss.handleUpgrade(req, socket, head, client => pipe.Attach(client))
+    }
+
+    /** Whether the request's bearer still resolves to the same live desktop session. */
+    private async StillLive(req: IncomingMessage, session: TenantSession): Promise<boolean>
+    {
+        try
+        {
+            return (await this.gate.Principal(req))?.id === session.id
+        }
+        catch
+        {
+            return false
+        }
     }
 
     private async Mint(action: DesktopAction, envName: string): Promise<string>
@@ -414,8 +436,8 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
     }
 }
 
-/** A forwarded audited request awaiting its response. */
-type PendingAudit = { method: string; note?: string }
+/** A forwarded request awaiting its response; `audited` ones are recorded when it arrives (with `note`). */
+type InFlightRequest = { method: string; audited: boolean; note?: string }
 
 /**
  * One live relay: the desktop client socket and the environment server socket, piped. Upstream frames that arrive before
@@ -426,7 +448,7 @@ class RelayPipe
     public static readonly GoingAway = 1001
     public static readonly PolicyViolation = 1008
     public static readonly NormalClosure = 1000
-    /** At most this many audited requests may await an answer on one relay. */
+    /** At most this many forwarded requests (audited or not) may await an answer on one relay. */
     public static readonly MaxPending = 32
     private static readonly MessageEvent = 'message'
     private static readonly CloseEvent = 'close'
@@ -451,7 +473,8 @@ class RelayPipe
 
     private client: WebSocket | undefined
     private readonly buffered: { data: RawData; isBinary: boolean }[] = []
-    private readonly pending = new Map<string, PendingAudit>()
+    /** Every forwarded request awaiting its answer, by JSON id: ids stay unique so each answer settles the right one. */
+    private readonly pending = new Map<string, InFlightRequest>()
     private readonly allowed: ReadonlySet<string>
     private closed = false
 
@@ -503,7 +526,7 @@ class RelayPipe
         this.onClosed()
         RelayPipe.CloseSocket(this.client, code)
         RelayPipe.CloseSocket(this.upstream, RelayPipe.NormalClosure)
-        for (const entry of this.pending.values())
+        for (const entry of [...this.pending.values()].filter(e => e.audited))
         {
             void this.relay.Record(this.context.actor, this.context.action, this.context.envName, RelayPipe.StatusUnanswered, entry.note)
         }
@@ -534,23 +557,22 @@ class RelayPipe
             this.Reject(message.id, RelayPipe.MethodNotFound, RelayPipe.NotAvailableMessage)
             return
         }
-        const noteField = DesktopRelayAllowlist.NoteFieldOf(method)
-        if (noteField !== undefined)
+        const key = JSON.stringify(message.id)
+        if (this.pending.has(key))
         {
-            const key = JSON.stringify(message.id)
-            if (this.pending.has(key))
-            {
-                // A reused id would make the answer ambiguous, so the audit could miss or misname this call.
-                this.Reject(message.id, RelayPipe.InvalidRequest, RelayPipe.DuplicateIdMessage)
-                return
-            }
-            if (this.pending.size >= RelayPipe.MaxPending)
-            {
-                this.Reject(message.id, RelayPipe.InternalErrorCode, RelayPipe.TooManyPendingMessage)
-                return
-            }
-            this.pending.set(key, { method, note: RelayPipe.NoteOf(message.params, noteField) })
+            // A reused id would make the answer ambiguous (any method), so the audit could miss or misname a call.
+            this.Reject(message.id, RelayPipe.InvalidRequest, RelayPipe.DuplicateIdMessage)
+            return
         }
+        if (this.pending.size >= RelayPipe.MaxPending)
+        {
+            this.Reject(message.id, RelayPipe.InternalErrorCode, RelayPipe.TooManyPendingMessage)
+            return
+        }
+        const noteField = DesktopRelayAllowlist.NoteFieldOf(method)
+        this.pending.set(key, noteField === undefined
+            ? { method, audited: false }
+            : { method, audited: true, note: RelayPipe.NoteOf(message.params, noteField) })
         this.upstream.send(String(data))
     }
 
@@ -574,7 +596,7 @@ class RelayPipe
         this.client.send(data, { binary: isBinary })
     }
 
-    /** Audits the outcome when an upstream frame answers a pending audited request. */
+    /** Settles the in-flight request an upstream answer is for, auditing its outcome when it is an audited one. */
     private Settle(text: string): void
     {
         const message = RelayPipe.ParseObject(text)
@@ -589,6 +611,10 @@ class RelayPipe
             return
         }
         this.pending.delete(key)
+        if (!entry.audited)
+        {
+            return
+        }
         const failed = Object.hasOwn(message, RelayPipe.ErrorField) || DesktopRelayAllowlist.IsInBandFailure(entry.method, message.result)
         void this.relay.Record(this.context.actor, this.context.action, this.context.envName, failed ? RelayPipe.StatusFailed : RelayPipe.StatusOk, entry.note)
     }

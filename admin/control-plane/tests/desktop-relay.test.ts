@@ -23,6 +23,8 @@ class FakeUpstream
 {
     public static readonly FailingGraph = 'boom'
     public static readonly HeldGraph = 'hold'
+    /** Answered with a JSON-RPC error only after a delay, so a later request's answer can overtake it. */
+    public static readonly SlowFailingGraph = 'slow-boom'
     public readonly methods: string[] = []
     public readonly bearers: string[] = []
     public readonly urls: string[] = []
@@ -82,6 +84,11 @@ class FakeUpstream
         const params = msg.params ?? {}
         if (params.graphName === FakeUpstream.HeldGraph)
         {
+            return
+        }
+        if (params.graphName === FakeUpstream.SlowFailingGraph)
+        {
+            setTimeout(() => ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: 'contribute failed' } })), 80)
             return
         }
         let reply: Record<string, unknown>
@@ -641,6 +648,41 @@ describe('DesktopRelay contribute', () =>
         assert.equal(kit.relay.CloseSession(kit.desktopToken), 1)
         assert.equal(await closed, 1000)
         await RelayKit.Until(() => kit.endpoints.releases === 1 && kit.upstream.closedByPeer === 1)
+    })
+
+    it('a sign-out during the upstream dial: the relay never attaches (401), the lease is released once, the upstream closes', async () =>
+    {
+        let open: () => void = () => undefined
+        kit.dialer.gate = new Promise<void>(res => { open = res })
+        const dialed = kit.Dial(RelayKit.Dev, 'contribute', kit.desktopToken)
+        await RelayKit.Until(() => kit.upstream.Connections() === 1)
+        await kit.store.Revoke(kit.desktopToken)
+        assert.equal(kit.relay.CloseSession(kit.desktopToken), 0)
+        open()
+        assert.equal((await dialed).status, 401)
+        await RelayKit.Until(() => kit.endpoints.releases === 1 && kit.upstream.closedByPeer === 1)
+        assert.equal(kit.endpoints.leases, 1)
+        assert.equal(kit.Audit().at(-1)?.status, 401)
+        assert.equal(kit.Audit().at(-1)?.actor, RelayKit.TenantId + '/' + RelayKit.Email)
+    })
+
+    it('refuses a graph/list reusing a pending contribute id (-32600), and audits the contribute with the upstream\'s real outcome', async () =>
+    {
+        const ws = (await kit.Dial(RelayKit.Dev, 'contribute', kit.desktopToken)).ws as WebSocket
+        RelayKit.Contributes(ws, [7], FakeUpstream.SlowFailingGraph)
+        await RelayKit.Until(() => kit.upstream.methods.length === 1)
+        const first = RelayKit.Next(ws)
+        ws.send(RelayKit.Request(7, 'graph/list'))
+        const refusal = await first
+        assert.equal((refusal.error as { code?: number } | undefined)?.code, -32600)
+        assert.equal(refusal.id, 7)
+        const contributeAnswer = await RelayKit.Next(ws)
+        assert.equal((contributeAnswer.error as { code?: number } | undefined)?.code, -32000)
+        assert.deepEqual(kit.upstream.methods, ['graph/contribute'])
+        await RelayKit.Until(() => kit.Audit().length === 1)
+        assert.equal(kit.Audit()[0]?.status, 500)
+        assert.equal(kit.Audit()[0]?.note, FakeUpstream.SlowFailingGraph)
+        ws.close()
     })
 
     it('a password change (ClosePrincipal) ends the principal\'s relays', async () =>
