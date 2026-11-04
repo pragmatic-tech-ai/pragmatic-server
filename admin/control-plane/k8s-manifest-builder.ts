@@ -10,7 +10,8 @@ import { TenantAdminEnv } from './tenant-admin-env.js'
 import type { TenantAdminWorkloadSpec } from './tenant-admin-workload.js'
 import { InvalidRecordIdError } from './platform-records.js'
 import { KindClusterName } from './kind-cluster-name.js'
-import { IngressTlsPolicy } from './ingress-tls.js'
+import { IngressTlsPolicy, IngressTlsSource, type IngressTls } from './ingress-tls.js'
+import { TenantConsoleAdmission, type TenantConsoleAdmissionSpec } from './tenant-console-admission.js'
 
 export type K8sObject = Record<string, unknown>
 
@@ -277,13 +278,14 @@ export class K8sManifestBuilder
     private static readonly TenantConsoleFingerprintSuffix = '-fingerprint'
     private static readonly TenantConsoleIdpCaSuffix = '-idp-ca'
     private static readonly TenantConsoleIdpTokenSuffix = '-idp-token'
+    private static readonly TenantConsoleDevTlsSuffix = '-dev-tls'
     private static readonly FingerprintVolume = 'fingerprint'
     private static readonly FingerprintMount = '/fingerprint'
     private static readonly FingerprintItemKey = 'fingerprint.key'
     /** Name of the RoleBinding the console creates in each environment namespace (binding its env ClusterRole there). */
     public static readonly TenantConsoleEnvBindingName = 'pragmatic-tenant-console'
-    /** FingerprintMount + '/' + FingerprintItemKey: where the console reads its fingerprint key. */
-    public static readonly FingerprintKeyFilePath = '/fingerprint/fingerprint.key'
+    /** Where the console reads its fingerprint key (the mount plus the one projected item). */
+    public static readonly FingerprintKeyFilePath = `${K8sManifestBuilder.FingerprintMount}/${K8sManifestBuilder.FingerprintItemKey}`
     private static readonly SecretKind = 'Secret'
     private static readonly CoreApiGroup = ''
     private static readonly NetworkingApiGroup = 'networking.k8s.io'
@@ -291,7 +293,7 @@ export class K8sManifestBuilder
     private static readonly RoleBindingsResource = 'rolebindings'
     private static readonly ClusterRolesResource = 'clusterroles'
     private static readonly SecretsResource = 'secrets'
-    private static readonly EnvCoreResources = [K8sManifestBuilder.SecretsResource, 'configmaps', 'services', 'persistentvolumeclaims', 'serviceaccounts']
+    private static readonly EnvCoreResources = [K8sManifestBuilder.SecretsResource, 'configmaps', 'services', 'persistentvolumeclaims']
     private static readonly EnvAppsResources = ['deployments', 'deployments/scale', 'statefulsets', 'statefulsets/scale']
     private static readonly EnvNetworkingResources = ['ingresses']
     private static readonly CreateVerb = 'create'
@@ -893,33 +895,8 @@ export class K8sManifestBuilder
                 [K8sManifestBuilder.ProxySslServerNameAnnotation]: K8sManifestBuilder.AnnotationOn,
                 ...IngressTlsPolicy.AnnotationsFor(tls),
             }
-        return {
-            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionNetworking,
-            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.IngressKind,
-            [K8sManifestBuilder.MetadataKey]: meta,
-            [K8sManifestBuilder.SpecKey]: {
-                [K8sManifestBuilder.IngressClassNameKey]: K8sManifestBuilder.IngressClassNginx,
-                ...(tls === undefined ? {} : { [K8sManifestBuilder.TlsKey]: [{
-                    [K8sManifestBuilder.HostsKey]: [host],
-                    [K8sManifestBuilder.SecretNameKey]: IngressTlsPolicy.SecretNameFor(tls, name),
-                }] }),
-                [K8sManifestBuilder.RulesKey]: [{
-                    [K8sManifestBuilder.HostKey]: host,
-                    [K8sManifestBuilder.HttpKey]: {
-                        [K8sManifestBuilder.PathsKey]: [{
-                            [K8sManifestBuilder.PathKey]: K8sManifestBuilder.IngressRootPath,
-                            [K8sManifestBuilder.PathTypeKey]: K8sManifestBuilder.PathTypePrefix,
-                            [K8sManifestBuilder.BackendKey]: {
-                                [K8sManifestBuilder.ServiceKey]: {
-                                    [K8sManifestBuilder.NameKey]: name,
-                                    [K8sManifestBuilder.PortKey]: { [K8sManifestBuilder.PortNumberKey]: spec.port },
-                                },
-                            },
-                        }],
-                    },
-                }],
-            },
-        }
+        const tlsEntry = tls === undefined ? undefined : this.IngressTlsEntry(host, IngressTlsPolicy.SecretNameFor(tls, name))
+        return this.IngressOf(meta, host, name, spec.port, tlsEntry)
     }
 
     public static TenantAdminNameOf(tenantId: string): string
@@ -972,6 +949,15 @@ export class K8sManifestBuilder
     public static TenantConsoleIdpTokenSecretNameOf(tenantId: string): string
     {
         return `${K8sManifestBuilder.TenantAdminNameOf(tenantId)}${K8sManifestBuilder.TenantConsoleIdpTokenSuffix}`
+    }
+
+    /**
+     * This tenant's own copy of the development TLS Secret in pragmatic-system (never the cluster-shared pragmatic-dev-tls,
+     * so removing one console cannot break another): the console Ingress serves it and the console copies it on.
+     */
+    public static TenantConsoleDevTlsSecretNameOf(tenantId: string): string
+    {
+        return `${K8sManifestBuilder.TenantAdminNameOf(tenantId)}${K8sManifestBuilder.TenantConsoleDevTlsSuffix}`
     }
 
     /**
@@ -1029,8 +1015,8 @@ export class K8sManifestBuilder
 
     /**
      * Renders one tenant's console (tenant-admin) container: shared pragmatic-system Namespace (unlabeled, first); SA with a
-     * mounted API token; the console ClusterRole + ClusterRoleBinding (namespaces and per-namespace binding of its env role);
-     * the env ClusterRole (bound by the console per environment namespace, never here); with a console exposure whose TLS
+     * mounted API token; the console ClusterRole; its admission fence (ValidatingAdmissionPolicy + binding, applied before the
+     * grant so it is never unfenced); the ClusterRoleBinding (namespaces and per-namespace binding of its env role); the env ClusterRole (bound by the console per environment namespace, never here); with a console exposure whose TLS
      * Secret is copied, a get-only Role + RoleBinding on that one source Secret; data PVC; Deployment (init container seeds
      * the data root from the seed Secret); a ClusterIP Service; and, with a console exposure, its Ingress. The token and RBAC
      * render even without `console`, by design: every console manages its environments in-cluster (including bootstrap
@@ -1043,6 +1029,8 @@ export class K8sManifestBuilder
             this.HiveAgentNamespaceObject(),
             this.TenantAdminServiceAccount(spec),
             this.TenantConsoleClusterRole(spec),
+            TenantConsoleAdmission.Policy(this.TenantConsoleAdmissionSpecOf(spec)),
+            TenantConsoleAdmission.Binding(this.TenantConsoleAdmissionSpecOf(spec)),
             this.TenantConsoleClusterRoleBinding(spec),
             this.TenantConsoleEnvClusterRole(spec),
             ...this.TenantConsoleTlsReadRbac(spec),
@@ -1055,38 +1043,73 @@ export class K8sManifestBuilder
     }
 
     /**
-     * Identities (v1 List) of everything RenderTenantAdmin can render except the shared Namespace and the data PVC, plus the
-     * console's credential Secret copies and the development TLS copy in pragmatic-system. Optional objects (TLS Role +
-     * RoleBinding, Ingress, pragmatic-dev-tls) are always named so a removal after a TLS-source change leaves nothing behind;
-     * the delete tolerates absent objects. Never the seed Secret (retained with the PVC: its master key decrypts that data).
+     * Identities (v1 List, name + namespace only) of everything RenderTenantAdmin can render except the shared Namespace and
+     * the data PVC, plus the console's credential Secret copies and this tenant's development TLS copy in pragmatic-system.
+     * Optional objects (TLS Role + RoleBinding, Ingress, dev TLS copy) are always named so a removal after a TLS-source change
+     * leaves nothing behind; the delete tolerates absent objects. Never the seed Secret (retained with the PVC: its master key
+     * decrypts that data) and never the cluster-shared pragmatic-dev-tls. Refuses an invalid hive id.
      */
     public TenantConsoleRemovalManifest(tenantId: string, hiveId: string): string
     {
-        const name = K8sManifestBuilder.TenantAdminNameOf(tenantId)
-        const tlsRole = K8sManifestBuilder.TenantConsoleTlsRoleNameOf(tenantId)
+        K8sManifestBuilder.AssertValidHiveId(hiveId)
+        const B = K8sManifestBuilder
+        const name = B.TenantAdminNameOf(tenantId)
+        const tlsRole = B.TenantConsoleTlsRoleNameOf(tenantId)
+        const system = B.SystemNamespace
         const items: K8sObject[] = [
-            this.Identity(K8sManifestBuilder.ApiVersionCore, K8sManifestBuilder.ServiceAccountKind, this.HiveAgentNamespacedMeta(hiveId, name)),
-            this.Identity(K8sManifestBuilder.ApiVersionRbac, K8sManifestBuilder.ClusterRoleKind, this.HiveAgentClusterMeta(hiveId, name)),
-            this.Identity(K8sManifestBuilder.ApiVersionRbac, K8sManifestBuilder.ClusterRoleBindingKind, this.HiveAgentClusterMeta(hiveId, name)),
-            this.Identity(K8sManifestBuilder.ApiVersionRbac, K8sManifestBuilder.ClusterRoleKind, this.HiveAgentClusterMeta(hiveId, K8sManifestBuilder.TenantConsoleEnvRoleNameOf(tenantId))),
-            this.Identity(K8sManifestBuilder.ApiVersionRbac, K8sManifestBuilder.RoleKind, this.HiveAgentNamespacedMeta(hiveId, tlsRole)),
-            this.Identity(K8sManifestBuilder.ApiVersionRbac, K8sManifestBuilder.RoleBindingKind, this.HiveAgentNamespacedMeta(hiveId, tlsRole)),
-            this.Identity(K8sManifestBuilder.ApiVersionApps, K8sManifestBuilder.DeploymentKind, this.HiveAgentNamespacedMeta(hiveId, name)),
-            this.Identity(K8sManifestBuilder.ApiVersionCore, K8sManifestBuilder.ServiceKind, this.HiveAgentNamespacedMeta(hiveId, name)),
-            this.Identity(K8sManifestBuilder.ApiVersionNetworking, K8sManifestBuilder.IngressKind, this.HiveAgentNamespacedMeta(hiveId, name)),
-            ...K8sManifestBuilder.TenantConsoleCredentialIdentitiesOf(tenantId),
-            K8sManifestBuilder.SystemSecretIdentity(IngressTlsPolicy.DevelopmentSecretName),
+            this.Identity(B.ApiVersionCore, B.ServiceAccountKind, name, system),
+            this.Identity(B.ApiVersionRbac, B.ClusterRoleKind, name),
+            this.Identity(TenantConsoleAdmission.ApiVersion, TenantConsoleAdmission.PolicyKind, name),
+            this.Identity(TenantConsoleAdmission.ApiVersion, TenantConsoleAdmission.BindingKind, name),
+            this.Identity(B.ApiVersionRbac, B.ClusterRoleBindingKind, name),
+            this.Identity(B.ApiVersionRbac, B.ClusterRoleKind, B.TenantConsoleEnvRoleNameOf(tenantId)),
+            this.Identity(B.ApiVersionRbac, B.RoleKind, tlsRole, system),
+            this.Identity(B.ApiVersionRbac, B.RoleBindingKind, tlsRole, system),
+            this.Identity(B.ApiVersionApps, B.DeploymentKind, name, system),
+            this.Identity(B.ApiVersionCore, B.ServiceKind, name, system),
+            this.Identity(B.ApiVersionNetworking, B.IngressKind, name, system),
+            ...B.TenantConsoleCredentialIdentitiesOf(tenantId),
+            B.SystemSecretIdentity(B.TenantConsoleDevTlsSecretNameOf(tenantId)),
         ]
         return this.ListOf(items)
     }
 
-    private Identity(apiVersion: string, kind: string, metadata: K8sObject): K8sObject
+    /** A delete-by-name identity: apiVersion, kind and metadata { name, namespace? } only. */
+    private Identity(apiVersion: string, kind: string, name: string, namespace?: string): K8sObject
     {
+        const metadata: K8sObject = { [K8sManifestBuilder.NameKey]: name }
+        if (namespace !== undefined)
+        {
+            metadata[K8sManifestBuilder.NamespaceKey] = namespace
+        }
         return {
             [K8sManifestBuilder.ApiVersionKey]: apiVersion,
             [K8sManifestBuilder.KindKey]: kind,
             [K8sManifestBuilder.MetadataKey]: metadata,
         }
+    }
+
+    private TenantConsoleAdmissionSpecOf(spec: TenantAdminWorkloadSpec): TenantConsoleAdmissionSpec
+    {
+        return {
+            name: K8sManifestBuilder.TenantAdminNameOf(spec.tenantId),
+            labels: this.HiveLabels(spec.hiveId),
+            hiveId: spec.hiveId,
+            hiveLabel: K8sManifestBuilder.HiveLabel,
+            namespacePrefix: K8sManifestBuilder.EnvNamespacePrefix,
+            serviceAccountName: K8sManifestBuilder.TenantAdminNameOf(spec.tenantId),
+            serviceAccountNamespace: K8sManifestBuilder.SystemNamespace,
+            envRoleName: K8sManifestBuilder.TenantConsoleEnvRoleNameOf(spec.tenantId),
+            envBindingName: K8sManifestBuilder.TenantConsoleEnvBindingName,
+        }
+    }
+
+    /** existing-secret / cert-manager: IngressTlsPolicy.SecretNameFor; development: this tenant's own dev TLS copy. */
+    private TenantConsoleTlsSecretNameOf(spec: TenantAdminWorkloadSpec, tls: IngressTls): string
+    {
+        return tls.source === IngressTlsSource.Development
+            ? K8sManifestBuilder.TenantConsoleDevTlsSecretNameOf(spec.tenantId)
+            : IngressTlsPolicy.SecretNameFor(tls, K8sManifestBuilder.TenantAdminNameOf(spec.tenantId))
     }
 
     private ListOf(items: K8sObject[]): string
@@ -1111,9 +1134,11 @@ export class K8sManifestBuilder
 
     /**
      * The console's only cluster-wide grant: get/create/delete namespaces, create rolebindings, and bind exactly its own env
-     * ClusterRole. RBAC cannot fence names by prefix, so these verbs are cluster-wide; the console's kubectl guard confines
-     * them to `pragmatic-env-` namespaces. The bind restriction caps escalation: a RoleBinding the console creates can only
-     * grant its env role (never cluster-admin), and only inside the namespace the binding lives in.
+     * ClusterRole. RBAC cannot fence names by prefix or label, so these verbs are cluster-wide; RBAC and admission fence them
+     * together: the console's ValidatingAdmissionPolicy (TenantConsoleAdmission) admits them only on this hive's
+     * `pragmatic-env-` namespaces and only for its own env RoleBinding to its own ServiceAccount, and the console's kubectl
+     * guard applies the same prefix rule client-side. The bind restriction caps escalation: a RoleBinding the console creates
+     * can only grant its env role (never cluster-admin), and only inside the namespace the binding lives in.
      */
     private TenantConsoleClusterRole(spec: TenantAdminWorkloadSpec): K8sObject
     {
@@ -1171,7 +1196,7 @@ export class K8sManifestBuilder
             return []
         }
         const name = K8sManifestBuilder.TenantConsoleTlsRoleNameOf(spec.tenantId)
-        const source = IngressTlsPolicy.SecretNameFor(spec.console.ingressTls, K8sManifestBuilder.TenantAdminNameOf(spec.tenantId))
+        const source = this.TenantConsoleTlsSecretNameOf(spec, spec.console.ingressTls)
         return [
             {
                 [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionRbac,
@@ -1199,21 +1224,46 @@ export class K8sManifestBuilder
         const name = K8sManifestBuilder.TenantAdminNameOf(spec.tenantId)
         const { host, ingressTls } = spec.console
         const meta = this.HiveAgentNamespacedMeta(spec.hiveId, name)
-        const annotations = IngressTlsPolicy.AnnotationsFor(ingressTls)
-        if (Object.keys(annotations).length > 0)
+        return [this.TerminatingIngress(meta, host, name, spec.port, ingressTls, this.TenantConsoleTlsSecretNameOf(spec, ingressTls))]
+    }
+
+    /**
+     * TLS-terminating nginx Ingress (environment server and console): the TLS choice's annotations (when any) on `meta`, one
+     * tls entry for the host (secretName only when given: none means the controller's default certificate), host -> Service.
+     */
+    private TerminatingIngress(meta: K8sObject, host: string, serviceName: string, port: number, tls: IngressTls | undefined, secretName: string | undefined): K8sObject
+    {
+        if (tls !== undefined)
         {
-            meta[K8sManifestBuilder.AnnotationsKey] = annotations
+            const annotations = IngressTlsPolicy.AnnotationsFor(tls)
+            if (Object.keys(annotations).length > 0)
+            {
+                meta[K8sManifestBuilder.AnnotationsKey] = annotations
+            }
         }
-        return [{
+        return this.IngressOf(meta, host, serviceName, port, this.IngressTlsEntry(host, secretName))
+    }
+
+    private IngressTlsEntry(host: string, secretName: string | undefined): K8sObject
+    {
+        const entry: K8sObject = { [K8sManifestBuilder.HostsKey]: [host] }
+        if (secretName !== undefined)
+        {
+            entry[K8sManifestBuilder.SecretNameKey] = secretName
+        }
+        return entry
+    }
+
+    /** The one nginx Ingress shape: class nginx, an optional single tls entry, and `/` (Prefix) on the host -> Service:port. */
+    private IngressOf(meta: K8sObject, host: string, serviceName: string, port: number, tlsEntry: K8sObject | undefined): K8sObject
+    {
+        return {
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionNetworking,
             [K8sManifestBuilder.KindKey]: K8sManifestBuilder.IngressKind,
             [K8sManifestBuilder.MetadataKey]: meta,
             [K8sManifestBuilder.SpecKey]: {
                 [K8sManifestBuilder.IngressClassNameKey]: K8sManifestBuilder.IngressClassNginx,
-                [K8sManifestBuilder.TlsKey]: [{
-                    [K8sManifestBuilder.HostsKey]: [host],
-                    [K8sManifestBuilder.SecretNameKey]: IngressTlsPolicy.SecretNameFor(ingressTls, name),
-                }],
+                ...(tlsEntry === undefined ? {} : { [K8sManifestBuilder.TlsKey]: [tlsEntry] }),
                 [K8sManifestBuilder.RulesKey]: [{
                     [K8sManifestBuilder.HostKey]: host,
                     [K8sManifestBuilder.HttpKey]: {
@@ -1222,15 +1272,15 @@ export class K8sManifestBuilder
                             [K8sManifestBuilder.PathTypeKey]: K8sManifestBuilder.PathTypePrefix,
                             [K8sManifestBuilder.BackendKey]: {
                                 [K8sManifestBuilder.ServiceKey]: {
-                                    [K8sManifestBuilder.NameKey]: name,
-                                    [K8sManifestBuilder.PortKey]: { [K8sManifestBuilder.PortNumberKey]: spec.port },
+                                    [K8sManifestBuilder.NameKey]: serviceName,
+                                    [K8sManifestBuilder.PortKey]: { [K8sManifestBuilder.PortNumberKey]: port },
                                 },
                             },
                         }],
                     },
                 }],
             },
-        }]
+        }
     }
 
     private TenantConsoleSubject(spec: TenantAdminWorkloadSpec): K8sObject
@@ -1748,41 +1798,9 @@ export class K8sManifestBuilder
         const host = K8sManifestBuilder.EnvBrowserHostOf(workload.environmentId, baseDomain)
         const tls = workload.federation?.ingressTls
         const meta = this.Meta(workload, name)
-        const tlsEntry: K8sObject = { [K8sManifestBuilder.HostsKey]: [host] }
-        if (tls !== undefined)
-        {
-            tlsEntry[K8sManifestBuilder.SecretNameKey] = IngressTlsPolicy.SecretNameFor(tls, name)
-            const annotations = IngressTlsPolicy.AnnotationsFor(tls)
-            if (Object.keys(annotations).length > 0)
-            {
-                meta[K8sManifestBuilder.AnnotationsKey] = annotations
-            }
-        }
-        return {
-            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionNetworking,
-            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.IngressKind,
-            [K8sManifestBuilder.MetadataKey]: meta,
-            [K8sManifestBuilder.SpecKey]: {
-                [K8sManifestBuilder.IngressClassNameKey]: K8sManifestBuilder.IngressClassNginx,
-                // TLS section (no secretName without an Ingress TLS choice -> controller default cert) makes nginx terminate TLS for the host.
-                [K8sManifestBuilder.TlsKey]: [tlsEntry],
-                [K8sManifestBuilder.RulesKey]: [{
-                    [K8sManifestBuilder.HostKey]: host,
-                    [K8sManifestBuilder.HttpKey]: {
-                        [K8sManifestBuilder.PathsKey]: [{
-                            [K8sManifestBuilder.PathKey]: K8sManifestBuilder.IngressRootPath,
-                            [K8sManifestBuilder.PathTypeKey]: K8sManifestBuilder.PathTypePrefix,
-                            [K8sManifestBuilder.BackendKey]: {
-                                [K8sManifestBuilder.ServiceKey]: {
-                                    [K8sManifestBuilder.NameKey]: name,
-                                    [K8sManifestBuilder.PortKey]: { [K8sManifestBuilder.PortNumberKey]: workload.serverPort },
-                                },
-                            },
-                        }],
-                    },
-                }],
-            },
-        }
+        // TLS section (no secretName without an Ingress TLS choice -> controller default cert) makes nginx terminate TLS for the host.
+        const secretName = tls === undefined ? undefined : IngressTlsPolicy.SecretNameFor(tls, name)
+        return this.TerminatingIngress(meta, host, name, workload.serverPort, tls, secretName)
     }
 
     /** Browser-facing hostname <environmentId>.<baseDomain> of a federated in-cluster environment. */

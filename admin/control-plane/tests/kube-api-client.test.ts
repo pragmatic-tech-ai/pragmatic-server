@@ -35,6 +35,15 @@ test('PathOf builds core, grouped, namespaced and cluster paths', () =>
     assert.equal(KubeResourceCatalog.PathOf({ apiVersion: 'networking.k8s.io/v1', kind: 'Ingress' }, 'n'), '/apis/networking.k8s.io/v1/namespaces/n/ingresses')
 })
 
+test('PathOf knows the cluster-scoped admission policy kinds', () =>
+{
+    const group = 'admissionregistration.k8s.io/v1'
+    assert.equal(KubeResourceCatalog.PathOf({ apiVersion: group, kind: 'ValidatingAdmissionPolicy' }, 'ignored', 'p'), '/apis/admissionregistration.k8s.io/v1/validatingadmissionpolicies/p')
+    assert.equal(KubeResourceCatalog.PathOf({ apiVersion: group, kind: 'ValidatingAdmissionPolicyBinding' }, undefined, 'b'), '/apis/admissionregistration.k8s.io/v1/validatingadmissionpolicybindings/b')
+    assert.equal(KubeResourceCatalog.IsNamespaced({ apiVersion: group, kind: 'ValidatingAdmissionPolicy' }), false)
+    assert.equal(KubeResourceCatalog.ParseResource('validatingadmissionpolicybinding/b').type.kind, 'ValidatingAdmissionPolicyBinding')
+})
+
 test('PathOf refuses an unknown kind', () =>
 {
     assert.throws(() => KubeResourceCatalog.PathOf({ apiVersion: 'example.com/v1', kind: 'Widget' }, 'n'), UnsupportedKubeKindError)

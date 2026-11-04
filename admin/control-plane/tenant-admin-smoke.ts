@@ -145,7 +145,8 @@ export class TenantAdminSmoke
     private static readonly DeploymentPrefix = 'deploy/'
     private static readonly ServicePrefix = 'svc/'
     private static readonly NamespacedKinds = 'deployment,service,serviceaccount,persistentvolumeclaim'
-    private static readonly ClusterKinds = 'clusterrole,clusterrolebinding'
+    /** Cluster-scoped, hive-labelled objects of the tenant-admin manifest (console RBAC and its admission fence). */
+    private static readonly ClusterKinds = 'clusterrole,clusterrolebinding,validatingadmissionpolicy,validatingadmissionpolicybinding'
     private static readonly ForwardingReady = 'Forwarding from'
     private static readonly NotFoundWord = 'NotFound'
     private static readonly SeedContainer = 'seed'

@@ -4,6 +4,7 @@ import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
 import type { TenantAdminWorkloadSpec } from '../tenant-admin-workload.js'
 import { TenantAdminBootstrap } from '../tenant-admin-bootstrap.js'
 import { IngressTlsSource, type IngressTls } from '../ingress-tls.js'
+import { TenantConsoleAdmission } from '../tenant-console-admission.js'
 
 class TenantAdminFixture
 {
@@ -45,12 +46,12 @@ describe('K8sManifestBuilder.RenderTenantAdmin', () =>
     it('emits the shared Namespace first (unlabeled), then SA, console RBAC, PVC, Deployment and Service; no Ingress', () =>
     {
         const items = TenantAdminFixture.Items()
-        assert.deepEqual(items.map(i => i.kind), ['Namespace', 'ServiceAccount', 'ClusterRole', 'ClusterRoleBinding', 'ClusterRole', 'PersistentVolumeClaim', 'Deployment', 'Service'])
+        assert.deepEqual(items.map(i => i.kind), ['Namespace', 'ServiceAccount', 'ClusterRole', 'ValidatingAdmissionPolicy', 'ValidatingAdmissionPolicyBinding', 'ClusterRoleBinding', 'ClusterRole', 'PersistentVolumeClaim', 'Deployment', 'Service'])
         assert.equal(items[0].metadata.name, 'pragmatic-system')
         assert.equal(items[0].metadata.labels, undefined)
         for (const i of items.slice(1))
         {
-            const clusterScoped = i.kind === 'ClusterRole' || i.kind === 'ClusterRoleBinding'
+            const clusterScoped = ['ClusterRole', 'ClusterRoleBinding', 'ValidatingAdmissionPolicy', 'ValidatingAdmissionPolicyBinding'].includes(i.kind)
             assert.equal(i.metadata.namespace, clusterScoped ? undefined : 'pragmatic-system')
             assert.equal(i.metadata.labels['pragmatic/hive'], 'hive-a')
             assert.equal(i.metadata.labels['pragmatic/environment'], undefined)
@@ -251,14 +252,15 @@ describe('K8sManifestBuilder.RenderTenantAdmin console exposure and RBAC', () =>
         assert.equal(K8sManifestBuilder.TenantConsoleFingerprintSecretNameOf('acme'), 'pragmatic-tenant-admin-acme-fingerprint')
         assert.equal(K8sManifestBuilder.TenantConsoleIdpCaSecretNameOf('acme'), 'pragmatic-tenant-admin-acme-idp-ca')
         assert.equal(K8sManifestBuilder.TenantConsoleIdpTokenSecretNameOf('acme'), 'pragmatic-tenant-admin-acme-idp-token')
+        assert.equal(K8sManifestBuilder.TenantConsoleDevTlsSecretNameOf('acme'), 'pragmatic-tenant-admin-acme-dev-tls')
         assert.equal(TenantAdminBootstrap.IdpCaSecretNameOf('acme'), K8sManifestBuilder.TenantConsoleIdpCaSecretNameOf('acme'))
         assert.equal(TenantAdminBootstrap.IdpTokenSecretNameOf('acme'), K8sManifestBuilder.TenantConsoleIdpTokenSecretNameOf('acme'))
     })
 
-    it('renders in order: Namespace, SA, console RBAC, env ClusterRole, TLS Role, PVC, Deployment, Service, Ingress', () =>
+    it('renders in order: Namespace, SA, console ClusterRole, admission fence, its binding, env ClusterRole, TLS Role, PVC, Deployment, Service, Ingress', () =>
     {
         assert.deepEqual(ConsoleFixture.Items(ConsoleFixture.Spec(ConsoleFixture.ExistingSecret)).map(i => i.kind), [
-            'Namespace', 'ServiceAccount', 'ClusterRole', 'ClusterRoleBinding', 'ClusterRole', 'Role', 'RoleBinding',
+            'Namespace', 'ServiceAccount', 'ClusterRole', 'ValidatingAdmissionPolicy', 'ValidatingAdmissionPolicyBinding', 'ClusterRoleBinding', 'ClusterRole', 'Role', 'RoleBinding',
             'PersistentVolumeClaim', 'Deployment', 'Service', 'Ingress',
         ])
     })
@@ -292,7 +294,7 @@ describe('K8sManifestBuilder.RenderTenantAdmin console exposure and RBAC', () =>
         const role = TenantAdminFixture.Items().find(i => i.kind === 'ClusterRole' && i.metadata.name === K8sManifestBuilder.TenantConsoleEnvRoleNameOf('acme'))
         assert.equal(role.metadata.labels['pragmatic/hive'], 'hive-a')
         assert.deepEqual(role.rules, [
-            { apiGroups: [''], resources: ['secrets', 'configmaps', 'services', 'persistentvolumeclaims', 'serviceaccounts'], verbs: ['*'] },
+            { apiGroups: [''], resources: ['secrets', 'configmaps', 'services', 'persistentvolumeclaims'], verbs: ['*'] },
             { apiGroups: ['apps'], resources: ['deployments', 'deployments/scale', 'statefulsets', 'statefulsets/scale'], verbs: ['*'] },
             { apiGroups: ['networking.k8s.io'], resources: ['ingresses'], verbs: ['*'] },
         ])
@@ -329,14 +331,14 @@ describe('K8sManifestBuilder.RenderTenantAdmin console exposure and RBAC', () =>
         assert.equal(ingress.metadata.labels['pragmatic/hive'], 'hive-a')
         assert.equal(ingress.metadata.annotations, undefined)
         assert.equal(ingress.spec.ingressClassName, 'nginx')
-        assert.deepEqual(ingress.spec.tls, [{ hosts: [ConsoleFixture.Host], secretName: 'pragmatic-dev-tls' }])
+        assert.deepEqual(ingress.spec.tls, [{ hosts: [ConsoleFixture.Host], secretName: 'pragmatic-tenant-admin-acme-dev-tls' }])
         assert.equal(ingress.spec.rules[0].host, ConsoleFixture.Host)
         const path = ingress.spec.rules[0].http.paths[0]
         assert.equal(path.path, '/')
         assert.equal(path.pathType, 'Prefix')
         assert.deepEqual(path.backend.service, { name: 'pragmatic-tenant-admin-acme', port: { number: 8443 } })
-        // Development TLS also copies a Secret (pragmatic-dev-tls), so the console gets the get-only Role on it.
-        assert.deepEqual(items.find(i => i.kind === 'Role').rules[0].resourceNames, ['pragmatic-dev-tls'])
+        // Development TLS uses this tenant's own copy, which the console also copies on, so it gets the get-only Role on it.
+        assert.deepEqual(items.find(i => i.kind === 'Role').rules[0].resourceNames, ['pragmatic-tenant-admin-acme-dev-tls'])
     })
 
     it('cert-manager console Ingress carries the issuer and a generated Secret name', () =>
@@ -401,6 +403,8 @@ describe('K8sManifestBuilder.RenderTenantAdmin console exposure and RBAC', () =>
         assert.deepEqual(doc.items.map(ConsoleFixture.IdOf), [
             'ServiceAccount/pragmatic-system/pragmatic-tenant-admin-acme',
             'ClusterRole/-/pragmatic-tenant-admin-acme',
+            'ValidatingAdmissionPolicy/-/pragmatic-tenant-admin-acme',
+            'ValidatingAdmissionPolicyBinding/-/pragmatic-tenant-admin-acme',
             'ClusterRoleBinding/-/pragmatic-tenant-admin-acme',
             'ClusterRole/-/pragmatic-tenant-admin-acme-env',
             'Role/pragmatic-system/pragmatic-tenant-admin-acme-tls',
@@ -411,11 +415,12 @@ describe('K8sManifestBuilder.RenderTenantAdmin console exposure and RBAC', () =>
             'Secret/pragmatic-system/pragmatic-tenant-admin-acme-fingerprint',
             'Secret/pragmatic-system/pragmatic-tenant-admin-acme-idp-ca',
             'Secret/pragmatic-system/pragmatic-tenant-admin-acme-idp-token',
-            'Secret/pragmatic-system/pragmatic-dev-tls',
+            'Secret/pragmatic-system/pragmatic-tenant-admin-acme-dev-tls',
         ])
         for (const item of doc.items)
         {
             assert.deepEqual(Object.keys(item).sort(), ['apiVersion', 'kind', 'metadata'])
+            assert.deepEqual(Object.keys(item.metadata).sort(), item.metadata.namespace === undefined ? ['name'] : ['name', 'namespace'])
         }
         assert.ok(!doc.items.some((i: any) => i.kind === 'PersistentVolumeClaim' || i.kind === 'Namespace'))
         assert.ok(!text.includes(K8sManifestBuilder.TenantAdminSeedSecretNameOf('acme')))
@@ -434,7 +439,101 @@ describe('K8sManifestBuilder.RenderTenantAdmin console exposure and RBAC', () =>
     it('credential removal shares the console Secret identity list', () =>
     {
         const credential = JSON.parse(TenantAdminBootstrap.CredentialRemovalManifest('acme')).items
-        const consoleSecrets = ConsoleFixture.Removal().filter((i: any) => i.kind === 'Secret' && i.metadata.name !== 'pragmatic-dev-tls')
+        const consoleSecrets = ConsoleFixture.Removal().filter((i: any) => i.kind === 'Secret' && i.metadata.name !== K8sManifestBuilder.TenantConsoleDevTlsSecretNameOf('acme'))
         assert.deepEqual(credential, consoleSecrets)
+    })
+
+    it('never references the cluster-shared development TLS Secret', () =>
+    {
+        const rendered = new K8sManifestBuilder().RenderTenantAdmin(ConsoleFixture.Spec())
+        const removal = new K8sManifestBuilder().TenantConsoleRemovalManifest('acme', 'hive-a')
+        assert.ok(!rendered.includes('"pragmatic-dev-tls"'))
+        assert.ok(!removal.includes('"pragmatic-dev-tls"'))
+    })
+})
+
+class AdmissionFixture
+{
+    public static readonly User = "request.userInfo.username == 'system:serviceaccount:pragmatic-system:pragmatic-tenant-admin-acme'"
+    public static readonly NamespaceCreate = "request.resource.resource != 'namespaces' || request.operation != 'CREATE' || (object.metadata.name.startsWith('pragmatic-env-') && has(object.metadata.labels) && 'pragmatic/hive' in object.metadata.labels && object.metadata.labels['pragmatic/hive'] == 'hive-a')"
+    public static readonly NamespaceChange = "request.resource.resource != 'namespaces' || request.operation == 'CREATE' || (oldObject.metadata.name.startsWith('pragmatic-env-') && has(oldObject.metadata.labels) && 'pragmatic/hive' in oldObject.metadata.labels && oldObject.metadata.labels['pragmatic/hive'] == 'hive-a')"
+    public static readonly BindingNamespace = "request.resource.resource != 'rolebindings' || (request.namespace.startsWith('pragmatic-env-') && has(namespaceObject.metadata.labels) && 'pragmatic/hive' in namespaceObject.metadata.labels && namespaceObject.metadata.labels['pragmatic/hive'] == 'hive-a')"
+    public static readonly BindingName = "request.resource.resource != 'rolebindings' || object.metadata.name == 'pragmatic-tenant-console'"
+    public static readonly BindingRole = "request.resource.resource != 'rolebindings' || (object.roleRef.apiGroup == 'rbac.authorization.k8s.io' && object.roleRef.kind == 'ClusterRole' && object.roleRef.name == 'pragmatic-tenant-admin-acme-env')"
+    public static readonly BindingSubjects = "request.resource.resource != 'rolebindings' || (has(object.subjects) && size(object.subjects) == 1 && object.subjects[0].kind == 'ServiceAccount' && object.subjects[0].namespace == 'pragmatic-system' && object.subjects[0].name == 'pragmatic-tenant-admin-acme')"
+
+    public static Of(kind: string): any
+    {
+        return TenantAdminFixture.Items().find(i => i.kind === kind)
+    }
+}
+
+describe('K8sManifestBuilder.RenderTenantAdmin admission fence', () =>
+{
+    it('renders a hive-labelled, fail-closed ValidatingAdmissionPolicy matched to the console ServiceAccount only', () =>
+    {
+        const policy = AdmissionFixture.Of('ValidatingAdmissionPolicy')
+        assert.equal(policy.apiVersion, 'admissionregistration.k8s.io/v1')
+        assert.equal(policy.metadata.name, 'pragmatic-tenant-admin-acme')
+        assert.equal(policy.metadata.namespace, undefined)
+        assert.equal(policy.metadata.labels['pragmatic/hive'], 'hive-a')
+        assert.equal(policy.spec.failurePolicy, 'Fail')
+        assert.deepEqual(policy.spec.matchConstraints, {
+            resourceRules: [
+                { apiGroups: [''], apiVersions: ['v1'], operations: ['CREATE', 'UPDATE', 'DELETE'], resources: ['namespaces'] },
+                { apiGroups: ['rbac.authorization.k8s.io'], apiVersions: ['v1'], operations: ['CREATE', 'UPDATE'], resources: ['rolebindings'] },
+            ],
+        })
+        assert.deepEqual(policy.spec.matchConditions, [{ name: 'console-service-account', expression: AdmissionFixture.User }])
+    })
+
+    it('validates namespaces by prefix and hive label, and role bindings by namespace, name, role and exact subject', () =>
+    {
+        const expressions = AdmissionFixture.Of('ValidatingAdmissionPolicy').spec.validations.map((v: any) => v.expression)
+        assert.deepEqual(expressions, [
+            AdmissionFixture.NamespaceCreate,
+            AdmissionFixture.NamespaceChange,
+            AdmissionFixture.BindingNamespace,
+            AdmissionFixture.BindingName,
+            AdmissionFixture.BindingRole,
+            AdmissionFixture.BindingSubjects,
+        ])
+        for (const v of AdmissionFixture.Of('ValidatingAdmissionPolicy').spec.validations)
+        {
+            assert.equal(typeof v.message, 'string')
+            assert.ok(v.message.length > 0)
+        }
+    })
+
+    it('binds the policy cluster-wide with Deny, hive-labelled', () =>
+    {
+        const binding = AdmissionFixture.Of('ValidatingAdmissionPolicyBinding')
+        assert.equal(binding.apiVersion, 'admissionregistration.k8s.io/v1')
+        assert.equal(binding.metadata.name, 'pragmatic-tenant-admin-acme')
+        assert.equal(binding.metadata.labels['pragmatic/hive'], 'hive-a')
+        assert.deepEqual(binding.spec, { policyName: 'pragmatic-tenant-admin-acme', validationActions: ['Deny'] })
+    })
+
+    it('applies the fence before the cluster-wide grant', () =>
+    {
+        const kinds = TenantAdminFixture.Items().map(i => i.kind)
+        assert.ok(kinds.indexOf('ValidatingAdmissionPolicyBinding') < kinds.indexOf('ClusterRoleBinding'))
+        assert.ok(kinds.indexOf('ValidatingAdmissionPolicy') < kinds.indexOf('ValidatingAdmissionPolicyBinding'))
+    })
+
+    it('quotes CEL string literals so a value can never break out of the expression', () =>
+    {
+        assert.equal(TenantConsoleAdmission.CelString('hive-a'), "'hive-a'")
+        assert.equal(TenantConsoleAdmission.CelString("a' || true || '"), "'a\\' || true || \\''")
+        assert.equal(TenantConsoleAdmission.CelString('a\\b'), "'a\\\\b'")
+    })
+
+    it('the removal manifest names the policy and its binding', () =>
+    {
+        const ids = ConsoleFixture.Removal().map(ConsoleFixture.IdOf)
+        assert.ok(ids.includes('ValidatingAdmissionPolicy/-/pragmatic-tenant-admin-acme'))
+        assert.ok(ids.includes('ValidatingAdmissionPolicyBinding/-/pragmatic-tenant-admin-acme'))
+        const policy = ConsoleFixture.Removal().find((i: any) => i.kind === 'ValidatingAdmissionPolicy')
+        assert.equal(policy.apiVersion, 'admissionregistration.k8s.io/v1')
     })
 })
