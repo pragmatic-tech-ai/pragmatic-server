@@ -45,8 +45,40 @@ class FakeGraphService implements IDevGraphService
     }
 }
 
+class LanguageSpy
+{
+    public readonly Changes: string[] = []
+    public readonly Seen: Promise<void>
+    private markSeen: () => void = () => undefined
+
+    public constructor()
+    {
+        this.Seen = new Promise<void>(resolve =>
+        {
+            this.markSeen = resolve
+        })
+    }
+
+    public Service(): ILanguageService
+    {
+        const signal = { subscribe: () => ({ dispose: () => undefined }) }
+        return {
+            GraphChanged: signal,
+            BuildStateChanged: signal,
+            DidChange: (uri: string) =>
+            {
+                this.Changes.push(uri)
+                this.markSeen()
+            },
+            DiagnosticsFor: async () => [],
+        } as unknown as ILanguageService
+    }
+}
+
 class GraphFixture
 {
+    public static readonly DocUri = 'file:///a.todl'
+    public static readonly DocText = 'x'
     public static readonly GraphName = 'sales'
     public static readonly Description = 'sales graph'
     public static readonly Stamp = '2026-10-20T00:00:00.000Z'
@@ -97,11 +129,11 @@ class GraphFixture
         return {}
     }
 
-    public async With(purpose: TenantPurpose, body: (client: PragmaticClient) => Promise<void>, wired: boolean = true, context: AccessContext = GraphFixture.Context(Role.Owner)): Promise<void>
+    public async With(purpose: TenantPurpose, body: (client: PragmaticClient) => Promise<void>, wired: boolean = true, context: AccessContext = GraphFixture.Context(Role.Owner), language: ILanguageService = GraphFixture.Language()): Promise<void>
     {
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const handler = ServerConnectionHandler.Attach(
-            serverSocket, GraphFixture.Language(), {} as SolutionManagerService, context, () => Promise.reject(new Error()), () => Promise.reject(new Error()),
+            serverSocket, language, {} as SolutionManagerService, context, () => Promise.reject(new Error()), () => Promise.reject(new Error()),
             undefined, undefined, undefined, undefined, undefined, undefined, purpose, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
             undefined, undefined, undefined, undefined, undefined, undefined, wired ? this.Service : undefined)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
@@ -259,4 +291,23 @@ test('a graph-contribute service credential is refused graph/delete even with an
         await client.DeleteGraph({ graphName: GraphFixture.GraphName })
         assert.deepEqual(open.Service.Calls, [GraphFixture.DeleteCall + GraphFixture.GraphName])
     })
+})
+
+test('a scoped credential\'s language notifications are dropped; an unscoped one still runs them', async () =>
+{
+    const scoped = new ScopedAccessContext(GraphFixture.Context(Role.Owner), [TokenScope.GraphContribute])
+    const droppedSpy = new LanguageSpy()
+    await new GraphFixture().With(TenantPurpose.Development, async client =>
+    {
+        client.DidChange(GraphFixture.DocUri, GraphFixture.DocText)
+        await client.ListGraphs()
+        assert.deepEqual(droppedSpy.Changes, [])
+    }, true, scoped, droppedSpy.Service())
+    const runSpy = new LanguageSpy()
+    await new GraphFixture().With(TenantPurpose.Development, async client =>
+    {
+        client.DidChange(GraphFixture.DocUri, GraphFixture.DocText)
+        await runSpy.Seen
+        assert.deepEqual(runSpy.Changes, [GraphFixture.DocUri])
+    }, true, GraphFixture.Context(Role.Owner), runSpy.Service())
 })

@@ -11,10 +11,16 @@ import { ConnectionAuthenticator } from '../connection-authenticator.js'
 class ScopeFixture
 {
     public static readonly Custom = 'custom'
+    public static readonly TenantId = 't1'
+    public static readonly TenantName = 'Tenant One'
+    public static readonly ServiceId = 'svc1'
+    public static readonly Email = 'a@x.io'
+    public static readonly Password = 'pw-123456'
+    public static readonly UserId = 'p1'
 
     public static Tenant1(): Tenant
     {
-        return new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
+        return new Tenant(ScopeFixture.TenantId, TenantKind.SelfHosted, ScopeFixture.TenantName)
     }
 }
 
@@ -52,14 +58,14 @@ test('a service-token context carries its scopes; a session context is unscoped 
 {
     const pack = await ServerIdentityPack.Open(new FakeStorage(), randomBytes(32))
     const tenant = ScopeFixture.Tenant1()
-    const { Token } = await pack.Tokens.Issue(tenant, 'svc1', [TokenScope.GraphContribute], null)
+    const { Token } = await pack.Tokens.Issue(tenant, ScopeFixture.ServiceId, [TokenScope.GraphContribute], null)
     const serviceContext = await new ConnectionAuthenticator().ResolveAsync(Token, tenant, pack)
     assert.ok(serviceContext instanceof ScopedAccessContext)
     assert.equal(TokenScopeGate.ForContext(serviceContext).Allows(GraphProtocol.Delete.method), false)
     assert.equal(TokenScopeGate.ForContext(serviceContext).Allows(GraphProtocol.Contribute.method), true)
 
-    await pack.Registrar.Register(tenant, 'a@x.io', 'p1', new PresentedSecret('pw-123456'))
-    const session = await pack.Sessions.Issue(new Principal('p1', 't1', PrincipalKind.User, new Map(), [TokenScope.ApplicationDeploy]))
+    await pack.Registrar.Register(tenant, ScopeFixture.Email, ScopeFixture.UserId, new PresentedSecret(ScopeFixture.Password))
+    const session = await pack.Sessions.Issue(new Principal(ScopeFixture.UserId, ScopeFixture.TenantId, PrincipalKind.User, new Map(), [TokenScope.ApplicationDeploy]))
     const sessionContext = await new ConnectionAuthenticator().ResolveAsync(session.Id, tenant, pack)
     assert.ok(sessionContext !== null && !(sessionContext instanceof ScopedAccessContext))
     assert.equal(TokenScopeGate.ForContext(sessionContext).Allows(GraphProtocol.Delete.method), true)

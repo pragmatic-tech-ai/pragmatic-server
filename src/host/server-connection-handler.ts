@@ -377,7 +377,7 @@ export class ServerConnectionHandler
     {
         this.connection.onNotification(type, (params: P) =>
         {
-            if (this.gate.Authorize(type.method).Allowed)
+            if (this.scopeGate.Allows(type.method) && this.gate.Authorize(type.method).Allowed)
             {
                 handler(params)
             }

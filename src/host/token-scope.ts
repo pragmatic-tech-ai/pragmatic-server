@@ -9,7 +9,9 @@ export enum TokenScope
 }
 
 /** An AccessContext built from a service-token authentication, carrying that token's scopes explicitly.
- *  Session-authenticated contexts are never wrapped, so a session principal's groups are never read as scopes. */
+ *  Session-authenticated contexts are never wrapped, so a session principal's groups are never read as scopes.
+ *  WARNING: the handler detects scopes by instanceof; rebuilding or cloning the AccessContext on its way to
+ *  ServerConnectionHandler.Attach drops them and FAILS OPEN. Pass this instance through unchanged. */
 export class ScopedAccessContext extends AccessContext
 {
     public readonly Scopes: readonly string[]
