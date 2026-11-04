@@ -2,6 +2,7 @@ import type { EnvironmentRecord } from './environment-record.js'
 import { EnvironmentWorkloadFactory } from './environment-workload.js'
 import type { EnvironmentWorkload } from './environment-workload.js'
 import { HivePlacementError } from './hive-placement-error.js'
+import type { IngressTls } from './ingress-tls.js'
 import type { ITenantDirectory } from './tenant-api/tenant-directory.js'
 
 /** An environment with no hive binding cannot be scheduled on a hive. */
@@ -20,7 +21,7 @@ export class EnvironmentNotPlacedError extends Error
 /** Binds an environment to its hive: validates tenant ownership, then builds the schedulable workload. */
 export class EnvironmentPlacement
 {
-    public constructor(private readonly directory: ITenantDirectory)
+    public constructor(private readonly directory: ITenantDirectory, private readonly ingressTls?: IngressTls)
     {
     }
 
@@ -35,6 +36,6 @@ export class EnvironmentPlacement
         {
             HivePlacementError.Assert(hive, record.tenantId, record.hiveId)
         }
-        return EnvironmentWorkloadFactory.From(record, hive!)
+        return EnvironmentWorkloadFactory.From(record, hive!, this.ingressTls)
     }
 }

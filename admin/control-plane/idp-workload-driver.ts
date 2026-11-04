@@ -1,4 +1,5 @@
 import type { IdpRecord } from './idp-record.js'
+import type { IngressTls } from './ingress-tls.js'
 
 export interface IdpConnection
 {
@@ -53,6 +54,8 @@ export interface IdpWorkloadSpec
     adminTokenRef: string
     /** Secret holding ca.crt / server.crt / server.key (mounted at <data>/tls). */
     tlsSecretName: string
+    /** The Ingress TLS choice for the browser host; absent -> ssl-passthrough of the IdP's own certificate. */
+    ingressTls?: IngressTls
 }
 
 /** Shared message plumbing for driver errors: only the message is forwarded, so secret material never reaches an error. */

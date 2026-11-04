@@ -28,4 +28,8 @@ export class TenantAdminEnv
     public static readonly IdpCaFile = 'PRAGMATIC_IDP_CA_FILE'
     /** Path of the Secret-mounted IdP admin-token file (never an inline value). */
     public static readonly IdpAdminTokenFile = 'PRAGMATIC_IDP_ADMIN_TOKEN_FILE'
+    /** Ingress TLS choice for the environment and IdP Ingresses this process renders (see IngressTlsPolicy). */
+    public static readonly IngressTlsSource = 'PRAGMATIC_TENANT_ADMIN_INGRESS_TLS_SOURCE'
+    public static readonly IngressTlsSecret = 'PRAGMATIC_TENANT_ADMIN_INGRESS_TLS_SECRET'
+    public static readonly IngressTlsIssuer = 'PRAGMATIC_TENANT_ADMIN_INGRESS_TLS_ISSUER'
 }

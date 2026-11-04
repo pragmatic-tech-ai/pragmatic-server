@@ -8,6 +8,8 @@ import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
 import { InvalidRecordIdError } from '../platform-records.js'
 import { KindClusterName } from '../kind-cluster-name.js'
 import { EnvServerSeedSource } from '../env-server-seed.js'
+import { IngressTlsSource } from '../ingress-tls.js'
+import { InClusterIdpSeedSource } from '../in-cluster-idp-seed.js'
 import type { EnvironmentWorkload } from '../environment-workload.js'
 import type { IdpWorkloadSpec } from '../idp-workload-driver.js'
 
@@ -311,6 +313,32 @@ describe('K8sManifestBuilder.RenderIdp', () =>
         assert.equal(path.backend.service.port.number, 9443)
     })
 
+    it('IdP Ingress with TLS settings terminates and re-encrypts', () =>
+    {
+        const spec: IdpWorkloadSpec = { ...Spec, baseDomain: 'd.localtest', ingressTls: { source: IngressTlsSource.Development } }
+        const ing = JSON.parse(new K8sManifestBuilder().RenderIdp(spec)).items.find((i: any) => i.kind === 'Ingress')
+        assert.equal(ing.metadata.annotations['nginx.ingress.kubernetes.io/ssl-passthrough'], undefined)
+        assert.equal(ing.metadata.annotations['nginx.ingress.kubernetes.io/backend-protocol'], 'HTTPS')
+        assert.deepEqual(ing.spec.tls, [{ hosts: ['idp-t1.d.localtest'], secretName: 'pragmatic-dev-tls' }])
+    })
+
+    it('IdP Ingress with cert-manager carries the issuer annotation and a Secret distinct from the IdP key Secret', () =>
+    {
+        const spec: IdpWorkloadSpec = { ...Spec, baseDomain: 'd.localtest', ingressTls: { source: IngressTlsSource.CertManager, clusterIssuer: 'le' } }
+        const ing = JSON.parse(new K8sManifestBuilder().RenderIdp(spec)).items.find((i: any) => i.kind === 'Ingress')
+        assert.equal(ing.metadata.annotations['cert-manager.io/cluster-issuer'], 'le')
+        assert.equal(ing.spec.tls[0].secretName, 'pragmatic-idp-t1-ingress-tls')
+        assert.notEqual(ing.spec.tls[0].secretName, InClusterIdpSeedSource.TlsSecretNameOf('t1'))
+    })
+
+    it('IdP Ingress without TLS settings stays passthrough', () =>
+    {
+        const ing = JSON.parse(new K8sManifestBuilder().RenderIdp({ ...Spec, baseDomain: 'd.localtest' })).items.find((i: any) => i.kind === 'Ingress')
+        assert.equal(ing.metadata.annotations['nginx.ingress.kubernetes.io/ssl-passthrough'], 'true')
+        assert.equal(ing.metadata.annotations['nginx.ingress.kubernetes.io/backend-protocol'], undefined)
+        assert.equal(ing.spec.tls, undefined)
+    })
+
     it('without baseDomain emits no Ingress', () =>
     {
         const items = Items()
@@ -493,6 +521,25 @@ describe('K8sManifestBuilder federated served environment', () =>
         assert.equal(ing.spec.rules[0].host, 'env-dev1-id.hive.test')
         assert.equal(ing.spec.rules[0].http.paths[0].backend.service.name, K8sManifestBuilder.ServerDeploymentOf('dev1'))
         assert.equal(ing.spec.rules[0].http.paths[0].backend.service.port.number, 8080)
+    })
+
+    it('env Ingress carries the TLS Secret and cert-manager annotation', () =>
+    {
+        const workload: EnvironmentWorkload = {
+            ...Fixture.Workload(false),
+            federation: { baseDomain: 'hive.test', caSecretName: 'dev1-idp-ca', ingressTls: { source: IngressTlsSource.CertManager, clusterIssuer: 'letsencrypt' } },
+        }
+        const ing = JSON.parse(new K8sManifestBuilder().Render(workload)).items.find((i: any) => i.kind === 'Ingress')
+        assert.equal(ing.metadata.annotations['cert-manager.io/cluster-issuer'], 'letsencrypt')
+        assert.equal(ing.spec.tls[0].secretName, `${K8sManifestBuilder.ServerDeploymentOf('dev1')}-ingress-tls`)
+        assert.deepEqual(ing.spec.tls[0].hosts, ['env-dev1-id.hive.test'])
+    })
+
+    it('env Ingress without TLS settings is unchanged', () =>
+    {
+        const ing = FederatedEnv.Items().find((i: any) => i.kind === 'Ingress')
+        assert.equal(ing.spec.tls[0].secretName, undefined)
+        assert.equal(ing.metadata.annotations, undefined)
     })
 
     it('a non-federated env has no Ingress, no CA mount and no NODE_EXTRA_CA_CERTS', () =>

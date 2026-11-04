@@ -12,11 +12,13 @@ import type { EnvironmentRecord } from '../environment-record.js'
 import { PlatformDirectory } from '../platform-directory.js'
 import { HivePlacementError } from '../hive-placement-error.js'
 import { EnvironmentPlacement, EnvironmentNotPlacedError } from '../environment-placement.js'
+import { IngressTlsSource } from '../ingress-tls.js'
 
 class PlacementFixture
 {
     public static readonly Prefix = 'envplace-'
     public static readonly Now = '2026-10-22T12:00:00.000Z'
+    public static readonly Tls = { source: IngressTlsSource.CertManager, clusterIssuer: 'letsencrypt' }
 
     public dir = ''
     public directory!: PlatformDirectory
@@ -41,7 +43,7 @@ class PlacementFixture
             cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach, configRef: 'kube-ref' },
             registry: { mode: InfraMode.Attach, endpoint: 'reg.local', credentialRef: 'cred-ref' }
         })
-        f.placement = new EnvironmentPlacement(f.directory)
+        f.placement = new EnvironmentPlacement(f.directory, PlacementFixture.Tls)
         return f
     }
 
@@ -108,6 +110,21 @@ test('WorkloadFor skips tenant validation for an unbound-tenant record that has 
     {
         const rec = { ...PlacementFixture.Env('t1', 'h1'), tenantId: undefined }
         assert.equal(f.placement.WorkloadFor(rec).hiveId, 'h1')
+    }
+    finally
+    {
+        await f.Dispose()
+    }
+})
+
+test('placement stamps the console TLS on federated workloads only', async () =>
+{
+    const f = await PlacementFixture.Create()
+    try
+    {
+        const federated = { ...PlacementFixture.Env('t1', 'h1'), idpBaseDomain: 'hive.test' }
+        assert.deepEqual(f.placement.WorkloadFor(federated).federation?.ingressTls, PlacementFixture.Tls)
+        assert.equal(f.placement.WorkloadFor(PlacementFixture.Env('t1', 'h1')).federation, undefined)
     }
     finally
     {

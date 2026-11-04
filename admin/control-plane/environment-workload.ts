@@ -3,6 +3,7 @@ import type { EnvironmentRecord } from './environment-record.js'
 import type { HiveRecord } from './platform-records.js'
 import { EnvServerSeedSource } from './env-server-seed.js'
 import { InClusterRegistry } from './in-cluster-registry.js'
+import type { IngressTls } from './ingress-tls.js'
 import { TemplateCatalog } from './template-catalog.js'
 
 /** A provisioned Postgres sidecar; the password is referenced by secret name only. */
@@ -18,6 +19,8 @@ export type WorkloadFederation = {
     baseDomain: string
     /** Secret holding ONLY the public CA certificate (key ca.crt); never the IdP server key. */
     caSecretName: string
+    /** The console's Ingress TLS choice; absent -> the controller's default certificate. */
+    ingressTls?: IngressTls
 }
 
 /** The app artifact an environment's pod pulls and verifies: registry coordinates, pinned digest, and the trust Secret/key it verifies against. */
@@ -60,7 +63,7 @@ export class EnvironmentWorkloadFactory
     private static readonly PortEnvKey = 'PRAGMATIC_PORT'
 
     /** Database presence follows the real template definition (TemplateCatalog.Resolve), so it cannot drift from the docker model. */
-    public static From(record: EnvironmentRecord, hive: HiveRecord): EnvironmentWorkload
+    public static From(record: EnvironmentRecord, hive: HiveRecord, ingressTls?: IngressTls): EnvironmentWorkload
     {
         const type = record.type ?? TemplateCatalog.DefaultTypeFor(record.template)
         const def = TemplateCatalog.Resolve(record.template, record.name, record.hostPort as number, type).def
@@ -88,6 +91,10 @@ export class EnvironmentWorkloadFactory
         if (record.idpBaseDomain !== undefined)
         {
             workload.federation = { baseDomain: record.idpBaseDomain, caSecretName: EnvServerSeedSource.IdpCaSecretNameOf(record.name) }
+            if (ingressTls !== undefined)
+            {
+                workload.federation.ingressTls = ingressTls
+            }
         }
         if (record.appDeployment !== undefined)
         {

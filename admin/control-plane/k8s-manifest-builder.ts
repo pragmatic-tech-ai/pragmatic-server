@@ -10,6 +10,7 @@ import { TenantAdminEnv } from './tenant-admin-env.js'
 import type { TenantAdminWorkloadSpec } from './tenant-admin-workload.js'
 import { InvalidRecordIdError } from './platform-records.js'
 import { KindClusterName } from './kind-cluster-name.js'
+import { IngressTlsPolicy } from './ingress-tls.js'
 
 export type K8sObject = Record<string, unknown>
 
@@ -158,6 +159,8 @@ export class K8sManifestBuilder
     private static readonly TlsKey = 'tls'
     private static readonly HostsKey = 'hosts'
     private static readonly SslPassthroughValue = 'true'
+    private static readonly BackendProtocolAnnotation = 'nginx.ingress.kubernetes.io/backend-protocol'
+    private static readonly BackendProtocolHttps = 'HTTPS'
     private static readonly HostKey = 'host'
     private static readonly HttpKey = 'http'
     private static readonly PathsKey = 'paths'
@@ -839,15 +842,24 @@ export class K8sManifestBuilder
     {
         const name = K8sManifestBuilder.IdpNameOf(spec.tenantId)
         const meta = this.IdpMeta(spec, name)
-        meta[K8sManifestBuilder.AnnotationsKey] = { [K8sManifestBuilder.SslPassthroughAnnotation]: K8sManifestBuilder.SslPassthroughValue }
+        const tls = spec.ingressTls
+        const host = K8sManifestBuilder.IdpBrowserHostOf(spec.tenantId, baseDomain)
+        // With a TLS choice the controller terminates for browsers and re-encrypts to the IdP, which keeps serving its own internal certificate.
+        meta[K8sManifestBuilder.AnnotationsKey] = tls === undefined
+            ? { [K8sManifestBuilder.SslPassthroughAnnotation]: K8sManifestBuilder.SslPassthroughValue }
+            : { [K8sManifestBuilder.BackendProtocolAnnotation]: K8sManifestBuilder.BackendProtocolHttps, ...IngressTlsPolicy.AnnotationsFor(tls) }
         return {
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionNetworking,
             [K8sManifestBuilder.KindKey]: K8sManifestBuilder.IngressKind,
             [K8sManifestBuilder.MetadataKey]: meta,
             [K8sManifestBuilder.SpecKey]: {
                 [K8sManifestBuilder.IngressClassNameKey]: K8sManifestBuilder.IngressClassNginx,
+                ...(tls === undefined ? {} : { [K8sManifestBuilder.TlsKey]: [{
+                    [K8sManifestBuilder.HostsKey]: [host],
+                    [K8sManifestBuilder.SecretNameKey]: IngressTlsPolicy.SecretNameFor(tls, name),
+                }] }),
                 [K8sManifestBuilder.RulesKey]: [{
-                    [K8sManifestBuilder.HostKey]: K8sManifestBuilder.IdpBrowserHostOf(spec.tenantId, baseDomain),
+                    [K8sManifestBuilder.HostKey]: host,
                     [K8sManifestBuilder.HttpKey]: {
                         [K8sManifestBuilder.PathsKey]: [{
                             [K8sManifestBuilder.PathKey]: K8sManifestBuilder.IngressRootPath,
@@ -1381,14 +1393,26 @@ export class K8sManifestBuilder
     {
         const name = K8sManifestBuilder.ServerDeploymentOf(workload.environmentName)
         const host = K8sManifestBuilder.EnvBrowserHostOf(workload.environmentId, baseDomain)
+        const tls = workload.federation?.ingressTls
+        const meta = this.Meta(workload, name)
+        const tlsEntry: K8sObject = { [K8sManifestBuilder.HostsKey]: [host] }
+        if (tls !== undefined)
+        {
+            tlsEntry[K8sManifestBuilder.SecretNameKey] = IngressTlsPolicy.SecretNameFor(tls, name)
+            const annotations = IngressTlsPolicy.AnnotationsFor(tls)
+            if (Object.keys(annotations).length > 0)
+            {
+                meta[K8sManifestBuilder.AnnotationsKey] = annotations
+            }
+        }
         return {
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionNetworking,
             [K8sManifestBuilder.KindKey]: K8sManifestBuilder.IngressKind,
-            [K8sManifestBuilder.MetadataKey]: this.Meta(workload, name),
+            [K8sManifestBuilder.MetadataKey]: meta,
             [K8sManifestBuilder.SpecKey]: {
                 [K8sManifestBuilder.IngressClassNameKey]: K8sManifestBuilder.IngressClassNginx,
-                // TLS section (no secretName in dev → controller default cert) makes nginx terminate TLS for the host.
-                [K8sManifestBuilder.TlsKey]: [{ [K8sManifestBuilder.HostsKey]: [host] }],
+                // TLS section (no secretName without an Ingress TLS choice -> controller default cert) makes nginx terminate TLS for the host.
+                [K8sManifestBuilder.TlsKey]: [tlsEntry],
                 [K8sManifestBuilder.RulesKey]: [{
                     [K8sManifestBuilder.HostKey]: host,
                     [K8sManifestBuilder.HttpKey]: {
