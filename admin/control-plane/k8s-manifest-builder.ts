@@ -93,7 +93,8 @@ export class K8sManifestBuilder
     private static readonly EnvironmentLabel = 'pragmatic/environment'
     private static readonly HiveLabel = 'pragmatic/hive'
     private static readonly AppLabel = 'pragmatic/app'
-    private static readonly NamespacePrefix = 'pragmatic-env-'
+    /** Every environment namespace starts with this; the console's guard fences its writes to it. */
+    public static readonly EnvNamespacePrefix = 'pragmatic-env-'
     private static readonly ServerSuffix = 'server'
     private static readonly DatabaseSuffix = 'postgres'
     private static readonly PostgresPort = 5432
@@ -269,6 +270,35 @@ export class K8sManifestBuilder
     private static readonly HostSeparator = '.'
     private static readonly AgentTokenSecretSuffix = '-token'
 
+    // Tenant console: in-cluster API access (environment management) and browser exposure.
+    private static readonly ConsoleHostPrefix = 'console-'
+    private static readonly TenantConsoleEnvRoleSuffix = '-env'
+    private static readonly TenantConsoleTlsRoleSuffix = '-tls'
+    private static readonly TenantConsoleFingerprintSuffix = '-fingerprint'
+    private static readonly TenantConsoleIdpCaSuffix = '-idp-ca'
+    private static readonly TenantConsoleIdpTokenSuffix = '-idp-token'
+    private static readonly FingerprintVolume = 'fingerprint'
+    private static readonly FingerprintMount = '/fingerprint'
+    private static readonly FingerprintItemKey = 'fingerprint.key'
+    /** Name of the RoleBinding the console creates in each environment namespace (binding its env ClusterRole there). */
+    public static readonly TenantConsoleEnvBindingName = 'pragmatic-tenant-console'
+    /** FingerprintMount + '/' + FingerprintItemKey: where the console reads its fingerprint key. */
+    public static readonly FingerprintKeyFilePath = '/fingerprint/fingerprint.key'
+    private static readonly SecretKind = 'Secret'
+    private static readonly CoreApiGroup = ''
+    private static readonly NetworkingApiGroup = 'networking.k8s.io'
+    private static readonly NamespacesResource = 'namespaces'
+    private static readonly RoleBindingsResource = 'rolebindings'
+    private static readonly ClusterRolesResource = 'clusterroles'
+    private static readonly SecretsResource = 'secrets'
+    private static readonly EnvCoreResources = [K8sManifestBuilder.SecretsResource, 'configmaps', 'services', 'persistentvolumeclaims', 'serviceaccounts']
+    private static readonly EnvAppsResources = ['deployments', 'deployments/scale', 'statefulsets', 'statefulsets/scale']
+    private static readonly EnvNetworkingResources = ['ingresses']
+    private static readonly CreateVerb = 'create'
+    private static readonly DeleteVerb = 'delete'
+    private static readonly BindVerb = 'bind'
+    private static readonly AnyVerb = '*'
+
     // In-cluster server boot wiring (env var names and file contract match environments/seed/docker.ts).
     private static readonly ConfigMapKey = 'configMap'
     private static readonly BaseDirVar = 'PRAGMATIC_BASE_DIR'
@@ -334,7 +364,7 @@ export class K8sManifestBuilder
 
     public static NamespaceOf(environmentName: string): string
     {
-        return K8sManifestBuilder.NamespacePrefix + environmentName
+        return K8sManifestBuilder.EnvNamespacePrefix + environmentName
     }
 
     public static ServerDeploymentOf(environmentName: string): string
@@ -908,7 +938,64 @@ export class K8sManifestBuilder
         return `${K8sManifestBuilder.TenantAdminNameOf(tenantId)}${K8sManifestBuilder.TenantAdminSeedSuffix}`
     }
 
-    /** Name of the Secret holding a hive's one-time agent bearer (key `token`). */
+    /** Browser host of a tenant's console: console-<tenantId>.<baseDomain>. */
+    public static ConsoleHostOf(tenantId: string, baseDomain: string): string
+    {
+        return `${K8sManifestBuilder.ConsoleHostPrefix}${tenantId}${K8sManifestBuilder.HostDotSeparator}${baseDomain}`
+    }
+
+    /** The console's environment ClusterRole: never bound cluster-wide, only per environment namespace by the console itself. */
+    public static TenantConsoleEnvRoleNameOf(tenantId: string): string
+    {
+        return `${K8sManifestBuilder.TenantAdminNameOf(tenantId)}${K8sManifestBuilder.TenantConsoleEnvRoleSuffix}`
+    }
+
+    /** The get-only Role (and its RoleBinding) on the console's copied TLS source Secret in pragmatic-system. */
+    public static TenantConsoleTlsRoleNameOf(tenantId: string): string
+    {
+        return `${K8sManifestBuilder.TenantAdminNameOf(tenantId)}${K8sManifestBuilder.TenantConsoleTlsRoleSuffix}`
+    }
+
+    /** Secret holding the console's session-fingerprint key (key `fingerprint.key`). */
+    public static TenantConsoleFingerprintSecretNameOf(tenantId: string): string
+    {
+        return `${K8sManifestBuilder.TenantAdminNameOf(tenantId)}${K8sManifestBuilder.TenantConsoleFingerprintSuffix}`
+    }
+
+    /** The ca.crt-only IdP trust Secret projected into pragmatic-system for the console pod. */
+    public static TenantConsoleIdpCaSecretNameOf(tenantId: string): string
+    {
+        return `${K8sManifestBuilder.TenantAdminNameOf(tenantId)}${K8sManifestBuilder.TenantConsoleIdpCaSuffix}`
+    }
+
+    /** The IdP admin-token Secret copy projected into pragmatic-system (the IdP-namespace original is unreachable from the pod). */
+    public static TenantConsoleIdpTokenSecretNameOf(tenantId: string): string
+    {
+        return `${K8sManifestBuilder.TenantAdminNameOf(tenantId)}${K8sManifestBuilder.TenantConsoleIdpTokenSuffix}`
+    }
+
+    /**
+     * Identities of the console's live-credential Secret copies in pragmatic-system (fingerprint key, IdP CA, IdP admin token):
+     * the one list both TenantConsoleRemovalManifest and TenantAdminBootstrap.CredentialRemovalManifest delete. Never the seed Secret.
+     */
+    public static TenantConsoleCredentialIdentitiesOf(tenantId: string): K8sObject[]
+    {
+        return [
+            K8sManifestBuilder.TenantConsoleFingerprintSecretNameOf(tenantId),
+            K8sManifestBuilder.TenantConsoleIdpCaSecretNameOf(tenantId),
+            K8sManifestBuilder.TenantConsoleIdpTokenSecretNameOf(tenantId),
+        ].map(name => K8sManifestBuilder.SystemSecretIdentity(name))
+    }
+
+    private static SystemSecretIdentity(name: string): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.SecretKind,
+            [K8sManifestBuilder.MetadataKey]: { [K8sManifestBuilder.NameKey]: name, [K8sManifestBuilder.NamespaceKey]: K8sManifestBuilder.SystemNamespace },
+        }
+    }
+
     /**
      * Selects every workload labelled for the hive (in pragmatic-system: its agent and, when installed, its tenant-admin pod).
      * Refuses an id that is not a valid label value: `pragmatic/hive==b` would also select hive `b`.
@@ -934,26 +1021,76 @@ export class K8sManifestBuilder
         }
     }
 
+    /** Name of the Secret holding a hive's one-time agent bearer (key `token`). */
     public static AgentTokenSecretNameOf(hiveId: string): string
     {
         return `${K8sManifestBuilder.HiveAgentNameOf(hiveId)}${K8sManifestBuilder.AgentTokenSecretSuffix}`
     }
 
     /**
-     * Renders one tenant's tenant-admin container: shared pragmatic-system Namespace (unlabeled, first), SA (no API
-     * token: the process needs no in-cluster access, so no RBAC), data PVC, Deployment (init container seeds the data root
-     * from the seed Secret) and a ClusterIP Service. Hive-labeled only, so the pull agent never selects it. Secrets are
-     * referenced by Secret name only, never inlined.
+     * Renders one tenant's console (tenant-admin) container: shared pragmatic-system Namespace (unlabeled, first); SA with a
+     * mounted API token; the console ClusterRole + ClusterRoleBinding (namespaces and per-namespace binding of its env role);
+     * the env ClusterRole (bound by the console per environment namespace, never here); with a console exposure whose TLS
+     * Secret is copied, a get-only Role + RoleBinding on that one source Secret; data PVC; Deployment (init container seeds
+     * the data root from the seed Secret); a ClusterIP Service; and, with a console exposure, its Ingress. The token and RBAC
+     * render even without `console`, by design: every console manages its environments in-cluster (including bootstrap
+     * and smoke installs). Hive-labeled only, so the pull agent never selects it. Secrets are referenced by name only,
+     * never inlined.
      */
     public RenderTenantAdmin(spec: TenantAdminWorkloadSpec): string
     {
         const items: K8sObject[] = [
             this.HiveAgentNamespaceObject(),
             this.TenantAdminServiceAccount(spec),
+            this.TenantConsoleClusterRole(spec),
+            this.TenantConsoleClusterRoleBinding(spec),
+            this.TenantConsoleEnvClusterRole(spec),
+            ...this.TenantConsoleTlsReadRbac(spec),
             this.TenantAdminClaim(spec),
             this.TenantAdminDeployment(spec),
             this.TenantAdminServiceObject(spec),
+            ...this.TenantConsoleIngressObjects(spec),
         ]
+        return this.ListOf(items)
+    }
+
+    /**
+     * Identities (v1 List) of everything RenderTenantAdmin can render except the shared Namespace and the data PVC, plus the
+     * console's credential Secret copies and the development TLS copy in pragmatic-system. Optional objects (TLS Role +
+     * RoleBinding, Ingress, pragmatic-dev-tls) are always named so a removal after a TLS-source change leaves nothing behind;
+     * the delete tolerates absent objects. Never the seed Secret (retained with the PVC: its master key decrypts that data).
+     */
+    public TenantConsoleRemovalManifest(tenantId: string, hiveId: string): string
+    {
+        const name = K8sManifestBuilder.TenantAdminNameOf(tenantId)
+        const tlsRole = K8sManifestBuilder.TenantConsoleTlsRoleNameOf(tenantId)
+        const items: K8sObject[] = [
+            this.Identity(K8sManifestBuilder.ApiVersionCore, K8sManifestBuilder.ServiceAccountKind, this.HiveAgentNamespacedMeta(hiveId, name)),
+            this.Identity(K8sManifestBuilder.ApiVersionRbac, K8sManifestBuilder.ClusterRoleKind, this.HiveAgentClusterMeta(hiveId, name)),
+            this.Identity(K8sManifestBuilder.ApiVersionRbac, K8sManifestBuilder.ClusterRoleBindingKind, this.HiveAgentClusterMeta(hiveId, name)),
+            this.Identity(K8sManifestBuilder.ApiVersionRbac, K8sManifestBuilder.ClusterRoleKind, this.HiveAgentClusterMeta(hiveId, K8sManifestBuilder.TenantConsoleEnvRoleNameOf(tenantId))),
+            this.Identity(K8sManifestBuilder.ApiVersionRbac, K8sManifestBuilder.RoleKind, this.HiveAgentNamespacedMeta(hiveId, tlsRole)),
+            this.Identity(K8sManifestBuilder.ApiVersionRbac, K8sManifestBuilder.RoleBindingKind, this.HiveAgentNamespacedMeta(hiveId, tlsRole)),
+            this.Identity(K8sManifestBuilder.ApiVersionApps, K8sManifestBuilder.DeploymentKind, this.HiveAgentNamespacedMeta(hiveId, name)),
+            this.Identity(K8sManifestBuilder.ApiVersionCore, K8sManifestBuilder.ServiceKind, this.HiveAgentNamespacedMeta(hiveId, name)),
+            this.Identity(K8sManifestBuilder.ApiVersionNetworking, K8sManifestBuilder.IngressKind, this.HiveAgentNamespacedMeta(hiveId, name)),
+            ...K8sManifestBuilder.TenantConsoleCredentialIdentitiesOf(tenantId),
+            K8sManifestBuilder.SystemSecretIdentity(IngressTlsPolicy.DevelopmentSecretName),
+        ]
+        return this.ListOf(items)
+    }
+
+    private Identity(apiVersion: string, kind: string, metadata: K8sObject): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.ApiVersionKey]: apiVersion,
+            [K8sManifestBuilder.KindKey]: kind,
+            [K8sManifestBuilder.MetadataKey]: metadata,
+        }
+    }
+
+    private ListOf(items: K8sObject[]): string
+    {
         return JSON.stringify({
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
             [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ListKind,
@@ -961,14 +1098,171 @@ export class K8sManifestBuilder
         })
     }
 
+    /** The token is mounted: the console drives environment namespaces through the Kubernetes API with this identity. */
     private TenantAdminServiceAccount(spec: TenantAdminWorkloadSpec): K8sObject
     {
         return {
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
             [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ServiceAccountKind,
             [K8sManifestBuilder.MetadataKey]: this.HiveAgentNamespacedMeta(spec.hiveId, K8sManifestBuilder.TenantAdminNameOf(spec.tenantId)),
-            [K8sManifestBuilder.AutomountTokenKey]: false,
+            [K8sManifestBuilder.AutomountTokenKey]: true,
         }
+    }
+
+    /**
+     * The console's only cluster-wide grant: get/create/delete namespaces, create rolebindings, and bind exactly its own env
+     * ClusterRole. RBAC cannot fence names by prefix, so these verbs are cluster-wide; the console's kubectl guard confines
+     * them to `pragmatic-env-` namespaces. The bind restriction caps escalation: a RoleBinding the console creates can only
+     * grant its env role (never cluster-admin), and only inside the namespace the binding lives in.
+     */
+    private TenantConsoleClusterRole(spec: TenantAdminWorkloadSpec): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionRbac,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ClusterRoleKind,
+            [K8sManifestBuilder.MetadataKey]: this.HiveAgentClusterMeta(spec.hiveId, K8sManifestBuilder.TenantAdminNameOf(spec.tenantId)),
+            [K8sManifestBuilder.RulesKey]: [
+                this.Rule(K8sManifestBuilder.CoreApiGroup, [K8sManifestBuilder.NamespacesResource], [K8sManifestBuilder.GetVerb, K8sManifestBuilder.CreateVerb, K8sManifestBuilder.DeleteVerb]),
+                this.Rule(K8sManifestBuilder.RbacApiGroup, [K8sManifestBuilder.RoleBindingsResource], [K8sManifestBuilder.CreateVerb]),
+                this.Rule(K8sManifestBuilder.RbacApiGroup, [K8sManifestBuilder.ClusterRolesResource], [K8sManifestBuilder.BindVerb], [K8sManifestBuilder.TenantConsoleEnvRoleNameOf(spec.tenantId)]),
+            ],
+        }
+    }
+
+    private TenantConsoleClusterRoleBinding(spec: TenantAdminWorkloadSpec): K8sObject
+    {
+        const name = K8sManifestBuilder.TenantAdminNameOf(spec.tenantId)
+        return {
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionRbac,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ClusterRoleBindingKind,
+            [K8sManifestBuilder.MetadataKey]: this.HiveAgentClusterMeta(spec.hiveId, name),
+            [K8sManifestBuilder.SubjectsKey]: [this.TenantConsoleSubject(spec)],
+            [K8sManifestBuilder.RoleRefKey]: this.RoleRef(K8sManifestBuilder.ClusterRoleKind, name),
+        }
+    }
+
+    /**
+     * What an environment manifest needs inside its own namespace. Deliberately NOT bound by this manifest: the console binds
+     * it per environment namespace (RoleBinding `pragmatic-tenant-console`), so it never applies cluster-wide.
+     */
+    private TenantConsoleEnvClusterRole(spec: TenantAdminWorkloadSpec): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionRbac,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ClusterRoleKind,
+            [K8sManifestBuilder.MetadataKey]: this.HiveAgentClusterMeta(spec.hiveId, K8sManifestBuilder.TenantConsoleEnvRoleNameOf(spec.tenantId)),
+            [K8sManifestBuilder.RulesKey]: [
+                this.Rule(K8sManifestBuilder.CoreApiGroup, K8sManifestBuilder.EnvCoreResources, [K8sManifestBuilder.AnyVerb]),
+                this.Rule(K8sManifestBuilder.AppsApiGroup, K8sManifestBuilder.EnvAppsResources, [K8sManifestBuilder.AnyVerb]),
+                this.Rule(K8sManifestBuilder.NetworkingApiGroup, K8sManifestBuilder.EnvNetworkingResources, [K8sManifestBuilder.AnyVerb]),
+            ],
+        }
+    }
+
+    /**
+     * With a console exposure whose TLS Secret is copied into each Ingress namespace (existing-secret, development): a Role +
+     * RoleBinding in pragmatic-system granting `get` on that one source Secret, so the console can copy it into environment
+     * namespaces. cert-manager writes per-Ingress Secrets itself, so it gets none. Empty otherwise.
+     */
+    private TenantConsoleTlsReadRbac(spec: TenantAdminWorkloadSpec): K8sObject[]
+    {
+        if (spec.console === undefined || !IngressTlsPolicy.CopiesSecret(spec.console.ingressTls))
+        {
+            return []
+        }
+        const name = K8sManifestBuilder.TenantConsoleTlsRoleNameOf(spec.tenantId)
+        const source = IngressTlsPolicy.SecretNameFor(spec.console.ingressTls, K8sManifestBuilder.TenantAdminNameOf(spec.tenantId))
+        return [
+            {
+                [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionRbac,
+                [K8sManifestBuilder.KindKey]: K8sManifestBuilder.RoleKind,
+                [K8sManifestBuilder.MetadataKey]: this.HiveAgentNamespacedMeta(spec.hiveId, name),
+                [K8sManifestBuilder.RulesKey]: [this.Rule(K8sManifestBuilder.CoreApiGroup, [K8sManifestBuilder.SecretsResource], [K8sManifestBuilder.GetVerb], [source])],
+            },
+            {
+                [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionRbac,
+                [K8sManifestBuilder.KindKey]: K8sManifestBuilder.RoleBindingKind,
+                [K8sManifestBuilder.MetadataKey]: this.HiveAgentNamespacedMeta(spec.hiveId, name),
+                [K8sManifestBuilder.SubjectsKey]: [this.TenantConsoleSubject(spec)],
+                [K8sManifestBuilder.RoleRefKey]: this.RoleRef(K8sManifestBuilder.RoleKind, name),
+            },
+        ]
+    }
+
+    /** TLS-terminating nginx Ingress for the console host (ServerIngress shape); empty without a console exposure. */
+    private TenantConsoleIngressObjects(spec: TenantAdminWorkloadSpec): K8sObject[]
+    {
+        if (spec.console === undefined)
+        {
+            return []
+        }
+        const name = K8sManifestBuilder.TenantAdminNameOf(spec.tenantId)
+        const { host, ingressTls } = spec.console
+        const meta = this.HiveAgentNamespacedMeta(spec.hiveId, name)
+        const annotations = IngressTlsPolicy.AnnotationsFor(ingressTls)
+        if (Object.keys(annotations).length > 0)
+        {
+            meta[K8sManifestBuilder.AnnotationsKey] = annotations
+        }
+        return [{
+            [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionNetworking,
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.IngressKind,
+            [K8sManifestBuilder.MetadataKey]: meta,
+            [K8sManifestBuilder.SpecKey]: {
+                [K8sManifestBuilder.IngressClassNameKey]: K8sManifestBuilder.IngressClassNginx,
+                [K8sManifestBuilder.TlsKey]: [{
+                    [K8sManifestBuilder.HostsKey]: [host],
+                    [K8sManifestBuilder.SecretNameKey]: IngressTlsPolicy.SecretNameFor(ingressTls, name),
+                }],
+                [K8sManifestBuilder.RulesKey]: [{
+                    [K8sManifestBuilder.HostKey]: host,
+                    [K8sManifestBuilder.HttpKey]: {
+                        [K8sManifestBuilder.PathsKey]: [{
+                            [K8sManifestBuilder.PathKey]: K8sManifestBuilder.IngressRootPath,
+                            [K8sManifestBuilder.PathTypeKey]: K8sManifestBuilder.PathTypePrefix,
+                            [K8sManifestBuilder.BackendKey]: {
+                                [K8sManifestBuilder.ServiceKey]: {
+                                    [K8sManifestBuilder.NameKey]: name,
+                                    [K8sManifestBuilder.PortKey]: { [K8sManifestBuilder.PortNumberKey]: spec.port },
+                                },
+                            },
+                        }],
+                    },
+                }],
+            },
+        }]
+    }
+
+    private TenantConsoleSubject(spec: TenantAdminWorkloadSpec): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.KindKey]: K8sManifestBuilder.ServiceAccountKind,
+            [K8sManifestBuilder.NameKey]: K8sManifestBuilder.TenantAdminNameOf(spec.tenantId),
+            [K8sManifestBuilder.NamespaceKey]: K8sManifestBuilder.SystemNamespace,
+        }
+    }
+
+    private RoleRef(kind: string, name: string): K8sObject
+    {
+        return {
+            [K8sManifestBuilder.ApiGroupKey]: K8sManifestBuilder.RbacApiGroup,
+            [K8sManifestBuilder.KindKey]: kind,
+            [K8sManifestBuilder.NameKey]: name,
+        }
+    }
+
+    private Rule(apiGroup: string, resources: ReadonlyArray<string>, verbs: ReadonlyArray<string>, resourceNames?: ReadonlyArray<string>): K8sObject
+    {
+        const rule: K8sObject = {
+            [K8sManifestBuilder.ApiGroupsKey]: [apiGroup],
+            [K8sManifestBuilder.ResourcesKey]: [...resources],
+            [K8sManifestBuilder.VerbsKey]: [...verbs],
+        }
+        if (resourceNames !== undefined)
+        {
+            rule[K8sManifestBuilder.ResourceNamesKey] = [...resourceNames]
+        }
+        return rule
     }
 
     private TenantAdminClaim(spec: TenantAdminWorkloadSpec): K8sObject
@@ -1003,7 +1297,7 @@ export class K8sManifestBuilder
         const name = K8sManifestBuilder.TenantAdminNameOf(spec.tenantId)
         const pod: K8sObject = {
             [K8sManifestBuilder.ServiceAccountNameKey]: name,
-            [K8sManifestBuilder.AutomountTokenKey]: false,
+            [K8sManifestBuilder.AutomountTokenKey]: true,
             [K8sManifestBuilder.SecurityContextKey]: { [K8sManifestBuilder.FsGroupKey]: K8sManifestBuilder.TenantAdminUid },
             [K8sManifestBuilder.InitContainersKey]: [this.TenantAdminSeedContainer(spec)],
             [K8sManifestBuilder.ContainersKey]: [this.TenantAdminContainer(spec)],
@@ -1015,6 +1309,7 @@ export class K8sManifestBuilder
                 this.SecretVolume(K8sManifestBuilder.TenantAdminSeedVolume, spec.seedSecretName),
                 { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.TmpVolume, [K8sManifestBuilder.EmptyDirKey]: {} },
                 ...this.TenantAdminIdpVolumes(spec),
+                ...this.TenantConsoleFingerprintVolumes(spec),
             ],
         }
         if (spec.imagePullSecretName !== undefined)
@@ -1090,6 +1385,46 @@ export class K8sManifestBuilder
         ]
     }
 
+    /** The session-fingerprint key Secret, projecting ONLY `fingerprint.key`; empty when none is named. */
+    private TenantConsoleFingerprintVolumes(spec: TenantAdminWorkloadSpec): K8sObject[]
+    {
+        if (spec.fingerprintKeySecretName === undefined)
+        {
+            return []
+        }
+        const item = K8sManifestBuilder.FingerprintItemKey
+        return [this.SecretVolume(K8sManifestBuilder.FingerprintVolume, spec.fingerprintKeySecretName, [{ key: item, path: item }])]
+    }
+
+    private TenantConsoleFingerprintMounts(spec: TenantAdminWorkloadSpec): K8sObject[]
+    {
+        if (spec.fingerprintKeySecretName === undefined)
+        {
+            return []
+        }
+        return [{ [K8sManifestBuilder.NameKey]: K8sManifestBuilder.FingerprintVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.FingerprintMount, [K8sManifestBuilder.ReadOnlyKey]: true }]
+    }
+
+    /** Console host, trusted proxy (the Ingress controller forwards the user's address) and the TLS choice; plus the fingerprint key path. */
+    private TenantConsoleEnv(spec: TenantAdminWorkloadSpec): K8sObject[]
+    {
+        const env: K8sObject[] = []
+        if (spec.console !== undefined)
+        {
+            env.push(this.EnvLiteral(TenantAdminEnv.ConsoleHost, spec.console.host))
+            env.push(this.EnvLiteral(TenantAdminEnv.TrustedProxy, K8sManifestBuilder.TrueText))
+            for (const [key, value] of Object.entries(IngressTlsPolicy.ToEnv(spec.console.ingressTls)))
+            {
+                env.push(this.EnvLiteral(key, value))
+            }
+        }
+        if (spec.fingerprintKeySecretName !== undefined)
+        {
+            env.push(this.EnvLiteral(TenantAdminEnv.FingerprintKeyFile, K8sManifestBuilder.FingerprintKeyFilePath))
+        }
+        return env
+    }
+
     private TenantAdminContainer(spec: TenantAdminWorkloadSpec): K8sObject
     {
         const secure = spec.externalScheme === K8sManifestBuilder.HttpsSchemeName
@@ -1119,11 +1454,13 @@ export class K8sManifestBuilder
                     },
                 },
                 ...this.TenantAdminIdpEnv(spec),
+                ...this.TenantConsoleEnv(spec),
             ],
             [K8sManifestBuilder.VolumeMountsKey]: [
                 { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.TenantAdminDataVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.TenantAdminDataMount },
                 { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.TmpVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.TmpMount },
                 ...this.TenantAdminIdpMounts(spec),
+                ...this.TenantConsoleFingerprintMounts(spec),
             ],
             // The plane answers 403 to any Host that is not a known tenant subdomain, so the probe presents the tenant's own host.
             [K8sManifestBuilder.ReadinessProbeKey]: {

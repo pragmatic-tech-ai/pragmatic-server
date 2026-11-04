@@ -1,3 +1,5 @@
+import type { IngressTls } from './ingress-tls.js'
+
 /** What the tenant-admin container is rendered from. Secrets are referenced by Secret object name only. */
 export interface TenantAdminWorkloadSpec
 {
@@ -18,6 +20,17 @@ export interface TenantAdminWorkloadSpec
     imagePullSecretName?: string
     /** Operator-provisioned IdP the pod connects to; CA cert and admin token arrive by Secret mount only. */
     idp?: TenantAdminIdpInjection
+    /** Browser exposure of the console; the Ingress (and, for a copied TLS Secret, its get-only read Role) is rendered only when set. */
+    console?: TenantConsoleExposure
+    /** Secret holding the session-fingerprint key under key `fingerprint.key`; mounted read-only at /fingerprint. */
+    fingerprintKeySecretName?: string
+}
+
+/** The console's browser host and the Ingress TLS choice it is served with. */
+export interface TenantConsoleExposure
+{
+    host: string
+    ingressTls: IngressTls
 }
 
 export interface TenantAdminIdpInjection

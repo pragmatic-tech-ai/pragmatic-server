@@ -233,11 +233,12 @@ describe('TenantAdminBootstrap in-cluster IdP federation producer', () =>
         assert.ok(list.items.some(i => i.metadata.name === seedName))
     })
 
-    it('names the tenant-admin credential Secrets for removal (IdP CA and admin-token copies), never the seed', () =>
+    it('names the tenant-admin credential Secrets for removal (fingerprint key, IdP CA and admin-token copies), never the seed', () =>
     {
         const removal = JSON.parse(TenantAdminBootstrap.CredentialRemovalManifest('acme')) as { kind: string; items: unknown[] }
         assert.equal(removal.kind, 'List')
         assert.deepEqual(removal.items, [
+            { apiVersion: 'v1', kind: 'Secret', metadata: { name: K8sManifestBuilder.TenantConsoleFingerprintSecretNameOf('acme'), namespace: 'pragmatic-system' } },
             { apiVersion: 'v1', kind: 'Secret', metadata: { name: TenantAdminBootstrap.IdpCaSecretNameOf('acme'), namespace: 'pragmatic-system' } },
             { apiVersion: 'v1', kind: 'Secret', metadata: { name: TenantAdminBootstrap.IdpTokenSecretNameOf('acme'), namespace: 'pragmatic-system' } },
         ])

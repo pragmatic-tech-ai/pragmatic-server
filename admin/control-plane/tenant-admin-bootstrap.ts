@@ -187,8 +187,6 @@ export class TenantAdminBootstrap
     private static readonly TokenKey = 'token'
     private static readonly IdpCaKey = 'ca.crt'
     private static readonly IdpAdminTokenKey = 'admin-token'
-    private static readonly IdpCaSuffix = '-idp-ca'
-    private static readonly IdpTokenSuffix = '-idp-token'
     private static readonly PartialIdpMaterial = 'TenantAdminBootstrap: idp.ca and idp.adminToken must be supplied together (or neither)'
     private static readonly DockerConfigKey = '.dockerconfigjson'
     private static readonly DockerConfigType = 'kubernetes.io/dockerconfigjson'
@@ -199,7 +197,6 @@ export class TenantAdminBootstrap
     private static readonly ApiVersion = 'v1'
     private static readonly ListKind = 'List'
     private static readonly NamespaceKind = 'Namespace'
-    private static readonly SecretKind = 'Secret'
     private static readonly JsonIndent = 2
     private static readonly KeySeparator = '/'
 
@@ -212,28 +209,28 @@ export class TenantAdminBootstrap
     /** Name of the ca.crt-only IdP trust Secret projected into pragmatic-system for the tenant-admin pod. */
     public static IdpCaSecretNameOf(tenantId: string): string
     {
-        return `${K8sManifestBuilder.TenantAdminNameOf(tenantId)}${TenantAdminBootstrap.IdpCaSuffix}`
+        return K8sManifestBuilder.TenantConsoleIdpCaSecretNameOf(tenantId)
     }
 
     /** Name of the admin-token Secret copy projected into pragmatic-system (the IdP-namespace original is unreachable from the pod). */
     public static IdpTokenSecretNameOf(tenantId: string): string
     {
-        return `${K8sManifestBuilder.TenantAdminNameOf(tenantId)}${TenantAdminBootstrap.IdpTokenSuffix}`
+        return K8sManifestBuilder.TenantConsoleIdpTokenSecretNameOf(tenantId)
     }
 
     /**
      * The tenant-admin's live-credential Secret copies in pragmatic-system, as a v1 List of identities to delete by name on hive
-     * delete (older clusters have them unlabelled): the IdP CA and the IdP admin-token copy. Never the seed Secret.
+     * delete (older clusters have them unlabelled): the fingerprint key, the IdP CA and the IdP admin-token copy - the same list
+     * TenantConsoleRemovalManifest names. Never the seed Secret.
      */
     public static CredentialRemovalManifest(tenantId: string): string
     {
         const C = TenantAdminBootstrap
-        const items = [C.IdpCaSecretNameOf(tenantId), C.IdpTokenSecretNameOf(tenantId)].map(name => ({
-            apiVersion: C.ApiVersion,
-            kind: C.SecretKind,
-            metadata: { name, namespace: K8sManifestBuilder.SystemNamespace },
-        }))
-        return JSON.stringify({ apiVersion: C.ApiVersion, kind: C.ListKind, items })
+        return JSON.stringify({
+            [C.ApiVersionKey]: C.ApiVersion,
+            [C.KindKey]: C.ListKind,
+            [C.ItemsKey]: K8sManifestBuilder.TenantConsoleCredentialIdentitiesOf(tenantId),
+        })
     }
 
     public async GenerateBootstrap(input: TenantBootstrapInput): Promise<TenantBootstrap>
