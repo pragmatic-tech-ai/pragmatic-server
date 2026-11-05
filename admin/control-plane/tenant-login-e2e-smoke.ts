@@ -67,6 +67,7 @@ import { EnvironmentPlacement } from './environment-placement.js'
 import { HiveObservationRegistry } from './hive-observation-record.js'
 import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import type { IHiveOrchestrator } from './hive-orchestrator.js'
+import { IdpLoginPage } from './idp-login-page.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import { KindImageLoader } from './kind-image-loader.js'
 import { KubectlCli, KubectlError, NodeExecFile } from './kubectl.js'
@@ -191,9 +192,6 @@ export class TenantLoginE2eSmoke
 
     private static readonly TenantPortalRel = '../tenant-portal/dist'
     private static readonly HostResolverRules = '--host-resolver-rules=MAP *.admin.localtest 127.0.0.1, MAP host.docker.internal 127.0.0.1'
-    private static readonly EmailSelector = 'input[name=email]'
-    private static readonly PasswordSelector = 'input[name=password]'
-    private static readonly SubmitSelector = 'button[type=submit]'
     private static readonly FormSelector = 'form'
     private static readonly SessionCookieName = 'pts_session'
     private static readonly RootPath = '/'
@@ -417,13 +415,11 @@ export class TenantLoginE2eSmoke
 
             // The portal boots, finds no session, and AUTO-redirects to /tenant-auth/oidc/begin -> the IdP login page.
             await page.goto(origin + S.RootPath)
-            await page.waitForSelector(S.EmailSelector, { timeout: S.FormWaitMs })
+            await IdpLoginPage.WaitForForm(page, S.FormWaitMs)
             this.Check(S.M_LoginForm, new URL(page.url()).host !== tenantHost, S.UrlDetail + page.url())
 
             // Submit the owner credentials; the IdP 302s to the callback which sets pts_session and returns to the portal.
-            await page.fill(S.EmailSelector, S.OwnerEmail)
-            await page.fill(S.PasswordSelector, ownerPassword)
-            await page.click(S.SubmitSelector)
+            await IdpLoginPage.Submit(page, S.OwnerEmail, ownerPassword)
 
             await page.waitForURL(url => url.host === tenantHost, { timeout: S.PortalWaitMs })
             const cookies = await context.cookies()

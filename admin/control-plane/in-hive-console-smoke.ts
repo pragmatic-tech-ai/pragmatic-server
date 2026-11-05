@@ -22,6 +22,7 @@ import type { TLSSocket } from 'node:tls'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
 import type { Page } from 'playwright'
+import { IdpLoginPage } from './idp-login-page.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import { KindImageLoader } from './kind-image-loader.js'
 import { KubectlError, NodeExecFile } from './kubectl.js'
@@ -147,9 +148,6 @@ export class InHiveConsoleSmoke
     private static readonly ProfilePath = '/tenant-api/profile'
     private static readonly PathSeparator = '/'
     private static readonly SessionCookieName = 'pts_session'
-    private static readonly EmailSelector = 'input[autocomplete="email"]'
-    private static readonly PasswordSelector = 'input[autocomplete="current-password"]'
-    private static readonly EnterKey = 'Enter'
     private static readonly FormWaitMs = 60000
     private static readonly ReturnWaitMs = 60000
 
@@ -455,11 +453,9 @@ export class InHiveConsoleSmoke
             const context = await browser.newContext({ ignoreHTTPSErrors: true })
             const page = await context.newPage()
             await page.goto(S.HttpsScheme + host + S.RootPath)
-            await page.waitForSelector(S.EmailSelector, { timeout: S.FormWaitMs })
+            await IdpLoginPage.WaitForForm(page, S.FormWaitMs)
             const onIdp = new URL(page.url()).host === K8sManifestBuilder.IdpBrowserHostOf(S.TenantId, this.options.baseDomain)
-            await page.fill(S.EmailSelector, ownerEmail)
-            await page.fill(S.PasswordSelector, ownerPassword)
-            await page.press(S.PasswordSelector, S.EnterKey)
+            await IdpLoginPage.Submit(page, ownerEmail, ownerPassword)
             await page.waitForURL(url => url.host === host, { timeout: S.ReturnWaitMs })
             const cookies = await context.cookies()
             const hasSession = cookies.some(c => c.name === S.SessionCookieName && c.value.length > 0)

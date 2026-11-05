@@ -45,6 +45,7 @@ import { ImageSigner } from './image-signer.js'
 import { InClusterEnvironmentRuntime } from './in-cluster-environment-runtime.js'
 import { InClusterIdpDriver } from './in-cluster-idp-driver.js'
 import { InClusterIdpSeedSource } from './in-cluster-idp-seed.js'
+import { IdpLoginPage } from './idp-login-page.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import { KindCli } from './kind.js'
 import { FileKeyStore } from './key-store.js'
@@ -183,9 +184,6 @@ export class InClusterFederationSmoke
     private static readonly TokenKey = 'token'
     private static readonly EmailKey = 'email'
     private static readonly NameKey = 'name'
-    private static readonly EmailSelector = 'input[name=email]'
-    private static readonly PasswordSelector = 'input[name=password]'
-    private static readonly SubmitSelector = 'button[type=submit]'
     private static readonly BodySelector = 'body'
     private static readonly CookieHeader = 'cookie'
     private static readonly FormWaitMs = 30000
@@ -411,11 +409,9 @@ export class InClusterFederationSmoke
             const context = await browser.newContext({ ignoreHTTPSErrors: true })
             const pageA = await context.newPage()
             await pageA.goto(this.EnvOrigin(S.EnvAName) + S.BeginPath + encodeURIComponent(S.EnvAName))
-            await pageA.waitForSelector(S.EmailSelector, { timeout: S.FormWaitMs })
+            await IdpLoginPage.WaitForForm(pageA, S.FormWaitMs)
             this.Expect(S.Labels.LoginForm, new URL(pageA.url()).host.startsWith(K8sManifestBuilder.IdpBrowserHostOf(S.TenantId, S.BaseDomain)))
-            await pageA.fill(S.EmailSelector, S.OwnerEmail)
-            await pageA.fill(S.PasswordSelector, password)
-            await pageA.click(S.SubmitSelector)
+            await IdpLoginPage.Submit(pageA, S.OwnerEmail, password)
             await pageA.waitForURL(url => url.pathname.includes(S.CallbackPathFragment), { timeout: S.CallbackWaitMs })
             await this.AssertSession(context, pageA, S.EnvAName, S.Labels.SessionA)
 
@@ -423,7 +419,7 @@ export class InClusterFederationSmoke
             await pageB.goto(this.EnvOrigin(S.EnvBName) + S.BeginPath + encodeURIComponent(S.EnvBName))
             await pageB.waitForURL(url => url.pathname.includes(S.CallbackPathFragment), { timeout: S.CallbackWaitMs })
             await pageB.waitForTimeout(S.SsoSettleMs)
-            this.Expect(S.Labels.Sso, (await pageB.$(S.EmailSelector)) === null)
+            this.Expect(S.Labels.Sso, (await pageB.$(IdpLoginPage.EmailSelector)) === null)
             await this.AssertSession(context, pageB, S.EnvBName, S.Labels.SessionB)
         }
         finally
