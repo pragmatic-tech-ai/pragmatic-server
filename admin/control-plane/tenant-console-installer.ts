@@ -254,6 +254,9 @@ export class TenantConsoleInstaller
     private static readonly SecretResource = 'secret'
     private static readonly TlsCopyLabel = 'pragmatic/tls-copy'
     private static readonly TlsCopyValue = 'true'
+    private static readonly TlsCopyRunLabel = 'pragmatic/tls-copy-run'
+    private static readonly CopyRunBytes = 6
+    private static readonly LabelNotEqual = '!='
     private static readonly SelectorSeparator = ','
     private static readonly LabelAssign = '='
     private static readonly PartialIdpPrefix = 'The identity provider Secret '
@@ -498,21 +501,23 @@ export class TenantConsoleInstaller
             {
                 await kubectl.ApplyServerSide(idp.secretsManifest)
             }
-            // Earlier TLS copies in the IdP namespace (another source, another existing-secret name) hold a private key nothing
-            // references any more; the current copy is re-applied right below.
-            await kubectl.DeleteBySelector(idpName, C.SecretResource, C.TlsCopySelectorOf(hive.id))
-            if (legacyCopies.length > 0)
-            {
-                await kubectl.DeleteManifest(C.SecretIdentities(idpName, legacyCopies))
-            }
+            // The current copies land first, stamped with this run, so the IdP Ingress never serves without its certificate.
+            const copyRun = randomBytes(C.CopyRunBytes).toString(C.Hex)
             if (spec.tls.source === IngressTlsSource.Development && tlsCopy !== undefined)
             {
-                await kubectl.ApplyServerSide(C.TlsSecretManifest(K8sManifestBuilder.TenantConsoleDevTlsSecretNameOf(t), system, tlsCopy, hive.id))
-                await kubectl.ApplyServerSide(C.TlsSecretManifest(IngressTlsPolicy.DevelopmentSecretName, idpName, tlsCopy, hive.id))
+                await kubectl.ApplyServerSide(C.TlsSecretManifest(K8sManifestBuilder.TenantConsoleDevTlsSecretNameOf(t), system, tlsCopy, hive.id, copyRun))
+                await kubectl.ApplyServerSide(C.TlsSecretManifest(IngressTlsPolicy.DevelopmentSecretName, idpName, tlsCopy, hive.id, copyRun))
             }
             else if (spec.tls.source === IngressTlsSource.ExistingSecret && tlsCopy !== undefined)
             {
-                await kubectl.ApplyServerSide(C.TlsSecretManifest(spec.tls.secretName as string, idpName, tlsCopy, hive.id))
+                await kubectl.ApplyServerSide(C.TlsSecretManifest(spec.tls.secretName as string, idpName, tlsCopy, hive.id, copyRun))
+            }
+            // Then earlier TLS copies in the IdP namespace (another source, another existing-secret name), which hold a private key
+            // nothing references any more: every labelled copy not stamped by this run, and the unlabelled legacy ones.
+            await kubectl.DeleteBySelector(idpName, C.SecretResource, C.StaleTlsCopySelectorOf(hive.id, copyRun))
+            if (legacyCopies.length > 0)
+            {
+                await kubectl.DeleteManifest(C.SecretIdentities(idpName, legacyCopies))
             }
             await this.idpAdmin.Remember(t, idp.ca, idp.adminToken)
             // A reinstall must pick up the new Secrets: both Deployments restart.
@@ -702,11 +707,18 @@ export class TenantConsoleInstaller
         return JSON.stringify({ [C.ApiVersionKey]: C.ApiVersionCore, [C.KindKey]: C.ListKind, [C.ItemsKey]: items })
     }
 
-    /** Selects this hive's TLS key copies (in the IdP namespace: the ones a TLS-source switch leaves behind). */
+    /** Selects all of this hive's TLS key copies (in the IdP namespace: what a console removal sweeps). */
     private static TlsCopySelectorOf(hiveId: string): string
     {
         const C = TenantConsoleInstaller
         return K8sManifestBuilder.HiveLabelSelectorOf(hiveId) + C.SelectorSeparator + C.TlsCopyLabel + C.LabelAssign + C.TlsCopyValue
+    }
+
+    /** Selects this hive's TLS key copies an earlier run left (no run stamp, or another one): what an install sweeps after its own. */
+    private static StaleTlsCopySelectorOf(hiveId: string, copyRun: string): string
+    {
+        const C = TenantConsoleInstaller
+        return C.TlsCopySelectorOf(hiveId) + C.SelectorSeparator + C.TlsCopyRunLabel + C.LabelNotEqual + copyRun
     }
 
     /** A non-empty base64 `data` entry of a Secret's JSON, or undefined. */
@@ -742,13 +754,13 @@ export class TenantConsoleInstaller
     }
 
     /**
-     * A hive-labelled kubernetes.io/tls Secret manifest, also labelled as a TLS copy (so a later TLS-source switch can sweep it); applied
-     * server-side through kubectl's stdin, never written anywhere else.
+     * A hive-labelled kubernetes.io/tls Secret manifest, also labelled as a TLS copy stamped with its install run (so a later install
+     * can sweep every copy but its own); applied server-side through kubectl's stdin, never written anywhere else.
      */
-    private static TlsSecretManifest(name: string, namespace: string, tls: IssuedCertificate, hiveId: string): string
+    private static TlsSecretManifest(name: string, namespace: string, tls: IssuedCertificate, hiveId: string, copyRun: string): string
     {
         const C = TenantConsoleInstaller
-        const labels = { ...K8sManifestBuilder.HiveLabelsOf(hiveId), [C.TlsCopyLabel]: C.TlsCopyValue }
+        const labels = { ...K8sManifestBuilder.HiveLabelsOf(hiveId), [C.TlsCopyLabel]: C.TlsCopyValue, [C.TlsCopyRunLabel]: copyRun }
         return JSON.stringify({
             [C.ApiVersionKey]: C.ApiVersionCore,
             [C.KindKey]: C.SecretKind,

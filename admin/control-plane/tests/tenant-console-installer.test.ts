@@ -196,15 +196,16 @@ describe('TenantConsoleInstaller', () =>
         const status = await fx.Installer.WhenSettled('h1')
         const idp = K8sManifestBuilder.IdpNameOf('acme')
         const admin = K8sManifestBuilder.TenantAdminNameOf('acme')
+        const run = (Items.Of(fx.Kubectl.ServerApplied[2] as string)[0] as unknown as { metadata: { labels: Record<string, string> } }).metadata.labels['pragmatic/tls-copy-run']
         assert.deepEqual(fx.Kubectl.Calls.filter(c => c[0] !== 'Find'), [
             ['ServesResource', 'admissionregistration.k8s.io/v1', 'validatingadmissionpolicies'],
             ['ServesResource', 'admissionregistration.k8s.io/v1', 'validatingadmissionpolicybindings'],
             ['Apply'],
             ['ApplyServerSide'],
             ['ApplyServerSide'],
-            ['DeleteBySelector', idp, 'secret', 'pragmatic/hive=h1,pragmatic/tls-copy=true'],
             ['ApplyServerSide'],
             ['ApplyServerSide'],
+            ['DeleteBySelector', idp, 'secret', 'pragmatic/hive=h1,pragmatic/tls-copy=true,pragmatic/tls-copy-run!=' + run],
             ['Remember', 'acme'],
             ['RolloutRestart', idp, idp],
             ['RolloutRestart', 'pragmatic-system', admin],
@@ -374,24 +375,32 @@ describe('TenantConsoleInstaller', () =>
         assert.equal(fx.Kubectl.Applied.length + fx.Kubectl.ServerApplied.length, 0)
     })
 
-    it('a TLS-source switch sweeps the previous key copies out of the IdP namespace before the new copy lands', async () =>
+    it('a TLS-source switch applies the new key copy first, then sweeps only the earlier copies out of the IdP namespace', async () =>
     {
         fx = await ConsoleInstallFixture.Create()
         const ns = K8sManifestBuilder.IdpNameOf('acme')
         fx.Installer.Start('h1')
         await fx.Installer.WhenSettled('h1')
-        const firstCopies = fx.Kubectl.ServerApplied.map(m => Items.Of(m)).flat().filter(i => i.type === 'kubernetes.io/tls')
-        assert.ok(firstCopies.every(i => (i as unknown as { metadata: { labels?: Record<string, string> } }).metadata.labels?.['pragmatic/tls-copy'] === 'true'))
+        type Labelled = { metadata: { labels?: Record<string, string> } }
+        const firstCopies = fx.Kubectl.ServerApplied.map(m => Items.Of(m)).flat().filter(i => i.type === 'kubernetes.io/tls') as unknown as Labelled[]
+        assert.ok(firstCopies.length > 0 && firstCopies.every(i => i.metadata.labels?.['pragmatic/tls-copy'] === 'true'))
+        const firstRun = firstCopies[0]!.metadata.labels?.['pragmatic/tls-copy-run'] ?? ''
+        assert.match(firstRun, /^[0-9a-f]{12}$/)
         fx.Kubectl.Calls.length = 0
         fx.Kubectl.ServerApplied.length = 0
         fx.Hives.set('h1', { ...ConsoleInstallFixture.Hive('h1'), console: { baseDomain: 'localtest.me', tls: { source: IngressTlsSource.ExistingSecret, secretName: 'corp-tls' } } })
         fx.Kubectl.Put('pragmatic-system', 'secret/corp-tls', { type: 'kubernetes.io/tls', data: { 'tls.crt': 'Y2VydA==', 'tls.key': 'a2V5' } })
         fx.Installer.Start('h1')
         assert.equal((await fx.Installer.WhenSettled('h1'))?.state, ConsoleInstallState.Deployed)
+        const copy = fx.Kubectl.ServerApplied.map(m => Items.Of(m)).flat().find(i => i.type === 'kubernetes.io/tls' && i.metadata.namespace === ns) as unknown as Labelled & { metadata: { name: string } }
+        assert.equal(copy.metadata.name, 'corp-tls')
+        const run = copy.metadata.labels?.['pragmatic/tls-copy-run'] ?? ''
+        assert.ok(run !== firstRun && /^[0-9a-f]{12}$/.test(run))
         const sweep = fx.Kubectl.Calls.findIndex(c => c[0] === 'DeleteBySelector')
-        assert.deepEqual(fx.Kubectl.Calls[sweep], ['DeleteBySelector', ns, 'secret', 'pragmatic/hive=h1,pragmatic/tls-copy=true'])
+        assert.deepEqual(fx.Kubectl.Calls[sweep], ['DeleteBySelector', ns, 'secret', 'pragmatic/hive=h1,pragmatic/tls-copy=true,pragmatic/tls-copy-run!=' + run])
+        // The IdP Ingress never goes without a certificate: the new copy lands before the old ones go.
         const verbs = fx.Kubectl.Calls.map(c => c[0])
-        assert.ok(sweep < verbs.lastIndexOf('ApplyServerSide'))
+        assert.ok(sweep > verbs.lastIndexOf('ApplyServerSide'))
     })
 
     it('a TLS-source switch also deletes the unlabelled earlier copy the IdP Ingress named, and pragmatic-dev-tls, never the IdP own Secrets', async () =>
