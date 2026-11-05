@@ -30,7 +30,7 @@ Final review: ready after ruling (1 Important, 8 Minor). Rulings for the single 
 - m3: revoke validates the domain shape (policy syntax only, still allows clearing policy-refused stored approvals) and caps the length before it reaches the audit note.
 - m4: one home for the approve-time domain check.
 - m5: use IsReported in the .mu or drop it from BoundProperties.
-- m6: `ü` in tests/email-domain-policy.test.ts.
+- m6: write the u-umlaut as the backslash-u-00fc escape (not the literal character) in tests/email-domain-policy.test.ts.
 - m7: hoist the `domains` key in tenant-api-client.ts.
 - m8: correct spec line ~177 and the platform-email-domains.ts doc: in-hive edits stay on the console's retained data volume and come back on reinstall.
 
