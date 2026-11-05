@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SealedSecretStore } from '../sealed-secret-store.js'
 import { DevCaHostOutsideDomainError, DevCaKeyMissingError, DevCertificateAuthority } from '../dev-certificate-authority.js'
+import { DevCaError } from '../../../src/idp/dev-ca.js'
 
 class CaFixture
 {
@@ -150,8 +151,8 @@ test('a base domain that is a single label, a public suffix or not a valid DNS n
     {
         for (const base of CaFixture.BadBases)
         {
-            await assert.rejects(ca.EnsureCa(base))
-            await assert.rejects(ca.Issue(base, [base]))
+            await assert.rejects(ca.EnsureCa(base), DevCaError)
+            await assert.rejects(ca.Issue(base, [base]), DevCaError)
         }
     })
 })
@@ -161,10 +162,11 @@ test('staging is removed after an openssl failure in EnsureCa and in Issue', asy
     await CaFixture.With(async (ca, root, _vaultFile, store) =>
     {
         const broken = new DevCertificateAuthority(root, store, CaFixture.MissingOpenssl)
-        await assert.rejects(broken.EnsureCa(CaFixture.Domain))
+        // A named error the console installer may show: it says openssl failed and why.
+        await assert.rejects(broken.EnsureCa(CaFixture.Domain), (e: unknown) => e instanceof DevCaError && /openssl failed/.test(e.message))
         assert.deepEqual(await readdir(root), [])
         await ca.EnsureCa(CaFixture.Domain)
-        await assert.rejects(broken.Issue(CaFixture.Domain, [CaFixture.Wildcard]))
+        await assert.rejects(broken.Issue(CaFixture.Domain, [CaFixture.Wildcard]), DevCaError)
         assert.deepEqual(await readdir(root), [CaFixture.Domain])
     })
 })

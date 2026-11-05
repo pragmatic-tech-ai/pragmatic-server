@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { chmod, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { DevCaError } from '../../src/idp/dev-ca.js'
 import { SealedSecretStore } from './sealed-secret-store.js'
 
 export type IssuedCertificate = { cert: Buffer; key: Buffer }
@@ -167,7 +168,7 @@ export class DevCertificateAuthority implements IDevCertificateIssuer
     {
         if (!DevCertificateAuthority.IsValidDomain(baseDomain))
         {
-            throw new Error(DevCertificateAuthority.BadBaseText + baseDomain)
+            throw new DevCaError(DevCertificateAuthority.BadBaseText + baseDomain)
         }
     }
 
@@ -341,7 +342,7 @@ export class DevCertificateAuthority implements IDevCertificateIssuer
                     resolve()
                     return
                 }
-                reject(new Error(DevCertificateAuthority.OpensslFailed + err.message))
+                reject(new DevCaError(DevCertificateAuthority.OpensslFailed + err.message))
             })
         })
     }

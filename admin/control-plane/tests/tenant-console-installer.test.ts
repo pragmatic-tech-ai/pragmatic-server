@@ -17,6 +17,7 @@ import {
 } from '../tenant-console-installer.js'
 import { ConsoleInstallFixture, FakeDevCa } from './console-install-fakes.js'
 import type { IImageVerifier } from '../image-verifier.js'
+import { DevCaError } from '../../../src/idp/dev-ca.js'
 import type { HiveRecord } from '../platform-records.js'
 import type { PlatformImageSigner } from '../platform-signing-key.js'
 
@@ -298,6 +299,37 @@ describe('TenantConsoleInstaller', () =>
             assert.ok(!text.includes(secret), 'leaked a secret')
         }
         assert.match(log, /\[console-install\] hive h1 failed at storing-secrets: KubectlError/)
+    })
+
+    it('a certificate failure is named and explained in the status and the log, with secret-looking runs scrubbed', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        const opaque = 'QWxhZGRpbjpvcGVuIHNlc2FtZTEyMzQ1Njc4OTBhYmNkZWY='
+        fx.DevCa.IssueError = new DevCaError('Development CA: openssl failed (is the openssl CLI installed and on PATH?): string too long maxsize=64 ' + opaque)
+        let status: Awaited<ReturnType<typeof fx.Installer.WhenSettled>>
+        const log = await ErrorLog.Capture(async () =>
+        {
+            fx.Installer.Start('h1')
+            status = await fx.Installer.WhenSettled('h1')
+        })
+        assert.equal(status!?.step, ConsoleInstallStep.PreparingCertificates)
+        assert.match(status!?.error ?? '', /^Could not prepare the console's certificates and settings\. Development CA: openssl failed .*string too long maxsize=64/)
+        assert.match(log, /\[console-install\] hive h1 failed at preparing-certificates: DevCaError: Development CA: openssl failed .*string too long maxsize=64/)
+        assert.ok(!(status!?.error ?? '').includes(opaque))
+        assert.ok(!log.includes(opaque))
+    })
+
+    it('a failure that is not a known showable error still logs only its name', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        fx.DevCa.IssueError = new TypeError('raw internal detail')
+        const log = await ErrorLog.Capture(async () =>
+        {
+            fx.Installer.Start('h1')
+            await fx.Installer.WhenSettled('h1')
+        })
+        assert.match(log, /failed at preparing-certificates: TypeError$/m)
+        assert.ok(!log.includes('raw internal detail'))
     })
 
     it('a first install scrubs the master key it minted and the fresh IdP server key', async () =>

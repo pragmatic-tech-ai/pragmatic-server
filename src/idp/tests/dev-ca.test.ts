@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { X509Certificate } from 'node:crypto'
-import { DevCa, IdpTlsMaterial } from '../dev-ca.js'
+import { DevCa, DevCaError, IdpTlsMaterial } from '../dev-ca.js'
 
 test('mints a CA, server cert and key, idempotently', () =>
 {
@@ -113,7 +113,8 @@ test('a missing openssl binary raises a clear error naming openssl', () =>
     const dir = mkdtempSync(join(tmpdir(), 'devca-'))
     try
     {
-        assert.throws(() => DevCa.EnsureAt(join(dir, 'nested'), 'idp.local', 'no-such-openssl-binary'), /openssl/)
+        assert.throws(() => DevCa.EnsureAt(join(dir, 'nested'), 'idp.local', 'no-such-openssl-binary'), (e: unknown) =>
+            e instanceof DevCaError && e.name === 'DevCaError' && /openssl/.test(e.message))
     }
     finally
     {
@@ -125,7 +126,7 @@ test('an invalid host is rejected before openssl runs', () =>
 {
     for (const bad of ['a/b', 'a\nb', 'a,b', ''])
     {
-        assert.throws(() => DevCa.EnsureAt(tmpdir(), bad, 'no-such-openssl-binary'), /invalid host/)
+        assert.throws(() => DevCa.EnsureAt(tmpdir(), bad, 'no-such-openssl-binary'), (e: unknown) => e instanceof DevCaError && /invalid host/.test(e.message))
     }
 })
 

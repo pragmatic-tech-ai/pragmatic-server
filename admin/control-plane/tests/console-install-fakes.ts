@@ -256,8 +256,14 @@ export class FakeDevCa implements IDevCertificateIssuer
         return Buffer.from('CA')
     }
 
+    public IssueError: Error | undefined
+
     public async Issue(baseDomain: string, hosts: readonly string[]): Promise<IssuedCertificate>
     {
+        if (this.IssueError !== undefined)
+        {
+            throw this.IssueError
+        }
         this.Issued.push({ baseDomain, hosts: [...hosts] })
         return { cert: Buffer.from('-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----\n'), key: Buffer.from(FakeDevCa.KeyPem) }
     }

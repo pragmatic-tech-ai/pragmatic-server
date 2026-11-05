@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto'
+import { DevCaError } from '../../src/idp/dev-ca.js'
 import type { ConsoleFingerprintKeys } from './console-fingerprint-keys.js'
 import { ConsoleRetention } from './console-retention.js'
 import { DevCaHostOutsideDomainError, DevCaKeyMissingError, type IDevCertificateIssuer, type IssuedCertificate } from './dev-certificate-authority.js'
@@ -216,7 +217,7 @@ export class TenantConsoleInstaller
     private static readonly ShowableErrors: ReadonlyArray<abstract new (...args: never[]) => Error> = [
         KubectlError, PortForwardError, IdpAdminError, IdpAdminTransportError, InHiveIdpUnavailableError, OwnerNotRecordedError,
         OwnerAccountMissingError, OwnerIdpRefusedError, IdpUnreachableError, ImageVerificationError, DevCaKeyMissingError,
-        DevCaHostOutsideDomainError, InvalidHiveConsoleError,
+        DevCaHostOutsideDomainError, InvalidHiveConsoleError, DevCaError,
     ]
     private static readonly HttpsScheme = 'https'
     private static readonly HttpsPrefix = 'https://'
@@ -796,23 +797,34 @@ export class TenantConsoleInstaller
     private Fail(run: ConsoleInstallRun, err: unknown): void
     {
         const C = TenantConsoleInstaller
+        const showable = C.ShowableErrors.some(ctor => err instanceof ctor)
+        // A showable error's own text, scrubbed of every secret this run saw and of secret-looking runs; undefined otherwise.
+        const detail = showable ? C.Scrub(run, (err as Error).message) : undefined
         let message = err instanceof ConsoleInstallStepError ? err.message : C.StepFailureMessages[run.step]
-        if (C.ShowableErrors.some(ctor => err instanceof ctor))
+        if (detail !== undefined)
         {
-            message += C.DetailSeparator + (err as Error).message
+            message += C.DetailSeparator + detail
         }
+        run.state = ConsoleInstallState.Failed
+        run.error = C.Scrub(run, message)
+        run.finishedAt = new Date(this.clock.Now()).toISOString()
+        // The error's name, plus its scrubbed text only when it is a showable one: any other raw message may carry cluster output.
+        const name = err instanceof Error ? err.name : C.UnknownErrorName
+        const line = C.LogPrefix + run.hiveId + C.LogStepInfix + run.step + C.LogErrorInfix + name
+        console.error(detail === undefined ? line : line + C.LogErrorInfix + detail)
+    }
+
+    /** Removes every secret value the run saw, then anything secret-looking (KubectlError.Redact), from a text. */
+    private static Scrub(run: ConsoleInstallRun, text: string): string
+    {
+        let scrubbed = text
         for (const secret of run.secrets)
         {
             if (secret.length > 0)
             {
-                message = message.split(secret).join(C.Redacted)
+                scrubbed = scrubbed.split(secret).join(TenantConsoleInstaller.Redacted)
             }
         }
-        run.state = ConsoleInstallState.Failed
-        run.error = message
-        run.finishedAt = new Date(this.clock.Now()).toISOString()
-        // The error's name only: a raw message may carry cluster output.
-        const name = err instanceof Error ? err.name : C.UnknownErrorName
-        console.error(C.LogPrefix + run.hiveId + C.LogStepInfix + run.step + C.LogErrorInfix + name)
+        return KubectlError.Redact(scrubbed)
     }
 }

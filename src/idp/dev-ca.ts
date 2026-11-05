@@ -21,6 +21,21 @@ export interface IdpTlsMaterialData
     cert: Buffer
 }
 
+/**
+ * A development CA could not mint: an invalid host or base domain, or openssl failed (its own text follows, which names files and
+ * hosts but never key material). Named so a caller can show the reason instead of a generic failure.
+ */
+export class DevCaError extends Error
+{
+    private static readonly ErrorName = 'DevCaError'
+
+    public constructor(message: string)
+    {
+        super(message)
+        this.name = DevCaError.ErrorName
+    }
+}
+
 /** Mints a local self-signed CA plus a CA-signed server cert (via the openssl CLI) for the dev IdP. Idempotent. */
 export class DevCa
 {
@@ -72,13 +87,13 @@ export class DevCa
         const hosts: readonly string[] = typeof host === 'string' ? [host] : host
         if (hosts.length === 0)
         {
-            throw new Error(DevCa.InvalidHost + String(host))
+            throw new DevCaError(DevCa.InvalidHost + String(host))
         }
         for (const h of hosts)
         {
             if (!DevCa.HostPattern.test(h))
             {
-                throw new Error(DevCa.InvalidHost + h)
+                throw new DevCaError(DevCa.InvalidHost + h)
             }
         }
         // Sweep any staging dir a prior crashed mint left behind (a hard-kill in the sub-second window before the
@@ -173,7 +188,7 @@ export class DevCa
         }
         catch (e)
         {
-            throw new Error(DevCa.OpensslFailed + (e instanceof Error ? e.message : String(e)))
+            throw new DevCaError(DevCa.OpensslFailed + (e instanceof Error ? e.message : String(e)))
         }
     }
 }
