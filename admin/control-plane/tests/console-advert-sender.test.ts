@@ -9,7 +9,7 @@ import { join } from 'node:path'
 import { Disposable, Signal, type IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import {
     ConsoleAdvertSender, ConsoleAdvertUnavailableError, HttpConsoleAdvertTransport, SeededConsoleAccounts,
-    type IAdvertTimer, type IConsoleAccountSource, type IConsoleAdvertTransport,
+    type IAdvertTimer, type IConsoleAccountSource, type IConsoleAdvertTransport, type IRequestDeadline,
 } from '../console-advert-sender.js'
 import { ConsoleFingerprint, type ConsoleAdvertBody } from '../console-advert-contract.js'
 import { ConsoleEmailDomainStore } from '../console-email-domain-store.js'
@@ -47,7 +47,6 @@ class Names
     public static readonly Created = '2026-01-01T00:00:00Z'
     public static readonly JsonType = 'application/json'
     public static readonly ContentTypeHeader = 'Content-Type'
-    public static readonly ShortTimeoutMs = 50
     public static readonly TestTimeoutMs = 5000
     public static readonly AbortedMessage = 'aborted'
     public static readonly AbortEvent = 'abort'
@@ -105,6 +104,47 @@ class FakeTimer implements IAdvertTimer
     public Tick(): void
     {
         this.tick?.()
+    }
+}
+
+/** A request deadline the test expires by hand: no wall-clock wait decides when a send times out. */
+class FakeDeadline implements IRequestDeadline
+{
+    public readonly Requested: number[] = []
+    private readonly issued: AbortController[] = []
+
+    public SignalAfter(timeoutMs: number): AbortSignal
+    {
+        this.Requested.push(timeoutMs)
+        const controller = new AbortController()
+        this.issued.push(controller)
+        return controller.signal
+    }
+
+    /** Times out every send issued so far (later sends get a fresh, live deadline). */
+    public Expire(): void
+    {
+        for (const controller of this.issued)
+        {
+            controller.abort()
+        }
+    }
+}
+
+/** A promise resolved by hand, for "the request has reached the server". */
+class Arrival
+{
+    public readonly Reached: Promise<void>
+    private resolve: () => void = () => undefined
+
+    public constructor()
+    {
+        this.Reached = new Promise<void>(r => { this.resolve = r })
+    }
+
+    public Mark(): void
+    {
+        this.resolve()
     }
 }
 
@@ -426,13 +466,23 @@ describe('HttpConsoleAdvertTransport', () =>
 
     it('a channel that never answers times out as the unreachable sentence', { timeout: Names.TestTimeoutMs }, async () =>
     {
-        const url = await listen(() => undefined)
-        await assert.rejects(() => new HttpConsoleAdvertTransport(url, Names.Token, Names.HiveId, Names.ShortTimeoutMs).Send(body), (err: unknown) =>
+        const arrival = new Arrival()
+        const url = await listen(() =>
+        {
+            arrival.Mark()
+            return undefined
+        })
+        const deadline = new FakeDeadline()
+        const sending = new HttpConsoleAdvertTransport(url, Names.Token, Names.HiveId, HttpConsoleAdvertTransport.RequestTimeoutMs, deadline).Send(body)
+        await arrival.Reached
+        deadline.Expire()
+        await assert.rejects(() => sending, (err: unknown) =>
         {
             assert.ok(err instanceof ConsoleAdvertUnavailableError)
             assert.equal(err.message, Names.UnreachableMessage)
             return true
         })
+        assert.deepEqual(deadline.Requested, [HttpConsoleAdvertTransport.RequestTimeoutMs])
     })
 
     it('an aborted send is the unreachable sentence', { timeout: Names.TestTimeoutMs }, async () =>
@@ -446,22 +496,39 @@ describe('HttpConsoleAdvertTransport', () =>
 
     it('a timed-out send is reported and the next send still runs', { timeout: Names.TestTimeoutMs }, async () =>
     {
+        // Deterministic: the first request is held by the server until the test expires its deadline by hand (no wall-clock
+        // timeout), and it is counted only once it has reached the server.
         let calls = 0
-        const url = await listen(() => (++calls === 1 ? undefined : { status: Names.Ok, body: Names.OkBody }))
+        const firstArrived = new Arrival()
+        const url = await listen(() =>
+        {
+            calls++
+            if (calls === 1)
+            {
+                firstArrived.Mark()
+                return undefined
+            }
+            return { status: Names.Ok, body: Names.OkBody }
+        })
         const root = mkdtempSync(join(tmpdir(), Names.TempPrefix))
         try
         {
             const store = await ConsoleEmailDomainStore.Open(join(root, ConsoleEmailDomainStore.FileName), Names.TenantId, [Names.Domain])
             const lines: string[] = []
             const timer = new FakeTimer()
-            const s = new ConsoleAdvertSender(new HttpConsoleAdvertTransport(url, Names.Token, Names.HiveId, Names.ShortTimeoutMs),
+            const deadline = new FakeDeadline()
+            const s = new ConsoleAdvertSender(new HttpConsoleAdvertTransport(url, Names.Token, Names.HiveId, HttpConsoleAdvertTransport.RequestTimeoutMs, deadline),
                 new FakeAccounts([Names.OwnerEmail]), store, randomBytes(Names.KeyBytes), Names.ConsoleUrl, timer, line => lines.push(line))
-            await s.Start()
+            const starting = s.Start()
+            await firstArrived.Reached
+            deadline.Expire()
+            await starting
             assert.deepEqual(lines, [Names.SendFailedPrefix + Names.UnreachableMessage])
             timer.Tick()
             await s.Idle()
             assert.equal(calls, 2)
             assert.equal(lines.length, 1, 'the second send succeeded')
+            assert.deepEqual(deadline.Requested, [HttpConsoleAdvertTransport.RequestTimeoutMs, HttpConsoleAdvertTransport.RequestTimeoutMs])
             s.Stop()
         }
         finally

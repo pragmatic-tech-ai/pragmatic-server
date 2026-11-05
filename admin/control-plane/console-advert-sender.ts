@@ -50,6 +50,21 @@ export class ConsoleAdvertUnavailableError extends Error
     }
 }
 
+/** Where a send's deadline comes from: a signal that aborts once a request has run for `timeoutMs`. Tests expire it by hand. */
+export interface IRequestDeadline
+{
+    SignalAfter(timeoutMs: number): AbortSignal
+}
+
+/** The real deadline: AbortSignal.timeout on the wall clock. */
+export class WallClockDeadline implements IRequestDeadline
+{
+    public SignalAfter(timeoutMs: number): AbortSignal
+    {
+        return AbortSignal.timeout(timeoutMs)
+    }
+}
+
 /**
  * POSTs the advert to `<baseUrl>/agent/hives/<hiveId>/console` with the hive's agent bearer (only in the Authorization header).
  * The answer's body is drained, never read into an error; the control plane's `refusedEmailDomains` is ignored because the
@@ -73,14 +88,15 @@ export class HttpConsoleAdvertTransport implements IConsoleAdvertTransport
         private readonly baseUrl: string,
         private readonly bearerToken: string,
         private readonly hiveId: string,
-        private readonly timeoutMs: number = HttpConsoleAdvertTransport.RequestTimeoutMs)
+        private readonly timeoutMs: number = HttpConsoleAdvertTransport.RequestTimeoutMs,
+        private readonly deadline: IRequestDeadline = new WallClockDeadline())
     {
     }
 
     public async Send(body: ConsoleAdvertBody, signal?: AbortSignal): Promise<void>
     {
         const T = HttpConsoleAdvertTransport
-        const timeout = AbortSignal.timeout(this.timeoutMs)
+        const timeout = this.deadline.SignalAfter(this.timeoutMs)
         let response: Response
         try
         {
