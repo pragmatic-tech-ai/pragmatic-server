@@ -26,7 +26,7 @@ export class InvalidVerifiedImagesError extends Error
  */
 export class ImageNotApprovedError extends ImageVerificationError
 {
-    private static readonly ErrorName = 'ImageNotApprovedError'
+    private static readonly NotApprovedErrorName = 'ImageNotApprovedError'
     private static readonly SentencePrefix = 'The hive refused to run image '
     private static readonly SentenceSuffix = ': the console runs only the server image the platform approved when the console was installed. Reinstall the console from the platform portal to approve the new server image.'
 
@@ -35,7 +35,7 @@ export class ImageNotApprovedError extends ImageVerificationError
     public constructor(imageRef: string)
     {
         super(imageRef, PinnedImageVerifier.NotVerifiedReason)
-        this.name = ImageNotApprovedError.ErrorName
+        this.name = ImageNotApprovedError.NotApprovedErrorName
         this.Sentence = ImageNotApprovedError.SentencePrefix + imageRef + ImageNotApprovedError.SentenceSuffix
     }
 }
