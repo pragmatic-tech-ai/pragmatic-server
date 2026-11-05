@@ -105,6 +105,7 @@ export class KubeResourceCatalog
         { apiVersion: 'apps/v1', kind: 'Deployment', plural: 'deployments', namespaced: true },
         { apiVersion: 'apps/v1', kind: 'StatefulSet', plural: 'statefulsets', namespaced: true },
         { apiVersion: 'networking.k8s.io/v1', kind: 'Ingress', plural: 'ingresses', namespaced: true },
+        { apiVersion: 'networking.k8s.io/v1', kind: 'NetworkPolicy', plural: 'networkpolicies', namespaced: true, short: 'netpol' },
         { apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'Role', plural: 'roles', namespaced: true },
         { apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'RoleBinding', plural: 'rolebindings', namespaced: true },
         { apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'ClusterRole', plural: 'clusterroles', namespaced: false },

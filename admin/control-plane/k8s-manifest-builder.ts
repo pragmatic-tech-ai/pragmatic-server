@@ -154,6 +154,18 @@ export class K8sManifestBuilder
     private static readonly IdpBrowserHostPrefix = 'idp-'
     private static readonly ApiVersionNetworking = 'networking.k8s.io/v1'
     private static readonly IngressKind = 'Ingress'
+    private static readonly NetworkPolicyKind = 'NetworkPolicy'
+    private static readonly PodSelectorKey = 'podSelector'
+    private static readonly PolicyTypesKey = 'policyTypes'
+    private static readonly IngressRulesKey = 'ingress'
+    private static readonly FromKey = 'from'
+    private static readonly NamespaceSelectorKey = 'namespaceSelector'
+    private static readonly ProtocolKey = 'protocol'
+    private static readonly TcpProtocol = 'TCP'
+    private static readonly IngressPolicyType = 'Ingress'
+    private static readonly NamespaceNameLabel = 'kubernetes.io/metadata.name'
+    /** The namespace the nginx ingress controller runs in (the console's Ingress uses ingressClassName nginx). */
+    public static readonly IngressControllerNamespace = 'ingress-nginx'
     private static readonly IngressClassNameKey = 'ingressClassName'
     private static readonly IngressClassNginx = 'nginx'
     private static readonly AnnotationsKey = 'annotations'
@@ -1090,6 +1102,7 @@ export class K8sManifestBuilder
             this.Identity(B.ApiVersionApps, B.DeploymentKind, name, system),
             this.Identity(B.ApiVersionCore, B.ServiceKind, name, system),
             this.Identity(B.ApiVersionNetworking, B.IngressKind, name, system),
+            this.Identity(B.ApiVersionNetworking, B.NetworkPolicyKind, name, system),
             ...B.TenantConsoleCredentialIdentitiesOf(tenantId),
             B.SystemSecretIdentity(B.TenantConsoleDevTlsSecretNameOf(tenantId)),
             // The in-hive IdP stops serving with its console; its namespace, data volume and Secrets stay (a reinstall resumes it).
@@ -1252,7 +1265,31 @@ export class K8sManifestBuilder
         const name = K8sManifestBuilder.TenantAdminNameOf(spec.tenantId)
         const { host, ingressTls } = spec.console
         const meta = this.HiveAgentNamespacedMeta(spec.hiveId, name)
-        return [this.TerminatingIngress(meta, host, name, spec.port, ingressTls, this.TenantConsoleTlsSecretNameOf(spec, ingressTls))]
+        return [this.TerminatingIngress(meta, host, name, spec.port, ingressTls, this.TenantConsoleTlsSecretNameOf(spec, ingressTls)), this.TenantConsoleNetworkPolicy(spec)]
+    }
+
+    /**
+     * With a console exposure the console trusts the forwarded-for header (TrustedProxy), so only the ingress controller's namespace
+     * may reach its port: any other pod (an environment workload included) could otherwise forge the address the login throttle keys
+     * on. Ingress only; the console's own egress (API server, IdP, DNS) is not restricted.
+     */
+    private TenantConsoleNetworkPolicy(spec: TenantAdminWorkloadSpec): K8sObject
+    {
+        const B = K8sManifestBuilder
+        const name = B.TenantAdminNameOf(spec.tenantId)
+        return {
+            [B.ApiVersionKey]: B.ApiVersionNetworking,
+            [B.KindKey]: B.NetworkPolicyKind,
+            [B.MetadataKey]: this.HiveAgentNamespacedMeta(spec.hiveId, name),
+            [B.SpecKey]: {
+                [B.PodSelectorKey]: { [B.MatchLabelsKey]: this.Selector(name) },
+                [B.PolicyTypesKey]: [B.IngressPolicyType],
+                [B.IngressRulesKey]: [{
+                    [B.FromKey]: [{ [B.NamespaceSelectorKey]: { [B.MatchLabelsKey]: { [B.NamespaceNameLabel]: B.IngressControllerNamespace } } }],
+                    [B.PortsKey]: [{ [B.ProtocolKey]: B.TcpProtocol, [B.PortKey]: spec.port }],
+                }],
+            },
+        }
     }
 
     /**

@@ -262,8 +262,31 @@ describe('K8sManifestBuilder.RenderTenantAdmin console exposure and RBAC', () =>
     {
         assert.deepEqual(ConsoleFixture.Items(ConsoleFixture.Spec(ConsoleFixture.ExistingSecret)).map(i => i.kind), [
             'Namespace', 'ServiceAccount', 'ClusterRole', 'ValidatingAdmissionPolicy', 'ValidatingAdmissionPolicyBinding', 'ClusterRoleBinding', 'ClusterRole', 'Role', 'RoleBinding',
-            'PersistentVolumeClaim', 'Deployment', 'Service', 'Ingress',
+            'PersistentVolumeClaim', 'Deployment', 'Service', 'Ingress', 'NetworkPolicy',
         ])
+    })
+
+    it('with a console exposure, a NetworkPolicy admits only the ingress controller namespace to the console port (its forwarded-for header is trusted)', () =>
+    {
+        const items = ConsoleFixture.Items()
+        const policy = items.find(i => i.kind === 'NetworkPolicy')
+        const pod = items.find(i => i.kind === 'Deployment').spec.template.metadata.labels
+        assert.equal(policy.apiVersion, 'networking.k8s.io/v1')
+        assert.deepEqual(policy.metadata, { name: 'pragmatic-tenant-admin-acme', namespace: 'pragmatic-system', labels: { 'pragmatic/hive': 'hive-a' } })
+        assert.deepEqual(policy.spec, {
+            podSelector: { matchLabels: pod },
+            policyTypes: ['Ingress'],
+            ingress: [{
+                from: [{ namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'ingress-nginx' } } }],
+                ports: [{ protocol: 'TCP', port: TenantAdminFixture.Spec().port }],
+            }],
+        })
+        assert.equal(ConsoleFixture.Env(ConsoleFixture.Spec(), 'PRAGMATIC_TENANT_ADMIN_TRUSTED_PROXY'), 'true')
+    })
+
+    it('without a console exposure there is no Ingress, no trusted proxy and no NetworkPolicy', () =>
+    {
+        assert.ok(!TenantAdminFixture.Items().some((i: any) => i.kind === 'NetworkPolicy' || i.kind === 'Ingress'))
     })
 
     it('console ServiceAccount and pod mount the token', () =>
@@ -413,6 +436,7 @@ describe('K8sManifestBuilder.RenderTenantAdmin console exposure and RBAC', () =>
             'Deployment/pragmatic-system/pragmatic-tenant-admin-acme',
             'Service/pragmatic-system/pragmatic-tenant-admin-acme',
             'Ingress/pragmatic-system/pragmatic-tenant-admin-acme',
+            'NetworkPolicy/pragmatic-system/pragmatic-tenant-admin-acme',
             'Secret/pragmatic-system/pragmatic-tenant-admin-acme-fingerprint',
             'Secret/pragmatic-system/pragmatic-tenant-admin-acme-idp-ca',
             'Secret/pragmatic-system/pragmatic-tenant-admin-acme-idp-token',

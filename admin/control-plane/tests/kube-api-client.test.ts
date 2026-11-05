@@ -44,6 +44,12 @@ test('PathOf knows the cluster-scoped admission policy kinds', () =>
     assert.equal(KubeResourceCatalog.ParseResource('validatingadmissionpolicybinding/b').type.kind, 'ValidatingAdmissionPolicyBinding')
 })
 
+test('PathOf knows the namespaced NetworkPolicy kind the console removal names', () =>
+{
+    assert.equal(KubeResourceCatalog.PathOf({ apiVersion: 'networking.k8s.io/v1', kind: 'NetworkPolicy' }, 'pragmatic-system', 'p'), '/apis/networking.k8s.io/v1/namespaces/pragmatic-system/networkpolicies/p')
+    assert.equal(KubeResourceCatalog.ParseResource('netpol/p').type.kind, 'NetworkPolicy')
+})
+
 test('PathOf refuses an unknown kind', () =>
 {
     assert.throws(() => KubeResourceCatalog.PathOf({ apiVersion: 'example.com/v1', kind: 'Widget' }, 'n'), UnsupportedKubeKindError)
