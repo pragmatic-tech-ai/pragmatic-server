@@ -1450,7 +1450,8 @@ export class ControlPlaneHost
      * Serves /api/hives/ID/console. PUT stores where the hive serves its tenant's console and returns the updated hive. DELETE removes
      * the console from a cluster the control plane drives (a refusing cluster answers 409 with kubectl's redacted text and keeps the
      * setting), then clears the setting and returns { hive, retained }: retained names what stays in the cluster (the console's and its
-     * IdP's data and Secrets, and the environment namespaces it created, which keep running), also in the audit note. Both refuse (409) while any hive operation runs (agent or console install,
+     * IdP's data and Secrets, and the environment namespaces it created, which keep running), also in the audit note. Both refuse
+     * (409) while any hive operation runs (agent or console install,
      * reissue, delete, console removal). False for any other method.
      */
     private async RouteHiveConsole(req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>

@@ -133,7 +133,8 @@ export class HiveAgentUninstaller
 
     /**
      * Removes the agent's objects and returns the names of what it deliberately kept and that exists: the tenant-admin data
-     * PVC and its seed Secret, and the in-hive IdP's data PVC and Secrets. The tenant's console objects are deleted by name, and the kept objects reported, only when
+     * PVC and its seed Secret, and the in-hive IdP's data PVC and Secrets. The tenant's console objects are deleted by name, and the
+     * kept objects reported, only when
      * this hive owns the tenant's tenant-admin (its Deployment carries this hive's label) or none is installed: another hive
      * of the same tenant on the same cluster keeps them. Throws AgentUninstallError when kubectl fails or the id cannot be
      * selected safely; any other failure is not an uninstall failure and propagates as is.

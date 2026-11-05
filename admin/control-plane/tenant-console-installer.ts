@@ -188,8 +188,8 @@ class ConsoleInstallRun
  * reinstalls), apply it, store its Secrets server-side, restart and wait for the IdP and console, then seed the Owner account.
  * The console's pinned-image allow-list holds only the server image approved by this install, so a console-created environment
  * runs (and rolls to) that ref only: after a platform release the operator reinstalls the console to approve the new server image
- * (the console says so: ImageNotApprovedError). One install per hive at a time; the latest status is kept in memory only. No secret value leaves this class except on
- * kubectl's stdin and into the sealed store: not in arguments, logs, errors or status.
+ * (the console says so: ImageNotApprovedError). One install per hive at a time; the latest status is kept in memory only. No
+ * secret value leaves this class except on kubectl's stdin and into the sealed store: not in arguments, logs, errors or status.
  */
 export class TenantConsoleInstaller
 {
