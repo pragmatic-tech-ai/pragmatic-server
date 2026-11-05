@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { DockerEnv } from '../../environments/seed/docker.js'
 import { UserSeeder } from '../../environments/seed/users.js'
 import { AdminProxy, WsAdminConnector } from './admin-proxy.js'
+import { AuditRegistry } from './audit-record.js'
 import { BundleBuilderAdapter, DockerEnvAdapter, UserSeederAdapter } from './docker-env-port.js'
 import { DockerEnvironmentRuntime } from './environment-runtime.js'
 import { EnvironmentRuntimeResolver } from './environment-runtime-resolver.js'
@@ -80,12 +81,16 @@ export type TenantAdminComposition = {
     readonly emailDomains: ConsoleEmailDomainStore
     /** Tells the control plane about this console; undefined unless every advert setting is present (a real console pod). */
     readonly advert: ConsoleAdvertSender | undefined
+    /** The desktop relay's audit (`<dataRoot>/tenant-desktop-audit.json`), loaded before the plane is built. */
+    readonly desktopAudit: AuditRegistry
 }
 
 /**
  * The standalone tenant-admin process: boots ONLY the tenant plane over its own data root. Tenant and hive identity
  * come from a seed file (`seed.json`) instead of the operator's PlatformDirectory, and rollout reads/actions go
  * through an injected IRolloutClient. There is no operator plane and no agent channel here.
+ * It serves the Plexus desktop surface (`/desktop/*`, including the `/desktop/console` lookup of its one tenant); the
+ * desktop relay to environments only in a pod, where the in-cluster reach exists (outside one it has no way to reach them).
  */
 export class TenantAdminServer
 {
@@ -259,7 +264,8 @@ export class TenantAdminServer
 
     /**
      * Builds the whole tenant plane over this process's own data root without binding anything: seeded directory,
-     * stores, services, plane, host, health monitor, the console's email domains and (in a configured console) its advert sender.
+     * stores, services, plane (with the desktop surface; its relay only in a pod), host, health monitor, the console's email
+     * domains, the desktop audit and (in a configured console) its advert sender.
      */
     public async Compose(env: NodeJS.ProcessEnv = process.env, serviceAccountRoot?: string, log: (line: string) => void = TenantAdminServer.LogLine): Promise<TenantAdminComposition>
     {
@@ -288,9 +294,13 @@ export class TenantAdminServer
         const service = new EnvironmentService(registry, new PortAllocator(ControlPlaneServer.EnvPortFloor, new NetPortProbe()), new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(orchestrators, placement, directory, new BundleBuilderAdapter()), directory, orchestrators), new UserSeederAdapter(new UserSeeder()), dataRoot, new AdminProxy(new WsAdminConnector()), directory, idpService, conn => new IdpAdminClient(conn), undefined, reach)
         const tenant = directory.Tenant
         const emailDomains = await ConsoleEmailDomainStore.Open(join(dataRoot, ConsoleEmailDomainStore.FileName), tenant.id, tenant.emailDomains)
+        const desktopAudit = new AuditRegistry(join(dataRoot, ControlPlaneServer.DesktopAuditFile))
+        await desktopAudit.Load()
+        // The desktop surface is always served; the relay only when this console can reach its environments (in a pod).
+        const relay = reach === undefined ? undefined : { endpoints: reach, audit: desktopAudit }
         const plane = ControlPlaneServer.BuildTenantPlane(
             dataRoot, idpService, directory, cfg.secureCookie, service, this.rollout, orchestrators, placement,
-            masterKey, adminClients, cfg.secretTtlHours, undefined, undefined, cfg.trustedProxy, false, undefined, emailDomains)
+            masterKey, adminClients, cfg.secretTtlHours, undefined, undefined, cfg.trustedProxy, true, relay, emailDomains, tenant.id)
         const resolver = new TenantHostResolver(cfg.baseDomain, cfg.scheme, directory, cfg.externalPort, TenantAdminServer.ConsoleAliasOf(cfg, directory))
         const staticRoot = join(dirname(fileURLToPath(import.meta.url)), ControlPlaneServer.ParentSegment, ControlPlaneServer.TenantPortalSegment, ControlPlaneServer.DistSegment)
         const monitor = cfg.probeMs > 0
@@ -298,7 +308,7 @@ export class TenantAdminServer
             : undefined
         const host = new TenantPlaneHost(plane, resolver, staticRoot, service, monitor)
         const advert = TenantAdminServer.AdvertSenderOf(env, cfg, tenant, emailDomains, log)
-        return { directory, rollout: this.rollout, plane, host, monitor, config: cfg, reach, emailDomains, advert }
+        return { directory, rollout: this.rollout, plane, host, monitor, config: cfg, reach, emailDomains, advert, desktopAudit }
     }
 
     /** Composes, binds the tenant listener, then starts the advert (its first send awaited; a failure is logged, never thrown). */
@@ -316,7 +326,8 @@ export class TenantAdminServer
 
     /**
      * Stops the advert (aborting a send in flight and waiting for it to end, so nothing is logged afterwards) and closes the
-     * tenant listener started by Run; a no-op when nothing runs.
+     * tenant listener started by Run, which also closes the desktop relay and awaits its pending audit writes; a no-op when
+     * nothing runs.
      */
     public async Close(): Promise<void>
     {

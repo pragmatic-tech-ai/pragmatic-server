@@ -10,7 +10,9 @@ import { AppWriteStatus, PragmaticClient, type TokenIssuedDto } from '@pragmatic
 import { AuditRegistry, type AuditRecord } from '../audit-record.js'
 import { AuditThrottle } from '../audit-throttle.js'
 import type { IEnvironmentService } from '../control-plane-host.js'
-import { EnvironmentUnreachableError, type EnvironmentEndpoints, type EnvironmentUrlsLease } from '../environment-endpoints.js'
+import { EnvironmentUnreachableError, type EnvironmentEndpoints, type EnvironmentUrlsLease, type IEnvironmentReach } from '../environment-endpoints.js'
+import { InClusterEnvironmentReach } from '../in-cluster-environment-reach.js'
+import type { IKubectl } from '../kubectl.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import type { HiveRecord, TenantRecord } from '../platform-records.js'
 import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
@@ -238,14 +240,21 @@ class RelayEndpoints
 class CountingDialer implements IUpstreamDialer
 {
     public dials = 0
+    /** Every URL the relay asked to dial, as asked. */
+    public readonly urls: string[] = []
     /** When set, a dial resolves only after this gate opens (the test acts on the client socket meanwhile). */
     public gate: Promise<void> | undefined
+    /** When set, the dial goes to this origin instead (path and query kept): stands in for cluster DNS. */
+    public redirectOrigin: string | undefined
     private readonly inner = new WsUpstreamDialer()
 
     public async Dial(url: string, bearer: string): Promise<WebSocket>
     {
         this.dials++
-        const ws = await this.inner.Dial(url, bearer)
+        this.urls.push(url)
+        const parsed = new URL(url)
+        const target = this.redirectOrigin === undefined ? url : this.redirectOrigin + parsed.pathname + parsed.search
+        const ws = await this.inner.Dial(target, bearer)
         await this.gate
         return ws
     }
@@ -274,6 +283,41 @@ class RelayDirectory implements ITenantDirectory
     public ListHives(): readonly HiveRecord[]
     {
         return []
+    }
+}
+
+/** An IKubectl stand-in that records every call; the relay must make none (no port-forward, no Secret read). */
+class RecordingKubectl
+{
+    public readonly calls: string[] = []
+
+    public async Get(namespace: string, resource: string): Promise<string>
+    {
+        this.calls.push(namespace + '/' + resource)
+        throw new Error('not expected')
+    }
+}
+
+/** Wraps a reach to count its leases and their releases. */
+class LeaseCountingReach implements IEnvironmentReach
+{
+    public leases = 0
+    public releases = 0
+
+    public constructor(private readonly inner: IEnvironmentReach)
+    {
+    }
+
+    public async UrlsFor(rec: EnvironmentRecord): Promise<EnvironmentUrlsLease>
+    {
+        const lease = await this.inner.UrlsFor(rec)
+        this.leases++
+        return { ...lease, Release: () => { this.releases++; lease.Release() } }
+    }
+
+    public AdminPasswordFor(rec: EnvironmentRecord, dataRoot: string): Promise<string>
+    {
+        return this.inner.AdminPasswordFor(rec, dataRoot)
     }
 }
 
@@ -313,6 +357,8 @@ class RelayKit
     public static readonly DeployToken = 'minted-deploy-credential'
     public static readonly Graph = 'payments'
     public static readonly NotAvailable = 'This method is not available through the desktop relay.'
+    /** The Dev env's recorded in-cluster endpoint (its Service DNS); only an in-cluster reach reads it. */
+    public static readonly DevEndpoint = { httpUrl: 'http://s.pragmatic-env-acme-dev.svc.cluster.local:8080', wsUrl: 'ws://s.pragmatic-env-acme-dev.svc.cluster.local:8080/?environment=' + RelayKit.DevId }
 
     public dir = ''
     public store!: TenantSessionStore
@@ -330,6 +376,11 @@ class RelayKit
     private server: Server | undefined
     private port = 0
 
+    /** `reach` replaces the counting RelayEndpoints fake; the dialer then reaches the fake upstream in place of cluster DNS. */
+    public constructor(private readonly reach?: IEnvironmentReach)
+    {
+    }
+
     public async Start(capabilities?: DesktopCapabilitiesSource, desktopTtlMs?: number, refusalThrottle?: AuditThrottle, auditOf: (path: string) => AuditRegistry = path => new AuditRegistry(path)): Promise<void>
     {
         this.dir = await mkdtemp(join(tmpdir(), 'desktop-relay-'))
@@ -339,17 +390,21 @@ class RelayKit
         this.upstream = new FakeUpstream()
         const upstreamPort = await this.upstream.Start()
         this.service = new RelayService([
-            RelayKit.Record(RelayKit.Dev, RelayKit.DevId, RelayKit.TenantId, EnvType.Development, EnvStatus.Running),
+            { ...RelayKit.Record(RelayKit.Dev, RelayKit.DevId, RelayKit.TenantId, EnvType.Development, EnvStatus.Running), endpoint: RelayKit.DevEndpoint },
             RelayKit.Record(RelayKit.DevStopped, 'env-stopped', RelayKit.TenantId, EnvType.Development, EnvStatus.Stopped),
             RelayKit.Record(RelayKit.Run, RelayKit.RunId, RelayKit.TenantId, EnvType.Runtime, EnvStatus.Running),
             RelayKit.Record(RelayKit.ForeignDev, 'env-foreign', RelayKit.OtherTenant, EnvType.Development, EnvStatus.Running),
         ])
         this.endpoints = new RelayEndpoints(upstreamPort)
         this.dialer = new CountingDialer()
+        if (this.reach !== undefined)
+        {
+            this.dialer.redirectOrigin = 'ws://127.0.0.1:' + String(upstreamPort)
+        }
         const service = this.service as unknown as IEnvironmentService
         this.gate = new HoldingGate(this.store, this.directory)
         this.relay = new DesktopRelay(this.gate, new DesktopTargets(service, this.directory, capabilities), service,
-            this.endpoints as unknown as EnvironmentEndpoints, this.audit, this.dialer, refusalThrottle, false, this.clock)
+            this.reach ?? this.endpoints as unknown as EnvironmentEndpoints, this.audit, this.dialer, refusalThrottle, false, this.clock)
         this.service.clock = this.clock
         this.desktopToken = (await this.store.Issue(RelayKit.TenantId, RelayKit.Principal, RelayKit.Email, TenantSessionKind.Desktop)).id
         this.consoleToken = (await this.store.Issue(RelayKit.TenantId, RelayKit.Principal, RelayKit.Email)).id
@@ -1131,5 +1186,37 @@ describe('DesktopRelay publish', () =>
         assert.equal(rec.path, RelayKit.Run)
         assert.equal(rec.status, 200)
         assert.equal(rec.note, 'shop')
+    })
+})
+
+describe('DesktopRelay over an in-cluster reach', () =>
+{
+    let kit: RelayKit
+    let kubectl: RecordingKubectl
+    let reach: LeaseCountingReach
+
+    beforeEach(async () =>
+    {
+        kubectl = new RecordingKubectl()
+        reach = new LeaseCountingReach(new InClusterEnvironmentReach(kubectl as unknown as IKubectl))
+        kit = new RelayKit(reach)
+        await kit.Start()
+    })
+
+    afterEach(async () =>
+    {
+        await kit.Stop()
+    })
+
+    it('an in-cluster reach dials the env\'s Service DNS with its environment query and holds no lease', async () =>
+    {
+        const client = await kit.Client(RelayKit.Dev, 'contribute')
+        assert.deepEqual(await client.ListGraphs(), [])
+        await client.DisposeAsync()
+        await RelayKit.Until(() => kit.upstream.closedByPeer === 1)
+        assert.deepEqual(kit.dialer.urls, ['ws://s.pragmatic-env-acme-dev.svc.cluster.local:8080/?environment=' + RelayKit.DevId])
+        assert.equal(reach.leases, 1, 'UrlsFor ran once')
+        assert.equal(reach.releases, 1, 'the pipe released its (no-op) lease when it closed')
+        assert.deepEqual(kubectl.calls, [], 'no port-forward and no Secret read')
     })
 })

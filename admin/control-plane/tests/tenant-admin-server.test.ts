@@ -107,6 +107,34 @@ class Names
     public static readonly SendFailed = 'send failed'
     public static readonly Utf8 = 'utf8'
     public static readonly CloseEvent = 'close'
+    public static readonly ConsolePath = '/desktop/console'
+    public static readonly DesktopAuditFile = 'tenant-desktop-audit.json'
+    public static readonly ServiceHostVar = 'KUBERNETES_SERVICE_HOST'
+    public static readonly ServiceHost = '10.0.0.1'
+    public static readonly ServiceAccountDir = 'sa'
+    public static readonly TokenFile = 'token'
+    public static readonly CaFile = 'ca.crt'
+    public static readonly ClientAddress = '127.0.0.1'
+    public static readonly AuditActor = 'acme/ann@acme.test'
+    public static readonly AuditMethod = 'contribute'
+    public static readonly AuditPath = 'acme-dev'
+    public static readonly EmptyJson = 'null'
+}
+
+/** Drives `/desktop/*` requests straight through a composed plane's desktop endpoint, as Plexus would (no Origin header). */
+class DesktopProbe
+{
+    public static async Get(composition: TenantAdminComposition, path: string): Promise<{ handled: boolean; status: number; body: unknown }>
+    {
+        const req = Object.assign(Readable.from([]), { method: Names.Get, headers: {}, socket: { remoteAddress: Names.ClientAddress } })
+        let status = 0
+        let text = Names.EmptyJson
+        const res = { writeHead: (s: number) => { status = s }, end: (b: string) => { text = b } }
+        const desktop = composition.plane.desktop
+        assert.ok(desktop !== undefined, 'the console plane carries the desktop surface')
+        const handled = await desktop.Handle(req as unknown as IncomingMessage, res as unknown as ServerResponse, path)
+        return { handled, status, body: JSON.parse(text) }
+    }
 }
 
 describe('TenantAdminServer', () =>
@@ -210,6 +238,70 @@ describe('TenantAdminServer', () =>
         const server = new TenantAdminServer(TenantAdminServer.ReadConfig(env()), new FakeRolloutClient())
         const composition = await server.Compose({ ...env(), KUBERNETES_SERVICE_HOST: '10.0.0.1' }, saRoot)
         assert.ok(composition.reach instanceof InClusterEnvironmentReach)
+    })
+
+    /** A pod's seed (an attachable local cluster) and a temp service-account dir; returns the dir. */
+    const writePod = (): string =>
+    {
+        writeSeedJson({ tenant, hives: [{ ...hive, cluster: { backend: 'local', mode: 'attach' } }] })
+        writeFileSync(join(root, Names.MasterKeyFile), randomBytes(Names.KeyBytes))
+        const saRoot = join(root, Names.ServiceAccountDir)
+        mkdirSync(saRoot)
+        writeFileSync(join(saRoot, Names.TokenFile), Names.TokenFile)
+        writeFileSync(join(saRoot, Names.CaFile), Names.CaFile)
+        return saRoot
+    }
+
+    it('Compose without a service account has no relay', async () =>
+    {
+        writeSeed()
+        writeFileSync(join(root, Names.MasterKeyFile), randomBytes(Names.KeyBytes))
+        const server = new TenantAdminServer(TenantAdminServer.ReadConfig(env()), new FakeRolloutClient())
+        const composition = await server.Compose({}, undefined, () => undefined)
+        assert.ok(composition.plane.desktop !== undefined, 'sign-in and targets are still served')
+        assert.equal(composition.plane.relay, undefined)
+    })
+
+    it('Compose in a pod mounts the relay over the composition\'s reach and audits under the data root', async () =>
+    {
+        const saRoot = writePod()
+        const server = new TenantAdminServer(TenantAdminServer.ReadConfig(env()), new FakeRolloutClient())
+        // No network call at compose: the service host is never dialled (nothing listens there in the test).
+        const composition = await server.Compose({ ...env(), [Names.ServiceHostVar]: Names.ServiceHost }, saRoot, () => undefined)
+        assert.ok(composition.reach instanceof InClusterEnvironmentReach)
+        assert.ok(composition.plane.relay !== undefined)
+        assert.equal(existsSync(join(root, Names.DesktopAuditFile)), false, 'nothing is written at compose')
+        await composition.desktopAudit.Append({ actor: Names.AuditActor, method: Names.AuditMethod, path: Names.AuditPath, status: Names.Ok, at: Names.Created })
+        assert.ok(existsSync(join(root, Names.DesktopAuditFile)))
+    })
+
+    it('closing the composed host closes the relay after the listener (its audit writes awaited)', async () =>
+    {
+        const saRoot = writePod()
+        const cfg = TenantAdminServer.ReadConfig({ ...env(), [Names.ProbeVar]: Names.ProbeOff })
+        const composition = await new TenantAdminServer(cfg, new FakeRolloutClient()).Compose({ ...env(), [Names.ServiceHostVar]: Names.ServiceHost }, saRoot, () => undefined)
+        const relay = composition.plane.relay
+        assert.ok(relay !== undefined)
+        const close = relay.Close.bind(relay)
+        let relayClosed = false
+        relay.Close = async () =>
+        {
+            await close()
+            relayClosed = true
+        }
+        await composition.host.Listen(0, Names.DefaultBind)
+        await composition.host.Close()
+        assert.equal(relayClosed, true)
+    })
+
+    it('Compose loads the desktop audit file before building the plane', async () =>
+    {
+        const saRoot = writePod()
+        const podEnv = { ...env(), [Names.ServiceHostVar]: Names.ServiceHost }
+        const first = await new TenantAdminServer(TenantAdminServer.ReadConfig(env()), new FakeRolloutClient()).Compose(podEnv, saRoot, () => undefined)
+        await first.desktopAudit.Append({ actor: Names.AuditActor, method: Names.AuditMethod, path: Names.AuditPath, status: Names.Ok, at: Names.Created })
+        const second = await new TenantAdminServer(TenantAdminServer.ReadConfig(env()), new FakeRolloutClient()).Compose(podEnv, saRoot, () => undefined)
+        assert.deepEqual(second.desktopAudit.List().map(r => r.actor), [Names.AuditActor])
     })
 
     for (const missing of [Names.DataRootVar, Names.PortVar, Names.DomainVar])
@@ -478,6 +570,15 @@ describe('TenantAdminServer console advert', () =>
         writeConsoleSeed()
         const server = new TenantAdminServer(TenantAdminServer.ReadConfig(baseEnv()), new FakeRolloutClient())
         const composition = await server.Compose({}, undefined, () => undefined)
+        assert.deepEqual(await handle(composition, Names.Get), { status: Names.Ok, body: { domains: [Names.EmailDomain], editable: true, inHive: true, pending: [] } })
+    })
+
+    it('Compose serves the desktop surface and its lookup, keeping the email-domain route', async () =>
+    {
+        writeConsoleSeed()
+        const server = new TenantAdminServer(TenantAdminServer.ReadConfig(baseEnv()), new FakeRolloutClient())
+        const composition = await server.Compose({}, undefined, () => undefined)
+        assert.deepEqual(await DesktopProbe.Get(composition, Names.ConsolePath), { handled: true, status: Names.Ok, body: { tenantId: Names.TenantId, tenantName: Names.TenantName } })
         assert.deepEqual(await handle(composition, Names.Get), { status: Names.Ok, body: { domains: [Names.EmailDomain], editable: true, inHive: true, pending: [] } })
     })
 
