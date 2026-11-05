@@ -282,6 +282,9 @@ class SwitchableAdverts extends ConsoleAdvertRegistry
 class RecordingOwnerResets extends ConsoleOwnerResets
 {
     public FailForget = false
+    /** Records made so far; a Record whose number is listed here fails (1-based). */
+    public Records = 0
+    public FailingRecords: number[] = []
 
     public constructor(path: string, private readonly events: string[])
     {
@@ -291,6 +294,11 @@ class RecordingOwnerResets extends ConsoleOwnerResets
     public override async Record(tenantId: string): Promise<string>
     {
         this.events.push('RecordOwnerReset')
+        this.Records++
+        if (this.FailingRecords.includes(this.Records))
+        {
+            throw new Error('disk full: secret-detail')
+        }
         return await super.Record(tenantId)
     }
 
@@ -738,11 +746,33 @@ describe('ControlPlaneHost in-hive console install', () =>
         assert.ok(fx.Events.indexOf('RecordOwnerReset') < fx.Events.indexOf('ResetOwnerPassword'))
     })
 
+    it('a successful Owner reset is recorded again after the IdP call, so a session opened meanwhile still ends', async () =>
+    {
+        assert.equal((await Send.Request(host, 'POST', '/api/hives/h1/console/owner-password')).status, 200)
+        const sequence = fx.Events.filter(e => e === 'RecordOwnerReset' || e === 'ResetOwnerPassword')
+        assert.deepEqual(sequence, ['RecordOwnerReset', 'ResetOwnerPassword', 'RecordOwnerReset'])
+    })
+
+    it('a failing second record does not fail the reset, and logs the error name only', async () =>
+    {
+        ownerResets.FailingRecords = [2]
+        let r: { status: number; body: string } | undefined
+        const lines = await ErrorLines.Capture(async () =>
+        {
+            r = await Send.Request(host, 'POST', '/api/hives/h1/console/owner-password')
+        })
+        assert.equal(r!.status, 200)
+        assert.deepEqual(JSON.parse(r!.body), { ownerEmail: 'owner@t1.test', ownerPassword: FakeInHiveIdpAdmin.Password })
+        assert.equal(lines.filter(l => l.includes('Owner reset') && l.includes('Error')).length, 1)
+        assert.ok(lines.every(l => !l.includes('secret-detail') && !l.includes(FakeInHiveIdpAdmin.Password)))
+    })
+
     it('a reset the IdP then fails keeps its record (the console ends the Owner sessions once more, harmlessly)', async () =>
     {
         fx.IdpAdmin.ResetError = new PortForwardError(PortForwardError.NotReadyMessage)
         assert.equal((await Send.Request(host, 'POST', '/api/hives/h1/console/owner-password')).status, 503)
         assert.ok(ownerResets.Of('t1') !== undefined)
+        assert.equal(fx.Events.filter(e => e === 'RecordOwnerReset').length, 1)
     })
 
     it('a refused reset (installing, or no console) records nothing', async () =>

@@ -2307,7 +2307,7 @@ export class HivesResources extends ResourceDictionary {
             _textBlock476.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 8));
             _stackPanel475.AddChild(_textBlock476);
             const _textBlock477 = new TextBlock();
-            _textBlock477.set_property_value(TextBlock.TextKey, "The Owner's open sessions end within 5 minutes.");
+            _textBlock477.set_property_value(TextBlock.TextKey, "Within 5 minutes, while the console can reach the platform, every Owner session ends, including any opened with the new password before then. The Owner should sign in again after that.");
             _textBlock477.set_property_value(TextBlock.ForegroundKey, DynamicResource(_textBlock477, "StateWarningInk"));
             _textBlock477.set_property_value(TextBlock.TextWrappingKey, TextWrapping.Wrap);
             _textBlock477.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 8));

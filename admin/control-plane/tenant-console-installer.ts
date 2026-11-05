@@ -244,6 +244,7 @@ export class TenantConsoleInstaller
     private static readonly LogStepInfix = ' failed at '
     private static readonly LogErrorInfix = ': '
     private static readonly UnknownErrorName = 'Error'
+    private static readonly RerecordFailedInfix = ': recording the Owner reset again after the IdP call failed: '
     private static readonly Base64 = 'base64'
     private static readonly Hex = 'hex'
     private static readonly Utf8 = 'utf8'
@@ -479,7 +480,9 @@ export class TenantConsoleInstaller
      * Sets a fresh in-hive Owner password and returns it once. Refused while an install runs or before the console is configured.
      * The reset is recorded after those guards and BEFORE the IdP call, so a reset that succeeds is always followed by the console
      * ending the Owner's sessions at its next advert (a reset that then fails costs only one harmless extra revoke); a failed record
-     * fails the reset with nothing changed.
+     * fails the reset with nothing changed. After the IdP call succeeded the reset is recorded once more (a new value, best
+     * effort, a failure logged by error name only): the console may advert, revoke and mark the first value applied while the
+     * IdP call is still running, and a session opened with the old password in that window must end too.
      */
     public async ResetOwnerPassword(hiveId: string): Promise<InHiveOwnerPassword>
     {
@@ -502,7 +505,22 @@ export class TenantConsoleInstaller
             throw new UnknownTenantError(hive.tenantId)
         }
         await this.ownerResets?.Record(tenant.id)
-        return this.idpAdmin.ResetOwnerPassword(hive, tenant)
+        const reset = await this.idpAdmin.ResetOwnerPassword(hive, tenant)
+        await this.RecordAgain(hiveId, tenant.id)
+        return reset
+    }
+
+    private async RecordAgain(hiveId: string, tenantId: string): Promise<void>
+    {
+        const C = TenantConsoleInstaller
+        try
+        {
+            await this.ownerResets?.Record(tenantId)
+        }
+        catch (err)
+        {
+            console.error(C.LogPrefix + hiveId + C.RerecordFailedInfix + (err instanceof Error ? err.name : C.UnknownErrorName))
+        }
     }
 
     /** Runs the steps; never rejects: a failure is recorded on the run. */

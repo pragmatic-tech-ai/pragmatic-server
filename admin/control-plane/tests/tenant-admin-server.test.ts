@@ -814,6 +814,49 @@ describe('TenantAdminServer console advert', () =>
         }
     })
 
+    it('in a pod, an Owner reset in the advert answer closes the Owner relays of the composed relay itself', async () =>
+    {
+        // A pod console: the seeded hive is attachable and a service account is mounted, so the relay is composed.
+        writeFileSync(join(root, Names.SeedFile), JSON.stringify({ tenant, hives: [{ ...hive, cluster: { backend: 'local', mode: 'attach' } }] }))
+        writeFileSync(join(root, Names.MasterKeyFile), randomBytes(Names.KeyBytes))
+        const saRoot = join(root, Names.ServiceAccountDir)
+        mkdirSync(saRoot)
+        writeFileSync(join(saRoot, Names.TokenFile), Names.TokenFile)
+        writeFileSync(join(saRoot, Names.CaFile), Names.CaFile)
+        answerBody = JSON.stringify({ refusedEmailDomains: [], ownerResetAt: Names.OwnerResetAt })
+        const env = { ...(await runEnv(await listenChannel())), [Names.ServiceHostVar]: Names.ServiceHost }
+        const trap = new NetworkTrap()
+        trap.Install()
+        const composition = await new TenantAdminServer(TenantAdminServer.ReadConfig(env), new FakeRolloutClient()).Compose(env, saRoot, () => undefined)
+        try
+        {
+            const relay = composition.plane.relay
+            assert.ok(relay !== undefined, 'the pod console composes the relay')
+            // The relay instance the host serves: its ClosePrincipal is what ends open relay sockets (DesktopRelay tests
+            // prove each open pipe closes). Spied here, so a follower built over any other principal registry fails this.
+            const closed: Array<[string, string]> = []
+            const close = relay.ClosePrincipal.bind(relay)
+            relay.ClosePrincipal = (tenantId: string, principalId: string, keep?: string) =>
+            {
+                closed.push([tenantId, principalId])
+                return close(tenantId, principalId, keep)
+            }
+            await composition.host.Listen(0, Names.DefaultBind)
+            await composition.advert?.Start()
+            assert.ok(composition.advert !== undefined, 'the configured console adverts')
+            assert.deepEqual(JSON.parse(readFileSync(join(root, ConsoleOwnerResetFollower.FileName), Names.Utf8)), { appliedAt: Names.OwnerResetAt })
+            assert.deepEqual(closed, [[Names.TenantId, Names.PrincipalId]], 'the Owner relays of the served relay are closed')
+            assert.deepEqual(trap.Calls, [], 'no Kubernetes API call and no kubectl process')
+        }
+        finally
+        {
+            composition.advert?.Stop()
+            await composition.advert?.Idle()
+            await composition.host.Close()
+            trap.Restore()
+        }
+    })
+
     it('Run sends the advert after listening and Close stops it', async () =>
     {
         writeConsoleSeed()

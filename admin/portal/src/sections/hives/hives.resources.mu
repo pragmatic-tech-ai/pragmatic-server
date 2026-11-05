@@ -865,7 +865,7 @@ resources HivesResources {
                 StackPanel [ Orientation = Vertical ] {
                     TextBlock [ Text = "This password is shown once and the old one no longer works. Pass it on over a secure channel; it is gone when you leave this page.",
                                 Foreground = @StateWarningInk, TextWrapping = Wrap, Margin = (0,0,0,8) ]
-                    TextBlock [ Text = "The Owner's open sessions end within 5 minutes.",
+                    TextBlock [ Text = "Within 5 minutes, while the console can reach the platform, every Owner session ends, including any opened with the new password before then. The Owner should sign in again after that.",
                                 Foreground = @StateWarningInk, TextWrapping = Wrap, Margin = (0,0,0,8) ]
                     StackPanel [ Orientation = Horizontal, Margin = (0,0,0,4) ] {
                         TextBlock [ Text = "Owner", Style = @UiCaption, Foreground = @Fg2, VerticalAlignment = Center, Margin = (0,0,8,0) ]
