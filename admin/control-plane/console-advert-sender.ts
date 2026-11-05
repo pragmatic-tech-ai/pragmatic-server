@@ -2,6 +2,7 @@ import { Disposable, Signal, type IDisposable } from '@pragmatic-tech-ai/todl-ru
 import { ConsoleFingerprint, type ConsoleAdvertAnswer, type ConsoleAdvertBody } from './console-advert-contract.js'
 import type { ConsoleEmailDomainStore } from './console-email-domain-store.js'
 import type { TenantRecord } from './platform-records.js'
+import { OwnerResetTime } from './tenant-owner.js'
 
 /** The console's sign-in accounts, as account emails; `Changed` fires whenever that list may have changed. */
 export interface IConsoleAccountSource
@@ -157,7 +158,7 @@ export class HttpConsoleAdvertTransport implements IConsoleAdvertTransport
             return {}
         }
         const value = (parsed as Record<string, unknown>)[HttpConsoleAdvertTransport.OwnerResetKey]
-        return typeof value === 'string' && !Number.isNaN(Date.parse(value)) ? { ownerResetAt: value } : {}
+        return OwnerResetTime.IsWellFormed(value) ? { ownerResetAt: value } : {}
     }
 
     /** The answer's text when it fits MaxAnswerBytes; undefined when it is longer (the rest is not read) or its read fails. */

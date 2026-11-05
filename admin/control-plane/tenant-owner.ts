@@ -18,3 +18,17 @@ export class TenantOwner
         return tenant.ownerPrincipalId ?? TenantOwner.DefaultPrincipalId
     }
 }
+
+/**
+ * The one home of the rule for an operator Owner reset time as it crosses from the control plane to the in-hive console: the
+ * control plane's record file, the advert transport reading the answer and the console's follower all accept exactly the
+ * values this accepts. Kept here, dependency-free, so the follower may use it.
+ */
+export class OwnerResetTime
+{
+    /** A string that Date.parse reads as a time. */
+    public static IsWellFormed(value: unknown): value is string
+    {
+        return typeof value === 'string' && !Number.isNaN(Date.parse(value))
+    }
+}

@@ -1,7 +1,6 @@
-import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
-import { TenantOwner, type OwnedTenant } from './tenant-owner.js'
+import { readFile } from 'node:fs/promises'
+import { AtomicJsonFile, SerialRuns } from './atomic-json-file.js'
+import { OwnerResetTime, TenantOwner, type OwnedTenant } from './tenant-owner.js'
 
 /**
  * What the follower ends: every session of a principal, console and desktop, with its open sockets and desktop relays
@@ -23,18 +22,18 @@ export interface IOwnerSessionEnder
  * Once the revoke resolved the value counts as applied in memory, so a marker write that fails is reported (the caller logs
  * it) without signing the Owner out again at later adverts of this process; only a restart, finding no durable marker,
  * revokes once more (never a missed reset). A failed revoke itself leaves the value unapplied and is retried at every advert.
- * Kept free of control-plane imports: only the Owner rule (tenant-owner.ts) and node built-ins.
+ * Kept free of control-plane imports: only the Owner rules (tenant-owner.ts), the atomic file write (atomic-json-file.ts)
+ * and node built-ins.
  */
 export class ConsoleOwnerResetFollower
 {
     public static readonly FileName = 'owner-reset-applied.json'
     private static readonly AppliedKey = 'appliedAt'
     private static readonly Utf8 = 'utf8'
-    private static readonly TempSuffix = '.tmp'
 
     /** The applied value once read or written; undefined until the marker is first read. */
     private applied: { value: string | undefined } | undefined
-    private chain: Promise<void> = Promise.resolve()
+    private readonly runs = new SerialRuns()
 
     public constructor(
         private readonly principals: IOwnerSessionEnder,
@@ -49,14 +48,12 @@ export class ConsoleOwnerResetFollower
      */
     public Apply(resetAt: string | undefined): Promise<boolean>
     {
-        const run = this.chain.then(() => this.ApplyNow(resetAt))
-        this.chain = run.then(() => undefined, () => undefined)
-        return run
+        return this.runs.Run(() => this.ApplyNow(resetAt))
     }
 
     private async ApplyNow(resetAt: string | undefined): Promise<boolean>
     {
-        if (typeof resetAt !== 'string' || Number.isNaN(Date.parse(resetAt)))
+        if (!OwnerResetTime.IsWellFormed(resetAt))
         {
             return false
         }
@@ -96,19 +93,8 @@ export class ConsoleOwnerResetFollower
         }
     }
 
-    private async WriteMarker(value: string): Promise<void>
+    private WriteMarker(value: string): Promise<void>
     {
-        await mkdir(dirname(this.path), { recursive: true })
-        const temp = `${this.path}.${randomUUID()}${ConsoleOwnerResetFollower.TempSuffix}`
-        await writeFile(temp, JSON.stringify({ [ConsoleOwnerResetFollower.AppliedKey]: value }), ConsoleOwnerResetFollower.Utf8)
-        try
-        {
-            await rename(temp, this.path)
-        }
-        catch (err)
-        {
-            await unlink(temp).catch(() => undefined)
-            throw err
-        }
+        return AtomicJsonFile.Write(this.path, { [ConsoleOwnerResetFollower.AppliedKey]: value })
     }
 }

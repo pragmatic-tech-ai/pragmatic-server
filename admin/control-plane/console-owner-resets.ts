@@ -1,7 +1,7 @@
-import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { readFile } from 'node:fs/promises'
+import { AtomicJsonFile, SerialRuns } from './atomic-json-file.js'
 import type { IOwnerResetSource } from './console-advert-receiver.js'
+import { OwnerResetTime } from './tenant-owner.js'
 
 /** Where the console installer records an operator Owner reset (before it reaches the IdP) and forgets it with the tenant. */
 export interface IOwnerResetRecorder
@@ -23,12 +23,11 @@ export class ConsoleOwnerResets implements IOwnerResetRecorder, IOwnerResetSourc
     public static readonly FileName = 'console-owner-resets.json'
     private static readonly Utf8 = 'utf8'
     private static readonly NotFoundCode = 'ENOENT'
-    private static readonly TempSuffix = '.tmp'
     private static readonly JsonIndent = 2
     private static readonly MalformedPrefix = 'Invalid Owner reset file (expected { [tenantId]: ISO time }): '
 
     private resets = new Map<string, string>()
-    private writes: Promise<void> = Promise.resolve()
+    private readonly writes = new SerialRuns()
 
     public constructor(private readonly filePath: string, private readonly now: () => Date = () => new Date())
     {
@@ -96,25 +95,12 @@ export class ConsoleOwnerResets implements IOwnerResetRecorder, IOwnerResetSourc
 
     private Serialised<T>(change: () => Promise<T>): Promise<T>
     {
-        const run = this.writes.then(change)
-        this.writes = run.then(() => undefined, () => undefined)
-        return run
+        return this.writes.Run(change)
     }
 
     private async Commit(next: Map<string, string>): Promise<void>
     {
-        await mkdir(dirname(this.filePath), { recursive: true })
-        const temp = `${this.filePath}.${randomUUID()}${ConsoleOwnerResets.TempSuffix}`
-        await writeFile(temp, JSON.stringify(Object.fromEntries(next), null, ConsoleOwnerResets.JsonIndent), ConsoleOwnerResets.Utf8)
-        try
-        {
-            await rename(temp, this.filePath)
-        }
-        catch (err)
-        {
-            await unlink(temp).catch(() => undefined)
-            throw err
-        }
+        await AtomicJsonFile.Write(this.filePath, Object.fromEntries(next), ConsoleOwnerResets.JsonIndent)
         this.resets = next
     }
 
@@ -134,7 +120,7 @@ export class ConsoleOwnerResets implements IOwnerResetRecorder, IOwnerResetSourc
             throw new Error(ConsoleOwnerResets.MalformedPrefix + filePath)
         }
         const entries = Object.entries(body as Record<string, unknown>)
-        if (!entries.every(([, v]) => typeof v === 'string' && !Number.isNaN(Date.parse(v))))
+        if (!entries.every(([, v]) => OwnerResetTime.IsWellFormed(v)))
         {
             throw new Error(ConsoleOwnerResets.MalformedPrefix + filePath)
         }
