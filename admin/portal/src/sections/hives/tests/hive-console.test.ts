@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { ApiError } from '../../../api-client.js'
 import { OperatorContext } from '../../../operator-context.js'
 import { ConsoleInstallState, ConsoleInstallStep, IngressTlsSource } from '../../../portal-types.js'
+import type { IClipboardSource } from '../../../shell/one-time-secret-page-view-model.js'
 import type { OptionViewModel } from '../../../shell/option-view-model.js'
 import { FakeControlPlane, Inspect, PortalTestHost, TestRail, Tick, type FakePollScheduler } from '../../../shell/tests/portal-test-fixtures.js'
 import { TenantsSectionService } from '../../tenants/tenants-section-service.js'
@@ -20,6 +21,7 @@ class ConsoleFixture
     public readonly Host: PortalTestHost
     public readonly Polls: FakePollScheduler
     public readonly Rail: TestRail
+    public readonly Copied: string[]
 
     public constructor(wireRole: string = OperatorContext.FullWireRole)
     {
@@ -30,7 +32,7 @@ class ConsoleFixture
         this.Api.AutoInstall = true
         this.Host = new PortalTestHost(this.Api.AsClient(), wireRole)
         this.Host.UseDialogs()
-        this.Host.UseClipboard()
+        this.Copied = this.Host.UseClipboard()
         this.Polls = this.Host.UsePolls()
         this.Host.Provider.register(HivesSectionService.Key, (p) => new HivesSectionService(p))
         this.Host.Provider.register(TenantsSectionService.Key, (p) => new TenantsSectionService(p))
@@ -44,10 +46,15 @@ class ConsoleFixture
         return this.Host.Host.Content
     }
 
-    // A bare console panel for h1, loaded with its record.
-    public Panel(): HiveConsoleViewModel
+    public get Section(): HivesSectionService
     {
-        const panel = new HiveConsoleViewModel(this.Host.Session, 'h1', this.Polls)
+        return this.Host.Provider.getRequired(HivesSectionService.Key)
+    }
+
+    // A bare console panel for h1, loaded with its record (copying through the section, or the given source).
+    public Panel(clipboard: IClipboardSource = this.Section): HiveConsoleViewModel
+    {
+        const panel = new HiveConsoleViewModel(this.Host.Session, 'h1', clipboard, this.Polls)
         panel.Load(this.Api.Hives[0]!)
         return panel
     }
@@ -158,13 +165,13 @@ describe('Hive tenant console (panel)', () =>
         const fx = new ConsoleFixture()
         const panel = await fx.Configured()
         assert.equal(panel.InstallCommand.CanExecute(), true)
-        assert.equal(panel.SetOwnerPasswordCommand.CanExecute(), false)
         panel.InstallCommand.Execute()
         await Tick.Settle()
         assert.deepEqual(fx.Api.ConsoleInstallStarts, ['h1'])
         assert.equal(panel.IsInstalling, true)
         assert.equal(panel.InstallCommand.CanExecute(), false)
         assert.equal(panel.SaveCommand.CanExecute(), false)
+        assert.equal(panel.SetOwnerPasswordCommand.CanExecute(), false)
         assert.deepEqual(panel.Steps.ToArray().map(s => s.Label), [
             'Check the hive agent', 'Prepare certificates', 'Apply the console', 'Store its secrets', 'Wait for it to start', 'Create the Owner account',
         ])
@@ -266,6 +273,142 @@ describe('Hive tenant console (panel)', () =>
         assert.equal(panel.RemoveCommand.CanExecute(), false)
     })
 
+    it('a refused start (another hive operation runs) stays Idle and shows only the sentence', async () =>
+    {
+        const fx = new ConsoleFixture()
+        const panel = await fx.Configured()
+        fx.Api.ConsoleFailure = new ApiError(409, 'An agent install is running for this hive. Wait for it to finish (or fail) before installing the console.')
+        await panel.Install()
+        assert.equal(panel.IsIdle, true)
+        assert.equal(panel.IsFailed, false)
+        assert.equal(panel.HasProgress, false)
+        assert.equal(panel.StatusText, '')
+        assert.equal(panel.ErrorText, 'An agent install is running for this hive. Wait for it to finish (or fail) before installing the console.')
+        assert.equal(panel.RetryCommand.CanExecute(), false)
+        assert.equal(fx.Polls.Pending, 0)
+    })
+
+    it('a refused reinstall keeps the deployed install showing', async () =>
+    {
+        const fx = new ConsoleFixture()
+        const panel = await fx.Configured()
+        fx.Api.ConsoleInstallReplies = [FakeControlPlane.ConsoleStatus(ConsoleInstallState.Deployed, ConsoleInstallStep.SeedingOwner, { consoleUrl: 'https://console-acme.localtest.me' })]
+        await panel.Resume()
+        fx.Api.ConsoleFailure = new ApiError(409, 'Another operation is running for this hive. Wait for it to finish, then try again.')
+        await panel.Install()
+        assert.equal(panel.IsDeployed, true)
+        assert.equal(panel.ConsoleUrl, 'https://console-acme.localtest.me')
+        assert.ok(panel.Steps.ToArray().every(s => s.IsDone))
+        assert.equal(panel.ErrorText, 'Another operation is running for this hive. Wait for it to finish, then try again.')
+    })
+
+    it('a 409 from Save (a console install runs) shows its sentence', async () =>
+    {
+        const fx = new ConsoleFixture()
+        const panel = fx.Panel()
+        panel.BaseDomain = 'localtest.me'
+        panel.SelectedTls = ConsoleFixture.Option(panel, IngressTlsSource.Development)
+        fx.Api.ConsoleFailure = new ApiError(409, 'A console install is running for this hive. Wait for it to finish (or fail), then try again.')
+        await panel.Save()
+        assert.equal(panel.ErrorText, 'A console install is running for this hive. Wait for it to finish (or fail), then try again.')
+        assert.equal(panel.IsConfigured, false)
+    })
+
+    it('after a control-plane restart (no install status) a configured console still offers Set Owner password', async () =>
+    {
+        const fx = new ConsoleFixture()
+        const panel = await fx.Configured()
+        fx.Api.ConsoleInstallReplies = []
+        await panel.Resume()
+        assert.equal(panel.IsIdle, true)
+        assert.equal(panel.SetOwnerPasswordCommand.CanExecute(), true)
+        panel.SetOwnerPasswordCommand.Execute()
+        await Tick.Settle()
+        assert.deepEqual(fx.Api.InHiveOwnerResets, ['h1'])
+        assert.equal(panel.OwnerPassword, fx.Api.InHiveOwnerPassword)
+    })
+
+    it('an unconfigured console offers no Set Owner password', () =>
+    {
+        const fx = new ConsoleFixture()
+        const panel = fx.Panel()
+        assert.equal(panel.SetOwnerPasswordCommand.CanExecute(), false)
+    })
+
+    it('Copy puts the Owner password on the clipboard and reports it without echoing it; Stop clears the status', async () =>
+    {
+        const fx = new ConsoleFixture()
+        const panel = await fx.Configured()
+        await panel.Resume()
+        assert.equal(panel.CopyPasswordCommand.CanExecute(), false)
+        await panel.SetOwnerPassword()
+        assert.equal(panel.CopyPasswordCommand.CanExecute(), true)
+        panel.CopyPasswordCommand.Execute()
+        await Tick.Settle()
+        assert.deepEqual(fx.Copied, [fx.Api.InHiveOwnerPassword])
+        assert.equal(panel.PasswordCopyStatus, 'Copied.')
+        panel.Stop()
+        assert.equal(panel.PasswordCopyStatus, '')
+        assert.equal(panel.OwnerPassword, '')
+    })
+
+    it('Copy reports a failure when there is no clipboard', async () =>
+    {
+        const fx = new ConsoleFixture()
+        const panel = fx.Panel({ Clipboard: undefined })
+        panel.BaseDomain = 'localtest.me'
+        panel.SelectedTls = ConsoleFixture.Option(panel, IngressTlsSource.Development)
+        await panel.Save()
+        await panel.Resume()
+        await panel.SetOwnerPassword()
+        panel.CopyPasswordCommand.Execute()
+        await Tick.Settle()
+        assert.equal(panel.PasswordCopyStatus, 'Could not copy. Select the value and copy it by hand.')
+        assert.deepEqual(fx.Copied, [])
+    })
+
+    it('Copy puts the dev trust command on the clipboard', async () =>
+    {
+        const fx = new ConsoleFixture()
+        const panel = await fx.Configured()
+        assert.equal(panel.CopyTrustCommandCommand.CanExecute(), false)
+        fx.Api.ConsoleInstallReplies = [FakeControlPlane.ConsoleStatus(ConsoleInstallState.Deployed, ConsoleInstallStep.SeedingOwner, {
+            devCaFile: 'C:\\data\\dev-ca\\localtest.me\\ca.crt',
+        })]
+        await panel.Resume()
+        panel.CopyTrustCommandCommand.Execute()
+        await Tick.Settle()
+        assert.deepEqual(fx.Copied, [panel.DevTrustCommand])
+        assert.equal(panel.TrustCopyStatus, 'Copied.')
+    })
+
+    it('a reload keeps unsaved edits; once saved, a reload shows the saved settings', async () =>
+    {
+        const fx = new ConsoleFixture()
+        const panel = await fx.Configured()
+        panel.BaseDomain = 'example.test'
+        panel.Load(fx.Api.Hives[0]!)
+        assert.equal(panel.BaseDomain, 'example.test')
+        assert.equal(panel.IsConfigured, true)
+        await panel.Save()
+        fx.Api.Hives[0]!.console = { baseDomain: 'other.test', tls: { source: IngressTlsSource.Development } }
+        panel.Load(fx.Api.Hives[0]!)
+        assert.equal(panel.BaseDomain, 'other.test')
+    })
+
+    it('clearing the Owner password never carries the old value in its change notification', async () =>
+    {
+        const fx = new ConsoleFixture()
+        const panel = await fx.Configured()
+        await panel.Resume()
+        await panel.SetOwnerPassword()
+        const olds: unknown[] = []
+        panel.PropertyChanged('OwnerPassword').subscribe(e => olds.push(e.oldValue))
+        panel.Stop()
+        assert.equal(panel.OwnerPassword, '')
+        assert.deepEqual(olds, [''])
+    })
+
     it('a removal the cluster refused shows its reason and keeps the settings', async () =>
     {
         const fx = new ConsoleFixture()
@@ -338,6 +481,36 @@ describe('Hive tenant console (hive page)', () =>
         assert.equal(panel.OwnerEmail, '')
         assert.equal(panel.HasOwnerPassword, false)
         assert.ok(!Inspect.ReachableStrings(detail, [fx.Api]).includes(fx.Api.InHiveOwnerPassword))
+    })
+
+    it('a reset reply that lands after the page was left is kept until the page shows again', async () =>
+    {
+        const fx = new ConsoleFixture()
+        fx.Api.Hives[0]!.console = { baseDomain: 'localtest.me', tls: { source: IngressTlsSource.Development } }
+        const detail = await fx.Detail()
+        const panel = detail.Console
+        let release: () => void = () => undefined
+        const gate = new Promise<void>(resolve => { release = resolve })
+        const reset = fx.Api.ResetInHiveOwnerPassword.bind(fx.Api)
+        fx.Api.ResetInHiveOwnerPassword = async (hiveId: string) =>
+        {
+            await gate
+            return reset(hiveId)
+        }
+        panel.SetOwnerPasswordCommand.Execute()
+        await Tick.Settle()
+        fx.Rail.Select(TenantsSectionService)
+        await Tick.Settle()
+        release()
+        await Tick.Settle()
+        assert.equal(panel.OwnerPassword, fx.Api.InHiveOwnerPassword)
+        fx.Rail.Select(HivesSectionService)
+        await Tick.Settle()
+        assert.equal(detail.IsShowing, true)
+        assert.equal(panel.OwnerPassword, fx.Api.InHiveOwnerPassword)
+        fx.Rail.Select(TenantsSectionService)
+        await Tick.Settle()
+        assert.equal(panel.OwnerPassword, '')
     })
 
     it('leaving the page stops the console install polling; coming back resumes it', async () =>

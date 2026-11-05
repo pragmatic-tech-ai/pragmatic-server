@@ -254,7 +254,7 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
         this.reissueTokenCommand = this.MutatingCommand(() => this.ReissueToken(), () => !this.agentInstall.IsInstalling)
         this.install = new HiveInstallViewModel(session, section, HiveInstallMode.FirstInstall)
         this.agentInstall = new HiveAgentInstallViewModel(session, Id, section.PollScheduler)
-        this.console = new HiveConsoleViewModel(session, Id, section.PollScheduler)
+        this.console = new HiveConsoleViewModel(session, Id, section, section.PollScheduler)
         this.toggleManualCommand = new RelayCommand(() => this.ToggleManual())
         this.pathShown = this.PathSnapshot()
         this.install.PropertyChanged(HiveInstallViewModel.AutoInstallProperty).subscribe(() => this.RaisePathChanged())

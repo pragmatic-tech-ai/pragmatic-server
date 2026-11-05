@@ -28,8 +28,8 @@
 // detail: where it is served (base domain, host, TLS source; development
 // self-signed is labelled development only), Install console with the same
 // step rows, the console address and the development CA trust command once
-// deployed, and Set Owner password, whose reply shows once in the panel and is
-// cleared when the page is left.
+// deployed (with Copy), and Set Owner password (any configured console), whose
+// reply shows once in the panel with Copy and is cleared when the page is left.
 //
 // Table rows use keyed templates set as the ListBox's ItemTemplate: a ListBox
 // resolves implicit-by-type templates only for MuralBase items, and the row
@@ -830,7 +830,14 @@ resources HivesResources {
                 StackPanel [ Orientation = Vertical ] {
                     TextBlock [ Text = "To trust the development CA on this machine, run this from the repository root (Windows asks you to confirm):",
                                 Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,4) ]
-                    TextBlock [ Text = $DevTrustCommand, Style = @Code, Foreground = @Fg0, TextWrapping = Wrap ]
+                    DockPanel {
+                        Button [ DockPanel.Dock = Right, Variant = Secondary, Command = $CopyTrustCommandCommand, VerticalAlignment = Top, Margin = (12,0,0,0) ] {
+                            TextBlock [ Text = "Copy" ]
+                        }
+                        TextBlock [ Text = $DevTrustCommand, Style = @Code, Foreground = @Fg0, TextWrapping = Wrap ]
+                    }
+                    TextBlock [ Text = $TrustCopyStatus, Style = @UiCaption, Foreground = @Fg2, Margin = (0,4,0,0),
+                                Visibility = $TrustCopyStatus << ToVisibility ]
                 }
             }
             Border [ Fill = @StateWarningSoft, Padding = (12,10,12,10), Margin = (0,0,0,8), Visibility = $ErrorText << ToVisibility ] {
@@ -843,7 +850,7 @@ resources HivesResources {
                 Button [ Variant = Secondary, Command = $InstallCommand, Margin = (0,0,8,0), Visibility = $IsDeployed << ToVisibility ] {
                     TextBlock [ Text = "Reinstall console" ]
                 }
-                Button [ Variant = Secondary, Command = $SetOwnerPasswordCommand, Visibility = $IsDeployed << ToVisibility ] {
+                Button [ Variant = Secondary, Command = $SetOwnerPasswordCommand, Visibility = $IsConfigured << ToVisibility ] {
                     TextBlock [ Text = "Set Owner password" ]
                 }
             }
@@ -855,10 +862,17 @@ resources HivesResources {
                         TextBlock [ Text = "Owner", Style = @UiCaption, Foreground = @Fg2, VerticalAlignment = Center, Margin = (0,0,8,0) ]
                         TextBlock [ Text = $OwnerEmail, Foreground = @Fg0, VerticalAlignment = Center ]
                     }
-                    StackPanel [ Orientation = Horizontal ] {
-                        TextBlock [ Text = "Password", Style = @UiCaption, Foreground = @Fg2, VerticalAlignment = Center, Margin = (0,0,8,0) ]
-                        TextBlock [ Text = $OwnerPassword, Style = @Code, Foreground = @Fg0, VerticalAlignment = Center ]
+                    DockPanel {
+                        Button [ DockPanel.Dock = Right, Variant = Secondary, Command = $CopyPasswordCommand, Margin = (12,0,0,0) ] {
+                            TextBlock [ Text = "Copy" ]
+                        }
+                        StackPanel [ Orientation = Horizontal, VerticalAlignment = Center ] {
+                            TextBlock [ Text = "Password", Style = @UiCaption, Foreground = @Fg2, VerticalAlignment = Center, Margin = (0,0,8,0) ]
+                            TextBlock [ Text = $OwnerPassword, Style = @Code, Foreground = @Fg0, VerticalAlignment = Center ]
+                        }
                     }
+                    TextBlock [ Text = $PasswordCopyStatus, Style = @UiCaption, Foreground = @Fg2, Margin = (0,4,0,0),
+                                Visibility = $PasswordCopyStatus << ToVisibility ]
                 }
             }
         }

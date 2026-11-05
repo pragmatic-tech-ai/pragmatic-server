@@ -2,6 +2,7 @@ import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/run
 import { Observable, type IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { ApiError } from '../../api-client.js'
 import { ConsoleInstallState, ConsoleInstallStep, IngressTlsSource, type ConsoleInstallStatusDto, type HiveConsoleSpecDto, type HiveDto } from '../../portal-types.js'
+import type { IClipboardSource } from '../../shell/one-time-secret-page-view-model.js'
 import type { OptionViewModel } from '../../shell/option-view-model.js'
 import { TimerPollScheduler, type IPollScheduler } from '../../shell/poll-scheduler.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
@@ -24,7 +25,8 @@ export enum ConsoleInstallPhase
 // host, TLS source) and Save / Remove for those settings; Install console
 // (and Retry), which the control plane runs itself while the panel polls its
 // status every 2 seconds; and, once deployed, a fresh Owner password for the
-// console's identity provider, shown once and cleared when the page is left.
+// console's identity provider, shown once (with Copy) and cleared when the
+// page is left after it was shown.
 // Polling runs only while the owning page is showing: the page calls Resume
 // when shown and Stop when left.
 export class HiveConsoleViewModel extends Observable
@@ -49,14 +51,20 @@ export class HiveConsoleViewModel extends Observable
     private static readonly BaseDomainHint = '<base domain>'
     private static readonly TrustCommandPrefix = 'powershell -NoProfile -ExecutionPolicy Bypass -File admin\\control-plane\\dev\\dev-ca-trust.ps1 -Install -CaFile "'
     private static readonly TrustCommandSuffix = '"'
+    private static readonly CopiedText = 'Copied.'
+    private static readonly CopyFailedText = 'Could not copy. Select the value and copy it by hand.'
+    private static readonly OwnerPasswordProperty = 'OwnerPassword'
     // Every bound value a change can move, raised when it did.
     private static readonly BoundProperties: readonly string[] = [
         'BaseDomain', 'Host', 'HostPlaceholder', 'SelectedTls', 'SecretName', 'ClusterIssuer',
         'IsExistingSecret', 'IsCertManager', 'IsDevelopment', 'IsConfigured', 'IsNotConfigured',
         'Phase', 'IsIdle', 'IsInstalling', 'IsDeployed', 'IsFailed', 'HasProgress', 'StatusText',
-        'ConsoleUrl', 'HasConsoleUrl', 'DevTrustCommand', 'HasDevTrustCommand',
-        'OwnerEmail', 'OwnerPassword', 'HasOwnerPassword', 'ErrorText', 'IsBusy', 'IsConfirmingRemove',
+        'ConsoleUrl', 'HasConsoleUrl', 'DevTrustCommand', 'HasDevTrustCommand', 'TrustCopyStatus',
+        'OwnerEmail', HiveConsoleViewModel.OwnerPasswordProperty, 'HasOwnerPassword', 'PasswordCopyStatus',
+        'ErrorText', 'IsBusy', 'IsConfirmingRemove',
     ]
+    // Bound values whose change notification never carries the old value (it would be the password).
+    private static readonly SecretProperties: ReadonlySet<string> = new Set([HiveConsoleViewModel.OwnerPasswordProperty])
 
     private readonly tlsOptions = new ObservableCollection<OptionViewModel<IngressTlsSource>>()
     private readonly steps = new ObservableCollection<AgentInstallStepViewModel>()
@@ -68,31 +76,45 @@ export class HiveConsoleViewModel extends Observable
     private readonly installCommand: RelayCommand
     private readonly retryCommand: RelayCommand
     private readonly setOwnerPasswordCommand: RelayCommand
+    private readonly copyPasswordCommand: RelayCommand
+    private readonly copyTrustCommandCommand: RelayCommand
     private tenantId = ''
     private saved: HiveConsoleSpecDto | undefined
+    // True once the operator edited a field since the settings were last shown: a reload then keeps the edits.
+    private dirty = false
     private baseDomain = ''
     private host = ''
     private selectedTls: OptionViewModel<IngressTlsSource> | undefined
     private secretName = ''
     private clusterIssuer = ''
     private phase = ConsoleInstallPhase.Idle
+    // The install status the panel shows (undefined: none), so a refused start can go back to it.
+    private lastStatus: ConsoleInstallStatusDto | undefined
     private consoleUrl = ''
     private devCaFile = ''
     private errorText = ''
-    // The Owner password reset's reply, held only for display until Stop.
+    // The Owner password reset's reply, held only for display. It is cleared by the first Stop after it was shown:
+    // a reply that lands while the page is hidden is kept until the page shows again (the server already rotated the
+    // password, so the reply is the only copy).
     private ownerEmail = ''
     private ownerPassword = ''
+    private passwordShown = false
+    private passwordCopyStatus = ''
+    private trustCopyStatus = ''
+    // Whether the owning page shows (between Resume and Stop).
+    private showing = false
     // A settings write, removal or password reset in flight.
     private busy = false
     private confirmingRemove = false
-    // Bumped by Stop (and by each Install / Resume): a reply for an older
-    // generation is dropped, so a left page never resumes polling.
+    // Bumped by Stop (and by each Install / Resume): an install status for an
+    // older generation is dropped, so a left page never resumes polling.
     private generation = 0
     private pending: IDisposable | undefined
 
     public constructor(
         private readonly session: PortalSessionService,
         public readonly HiveId: string,
+        private readonly clipboardSource: IClipboardSource,
         private readonly scheduler: IPollScheduler = new TimerPollScheduler(),
         private readonly intervalMs: number = HiveConsoleViewModel.PollIntervalMs)
     {
@@ -110,14 +132,22 @@ export class HiveConsoleViewModel extends Observable
         this.installCommand = this.Command(() => this.Install(), () => this.CanInstall)
         this.retryCommand = this.Command(() => this.Install(), () => this.CanInstall && this.IsFailed)
         this.setOwnerPasswordCommand = this.Command(() => this.SetOwnerPassword(), () => this.CanSetOwnerPassword)
+        this.copyPasswordCommand = this.Command(() => this.CopyPassword(), () => this.HasOwnerPassword)
+        this.copyTrustCommandCommand = this.Command(() => this.CopyTrustCommand(), () => this.HasDevTrustCommand)
     }
 
-    // Takes the hive's record as the control plane holds it: its tenant and its saved console settings, which the fields show.
+    // Takes the hive's record as the control plane holds it: its tenant and its saved console settings, which the
+    // fields show unless the operator has unsaved edits in them.
     public Load(hive: HiveDto): void
     {
         this.Change(() =>
         {
             this.tenantId = hive.tenantId
+            if (this.dirty)
+            {
+                this.saved = hive.console
+                return
+            }
             this.ShowSettings(hive.console)
         })
     }
@@ -129,7 +159,7 @@ export class HiveConsoleViewModel extends Observable
 
     public set BaseDomain(value: string)
     {
-        this.Change(() => { this.baseDomain = value })
+        this.Edit(this.baseDomain, value, () => { this.baseDomain = value })
     }
 
     // The console's browser host; empty uses HostPlaceholder.
@@ -140,7 +170,7 @@ export class HiveConsoleViewModel extends Observable
 
     public set Host(value: string)
     {
-        this.Change(() => { this.host = value })
+        this.Edit(this.host, value, () => { this.host = value })
     }
 
     // The host the console gets when Host is empty: console-<tenant>.<base domain>.
@@ -163,7 +193,7 @@ export class HiveConsoleViewModel extends Observable
 
     public set SelectedTls(value: OptionViewModel<IngressTlsSource> | undefined)
     {
-        this.Change(() => { this.selectedTls = value })
+        this.Edit(this.selectedTls, value, () => { this.selectedTls = value })
     }
 
     // The existing kubernetes.io/tls Secret in pragmatic-system (existing-secret only).
@@ -174,7 +204,7 @@ export class HiveConsoleViewModel extends Observable
 
     public set SecretName(value: string)
     {
-        this.Change(() => { this.secretName = value })
+        this.Edit(this.secretName, value, () => { this.secretName = value })
     }
 
     // The cert-manager ClusterIssuer (cert-manager only).
@@ -185,7 +215,7 @@ export class HiveConsoleViewModel extends Observable
 
     public set ClusterIssuer(value: string)
     {
-        this.Change(() => { this.clusterIssuer = value })
+        this.Edit(this.clusterIssuer, value, () => { this.clusterIssuer = value })
     }
 
     public get IsExistingSecret(): boolean
@@ -308,6 +338,28 @@ export class HiveConsoleViewModel extends Observable
         return this.ownerPassword.length > 0
     }
 
+    // How the last Copy of the Owner password went ('Copied.' or how to copy by hand); never the password.
+    public get PasswordCopyStatus(): string
+    {
+        return this.passwordCopyStatus
+    }
+
+    // How the last Copy of the trust command went.
+    public get TrustCopyStatus(): string
+    {
+        return this.trustCopyStatus
+    }
+
+    public get CopyPasswordCommand(): RelayCommand
+    {
+        return this.copyPasswordCommand
+    }
+
+    public get CopyTrustCommandCommand(): RelayCommand
+    {
+        return this.copyTrustCommandCommand
+    }
+
     // Why the last action (or the install) failed; '' otherwise.
     public get ErrorText(): string
     {
@@ -378,9 +430,12 @@ export class HiveConsoleViewModel extends Observable
         return this.CanChangeSettings && this.IsConfigured && !this.confirmingRemove
     }
 
+    // The server resets the Owner password for any configured hive with no console install running (it refuses with a
+    // sentence when the console's identity provider cannot be reached), so the panel does not wait for an install
+    // status: after a control-plane restart there is none.
     private get CanSetOwnerPassword(): boolean
     {
-        return this.session.CanMutate && !this.busy && this.IsConfigured && this.IsDeployed
+        return this.session.CanMutate && !this.busy && this.IsConfigured && !this.IsInstalling
     }
 
     // Stores the settings as typed. Never throws: a refusal shows its sentence in ErrorText.
@@ -409,7 +464,8 @@ export class HiveConsoleViewModel extends Observable
         await this.Request(async () =>
         {
             const hive = await this.session.Client.RemoveHiveConsole(this.HiveId)
-            this.Stop()
+            // No install to follow any more (the page still shows: not a Stop).
+            this.Restart()
             this.Change(() =>
             {
                 this.ShowSettings(hive.console)
@@ -427,6 +483,7 @@ export class HiveConsoleViewModel extends Observable
             return
         }
         const generation = this.Restart()
+        const before: InstallView = { phase: this.phase, status: this.lastStatus }
         this.Change(() =>
         {
             this.errorText = HiveConsoleViewModel.NoText
@@ -441,7 +498,7 @@ export class HiveConsoleViewModel extends Observable
         {
             if (generation === this.generation)
             {
-                await this.Refused(generation, e)
+                await this.Refused(generation, e, before)
             }
             return
         }
@@ -455,19 +512,17 @@ export class HiveConsoleViewModel extends Observable
         {
             return
         }
-        const generation = this.generation
         await this.Request(async () =>
         {
             const reset = await this.session.Client.ResetInHiveOwnerPassword(this.HiveId)
-            // A page left meanwhile never shows it.
-            if (generation !== this.generation)
-            {
-                return
-            }
+            // Never dropped: the server already rotated the password and this reply is its only copy. A reply landing
+            // while the page is hidden waits for the page to show again; Stop clears it only once it was shown.
             this.Change(() =>
             {
                 this.ownerEmail = reset.ownerEmail
                 this.ownerPassword = reset.ownerPassword
+                this.passwordShown = this.showing
+                this.passwordCopyStatus = HiveConsoleViewModel.NoText
             })
         })
     }
@@ -475,24 +530,80 @@ export class HiveConsoleViewModel extends Observable
     // Reads the hive's latest install (a page was shown); polls it while it runs. Never throws.
     public async Resume(): Promise<void>
     {
+        this.showing = true
+        if (this.HasOwnerPassword)
+        {
+            this.passwordShown = true
+        }
         const generation = this.Restart()
         await this.Read(generation)
     }
 
-    // Stops polling and forgets the shown Owner password (the page was left). A reply already in flight is dropped.
+    // Stops polling (the page was left): an install status in flight is dropped, and an Owner password that was
+    // shown is forgotten. One that has not been shown yet (its reply landed while hidden) is kept for the next showing.
     public Stop(): void
     {
+        this.showing = false
         this.generation++
         this.CancelPending()
-        if (this.ownerPassword.length > 0 || this.ownerEmail.length > 0 || this.confirmingRemove)
+        this.Change(() =>
         {
-            this.Change(() =>
+            if (this.passwordShown)
             {
                 this.ownerEmail = HiveConsoleViewModel.NoText
                 this.ownerPassword = HiveConsoleViewModel.NoText
-                this.confirmingRemove = false
-            })
+                this.passwordShown = false
+            }
+            this.passwordCopyStatus = HiveConsoleViewModel.NoText
+            this.trustCopyStatus = HiveConsoleViewModel.NoText
+            this.confirmingRemove = false
+        })
+    }
+
+    private async CopyPassword(): Promise<void>
+    {
+        const status = await this.Copy(this.ownerPassword)
+        this.Change(() => { this.passwordCopyStatus = status })
+    }
+
+    private async CopyTrustCommand(): Promise<void>
+    {
+        const status = await this.Copy(this.DevTrustCommand)
+        this.Change(() => { this.trustCopyStatus = status })
+    }
+
+    // Copies one value; the outcome as a status sentence (never the value).
+    private async Copy(value: string): Promise<string>
+    {
+        const C = HiveConsoleViewModel
+        const clipboard = this.clipboardSource.Clipboard
+        if (clipboard === undefined || value.length === 0)
+        {
+            return C.CopyFailedText
         }
+        try
+        {
+            await clipboard.WriteText(value)
+            return C.CopiedText
+        }
+        catch
+        {
+            return C.CopyFailedText
+        }
+    }
+
+    // A field the operator typed into: marks the settings edited when the value changed.
+    private Edit<T>(old: T, value: T, apply: () => void): void
+    {
+        if (old === value)
+        {
+            return
+        }
+        this.Change(() =>
+        {
+            apply()
+            this.dirty = true
+        })
     }
 
     private AskRemove(): void
@@ -540,10 +651,11 @@ export class HiveConsoleViewModel extends Observable
         return spec
     }
 
-    // Shows saved settings in the fields (no settings: the fields stay as typed).
+    // Shows saved settings in the fields (no settings: the fields stay as typed); the fields are then unedited.
     private ShowSettings(spec: HiveConsoleSpecDto | undefined): void
     {
         this.saved = spec
+        this.dirty = false
         if (spec === undefined)
         {
             return
@@ -619,8 +731,9 @@ export class HiveConsoleViewModel extends Observable
         this.Follow(generation, status)
     }
 
-    // A refused start: follow the hive's running install when there is one, else show the refusal.
-    private async Refused(generation: number, e: unknown): Promise<void>
+    // A refused start: follow the hive's running install when there is one; else no install ran, so the panel goes
+    // back to what it showed before the start and only the refusal's sentence shows (Failed is for a failed run).
+    private async Refused(generation: number, e: unknown, before: InstallView): Promise<void>
     {
         if (this.Expired(e))
         {
@@ -646,7 +759,7 @@ export class HiveConsoleViewModel extends Observable
         }
         this.Change(() =>
         {
-            this.SetPhase(ConsoleInstallPhase.Failed, undefined)
+            this.SetPhase(before.phase, before.status)
             this.errorText = HiveConsoleViewModel.MessageOf(e)
         })
     }
@@ -721,6 +834,7 @@ export class HiveConsoleViewModel extends Observable
     private SetPhase(phase: ConsoleInstallPhase, status: ConsoleInstallStatusDto | undefined): void
     {
         this.phase = phase
+        this.lastStatus = status
         this.consoleUrl = status?.consoleUrl ?? HiveConsoleViewModel.NoText
         this.devCaFile = status?.devCaFile ?? HiveConsoleViewModel.NoText
         if (status === undefined)
@@ -797,7 +911,9 @@ export class HiveConsoleViewModel extends Observable
         {
             if (before[i] !== after[i])
             {
-                this.RaisePropertyChanged(name, before[i], after[i])
+                // A secret's old value never rides the notification: its listeners get a neutral one.
+                const old = HiveConsoleViewModel.SecretProperties.has(name) ? HiveConsoleViewModel.NoText : before[i]
+                this.RaisePropertyChanged(name, old, after[i])
             }
         })
         for (const command of this.commands)
@@ -810,4 +926,11 @@ export class HiveConsoleViewModel extends Observable
     {
         return HiveConsoleViewModel.BoundProperties.map(name => Reflect.get(this, name) as unknown)
     }
+}
+
+// What the install part of the panel showed: its phase and the status behind it.
+interface InstallView
+{
+    readonly phase: ConsoleInstallPhase
+    readonly status: ConsoleInstallStatusDto | undefined
 }
