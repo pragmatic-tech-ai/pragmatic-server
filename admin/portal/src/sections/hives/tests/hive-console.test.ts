@@ -97,6 +97,13 @@ class ConsoleFixture
 
 describe('Hive tenant console (panel)', () =>
 {
+    it('IsReported is not a bound value: no markup binds it, StatusText carries the Reported state', () =>
+    {
+        const bound = Reflect.get(HiveConsoleViewModel, 'BoundProperties') as readonly string[]
+        assert.equal(bound.includes('IsReported'), false)
+        assert.equal(bound.includes('StatusText'), true)
+    })
+
     it('Save sends the console spec', async () =>
     {
         const fx = new ConsoleFixture()

@@ -71,11 +71,12 @@ export class HiveConsoleViewModel extends Observable
     private static readonly CopiedText = 'Copied.'
     private static readonly CopyFailedText = 'Could not copy. Select the value and copy it by hand.'
     private static readonly OwnerPasswordProperty = 'OwnerPassword'
-    // Every bound value a change can move, raised when it did.
+    // Every bound value a change can move, raised when it did. IsReported is not listed: no markup binds it, since
+    // StatusText already carries the Reported state.
     private static readonly BoundProperties: readonly string[] = [
         'BaseDomain', 'Host', 'HostPlaceholder', 'SelectedTls', 'SecretName', 'ClusterIssuer', 'IngressNamespace',
         'IsExistingSecret', 'IsCertManager', 'IsDevelopment', 'IsConfigured', 'IsNotConfigured',
-        'Phase', 'IsIdle', 'IsInstalling', 'IsDeployed', 'IsReported', 'IsFailed', 'HasProgress', 'StatusText',
+        'Phase', 'IsIdle', 'IsInstalling', 'IsDeployed', 'IsFailed', 'HasProgress', 'StatusText',
         'ConsoleUrl', 'HasConsoleUrl', 'DevTrustCommand', 'HasDevTrustCommand', 'TrustCopyStatus',
         'OwnerEmail', HiveConsoleViewModel.OwnerPasswordProperty, 'HasOwnerPassword', 'PasswordCopyStatus',
         'ErrorText', 'IsBusy', 'IsConfirmingRemove', 'RemovalNote',
@@ -305,7 +306,8 @@ export class HiveConsoleViewModel extends Observable
         return this.phase === ConsoleInstallPhase.Deployed || this.phase === ConsoleInstallPhase.Reported
     }
 
-    // True once the running console has reported to the control plane.
+    // True once the running console has reported to the control plane. Read by code and tests only (not bound; see
+    // BoundProperties): StatusText is what the panel shows for it.
     public get IsReported(): boolean
     {
         return this.phase === ConsoleInstallPhase.Reported
