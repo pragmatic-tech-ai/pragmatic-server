@@ -4,6 +4,7 @@ import type { IdpConnection, IIdpService } from './idp-service.js';
 import { UnknownTenantError, type PlatformDirectory } from './platform-directory.js';
 import type { TenantRecord } from './platform-records.js';
 import type { TenantAccountIndex } from './tenant-account-index.js';
+import { TenantOwner } from './tenant-owner.js';
 
 export type TenantProvisionInput = { id: string; clientId: string; displayName: string; ownerEmail: string };
 
@@ -121,8 +122,8 @@ export class IdpUnreachableError extends Error
  */
 export class TenantProvisioningService
 {
-    /** The principal id every Owner account is seeded under (control-plane and in-hive IdPs alike). */
-    public static readonly OwnerPrincipalId = 'owner';
+    /** The principal id every Owner account is seeded under (control-plane and in-hive IdPs alike); the rule lives in TenantOwner. */
+    public static readonly OwnerPrincipalId = TenantOwner.DefaultPrincipalId;
     private static readonly PasswordBytes = 24;
     private static readonly PasswordEncoding = 'base64url';
     private static readonly NotFoundStatus = 404;

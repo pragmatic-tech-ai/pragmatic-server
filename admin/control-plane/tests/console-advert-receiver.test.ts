@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ConsoleAdvertReceiver, ConsoleNotEnabledError, InvalidConsoleAdvertError } from '../console-advert-receiver.js'
-import type { IConsoleAdvertDirectory } from '../console-advert-receiver.js'
+import type { IConsoleAdvertDirectory, IOwnerResetSource } from '../console-advert-receiver.js'
 import { ConsoleAdvertRegistry } from '../console-advert-registry.js'
 import { IngressTlsSource } from '../ingress-tls.js'
 import type { HiveRecord } from '../platform-records.js'
@@ -204,6 +204,27 @@ test('refuses an advert whose hive lost its console before the write, so a late 
             await assert.rejects(() => receiver.Receive('h1', ReceiverFixture.Body()), ConsoleNotEnabledError)
             assert.equal(registry.List().length, 0)
         }
+    }
+    finally
+    {
+        await rm(dir, { recursive: true, force: true })
+    }
+})
+
+test('the outcome carries the tenant last Owner reset, and none when there is none', async () =>
+{
+    const dir = await mkdtemp(join(tmpdir(), 'advert-receiver-reset-'))
+    try
+    {
+        const hive = { id: 'h1', tenantId: 'acme', console: { baseDomain: 'localtest.me', tls: { source: IngressTlsSource.Development } } } as unknown as HiveRecord
+        const directory: IConsoleAdvertDirectory = { GetHive: id => (id === 'h1' ? hive : undefined) }
+        const resets = new Map<string, string>()
+        const source: IOwnerResetSource = { Of: tenantId => resets.get(tenantId) }
+        const receiver = new ConsoleAdvertReceiver(directory, new ConsoleAdvertRegistry(join(dir, ConsoleAdvertRegistry.FileName)), () => new Date('2026-11-04T12:00:00.000Z'), source)
+        assert.equal('ownerResetAt' in await receiver.Receive('h1', ReceiverFixture.Body()), false)
+        resets.set('acme', '2026-11-04T10:00:00.000Z')
+        resets.set('other', '2026-11-04T11:00:00.000Z')
+        assert.equal((await receiver.Receive('h1', ReceiverFixture.Body())).ownerResetAt, '2026-11-04T10:00:00.000Z')
     }
     finally
     {

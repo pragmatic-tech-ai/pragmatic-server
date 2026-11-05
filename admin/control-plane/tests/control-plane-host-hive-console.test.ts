@@ -26,6 +26,7 @@ import { InClusterIdpSeedSource } from '../in-cluster-idp-seed.js'
 import type { TenantConsoleInstaller } from '../tenant-console-installer.js'
 import { ConsoleAdvertRegistry } from '../console-advert-registry.js'
 import { ConsoleDomainApprovals } from '../console-domain-approvals.js'
+import { ConsoleOwnerResets } from '../console-owner-resets.js'
 import { ConsoleInstallFixture, FakeInHiveIdpAdmin } from './console-install-fakes.js'
 
 type Reply = { status: number; body: string }
@@ -277,6 +278,32 @@ class SwitchableAdverts extends ConsoleAdvertRegistry
     }
 }
 
+// A real Owner-reset store that notes each Record in the fixture's event list and whose forget can be made to fail.
+class RecordingOwnerResets extends ConsoleOwnerResets
+{
+    public FailForget = false
+
+    public constructor(path: string, private readonly events: string[])
+    {
+        super(path)
+    }
+
+    public override async Record(tenantId: string): Promise<string>
+    {
+        this.events.push('RecordOwnerReset')
+        return await super.Record(tenantId)
+    }
+
+    public override async Forget(tenantId: string): Promise<void>
+    {
+        if (this.FailForget)
+        {
+            throw new Error('disk full: secret-detail')
+        }
+        await super.Forget(tenantId)
+    }
+}
+
 class SwitchableApprovals extends ConsoleDomainApprovals
 {
     public FailForget = false
@@ -346,6 +373,7 @@ describe('ControlPlaneHost in-hive console install', () =>
     let hold: InstallHold
     let adverts: SwitchableAdverts
     let approvals: SwitchableApprovals
+    let ownerResets: RecordingOwnerResets
 
     const reportFor = (tenantId: string, hiveId: string): Promise<unknown> =>
         adverts.Report({ tenantId, hiveId, consoleUrl: 'https://console-' + tenantId + '.localtest.me', fingerprints: [], emailDomains: [], reportedAt: new Date().toISOString() })
@@ -373,7 +401,9 @@ describe('ControlPlaneHost in-hive console install', () =>
         fx.SeedRunningIdp('t1')
         adverts = new SwitchableAdverts(join(parent, 'console-adverts.json'))
         approvals = new SwitchableApprovals(join(parent, 'console-domain-approvals.json'))
-        installer = fx.InstallerOver(directory, adverts)
+        ownerResets = new RecordingOwnerResets(join(parent, ConsoleOwnerResets.FileName), fx.Events)
+        await ownerResets.Load()
+        installer = fx.InstallerOver(directory, adverts, ownerResets)
         hold = new InstallHold(fx, installer)
         const deployments = await RolloutFixture.Create(parent, directory, new HiveOrchestratorFactory())
         await deployments.RegisterHive('h1')
@@ -697,6 +727,59 @@ describe('ControlPlaneHost in-hive console install', () =>
         const r = await Send.Request(host, 'POST', '/api/hives/h1/console/owner-password')
         assert.equal(r.status, 503)
         assert.match(JSON.parse(r.body).error as string, /port-forward/)
+    })
+
+    it('an Owner reset of an in-hive console records the reset time before the IdP call, and answers as before', async () =>
+    {
+        const r = await Send.Request(host, 'POST', '/api/hives/h1/console/owner-password')
+        assert.equal(r.status, 200)
+        assert.deepEqual(JSON.parse(r.body), { ownerEmail: 'owner@t1.test', ownerPassword: FakeInHiveIdpAdmin.Password })
+        assert.ok(ownerResets.Of('t1') !== undefined)
+        assert.ok(fx.Events.indexOf('RecordOwnerReset') < fx.Events.indexOf('ResetOwnerPassword'))
+    })
+
+    it('a reset the IdP then fails keeps its record (the console ends the Owner sessions once more, harmlessly)', async () =>
+    {
+        fx.IdpAdmin.ResetError = new PortForwardError(PortForwardError.NotReadyMessage)
+        assert.equal((await Send.Request(host, 'POST', '/api/hives/h1/console/owner-password')).status, 503)
+        assert.ok(ownerResets.Of('t1') !== undefined)
+    })
+
+    it('a refused reset (installing, or no console) records nothing', async () =>
+    {
+        await directory.CreateHive({ id: 'h2', tenantId: 't1', displayName: 'H2', cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
+        assert.equal((await Send.Request(host, 'POST', '/api/hives/h2/console/owner-password')).status, 409)
+        hold.Engage()
+        assert.equal((await Send.Request(host, 'POST', '/api/hives/h1/console-install')).status, 202)
+        assert.equal((await Send.Request(host, 'POST', '/api/hives/h1/console/owner-password')).status, 409)
+        await hold.Release()
+        assert.equal(ownerResets.Of('t1'), undefined)
+        assert.ok(!fx.Events.includes('RecordOwnerReset'))
+    })
+
+    it('the Owner reset record outlives the console removal and the hive delete, and goes with the tenant', async () =>
+    {
+        assert.equal((await Send.Request(host, 'POST', '/api/hives/h1/console/owner-password')).status, 200)
+        const recorded = ownerResets.Of('t1')
+        assert.equal((await Send.Request(host, 'DELETE', '/api/hives/h1/console')).status, 200)
+        assert.equal(ownerResets.Of('t1'), recorded)
+        assert.equal((await Send.Request(host, 'DELETE', '/api/hives/h1')).status, 200)
+        assert.equal(ownerResets.Of('t1'), recorded)
+        assert.equal((await Send.Request(host, 'DELETE', '/api/tenants/t1')).status, 200)
+        assert.equal(ownerResets.Of('t1'), undefined)
+    })
+
+    it('a failing Owner-reset store does not fail a tenant delete, and logs the error name only', async () =>
+    {
+        await directory.CreateProvisionedTenant({ id: 't2', clientId: 'acme', displayName: 'T2', ownerEmail: 'owner@t2.test', ownerPrincipalId: 'owner', idpBaseUrl: 'https://idp.test' })
+        ownerResets.FailForget = true
+        const lines = await ErrorLines.Capture(async () =>
+        {
+            assert.equal((await Send.Request(host, 'DELETE', '/api/tenants/t2')).status, 200)
+        })
+        assert.equal(directory.GetTenant('t2'), undefined)
+        assert.equal(lines.filter(l => l.includes('Owner reset failed: Error')).length, 1)
+        assert.ok(lines.every(l => !l.includes('secret-detail')))
     })
 
     it('PUT console refuses an existing-secret named like the IdP own Secrets', async () =>

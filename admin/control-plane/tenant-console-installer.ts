@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { DevCaError } from '../../src/idp/dev-ca.js'
 import { ConsoleAdvertRegistry, type ConsoleAdvertRecord, type IConsoleAdvertLookup } from './console-advert-registry.js'
 import type { ConsoleFingerprintKeys } from './console-fingerprint-keys.js'
+import type { IOwnerResetRecorder } from './console-owner-resets.js'
 import { ConsoleRetention } from './console-retention.js'
 import { DevCaHostOutsideDomainError, DevCaKeyMissingError, type IDevCertificateIssuer, type IssuedCertificate } from './dev-certificate-authority.js'
 import { EffectiveRegistry } from './effective-registry.js'
@@ -290,7 +291,8 @@ export class TenantConsoleInstaller
         private readonly trustRoots: IKeyStore,
         private readonly agentChannelUrl: string | undefined,
         private readonly clock: IInstallClock = new SystemInstallClock(),
-        private readonly adverts?: IConsoleAdvertLookup)
+        private readonly adverts?: IConsoleAdvertLookup,
+        private readonly ownerResets?: IOwnerResetRecorder)
     {
     }
 
@@ -464,7 +466,21 @@ export class TenantConsoleInstaller
         await this.idpAdmin.Forget(tenantId)
     }
 
-    /** Sets a fresh in-hive Owner password and returns it once. Refused while an install runs or before the console is configured. */
+    /**
+     * On tenant delete only: drops the tenant's recorded Owner reset. A console removal or hive delete keeps it, because the
+     * console's data volume (with its sessions and its applied marker) survives both and a reinstall must still see the reset.
+     */
+    public async ForgetOwnerReset(tenantId: string): Promise<void>
+    {
+        await this.ownerResets?.Forget(tenantId)
+    }
+
+    /**
+     * Sets a fresh in-hive Owner password and returns it once. Refused while an install runs or before the console is configured.
+     * The reset is recorded after those guards and BEFORE the IdP call, so a reset that succeeds is always followed by the console
+     * ending the Owner's sessions at its next advert (a reset that then fails costs only one harmless extra revoke); a failed record
+     * fails the reset with nothing changed.
+     */
     public async ResetOwnerPassword(hiveId: string): Promise<InHiveOwnerPassword>
     {
         const hive = this.directory.GetHive(hiveId)
@@ -485,6 +501,7 @@ export class TenantConsoleInstaller
         {
             throw new UnknownTenantError(hive.tenantId)
         }
+        await this.ownerResets?.Record(tenant.id)
         return this.idpAdmin.ResetOwnerPassword(hive, tenant)
     }
 

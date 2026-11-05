@@ -1,5 +1,5 @@
 import { Disposable, Signal, type IDisposable } from '@pragmatic-tech-ai/todl-runtime'
-import { ConsoleFingerprint, type ConsoleAdvertBody } from './console-advert-contract.js'
+import { ConsoleFingerprint, type ConsoleAdvertAnswer, type ConsoleAdvertBody } from './console-advert-contract.js'
 import type { ConsoleEmailDomainStore } from './console-email-domain-store.js'
 import type { TenantRecord } from './platform-records.js'
 
@@ -12,8 +12,8 @@ export interface IConsoleAccountSource
 
 /**
  * The console's sign-in accounts: today only the seeded Owner (TenantRecord.ownerEmail), the same rule TenantAccountIndex
- * documents. `Changed` never emits today, which is accepted; Plan 3, and any later account create / delete / email-change path
- * in the console, MUST emit it so the advert is re-sent at once.
+ * documents. `Changed` never emits today, which is accepted; any later account create / delete / email-change path in the
+ * console MUST emit it so the advert is re-sent at once.
  */
 export class SeededConsoleAccounts implements IConsoleAccountSource
 {
@@ -32,10 +32,16 @@ export class SeededConsoleAccounts implements IConsoleAccountSource
     }
 }
 
-/** Delivers one advert to the control plane; throws on any failure, including an abort through `signal`. */
+/** Delivers one advert to the control plane and returns what the console takes from its answer; throws on any failure, including an abort through `signal`. */
 export interface IConsoleAdvertTransport
 {
-    Send(body: ConsoleAdvertBody, signal?: AbortSignal): Promise<void>
+    Send(body: ConsoleAdvertBody, signal?: AbortSignal): Promise<ConsoleAdvertAnswer>
+}
+
+/** Acts on the Owner reset time a 200 advert answer carried (ConsoleOwnerResetFollower); returns whether it revoked. */
+export interface IOwnerResetFollower
+{
+    Apply(resetAt: string | undefined): Promise<boolean>
 }
 
 /** The agent channel did not take the advert; the message is a fixed sentence (plus the HTTP status), never a body or the token. */
@@ -67,13 +73,19 @@ export class WallClockDeadline implements IRequestDeadline
 
 /**
  * POSTs the advert to `<baseUrl>/agent/hives/<hiveId>/console` with the hive's agent bearer (only in the Authorization header).
- * The answer's body is drained, never read into an error; the control plane's `refusedEmailDomains` is ignored because the
- * console validates with the same EmailDomainPolicy. A request that outlives `timeoutMs`, or is aborted by the caller, reads as
- * unreachable, so a hung control plane cannot hold the sender's one in-flight send for ever.
+ * The answer's body is never read into an error or a log: a failed answer's body is drained, and of a 200 answer at most
+ * MaxAnswerBytes are read, keeping only `ownerResetAt` when it is a string Date.parse accepts (a malformed, oversized or
+ * reset-less answer yields {}). The control plane's `refusedEmailDomains` is ignored because the console validates with the
+ * same EmailDomainPolicy. A request that outlives `timeoutMs`, or is aborted by the caller, reads as unreachable, so a hung
+ * control plane cannot hold the sender's one in-flight send for ever.
  */
 export class HttpConsoleAdvertTransport implements IConsoleAdvertTransport
 {
     public static readonly RequestTimeoutMs = 30000
+    /** The most of a 200 answer read; a longer answer is dropped as malformed. */
+    public static readonly MaxAnswerBytes = 4096
+    private static readonly OwnerResetKey = 'ownerResetAt'
+    private static readonly Utf8 = 'utf8'
     private static readonly AgentPrefix = '/agent/hives/'
     private static readonly ConsoleSegment = '/console'
     private static readonly AuthorizationHeader = 'Authorization'
@@ -93,7 +105,7 @@ export class HttpConsoleAdvertTransport implements IConsoleAdvertTransport
     {
     }
 
-    public async Send(body: ConsoleAdvertBody, signal?: AbortSignal): Promise<void>
+    public async Send(body: ConsoleAdvertBody, signal?: AbortSignal): Promise<ConsoleAdvertAnswer>
     {
         const T = HttpConsoleAdvertTransport
         const timeout = this.deadline.SignalAfter(this.timeoutMs)
@@ -111,11 +123,66 @@ export class HttpConsoleAdvertTransport implements IConsoleAdvertTransport
         {
             throw new ConsoleAdvertUnavailableError(T.UnreachableMessage)
         }
-        await T.Drain(response)
         if (!response.ok)
         {
+            await T.Drain(response)
             throw new ConsoleAdvertUnavailableError(T.FailedMessagePrefix + response.status)
         }
+        return T.AnswerOf(await T.BoundedText(response))
+    }
+
+    /** { ownerResetAt } when `text` is a JSON object whose ownerResetAt is a string Date.parse accepts; otherwise {}. */
+    private static AnswerOf(text: string | undefined): ConsoleAdvertAnswer
+    {
+        if (text === undefined)
+        {
+            return {}
+        }
+        let parsed: unknown
+        try
+        {
+            parsed = JSON.parse(text)
+        }
+        catch
+        {
+            return {}
+        }
+        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed))
+        {
+            return {}
+        }
+        const value = (parsed as Record<string, unknown>)[HttpConsoleAdvertTransport.OwnerResetKey]
+        return typeof value === 'string' && !Number.isNaN(Date.parse(value)) ? { ownerResetAt: value } : {}
+    }
+
+    /** The answer's text when it fits MaxAnswerBytes; undefined when it is longer (the rest is not read) or its read fails. */
+    private static async BoundedText(response: Response): Promise<string | undefined>
+    {
+        const reader = response.body?.getReader()
+        if (reader === undefined)
+        {
+            return undefined
+        }
+        const chunks: Uint8Array[] = []
+        let total = 0
+        try
+        {
+            for (let next = await reader.read(); !next.done; next = await reader.read())
+            {
+                total += next.value.byteLength
+                if (total > HttpConsoleAdvertTransport.MaxAnswerBytes)
+                {
+                    await reader.cancel().catch(() => undefined)
+                    return undefined
+                }
+                chunks.push(next.value)
+            }
+        }
+        catch
+        {
+            return undefined
+        }
+        return Buffer.concat(chunks).toString(HttpConsoleAdvertTransport.Utf8)
     }
 
     private static async Drain(response: Response): Promise<void>
@@ -151,12 +218,15 @@ export class IntervalAdvertTimer implements IAdvertTimer
 /**
  * Keeps the control plane told where this console is, whose accounts it holds (keyed fingerprints, never emails) and which
  * email domains it claims: once at start, every IntervalMs, and at once on an account or domain change. A failed send is
- * logged (a fixed sentence or the error's name, never a body, token or email) and the next tick or change retries.
+ * logged (a fixed sentence or the error's name, never a body, token or email) and the next tick or change retries. Every 200
+ * answer is handed to the Owner-reset follower (when one is given), so an operator Owner reset ends the Owner's sessions here
+ * within one interval; the follower's failure is logged by error name only and never fails the advert.
  */
 export class ConsoleAdvertSender
 {
     public static readonly IntervalMs = 5 * 60 * 1000
     private static readonly FailedPrefix = '[console-advert] send failed: '
+    private static readonly OwnerResetFailedPrefix = '[console-advert] owner reset not applied: '
     private static readonly UnknownErrorName = 'unknown error'
 
     private readonly subscriptions: IDisposable[] = []
@@ -173,7 +243,8 @@ export class ConsoleAdvertSender
         private readonly fingerprintKey: Buffer,
         private readonly consoleUrl: string,
         private readonly timer: IAdvertTimer = new IntervalAdvertTimer(),
-        private readonly log: (line: string) => void = line => console.error(line))
+        private readonly log: (line: string) => void = line => console.error(line),
+        private readonly follower?: IOwnerResetFollower)
     {
     }
 
@@ -254,9 +325,10 @@ export class ConsoleAdvertSender
     {
         const sending = new AbortController()
         this.sending = sending
+        let answer: ConsoleAdvertAnswer
         try
         {
-            await this.transport.Send(this.Body(), sending.signal)
+            answer = await this.transport.Send(this.Body(), sending.signal)
         }
         catch (err)
         {
@@ -264,10 +336,33 @@ export class ConsoleAdvertSender
             {
                 this.log(ConsoleAdvertSender.FailedPrefix + ConsoleAdvertSender.Describe(err))
             }
+            return
         }
         finally
         {
             this.sending = undefined
+        }
+        await this.Follow(answer)
+    }
+
+    /**
+     * Hands a 200 answer's Owner reset to the follower; its failure is logged by error name only and never fails the advert.
+     * Skipped once stopped (nothing runs or logs after Stop); the control plane keeps the reset, so the next start's first
+     * advert hands it over again.
+     */
+    private async Follow(answer: ConsoleAdvertAnswer): Promise<void>
+    {
+        if (this.follower === undefined || this.stopped)
+        {
+            return
+        }
+        try
+        {
+            await this.follower.Apply(answer.ownerResetAt)
+        }
+        catch (err)
+        {
+            this.log(ConsoleAdvertSender.OwnerResetFailedPrefix + ConsoleAdvertSender.NameOf(err))
         }
     }
 
@@ -278,6 +373,11 @@ export class ConsoleAdvertSender
         {
             return err.message
         }
+        return ConsoleAdvertSender.NameOf(err)
+    }
+
+    private static NameOf(err: unknown): string
+    {
         return err instanceof Error ? err.name : ConsoleAdvertSender.UnknownErrorName
     }
 }

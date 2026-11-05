@@ -29,14 +29,24 @@ export class ConsoleNotEnabledError extends Error
     }
 }
 
-export type ConsoleAdvertOutcome = { record: ConsoleAdvertRecord; refusedEmailDomains: string[] }
+/** A stored advert, the email domains refused from it, and the tenant's last operator Owner reset when there is one. */
+export type ConsoleAdvertOutcome = { record: ConsoleAdvertRecord; refusedEmailDomains: string[]; ownerResetAt?: string }
 
 export interface IConsoleAdvertDirectory
 {
     GetHive(id: string): HiveRecord | undefined
 }
 
-/** Validates what an in-hive console reports about itself and stores it as the tenant's advert. */
+/** The time of a tenant's last operator Owner reset of its in-hive console (ConsoleOwnerResets); undefined when none. */
+export interface IOwnerResetSource
+{
+    Of(tenantId: string): string | undefined
+}
+
+/**
+ * Validates what an in-hive console reports about itself and stores it as the tenant's advert; the outcome also carries the
+ * tenant's last operator Owner reset (read from `ownerResets`) so the console can end the Owner's sessions.
+ */
 export class ConsoleAdvertReceiver
 {
     public static readonly BadShape = 'The console advert must be a JSON object with consoleUrl, fingerprints and emailDomains.'
@@ -51,7 +61,8 @@ export class ConsoleAdvertReceiver
     public constructor(
         private readonly directory: IConsoleAdvertDirectory,
         private readonly store: ConsoleAdvertRegistry,
-        private readonly now: () => Date = () => new Date())
+        private readonly now: () => Date = () => new Date(),
+        private readonly ownerResets?: IOwnerResetSource)
     {
     }
 
@@ -82,7 +93,13 @@ export class ConsoleAdvertReceiver
         {
             throw new ConsoleNotEnabledError()
         }
-        return { record, refusedEmailDomains: domains.refused }
+        const outcome: ConsoleAdvertOutcome = { record, refusedEmailDomains: domains.refused }
+        const ownerResetAt = this.ownerResets?.Of(hive.tenantId)
+        if (ownerResetAt !== undefined)
+        {
+            outcome.ownerResetAt = ownerResetAt
+        }
+        return outcome
     }
 
     /**

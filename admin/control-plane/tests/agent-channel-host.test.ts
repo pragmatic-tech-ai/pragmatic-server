@@ -16,6 +16,7 @@ import type { PlatformDeploymentRegistry } from '../platform-deployment-registry
 import { RolloutFixture } from './rollout-fixture.js'
 import { ConsoleAdvertRegistry } from '../console-advert-registry.js'
 import { ConsoleAdvertReceiver } from '../console-advert-receiver.js'
+import { ConsoleOwnerResets } from '../console-owner-resets.js'
 import { IngressTlsSource } from '../ingress-tls.js'
 
 type Reply = { status: number; body: string }
@@ -74,6 +75,7 @@ describe('AgentChannelHost', () =>
     const ConsoleUrl = 'https://console-t1.localtest.me'
     const Fingerprint = 'a'.repeat(64)
     const Advert = { consoleUrl: ConsoleUrl, fingerprints: [Fingerprint], emailDomains: ['acme.com', 'gmail.com'] }
+    const OwnerResetAt = '2026-11-04T10:00:00.000Z'
     const OtherPath = '/agent/hives/' + Harness.HiveId + '/other'
     const LegacyPath = '/api/hives/' + Harness.HiveId + '/agent/target'
     const UnregisteredPath = '/agent/hives/ghost/snapshot'
@@ -359,6 +361,21 @@ describe('AgentChannelHost', () =>
         assert.equal(reply.status, 200)
         assert.deepEqual(JSON.parse(reply.body), { refusedEmailDomains: ['gmail.com'] })
         assert.equal(adverts.ForTenant(TenantId)?.consoleUrl, ConsoleUrl)
+    })
+
+    it('the advert answer carries the tenant\'s last Owner reset', async () =>
+    {
+        const resets = new ConsoleOwnerResets(join(parent, ConsoleOwnerResets.FileName), () => new Date(OwnerResetAt))
+        await resets.Load()
+        await host.Close()
+        host = new AgentChannelHost(deployments, new ConsoleAdvertReceiver(directory, adverts, undefined, resets))
+        await host.Listen(0, '127.0.0.1')
+        const before = await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + token, Advert)
+        assert.deepEqual(JSON.parse(before.body), { refusedEmailDomains: ['gmail.com'] })
+        await resets.Record(TenantId)
+        const after = await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + token, Advert)
+        assert.equal(after.status, 200)
+        assert.deepEqual(JSON.parse(after.body), { refusedEmailDomains: ['gmail.com'], ownerResetAt: OwnerResetAt })
     })
 
     it('rejects a console advert with a missing or wrong bearer: 401, nothing stored', async () =>

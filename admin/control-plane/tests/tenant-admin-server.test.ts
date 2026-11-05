@@ -26,6 +26,7 @@ import type { TenantSession } from '../tenant-auth/tenant-session.js'
 import { TenantAdminEnv } from '../tenant-admin-env.js'
 import { ConsoleAdvertSender } from '../console-advert-sender.js'
 import { ConsoleEmailDomainStore } from '../console-email-domain-store.js'
+import { ConsoleOwnerResetFollower } from '../console-owner-reset-follower.js'
 import { WebSocket } from 'ws'
 import { KubeHttpsTransport } from '../../../src/agent/kube-https-transport.js'
 import type { AuditRegistry } from '../audit-record.js'
@@ -109,6 +110,7 @@ class Names
     public static readonly ContentTypeHeader = 'Content-Type'
     public static readonly JsonType = 'application/json'
     public static readonly OkBody = '{"refusedEmailDomains":[]}'
+    public static readonly OwnerResetAt = '2026-11-04T10:00:00.000Z'
     public static readonly SendFailed = 'send failed'
     public static readonly Utf8 = 'utf8'
     public static readonly CloseEvent = 'close'
@@ -577,6 +579,8 @@ describe('TenantAdminServer console advert', () =>
     let posts: Array<{ url: string | undefined; body: unknown }> = []
     /** Hanging requests whose connection the client dropped. */
     let abandoned = 0
+    /** What the local agent channel answers a 200 advert with. */
+    let answerBody = Names.OkBody
 
     const baseEnv = (): NodeJS.ProcessEnv => ({ [Names.DataRootVar]: root, [Names.PortVar]: Names.Port, [Names.DomainVar]: Names.Domain })
     const advertEnv = (rolloutUrl: string = Names.RolloutUrl): NodeJS.ProcessEnv => ({
@@ -596,6 +600,7 @@ describe('TenantAdminServer console advert', () =>
         writeFileSync(keyFile, randomBytes(Names.KeyBytes))
         posts = []
         abandoned = 0
+        answerBody = Names.OkBody
     })
 
     afterEach(async () =>
@@ -626,7 +631,7 @@ describe('TenantAdminServer console advert', () =>
                     return
                 }
                 res.writeHead(Names.Ok, { [Names.ContentTypeHeader]: Names.JsonType })
-                res.end(Names.OkBody)
+                res.end(answerBody)
             })
         })
         await new Promise<void>(res => channel!.listen(0, Names.DefaultBind, () => res()))
@@ -775,6 +780,25 @@ describe('TenantAdminServer console advert', () =>
         await Waits.Until(() => abandoned === 1)
         await new Promise<void>(res => setTimeout(res, Names.SettleMs))
         assert.deepEqual(lines.filter(l => l.includes(Names.SendFailed)), [], 'the aborted send is not reported')
+    })
+
+    it('an Owner reset in the advert answer ends the seeded Owner sessions once and writes the applied marker', async () =>
+    {
+        writeConsoleSeed()
+        answerBody = JSON.stringify({ refusedEmailDomains: [], ownerResetAt: Names.OwnerResetAt })
+        const url = await listenChannel()
+        const env = await runEnv(url)
+        const server = new TenantAdminServer(TenantAdminServer.ReadConfig(env), new FakeRolloutClient())
+        const composition = await server.Run(env, () => undefined)
+        try
+        {
+            assert.deepEqual(JSON.parse(readFileSync(join(root, ConsoleOwnerResetFollower.FileName), Names.Utf8)), { appliedAt: Names.OwnerResetAt })
+            assert.ok(composition.plane.principals !== undefined)
+        }
+        finally
+        {
+            await server.Close()
+        }
     })
 
     it('Run sends the advert after listening and Close stops it', async () =>

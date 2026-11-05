@@ -214,7 +214,7 @@ export class AgentChannelHost
         res.end()
     }
 
-    /** Stores the advert the hive's console reports and answers the email domains the control plane refused; a body that is not JSON is reported with the receiver's shape sentence, never echoed. */
+    /** Stores the advert the hive's console reports and answers the email domains the control plane refused, plus the tenant's last operator Owner reset (ownerResetAt) when there is one; a body that is not JSON is reported with the receiver's shape sentence, never echoed. */
     private async ReceiveConsoleAdvert(req: IncomingMessage, res: ServerResponse, id: string): Promise<void>
     {
         const raw = await this.ReadBody(req)
@@ -228,7 +228,12 @@ export class AgentChannelHost
             throw new InvalidConsoleAdvertError(ConsoleAdvertReceiver.BadShape)
         }
         const outcome = await (this.adverts as ConsoleAdvertReceiver).Receive(id, body)
-        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { refusedEmailDomains: outcome.refusedEmailDomains })
+        const answer: { refusedEmailDomains: string[]; ownerResetAt?: string } = { refusedEmailDomains: outcome.refusedEmailDomains }
+        if (outcome.ownerResetAt !== undefined)
+        {
+            answer.ownerResetAt = outcome.ownerResetAt
+        }
+        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, answer)
     }
 
     /** The version of a { version: non-empty string } body, or undefined when it is anything else. */

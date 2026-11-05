@@ -27,6 +27,7 @@ import { HiveAgentUninstaller } from './hive-agent-uninstaller.js'
 import { ConsoleFingerprintKeys } from './console-fingerprint-keys.js'
 import { ConsoleAdvertRegistry } from './console-advert-registry.js'
 import { ConsoleAdvertReceiver } from './console-advert-receiver.js'
+import { ConsoleOwnerResets } from './console-owner-resets.js'
 import { ConsoleDomainApprovals } from './console-domain-approvals.js'
 import { PlatformEmailDomains } from './platform-email-domains.js'
 import type { ITenantEmailDomains } from './tenant-api/tenant-email-domains.js'
@@ -196,6 +197,7 @@ export class ControlPlaneServer
     public static readonly TenantAccountsFile = 'tenant-accounts.json'
     public static readonly ConsoleAdvertsFile = ConsoleAdvertRegistry.FileName
     public static readonly ConsoleDomainApprovalsFile = ConsoleDomainApprovals.FileName
+    public static readonly ConsoleOwnerResetsFile = ConsoleOwnerResets.FileName
     public static readonly DesktopTenantPlaneUrlEnvVar = 'PRAGMATIC_DESKTOP_TENANT_PLANE_URL'
     private static readonly LoopbackHttpPrefix = 'http://127.0.0.1:'
     private static readonly TenantAdminOidcDir = 'tenant-admin-oidc'
@@ -247,7 +249,9 @@ export class ControlPlaneServer
         const accountIndex = new TenantAccountIndex(join(dataRoot, ControlPlaneServer.TenantAccountsFile))
         const adverts = new ConsoleAdvertRegistry(join(dataRoot, ControlPlaneServer.ConsoleAdvertsFile))
         const approvals = new ConsoleDomainApprovals(join(dataRoot, ControlPlaneServer.ConsoleDomainApprovalsFile))
-        await Promise.all([manifests.Load(), audit.Load(), desktopAudit.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load(), policies.Load(), ledger.Load(), adminClientRegistry.Load(), accountIndex.Load(), adverts.Load(), approvals.Load()])
+        // Operator Owner resets of in-hive consoles: recorded by the console installer, answered to the console in its advert.
+        const ownerResets = new ConsoleOwnerResets(join(dataRoot, ControlPlaneServer.ConsoleOwnerResetsFile))
+        await Promise.all([manifests.Load(), audit.Load(), desktopAudit.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load(), policies.Load(), ledger.Load(), adminClientRegistry.Load(), accountIndex.Load(), adverts.Load(), approvals.Load(), ownerResets.Load()])
         await accountIndex.BackfillFrom(directory)
         const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, placement, observations, ControlPlaneServer.ManifestSignerOf(signing.PlatformSigner.KeyRef, dataRoot, signing.ImageSigner), policies, ledger)
         // One tenant session store for the tenant plane and the Owner password reset (which ends the Owner's sessions).
@@ -273,7 +277,7 @@ export class ControlPlaneServer
         const consoleInstaller = new TenantConsoleInstaller(directory, orchestrators, new TenantAdminBootstrap(deployments), fingerprintKeys,
             new DevCertificateAuthority(join(dataRoot, DevCertificateAuthority.DirName), sealed), new InHiveIdpAdmin(orchestrators, sealed),
             new PlatformConsoleImageApproval(signing.PlatformSigner, HiveOrchestratorFactory.VerifierFor(dataRoot)),
-            new FileKeyStore(join(dataRoot, ControlPlaneServer.KeysDirName)), agentChannelUrl, new SystemInstallClock(), adverts)
+            new FileKeyStore(join(dataRoot, ControlPlaneServer.KeysDirName)), agentChannelUrl, new SystemInstallClock(), adverts, ownerResets)
         // One email-domain service for the operator routes and the control-plane tenant plane, over the shared adverts and approvals.
         const emailDomains = new PlatformEmailDomains(directory, adverts, approvals)
         const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations, new LoginThrottle(), opts.trustedProxy, undefined, undefined, undefined, opts.allowedHosts, new OperatorAuthorization(), audit, new AuditThrottle(), idpService, agentChannelUrl, agentInstaller, new HiveAgentUninstaller(orchestrators), discovery, consoleInstaller, adverts, approvals, emailDomains)
@@ -317,7 +321,7 @@ export class ControlPlaneServer
         if (agentChannelPort !== ControlPlaneServer.AgentChannelDisabled)
         {
             const agentBind = ControlPlaneServer.ParseAgentChannelBind(process.env[ControlPlaneServer.AgentChannelBindEnvVar])
-            await new AgentChannelHost(deployments, new ConsoleAdvertReceiver(directory, adverts)).Listen(agentChannelPort, agentBind)
+            await new AgentChannelHost(deployments, new ConsoleAdvertReceiver(directory, adverts, undefined, ownerResets)).Listen(agentChannelPort, agentBind)
             console.log(ControlPlaneServer.AgentChannelListeningPrefix + agentBind + ControlPlaneServer.HostPortSeparator + String(agentChannelPort))
         }
         if (tenantStart !== undefined)

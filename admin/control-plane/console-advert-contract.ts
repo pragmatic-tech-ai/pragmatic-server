@@ -6,6 +6,12 @@ import { TenantAccountIndex } from './tenant-account-index.js'
 /** What an in-hive console tells the control plane about itself: where it is, who may find it, and which email domains it claims. */
 export type ConsoleAdvertBody = { consoleUrl: string; fingerprints: string[]; emailDomains: string[] }
 
+/**
+ * What the console takes from the control plane's 200 advert answer: the time of the tenant's last operator Owner reset, when
+ * there is one (the console then ends the Owner's sessions once per value). The answer's `refusedEmailDomains` is not taken.
+ */
+export type ConsoleAdvertAnswer = { ownerResetAt?: string }
+
 export class ConsoleAdvertLimits
 {
     public static readonly MaxFingerprints = 10000

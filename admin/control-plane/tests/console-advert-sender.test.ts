@@ -9,9 +9,9 @@ import { join } from 'node:path'
 import { Disposable, Signal, type IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import {
     ConsoleAdvertSender, ConsoleAdvertUnavailableError, HttpConsoleAdvertTransport, SeededConsoleAccounts,
-    type IAdvertTimer, type IConsoleAccountSource, type IConsoleAdvertTransport, type IRequestDeadline,
+    type IAdvertTimer, type IConsoleAccountSource, type IConsoleAdvertTransport, type IOwnerResetFollower, type IRequestDeadline,
 } from '../console-advert-sender.js'
-import { ConsoleFingerprint, type ConsoleAdvertBody } from '../console-advert-contract.js'
+import { ConsoleFingerprint, type ConsoleAdvertAnswer, type ConsoleAdvertBody } from '../console-advert-contract.js'
 import { ConsoleEmailDomainStore } from '../console-email-domain-store.js'
 import type { TenantRecord } from '../platform-records.js'
 
@@ -51,6 +51,8 @@ class Names
     public static readonly AbortedMessage = 'aborted'
     public static readonly AbortEvent = 'abort'
     public static readonly SendFailedPrefix = '[console-advert] send failed: '
+    public static readonly OwnerResetFailedPrefix = '[console-advert] owner reset not applied: '
+    public static readonly ResetAt = '2026-11-04T10:00:00.000Z'
 }
 
 class RecordingTransport implements IConsoleAdvertTransport
@@ -72,7 +74,9 @@ class RecordingTransport implements IConsoleAdvertTransport
         this.open?.()
     }
 
-    public async Send(body: ConsoleAdvertBody, signal?: AbortSignal): Promise<void>
+    public answer: ConsoleAdvertAnswer = {}
+
+    public async Send(body: ConsoleAdvertBody, signal?: AbortSignal): Promise<ConsoleAdvertAnswer>
     {
         this.bodies.push(body)
         this.signals.push(signal)
@@ -85,6 +89,24 @@ class RecordingTransport implements IConsoleAdvertTransport
         {
             throw this.failWith
         }
+        return this.answer
+    }
+}
+
+/** Records every value handed to it; can be made to throw. */
+class FakeFollower implements IOwnerResetFollower
+{
+    public readonly applied: Array<string | undefined> = []
+    public failWith: Error | undefined
+
+    public async Apply(resetAt: string | undefined): Promise<boolean>
+    {
+        this.applied.push(resetAt)
+        if (this.failWith !== undefined)
+        {
+            throw this.failWith
+        }
+        return resetAt !== undefined
     }
 }
 
@@ -381,6 +403,48 @@ describe('ConsoleAdvertSender', () =>
     {
         await sender().Idle()
     })
+
+    it('a 200 advert answer is handed to the owner-reset follower', async () =>
+    {
+        const follower = new FakeFollower()
+        const s = new ConsoleAdvertSender(transport, accounts, store, key, Names.ConsoleUrl, timer, line => lines.push(line), follower)
+        await s.Start()
+        transport.answer = { ownerResetAt: Names.ResetAt }
+        timer.Tick()
+        await s.Idle()
+        assert.deepEqual(follower.applied, [undefined, Names.ResetAt], 'every 200 answer, with or without a reset')
+        transport.failWith = new Error(Names.SendFailed)
+        timer.Tick()
+        await s.Idle()
+        assert.equal(follower.applied.length, 2, 'a failed send hands nothing over')
+        s.Stop()
+    })
+
+    it('an answer that arrives after Stop is not handed to the follower', async () =>
+    {
+        const follower = new FakeFollower()
+        let s: ConsoleAdvertSender | undefined
+        const stopping: IConsoleAdvertTransport = { Send: async () => { s?.Stop(); return { ownerResetAt: Names.ResetAt } } }
+        s = new ConsoleAdvertSender(stopping, accounts, store, key, Names.ConsoleUrl, timer, line => lines.push(line), follower)
+        await s.SendNow()
+        assert.deepEqual(follower.applied, [])
+        assert.deepEqual(lines, [])
+    })
+
+    it('a throwing follower is logged by error name only and never fails the advert', async () =>
+    {
+        const follower = new FakeFollower()
+        follower.failWith = new TypeError('store at /data/owner ' + Names.OwnerEmail)
+        transport.answer = { ownerResetAt: Names.ResetAt }
+        const s = new ConsoleAdvertSender(transport, accounts, store, key, Names.ConsoleUrl, timer, line => lines.push(line), follower)
+        await s.Start()
+        assert.deepEqual(lines, [Names.OwnerResetFailedPrefix + 'TypeError'])
+        timer.Tick()
+        await s.Idle()
+        assert.equal(transport.bodies.length, 2, 'the advert keeps running')
+        assert.equal(follower.applied.length, 2, 'the next answer is handed over again')
+        s.Stop()
+    })
 })
 
 describe('HttpConsoleAdvertTransport', () =>
@@ -436,6 +500,31 @@ describe('HttpConsoleAdvertTransport', () =>
         assert.equal(seen.authorization, Names.Bearer)
         assert.equal(seen.contentType, Names.JsonType)
         assert.deepEqual(seen.body, body)
+    })
+
+    it('a 200 answer yields its ownerResetAt', async () =>
+    {
+        const url = await listen(() => ({ status: Names.Ok, body: JSON.stringify({ refusedEmailDomains: [], ownerResetAt: Names.ResetAt }) }))
+        assert.deepEqual(await new HttpConsoleAdvertTransport(url, Names.Token, Names.HiveId).Send(body), { ownerResetAt: Names.ResetAt })
+    })
+
+    it('a 200 answer without a reset, or a malformed, non-time or oversized one, yields nothing', async () =>
+    {
+        const answers = [
+            Names.OkBody,
+            '{not json',
+            'null',
+            '[]',
+            JSON.stringify({ ownerResetAt: 5 }),
+            JSON.stringify({ ownerResetAt: 'not a time' }),
+            JSON.stringify({ ownerResetAt: Names.ResetAt, padding: 'x'.repeat(HttpConsoleAdvertTransport.MaxAnswerBytes) }),
+        ]
+        let next = 0
+        const url = await listen(() => ({ status: Names.Ok, body: answers[next++] }))
+        for (const answer of answers)
+        {
+            assert.deepEqual(await new HttpConsoleAdvertTransport(url, Names.Token, Names.HiveId).Send(body), {}, answer.slice(0, 40))
+        }
     })
 
     it('a 409 is ConsoleAdvertUnavailableError without the token', async () =>

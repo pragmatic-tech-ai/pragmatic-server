@@ -32,8 +32,9 @@ import { NetPortProbe, PortAllocator } from './port-allocator.js'
 import { ControlPlaneServer } from './server.js'
 import type { HiveRecord, TenantRecord } from './platform-records.js'
 import { ConsoleFingerprint } from './console-advert-contract.js'
-import { ConsoleAdvertSender, HttpConsoleAdvertTransport, IntervalAdvertTimer, SeededConsoleAccounts } from './console-advert-sender.js'
+import { ConsoleAdvertSender, HttpConsoleAdvertTransport, IntervalAdvertTimer, SeededConsoleAccounts, type IOwnerResetFollower } from './console-advert-sender.js'
 import { ConsoleEmailDomainStore } from './console-email-domain-store.js'
+import { ConsoleOwnerResetFollower } from './console-owner-reset-follower.js'
 import { ConsoleFingerprintKeys } from './console-fingerprint-keys.js'
 import { SeededTenantDirectory, type TenantDirectorySeed } from './tenant-api/seeded-tenant-directory.js'
 import type { IRolloutClient } from './tenant-api/rollout-client.js'
@@ -181,8 +182,9 @@ export class TenantAdminServer
      * The console's advert sender: undefined (and one log line naming the missing setting's env var, never a value) unless
      * consoleHost, a ConsoleFingerprintKeys.KeyBytes key file and RolloutUrl / RolloutToken / RolloutHiveId are all present.
      * It dials home over the same agent channel, bearer and hive as the HTTP rollout client. consoleUrl = 'https://' + consoleHost.
+     * Every 200 answer is handed to `follower` (the console's ConsoleOwnerResetFollower) when one is given.
      */
-    public static AdvertSenderOf(env: NodeJS.ProcessEnv, cfg: TenantAdminConfig, tenant: TenantRecord, domains: ConsoleEmailDomainStore, log: (line: string) => void = TenantAdminServer.LogLine): ConsoleAdvertSender | undefined
+    public static AdvertSenderOf(env: NodeJS.ProcessEnv, cfg: TenantAdminConfig, tenant: TenantRecord, domains: ConsoleEmailDomainStore, log: (line: string) => void = TenantAdminServer.LogLine, follower?: IOwnerResetFollower): ConsoleAdvertSender | undefined
     {
         const S = TenantAdminServer
         const url = S.OptionalOf(env, TenantAdminEnv.RolloutUrl)
@@ -214,7 +216,7 @@ export class TenantAdminServer
             return S.AdvertOff(log, TenantAdminEnv.FingerprintKeyFile + S.BadKeyInfix + ConsoleFingerprintKeys.KeyBytes + S.BytesSuffix)
         }
         return new ConsoleAdvertSender(new HttpConsoleAdvertTransport(url, token, hiveId), new SeededConsoleAccounts(tenant), domains, key,
-            S.ConsoleUrlScheme + cfg.consoleHost, new IntervalAdvertTimer(), log)
+            S.ConsoleUrlScheme + cfg.consoleHost, new IntervalAdvertTimer(), log, follower)
     }
 
     /**
@@ -307,7 +309,12 @@ export class TenantAdminServer
             ? new TenantHealthMonitor(directory, new HiveHealthProducer(service, orchestrators, placement), plane.events, cfg.probeMs, cfg.probeTimeoutMs, service)
             : undefined
         const host = new TenantPlaneHost(plane, resolver, staticRoot, service, monitor)
-        const advert = TenantAdminServer.AdvertSenderOf(env, cfg, tenant, emailDomains, log)
+        // An operator Owner reset reaches this console in the advert answer; the follower then ends the Owner's sessions, sockets
+        // and relays (the host has attached both to plane.principals above).
+        const follower = plane.principals === undefined
+            ? undefined
+            : new ConsoleOwnerResetFollower(plane.principals, tenant, join(dataRoot, ConsoleOwnerResetFollower.FileName))
+        const advert = TenantAdminServer.AdvertSenderOf(env, cfg, tenant, emailDomains, log, follower)
         return { directory, rollout: this.rollout, plane, host, monitor, config: cfg, reach, emailDomains, advert, desktopAudit }
     }
 

@@ -187,3 +187,41 @@ File and class names, advert interval constants, the advert store shape, how the
   plane ignores them until the console is reinstalled, but they stay in `email-domains.json` on the console's retained data
   volume, so a reinstall brings them back in its first advert (domains an operator approved before match again at once,
   since approvals are kept per tenant). Accepted.
+- **An operator Owner reset reaches the in-hive console by pull (Plan 3 pre-flight D8).** The console's NetworkPolicy
+  admits only the ingress controller and the control plane has no route to the console, so the control plane cannot push.
+  It records the reset time per tenant (`console-owner-resets.json`; recorded after the reset's guards and before the IdP
+  call, so a reset that succeeds is always followed by revocation and one that then fails costs only a harmless extra
+  revoke) and answers it as `ownerResetAt` to the console's advert; the console then ends every session of the Owner,
+  console and desktop, and closes its sockets and relays, once per value (marker `owner-reset-applied.json` in its data
+  root, written only after the revoke succeeded). So an operator Owner reset of an in-hive console ends the Owner's console
+  and desktop sessions at the console's next advert (at most 5 minutes; not while the console cannot reach the agent
+  channel). The in-hive owner-password answer has no `sessionsRevoked` (the control-plane tenant's does); the portal's Set
+  Owner password result says "The Owner's open sessions end within 5 minutes." The record is kept through console removal
+  and hive delete (the console's data volume, and with it its sessions, survives both) and is forgotten only with the
+  tenant. The reset time goes only to the hive's own bearer and carries nothing sensitive.
+- **Residual: a forced delete leaves a running console (Plan 3 pre-flight D9).** A forced hive delete (delete anyway)
+  skips the cluster, so the console keeps running with its sessions, its `/desktop/*` surface and the relay to its
+  environments; a tenant delete is only as complete as the hive deletes before it. A forced delete leaves a running console
+  reachable until the cluster owner removes it; its adverts are refused (409). Making a console whose advert is refused as
+  not enabled stop serving sign-in and the relay is a follow-up feature, not built here (a control-plane outage must not
+  lock a tenant out).
+- **Plexus main trusts the OS root store, process-wide, from start (Plan 3 pre-flight D19).** At the top of the ready
+  handler Plexus sets Node's default CA list to the union of Node's bundled roots and the system store
+  (`tls.getCACertificates('system')` with `tls.setDefaultCACertificates`): Node's system-CA option through the `tls` API,
+  not Electron `net.fetch`. That widens trust for every Node TLS client in main (agent runtime, MCP clients, package
+  registries), including user-installed and corporate roots and the development CA once installed, matching what the
+  renderer and the system browser already trust. A CA installed while Plexus runs is trusted only after a restart (the
+  certificate error says so).
+- **The typed console address path sends no email (Plan 3 pre-flight D21).** With a typed address Plexus calls the
+  console's unauthenticated, rate-limited `GET /desktop/console` (the served tenant's id and name only), then `begin`
+  WITHOUT the email; the account is proven only at the IdP. So the typed path cannot test whether an email has an account,
+  and discovery on the control plane stays the only email lookup. The typed email is used only as the session's display
+  fallback. The tenant name is disclosed to anyone who can reach the console host, which already names the tenant.
+- **One console per tenant: an in-hive tenant's Plexus sees the environments its console manages (Plan 3 pre-flight
+  D22).** After the first advert discovery sends the tenant's people to the console, whose registry holds only the
+  environments it created; environments the control plane created for that tenant (on other hives, or before the console
+  was installed) are no longer listed in Plexus targets or reachable by the relay, although the control-plane tenant plane
+  still serves them. Plexus targets across the console and the platform tenant plane is a follow-up feature.
+- **Out of a pod the console serves desktop sign-in and targets but no relay.** The out-of-pod (dev-collapse) console has
+  no environment reach and its environment service cannot mint credentials there either, so its relay upgrade is refused
+  with the relay-refused sentence; the supported path is a console in a pod.

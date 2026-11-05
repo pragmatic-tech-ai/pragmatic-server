@@ -293,6 +293,7 @@ export class ControlPlaneHost
     private static readonly ForgetFailedLogInfix = ': forgetting its console keys failed: '
     private static readonly ForgetAdvertLogInfix = ': forgetting its console advert failed: '
     private static readonly ForgetApprovalsLogInfix = ': forgetting its approved email domains failed: '
+    private static readonly ForgetOwnerResetLogInfix = ': forgetting its recorded Owner reset failed: '
     private static readonly ConsoleRemoveLogPrefix = '[console-remove] hive '
     private static readonly UnknownErrorName = 'Error'
     private static readonly NamespacesLeftNoticePrefix = 'These environment namespaces could not be deleted and may remain in the cluster: '
@@ -1459,7 +1460,9 @@ export class ControlPlaneHost
 
     /**
      * Serves POST /api/hives/ID/console/owner-password: sets a fresh Owner password in the hive's in-hive IdP and returns
-     * { ownerEmail, ownerPassword } once (no-store). The password is never logged or audited; false for any other method.
+     * { ownerEmail, ownerPassword } once (no-store). The installer records the reset first, so the console ends the Owner's
+     * sessions at its next advert (within ConsoleAdvertSender.IntervalMs). The password is never logged or audited; false for
+     * any other method.
      */
     private async RouteHiveConsoleOwnerPassword(res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
     {
@@ -1570,8 +1573,12 @@ export class ControlPlaneHost
         }
     }
 
-    /** Drops a deleted tenant's console advert and approved email domains; each best effort like ForgetHiveAdvert. */
-    private async ForgetTenantAdvertAndApprovals(tenantId: string): Promise<void>
+    /**
+     * Drops a deleted tenant's console advert, approved email domains and recorded Owner reset; each best effort like
+     * ForgetHiveAdvert. The Owner reset is forgotten only here: a console removal or hive delete keeps it (the console's data
+     * volume and its sessions survive both).
+     */
+    private async ForgetTenantConsoleRecords(tenantId: string): Promise<void>
     {
         const C = ControlPlaneHost
         try
@@ -1589,6 +1596,14 @@ export class ControlPlaneHost
         catch (err)
         {
             C.LogForgetFailure(C.TenantDeleteLogPrefix, tenantId, err, C.ForgetApprovalsLogInfix)
+        }
+        try
+        {
+            await this.consoleInstaller?.ForgetOwnerReset(tenantId)
+        }
+        catch (err)
+        {
+            C.LogForgetFailure(C.TenantDeleteLogPrefix, tenantId, err, C.ForgetOwnerResetLogInfix)
         }
     }
 
@@ -2138,7 +2153,7 @@ export class ControlPlaneHost
                 await this.directory.DeleteTenant(id)
                 await this.provisioning.ForgetTenant(id)
                 await this.ForgetTenantConsoleCredentials(id)
-                await this.ForgetTenantAdvertAndApprovals(id)
+                await this.ForgetTenantConsoleRecords(id)
                 break
         }
     }

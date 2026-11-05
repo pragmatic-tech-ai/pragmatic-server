@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ConsoleAdvertRecord, IConsoleAdvertLookup } from '../console-advert-registry.js'
 import { ConsoleFingerprintKeys } from '../console-fingerprint-keys.js'
+import type { IOwnerResetRecorder } from '../console-owner-resets.js'
 import type { IDevCertificateIssuer, IssuedCertificate } from '../dev-certificate-authority.js'
 import type { EnvironmentWorkload } from '../environment-workload.js'
 import type { IHiveOrchestrator, WorkloadHealth } from '../hive-orchestrator.js'
@@ -231,6 +232,7 @@ export class FakeInHiveIdpAdmin implements IInHiveIdpAdmin
 
     public async ResetOwnerPassword(_hive: HiveRecord, tenant: TenantRecord): Promise<InHiveOwnerPassword>
     {
+        this.events.push('ResetOwnerPassword')
         if (this.ResetError !== undefined)
         {
             throw this.ResetError
@@ -429,10 +431,10 @@ export class ConsoleInstallFixture
     }
 
     /** Another installer over the same fakes and store, reading hives and tenants from `directory` (a host test's PlatformDirectory). */
-    public InstallerOver(directory: IConsoleDirectory, adverts?: IConsoleAdvertLookup): TenantConsoleInstaller
+    public InstallerOver(directory: IConsoleDirectory, adverts?: IConsoleAdvertLookup, ownerResets?: IOwnerResetRecorder): TenantConsoleInstaller
     {
         return new TenantConsoleInstaller(directory, this.Orchestrators, new TenantAdminBootstrap(this.Registrar), this.Fingerprints, this.DevCa,
-            this.IdpAdmin, this.Images, new FakeTrustRoots(), ConsoleInstallFixture.ChannelUrl, undefined, adverts)
+            this.IdpAdmin, this.Images, new FakeTrustRoots(), ConsoleInstallFixture.ChannelUrl, undefined, adverts, ownerResets)
     }
 
     /** A new installer over the same hives and tenants with no run in memory, as after a control plane restart. */

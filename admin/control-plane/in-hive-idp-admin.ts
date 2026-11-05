@@ -5,6 +5,7 @@ import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import { KubectlCli, NodeProcessSpawner, type IProcessSpawner } from './kubectl.js'
 import type { HiveRecord, TenantRecord } from './platform-records.js'
 import type { SealedSecretStore } from './sealed-secret-store.js'
+import { TenantOwner } from './tenant-owner.js'
 import { OwnerNotRecordedError, OwnerResetInProgressError, TenantProvisioningService } from './tenant-provisioning-service.js'
 
 /** A fresh in-hive Owner password, returned once to the operator (never logged, audited or stored). */
@@ -97,7 +98,7 @@ export class InHiveIdpAdmin implements IInHiveIdpAdmin
             // the operator sets a known one with ResetOwnerPassword.
             await client.SeedAccount(tenant.id, {
                 email: ownerEmail,
-                principalId: InHiveIdpAdmin.OwnerPrincipalOf(tenant),
+                principalId: TenantOwner.PrincipalOf(tenant),
                 displayName: tenant.displayName,
                 password: TenantProvisioningService.NewOwnerPassword(),
             })
@@ -119,7 +120,7 @@ export class InHiveIdpAdmin implements IInHiveIdpAdmin
             {
                 try
                 {
-                    await client.ResetPassword(tenant.id, InHiveIdpAdmin.OwnerPrincipalOf(tenant), ownerPassword)
+                    await client.ResetPassword(tenant.id, TenantOwner.PrincipalOf(tenant), ownerPassword)
                 }
                 catch (err)
                 {
@@ -205,10 +206,5 @@ export class InHiveIdpAdmin implements IInHiveIdpAdmin
             throw new OwnerNotRecordedError()
         }
         return tenant.ownerEmail
-    }
-
-    private static OwnerPrincipalOf(tenant: TenantRecord): string
-    {
-        return tenant.ownerPrincipalId ?? TenantProvisioningService.OwnerPrincipalId
     }
 }
