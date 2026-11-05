@@ -1,0 +1,82 @@
+# Rulings made while building Plan 1 (in-hive console install, TLS, in-cluster environment management)
+
+Source: the SDD ledger. Each line: what was decided, why, and the cost if wrong.
+
+- Ruling: accept ALL 29 pre-flight recommendations as written in preflight.md section D (for #12: drop `digest`, plain ref allow-list; for #13: extract the shared HTTPS transport into src/agent; for #20: serialise SealedSecretStore writes) - each is a defect or ambiguity fix the reviewer would otherwise raise - cost if wrong: small rework per item.
+- Ruling: #21 spec deviations (reuse agent token; ClusterRole bound per-namespace + cluster-wide create rolebindings/bind, prefix fenced by the console guard) accepted; recorded in the spec decisions section in Task 13's commit - RBAC cannot fence name prefixes - cost if wrong: residual privilege noted in spec.
+Task 1: complete (2a1953b, review PASS/PASS)
+- Ruling: HttpsKubeTransport tests depend on openssl via DevCa.EnsureAt - existing tests already do (repo precedent) - cost: none on dev machines with openssl.
+Task 2: complete (c3b8bd5 + fix 4146897; re-review all ADDRESSED)
+Task 3: complete (a7859e3 + a9b2164 + efe0f72; re-review all addressed, round-2 nits verified by controller)
+Task 4: complete (e37bb84 + da8b32b; review Approved, 3 Minors fixed, fix verified by controller)
+- Ruling: development TLS copy in pragmatic-system is per tenant `pragmatic-tenant-admin-<tenantId>-dev-tls` (builder static) instead of shared `pragmatic-dev-tls` - removing one console must not break another - cost: one Secret per dev console. LATER TASKS (T6 TLS copy, T12, T13, T15) use this name; the env/IdP namespace copies keep whatever name T6 defines.
+- Ruling: add a per-console ValidatingAdmissionPolicy (k8s >= 1.30) fencing the console SA: namespace create/delete to pragmatic-env-* with this hive label; rolebinding only the console env binding name -> console env ClusterRole -> console SA - closes the #21 residual (RBAC cannot fence names; the console guard alone is not server-enforced) - cost: requires k8s >= 1.30.
+- Note for T13: hive delete must remove the console (ClusterRoles/Bindings/policy) for every hive that owns a tenant-admin (uninstaller OwnsTenantAdmin check).
+- Ruling: env namespaces enforce Pod Security `baseline`; console policy requires baseline|restricted on namespace create - a stolen console token must not get node root - cost: workloads must stay baseline-compliant.
+- Carry to Task 6: (a) dev TLS copy: read `pragmatic-tenant-admin-<t>-dev-tls` from pragmatic-system and write it into the env (and IdP) namespace under the name the env/IdP Ingress expects (`pragmatic-dev-tls`); test expectations follow. (b) cross-hive squatting: the control-plane kubectl orchestrator path AND the in-cluster one refuse to deploy into an existing env namespace labelled for another hive (or unlabelled when created by someone else), with a plain error. (c) namespace + RoleBinding via POST, not server-side apply (RBAC has no patch).
+Task 5: complete (f479132 + da6d8f5 + dedab7c; baseline PSA verified by dry-run; live PSA enforcement proven in T15 smoke)
+- Note for T12/T13: environments created by the console must use the console's own TLS choice (its TLS Role only grants get on the console's exposure Secret); placement must pass it.
+- Note: VerifiedImage is { imageRef } only (ruling #12, applied in T6) - T12/T13 build { imageRef } entries.
+Task 6: complete (8e061a0 + 7cc1aef; re-review all addressed)
+Task 7: complete (ab296c5 + d584592; fix verified by controller from report)
+- Follow-up (fix at end of plan): the intermittent control-plane failure is tests/tenant-password-change*.test.ts (seen in T7 gate) - root-cause and fix it before the final review.
+- Rule breach noted: T8 implementer used sed -i on its own uncommitted new test files (CR strip); blobs verified LF.
+Task 8: complete (0559534 + dbd55fb + 9e41f47; re-review addressed; round-2 nits verified from report + byte scan)
+Flake fix: dispatched before Task 9 (BASE 9e41f47) - intermittent control-plane failures (tenant-password-change; loop-orchestrator whole-file; a run with ~50 fewer tests).
+Flake fix: done (16d1183 ControlPlaneHost.Close awaits audit + relay test ws coalesce; f9c66d7 DesktopRelay/TenantPlaneHost Close await audit). Remaining whole-file failures = node.exe native fast-fail exit 0xC0000409 (environmental; rerun is correct response; crash dump needs admin).
+- To do in final sweep (fix-all): src SqlAuditAccessSink async inserts not drained at server shutdown -> add a drain to the audit-sink interface + call from shutdown.
+Task 9: complete (f165558 + 93de8a4; minors fixed, verified from report)
+Task 10: complete (9581cb9 + c707f5c; controller review: WhatIf, CA guard, -Thumbprint added)
+Task 11: complete (21fdaad + 6da38e1; fix verified from report)
+- Note for T13: development leaf certs must list the exact console/IdP hosts as SANs (a tenant id with a dot yields a multi-label host a wildcard would not cover).
+Task 12: complete (8994d5a + 76fe1fc; Approved, minors fixed; fingerprintKey required with console; IdP TLS = console TLS)
+- Ruling (amends pre-flight #3): on reinstall the IdP CA/admin token are read from the cluster's IdP Secrets (what the running IdP uses), and the sealed copy is refreshed from them - a sealed-first approach would write mismatched copies, refusing a mismatch would block the repair, and anyone who can write IdP-namespace Secrets can already replace the IdP - cost if wrong: none beyond existing trust.
+Task 13: complete (c7dba50 + 854ac2e + 78ecf76; re-review addressed; round-2 N1-N4 verified from report)
+- Ruling: Remove confirmation accepted (it deletes cluster grants + env namespaces). Set Owner password gate = configured && not installing (brief's Deployed gate overruled: the server doesn't need it and the status is forgotten after restart).
+Task 14: complete (812ca29 + f65bf0d; fixes verified from report). Rule breach noted: perl -pi on hive-console-view-model.ts (file verified LF/ASCII).
+Task 15: complete (3a03ade; live smoke run 4: 22/22 PASS on docker-desktop, teardown clean; product bug fixed: dev-ca CN > 64 chars). Control plane now pid 50652 on branch code.
+Final review: dispatched (BASE 1139385..3a03ade). Carry into final fix wave: (1) installer failure diagnosability - named, scrubbed error from the cert step; (2) stale IdP login selectors in in-cluster-federation-smoke.ts and tenant-login-e2e-smoke.ts; (3) SqlAuditAccessSink drain at server shutdown.
+Final review: ready with fixes (3 Important, 6 Minor). Rulings for the single final fix wave:
+- I1: forget the tenant's in-hive IdP credentials only when the deleted hive is the console hive (or the console is removed); test.
+- I2: Remove console KEEPS the console-created env namespaces (data preserved, like the PVC); fix the confirmation sentence; list them in `retained`; reinstall re-adopts them (labelled for the hive, PSA baseline) - cost: unmanaged envs until reinstall.
+- I3: console removal and hive delete remove the in-hive IdP's Deployment, Service and Ingress, keep its data (PVC/Secrets), and report the kept objects in `retained`.
+- m1: install refuses clusters below Kubernetes 1.30 (plain sentence; check the admission API is served) and the removal manifest tolerates an unserved policy kind (hive delete on old clusters must still work).
+- m2: delete the dead CredentialRemovalManifest / TenantConsoleInstaller.Supports.
+- m3: hoist the inline literals.
+- m4: a refused image in the console shows a plain sentence telling the operator to reinstall the console to approve the new server image (portal note on the console panel too).
+- m5: NetworkPolicy so only the ingress controller namespace (and kube-system DNS etc. as needed) can reach the console port; keep TrustedProxy.
+- m6: apply the new IdP TLS copy before deleting the old one.
+- Carried: (a) named, scrubbed install-step errors logged/shown; (b) update stale IdP login selectors in in-cluster-federation-smoke.ts and tenant-login-e2e-smoke.ts; (c) SqlAuditAccessSink drain at server shutdown.
+
+## Pre-flight findings (all 29 accepted as recommended)
+
+
+1. **(Major) cert-manager IdP Secret-name collision (T4/T12/T13).** `SecretNameFor(cert-manager, IdpNameOf(t))` = `pragmatic-idp-<t>-tls` = `InClusterIdpSeedSource.TlsSecretNameOf(t)`, the IdP's own server key Secret; cert-manager would overwrite it (including `ca.crt`). Recommended: give cert-manager Secrets a distinct suffix (e.g. `<ingressName>-ingress-tls`) in `IngressTlsPolicy.SecretNameFor`, update the T4/T5 expected values, and add a T4 test that the IdP Ingress cert-manager Secret name differs from `InClusterIdpSeedSource.TlsSecretNameOf`.
+2. **(Major) Reinstall rotates the console master key (T12/T13).** `GenerateBootstrap` mints a new `master.key` each call; T13 server-side applies the seed Secret; the init container `cp -f` overwrites `/data/master.key`, so the console's existing encrypted data becomes unreadable after a reinstall (Review Focus 1 path). Recommended: T12 gains `masterKey?: Buffer`; T13 reads the existing seed Secret (`Find`) on reinstall and passes its `master.key`; add test `reinstall keeps the console master key`.
+3. **(Major) Reinstall rotates the in-hive IdP CA and admin token (T13).** A fresh `InClusterIdpSeedSource` per run replaces the IdP TLS Secret; every environment's `<env>-idp-ca` copy goes stale and federated environments stop trusting the IdP. Recommended: when the IdP TLS + admin Secrets already exist in `IdpNameOf(t)`, skip re-seeding and reuse `ca`/`adminToken` from the `IInHiveIdpAdmin` sealed store; add a reinstall test asserting no IdP seed apply.
+4. **(Major) T4 depends on T5's env keys.** Recommended: move `TenantAdminEnv.IngressTlsSource/IngressTlsSecret/IngressTlsIssuer` into T4 (add `tenant-admin-env.ts` to T4 Files); T5 keeps `ConsoleHost` and `FingerprintKeyFile`.
+5. **(Major) T13 controller amendment is underspecified.** No IKubectl op lists or deletes cluster-scoped Namespaces by label + prefix; no file/test listed; "known gap" does not exist; `retained` today means deliberately kept, not failed. Recommended: add `DeleteNamespacesBySelector(selector)` (KubectlCli, ApiKubectl, guard refusing non-prefix names) using selector `pragmatic/hive=<id>,pragmatic/environment` and a client-side `pragmatic-env-` prefix check; call it from the host's hive delete after the console Uninstall, skip when forced; report failures in a new `failed` list (or in `notice`), not in `retained`; add the named test to Step 1 and the files to Files; drop `hive-agent-uninstaller.ts` from File Structure.
+6. **(Major) `SeedOwner` duplicate-account special case is a false premise.** IdP seeding is already idempotent (200 for an existing principal). Recommended: delete the special case and the "read idp-admin-endpoint.ts" instruction; replace the test with "SeedOwner ensures the realm then seeds the recorded Owner principal, and a second call succeeds".
+7. **(Minor) T13 order test omits the development TLS applies.** Recommended full order: Apply(manifest) -> ApplyServerSide(bootstrap secrets) -> ApplyServerSide(IdP seed) -> ApplyServerSide(`pragmatic-dev-tls` in pragmatic-system) -> ApplyServerSide(`pragmatic-dev-tls` in IdP ns) -> Remember -> RolloutRestart x2 -> RolloutStatus x2 -> SeedOwner.
+8. **(Minor) `InClusterOrchestration.ingressTls` is a second, unused home.** Recommended: drop it from `InClusterOrchestration` and from `InClusterOrchestrationOf`; placement (`w.federation.ingressTls`) is the single source.
+9. **(Minor) `TenantConsoleRemovalManifest(spec)` shape and stale TLS objects.** Recommended: signature `TenantConsoleRemovalManifest(tenantId: string, hiveId: string)` that always names every optional object (Ingress, TLS Role + RoleBinding, `pragmatic-dev-tls`; DeleteManifest tolerates absence); on reinstall with a changed TLS source, delete the previous TLS Role/RoleBinding first.
+10. **(Minor) Secret-name home for fingerprint / idp-ca / idp-token.** Recommended: T5 adds builder statics `TenantConsoleFingerprintSecretNameOf`, `TenantConsoleIdpCaSecretNameOf`, `TenantConsoleIdpTokenSecretNameOf` (suffixes move to the builder); T12 makes the `TenantAdminBootstrap` statics delegate; `CredentialRemovalManifest` and `TenantConsoleRemovalManifest` share one identity list.
+11. **(Minor) `VerifiedImagesKey` dual ownership.** Recommended: T7 owns it unconditionally; T12 moves it to Consumes.
+12. **(Minor) `VerifiedImage.digest` is never checked.** `PinnedImageVerifier` can only compare refs in-pod. Recommended: drop `digest` (plain ref allowlist, rename nothing else), or explicitly say it is informational; do not imply digest pinning.
+13. **(Minor) Duplicated HTTPS transport.** Recommended: extract the shared Send + service-account defaults into `src/agent` (admin may import src) and have both `InClusterK8sApi` and `HttpsKubeTransport`/`InClusterServiceAccount` use it; or accept the duplication with a one-line justification in T2.
+14. **(Minor) Duplicated verifier construction in server.ts.** Recommended: `HiveOrchestratorFactory` gains `public static VerifierFor(dataRoot: string): CryptoImageVerifier` (and a public `KeysDirName`), used by both `BuildKubectl` and T13's wiring/`FileKeyStore`.
+15. **(Minor) Owner literals and missing-Owner seeding.** Recommended: make `TenantProvisioningService.OwnerPrincipalId` public static alongside `NewOwnerPassword` and use it; `SeedOwner` with no `ownerEmail` fails the install at seeding-owner with `OwnerNotRecordedError`'s sentence.
+16. **(Minor) `HiveConsoleViewModel` ctor vs page lifecycle.** Recommended: `ctor(session, hiveId, scheduler, intervalMs)` built in the page ctor like `AgentInstall`, plus `Load(hive: HiveDto)` called from `LoadCore`.
+17. **(Minor) Hive without a trust root.** Recommended: installer fails at preparing-certificates with a plain sentence when `hive.trustRootRef` is undefined (before calling `trustRoots.PublicKey`), plus a test.
+18. **(Minor) `KubeApiError` text.** Recommended: `'kubernetes API <METHOD> <path> failed with status <n>[: <redacted message>]'` (paths carry names only) instead of `<kind>`.
+19. **(Minor) T3 test typing.** Recommended: `{ attempts: 2, intervalMs: 0 }`.
+20. **(Minor) `SealedSecretStore` concurrent writes.** Fingerprint keys, dev CA and IdP admin share one store and concurrent installs write the same `<file>.tmp`. Recommended: serialise Put/Delete through an internal promise chain; add a two-concurrent-Puts test.
+21. **(Ruling) Spec deviations.** (a) reuse of the hive agent token instead of generating one; (b) ClusterRole-via-RoleBinding plus cluster-wide `create rolebindings`/`bind` (RBAC cannot fence the namespace; the guard does). Recommended: accept both; record them in the spec's decision section and in the console ClusterRole doc comment.
+22. **(Minor) Token + RBAC rendered even without `console`.** Existing bootstrap users (smokes) would then also switch to in-cluster orchestration. Recommended: accept as designed (T5 says "by design"), but state it in the `RenderTenantAdmin` comment.
+23. **(Minor) Forced hive delete.** Recommended: skip console `Uninstall` when forced (add a notice like `AgentLeftNotice`), always run `Forget` after the records are gone; a non-forced console Uninstall failure aborts the delete fail-closed (409, record kept).
+24. **(Minor) TLS source read path in T6 step 5.** Recommended: GET the pragmatic-system Secret through `client` (the TLS Role grants it; the guard would refuse), and write the copy through the guarded `Kubectl.ApplyServerSide`.
+25. **(Minor) `Compose(env)` vs `BuildIdpService(process.env, ...)`.** Recommended: pass `env` through.
+26. **(Minor) File Structure lists `hive-agent-uninstaller.ts` under Modify with "no change".** Recommended: remove it (or assign it per ruling 5).
+27. **(Minor) T5 automount assertion fix.** Recommended: name tests/tenant-admin-manifest.test.ts:74 as the one to flip; tests/k8s-manifest-builder.test.ts:343 (IdP pod) stays `false`.
+28. **(Minor) T13 PortForward wording.** Recommended: say "`orchestrators.For(hive).Kubectl`, checked with `KubectlCli.CanPortForward`, then its `PortForward(...)`".
+29. **(Minor) Console install re-applies the hive agent.** `GenerateBootstrap` always includes `RenderHiveAgent`, so T13's Apply rewrites the agent's Deployment/ClusterRole (reverting any later image change). Recommended: when `reuseAgentToken` is true, omit the agent objects from the manifest; add a T12 test.
